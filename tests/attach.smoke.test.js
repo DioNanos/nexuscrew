@@ -24,20 +24,32 @@ test('attach streams real tmux bytes and forwards input', { timeout: 15000 }, as
   }
 });
 
-// Gate: a small default attach must NOT shrink the window for the real terminal.
-test('default attach (ignore-size) does NOT resize a session held by another client', { timeout: 15000 }, async () => {
+// Gate "segue il focus" (decisione DAG 2026-07-09): con window-size latest il
+// client USATO piu' di recente comanda la geometria. Un client piccolo puo'
+// restringere la finestra mentre lo usi, ma tornare a usare il client grande
+// DEVE riportarla grande. (Sostituisce il vecchio gate ignore-size.)
+test('window-size latest: usare di nuovo il client grande riporta la size grande', { timeout: 15000 }, async () => {
   const wsz = () => execFileSync('tmux',
     ['display-message', '-p', '-t', S, '#{window_width}x#{window_height}']).toString().trim();
   execFileSync('tmux', ['new-session', '-d', '-s', S, '-x', '100', '-y', '30']);
+  execFileSync('tmux', ['set-option', '-t', `=${S}:`, 'window-size', 'latest']);
   try {
-    const big = openAttach(S, { cols: 100, rows: 30, takeSize: true }); // real terminal holding the geometry
+    const big = openAttach(S, { cols: 100, rows: 30 });
     await new Promise((r) => setTimeout(r, 400));
-    const before = wsz();
-    const small = openAttach(S, { cols: 40, rows: 10 });          // client piccolo, default ignore-size
+    big.write(' ');                                        // attivita' sul grande
+    await new Promise((r) => setTimeout(r, 400));
+    const bigSize = wsz();                                 // riferimento (status bar inclusa)
+    const small = openAttach(S, { cols: 40, rows: 10 });
+    await new Promise((r) => setTimeout(r, 300));
+    small.write(' ');                                      // il piccolo prende il focus
     await new Promise((r) => setTimeout(r, 600));
-    const after = wsz();
+    const shrunk = wsz();
+    big.write(' ');                                        // torno sul grande
+    await new Promise((r) => setTimeout(r, 800));
+    const back = wsz();
     small.kill(); big.kill();
-    assert.strictEqual(after, before, `ignore-size violato: ${before} -> ${after}`);
+    assert.notStrictEqual(shrunk, bigSize, 'il client piccolo attivo deve restringere');
+    assert.strictEqual(back, bigSize, `focus non ripristina la size: grande=${bigSize}, piccolo=${shrunk}, dopo=${back}`);
   } finally {
     execFileSync('tmux', ['kill-session', '-t', S]);
   }

@@ -39,3 +39,65 @@ test('resize clamp + normalize ripara garbage', async () => {
   const ok = m.normalize({ columns: [{ width: 2, tiles: [{ session: 'a', height: 1 }] }] });
   assert.equal(ok.columns[0].tiles[0].session, 'a');
 });
+
+test('dropForQuadrant: mapping direzionale + invalidi', async () => {
+  const m = await mod();
+  let l = m.emptyLayout();
+  l = m.addTile(l, 'a', 'end'); l = m.addTile(l, 'b', { col: 0, row: 1 });
+  assert.deepEqual(m.dropForQuadrant(l, 0, 0, 'left'), { col: 0 });
+  assert.deepEqual(m.dropForQuadrant(l, 0, 0, 'right'), { col: 1 });
+  assert.deepEqual(m.dropForQuadrant(l, 0, 1, 'top'), { col: 0, row: 1 });
+  assert.deepEqual(m.dropForQuadrant(l, 0, 1, 'bottom'), { col: 0, row: 2 });
+  assert.equal(m.dropForQuadrant(l, 9, 0, 'left'), null);
+  assert.equal(m.dropForQuadrant(l, 0, 0, 'diag'), null);
+});
+
+test('equalize / toGrid2x2 / toColumns', async () => {
+  const m = await mod();
+  let l = m.emptyLayout();
+  for (const s of ['a','b','c','d','e']) l = m.addTile(l, s, 'end');
+  l = m.resizeColumn(l, 0, 3);
+  assert.ok(m.equalize(l).columns.every((c) => c.width === 1));
+  const g = m.toGrid2x2(l);
+  assert.equal(g.columns.length, 2);
+  assert.deepEqual(g.columns.map((c) => c.tiles.length), [3, 2]);
+  assert.deepEqual(m.sessions(g), ['a','b','c','d','e']);
+  const cols = m.toColumns(l);
+  assert.equal(cols.columns.length, 5);
+  assert.deepEqual(m.toGrid2x2(m.emptyLayout()), m.emptyLayout());
+});
+
+test('snapFraction: scatta a 25/50/75 entro tolleranza', async () => {
+  const m = await mod();
+  assert.equal(m.snapFraction(0.51), 0.5);
+  assert.equal(m.snapFraction(0.27), 0.25);
+  assert.equal(m.snapFraction(0.60), 0.60);
+});
+
+test('addTileSmart: crescita bilanciata a griglia (~sqrt)', async () => {
+  const m = await mod();
+  let l = m.emptyLayout();
+  l = m.addTileSmart(l, 'a');                     // 1 -> [[a]]
+  assert.deepEqual(l.columns.map((c) => c.tiles.length), [1]);
+  l = m.addTileSmart(l, 'b');                     // 2 -> [[a],[b]]
+  assert.deepEqual(l.columns.map((c) => c.tiles.length), [1, 1]);
+  l = m.addTileSmart(l, 'c');                     // 3 -> [[a,c],[b]]
+  assert.deepEqual(l.columns.map((c) => c.tiles.length), [2, 1]);
+  l = m.addTileSmart(l, 'd');                     // 4 -> 2x2
+  assert.deepEqual(l.columns.map((c) => c.tiles.length), [2, 2]);
+  l = m.addTileSmart(l, 'e');                     // 5 -> terza colonna
+  assert.deepEqual(l.columns.map((c) => c.tiles.length), [2, 2, 1]);
+  assert.equal(m.addTileSmart(l, 'a'), l, 'dedup');
+});
+
+test('cap 9: normalize tronca layout corrotti, preset non superano il cap', async () => {
+  const m = await mod();
+  const fat = { columns: Array.from({ length: 11 }, (_, i) => ({ width: 1, tiles: [{ session: `s${i}`, height: 1 }] })) };
+  const n = m.normalize(fat);
+  assert.equal(m.sessions(n).length, 9, 'normalize applica il cap');
+  assert.ok(m.sessions(m.toGrid2x2(n)).length <= 9);
+  assert.ok(m.sessions(m.toColumns(n)).length <= 9);
+  // preset direttamente sul layout CORROTTO (senza passare da normalize)
+  assert.equal(m.sessions(m.toGrid2x2(fat)).length, 9, 'toGrid2x2 cap diretto');
+  assert.equal(m.sessions(m.toColumns(fat)).length, 9, 'toColumns cap diretto');
+});

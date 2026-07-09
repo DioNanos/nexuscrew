@@ -3,6 +3,12 @@ import './Icon.css';
 // Set unico di icone stroke (griglia 24, tratto 2, angoli tondi, currentColor):
 // stessa resa su ogni device, a differenza delle emoji.
 const PATHS = {
+  power: (
+    <>
+      <path d="M12 3v8" />
+      <path d="M6.6 6.6a8 8 0 1 0 10.8 0" />
+    </>
+  ),
   folder: (
     <path d="M4 6a2 2 0 0 1 2-2h3.6a2 2 0 0 1 1.4.6L12.4 6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
   ),

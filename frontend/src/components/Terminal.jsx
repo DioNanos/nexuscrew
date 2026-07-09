@@ -107,6 +107,16 @@ export default function Terminal({ session, token, readonly, takeSize, sendRef, 
     // window 'resize' on some mobile browsers — track the visualViewport too.
     const vv = window.visualViewport;
     if (vv) { vv.addEventListener('resize', onResize); vv.addEventListener('scroll', onResize); }
+    // Il tile può cambiare dimensione senza resize della finestra (altri tile,
+    // divisori, preset, sidebar) → osserva l'host e rifitta (rAF debounce per i drag).
+    let ro = null, rafId = 0;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => {
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(onResize);
+      });
+      ro.observe(host);
+    }
 
     return () => {
       apiRef.current = null;
@@ -117,6 +127,8 @@ export default function Terminal({ session, token, readonly, takeSize, sendRef, 
       host.removeEventListener('wheel', onWheel, { capture: true });
       window.removeEventListener('resize', onResize);
       if (vv) { vv.removeEventListener('resize', onResize); vv.removeEventListener('scroll', onResize); }
+      if (ro) ro.disconnect();
+      if (rafId) cancelAnimationFrame(rafId);
       sock.close();
       term.dispose();
     };

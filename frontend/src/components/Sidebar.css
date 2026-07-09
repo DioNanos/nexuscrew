@@ -2,16 +2,45 @@
 .nc-sidebar {
   display: flex; flex-direction: column; gap: 8px;
   padding: 12px 10px; color: #cfe;
-  width: 240px; flex: 0 0 240px; min-height: 0;
+  min-height: 0; position: relative;
   overflow-y: auto; box-sizing: border-box;
   border-right: 1px solid #1c241c;
   background: #0a0e0a;
 }
+/* Modalità mini: solo dot, niente padding orizzontale. */
+.nc-sidebar.mini { padding: 12px 4px; align-items: center; gap: 6px; }
+
+/* Maniglia di resize sul bordo destro (come i divisori griglia). */
+.nc-side-resize {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 6px;
+  cursor: col-resize; z-index: 5;
+}
+.nc-side-resize:hover { background: #1c3a1c; }
+
+.nc-collapse-btn {
+  flex: 0 0 auto; background: none; border: 1px solid #243; color: #9fd;
+  border-radius: 8px; min-width: 26px; min-height: 26px; cursor: pointer;
+  font-size: 13px; line-height: 1;
+}
+.nc-collapse-btn:hover { border-color: #2e7d32; color: #d8ffe8; }
 
 .nc-side-head {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: 6px; justify-content: space-between;
   padding: 2px 4px 6px;
 }
+.nc-side-head.mini { padding: 2px 0 6px; justify-content: center; }
+
+/* Griglia dot in mini mode. */
+.nc-side-group.mini { align-items: center; gap: 6px; }
+.nc-mini-dot, .nc-mini-init {
+  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; box-sizing: border-box;
+  border: 1px solid #1c241c; background: #0e140e; border-radius: 9px;
+  cursor: pointer; user-select: none; color: #d8ffe8; padding: 0;
+}
+.nc-mini-init { font-size: 13px; font-weight: 700; }
+.nc-mini-dot:hover, .nc-mini-init:hover { border-color: #244; }
+.nc-mini-dot.active, .nc-mini-init.active { border-color: #2e7d32; background: #14200f; }
 .nc-side-title { font-size: 13px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; opacity: .8; }
 .nc-new-btn {
   background: #2e7d32; color: #fff; border: none; border-radius: 8px;
@@ -27,17 +56,22 @@
 
 /* Cella flotta */
 .nc-cell {
-  display: flex; align-items: center; gap: 10px; padding: 9px 10px;
+  display: flex; align-items: center; gap: 8px; padding: 9px 10px;
   border: 1px solid #1c241c; background: #0e140e; border-radius: 10px;
 }
 .nc-cell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .nc-cell-main b { font-size: 13px; color: #d8ffe8; }
 .nc-cell-main small { font-size: 11px; opacity: .6; }
+/* Azioni card: STESSO design delle .nc-act mobile (DAG: grafica desktop = mobile) */
 .nc-power {
-  flex: 0 0 auto; background: none; border: 1px solid #243; color: #9fd;
-  border-radius: 8px; min-width: 30px; min-height: 30px; cursor: pointer; font-size: 15px;
+  flex: 0 0 auto; width: 28px; height: 28px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.22);
+  color: #9aa89a; border-radius: 50%; cursor: pointer;
 }
-.nc-power:active { border-color: #2e7d32; }
+.nc-power.on { color: #00cc66; border-color: rgba(0,204,102,0.55); background: rgba(0,204,102,0.10); }
+.nc-power.warn { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.10); }
+.nc-power:hover { filter: brightness(1.25); }
 
 /* Dot di stato (condiviso cella + card) */
 .nc-dot {
@@ -48,7 +82,7 @@
 
 /* Card sessione (draggabile) */
 .nc-side-card {
-  display: flex; align-items: center; gap: 10px; padding: 9px 10px;
+  display: flex; align-items: center; gap: 8px; padding: 9px 10px;
   border: 1px solid #1c241c; background: #0e140e; border-radius: 10px;
   cursor: grab; user-select: none;
 }
@@ -63,8 +97,10 @@
 }
 .nc-rel { flex: 0 0 auto; font-size: 10px; opacity: .45; }
 .nc-menu {
-  flex: 0 0 auto; background: none; border: none; color: #9fd;
-  min-width: 26px; min-height: 26px; cursor: pointer; font-size: 15px; border-radius: 6px;
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; color: #9fd;
+  cursor: pointer; font-size: 15px; line-height: 1; border-radius: 50%;
 }
 .nc-menu:active { color: #f88; }
 
@@ -85,3 +121,22 @@
 .nc-cell.live { cursor: pointer; }
 .nc-cell.live:hover { background: rgba(255,255,255,0.06); }
 .nc-cell.active { outline: 1px solid rgba(0,204,102,0.5); }
+
+.nc-side-presets { display:flex; gap:4px; padding:2px 8px 6px; }
+.nc-side-presets button { background:none; border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:inherit; cursor:pointer; padding:2px 8px; }
+.nc-side-presets button:hover { background:rgba(255,255,255,0.08); }
+.nc-pin {
+  flex: 0 0 auto; width: 28px; height: 28px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.22);
+  color: #9aa89a; cursor: pointer; border-radius: 50%; font-size: 14px; line-height: 1;
+}
+.nc-pin:hover { filter: brightness(1.25); }
+.nc-pin.on { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.08); }
+/* tooltip mini via JS position:fixed — il ::after veniva clippato dall'overflow */
+.nc-mini-tip {
+  position:fixed; left:56px; transform:translateY(-50%);
+  background:#161b16; color:#e6ffe6; border:1px solid rgba(0,204,102,0.4);
+  padding:3px 10px; border-radius:4px; white-space:nowrap; z-index:1000;
+  pointer-events:none; font-size:12px;
+}

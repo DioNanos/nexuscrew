@@ -12,7 +12,7 @@ import NewSessionDialog from './components/NewSessionDialog.jsx';
 import {
   apiFetch, fleetStatus, fleetUp, fleetDown, createSession, killSession,
 } from './lib/api.js';
-import { emptyLayout, normalize, addTile, removeTile, sessions } from './lib/grid-model.js';
+import { emptyLayout, normalize, addTileSmart, removeTile, sessions } from './lib/grid-model.js';
 import {t} from './lib/i18n.js';
 import { useLang } from './hooks/useLang.js';
 import './App.css';
@@ -20,7 +20,15 @@ import './App.css';
 const FONT_MIN = 9;
 const FONT_MAX = 24;
 const GRID_KEY = 'nc_grid_v1';
+const SIDE_W_KEY = 'nc_side_w';
+const SIDE_MIN_KEY = 'nc_side_min';
+const SIDE_W_DEF = 240;
 const MQ_DESKTOP = '(min-width:1024px) and (pointer:fine)';
+
+function loadSideW() {
+  const v = Number(localStorage.getItem(SIDE_W_KEY));
+  return v >= 180 && v <= 480 ? v : SIDE_W_DEF;
+}
 
 function initialFontSize() {
   const v = Number(localStorage.getItem('nc_fontsize'));
@@ -164,12 +172,22 @@ export default function App() {
   const [single, setSingle] = useState(null);     // overlay vista singola desktop
   const [powerCell, setPowerCell] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
+  // bundle stantio: la tab tiene il JS vecchio anche se il server e' nuovo.
+  const [staleVersion, setStaleVersion] = useState(false);
   const [presets, setPresets] = useState(['shell', 'claude', 'codex-vl', 'pi']);
+  const [sideW, setSideW] = useState(loadSideW);
+  const [sideMin, setSideMin] = useState(() => localStorage.getItem(SIDE_MIN_KEY) === '1');
 
   // persisti il layout (debounce leggero via microtask: scrive solo quando cambia)
   useEffect(() => {
     try { localStorage.setItem(GRID_KEY, JSON.stringify(layout)); } catch (_) {}
   }, [layout]);
+  useEffect(() => {
+    try { localStorage.setItem(SIDE_W_KEY, String(sideW)); } catch (_) {}
+  }, [sideW]);
+  useEffect(() => {
+    try { localStorage.setItem(SIDE_MIN_KEY, sideMin ? '1' : ''); } catch (_) {}
+  }, [sideMin]);
 
   const poll = useCallback(async () => {
     try {
@@ -197,6 +215,8 @@ export default function App() {
     let cancelled = false;
     apiFetch('/api/config', token).then((r) => r.json()).then((j) => {
       if (!cancelled && Array.isArray(j.presets) && j.presets.length) setPresets(j.presets);
+      if (!cancelled && j.version && typeof __NC_BUILD_VERSION__ !== 'undefined'
+        && j.version !== __NC_BUILD_VERSION__) setStaleVersion(j.version);
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [isDesktop, token]);
@@ -205,8 +225,8 @@ export default function App() {
   const activeSessions = sessions(layout);
 
   // --- actions ---
-  const onAddTile = (name) => setLayout((l) => addTile(l, name, 'end'));
-  const onKill = async (name) => {
+  const onAddTile = (name) => setLayout((l) => addTileSmart(l, name));
+    const onKill = async (name) => {
     try { await killSession(token, name); } catch (_) { return; }
     setLayout((l) => removeTile(l, name));
     poll();
@@ -241,13 +261,20 @@ export default function App() {
 
   // Flusso mobile INTATTO.
   if (!isDesktop) {
-    if (!session) return <SessionList onPick={setSession} token={token} />;
+    const staleBanner = staleVersion ? (
+    <div className="nc-stale" onClick={() => location.reload()}>
+      {t('update-available').replace('{v}', staleVersion)} — {t('reload')}
+    </div>
+  ) : null;
+
+  if (!session) return <>{staleBanner}<SessionList onPick={setSession} token={token} /></>;
     return <SingleView session={session} token={token} onBack={() => setSession(null)} />;
   }
 
   // Workspace desktop: Sidebar + GridView + overlay vista singola + dialoghi.
   return (
     <div className="nc-workspace">
+      {staleBanner}
       <Sidebar
         sessions={dSessions}
         cells={cells}
@@ -257,6 +284,10 @@ export default function App() {
         onPower={setPowerCell}
         onKill={onKill}
         onNew={() => setNewOpen(true)}
+        width={sideW}
+        collapsed={sideMin}
+        onResize={setSideW}
+        onToggleCollapse={() => setSideMin((v) => !v)}
       />
       <div className="nc-workspace-main">
         <GridView
