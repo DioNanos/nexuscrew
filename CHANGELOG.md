@@ -2,6 +2,13 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.7.2
+
+- fix(grid): fleet cell cards in the desktop sidebar are now clickable (add tile) and
+  draggable into the grid when their tmux session is alive — they only exposed the
+  power button before, so on fleet-only hosts nothing could be dragged. Verified
+  end-to-end in a real browser (click → live tile, drag → new column).
+
 ## 0.7.1
 
 - License corrected to **Apache-2.0** (0.7.0 was published with MIT metadata by mistake;

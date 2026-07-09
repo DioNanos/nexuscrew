@@ -81,3 +81,7 @@
   font-size: 11px; padding: 0 1px; opacity: .5; text-transform: uppercase;
 }
 .nc-lang-btn.on { opacity: 1; font-weight: 700; color: #d8ffe8; }
+
+.nc-cell.live { cursor: pointer; }
+.nc-cell.live:hover { background: rgba(255,255,255,0.06); }
+.nc-cell.active { outline: 1px solid rgba(0,204,102,0.5); }

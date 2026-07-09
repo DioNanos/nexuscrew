@@ -32,8 +32,19 @@ export default function Sidebar({ sessions = [], cells = [], activeSessions = []
           {cells.map((c) => {
             const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
             const title = c.degraded ? t('cell-degraded') : c.tmux ? t('cell-on') : t('cell-off');
+            // Cella con tmux vivo = sessione a tutti gli effetti: draggabile
+            // nella griglia, click = tile, doppio click = vista singola.
+            const live = !!c.tmux;
             return (
-              <div key={c.cell} className="nc-cell" title={title}>
+              <div
+                key={c.cell}
+                className={`nc-cell${live ? ' live' : ''}${active.has(c.tmuxSession) ? ' active' : ''}`}
+                title={title}
+                draggable={live}
+                onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', c.tmuxSession) : undefined}
+                onClick={live ? () => onAddTile && onAddTile(c.tmuxSession) : undefined}
+                onDoubleClick={live ? () => onPick && onPick(c.tmuxSession) : undefined}
+              >
                 <span className={`nc-dot ${dot}`} />
                 <span className="nc-cell-main">
                   <b>{c.cell}</b>
@@ -41,7 +52,7 @@ export default function Sidebar({ sessions = [], cells = [], activeSessions = []
                 </span>
                 <button
                   className="nc-power"
-                  onClick={() => onPower && onPower(c)}
+                  onClick={(e) => { e.stopPropagation(); onPower && onPower(c); }}
                   title={c.active ? t('power-off') : t('power-on')}
                 >⏻</button>
               </div>
