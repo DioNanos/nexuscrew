@@ -23,7 +23,16 @@ export default function GridTile({ session, token, focused, onFocus, onClose, on
       className={`nc-tile${focused ? ' focused' : ''}`}
       onMouseDown={() => onFocus && onFocus(session)}
     >
-      <div className="nc-tile-head">
+      {/* L'header è la maniglia di drag: un tile APERTO si sposta nella
+          griglia trascinandolo (stesso protocollo delle card sidebar). */}
+      <div
+        className="nc-tile-head"
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData('text/nc-session', session);
+          e.dataTransfer.effectAllowed = 'move';
+        }}
+      >
         <button className="nc-tile-name" onClick={() => onFocus && onFocus(session)}>
           <span className={alive ? 'nc-dot on' : 'nc-dot'} />
           <b>{session}</b>

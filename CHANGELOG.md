@@ -9,6 +9,11 @@ All notable changes to NexusCrew are tracked here.
   power button before, so on fleet-only hosts nothing could be dragged. Verified
   end-to-end in a real browser (click → live tile, drag → new column).
 
+## 0.7.5
+
+- feat(grid): **open tiles are movable** — drag a tile by its header and drop it anywhere
+  (same directional zones as sidebar drags: side-by-side, stack, new column).
+
 ## 0.7.4
 
 - fix(desktop): **black screen** on desktop in 0.7.3 — the stale-bundle banner was declared
