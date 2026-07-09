@@ -3,6 +3,7 @@ import {
   apiFetch, seenKey, fleetStatus, fleetUp, fleetDown, killSession, createSession,
 } from '../lib/api.js';
 import Icon from './Icon.jsx';
+import { loadPins, togglePinIn, pinRank, cmpRank } from '../lib/pins.js';
 import PowerSheet from './PowerSheet.jsx';
 import NewSessionDialog from './NewSessionDialog.jsx';
 import {t,  LANGUAGES} from '../lib/i18n.js';
@@ -101,6 +102,8 @@ export default function SessionList({ onPick, token }) {
   }, [sessions]);
 
   const cellSessions = useMemo(() => new Set(cells.map((c) => c.tmuxSession)), [cells]);
+  const [pins, setPins] = useState(loadPins);
+  const togglePin = (name) => setPins((p) => togglePinIn(p, name));
 
   const rows = useMemo(() => {
     const list = (sessions || []).map((s) => {
@@ -111,13 +114,17 @@ export default function SessionList({ onPick, token }) {
     const needle = q.trim().toLowerCase();
     return list
       .filter((s) => !needle || s.name.toLowerCase().includes(needle))
-      .sort((a, b) => relevance(a, a.fresh) - relevance(b, b.fresh) || a.name.localeCompare(b.name));
-  }, [sessions, q]);
+      .sort((a, b) => cmpRank(pinRank(pins, a.name, a.activity), pinRank(pins, b.name, b.activity))
+        || relevance(a, a.fresh) - relevance(b, b.fresh) || a.name.localeCompare(b.name));
+  }, [sessions, q, pins]);
 
   const others = rows.filter((s) => !cellSessions.has(s.name));
   const sortedCells = useMemo(
-    () => [...cells].sort((a, b) => (Number(b.active) - Number(a.active)) || a.cell.localeCompare(b.cell)),
-    [cells],
+    () => [...cells].sort((a, b) =>
+      cmpRank(pinRank(pins, a.tmuxSession, (byName.get(a.tmuxSession) || {}).activity),
+              pinRank(pins, b.tmuxSession, (byName.get(b.tmuxSession) || {}).activity))
+      || (Number(b.active) - Number(a.active)) || a.cell.localeCompare(b.cell)),
+    [cells, pins, byName],
   );
 
   const total = sessions ? sessions.length : 0;
@@ -169,10 +176,15 @@ export default function SessionList({ onPick, token }) {
                   <span className="nc-badge" title={t('new-files-outbox')}>{s.outbox.count}</span>
                 )}
                 <button
-                  className="nc-power"
+                  className={`nc-act pin${pins.includes(c.tmuxSession) ? ' on' : ''}`}
+                  title={t('pin')}
+                  onClick={() => togglePin(c.tmuxSession)}
+                >{pins.includes(c.tmuxSession) ? '\u2605' : '\u2606'}</button>
+                <button
+                  className={`nc-act power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
                   onClick={() => setPowerCell(c)}
                   title={c.active ? t('power-off') : t('power-on')}
-                >⏻</button>
+                ><Icon name="power" size={16} /></button>
               </div>
             );
           })}
@@ -192,6 +204,11 @@ export default function SessionList({ onPick, token }) {
             </button>
             {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
             {s.fresh && <span className="nc-badge" title={t('new-files-outbox')}>{s.outbox.count}</span>}
+            <button
+              className={`nc-act pin${pins.includes(s.name) ? ' on' : ''}`}
+              title={t('pin')}
+              onClick={() => togglePin(s.name)}
+            >{pins.includes(s.name) ? '\u2605' : '\u2606'}</button>
             <button
               className="nc-menu"
               title={t('terminate')}

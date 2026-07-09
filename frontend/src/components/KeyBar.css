@@ -1,14 +1,33 @@
-.nc-keybar { display: flex; gap: 6px; overflow-x: auto; padding: 8px; background: #0e140e;
-  border-top: 1px solid #1c241c; -webkit-overflow-scrolling: touch; }
-.nc-keybar button { flex: 0 0 auto; padding: 10px 12px; min-width: 48px; border-radius: 8px;
+/* Stile Termux extra-keys: piatto, due righe, niente bordi (DAG 2026-07-09). */
+.nc-keybar { background: #0a0e0a; border-top: 1px solid #1c241c; position: relative; }
+.nc-keybar.termux { display: flex; flex-direction: column; padding: 2px 0; }
+.nc-keybar .row { display: flex; }
+.nc-keybar .row button {
+  flex: 1 1 0; min-width: 0; padding: 10px 2px;
+  background: none; border: none; border-radius: 0;
+  color: #e6ffe6; font-size: 14px; font-weight: 600; letter-spacing: 0.5px;
+  font-family: inherit;
+}
+.nc-keybar .row button:active { background: #1d2a1d; }
+.nc-keybar .row button.armed { color: #021; background: #00cc66; }
+/* menu ☰ con le azioni tmux */
+.nc-keymenu {
+  position: absolute; bottom: 100%; left: 8px; right: 8px; z-index: 30;
+  display: flex; flex-wrap: wrap; gap: 6px; padding: 8px;
+  background: #101810; border: 1px solid #2a3a2a; border-radius: 10px 10px 0 0;
+}
+.nc-keymenu button {
+  flex: 1 0 30%; padding: 10px 6px; border-radius: 8px;
+  border: 1px solid #243; background: #122; color: #9fd; font-size: 13px;
+}
+.nc-keymenu button:active { background: #00cc66; color: #021; }
+/* copy-mode: layout precedente compatto */
+.nc-keybar.copy { display: flex; gap: 6px; overflow-x: auto; padding: 8px; background: #14210f; }
+.nc-keybar.copy button { flex: 0 0 auto; padding: 10px 12px; min-width: 48px; border-radius: 8px;
   border: 1px solid #243; background: #122; color: #9fd; font-size: 13px; }
-.nc-keybar button:active { background: #00cc66; color: #021; }
-.nc-keybar button.armed { background: #00cc66; color: #021; border-color: #00cc66; }
-.nc-keybar.copy { background: #14210f; }
+.nc-keybar.copy button:active { background: #00cc66; color: #021; }
 .nc-keybar .tag { flex: 0 0 auto; align-self: center; padding: 0 8px; color: #8e8; font-size: 12px; }
 
-/* Touch targets: tasti più alti e leggibili, gap un po' più largo. */
 @media (pointer: coarse) {
-  .nc-keybar { gap: 8px; }
-  .nc-keybar button { min-height: 42px; font-size: 15px; }
+  .nc-keybar .row button { padding: 12px 2px; font-size: 15px; }
 }

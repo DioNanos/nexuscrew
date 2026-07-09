@@ -67,3 +67,11 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
   to   { transform: translateX(0); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .nc-app { animation: none; } }
+
+.nc-stale {
+  position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
+  z-index: 2000; cursor: pointer;
+  background: #1a2410; color: #d9f7c7; border: 1px solid #7aa903;
+  border-radius: 8px; padding: 6px 14px; font-size: 13px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+}

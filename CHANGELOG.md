@@ -9,6 +9,23 @@ All notable changes to NexusCrew are tracked here.
   power button before, so on fleet-only hosts nothing could be dragged. Verified
   end-to-end in a real browser (click → live tile, drag → new column).
 
+## 0.7.3 — "Window Management"
+
+- feat(grid): directional drop zones (VS Code-style) — hover quadrant decides: left/right
+  edges place side-by-side, top/bottom stack, with live preview overlay. Balanced click
+  placement (grid-like growth, no endless narrow columns).
+- feat(size): sessions follow the focus — `window-size latest`, web clients participate:
+  going back to a bigger client and typing restores its size (real-tmux gated).
+- feat(ui): collapsible + resizable sidebar (mini 48px with instant tooltips), pin sessions
+  and cells to top (persisted) + activity-based auto-sort, Termux-style two-row KeyBar
+  (ESC ☰ / — HOME ↑ END PGUP | ⇥ CTRL ALT ← ↓ → PGDN) with sticky ALT.
+- fix(grid): xterm refits when its tile is resized (ResizeObserver) — adding tiles or
+  dragging dividers adapts live terminals; resize listeners cleaned on cancel/blur/unmount;
+  aborted drags clear the preview; tile cap enforced fail-safe.
+- fix(mobile): high-visibility round action buttons (power/pin), SVG power icon
+  (U+23FB was tofu on Android), stale-bundle update banner (tap to reload).
+- Two security review passes on the cycle (all findings addressed); 155-test suite.
+
 ## 0.7.1
 
 - License corrected to **Apache-2.0** (0.7.0 was published with MIT metadata by mistake;

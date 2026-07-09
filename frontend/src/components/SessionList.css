@@ -110,3 +110,18 @@
   font-size: 11px; padding: 0 1px; opacity: .5; text-transform: uppercase;
 }
 .nc-lang-btn.on { opacity: 1; font-weight: 700; color: #d8ffe8; }
+
+/* Azioni card mobile: bottoni rotondi con stato colorato (design DAG 2026-07-09:
+   il glifo nudo non si vedeva). */
+.nc-act {
+  width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.22);
+  color: #9aa89a; cursor: pointer; flex: 0 0 auto;
+  font-size: 15px; line-height: 1;
+}
+.nc-act.power.on { color: #00cc66; border-color: rgba(0,204,102,0.55); background: rgba(0,204,102,0.10); }
+.nc-act.power.warn { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.10); }
+.nc-act.pin.on { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.08); }
+.nc-mcard { gap: 8px; }

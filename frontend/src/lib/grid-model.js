@@ -28,6 +28,22 @@ export function addTile(layout, session, drop) {
   return l;
 }
 
+// Crescita bilanciata "a griglia" per il click (niente colonne infinite):
+// n. colonne target = ceil(sqrt(n)); sotto target apre una colonna, altrimenti
+// impila nella colonna con meno tile. 1->[[a]] 2->side 3/4->2x2 5->3 colonne.
+export function addTileSmart(layout, session) {
+  if (sessions(layout).includes(session)) return layout;
+  if (sessions(layout).length >= MAX_TILES) return layout;
+  const n = sessions(layout).length + 1;
+  const targetCols = Math.ceil(Math.sqrt(n));
+  if (layout.columns.length < targetCols) return addTile(layout, session, 'end');
+  let best = 0;
+  for (let i = 1; i < layout.columns.length; i += 1) {
+    if (layout.columns[i].tiles.length < layout.columns[best].tiles.length) best = i;
+  }
+  return addTile(layout, session, { col: best, row: layout.columns[best].tiles.length });
+}
+
 export function removeTile(layout, session) {
   const l = clone(layout);
   for (const c of l.columns) c.tiles = c.tiles.filter((t) => t.session !== session);
@@ -53,6 +69,53 @@ export function resizeTile(layout, colIdx, rowIdx, height) {
   return l;
 }
 
+// Drop direzionale: dato un tile (colIdx,rowIdx) e un quadrante, ritorna il
+// descrittore drop per addTile/moveTile. Input invalidi → null.
+export function dropForQuadrant(layout, colIdx, rowIdx, quadrant) {
+  const col = layout.columns[colIdx];
+  if (!col) return null;
+  if (!col.tiles[rowIdx]) return null;
+  switch (quadrant) {
+    case 'left': return { col: colIdx };
+    case 'right': return { col: colIdx + 1 };
+    case 'top': return { col: colIdx, row: rowIdx };
+    case 'bottom': return { col: colIdx, row: rowIdx + 1 };
+    default: return null;
+  }
+}
+
+// Preset: tutti i pesi (width colonne + height tiles) a 1.
+export function equalize(layout) {
+  const l = clone(layout);
+  for (const c of l.columns) { c.width = 1; for (const t of c.tiles) t.height = 1; }
+  return l;
+}
+
+// Preset: ridistribuisce le sessioni esistenti su 2 colonne bilanciate.
+function capped(list) { return list.slice(0, MAX_TILES); }
+
+export function toGrid2x2(layout) {
+  const ss = capped(sessions(layout));
+  if (ss.length === 0) return emptyLayout();
+  const firstN = Math.ceil(ss.length / 2);
+  const left = ss.slice(0, firstN);
+  const right = ss.slice(firstN);
+  const columns = [{ width: 1, tiles: left.map((session) => ({ session, height: 1 })) }];
+  if (right.length) columns.push({ width: 1, tiles: right.map((session) => ({ session, height: 1 })) });
+  return { columns };
+}
+
+// Preset: una colonna per sessione, pesi 1.
+export function toColumns(layout) {
+  return { columns: capped(sessions(layout)).map((session) => ({ width: 1, tiles: [{ session, height: 1 }] })) };
+}
+
+// Snap di una frazione ai divisori canonici 25/50/75% entro ±3%.
+export function snapFraction(f) {
+  for (const s of [0.25, 0.5, 0.75]) if (Math.abs(f - s) <= 0.03) return s;
+  return f;
+}
+
 // Ripara input da localStorage: qualunque garbage → layout valido.
 export function normalize(raw) {
   if (!raw || !Array.isArray(raw.columns)) return emptyLayout();
@@ -65,6 +128,8 @@ export function normalize(raw) {
     }))
     .filter((c) => c.tiles.length > 0);
   const seen = new Set();
-  for (const c of columns) c.tiles = c.tiles.filter((t) => !seen.has(t.session) && seen.add(t.session));
+  for (const c of columns) {
+    c.tiles = c.tiles.filter((t) => !seen.has(t.session) && seen.add(t.session) && seen.size <= MAX_TILES);
+  }
   return { columns: columns.filter((c) => c.tiles.length > 0) };
 }
