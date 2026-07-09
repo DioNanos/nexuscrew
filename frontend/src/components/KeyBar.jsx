@@ -11,7 +11,7 @@ const NAV = [
   { label: 'PGUP', seq: ESC + '[5~' }, { label: 'PGDN', seq: ESC + '[6~' },
 ];
 
-export default function KeyBar({ send, action, ctrlArmed = false, onCtrl }) {
+export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyboard }) {
   const [copy, setCopy] = useState(false);
   const [menu, setMenu] = useState(false);
   const [altArmed, setAltArmed] = useState(false);
@@ -62,6 +62,8 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl }) {
       </div>
       <div className="row">
         {Bk('⇥', '\t')}
+        <button key="kbd"
+          onMouseDown={(e) => { e.preventDefault(); if (onKeyboard) onKeyboard(); }}>⌨</button>
         <button key="ctrl" className={ctrlArmed ? 'armed' : ''}
           onMouseDown={(e) => { e.preventDefault(); if (onCtrl) onCtrl(); }}>CTRL</button>
         <button key="alt" className={altArmed ? 'armed' : ''}
