@@ -9,6 +9,14 @@ All notable changes to NexusCrew are tracked here.
   power button before, so on fleet-only hosts nothing could be dragged. Verified
   end-to-end in a real browser (click → live tile, drag → new column).
 
+## 0.7.4
+
+- fix(desktop): **black screen** on desktop in 0.7.3 — the stale-bundle banner was declared
+  inside the mobile branch but referenced by the desktop tree (TDZ ReferenceError).
+  Hoisted before both branches; the banner now also covers the mobile single view.
+- fix(keybar): 8+8 keys — ↑ aligned exactly above ↓ (added ⌨ composer toggle in row 2,
+  matching the reference layout).
+
 ## 0.7.3 — "Window Management"
 
 - feat(grid): directional drop zones (VS Code-style) — hover quadrant decides: left/right

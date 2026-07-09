@@ -143,7 +143,7 @@ function SingleView({ session, token, onBack }) {
         <Terminal session={session} token={token} readonly={false} sendRef={sendRef} actionRef={actionRef}
           ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} onFiles={setFilesEvent} fontSize={fontSize} />
       </div>
-      <KeyBar send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
+      <KeyBar onKeyboard={() => setShowComposer((v) => !v)} send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
         ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} />
       {showComposer && (
         <ComposerBar send={(seq) => sendRef.current(seq)} token={token} />
@@ -259,16 +259,17 @@ export default function App() {
     );
   }
 
-  // Flusso mobile INTATTO.
-  if (!isDesktop) {
-    const staleBanner = staleVersion ? (
+  // Banner bundle stantio: visibile in OGNI vista (definito PRIMA dei rami).
+  const staleBanner = staleVersion ? (
     <div className="nc-stale" onClick={() => location.reload()}>
       {t('update-available').replace('{v}', staleVersion)} — {t('reload')}
     </div>
   ) : null;
 
-  if (!session) return <>{staleBanner}<SessionList onPick={setSession} token={token} /></>;
-    return <SingleView session={session} token={token} onBack={() => setSession(null)} />;
+  // Flusso mobile INTATTO.
+  if (!isDesktop) {
+    if (!session) return <>{staleBanner}<SessionList onPick={setSession} token={token} /></>;
+    return <>{staleBanner}<SingleView session={session} token={token} onBack={() => setSession(null)} /></>;
   }
 
   // Workspace desktop: Sidebar + GridView + overlay vista singola + dialoghi.
