@@ -39,3 +39,7 @@
   position: absolute; inset: 0; z-index: 5;
   background: #0e140e;
 }
+
+/* maniglia di drag: l'header si afferra (i bottoni restano bottoni) */
+.nc-tile-head { cursor: grab; }
+.nc-tile-head:active { cursor: grabbing; }
