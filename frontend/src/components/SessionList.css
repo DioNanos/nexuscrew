@@ -1,0 +1,112 @@
+.nc-home {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 18px 14px 10px; color: #cfe;
+  max-width: 560px; margin: 0 auto;
+  min-height: 100dvh; box-sizing: border-box;
+}
+
+/* Wordmark: identità da terminale — mono, cursore a blocco che lampeggia. */
+.nc-home-head { position: relative; }
+.nc-wordmark { font-size: 26px; font-weight: 700; letter-spacing: .5px; color: #d8ffe8; }
+.nc-cursor {
+  display: inline-block; width: 12px; height: 22px; margin-left: 6px;
+  background: #00cc66; vertical-align: -2px;
+  animation: nc-blink 1.1s steps(1) infinite;
+}
+@keyframes nc-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .nc-cursor { animation: none; } }
+.nc-home-sub { margin-top: 4px; font-size: 13px; opacity: .65; }
+.nc-refresh {
+  position: absolute; top: 0; right: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 1px solid #243; color: #9fd;
+  border-radius: 8px; min-width: 40px; min-height: 40px;
+}
+
+.nc-filter {
+  padding: 10px 12px; font: 16px/1.2 inherit;
+  background: #0e140e; color: #cfe;
+  border: 1px solid #243; border-radius: 8px;
+}
+.nc-filter:focus { outline: none; border-color: #2e7d32; }
+
+.nc-session-list { display: flex; flex-direction: column; gap: 8px; }
+.nc-session {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  border: 1px solid #1c241c; background: #0e140e; color: #cfe;
+  border-radius: 10px; text-align: left; min-height: 56px;
+}
+.nc-session:active { background: #14200f; border-color: #2e7d32; }
+.nc-session .dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #355; }
+.nc-session .dot.on { background: #00cc66; box-shadow: 0 0 6px #00cc6688; }
+.nc-session-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.nc-session-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.nc-session-main small { opacity: .55; font-size: 12px; }
+
+.nc-badge {
+  flex: 0 0 auto;
+  background: #2e7d32; color: #fff;
+  border-radius: 10px; padding: 1px 8px;
+  font-size: 12px; line-height: 18px;
+}
+
+.nc-err { color: #f88; font-size: 13px; padding: 4px 2px; }
+.nc-empty { opacity: .5; padding: 18px 4px; font-size: 13px; }
+
+.nc-home-foot {
+  margin-top: auto; padding-top: 14px;
+  display: flex; justify-content: space-between; gap: 8px;
+  font-size: 11px; opacity: .4;
+}
+
+/* Gruppi home mobile (Flotta / Altre sessioni). */
+.nc-group { display: flex; flex-direction: column; gap: 8px; }
+.nc-group-title {
+  font-size: 11px; opacity: .55; text-transform: uppercase; letter-spacing: .5px;
+  padding: 6px 2px 2px;
+}
+
+/* Card mobile ricca (celle + sessioni). */
+.nc-mcard {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  border: 1px solid #1c241c; background: #0e140e; color: #cfe;
+  border-radius: 12px; min-height: 56px;
+}
+.nc-mcard-main {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 12px;
+  background: none; border: none; color: inherit; cursor: pointer; padding: 0; text-align: left;
+}
+.nc-mcard-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.nc-mcard-text b { font-size: 14px; color: #d8ffe8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-mcard-text small {
+  font-size: 12px; opacity: .6;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dot.warn { background: #e0b020; box-shadow: 0 0 6px #e0b02088; }
+
+.nc-rel { flex: 0 0 auto; font-size: 11px; opacity: .45; }
+
+.nc-power, .nc-menu {
+  flex: 0 0 auto; background: none; border: 1px solid #243; color: #9fd;
+  border-radius: 8px; min-width: 38px; min-height: 38px; font-size: 17px; cursor: pointer;
+}
+.nc-power:active, .nc-menu:active { border-color: #2e7d32; }
+.nc-menu:active { color: #f88; }
+
+/* FAB nuova sessione (fisso bottom-right). */
+.nc-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: 20;
+  width: 54px; height: 54px; border-radius: 50%;
+  background: #2e7d32; color: #fff; border: none;
+  font-size: 28px; line-height: 1; cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+}
+.nc-fab:active { background: #255028; }
+
+/* Picker lingua nel footer (IT · EN · ES). */
+.nc-lang { display: inline-flex; align-items: center; gap: 2px; }
+.nc-lang-btn {
+  background: none; border: none; color: inherit; cursor: pointer;
+  font-size: 11px; padding: 0 1px; opacity: .5; text-transform: uppercase;
+}
+.nc-lang-btn.on { opacity: 1; font-weight: 700; color: #d8ffe8; }

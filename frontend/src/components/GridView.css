@@ -1,0 +1,52 @@
+/* GridView — griglia desktop a colonne (flex, zero dipendenze). */
+.nc-grid {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; flex-direction: row;
+  padding: 6px; gap: 0;
+  position: relative;
+  background: #070a07;
+}
+
+.nc-col {
+  display: flex; flex-direction: column;
+  min-width: 120px; min-height: 0;
+  position: relative;
+}
+/* insert indicator: nuova colonna (drop sul gap/area vuota a sinistra della colonna) */
+.nc-col.drop-newcol::before {
+  content: ''; position: absolute; left: -3px; top: 0; bottom: 0; width: 3px;
+  background: #00cc66; border-radius: 2px; z-index: 6;
+}
+
+.nc-tile-slot {
+  display: flex; flex-direction: column;
+  min-height: 60px; min-width: 0; position: relative;
+}
+.nc-tile-slot > .nc-tile { flex: 1 1 auto; min-height: 0; }
+/* insert indicator: split (drop sopra il tile) */
+.nc-tile-slot.drop-split::before {
+  content: ''; position: absolute; left: 0; right: 0; top: -3px; height: 3px;
+  background: #00cc66; border-radius: 2px; z-index: 6;
+}
+
+/* Divisori ridimensionabili (pointer). */
+.nc-divider-v {
+  flex: 0 0 6px; cursor: col-resize;
+  margin: 0 1px; border-radius: 2px;
+}
+.nc-divider-v:hover { background: #1c3a1c; }
+.nc-divider-h {
+  flex: 0 0 6px; cursor: row-resize;
+  margin: 1px 0; border-radius: 2px;
+}
+.nc-divider-h:hover { background: #1c3a1c; }
+
+/* Indicator "nuova colonna in coda" (drop sull'area destra / griglia vuota). */
+.nc-drop-line-v { flex: 0 0 3px; align-self: stretch; background: #00cc66; border-radius: 2px; }
+.nc-drop-line-end { margin-left: 3px; }
+
+.nc-grid-empty {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #cfe; opacity: .4; font-size: 13px; text-align: center; padding: 20px;
+}

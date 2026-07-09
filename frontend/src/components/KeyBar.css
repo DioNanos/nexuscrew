@@ -1,0 +1,14 @@
+.nc-keybar { display: flex; gap: 6px; overflow-x: auto; padding: 8px; background: #0e140e;
+  border-top: 1px solid #1c241c; -webkit-overflow-scrolling: touch; }
+.nc-keybar button { flex: 0 0 auto; padding: 10px 12px; min-width: 48px; border-radius: 8px;
+  border: 1px solid #243; background: #122; color: #9fd; font-size: 13px; }
+.nc-keybar button:active { background: #00cc66; color: #021; }
+.nc-keybar button.armed { background: #00cc66; color: #021; border-color: #00cc66; }
+.nc-keybar.copy { background: #14210f; }
+.nc-keybar .tag { flex: 0 0 auto; align-self: center; padding: 0 8px; color: #8e8; font-size: 12px; }
+
+/* Touch targets: tasti più alti e leggibili, gap un po' più largo. */
+@media (pointer: coarse) {
+  .nc-keybar { gap: 8px; }
+  .nc-keybar button { min-height: 42px; font-size: 15px; }
+}

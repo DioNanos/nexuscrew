@@ -1,0 +1,9 @@
+node_modules/
+frontend/node_modules/
+.nexuscrew/
+*.db
+*.log
+.env
+.env.*
+!.env.example
+mmmbuto-nexuscrew-*.tgz

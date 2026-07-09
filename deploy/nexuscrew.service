@@ -1,0 +1,15 @@
+[Unit]
+Description=NexusCrew — browser tmux client (loopback-only, reach it via SSH/VPN tunnel)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/dag/Dev/20_ai-labs/nexuscrew
+Environment=NEXUSCREW_PORT=41777
+Environment=PATH=/home/dag/.local/bin:/home/dag/.nvm/versions/node/v24.10.0/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/dag/.nvm/versions/node/v24.10.0/bin/node bin/nexuscrew.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
