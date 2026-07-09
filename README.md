@@ -37,7 +37,15 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 
 ## Screenshots
 
-> Coming soon — desktop grid, fleet panel, and the mobile home.
+| Fleet Deck — mobile home | Attached session |
+|:---:|:---:|
+| <img src="docs/img/fleet-deck.gif" width="300" alt="NexusCrew mobile home: the tmux fleet with live cards, cursor blinking"> | <img src="docs/img/session-window.png" width="300" alt="A tmux session attached in the browser over a real PTY"> |
+
+The mobile home lists your tmux fleet with live cards; tapping a session attaches it
+over a real PTY. On the right, a `codex-vl` session running inside the browser client.
+
+<!-- desktop grid (≥1024px) — coming next -->
+<!-- ![Fleet Deck desktop grid](docs/img/fleet-deck-desktop.png) -->
 
 ## Optional fleet integration
 
