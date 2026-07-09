@@ -9,6 +9,11 @@ All notable changes to NexusCrew are tracked here.
   power button before, so on fleet-only hosts nothing could be dragged. Verified
   end-to-end in a real browser (click → live tile, drag → new column).
 
+## 0.7.6
+
+- docs: README "License" section said MIT — corrected to Apache-2.0 (badge and LICENSE
+  file were already correct since 0.7.1). No code changes.
+
 ## 0.7.5
 
 - feat(grid): **open tiles are movable** — drag a tile by its header and drop it anywhere
