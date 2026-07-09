@@ -128,6 +128,6 @@ v0.4 "pty-core" is published on the **`next`** dist-tag for install-and-try on r
 
 ## License
 
-MIT © DioNanos
+Apache-2.0 © 2026 Davide A. Guglielmi (DioNanos)
 
 *Per aspera ad astra.*
