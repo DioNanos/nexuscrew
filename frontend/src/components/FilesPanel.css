@@ -1,0 +1,25 @@
+.nc-files {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: min(340px, 90vw);
+  background: var(--bg, #111511);
+  border-left: 1px solid #2a332a;
+  display: flex; flex-direction: column;
+  z-index: 30;
+}
+.nc-files header { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid #2a332a; }
+.nc-files nav { display: flex; gap: 6px; padding: 8px 10px; }
+.nc-files nav button { flex: 0 0 auto; padding: 4px 10px; border-radius: 6px; }
+.nc-files nav button.on { background: #2e7d32; color: #fff; }
+.nc-files nav .up { margin-left: auto; }
+.nc-files ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+.nc-files li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #1c231c; }
+.nc-files li .name { flex: 1; cursor: pointer; overflow-wrap: anywhere; }
+.nc-files li.empty { opacity: 0.5; justify-content: center; }
+.nc-busy { padding: 4px 10px; font-size: 12px; color: #e0a030; }
+
+/* Touch targets: nav e righe file alte abbastanza da essere tap-pabili. */
+@media (pointer: coarse) {
+  .nc-files nav button, .nc-files li { min-height: 42px; }
+}
+
+.nc-files header button, .nc-files nav button, .nc-files li button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }

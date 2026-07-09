@@ -1,0 +1,41 @@
+/* GridTile — una cella della griglia desktop. */
+.nc-tile {
+  display: flex; flex-direction: column;
+  min-height: 0; min-width: 0; position: relative;
+  background: #0a0e0a;
+  border: 1px solid #1c241c; border-radius: 8px;
+  overflow: hidden;
+}
+.nc-tile.focused { border-color: #2e7d32; box-shadow: 0 0 0 1px #2e7d3244 inset; }
+
+.nc-tile-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  padding: 3px 6px; background: #0e140e; border-bottom: 1px solid #1c241c;
+  height: 28px;
+}
+.nc-tile-name {
+  flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: none; color: #cfe; cursor: pointer; padding: 0;
+}
+.nc-tile-name b {
+  font-size: 12px; font-weight: 600; color: #d8ffe8;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nc-tile .nc-dot { width: 7px; height: 7px; flex: 0 0 auto; }
+.nc-tile-actions { flex: 0 0 auto; display: inline-flex; gap: 2px; }
+.nc-tile-actions button {
+  background: none; border: none; color: #9fd; cursor: pointer;
+  min-width: 22px; height: 22px; font-size: 13px; border-radius: 4px; padding: 0 3px;
+}
+.nc-tile-actions button:hover { color: #d8ffe8; }
+.nc-tile-actions .nc-tile-close:hover { color: #f88; }
+
+.nc-tile-body { flex: 1 1 auto; position: relative; min-height: 0; }
+.nc-tile-body .nc-terminal { width: 100%; height: 100%; }
+
+/* Composer e file come overlay/pannello interno al tile. */
+.nc-tile-composer { flex: 0 0 auto; border-top: 1px solid #1c241c; }
+.nc-tile-files {
+  position: absolute; inset: 0; z-index: 5;
+  background: #0e140e;
+}

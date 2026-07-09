@@ -1,0 +1,9 @@
+.nc-terminal { position: absolute; inset: 0; padding: 4px; background: #0a0e0a; }
+.nc-terminal .xterm { height: 100%; }
+
+/* Il browser NON deve mai avviare il pan nativo sul terminale: al primo
+   touchmove Chrome sceglie tra native scroll e JS, e senza questo vincolo
+   vince il viewport locale di xterm (che scorre il buffer sbagliato).
+   Con touch-action:none ogni gesto arriva ai nostri handler, che lo
+   traducono in copy-mode tmux (la cronologia vera). */
+.nc-terminal, .nc-terminal .xterm, .nc-terminal .xterm-viewport { touch-action: none; }

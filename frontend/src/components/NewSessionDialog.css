@@ -1,0 +1,35 @@
+/* NewSessionDialog — self-contained (stessi toni di PowerSheet/SessionList). */
+.nc-sheet-overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, .55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; box-sizing: border-box;
+}
+.nc-sheet {
+  width: 100%; max-width: 380px;
+  background: #0e140e; color: #cfe;
+  border: 1px solid #243; border-radius: 14px;
+  padding: 16px; display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+}
+.nc-sheet-head { display: flex; align-items: center; }
+.nc-sheet-head b { font-size: 16px; color: #d8ffe8; }
+
+.nc-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; opacity: .8; }
+.nc-field input, .nc-field select {
+  padding: 9px 10px; font: 14px/1.2 inherit;
+  background: #0a0e0a; color: #cfe;
+  border: 1px solid #243; border-radius: 8px;
+}
+.nc-field input:focus, .nc-field select:focus { outline: none; border-color: #2e7d32; }
+
+.nc-err { color: #f88; font-size: 12px; }
+
+.nc-sheet-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.nc-btn {
+  border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer;
+}
+.nc-btn.ghost { background: none; border: 1px solid #243; color: #9fd; }
+.nc-btn.primary { background: #2e7d32; color: #fff; }
+.nc-btn.primary:active { background: #255028; }
+.nc-btn:disabled { opacity: .5; cursor: default; }

@@ -1,0 +1,83 @@
+/* Sidebar desktop — toni riusati da SessionList.css (card #0e140e, dot verde). */
+.nc-sidebar {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 10px; color: #cfe;
+  width: 240px; flex: 0 0 240px; min-height: 0;
+  overflow-y: auto; box-sizing: border-box;
+  border-right: 1px solid #1c241c;
+  background: #0a0e0a;
+}
+
+.nc-side-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 4px 6px;
+}
+.nc-side-title { font-size: 13px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; opacity: .8; }
+.nc-new-btn {
+  background: #2e7d32; color: #fff; border: none; border-radius: 8px;
+  padding: 4px 10px; font-size: 12px; cursor: pointer;
+}
+.nc-new-btn:active { background: #255028; }
+
+.nc-side-group { display: flex; flex-direction: column; gap: 6px; }
+.nc-side-group-title {
+  font-size: 11px; opacity: .55; text-transform: uppercase; letter-spacing: .5px;
+  padding: 10px 4px 2px;
+}
+
+/* Cella flotta */
+.nc-cell {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px;
+  border: 1px solid #1c241c; background: #0e140e; border-radius: 10px;
+}
+.nc-cell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.nc-cell-main b { font-size: 13px; color: #d8ffe8; }
+.nc-cell-main small { font-size: 11px; opacity: .6; }
+.nc-power {
+  flex: 0 0 auto; background: none; border: 1px solid #243; color: #9fd;
+  border-radius: 8px; min-width: 30px; min-height: 30px; cursor: pointer; font-size: 15px;
+}
+.nc-power:active { border-color: #2e7d32; }
+
+/* Dot di stato (condiviso cella + card) */
+.nc-dot {
+  flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #355;
+}
+.nc-dot.on { background: #00cc66; box-shadow: 0 0 6px #00cc6688; }
+.nc-dot.warn { background: #e0b020; box-shadow: 0 0 6px #e0b02088; }
+
+/* Card sessione (draggabile) */
+.nc-side-card {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px;
+  border: 1px solid #1c241c; background: #0e140e; border-radius: 10px;
+  cursor: grab; user-select: none;
+}
+.nc-side-card:hover { border-color: #244; }
+.nc-side-card.active { border-color: #2e7d32; background: #14200f; }
+.nc-side-card:active { cursor: grabbing; }
+.nc-card-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.nc-card-main b { font-size: 13px; color: #d8ffe8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-card-main small {
+  font-size: 11px; opacity: .55;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nc-rel { flex: 0 0 auto; font-size: 10px; opacity: .45; }
+.nc-menu {
+  flex: 0 0 auto; background: none; border: none; color: #9fd;
+  min-width: 26px; min-height: 26px; cursor: pointer; font-size: 15px; border-radius: 6px;
+}
+.nc-menu:active { color: #f88; }
+
+.nc-empty { opacity: .4; padding: 8px 4px; font-size: 12px; }
+
+/* Picker lingua in fondo alla sidebar. */
+.nc-side-lang {
+  margin-top: auto; padding: 10px 4px 4px;
+  display: flex; align-items: center; gap: 2px;
+  font-size: 11px; opacity: .6;
+}
+.nc-lang-btn {
+  background: none; border: none; color: inherit; cursor: pointer;
+  font-size: 11px; padding: 0 1px; opacity: .5; text-transform: uppercase;
+}
+.nc-lang-btn.on { opacity: 1; font-weight: 700; color: #d8ffe8; }

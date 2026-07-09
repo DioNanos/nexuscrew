@@ -1,0 +1,65 @@
+{
+  "name": "@mmmbuto/nexuscrew",
+  "version": "0.7.1",
+  "description": "Faithful browser tmux client \u2014 attach to live sessions over a real PTY, localhost-only, mobile-easy",
+  "main": "lib/server.js",
+  "bin": {
+    "nexuscrew": "bin/nexuscrew.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "frontend/dist/",
+    "frontend/index.html",
+    "LICENSE",
+    "README.md",
+    "NOTICE"
+  ],
+  "scripts": {
+    "start": "node bin/nexuscrew.js serve",
+    "dev": "node bin/nexuscrew.js serve",
+    "build": "cd frontend && npm install && npm run build && cd ..",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "@mmmbuto/pty-termux-utils": "^1.1.4",
+    "express": "^4.21.0",
+    "multer": "^2.2.0",
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "@lydell/node-pty-linux-x64": "^1.2.0-beta.12",
+    "node-pty": "^1.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "linux",
+    "darwin",
+    "android"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "keywords": [
+    "tmux",
+    "terminal",
+    "pty",
+    "websocket",
+    "xterm",
+    "cockpit",
+    "mobile",
+    "session-manager"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DioNanos/nexuscrew"
+  },
+  "author": "DioNanos",
+  "license": "Apache-2.0",
+  "allowScripts": {
+    "@mmmbuto/node-pty-android-arm64@1.1.0": true
+  }
+}

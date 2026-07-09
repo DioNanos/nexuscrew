@@ -1,0 +1,77 @@
+import './Icon.css';
+
+// Set unico di icone stroke (griglia 24, tratto 2, angoli tondi, currentColor):
+// stessa resa su ogni device, a differenza delle emoji.
+const PATHS = {
+  folder: (
+    <path d="M4 6a2 2 0 0 1 2-2h3.6a2 2 0 0 1 1.4.6L12.4 6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+  ),
+  keyboard: (
+    <>
+      <rect x="3" y="6" width="18" height="12" rx="2" />
+      <path d="M7 10h.01M11 10h.01M15 10h.01M17 14h.01M7 14h7" />
+    </>
+  ),
+  mic: (
+    <>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+    </>
+  ),
+  enter: (
+    <>
+      <path d="M20 5v6a2 2 0 0 1-2 2H5" />
+      <polyline points="9 9 5 13 9 17" />
+    </>
+  ),
+  trash: (
+    <>
+      <path d="M4 7h16" />
+      <path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+      <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" />
+      <path d="M10 11v6M14 11v6" />
+    </>
+  ),
+  x: <path d="M6 6l12 12M18 6 6 18" />,
+  refresh: (
+    <>
+      <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" />
+      <polyline points="21 3 21 8 16 8" />
+    </>
+  ),
+  upload: (
+    <>
+      <path d="M12 16V5" />
+      <polyline points="8 9 12 5 16 9" />
+      <path d="M5 20h14" />
+    </>
+  ),
+  chevronLeft: <polyline points="14 6 8 12 14 18" />,
+  zoomIn: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.35-4.35" />
+      <path d="M8 11h6M11 8v6" />
+    </>
+  ),
+  zoomOut: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.35-4.35" />
+      <path d="M8 11h6" />
+    </>
+  ),
+};
+
+export default function Icon({ name, size = 20 }) {
+  return (
+    <svg
+      className="nc-icon" width={size} height={size} viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+    >
+      {PATHS[name] || null}
+    </svg>
+  );
+}

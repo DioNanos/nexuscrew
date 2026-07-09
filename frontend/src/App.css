@@ -1,0 +1,69 @@
+:root { color-scheme: dark; }
+body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; font-family: ui-monospace, monospace; }
+/* dvh tracks the visible viewport so the bottom KeyBar stays above the soft keyboard */
+.nc-app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; min-height: 0; }
+.nc-keybar { flex: 0 0 auto; }
+.nc-bar { display: flex; gap: 10px; align-items: center; padding: 8px; color: #cfe; background: #0e140e; }
+.nc-bar button { background: none; border: 1px solid #243; color: #9fd; border-radius: 6px; padding: 4px 10px; }
+.nc-termwrap { position: relative; flex: 1; }
+.nc-auth { color: #cfe; padding: 20px; display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
+.nc-auth input[type=text], .nc-auth input:not([type]) { padding: 10px; background: #122; border: 1px solid #243; color: #cfe; border-radius: 6px; }
+.nc-auth button { padding: 10px; background: #122; border: 1px solid #243; color: #9fd; border-radius: 6px; }
+.nc-bar-right { margin-left: auto; display: flex; gap: 4px; }
+
+/* Touch targets: header buttons grandi e leggibili sul telefono. */
+@media (pointer: coarse) {
+  .nc-bar button, .nc-bar-right button { min-height: 42px; min-width: 42px; font-size: 20px; }
+}
+
+/* I bottoni con icone SVG centrano il glifo; il testo accanto respira. */
+.nc-bar button, .nc-bar-right button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+
+/* Il titolo sessione non deve mai accavallarsi ai bottoni: tronca con ellissi. */
+.nc-bar > button { flex: 0 0 auto; }
+.nc-bar > b {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; font-weight: 600;
+}
+.nc-bar-right { flex: 0 0 auto; }
+
+/* Su schermi stretti il back è solo chevron: lo spazio va al titolo. */
+@media (max-width: 480px) {
+  .nc-bar-label { display: none; }
+}
+
+/* Workspace desktop: Sidebar + GridView (+ overlay vista singola). */
+.nc-workspace {
+  display: flex; flex-direction: row;
+  height: 100vh; height: 100dvh; min-height: 0;
+  background: #0a0e0a; color: #cfe;
+}
+.nc-workspace-main {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+}
+.nc-single-overlay {
+  position: fixed; inset: 0; z-index: 40;
+  background: #0a0e0a;
+}
+
+/* Header vista singola: nome centrato + sottotitolo stato. */
+.nc-bar-single .nc-bar-center {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  line-height: 1.15;
+}
+.nc-bar-single .nc-bar-center b {
+  font-size: 13px; font-weight: 600; color: #d8ffe8;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+.nc-bar-sub { font-size: 10px; opacity: .55; }
+
+/* Transizione slide-in della vista singola (transform 0.2s). */
+.nc-app { animation: nc-slide-in 0.2s ease-out; }
+@keyframes nc-slide-in {
+  from { transform: translateX(12%); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .nc-app { animation: none; } }

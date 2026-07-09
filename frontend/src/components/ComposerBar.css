@@ -1,0 +1,23 @@
+.nc-composer { border-top: 1px solid #2a332a; padding: 6px 8px; background: var(--bg, #111511); }
+.nc-composer-row { display: flex; gap: 6px; align-items: flex-end; }
+.nc-composer textarea {
+  flex: 1; resize: none; background: #0a0e0a; color: #d8e0d8;
+  border: 1px solid #2a332a; border-radius: 8px; padding: 6px 8px;
+  font: 13px/1.4 inherit;
+}
+.nc-composer .mic.on { background: #b02a2a; color: #fff; }
+.nc-composer-err { font-size: 12px; color: #e0a030; padding-bottom: 4px; }
+
+/* Touch targets: mic/go grandi; textarea a 16px evita l'auto-zoom iOS/Android. */
+@media (pointer: coarse) {
+  .nc-composer .mic, .nc-composer .go { min-width: 46px; min-height: 46px; font-size: 20px; }
+  .nc-composer textarea { font-size: 16px; }
+}
+
+/* Stesso linguaggio dei bottoni header: verde tema su bordo scuro (non grigio).
+   Lo stato .mic.on (registrazione, rosso) vince per specificità. */
+.nc-composer .mic, .nc-composer .go {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 1px solid #243; color: #9fd; border-radius: 8px;
+}
+.nc-composer .go { color: #7ee787; border-color: #2e7d32; }
