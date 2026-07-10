@@ -55,3 +55,4 @@
 .nc-btn.primary { background: #2e7d32; color: #fff; }
 .nc-btn.primary:active { background: #255028; }
 .nc-btn:disabled { opacity: .5; cursor: default; }
+.nc-engine-id { opacity: 0.55; font-size: 0.85em; }

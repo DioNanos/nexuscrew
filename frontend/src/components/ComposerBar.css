@@ -8,16 +8,36 @@
 .nc-composer .mic.on { background: #b02a2a; color: #fff; }
 .nc-composer-err { font-size: 12px; color: #e0a030; padding-bottom: 4px; }
 
-/* Touch targets: mic/go grandi; textarea a 16px evita l'auto-zoom iOS/Android. */
+/* Touch targets: attach/mic/go grandi; textarea a 16px evita l'auto-zoom iOS/Android. */
 @media (pointer: coarse) {
-  .nc-composer .mic, .nc-composer .go { min-width: 46px; min-height: 46px; font-size: 20px; }
+  .nc-composer .mic, .nc-composer .go, .nc-composer .attach { min-width: 46px; min-height: 46px; font-size: 20px; }
   .nc-composer textarea { font-size: 16px; }
+  .nc-attach-menu button { min-height: 48px; }
 }
 
 /* Stesso linguaggio dei bottoni header: verde tema su bordo scuro (non grigio).
-   Lo stato .mic.on (registrazione, rosso) vince per specificità. */
-.nc-composer .mic, .nc-composer .go {
+   Lo stato .mic.on (registrazione, rosso) vince per specificità.
+   Il verde pieno resta SOLO sul send destro (.go): attach è neutro come mic. */
+.nc-composer .mic, .nc-composer .go, .nc-composer .attach {
   display: inline-flex; align-items: center; justify-content: center;
   background: none; border: 1px solid #243; color: #9fd; border-radius: 8px;
+  cursor: pointer;
 }
 .nc-composer .go { color: #7ee787; border-color: #2e7d32; }
+.nc-composer .attach.busy { opacity: 0.5; animation: nc-attach-pulse 1s ease-in-out infinite; }
+@keyframes nc-attach-pulse { 50% { opacity: 0.9; } }
+
+/* Popover allegati: position fixed (i tile del grid hanno overflow:hidden —
+   review Codex), ancorato sopra il bottone via left/bottom inline. */
+.nc-attach-menu {
+  position: fixed; z-index: 1000; min-width: 180px;
+  display: flex; flex-direction: column; padding: 4px;
+  background: #0e130e; border: 1px solid #2e7d32; border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+}
+.nc-attach-menu button {
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  min-height: 40px; padding: 8px 12px; border: 0; border-radius: 7px;
+  background: none; color: #d8e0d8; font: 14px/1 inherit; cursor: pointer;
+}
+.nc-attach-menu button:hover, .nc-attach-menu button:focus-visible { background: #1a241a; color: #7ee787; }

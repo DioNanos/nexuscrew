@@ -101,3 +101,36 @@ test('cap 9: normalize tronca layout corrotti, preset non superano il cap', asyn
   assert.equal(m.sessions(m.toGrid2x2(fat)).length, 9, 'toGrid2x2 cap diretto');
   assert.equal(m.sessions(m.toColumns(fat)).length, 9, 'toColumns cap diretto');
 });
+
+test('fontSize per-tile: default, zoomTile clamp, normalize preserva e ripara', async () => {
+  const m = await mod();
+  let l = m.emptyLayout();
+  l = m.addTile(l, 'a', 'end'); l = m.addTile(l, 'b', 'end');
+  assert.equal(l.columns[0].tiles[0].fontSize, m.TILE_FONT_DEF, 'default al TILE_FONT_DEF');
+  // zoomTile: delta relativo con clamp ai bound
+  l = m.zoomTile(l, 0, 0, +2);
+  assert.equal(l.columns[0].tiles[0].fontSize, m.TILE_FONT_DEF + 2);
+  assert.equal(l.columns[1].tiles[0].fontSize, m.TILE_FONT_DEF, 'lo zoom non tocca gli altri tile');
+  l = m.zoomTile(l, 0, 0, +99);
+  assert.equal(l.columns[0].tiles[0].fontSize, m.TILE_FONT_MAX, 'clamp max');
+  l = m.zoomTile(l, 0, 0, -99);
+  assert.equal(l.columns[0].tiles[0].fontSize, m.TILE_FONT_MIN, 'clamp min');
+  assert.equal(m.zoomTile(l, 7, 7, +1), l, 'indici invalidi: layout invariato');
+  // normalize: preserva fontSize valido, ripara garbage al default
+  const raw = { columns: [{ width: 1, tiles: [
+    { session: 'a', height: 1, fontSize: 17 },
+    { session: 'b', height: 1, fontSize: 999 },
+    { session: 'c', height: 1 },
+  ] }] };
+  const n = m.normalize(raw);
+  assert.equal(n.columns[0].tiles[0].fontSize, 17, 'valido preservato');
+  assert.equal(n.columns[0].tiles[1].fontSize, m.TILE_FONT_DEF, 'fuori range -> default');
+  assert.equal(n.columns[0].tiles[2].fontSize, m.TILE_FONT_DEF, 'assente -> default');
+  // moveTile non perde il fontSize (passa da remove+add)
+  let l2 = m.emptyLayout();
+  l2 = m.addTile(l2, 'x', 'end'); l2 = m.addTile(l2, 'y', 'end');
+  l2 = m.zoomTile(l2, 0, 0, +3);
+  l2 = m.moveTile(l2, 'x', { col: 1, row: 1 });
+  const moved = l2.columns.flatMap((c) => c.tiles).find((t) => t.session === 'x');
+  assert.equal(moved.fontSize, m.TILE_FONT_DEF + 3, 'moveTile preserva fontSize');
+});

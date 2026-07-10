@@ -2,6 +2,22 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.7.7
+
+- feat(composer): **attachment button** to the left of the input — a File / Camera / Gallery
+  menu for quick file send. The picked file lands in the session inbox and its path is
+  appended to the composer text (you send it explicitly, so you can add a message). The
+  camera uses the native capture hint on mobile and falls back to a picker on desktop.
+- feat(fleet): **built-in fleet** — engine/cell definitions in `~/.nexuscrew/fleet.json`
+  (editable, schema-validated), provider selection `external | builtin | disabled` chosen
+  once at startup, and a single boot companion service installed by `nexuscrew init` (only
+  when the built-in provider is active, with a migration gate that refuses a silent double
+  boot). Launch path is argv-direct (no shell), with a hard command/env/cwd trust boundary.
+- feat(fleet): fleet HTTP API hardening — `READONLY` blocks every mutation at the route
+  level (external providers included), capability negotiation returns `501` for unsupported
+  methods, `status` exposes `provider`/`bootOwner`/`capabilities`, a `restart` capability,
+  and secrets (env values, prompts) are redacted from error output.
+
 ## 0.7.2
 
 - fix(grid): fleet cell cards in the desktop sidebar are now clickable (add tile) and

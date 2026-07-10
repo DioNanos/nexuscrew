@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# nc-deliver — deliver files to the human via the NexusCrew outbox (shows a
+# badge in the browser UI). Writes into <root>/<session>/outbox/, where root is
+# $NEXUSCREW_FILES_ROOT (default ~/NexusFiles) and session is the current tmux
+# session. Files are timestamp-prefixed; never overwrites.
+set -euo pipefail
+
+root="${NEXUSCREW_FILES_ROOT:-$HOME/NexusFiles}"
+session="${NEXUSCREW_SESSION:-$(tmux display-message -p '#S' 2>/dev/null || true)}"
+
+[ -n "$session" ] || { echo "nc-deliver: no tmux session (run inside tmux, or set NEXUSCREW_SESSION)" >&2; exit 2; }
+[ "$#" -ge 1 ] || { echo "usage: nc-deliver <file> [file...]" >&2; exit 2; }
+
+dir="$root/$session/outbox"
+mkdir -p "$dir"
+
+for f in "$@"; do
+  [ -f "$f" ] || { echo "nc-deliver: not a file: $f" >&2; exit 1; }
+  dest="$dir/$(date +%Y%m%d-%H%M)_$(basename -- "$f")"
+  i=1; while [ -e "$dest" ]; do dest="$dir/$(date +%Y%m%d-%H%M)_${i}-$(basename -- "$f")"; i=$((i+1)); done
+  cp -- "$f" "$dest"
+  echo "delivered → $dest"
+done

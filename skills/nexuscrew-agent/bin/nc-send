@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# nc-send — send text to a tmux session RELIABLY (bracketed paste), the way a
+# raw `send-keys 'msg' Enter` cannot: the Enter is often swallowed by a TUI's
+# paste-burst detector and the message just sits in the composer. This uses
+# load-buffer + paste-buffer -p, then a burst-flush + Enter to submit.
+#
+# usage:
+#   nc-send <session> "text"              # paste + submit (Enter)
+#   nc-send <session> --file PATH         # text from a file
+#   nc-send <session> --no-submit "text"  # leave it in the composer, no Enter
+set -euo pipefail
+
+# Resolve the real tmux binary (bypass shell aliases/functions).
+TMUX_BIN="${TMUX_BIN:-$(command -v tmux || true)}"
+[ -n "$TMUX_BIN" ] || { echo "nc-send: tmux not found on PATH (set TMUX_BIN)" >&2; exit 127; }
+submit=1; file=""
+
+sess="${1:?usage: nc-send <session> [--file PATH|--no-submit] <text>}"; shift
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --no-submit) submit=0; shift ;;
+    --file) file="${2:?--file needs a path}"; shift 2 ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+
+if [ -n "$file" ]; then
+  [ -f "$file" ] || { echo "nc-send: not a file: $file" >&2; exit 1; }
+  src="$file"; cleanup=""
+else
+  src="$(mktemp)"; cleanup="$src"; printf '%s' "${1:-}" > "$src"
+fi
+trap '[ -n "$cleanup" ] && rm -f "$cleanup"' EXIT
+
+"$TMUX_BIN" has-session -t "=$sess" 2>/dev/null || { echo "nc-send: no such session: $sess" >&2; exit 1; }
+
+"$TMUX_BIN" load-buffer -b ncsend "$src"
+"$TMUX_BIN" paste-buffer -p -t "$sess" -b ncsend   # -p = bracketed paste
+
+if [ "$submit" -eq 1 ]; then
+  sleep 0.4
+  "$TMUX_BIN" send-keys -t "$sess" C-e             # flush the paste-burst window
+  sleep 0.3
+  "$TMUX_BIN" send-keys -t "$sess" Enter
+fi
+
+echo "nc-send → $sess ($([ "$submit" -eq 1 ] && echo submitted || echo composer))"

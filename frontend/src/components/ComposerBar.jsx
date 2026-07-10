@@ -26,7 +26,7 @@ function stripTrailingNewlines(s) {
   return s.slice(0, end);
 }
 
-export default function ComposerBar({ send, token }) {
+export default function ComposerBar({ send, token, session }) {
   useLang();
   const [text, setText] = useState('');
   const [rec, setRec] = useState(false);
@@ -34,6 +34,18 @@ export default function ComposerBar({ send, token }) {
   const [serverStt, setServerStt] = useState(false);
   const recognitionRef = useRef(null);
   const mediaRef = useRef(null);
+  // Tasto allegati (design 2026-07-10_attach_button_design.md): popover 3 voci
+  // File/Fotocamera/Galleria; upload con paste=false, path appesi al testo.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ left: 0, bottom: 0 });
+  const [busy, setBusy] = useState(false);
+  const attachBtnRef = useRef(null);
+  const menuRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const camInputRef = useRef(null);
+  const galInputRef = useRef(null);
+  // id univoco per aria-controls (un composer per tile nel grid)
+  const menuIdRef = useRef(`nc-attach-${Math.random().toString(36).slice(2, 8)}`);
 
   // Voice split (M5): mic visibility = browser Web Speech OR server STT configured.
   // Se Web Speech e' supportato il mic resta visibile anche con server STT off;
@@ -57,6 +69,72 @@ export default function ComposerBar({ send, token }) {
     send(t);
     send(CR); // Invio esplicito, mai implicito nel testo incollato
     setText('');
+  }
+
+  // --- Allegati ---
+  // Popover position:fixed calcolato dal rect del bottone (review Codex: i tile
+  // del grid hanno overflow:hidden — un absolute dentro il composer verrebbe
+  // clippato). Ancorato sopra il bottone, clampato al viewport.
+  function openMenu() {
+    const r = attachBtnRef.current && attachBtnRef.current.getBoundingClientRect();
+    if (r) {
+      setMenuPos({
+        left: Math.max(6, Math.min(r.left, window.innerWidth - 186)),
+        bottom: window.innerHeight - r.top + 6,
+      });
+    }
+    setMenuOpen(true);
+  }
+  function closeMenu(restoreFocus) {
+    setMenuOpen(false);
+    if (restoreFocus && attachBtnRef.current) attachBtnRef.current.focus();
+  }
+
+  // Esc + click fuori chiudono il popover (review Codex: niente focus-trap
+  // completa per 3 voci, ma Esc/outside-click/ripristino focus servono).
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') closeMenu(true); };
+    const onDown = (e) => {
+      const inMenu = menuRef.current && menuRef.current.contains(e.target);
+      const inBtn = attachBtnRef.current && attachBtnRef.current.contains(e.target);
+      if (!inMenu && !inBtn) closeMenu(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown);
+    };
+  }, [menuOpen]);
+
+  function pick(ref) {
+    closeMenu(false);
+    if (ref.current) ref.current.click();
+  }
+
+  // Upload sequenziale (l'API accetta 1 file per request) con paste=false:
+  // il path NON va nel PTY — si appende al testo del composer, l'Invio è tuo.
+  async function uploadFiles(files) {
+    if (!files.length || !session) return;
+    setBusy(true); setErr('');
+    const paths = [];
+    for (const f of files) {
+      try {
+        const fd = new FormData();
+        fd.append('session', session);
+        fd.append('paste', 'false');
+        fd.append('file', f, f.name);
+        const r = await apiFetch('/api/files/upload', token, { method: 'POST', body: fd });
+        const j = await r.json();
+        if (j.error) { setErr(j.error); break; }
+        paths.push(j.path);
+      } catch (e) { setErr(String(e)); break; }
+    }
+    if (paths.length) {
+      setText((prev) => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + paths.join(' '));
+    }
+    setBusy(false);
   }
 
   function stopVoice() {
@@ -117,6 +195,32 @@ export default function ComposerBar({ send, token }) {
     <div className="nc-composer">
       {err && <div className="nc-composer-err">{err}</div>}
       <div className="nc-composer-row">
+        {session && (
+          <button
+            ref={attachBtnRef} className={busy ? 'attach busy' : 'attach'} disabled={busy}
+            onClick={() => (menuOpen ? closeMenu(false) : openMenu())}
+            title={busy ? t('attach-uploading') : t('attach')} aria-label={t('attach')}
+            aria-haspopup="menu" aria-expanded={menuOpen} aria-controls={menuIdRef.current}
+          ><Icon name="attach" size={22} /></button>
+        )}
+        {menuOpen && (
+          <div
+            ref={menuRef} id={menuIdRef.current} role="menu" className="nc-attach-menu"
+            style={{ left: menuPos.left, bottom: menuPos.bottom }}
+          >
+            <button role="menuitem" onClick={() => pick(fileInputRef)}><Icon name="file" size={18} /> {t('attach-file')}</button>
+            <button role="menuitem" onClick={() => pick(camInputRef)}><Icon name="camera" size={18} /> {t('attach-camera')}</button>
+            <button role="menuitem" onClick={() => pick(galInputRef)}><Icon name="image" size={18} /> {t('attach-gallery')}</button>
+          </div>
+        )}
+        {/* input nascosti: File (tutto, multi) / Fotocamera (capture=hint best-effort,
+            degrada a picker senza errore) / Galleria (media, multi) */}
+        <input ref={fileInputRef} type="file" multiple hidden
+          onChange={(e) => { uploadFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
+        <input ref={camInputRef} type="file" accept="image/*" capture="environment" hidden
+          onChange={(e) => { uploadFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
+        <input ref={galInputRef} type="file" accept="image/*,video/*" multiple hidden
+          onChange={(e) => { uploadFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
         <textarea
           rows={2} value={text} placeholder={t('composer-placeholder')}
           onChange={(e) => setText(e.target.value)}
