@@ -31,6 +31,13 @@ const PATHS = {
       <polyline points="9 9 5 13 9 17" />
     </>
   ),
+  // Paper-plane (feather "send"): stesso stroke degli altri, fill none.
+  send: (
+    <>
+      <path d="M22 2 15 22 11 13 2 9Z" />
+      <path d="M22 2 11 13" />
+    </>
+  ),
   trash: (
     <>
       <path d="M4 7h16" />
@@ -54,6 +61,29 @@ const PATHS = {
     </>
   ),
   chevronLeft: <polyline points="14 6 8 12 14 18" />,
+  // Paperclip (feather): tasto allegati del composer.
+  attach: (
+    <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+  ),
+  file: (
+    <>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+    </>
+  ),
+  camera: (
+    <>
+      <path d="M14.5 4h-5L7.5 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.5z" />
+      <circle cx="12" cy="13" r="3.5" />
+    </>
+  ),
+  image: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="M21 15l-5-5L5 21" />
+    </>
+  ),
   zoomIn: (
     <>
       <circle cx="11" cy="11" r="7" />

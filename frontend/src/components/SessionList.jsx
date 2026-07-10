@@ -38,6 +38,7 @@ export default function SessionList({ onPick, token }) {
   const [endpoint, setEndpoint] = useState({ bind: '127.0.0.1', port: '' });
   const [cells, setCells] = useState([]);
   const [fleetAvailable, setFleetAvailable] = useState(false);
+  const [engines, setEngines] = useState([]);       // dal contratto fleet ({id,label,rc})
   const [presets, setPresets] = useState(['shell', 'claude', 'codex-vl', 'pi']);
   const [powerCell, setPowerCell] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
@@ -54,7 +55,8 @@ export default function SessionList({ onPick, token }) {
       const fs = await fleetStatus(token);
       setFleetAvailable(!!fs.available);
       setCells(fs.available ? (fs.cells || []) : []);
-    } catch (_) { setFleetAvailable(false); setCells([]); }
+      setEngines(fs.available ? (fs.engines || []) : []);
+    } catch (_) { setFleetAvailable(false); setCells([]); setEngines([]); }
   }
 
   useEffect(() => {
@@ -240,10 +242,10 @@ export default function SessionList({ onPick, token }) {
       <button className="nc-fab" onClick={() => setNewOpen(true)} title={t('new-session')} aria-label={t('new-session')}>+</button>
 
       {powerCell && (
-        <PowerSheet cell={powerCell} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
+        <PowerSheet cell={powerCell} engines={engines} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
       )}
       {newOpen && (
-        <NewSessionDialog presets={presets} onCreate={onCreate} onClose={() => setNewOpen(false)} />
+        <NewSessionDialog presets={presets} token={token} onCreate={onCreate} onClose={() => setNewOpen(false)} />
       )}
     </div>
   );

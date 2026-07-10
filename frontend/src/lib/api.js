@@ -28,3 +28,4 @@ export const fleetEngine = (t, b) => jsonFetch('/api/fleet/engine', t, { method:
 export const fleetBoot = (t, b) => jsonFetch('/api/fleet/boot', t, { method: 'POST', body: b });
 export const createSession = (t, b) => jsonFetch('/api/sessions', t, { method: 'POST', body: b });
 export const killSession = (t, name) => jsonFetch(`/api/sessions/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
+export const listDirs = (t, p) => jsonFetch(`/api/fs/dirs${p ? `?path=${encodeURIComponent(p)}` : ''}`, t);

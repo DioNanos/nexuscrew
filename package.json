@@ -1,7 +1,7 @@
 {
   "name": "@mmmbuto/nexuscrew",
-  "version": "0.7.6",
-  "description": "Faithful browser tmux client \u2014 attach to live sessions over a real PTY, localhost-only, mobile-easy",
+  "version": "0.7.7",
+  "description": "Faithful browser tmux client — attach to live sessions over a real PTY, localhost-only, mobile-easy",
   "main": "lib/server.js",
   "bin": {
     "nexuscrew": "bin/nexuscrew.js"

@@ -60,8 +60,15 @@ that answers `fleet status --json` with:
 ```json
 {"schemaVersion":1,"kind":"ai-fleet","cells":[
   {"cell":"Dev","tmuxSession":"cloud-Dev","engine":"native",
-   "active":true,"boot":true,"tmux":true,"rc":"","key":""}]}
+   "active":true,"boot":true,"tmux":true,"rc":"","key":""}],
+ "engines":[{"id":"native","label":"Claude","rc":true},{"id":"my-engine","label":"My Engine"}]}
 ```
+
+`engines` is optional: it declares the engine picker shown when powering a cell on — `id` is
+what `up --engine <id>` receives, `label` is what the UI displays, `rc: true` marks engines
+that support your remote-control path (others show a hint). Order = picker order, first entry
+is the suggested default. Without it, the picker falls back to the engines currently in use
+by the cells. NexusCrew itself has **no built-in engine list** — your fleet CLI owns it.
 
 and accepts `up <Cell> [--engine E] [--boot]`, `down <Cell> [--boot]`, `engine <Cell> <E>`,
 `boot|noboot <Cell>`. The binary is trust-checked (regular file, not a symlink, not

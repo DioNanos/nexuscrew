@@ -52,3 +52,22 @@ test('comandi: passthrough argomenti + validazioni', async () => {
   await assert.rejects(() => fleet.up('NotACell', {}), (e) => e.status === 400);
   await assert.rejects(() => fleet.engine('Dev', 'rm -rf'), (e) => e.status === 400);
 });
+
+test('engines dal contratto: dichiarati, fallback derivato, malformati fail-closed', async () => {
+  const { parseStatus } = require('../lib/fleet/index.js');
+  const cell = { cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'zorp', active: true, boot: true, tmux: true, rc: '', key: '' };
+  const base = { schemaVersion: 1, kind: 'ai-fleet', cells: [cell] };
+  // dichiarati: stringhe e oggetti {id,label,rc}; label default = id; rc default solo per 'native'
+  const withEngines = parseStatus(JSON.stringify({ ...base, engines: ['native', { id: 'zorp', label: 'Zorp 9000' }, { id: 'x1', rc: true }] }));
+  assert.deepEqual(withEngines.engines, [
+    { id: 'native', label: 'native', rc: true },
+    { id: 'zorp', label: 'Zorp 9000', rc: false },
+    { id: 'x1', label: 'x1', rc: true },
+  ]);
+  // assenti → [] nel parse (il fallback derivato dalle celle lo fa status())
+  assert.deepEqual(parseStatus(JSON.stringify(base)).engines, []);
+  // malformati → intero status rifiutato (fail-closed)
+  for (const bad of [[{ label: 'no-id' }], ['id non valido!'], [{ id: 'a', rc: 'yes' }], 'not-array']) {
+    assert.equal(parseStatus(JSON.stringify({ ...base, engines: bad })), null, `engines ${JSON.stringify(bad)} rifiutato`);
+  }
+});

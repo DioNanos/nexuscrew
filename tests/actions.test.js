@@ -23,8 +23,8 @@ test('pasteArgs: literal, -- protegge, niente newline/control', () => {
   // Target '=sess1:' (con colon): su tmux 3.4 il bare '=name' fallisce per i
   // comandi pane-target (send-keys: "can't find pane"), '=name:' funziona.
   assert.deepEqual(
-    pasteArgs('sess1', '/home/dag/NexusFiles/sess1/inbox/f.jpg'),
-    ['send-keys', '-t', '=sess1:', '-l', '--', '/home/dag/NexusFiles/sess1/inbox/f.jpg'],
+    pasteArgs('sess1', '/home/user/NexusFiles/sess1/inbox/f.jpg'),
+    ['send-keys', '-t', '=sess1:', '-l', '--', '/home/user/NexusFiles/sess1/inbox/f.jpg'],
   );
   assert.equal(pasteArgs('sess1', 'testo' + NL + 'con invio'), null);
   assert.equal(pasteArgs('sess1', 'testo' + CR + 'cr'), null);

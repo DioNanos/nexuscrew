@@ -7,6 +7,3 @@ frontend/node_modules/
 .env.*
 !.env.example
 mmmbuto-nexuscrew-*.tgz
-
-# packed tarballs (npm pack) — never commit
-*.tgz

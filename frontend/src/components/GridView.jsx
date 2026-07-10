@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import GridTile from './GridTile.jsx';
 import {
   addTile, moveTile, removeTile, sessions, resizeColumn, resizeTile,
-  dropForQuadrant, snapFraction,
+  dropForQuadrant, snapFraction, zoomTile,
 } from '../lib/grid-model.js';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
@@ -163,6 +163,8 @@ export default function GridView({
                     focused={focusSession === tile.session}
                     onFocus={onFocus} onClose={closeTile} onOpenSingle={onOpenSingle}
                     alive={!sessionsAlive || sessionsAlive.has(tile.session)}
+                    fontSize={tile.fontSize}
+                    onZoom={(delta) => onLayoutChange(zoomTile(layout, ci, ri, delta))}
                   />
                 </div>,
               );

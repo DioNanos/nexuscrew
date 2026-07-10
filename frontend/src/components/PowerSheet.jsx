@@ -3,18 +3,21 @@ import {t} from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import './PowerSheet.css';
 
-// Engine allowlistati (specchia lib/fleet/index.js ENGINES).
-const ENGINES = ['native', 'glm', 'glm-a', 'glm-p', 'ollama', 'ollama-cloud', 'codex-vl'];
-
 // Sheet di accensione/spegnimento di una cella.
 //   cell: oggetto cella flotta ({cell, engine, active, boot, ...})
+//   engines: dal contratto fleet ({id, label, rc}) — niente lista hardcoded;
+//     l'ordine è quello dichiarato dal fleet (primo = default consigliato).
 //   onConfirm(payload): il genitore esegue fleetUp/fleetDown — payload:
 //     {action:'up', engine, boot} | {action:'down', boot}  (boot down = togli dal boot)
-// Vincolo: engine ≠ native → niente remote-control (mostrato).
-export default function PowerSheet({ cell, onConfirm, onClose }) {
+// Vincolo: engine senza rc → niente remote-control app claude.ai (mostrato).
+export default function PowerSheet({ cell, engines = [], onConfirm, onClose }) {
   useLang();
   const isOn = !!(cell && cell.active);
-  const [engine, setEngine] = useState(cell?.engine || 'glm');
+  // Fallback se il fleet non dichiara engines: almeno quello corrente della cella.
+  const list = engines.length ? engines
+    : [{ id: cell?.engine || 'native', label: cell?.engine || 'native', rc: (cell?.engine || 'native') === 'native' }];
+  const [engine, setEngine] = useState(cell?.engine || list[0].id);
+  const sel = list.find((e) => e.id === engine);
   const [boot, setBoot] = useState(cell?.boot ?? true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -46,10 +49,11 @@ export default function PowerSheet({ cell, onConfirm, onClose }) {
           <>
             <div className="nc-sheet-label">{t('engine')}</div>
             <div className="nc-engines">
-              {ENGINES.map((en) => (
-                <label key={en} className={`nc-engine${engine === en ? ' sel' : ''}`}>
-                  <input type="radio" name="ps-engine" checked={engine === en} onChange={() => setEngine(en)} />
-                  {en}
+              {list.map((en) => (
+                <label key={en.id} className={`nc-engine${engine === en.id ? ' sel' : ''}`}>
+                  <input type="radio" name="ps-engine" checked={engine === en.id} onChange={() => setEngine(en.id)} />
+                  {en.label}
+                  {en.label.toLowerCase() !== en.id.toLowerCase() && <small className="nc-engine-id"> ({en.id})</small>}
                 </label>
               ))}
             </div>
@@ -57,7 +61,7 @@ export default function PowerSheet({ cell, onConfirm, onClose }) {
               <input type="checkbox" checked={boot} onChange={(e) => setBoot(e.target.checked)} />
               {t('boot-persist')}
             </label>
-            {engine !== 'native' && (
+            {sel && !sel.rc && (
               <div className="nc-note">{t('no-remote-control')}</div>
             )}
           </>

@@ -2,6 +2,9 @@ import { useRef, useState } from 'react';
 import Terminal from './Terminal.jsx';
 import ComposerBar from './ComposerBar.jsx';
 import FilesPanel from './FilesPanel.jsx';
+import Icon from './Icon.jsx';
+import { t } from '../lib/i18n.js';
+import { TILE_FONT_DEF } from '../lib/grid-model.js';
 import './GridTile.css';
 
 // Un tile della griglia. Ogni tile ha i PROPRI ref (audit F6: mai condivisi
@@ -9,7 +12,7 @@ import './GridTile.css';
 // takeSize={false}: il tile non ridimensiona la sessione tmux (lo fa solo la
 // vista singola / chi ha preso il size-lock); evita che 3 tile si contendano
 // le dimensioni della stessa sessione.
-export default function GridTile({ session, token, focused, onFocus, onClose, onOpenSingle, alive = true }) {
+export default function GridTile({ session, token, focused, onFocus, onClose, onOpenSingle, alive = true, fontSize = TILE_FONT_DEF, onZoom }) {
   const sendRef = useRef(() => {});
   const actionRef = useRef(() => {});
   const ctrlRef = useRef(false);
@@ -38,6 +41,8 @@ export default function GridTile({ session, token, focused, onFocus, onClose, on
           <b>{session}</b>
         </button>
         <span className="nc-tile-actions">
+          {onZoom && <button onClick={() => onZoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={14} /></button>}
+          {onZoom && <button onClick={() => onZoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={14} /></button>}
           <button onClick={() => setShowComposer((v) => !v)} title="composer">⌨</button>
           <button onClick={() => setShowFiles((v) => !v)} title="file">📁</button>
           {onOpenSingle && <button onClick={() => onOpenSingle(session)} title="vista singola">↗</button>}
@@ -49,7 +54,7 @@ export default function GridTile({ session, token, focused, onFocus, onClose, on
         <Terminal
           session={session} token={token} readonly={false} takeSize={false}
           sendRef={sendRef} actionRef={actionRef} ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
-          onFiles={setFilesEvent} fontSize={11}
+          onFiles={setFilesEvent} fontSize={fontSize}
         />
         {showFiles && (
           <div className="nc-tile-files" onMouseDown={(e) => e.stopPropagation()}>
@@ -60,7 +65,7 @@ export default function GridTile({ session, token, focused, onFocus, onClose, on
 
       {showComposer && (
         <div className="nc-tile-composer" onMouseDown={(e) => e.stopPropagation()}>
-          <ComposerBar send={(seq) => sendRef.current(seq)} token={token} />
+          <ComposerBar send={(seq) => sendRef.current(seq)} token={token} session={session} />
         </div>
       )}
     </div>

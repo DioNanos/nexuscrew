@@ -4,10 +4,12 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/dag/Dev/20_ai-labs/nexuscrew
+# Reference template. `nexuscrew init` generates the real unit with the paths
+# resolved for your install; %h expands to the user's home in a --user unit.
+WorkingDirectory=%h/nexuscrew
 Environment=NEXUSCREW_PORT=41777
-Environment=PATH=/home/dag/.local/bin:/home/dag/.nvm/versions/node/v24.10.0/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/dag/.nvm/versions/node/v24.10.0/bin/node bin/nexuscrew.js
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node bin/nexuscrew.js
 Restart=on-failure
 RestartSec=3
 

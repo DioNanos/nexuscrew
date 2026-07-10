@@ -47,6 +47,22 @@ test('upload: salva in inbox, incolla il path, 404 per sessione ignota', async (
   assert.equal((await fetch(`${base}/upload`, { method: 'POST', body: fd })).status, 404);
 });
 
+// paste=false (tasto allegati del composer): il file va in inbox ma il path
+// NON viene incollato nel PTY — lo appende il client al testo del composer.
+// Default (campo assente) = comportamento storico, testato sopra.
+test('upload: paste=false salva in inbox SENZA incollare nel PTY', async (t) => {
+  const { pasted, base } = await setup(t);
+  const fd = form('shot.png', 'img');
+  fd.append('paste', 'false');
+  const r = await fetch(`${base}/upload`, { method: 'POST', body: fd });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.ok(j.name.endsWith('_shot.png'));
+  assert.equal(fs.readFileSync(j.path, 'utf8'), 'img');
+  assert.equal(j.pasted, false, 'pasted deve essere false');
+  assert.equal(pasted.length, 0, 'nessuna scrittura PTY con paste=false');
+});
+
 test('upload: oltre il limite -> 413', async (t) => {
   const { base } = await setup(t, { maxUpload: 10 });
   const r = await fetch(`${base}/upload`, { method: 'POST', body: form('big.bin', 'x'.repeat(100)) });

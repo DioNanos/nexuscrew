@@ -146,7 +146,7 @@ function SingleView({ session, token, onBack }) {
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
         ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} />
       {showComposer && (
-        <ComposerBar send={(seq) => sendRef.current(seq)} token={token} />
+        <ComposerBar send={(seq) => sendRef.current(seq)} token={token} session={session} />
       )}
       {showFiles && (
         <FilesPanel session={session} token={token} filesEvent={filesEvent} onClose={() => setShowFiles(false)} />
@@ -167,6 +167,7 @@ export default function App() {
   // desktop workspace state
   const [dSessions, setDSessions] = useState([]);
   const [cells, setCells] = useState([]);
+  const [engines, setEngines] = useState([]);       // dal contratto fleet ({id,label,rc})
   const [layout, setLayout] = useState(loadLayout);
   const [gridFocus, setGridFocus] = useState(null);
   const [single, setSingle] = useState(null);     // overlay vista singola desktop
@@ -198,7 +199,8 @@ export default function App() {
     try {
       const fs = await fleetStatus(token);
       setCells(fs.available ? (fs.cells || []) : []);
-    } catch (_) { setCells([]); }
+      setEngines(fs.available ? (fs.engines || []) : []);
+    } catch (_) { setCells([]); setEngines([]); }
   }, [token]);
 
   // Polling sessions + flotta (solo desktop: su mobile pensa SessionList).
@@ -308,10 +310,10 @@ export default function App() {
         </div>
       )}
       {powerCell && (
-        <PowerSheet cell={powerCell} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
+        <PowerSheet cell={powerCell} engines={engines} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
       )}
       {newOpen && (
-        <NewSessionDialog presets={presets} onCreate={onCreateSession} onClose={() => setNewOpen(false)} />
+        <NewSessionDialog presets={presets} token={token} onCreate={onCreateSession} onClose={() => setNewOpen(false)} />
       )}
     </div>
   );

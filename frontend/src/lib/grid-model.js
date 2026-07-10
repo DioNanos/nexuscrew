@@ -3,6 +3,16 @@
 const MAX_TILES = 9;
 const MIN_W = 0.2;
 
+// Font per-tile (zoom nel grid): stessi bound dello zoom single-view.
+export const TILE_FONT_MIN = 9;
+export const TILE_FONT_MAX = 24;
+export const TILE_FONT_DEF = 11;
+// Riparazione (normalize): valore valido passa, garbage torna al default.
+const repairFont = (v) => {
+  const n = Number(v);
+  return n >= TILE_FONT_MIN && n <= TILE_FONT_MAX ? n : TILE_FONT_DEF;
+};
+
 export function emptyLayout() { return { columns: [] }; }
 
 export function sessions(layout) {
@@ -11,11 +21,11 @@ export function sessions(layout) {
 
 const clone = (l) => ({ columns: l.columns.map((c) => ({ width: c.width, tiles: c.tiles.map((t) => ({ ...t })) })) });
 
-export function addTile(layout, session, drop) {
+export function addTile(layout, session, drop, props) {
   if (sessions(layout).includes(session)) return layout;
   if (sessions(layout).length >= MAX_TILES) return layout;
   const l = clone(layout);
-  const tile = { session, height: 1 };
+  const tile = { session, height: 1, fontSize: TILE_FONT_DEF, ...(props || {}) };
   if (drop === 'end') { l.columns.push({ width: 1, tiles: [tile] }); return l; }
   if (drop && typeof drop.col === 'number' && typeof drop.row === 'number' && l.columns[drop.col]) {
     l.columns[drop.col].tiles.splice(drop.row, 0, tile); return l;
@@ -53,7 +63,9 @@ export function removeTile(layout, session) {
 
 export function moveTile(layout, session, drop) {
   if (!sessions(layout).includes(session)) return layout;
-  return addTile(removeTile(layout, session), session, drop);
+  // Preserva le proprietà per-tile (fontSize) attraverso il remove+add.
+  const old = layout.columns.flatMap((c) => c.tiles).find((t) => t.session === session);
+  return addTile(removeTile(layout, session), session, drop, { fontSize: old.fontSize });
 }
 
 export function resizeColumn(layout, colIdx, width) {
@@ -66,6 +78,18 @@ export function resizeTile(layout, colIdx, rowIdx, height) {
   const l = clone(layout);
   const t = l.columns[colIdx] && l.columns[colIdx].tiles[rowIdx];
   if (t) t.height = Math.max(MIN_W, Number(height) || 1);
+  return l;
+}
+
+// Zoom font di un singolo tile: delta relativo con clamp ai bound.
+// Indici invalidi → layout invariato (stesso riferimento).
+export function zoomTile(layout, colIdx, rowIdx, delta) {
+  const cur = layout.columns[colIdx] && layout.columns[colIdx].tiles[rowIdx];
+  if (!cur) return layout;
+  const l = clone(layout);
+  const t = l.columns[colIdx].tiles[rowIdx];
+  const base = Number(t.fontSize) || TILE_FONT_DEF;
+  t.fontSize = Math.max(TILE_FONT_MIN, Math.min(TILE_FONT_MAX, base + (Number(delta) || 0)));
   return l;
 }
 
@@ -94,20 +118,27 @@ export function equalize(layout) {
 // Preset: ridistribuisce le sessioni esistenti su 2 colonne bilanciate.
 function capped(list) { return list.slice(0, MAX_TILES); }
 
+// I preset ricostruiscono i tile: il fontSize per-tile va riportato a mano.
+function fontOf(layout, session) {
+  const t = layout.columns.flatMap((c) => c.tiles).find((x) => x.session === session);
+  return (t && t.fontSize) || TILE_FONT_DEF;
+}
+
 export function toGrid2x2(layout) {
   const ss = capped(sessions(layout));
   if (ss.length === 0) return emptyLayout();
+  const mk = (session) => ({ session, height: 1, fontSize: fontOf(layout, session) });
   const firstN = Math.ceil(ss.length / 2);
   const left = ss.slice(0, firstN);
   const right = ss.slice(firstN);
-  const columns = [{ width: 1, tiles: left.map((session) => ({ session, height: 1 })) }];
-  if (right.length) columns.push({ width: 1, tiles: right.map((session) => ({ session, height: 1 })) });
+  const columns = [{ width: 1, tiles: left.map(mk) }];
+  if (right.length) columns.push({ width: 1, tiles: right.map(mk) });
   return { columns };
 }
 
 // Preset: una colonna per sessione, pesi 1.
 export function toColumns(layout) {
-  return { columns: capped(sessions(layout)).map((session) => ({ width: 1, tiles: [{ session, height: 1 }] })) };
+  return { columns: capped(sessions(layout)).map((session) => ({ width: 1, tiles: [{ session, height: 1, fontSize: fontOf(layout, session) }] })) };
 }
 
 // Snap di una frazione ai divisori canonici 25/50/75% entro ±3%.
@@ -124,7 +155,7 @@ export function normalize(raw) {
       width: Math.max(MIN_W, Number(c && c.width) || 1),
       tiles: (Array.isArray(c && c.tiles) ? c.tiles : [])
         .filter((t) => t && typeof t.session === 'string' && t.session)
-        .map((t) => ({ session: t.session, height: Math.max(MIN_W, Number(t.height) || 1) })),
+        .map((t) => ({ session: t.session, height: Math.max(MIN_W, Number(t.height) || 1), fontSize: repairFont(t.fontSize) })),
     }))
     .filter((c) => c.tiles.length > 0);
   const seen = new Set();

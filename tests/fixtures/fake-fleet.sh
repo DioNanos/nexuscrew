@@ -15,7 +15,7 @@ if [ "$1" = "status" ] && [ "$2" = "--json" ]; then
  {"cell":"Dev","tmuxSession":"cloud-Dev","engine":"glm","active":true,"boot":true,"tmux":true,"rc":"","key":"A"},
  {"cell":"Trading","tmuxSession":"cloud-Trading","engine":"native","active":false,"boot":false,"tmux":false,"rc":"RC_Trading","key":""},
  {"cell":"SysAdmin","tmuxSession":"cloud-SysAdmin","engine":"native","active":true,"boot":true,"tmux":false,"rc":"RC_SysAdmin","key":""}
-]}
+],"engines":[{"id":"native","label":"Claude"},{"id":"glm","label":"GLM"},{"id":"glm-a","label":"GLM · A"}]}
 EOF
   exit 0
 fi

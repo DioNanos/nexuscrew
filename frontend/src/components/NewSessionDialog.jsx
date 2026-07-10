@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {t} from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
+import { listDirs } from '../lib/api.js';
 import './NewSessionDialog.css';
 
 // Validazione nome specchiata da lib/tmux/lifecycle.js validSessionName.
@@ -10,26 +11,35 @@ const NAME_RE = /^[\w.-]{1,64}$/;
 //   onCreate({name, cwd, preset}): il genitore chiama createSession().
 // Nota: cwd default '~' → inviamo '' così il server usa la home reale
 // (resolveCwd non espande '~'; un path reale passa invariato).
-export default function NewSessionDialog({ presets = ['shell'], onCreate, onClose }) {
+// Il folder-picker (token) sfoglia le dir del server via /api/fs/dirs; senza
+// token il campo resta un input testuale semplice (retro-compatibile).
+export default function NewSessionDialog({ presets = ['shell'], token, onCreate, onClose }) {
   useLang();
   const [name, setName] = useState('');
   const [cwd, setCwd] = useState('~');
   const [preset, setPreset] = useState(presets[0] || 'shell');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [picker, setPicker] = useState(null);        // null=chiuso | {path,parent,home,dirs}
+  const [pickErr, setPickErr] = useState(null);
 
   const nameOk = NAME_RE.test(name) && !name.startsWith('-');
+
+  async function openPicker(path) {
+    setPickErr(null);
+    try {
+      const j = await listDirs(token, path);
+      setPicker(j);
+      setCwd(j.path);                                 // il path corrente diventa il cwd scelto
+    } catch (e) { setPickErr(String((e && e.message) || e)); }
+  }
 
   async function submit(e) {
     e.preventDefault();
     if (!nameOk) return;
     setBusy(true); setErr(null);
     try {
-      await onCreate({
-        name,
-        cwd: cwd === '~' ? '' : cwd,
-        preset,
-      });
+      await onCreate({ name, cwd: cwd === '~' ? '' : cwd, preset });
       onClose();
     } catch (er) { setErr(String((er && er.message) || er)); setBusy(false); }
   }
@@ -50,8 +60,38 @@ export default function NewSessionDialog({ presets = ['shell'], onCreate, onClos
         )}
 
         <label className="nc-field">{t('cwd')}
-          <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="~" />
+          <div className="nc-cwd-row">
+            <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="~" />
+            {token && (
+              <button
+                type="button" className="nc-btn ghost nc-cwd-browse"
+                onClick={() => (picker ? setPicker(null) : openPicker(cwd === '~' ? '' : cwd))}
+              >
+                {t('browse')}
+              </button>
+            )}
+          </div>
         </label>
+
+        {picker && (
+          <div className="nc-fs" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="nc-fs-path" title={picker.path}>{picker.path}</div>
+            <div className="nc-fs-list">
+              <button type="button" className="nc-fs-item nc-fs-nav" onClick={() => openPicker(picker.home)}>⌂ {t('fs-home')}</button>
+              {picker.parent && (
+                <button type="button" className="nc-fs-item nc-fs-nav" onClick={() => openPicker(picker.parent)}>↑ {t('fs-parent')}</button>
+              )}
+              {picker.dirs.map((d) => (
+                <button
+                  type="button" key={d} className="nc-fs-item"
+                  onClick={() => openPicker(`${picker.path.replace(/\/$/, '')}/${d}`)}
+                >📁 {d}</button>
+              ))}
+              {picker.dirs.length === 0 && <div className="nc-fs-empty">—</div>}
+            </div>
+            {pickErr && <div className="nc-err">{pickErr}</div>}
+          </div>
+        )}
 
         <label className="nc-field">{t('preset')}
           <select value={preset} onChange={(e) => setPreset(e.target.value)}>
