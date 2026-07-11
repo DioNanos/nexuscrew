@@ -100,3 +100,25 @@ test('attach con takeSize:false resta ok e propaga takeSize (regressione F6)', (
   assert.strictEqual(ws.closedCode, null, 'nessuna chiusura');
 });
 
+
+// Regressione BLOCKER audit finale (§4b(6)): readonlyDefault del server e' un
+// PAVIMENTO. Un client che manda readonly:false NON puo' declassare un server
+// READONLY. Il client puo' solo AGGIUNGERE restrizione (readonly:true su server RW).
+test('READONLY: server readonlyDefault=true vince su client readonly:false (pavimento §4b(6))', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory();
+  bindWs(ws, okDeps(openAttach, { defaults: { readonlyDefault: true } }));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't', readonly: false }), false);
+  assert.strictEqual(openAttach.calls.length, 1);
+  assert.strictEqual(openAttach.calls[0].opts.readonly, true, 'server READONLY forza readonly:true anche se il client chiede false');
+});
+
+test('READONLY: client puo\' solo aggiungere restrizione su server RW', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory();
+  bindWs(ws, okDeps(openAttach, { defaults: { readonlyDefault: false } }));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't', readonly: true }), false);
+  assert.strictEqual(openAttach.calls[0].opts.readonly, true, 'client readonly:true on server RW -> read-only');
+  const ws2 = fakeWs(); const openAttach2 = fakePtyFactory();
+  bindWs(ws2, okDeps(openAttach2, { defaults: { readonlyDefault: false } }));
+  ws2.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't', readonly: false }), false);
+  assert.strictEqual(openAttach2.calls[0].opts.readonly, false, 'server RW + client false -> read-write (lecity)');
+});

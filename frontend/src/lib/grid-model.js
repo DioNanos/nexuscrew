@@ -3,6 +3,39 @@
 const MAX_TILES = 9;
 const MIN_W = 0.2;
 
+// --- Multi-node (B2, design §5): tile {session, node?} ----------------------
+// node = nome del nodo remoto (chiave strict di nodes.json, come il proxy B1);
+// assente -> sessione locale (retrocompatibilita' con i layout esistenti).
+// Identita' di un tile = refKey "node:session" (tmux vieta ':' nei nomi di
+// sessione e i nomi nodo sono ^[a-z0-9-]+$ -> nessuna collisione possibile).
+export const NODE_RE = /^[a-z0-9-]{1,32}$/;
+
+// ref: stringa ("sess" locale, "nodo:sess" remota) o oggetto {session, node?}.
+// -> {session, node?} normalizzato, o null su input invalido (fail-closed).
+export function parseRef(ref) {
+  if (typeof ref === 'string' && ref) {
+    const i = ref.indexOf(':');
+    if (i < 0) return { session: ref };
+    const node = ref.slice(0, i);
+    const session = ref.slice(i + 1);
+    if (!NODE_RE.test(node) || !session) return null;
+    return { session, node };
+  }
+  if (ref && typeof ref === 'object' && typeof ref.session === 'string' && ref.session) {
+    if (ref.node === undefined || ref.node === null || ref.node === '') return { session: ref.session };
+    if (typeof ref.node === 'string' && NODE_RE.test(ref.node)) return { session: ref.session, node: ref.node };
+    return null;
+  }
+  return null;
+}
+
+// refKey({session,node?}|string) -> chiave stabile del tile.
+export function refKey(ref) {
+  const r = parseRef(ref);
+  if (!r) return '';
+  return r.node ? `${r.node}:${r.session}` : r.session;
+}
+
 // Font per-tile (zoom nel grid): stessi bound dello zoom single-view.
 export const TILE_FONT_MIN = 9;
 export const TILE_FONT_MAX = 24;
@@ -15,17 +48,22 @@ const repairFont = (v) => {
 
 export function emptyLayout() { return { columns: [] }; }
 
+// Chiavi (refKey) di tutti i tile del layout. Per i layout solo-locali coincide
+// con i nomi sessione (comportamento storico invariato).
 export function sessions(layout) {
-  return layout.columns.flatMap((c) => c.tiles.map((t) => t.session));
+  return layout.columns.flatMap((c) => c.tiles.map((t) => refKey(t)));
 }
 
 const clone = (l) => ({ columns: l.columns.map((c) => ({ width: c.width, tiles: c.tiles.map((t) => ({ ...t })) })) });
 
-export function addTile(layout, session, drop, props) {
-  if (sessions(layout).includes(session)) return layout;
+export function addTile(layout, ref, drop, props) {
+  const r = parseRef(ref);
+  if (!r) return layout;
+  if (sessions(layout).includes(refKey(r))) return layout;
   if (sessions(layout).length >= MAX_TILES) return layout;
   const l = clone(layout);
-  const tile = { session, height: 1, fontSize: TILE_FONT_DEF, ...(props || {}) };
+  const tile = { session: r.session, height: 1, fontSize: TILE_FONT_DEF, ...(props || {}) };
+  if (r.node) tile.node = r.node;
   if (drop === 'end') { l.columns.push({ width: 1, tiles: [tile] }); return l; }
   if (drop && typeof drop.col === 'number' && typeof drop.row === 'number' && l.columns[drop.col]) {
     l.columns[drop.col].tiles.splice(drop.row, 0, tile); return l;
@@ -41,31 +79,35 @@ export function addTile(layout, session, drop, props) {
 // Crescita bilanciata "a griglia" per il click (niente colonne infinite):
 // n. colonne target = ceil(sqrt(n)); sotto target apre una colonna, altrimenti
 // impila nella colonna con meno tile. 1->[[a]] 2->side 3/4->2x2 5->3 colonne.
-export function addTileSmart(layout, session) {
-  if (sessions(layout).includes(session)) return layout;
+export function addTileSmart(layout, ref) {
+  const key = refKey(ref);
+  if (!key) return layout;
+  if (sessions(layout).includes(key)) return layout;
   if (sessions(layout).length >= MAX_TILES) return layout;
   const n = sessions(layout).length + 1;
   const targetCols = Math.ceil(Math.sqrt(n));
-  if (layout.columns.length < targetCols) return addTile(layout, session, 'end');
+  if (layout.columns.length < targetCols) return addTile(layout, ref, 'end');
   let best = 0;
   for (let i = 1; i < layout.columns.length; i += 1) {
     if (layout.columns[i].tiles.length < layout.columns[best].tiles.length) best = i;
   }
-  return addTile(layout, session, { col: best, row: layout.columns[best].tiles.length });
+  return addTile(layout, ref, { col: best, row: layout.columns[best].tiles.length });
 }
 
-export function removeTile(layout, session) {
+export function removeTile(layout, ref) {
+  const key = refKey(ref);
   const l = clone(layout);
-  for (const c of l.columns) c.tiles = c.tiles.filter((t) => t.session !== session);
+  for (const c of l.columns) c.tiles = c.tiles.filter((t) => refKey(t) !== key);
   l.columns = l.columns.filter((c) => c.tiles.length > 0);
   return l;
 }
 
-export function moveTile(layout, session, drop) {
-  if (!sessions(layout).includes(session)) return layout;
+export function moveTile(layout, ref, drop) {
+  const key = refKey(ref);
+  if (!sessions(layout).includes(key)) return layout;
   // Preserva le proprietà per-tile (fontSize) attraverso il remove+add.
-  const old = layout.columns.flatMap((c) => c.tiles).find((t) => t.session === session);
-  return addTile(removeTile(layout, session), session, drop, { fontSize: old.fontSize });
+  const old = layout.columns.flatMap((c) => c.tiles).find((t) => refKey(t) === key);
+  return addTile(removeTile(layout, key), key, drop, { fontSize: old.fontSize });
 }
 
 export function resizeColumn(layout, colIdx, width) {
@@ -118,16 +160,21 @@ export function equalize(layout) {
 // Preset: ridistribuisce le sessioni esistenti su 2 colonne bilanciate.
 function capped(list) { return list.slice(0, MAX_TILES); }
 
-// I preset ricostruiscono i tile: il fontSize per-tile va riportato a mano.
-function fontOf(layout, session) {
-  const t = layout.columns.flatMap((c) => c.tiles).find((x) => x.session === session);
-  return (t && t.fontSize) || TILE_FONT_DEF;
+// I preset ricostruiscono i tile: fontSize e node per-tile vanno riportati a mano.
+function tileByKey(layout, key) {
+  return layout.columns.flatMap((c) => c.tiles).find((x) => refKey(x) === key);
+}
+function rebuildTile(layout, key) {
+  const t = tileByKey(layout, key) || {};
+  const out = { session: t.session, height: 1, fontSize: t.fontSize || TILE_FONT_DEF };
+  if (t.node) out.node = t.node;
+  return out;
 }
 
 export function toGrid2x2(layout) {
   const ss = capped(sessions(layout));
   if (ss.length === 0) return emptyLayout();
-  const mk = (session) => ({ session, height: 1, fontSize: fontOf(layout, session) });
+  const mk = (key) => rebuildTile(layout, key);
   const firstN = Math.ceil(ss.length / 2);
   const left = ss.slice(0, firstN);
   const right = ss.slice(firstN);
@@ -138,7 +185,7 @@ export function toGrid2x2(layout) {
 
 // Preset: una colonna per sessione, pesi 1.
 export function toColumns(layout) {
-  return { columns: capped(sessions(layout)).map((session) => ({ width: 1, tiles: [{ session, height: 1, fontSize: fontOf(layout, session) }] })) };
+  return { columns: capped(sessions(layout)).map((key) => ({ width: 1, tiles: [rebuildTile(layout, key)] })) };
 }
 
 // Snap di una frazione ai divisori canonici 25/50/75% entro ±3%.
@@ -148,6 +195,9 @@ export function snapFraction(f) {
 }
 
 // Ripara input da localStorage: qualunque garbage → layout valido.
+// node: assente → tile locale (layout pre-B2 invariati); valido → conservato;
+// garbage → tile SCARTATO (fail-closed: mai reindirizzare l'input a una
+// sessione locale omonima).
 export function normalize(raw) {
   if (!raw || !Array.isArray(raw.columns)) return emptyLayout();
   const columns = raw.columns
@@ -155,12 +205,17 @@ export function normalize(raw) {
       width: Math.max(MIN_W, Number(c && c.width) || 1),
       tiles: (Array.isArray(c && c.tiles) ? c.tiles : [])
         .filter((t) => t && typeof t.session === 'string' && t.session)
-        .map((t) => ({ session: t.session, height: Math.max(MIN_W, Number(t.height) || 1), fontSize: repairFont(t.fontSize) })),
+        .filter((t) => t.node == null || (typeof t.node === 'string' && NODE_RE.test(t.node)))
+        .map((t) => {
+          const out = { session: t.session, height: Math.max(MIN_W, Number(t.height) || 1), fontSize: repairFont(t.fontSize) };
+          if (t.node != null) out.node = t.node;
+          return out;
+        }),
     }))
     .filter((c) => c.tiles.length > 0);
   const seen = new Set();
   for (const c of columns) {
-    c.tiles = c.tiles.filter((t) => !seen.has(t.session) && seen.add(t.session) && seen.size <= MAX_TILES);
+    c.tiles = c.tiles.filter((t) => !seen.has(refKey(t)) && seen.add(refKey(t)) && seen.size <= MAX_TILES);
   }
   return { columns: columns.filter((c) => c.tiles.length > 0) };
 }

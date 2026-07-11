@@ -1,0 +1,120 @@
+/* SettingsPanel — pannello a schede (toni PowerSheet/SessionList, verde terminale).
+   Desktop: overlay centrato; mobile (<1024px): full-screen. */
+.nc-set-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(0, 0, 0, .55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; box-sizing: border-box;
+}
+.nc-set-panel {
+  width: 100%; max-width: 560px; max-height: 90vh;
+  background: #0e140e; color: #cfe;
+  border: 1px solid #243; border-radius: 14px;
+  padding: 16px; display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+  overflow: hidden;
+}
+@media (max-width: 1023px) {
+  .nc-set-overlay { padding: 0; }
+  .nc-set-panel { max-width: none; max-height: none; height: 100%; border-radius: 0; border: none; }
+}
+
+.nc-set-head { display: flex; align-items: center; gap: 8px; }
+.nc-set-head b { font-size: 16px; color: #d8ffe8; flex: 1; }
+.nc-set-close { background: none; border: none; color: #9fd; cursor: pointer; padding: 4px; }
+
+.nc-set-readonly {
+  font-size: 12px; color: #e0b020;
+  border: 1px solid #4a3a10; border-radius: 8px; padding: 8px 10px;
+  background: #171307;
+}
+
+.nc-set-tabs { display: flex; gap: 6px; border-bottom: 1px solid #1c241c; padding-bottom: 8px; }
+.nc-set-tabbtn {
+  background: none; border: 1px solid #1c241c; border-radius: 8px;
+  color: #9fd; font-size: 12px; padding: 6px 12px; cursor: pointer;
+  text-transform: uppercase; letter-spacing: .5px;
+}
+.nc-set-tabbtn.on { border-color: #2e7d32; background: #14200f; color: #d8ffe8; }
+
+.nc-set-body { overflow-y: auto; flex: 1; min-height: 120px; }
+.nc-set-tab { display: flex; flex-direction: column; gap: 12px; }
+
+.nc-set-tab .nc-check span { display: flex; flex-direction: column; gap: 2px; }
+.nc-set-tab .nc-check small { opacity: .6; font-size: 11px; }
+
+.nc-set-info { font-size: 12px; opacity: .7; line-height: 1.6; }
+.nc-set-note { font-size: 12px; color: #9fd; }
+.nc-set-hint { font-size: 11px; opacity: .7; }
+
+.nc-set-form { display: flex; flex-direction: column; gap: 8px; }
+.nc-set-form input {
+  padding: 9px 10px; font: 14px/1.2 inherit;
+  background: #0a0e0a; color: #cfe;
+  border: 1px solid #243; border-radius: 8px;
+}
+.nc-set-form input:focus { outline: none; border-color: #2e7d32; }
+.nc-set-form input:disabled { opacity: .5; }
+.nc-set-form textarea, .nc-set-form select {
+  padding: 9px 10px; font: 13px/1.3 inherit; background: #0a0e0a; color: #cfe;
+  border: 1px solid #243; border-radius: 8px; min-height: 36px;
+}
+.nc-set-form textarea { min-height: 72px; resize: vertical; }
+.nc-fleet-editor { gap: 10px; }
+.nc-fleet-section-head, .nc-fleet-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.nc-fleet-section-head { margin-top: 4px; border-bottom: 1px solid #243; padding-bottom: 6px; }
+.nc-fleet-item { border: 1px solid #1c241c; border-radius: 8px; padding: 8px; }
+.nc-fleet-item > span { display: flex; gap: 6px; align-items: center; }
+.nc-fleet-item > span:first-child { flex-direction: column; align-items: flex-start; min-width: 0; }
+.nc-fleet-item small { opacity: .6; overflow-wrap: anywhere; }
+.nc-fleet-form { border: 1px solid #2e7d32; border-radius: 10px; padding: 10px; }
+.nc-fleet-pair, .nc-fleet-env { display: flex; gap: 6px; }
+.nc-fleet-pair input, .nc-fleet-env input { flex: 1; min-width: 0; }
+
+.nc-set-node {
+  border: 1px solid #1c241c; border-radius: 10px; padding: 10px;
+  display: flex; flex-direction: column; gap: 8px; background: #0a0e0a;
+}
+.nc-set-node-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nc-set-node-head b { color: #d8ffe8; }
+.nc-set-node-head small { opacity: .6; font-size: 11px; }
+.nc-set-tunnel { margin-left: auto; font-size: 11px; color: #f88; }
+.nc-set-tunnel.up { color: #6c6; }
+.nc-set-node-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.nc-set-node-actions .nc-btn { padding: 5px 10px; font-size: 12px; }
+.nc-set-test { font-size: 11px; }
+.nc-set-test.ok { color: #6c6; }
+.nc-set-test.ko { color: #f88; }
+
+.nc-set-copyline {
+  display: flex; gap: 8px; align-items: center;
+}
+.nc-set-copyline code {
+  flex: 1; font-size: 10px; word-break: break-all; user-select: all;
+  background: #0a0e0a; border: 1px solid #1c241c; border-radius: 6px; padding: 6px;
+  max-height: 72px; overflow-y: auto;
+}
+.nc-set-akeys { display: flex; flex-direction: column; gap: 6px; }
+
+.nc-set-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.nc-set-confirm {
+  border: 1px solid #4a3a10; border-radius: 10px; padding: 10px;
+  background: #171307; font-size: 12px; color: #e8d8a0;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+/* riuso vocabolario bottoni/check (definiti anche in PowerSheet.css: qui replicati
+   per rendere il pannello self-contained anche senza altri componenti montati) */
+.nc-set-panel .nc-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; cursor: pointer; }
+.nc-set-panel .nc-check input { accent-color: #2e7d32; margin-top: 2px; }
+.nc-set-panel .nc-btn { border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+.nc-set-panel .nc-btn.ghost { background: none; border: 1px solid #243; color: #9fd; }
+.nc-set-panel .nc-btn.primary { background: #2e7d32; color: #fff; }
+.nc-set-panel .nc-btn.danger { background: none; border: 1px solid #532; color: #f88; }
+.nc-set-panel .nc-btn:disabled { opacity: .5; cursor: default; }
+.nc-set-panel .nc-sheet-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.nc-set-panel .nc-sheet-label { font-size: 12px; opacity: .7; text-transform: uppercase; letter-spacing: .5px; }
+.nc-set-panel .nc-err { color: #f88; font-size: 12px; }
+.nc-set-panel .nc-empty { opacity: .5; font-size: 12px; }
+.nc-set-panel .nc-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; display: inline-block; flex: 0 0 8px; }
+.nc-set-panel .nc-dot.on { background: #2e7d32; }

@@ -37,7 +37,7 @@ function makeWorld(over = {}) {
       ...(over.promptMode === 'send-keys' ? {} : { promptFlag: '--append-system-prompt' }),
     }],
     cells: [{
-      id: 'Dev', cwd, engine: 'claude', boot: true,
+      id: 'Dev', tmuxSession: 'work-build', cwd, engine: 'claude', boot: true,
       ...(over.cellModel !== undefined ? { model: over.cellModel } : {}),
       ...(over.cellPrompt !== undefined ? { prompt: over.cellPrompt } : { prompt: 'you are a dev agent' }),
     }],
@@ -126,10 +126,10 @@ test('composeLaunchArgv flag: command+args+env(-e)+model+promptFlag, no shell', 
       model: { flag: '--model', value: 'sonnet' },
       promptMode: 'flag', promptFlag: '--append-system-prompt',
     };
-    const argv = composeLaunchArgv({ tmuxSession: 'cloud-Dev', realCwd: w.cwd, engine, cell: { model: 'opus', prompt: 'p1' } });
+    const argv = composeLaunchArgv({ tmuxSession: 'work-build', realCwd: w.cwd, engine, cell: { model: 'opus', prompt: 'p1' } });
     assert.equal(argv[0], 'new-session');
     assert.equal(argv[1], '-d');
-    assert.deepEqual([argv[2], argv[3]], ['-s', 'cloud-Dev']);
+    assert.deepEqual([argv[2], argv[3]], ['-s', 'work-build']);
     assert.deepEqual([argv[4], argv[5]], ['-c', w.cwd]);
     // engine.env via -e (chiave validata, NON in env del processo)
     const eIdx = argv.indexOf('-e');
@@ -291,7 +291,7 @@ test('READONLY (cfg): up/mutazioni 403; status/schema/capabilities ok', async ()
     // letture pure passano
     const st = await fleet.status();
     assert.equal(st.available, true);
-    assert.equal(fleet.capabilities().length, 10);
+    assert.equal(fleet.capabilities().length, 11);
     assert.ok(fleet.schema().engine.command);
   } finally { w.cleanup(); }
 });
@@ -354,13 +354,97 @@ test('engine()/boot(): persistono su fleet.json', async () => {
   try {
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await fleet.defineEngine({ id: 'glm', command: w.command, promptMode: 'send-keys' });
+    await fleet.engine('Dev', 'glm', { model: 'model-one' });
+    await fleet.engine('Dev', 'claude');
+    assert.equal(fleet.definitions().cells[0].model, undefined, 'nessun modello glm trascinato su claude');
     await fleet.engine('Dev', 'glm');
     await fleet.boot('Dev', false);
     const st = await fleet.status();
     assert.equal(st.cells.find((c) => c.cell === 'Dev').engine, 'glm');
+    assert.equal(st.cells.find((c) => c.cell === 'Dev').model, 'model-one', 'ultimo modello glm ripristinato');
+    assert.equal(st.cells.find((c) => c.cell === 'Dev').models.glm, 'model-one');
     assert.equal(st.cells.find((c) => c.cell === 'Dev').boot, false);
     // engine non valido -> 400
     await assert.rejects(() => fleet.engine('Dev', 'zzz'), (e) => e.status === 400);
+  } finally { w.cleanup(); }
+});
+
+test('managed codex-vl.native: launcher interno, login nativo, fake tmux', async () => {
+  const w = makeWorld({ cellPrompt: 'bootstrap managed' });
+  try {
+    const bin = path.join(w.home, '.local', 'bin', 'codex-vl');
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n'); fs.chmodSync(bin, 0o755);
+    atomicWrite(w.defsPath, {
+      schemaVersion: 1,
+      engines: [{ id: 'codex-vl.native', label: 'Codex-VL · Native', managed: { client: 'codex-vl', provider: 'native', model: '' } }],
+      cells: [{ id: 'Dev', cwd: w.cwd, engine: 'codex-vl.native', prompt: 'bootstrap managed' }],
+    });
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, sendKeysReadyMs: 0 });
+    const view = fleet.definitions();
+    assert.equal(view.engines[0].managedInfo.configured, true);
+    assert.equal(view.engines[0].managedInfo.provider, 'native');
+    assert.ok(view.managedCatalog.some((p) => p.id === 'claude.zai-a'));
+    await fleet.up('Dev');
+    const argv = readLog(w).nsArgv[0];
+    assert.ok(argv.includes(bin));
+    assert.ok(argv.includes('--dangerously-bypass-approvals-and-sandbox'));
+    assert.ok(argv.includes('bootstrap managed'));
+    assert.equal(argv.some((x) => /zai|ollama/i.test(x)), false);
+    assert.equal(readLog(w).lines.some((x) => x.startsWith('load-buffer')), false);
+  } finally { w.cleanup(); }
+});
+
+test('editCell engine ripristina il proprio modello e non trascina quello precedente', async () => {
+  const w = makeWorld();
+  try {
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    await fleet.defineEngine({ id: 'glm', command: w.command, model: { flag: '--model', value: 'default' }, promptMode: 'send-keys' });
+    await fleet.engine('Dev', 'glm', { model: 'glm-last' });
+    await fleet.editCell('Dev', { engine: 'claude' });
+    assert.equal(fleet.definitions().cells[0].model, undefined);
+    await fleet.editCell('Dev', { engine: 'glm' });
+    assert.equal(fleet.definitions().cells[0].model, 'glm-last');
+  } finally { w.cleanup(); }
+});
+
+test('removeEngine elimina anche i modelli ricordati dalle celle', async () => {
+  const w = makeWorld();
+  try {
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    await fleet.defineEngine({ id: 'glm', command: w.command, promptMode: 'send-keys' });
+    await fleet.engine('Dev', 'glm', { model: 'remember-me' });
+    await fleet.engine('Dev', 'claude');
+    await fleet.removeEngine('glm');
+    const cell = fleet.definitions().cells[0];
+    assert.equal(cell.models, undefined);
+    assert.ok(!fleet.definitions().engines.some((e) => e.id === 'glm'));
+  } finally { w.cleanup(); }
+});
+
+test('definitions redatte + envChanges write-only', async () => {
+  const w = makeWorld();
+  try {
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const view = fleet.definitions();
+    assert.deepEqual(view.engines[0].envKeys, ['ANTHROPIC_API_KEY']);
+    assert.equal(view.engines[0].env, undefined);
+    await fleet.editEngine('claude', { label: 'Claude++' }, { set: { NEW_TOKEN: 'secret-2' }, remove: ['ANTHROPIC_API_KEY'] });
+    const disk = require('../lib/fleet/definitions.js').loadDefinitions(w.defsPath);
+    assert.deepEqual(disk.engines[0].env, { NEW_TOKEN: 'secret-2' });
+    assert.equal(fleet.definitions().engines[0].env, undefined);
+  } finally { w.cleanup(); }
+});
+
+test('removeCell attiva richiede stop esplicito', async () => {
+  const w = makeWorld();
+  try {
+    fs.writeFileSync(w.sessions, 'work-build\n');
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    await assert.rejects(() => fleet.removeCell('Dev'), (e) => e.status === 409);
+    await fleet.removeCell('Dev', { stop: true });
+    assert.equal(fleet.definitions().cells.length, 0);
+    assert.ok(readLog(w).lines.some((x) => x.startsWith('kill-session')));
   } finally { w.cleanup(); }
 });
 
@@ -372,7 +456,7 @@ test('capabilities e schema: superficie estesa del built-in', async () => {
   try {
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     assert.deepEqual(fleet.capabilities(),
-      ['status', 'up', 'down', 'restart', 'engine', 'boot', 'define', 'edit', 'remove', 'schema']);
+      ['status', 'up', 'down', 'restart', 'engine', 'boot', 'define', 'edit', 'remove', 'schema', 'definitions']);
     const sch = fleet.schema();
     assert.equal(sch.schemaVersion, 1);
     for (const f of ['id', 'label', 'rc', 'command', 'args', 'env', 'model', 'promptMode', 'promptFlag']) {
@@ -389,7 +473,7 @@ test('capabilities e schema: superficie estesa del built-in', async () => {
 test('status: cells/engines da definitions; isCellSession; provider/reason', async () => {
   const w = makeWorld();
   try {
-    fs.writeFileSync(w.sessions, 'cloud-Dev\n'); // Dev attiva in tmux
+    fs.writeFileSync(w.sessions, 'work-build\n'); // cella attiva in tmux
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     const st = await fleet.status();
     assert.equal(st.provider, 'builtin');
@@ -399,9 +483,9 @@ test('status: cells/engines da definitions; isCellSession; provider/reason', asy
     assert.equal(dev.active, true);
     assert.equal(dev.tmux, true);
     assert.equal(dev.degraded, false);
-    assert.equal(dev.tmuxSession, 'cloud-Dev');
+    assert.equal(dev.tmuxSession, 'work-build');
     assert.equal(st.engines[0].id, 'claude');
-    assert.equal(fleet.isCellSession('cloud-Dev'), true);
+    assert.equal(fleet.isCellSession('work-build'), true);
     assert.equal(fleet.isCellSession('worker-1'), false);
   } finally { w.cleanup(); }
 });

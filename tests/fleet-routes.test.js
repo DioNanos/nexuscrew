@@ -7,6 +7,7 @@ const path = require('node:path');
 const { createServer } = require('../lib/server.js');
 
 const FAKE = path.join(__dirname, 'fixtures', 'fake-fleet.sh');
+const FAKE_TMUX = path.join(__dirname, 'fixtures', 'fake-tmux.sh');
 
 // fleet.json valido minimale per i test del provider BUILTIN. NON serve che il
 // command sia realmente lanciato: i test delle route define/edit/schema/501 non
@@ -23,8 +24,9 @@ const BUILTIN_DEFS = {
 
 function boot(t, over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncflr-'));
+  process.env.FAKE_TMUX_LOG = path.join(dir, 'tmux.log');
   const { server, token, watcher } = createServer({
-    tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'), ...over,
+    home: dir, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'), tmuxBin: FAKE_TMUX, ...over,
   });
   return new Promise((res) => server.listen(0, '127.0.0.1', () => {
     t.after(() => { server.close(); if (watcher) watcher.close(); fs.rmSync(dir, { recursive: true, force: true }); });
@@ -58,7 +60,7 @@ test('fleet unavailable: status {available:false} + provider/caps, comandi 404',
 });
 
 test('fleet available: status celle, up ok, cella ignota 400, Bearer richiesto', async (t) => {
-  const { base, token } = await boot(t, { fleetBin: FAKE });
+  const { base, token } = await boot(t, { fleetBin: FAKE, fleetProvider: 'external' });
   assert.equal((await fetch(`${base}/api/fleet/status`)).status, 401);
   const st = await (await fetch(`${base}/api/fleet/status`, { headers: H(token) })).json();
   assert.equal(st.available, true);
@@ -68,7 +70,7 @@ test('fleet available: status celle, up ok, cella ignota 400, Bearer richiesto',
   assert.equal(st.bootOwner, 'external');
   assert.equal(st.capabilities.includes('status'), true);
   assert.equal(st.capabilities.includes('schema'), false);
-  const up = await fetch(`${base}/api/fleet/up`, { method: 'POST', headers: H(token), body: JSON.stringify({ cell: 'Dev', engine: 'glm-a', boot: true }) });
+  const up = await fetch(`${base}/api/fleet/up`, { method: 'POST', headers: H(token), body: JSON.stringify({ cell: 'Build', engine: 'glm-a', boot: true }) });
   assert.deepEqual(await up.json(), { ok: true });
   const bad = await fetch(`${base}/api/fleet/up`, { method: 'POST', headers: H(token), body: JSON.stringify({ cell: 'Nope' }) });
   assert.equal(bad.status, 400);
@@ -95,6 +97,17 @@ test('builtin: /schema 200 con caps', async (t) => {
   assert.equal(sc.schemaVersion, 1);
   assert.ok(sc.caps && typeof sc.caps === 'object');
   assert.ok(sc.engine && sc.cell);
+});
+
+test('builtin: /definitions espone campi editabili ma non env values', async (t) => {
+  const { base, token } = await bootBuiltin(t);
+  const r = await fetch(`${base}/api/fleet/definitions`, { headers: H(token) });
+  assert.equal(r.status, 200);
+  const d = await r.json();
+  assert.equal(d.engines[0].command, '/bin/sh');
+  assert.deepEqual(d.engines[0].envKeys, []);
+  assert.equal(d.engines[0].env, undefined);
+  assert.equal(d.cells[0].id, 'Dev');
 });
 
 test('builtin: /define-engine valido 200 e persiste (rileggo /status engines)', async (t) => {
@@ -136,7 +149,7 @@ test('builtin: define/edit/remove cell+engine funzionano (copertura nuove route)
 });
 
 test('external legacy: /schema -> 501 (capability mancante, design 9c)', async (t) => {
-  const { base, token } = await boot(t, { fleetBin: FAKE });
+  const { base, token } = await boot(t, { fleetBin: FAKE, fleetProvider: 'external' });
   const r = await fetch(`${base}/api/fleet/schema`, { headers: H(token) });
   assert.equal(r.status, 501);
   assert.match((await r.json()).error, /not supported/);
@@ -144,7 +157,7 @@ test('external legacy: /schema -> 501 (capability mancante, design 9c)', async (
 
 test('restart: provider legacy senza capability restart -> 501', async (t) => {
   // DEFAULT_CAPS non include 'restart' (solo il built-in lo espone): route -> 501.
-  const { base, token } = await boot(t, { fleetBin: FAKE });
+  const { base, token } = await boot(t, { fleetBin: FAKE, fleetProvider: 'external' });
   const r = await fetch(`${base}/api/fleet/restart`, {
     method: 'POST', headers: H(token), body: JSON.stringify({ cell: 'Dev' }),
   });

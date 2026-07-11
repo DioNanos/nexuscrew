@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import GridTile from './GridTile.jsx';
 import {
   addTile, moveTile, removeTile, sessions, resizeColumn, resizeTile,
-  dropForQuadrant, snapFraction, zoomTile,
+  dropForQuadrant, snapFraction, zoomTile, refKey,
 } from '../lib/grid-model.js';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
@@ -24,7 +24,8 @@ function quadrantOf(x, y, r) {
 // DnD nativo: drop su un tile -> split {col,row}; drop su gap/area vuota ->
 // nuova colonna {col}. Divisori pointer ridimensionano i pesi (live).
 export default function GridView({
-  layout, onLayoutChange, token, sessionsAlive, focusSession, onFocus, onOpenSingle,
+  layout, onLayoutChange, token, readonly = false, sessionsAlive, focusSession, onFocus, onOpenSingle,
+  decks = [], currentDeck, onSendToDeck,
 }) {
   useLang();                                         // re-render allo switch lingua
   const [drag, setDrag] = useState(null);            // {col} | {col,row,quadrant}
@@ -147,9 +148,10 @@ export default function GridView({
           >
             {col.tiles.flatMap((tile, ri) => {
               const tnodes = [];
+              const key = refKey(tile);
               tnodes.push(
                 <div
-                  key={tile.session}
+                  key={key}
                   className={`nc-tile-slot${dropClass(ci, ri)}`}
                   style={{ flexGrow: tile.height, flexBasis: 0 }}
                   onDragOver={(e) => {
@@ -159,12 +161,13 @@ export default function GridView({
                   }}
                 >
                   <GridTile
-                    session={tile.session} token={token}
-                    focused={focusSession === tile.session}
+                    session={tile.session} node={tile.node} token={token} readonly={readonly}
+                    focused={focusSession === key}
                     onFocus={onFocus} onClose={closeTile} onOpenSingle={onOpenSingle}
-                    alive={!sessionsAlive || sessionsAlive.has(tile.session)}
+                    alive={!sessionsAlive || sessionsAlive.has(key)}
                     fontSize={tile.fontSize}
                     onZoom={(delta) => onLayoutChange(zoomTile(layout, ci, ri, delta))}
+                    decks={decks} currentDeck={currentDeck} onSendToDeck={onSendToDeck}
                   />
                 </div>,
               );

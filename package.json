@@ -1,6 +1,6 @@
 {
   "name": "@mmmbuto/nexuscrew",
-  "version": "0.7.7",
+  "version": "0.8.0",
   "description": "Faithful browser tmux client — attach to live sessions over a real PTY, localhost-only, mobile-easy",
   "main": "lib/server.js",
   "bin": {
@@ -9,6 +9,7 @@
   "files": [
     "bin/",
     "lib/",
+    "skills/",
     "frontend/dist/",
     "frontend/index.html",
     "LICENSE",
@@ -25,9 +26,14 @@
     "@mmmbuto/pty-termux-utils": "^1.1.4",
     "express": "^4.21.0",
     "multer": "^2.2.0",
+    "qrcode-terminal": "^0.12.0",
+    "web-push": "^3.6.7",
     "ws": "^8.18.0"
   },
   "optionalDependencies": {
+    "@lydell/node-pty-darwin-arm64": "^1.2.0-beta.14",
+    "@lydell/node-pty-darwin-x64": "^1.2.0-beta.14",
+    "@lydell/node-pty-linux-arm64": "^1.2.0-beta.12",
     "@lydell/node-pty-linux-x64": "^1.2.0-beta.12",
     "node-pty": "^1.1.0"
   },
@@ -55,7 +61,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/DioNanos/nexuscrew"
+    "url": "git+https://github.com/DioNanos/nexuscrew.git"
   },
   "author": "DioNanos",
   "license": "Apache-2.0",

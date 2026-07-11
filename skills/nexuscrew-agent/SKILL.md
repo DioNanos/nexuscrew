@@ -1,11 +1,34 @@
 ---
 name: nexuscrew-agent
-description: Use when an AI agent in a NexusCrew tmux session must hand a file to the human (report, screenshot, export) or send text/input to a tmux session, or when a tmux send-keys message is ignored, sits unsubmitted in the composer, or a pasted prompt arrives garbled.
+description: Use when an AI agent connected to NexusCrew must notify or ask the human, inspect NexusCrew session/fleet status, read its inbox, deliver a file (report, screenshot, export), send text/input to a tmux session, or recover from tmux send-keys messages that remain unsubmitted or arrive garbled. Prefer the NexusCrew MCP tools nc_notify, nc_ask, nc_status, nc_inbox, and nc_send_file when exposed; use the bundled tmux/file helpers as fallback.
 ---
 
 # NexusCrew Agent I/O
 
-Two things an agent does inside [NexusCrew](https://github.com/DioNanos/nexuscrew): **hand files to the human** and **send input to a tmux session**. Both have a reliable way and a way that silently fails.
+Use the [NexusCrew](https://github.com/DioNanos/nexuscrew) MCP bridge for communication with the human and read-only runtime status. Use the bundled helpers for direct tmux messaging or as a compatibility fallback.
+
+## MCP bridge (preferred)
+
+When the client exposes the NexusCrew MCP server, use these tools directly:
+
+| Goal | MCP tool |
+|---|---|
+| Notify the human about a result, blocker, or milestone | `nc_notify` |
+| Ask for a decision without blocking the agent | `nc_ask` |
+| Inspect live tmux sessions and fleet cells | `nc_status` |
+| List files received for the current session | `nc_inbox` |
+| Deliver an absolute file path under the user's home | `nc_send_file` |
+
+Apply these rules:
+
+- Use `nc_notify` for meaningful asynchronous updates, failures requiring attention, and completion. Do not notify for every command or duplicate routine chat commentary.
+- Never include access tokens, credentials, private keys, push subscriptions, or other secrets in a notification, ask, file caption, or tool result.
+- Treat `nc_ask` as non-blocking: it returns an ask ID immediately. Continue safe independent work or wait normally; the human response arrives in the originating tmux session with a `[human reply · ask#<id>]` prefix by default.
+- Use `nc_status` instead of scraping NexusCrew state files. Use `nc_inbox` instead of guessing an inbox path when the tool is available.
+- Pass `nc_send_file` an existing absolute regular-file path below the user's home. Let NexusCrew choose and sanitize the outbox name.
+- Do not treat an MCP notification as a substitute for the final response required by the active client.
+
+The MCP server is the stdio command `nexuscrew mcp` and must be registered in the host AI client. If the `nc_*` tools are not exposed, report that the bridge is not configured in that session and use the fallback flows below where applicable.
 
 ## File exchange (inbox / outbox)
 
@@ -14,7 +37,7 @@ Per session, NexusCrew watches `<root>/<session>/{inbox,outbox}` (root = `$NEXUS
 - **outbox** — files you write here surface in the browser UI with a badge. This is how you deliver a deliverable.
 - **inbox** — files the human sends arrive here. The path reaches you in your prompt either way, but through two different human-side flows: the files-panel upload pastes the bare path straight into your PTY, while the composer **attach button** (paperclip, v0.7.7+) puts the path inside the human's typed message — expect paths mixed with instructions, not always a bare path on its own line. Read the files from the inbox; never overwrite, treat as read-only input.
 
-Deliver with the helper (resolves the current tmux session, timestamps, never overwrites):
+When `nc_send_file` is unavailable, deliver with the helper (resolves the current tmux session, timestamps, never overwrites):
 
 ```bash
 bin/nc-deliver report.pdf chart.png      # → ~/NexusFiles/<session>/outbox/
@@ -42,8 +65,11 @@ tmux capture-pane -t <session> -p | tail -8   # see the text / a running state
 
 | Goal | Do this |
 |---|---|
-| Give the human a file | `nc-deliver <file>...` |
-| Read a file the human sent | look in `<root>/<session>/inbox/` (path is in your prompt) |
+| Notify the human | `nc_notify` |
+| Ask the human without blocking | `nc_ask` |
+| Inspect NexusCrew runtime state | `nc_status` |
+| Give the human a file | `nc_send_file` or fallback `nc-deliver <file>...` |
+| Read a file the human sent | `nc_inbox` or fallback to the path in the prompt |
 | Send a prompt/command to a session | `nc-send <session> "text"` |
 | Queue text without running it | `nc-send <session> --no-submit "text"` |
 | Confirm a send worked | `tmux capture-pane -t <session> -p | tail` |

@@ -36,26 +36,26 @@ test('status: celle con degraded calcolato + cache', async () => {
   assert.equal(fleet.available, true);
   const st = await fleet.status();
   const by = Object.fromEntries(st.cells.map((c) => [c.cell, c]));
-  assert.equal(by.Dev.degraded, false);            // active+tmux
-  assert.equal(by.Trading.degraded, false);        // inactive+no tmux
-  assert.equal(by.SysAdmin.degraded, true);        // active MA tmux morto
-  assert.equal(fleet.isCellSession('cloud-Dev'), true);
+  assert.equal(by.Build.degraded, false);          // active+tmux
+  assert.equal(by.Review.degraded, false);         // inactive+no tmux
+  assert.equal(by.Ops.degraded, true);             // active MA tmux morto
+  assert.equal(fleet.isCellSession('work-build'), true);
   assert.equal(fleet.isCellSession('worker-1'), false);
 });
 
 test('comandi: passthrough argomenti + validazioni', async () => {
   const fleet = await createFleet(cfg());
-  await fleet.up('Dev', { engine: 'glm-a', boot: true });   // ok
-  await fleet.down('Dev', {});                              // ok
-  await fleet.engine('Dev', 'native');                      // ok
-  await fleet.boot('Dev', false);                           // ok
+  await fleet.up('Build', { engine: 'glm-a', boot: true }); // ok
+  await fleet.down('Build', {});                            // ok
+  await fleet.engine('Build', 'native');                    // ok
+  await fleet.boot('Build', false);                         // ok
   await assert.rejects(() => fleet.up('NotACell', {}), (e) => e.status === 400);
-  await assert.rejects(() => fleet.engine('Dev', 'rm -rf'), (e) => e.status === 400);
+  await assert.rejects(() => fleet.engine('Build', 'rm -rf'), (e) => e.status === 400);
 });
 
 test('engines dal contratto: dichiarati, fallback derivato, malformati fail-closed', async () => {
   const { parseStatus } = require('../lib/fleet/index.js');
-  const cell = { cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'zorp', active: true, boot: true, tmux: true, rc: '', key: '' };
+  const cell = { cell: 'Build', tmuxSession: 'work-build', engine: 'zorp', active: true, boot: true, tmux: true, rc: '', key: '' };
   const base = { schemaVersion: 1, kind: 'ai-fleet', cells: [cell] };
   // dichiarati: stringhe e oggetti {id,label,rc}; label default = id; rc default solo per 'native'
   const withEngines = parseStatus(JSON.stringify({ ...base, engines: ['native', { id: 'zorp', label: 'Zorp 9000' }, { id: 'x1', rc: true }] }));

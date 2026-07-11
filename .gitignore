@@ -7,3 +7,7 @@ frontend/node_modules/
 .env.*
 !.env.example
 mmmbuto-nexuscrew-*.tgz
+# Internal design/audit material is never part of the public repository tree.
+docs/superpowers/
+docs/CURRENT_STATE.md
+test-report/

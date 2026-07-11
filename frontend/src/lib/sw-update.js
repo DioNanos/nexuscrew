@@ -1,6 +1,6 @@
 // Rilevamento "nuova versione" basato sul ciclo di vita del Service Worker.
 //
-// main.jsx chiama registerSW(); UpdatePrompt.jsx legge isUpdateNeeded()/subscribe
+// main.jsx chiama registerSW(); UpdatePrompt.jsx legge getUpdateState()/subscribe
 // e, al click, chiama applyUpdate(). Modulo puro: sicuro dove 'serviceWorker' non
 // esiste (test node, SSR) — non registra nulla e non accede a navigator/window.
 //
@@ -17,6 +17,8 @@ const EVT = 'nc-sw-update';
 
 let registration = null;
 let needRefresh = false;
+let serverIssue = null;
+let snapshot = Object.freeze({ needed: false, kind: null, version: '' });
 // Vero solo dopo applyUpdate(): evita un reload spurio al primo claim del SW.
 let reloadOnControllerChange = false;
 
@@ -24,8 +26,13 @@ function dispatch() {
   if (typeof window !== 'undefined') window.dispatchEvent(new Event(EVT));
 }
 
-export function isUpdateNeeded() {
-  return needRefresh;
+function rebuildSnapshot() {
+  const next = serverIssue || (needRefresh ? { kind: 'reload', version: '' } : null);
+  snapshot = Object.freeze({ needed: !!next, kind: next?.kind || null, version: next?.version || '' });
+}
+
+export function getUpdateState() {
+  return snapshot;
 }
 
 export function subscribeUpdate(cb) {
@@ -37,7 +44,17 @@ export function subscribeUpdate(cb) {
 function setNeedRefresh(v) {
   if (needRefresh === v) return;
   needRefresh = v;
+  rebuildSnapshot();
   dispatch();
+}
+
+export function reportServerVersions(serverVersion, uiVersion, browserVersion) {
+  let next = null;
+  if (serverVersion && uiVersion && serverVersion !== uiVersion) next = { kind: 'install', version: serverVersion };
+  else if (uiVersion && browserVersion && uiVersion !== browserVersion) next = { kind: 'reload', version: uiVersion };
+  const same = JSON.stringify(next) === JSON.stringify(serverIssue);
+  serverIssue = next; rebuildSnapshot();
+  if (!same) dispatch();
 }
 
 function watchInstallingWorker(worker) {
@@ -77,6 +94,7 @@ export function registerSW() {
 
 export function applyUpdate() {
   reloadOnControllerChange = true;
+  setNeedRefresh(false);
   const waiting = registration && registration.waiting;
   if (waiting) {
     // SW in stato waiting: ordiniamo l'attivazione; il controllerchange

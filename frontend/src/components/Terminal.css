@@ -1,4 +1,5 @@
-.nc-terminal { position: absolute; inset: 0; padding: 4px; background: #0a0e0a; }
+.nc-terminal { position: absolute; inset: 0; background: #0a0e0a; }
+.nc-terminal-host { position: absolute; inset: 0; padding: 4px; }
 .nc-terminal .xterm { height: 100%; }
 
 /* Il browser NON deve mai avviare il pan nativo sul terminale: al primo
@@ -6,4 +7,12 @@
    vince il viewport locale di xterm (che scorre il buffer sbagliato).
    Con touch-action:none ogni gesto arriva ai nostri handler, che lo
    traducono in copy-mode tmux (la cronologia vera). */
-.nc-terminal, .nc-terminal .xterm, .nc-terminal .xterm-viewport { touch-action: none; }
+.nc-terminal-host, .nc-terminal .xterm, .nc-terminal .xterm-viewport { touch-action: none; }
+.nc-terminal.selecting { box-shadow: inset 0 0 0 2px #d6a600; }
+.nc-selection-tools {
+  position: absolute; z-index: 9; right: 10px; top: 10px; display: flex; gap: 6px; align-items: center;
+  background: rgba(14, 20, 14, .94); border: 1px solid #586b2a; border-radius: 8px; padding: 5px 7px;
+  color: #edda8a; font-size: 11px;
+}
+.nc-selection-tools button { background: #172417; border: 1px solid #486044; color: #d8ffe8; border-radius: 6px; padding: 5px 9px; }
+.nc-selection-tools textarea { width: 180px; height: 48px; background: #071007; color: #d8ffe8; }

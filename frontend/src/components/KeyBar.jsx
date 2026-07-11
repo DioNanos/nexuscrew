@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import './KeyBar.css';
-// Layout stile Termux extra-keys (richiesta DAG 2026-07-09): due righe piatte,
+// Layout stile Termux extra-keys: due righe piatte,
 // tasti uniformi senza bordi. Le azioni NexusCrew (window/pane/scroll/detach)
 // vivono nel menu ☰. send(seq): byte grezzi nel pty. action(name): comando
 // tmux server-side (la nav NON si emula con prefix key client-side).
@@ -11,7 +11,7 @@ const NAV = [
   { label: 'PGUP', seq: ESC + '[5~' }, { label: 'PGDN', seq: ESC + '[6~' },
 ];
 
-export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyboard }) {
+export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyboard, selectionMode = false, onSelectionMode }) {
   const [copy, setCopy] = useState(false);
   const [menu, setMenu] = useState(false);
   const [altArmed, setAltArmed] = useState(false);
@@ -45,6 +45,7 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
           {Ba('⬅PANE', 'pane-left')}
           {Ba('PANE➡', 'pane-right')}
           {Bk('SCROLL', PREFIX + '[', () => { setCopy(true); setMenu(false); })}
+          <button className={selectionMode ? 'armed' : ''} onMouseDown={(e) => { e.preventDefault(); onSelectionMode?.(!selectionMode); setMenu(false); }}>SELECT</button>
           {Bk('⌃C', '\x03', () => setMenu(false))}
           {Bk('DETACH', PREFIX + 'd', () => setMenu(false))}
         </div>

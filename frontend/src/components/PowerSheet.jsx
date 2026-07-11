@@ -8,7 +8,7 @@ import './PowerSheet.css';
 //   engines: dal contratto fleet ({id, label, rc}) — niente lista hardcoded;
 //     l'ordine è quello dichiarato dal fleet (primo = default consigliato).
 //   onConfirm(payload): il genitore esegue fleetUp/fleetDown — payload:
-//     {action:'up', engine, boot} | {action:'down', boot}  (boot down = togli dal boot)
+//     {action:'up', engine, model, boot} | {action:'down', boot}
 // Vincolo: engine senza rc → niente remote-control app claude.ai (mostrato).
 export default function PowerSheet({ cell, engines = [], onConfirm, onClose }) {
   useLang();
@@ -18,6 +18,13 @@ export default function PowerSheet({ cell, engines = [], onConfirm, onClose }) {
     : [{ id: cell?.engine || 'native', label: cell?.engine || 'native', rc: (cell?.engine || 'native') === 'native' }];
   const [engine, setEngine] = useState(cell?.engine || list[0].id);
   const sel = list.find((e) => e.id === engine);
+  const modelFor = (engineId) => {
+    const en = list.find((x) => x.id === engineId);
+    return cell?.models?.[engineId]
+      || (cell?.engine === engineId ? cell?.model : '')
+      || en?.model || en?.models?.[0] || '';
+  };
+  const [model, setModel] = useState(() => modelFor(cell?.engine || list[0].id));
   const [boot, setBoot] = useState(cell?.boot ?? true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -27,7 +34,7 @@ export default function PowerSheet({ cell, engines = [], onConfirm, onClose }) {
     setBusy(true); setErr(null);
     try {
       if (isOn) await onConfirm({ action: 'down', boot });
-      else await onConfirm({ action: 'up', engine, boot });
+      else await onConfirm({ action: 'up', engine, model, boot });
       onClose();
     } catch (er) { setErr(String((er && er.message) || er)); setBusy(false); }
   }
@@ -51,12 +58,21 @@ export default function PowerSheet({ cell, engines = [], onConfirm, onClose }) {
             <div className="nc-engines">
               {list.map((en) => (
                 <label key={en.id} className={`nc-engine${engine === en.id ? ' sel' : ''}`}>
-                  <input type="radio" name="ps-engine" checked={engine === en.id} onChange={() => setEngine(en.id)} />
+                  <input type="radio" name="ps-engine" checked={engine === en.id} onChange={() => { setEngine(en.id); setModel(modelFor(en.id)); }} />
                   {en.label}
                   {en.label.toLowerCase() !== en.id.toLowerCase() && <small className="nc-engine-id"> ({en.id})</small>}
                 </label>
               ))}
             </div>
+            {sel && (sel.models || []).length > 0 && (
+              <label className="nc-field">
+                <span>{t('model')}</span>
+                <select value={model} onChange={(e) => setModel(e.target.value)}>
+                  {sel.models.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <small>{cell?.models?.[engine] ? t('model-remembered') : t('model-default')}</small>
+              </label>
+            )}
             <label className="nc-check">
               <input type="checkbox" checked={boot} onChange={(e) => setBoot(e.target.checked)} />
               {t('boot-persist')}
