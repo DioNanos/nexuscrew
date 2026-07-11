@@ -10,7 +10,8 @@
 // prima di inoltrare e inietta lui il token remoto (contratto §4b(2)).
 export function wsTarget(node, token) {
   if (!node) return '/ws';
-  return `/node/${encodeURIComponent(node)}/ws?token=${encodeURIComponent(token || '')}`;
+  const route = String(node).split('/').map(encodeURIComponent).join('/');
+  return `/api/route/${route}/_/ws?token=${encodeURIComponent(token || '')}`;
 }
 
 export function openTerminalSocket({ session, node, token, cols, rows, readonly = false, takeSize, focused, onData, onExit, onFiles, retryBaseMs = 250 }) {

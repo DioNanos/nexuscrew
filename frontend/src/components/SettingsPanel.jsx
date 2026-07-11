@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
+import QRCode from 'qrcode';
+import QrScanner from 'qr-scanner';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import {
   apiFetch, getSettings, getNodes, saveConfig, rotateToken,
-  addNode, removeNode, nodeAction, setNodeRole, regenService,
+  removeNode, nodeAction, setNodeRole, regenService, pairNode, createPeerInvite, setNodeVisibility,
 } from '../lib/api.js';
 import { validateNodeForm, validateRendezvousForm, tunnelInfo } from '../lib/settings-model.js';
 import { getPushState, subscribePush, unsubscribePush } from '../lib/push.js';
@@ -47,6 +49,12 @@ export function AuthorizedKeysBlock({ line }) {
       <CopyLine text={line} />
     </div>
   );
+}
+
+function PairingQr({ value }) {
+  const [src, setSrc] = useState('');
+  useEffect(() => { let live = true; QRCode.toDataURL(value, { margin: 1, width: 220 }).then((x) => { if (live) setSrc(x); }).catch(() => {}); return () => { live = false; }; }, [value]);
+  return src ? <img src={src} width="220" height="220" alt="NexusCrew pairing QR" /> : null;
 }
 
 // --- scheda RUOLI -------------------------------------------------------------
@@ -127,8 +135,8 @@ function NodesTab({ token, nodes, readonly, refresh }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);        // `${name}:${action}` in corso
   const [testResult, setTestResult] = useState({}); // name -> {ok, result, detail}
-  const [form, setForm] = useState({ name: '', ssh: '', remotePort: '' });
-  const [akeys, setAkeys] = useState(null);
+  const [form, setForm] = useState({ name: '', ssh: '', pairingUrl: '' });
+  const [invite, setInvite] = useState(null);
   const now = Date.now();
 
   const run = async (name, action) => {
@@ -150,14 +158,12 @@ function NodesTab({ token, nodes, readonly, refresh }) {
   };
 
   const onAdd = async () => {
-    setErr(null); setAkeys(null);
-    const v = validateNodeForm(form);
-    if (!v.ok) return setErr(t(v.error));
+    setErr(null);
+    if (!form.name || !form.ssh || !form.pairingUrl) return setErr(t('pairing-required'));
     setBusy('add');
     try {
-      const j = await addNode(token, v.value);
-      setAkeys(j.authorizedKeys || null);
-      setForm({ name: '', ssh: '', remotePort: '' });
+      await pairNode(token, form);
+      setForm({ name: '', ssh: '', pairingUrl: '' });
       await refresh();
     } catch (e) { setErr(String(e.message || e)); }
     setBusy(null);
@@ -174,11 +180,24 @@ function NodesTab({ token, nodes, readonly, refresh }) {
             <div className="nc-set-node-head">
               <span className={`nc-dot ${ti.up ? 'on' : ''}`} />
               <b>{n.name}</b>
-              <small>{n.ssh} · :{n.localPort}→:{n.remotePort}</small>
+              <small>{n.ssh}{n.sshPort ? `:${n.sshPort}` : ''} · :{n.localPort}→:{n.remotePort}</small>
               <span className={`nc-set-tunnel${ti.up ? ' up' : ''}`}>
                 {t(ti.label)}{ti.since ? ` · ${ti.since}` : ''}
               </span>
+              <select value={n.visibility || 'network'} disabled={readonly || !!busy}
+                onChange={async (e) => { setBusy(`${n.name}:visibility`); try { await setNodeVisibility(token, n.name, e.target.value); await refresh(); } catch (x) { setErr(String(x.message || x)); } setBusy(null); }}>
+                <option value="network">{t('visibility-network')}</option>
+                <option value="relay-only">{t('visibility-relay')}</option>
+                <option value="selected">{t('visibility-selected')}</option>
+              </select>
             </div>
+            {n.visibility === 'selected' && <div className="nc-set-row">
+              {(nodes || []).filter((x) => x.name !== n.name && x.nodeId).map((x) => {
+                const checked = (n.selected || []).includes(x.nodeId);
+                return <label className="nc-check" key={x.nodeId}><input type="checkbox" checked={checked} disabled={readonly || !!busy}
+                  onChange={async (e) => { const selected = e.target.checked ? [...(n.selected || []), x.nodeId] : (n.selected || []).filter((id) => id !== x.nodeId); setBusy(`${n.name}:visibility`); try { await setNodeVisibility(token, n.name, 'selected', selected); await refresh(); } catch (z) { setErr(String(z.message || z)); } setBusy(null); }} /> {x.name}</label>;
+              })}
+            </div>}
             <div className="nc-set-node-actions">
               <button type="button" className="nc-btn ghost" disabled={!!busy}
                 onClick={() => run(n.name, 'test')}>{t('node-test')}</button>
@@ -206,18 +225,34 @@ function NodesTab({ token, nodes, readonly, refresh }) {
 
       <div className="nc-set-form">
         <div className="nc-sheet-label">{t('node-add')}</div>
-        <input placeholder={t('node-name-ph')} value={form.name} disabled={readonly}
-          onChange={(e) => setForm({ ...form, name: e.target.value })} />
-        <input placeholder={t('node-ssh-ph')} value={form.ssh} disabled={readonly}
-          onChange={(e) => setForm({ ...form, ssh: e.target.value })} />
-        <input placeholder={t('node-port-ph')} inputMode="numeric" value={form.remotePort} disabled={readonly}
-          onChange={(e) => setForm({ ...form, remotePort: e.target.value })} />
+        <label className="nc-field">{t('node-name-label')}
+          <input placeholder={t('node-name-ph')} value={form.name} disabled={readonly}
+            onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </label>
+        <label className="nc-field">{t('node-ssh-label')}
+          <input placeholder="my-relay" value={form.ssh} disabled={readonly}
+            onChange={(e) => setForm({ ...form, ssh: e.target.value })} />
+        </label>
+        <label className="nc-field">{t('pairing-link')}
+          <input placeholder="http://127.0.0.1:…/#pair=…" value={form.pairingUrl} disabled={readonly}
+            onChange={(e) => setForm({ ...form, pairingUrl: e.target.value })} />
+          <input id="nc-pair-scan" type="file" accept="image/*" capture="environment" hidden
+            onChange={async (e) => { const f = e.target.files && e.target.files[0]; if (!f) return; try { const x = await QrScanner.scanImage(f); setForm((old) => ({ ...old, pairingUrl: x })); } catch (_) { setErr(t('pairing-qr-invalid')); } e.target.value = ''; }} />
+          <button type="button" className="nc-btn ghost" onClick={() => document.getElementById('nc-pair-scan')?.click()}>{t('scan-qr')}</button>
+        </label>
         <div className="nc-sheet-actions">
           <button type="button" className="nc-btn primary" disabled={readonly || busy === 'add'}
             title={readonly ? t('settings-readonly') : ''} onClick={onAdd}>{t('add')}</button>
         </div>
       </div>
-      <AuthorizedKeysBlock line={akeys} />
+      <div className="nc-set-form">
+        <div className="nc-sheet-label">{t('invite-node')}</div>
+        <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
+          onClick={async () => { setBusy('invite'); try { setInvite(await createPeerInvite(token)); } catch (e) { setErr(String(e.message || e)); } setBusy(null); }}>
+          {t('create-pairing-link')}
+        </button>
+        {invite && <><PairingQr value={invite.pairingUrl} /><CopyLine text={invite.pairingUrl} /></>}
+      </div>
       {err && <div className="nc-err">{err}</div>}
     </div>
   );
@@ -336,7 +371,7 @@ function SystemTab({ token, settings, readonly }) {
 
 export default function SettingsPanel({ token, onClose }) {
   useLang();
-  const [tab, setTab] = useState('roles');
+  const [tab, setTab] = useState('nodes');
   const [settings, setSettings] = useState(null);
   const [nodes, setNodes] = useState([]);
   const [readonly, setReadonly] = useState(false);
@@ -384,14 +419,13 @@ export default function SettingsPanel({ token, onClose }) {
         {loadErr && <div className="nc-err">{loadErr}</div>}
 
         <div className="nc-set-tabs">
-          {['roles', 'nodes', 'fleet', 'system'].map((k) => (
+          {['nodes', 'fleet', 'system'].map((k) => (
             <button key={k} type="button" className={`nc-set-tabbtn${tab === k ? ' on' : ''}`}
               onClick={() => setTab(k)}>{t(`tab-${k}`)}</button>
           ))}
         </div>
 
         <div className="nc-set-body">
-          {tab === 'roles' && <RolesTab token={token} settings={settings} readonly={readonly} refresh={refresh} />}
           {tab === 'nodes' && <NodesTab token={token} nodes={nodes} readonly={readonly} refresh={refresh} />}
           {tab === 'fleet' && <FleetTab token={token} readonly={readonly} />}
           {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} />}

@@ -29,3 +29,13 @@ test('decks store: rifiuta symlink target e duplicati', () => {
   assert.equal(store.parseStore(bad), null);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('decks store persists strict multi-hop routes and rejects route cycles', () => {
+  const multi = { columns: [{ width: 1, tiles: [
+    { session: 'work', node: 'relay/phone', height: 1, fontSize: 11 },
+    { session: 'work', node: 'relay/mac', height: 1, fontSize: 11 },
+  ] }] };
+  assert.deepEqual(store.parseLayout(multi), multi);
+  assert.equal(store.parseLayout({ columns: [{ width: 1, tiles: [{ session: 'work', node: 'relay/phone/relay', height: 1, fontSize: 11 }] }] }), null);
+  assert.equal(store.parseLayout({ columns: [{ width: 1, tiles: [{ session: 'work', node: 'a/b/c/d/e', height: 1, fontSize: 11 }] }] }), null);
+});

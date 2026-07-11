@@ -8,7 +8,7 @@ const express = require('express');
 const { filesRoutes } = require('../lib/files/routes.js');
 const store = require('../lib/files/store.js');
 
-function setup(t, { maxUpload = 1024 * 1024 } = {}) {
+function setup(t, { maxUpload = 1024 * 1024, readonly = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncroutes-'));
   const pasted = [];
   const app = express();
@@ -16,6 +16,7 @@ function setup(t, { maxUpload = 1024 * 1024 } = {}) {
     cfg: { filesRoot: root, maxUpload },
     sessionExists: (s) => s === 'sess1',
     paste: (s, text) => { pasted.push([s, text]); return true; },
+    readonly: () => readonly,
   }));
   return new Promise((res) => {
     const srv = app.listen(0, '127.0.0.1', () => {
@@ -67,6 +68,15 @@ test('upload: oltre il limite -> 413', async (t) => {
   const { base } = await setup(t, { maxUpload: 10 });
   const r = await fetch(`${base}/upload`, { method: 'POST', body: form('big.bin', 'x'.repeat(100)) });
   assert.equal(r.status, 413);
+});
+
+test('READONLY blocks upload and delete at the destination route', async (t) => {
+  const { root, base } = await setup(t, { readonly: true });
+  assert.equal((await fetch(`${base}/upload`, { method: 'POST', body: form('x.txt', 'x') })).status, 403);
+  const dir = store.ensureBox(root, 'sess1', 'outbox');
+  fs.writeFileSync(path.join(dir, 'keep.txt'), 'keep');
+  assert.equal((await fetch(`${base}/?session=sess1&box=outbox&name=keep.txt`, { method: 'DELETE' })).status, 403);
+  assert.equal(fs.readFileSync(path.join(dir, 'keep.txt'), 'utf8'), 'keep');
 });
 
 test('list/download/delete con guardie', async (t) => {

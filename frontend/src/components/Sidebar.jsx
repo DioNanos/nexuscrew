@@ -148,10 +148,10 @@ export default function Sidebar({
             ))
             : [(
               <button
-                key={`nodo-${g.name}`}
+                key={`nodo-${(g.route || [g.name]).join('/')}`}
                 type="button"
                 className="nc-mini-dot"
-                onMouseEnter={(e) => showTip(e, `${g.name}: ${nodeStateLabel(g)}`)}
+                onMouseEnter={(e) => showTip(e, `${g.label || (g.route || [g.name]).join(' › ')}: ${nodeStateLabel(g)}`)}
                 onMouseLeave={hideTip}
               ><span className="nc-dot warn" /></button>
             )]))}
@@ -260,10 +260,10 @@ export default function Sidebar({
       {/* Gruppi per-nodo remoto (B2, design §5): "phone · 2 sessioni" accanto
           alle sessioni locali; tunnel giu' = gruppo degradato statico (§7). */}
       {(nodeGroups || []).map((g) => (
-        <div key={`nodo-${g.name}`}>
+        <div key={`nodo-${(g.route || [g.name]).join('/')}`}>
           <div className="nc-side-group-title nc-node-title">
             <span className={`nc-dot ${g.status === 'up' ? 'on' : 'warn'}`} />
-            <b>{g.name}</b>
+            <b>{g.label || g.name}</b>
             <small>
               {' · '}
               {g.status === 'up'
@@ -292,6 +292,10 @@ export default function Sidebar({
                     </small>
                   </span>
                   {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
+                  <button className="nc-menu" title={t('terminate')} onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm(t('terminate-confirm').replace('{name}', s.name))) onKill && onKill(s.name, g.route);
+                  }}>⋯</button>
                 </div>
               ))}
               {g.sessions.length === 0 && <div className="nc-empty">{t('no-sessions-short')}</div>}

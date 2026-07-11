@@ -117,11 +117,11 @@ function SingleView({ session, node, token, readonly = false, onBack }) {
   // locale (si salta il fleetStatus).
   useEffect(() => {
     let alive = true;
-    const base = node ? `/node/${encodeURIComponent(node)}` : '';
+    const base = node ? `/api/route/${node.split('/').map(encodeURIComponent).join('/')}/_` : '/api';
     async function load() {
       let sess = null; let cell = null;
       try {
-        const r = await apiFetch(`${base}/api/sessions`, token);
+        const r = await apiFetch(`${base}/sessions`, token);
         const j = await r.json();
         if (Array.isArray(j.sessions)) sess = j.sessions.find((s) => s.name === session);
       } catch (_) { /* best-effort */ }
@@ -283,9 +283,10 @@ export default function App() {
 
   // --- actions ---
   const onAddTile = (name) => setLayout((l) => addTileSmart(l, name));
-    const onKill = async (name) => {
-    try { await killSession(token, name); } catch (_) { return; }
-    setLayout((l) => removeTile(l, name));
+    const onKill = async (name, route = []) => {
+    try { await killSession(token, name, route); } catch (_) { return; }
+    const key = route.length ? `${route.join('/')}:${name}` : name;
+    setLayout((l) => removeTile(l, key));
     poll();
   };
   const onFleetConfirm = async (payload) => {
@@ -298,8 +299,8 @@ export default function App() {
     }
     poll();
   };
-  const onCreateSession = async (body) => {
-    await createSession(token, body);
+  const onCreateSession = async (body, route = []) => {
+    await createSession(token, body, route);
     poll();
   };
 
@@ -421,7 +422,9 @@ export default function App() {
         <PowerSheet cell={powerCell} engines={engines} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
       )}
       {newOpen && (
-        <NewSessionDialog presets={presets} token={token} onCreate={onCreateSession} onClose={() => setNewOpen(false)} />
+        <NewSessionDialog presets={presets}
+          targets={nodeGroups.filter((g) => g.status === 'up').map((g) => ({ route: g.route, label: g.label || g.name }))}
+          token={token} onCreate={onCreateSession} onClose={() => setNewOpen(false)} />
       )}
       {settingsOverlays}
     </div>

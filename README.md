@@ -16,7 +16,7 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 
 ---
 
-## What it is (v0.8 "Many Nodes, Many Monitors")
+## What it is (v0.8.2 "Simple Federated Hydra")
 
 - Runs a small server on the host where your tmux sessions live.
 - Each attach spawns a real PTY running `tmux attach` and bridges its bytes over a WebSocket
@@ -62,11 +62,13 @@ over a real PTY. On the right, a `codex-vl` session running inside the browser c
 ## Fleet integration
 
 A clean install includes the built-in, schema-driven fleet manager. Its safe defaults contain
-only two engine templates — **Claude Native** and **Codex-VL Native** — and no cells, prompts,
+three engine templates — **Claude Native**, **Codex Native**, and **Codex-VL Native** — and no cells, prompts,
 API keys, or machine-specific paths. Add cells and enable optional managed providers from the
-Fleet settings. Managed providers currently cover native login, Ollama Cloud Direct for Claude
-and Codex-VL, and Z.AI A/P for Claude. Provider secrets are read at launch from the 0600 file
-`~/.nexuscrew/providers.env`; API values are write-only and redacted from status and errors.
+Fleet settings. The managed matrix covers Claude Code, Codex, Codex-VL, and Pi with their
+documented native/local providers plus renameable custom providers. Custom Codex adapters are
+Responses-only. New custom credentials are read only from the environment variable named in
+the PWA; NexusCrew never stores the secret value. Existing Z.AI A/P and Ollama Cloud profiles
+retain their backwards-compatible credential loading.
 
 Custom argv-based engines remain supported. Their command, environment, cwd, and prompt are
 validated against a strict trust boundary and launched without a shell.
@@ -111,35 +113,33 @@ channel you control**:
 ```bash
 # from your laptop/phone, tunnel the loopback port over SSH
 ssh -L 41820:127.0.0.1:41820 user@your-host
-# then open http://localhost:41820/#token=<token printed by the server>
+# then run `nexuscrew show` on the machine where the browser is available
 ```
 
-autossh reverse tunnels or a VPN work the same way. A short-lived **local token** (0600 file,
-auto-generated, printed once at startup) is a second factor on top of your SSH/VPN gate. The
+autossh reverse tunnels or a VPN work the same way. A local **authentication token** (0600 file,
+auto-generated and passed directly to the browser by `nexuscrew show`) is a second factor on top of your SSH/VPN gate. The
 token travels in the URL **fragment** (`#token=…`), so it never reaches the server logs.
 
 > **Exposing the app publicly (reverse proxy, network bind, port forward to the internet) is
 > unsupported and unsafe.** The whole security model is "localhost + a tunnel you control".
 
-## Multi-node (one command, many nodes)
+## Federated Hydra nodes (configured from the PWA)
 
-Each installation can be a **client/hub**, a reachable **node**, or both. Add a host from
-the hub:
+Every installation is always the local node and can join other NexusCrew nodes. Open
+**Settings → Nodes**, create a ten-minute pairing link/QR on one device, then paste or scan it
+on the other together with an OpenSSH Host alias. That single pairing creates a reciprocal,
+loopback-only link and both sides exchange a redacted topology automatically.
 
-```bash
-nexuscrew nodes add vps --ssh user@host
-nexuscrew nodes test vps
-nexuscrew nodes up vps
-```
+NexusCrew does not create SSH keys or edit `authorized_keys`. OpenSSH remains authoritative for
+identity files, agents, host keys, ports, ProxyJump and forwarding policy. NexusCrew uses
+`autossh` when available and otherwise its supervised `ssh`; configured links return at boot.
+Pair credentials are random, per-peer and scoped only to the federated session/file surface—the
+PWA token never crosses a peer link.
 
-NexusCrew creates a dedicated SSH key and prints the restricted `authorized_keys` entry.
-Every hop remains loopback → SSH → loopback: the app never binds a public interface and
-does not add its own TLS layer. The hub proxy injects the remote token only server-side;
-the browser sees one origin and authenticates with only the hub token. `nodes test`
-distinguishes tunnel-down, health failure, missing token, and rejected-token states.
-
-For NAT-ed hosts such as phones, `nexuscrew node on` enables the reachable-node role using
-a reverse tunnel to a configured rendezvous host; `nexuscrew node off` disables it.
+A relay controls what its peers can see. The default is the whole network; a peer can be reduced
+to relay-only or a selected set. HTTP and WebSocket routing enforce that policy at every hop,
+with stable instance IDs, cycle rejection and a four-hop ceiling. Session creation, terminal,
+files and termination work on Local or any reachable route; Fleet remains local to each node.
 
 ## Install & run
 
@@ -176,18 +176,20 @@ npm install -g @mmmbuto/nexuscrew
 nexuscrew
 ```
 
-Termux uses the Android ARM64 PTY provider. Service startup uses a verified pidfile and a
-`~/.termux/boot/` script; install the Termux:Boot app only if you want automatic startup after
-reboot.
+Termux uses the Android ARM64 PTY provider. The normal command starts NexusCrew in the
+background and exits, so it can also be used directly as a Termux:Boot startup command.
 
-On every platform, the command prints the local URL and an authenticated QR:
+On every platform the first run starts the server in the background and opens the PWA wizard.
+After onboarding, the same command starts or reuses the background service and exits silently:
 
 ```bash
-nexuscrew                 # smart init/start; binds 127.0.0.1:41820
-nexuscrew url --qr        # print the authenticated URL again
+nexuscrew                 # background start; opens only on first run
+nexuscrew show            # background start when needed + open the authenticated PWA
 ```
 
-Then tunnel in (see above) and open the printed URL with `#token=…`.
+The preferred port is `41820`. If it is occupied by another process, NexusCrew selects the
+next free loopback port and updates its configuration. If the configured port already hosts
+the same authenticated NexusCrew instance, it is reused.
 
 Env knobs: `NEXUSCREW_PORT` (default 41820), `NEXUSCREW_CONFIG_FILE`,
 `NEXUSCREW_TOKEN_FILE`, `NEXUSCREW_FILES_ROOT`, `NEXUSCREW_TMUX`,
@@ -197,25 +199,16 @@ resolved PTY provider at startup.
 ## CLI
 
 ```
-nexuscrew                    smart-up: init (zero questions) if needed → start → URL + QR
-nexuscrew start | up         start the service (systemd --user / launchd / nohup+pidfile)
-nexuscrew stop | down        stop the service (service manager / verified pidfile)
-nexuscrew status [--json]    platform, service, port, url, roles (client/node), nodes
-nexuscrew url [--qr]         reprint the full URL with #token (+ scannable QR) — token shown ONLY here
-nexuscrew token rotate       atomically rotate the token + restart to invalidate live sessions
-nexuscrew logs [-f]          journalctl --user -u nexuscrew (linux) / logfile (mac, termux); -f follows
-nexuscrew doctor             self-check: node, tmux, PTY, service, boot, token perms (exit 1 on problems)
-nexuscrew mcp                stdio MCP server for AI sessions (notify / ask / send file / status)
-nexuscrew update             npm i -g @mmmbuto/nexuscrew@latest + restart if active
-nexuscrew init [--port N]    explicit setup (detect + config + token + service)
-nexuscrew nodes add <name> --ssh user@host [--remote-port N] [--key path]
-nexuscrew nodes list | remove <name> | test <name> | up|down|restart <name> | set-token <name>
-nexuscrew node on|off        reachable-node role (reverse tunnel to a rendezvous)
+nexuscrew          background start; first run opens the PWA wizard
+nexuscrew show     start when needed and open the authenticated PWA
+nexuscrew doctor   local diagnostics (exit 1 when a required check fails)
+nexuscrew help     concise command help
+nexuscrew version  installed version
 ```
 
-The token is **never** printed by `status`, `logs`, `smart-up` or any service output — it appears
-only in `nexuscrew url` (and, embedded, in the QR). `nexuscrew url --qr` is the killer feature on
-Termux: scan it with the phone to open the tunnelled URL already authenticated.
+All configuration and lifecycle operations live in the PWA. Internal service-manager and MCP
+entry points are intentionally not part of the public CLI workflow. The token is never printed
+by normal startup, help, doctor, or service output.
 
 ## MCP bridge
 
@@ -273,13 +266,12 @@ holding.** On a screen smaller than the session you'll see a clipped view (expec
 ```bash
 npm test            # node --test (config, tmux list, pty attach smoke, ws bridge, token)
 npm run build       # builds the frontend into frontend/dist
-node bin/nexuscrew.js
+node bin/nexuscrew.js serve
 ```
 
 ## Status
 
-v0.8.0 is the current release on both **`latest`** and **`next`**, including Linux,
-macOS, and Android/Termux support.
+The current stable release is **v0.8.2**, published on npm under the **`latest`** dist-tag.
 
 ## License
 

@@ -8,7 +8,8 @@ const MIN_W = 0.2;
 // assente -> sessione locale (retrocompatibilita' con i layout esistenti).
 // Identita' di un tile = refKey "node:session" (tmux vieta ':' nei nomi di
 // sessione e i nomi nodo sono ^[a-z0-9-]+$ -> nessuna collisione possibile).
-export const NODE_RE = /^[a-z0-9-]{1,32}$/;
+export const NODE_RE = /^[a-z0-9-]{1,32}(?:\/[a-z0-9-]{1,32}){0,3}$/;
+const validNodeRoute = (node) => NODE_RE.test(node) && new Set(node.split('/')).size === node.split('/').length;
 
 // ref: stringa ("sess" locale, "nodo:sess" remota) o oggetto {session, node?}.
 // -> {session, node?} normalizzato, o null su input invalido (fail-closed).
@@ -18,12 +19,12 @@ export function parseRef(ref) {
     if (i < 0) return { session: ref };
     const node = ref.slice(0, i);
     const session = ref.slice(i + 1);
-    if (!NODE_RE.test(node) || !session) return null;
+    if (!validNodeRoute(node) || !session) return null;
     return { session, node };
   }
   if (ref && typeof ref === 'object' && typeof ref.session === 'string' && ref.session) {
     if (ref.node === undefined || ref.node === null || ref.node === '') return { session: ref.session };
-    if (typeof ref.node === 'string' && NODE_RE.test(ref.node)) return { session: ref.session, node: ref.node };
+    if (typeof ref.node === 'string' && validNodeRoute(ref.node)) return { session: ref.session, node: ref.node };
     return null;
   }
   return null;
@@ -205,7 +206,7 @@ export function normalize(raw) {
       width: Math.max(MIN_W, Number(c && c.width) || 1),
       tiles: (Array.isArray(c && c.tiles) ? c.tiles : [])
         .filter((t) => t && typeof t.session === 'string' && t.session)
-        .filter((t) => t.node == null || (typeof t.node === 'string' && NODE_RE.test(t.node)))
+        .filter((t) => t.node == null || (typeof t.node === 'string' && validNodeRoute(t.node)))
         .map((t) => {
           const out = { session: t.session, height: Math.max(MIN_W, Number(t.height) || 1), fontSize: repairFont(t.fontSize) };
           if (t.node != null) out.node = t.node;

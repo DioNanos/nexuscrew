@@ -83,11 +83,18 @@ test('sanitizeRequestHeaders: strip client-supplied, inietta token remoto', () =
   assert.strictEqual(out.authorization, `Bearer ${REMOTE}`); // iniettato, non quello client
 });
 
+test('sanitizeRequestHeaders: strip headers nominated dynamically by Connection', () => {
+  const out = sanitizeRequestHeaders({ connection: 'X-Hop, keep-alive', 'x-hop': 'secret', accept: 'text/plain' }, REMOTE);
+  assert.strictEqual(out['x-hop'], undefined);
+  assert.strictEqual(out.accept, 'text/plain');
+});
+
 test('sanitizeResponseHeaders: strip hop-by-hop', () => {
-  const out = sanitizeResponseHeaders({ 'content-type': 'text/plain', connection: 'close', 'transfer-encoding': 'chunked' });
+  const out = sanitizeResponseHeaders({ 'content-type': 'text/plain', connection: 'x-hop, close', 'x-hop': 'secret', 'transfer-encoding': 'chunked' });
   assert.strictEqual(out['content-type'], 'text/plain');
   assert.strictEqual(out.connection, undefined);
   assert.strictEqual(out['transfer-encoding'], undefined);
+  assert.strictEqual(out['x-hop'], undefined);
 });
 
 test('stripLocalTokenQuery: rimuove solo token', () => {
@@ -106,7 +113,7 @@ test('buildUpgradeRequest: Connection/Upgrade controllati, token iniettato, host
   assert.match(raw, /\r\nSec-Websocket-Key: KEY==\r\n/i);
   assert.match(raw, /\r\nConnection: Upgrade\r\n/);
   assert.match(raw, /\r\nUpgrade: websocket\r\n/);
-  assert.match(raw, new RegExp(`\\r\\nAuthorization: Bearer ${REMOTE}\\r\\n`));
+  assert.match(raw, new RegExp(`\\r\\nauthorization: Bearer ${REMOTE}\\r\\n`, 'i'));
   assert.ok(!/Bearer CLIENT/.test(raw), 'authorization client non inoltrato');
   assert.ok(raw.endsWith('\r\n\r\n'));
 });

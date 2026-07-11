@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {t} from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
-import { listDirs } from '../lib/api.js';
+import { listDirs, getRouteConfig } from '../lib/api.js';
 import './NewSessionDialog.css';
 
 // Validazione nome specchiata da lib/tmux/lifecycle.js validSessionName.
@@ -13,11 +13,13 @@ const NAME_RE = /^[\w.-]{1,64}$/;
 // (resolveCwd non espande '~'; un path reale passa invariato).
 // Il folder-picker (token) sfoglia le dir del server via /api/fs/dirs; senza
 // token il campo resta un input testuale semplice (retro-compatibile).
-export default function NewSessionDialog({ presets = ['shell'], token, onCreate, onClose }) {
+export default function NewSessionDialog({ presets = ['shell'], targets = [], token, onCreate, onClose }) {
   useLang();
   const [name, setName] = useState('');
   const [cwd, setCwd] = useState('~');
   const [preset, setPreset] = useState(presets[0] || 'shell');
+  const [availablePresets, setAvailablePresets] = useState(presets);
+  const [routeKey, setRouteKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [picker, setPicker] = useState(null);        // null=chiuso | {path,parent,home,dirs}
@@ -28,7 +30,8 @@ export default function NewSessionDialog({ presets = ['shell'], token, onCreate,
   async function openPicker(path) {
     setPickErr(null);
     try {
-      const j = await listDirs(token, path);
+      const route = routeKey ? routeKey.split('/') : [];
+      const j = await listDirs(token, path, route);
       setPicker(j);
       setCwd(j.path);                                 // il path corrente diventa il cwd scelto
     } catch (e) { setPickErr(String((e && e.message) || e)); }
@@ -39,7 +42,7 @@ export default function NewSessionDialog({ presets = ['shell'], token, onCreate,
     if (!nameOk) return;
     setBusy(true); setErr(null);
     try {
-      await onCreate({ name, cwd: cwd === '~' ? '' : cwd, preset });
+      await onCreate({ name, cwd: cwd === '~' ? '' : cwd, preset }, routeKey ? routeKey.split('/') : []);
       onClose();
     } catch (er) { setErr(String((er && er.message) || er)); setBusy(false); }
   }
@@ -48,6 +51,20 @@ export default function NewSessionDialog({ presets = ['shell'], token, onCreate,
     <div className="nc-sheet-overlay" onClick={onClose}>
       <form className="nc-sheet" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="nc-sheet-head"><b>{t('new-session')}</b></div>
+
+        <label className="nc-field">{t('location')}
+          <select value={routeKey} onChange={async (e) => {
+            const key = e.target.value; setRouteKey(key); setPicker(null);
+            try {
+              const c = await getRouteConfig(token, key ? key.split('/') : []);
+              const ps = Array.isArray(c.presets) && c.presets.length ? c.presets : ['shell'];
+              setAvailablePresets(ps); setPreset(ps[0]);
+            } catch (_) { setAvailablePresets(['shell']); setPreset('shell'); }
+          }}>
+            <option value="">{t('local')}</option>
+            {targets.map((x) => <option key={x.route.join('/')} value={x.route.join('/')}>{x.label}</option>)}
+          </select>
+        </label>
 
         <label className="nc-field">{t('name')}
           <input
@@ -95,7 +112,7 @@ export default function NewSessionDialog({ presets = ['shell'], token, onCreate,
 
         <label className="nc-field">{t('preset')}
           <select value={preset} onChange={(e) => setPreset(e.target.value)}>
-            {presets.map((p) => <option key={p} value={p}>{p}</option>)}
+            {availablePresets.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
         </label>
 

@@ -34,7 +34,7 @@ test('generateLinux: struttura systemd --user', () => {
   assert.match(s, /\[Service\]/);
   assert.match(s, /\[Install\]/);
   assert.match(s, /WorkingDirectory=\/home\/user\/nexuscrew/);
-  assert.match(s, /Environment=NEXUSCREW_PORT=41820/);
+  assert.doesNotMatch(s, /NEXUSCREW_PORT/, 'config.json resta la fonte autoritativa della porta');
   assert.match(s, /ExecStart=\/usr\/bin\/node .*\/bin\/nexuscrew\.js serve/);
   assert.match(s, /WantedBy=default\.target/);
 });
@@ -125,7 +125,7 @@ test('generateTermux: shebang + contesto completo', () => {
   assert.match(s, /^#!\/data\/data\/com\.termux\/files\/usr\/bin\/sh/);
   assert.match(s, /export PATH=\/data\/data\/com\.termux\/files\/usr\/bin:\$PATH/);
   assert.match(s, /export HOME=\/data\/data\/com\.termux\/files\/home/);
-  assert.match(s, /export NEXUSCREW_PORT=41820/);
+  assert.doesNotMatch(s, /NEXUSCREW_PORT/, 'config.json resta la fonte autoritativa della porta');
   assert.match(s, /termux-wake-lock/);
   assert.match(s, /mkdir -p "\$HOME\/\.nexuscrew"/);
 });

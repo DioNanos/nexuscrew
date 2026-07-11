@@ -35,23 +35,31 @@ export const fleetRemoveEngine = (t, id) => jsonFetch('/api/fleet/remove-engine'
 export const fleetDefineCell = (t, def) => jsonFetch('/api/fleet/define-cell', t, { method: 'POST', body: { def } });
 export const fleetEditCell = (t, id, patch) => jsonFetch('/api/fleet/edit-cell', t, { method: 'POST', body: { id, patch } });
 export const fleetRemoveCell = (t, id, stop = false) => jsonFetch('/api/fleet/remove-cell', t, { method: 'POST', body: { id, stop } });
-export const createSession = (t, b) => jsonFetch('/api/sessions', t, { method: 'POST', body: b });
-export const killSession = (t, name) => jsonFetch(`/api/sessions/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
-export const listDirs = (t, p) => jsonFetch(`/api/fs/dirs${p ? `?path=${encodeURIComponent(p)}` : ''}`, t);
+export const routeBase = (route) => Array.isArray(route) && route.length
+  ? `/api/route/${route.map(encodeURIComponent).join('/')}/_` : '/api';
+export const createSession = (t, b, route) => jsonFetch(`${routeBase(route)}/sessions`, t, { method: 'POST', body: b });
+export const killSession = (t, name, route) => jsonFetch(`${routeBase(route)}/sessions/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
+export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs${p ? `?path=${encodeURIComponent(p)}` : ''}`, t);
 
 // Settings API B2 (design §4b(6)): read-only + mutanti lista chiusa. jsonFetch
 // propaga la causa esplicita (j.error) su ogni failure — MAI errori muti in UI.
 export const getSettings = (t) => jsonFetch('/api/settings', t);
 export const getNodes = (t) => jsonFetch('/api/nodes', t);
+export const getTopology = (t) => jsonFetch('/api/topology', t);
+export const getRouteSessions = (t, route) => jsonFetch(`${routeBase(route)}/sessions`, t);
+export const getRouteConfig = (t, route) => jsonFetch(`${routeBase(route)}/config`, t);
 // Sessioni di un nodo remoto via proxy B1 (stesso token locale: il proxy
 // verifica il Bearer e inietta LUI il token remoto — mai visto dal browser).
 export const getNodeSessions = (t, name) => jsonFetch(`/node/${encodeURIComponent(name)}/api/sessions`, t);
 export const saveConfig = (t, b) => jsonFetch('/api/settings/config', t, { method: 'POST', body: b });
 export const rotateToken = (t) => jsonFetch('/api/settings/token/rotate', t, { method: 'POST' });
 export const addNode = (t, b) => jsonFetch('/api/settings/nodes', t, { method: 'POST', body: b });
+export const pairNode = (t, b) => jsonFetch('/api/settings/nodes/pair', t, { method: 'POST', body: b });
+export const createPeerInvite = (t) => jsonFetch('/api/settings/peering/invite', t, { method: 'POST' });
 export const removeNode = (t, name) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
 // action ∈ {test, up, down, restart} — stringhe fisse dal chiamante, mai input utente.
 export const nodeAction = (t, name, action) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/${action}`, t, { method: 'POST' });
+export const setNodeVisibility = (t, name, visibility, selected = []) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/visibility`, t, { method: 'PATCH', body: { visibility, selected } });
 export const setNodeRole = (t, b) => jsonFetch('/api/settings/node-role', t, { method: 'POST', body: b });
 export const regenService = (t) => jsonFetch('/api/settings/service/regenerate', t, { method: 'POST' });
 

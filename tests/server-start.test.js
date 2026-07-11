@@ -1,7 +1,7 @@
 'use strict';
 // F1 (audit run multi-fase, BLOCKER verifier A2): lo startup di start() NON deve
 // stampare il token — l'output finisce nei log del servizio (journalctl/logfile)
-// che `nexuscrew logs` espone. L'URL col token si ottiene solo da `nexuscrew url`.
+// che il service manager espone. L'apertura autenticata usa `nexuscrew show`.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -26,7 +26,32 @@ test('start(): il token non compare nell\'output di startup', async (t) => {
   assert.ok(lines.length >= 2, 'startup logga le sue righe');
   const out = lines.join('\n');
   assert.ok(!out.includes(token), 'il token NON deve comparire nello startup log');
-  assert.ok(out.includes('nexuscrew url'), 'lo startup rimanda a `nexuscrew url`');
+  assert.ok(out.includes('nexuscrew show'), 'lo startup rimanda a `nexuscrew show`');
+});
+
+test('start(): porta occupata al boot -> bind alternativo e persistenza atomica', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-start-port-'));
+  const blocker = require('node:http').createServer((_req, res) => res.end('other'));
+  await new Promise((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+  const occupied = blocker.address().port;
+  const configPath = path.join(dir, 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify({ port: occupied, wizardDone: true }) + '\n', { mode: 0o600 });
+  const server = start({
+    home: dir, configDir: dir, configPath, tokenPath: path.join(dir, 'token'),
+    filesRoot: path.join(dir, 'files'), port: occupied, fleetEnabled: false, log: () => {},
+  });
+  await new Promise((resolve) => server.on('listening', resolve));
+  t.after(() => {
+    server.close(); blocker.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const selected = server.address().port;
+  assert.notEqual(selected, occupied);
+  assert.ok(selected > occupied && selected <= occupied + 200, 'sceglie deterministicamente la prima porta successiva disponibile');
+  const persisted = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  assert.equal(persisted.port, selected);
+  assert.equal(persisted.wizardDone, true);
+  assert.equal(fs.statSync(configPath).mode & 0o777, 0o600);
 });
 
 test('createServer: roles.node autostarta il reverse supervisor al reboot', () => {

@@ -97,13 +97,13 @@ export default function SessionList({ onPick, token, onSettings }) {
     refresh();
   }
 
-  async function onKill(name) {
-    try { await killSession(token, name); } catch (_) { return; }
+  async function onKill(name, route = []) {
+    try { await killSession(token, name, route); } catch (_) { return; }
     refresh();
   }
 
-  async function onCreate(body) {
-    await createSession(token, body);
+  async function onCreate(body, route = []) {
+    await createSession(token, body, route);
     setNewOpen(false);
     refresh();
   }
@@ -209,7 +209,7 @@ export default function SessionList({ onPick, token, onSettings }) {
       )}
 
       <section className="nc-group">
-        {fleetAvailable && <div className="nc-group-title">{t('other-sessions')}</div>}
+        <div className="nc-group-title">{t('local')}</div>
         {others.map((s) => (
           <div key={s.name} className="nc-mcard">
             <button className="nc-mcard-main" onClick={() => onPick(s.name)}>
@@ -244,10 +244,10 @@ export default function SessionList({ onPick, token, onSettings }) {
       {/* Gruppi per-nodo remoto (B2, design §5): card per sessione remota;
           tunnel giu' = riga degradata statica (§7, niente spinner). */}
       {nodeGroups.map((g) => (
-        <section key={`nodo-${g.name}`} className="nc-group">
+        <section key={`nodo-${(g.route || [g.name]).join('/')}`} className="nc-group">
           <div className="nc-group-title nc-node-title">
             <span className={`dot ${g.status === 'up' ? 'on' : 'warn'}`} />
-            {g.name}
+            {g.label || g.name}
             {' · '}
             {g.status === 'up'
               ? t('node-sessions').replace('{n}', String(g.sessions.length))
@@ -263,6 +263,8 @@ export default function SessionList({ onPick, token, onSettings }) {
                 </span>
               </button>
               {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
+              <button className="nc-menu" title={t('terminate')}
+                onClick={() => { if (window.confirm(t('terminate-confirm').replace('{name}', s.name))) onKill(s.name, g.route); }}>⋯</button>
             </div>
           ))}
           {g.status === 'up' && g.sessions.length === 0 && (
@@ -290,7 +292,8 @@ export default function SessionList({ onPick, token, onSettings }) {
         <PowerSheet cell={powerCell} engines={engines} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
       )}
       {newOpen && (
-        <NewSessionDialog presets={presets} token={token} onCreate={onCreate} onClose={() => setNewOpen(false)} />
+        <NewSessionDialog presets={presets} targets={nodeGroups.filter((g) => g.status === 'up').map((g) => ({ route: g.route, label: g.label || g.name }))}
+          token={token} onCreate={onCreate} onClose={() => setNewOpen(false)} />
       )}
     </div>
   );

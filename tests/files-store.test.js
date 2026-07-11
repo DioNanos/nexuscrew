@@ -17,8 +17,8 @@ test('sanitizeName: basename, control char, mai vuoto', () => {
 });
 
 test('isValidSession: regex tmux', () => {
-  assert.ok(store.isValidSession('claude_dev_senior'));
-  assert.ok(store.isValidSession('Codex-VL_DS4P'));
+  assert.ok(store.isValidSession('worker_session'));
+  assert.ok(store.isValidSession('Worker-VL_DS4P'));
   assert.ok(!store.isValidSession('../evil'));
   assert.ok(!store.isValidSession(''));
   assert.ok(!store.isValidSession('a/b'));
