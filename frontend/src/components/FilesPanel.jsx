@@ -7,8 +7,13 @@ import './FilesPanel.css';
 
 const fmtSize = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)}M` : n > 1024 ? `${(n / 1024).toFixed(0)}K` : `${n}B`);
 
-export default function FilesPanel({ session, token, filesEvent, onClose }) {
+// node (opzionale): file exchange di un nodo remoto — stesse route, prefissate
+// dal proxy /node/<name> (B1). Il marker "visto" resta scopato per nodo per non
+// pestare una sessione locale omonima.
+export default function FilesPanel({ session, node, token, filesEvent, onClose }) {
   useLang();
+  const base = node ? `/node/${encodeURIComponent(node)}` : '';
+  const seen = node ? `${node}:${session}` : session;
   const [box, setBox] = useState('outbox');
   const [data, setData] = useState({ inbox: [], outbox: [] });
   const [busy, setBusy] = useState('');
@@ -16,15 +21,15 @@ export default function FilesPanel({ session, token, filesEvent, onClose }) {
 
   async function refresh() {
     try {
-      const r = await apiFetch(`/api/files?session=${encodeURIComponent(session)}`, token);
+      const r = await apiFetch(`${base}/api/files?session=${encodeURIComponent(session)}`, token);
       const j = await r.json();
       if (j.error) { setBusy(j.error); return; }
       setData(j);
       const latest = j.outbox[0] ? j.outbox[0].mtime : 0;
-      localStorage.setItem(seenKey(session), String(latest));
+      localStorage.setItem(seenKey(seen), String(latest));
     } catch (e) { setBusy(String(e)); }
   }
-  useEffect(() => { refresh(); }, [session]);
+  useEffect(() => { refresh(); }, [session, node]);
   useEffect(() => { if (filesEvent && filesEvent.session === session) refresh(); }, [filesEvent]);
 
   async function uploadFiles(files) {
@@ -34,7 +39,7 @@ export default function FilesPanel({ session, token, filesEvent, onClose }) {
       fd.append('session', session);
       fd.append('file', f);
       try {
-        const r = await apiFetch('/api/files/upload', token, { method: 'POST', body: fd });
+        const r = await apiFetch(`${base}/api/files/upload`, token, { method: 'POST', body: fd });
         const j = await r.json();
         setBusy(j.error ? `errore: ${j.error}` : '');
       } catch (e) { setBusy(String(e)); }
@@ -44,7 +49,7 @@ export default function FilesPanel({ session, token, filesEvent, onClose }) {
 
   async function download(name) {
     const r = await apiFetch(
-      `/api/files/download?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
+      `${base}/api/files/download?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
     );
     if (!r.ok) { setBusy('errore download'); return; }
     const blob = await r.blob();
@@ -56,7 +61,7 @@ export default function FilesPanel({ session, token, filesEvent, onClose }) {
 
   async function del(name) {
     await apiFetch(
-      `/api/files?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
+      `${base}/api/files?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
       { method: 'DELETE' },
     );
     refresh();
@@ -65,7 +70,7 @@ export default function FilesPanel({ session, token, filesEvent, onClose }) {
   return (
     <div className="nc-files">
       <header>
-        <b>{session}</b>
+        <b>{node ? `${node}:${session}` : session}</b>
         <button onClick={onClose} title={t('close')}><Icon name="x" size={20} /></button>
       </header>
       <nav>

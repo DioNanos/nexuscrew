@@ -36,7 +36,7 @@ test('create: 201 con preset shell, 400 nome/preset invalidi', async (t) => {
 
 test('kill: 409 su cloud-* ANCHE con fleet unavailable (F2), 200 su generica, 404 su assente', async (t) => {
   const { base, token } = await boot(t);
-  assert.equal((await fetch(`${base}/api/sessions/cloud-Dev`, { method: 'DELETE', headers: H(token) })).status, 409);
+  assert.equal((await fetch(`${base}/api/sessions/cloud-Build`, { method: 'DELETE', headers: H(token) })).status, 409);
   assert.equal((await fetch(`${base}/api/sessions/w1`, { method: 'DELETE', headers: H(token) })).status, 200);
   assert.equal((await fetch(`${base}/api/sessions/ghost`, { method: 'DELETE', headers: H(token) })).status, 404);
 });

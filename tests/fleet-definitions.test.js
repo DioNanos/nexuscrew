@@ -23,7 +23,7 @@ function validDef() {
       promptFlag: '--append-system-prompt',
     }],
     cells: [{
-      id: 'Dev', cwd: '/home/user/Dev', engine: 'claude',
+      id: 'Build', cwd: '/home/user/work', engine: 'claude',
       boot: true, model: 'opus', prompt: 'you are a dev agent',
     }],
   };
@@ -39,7 +39,7 @@ test('schema valido: accettato (oggetto e stringa JSON) + normalizzazione', () =
   assert.equal(obj.engines[0].label, 'Claude');
   assert.deepEqual(obj.engines[0].args, ['--dangerously-skip-permissions']);
   assert.deepEqual(obj.engines[0].env, { ANTHROPIC_API_KEY: 'sk-x' });
-  assert.equal(obj.cells[0].tmuxSession, 'cloud-Dev', 'tmuxSession derivato da id');
+  assert.equal(obj.cells[0].tmuxSession, 'cloud-Build', 'tmuxSession derivato da id');
   assert.equal(obj.cells[0].boot, true);
 
   // stringa JSON round-trip
@@ -83,13 +83,25 @@ test('dangling engine ref -> null', () => {
   assert.equal(parseDefinitions(d), null);
 });
 
+test('cell models: ultimo modello per engine strict e senza dangling key', () => {
+  const d = validDef();
+  d.cells[0].model = 'opus';
+  d.cells[0].models = { claude: 'opus' };
+  const parsed = parseDefinitions(d);
+  assert.deepEqual(parsed.cells[0].models, { claude: 'opus' });
+  d.cells[0].models = { missing: 'x' };
+  assert.equal(parseDefinitions(d), null);
+  d.cells[0].models = { claude: '' };
+  assert.equal(parseDefinitions(d), null);
+});
+
 test('id duplicati (engine e cell) -> null', () => {
   const d = validDef();
   d.engines.push({ ...d.engines[0] }); // stesso id 'claude'
   assert.equal(parseDefinitions(d), null, 'engine id dup');
 
   const d2 = validDef();
-  d2.cells.push({ id: 'Dev', cwd: '/x', engine: 'claude' }); // stesso id cell
+  d2.cells.push({ id: 'Build', cwd: '/x', engine: 'claude' }); // stesso id cell
   assert.equal(parseDefinitions(d2), null, 'cell id dup');
 });
 
@@ -104,15 +116,15 @@ test('cella con tmuxSession cloud-* (override esplicito) -> null; derivato/canon
   const d = validDef();
   d.cells[0].tmuxSession = 'cloud-Foo';
   assert.equal(parseDefinitions(d), null, 'alias cloud-* verso altro rifiutato');
-  // il derivato (nessun campo) cloud-Dev e' accettato (forma canonica del fleet)
+  // il derivato (nessun campo) cloud-Build e' accettato (forma canonica del fleet)
   const ok = parseDefinitions(validDef());
-  assert.equal(ok.cells[0].tmuxSession, 'cloud-Dev');
+  assert.equal(ok.cells[0].tmuxSession, 'cloud-Build');
   // il canonico cloud-<id> scritto esplicitamente e' ammesso (round-trip su disco)
   const canon = validDef();
-  canon.cells[0].tmuxSession = 'cloud-Dev';
+  canon.cells[0].tmuxSession = 'cloud-Build';
   const cok = parseDefinitions(canon);
   assert.ok(cok);
-  assert.equal(cok.cells[0].tmuxSession, 'cloud-Dev');
+  assert.equal(cok.cells[0].tmuxSession, 'cloud-Build');
 });
 
 test('cap engines/cells/args/env superati -> null', () => {
@@ -259,7 +271,7 @@ test('atomicWrite: file 0600 + rileggibile con loadDefinitions; backup predecess
     const loaded = loadDefinitions(file);
     assert.ok(loaded, 'rileggibile');
     assert.equal(loaded.engines[0].id, 'claude');
-    assert.equal(loaded.cells[0].tmuxSession, 'cloud-Dev');
+    assert.equal(loaded.cells[0].tmuxSession, 'cloud-Build');
 
     // dati invalidi -> throw + backup del predecessore + file originale intatto
     assert.throws(() => atomicWrite(file, { schemaVersion: 1, engines: 'bad', cells: [] }), /validazione/i);

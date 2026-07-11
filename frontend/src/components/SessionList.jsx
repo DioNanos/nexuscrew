@@ -8,6 +8,7 @@ import PowerSheet from './PowerSheet.jsx';
 import NewSessionDialog from './NewSessionDialog.jsx';
 import {t,  LANGUAGES} from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
+import { useNodes } from '../hooks/useNodes.js';
 import './SessionList.css';
 
 // Home mobile: cockpit della flotta a gruppi (Flotta + Altre sessioni).
@@ -29,8 +30,19 @@ function rel(epochSec) {
   return `${Math.floor(s / 86400)}g`;
 }
 
-export default function SessionList({ onPick, token }) {
+// Etichetta di stato di un gruppo nodo degradato (design §7: mai spinner).
+function nodeStateLabel(g) {
+  if (g.status === 'down') {
+    return g.downSince ? t('tunnel-down-since').replace('{t}', rel(g.downSince)) : t('tunnel-down');
+  }
+  if (g.status === 'unreachable') return t('node-unreachable');
+  return '';
+}
+
+export default function SessionList({ onPick, token, onSettings }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
+  // Gruppi per-nodo remoto (B2): zero nodi configurati -> [] e home identica.
+  const nodeGroups = useNodes(token);
   const [sessions, setSessions] = useState(null); // null = primo load
   const [err, setErr] = useState(null);
   const [q, setQ] = useState('');
@@ -80,7 +92,7 @@ export default function SessionList({ onPick, token }) {
   async function onFleetConfirm(payload) {
     if (!powerCell) return;
     const { cell } = powerCell;
-    if (payload.action === 'up') await fleetUp(token, { cell, engine: payload.engine, boot: !!payload.boot });
+    if (payload.action === 'up') await fleetUp(token, { cell, engine: payload.engine, model: payload.model || '', boot: !!payload.boot });
     else await fleetDown(token, { cell, boot: !!payload.boot });
     refresh();
   }
@@ -140,7 +152,10 @@ export default function SessionList({ onPick, token }) {
         <div className="nc-home-sub">
           {t('fleet-tmux')} · {total} {t('sessions')}{attached > 0 && ` · ${attached} attached`}
         </div>
-        <button className="nc-refresh" onClick={refresh} title={t('refresh')}><Icon name="refresh" size={18} /></button>
+        <span className="nc-head-actions">
+          <button className="nc-refresh" onClick={onSettings} title={t('settings')}><Icon name="gear" size={18} /></button>
+          <button className="nc-refresh" onClick={refresh} title={t('refresh')}><Icon name="refresh" size={18} /></button>
+        </span>
       </header>
 
       {total > 8 && (
@@ -225,6 +240,36 @@ export default function SessionList({ onPick, token }) {
           </div>
         )}
       </section>
+
+      {/* Gruppi per-nodo remoto (B2, design §5): card per sessione remota;
+          tunnel giu' = riga degradata statica (§7, niente spinner). */}
+      {nodeGroups.map((g) => (
+        <section key={`nodo-${g.name}`} className="nc-group">
+          <div className="nc-group-title nc-node-title">
+            <span className={`dot ${g.status === 'up' ? 'on' : 'warn'}`} />
+            {g.name}
+            {' · '}
+            {g.status === 'up'
+              ? t('node-sessions').replace('{n}', String(g.sessions.length))
+              : nodeStateLabel(g)}
+          </div>
+          {g.status === 'up' && g.sessions.map((s) => (
+            <div key={s.key} className="nc-mcard">
+              <button className="nc-mcard-main" onClick={() => onPick({ session: s.name, node: s.node })}>
+                <span className={s.attached ? 'dot on' : 'dot'} />
+                <span className="nc-mcard-text">
+                  <b>{s.name}</b>
+                  <small>{s.preview ? s.preview : (s.cmd ? s.cmd : t('windows').replace('{n}', String(s.windows || 0)))}</small>
+                </span>
+              </button>
+              {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
+            </div>
+          ))}
+          {g.status === 'up' && g.sessions.length === 0 && (
+            <div className="nc-empty">{t('no-sessions-short')}</div>
+          )}
+        </section>
+      ))}
 
       <footer className="nc-home-foot" onClick={copyEndpointUrl} title={t('copy-url')}>
         {version && <span>v{version}</span>}

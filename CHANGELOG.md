@@ -2,6 +2,59 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.0 — 2026-07-11 — "Many Nodes, Many Monitors"
+
+The multi-node + multi-monitor release: one UI for the tmux fleets of several hosts,
+named multi-window decks, a real CLI, an MCP operator bridge, and a first-run wizard.
+
+- feat(mcp): **MCP bridge** — `nexuscrew mcp` runs a minimal stdio MCP server (hand-rolled
+  JSON-RPC 2.0, newline-delimited, no SDK deps) that brings NexusCrew inside AI sessions as
+  the cell→human channel: `nc_notify` (UI toast + web push), `nc_ask` (question with deferred
+  answer pasted back into the caller's tmux session as `[human reply · ask#<id>] …`
+  by default (`NEXUSCREW_REPLY_LABEL` configures the neutral operator label),
+  `nc_send_file` (copy into the session outbox with badge + notification), `nc_status` and
+  `nc_inbox` (read-only). Caller identity from `$TMUX` (`display-message #S`) with
+  `NEXUSCREW_MCP_SESSION` fallback; fail-closed on malformed input (garbage never crashes,
+  JSON-RPC errors instead).
+- feat(server): notification plumbing — `POST /api/notify` (rate limit global per token +
+  per session, capped LRU buckets), SSE `GET /api/events` for live UI frames, web push
+  (`web-push` dep, lazy VAPID keys in `~/.nexuscrew/vapid.json` 0600, https-only endpoints
+  with private-host rejection and a subscription cap, subscriptions in `push.json` 0600
+  with dead-endpoint cleanup), asks store persisted in `asks.json` 0600 (hard cap on open
+  asks, rate-limited creation). Answer route is READONLY-gated (paste is a PTY write),
+  claims the ask atomically (concurrent answers cannot double-paste) and only commits
+  after a successful paste. READONLY is a floor: ask creation and outbox delivery are 403,
+  VAPID keys are never generated in READONLY, and secret stores (`vapid/push/asks.json`)
+  with unsafe mode/owner or symlinked are refused fail-closed.
+- feat(ui): notification toasts + open-asks panel with reply box/option buttons and counter
+  badge (all views, i18n it/en/es); push enable/disable in Settings → System; service worker
+  handles `push` and `notificationclick` (deep-link `/#ask=<id>`).
+
+- feat(cli): **unified CLI** — `nexuscrew` alone smart-ups (zero-question init → start →
+  URL + QR); new subcommands `up|down`, `url [--qr]`, `token rotate`, `logs [-f]`,
+  `doctor`, `update`, and an extended `status [--json]` with roles and per-node tunnel
+  state. The server startup log no longer prints the token.
+- feat(nodes): **multi-node foundation** — `~/.nexuscrew/nodes.json` secret store (0600,
+  atomic writes, strict schema) and an SSH tunnel manager with dedicated restricted keys,
+  explicit loopback binds, `ExitOnForwardFailure`, and retry with backoff. CLI commands
+  cover node registration, tests, tunnel lifecycle, token setup, and reachable-node mode.
+- feat(proxy): **single-origin multi-node** — the hub reverse-proxies `/node/<name>/…`
+  over HTTP and WebSocket. Local auth happens before node resolution; remote tokens stay
+  server-side; client credentials and hop-by-hop headers are stripped; READONLY blocks
+  mutations and remote PTY attach.
+- feat(deck): **multi-window decks** — named workspaces at `/deck/<name>`, with one
+  remembered tile layout per browser and deck. Deck tiles attach with `ignore-size`; the
+  focused tile becomes size owner so browser windows do not fight real terminals.
+- feat(ui): **remote nodes, settings, and first-run wizard** — per-node groups and remote
+  attach in the sidebar, grid, and decks; a three-tab settings panel for roles, nodes, and
+  system actions; and a skippable three-step setup wizard. Mutations use a closed-list,
+  READONLY-gated API with strict validation and token-redacted responses.
+- security: proxy upgrade failures return a controlled 502; WebSocket upgrades
+  pre-authenticate through the injected header; local query tokens are stripped before
+  forwarding; token rotation invalidates live sessions after restart.
+- i18n: all new surfaces in English, Italian, and Spanish.
+- tests: suite grows from 262 to **495 tests** (494 pass / 1 skip).
+
 ## 0.7.7
 
 - feat(composer): **attachment button** to the left of the input — a File / Camera / Gallery

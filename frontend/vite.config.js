@@ -7,7 +7,12 @@ import { readFileSync } from 'node:fs'
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), {
+    name: 'nexuscrew-version-manifest',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: `${JSON.stringify({ version: pkg.version })}\n` })
+    }
+  }],
   define: { __NC_BUILD_VERSION__: JSON.stringify(pkg.version) },
   server: {
     proxy: {

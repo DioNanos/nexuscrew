@@ -30,7 +30,7 @@ test('resolveCwd: dentro home ok, symlink-escape e fuori-home rifiutati', (t) =>
 
 test('isProtectedSession: cloud-* SEMPRE, anche senza registry (F2)', () => {
   const noFleet = () => false;
-  assert.equal(isProtectedSession('cloud-Dev', noFleet), true);
+  assert.equal(isProtectedSession('cloud-Build', noFleet), true);
   assert.equal(isProtectedSession('cloud-qualunque', noFleet), true);
   assert.equal(isProtectedSession('CLOUD-x', noFleet), true);
   assert.equal(isProtectedSession('worker-1', noFleet), false);

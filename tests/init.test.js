@@ -4,7 +4,16 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { runInit, readExistingPort, nodeMajor } = require('../lib/cli/init.js');
+const { runInit, readExistingPort, haveTmux, nodeMajor } = require('../lib/cli/init.js');
+
+test('haveTmux: risolve PATH senza shell', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-path-'));
+  const bin = path.join(dir, 'tmux');
+  fs.writeFileSync(bin, '#!/bin/sh\n', { mode: 0o755 });
+  assert.equal(haveTmux('tmux', { PATH: dir }), true);
+  assert.equal(haveTmux('missing', { PATH: dir }), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 function tmpHome() {
   const h = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-init-'));
@@ -40,6 +49,9 @@ test('runInit: crea config + token + NexusFiles (linux, tmux ok)', () => {
   assert.ok(fs.existsSync(path.join(home, '.nexuscrew', 'config.json')));
   assert.ok(fs.existsSync(path.join(home, '.nexuscrew', 'token')));
   assert.ok(fs.existsSync(path.join(home, 'NexusFiles')));
+  const fleet = JSON.parse(fs.readFileSync(path.join(home, '.nexuscrew', 'fleet.json'), 'utf8'));
+  assert.deepEqual(fleet.engines.map((e) => e.id), ['claude.native', 'codex-vl.native']);
+  assert.deepEqual(fleet.cells, []);
   assert.ok(fs.existsSync(installTarget)); // service installato
   assert.equal(r.port, 41820);
   assert.ok(r.url.includes('#token='));

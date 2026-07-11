@@ -1,15 +1,41 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../lib/ws-client.js';
+import { copyText } from '../lib/clipboard.js';
+import { t } from '../lib/i18n.js';
 import './Terminal.css';
 
-export default function Terminal({ session, token, readonly, takeSize, sendRef, actionRef, ctrlRef, setCtrlArmed, onFiles, fontSize = 13 }) {
+// node (opzionale): sessione su nodo remoto — il WS passa dal proxy
+// /node/<name>/ws (B1); tutto il resto del protocollo e' identico.
+export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, actionRef, ctrlRef, setCtrlArmed, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange }) {
   const hostRef = useRef(null);
   const apiRef = useRef(null);        // {term, fit, sock} per lo zoom senza riconnettere
   const fontSizeRef = useRef(fontSize);
   fontSizeRef.current = fontSize;
+  const focusedRef = useRef(focused);
+  focusedRef.current = focused;
+  const selectionModeRef = useRef(selectionMode);
+  selectionModeRef.current = selectionMode;
+  const [selection, setSelection] = useState('');
+  const [copyState, setCopyState] = useState('');
+
+  const doCopy = async () => {
+    const value = apiRef.current?.term?.getSelection() || selection;
+    const ok = await copyText(value);
+    setCopyState(ok ? t('copied') : t('copy-manual'));
+    if (ok) { apiRef.current?.term?.clearSelection(); onSelectionModeChange?.(false); }
+    setTimeout(() => setCopyState(''), 1800);
+  };
+
+  // Focus → size-owner (§5b): quando il tile prende/perde il focus manda il
+  // frame 'focus' cosi' il server promuove/demota il client (ignore-size).
+  // Connessione viva: non riapre il socket.
+  useEffect(() => {
+    const api = apiRef.current;
+    if (api && api.sock && api.sock.focus) api.sock.focus(!!focused);
+  }, [focused]);
 
   // Zoom: cambia solo il font e rifitta — la connessione resta viva.
   useEffect(() => {
@@ -34,7 +60,7 @@ export default function Terminal({ session, token, readonly, takeSize, sendRef, 
     let sock;
     try {
       sock = openTerminalSocket({
-        session, token, readonly, takeSize, onFiles,
+        session, node, token, readonly, takeSize, focused: focusedRef.current, onFiles,
         cols: term.cols, rows: term.rows,
         onData: (bytes) => term.write(dec.decode(bytes)),
         onExit: () => term.write('\r\n\x1b[33m[sessione finita]\x1b[0m\r\n'),
@@ -62,18 +88,46 @@ export default function Terminal({ session, token, readonly, takeSize, sendRef, 
       }
       sock.sendInput(d);
     });
+    const onSelection = term.onSelectionChange(() => setSelection(term.getSelection()));
+    term.attachCustomKeyEventHandler((e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && term.getSelection()) {
+        if (e.type === 'keydown') copyText(term.getSelection());
+        return false;
+      }
+      return true;
+    });
     // Cronologia col gesto: drag verticale (dito) e rotella → copy-mode
     // server-side. Dito verso il basso = storia più vecchia (scroll-up).
     // Il drag col MOUSE resta selezione testo. Grazie a copy-mode -e, il
     // gesto opposto fino in fondo riporta al vivo.
     const host = hostRef.current;
     const STEP = 24; // px per tick di scroll (3 righe tmux)
-    let touchY = null, touchX = null, acc = 0, vertical = null;
+    let touchY = null, touchX = null, acc = 0, vertical = null, selectStart = null;
+    const cellAt = (touch) => {
+      const screen = host.querySelector('.xterm-screen') || host;
+      const r = screen.getBoundingClientRect();
+      const col = Math.max(0, Math.min(term.cols - 1, Math.floor(((touch.clientX - r.left) / Math.max(1, r.width)) * term.cols)));
+      const visibleRow = Math.max(0, Math.min(term.rows - 1, Math.floor(((touch.clientY - r.top) / Math.max(1, r.height)) * term.rows)));
+      return { col, row: term.buffer.active.viewportY + visibleRow };
+    };
     const onTouchStart = (e) => {
       if (e.touches.length !== 1) { touchY = null; return; }
+      if (selectionModeRef.current) {
+        e.preventDefault(); e.stopPropagation();
+        selectStart = cellAt(e.touches[0]); term.clearSelection(); return;
+      }
       touchY = e.touches[0].clientY; touchX = e.touches[0].clientX; acc = 0; vertical = null;
     };
     const onTouchMove = (e) => {
+      if (selectionModeRef.current && selectStart && e.touches.length === 1) {
+        e.preventDefault(); e.stopPropagation();
+        const end = cellAt(e.touches[0]);
+        const a = selectStart.row * term.cols + selectStart.col;
+        const b = end.row * term.cols + end.col;
+        const first = a <= b ? selectStart : end;
+        term.select(first.col, first.row, Math.abs(b - a) + 1);
+        return;
+      }
       if (touchY === null || e.touches.length !== 1) return;
       // preventDefault SUBITO, non dopo la soglia: al primo touchmove il
       // browser decide tra native scroll e JS — se non blocchi qui, parte il
@@ -88,7 +142,7 @@ export default function Terminal({ session, token, readonly, takeSize, sendRef, 
       while (acc >= STEP) { sock.action('scroll-up'); acc -= STEP; }
       while (acc <= -STEP) { sock.action('scroll-down'); acc += STEP; }
     };
-    const onTouchEnd = () => { touchY = null; };
+    const onTouchEnd = () => { touchY = null; selectStart = null; };
     let wheelAcc = 0;
     const onWheel = (e) => {
       e.preventDefault(); e.stopPropagation();
@@ -96,7 +150,7 @@ export default function Terminal({ session, token, readonly, takeSize, sendRef, 
       while (wheelAcc <= -STEP) { sock.action('scroll-up'); wheelAcc += STEP; }
       while (wheelAcc >= STEP) { sock.action('scroll-down'); wheelAcc -= STEP; }
     };
-    host.addEventListener('touchstart', onTouchStart, { passive: true });
+    host.addEventListener('touchstart', onTouchStart, { passive: false });
     host.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
     host.addEventListener('touchend', onTouchEnd, { passive: true });
     host.addEventListener('wheel', onWheel, { passive: false, capture: true });
@@ -121,6 +175,7 @@ export default function Terminal({ session, token, readonly, takeSize, sendRef, 
     return () => {
       apiRef.current = null;
       onData.dispose();
+      onSelection.dispose();
       host.removeEventListener('touchstart', onTouchStart);
       host.removeEventListener('touchmove', onTouchMove, { capture: true });
       host.removeEventListener('touchend', onTouchEnd);
@@ -132,7 +187,14 @@ export default function Terminal({ session, token, readonly, takeSize, sendRef, 
       sock.close();
       term.dispose();
     };
-  }, [session, token, readonly, takeSize, sendRef, actionRef, ctrlRef, setCtrlArmed, onFiles]);
+  }, [session, node, token, readonly, takeSize, sendRef, actionRef, ctrlRef, setCtrlArmed, onFiles]);
 
-  return <div className="nc-terminal" ref={hostRef} />;
+  return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
+    <div className="nc-terminal-host" ref={hostRef} />
+    {(selection || selectionMode) && <div className="nc-selection-tools">
+      {selection ? <button type="button" onClick={doCopy}>{copyState || t('copy')}</button> : <span>{t('select-drag')}</span>}
+      <button type="button" onClick={() => { apiRef.current?.term?.clearSelection(); setSelection(''); onSelectionModeChange?.(false); }}>{t('cancel')}</button>
+      {copyState === t('copy-manual') && <textarea readOnly value={selection} onFocus={(e) => e.target.select()} />}
+    </div>}
+  </div>;
 }

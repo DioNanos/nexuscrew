@@ -30,6 +30,7 @@ test('createServer: /api/* gated, static libero', async (t) => {
   const { server, token, watcher } = createServer({
     tokenPath: path.join(dir, 'token'),
     filesRoot: path.join(dir, 'files'),
+    fleetEnabled: false,
   });
   await new Promise((res) => server.listen(0, '127.0.0.1', res));
   t.after(() => { server.close(); if (watcher) watcher.close(); });
@@ -43,4 +44,5 @@ test('createServer: /api/* gated, static libero', async (t) => {
   assert.equal(cfg.bind, '127.0.0.1');
   assert.equal(typeof cfg.port, 'number');
   assert.ok(typeof cfg.version === 'string' && cfg.version.length > 0);
+  assert.ok(cfg.uiVersion === null || typeof cfg.uiVersion === 'string');
 });

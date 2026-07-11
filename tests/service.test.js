@@ -7,7 +7,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const {
   generateService, generateLinux, generateMac, generateTermux,
-  installService, installPath, fileMode,
+  installService, installPath, installCommands, fileMode,
   escapeSystemdPath, escapeSystemdExec, escapeXml, shellQuote,
 } = require('../lib/cli/service.js');
 
@@ -20,7 +20,11 @@ const ctx = (over = {}) => ({
   ...over,
 });
 
-function have(bin) { try { execFileSync('command', ['-v', bin], { stdio: 'ignore', shell: true }); return true; } catch (_) { return false; } }
+function have(bin) {
+  return String(process.env.PATH || '').split(path.delimiter).some((dir) => {
+    try { fs.accessSync(path.join(dir, bin), fs.constants.X_OK); return true; } catch (_) { return false; }
+  });
+}
 
 // --- Linux systemd ---
 
@@ -83,6 +87,12 @@ test('generateMac: struttura plist valida (key/string/array/dict)', () => {
   assert.match(s, /<key>RunAtLoad<\/key>\s*<true\/>/);
   assert.match(s, /<key>StandardOutPath<\/key>/);
   assert.match(s, /<key>StandardErrorPath<\/key>/);
+  assert.match(s, /<key>PATH<\/key>\s*<string>\/usr\/bin:\/opt\/homebrew\/bin:\/usr\/local\/bin:\/bin<\/string>/);
+});
+
+test('generateMac: PATH usa dirname Node + Homebrew e bin di sistema', () => {
+  const s = generateMac(ctx({ nodeBin: '/custom/node/bin/node' }));
+  assert.match(s, /<key>PATH<\/key>\s*<string>\/custom\/node\/bin:\/opt\/homebrew\/bin:\/usr\/local\/bin:\/usr\/bin:\/bin<\/string>/);
 });
 
 test('generateMac: NESSUN <home> come elemento XML (R2)', () => {
@@ -259,6 +269,31 @@ test('installService: exec systemctl/launchctl chiamati (mock)', () => {
   assert.ok(calls.some((c) => c[1].includes('daemon-reload')));
   assert.ok(calls.some((c) => c[1].includes('enable')));
   assert.ok(calls.some((c) => c[1].includes('restart'))); // restart carica nuovo codice (drop-in)
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('installCommands mac: bootout service-target, bootstrap domain-target', () => {
+  const cmds = installCommands('mac', '/tmp/nexuscrew.plist', { uid: 501 });
+  assert.deepEqual(cmds, [
+    ['launchctl', ['bootout', 'gui/501/com.mmmbuto.nexuscrew']],
+    ['launchctl', ['bootstrap', 'gui/501', '/tmp/nexuscrew.plist']],
+  ]);
+});
+
+test('installService mac: bootout assente ignorato, bootstrap failure emerge', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-mac-'));
+  const target = path.join(dir, 'nexuscrew.plist');
+  let bootstrapFails = false;
+  const execImpl = (_bin, args) => {
+    if (args[0] === 'bootout') throw new Error('service not loaded');
+    if (args[0] === 'bootstrap' && bootstrapFails) throw new Error('bootstrap failed');
+  };
+  const ok = installService('mac', generateMac(ctx()), { ...ctx(), installPath: target }, { execImpl });
+  assert.deepEqual(ok.failures, []);
+  bootstrapFails = true;
+  const bad = installService('mac', generateMac(ctx()), { ...ctx(), installPath: target }, { execImpl });
+  assert.equal(bad.failures.length, 1);
+  assert.match(bad.failures[0].cmd, /bootstrap gui\/1000/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

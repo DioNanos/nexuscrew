@@ -1,4 +1,4 @@
-/* Stile Termux extra-keys: piatto, due righe, niente bordi (DAG 2026-07-09). */
+/* Stile Termux extra-keys: piatto, due righe, niente bordi. */
 .nc-keybar { background: #0a0e0a; border-top: 1px solid #1c241c; position: relative; }
 .nc-keybar.termux { display: flex; flex-direction: column; padding: 2px 0; }
 .nc-keybar .row { display: flex; }

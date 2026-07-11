@@ -82,9 +82,12 @@ test('installFleetService mac: scrive plist com.mmmbuto.nexuscrew-fleet + bootst
   });
   assert.equal(r.written, true);
   assert.ok(fs.existsSync(target));
-  assert.ok(fs.readFileSync(target, 'utf8').includes('com.mmmbuto.nexuscrew-fleet'));
+  const plist = fs.readFileSync(target, 'utf8');
+  assert.ok(plist.includes('com.mmmbuto.nexuscrew-fleet'));
+  assert.match(plist, /<key>PATH<\/key>\s*<string>\/usr\/local\/bin:\/opt\/homebrew\/bin:\/usr\/bin:\/bin<\/string>/);
   // idempotente come service.js: bootout (ignore se assente) + bootstrap
-  assert.ok(calls.some(([b, a]) => b === 'launchctl' && a[0] === 'bootstrap'));
+  assert.ok(calls.some(([b, a]) => b === 'launchctl'
+    && a.join(' ') === `bootstrap gui/501 ${target}`));
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -192,9 +195,13 @@ test('selectProviderModeSync: external se fleetBin fidato presente (no companion
 });
 
 test('selectProviderModeSync: forced onorati (disabled / builtin fail-closed senza fleet.json)', () => {
-  assert.equal(selectProviderModeSync({ fleetProvider: 'disabled' }).mode, 'disabled');
-  // forced builtin ma fleet.json mancante -> fail-closed disabled (§9g)
-  assert.equal(selectProviderModeSync({ fleetProvider: 'builtin' }).mode, 'disabled');
+  const home = tmpHome();
+  const missing = path.join(home, '.nexuscrew', 'fleet.json');
+  assert.equal(selectProviderModeSync({ home, fleetDefsPath: missing, fleetProvider: 'disabled' }).mode, 'disabled');
+  // forced builtin ma fleet.json mancante -> fail-closed disabled (§9g), senza
+  // dipendere dall'eventuale fleet.json reale dell'utente che esegue la suite.
+  assert.equal(selectProviderModeSync({ home, fleetDefsPath: missing, fleetProvider: 'builtin' }).mode, 'disabled');
+  fs.rmSync(home, { recursive: true, force: true });
 });
 
 test('selectProviderModeSync: auto disabled se niente external nè fleet.json', () => {

@@ -53,6 +53,11 @@
   font-size: 11px; opacity: .55; text-transform: uppercase; letter-spacing: .5px;
   padding: 10px 4px 2px;
 }
+/* Titolo gruppo per-nodo remoto (B2): dot di stato + nome + conteggio/degrado. */
+.nc-node-title { display: flex; align-items: center; gap: 6px; opacity: .8; }
+.nc-node-title .nc-dot { width: 7px; height: 7px; flex: 0 0 auto; }
+.nc-node-title b { font-weight: 700; }
+.nc-node-title small { text-transform: none; letter-spacing: 0; opacity: .8; }
 
 /* Cella flotta */
 .nc-cell {
@@ -62,7 +67,7 @@
 .nc-cell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .nc-cell-main b { font-size: 13px; color: #d8ffe8; }
 .nc-cell-main small { font-size: 11px; opacity: .6; }
-/* Azioni card: STESSO design delle .nc-act mobile (DAG: grafica desktop = mobile) */
+/* Azioni card: stesso design delle .nc-act mobile (desktop = mobile). */
 .nc-power {
   flex: 0 0 auto; width: 28px; height: 28px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -105,6 +110,19 @@
 .nc-menu:active { color: #f88; }
 
 .nc-empty { opacity: .4; padding: 8px 4px; font-size: 12px; }
+
+/* Voce settings sotto il pannello FLEET (B2-UI). */
+.nc-side-gear {
+  display: flex; align-items: center; gap: 8px;
+  background: none; border: 1px solid #1c241c; border-radius: 10px;
+  color: #9fd; font-size: 12px; padding: 7px 10px; cursor: pointer;
+  margin-top: 6px;
+}
+.nc-side-gear:hover { border-color: #2e7d32; color: #d8ffe8; }
+.nc-side-gear.mini {
+  justify-content: center; width: 34px; height: 34px; box-sizing: border-box;
+  padding: 0; border-radius: 9px; margin: 6px auto 0;
+}
 
 /* Picker lingua in fondo alla sidebar. */
 .nc-side-lang {

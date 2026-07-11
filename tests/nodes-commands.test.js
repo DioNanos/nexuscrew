@@ -1,0 +1,355 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const cmds = require('../lib/nodes/commands.js');
+const store = require('../lib/nodes/store.js');
+const tunnel = require('../lib/nodes/tunnel.js');
+const pidf = require('../lib/cli/pidfile.js');
+const { status, doctor, dispatch } = require('../lib/cli/commands.js');
+
+function nodeHome() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-ncmd-'));
+  fs.mkdirSync(path.join(home, '.nexuscrew'), { recursive: true });
+  return home;
+}
+const nodesPathFor = (home) => path.join(home, '.nexuscrew', 'nodes.json');
+const FAKE_PUB = 'ssh-ed25519 AAAAFAKEKEY nexuscrew-tunnel';
+const keygenSeam = () => FAKE_PUB;
+
+// --- nodes add --------------------------------------------------------------
+
+test('nodes add: scrive nodes.json 0600 + stampa authorized_keys forward (permitopen)', () => {
+  const home = nodeHome();
+  const l = [];
+  const r = cmds.nodesAdd({ home, log: (m) => l.push(m), name: 'vps', ssh: 'user@example.com', remotePort: 41820, keygen: keygenSeam });
+  assert.equal(r.code, 0);
+  const p = nodesPathFor(home);
+  assert.equal(fs.lstatSync(p).mode & 0o777, 0o600);
+  const st = store.loadStore(p);
+  assert.equal(st.nodes[0].name, 'vps');
+  assert.equal(st.nodes[0].localPort, 43001); // prima porta stabile
+  const out = l.join('\n');
+  assert.ok(out.includes('restrict,port-forwarding,permitopen="127.0.0.1:41820",command="/bin/false"'));
+  assert.ok(out.includes(FAKE_PUB));
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('nodes add: READONLY blocca, nessun file scritto', () => {
+  const home = nodeHome();
+  process.env.NEXUSCREW_READONLY = '1';
+  const r = cmds.nodesAdd({ home, log: () => {}, name: 'vps', ssh: 'user@h', keygen: keygenSeam });
+  delete process.env.NEXUSCREW_READONLY;
+  assert.equal(r.code, 1);
+  assert.equal(r.reason, 'readonly');
+  assert.ok(!fs.existsSync(nodesPathFor(home)));
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('nodes add: nome duplicato e self-reference rifiutati', () => {
+  const home = nodeHome();
+  cmds.nodesAdd({ home, log: () => {}, name: 'vps', ssh: 'user@h', keygen: keygenSeam });
+  const dup = cmds.nodesAdd({ home, log: () => {}, name: 'vps', ssh: 'user@h2', keygen: keygenSeam });
+  assert.equal(dup.code, 1);
+  // self-reference: nodeId == quello dell'installazione
+  const ownId = store.loadStore(nodesPathFor(home)).nodeId;
+  const self = cmds.nodesAdd({ home, log: () => {}, name: 'me', ssh: 'user@h3', nodeId: ownId, keygen: keygenSeam });
+  assert.equal(self.code, 1);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('nodes add: ssh invalido -> code 1 chiaro (mai guess)', () => {
+  const home = nodeHome();
+  const l = [];
+  const r = cmds.nodesAdd({ home, log: (m) => l.push(m), name: 'vps', ssh: 'nohost', keygen: keygenSeam });
+  assert.equal(r.code, 1);
+  assert.ok(!fs.existsSync(nodesPathFor(home)) || store.loadStore(nodesPathFor(home)).nodes.length === 0);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// --- nodes list -------------------------------------------------------------
+
+test('nodes list --json: redatto (hasToken, mai il token) + stato tunnel', () => {
+  const home = nodeHome();
+  let st = store.addNode(store.emptyStore(), { name: 'vps', ssh: 'user@h', remotePort: 41820, localPort: 43001, keyPath: '/k' });
+  st = store.setNodeToken(st, 'vps', 'SUPER-SECRET-TOKEN');
+  store.atomicWriteStore(nodesPathFor(home), st);
+  const l = [];
+  const r = cmds.nodesList({ home, log: (m) => l.push(m), json: true });
+  assert.equal(r.code, 0);
+  const out = l.join('\n');
+  assert.ok(!out.includes('SUPER-SECRET-TOKEN'));
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.nodes[0].hasToken, true);
+  assert.equal(parsed.nodes[0].token, undefined);
+  assert.equal(parsed.nodes[0].tunnel.status, 'down');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// --- nodes remove -----------------------------------------------------------
+
+test('nodes remove: rimuove; READONLY blocca', () => {
+  const home = nodeHome();
+  cmds.nodesAdd({ home, log: () => {}, name: 'vps', ssh: 'user@h', keygen: keygenSeam });
+  process.env.NEXUSCREW_READONLY = '1';
+  assert.equal(cmds.nodesRemove({ home, log: () => {}, name: 'vps' }).code, 1);
+  delete process.env.NEXUSCREW_READONLY;
+  assert.equal(cmds.nodesRemove({ home, log: () => {}, name: 'vps' }).code, 0);
+  assert.equal(store.loadStore(nodesPathFor(home)).nodes.length, 0);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('F4 nodes remove: ferma un tunnel ATTIVO prima di rimuovere la config (no orphan)', async () => {
+  const home = nodeHome();
+  seedNode(home, { token: 'T' });
+  // tunnel "up" reale: figlio sleep detached + pidfile col suo pid (cmd matcha).
+  const { spawn } = require('node:child_process');
+  const child = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+  child.unref();
+  const childPid = child.pid;
+  pidf.writePidfile(tunnel.tunnelPidPath(home, 'vps'), childPid, 'sleep 30');
+  const exited = new Promise((res) => {
+    child.on('exit', () => res(true));
+    setTimeout(() => res(false), 2000);
+  });
+  const r = cmds.nodesRemove({ home, log: () => {}, name: 'vps' });
+  assert.equal(r.code, 0);
+  assert.equal(r.stopped, true, 'nodesRemove ha fermato il tunnel attivo (killPidfile killed:true)');
+  assert.equal(store.loadStore(nodesPathFor(home)).nodes.length, 0, 'nodo rimosso dalla config');
+  assert.ok(!fs.existsSync(tunnel.tunnelPidPath(home, 'vps')), 'pidfile del tunnel rimosso');
+  assert.equal(await exited, true, 'il tunnel figlio e\' stato realmente terminato (no orphan)');
+  try { process.kill(childPid, 'SIGKILL'); } catch (_) { /* giÃ  morto */ }
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('F4 nodes remove: se lo stop fallisce preserva la config', () => {
+  const home = nodeHome();
+  seedNode(home, { token: 'T' });
+  const original = tunnel.stopTunnel;
+  tunnel.stopTunnel = () => ({ stopped: false, reason: 'operation not permitted' });
+  try {
+    const r = cmds.nodesRemove({ home, log: () => {}, name: 'vps' });
+    assert.equal(r.code, 1);
+    assert.equal(r.reason, 'tunnel stop failed');
+    assert.equal(store.loadStore(nodesPathFor(home)).nodes.length, 1);
+  } finally {
+    tunnel.stopTunnel = original;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// --- nodes set-token --------------------------------------------------------
+
+test('nodes set-token: salva (da opts.token), non stampa il token, READONLY blocca', () => {
+  const home = nodeHome();
+  cmds.nodesAdd({ home, log: () => {}, name: 'vps', ssh: 'user@h', keygen: keygenSeam });
+  process.env.NEXUSCREW_READONLY = '1';
+  assert.equal(cmds.nodesSetToken({ home, log: () => {}, name: 'vps', token: 'X' }).code, 1);
+  delete process.env.NEXUSCREW_READONLY;
+  const l = [];
+  const r = cmds.nodesSetToken({ home, log: (m) => l.push(m), name: 'vps', token: 'ROTATED-REMOTE-TOKEN' });
+  assert.equal(r.code, 0);
+  assert.equal(store.loadStore(nodesPathFor(home)).nodes[0].token, 'ROTATED-REMOTE-TOKEN');
+  assert.ok(!l.join('\n').includes('ROTATED-REMOTE-TOKEN')); // mai stampato
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// --- nodes test (NON-mutante): 3 failure distinte ---------------------------
+
+function seedNode(home, { token } = {}) {
+  let st = store.addNode(store.emptyStore(), { name: 'vps', ssh: 'user@h', remotePort: 41820, localPort: 43001, keyPath: '/k' });
+  if (token) st = store.setNodeToken(st, 'vps', token);
+  store.atomicWriteStore(nodesPathFor(home), st);
+}
+function markTunnelUp(home, name) {
+  // pidfile vivo con cmd vuoto -> isAlive true senza match cmdline (self pid)
+  pidf.writePidfile(tunnel.tunnelPidPath(home, name), process.pid, '');
+}
+
+test('nodes test: tunnel DOWN', async () => {
+  const home = nodeHome();
+  seedNode(home, { token: 'T' });
+  const r = await cmds.nodesTest({ home, log: () => {}, name: 'vps', httpProbe: async () => ({ ok: true, status: 200 }) });
+  assert.equal(r.result, 'tunnel-down');
+  assert.equal(r.code, 1);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('nodes test: HEALTH KO (tunnel up, / non risponde)', async () => {
+  const home = nodeHome();
+  seedNode(home, { token: 'T' });
+  markTunnelUp(home, 'vps');
+  const r = await cmds.nodesTest({ home, log: () => {}, name: 'vps', httpProbe: async (url) => (url.endsWith('/') ? { ok: false, status: 0 } : { ok: true, status: 200 }) });
+  assert.equal(r.result, 'health-ko');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('nodes test: TOKEN KO (health ok, /api/config 401)', async () => {
+  const home = nodeHome();
+  seedNode(home, { token: 'T' });
+  markTunnelUp(home, 'vps');
+  const r = await cmds.nodesTest({ home, log: () => {}, name: 'vps', httpProbe: async (url) => (url.endsWith('/api/config') ? { ok: false, status: 401 } : { ok: true, status: 200 }) });
+  assert.equal(r.result, 'token-ko');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('nodes test: OK e token-missing', async () => {
+  const home = nodeHome();
+  seedNode(home, { token: 'T' });
+  markTunnelUp(home, 'vps');
+  const ok = await cmds.nodesTest({ home, log: () => {}, name: 'vps', httpProbe: async (url) => (url.endsWith('/api/config') ? { ok: true, status: 200 } : { ok: true, status: 200 }) });
+  assert.equal(ok.result, 'ok');
+  assert.equal(ok.code, 0);
+  // token assente -> token-missing
+  const home2 = nodeHome();
+  seedNode(home2, {}); // niente token
+  markTunnelUp(home2, 'vps');
+  const tm = await cmds.nodesTest({ home: home2, log: () => {}, name: 'vps', httpProbe: async () => ({ ok: true, status: 200 }) });
+  assert.equal(tm.result, 'token-missing');
+  fs.rmSync(home, { recursive: true, force: true });
+  fs.rmSync(home2, { recursive: true, force: true });
+});
+
+test('nodes test: nodo sconosciuto -> code 1', async () => {
+  const home = nodeHome();
+  const r = await cmds.nodesTest({ home, log: () => {}, name: 'ghost', httpProbe: async () => ({ ok: true, status: 200 }) });
+  assert.equal(r.result, 'unknown-node');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// --- nodes up/down (spawn mockato) -----------------------------------------
+
+test('nodes up: spawn ssh con forward argv; down non tocca la config', () => {
+  const home = nodeHome();
+  seedNode(home, { token: 'T' });
+  const calls = [];
+  const r = cmds.nodesUp({ home, log: () => {}, name: 'vps', logFd: null, spawnImpl: (bin, args) => { calls.push([bin, args]); return { pid: 999999999, unref() {} }; } });
+  assert.equal(r.code, 0);
+  assert.equal(calls[0][0], process.execPath);
+  assert.ok(calls[0][1][0].endsWith('tunnel-supervisor.js'));
+  assert.ok(calls[0][1].includes('-L') && calls[0][1].includes('127.0.0.1:43001:127.0.0.1:41820'));
+  // la config nodes.json e' intatta dopo up
+  assert.equal(store.loadStore(nodesPathFor(home)).nodes.length, 1);
+  const d = cmds.nodesDown({ home, log: () => {}, name: 'vps' });
+  assert.equal(d.code, 0);
+  assert.equal(store.loadStore(nodesPathFor(home)).nodes.length, 1); // config immutata
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// --- node on/off ------------------------------------------------------------
+
+test('node on: gate permitlisten (<7.8 rifiuta), poi abilita ruolo + rendezvous', () => {
+  const home = nodeHome();
+  // ssh vecchio -> rifiuto PRIMA di abilitare
+  const old = cmds.nodeOn({ home, log: () => {}, rendezvousSsh: 'user@host', sshVersion: () => ({ major: 7, minor: 2 }), keygen: keygenSeam });
+  assert.equal(old.code, 1);
+  assert.equal(old.reason, 'permitlisten');
+  // config non modificata
+  assert.ok(!fs.existsSync(path.join(home, '.nexuscrew', 'config.json')) || !JSON.parse(fs.readFileSync(path.join(home, '.nexuscrew', 'config.json'), 'utf8')).roles);
+
+  // ssh moderno + rendezvous -> abilita, stampa permitlisten authorized_keys
+  const l = [];
+  const spawned = [];
+  const on = cmds.nodeOn({
+    home, log: (m) => l.push(m), rendezvousSsh: 'user@host', publishedPort: 41821,
+    sshVersion: () => ({ major: 9, minor: 6, raw: 'OpenSSH_9.6' }), keygen: keygenSeam,
+    logFd: null, spawnSyncImpl: () => ({ stderr: 'OpenSSH_9.6p1\n' }),
+    spawnImpl: (bin, args) => { spawned.push([bin, args]); return { pid: 4193999, unref() {} }; },
+  });
+  assert.equal(on.code, 0);
+  assert.equal(on.roles.node, true);
+  assert.equal(on.tunnel.started, true);
+  assert.equal(spawned[0][0], process.execPath);
+  assert.ok(spawned[0][1][0].endsWith('tunnel-supervisor.js'));
+  assert.ok(spawned[0][1].includes('-R'));
+  assert.ok(spawned[0][1].includes('127.0.0.1:41821:127.0.0.1:41820'));
+  const out = l.join('\n');
+  assert.ok(out.includes('permitlisten="127.0.0.1:41821"'));
+  assert.ok(out.includes(FAKE_PUB));
+  // rendezvous persistito in nodes.json
+  assert.equal(store.loadStore(nodesPathFor(home)).rendezvous.publishedPort, 41821);
+  // config.json roles.node true
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, '.nexuscrew', 'config.json'), 'utf8')).roles.node, true);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('node on/off: READONLY blocca; off disabilita il ruolo', () => {
+  const home = nodeHome();
+  process.env.NEXUSCREW_READONLY = '1';
+  assert.equal(cmds.nodeOn({ home, log: () => {}, rendezvousSsh: 'user@host', sshVersion: () => ({ major: 9, minor: 6 }), keygen: keygenSeam }).code, 1);
+  assert.equal(cmds.nodeOff({ home, log: () => {} }).code, 1);
+  delete process.env.NEXUSCREW_READONLY;
+  cmds.nodeOn({
+    home, log: () => {}, rendezvousSsh: 'user@host', sshVersion: () => ({ major: 9, minor: 6 }),
+    keygen: keygenSeam, logFd: null,
+    spawnSyncImpl: () => ({ stderr: 'OpenSSH_9.6p1\n' }),
+    spawnImpl: () => ({ pid: 4193999, unref() {} }),
+  });
+  const off = cmds.nodeOff({ home, log: () => {} });
+  assert.equal(off.roles.node, false);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// --- integrazione A2: status --json + doctor -------------------------------
+
+test('status --json: nodes[] con stato tunnel reale, token REDATTI', () => {
+  const home = nodeHome();
+  let st = store.addNode(store.emptyStore(), { name: 'vps', ssh: 'user@h', remotePort: 41820, localPort: 43001, keyPath: '/k' });
+  st = store.setNodeToken(st, 'vps', 'STATUS-SECRET-TOKEN');
+  store.atomicWriteStore(nodesPathFor(home), st);
+  const l = [];
+  status({ home, platform: 'linux', json: true, log: (m) => l.push(m), execImpl: () => { throw new Error('inactive'); } });
+  const out = l.join('\n');
+  assert.ok(!out.includes('STATUS-SECRET-TOKEN'));
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.nodes.length, 1);
+  assert.equal(parsed.nodes[0].name, 'vps');
+  assert.equal(parsed.nodes[0].hasToken, true);
+  assert.equal(parsed.nodes[0].tunnel.status, 'down');
+  assert.equal(parsed.nodes[0].token, undefined);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('doctor: check ssh client + permitlisten (>=7.8 ok, <7.8 fail)', () => {
+  const home = nodeHome();
+  fs.writeFileSync(path.join(home, '.nexuscrew', 'token'), 'TOK\n', { mode: 0o600 });
+  const svc = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
+  fs.mkdirSync(path.dirname(svc), { recursive: true });
+  fs.writeFileSync(svc, 'x');
+  const common = {
+    home, platform: 'linux', installPath: svc, log: () => {},
+    execImpl: (b, a) => { if (a && a.includes('is-active')) return 'active'; if (a && a.includes('is-enabled')) return 'enabled'; return ''; },
+    ptyLoad: () => ({ spawn() {} }),
+  };
+  const good = doctor({ ...common, sshVersion: () => ({ stdout: '', stderr: 'OpenSSH_9.6p1\n' }) });
+  assert.ok(good.checks.some((c) => c.name.includes('ssh client') && c.ok));
+  assert.ok(good.checks.some((c) => c.name.includes('permitlisten') && c.ok));
+  assert.equal(good.code, 0);
+  const bad = doctor({ ...common, sshVersion: () => ({ stdout: '', stderr: 'OpenSSH_7.2p2\n' }) });
+  assert.ok(bad.checks.some((c) => c.name.includes('permitlisten') && !c.ok));
+  assert.equal(bad.code, 1);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// --- dispatch wiring --------------------------------------------------------
+
+test('dispatch: nodes add via CLI (flag --ssh forma spaziata)', () => {
+  const home = nodeHome();
+  const r = dispatch(['nodes', 'add', 'vps', '--ssh', 'user@example.com', '--remote-port', '41820'], { home, log: () => {}, keygen: keygenSeam });
+  assert.equal(r.code, 0);
+  assert.equal(store.loadStore(nodesPathFor(home)).nodes[0].ssh, 'user@example.com');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('dispatch: nodes test async -> keepAlive + exit seam', async () => {
+  const home = nodeHome();
+  seedNode(home, { token: 'T' });
+  let exitCode = null;
+  const r = dispatch(['nodes', 'test', 'vps'], { home, log: () => {}, exit: (c) => { exitCode = c; }, httpProbe: async () => ({ ok: true, status: 200 }) });
+  assert.equal(r.keepAlive, true);
+  await new Promise((res) => setTimeout(res, 20));
+  assert.equal(exitCode, 1); // tunnel down -> code 1
+  fs.rmSync(home, { recursive: true, force: true });
+});

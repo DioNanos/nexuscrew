@@ -22,19 +22,29 @@ function initial(name) { return String(name || '?').replace(/^[^a-zA-Z0-9]+/, ''
 const SIDE_MIN_W = 180;
 const SIDE_MAX_W = 480;
 
-// Sidebar presentazionale: mostra la flotta (celle) + le altre sessioni tmux.
-// Il polling e le azioni sono del genitore; qui solo render + callback.
+// Etichetta di stato di un gruppo nodo degradato (design §7: mai spinner).
+function nodeStateLabel(g) {
+  if (g.status === 'down') {
+    return g.downSince ? t('tunnel-down-since').replace('{t}', rel(g.downSince)) : t('tunnel-down');
+  }
+  if (g.status === 'unreachable') return t('node-unreachable');
+  return '';
+}
+
+// Sidebar presentazionale: mostra la flotta (celle) + le altre sessioni tmux
+// + i gruppi per-nodo remoto (B2, design §5). Il polling e le azioni sono del
+// genitore; qui solo render + callback.
 // Collassabile (mini 48px, solo dot) e ridimensionabile (maniglia bordo destro).
 export default function Sidebar({
-  sessions = [], cells = [], activeSessions = [], onPick, onAddTile, onPower, onKill, onNew,
-  width = 240, collapsed = false, onResize, onToggleCollapse,
+  sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onKill, onNew,
+  onSettings, width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   const [pins, setPins] = useState(loadPins);
   const togglePin = (name) => setPins((p) => togglePinIn(p, name));
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
   const byName = new Map((sessions || []).map((s) => [s.name, s]));
-  // Ordinamento (DAG): pinnate in cima (ordine di pin), poi attivita' recente,
+  // Ordinamento: pinnate in cima (ordine di pin), poi attivita' recente,
   // poi ordine naturale/alfabetico. Vale per ENTRAMBI i gruppi, celle incluse.
   const rank = (key, activity) => pinRank(pins, key, activity);
   const cmp = cmpRank;
@@ -47,7 +57,7 @@ export default function Sidebar({
   });
   const active = new Set(activeSessions || []);
   // Tooltip mini via JS (position:fixed): il ::after CSS veniva CLIPPATO
-  // dall'overflow della sidebar da 48px (bug segnalato da DAG).
+  // dall'overflow della sidebar da 48px.
   const [tip, setTip] = useState(null); // {text, y}
   const showTip = (e, text) => { const r = e.currentTarget.getBoundingClientRect(); setTip({ text, y: r.top + r.height / 2 }); };
   const hideTip = () => setTip(null);
@@ -120,7 +130,36 @@ export default function Sidebar({
               onDoubleClick={() => onPick && onPick(s.name)}
             >{initial(s.name)}</button>
           ))}
+          {/* Sessioni dei nodi remoti (B2): iniziali col tooltip "nodo:sessione";
+              nodo degradato = dot warn statico (mai spinner, design §7). */}
+          {(nodeGroups || []).flatMap((g) => (g.status === 'up'
+            ? g.sessions.map((s) => (
+              <button
+                key={s.key}
+                type="button"
+                className={`nc-mini-init${active.has(s.key) ? ' active' : ''}`}
+                onMouseEnter={(e) => showTip(e, s.key)}
+                onMouseLeave={hideTip}
+                draggable
+                onDragStart={(e) => e.dataTransfer.setData('text/nc-session', s.key)}
+                onClick={() => onAddTile && onAddTile(s.key)}
+                onDoubleClick={() => onPick && onPick({ session: s.name, node: s.node })}
+              >{initial(s.name)}</button>
+            ))
+            : [(
+              <button
+                key={`nodo-${g.name}`}
+                type="button"
+                className="nc-mini-dot"
+                onMouseEnter={(e) => showTip(e, `${g.name}: ${nodeStateLabel(g)}`)}
+                onMouseLeave={hideTip}
+              ><span className="nc-dot warn" /></button>
+            )]))}
         </div>
+        <button className="nc-side-gear mini" onClick={onSettings} title={t('settings')}
+          onMouseEnter={(e) => showTip(e, t('settings'))} onMouseLeave={hideTip}>
+          <Icon name="gear" size={16} />
+        </button>
         {tip && <div className="nc-mini-tip" style={{ top: tip.y }}>{tip.text}</div>}
       </aside>
     );
@@ -173,6 +212,11 @@ export default function Sidebar({
         </div>
       )}
 
+      {/* Voce settings sotto il pannello FLEET (design §5, B2-UI). */}
+      <button className="nc-side-gear" onClick={onSettings} title={t('settings')}>
+        <Icon name="gear" size={15} /> {t('settings')}
+      </button>
+
       <div className="nc-side-group-title">{t('other-sessions')}</div>
       <div className="nc-side-group">
         {others.map((s) => (
@@ -212,6 +256,49 @@ export default function Sidebar({
         ))}
         {others.length === 0 && <div className="nc-empty">{t('no-sessions-short')}</div>}
       </div>
+
+      {/* Gruppi per-nodo remoto (B2, design §5): "phone · 2 sessioni" accanto
+          alle sessioni locali; tunnel giu' = gruppo degradato statico (§7). */}
+      {(nodeGroups || []).map((g) => (
+        <div key={`nodo-${g.name}`}>
+          <div className="nc-side-group-title nc-node-title">
+            <span className={`nc-dot ${g.status === 'up' ? 'on' : 'warn'}`} />
+            <b>{g.name}</b>
+            <small>
+              {' · '}
+              {g.status === 'up'
+                ? t('node-sessions').replace('{n}', String(g.sessions.length))
+                : nodeStateLabel(g)}
+            </small>
+          </div>
+          {g.status === 'up' && (
+            <div className="nc-side-group">
+              {g.sessions.map((s) => (
+                <div
+                  key={s.key}
+                  className={`nc-side-card${active.has(s.key) ? ' active' : ''}`}
+                  draggable
+                  onDragStart={(e) => e.dataTransfer.setData('text/nc-session', s.key)}
+                  onClick={() => onAddTile && onAddTile(s.key)}
+                  onDoubleClick={() => onPick && onPick({ session: s.name, node: s.node })}
+                >
+                  <span className={s.attached ? 'nc-dot on' : 'nc-dot'} />
+                  <span className="nc-card-main">
+                    <b>{s.name}</b>
+                    <small>
+                      {s.preview
+                        ? s.preview
+                        : (s.cmd ? s.cmd : t('windows').replace('{n}', String(s.windows || 0)))}
+                    </small>
+                  </span>
+                  {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
+                </div>
+              ))}
+              {g.sessions.length === 0 && <div className="nc-empty">{t('no-sessions-short')}</div>}
+            </div>
+          )}
+        </div>
+      ))}
 
       <div className="nc-side-lang">
         {LANGUAGES.map((lg, i) => (

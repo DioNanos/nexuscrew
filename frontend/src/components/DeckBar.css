@@ -1,0 +1,68 @@
+/* Barra gestione deck (finestra principale): sopra la griglia. Tema terminale. */
+.nc-deckbar {
+  display: flex; align-items: center; gap: 8px;
+  flex: 0 0 auto; min-width: 0;
+  padding: 5px 8px;
+  background: #0e140e; border-bottom: 1px solid #1c2a1c;
+  overflow-x: auto; white-space: nowrap;
+}
+.nc-deckbar-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  opacity: .5; color: #9fd; flex: 0 0 auto;
+}
+.nc-deck-chips { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
+.nc-deck-chip {
+  display: inline-flex; align-items: center;
+  border: 1px solid #243; border-radius: 6px; overflow: hidden;
+  background: #0a0e0a;
+}
+.nc-deck-chip.current { border-color: #7aa903; }
+.nc-deck-open {
+  background: none; border: none; color: #cfe;
+  padding: 3px 8px; font: inherit; font-size: 12px; cursor: pointer; max-width: 180px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.nc-deck-chip.current .nc-deck-open { color: #d9f7c7; }
+.nc-deck-open:hover { background: #132013; }
+.nc-deck-mini {
+  background: none; border: none; border-left: 1px solid #1c2a1c;
+  color: #7a9; padding: 3px 6px; font: inherit; font-size: 11px; cursor: pointer;
+}
+.nc-deck-mini:hover { background: #132013; color: #9fd; }
+.nc-deck-del:hover { color: #f99; }
+.nc-deck-newbtn {
+  background: none; border: 1px dashed #2a3a2a; color: #9fd;
+  border-radius: 6px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer;
+  flex: 0 0 auto;
+}
+.nc-deck-newbtn:hover { border-color: #7aa903; }
+.nc-deck-add { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.nc-deck-add input {
+  padding: 3px 8px; background: #122; border: 1px solid #243; color: #cfe;
+  border-radius: 6px; font: inherit; font-size: 12px; width: 130px;
+}
+.nc-deck-add input.invalid { border-color: #a44; }
+.nc-deck-slug { color: #7a9; font-size: 10px; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+.nc-deck-ok, .nc-deck-cancel {
+  background: #122; border: 1px solid #243; color: #9fd;
+  border-radius: 6px; padding: 3px 9px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.nc-deck-ok:disabled { opacity: .4; cursor: default; }
+.nc-deck-state { font-size: 10px; color: #7a9; min-width: 64px; }
+.nc-deck-state.error, .nc-deck-error { color: #f88; font-size: 10px; }
+.nc-deck-fallback { color: #fd8; font-size: 11px; }
+
+/* Tile: select "manda al deck" nell'header. */
+.nc-tile-deck {
+  background: #0a0e0a; border: 1px solid #243; color: #9fd;
+  border-radius: 5px; font: inherit; font-size: 11px; padding: 1px 3px; max-width: 92px;
+}
+
+/* Finestra deck minimale: pulsante flottante per riaprire la sidebar. */
+.nc-side-show {
+  position: fixed; left: 8px; top: 8px; z-index: 30;
+  background: #0e140e; border: 1px solid #243; color: #9fd;
+  border-radius: 6px; padding: 5px 9px; font: inherit; font-size: 13px; cursor: pointer;
+  opacity: .8;
+}
+.nc-side-show:hover { opacity: 1; border-color: #7aa903; }

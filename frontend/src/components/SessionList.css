@@ -16,8 +16,12 @@
 @keyframes nc-blink { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .nc-cursor { animation: none; } }
 .nc-home-sub { margin-top: 4px; font-size: 13px; opacity: .65; }
-.nc-refresh {
+/* Azioni header (settings + refresh): contenitore assoluto, bottoni statici. */
+.nc-head-actions {
   position: absolute; top: 0; right: 0;
+  display: inline-flex; gap: 6px;
+}
+.nc-refresh {
   display: inline-flex; align-items: center; justify-content: center;
   background: none; border: 1px solid #243; color: #9fd;
   border-radius: 8px; min-width: 40px; min-height: 40px;
@@ -84,6 +88,15 @@
 }
 .dot.warn { background: #e0b020; box-shadow: 0 0 6px #e0b02088; }
 
+/* Titolo gruppo per-nodo remoto (B2): dot di stato inline nel titolo. */
+.nc-group-title.nc-node-title { display: flex; align-items: center; gap: 6px; }
+.nc-group-title.nc-node-title .dot {
+  flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #355;
+}
+.nc-group-title.nc-node-title .dot.on { background: #00cc66; box-shadow: 0 0 6px #00cc6688; }
+.nc-mcard .dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #355; }
+.nc-mcard .dot.on { background: #00cc66; box-shadow: 0 0 6px #00cc6688; }
+
 .nc-rel { flex: 0 0 auto; font-size: 11px; opacity: .45; }
 
 .nc-power, .nc-menu {
@@ -111,7 +124,7 @@
 }
 .nc-lang-btn.on { opacity: 1; font-weight: 700; color: #d8ffe8; }
 
-/* Azioni card mobile: bottoni rotondi con stato colorato (design DAG 2026-07-09:
+/* Azioni card mobile: bottoni rotondi con stato colorato:
    il glifo nudo non si vedeva). */
 .nc-act {
   width: 34px; height: 34px; border-radius: 50%;

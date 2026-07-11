@@ -8,6 +8,7 @@ const { assertLoopback, defaults, loadConfig, baseDefaults } = require('../lib/c
 test('defaults bind to loopback only', () => {
   assert.strictEqual(defaults().bind, '127.0.0.1');
   assert.strictEqual(defaults().readonlyDefault, false); // read-write di default
+  assert.strictEqual(defaults().replyLabel, 'human');
 });
 
 test('assertLoopback rejects non-loopback bind', () => {
@@ -88,6 +89,14 @@ test('loadConfig: env voice override', () => {
   try {
     assert.equal(loadConfig().voiceUrl, 'http://1.2.3.4:9');
   } finally { delete process.env.NEXUSCREW_VOICE_URL; }
+});
+
+test('loadConfig: reply label neutra e override env', () => {
+  assert.equal(baseDefaults().replyLabel, 'human');
+  process.env.NEXUSCREW_REPLY_LABEL = 'operator';
+  try {
+    assert.equal(loadConfig().replyLabel, 'operator');
+  } finally { delete process.env.NEXUSCREW_REPLY_LABEL; }
 });
 
 test('loadConfig: config.json malformato -> defaults sicuri (no throw)', () => {

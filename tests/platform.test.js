@@ -34,8 +34,8 @@ test('nodeBin returns process.execPath (no hardcoded nvm)', () => {
 
 test('repoRoot resolves to the nexuscrew repo dir', () => {
   const r = repoRoot();
-  assert.ok(r.endsWith('nexuscrew'), `expected endswith nexuscrew, got ${r}`);
-  assert.ok(require('node:fs').existsSync(require('node:path').join(r, 'package.json')));
+  const pkg = require(require('node:path').join(r, 'package.json'));
+  assert.equal(pkg.name, '@mmmbuto/nexuscrew');
 });
 
 test('uid returns a positive number', () => {

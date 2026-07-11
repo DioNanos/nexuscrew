@@ -1,0 +1,45 @@
+/* Wizard first-run — overlay a sheet (toni PowerSheet, verde terminale). */
+.nc-wiz-overlay {
+  position: fixed; inset: 0; z-index: 70;
+  background: rgba(0, 0, 0, .7);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; box-sizing: border-box;
+}
+.nc-wiz {
+  width: 100%; max-width: 420px; max-height: 90vh; overflow-y: auto;
+  background: #0e140e; color: #cfe;
+  border: 1px solid #243; border-radius: 14px;
+  padding: 18px; display: flex; flex-direction: column; gap: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+}
+.nc-wiz-head { display: flex; flex-direction: column; gap: 4px; }
+.nc-wiz-head b { font-size: 17px; color: #d8ffe8; }
+.nc-wiz-head small { font-size: 12px; opacity: .65; text-transform: uppercase; letter-spacing: .5px; }
+
+.nc-wiz-body { display: flex; flex-direction: column; gap: 10px; }
+.nc-wiz-body input {
+  padding: 9px 10px; font: 14px/1.2 inherit;
+  background: #0a0e0a; color: #cfe;
+  border: 1px solid #243; border-radius: 8px;
+}
+.nc-wiz-body input:focus { outline: none; border-color: #2e7d32; }
+.nc-wiz-done { font-size: 13px; opacity: .85; }
+
+.nc-wiz .nc-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; cursor: pointer; }
+.nc-wiz .nc-check input { accent-color: #2e7d32; margin-top: 2px; }
+.nc-wiz .nc-check span { display: flex; flex-direction: column; gap: 2px; }
+.nc-wiz .nc-check small { opacity: .6; font-size: 11px; }
+
+.nc-wiz .nc-btn { border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+.nc-wiz .nc-btn.ghost { background: none; border: 1px solid #243; color: #9fd; }
+.nc-wiz .nc-btn.primary { background: #2e7d32; color: #fff; }
+.nc-wiz .nc-btn:disabled { opacity: .5; cursor: default; }
+.nc-wiz .nc-sheet-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.nc-wiz .nc-err { color: #f88; font-size: 12px; }
+
+.nc-wiz-skip {
+  background: none; border: none; color: #9fd; opacity: .6;
+  font-size: 12px; cursor: pointer; text-decoration: underline;
+  align-self: center; padding: 4px;
+}
+.nc-wiz-skip:hover { opacity: 1; }
