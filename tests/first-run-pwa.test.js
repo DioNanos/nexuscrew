@@ -35,7 +35,7 @@ test('fresh install -> background orchestration -> authenticated PWA wizard reac
     execImpl: () => '',
     portAvailableImpl: async () => true,
     runInitImpl: (opts) => runInit(opts),
-    startImpl: () => {
+    startPortableImpl: () => {
       runtime = createServer({
         home, configDir, configPath, tokenPath, port,
         filesRoot: path.join(home, 'NexusFiles'), fleetEnabled: false,

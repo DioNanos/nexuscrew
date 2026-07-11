@@ -11,13 +11,14 @@ import { validateNodeForm, validateRendezvousForm, tunnelInfo } from '../lib/set
 import { getPushState, subscribePush, unsubscribePush } from '../lib/push.js';
 import Icon from './Icon.jsx';
 import FleetTab from './FleetTab.jsx';
+import { useNodes } from '../hooks/useNodes.js';
 import './SettingsPanel.css';
 
 // Pannello settings (design §5, B2-UI). Stessa struttura a schede su desktop
 // (overlay nel workspace) e mobile (full-screen via CSS). Tre schede:
-//   ruoli   — toggle client/node (POST /config, POST /node-role)
-//   nodi    — elenco nodi + stato tunnel (poll GET /api/nodes) + azioni
-//   sistema — token rotate (conferma esplicita), rigenerazione service, info
+//   nodi    — peer Hydra + stato tunnel + azioni
+//   fleet   — engine/celle locali o su una route raggiungibile
+//   sistema — token rotate, boot/service e info
 // Invarianti UI: token MAI mostrato; ogni failure API mostrata con la causa
 // esplicita (jsonFetch propaga j.error); in READONLY i mutanti sono disabilitati
 // con motivo visibile (test/up/down/restart restano attivi: non sono gated).
@@ -338,6 +339,7 @@ function SystemTab({ token, settings, readonly }) {
           <br />
           {svc && svc.installed ? t('service-installed') : t('service-missing')}
           {svc && svc.installed ? ` · ${svc.active ? t('service-active') : t('service-inactive')}` : ''}
+          {svc ? ` · boot ${svc.boot ? 'on' : 'off'}` : ''}
         </div>
       )}
 
@@ -376,6 +378,7 @@ export default function SettingsPanel({ token, onClose }) {
   const [nodes, setNodes] = useState([]);
   const [readonly, setReadonly] = useState(false);
   const [loadErr, setLoadErr] = useState(null);
+  const roster = useNodes(token);
 
   const refresh = useCallback(async () => {
     try {
@@ -427,7 +430,8 @@ export default function SettingsPanel({ token, onClose }) {
 
         <div className="nc-set-body">
           {tab === 'nodes' && <NodesTab token={token} nodes={nodes} readonly={readonly} refresh={refresh} />}
-          {tab === 'fleet' && <FleetTab token={token} readonly={readonly} />}
+          {tab === 'fleet' && <FleetTab token={token} readonly={readonly}
+            targets={roster.filter((g) => g.status === 'up').map((g) => ({ route: g.route, label: g.label || g.name }))} />}
           {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} />}
         </div>
       </div>

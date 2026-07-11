@@ -3,11 +3,12 @@ import { t } from '../lib/i18n.js';
 import {
   fleetStatus, fleetDefinitions, fleetDefineEngine, fleetEditEngine, fleetRemoveEngine,
   fleetDefineCell, fleetEditCell, fleetRemoveCell, fleetRestart,
-  listDirs,
+  listDirs, getRouteConfig,
 } from '../lib/api.js';
 
-const blankEngine = () => ({ kind: 'managed', id: 'claude.native', label: '', client: 'claude', provider: 'native', credentialProfile: '', managedModel: '', permissionPolicy: 'standard', displayName: '', protocol: 'anthropic_messages', baseUrl: '', envKey: '', providerId: 'nexuscrew-custom', command: '', argsText: '', rc: true, promptMode: 'send-keys', promptFlag: '', modelFlag: '', modelValue: '', envRows: [] });
+const blankEngine = () => ({ kind: 'managed', id: 'claude.native', label: '', client: 'claude', provider: 'native', credentialProfile: '', managedModel: '', permissionPolicy: 'unsafe', displayName: '', protocol: 'anthropic_messages', baseUrl: '', envKey: '', providerId: 'nexuscrew-custom', command: '', argsText: '', rc: true, promptMode: 'send-keys', promptFlag: '', modelFlag: '', modelValue: '', envRows: [] });
 const blankCell = (engine = '') => ({ id: '', cwd: '', engine, boot: false, model: '', prompt: '' });
+const defaultPermission = (client) => client === 'claude' ? 'unsafe' : 'standard';
 const catalogEntry = (catalog, form) => catalog.find((p) => p.client === form.client && p.provider === form.provider && (p.credentialProfile || '') === (form.credentialProfile || ''));
 const managedLabel = (catalog, form) => catalogEntry(catalog, form)?.label || `${form.client} · ${form.provider}`;
 
@@ -16,7 +17,7 @@ function engineForm(e) {
     kind: e.managed ? 'managed' : 'custom',
     id: e.id, label: e.label || '', command: e.command || '', argsText: (e.args || []).join('\n'), rc: !!e.rc,
     client: e.managed?.client || 'claude', provider: e.managed?.provider || 'native', credentialProfile: e.managed?.credentialProfile || '', managedModel: e.managed?.model || '',
-    permissionPolicy: e.managed?.permissionPolicy || 'standard', displayName: e.managed?.displayName || '', protocol: e.managed?.protocol || '', baseUrl: e.managed?.baseUrl || '', envKey: e.managed?.envKey || '', providerId: e.managed?.providerId || 'nexuscrew-custom', modelOptions: e.availableModels || e.managedInfo?.models || [],
+    permissionPolicy: e.managed?.permissionPolicy || defaultPermission(e.managed?.client), displayName: e.managed?.displayName || '', protocol: e.managed?.protocol || '', baseUrl: e.managed?.baseUrl || '', envKey: e.managed?.envKey || '', providerId: e.managed?.providerId || 'nexuscrew-custom', modelOptions: e.availableModels || e.managedInfo?.models || [],
     promptMode: e.promptMode || 'send-keys', promptFlag: e.promptFlag || '',
     modelFlag: e.model?.flag || '', modelValue: e.model?.value || '',
     envRows: (e.envKeys || []).map((key) => ({ key, value: '', configured: true, remove: false })),
@@ -25,7 +26,7 @@ function engineForm(e) {
 
 function buildEngine(form, creating, catalog = []) {
   if (form.kind === 'managed') {
-    const managed = { client: form.client, provider: form.provider, model: form.managedModel || '', permissionPolicy: form.permissionPolicy || 'standard' };
+    const managed = { client: form.client, provider: form.provider, model: form.managedModel || '', permissionPolicy: form.permissionPolicy || defaultPermission(form.client) };
     if (form.credentialProfile) managed.credentialProfile = form.credentialProfile;
     if (form.provider === 'custom') Object.assign(managed, { displayName: form.displayName, protocol: form.protocol, baseUrl: form.baseUrl, envKey: form.envKey, providerId: form.providerId });
     return {
@@ -43,7 +44,7 @@ function buildEngine(form, creating, catalog = []) {
   return out;
 }
 
-export default function FleetTab({ token, readonly }) {
+export default function FleetTab({ token, readonly, targets = [] }) {
   const [defs, setDefs] = useState({ engines: [], cells: [], managedCatalog: [] });
   const [status, setStatus] = useState({ available: false, capabilities: [] });
   const [engineEdit, setEngineEdit] = useState(null);
@@ -51,18 +52,22 @@ export default function FleetTab({ token, readonly }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [note, setNote] = useState('');
+  const [location, setLocation] = useState('');
+  const [remoteReadonly, setRemoteReadonly] = useState(false);
+  const route = location ? location.split('/') : [];
 
   const refresh = useCallback(async () => {
     try {
-      const st = await fleetStatus(token); setStatus(st);
+      const st = await fleetStatus(token, route); setStatus(st);
+      try { const cfg = await getRouteConfig(token, route); setRemoteReadonly(!!cfg.readonlyDefault); } catch (_) { setRemoteReadonly(false); }
       if (st.provider === 'builtin' && (st.capabilities || []).includes('definitions')) {
-        const next = await fleetDefinitions(token);
+        const next = await fleetDefinitions(token, route);
         const runtime = new Map((st.engines || []).map((engine) => [engine.id, engine]));
         next.engines = (next.engines || []).map((engine) => ({ ...engine, availableModels: runtime.get(engine.id)?.models || [] }));
         setDefs(next);
       }
     } catch (e) { setErr(String(e.message || e)); }
-  }, [token]);
+  }, [token, location]);
   useEffect(() => { refresh(); const id = setInterval(refresh, 5000); return () => clearInterval(id); }, [refresh]);
 
   const active = new Set((status.cells || []).filter((c) => c.active).map((c) => c.cell));
@@ -79,18 +84,18 @@ export default function FleetTab({ token, readonly }) {
     if (!creating && engineEdit.form.kind === 'custom' && !engineEdit.form.modelFlag) def.model = null;
     if (!creating && engineEdit.form.kind === 'custom' && engineEdit.form.promptMode !== 'flag') def.promptFlag = null;
     let result;
-    if (creating) result = await fleetDefineEngine(token, def);
+    if (creating) result = await fleetDefineEngine(token, def, route);
     else {
       const original = engineEdit.original;
       const currentKeys = new Set(engineEdit.form.envRows.filter((r) => !r.remove).map((r) => r.key));
       const remove = (original.envKeys || []).filter((k) => !currentKeys.has(k));
       const set = Object.fromEntries(engineEdit.form.envRows.filter((r) => !r.remove && r.key && (!r.configured || r.value !== '')).map((r) => [r.key, r.value]));
-      result = await fleetEditEngine(token, original.id, def, engineEdit.form.kind === 'custom' ? { set, remove } : undefined);
+      result = await fleetEditEngine(token, original.id, def, engineEdit.form.kind === 'custom' ? { set, remove } : undefined, route);
     }
     setEngineEdit(null); setNote(t('fleet-saved'));
     const affected = result?.activeCells || [];
     if (affected.length && window.confirm(t('fleet-restart-confirm').replace('{cells}', affected.join(', ')))) {
-      for (const id of affected) await fleetRestart(token, id);
+      for (const id of affected) await fleetRestart(token, id, route);
     }
   });
 
@@ -105,34 +110,42 @@ export default function FleetTab({ token, readonly }) {
       def.model = f.model || null;
       def.prompt = f.prompt || null;
     }
-    const result = creating ? await fleetDefineCell(token, def) : await fleetEditCell(token, cellEdit.original.id, def);
+    const result = creating ? await fleetDefineCell(token, def, route) : await fleetEditCell(token, cellEdit.original.id, def, route);
     const id = creating ? f.id : cellEdit.original.id;
     setCellEdit(null); setNote(t('fleet-saved'));
-    if (!creating && result?.active && window.confirm(t('fleet-restart-confirm').replace('{cells}', id))) await fleetRestart(token, id);
+    if (!creating && result?.active && window.confirm(t('fleet-restart-confirm').replace('{cells}', id))) await fleetRestart(token, id, route);
   });
 
-  if (!editable) return <div className="nc-set-info">{t('fleet-editor-unavailable')}</div>;
+  const locked = readonly || remoteReadonly;
+  const locationPicker = <label className="nc-field">{t('location')}<select value={location} onChange={(e) => {
+    setLocation(e.target.value); setEngineEdit(null); setCellEdit(null); setErr(''); setNote(''); setRemoteReadonly(false);
+    setStatus({ available: false, capabilities: [] }); setDefs({ engines: [], cells: [], managedCatalog: [] });
+  }}>
+    <option value="">{t('local')}</option>{targets.map((x) => <option key={x.route.join('/')} value={x.route.join('/')}>{x.label}</option>)}
+  </select></label>;
+  if (!editable) return <div className="nc-set-tab">{locationPicker}<div className="nc-set-info">{t('fleet-editor-unavailable')}</div>{err && <div className="nc-err">{err}</div>}</div>;
   return (
     <div className="nc-set-tab nc-fleet-editor">
-      <div className="nc-fleet-section-head"><b>{t('fleet-engines')}</b><button className="nc-btn primary" disabled={readonly || busy} onClick={() => setEngineEdit({ mode: 'new', form: blankEngine() })}>+ {t('add')}</button></div>
+      {locationPicker}
+      <div className="nc-fleet-section-head"><b>{t('fleet-engines')}</b><button className="nc-btn primary" disabled={locked || busy} onClick={() => setEngineEdit({ mode: 'new', form: blankEngine() })}>+ {t('add')}</button></div>
       {defs.engines.map((e) => (
         <div className="nc-fleet-item" key={e.id}><span><b>{e.label}</b><small>{e.managed
           ? `${e.id} · ${e.managed.client} / ${e.managed.provider} · ${e.managedInfo?.configured ? t('fleet-ready') : e.managedInfo?.reason || t('fleet-not-ready')}`
           : `${e.id} · ${e.command}`}</small></span><span>
-          <button className="nc-btn ghost" disabled={readonly || busy} onClick={() => setEngineEdit({ mode: 'edit', original: e, form: engineForm(e) })}>{t('edit')}</button>
-          <button className="nc-btn danger" disabled={readonly || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-engine').replace('{id}', e.id))) await fleetRemoveEngine(token, e.id); })}>×</button>
+          <button className="nc-btn ghost" disabled={locked || busy} onClick={() => setEngineEdit({ mode: 'edit', original: e, form: engineForm(e) })}>{t('edit')}</button>
+          <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-engine').replace('{id}', e.id))) await fleetRemoveEngine(token, e.id, route); })}>×</button>
         </span></div>
       ))}
       {engineEdit && <EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} />}
 
-      <div className="nc-fleet-section-head"><b>{t('fleet-cells')}</b><button className="nc-btn primary" disabled={readonly || busy || !defs.engines.length} onClick={() => setCellEdit({ mode: 'new', form: blankCell(defs.engines[0]?.id) })}>+ {t('add')}</button></div>
+      <div className="nc-fleet-section-head"><b>{t('fleet-cells')}</b><button className="nc-btn primary" disabled={locked || busy || !defs.engines.length} onClick={() => setCellEdit({ mode: 'new', form: blankCell(defs.engines[0]?.id) })}>+ {t('add')}</button></div>
       {defs.cells.map((c) => (
         <div className="nc-fleet-item" key={c.id}><span><b>{c.id}</b><small>{c.engine} · {c.cwd}{active.has(c.id) ? ` · ${t('service-active')}` : ''}</small></span><span>
-          <button className="nc-btn ghost" disabled={readonly || busy} onClick={() => setCellEdit({ mode: 'edit', original: c, form: { ...c } })}>{t('edit')}</button>
-          <button className="nc-btn danger" disabled={readonly || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-cell').replace('{id}', c.id))) await fleetRemoveCell(token, c.id, true); })}>×</button>
+          <button className="nc-btn ghost" disabled={locked || busy} onClick={() => setCellEdit({ mode: 'edit', original: c, form: { ...c } })}>{t('edit')}</button>
+          <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-cell').replace('{id}', c.id))) await fleetRemoveCell(token, c.id, true, route); })}>×</button>
         </span></div>
       ))}
-      {cellEdit && <CellEditor token={token} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} />}
+      {cellEdit && <CellEditor token={token} route={route} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} />}
       {note && <div className="nc-set-note">{note}</div>}{err && <div className="nc-err">{err}</div>}
     </div>
   );
@@ -146,7 +159,7 @@ function EngineEditor({ state, setState, busy, onSave, catalog }) {
   const selectedProfile = catalogEntry(catalog, f);
   const setManagedProfile = (entry) => {
     if (!entry) return;
-    set({ client: entry.client, provider: entry.provider, credentialProfile: entry.credentialProfile || '', managedModel: entry.model || '', protocol: entry.protocol || '', permissionPolicy: 'standard', rc: !!entry.rc, displayName: entry.custom ? t('fleet-custom-provider-default') : '', baseUrl: entry.custom ? '' : entry.endpoint || '', envKey: '', providerId: 'nexuscrew-custom', ...(state.mode === 'new' ? { id: entry.id, label: '' } : {}) });
+    set({ client: entry.client, provider: entry.provider, credentialProfile: entry.credentialProfile || '', managedModel: entry.model || '', protocol: entry.protocol || '', permissionPolicy: entry.permissionPolicyDefault || 'standard', rc: !!entry.rc, displayName: entry.custom ? t('fleet-custom-provider-default') : '', baseUrl: entry.custom ? '' : entry.endpoint || '', envKey: '', providerId: 'nexuscrew-custom', ...(state.mode === 'new' ? { id: entry.id, label: '' } : {}) });
   };
   return <div className="nc-set-form nc-fleet-form">
     <b>{state.mode === 'new' ? t('fleet-new-engine') : `${t('edit')} ${f.id}`}</b>
@@ -185,7 +198,7 @@ function EngineEditor({ state, setState, busy, onSave, catalog }) {
   </div>;
 }
 
-function CellEditor({ token, state, setState, engines, busy, onSave }) {
+function CellEditor({ token, route, state, setState, engines, busy, onSave }) {
   const [picker, setPicker] = useState(null);
   const [pickErr, setPickErr] = useState('');
   const f = state.form; const set = (patch) => setState({ ...state, form: { ...f, ...patch } });
@@ -195,7 +208,7 @@ function CellEditor({ token, state, setState, engines, busy, onSave }) {
     set({ engine: id, model: f.models?.[id] || engine?.managed?.model || engine?.model?.value || '' });
   };
   const browse = async (p) => {
-    try { const x = await listDirs(token, p); setPicker(x); set({ cwd: x.path }); setPickErr(''); }
+    try { const x = await listDirs(token, p, route); setPicker(x); set({ cwd: x.path }); setPickErr(''); }
     catch (e) { setPickErr(String(e.message || e)); }
   };
   return <div className="nc-set-form nc-fleet-form">

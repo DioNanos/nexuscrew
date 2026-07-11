@@ -16,7 +16,7 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 
 ---
 
-## What it is (v0.8.2 "Simple Federated Hydra")
+## What it is (v0.8.3 "Simple and Clean")
 
 - Runs a small server on the host where your tmux sessions live.
 - Each attach spawns a real PTY running `tmux attach` and bridges its bytes over a WebSocket
@@ -27,9 +27,9 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 - **Multi-window decks**: named workspaces at `/deck/<name>` — one browser window per
   monitor, each with its own remembered tile layout. The focused tile is the size owner;
   everything else attaches with `ignore-size`.
-- **Multi-node**: register other hosts as nodes over dedicated restricted SSH tunnels and
-  see their tmux fleets in the same UI. Per-node groups, remote attach, and file exchange
-  all travel through a single-origin `/node/<name>` proxy using one local token.
+- **Multi-node**: connect existing NexusCrew installations through the SSH configuration you
+  already control and see their tmux fleets in the same UI. Per-node groups, remote attach,
+  file exchange, and Fleet management travel through a scoped single-origin route.
 - **Settings and wizard**: manage roles, nodes, token rotation, and service regeneration
   from the UI; a skippable first-run wizard guides initial setup.
 - **Session lifecycle from the UI**: create sessions (name + cwd + an allowlisted preset)
@@ -69,6 +69,12 @@ documented native/local providers plus renameable custom providers. Custom Codex
 Responses-only. New custom credentials are read only from the environment variable named in
 the PWA; NexusCrew never stores the secret value. Existing Z.AI A/P and Ollama Cloud profiles
 retain their backwards-compatible credential loading.
+
+Managed engines expose a permission selector. New Claude engines (native, Z.AI, Ollama, or
+custom) default to **Bypass permissions** and launch with
+`--dangerously-skip-permissions`; choose **Standard permissions** to disable it. New Codex and
+Codex-VL engines default to Standard and offer an explicit opt-in for
+`--dangerously-bypass-approvals-and-sandbox`. Pi keeps its native permission behavior.
 
 Custom argv-based engines remain supported. Their command, environment, cwd, and prompt are
 validated against a strict trust boundary and launched without a shell.
@@ -139,7 +145,8 @@ PWA token never crosses a peer link.
 A relay controls what its peers can see. The default is the whole network; a peer can be reduced
 to relay-only or a selected set. HTTP and WebSocket routing enforce that policy at every hop,
 with stable instance IDs, cycle rejection and a four-hop ceiling. Session creation, terminal,
-files and termination work on Local or any reachable route; Fleet remains local to each node.
+files, termination, and Fleet editing work on Local or any reachable route. Previously seen
+transitive nodes remain listed as offline with their last-seen time while a relay is down.
 
 ## Install & run
 
@@ -151,9 +158,9 @@ npm install -g @mmmbuto/nexuscrew
 nexuscrew
 ```
 
-The first run creates a loopback-only configuration and a `systemd --user` service when
-systemd is available. Linux x64 and ARM64 use platform PTY prebuilds; `node-pty` remains the
-build-from-source fallback.
+The first run creates a loopback-only configuration and starts a detached process. Run
+`nexuscrew boot` only if you want a persistent `systemd --user` service. Linux x64 and ARM64
+use platform PTY prebuilds; `node-pty` remains the build-from-source fallback.
 
 ### macOS (Apple Silicon or Intel)
 
@@ -163,9 +170,10 @@ npm install -g @mmmbuto/nexuscrew
 nexuscrew
 ```
 
-The first run installs a user LaunchAgent with an explicit Node/Homebrew PATH. The npm package
-selects the matching Darwin ARM64 or x64 PTY prebuild. NexusCrew is an npm/Node CLI, not an
-`.app`, `.pkg`, or standalone Mach-O distribution, so it does not require Developer ID signing.
+The first run starts a detached process. Run `nexuscrew boot` to install a user LaunchAgent
+with an explicit Node/Homebrew PATH. The npm package selects the matching Darwin ARM64 or x64
+PTY prebuild. NexusCrew is an npm/Node CLI, not an `.app`, `.pkg`, or standalone Mach-O
+distribution, so it does not require Developer ID signing.
 
 ### Android / Termux (ARM64)
 
@@ -177,14 +185,18 @@ nexuscrew
 ```
 
 Termux uses the Android ARM64 PTY provider. The normal command starts NexusCrew in the
-background and exits, so it can also be used directly as a Termux:Boot startup command.
+background and exits. `nexuscrew boot` installs the Termux:Boot script explicitly.
 
 On every platform the first run starts the server in the background and opens the PWA wizard.
-After onboarding, the same command starts or reuses the background service and exits silently:
+After onboarding, the same command starts or reuses it, prints a compact status and guide, and
+exits:
 
 ```bash
 nexuscrew                 # background start; opens only on first run
 nexuscrew show            # background start when needed + open the authenticated PWA
+nexuscrew show token      # print the clickable authenticated URL; do not open a browser
+nexuscrew boot            # opt in to startup persistence
+nexuscrew boot off        # disable startup persistence, keep the current run alive
 ```
 
 The preferred port is `41820`. If it is occupied by another process, NexusCrew selects the
@@ -201,6 +213,8 @@ resolved PTY provider at startup.
 ```
 nexuscrew          background start; first run opens the PWA wizard
 nexuscrew show     start when needed and open the authenticated PWA
+nexuscrew show token  print the clickable authenticated URL without opening it
+nexuscrew boot     enable startup at boot (`boot off|status` are also available)
 nexuscrew doctor   local diagnostics (exit 1 when a required check fails)
 nexuscrew help     concise command help
 nexuscrew version  installed version
@@ -271,7 +285,7 @@ node bin/nexuscrew.js serve
 
 ## Status
 
-The current stable release is **v0.8.2**, published on npm under the **`latest`** dist-tag.
+The current stable release is **v0.8.3**, published on npm under the **`latest`** dist-tag.
 
 ## License
 

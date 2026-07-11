@@ -22,9 +22,11 @@ export function nodeBase(node) {
 export function trackDown(prev, nodes, nowSec) {
   const out = {};
   for (const n of Array.isArray(nodes) ? nodes : []) {
-    if (!n || typeof n.name !== 'string') continue;
-    const upNow = n.tunnel && n.tunnel.status === 'up';
-    if (!upNow) out[n.name] = (prev && prev[n.name]) || nowSec;
+    const route = Array.isArray(n?.route) ? n.route : (typeof n?.name === 'string' ? [n.name] : []);
+    if (!route.length) continue;
+    const key = route.join('/');
+    const upNow = n.status === 'up' || (n.tunnel && n.tunnel.status === 'up');
+    if (!upNow) out[key] = (prev && prev[key]) || nowSec;
   }
   return out; // nodi tornati up (o rimossi) spariscono dalla mappa
 }
@@ -35,24 +37,52 @@ export function trackDown(prev, nodes, nowSec) {
 //           soli nodi col tunnel up (best-effort)
 //   down:   mappa trackDown (epochSec prima osservazione del down)
 // Zero nodi configurati -> [] (la UI resta identica a oggi).
-export function buildNodeGroups({ nodes, remote, down } = {}) {
+export function buildNodeGroups({ nodes, topology, remote, down } = {}) {
   const out = [];
+  const directRoutes = new Set();
+  const seenIds = new Set();
   for (const n of Array.isArray(nodes) ? nodes : []) {
     if (!n || typeof n.name !== 'string' || !NODE_NAME_RE.test(n.name)) continue;
+    const route = [n.name]; const key = n.name; directRoutes.add(key);
     const up = n.tunnel && n.tunnel.status === 'up';
-    if (!up) {
-      out.push({ name: n.name, status: 'down', sessions: [], downSince: (down && down[n.name]) || null });
+    const base = { name: n.name, label: n.name, route, direct: true, tunnelStatus: up ? 'up' : 'down', sessions: [] };
+    if (n.nodeId) seenIds.add(n.nodeId);
+    if (!n.nodeId && n.paired === false) {
+      out.push({ ...base, status: 'needs-repair', downSince: (down && down[key]) || null });
       continue;
     }
-    const r = (remote && remote[n.name]) || null;
+    if (!up) {
+      out.push({ ...base, status: 'down', downSince: (down && down[key]) || null });
+      continue;
+    }
+    const r = (remote && (remote[key] || remote[n.name])) || null;
     if (!r || r.error || !Array.isArray(r.sessions)) {
-      out.push({ name: n.name, status: 'unreachable', sessions: [] });
+      out.push({ ...base, status: 'unreachable' });
       continue;
     }
     const sessions = r.sessions
       .filter((s) => s && typeof s.name === 'string' && s.name)
-      .map((s) => ({ ...s, node: n.name, key: `${n.name}:${s.name}` }));
-    out.push({ name: n.name, status: 'up', sessions });
+      .map((s) => ({ ...s, node: key, route, key: `${key}:${s.name}` }));
+    out.push({ ...base, status: 'up', sessions });
   }
-  return out.sort((a, b) => a.name.localeCompare(b.name));
+  for (const n of Array.isArray(topology) ? topology : []) {
+    if (!n || !Array.isArray(n.route) || n.route.length < 1 || n.route.some((x) => !NODE_NAME_RE.test(x))) continue;
+    const key = n.route.join('/');
+    if (directRoutes.has(key) || (n.instanceId && seenIds.has(n.instanceId))) continue;
+    if (n.instanceId) seenIds.add(n.instanceId);
+    const base = { name: n.name, label: n.route.join(' › '), route: [...n.route], direct: false, tunnelStatus: null, sessions: [], lastSeen: n.lastSeen || null };
+    if (n.stale) {
+      out.push({ ...base, status: 'offline', downSince: (down && down[key]) || n.lastSeen || null });
+      continue;
+    }
+    const r = (remote && remote[key]) || null;
+    if (!r || r.error || !Array.isArray(r.sessions)) {
+      out.push({ ...base, status: 'unreachable', downSince: (down && down[key]) || null });
+      continue;
+    }
+    const sessions = r.sessions.filter((s) => s && typeof s.name === 'string' && s.name)
+      .map((s) => ({ ...s, node: key, route: n.route, key: `${key}:${s.name}` }));
+    out.push({ ...base, status: 'up', sessions, lastSeen: n.lastSeen || null });
+  }
+  return out.sort((a, b) => a.label.localeCompare(b.label));
 }

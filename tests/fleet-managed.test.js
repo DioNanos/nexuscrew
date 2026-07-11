@@ -19,10 +19,11 @@ function fakeClient(home, name) {
   return p;
 }
 
-test('app defaults: Claude, Codex e Codex-VL nativi con permessi standard', () => {
+test('app defaults: Claude unsafe opt-out, Codex e Codex-VL standard opt-in', () => {
   const d = defaultDefinitions();
   assert.deepEqual(d.engines.map((e) => e.id), ['claude.native', 'codex.native', 'codex-vl.native']);
-  assert.ok(d.engines.every((e) => e.managed.permissionPolicy === 'standard'));
+  assert.equal(d.engines.find((e) => e.id === 'claude.native').managed.permissionPolicy, 'unsafe');
+  assert.ok(d.engines.filter((e) => e.id !== 'claude.native').every((e) => e.managed.permissionPolicy === 'standard'));
   assert.deepEqual(d.cells, []);
   assert.ok(parseDefinitions(d));
   assert.equal(CATALOG.filter((p) => p.default).length, 3);
@@ -86,7 +87,7 @@ test('Ollama Direct: usa ollama.com + OLLAMA_API_KEY, mai localhost', () => {
     fs.writeFileSync(secrets, 'OLLAMA_API_KEY=ollama-secret\n', { mode: 0o600 });
     for (const client of ['claude', 'codex-vl']) {
       const managed = { client, provider: 'ollama-cloud', model: 'glm-5.2' };
-      const r = resolveManagedEngine({ id: `${client}.ollama-cloud`, label: 'Ollama', managed }, { id: 'Dev' }, { home, providerSecretsPath: secrets });
+      const r = resolveManagedEngine({ id: `${client}.ollama-cloud`, label: 'Ollama', managed }, { id: 'Dev' }, { home, providerSecretsPath: secrets, env: {} });
       assert.equal(r.ok, true);
       assert.equal(JSON.stringify(r).includes('127.0.0.1'), false);
       assert.equal(JSON.stringify(r).includes('localhost'), false);
@@ -108,6 +109,9 @@ test('Claude native onora rc:false', () => {
     const r = resolveManagedEngine({ id: 'claude.native', label: 'Claude', rc: false, managed: { client: 'claude', provider: 'native', model: '' } }, { id: 'Dev' }, { home });
     assert.equal(r.ok, true);
     assert.equal(r.engine.args.includes('--remote-control'), false);
+    assert.equal(r.engine.args.includes('--dangerously-skip-permissions'), true);
+    const standard = resolveManagedEngine({ id: 'claude.native', label: 'Claude', rc: false, managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'standard' } }, { id: 'Dev' }, { home });
+    assert.equal(standard.engine.args.includes('--dangerously-skip-permissions'), false);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -119,13 +123,14 @@ test('Z.AI: config visibile, secret redatto, launch env interno', () => {
     fs.writeFileSync(secrets, "ZAI_API_KEY_A='super-secret'\n", { mode: 0o600 });
     assert.deepEqual(parseEnvFile(secrets), { ZAI_API_KEY_A: 'super-secret' });
     const managed = { client: 'claude', provider: 'zai-a', model: 'glm-5.2[1m]' };
-    const info = describeManaged(managed, { home, providerSecretsPath: secrets });
+    const info = describeManaged(managed, { home, providerSecretsPath: secrets, env: {} });
     assert.equal(info.configured, true);
     assert.equal(info.auth, 'ZAI_API_KEY_A');
     assert.equal(JSON.stringify(info).includes('super-secret'), false);
-    const r = resolveManagedEngine({ id: 'claude.zai-a', label: 'z', managed }, { id: 'Dev' }, { home, providerSecretsPath: secrets });
+    const r = resolveManagedEngine({ id: 'claude.zai-a', label: 'z', managed }, { id: 'Dev' }, { home, providerSecretsPath: secrets, env: {} });
     assert.equal(r.ok, true);
     assert.equal(r.engine.env.ANTHROPIC_AUTH_TOKEN, 'super-secret');
+    assert.equal(r.engine.args.includes('--dangerously-skip-permissions'), true);
     assert.deepEqual(r.engine.args.slice(-2), ['--model', 'glm-5.2[1m]']);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -232,7 +237,7 @@ test('Pi Custom: estensione documentata, base URL/protocollo reali, nessun segre
 
 test('legacy Z.AI provider migra a provider+credentialProfile senza perdere compatibilita', () => {
   assert.deepEqual(normalizeManagedSpec({ client: 'claude', provider: 'zai-a', model: 'glm-5.2[1m]' }), {
-    client: 'claude', provider: 'zai', model: 'glm-5.2[1m]', permissionPolicy: 'standard', credentialProfile: 'a',
+    client: 'claude', provider: 'zai', model: 'glm-5.2[1m]', permissionPolicy: 'unsafe', credentialProfile: 'a',
   });
 });
 
@@ -243,7 +248,7 @@ test('providers.env symlink rifiutato e credenziale risulta mancante', () => {
     const real = path.join(home, 'real.env'); const link = path.join(home, 'providers.env');
     fs.writeFileSync(real, 'ZAI_API_KEY_A=secret\n'); fs.symlinkSync(real, link);
     assert.deepEqual(parseEnvFile(link), {});
-    const info = describeManaged({ client: 'claude', provider: 'zai-a', model: '' }, { home, providerSecretsPath: link });
+    const info = describeManaged({ client: 'claude', provider: 'zai-a', model: '' }, { home, providerSecretsPath: link, env: {} });
     assert.equal(info.configured, false);
     assert.match(info.reason, /ZAI_API_KEY_A/);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -256,7 +261,7 @@ test('providers.env con permessi group/world viene rifiutato', () => {
     const p = path.join(home, 'providers.env');
     fs.writeFileSync(p, 'OLLAMA_API_KEY=secret\n', { mode: 0o644 }); fs.chmodSync(p, 0o644);
     assert.deepEqual(parseEnvFile(p), {});
-    const info = describeManaged({ client: 'claude', provider: 'ollama-cloud', model: 'glm-5.2' }, { home, providerSecretsPath: p });
+    const info = describeManaged({ client: 'claude', provider: 'ollama-cloud', model: 'glm-5.2' }, { home, providerSecretsPath: p, env: {} });
     assert.equal(info.configured, false);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

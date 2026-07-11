@@ -152,6 +152,26 @@ test('buildNodeGroups: tunnel up ma sessions malformate -> unreachable (fail-clo
   assert.equal(g[0].status, 'unreachable');
 });
 
+test('buildNodeGroups: topology transitiva resta visibile offline con last-seen e torna live', async () => {
+  const m = await nodes();
+  const stale = m.buildNodeGroups({
+    nodes: [{ name: 'relay', nodeId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', tunnel: { status: 'up' } }],
+    topology: [{ instanceId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', name: 'phone', route: ['relay', 'phone'], stale: true, lastSeen: 123 }],
+    remote: { relay: { sessions: [] } }, down: {},
+  });
+  const phone = stale.find((g) => g.name === 'phone');
+  assert.equal(phone.status, 'offline');
+  assert.equal(phone.lastSeen, 123);
+  assert.deepEqual(phone.route, ['relay', 'phone']);
+
+  const live = m.buildNodeGroups({
+    topology: [{ instanceId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', name: 'phone', route: ['relay', 'phone'], stale: false, lastSeen: 456 }],
+    remote: { 'relay/phone': { sessions: [{ name: 'work' }] } }, down: {},
+  });
+  assert.equal(live[0].status, 'up');
+  assert.equal(live[0].sessions[0].key, 'relay/phone:work');
+});
+
 test('trackDown: prima osservazione ricordata, up ripulisce, nodo rimosso sparisce', async () => {
   const m = await nodes();
   let d = m.trackDown({}, [{ name: 'a', tunnel: { status: 'down' } }, { name: 'b', tunnel: { status: 'up' } }], 100);

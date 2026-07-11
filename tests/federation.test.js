@@ -23,7 +23,9 @@ test('federation route parser has an explicit capability allowlist and hop cap',
   assert.equal(fed.parseRoute('/a/b/c/d/e/_/sessions'), null);
   assert.equal(fed.parseRoute('/vps/sessions'), null, 'explicit delimiter is mandatory');
   assert.equal(fed.allowedResource('/sessions', 'POST'), true);
-  assert.equal(fed.allowedResource('/fleet/status', 'GET'), false);
+  assert.equal(fed.allowedResource('/fleet/status', 'GET'), true);
+  assert.equal(fed.allowedResource('/fleet/define-cell', 'POST'), true);
+  assert.equal(fed.allowedResource('/fleet/define-cell', 'GET'), false);
   assert.equal(fed.allowedResource('/settings', 'GET'), false);
   assert.equal(fed.allowedResource('/files/outbox', 'POST'), false);
   assert.equal(fed.allowedResource('/files/upload', 'POST'), true);

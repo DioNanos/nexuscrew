@@ -21,14 +21,14 @@ const rawRequest = (url, headers = {}) => new Promise((resolve, reject) => {
   req.on('error', reject);
 });
 
-test('scoped federation HTTP reaches sessions but cannot reach settings/fleet', async (t) => {
+test('scoped federation HTTP reaches sessions and allowlisted fleet but never settings', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fed-http-'));
   const destNodes = path.join(dir, 'dest.json');
   let ds = store.emptyStore('d'.repeat(32));
   ds = store.addNode(ds, { name: 'relay', remotePort: 41820, localPort: 44001, direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', nodeId: 'a'.repeat(32), token: 'dest-to-relay', acceptToken: 'relay-to-dest' });
   store.atomicWriteStore(destNodes, ds);
 
-  let sessionHits = 0; let forbiddenHits = 0; let deleteHits = 0; let seen = null;
+  let sessionHits = 0; let fleetHits = 0; let forbiddenHits = 0; let deleteHits = 0; let seen = null;
   const local = express();
   local.use((req, res, next) => req.headers.authorization === 'Bearer dest-main' ? next() : res.sendStatus(401));
   local.get('/api/sessions', (req, res) => {
@@ -38,6 +38,7 @@ test('scoped federation HTTP reaches sessions but cannot reach settings/fleet', 
     res.json({ sessions: [{ name: 'remote-one' }] });
   });
   local.delete('/api/sessions/:name', (_req, res) => { deleteHits += 1; res.json({ killed: true }); });
+  local.get('/api/fleet/status', (_req, res) => { fleetHits += 1; res.json({ available: true, provider: 'builtin' }); });
   local.post('/api/files/outbox', (_req, res) => { forbiddenHits += 1; res.sendStatus(500); });
   local.all('/api/settings*', (_req, res) => { forbiddenHits += 1; res.sendStatus(500); });
   const localServer = await listen(local);
@@ -71,7 +72,8 @@ test('scoped federation HTTP reaches sessions but cannot reach settings/fleet', 
   assert.equal(deleteHits, 3, 'ordinary, capability-like, and underscore session names reach only the selected destination');
   assert.equal((await fetch(`${base}/api/route/mac/_/files/outbox`, { method: 'POST' })).status, 404);
   assert.equal((await fetch(`${base}/api/route/mac/_/settings`)).status, 404);
-  assert.equal((await fetch(`${base}/api/route/mac/_/fleet/status`)).status, 404);
+  assert.equal((await fetch(`${base}/api/route/mac/_/fleet/status`)).status, 200);
+  assert.equal(fleetHits, 1);
   assert.equal(forbiddenHits, 0);
 });
 
