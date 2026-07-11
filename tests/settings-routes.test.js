@@ -83,7 +83,7 @@ test('GET /settings: 401 senza Bearer, vista completa con Bearer (firstRun true)
   assert.deepEqual(s.roles, { client: false, node: false });
   assert.equal(s.port, 41999);
   assert.equal(s.platform, 'linux');
-  assert.deepEqual(s.service, { installed: false, active: false });
+  assert.deepEqual(s.service, { installed: false, active: false, boot: false });
   assert.equal(typeof s.version, 'string');
   assert.equal(s.rendezvous, undefined);
 });
@@ -403,7 +403,12 @@ test('node-role: OpenSSH < 7.8 (niente permitlisten) -> 409 conflitto esplicito'
 // --- POST /settings/service/regenerate --------------------------------------------
 
 test('service/regenerate: scrive l\'unit ma NON esegue restart (activation skippata)', async (t) => {
-  const { base, token, configPath } = await boot(t);
+  const { base, token, configPath } = await boot(t, {}, {
+    execImpl: (_bin, args) => {
+      if (args.includes('is-enabled')) return 'enabled';
+      throw new Error('inactive');
+    },
+  });
   // porta configurata diversa da quella runtime: resta solo nel config autoritativo
   fs.writeFileSync(configPath, JSON.stringify({ port: 42555 }), { mode: 0o600 });
   const r = await fetch(`${base}/api/settings/service/regenerate`, { method: 'POST', headers: H(token) });
@@ -420,6 +425,13 @@ test('service/regenerate: scrive l\'unit ma NON esegue restart (activation skipp
   // ora il service risulta installato nella vista read-only
   const s = await (await fetch(`${base}/api/settings`, { headers: H(token) })).json();
   assert.equal(s.service.installed, true);
+});
+
+test('service/regenerate: boot opt-in assente -> 409 e nessuna unit creata', async (t) => {
+  const { base, token } = await boot(t);
+  const r = await fetch(`${base}/api/settings/service/regenerate`, { method: 'POST', headers: H(token) });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /nexuscrew boot/);
 });
 
 // --- READONLY route-level -----------------------------------------------------------

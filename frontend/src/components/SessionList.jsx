@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  apiFetch, seenKey, fleetStatus, fleetUp, fleetDown, killSession, createSession,
+  apiFetch, seenKey, fleetStatus, fleetUp, fleetDown, killSession, createSession, nodeAction,
 } from '../lib/api.js';
 import Icon from './Icon.jsx';
 import { loadPins, togglePinIn, pinRank, cmpRank } from '../lib/pins.js';
@@ -36,6 +36,8 @@ function nodeStateLabel(g) {
     return g.downSince ? t('tunnel-down-since').replace('{t}', rel(g.downSince)) : t('tunnel-down');
   }
   if (g.status === 'unreachable') return t('node-unreachable');
+  if (g.status === 'offline') return g.lastSeen ? t('node-offline-seen').replace('{t}', rel(g.lastSeen)) : t('node-offline');
+  if (g.status === 'needs-repair') return t('node-needs-repair');
   return '';
 }
 
@@ -54,6 +56,7 @@ export default function SessionList({ onPick, token, onSettings }) {
   const [presets, setPresets] = useState(['shell', 'claude', 'codex-vl', 'pi']);
   const [powerCell, setPowerCell] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
+  const [nodeBusy, setNodeBusy] = useState(null);
 
   async function refresh() {
     try {
@@ -106,6 +109,14 @@ export default function SessionList({ onPick, token, onSettings }) {
     await createSession(token, body, route);
     setNewOpen(false);
     refresh();
+  }
+
+  async function onNodePower(group) {
+    if (!group?.direct || nodeBusy) return;
+    setNodeBusy(group.name);
+    try { await nodeAction(token, group.name, group.tunnelStatus === 'up' ? 'down' : 'up'); }
+    catch (_) {}
+    setNodeBusy(null);
   }
 
   // lookup sessione per tmuxSession (per activity/preview/outbox delle celle)
@@ -252,6 +263,9 @@ export default function SessionList({ onPick, token, onSettings }) {
             {g.status === 'up'
               ? t('node-sessions').replace('{n}', String(g.sessions.length))
               : nodeStateLabel(g)}
+            {g.direct && <button type="button" className={`nc-act power${g.tunnelStatus === 'up' ? ' on' : ''}`}
+              disabled={nodeBusy === g.name} title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}
+              onClick={() => onNodePower(g)}><Icon name="power" size={15} /></button>}
           </div>
           {g.status === 'up' && g.sessions.map((s) => (
             <div key={s.key} className="nc-mcard">

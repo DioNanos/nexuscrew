@@ -14,7 +14,7 @@ import SettingsPanel from './components/SettingsPanel.jsx';
 import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import {
-  apiFetch, fleetStatus, fleetUp, fleetDown, createSession, killSession, getSettings,
+  apiFetch, fleetStatus, fleetUp, fleetDown, createSession, killSession, getSettings, nodeAction,
 } from './lib/api.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef } from './lib/grid-model.js';
 import {
@@ -203,6 +203,7 @@ export default function App() {
   // zero nodi configurati -> [] e workspace identico a oggi.
   const nodeGroups = useNodes(token, isDesktop);
   const [powerCell, setPowerCell] = useState(null);
+  const [nodePowerBusy, setNodePowerBusy] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [presets, setPresets] = useState(['shell', 'claude', 'codex-vl', 'pi']);
   const [sideW, setSideW] = useState(loadSideW);
@@ -303,6 +304,12 @@ export default function App() {
     await createSession(token, body, route);
     poll();
   };
+  const onNodePower = async (group) => {
+    if (!group?.direct || nodePowerBusy) return;
+    setNodePowerBusy(true);
+    try { await nodeAction(token, group.name, group.tunnelStatus === 'up' ? 'down' : 'up'); }
+    finally { setNodePowerBusy(false); }
+  };
 
   // --- deck actions (§5b) ---
   const openDeckWindow = (name) => {
@@ -382,6 +389,7 @@ export default function App() {
           onPick={openSingle}
           onAddTile={onAddTile}
           onPower={setPowerCell}
+          onNodePower={onNodePower}
           onKill={onKill}
           onNew={() => setNewOpen(true)}
           onSettings={() => setSettingsOpen(true)}

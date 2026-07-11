@@ -4,7 +4,7 @@ import { useLang } from '../hooks/useLang.js';
 import { saveConfig, pairNode } from '../lib/api.js';
 import './Wizard.css';
 
-// 0.8.2: every installation is always local and may join one Hydra network.
+// Every installation is always local and may join one Hydra network.
 // SSH policy lives in OpenSSH; the PWA only needs a Host alias and a one-time
 // pairing link. No roles, key generation, authorized_keys or rendezvous steps.
 export default function Wizard({ token, onDone }) {

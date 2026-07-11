@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { dispatch, serve, start, stop, status, parseFlags, HELP,
-  smartUp, url, tokenRotate, logs, update, doctor, findAvailablePort, openPwa } = require('../lib/cli/commands.js');
+  smartUp, url, tokenRotate, logs, update, doctor, findAvailablePort, openPwa, startPortable } = require('../lib/cli/commands.js');
 
 // Home "inizializzata" (config.json + token) per i test url/status/token/logs. [A2]
 function initHome(port = 41822, token = 'SECRETTOKEN12345') {
@@ -40,11 +40,11 @@ test('dispatch: help -> code 0, stampa HELP', () => {
   assert.ok(long.join('\n').includes('nexuscrew show'));
   const version = [];
   assert.equal(dispatch(['--version'], { log: (m) => version.push(m) }).code, 0);
-  assert.equal(version[0], '0.8.2');
+  assert.equal(version[0], '0.8.3');
   assert.equal(dispatch(['--bogus'], { log: () => {} }).code, 1);
 });
 
-test('dispatch: no args -> background start silenzioso + apertura wizard al primo avvio', async () => {
+test('dispatch: no args -> background, mini summary senza token + wizard solo al primo avvio', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-smartup-'));
   const logs = [];
   const opened = [];
@@ -61,7 +61,10 @@ test('dispatch: no args -> background start silenzioso + apertura wizard al prim
   assert.ok(fs.existsSync(path.join(home, '.nexuscrew', 'config.json')));
   assert.ok(fs.existsSync(path.join(home, '.nexuscrew', 'token')));
   const tok = fs.readFileSync(path.join(home, '.nexuscrew', 'token'), 'utf8').trim();
-  assert.equal(logs.length, 0);
+  assert.match(logs.join('\n'), /server  .*running/);
+  assert.match(logs.join('\n'), /nexuscrew show token/);
+  assert.equal(logs.join('\n').includes(tok), false);
+  assert.equal(fs.existsSync(path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service')), false, 'boot is opt-in');
   assert.equal(opened.length, 1);
   assert.ok(opened[0].includes(`#token=${tok}`));
   fs.rmSync(home, { recursive: true, force: true });
@@ -74,7 +77,7 @@ test('smart-up configurato: avvia/riusa in background senza aprire; show apre', 
   const opened = [];
   const common = {
     home, platform: 'linux', probeImpl: async () => true,
-    execImpl: () => 'active', openImpl: (u) => { opened.push(u); },
+    execImpl: () => 'active', openImpl: (u) => { opened.push(u); }, log: () => {},
   };
   const background = await dispatch([], common);
   assert.equal(background.code, 0);
@@ -94,11 +97,59 @@ test('smart-up migra una service definition 0.8.0 che pinna NEXUSCREW_PORT', asy
   fs.writeFileSync(servicePath, '[Service]\nEnvironment=NEXUSCREW_PORT=41822\n');
   await smartUp({
     home, platform: 'linux', installPath: servicePath, tmuxOk: true,
-    execImpl: (_bin, args) => (args?.includes('is-active') ? 'active' : ''),
+    execImpl: (_bin, args) => (args?.includes('is-active') ? 'active' : (args?.includes('is-enabled') ? 'enabled' : '')),
     probeImpl: async () => true,
   });
   assert.doesNotMatch(fs.readFileSync(servicePath, 'utf8'), /NEXUSCREW_PORT/);
   assert.equal(JSON.parse(fs.readFileSync(cp, 'utf8')).port, 41822);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('show token stampa link autenticato senza aprire il browser', async () => {
+  const { home } = initHome(); const logs = []; const opened = [];
+  const r = await dispatch(['show', 'token'], { home, platform: 'linux', log: (x) => logs.push(x), probeImpl: async () => true, execImpl: () => '', openImpl: (u) => opened.push(u) });
+  assert.equal(r.code, 0); assert.equal(opened.length, 0); assert.equal(logs.length, 1);
+  const tok = fs.readFileSync(path.join(home, '.nexuscrew', 'token'), 'utf8').trim();
+  assert.match(logs[0], /^http:\/\/127\.0\.0\.1:\d+\/#token=/); assert.ok(logs[0].endsWith(tok));
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('boot status e off sono comandi pubblici idempotenti', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-boot-cli-')); const logs = [];
+  assert.equal(dispatch(['boot', 'status'], { home, platform: 'termux', log: (x) => logs.push(x) }).code, 0);
+  assert.match(logs[0], /boot: off/);
+  const r = await dispatch(['boot', 'off'], { home, platform: 'termux', log: (x) => logs.push(x) });
+  assert.equal((await r).code, 0);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('boot on Termux installa esplicitamente lo startup script', async () => {
+  const { home } = initHome();
+  const cp = path.join(home, '.nexuscrew', 'config.json');
+  fs.writeFileSync(cp, JSON.stringify({ port: 41822, wizardDone: true }) + '\n', { mode: 0o600 });
+  const r = await dispatch(['boot'], {
+    home, platform: 'termux', tmuxOk: true, log: () => {}, execImpl: () => '',
+    probeImpl: async () => true,
+  });
+  assert.equal(r.code, 0);
+  const script = path.join(home, '.termux', 'boot', 'nexuscrew.sh');
+  assert.equal(fs.existsSync(script), true);
+  assert.equal(fs.statSync(script).mode & 0o777, 0o700);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('startPortable passa HOME e path runtime espliciti al processo detached', () => {
+  const { home } = initHome(); let seen;
+  const r = startPortable({
+    home, filesRoot: path.join(home, 'files'),
+    spawnImpl: (_bin, _args, opts) => { seen = opts; return { pid: 77, unref() {} }; },
+  });
+  assert.equal(r.portable, true);
+  assert.equal(seen.detached, true);
+  assert.equal(seen.env.HOME, home);
+  assert.equal(seen.env.NEXUSCREW_CONFIG_FILE, path.join(home, '.nexuscrew', 'config.json'));
+  assert.equal(seen.env.NEXUSCREW_TOKEN_FILE, path.join(home, '.nexuscrew', 'token'));
+  assert.equal(seen.env.NEXUSCREW_FILES_ROOT, path.join(home, 'files'));
   fs.rmSync(home, { recursive: true, force: true });
 });
 

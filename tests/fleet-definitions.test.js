@@ -72,7 +72,7 @@ test('managed 0.8.0: Z.AI legacy migra senza spezzare i riferimenti delle celle'
   assert.ok(parsed);
   assert.deepEqual(parsed.engines[0].managed, {
     client: 'claude', provider: 'zai', credentialProfile: 'a',
-    model: 'glm-5.2[1m]', permissionPolicy: 'standard',
+    model: 'glm-5.2[1m]', permissionPolicy: 'unsafe',
   });
   assert.equal(parsed.cells[0].engine, 'claude.zai-a');
 });

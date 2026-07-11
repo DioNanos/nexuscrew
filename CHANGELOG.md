@@ -2,6 +2,28 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.3 — 2026-07-12 — "Simple and Clean"
+
+- `nexuscrew` starts or reuses the loopback server in the background, prints a compact
+  status/guide, and exits. Only the first run opens the PWA wizard. `nexuscrew show` opens
+  the PWA, while `nexuscrew show token` prints the clickable authenticated fragment URL.
+- Startup persistence is explicit: `nexuscrew boot` installs/enables the native user service
+  on Linux/macOS or the Termux:Boot script; `boot off|status` controls and reports it. A normal
+  first run no longer silently opts the host into boot persistence.
+- The Hydra roster retains transitive peers as offline entries with last-seen information
+  while a relay is unavailable, then reconciles them when the relay returns or is removed.
+- Node tunnel power is restored as a direct action in both mobile and desktop lists. Session
+  menus remain session-only, avoiding ambiguity between killing a session and controlling its link.
+- Settings → Fleet now selects Local or any reachable Hydra route for engine and cell
+  management. Federated Fleet requests use the scoped, hop-bounded allowlist and honor READONLY.
+- Managed engines expose an explicit permission policy. New Claude engines, including Z.AI,
+  default to `--dangerously-skip-permissions` with a Standard opt-out; Codex and Codex-VL
+  default to Standard with an opt-in for `--dangerously-bypass-approvals-and-sandbox`.
+- The Nodes UI describes pairing as connecting an existing NexusCrew installation: every
+  installation remains local and peer-capable, with no artificial client/server role.
+- Tests: **538 total** (537 pass / 1 platform-dependent skip), including first-run PWA,
+  multi-hop Fleet routing, stale roster reconciliation, boot opt-in and contaminated env runs.
+
 ## 0.8.2 — 2026-07-11 — "Simple Federated Hydra"
 
 - Replaces client/node roles in first-run UX with one local node plus a single **Nodes**

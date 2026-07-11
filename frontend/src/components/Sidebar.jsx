@@ -28,6 +28,8 @@ function nodeStateLabel(g) {
     return g.downSince ? t('tunnel-down-since').replace('{t}', rel(g.downSince)) : t('tunnel-down');
   }
   if (g.status === 'unreachable') return t('node-unreachable');
+  if (g.status === 'offline') return g.lastSeen ? t('node-offline-seen').replace('{t}', rel(g.lastSeen)) : t('node-offline');
+  if (g.status === 'needs-repair') return t('node-needs-repair');
   return '';
 }
 
@@ -36,7 +38,7 @@ function nodeStateLabel(g) {
 // genitore; qui solo render + callback.
 // Collassabile (mini 48px, solo dot) e ridimensionabile (maniglia bordo destro).
 export default function Sidebar({
-  sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onKill, onNew,
+  sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onNodePower, onKill, onNew,
   onSettings, width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
@@ -270,6 +272,9 @@ export default function Sidebar({
                 ? t('node-sessions').replace('{n}', String(g.sessions.length))
                 : nodeStateLabel(g)}
             </small>
+            {g.direct && <button type="button" className={`nc-power${g.tunnelStatus === 'up' ? ' on' : ''}`}
+              title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}
+              onClick={() => onNodePower && onNodePower(g)}><Icon name="power" size={14} /></button>}
           </div>
           {g.status === 'up' && (
             <div className="nc-side-group">

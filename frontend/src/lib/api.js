@@ -21,22 +21,23 @@ async function jsonFetch(path, token, opts = {}) {
   if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.status = r.status; e.data = j; throw e; }
   return j;
 }
-export const fleetStatus = (t) => jsonFetch('/api/fleet/status', t);
-export const fleetUp = (t, b) => jsonFetch('/api/fleet/up', t, { method: 'POST', body: b });
-export const fleetDown = (t, b) => jsonFetch('/api/fleet/down', t, { method: 'POST', body: b });
-export const fleetEngine = (t, b) => jsonFetch('/api/fleet/engine', t, { method: 'POST', body: b });
-export const fleetBoot = (t, b) => jsonFetch('/api/fleet/boot', t, { method: 'POST', body: b });
-export const fleetRestart = (t, cell) => jsonFetch('/api/fleet/restart', t, { method: 'POST', body: { cell } });
-export const fleetSchema = (t) => jsonFetch('/api/fleet/schema', t);
-export const fleetDefinitions = (t) => jsonFetch('/api/fleet/definitions', t);
-export const fleetDefineEngine = (t, def) => jsonFetch('/api/fleet/define-engine', t, { method: 'POST', body: { def } });
-export const fleetEditEngine = (t, id, patch, envChanges) => jsonFetch('/api/fleet/edit-engine', t, { method: 'POST', body: { id, patch, envChanges } });
-export const fleetRemoveEngine = (t, id) => jsonFetch('/api/fleet/remove-engine', t, { method: 'POST', body: { id } });
-export const fleetDefineCell = (t, def) => jsonFetch('/api/fleet/define-cell', t, { method: 'POST', body: { def } });
-export const fleetEditCell = (t, id, patch) => jsonFetch('/api/fleet/edit-cell', t, { method: 'POST', body: { id, patch } });
-export const fleetRemoveCell = (t, id, stop = false) => jsonFetch('/api/fleet/remove-cell', t, { method: 'POST', body: { id, stop } });
 export const routeBase = (route) => Array.isArray(route) && route.length
   ? `/api/route/${route.map(encodeURIComponent).join('/')}/_` : '/api';
+const fleetPath = (route, action) => `${routeBase(route)}/fleet/${action}`;
+export const fleetStatus = (t, route) => jsonFetch(fleetPath(route, 'status'), t);
+export const fleetUp = (t, b, route) => jsonFetch(fleetPath(route, 'up'), t, { method: 'POST', body: b });
+export const fleetDown = (t, b, route) => jsonFetch(fleetPath(route, 'down'), t, { method: 'POST', body: b });
+export const fleetEngine = (t, b, route) => jsonFetch(fleetPath(route, 'engine'), t, { method: 'POST', body: b });
+export const fleetBoot = (t, b, route) => jsonFetch(fleetPath(route, 'boot'), t, { method: 'POST', body: b });
+export const fleetRestart = (t, cell, route) => jsonFetch(fleetPath(route, 'restart'), t, { method: 'POST', body: { cell } });
+export const fleetSchema = (t, route) => jsonFetch(fleetPath(route, 'schema'), t);
+export const fleetDefinitions = (t, route) => jsonFetch(fleetPath(route, 'definitions'), t);
+export const fleetDefineEngine = (t, def, route) => jsonFetch(fleetPath(route, 'define-engine'), t, { method: 'POST', body: { def } });
+export const fleetEditEngine = (t, id, patch, envChanges, route) => jsonFetch(fleetPath(route, 'edit-engine'), t, { method: 'POST', body: { id, patch, envChanges } });
+export const fleetRemoveEngine = (t, id, route) => jsonFetch(fleetPath(route, 'remove-engine'), t, { method: 'POST', body: { id } });
+export const fleetDefineCell = (t, def, route) => jsonFetch(fleetPath(route, 'define-cell'), t, { method: 'POST', body: { def } });
+export const fleetEditCell = (t, id, patch, route) => jsonFetch(fleetPath(route, 'edit-cell'), t, { method: 'POST', body: { id, patch } });
+export const fleetRemoveCell = (t, id, stop = false, route) => jsonFetch(fleetPath(route, 'remove-cell'), t, { method: 'POST', body: { id, stop } });
 export const createSession = (t, b, route) => jsonFetch(`${routeBase(route)}/sessions`, t, { method: 'POST', body: b });
 export const killSession = (t, name, route) => jsonFetch(`${routeBase(route)}/sessions/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
 export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs${p ? `?path=${encodeURIComponent(p)}` : ''}`, t);
