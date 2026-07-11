@@ -13,7 +13,7 @@ export const NODE_NAME_RE = /^[a-z0-9-]{1,32}$/;
 // Base path HTTP delle route remote di un nodo ('' = locale). Le route dei
 // tile (files/preview/voice) passano dal proxy B1 con lo stesso token locale.
 export function nodeBase(node) {
-  return node ? `/node/${encodeURIComponent(node)}` : '';
+  return node ? `/api/route/${String(node).split('/').map(encodeURIComponent).join('/')}/_` : '/api';
 }
 
 // Tracking client-side del "down da quando": /api/nodes riporta `since` solo

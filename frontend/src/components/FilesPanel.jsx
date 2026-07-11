@@ -12,7 +12,7 @@ const fmtSize = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)}M` : n > 1024 
 // pestare una sessione locale omonima.
 export default function FilesPanel({ session, node, token, filesEvent, onClose }) {
   useLang();
-  const base = node ? `/node/${encodeURIComponent(node)}` : '';
+  const base = node ? `/api/route/${String(node).split('/').map(encodeURIComponent).join('/')}/_` : '/api';
   const seen = node ? `${node}:${session}` : session;
   const [box, setBox] = useState('outbox');
   const [data, setData] = useState({ inbox: [], outbox: [] });
@@ -21,7 +21,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
 
   async function refresh() {
     try {
-      const r = await apiFetch(`${base}/api/files?session=${encodeURIComponent(session)}`, token);
+      const r = await apiFetch(`${base}/files?session=${encodeURIComponent(session)}`, token);
       const j = await r.json();
       if (j.error) { setBusy(j.error); return; }
       setData(j);
@@ -39,7 +39,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
       fd.append('session', session);
       fd.append('file', f);
       try {
-        const r = await apiFetch(`${base}/api/files/upload`, token, { method: 'POST', body: fd });
+        const r = await apiFetch(`${base}/files/upload`, token, { method: 'POST', body: fd });
         const j = await r.json();
         setBusy(j.error ? `errore: ${j.error}` : '');
       } catch (e) { setBusy(String(e)); }
@@ -49,7 +49,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
 
   async function download(name) {
     const r = await apiFetch(
-      `${base}/api/files/download?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
+      `${base}/files/download?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
     );
     if (!r.ok) { setBusy('errore download'); return; }
     const blob = await r.blob();
@@ -61,7 +61,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
 
   async function del(name) {
     await apiFetch(
-      `${base}/api/files?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
+      `${base}/files?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
       { method: 'DELETE' },
     );
     refresh();

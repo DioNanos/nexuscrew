@@ -34,6 +34,20 @@ test('buildForwardArgs: argv esatto dal template §4b(1)', () => {
   for (const a of args) assert.ok(!/\s/.test(a) || a === '-o', `arg "${a}" senza whitespace`);
 });
 
+test('buildForwardArgs: sshPort usa -p senza confonderla con remotePort', () => {
+  const args = tunnel.buildForwardArgs({ ...NODE, sshPort: 41822, remotePort: 41777 });
+  assert.deepEqual(args.slice(0, 11), [
+    '-N',
+    '-o', 'ExitOnForwardFailure=yes',
+    '-o', 'ServerAliveInterval=30',
+    '-o', 'ServerAliveCountMax=3',
+    '-o', 'BatchMode=yes',
+    '-p', '41822',
+  ]);
+  assert.ok(args.includes('127.0.0.1:43001:127.0.0.1:41777'));
+  assert.equal(args.at(-1), 'user@example.com');
+});
+
 test('buildReverseArgs: argv esatto con bind loopback esplicito lato remoto', () => {
   const args = tunnel.buildReverseArgs({ ssh: 'user@host', publishedPort: 41821, localPort: 41820, keyPath: '/home/user/.nexuscrew/keys/rendezvous_ed25519' });
   assert.deepEqual(args, [
@@ -51,6 +65,7 @@ test('buildReverseArgs: argv esatto con bind loopback esplicito lato remoto', ()
 test('build*Args: spec invalida -> throw (no argv injection)', () => {
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, ssh: 'user@-evil' }), /ssh/);
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, localPort: 0 }), /localPort/);
+  assert.throws(() => tunnel.buildForwardArgs({ ...NODE, sshPort: 0 }), /sshPort/);
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, keyPath: 'relative' }), /keyPath/);
   assert.throws(() => tunnel.buildReverseArgs({ ssh: 'u@h', publishedPort: 99999, localPort: 22, keyPath: '/k' }), /publishedPort/);
 });

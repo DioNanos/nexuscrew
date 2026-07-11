@@ -2,6 +2,22 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.2 — 2026-07-11 — "Simple Federated Hydra"
+
+- Replaces client/node roles in first-run UX with one local node plus a single **Nodes**
+  surface for reciprocal PWA pairing.
+- One-time ten-minute link/QR pairing creates scoped per-peer credentials; the main PWA
+  token is never exchanged. Invites and peer state remain local 0600 stores.
+- Uses an existing OpenSSH Host alias without creating keys or editing `authorized_keys`;
+  auto-selects autossh or supervised SSH and restores outbound links at boot.
+- Adds bounded four-hop topology discovery and a separate capability-allowlisted federation
+  ingress for HTTP and WebSocket routing. Relay visibility is enforced symmetrically.
+- Session list, creation, terminal, files and termination are location-aware across Local and
+  federated routes. Fleet remains local to its node.
+- Reads legacy nodes schema v1 while writing the extended v2 peer schema; legacy rendezvous
+  runtime behavior remains available during migration.
+- Tests: **528 total** (527 pass / 1 platform-dependent skip).
+
 ## 0.8.0 — 2026-07-11 — "Many Nodes, Many Monitors"
 
 The multi-node + multi-monitor release: one UI for the tmux fleets of several hosts,

@@ -38,3 +38,15 @@ test('decks API: READONLY blocca mutazioni', async (t) => {
   const r = await fetch(`${base}/api/decks`, { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'x' }) });
   assert.equal(r.status, 403);
 });
+
+test('decks API round-trips multi-hop tiles with duplicate session names at distinct routes', async (t) => {
+  const { base, token } = await boot(t); const h = H(token);
+  const multi = { columns: [{ width: 1, tiles: [
+    { session: 'work', node: 'relay/phone', height: 1, fontSize: 11 },
+    { session: 'work', node: 'relay/mac', height: 1, fontSize: 11 },
+  ] }] };
+  const saved = await fetch(`${base}/api/decks/main`, { method: 'PUT', headers: h, body: JSON.stringify({ layout: multi, expectedRevision: 0 }) });
+  assert.equal(saved.status, 200);
+  const listed = await (await fetch(`${base}/api/decks`, { headers: h })).json();
+  assert.deepEqual(listed.decks[0].layout, multi);
+});

@@ -388,7 +388,7 @@ test('managed codex-vl.native: launcher interno, login nativo, fake tmux', async
     await fleet.up('Dev');
     const argv = readLog(w).nsArgv[0];
     assert.ok(argv.includes(bin));
-    assert.ok(argv.includes('--dangerously-bypass-approvals-and-sandbox'));
+    assert.equal(argv.includes('--dangerously-bypass-approvals-and-sandbox'), false, 'standard e il default sicuro');
     assert.ok(argv.includes('bootstrap managed'));
     assert.equal(argv.some((x) => /zai|ollama/i.test(x)), false);
     assert.equal(readLog(w).lines.some((x) => x.startsWith('load-buffer')), false);

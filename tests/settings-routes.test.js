@@ -404,7 +404,7 @@ test('node-role: OpenSSH < 7.8 (niente permitlisten) -> 409 conflitto esplicito'
 
 test('service/regenerate: scrive l\'unit ma NON esegue restart (activation skippata)', async (t) => {
   const { base, token, configPath } = await boot(t);
-  // porta configurata diversa da quella runtime: l'unit deve usare quella del config
+  // porta configurata diversa da quella runtime: resta solo nel config autoritativo
   fs.writeFileSync(configPath, JSON.stringify({ port: 42555 }), { mode: 0o600 });
   const r = await fetch(`${base}/api/settings/service/regenerate`, { method: 'POST', headers: H(token) });
   assert.equal(r.status, 200);
@@ -415,7 +415,8 @@ test('service/regenerate: scrive l\'unit ma NON esegue restart (activation skipp
   assert.ok(j.skippedActivation.some((c) => /restart/.test(c)));
   const unit = fs.readFileSync(j.target, 'utf8');
   assert.match(unit, /ExecStart=/);
-  assert.match(unit, /NEXUSCREW_PORT=42555/);
+  assert.doesNotMatch(unit, /NEXUSCREW_PORT/);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).port, 42555);
   // ora il service risulta installato nella vista read-only
   const s = await (await fetch(`${base}/api/settings`, { headers: H(token) })).json();
   assert.equal(s.service.installed, true);

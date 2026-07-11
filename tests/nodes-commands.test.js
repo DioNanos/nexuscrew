@@ -60,12 +60,13 @@ test('nodes add: nome duplicato e self-reference rifiutati', () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('nodes add: ssh invalido -> code 1 chiaro (mai guess)', () => {
+test('nodes add: Host alias valido; target argv ostile rifiutato', () => {
   const home = nodeHome();
   const l = [];
   const r = cmds.nodesAdd({ home, log: (m) => l.push(m), name: 'vps', ssh: 'nohost', keygen: keygenSeam });
-  assert.equal(r.code, 1);
-  assert.ok(!fs.existsSync(nodesPathFor(home)) || store.loadStore(nodesPathFor(home)).nodes.length === 0);
+  assert.equal(r.code, 0);
+  const bad = cmds.nodesAdd({ home, log: () => {}, name: 'bad', ssh: '-oProxyCommand=evil' });
+  assert.equal(bad.code, 1);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -335,21 +336,9 @@ test('doctor: check ssh client + permitlisten (>=7.8 ok, <7.8 fail)', () => {
 
 // --- dispatch wiring --------------------------------------------------------
 
-test('dispatch: nodes add via CLI (flag --ssh forma spaziata)', () => {
-  const home = nodeHome();
-  const r = dispatch(['nodes', 'add', 'vps', '--ssh', 'user@example.com', '--remote-port', '41820'], { home, log: () => {}, keygen: keygenSeam });
-  assert.equal(r.code, 0);
-  assert.equal(store.loadStore(nodesPathFor(home)).nodes[0].ssh, 'user@example.com');
-  fs.rmSync(home, { recursive: true, force: true });
-});
-
-test('dispatch: nodes test async -> keepAlive + exit seam', async () => {
-  const home = nodeHome();
-  seedNode(home, { token: 'T' });
-  let exitCode = null;
-  const r = dispatch(['nodes', 'test', 'vps'], { home, log: () => {}, exit: (c) => { exitCode = c; }, httpProbe: async () => ({ ok: true, status: 200 }) });
-  assert.equal(r.keepAlive, true);
-  await new Promise((res) => setTimeout(res, 20));
-  assert.equal(exitCode, 1); // tunnel down -> code 1
-  fs.rmSync(home, { recursive: true, force: true });
+test('dispatch: gestione nodes e test tunnel sono disponibili solo dalla PWA', () => {
+  const logs = [];
+  const add = dispatch(['nodes', 'add', 'vps', '--ssh', 'user@example.com'], { log: (m) => logs.push(m) });
+  assert.equal(add.code, 1);
+  assert.match(logs.join('\n'), /nexuscrew show/);
 });

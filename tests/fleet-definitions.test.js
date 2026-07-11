@@ -60,6 +60,23 @@ test('schema valido: accettato (oggetto e stringa JSON) + normalizzazione', () =
   assert.equal(min.cells[0].boot, false);
 });
 
+test('managed 0.8.0: Z.AI legacy migra senza spezzare i riferimenti delle celle', () => {
+  const parsed = parseDefinitions({
+    schemaVersion: 1,
+    engines: [{
+      id: 'claude.zai-a', label: 'Z.AI A',
+      managed: { client: 'claude', provider: 'zai-a', model: 'glm-5.2[1m]' },
+    }],
+    cells: [{ id: 'Dev', cwd: '/home/user/work', engine: 'claude.zai-a' }],
+  });
+  assert.ok(parsed);
+  assert.deepEqual(parsed.engines[0].managed, {
+    client: 'claude', provider: 'zai', credentialProfile: 'a',
+    model: 'glm-5.2[1m]', permissionPolicy: 'standard',
+  });
+  assert.equal(parsed.cells[0].engine, 'claude.zai-a');
+});
+
 test('schemaVersion sbagliato / engines non-array / cells mancanti -> null', () => {
   const base = validDef();
   assert.equal(parseDefinitions({ ...base, schemaVersion: 2 }), null);

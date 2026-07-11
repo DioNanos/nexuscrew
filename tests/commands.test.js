@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { dispatch, serve, start, stop, status, parseFlags, HELP,
-  smartUp, url, tokenRotate, logs, update, doctor } = require('../lib/cli/commands.js');
+  smartUp, url, tokenRotate, logs, update, doctor, findAvailablePort, openPwa } = require('../lib/cli/commands.js');
 
 // Home "inizializzata" (config.json + token) per i test url/status/token/logs. [A2]
 function initHome(port = 41822, token = 'SECRETTOKEN12345') {
@@ -35,31 +35,91 @@ test('dispatch: help -> code 0, stampa HELP', () => {
   const r = dispatch(['help'], { log: (m) => logs.push(m) });
   assert.equal(r.code, 0);
   assert.ok(logs.join('\n').includes('Usage'));
+  const long = [];
+  assert.equal(dispatch(['--help'], { log: (m) => long.push(m) }).code, 0);
+  assert.ok(long.join('\n').includes('nexuscrew show'));
+  const version = [];
+  assert.equal(dispatch(['--version'], { log: (m) => version.push(m) }).code, 0);
+  assert.equal(version[0], '0.8.2');
+  assert.equal(dispatch(['--bogus'], { log: () => {} }).code, 1);
 });
 
-test('dispatch: no args -> smart-up (init+start+URL, seam iniettati)', () => {
+test('dispatch: no args -> background start silenzioso + apertura wizard al primo avvio', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-smartup-'));
   const logs = [];
-  const calls = [];
-  const r = dispatch([], {
+  const opened = [];
+  const r = await dispatch([], {
     log: (m) => logs.push(m),
     home, platform: 'linux', tmuxOk: true,
-    execImpl: (b, a) => { calls.push([b, a]); if (a && a.includes('is-active')) throw new Error('inactive'); },
+    execImpl: (_b, a) => { if (a && a.includes('is-active')) return 'active'; return ''; },
     spawnImpl: () => ({ unref() {} }),
+    portAvailableImpl: async () => true,
+    probeImpl: async () => true,
+    openImpl: (u) => { opened.push(u); return true; },
   });
   assert.equal(r.code, 0);
-  // init minimale ha creato config + token
   assert.ok(fs.existsSync(path.join(home, '.nexuscrew', 'config.json')));
   assert.ok(fs.existsSync(path.join(home, '.nexuscrew', 'token')));
-  // start del service (systemctl --user start)
-  assert.ok(calls.some((c) => c[0] === 'systemctl' && c[1].includes('start')));
-  const out = logs.join('\n');
-  assert.ok(out.includes('http://127.0.0.1:')); // URL base stampato
-  assert.ok(out.includes('█')); // QR (incorpora il token)
-  // il token in CHIARO non deve comparire in smart-up (solo dentro il QR)
   const tok = fs.readFileSync(path.join(home, '.nexuscrew', 'token'), 'utf8').trim();
-  assert.ok(!out.includes(tok));
-  assert.ok(!out.includes('#token='));
+  assert.equal(logs.length, 0);
+  assert.equal(opened.length, 1);
+  assert.ok(opened[0].includes(`#token=${tok}`));
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('smart-up configurato: avvia/riusa in background senza aprire; show apre', async () => {
+  const { home } = initHome();
+  const cp = path.join(home, '.nexuscrew', 'config.json');
+  fs.writeFileSync(cp, JSON.stringify({ port: 41822, wizardDone: true }) + '\n', { mode: 0o600 });
+  const opened = [];
+  const common = {
+    home, platform: 'linux', probeImpl: async () => true,
+    execImpl: () => 'active', openImpl: (u) => { opened.push(u); },
+  };
+  const background = await dispatch([], common);
+  assert.equal(background.code, 0);
+  assert.equal(opened.length, 0);
+  const shown = await dispatch(['show'], common);
+  assert.equal(shown.code, 0);
+  assert.equal(opened.length, 1);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('smart-up migra una service definition 0.8.0 che pinna NEXUSCREW_PORT', async () => {
+  const { home } = initHome();
+  const cp = path.join(home, '.nexuscrew', 'config.json');
+  fs.writeFileSync(cp, JSON.stringify({ port: 41822, wizardDone: true }) + '\n', { mode: 0o600 });
+  const servicePath = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
+  fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+  fs.writeFileSync(servicePath, '[Service]\nEnvironment=NEXUSCREW_PORT=41822\n');
+  await smartUp({
+    home, platform: 'linux', installPath: servicePath, tmuxOk: true,
+    execImpl: (_bin, args) => (args?.includes('is-active') ? 'active' : ''),
+    probeImpl: async () => true,
+  });
+  assert.doesNotMatch(fs.readFileSync(servicePath, 'utf8'), /NEXUSCREW_PORT/);
+  assert.equal(JSON.parse(fs.readFileSync(cp, 'utf8')).port, 41822);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('smart-up: porta occupata da altro processo -> successiva libera e config aggiornata', async () => {
+  const { home } = initHome(41822);
+  const cp = path.join(home, '.nexuscrew', 'config.json');
+  fs.writeFileSync(cp, JSON.stringify({ port: 41822, wizardDone: true }) + '\n', { mode: 0o600 });
+  let migrated = false;
+  const r = await smartUp({
+    home, platform: 'linux',
+    execImpl: () => { throw new Error('inactive'); },
+    probeImpl: async (port) => migrated && port === 41823,
+    portAvailableImpl: async (port) => port === 41823,
+    runInitImpl: ({ port }) => {
+      const cfg = JSON.parse(fs.readFileSync(cp, 'utf8')); cfg.port = port;
+      fs.writeFileSync(cp, JSON.stringify(cfg) + '\n', { mode: 0o600 }); migrated = true;
+    },
+    waitAttempts: 1,
+  });
+  assert.equal(r.port, 41823);
+  assert.equal(JSON.parse(fs.readFileSync(cp, 'utf8')).port, 41823);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -67,19 +127,17 @@ test('dispatch: unknown command -> code 1', () => {
   const logs = [];
   const r = dispatch(['bogus'], { log: (m) => logs.push(m) });
   assert.equal(r.code, 1);
-  assert.ok(logs.join('\n').includes('unknown'));
+  assert.ok(logs.join('\n').includes('not a public CLI command'));
 });
 
 // --- dispatch init (tmpdir, dry-run) ---
 
-test('dispatch init --dry-run: runInit dry-run (no write su home tmp)', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cmd-'));
+test('legacy configuration commands are not public CLI commands', () => {
   const logs = [];
-  const r = dispatch(['init', '--dry-run'], { log: (m) => logs.push(m), home, tmuxOk: true });
-  assert.equal(r.code, 0);
-  assert.ok(!fs.existsSync(path.join(home, '.nexuscrew', 'config.json'))); // dry-run no write
-  assert.ok(logs.some((l) => /DRY-RUN/.test(l)));
-  fs.rmSync(home, { recursive: true, force: true });
+  for (const command of ['init', 'start', 'stop', 'status', 'url', 'logs', 'update', 'nodes']) {
+    assert.equal(dispatch([command], { log: (m) => logs.push(m) }).code, 1);
+  }
+  assert.ok(logs.join('\n').includes('nexuscrew show'));
 });
 
 // --- serve ---
@@ -220,34 +278,17 @@ test('dispatch serve: chiama serve + keepAlive (no exit, server resta vivo)', ()
 });
 
 // ---------------------------------------------------------------------------
-// A2 — CLI unificata: up/down, url, status esteso, token rotate, logs, doctor, update
+// Helpers interni usati dalla PWA/runtime; non sono comandi CLI pubblici.
 // ---------------------------------------------------------------------------
 
-test('dispatch up/down: alias di start/stop', () => {
-  const cu = [];
-  const ru = dispatch(['up'], { platform: 'linux', execImpl: (b, a) => cu.push([b, a]), log: () => {} });
-  assert.equal(ru.code, 0);
-  assert.ok(cu.some((c) => c[0] === 'systemctl' && c[1].includes('start')));
-  const cd = [];
-  const rd = dispatch(['down'], { platform: 'linux', execImpl: (b, a) => cd.push([b, a]), log: () => {} });
-  assert.equal(rd.code, 0);
-  assert.ok(cd.some((c) => c[0] === 'systemctl' && c[1].includes('stop')));
-});
-
-test('dispatch mac: activation failure ritorna code 1 senza throw', () => {
-  const fail = () => { throw new Error('launchd unavailable'); };
-  assert.equal(dispatch(['start'], { platform: 'mac', uid: 501, execImpl: fail, log: () => {} }).code, 1);
-  assert.equal(dispatch(['stop'], { platform: 'mac', uid: 501, execImpl: fail, log: () => {} }).code, 1);
-});
-
-test('url: stampa URL con #token; --qr aggiunge QR', () => {
+test('url helper: costruisce URL autenticato', () => {
   const { home, token } = initHome();
   const l = [];
-  const r = dispatch(['url'], { log: (m) => l.push(m), home });
-  assert.equal(r.code, 0);
+  const r = url({ log: (m) => l.push(m), home });
+  assert.equal(r.hasToken, true);
   assert.ok(l.join('\n').includes(`#token=${token}`)); // url e' l'UNICO posto col token in chiaro
   const l2 = [];
-  dispatch(['url', '--qr'], { log: (m) => l2.push(m), home });
+  url({ log: (m) => l2.push(m), home, qr: true });
   assert.ok(l2.join('\n').includes('█')); // QR ASCII presente (no snapshot fragile)
   fs.rmSync(home, { recursive: true, force: true });
 });
@@ -255,9 +296,10 @@ test('url: stampa URL con #token; --qr aggiunge QR', () => {
 test('status --json: roles+nodes progettati, porta da config, MAI il token', () => {
   const { home, token, port } = initHome();
   const l = [];
-  dispatch(['status', '--json'], {
+  status({
     home, platform: 'linux', log: (m) => l.push(m),
     execImpl: () => { throw new Error('inactive'); },
+    json: true,
   });
   const out = JSON.parse(l.join('\n'));
   assert.deepEqual(out.roles, { client: false, node: false });
@@ -280,10 +322,10 @@ test('status: roles letti dal config.json (default entrambi off)', () => {
 test('no token nei log: status e logs non stampano il token', () => {
   const { home, token } = initHome();
   const s = [];
-  dispatch(['status'], { home, platform: 'linux', log: (m) => s.push(m), execImpl: () => { throw new Error('x'); } });
+  status({ home, platform: 'linux', log: (m) => s.push(m), execImpl: () => { throw new Error('x'); } });
   assert.ok(!s.join('\n').includes(token));
   const l = [];
-  dispatch(['logs'], { home, platform: 'linux', log: (m) => l.push(m), spawnImpl: () => ({}) });
+  logs({ home, platform: 'linux', log: (m) => l.push(m), spawnImpl: () => ({}) });
   assert.ok(!l.join('\n').includes(token));
   fs.rmSync(home, { recursive: true, force: true });
 });
@@ -354,10 +396,10 @@ test('logs linux: journalctl --user -u nexuscrew; -f segue', () => {
   assert.ok(cap2[0][1].includes('-f'));
 });
 
-test('logs termux: tail del logfile; dispatch -f rilevato', () => {
+test('logs helper termux: tail del logfile con follow', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-logs-'));
   const cap = [];
-  const r = dispatch(['logs', '-f'], { platform: 'termux', home, spawnImpl: (b, a) => { cap.push([b, a]); return {}; }, log: () => {} });
+  const r = logs({ platform: 'termux', home, follow: true, spawnImpl: (b, a) => { cap.push([b, a]); return {}; }, log: () => {} });
   assert.equal(r.keepAlive, true);
   assert.equal(cap[0][0], 'tail');
   assert.ok(cap[0][1].includes('-f'));
@@ -422,21 +464,24 @@ test('update: npm fallito -> code 1 + messaggio chiaro', () => {
   assert.ok(l.join('\n').includes('fallito'));
 });
 
-test('smart-up idempotente: gia\' attivo -> solo URL base + QR (no start)', () => {
-  const { home, token } = initHome();
+test('smart-up idempotente: gia\' attivo e configurato -> no start, no output, no browser', async () => {
+  const { home } = initHome();
+  const cp = path.join(home, '.nexuscrew', 'config.json');
+  fs.writeFileSync(cp, JSON.stringify({ port: 41822, wizardDone: true }) + '\n', { mode: 0o600 });
   const calls = [];
   const l = [];
-  const r = smartUp({
+  let opened = false;
+  const r = await smartUp({
     home, platform: 'linux', log: (m) => l.push(m),
     execImpl: (b, a) => { calls.push([b, a]); if (a && a.includes('is-active')) return 'active'; return ''; },
+    probeImpl: async () => true,
+    openImpl: () => { opened = true; },
     runInitImpl: () => { throw new Error('non deve re-init'); },
   });
   assert.equal(r.running, true);
   assert.ok(!calls.some((c) => c[1] && c[1].includes('start'))); // gia' attivo -> nessuno start
-  const out = l.join('\n');
-  assert.ok(out.includes('http://127.0.0.1:'));
-  assert.ok(out.includes('█')); // QR
-  assert.ok(!out.includes(token)); // token in chiaro assente
+  assert.equal(l.length, 0);
+  assert.equal(opened, false);
   fs.rmSync(home, { recursive: true, force: true });
 });
 

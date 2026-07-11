@@ -48,6 +48,10 @@
 .nc-set-hint { font-size: 11px; opacity: .7; }
 
 .nc-set-form { display: flex; flex-direction: column; gap: 8px; }
+.nc-set-form .nc-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; opacity: .82; }
+.nc-set-form .nc-field small { font-size: 10px; opacity: .7; line-height: 1.3; }
+.nc-set-ports { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 520px) { .nc-set-ports { grid-template-columns: 1fr; } }
 .nc-set-form input {
   padding: 9px 10px; font: 14px/1.2 inherit;
   background: #0a0e0a; color: #cfe;

@@ -29,7 +29,7 @@ function stripTrailingNewlines(s) {
 // node (opzionale): sessione remota — upload/voice passano dal proxy /node/<name>.
 export default function ComposerBar({ send, token, session, node }) {
   useLang();
-  const base = node ? `/node/${encodeURIComponent(node)}` : '';
+  const base = node ? `/api/route/${String(node).split('/').map(encodeURIComponent).join('/')}/_` : '/api';
   const [text, setText] = useState('');
   const [rec, setRec] = useState(false);
   const [err, setErr] = useState('');
@@ -54,7 +54,8 @@ export default function ComposerBar({ send, token, session, node }) {
   // se nessuno dei due -> mic nascosto.
   useEffect(() => {
     let cancelled = false;
-    apiFetch(`${base}/api/voice/status`, token)
+    if (node) { setServerStt(false); return undefined; }
+    apiFetch(`${base}/voice/status`, token)
       .then((r) => r.json())
       .then((j) => { if (!cancelled) setServerStt(!!j.serverSttConfigured); })
       .catch(() => { if (!cancelled) setServerStt(false); });
@@ -127,7 +128,7 @@ export default function ComposerBar({ send, token, session, node }) {
         fd.append('session', session);
         fd.append('paste', 'false');
         fd.append('file', f, f.name);
-        const r = await apiFetch(`${base}/api/files/upload`, token, { method: 'POST', body: fd });
+        const r = await apiFetch(`${base}/files/upload`, token, { method: 'POST', body: fd });
         const j = await r.json();
         if (j.error) { setErr(j.error); break; }
         paths.push(j.path);
@@ -174,7 +175,7 @@ export default function ComposerBar({ send, token, session, node }) {
         setErr('trascrivo…');
         try {
           const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' });
-          const r = await apiFetch(`${base}/api/voice/transcribe`, token, {
+          const r = await apiFetch(`${base}/voice/transcribe`, token, {
             method: 'POST',
             headers: { 'content-type': 'application/octet-stream' },
             body: blob,

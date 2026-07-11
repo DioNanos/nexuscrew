@@ -4,35 +4,42 @@
 // (design §7, niente spinner infinito); zero nodi configurati -> groups = []
 // e la UI resta identica a oggi.
 import { useEffect, useRef, useState } from 'react';
-import { getNodes, getNodeSessions } from '../lib/api.js';
-import { buildNodeGroups, trackDown } from '../lib/nodes-model.js';
+import { getTopology, getRouteSessions } from '../lib/api.js';
 
 const POLL_MS = 4000;
 
 export function useNodes(token, enabled = true) {
   const [groups, setGroups] = useState([]);
-  const downRef = useRef({}); // name -> epochSec prima osservazione del down
+  const downRef = useRef({});
 
   useEffect(() => {
     if (!enabled || !token) { setGroups([]); return undefined; }
     let alive = true;
 
     async function poll() {
-      let nodes = [];
+      let topology = [];
       try {
-        const j = await getNodes(token);
-        nodes = Array.isArray(j.nodes) ? j.nodes : [];
-      } catch (_) { nodes = []; /* best-effort: API giu' = nessun gruppo */ }
+        const j = await getTopology(token);
+        topology = Array.isArray(j.nodes) ? j.nodes : [];
+      } catch (_) { topology = []; }
       if (!alive) return;
-      downRef.current = trackDown(downRef.current, nodes, Math.floor(Date.now() / 1000));
-      const up = nodes.filter((n) => n && n.tunnel && n.tunnel.status === 'up');
-      const remote = {};
-      await Promise.all(up.map(async (n) => {
-        try { remote[n.name] = await getNodeSessions(token, n.name); }
-        catch (e) { remote[n.name] = { error: String((e && e.message) || e) }; }
+      const groups = [];
+      await Promise.all(topology.map(async (n) => {
+        const key = n.route.join('/');
+        try {
+          const remote = await getRouteSessions(token, n.route);
+          delete downRef.current[key];
+          groups.push({
+            name: n.name, label: n.route.join(' › '), route: n.route, status: 'up',
+            sessions: (remote.sessions || []).map((s) => ({ ...s, node: key, route: n.route, key: `${key}:${s.name}` })),
+          });
+        } catch (_) {
+          downRef.current[key] ||= Math.floor(Date.now() / 1000);
+          groups.push({ name: n.name, label: n.route.join(' › '), route: n.route, status: 'unreachable', sessions: [], downSince: downRef.current[key] });
+        }
       }));
       if (!alive) return;
-      setGroups(buildNodeGroups({ nodes, remote, down: downRef.current }));
+      setGroups(groups.sort((a, b) => a.label.localeCompare(b.label)));
     }
 
     poll();

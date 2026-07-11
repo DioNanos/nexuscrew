@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 'use strict';
-// NexusCrew CLI dispatcher (portable). Subcomandi: init / serve / start / stop / status.
+// The normal product surface is the PWA. `nexuscrew` starts it in background;
+// `nexuscrew show` starts it when needed and opens it.
 const { dispatch } = require('../lib/cli/commands.js');
-const r = dispatch(process.argv.slice(2));
-// serve tiene il processo vivo (server.listen); gli altri comandi escono.
-if (!r || !r.keepAlive) process.exit((r && r.code) || 0);
+Promise.resolve(dispatch(process.argv.slice(2)))
+  .then((r) => {
+    if (!r || !r.keepAlive) process.exitCode = (r && r.code) || 0;
+  })
+  .catch((e) => {
+    process.stderr.write(`nexuscrew: ${String((e && e.message) || e)}\n`);
+    process.exitCode = 1;
+  });

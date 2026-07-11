@@ -35,16 +35,21 @@ export function parsePort(v) {
 }
 
 // Valida il form "aggiungi nodo" (wizard step 2 + settings). Ritorna
-// {ok:true, value:{name, ssh, remotePort?}} oppure {ok:false, error:<chiave i18n>}.
-export function validateNodeForm({ name, ssh, remotePort } = {}) {
+// {ok:true, value:{name, ssh, sshPort?, remotePort?}} oppure
+// {ok:false, error:<chiave i18n>}. sshPort e' la porta del trasporto SSH;
+// remotePort e' la porta HTTP loopback di NexusCrew sul nodo remoto.
+export function validateNodeForm({ name, ssh, sshPort, remotePort } = {}) {
   const n = typeof name === 'string' ? name.trim() : name;
   const s = typeof ssh === 'string' ? ssh.trim() : ssh;
   if (!isValidNodeName(n)) return { ok: false, error: 'err-node-name' };
   if (!isValidSsh(s)) return { ok: false, error: 'err-ssh' };
-  const port = parsePort(remotePort);
-  if (port === undefined) return { ok: false, error: 'err-port' };
+  const parsedSshPort = parsePort(sshPort);
+  if (parsedSshPort === undefined) return { ok: false, error: 'err-ssh-port' };
+  const parsedRemotePort = parsePort(remotePort);
+  if (parsedRemotePort === undefined) return { ok: false, error: 'err-node-port' };
   const value = { name: n, ssh: s };
-  if (port !== null) value.remotePort = port;
+  if (parsedSshPort !== null) value.sshPort = parsedSshPort;
+  if (parsedRemotePort !== null) value.remotePort = parsedRemotePort;
   return { ok: true, value };
 }
 

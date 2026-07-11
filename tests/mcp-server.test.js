@@ -305,3 +305,48 @@ test('subprocess: handshake + tools/call nc_notify contro server HTTP finto', as
   child.stdin.end();
   assert.equal(await exit, 0);
 });
+
+test('subprocess: EOF immediato non tronca una tools/call asincrona', async (t) => {
+  const dir = tmpdir();
+  const tokenPath = writeToken(dir, 'tok-eof');
+  const fake = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      setTimeout(() => {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ delivered: { ui: 1, push: 0 } }));
+      }, 50);
+    });
+  });
+  await new Promise((res) => fake.listen(0, '127.0.0.1', res));
+  t.after(() => fake.close());
+
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'bin', 'nexuscrew.js'), 'mcp'], {
+    env: {
+      PATH: process.env.PATH,
+      HOME: dir,
+      NEXUSCREW_CONFIG_FILE: path.join(dir, 'config.json'),
+      NEXUSCREW_PORT: String(fake.address().port),
+      NEXUSCREW_TOKEN_FILE: tokenPath,
+      NEXUSCREW_MCP_SESSION: 'cell-eof',
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  t.after(() => { try { child.kill(); } catch (_) {} });
+
+  let stdout = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+  child.stdin.end([
+    rpc(1, 'initialize', { protocolVersion: '2026-01-01' }),
+    JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+    rpc(2, 'tools/call', { name: 'nc_notify', arguments: { title: 'EOF safe' } }),
+    '',
+  ].join('\n'));
+
+  const exitCode = await new Promise((resolve) => child.on('exit', resolve));
+  assert.equal(exitCode, 0);
+  const messages = stdout.trim().split('\n').filter(Boolean).map(JSON.parse);
+  assert.equal(messages.find((m) => m.id === 1)?.result?.serverInfo?.name, 'nexuscrew');
+  const toolReply = messages.find((m) => m.id === 2);
+  assert.deepEqual(JSON.parse(toolReply.result.content[0].text), { delivered: { ui: 1, push: 0 } });
+});

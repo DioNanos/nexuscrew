@@ -3,6 +3,8 @@
 // per-nodo (ws-client), aggregazione gruppi per-nodo (nodes-model).
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const grid = () => import('../frontend/src/lib/grid-model.js');
 const wsc = () => import('../frontend/src/lib/ws-client.js');
@@ -14,6 +16,7 @@ test('parseRef/refKey: locale, remoto, oggetto, garbage fail-closed', async () =
   const m = await grid();
   assert.deepEqual(m.parseRef('work'), { session: 'work' });
   assert.deepEqual(m.parseRef('phone:work'), { session: 'work', node: 'phone' });
+  assert.deepEqual(m.parseRef('relay/phone:work'), { session: 'work', node: 'relay/phone' });
   assert.deepEqual(m.parseRef({ session: 'work', node: 'phone' }), { session: 'work', node: 'phone' });
   assert.deepEqual(m.parseRef({ session: 'work' }), { session: 'work' });
   assert.equal(m.parseRef(''), null);
@@ -24,6 +27,9 @@ test('parseRef/refKey: locale, remoto, oggetto, garbage fail-closed', async () =
   assert.equal(m.refKey('phone:work'), 'phone:work');
   assert.equal(m.refKey({ session: 'work' }), 'work');
   assert.equal(m.refKey({ session: 'work', node: 'phone' }), 'phone:work');
+  assert.equal(m.refKey({ session: 'work', node: 'relay/phone' }), 'relay/phone:work');
+  assert.equal(m.parseRef({ session: 'work', node: 'a/b/c/d/e' }), null, 'maximum four route segments');
+  assert.equal(m.parseRef({ session: 'work', node: 'a/b/a' }), null, 'repeated route segment is rejected');
 });
 
 test('addTile con node: stessa sessione su nodi diversi coesiste, dedup per refKey', async () => {
@@ -31,7 +37,8 @@ test('addTile con node: stessa sessione su nodi diversi coesiste, dedup per refK
   let l = m.emptyLayout();
   l = m.addTile(l, 'work', 'end');                      // locale
   l = m.addTile(l, 'phone:work', 'end');                // remota, stesso nome
-  assert.deepEqual(m.sessions(l), ['work', 'phone:work']);
+  l = m.addTile(l, 'relay/phone:work', 'end');
+  assert.deepEqual(m.sessions(l), ['work', 'phone:work', 'relay/phone:work']);
   assert.equal(m.addTile(l, { session: 'work', node: 'phone' }, 'end'), l, 'dedup per refKey');
   const tiles = l.columns.flatMap((c) => c.tiles);
   assert.equal(tiles[0].node, undefined, 'tile locale senza campo node');
@@ -98,12 +105,12 @@ test('normalize: dedup per refKey (locale e remota omonime NON collassano)', asy
 
 // --- ws-client: path building ------------------------------------------------
 
-test('wsTarget: locale /ws senza token in URL; remoto /node/<name>/ws?token=', async () => {
+test('wsTarget: locale /ws; remoto usa federation route', async () => {
   const m = await wsc();
   assert.equal(m.wsTarget(undefined, 'sekret'), '/ws', 'locale: mai token in URL');
   assert.equal(m.wsTarget(null, 'sekret'), '/ws');
-  assert.equal(m.wsTarget('phone', 'sek ret'), '/node/phone/ws?token=sek%20ret');
-  assert.equal(m.wsTarget('phone', ''), '/node/phone/ws?token=');
+  assert.equal(m.wsTarget('vps/phone', 'sek ret'), '/api/route/vps/phone/_/ws?token=sek%20ret');
+  assert.equal(m.wsTarget('phone', ''), '/api/route/phone/_/ws?token=');
 });
 
 // --- nodes-model: aggregazione gruppi ----------------------------------------
@@ -157,6 +164,12 @@ test('trackDown: prima osservazione ricordata, up ripulisce, nodo rimosso sparis
 
 test('nodeBase: prefisso proxy per nodo, vuoto per locale', async () => {
   const m = await nodes();
-  assert.equal(m.nodeBase(), '');
-  assert.equal(m.nodeBase('phone'), '/node/phone');
+  assert.equal(m.nodeBase(), '/api');
+  assert.equal(m.nodeBase('vps/phone'), '/api/route/vps/phone/_');
+});
+
+test('all Sidebar remote group variants use the canonical full-route React key', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'components', 'Sidebar.jsx'), 'utf8');
+  assert.equal(src.includes('key={`nodo-${g.name}`}'), false);
+  assert.equal((src.match(/key=\{`nodo-\$\{\(g\.route \|\| \[g\.name\]\)\.join\('\/'\)\}`\}/g) || []).length, 2);
 });

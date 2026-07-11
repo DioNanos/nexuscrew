@@ -39,15 +39,16 @@ test('settings-model: parsePort — assente null, valida numero, garbage undefin
   }
 });
 
-test('settings-model: validateNodeForm — trim, porta opzionale, errori con chiave i18n', async () => {
+test('settings-model: validateNodeForm — separa porta SSH e porta NexusCrew', async () => {
   const m = await mod();
-  const ok = m.validateNodeForm({ name: ' host ', ssh: ' user@host ', remotePort: '41820' });
-  assert.deepEqual(ok, { ok: true, value: { name: 'host', ssh: 'user@host', remotePort: 41820 } });
-  const noPort = m.validateNodeForm({ name: 'host', ssh: 'user@host', remotePort: '' });
+  const ok = m.validateNodeForm({ name: ' host ', ssh: ' user@host ', sshPort: '41822', remotePort: '41777' });
+  assert.deepEqual(ok, { ok: true, value: { name: 'host', ssh: 'user@host', sshPort: 41822, remotePort: 41777 } });
+  const noPort = m.validateNodeForm({ name: 'host', ssh: 'user@host', sshPort: '', remotePort: '' });
   assert.deepEqual(noPort, { ok: true, value: { name: 'host', ssh: 'user@host' } });
   assert.deepEqual(m.validateNodeForm({ name: 'HOST', ssh: 'user@host' }), { ok: false, error: 'err-node-name' });
   assert.deepEqual(m.validateNodeForm({ name: 'vps', ssh: 'nope' }), { ok: false, error: 'err-ssh' });
-  assert.deepEqual(m.validateNodeForm({ name: 'host', ssh: 'user@host', remotePort: '0' }), { ok: false, error: 'err-port' });
+  assert.deepEqual(m.validateNodeForm({ name: 'host', ssh: 'user@host', sshPort: '0' }), { ok: false, error: 'err-ssh-port' });
+  assert.deepEqual(m.validateNodeForm({ name: 'host', ssh: 'user@host', remotePort: '0' }), { ok: false, error: 'err-node-port' });
   assert.deepEqual(m.validateNodeForm({}), { ok: false, error: 'err-node-name' });
 });
 
