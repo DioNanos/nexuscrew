@@ -24,6 +24,7 @@ const SIDE_MAX_W = 480;
 
 // Etichetta di stato di un gruppo nodo degradato (design §7: mai spinner).
 function nodeStateLabel(g) {
+  if (g.status === 'passive') return t('node-passive');
   if (g.status === 'down') {
     return g.downSince ? t('tunnel-down-since').replace('{t}', rel(g.downSince)) : t('tunnel-down');
   }
@@ -35,7 +36,7 @@ function nodeStateLabel(g) {
 
 // Dot di salute dal model health (NO verde hardcoded): 'on' solo se probe 200;
 // degraded (401) / down / unknown -> 'warn' + titolo diagnostico.
-function healthDot(h) { if (!h) return null; return h.status === 'healthy' ? 'on' : 'warn'; }
+function healthDot(h) { if (!h || h.status === 'passive') return null; return h.status === 'healthy' ? 'on' : 'warn'; }
 function healthTitle(h) { if (!h) return ''; return h.detail || h.status || ''; }
 
 // Sidebar presentazionale: mostra la flotta (celle) + le altre sessioni tmux
@@ -160,7 +161,7 @@ export default function Sidebar({
                 className="nc-mini-dot"
                 onMouseEnter={(e) => showTip(e, `${g.label || (g.route || [g.name]).join(' › ')}: ${nodeStateLabel(g)}`)}
                 onMouseLeave={hideTip}
-              ><span className="nc-dot warn" /></button>
+              ><span className={`nc-dot${g.status === 'passive' ? '' : ' warn'}`} /></button>
             )]))}
         </div>
         <button className="nc-side-gear mini" onClick={() => onSettings && onSettings('nodes', false)} title={t('settings')}
@@ -192,7 +193,8 @@ export default function Sidebar({
               <div
                 key={c.cell}
                 className={`nc-cell${live ? ' live' : ''}${active.has(c.tmuxSession) ? ' active' : ''}`}
-                title={title}
+                title={`${c.cell} · ${c.engine}${c.key ? `·${c.key}` : ''} · ${title}`}
+                aria-label={`${c.cell}, ${c.engine}${c.key ? ` ${c.key}` : ''}, ${title}`}
                 draggable={live}
                 onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', c.tmuxSession) : undefined}
                 onClick={live ? () => onAddTile && onAddTile(c.tmuxSession) : undefined}
@@ -200,8 +202,8 @@ export default function Sidebar({
               >
                 <span className={`nc-dot ${dot}`} />
                 <span className="nc-cell-main">
-                  <b>{c.cell}</b>
-                  <small>{c.engine}{c.key ? `·${c.key}` : ''}</small>
+                  <b title={c.cell}>{c.cell}</b>
+                  <small title={`${c.engine}${c.key ? `·${c.key}` : ''}`}>{c.engine}{c.key ? `·${c.key}` : ''}</small>
                 </span>
                 <button
                   className={`nc-pin${pins.includes(c.tmuxSession) ? ' on' : ''}`}
@@ -270,7 +272,7 @@ export default function Sidebar({
           solo per nodi diretti gestibili; peer inbound non ha power fittizio. */}
       {(nodeGroups || []).map((g) => {
         const hd = healthDot(g.health);
-        const dotClass = hd || (g.status === 'up' ? 'on' : 'warn');
+        const dotClass = hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
         const nodeRoute = (g.route || [g.name]).join('/');
         return (
         <div key={`nodo-${(g.route || [g.name]).join('/')}`}>

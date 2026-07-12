@@ -34,7 +34,8 @@ export function trackDown(prev, nodes, nowSec) {
     if (!route.length) continue;
     const key = route.join('/');
     const upNow = n.status === 'up' || (n.tunnel && n.tunnel.status === 'up');
-    if (!upNow) out[key] = (prev && prev[key]) || nowSec;
+    const passive = n.status === 'passive' || (n.tunnel && n.tunnel.status === 'passive');
+    if (!upNow && !passive) out[key] = (prev && prev[key]) || nowSec;
   }
   return out; // nodi tornati up (o rimossi) spariscono dalla mappa
 }
@@ -46,7 +47,10 @@ function enrichCells(f, route, key) {
   return f.cells.map((c) => ({
     ...c,
     route,
-    key: `${key}:${c.cell || c.tmuxSession}`,
+    // Il tile deve aprire la VERA sessione tmux, non l'id logico della cella.
+    // Usare c.cell (es. Dev) produceva header plausibile ma attach WS a una
+    // sessione inesistente invece di cloud-Dev -> terminale remoto vuoto.
+    key: `${key}:${c.tmuxSession || c.cell}`,
   }));
 }
 
@@ -74,6 +78,7 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet } = {}) {
       name: n.name, label: n.label || n.name, route, direct: true,
       tunnelStatus, sessions: [], cells: [], unmanaged: [],
       fleetAvailable: false, capabilities: [], engines: [], health: n.health || null,
+      direction: n.direction || 'outbound', roles: n.roles || null, rolesKnown: n.rolesKnown === true,
     };
     if (n.nodeId) seenIds.add(n.nodeId);
     if (!n.nodeId && n.paired === false) {
@@ -82,6 +87,10 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet } = {}) {
     }
     if (n.health?.auth === 'failed' || (tunnelStatus === 'degraded' && n.health?.status === 'degraded')) {
       out.push({ ...base, status: 'needs-repair', downSince: (down && down[key]) || null });
+      continue;
+    }
+    if (tunnelStatus === 'passive' || n.health?.status === 'passive') {
+      out.push({ ...base, status: 'passive', downSince: null });
       continue;
     }
     if (!up) {

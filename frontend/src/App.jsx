@@ -15,7 +15,7 @@ import NotifyCenter from './components/NotifyCenter.jsx';
 import {
   apiFetch, fleetStatus, fleetUp, fleetDown, killSession, getSettings, nodeAction,
 } from './lib/api.js';
-import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef } from './lib/grid-model.js';
+import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
 import {
   MAIN_DECK, deckFromPath, deckUrl, readLayoutRaw,
 } from './lib/deck-model.js';
@@ -121,6 +121,7 @@ function SingleView({ session, node, token, readonly = false, onBack }) {
     return next;
   });
   const sendRef = useRef(() => {});
+  const composerRef = useRef(() => false);
   const actionRef = useRef(() => {});
   const ctrlRef = useRef(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
@@ -174,14 +175,14 @@ function SingleView({ session, node, token, readonly = false, onBack }) {
         </span>
       </header>
       <div className="nc-termwrap">
-        <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} actionRef={actionRef}
+        <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
           ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} onFiles={setFilesEvent} fontSize={fontSize}
           selectionMode={selectionMode} onSelectionModeChange={setSelectionMode} />
       </div>
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
         ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} selectionMode={selectionMode} onSelectionMode={setSelectionMode} />
       {showComposer && (
-        <ComposerBar send={(seq) => sendRef.current(seq)} token={token} session={session} node={node} />
+        <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} />
       )}
       {showFiles && (
         <FilesPanel session={session} node={node} token={token} filesEvent={filesEvent} onClose={() => setShowFiles(false)} />
@@ -204,9 +205,9 @@ export default function App() {
   const [remember, setRemember] = useState(false);
   const isDesktop = useDesktop();
 
-  // Deck corrente (§5b): dal path /deck/<name>, costante per questa finestra.
-  // Ogni deck e' un workspace nominato con il PROPRIO layout persistito.
-  const [deck] = useState(() => deckFromPath(typeof location !== 'undefined' ? location.pathname : '/'));
+  // Deck corrente: il path sceglie quello iniziale (anche per una finestra
+  // staccata), poi i click cambiano tab internamente senza reload della PWA.
+  const [deck, setDeck] = useState(() => deckFromPath(typeof location !== 'undefined' ? location.pathname : '/'));
   const isMainDeck = deck === MAIN_DECK;
 
   // mobile single-view session: ref {session, node?} (node = nodo remoto B2)
@@ -225,11 +226,26 @@ export default function App() {
   // Gruppi per-nodo remoto (B2, design §5): polling separato, best-effort;
   // zero nodi configurati -> [] e workspace identico a oggi.
   const nodeGroups = useNodes(token, isDesktop);
+  // 0.8.8 salvava le celle remote come route:<cell-id> anziché usare la vera
+  // tmuxSession route:cloud-<id>. Ripara una volta i deck esistenti, ma solo se
+  // sul peer non esiste davvero una sessione unmanaged con quel nome.
+  useEffect(() => {
+    const replacements = new Map();
+    for (const group of nodeGroups || []) {
+      const routeKey = (group.route || [group.name]).join('/');
+      const actual = new Set((group.sessions || []).map((session) => session.name));
+      for (const cell of group.cells || []) {
+        if (!cell.cell || !cell.tmuxSession || cell.cell === cell.tmuxSession || actual.has(cell.cell)) continue;
+        replacements.set(`${routeKey}:${cell.cell}`, `${routeKey}:${cell.tmuxSession}`);
+      }
+    }
+    setLayout((current) => remapTileRefs(current, replacements));
+  }, [nodeGroups]);
   const [powerCell, setPowerCell] = useState(null);
   const [nodePowerBusy, setNodePowerBusy] = useState(false);
   const [sideW, setSideW] = useState(loadSideW);
-  // Finestre deck minimali: nei deck non-main la sidebar e' nascosta di default
-  // (toggle flottante); quando riaperta parte in mini = session-picker compatto.
+  // Finestre staccate: nei deck non-main la sidebar e' nascosta di default;
+  // il toggle vive nella DeckBar (in flow, mai sopra la freccia della sidebar).
   const [sideHidden, setSideHidden] = useState(!isMainDeck);
   const [sideMin, setSideMin] = useState(() => (isMainDeck ? localStorage.getItem(SIDE_MIN_KEY) === '1' : true));
   // Settings + first-run wizard (B2-UI, design §5).
@@ -309,7 +325,13 @@ export default function App() {
   const activeSessions = sessions(layout); // refKeys dei tile aperti
 
   // --- actions ---
-  const onAddTile = (name) => setLayout((l) => addTileSmart(l, name));
+  const onAddTile = (name) => setLayout((l) => {
+    const next = addTileSmart(l, name);
+    if (next === l && !sessions(l).includes(typeof name === 'string' ? name : '') && sessions(l).length >= 9) {
+      deckStore.setError(t('grid-full'));
+    }
+    return next;
+  });
     const onKill = async (name, route = []) => {
     try { await killSession(token, name, route); } catch (_) { return; }
     const key = route.length ? `${route.join('/')}:${name}` : name;
@@ -343,21 +365,29 @@ export default function App() {
   const openDeckWindow = (name) => {
     try { const w = window.open(deckUrl(name, token), '_blank'); if (w) w.opener = null; return !!w; } catch (_) { return false; }
   };
-  const openDeckHere = (name) => location.assign(deckUrl(name, token));
+  const selectDeck = async (name) => {
+    if (!name || name === deck) return;
+    const nextLayout = await deckStore.select(name);
+    setDeck(name); setLayout(nextLayout); setGridFocus(null); setSingle(null);
+    try { history.replaceState(null, '', deckUrl(name, null)); } catch (_) {}
+  };
   const onCreateDeck = async (name) => {
     await deckStore.add(name);
-    openDeckHere(name);
+    await selectDeck(name);
   };
   const onRenameDeck = async (from, to) => {
-    await deckStore.rename(from, to);
-    if (from === deck) location.assign(deckUrl(to, token));
+    const saved = await deckStore.rename(from, to);
+    if (from === deck) {
+      setDeck(to); setLayout(normalize(saved.layout)); setGridFocus(null); setSingle(null);
+      try { history.replaceState(null, '', deckUrl(to, null)); } catch (_) {}
+    }
   };
   const onDeleteDeck = async (name) => {
     await deckStore.remove(name);
-    if (name === deck) location.assign(deckUrl(MAIN_DECK, token));
+    if (name === deck) await selectDeck(MAIN_DECK);
   };
-  // "manda al deck X": aggiunge il tile al layout del deck bersaglio (l'altra
-  // finestra lo raccoglie via evento 'storage') e lo toglie da questo deck.
+  // "manda al deck X": aggiunge il tile al layout del deck bersaglio. Le altre
+  // finestre convergono tramite il poll server-side di useDecks (massimo 5 s).
   const onSendToDeck = async (name, target) => {
     if (!target || target === deck) return;
     await deckStore.addTileTo(target, name);
@@ -407,10 +437,6 @@ export default function App() {
   const sidebarVisible = isMainDeck || !sideHidden;
   return (
     <div className="nc-workspace">
-      {/* Finestre deck minimali: toggle flottante per mostrare/nascondere la sidebar. */}
-      {!isMainDeck && (
-        <button className="nc-side-show" title={t('toggle-sidebar')} onClick={() => setSideHidden((v) => !v)}>☰</button>
-      )}
       {sidebarVisible && (
         <Sidebar
           sessions={dSessions}
@@ -434,8 +460,10 @@ export default function App() {
         <DeckBar
           decks={decks} currentDeck={deck}
           onCreate={onCreateDeck} onRename={onRenameDeck} onDelete={onDeleteDeck}
-          onOpenWindow={openDeckWindow} onNavigate={openDeckHere}
+          onOpenWindow={openDeckWindow} onNavigate={selectDeck}
           saveState={deckStore.saveState} error={deckStore.error}
+          sidebarVisible={sidebarVisible}
+          onToggleSidebar={!isMainDeck ? () => setSideHidden((v) => !v) : null}
         />
         <GridView
           layout={layout}

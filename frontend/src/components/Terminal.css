@@ -16,3 +16,10 @@
 }
 .nc-selection-tools button { background: #172417; border: 1px solid #486044; color: #d8ffe8; border-radius: 6px; padding: 5px 9px; }
 .nc-selection-tools textarea { width: 180px; height: 48px; background: #071007; color: #d8ffe8; }
+.nc-upload-state {
+  position:absolute; z-index:10; left:50%; top:12px; transform:translateX(-50%);
+  max-width:min(520px,calc(100% - 24px)); padding:6px 10px; border-radius:7px;
+  border:1px solid #2e7d32; background:rgba(10,20,10,.96); color:#cfe;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px;
+}
+.nc-upload-state.error { border-color:#a44; color:#fbb; }

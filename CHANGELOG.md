@@ -2,6 +2,44 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.9 — 2026-07-12 — "Hydra Workspaces"
+
+- Remote Fleet tiles now attach to their real `tmuxSession`, including an idempotent migration
+  for persisted 0.8.8 deck references. Automatic grid growth preserves visual row order,
+  widths, tile heights and zoom; deck switches and renames flush dirty state before moving.
+- Named decks switch inside the current PWA by default; only `↗` detaches a browser window.
+  Fleet dialogs are viewport-owned with Escape, focus trapping/restoration and visible errors,
+  while long sidebar names stay within their cards without covering actions.
+- Pairing link creation reuses the configured rendezvous without confusing its published
+  NexusCrew HTTP port with the SSH transport port. Peers exchange roles, so intermittent
+  inbound clients become neutral `passive` entries while real node/auth failures remain errors.
+- Clipboard images and OS-dropped files upload directly to the receiving terminal session,
+  including federated routes, with progress and per-file errors. Saved paths are pasted without
+  Enter; normal text paste and private session-card drag/drop are unchanged.
+- Settings → Fleet adds selective, schema-closed cell/system-prompt backup and restore with
+  engine mapping, overwrite confirmation, atomic writes, secret exclusion and explicit
+  `needsRestart` reporting for active cells.
+- Global npm installs gain stable-only automatic updates with no downgrade, a per-home
+  interprocess lock, exact CLI/runtime verification, same-port restart, one exact-version
+  rollback and blocked retry after an unhealthy update. Errors and logs are bounded/redacted.
+- Tests: **693 total** (692 pass / 1 platform-dependent skip), with production build and
+  package/audit verification performed before local installation.
+
+## 0.8.8 — 2026-07-12 — "Reliable Composer"
+
+- The PWA composer now sends long and multiline drafts through xterm's explicit paste path,
+  preserving the terminal application's bracketed-paste mode. Enter travels as a separate
+  input only after the complete paste was accepted, so agent TUIs no longer absorb submission
+  into a non-bracketed paste burst.
+- WebSocket input delivery is observable instead of silently dropping writes while reconnecting.
+  If the terminal is not ready or disconnects during paste, the composer keeps the full draft
+  and shows a localized retry message; successful sends continue to keep the mobile keyboard
+  focused.
+- The README mobile Fleet image is now one metadata-free animated GIF built from the two current
+  phone captures, with a compact cursor-only second frame to avoid full-screen flicker.
+- Tests: **664 total** (663 pass / 1 platform-dependent skip), production dependency audit
+  clean, plus a real xterm smoke proving an exact 3,000-character bracketed payload.
+
 ## 0.8.7 — 2026-07-12 — "One-Link Pairing"
 
 - Settings → Nodes and the first-run wizard now share one prominent **Connect with one link**

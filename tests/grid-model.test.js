@@ -61,7 +61,7 @@ test('equalize / toGrid2x2 / toColumns', async () => {
   const g = m.toGrid2x2(l);
   assert.equal(g.columns.length, 2);
   assert.deepEqual(g.columns.map((c) => c.tiles.length), [3, 2]);
-  assert.deepEqual(m.sessions(g), ['a','b','c','d','e']);
+  assert.deepEqual(m.visualSessions(g), ['a','b','c','d','e']);
   const cols = m.toColumns(l);
   assert.equal(cols.columns.length, 5);
   assert.deepEqual(m.toGrid2x2(m.emptyLayout()), m.emptyLayout());
@@ -88,6 +88,20 @@ test('addTileSmart: crescita bilanciata a griglia (~sqrt)', async () => {
   l = m.addTileSmart(l, 'e');                     // 5 -> terza colonna
   assert.deepEqual(l.columns.map((c) => c.tiles.length), [2, 2, 1]);
   assert.equal(m.addTileSmart(l, 'a'), l, 'dedup');
+});
+
+test('ordine visuale e dimensioni manuali sopravvivono al cambio colonne', async () => {
+  const m = await mod();
+  let l = m.emptyLayout();
+  for (const key of ['a', 'b', 'c', 'd']) l = m.addTileSmart(l, key);
+  l = m.resizeColumn(l, 0, 2.5);
+  l = m.resizeTile(l, 0, 0, 1.8);
+  l = m.addTileSmart(l, 'e');
+  assert.deepEqual(m.visualSessions(l), ['a', 'b', 'c', 'd', 'e']);
+  assert.equal(l.columns[0].width, 2.5);
+  assert.equal(l.columns[0].tiles[0].height, 1.8);
+  assert.deepEqual(m.visualSessions(m.toGrid2x2(l)), ['a', 'b', 'c', 'd', 'e']);
+  assert.deepEqual(m.visualSessions(m.toColumns(l)), ['a', 'b', 'c', 'd', 'e']);
 });
 
 test('cap 9: normalize tronca layout corrotti, preset non superano il cap', async () => {
@@ -126,11 +140,13 @@ test('fontSize per-tile: default, zoomTile clamp, normalize preserva e ripara', 
   assert.equal(n.columns[0].tiles[0].fontSize, 17, 'valido preservato');
   assert.equal(n.columns[0].tiles[1].fontSize, m.TILE_FONT_DEF, 'fuori range -> default');
   assert.equal(n.columns[0].tiles[2].fontSize, m.TILE_FONT_DEF, 'assente -> default');
-  // moveTile non perde il fontSize (passa da remove+add)
+  // moveTile non perde fontSize/height (passa da remove+add)
   let l2 = m.emptyLayout();
   l2 = m.addTile(l2, 'x', 'end'); l2 = m.addTile(l2, 'y', 'end');
   l2 = m.zoomTile(l2, 0, 0, +3);
+  l2 = m.resizeTile(l2, 0, 0, 2.25);
   l2 = m.moveTile(l2, 'x', { col: 1, row: 1 });
   const moved = l2.columns.flatMap((c) => c.tiles).find((t) => t.session === 'x');
   assert.equal(moved.fontSize, m.TILE_FONT_DEF + 3, 'moveTile preserva fontSize');
+  assert.equal(moved.height, 2.25, 'moveTile preserva height');
 });

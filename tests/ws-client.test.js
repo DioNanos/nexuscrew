@@ -55,3 +55,29 @@ test('ws client non riconnette dopo close intenzionale o errore auth', async () 
     if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
   }
 });
+
+test('ws client rende osservabile la consegna: false offline, true quando OPEN', async () => {
+  const oldWs = globalThis.WebSocket;
+  const oldLocation = globalThis.location;
+  try {
+    FakeWebSocket.sockets = [];
+    globalThis.WebSocket = FakeWebSocket;
+    globalThis.location = { hostname: '127.0.0.1', protocol: 'http:', host: '127.0.0.1:41820' };
+    const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?delivery=${Date.now()}`);
+    const socket = openTerminalSocket({ session: 'work-build', token: 't', cols: 80, rows: 24 });
+    const ws = FakeWebSocket.sockets[0];
+
+    assert.equal(socket.isReady(), false);
+    assert.equal(socket.sendInput('non perdere'), false);
+    ws.open();
+    assert.equal(socket.isReady(), true);
+    assert.equal(socket.sendInput('x'.repeat(3000)), true);
+    assert.equal(Buffer.from(ws.sent.at(-1)).toString(), 'x'.repeat(3000));
+    ws.readyState = 3;
+    assert.equal(socket.sendInput('offline di nuovo'), false);
+    socket.close();
+  } finally {
+    if (oldWs === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = oldWs;
+    if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
+  }
+});

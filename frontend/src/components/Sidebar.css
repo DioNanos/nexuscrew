@@ -63,10 +63,11 @@
 .nc-cell {
   display: flex; align-items: center; gap: 8px; padding: 9px 10px;
   border: 1px solid #1c241c; background: #0e140e; border-radius: 10px;
+  overflow: hidden;
 }
 .nc-cell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.nc-cell-main b { font-size: 13px; color: #d8ffe8; }
-.nc-cell-main small { font-size: 11px; opacity: .6; }
+.nc-cell-main b { font-size: 13px; color: #d8ffe8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.nc-cell-main small { font-size: 11px; opacity: .6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 /* Azioni card: stesso design delle .nc-act mobile (desktop = mobile). */
 .nc-power {
   flex: 0 0 auto; width: 28px; height: 28px; padding: 0;

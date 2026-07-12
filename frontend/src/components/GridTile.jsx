@@ -17,6 +17,7 @@ import './GridTile.css';
 // "node:session" (drag, focus, close), locale = solo nome (retrocompatibile).
 export default function GridTile({ session, node, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck }) {
   const sendRef = useRef(() => {});
+  const composerRef = useRef(() => false);
   const actionRef = useRef(() => {});
   const ctrlRef = useRef(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
@@ -72,7 +73,7 @@ export default function GridTile({ session, node, token, readonly = false, focus
       <div className="nc-tile-body">
         <Terminal
           session={session} node={node} token={token} readonly={readonly} takeSize={false} focused={focused}
-          sendRef={sendRef} actionRef={actionRef} ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
+          sendRef={sendRef} composerRef={composerRef} actionRef={actionRef} ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
           onFiles={setFilesEvent} fontSize={fontSize}
         />
         {showFiles && (
@@ -84,7 +85,7 @@ export default function GridTile({ session, node, token, readonly = false, focus
 
       {showComposer && (
         <div className="nc-tile-composer" onMouseDown={(e) => e.stopPropagation()}>
-          <ComposerBar send={(seq) => sendRef.current(seq)} token={token} session={session} node={node} />
+          <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} />
         </div>
       )}
     </div>

@@ -24,6 +24,7 @@
   cursor: pointer;
 }
 .nc-composer .go { color: #7ee787; border-color: #2e7d32; }
+.nc-composer .go:disabled { opacity: 0.5; cursor: wait; }
 .nc-composer .attach.busy { opacity: 0.5; animation: nc-attach-pulse 1s ease-in-out infinite; }
 @keyframes nc-attach-pulse { 50% { opacity: 0.9; } }
 

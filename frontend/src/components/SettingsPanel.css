@@ -73,15 +73,44 @@
 .nc-fleet-item > span { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .nc-fleet-item > span:first-child { flex-direction: column; align-items: flex-start; min-width: 0; }
 .nc-fleet-item > span:last-child { flex-wrap: wrap; justify-content: flex-end; }
-.nc-fleet-item small { opacity: .6; overflow-wrap: anywhere; }
+.nc-fleet-item > span:first-child b,
+.nc-fleet-item > span:first-child small {
+  display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nc-fleet-item small { opacity: .6; }
 .nc-fleet-form { border: 1px solid #2e7d32; border-radius: 10px; padding: 10px; }
+.nc-fleet-modal {
+  position: fixed; inset: 0; z-index: 75; padding: 16px;
+  display: flex; align-items: center; justify-content: center;
+  box-sizing: border-box; background: rgba(0, 0, 0, .72);
+  overscroll-behavior: contain;
+}
+.nc-fleet-modal-dialog {
+  width: min(680px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto;
+  border-radius: 12px; background: #0e140e; box-shadow: 0 14px 50px rgba(0, 0, 0, .7);
+  overscroll-behavior: contain;
+}
+.nc-fleet-modal-dialog .nc-fleet-form { margin: 0; padding: 14px; }
+.nc-fleet-head-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .nc-fleet-pair, .nc-fleet-env { display: flex; gap: 6px; }
 .nc-fleet-pair input, .nc-fleet-pair select, .nc-fleet-env input { flex: 1; min-width: 0; }
 @media (max-width: 520px) {
+  .nc-fleet-modal { padding: 0; align-items: stretch; }
+  .nc-fleet-modal-dialog { width: 100%; max-height: 100dvh; border-radius: 0; }
   .nc-fleet-item { align-items: flex-start; flex-direction: column; }
   .nc-fleet-item > span:last-child { width: 100%; justify-content: flex-start; }
   .nc-fleet-pair { flex-direction: column; }
 }
+
+.nc-invite-endpoint { border: 1px solid #243; border-radius: 8px; padding: 9px 10px; overflow-wrap: anywhere; }
+.nc-invite-advanced { display: flex; flex-direction: column; gap: 8px; padding: 9px; border-left: 2px solid #243; }
+.nc-invite-actions { flex-wrap: wrap; }
+.nc-update-settings, .nc-backup-dialog { border: 1px solid #243; border-radius: 10px; padding: 10px; }
+.nc-backup-tabs { margin: 0; }
+.nc-backup-list { display: flex; flex-direction: column; gap: 6px; max-height: 42vh; overflow-y: auto; }
+.nc-backup-row, .nc-backup-import-row { border: 1px solid #1c241c; border-radius: 8px; padding: 8px; }
+.nc-backup-import-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, .7fr); gap: 8px; align-items: center; }
+@media (max-width: 520px) { .nc-backup-import-row { grid-template-columns: 1fr; } }
 
 .nc-set-node {
   border: 1px solid #1c241c; border-radius: 10px; padding: 10px;

@@ -55,6 +55,17 @@ export function sessions(layout) {
   return layout.columns.flatMap((c) => c.tiles.map((t) => refKey(t)));
 }
 
+// Ordine umano della griglia: riga per riga, da sinistra a destra. Lo storage
+// e' column-major, quindi il semplice flatMap trasformava 1,2,3,4 in 1,3,2,4.
+export function visualSessions(layout) {
+  const out = [];
+  const rows = Math.max(0, ...layout.columns.map((column) => column.tiles.length));
+  for (let row = 0; row < rows; row += 1) {
+    for (const column of layout.columns) if (column.tiles[row]) out.push(refKey(column.tiles[row]));
+  }
+  return out;
+}
+
 const clone = (l) => ({ columns: l.columns.map((c) => ({ width: c.width, tiles: c.tiles.map((t) => ({ ...t })) })) });
 
 export function addTile(layout, ref, drop, props) {
@@ -87,12 +98,32 @@ export function addTileSmart(layout, ref) {
   if (sessions(layout).length >= MAX_TILES) return layout;
   const n = sessions(layout).length + 1;
   const targetCols = Math.ceil(Math.sqrt(n));
-  if (layout.columns.length < targetCols) return addTile(layout, ref, 'end');
-  let best = 0;
-  for (let i = 1; i < layout.columns.length; i += 1) {
-    if (layout.columns[i].tiles.length < layout.columns[best].tiles.length) best = i;
+  if (layout.columns.length >= targetCols) {
+    let best = 0;
+    for (let i = 1; i < layout.columns.length; i += 1) {
+      if (layout.columns[i].tiles.length < layout.columns[best].tiles.length) best = i;
+    }
+    return addTile(layout, ref, { col: best, row: layout.columns[best].tiles.length });
   }
-  return addTile(layout, ref, { col: best, row: layout.columns[best].tiles.length });
+  // I click automatici usano una griglia bilanciata row-major: l'ordine in cui
+  // l'utente apre le finestre resta quello visibile anche quando si passa da
+  // 2 a 3 colonne. Font per-tile preservato; pesi tornano pari nel layout auto.
+  const ordered = [...visualSessions(layout), key];
+  const previous = new Map(layout.columns.flatMap((column) => column.tiles.map((tile) => [refKey(tile), tile])));
+  const averageWidth = layout.columns.length
+    ? layout.columns.reduce((sum, column) => sum + (Number(column.width) || 1), 0) / layout.columns.length
+    : 1;
+  const columns = Array.from({ length: targetCols }, (_, index) => ({
+    width: layout.columns[index]?.width || averageWidth, tiles: [],
+  }));
+  ordered.forEach((item, index) => {
+    const parsed = parseRef(item); if (!parsed) return;
+    const old = previous.get(item) || {};
+    const tile = { session: parsed.session, height: old.height || 1, fontSize: old.fontSize || TILE_FONT_DEF };
+    if (parsed.node) tile.node = parsed.node;
+    columns[index % targetCols].tiles.push(tile);
+  });
+  return { columns: columns.filter((column) => column.tiles.length) };
 }
 
 export function removeTile(layout, ref) {
@@ -106,9 +137,30 @@ export function removeTile(layout, ref) {
 export function moveTile(layout, ref, drop) {
   const key = refKey(ref);
   if (!sessions(layout).includes(key)) return layout;
-  // Preserva le proprietà per-tile (fontSize) attraverso il remove+add.
+  // Preserva le proprietà per-tile attraverso il remove+add.
   const old = layout.columns.flatMap((c) => c.tiles).find((t) => refKey(t) === key);
-  return addTile(removeTile(layout, key), key, drop, { fontSize: old.fontSize });
+  return addTile(removeTile(layout, key), key, drop, { fontSize: old.fontSize, height: old.height });
+}
+
+// Migrazione mirata di ref tile persistiti. replacements = Map<oldKey,newKey>;
+// ritorna lo stesso oggetto se non cambia nulla, così React/useDecks non salva
+// in loop. Ogni nuova ref passa dalla stessa validazione strict parseRef().
+export function remapTileRefs(layout, replacements) {
+  if (!(replacements instanceof Map) || replacements.size === 0) return layout;
+  let changed = false;
+  const next = clone(layout);
+  for (const column of next.columns) {
+    for (const tile of column.tiles) {
+      const replacement = replacements.get(refKey(tile));
+      if (!replacement) continue;
+      const parsed = parseRef(replacement);
+      if (!parsed) continue;
+      tile.session = parsed.session;
+      if (parsed.node) tile.node = parsed.node; else delete tile.node;
+      changed = true;
+    }
+  }
+  return changed ? normalize(next) : layout;
 }
 
 export function resizeColumn(layout, colIdx, width) {
@@ -173,12 +225,11 @@ function rebuildTile(layout, key) {
 }
 
 export function toGrid2x2(layout) {
-  const ss = capped(sessions(layout));
+  const ss = capped(visualSessions(layout));
   if (ss.length === 0) return emptyLayout();
   const mk = (key) => rebuildTile(layout, key);
-  const firstN = Math.ceil(ss.length / 2);
-  const left = ss.slice(0, firstN);
-  const right = ss.slice(firstN);
+  const left = ss.filter((_key, index) => index % 2 === 0);
+  const right = ss.filter((_key, index) => index % 2 === 1);
   const columns = [{ width: 1, tiles: left.map(mk) }];
   if (right.length) columns.push({ width: 1, tiles: right.map(mk) });
   return { columns };
@@ -186,7 +237,7 @@ export function toGrid2x2(layout) {
 
 // Preset: una colonna per sessione, pesi 1.
 export function toColumns(layout) {
-  return { columns: capped(sessions(layout)).map((key) => ({ width: 1, tiles: [rebuildTile(layout, key)] })) };
+  return { columns: capped(visualSessions(layout)).map((key) => ({ width: 1, tiles: [rebuildTile(layout, key)] })) };
 }
 
 // Snap di una frazione ai divisori canonici 25/50/75% entro ±3%.

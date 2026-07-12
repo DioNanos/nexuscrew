@@ -4,9 +4,11 @@ import {
   fleetStatus, fleetDefinitions, fleetDefineEngine, fleetEditEngine, fleetRemoveEngine,
   fleetDefineCell, fleetEditCell, fleetRemoveCell, fleetRestart, fleetUp, fleetDown,
   fleetImportCell, killSession, getRouteSessions,
+  fleetRestoreCells,
   listDirs, getRouteConfig,
 } from '../lib/api.js';
 import PowerSheet from './PowerSheet.jsx';
+import { createFleetBackup, parseFleetBackup, restoreCellDefinition } from '../lib/fleet-backup.js';
 
 const blankEngine = () => ({ kind: 'managed', id: 'claude.native', label: '', client: 'claude', provider: 'native', credentialProfile: '', managedModel: '', permissionPolicy: 'unsafe', displayName: '', protocol: 'anthropic_messages', baseUrl: '', envKey: '', providerId: 'nexuscrew-custom', command: '', argsText: '', rc: true, promptMode: 'send-keys', promptFlag: '', modelFlag: '', modelValue: '', envRows: [] });
 const blankCell = (engine = '') => ({ id: '', cwd: '', engine, boot: false, model: '', prompt: '' });
@@ -48,6 +50,47 @@ function buildEngine(form, creating, catalog = []) {
   return out;
 }
 
+function FleetModal({ children, onClose, label, error = '' }) {
+  const dialogRef = useRef(null);
+  const errorRef = useRef(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const previous = document.activeElement;
+    const dialog = dialogRef.current;
+    const focusable = () => Array.from(dialog?.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    ) || []).filter((element) => element.offsetParent !== null);
+    const frame = requestAnimationFrame(() => (focusable()[0] || dialog)?.focus({ preventScroll: true }));
+    const onKey = (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); closeRef.current?.(); return; }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (!items.length) { event.preventDefault(); dialog?.focus(); return; }
+      const first = items[0]; const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      cancelAnimationFrame(frame); document.removeEventListener('keydown', onKey);
+      if (previous && previous.isConnected && typeof previous.focus === 'function') previous.focus({ preventScroll: true });
+    };
+  }, []);
+  useEffect(() => {
+    if (!error) return;
+    requestAnimationFrame(() => errorRef.current?.scrollIntoView({ block: 'nearest' }));
+  }, [error]);
+  return (
+    <div className="nc-fleet-modal" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div ref={dialogRef} className="nc-fleet-modal-dialog" role="dialog" aria-modal="true" aria-label={label || t('settings')} tabIndex={-1}>
+        {children}
+        {error && <div ref={errorRef} className="nc-err nc-fleet-modal-error" role="alert" aria-live="assertive">{error}</div>}
+      </div>
+    </div>
+  );
+}
+
 export default function FleetTab({ token, readonly, targets = [], startNewCell = false, initialLocation = '' }) {
   const [defs, setDefs] = useState({ engines: [], cells: [], managedCatalog: [] });
   const [status, setStatus] = useState({ available: false, capabilities: [] });
@@ -60,6 +103,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   const [remoteReadonly, setRemoteReadonly] = useState(false);
   const [powerCell, setPowerCell] = useState(null);
   const [importEdit, setImportEdit] = useState(null);
+  const [backupOpen, setBackupOpen] = useState(false);
   const autoCreateDone = useRef(false);
   const route = location ? location.split('/') : [];
 
@@ -79,6 +123,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
 
   const active = new Set((status.cells || []).filter((c) => c.active).map((c) => c.cell));
   const editable = status.provider === 'builtin' && (status.capabilities || []).includes('edit');
+  const canRestoreBackup = (status.capabilities || []).includes('restore');
   useEffect(() => {
     if (!startNewCell || autoCreateDone.current || !editable || !defs.engines.length) return;
     autoCreateDone.current = true;
@@ -152,12 +197,15 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     }
   };
 
-  const openImport = (session, targetRoute) => setImportEdit({
-    mode: 'new',
-    route: Array.isArray(targetRoute) ? targetRoute : route,
-    form: { tmuxSession: session.name, id: '', engine: '', cwd: '', boot: false },
-    err: '',
-  });
+  const openImport = (session, targetRoute) => {
+    setErr('');
+    setImportEdit({
+      mode: 'new',
+      route: Array.isArray(targetRoute) ? targetRoute : route,
+      form: { tmuxSession: session.name, id: '', engine: '', cwd: '', boot: false },
+      err: '',
+    });
+  };
 
   // Import esplicito di una sessione tmux (cella Fleet legacy orfana, es jarvis)
   // in una cella GESTITA fleet.json. NESSUNA invenzione: engine obbligatorio e
@@ -173,6 +221,20 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     setImportEdit(null);
     setNote(t('fleet-saved'));
   });
+  const restoreBackup = (rows) => run(async () => {
+    const engineIds = defs.engines.map((engine) => engine.id);
+    const restored = [];
+    for (const row of rows) {
+      const def = restoreCellDefinition(row.cell, row.engine, engineIds);
+      if (!def) throw new Error(`${row.cell.id}: ${t('fleet-backup-engine-missing')}`);
+      restored.push(def);
+    }
+    const overwrites = rows.filter((row) => row.exists).map((row) => row.cell.id);
+    if (overwrites.length && !window.confirm(t('fleet-backup-confirm-overwrite').replace('{cells}', overwrites.join(', ')))) return;
+    const result = await fleetRestoreCells(token, restored, route);
+    const restart = result.needsRestart || [];
+    setBackupOpen(false); setNote(`${t('fleet-backup-restored').replace('{n}', String(rows.length))}${restart.length ? ` · ${t('fleet-backup-needs-restart').replace('{cells}', restart.join(', '))}` : ''}`);
+  });
   const locationPicker = <label className="nc-field">{t('location')}<select value={location} onChange={(e) => {
     setLocation(e.target.value); setEngineEdit(null); setCellEdit(null); setErr(''); setNote(''); setRemoteReadonly(false);
     setStatus({ available: false, capabilities: [] }); setDefs({ engines: [], cells: [], managedCatalog: [] });
@@ -185,7 +247,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
       <FleetInventory token={token} targets={targets} readonly={readonly} onPower={onPower} onImport={openImport} />
       <div className="nc-set-info">{t('fleet-editor-unavailable')}</div>
       {err && <div className="nc-err">{err}</div>}
-      {importEdit && <ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} />}
+      {importEdit && <FleetModal onClose={() => setImportEdit(null)} label={t('import-as-cell')} error={err}><ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} /></FleetModal>}
       {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { await refresh(); } }} onClose={() => setPowerCell(null)} />}
     </div>
   );
@@ -193,18 +255,21 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     <div className="nc-set-tab nc-fleet-editor">
       {locationPicker}
       <FleetInventory token={token} targets={targets} readonly={readonly} onPower={onPower} onImport={openImport} />
-      <div className="nc-fleet-section-head"><b>{t('fleet-engines')}</b><button className="nc-btn primary" disabled={locked || busy} onClick={() => setEngineEdit({ mode: 'new', form: blankEngine() })}>+ {t('add')}</button></div>
+      <div className="nc-fleet-section-head"><b>{t('fleet-engines')}</b><button className="nc-btn primary" disabled={locked || busy} onClick={() => { setErr(''); setEngineEdit({ mode: 'new', form: blankEngine() }); }}>+ {t('add')}</button></div>
       {defs.engines.map((e) => (
         <div className="nc-fleet-item" key={e.id}><span><b>{e.label}</b><small>{e.managed
           ? `${e.id} · ${e.managed.client} / ${e.managed.provider} · ${e.managedInfo?.configured ? t('fleet-ready') : e.managedInfo?.reason || t('fleet-not-ready')}`
           : `${e.id} · ${e.command}`}</small></span><span>
-          <button className="nc-btn ghost" disabled={locked || busy} onClick={() => setEngineEdit({ mode: 'edit', original: e, form: engineForm(e) })}>{t('edit')}</button>
+          <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setEngineEdit({ mode: 'edit', original: e, form: engineForm(e) }); }}>{t('edit')}</button>
           <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-engine').replace('{id}', e.id))) await fleetRemoveEngine(token, e.id, route); })}>×</button>
         </span></div>
       ))}
-      {engineEdit && <EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} />}
+      {engineEdit && <FleetModal onClose={() => setEngineEdit(null)} label={t('fleet-new-engine')} error={err}><EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} /></FleetModal>}
 
-      <div className="nc-fleet-section-head"><b>{t('fleet-cells')}</b><button className="nc-btn primary" disabled={locked || busy || !defs.engines.length} onClick={() => setCellEdit({ mode: 'new', form: blankCell(defs.engines[0]?.id) })}>+ {t('add')}</button></div>
+      <div className="nc-fleet-section-head"><b>{t('fleet-cells')}</b><span className="nc-fleet-head-actions">
+        <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setBackupOpen(true); }}>{t('fleet-backup')}</button>
+        <button className="nc-btn primary" disabled={locked || busy || !defs.engines.length} onClick={() => { setErr(''); setCellEdit({ mode: 'new', form: blankCell(defs.engines[0]?.id) }); }}>+ {t('add')}</button>
+      </span></div>
       {defs.cells.map((c) => {
         const isOn = active.has(c.id);
         const caps = status.capabilities || [];
@@ -216,13 +281,14 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
             onClick={() => onPower({ cell: c.id, id: c.id, engine: c.engine, model: c.model, models: c.models, permissionPolicies: c.permissionPolicies, active: false, boot: c.boot })}>{t('start')}</button>}
           {isOn && caps.includes('restart') && <button className="nc-btn ghost" disabled={locked || busy}
             onClick={() => run(() => fleetRestart(token, c.id, route))}>{t('restart')}</button>}
-          <button className="nc-btn ghost" disabled={locked || busy} onClick={() => setCellEdit({ mode: 'edit', original: c, form: { ...c } })}>{t('edit')}</button>
+          <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setCellEdit({ mode: 'edit', original: c, form: { ...c } }); }}>{t('edit')}</button>
           <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-cell').replace('{id}', c.id))) await fleetRemoveCell(token, c.id, true, route); })}>×</button>
         </span></div>
       );})}
-      {cellEdit && <CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} />}
+      {cellEdit && <FleetModal onClose={() => setCellEdit(null)} label={t('fleet-new-cell')} error={err}><CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} /></FleetModal>}
       {note && <div className="nc-set-note">{note}</div>}{err && <div className="nc-err">{err}</div>}
-      {importEdit && <ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} />}
+      {backupOpen && <FleetModal onClose={() => setBackupOpen(false)} label={t('fleet-backup')} error={err}><FleetBackupDialog cells={defs.cells} engines={defs.engines} busy={busy} canRestore={canRestoreBackup} onRestore={restoreBackup} onClose={() => setBackupOpen(false)} /></FleetModal>}
+      {importEdit && <FleetModal onClose={() => setImportEdit(null)} label={t('import-as-cell')} error={err}><ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} /></FleetModal>}
       {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { await refresh(); } }} onClose={() => setPowerCell(null)} />}
     </div>
   );
@@ -319,6 +385,93 @@ function FleetInventory({ token, targets = [], readonly = false, onPower, onImpo
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function FleetBackupDialog({ cells = [], engines = [], busy, canRestore = false, onRestore, onClose }) {
+  const [tab, setTab] = useState('export');
+  const [selectedOut, setSelectedOut] = useState(() => new Set(cells.map((cell) => cell.id)));
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState('');
+  const engineIds = engines.map((engine) => engine.id);
+  const existing = new Set(cells.map((cell) => cell.id));
+
+  const toggleOut = (id) => setSelectedOut((before) => {
+    const next = new Set(before); if (next.has(id)) next.delete(id); else next.add(id); return next;
+  });
+  const exportSelected = () => {
+    const backup = createFleetBackup(cells, selectedOut);
+    if (!backup.cells.length) { setError(t('fleet-backup-select-one')); return; }
+    const blob = new Blob([`${JSON.stringify(backup, null, 2)}\n`], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = `nexuscrew-cells-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0); setError('');
+  };
+  const readFile = async (file) => {
+    setError(''); setRows([]);
+    if (!file) return;
+    if (file.size > 1024 * 1024) { setError(t('fleet-backup-too-large')); return; }
+    try {
+      const parsed = parseFleetBackup(await file.text());
+      if (!parsed.ok) { setError(t(`fleet-backup-${parsed.error}`)); return; }
+      setRows(parsed.cells.map((cell) => {
+        const engineOk = engineIds.includes(cell.engine);
+        const exists = existing.has(cell.id);
+        return { cell, engine: engineOk ? cell.engine : '', selected: engineOk && !exists, exists };
+      }));
+    } catch (e) { setError(String(e.message || e)); }
+  };
+  const updateRow = (index, patch) => setRows((before) => before.map((row, i) => i === index ? { ...row, ...patch } : row));
+  const selectedRows = rows.filter((row) => row.selected && row.engine);
+
+  return (
+    <div className="nc-set-form nc-fleet-form nc-backup-dialog">
+      <b>{t('fleet-backup')}</b>
+      <small>{t('fleet-backup-help')}</small>
+      <div className="nc-set-tabs nc-backup-tabs">
+        <button type="button" className={`nc-set-tabbtn${tab === 'export' ? ' on' : ''}`} onClick={() => { setTab('export'); setError(''); }}>{t('fleet-backup-export')}</button>
+        <button type="button" className={`nc-set-tabbtn${tab === 'import' ? ' on' : ''}`} disabled={!canRestore}
+          title={canRestore ? '' : t('fleet-backup-restore-unavailable')}
+          onClick={() => { setTab('import'); setError(''); }}>{t('fleet-backup-import')}</button>
+      </div>
+      {tab === 'export' ? <>
+        <div className="nc-set-row">
+          <button type="button" className="nc-btn ghost" onClick={() => setSelectedOut(new Set(cells.map((cell) => cell.id)))}>{t('select-all')}</button>
+          <button type="button" className="nc-btn ghost" onClick={() => setSelectedOut(new Set())}>{t('select-none')}</button>
+        </div>
+        <div className="nc-backup-list">
+          {cells.map((cell) => <label className="nc-check nc-backup-row" key={cell.id}>
+            <input type="checkbox" checked={selectedOut.has(cell.id)} onChange={() => toggleOut(cell.id)} />
+            <span><b>{cell.id}</b><small>{cell.engine} · {t('fleet-system-prompt')} {(cell.prompt || '').length} {t('characters')}</small></span>
+          </label>)}
+          {!cells.length && <div className="nc-empty">{t('fleet-backup-empty')}</div>}
+        </div>
+        <div className="nc-sheet-actions"><button type="button" className="nc-btn ghost" onClick={onClose}>{t('cancel')}</button><button type="button" className="nc-btn primary" disabled={!selectedOut.size} onClick={exportSelected}>{t('fleet-backup-download')}</button></div>
+      </> : <>
+        <input type="file" accept="application/json,.json" disabled={busy} onChange={(e) => readFile(e.target.files && e.target.files[0])} />
+        <small>{t('fleet-backup-import-help')}</small>
+        {!!rows.length && <div className="nc-set-row">
+          <button type="button" className="nc-btn ghost" onClick={() => setRows((all) => all.map((row) => ({ ...row, selected: !!row.engine })))}>{t('select-all')}</button>
+          <button type="button" className="nc-btn ghost" onClick={() => setRows((all) => all.map((row) => ({ ...row, selected: false })))}>{t('select-none')}</button>
+        </div>}
+        <div className="nc-backup-list">
+          {rows.map((row, index) => <div className="nc-backup-import-row" key={row.cell.id}>
+            <label className="nc-check">
+              <input type="checkbox" checked={row.selected} disabled={!row.engine} onChange={(e) => updateRow(index, { selected: e.target.checked })} />
+              <span><b>{row.cell.id}</b><small>{row.exists ? t('fleet-backup-overwrite') : t('fleet-backup-new')} · {t('fleet-system-prompt')} {row.cell.systemPrompt.length} {t('characters')}</small></span>
+            </label>
+            <select value={row.engine} onChange={(e) => updateRow(index, { engine: e.target.value, selected: !!e.target.value })}>
+              <option value="">{t('fleet-backup-engine-missing')}</option>
+              {engines.map((engine) => <option key={engine.id} value={engine.id}>{engine.label || engine.id}</option>)}
+            </select>
+          </div>)}
+        </div>
+        <div className="nc-sheet-actions"><button type="button" className="nc-btn ghost" onClick={onClose}>{t('cancel')}</button><button type="button" className="nc-btn primary" disabled={busy || !selectedRows.length} onClick={() => onRestore(selectedRows)}>{t('fleet-backup-restore')}</button></div>
+      </>}
+      {error && <div className="nc-err">{error}</div>}
     </div>
   );
 }

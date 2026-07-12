@@ -13,12 +13,12 @@ const ID = 'a'.repeat(32);
 test('inventario: posizione remota con fleet mostra cells attive+inattive e unmanaged', async () => {
   const { buildNodeGroups } = await nodes();
   const g = buildNodeGroups({
-    nodes: [{ name: 'relay', label: 'Remote Relay', tunnel: { status: 'up' }, nodeId: ID }],
-    remote: { relay: { sessions: [{ name: 'work' }, { name: 'cloud-build' }] } },
+    nodes: [{ name: 'relay', label: 'Relay', tunnel: { status: 'up' }, nodeId: ID }],
+    remote: { relay: { sessions: [{ name: 'work' }, { name: 'cloud-dev' }] } },
     fleet: { relay: { available: true, capabilities: ['status', 'up', 'down', 'edit'],
       cells: [
-        { cell: 'build', tmuxSession: 'cloud-build', engine: 'claude', active: true, boot: true },
-        { cell: 'review', tmuxSession: 'cloud-review', engine: 'glm', active: false, boot: true },
+        { cell: 'dev', tmuxSession: 'cloud-dev', engine: 'claude', active: true, boot: true },
+        { cell: 'fork', tmuxSession: 'cloud-fork', engine: 'glm', active: false, boot: true },
       ] } },
     down: {},
   });
@@ -26,9 +26,9 @@ test('inventario: posizione remota con fleet mostra cells attive+inattive e unma
   assert.equal(grp.status, 'up');
   assert.equal(grp.fleetAvailable, true);
   assert.equal(grp.cells.length, 2);
-  assert.equal(grp.cells.find((c) => c.cell === 'build').active, true, 'cell attiva');
-  assert.equal(grp.cells.find((c) => c.cell === 'review').active, false, 'cell inattiva mostrata');
-  // unmanaged = sessioni NON cloud-* (work); cloud-build esclusa perche' e' una cell
+  assert.equal(grp.cells.find((c) => c.cell === 'dev').active, true, 'cell attiva');
+  assert.equal(grp.cells.find((c) => c.cell === 'fork').active, false, 'cell inattiva mostrata');
+  // unmanaged = sessioni NON cloud-* (work); cloud-dev esclusa perche' e' una cell
   assert.deepEqual(grp.unmanaged.map((s) => s.name), ['work']);
 });
 
@@ -37,22 +37,24 @@ test('inventario: chiavi route-qualified (nessuna collisione tra omonimi)', asyn
   const g = buildNodeGroups({
     nodes: [
       { name: 'relay', tunnel: { status: 'up' }, nodeId: 'b'.repeat(32) },
-      { name: 'laptop', tunnel: { status: 'up' }, nodeId: 'c'.repeat(32) },
+      { name: 'mac', tunnel: { status: 'up' }, nodeId: 'c'.repeat(32) },
     ],
     remote: {
-      relay: { sessions: [{ name: 'build' }] },
-      laptop: { sessions: [{ name: 'build' }] },
+      relay: { sessions: [{ name: 'dev' }] },
+      mac: { sessions: [{ name: 'dev' }] },
     },
     fleet: {
-      relay: { available: true, cells: [{ cell: 'build', tmuxSession: 'cloud-build', engine: 'x', active: true }] },
-      laptop: { available: true, cells: [{ cell: 'build', tmuxSession: 'cloud-build', engine: 'y', active: true }] },
+      relay: { available: true, cells: [{ cell: 'dev', tmuxSession: 'cloud-dev', engine: 'x', active: true }] },
+      mac: { available: true, cells: [{ cell: 'dev', tmuxSession: 'cloud-dev', engine: 'y', active: true }] },
     },
     down: {},
   });
   const keys = g.flatMap((grp) => grp.cells.map((c) => c.key));
   assert.equal(new Set(keys).size, keys.length, 'chiavi cell univoche anche con cell omonime');
-  assert.ok(keys.includes('relay:build'));
-  assert.ok(keys.includes('laptop:build'));
+  // La chiave punta alla sessione tmux reale, non all'id logico della cella:
+  // l'attach di `dev` aprirebbe un terminale vuoto al posto di `cloud-dev`.
+  assert.ok(keys.includes('relay:cloud-dev'));
+  assert.ok(keys.includes('mac:cloud-dev'));
   // positionKey: locale nuda, remota route-qualified
   assert.equal(positionKey([], 'x'), 'x');
   assert.equal(positionKey(['relay'], 'x'), 'relay:x');
@@ -63,12 +65,12 @@ test('inventario: backward-compat senza fleet -> cells vuote, sessions tutte le 
   const { buildNodeGroups } = await nodes();
   const g = buildNodeGroups({
     nodes: [{ name: 'relay', tunnel: { status: 'up' }, nodeId: ID }],
-    remote: { relay: { sessions: [{ name: 'cloud-build' }, { name: 'work' }] } },
+    remote: { relay: { sessions: [{ name: 'cloud-dev' }, { name: 'work' }] } },
     down: {},
   });
   const grp = g.find((x) => x.name === 'relay');
   assert.deepEqual(grp.cells, [], 'senza fleet nessuna cell');
-  assert.deepEqual(grp.sessions.map((s) => s.name), ['cloud-build', 'work'], 'sessions = tutte le tmux (retrocompat)');
+  assert.deepEqual(grp.sessions.map((s) => s.name), ['cloud-dev', 'work'], 'sessions = tutte le tmux (retrocompat)');
 });
 
 test('inventario: nodo degradato (down/unreachable) -> cells vuote, niente crash', async () => {
@@ -84,13 +86,24 @@ test('inventario: nodo degradato (down/unreachable) -> cells vuote, niente crash
   assert.deepEqual(grp.unmanaged, []);
 });
 
+test('inventario: client inbound intermittente resta passivo e non accumula downSince', async () => {
+  const { buildNodeGroups, trackDown } = await nodes();
+  const input = [{ name: 'phone', direction: 'inbound', roles: { client: true, node: false }, rolesKnown: true,
+    tunnel: { status: 'passive' }, health: { status: 'passive', managed: false } }];
+  assert.deepEqual(trackDown({ phone: 100 }, input, 200), {});
+  const group = buildNodeGroups({ nodes: input, remote: {}, down: { phone: 100 } })[0];
+  assert.equal(group.status, 'passive');
+  assert.equal(group.downSince, null);
+  assert.deepEqual(group.cells, []);
+});
+
 test('inventario: label umana usata quando presente (fallback a name)', async () => {
   const { buildNodeGroups } = await nodes();
   const withLabel = buildNodeGroups({
-    nodes: [{ name: 'relay', label: 'Remote Server', tunnel: { status: 'up' }, nodeId: ID }],
+    nodes: [{ name: 'relay', label: 'Relay Server', tunnel: { status: 'up' }, nodeId: ID }],
     remote: { relay: { sessions: [] } }, down: {},
   });
-  assert.equal(withLabel[0].label, 'Remote Server');
+  assert.equal(withLabel[0].label, 'Relay Server');
   const noLabel = buildNodeGroups({
     nodes: [{ name: 'relay', tunnel: { status: 'up' }, nodeId: ID }],
     remote: { relay: { sessions: [] } }, down: {},
@@ -114,7 +127,7 @@ test('inventario: engines e route restano associati alle celle remote per il Pow
   const groups = buildNodeGroups({
     nodes: [{ name: 'relay', nodeId: 'a'.repeat(32), tunnel: { status: 'up' } }],
     remote: { relay: { sessions: [] } },
-    fleet: { relay: { available: true, capabilities: ['up', 'down'], engines: [{ id: 'claude.zai-p' }], cells: [{ cell: 'Build', tmuxSession: 'cloud-Build', active: false, engine: 'claude.zai-p' }] } },
+    fleet: { relay: { available: true, capabilities: ['up', 'down'], engines: [{ id: 'claude.zai-p' }], cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev', active: false, engine: 'claude.zai-p' }] } },
   });
   assert.deepEqual(groups[0].engines, [{ id: 'claude.zai-p' }]);
   assert.deepEqual(groups[0].cells[0].route, ['relay']);

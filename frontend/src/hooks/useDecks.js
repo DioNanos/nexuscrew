@@ -11,22 +11,24 @@ export function useDecks(token, current, layout, setLayout) {
   const [saveState, setSaveState] = useState('idle');
   const [error, setError] = useState('');
   const recordsRef = useRef([]);
+  const currentRef = useRef(current);
   const layoutRef = useRef(layout);
   const dirtyRef = useRef(false);
   const skipRef = useRef(true);
   layoutRef.current = layout;
+  currentRef.current = current;
   recordsRef.current = records;
 
-  const install = useCallback((next, applyLayout = true) => {
+  const install = useCallback((next, applyLayout = true, deckName = currentRef.current) => {
     recordsRef.current = next; setRecords(next);
-    const rec = next.find((d) => d.name === current);
+    const rec = next.find((d) => d.name === deckName);
     if (applyLayout && rec) {
       skipRef.current = true;
       setLayout(normalize(rec.layout));
-      writeLayoutRaw(current, rec.layout); // cache/migrazione backward-compatible
+      writeLayoutRaw(deckName, rec.layout); // cache/migrazione backward-compatible
     }
     saveDecks(next.map((d) => d.name));
-  }, [current, setLayout]);
+  }, [setLayout]);
 
   const bootstrap = useCallback(async () => {
     let st = await getDecks(token);
@@ -54,21 +56,23 @@ export function useDecks(token, current, layout, setLayout) {
 
   useEffect(() => { if (token) bootstrap().catch((e) => setError(String(e.message || e))); }, [bootstrap, token]);
 
-  const saveNow = useCallback(async () => {
-    if (!ready) return;
-    const rec = recordsRef.current.find((d) => d.name === current);
-    if (!rec) return setError(`deck inesistente: ${current}`);
+  const saveNow = useCallback(async (deckName = currentRef.current) => {
+    if (!ready || !dirtyRef.current) return true;
+    const rec = recordsRef.current.find((d) => d.name === deckName);
+    if (!rec) { setError(`deck inesistente: ${deckName}`); return false; }
     setSaveState('saving');
     try {
-      const saved = await saveDeck(token, current, normalize(layoutRef.current), rec.revision);
-      install(recordsRef.current.map((d) => d.name === current ? saved : d), false);
+      const saved = await saveDeck(token, deckName, normalize(layoutRef.current), rec.revision);
+      install(recordsRef.current.map((d) => d.name === deckName ? saved : d), false);
       dirtyRef.current = false; setSaveState('saved'); setError('');
       setTimeout(() => setSaveState('idle'), 1500);
+      return true;
     } catch (e) {
       setSaveState('error'); setError(String(e.message || e));
-      if (e.status === 409 && e.data && e.data.current) install(recordsRef.current.map((d) => d.name === current ? e.data.current : d), false);
+      if (e.status === 409 && e.data && e.data.current) install(recordsRef.current.map((d) => d.name === deckName ? e.data.current : d), false);
+      return false;
     }
-  }, [ready, current, token, install]);
+  }, [ready, token, install]);
 
   useEffect(() => {
     if (!ready) return;
@@ -96,11 +100,17 @@ export function useDecks(token, current, layout, setLayout) {
   const add = async (name) => { const d = await createDeck(token, name); install([...recordsRef.current, d], false); return d; };
   const rename = async (from, to) => {
     const d = recordsRef.current.find((x) => x.name === from); if (!d) throw new Error('deck inesistente');
-    const saved = await renameDeck(token, from, to, d.revision);
+    if (from === currentRef.current && dirtyRef.current) {
+      const savedDirty = await saveNow(from);
+      if (!savedDirty) throw new Error(`salvataggio di "${from}" fallito: rinomina annullata`);
+    }
+    const fresh = recordsRef.current.find((x) => x.name === from); if (!fresh) throw new Error('deck inesistente');
+    const saved = await renameDeck(token, from, to, fresh.revision);
     install(recordsRef.current.map((x) => x.name === from ? saved : x), false); return saved;
   };
   const remove = async (name) => {
     const d = recordsRef.current.find((x) => x.name === name); if (!d) throw new Error('deck inesistente');
+    if (name === currentRef.current) dirtyRef.current = false; // delete confirmation intentionally discards pending layout
     await deleteDeck(token, name, d.revision); install(recordsRef.current.filter((x) => x.name !== name), false);
   };
   const addTileTo = async (name, ref) => {
@@ -108,5 +118,18 @@ export function useDecks(token, current, layout, setLayout) {
     const saved = await saveDeck(token, name, addTileSmart(normalize(d.layout), ref), d.revision);
     install(recordsRef.current.map((x) => x.name === name ? saved : x), false); return saved;
   };
-  return { decks: records.map((d) => d.name), records, ready, saveState, error, setError, saveNow, add, rename, remove, addTileTo };
+  // Cambio deck nella stessa finestra: salva prima l'eventuale layout dirty,
+  // poi restituisce il layout target e arma skipRef per evitare che React salvi
+  // per errore il layout del deck precedente sotto il nuovo nome.
+  const select = async (name) => {
+    if (dirtyRef.current) {
+      const saved = await saveNow(currentRef.current);
+      if (!saved) throw new Error(`salvataggio di "${currentRef.current}" fallito: cambio deck annullato`);
+    }
+    const target = recordsRef.current.find((d) => d.name === name);
+    if (!target) throw new Error(`deck inesistente: ${name}`);
+    dirtyRef.current = false; skipRef.current = true;
+    return normalize(target.layout);
+  };
+  return { decks: records.map((d) => d.name), records, ready, saveState, error, setError, saveNow, select, add, rename, remove, addTileTo };
 }
