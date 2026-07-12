@@ -16,7 +16,7 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 
 ---
 
-## What it is (v0.8.7 "One-Link Pairing")
+## What it is (v0.8.9 "Hydra Workspaces")
 
 - Runs a small server on the host where your tmux sessions live.
 - Each attach spawns a real PTY running `tmux attach` and bridges its bytes over a WebSocket
@@ -24,16 +24,17 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 - **Desktop grid** (≥1024px): drag sessions from the sidebar into a tiling column layout —
   live terminals side by side, draggable dividers, per-tile composer, layout remembered.
   Tiles attach with `ignore-size` so they never resize your real terminals.
-- **Multi-window decks**: named workspaces at `/deck/<name>` — one browser window per
-  monitor, each with its own remembered tile layout. The focused tile is the size owner;
-  everything else attaches with `ignore-size`.
+- **Attached decks by default**: named workspaces switch as tabs inside the same PWA without
+  reloading terminals or losing a pending layout save. Use `↗` only when you want to detach a
+  deck into another browser window or monitor.
 - **Federated Hydra inventory**: connect existing NexusCrew installations through the SSH
   configuration you already control and see local, direct, and relayed tmux fleets in one UI.
   Route labels show where every session lives; creation, attach, files, lifecycle and Fleet
   management use the selected location through a scoped single-origin route.
 - **One-link node pairing**: paste a link or scan its QR in Settings → Nodes. A complete
   link tests SSH, exchanges the one-time invitation, confirms both directions and verifies
-  the peer automatically; failures identify the exact connection stage.
+  the peer automatically; failures identify the exact connection stage. Once a rendezvous
+  is configured, creating the link needs no repeated host or port fields.
 - **Settings and wizard**: manage roles, nodes, token rotation, and service regeneration
   from the UI; the first-run wizard uses the same pairing flow as Settings.
 - **Cell lifecycle from the UI**: the primary `+` creates a managed Fleet cell at Local or
@@ -42,6 +43,9 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 - **Legacy session adoption**: Settings → Fleet lists managed and unmanaged tmux sessions on
   every route. A live unmanaged session can be explicitly imported as a managed cell without
   inventing its engine, provider or model.
+- **Selective cell backup**: export chosen cells with their engine mapping and system prompt,
+  then select exactly which definitions to restore. Provider keys and runtime session state
+  are never exported; active cells that need a restart are reported explicitly.
 - **Rich cards**: last activity, current command, a sanitized one-line preview per session.
 - **Fleet control**: a built-in schema-driven fleet manager handles cells, engines, model
   selection, and boot persistence; an existing external `fleet` CLI can take ownership through
@@ -50,7 +54,14 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 - **localhost-only**: the server binds `127.0.0.1` and refuses any non-loopback bind.
 - **Stateless**: tmux *is* the persistence. No database, no accounts.
 - **Mobile terminal controls**: long-press begins local text selection, drag extends it, and
-  the composer send button keeps the software keyboard open for the next message.
+  the composer sends long or multiline drafts through the terminal's real bracketed-paste
+  mode while keeping both failed drafts and the software keyboard ready.
+- **Desktop file paste/drop**: paste a clipboard image or drop files directly on the target
+  terminal. NexusCrew uploads them to that session's inbox—locally or through Hydra—and
+  inserts the saved paths without submitting Enter; ordinary text paste is unchanged.
+- **Safe npm auto-update**: global installs follow stable npm `latest` without downgrades,
+  serialize installation across processes, verify the restarted runtime and roll back once
+  to the exact previous version if the new server does not become healthy.
 - **Universal**: a PTY is a PTY — a coding agent, a REPL, a plain shell, anything tmux holds.
 
 ## Screenshots
@@ -63,7 +74,7 @@ The **Fleet Deck** desktop grid (≥1024px): drag sessions into a tiling layout 
 terminals side by side, each a real PTY streamed to the browser.
 
 <p align="center">
-  <img src="docs/img/fleet-mobile.png" width="420" alt="NexusCrew mobile Fleet overview with managed AI cells and direct power controls">
+  <img src="docs/img/fleet-mobile.gif" width="420" alt="Animated NexusCrew mobile Fleet overview with managed AI cells and direct power controls">
 </p>
 
 The mobile Fleet overview keeps managed cells, current engines, activity and direct power
@@ -103,6 +114,12 @@ auto-compaction window variables, including one-million-token profiles where dec
 
 Custom argv-based engines remain supported. Their command, environment, cwd, and prompt are
 validated against a strict trust boundary and launched without a shell.
+
+Settings → Fleet also provides a selective **Cells backup** flow. The JSON file contains only
+portable cell definitions (cwd, engine choice, model mapping, boot flag and system prompt),
+never provider credentials, PWA tokens or live tmux identifiers. During restore you choose the
+destination engine for each cell and confirm overwrites; running cells are left untouched and
+listed as needing a restart.
 
 ### External fleet manager
 
@@ -163,9 +180,10 @@ token travels in the URL **fragment** (`#token=…`), so it never reaches the se
 Every installation is always the local node and can join other NexusCrew nodes. The normal
 flow stays entirely in the PWA:
 
-1. On the installation being shared, open **Settings → Nodes → Invite a node**. Enter the
-   OpenSSH target or Host alias that the *other device* uses to reach this installation, then
-   create the ten-minute link/QR.
+1. On the installation being shared, open **Settings → Nodes → Invite a node** and create the
+   ten-minute link/QR. If its rendezvous is already configured, this is a zero-field action.
+   Otherwise expand the advanced fields once and enter the OpenSSH target or Host alias that
+   the *other device* uses to reach this installation.
 2. On the other device, open its own NexusCrew PWA (`nexuscrew show`), go to
    **Settings → Nodes**, and use the first card, **Connect with one link**. Paste the complete
    link in the prominent field or scan the QR. Do not navigate to the loopback address in the
@@ -180,6 +198,11 @@ The link never contains an SSH key, identity file, API key or PWA token. Its onl
 the random, one-time pairing invite; SSH routing fields are non-secret configuration. A
 successful pairing creates a reciprocal loopback-only link and both sides exchange a redacted
 topology automatically.
+
+Pairing also exchanges node roles. An inbound phone or laptop that is not advertising itself as
+an always-reachable node is shown as **passive** while away, not as a broken red peer. A declared
+server/node that stops responding, or a live endpoint that rejects authentication, remains a
+real health error.
 
 NexusCrew does not create SSH keys or edit `authorized_keys`. OpenSSH remains authoritative for
 identity files, agents, host keys, ports, ProxyJump and forwarding policy. NexusCrew uses
@@ -251,8 +274,20 @@ the same authenticated NexusCrew instance, it is reused.
 
 Env knobs: `NEXUSCREW_PORT` (default 41820), `NEXUSCREW_CONFIG_FILE`,
 `NEXUSCREW_TOKEN_FILE`, `NEXUSCREW_FILES_ROOT`, `NEXUSCREW_TMUX`,
-`NEXUSCREW_FLEET=0`, and `NEXUSCREW_READONLY=1`. Set `NEXUSCREW_DEBUG=1` to log the
-resolved PTY provider at startup.
+`NEXUSCREW_FLEET=0`, `NEXUSCREW_READONLY=1`, and `NEXUSCREW_AUTO_UPDATE=0` to disable
+automatic stable npm updates. Set `NEXUSCREW_DEBUG=1` to log the resolved PTY provider at
+startup.
+
+### Automatic updates
+
+A global npm installation checks `@mmmbuto/nexuscrew@latest` shortly after startup and then
+periodically. A newer stable version is installed exactly once, preflighted through the CLI,
+and the active service or detached runtime is restarted on the same loopback port. If the new
+runtime fails its bounded health check, NexusCrew reinstalls the exact previous version and
+restarts once; that failed version is then blocked from automatic retry. The updater never
+accepts a prerelease from `latest`, never downgrades, and redacts registry credentials and local
+paths from PWA errors. Its current state and manual check/apply controls live in Settings →
+System. Set `NEXUSCREW_AUTO_UPDATE=0` (or `false`, `no`, `off`) to disable scheduling.
 
 ## CLI
 
@@ -335,7 +370,8 @@ node bin/nexuscrew.js serve
 
 ## Status
 
-The current stable release is **v0.8.7**, published on npm under the **`latest`** dist-tag.
+The current stable release is **v0.8.9**. npm **`latest`**, the GitHub tag and the release
+assets are promoted from the same verified artifact.
 
 ## License
 

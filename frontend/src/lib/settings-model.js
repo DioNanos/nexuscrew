@@ -149,9 +149,11 @@ export function relCompact(epochMs, nowMs) {
 
 export function tunnelInfo(tunnel, nowMs) {
   const up = !!(tunnel && tunnel.status === 'up');
+  const passive = !!(tunnel && tunnel.status === 'passive');
   return {
     up,
-    label: up ? 'tunnel-up' : 'tunnel-down',
+    ...(passive ? { passive: true } : {}),
+    label: up ? 'tunnel-up' : passive ? 'node-passive' : 'tunnel-down',
     since: up ? relCompact(tunnel.since, nowMs) : null,
   };
 }

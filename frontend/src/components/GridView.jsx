@@ -10,6 +10,9 @@ import './GridView.css';
 
 const MIN_W = 0.2;
 const SIDE = 0.28; // fasce laterali left/right (28%)
+const transferHas = (transfer, type) => Array.from(transfer?.types || []).includes(type);
+const isSessionTransfer = (transfer) => transferHas(transfer, 'text/nc-session');
+const isFileTransfer = (transfer) => transferHas(transfer, 'Files') || (transfer?.files?.length || 0) > 0;
 
 // Quadrante dal puntatore vs bounding box: fasce laterali 28%, altrimenti metà top/bottom.
 function quadrantOf(x, y, r) {
@@ -70,6 +73,7 @@ export default function GridView({
 
   function onDrop(e) {
     e.preventDefault();
+    if (isFileTransfer(e.dataTransfer)) { setDrag(null); return; }
     const name = e.dataTransfer.getData('text/nc-session');
     const target = drag;
     setDrag(null);
@@ -122,6 +126,8 @@ export default function GridView({
       className="nc-grid"
       ref={gridRef}
       onDragOver={(e) => {
+        if (isFileTransfer(e.dataTransfer)) { e.preventDefault(); setDrag(null); return; }
+        if (!isSessionTransfer(e.dataTransfer)) return;
         e.preventDefault();
         // area oltre le colonne / griglia vuota -> nuova colonna in coda
         if (!(drag && drag.col === ncols)) setDrag({ col: ncols });
@@ -142,6 +148,7 @@ export default function GridView({
             ref={(el) => { colRefs.current[ci] = el; }}
             style={{ flexGrow: col.width, flexBasis: 0 }}
             onDragOver={(e) => {
+              if (!isSessionTransfer(e.dataTransfer)) return;
               e.preventDefault(); e.stopPropagation();
               if (!(drag && drag.col === ci && drag.row === undefined)) setDrag({ col: ci });
             }}
@@ -155,6 +162,7 @@ export default function GridView({
                   className={`nc-tile-slot${dropClass(ci, ri)}`}
                   style={{ flexGrow: tile.height, flexBasis: 0 }}
                   onDragOver={(e) => {
+                    if (!isSessionTransfer(e.dataTransfer)) return;
                     e.preventDefault(); e.stopPropagation();
                     const q = quadrantOf(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
                     if (!(drag && drag.col === ci && drag.row === ri && drag.quadrant === q)) setDrag({ col: ci, row: ri, quadrant: q });

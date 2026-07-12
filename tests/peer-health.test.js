@@ -92,14 +92,25 @@ test('nodeHealth: inbound usa localPort per un probe reale ma resta managed fals
   assert.equal(h.managed, false);
 });
 
-test('nodeHealth: inbound reversePort non raggiungibile -> down, mai up hardcoded', async () => {
+test('nodeHealth: inbound client/legacy non raggiungibile -> passive, non errore', async () => {
   const h = await nodesHealth.nodeHealth({
     node: { name: 'p-down', direction: 'inbound', localPort: 44002, token: 'peer-token', nodeId: NODE_ID },
     home: tmpHome(), fetchImpl: mockFetch('throw'), force: true,
   });
   assert.equal(h.transport, 'down');
-  assert.equal(h.status, 'down');
+  assert.equal(h.status, 'passive');
+  assert.equal(h.expected, true);
   assert.equal(h.managed, false);
+});
+
+test('nodeHealth: inbound nodo dichiarato non raggiungibile resta down reale', async () => {
+  const h = await nodesHealth.nodeHealth({
+    node: { name: 'server-down', direction: 'inbound', localPort: 44003, token: 'peer-token', nodeId: NODE_ID,
+      roles: { client: true, node: true }, rolesKnown: true },
+    home: tmpHome(), fetchImpl: mockFetch('throw'), force: true,
+  });
+  assert.equal(h.transport, 'down');
+  assert.equal(h.status, 'down');
 });
 
 test('nodeHealth: outbound senza tunnel up -> down (no pidfile)', async () => {
@@ -136,9 +147,11 @@ test('nodeHealth: outbound tunnel up + probe 401 -> degraded/auth failed (riprod
 async function boot(t, over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-srv-'));
   const nodesPath = path.join(dir, 'nodes.json');
+  const configPath = path.join(dir, 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify({ roles: { client: false, node: false } }));
   const { server, token, watcher } = createServer({
     home: dir, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'),
-    nodesPath, fleetEnabled: false, ...over,
+    nodesPath, configPath, fleetEnabled: false, ...over,
   });
   return new Promise((res) => server.listen(0, '127.0.0.1', () => {
     const port = server.address().port;
@@ -182,6 +195,7 @@ test('route /federation/health: 200 + instanceId/version con acceptToken valido'
   assert.equal(j.ok, true);
   assert.match(j.instanceId, /^[a-f0-9]+$/);
   assert.ok(typeof j.version === 'string');
+  assert.deepEqual(j.roles, { client: false, node: false });
 });
 
 // --- route: GET /api/nodes espone health (mai token) ------------------------
@@ -200,7 +214,7 @@ test('route /api/nodes: ogni nodo porta {health, tunnel}; token MAI esposto', as
   const inb = j.nodes.find((n) => n.name === 'inb');
   assert.ok(out && out.health, 'outbound ha health');
   assert.ok(inb && inb.health, 'inbound ha health');
-  assert.equal(inb.health.status, 'down', 'inbound viene realmente probato sulla reversePort');
+  assert.equal(inb.health.status, 'passive', 'legacy inbound offline is neutral, not a false red error');
   assert.equal(inb.health.managed, false);
   // tunnel derivato retro-compat
   assert.ok(['down', 'degraded', 'up', 'unknown'].includes(out.tunnel.status));

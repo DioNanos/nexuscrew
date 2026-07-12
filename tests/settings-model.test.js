@@ -104,6 +104,8 @@ test('tunnelInfo: up con since relativo, down senza, garbage = down', async () =
     { up: true, label: 'tunnel-up', since: null });
   assert.deepEqual(m.tunnelInfo({ status: 'down' }, now),
     { up: false, label: 'tunnel-down', since: null });
+  assert.deepEqual(m.tunnelInfo({ status: 'passive' }, now),
+    { up: false, passive: true, label: 'node-passive', since: null });
   assert.deepEqual(m.tunnelInfo(null, now), { up: false, label: 'tunnel-down', since: null });
   assert.equal(m.relCompact(now - 30_000, now), 'ora');
   assert.equal(m.relCompact(now - 2 * 3600_000, now), '2h');

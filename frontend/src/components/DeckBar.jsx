@@ -8,7 +8,7 @@ import './DeckBar.css';
 // in una nuova finestra (un monitor = una finestra). I deck sono client-side.
 export default function DeckBar({
   decks = [], currentDeck = MAIN_DECK, onCreate, onRename, onDelete, onOpenWindow, onNavigate,
-  saveState = 'idle', error = '',
+  saveState = 'idle', error = '', sidebarVisible, onToggleSidebar,
 }) {
   useLang();
   const [adding, setAdding] = useState(false);
@@ -33,8 +33,21 @@ export default function DeckBar({
     if (!ok) setBlockedUrl(d);
   };
 
+  const navigate = async (d) => {
+    if (d === currentDeck || !onNavigate || busy) return;
+    setBusy(true); setLocalErr('');
+    try { await onNavigate(d); }
+    catch (error) { setLocalErr(String(error?.message || error)); }
+    setBusy(false);
+  };
+
   return (
     <div className="nc-deckbar">
+      {onToggleSidebar && (
+        <button className="nc-deck-sidebar-toggle" title={t('toggle-sidebar')} onClick={onToggleSidebar}>
+          {sidebarVisible ? '◀' : '☰'}
+        </button>
+      )}
       <span className="nc-deckbar-label">{t('decks')}</span>
       <div className="nc-deck-chips">
         {decks.map((d) => (
@@ -42,9 +55,10 @@ export default function DeckBar({
             <button
               className="nc-deck-open"
               title={d === currentDeck ? t('deck-current') : d}
-              onClick={() => d !== currentDeck && onNavigate && onNavigate(d)}
+              disabled={busy}
+              onClick={() => navigate(d)}
             >{d}{d === currentDeck ? ' •' : ''}</button>
-            <button className="nc-deck-mini" title={t('open-deck-window')} onClick={() => popout(d)}>↗</button>
+            <button className="nc-deck-mini" title={t('detach-deck')} onClick={() => popout(d)}>↗</button>
             {d !== MAIN_DECK && (
               <>
                 <button
@@ -52,8 +66,8 @@ export default function DeckBar({
                   title={t('rename-deck')}
                   onClick={() => {
                     const to = (typeof window !== 'undefined' ? window.prompt(t('rename-deck'), d) : '') || '';
-                    const v = to.trim();
-                    if (v && v !== d && onRename) onRename(d, v).catch((e) => setLocalErr(String(e.message || e)));
+                    const v = normalizeDeckName(to);
+                    if (isValidDeckName(v) && v !== d && onRename) onRename(d, v).catch((e) => setLocalErr(String(e.message || e)));
                   }}
                 >✎</button>
                 <button

@@ -23,6 +23,19 @@ test('pairing invite: URL round-trip, 0600, one-time and expiry', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('pairing invite: landing port and remote NexusCrew port are independent', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-pair-ports-'));
+  const made = peering.createInvite({
+    invitesPath: path.join(dir, 'invites.json'), instanceId: 'e'.repeat(32),
+    port: 43001, linkPort: 41820, label: 'Relay', ssh: 'relay-host',
+  });
+  assert.equal(new URL(made.pairingUrl).port, '41820', 'link opens on the receiver/local PWA port');
+  const parsed = peering.parsePairingUrl(made.pairingUrl);
+  assert.equal(parsed.port, 43001, 'payload keeps the published remote HTTP port');
+  assert.equal(parsed.sshPort, undefined, 'published HTTP port is never inferred as SSH port');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('pairing parser rejects malformed payloads and reverse ports do not collide', () => {
   assert.equal(peering.parsePairingUrl('not a URL'), null);
   assert.equal(peering.decodePairing('garbage'), null);
@@ -54,11 +67,11 @@ test('pairing v2: con Host SSH e senza name deriva sempre lo slug dalla label', 
   const p = path.join(dir, 'invites.json');
   const made = peering.createInvite({
     invitesPath: p, instanceId: 'd'.repeat(32), port: 41820,
-    label: 'Main Relay', ssh: 'relay-host',
+    label: 'Relay 3 Node', ssh: 'relay-host',
   });
   const parsed = peering.parsePairingUrl(made.pairingUrl);
   assert.equal(made.version, 2);
-  assert.equal(parsed.name, 'main-relay');
+  assert.equal(parsed.name, 'relay-3-node');
   assert.equal(parsed.ssh, 'relay-host');
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -82,7 +95,7 @@ test('pairing strict allowlist: campi ignoti o segreti -> rifiutato (null)', () 
   const base = made.pairingUrl;
   // Campo segreto in più (identityFile) -> rifiutato
   const x = JSON.parse(Buffer.from(new URL(base).hash.replace(/^#pair=/, ''), 'base64url').toString('utf8'));
-  const withSecret = { ...x, identityFile: '/home/example/.ssh/id_ed25519' };
+  const withSecret = { ...x, identityFile: '/home/alice/.ssh/id_ed25519' };
   const url = `http://127.0.0.1:41822/#pair=${Buffer.from(JSON.stringify(withSecret)).toString('base64url')}`;
   assert.equal(peering.parsePairingUrl(url), null);
   // apiKey extra -> rifiutato

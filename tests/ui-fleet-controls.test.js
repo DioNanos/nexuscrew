@@ -111,10 +111,12 @@ test('Fleet settings inventory keeps every node visible and routes remote settin
   assert.doesNotMatch(mobile, /onSettings\('fleet', false/);
 });
 
-test('PWA-created pairing links always include reachable SSH and a derived slug', () => {
+test('PWA-created pairing links reuse the rendezvous endpoint and keep SSH advanced', () => {
   const settings = read('SettingsPanel.jsx');
   assert.match(settings, /const name = toSlug\(inviteForm\.name \|\| devName \|\| deviceDefault/);
-  assert.match(settings, /validateNodeForm\(\{ name, ssh: inviteForm\.ssh, sshPort: inviteForm\.sshPort \}\)/);
-  assert.match(settings, /disabled=\{readonly \|\| !!busy \|\| !inviteForm\.ssh\.trim\(\)\}/);
-  assert.match(settings, /name,\s*ssh: checked\.value\.ssh/);
+  assert.match(settings, /const automaticSsh = settings\?\.rendezvous\?\.ssh \|\| ''/);
+  assert.match(settings, /validateNodeForm\(\{ name, ssh: inviteForm\.ssh \|\| automaticSsh, sshPort: inviteForm\.sshPort \}\)/);
+  assert.match(settings, /disabled=\{readonly \|\| !!busy \|\| \(!configuredEndpoint && !inviteForm\.ssh\.trim\(\)\)\}/);
+  assert.match(settings, /inviteForm\.ssh\.trim\(\) \? \{ ssh: checked\.value\.ssh \} : \{\}/);
+  assert.doesNotMatch(settings, /publishedPort[^\n]*sshPort|sshPort[^\n]*publishedPort/);
 });

@@ -4,13 +4,15 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../lib/ws-client.js';
 import { copyText } from '../lib/clipboard.js';
+import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
 import { t } from '../lib/i18n.js';
+import { filesFromTransfer, hasFilePayload, uploadSessionFiles } from '../lib/attachments.js';
 import './Terminal.css';
 
 // node (opzionale): sessione su nodo remoto — il WS passa dal proxy
 // /node/<name>/ws (B1); tutto il resto del protocollo e' identico.
-export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, actionRef, ctrlRef, setCtrlArmed, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange }) {
+export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange }) {
   const hostRef = useRef(null);
   const apiRef = useRef(null);        // {term, fit, sock} per lo zoom senza riconnettere
   const fontSizeRef = useRef(fontSize);
@@ -21,6 +23,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   selectionModeRef.current = selectionMode;
   const [selection, setSelection] = useState('');
   const [copyState, setCopyState] = useState('');
+  const [uploadState, setUploadState] = useState(null);
 
   const doCopy = async () => {
     const value = apiRef.current?.term?.getSelection() || selection;
@@ -77,13 +80,19 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       return () => term.dispose();
     }
     apiRef.current = { term, fit, sock };
-    if (sendRef) sendRef.current = (seq) => sock.sendInput(seq);     // tasti grezzi (KeyBar)
-    if (actionRef) actionRef.current = (name) => sock.action(name);  // nav window/pane (KeyBar)
 
+    // During a programmatic composer paste, collect the result of xterm's
+    // synchronous onData emission. This lets the composer retain its draft if
+    // the WebSocket is not OPEN instead of clearing text that never left.
+    let composerPaste = null;
     const onData = term.onData((d) => {
-      if (readonly) return;
+      if (readonly) {
+        if (composerPaste) composerPaste.ok = false;
+        return;
+      }
       // sticky Ctrl: fold the next single character into its control code (a-z/@-_).
-      if (ctrlRef && ctrlRef.current && d.length === 1) {
+      // A composer paste is literal and must never consume an armed Ctrl key.
+      if (!composerPaste && ctrlRef && ctrlRef.current && d.length === 1) {
         const c = d.charCodeAt(0);
         let code = c;
         if (c >= 97 && c <= 122) code = c - 96;        // a-z -> ^A..^Z
@@ -93,8 +102,27 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         ctrlRef.current = false;
         if (setCtrlArmed) setCtrlArmed(false);
       }
-      sock.sendInput(d);
+      const ok = sock.sendInput(d);
+      if (composerPaste) {
+        composerPaste.seen = true;
+        composerPaste.ok = composerPaste.ok && ok;
+      }
     });
+    if (sendRef) sendRef.current = (seq) => sock.sendInput(seq);     // tasti grezzi (KeyBar)
+    if (actionRef) actionRef.current = (name) => sock.action(name);  // nav window/pane (KeyBar)
+    if (composerRef) {
+      composerRef.current = createComposerSubmitter({
+        isReady: () => !readonly && sock.isReady(),
+        paste: (value) => {
+          const state = { seen: false, ok: true };
+          composerPaste = state;
+          try { term.paste(value); } catch (_) { state.ok = false; }
+          finally { composerPaste = null; }
+          return state.seen && state.ok;
+        },
+        send: (seq) => sock.sendInput(seq),
+      });
+    }
     const onSelection = term.onSelectionChange(() => setSelection(term.getSelection()));
     term.attachCustomKeyEventHandler((e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && term.getSelection()) {
@@ -108,6 +136,46 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // Il drag col MOUSE resta selezione testo. Grazie a copy-mode -e, il
     // gesto opposto fino in fondo riporta al vivo.
     const host = hostRef.current;
+    let uploading = false;
+    const uploadAttachments = async (files) => {
+      if (!files.length || uploading) return;
+      if (readonly) { setUploadState({ error: t('settings-readonly') }); return; }
+      uploading = true;
+      setUploadState({ current: 0, total: files.length, name: '' });
+      const result = await uploadSessionFiles({
+        files, token, session, node, paste: true,
+        onProgress: ({ index, total, name, state, error }) => setUploadState({
+          current: index + 1, total, name, ...(state === 'error' ? { error } : {}),
+        }),
+      });
+      uploading = false;
+      if (result.errors.length) setUploadState({ error: result.errors.map((item) => `${item.name}: ${item.message}`).join(' · ') });
+      else {
+        setUploadState({ done: true, total: result.paths.length });
+        setTimeout(() => setUploadState(null), 1600);
+      }
+    };
+    const onPasteFiles = (event) => {
+      const transfer = event.clipboardData;
+      if (!hasFilePayload(transfer)) return; // text paste remains entirely xterm/browser-owned
+      const files = filesFromTransfer(transfer);
+      if (!files.length) return;
+      event.preventDefault(); event.stopPropagation();
+      uploadAttachments(files);
+    };
+    const onDragFiles = (event) => {
+      if (!hasFilePayload(event.dataTransfer)) return;
+      event.preventDefault(); event.stopPropagation();
+    };
+    const onDropFiles = (event) => {
+      if (!hasFilePayload(event.dataTransfer)) return;
+      event.preventDefault(); event.stopPropagation();
+      uploadAttachments(filesFromTransfer(event.dataTransfer));
+    };
+    host.addEventListener('paste', onPasteFiles, true);
+    host.addEventListener('dragenter', onDragFiles, true);
+    host.addEventListener('dragover', onDragFiles, true);
+    host.addEventListener('drop', onDropFiles, true);
     const STEP = 24; // px per tick di scroll (3 righe tmux)
     let touchY = null, touchX = null, acc = 0, vertical = null, selectStart = null;
     let longPressTimer = null; let touchSelecting = false;
@@ -242,6 +310,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
 
     return () => {
       apiRef.current = null;
+      if (sendRef) sendRef.current = () => false;
+      if (composerRef) composerRef.current = () => false;
+      if (actionRef) actionRef.current = () => false;
       onData.dispose();
       onSelection.dispose();
       host.removeEventListener('touchstart', onTouchStart);
@@ -255,6 +326,10 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       host.removeEventListener('mousemove', onMouseMove, true);
       host.removeEventListener('mouseup', onMouseUp, true);
       host.removeEventListener('keydown', onKeyCopy, true);
+      host.removeEventListener('paste', onPasteFiles, true);
+      host.removeEventListener('dragenter', onDragFiles, true);
+      host.removeEventListener('dragover', onDragFiles, true);
+      host.removeEventListener('drop', onDropFiles, true);
       window.removeEventListener('resize', onResize);
       if (vv) { vv.removeEventListener('resize', onResize); vv.removeEventListener('scroll', onResize); }
       if (ro) ro.disconnect();
@@ -262,10 +337,17 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       sock.close();
       term.dispose();
     };
-  }, [session, node, token, readonly, takeSize, sendRef, actionRef, ctrlRef, setCtrlArmed, onFiles]);
+  }, [session, node, token, readonly, takeSize, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, onFiles]);
 
   return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
     <div className="nc-terminal-host" ref={hostRef} />
+    {uploadState && <div className={`nc-upload-state${uploadState.error ? ' error' : ''}`} role="status">
+      {uploadState.error
+        ? uploadState.error
+        : uploadState.done
+          ? t('attach-uploaded').replace('{n}', String(uploadState.total || 0))
+          : t('attach-upload-progress').replace('{n}', String(uploadState.current || 0)).replace('{total}', String(uploadState.total || 0))}
+    </div>}
     {(selection || selectionMode) && <div className="nc-selection-tools">
       {selection ? <button type="button" onClick={doCopy}>{copyState || t('copy')}</button> : <span>{t('select-drag')}</span>}
       <button type="button" onClick={() => { apiRef.current?.term?.clearSelection(); setSelection(''); onSelectionModeChange?.(false); }}>{t('cancel')}</button>

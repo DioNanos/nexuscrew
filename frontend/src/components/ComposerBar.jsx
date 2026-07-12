@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api.js';
+import { stripTrailingNewlines } from '../lib/composer-input.js';
 import {t} from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import Icon from './Icon.jsx';
+import { uploadSessionFiles } from '../lib/attachments.js';
 import './ComposerBar.css';
 
 // Composer: testo multilinea + microfono. Il testo va nel PTY come input
@@ -10,24 +12,8 @@ import './ComposerBar.css';
 // altrimenti registra e trascrive server-side (whisper locale, l'audio
 // non lascia la VPS).
 //
-// NOTE: la rimozione dei newline finali e l'invio del CR usano charCode/
-// String.fromCharCode invece di /[\r\n]+$/ e '\r' perche' il write-layer
-// corrompe gli escape backslash (v. store.js): un line terminator letterale
-// in un regex literal e' un SyntaxError. Semantica identica al piano.
-const CR = String.fromCharCode(13); // \r — Invio
-
-function stripTrailingNewlines(s) {
-  let end = s.length;
-  while (end > 0) {
-    const c = s.charCodeAt(end - 1);
-    if (c === 10 || c === 13) end -= 1; // \n o \r
-    else break;
-  }
-  return s.slice(0, end);
-}
-
 // node (opzionale): sessione remota — upload/voice passano dal proxy /node/<name>.
-export default function ComposerBar({ send, token, session, node }) {
+export default function ComposerBar({ submitText, token, session, node }) {
   useLang();
   const base = node ? `/api/route/${String(node).split('/').map(encodeURIComponent).join('/')}/_` : '/api';
   const [text, setText] = useState('');
@@ -42,6 +28,7 @@ export default function ComposerBar({ send, token, session, node }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ left: 0, bottom: 0 });
   const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
   const attachBtnRef = useRef(null);
   const menuRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -67,12 +54,17 @@ export default function ComposerBar({ send, token, session, node }) {
     && (window.SpeechRecognition || window.webkitSpeechRecognition);
   const micVisible = !!(wsAvailable || serverStt);
 
-  function submit() {
-    const t = stripTrailingNewlines(text);
-    if (!t) return;
-    send(t);
-    send(CR); // Invio esplicito, mai implicito nel testo incollato
-    setText('');
+  async function submit() {
+    const draft = text;
+    const value = stripTrailingNewlines(draft);
+    if (!value || sending) return;
+    setSending(true);
+    setErr('');
+    let ok = false;
+    try { ok = !!(await submitText(value)); } catch (_) { ok = false; }
+    if (ok) setText((current) => (current === draft ? '' : current));
+    else setErr(t('composer-send-failed'));
+    setSending(false);
     // Il tap sul send non deve trasferire il focus al bottone: su mobile questo
     // chiuderebbe l'IME dopo ogni invio. Il focus viene riaffermato anche dopo il
     // render che svuota il testo, mantenendo la tastiera pronta per il messaggio
@@ -127,19 +119,8 @@ export default function ComposerBar({ send, token, session, node }) {
   async function uploadFiles(files) {
     if (!files.length || !session) return;
     setBusy(true); setErr('');
-    const paths = [];
-    for (const f of files) {
-      try {
-        const fd = new FormData();
-        fd.append('session', session);
-        fd.append('paste', 'false');
-        fd.append('file', f, f.name);
-        const r = await apiFetch(`${base}/files/upload`, token, { method: 'POST', body: fd });
-        const j = await r.json();
-        if (j.error) { setErr(j.error); break; }
-        paths.push(j.path);
-      } catch (e) { setErr(String(e)); break; }
-    }
+    const { paths, errors } = await uploadSessionFiles({ files, token, session, node, paste: false });
+    if (errors.length) setErr(errors.map((item) => `${item.name}: ${item.message}`).join(' · '));
     if (paths.length) {
       setText((prev) => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + paths.join(' '));
     }
@@ -238,7 +219,7 @@ export default function ComposerBar({ send, token, session, node }) {
         {micVisible && (
           <button className={rec ? 'mic on' : 'mic'} onClick={rec ? stopVoice : startVoice} title={t('voice')}><Icon name="mic" size={22} /></button>
         )}
-        <button type="button" className="go"
+        <button type="button" className="go" disabled={sending}
           onPointerDown={(e) => e.preventDefault()}
           onClick={submit} title={t('send')}><Icon name="enter" size={22} /></button>
       </div>

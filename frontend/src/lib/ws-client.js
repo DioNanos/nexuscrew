@@ -71,9 +71,16 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
   connect();
   return {
     sendInput: (data) => {
-      if (!ws || ws.readyState !== 1) return;
-      ws.send(typeof data === 'string' ? new TextEncoder().encode(data) : data);
+      if (!ws || ws.readyState !== 1) return false;
+      try {
+        ws.send(typeof data === 'string' ? new TextEncoder().encode(data) : data);
+        return true;
+      } catch (_) {
+        try { ws.close(); } catch (_) {}
+        return false;
+      }
     },
+    isReady: () => !!ws && ws.readyState === 1,
     resize: (c, r) => { cols = c; rows = r; if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols: c, rows: r })); },
     action: (name) => { if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'action', name })); },
     // Promuove/demota questo client a size-owner quando prende/perde il focus.

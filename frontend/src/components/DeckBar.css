@@ -10,6 +10,12 @@
   font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
   opacity: .5; color: #9fd; flex: 0 0 auto;
 }
+.nc-deck-sidebar-toggle {
+  flex: 0 0 auto; min-width: 28px; height: 26px;
+  border: 1px solid #243; border-radius: 6px; background: #0a0e0a;
+  color: #9fd; cursor: pointer; font: inherit;
+}
+.nc-deck-sidebar-toggle:hover { border-color: #7aa903; }
 .nc-deck-chips { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
 .nc-deck-chip {
   display: inline-flex; align-items: center;
@@ -57,12 +63,3 @@
   background: #0a0e0a; border: 1px solid #243; color: #9fd;
   border-radius: 5px; font: inherit; font-size: 11px; padding: 1px 3px; max-width: 92px;
 }
-
-/* Finestra deck minimale: pulsante flottante per riaprire la sidebar. */
-.nc-side-show {
-  position: fixed; left: 8px; top: 8px; z-index: 30;
-  background: #0e140e; border: 1px solid #243; color: #9fd;
-  border-radius: 6px; padding: 5px 9px; font: inherit; font-size: 13px; cursor: pointer;
-  opacity: .8;
-}
-.nc-side-show:hover { opacity: 1; border-color: #7aa903; }

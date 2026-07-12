@@ -292,7 +292,7 @@ test('READONLY (cfg): up/mutazioni 403; status/schema/capabilities ok', async ()
     // letture pure passano
     const st = await fleet.status();
     assert.equal(st.available, true);
-    assert.equal(fleet.capabilities().length, 12);
+    assert.equal(fleet.capabilities().length, 13);
     assert.ok(fleet.schema().engine.command);
   } finally { w.cleanup(); }
 });
@@ -450,6 +450,44 @@ test('removeCell attiva richiede stop esplicito', async () => {
   } finally { w.cleanup(); }
 });
 
+test('restoreCells: atomico, preserva tmuxSession e segnala needsRestart', async () => {
+  const w = makeWorld();
+  try {
+    fs.writeFileSync(w.sessions, 'work-build\n');
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const result = await fleet.restoreCells([
+      { id: 'Dev', cwd: w.cwd, engine: 'claude', boot: false, prompt: 'restored' },
+      { id: 'Trading', cwd: w.cwd, engine: 'claude', boot: false, prompt: 'new' },
+    ]);
+    assert.deepEqual(result.replaced, ['Dev']);
+    assert.deepEqual(result.created, ['Trading']);
+    assert.deepEqual(result.needsRestart, ['Dev']);
+    const defs = fleet.definitions();
+    assert.equal(defs.cells.find((cell) => cell.id === 'Dev').tmuxSession, 'work-build');
+    assert.equal(defs.cells.find((cell) => cell.id === 'Trading').tmuxSession, 'cloud-Trading');
+  } finally { w.cleanup(); }
+});
+
+test('restoreCells: missing engines strutturati e input invalido non scrive parzialmente', async () => {
+  const w = makeWorld();
+  try {
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    await assert.rejects(() => fleet.restoreCells([
+      { id: 'X', cwd: w.cwd, engine: 'missing', boot: false },
+    ]), (error) => error.status === 400 && error.data?.code === 'missing-engines'
+      && error.data.missingEngines.includes('missing'));
+    const before = fs.readFileSync(w.defsPath, 'utf8');
+    await assert.rejects(() => fleet.restoreCells([
+      { id: 'Trading', cwd: w.cwd, engine: 'claude', boot: false },
+      { id: 'Bad', cwd: '', engine: 'claude', boot: false },
+    ]), (error) => error.status === 400);
+    assert.equal(fs.readFileSync(w.defsPath, 'utf8'), before, 'nessuna scrittura parziale');
+    await assert.rejects(() => fleet.restoreCells([
+      { id: 'Leak', cwd: w.cwd, engine: 'claude', boot: false, token: 'secret' },
+    ]), (error) => error.status === 400 && /non ammesso/.test(error.message));
+  } finally { w.cleanup(); }
+});
+
 // ---------------------------------------------------------------------------
 // 9. capabilities + schema corretti; status + isCellSession
 // ---------------------------------------------------------------------------
@@ -458,7 +496,7 @@ test('capabilities e schema: superficie estesa del built-in', async () => {
   try {
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     assert.deepEqual(fleet.capabilities(),
-      ['status', 'up', 'down', 'restart', 'engine', 'boot', 'define', 'edit', 'remove', 'import', 'schema', 'definitions']);
+      ['status', 'up', 'down', 'restart', 'engine', 'boot', 'define', 'edit', 'remove', 'import', 'restore', 'schema', 'definitions']);
     const sch = fleet.schema();
     assert.equal(sch.schemaVersion, 1);
     for (const f of ['id', 'label', 'rc', 'command', 'args', 'env', 'model', 'promptMode', 'promptFlag']) {

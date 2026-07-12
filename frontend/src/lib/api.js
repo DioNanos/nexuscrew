@@ -39,6 +39,7 @@ export const fleetDefineCell = (t, def, route) => jsonFetch(fleetPath(route, 'de
 export const fleetEditCell = (t, id, patch, route) => jsonFetch(fleetPath(route, 'edit-cell'), t, { method: 'POST', body: { id, patch } });
 export const fleetRemoveCell = (t, id, stop = false, route) => jsonFetch(fleetPath(route, 'remove-cell'), t, { method: 'POST', body: { id, stop } });
 export const fleetImportCell = (t, b, route) => jsonFetch(fleetPath(route, 'import-cell'), t, { method: 'POST', body: b });
+export const fleetRestoreCells = (t, cells, route) => jsonFetch(fleetPath(route, 'restore-cells'), t, { method: 'POST', body: { cells } });
 export const createSession = (t, b, route) => jsonFetch(`${routeBase(route)}/sessions`, t, { method: 'POST', body: b });
 export const killSession = (t, name, route) => jsonFetch(`${routeBase(route)}/sessions/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
 export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs${p ? `?path=${encodeURIComponent(p)}` : ''}`, t);
@@ -65,6 +66,8 @@ export const nodeAction = (t, name, action) => jsonFetch(`/api/settings/nodes/${
 export const setNodeVisibility = (t, name, visibility, selected = []) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/visibility`, t, { method: 'PATCH', body: { visibility, selected } });
 export const setNodeRole = (t, b) => jsonFetch('/api/settings/node-role', t, { method: 'POST', body: b });
 export const regenService = (t) => jsonFetch('/api/settings/service/regenerate', t, { method: 'POST' });
+export const checkNpmUpdate = (t) => jsonFetch('/api/settings/update/check', t, { method: 'POST' });
+export const applyNpmUpdate = (t) => jsonFetch('/api/settings/update/apply', t, { method: 'POST' });
 
 // MCP bridge: asks aperti + risposta (il POST answer incolla nella sessione
 // della cella; in READONLY il server risponde 403 con causa esplicita).

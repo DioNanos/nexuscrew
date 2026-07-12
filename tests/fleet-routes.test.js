@@ -112,6 +112,36 @@ test('builtin: /definitions espone campi editabili ma non env values', async (t)
   assert.equal(d.cells[0].id, 'Dev');
 });
 
+test('builtin: restore-cells usa body cap dedicato e missing engines strutturati', async (t) => {
+  const { base, token } = await bootBuiltin(t);
+  const cells = Array.from({ length: 32 }, (_, index) => ({
+    id: index === 0 ? 'Dev' : `C${index}`, cwd: '/tmp', engine: 'sh', boot: false,
+    prompt: 'x'.repeat(7000),
+  }));
+  const restored = await fetch(`${base}/api/fleet/restore-cells`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ cells }),
+  });
+  assert.equal(restored.status, 200, 'payload >4kb ma <256kb accettato');
+  assert.equal((await restored.json()).count, 32);
+
+  const missing = await fetch(`${base}/api/fleet/restore-cells`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ cells: [{ id: 'X', cwd: '/tmp', engine: 'missing' }] }),
+  });
+  assert.equal(missing.status, 400);
+  const detail = await missing.json();
+  assert.equal(detail.code, 'missing-engines');
+  assert.deepEqual(detail.missingEngines, ['missing']);
+});
+
+test('fleet JSON parser errors are JSON, including restore payload too large', async (t) => {
+  const { base, token } = await bootBuiltin(t);
+  const response = await fetch(`${base}/api/fleet/restore-cells`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ cells: [], padding: 'x'.repeat(270 * 1024) }),
+  });
+  assert.equal(response.status, 413);
+  assert.equal((await response.json()).code, 'body-too-large');
+});
+
 test('builtin: /define-engine valido 200 e persiste (rileggo /status engines)', async (t) => {
   const { base, token } = await bootBuiltin(t);
   const def = { id: 'codex', label: 'Codex', command: '/bin/sh', promptMode: 'send-keys' };
