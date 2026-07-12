@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  apiFetch, seenKey, fleetStatus, fleetUp, fleetDown, killSession, createSession, nodeAction,
+  apiFetch, seenKey, fleetStatus, fleetUp, fleetDown, killSession, nodeAction,
 } from '../lib/api.js';
 import Icon from './Icon.jsx';
 import { loadPins, togglePinIn, pinRank, cmpRank } from '../lib/pins.js';
 import PowerSheet from './PowerSheet.jsx';
-import NewSessionDialog from './NewSessionDialog.jsx';
 import {t,  LANGUAGES} from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { useNodes } from '../hooks/useNodes.js';
@@ -41,6 +40,19 @@ function nodeStateLabel(g) {
   return '';
 }
 
+// Dot di salute dal model health a 3 dimensioni (NO verde hardcoded): healthy
+// solo se il probe federation e' 200; 401/degraded/down/unknown -> warn + titolo
+// diagnostico. h = node.health da /api/nodes (assente sui nodi senza probe).
+function healthDot(h) {
+  if (!h) return null;
+  if (h.status === 'healthy') return 'on';
+  return 'warn'; // degraded | down | unknown
+}
+function healthTitle(h) {
+  if (!h) return '';
+  return h.detail || h.status || '';
+}
+
 export default function SessionList({ onPick, token, onSettings }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   // Gruppi per-nodo remoto (B2): zero nodi configurati -> [] e home identica.
@@ -52,10 +64,7 @@ export default function SessionList({ onPick, token, onSettings }) {
   const [endpoint, setEndpoint] = useState({ bind: '127.0.0.1', port: '' });
   const [cells, setCells] = useState([]);
   const [fleetAvailable, setFleetAvailable] = useState(false);
-  const [engines, setEngines] = useState([]);       // dal contratto fleet ({id,label,rc})
-  const [presets, setPresets] = useState(['shell', 'claude', 'codex-vl', 'pi']);
   const [powerCell, setPowerCell] = useState(null);
-  const [newOpen, setNewOpen] = useState(false);
   const [nodeBusy, setNodeBusy] = useState(null);
 
   async function refresh() {
@@ -70,8 +79,7 @@ export default function SessionList({ onPick, token, onSettings }) {
       const fs = await fleetStatus(token);
       setFleetAvailable(!!fs.available);
       setCells(fs.available ? (fs.cells || []) : []);
-      setEngines(fs.available ? (fs.engines || []) : []);
-    } catch (_) { setFleetAvailable(false); setCells([]); setEngines([]); }
+    } catch (_) { setFleetAvailable(false); setCells([]); }
   }
 
   useEffect(() => {
@@ -80,7 +88,6 @@ export default function SessionList({ onPick, token, onSettings }) {
       .then((j) => {
         setVersion(j.version || '');
         setEndpoint({ bind: j.bind || '127.0.0.1', port: j.port || '' });
-        if (Array.isArray(j.presets) && j.presets.length) setPresets(j.presets);
       }).catch(() => {});
     const id = setInterval(refresh, 4000);
     return () => clearInterval(id);
@@ -95,19 +102,22 @@ export default function SessionList({ onPick, token, onSettings }) {
   async function onFleetConfirm(payload) {
     if (!powerCell) return;
     const { cell } = powerCell;
-    if (payload.action === 'up') await fleetUp(token, { cell, engine: payload.engine, model: payload.model || '', boot: !!payload.boot });
-    else await fleetDown(token, { cell, boot: !!payload.boot });
+    const route = Array.isArray(powerCell.route) ? powerCell.route : [];
+    if (payload.action === 'up') {
+      await fleetUp(token, {
+        cell, boot: !!payload.boot,
+        ...(payload.engine ? { engine: payload.engine } : {}),
+        ...(payload.model !== undefined ? { model: payload.model } : {}),
+        ...(payload.permissionPolicy ? { permissionPolicy: payload.permissionPolicy } : {}),
+      }, route);
+    } else {
+      await fleetDown(token, { cell, boot: !!payload.boot }, route);
+    }
     refresh();
   }
 
   async function onKill(name, route = []) {
     try { await killSession(token, name, route); } catch (_) { return; }
-    refresh();
-  }
-
-  async function onCreate(body, route = []) {
-    await createSession(token, body, route);
-    setNewOpen(false);
     refresh();
   }
 
@@ -164,7 +174,7 @@ export default function SessionList({ onPick, token, onSettings }) {
           {t('fleet-tmux')} · {total} {t('sessions')}{attached > 0 && ` · ${attached} attached`}
         </div>
         <span className="nc-head-actions">
-          <button className="nc-refresh" onClick={onSettings} title={t('settings')}><Icon name="gear" size={18} /></button>
+          <button className="nc-refresh" onClick={() => onSettings('nodes', false)} title={t('settings')}><Icon name="gear" size={18} /></button>
           <button className="nc-refresh" onClick={refresh} title={t('refresh')}><Icon name="refresh" size={18} /></button>
         </span>
       </header>
@@ -252,22 +262,50 @@ export default function SessionList({ onPick, token, onSettings }) {
         )}
       </section>
 
-      {/* Gruppi per-nodo remoto (B2, design §5): card per sessione remota;
-          tunnel giu' = riga degradata statica (§7, niente spinner). */}
-      {nodeGroups.map((g) => (
+      {/* Gruppi per-nodo remoto (Hydra): per ogni posizione mostriamo celle Fleet
+          (attive e inattive, con engine/active) + tmux unmanaged. La salute e'
+          quella del probe federato (NO verde hardcoded): 401/degraded -> warn con
+          diagnostica. Tunnel del nodo diretto controllabile (power); peer inbound
+          non gestito da qui -> niente power finto. */}
+      {nodeGroups.map((g) => {
+        const hd = healthDot(g.health);
+        const dotClass = hd || (g.status === 'up' ? 'on' : 'warn');
+        const dotTitle = g.health ? healthTitle(g.health) : (g.status === 'up' ? '' : nodeStateLabel(g));
+        return (
         <section key={`nodo-${(g.route || [g.name]).join('/')}`} className="nc-group">
           <div className="nc-group-title nc-node-title">
-            <span className={`dot ${g.status === 'up' ? 'on' : 'warn'}`} />
+            <span className={`dot ${dotClass}`} title={dotTitle} />
             {g.label || g.name}
             {' · '}
             {g.status === 'up'
-              ? t('node-sessions').replace('{n}', String(g.sessions.length))
-              : nodeStateLabel(g)}
-            {g.direct && <button type="button" className={`nc-act power${g.tunnelStatus === 'up' ? ' on' : ''}`}
-              disabled={nodeBusy === g.name} title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}
-              onClick={() => onNodePower(g)}><Icon name="power" size={15} /></button>}
+              ? t('node-sessions').replace('{n}', String(g.cells.length + g.unmanaged.length))
+              : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
+            {g.direct && g.health && g.health.managed !== false && (
+              <button type="button" className={`nc-act power${g.tunnelStatus === 'up' ? ' on' : ''}`}
+                disabled={nodeBusy === g.name} title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}
+                onClick={() => onNodePower(g)}><Icon name="power" size={15} /></button>
+            )}
           </div>
-          {g.status === 'up' && g.sessions.map((s) => (
+          {g.status === 'up' && g.cells.length > 0 && g.cells.map((c) => (
+            <div key={c.key} className="nc-mcard">
+              <button className="nc-mcard-main" onClick={() => c.tmux && onPick({ session: c.tmuxSession, node: (g.route || [g.name]).join('/') })}
+                title={c.active ? t('cell-on') : t('cell-off')}>
+                <span className={`dot ${c.degraded ? 'warn' : c.tmux ? 'on' : ''}`} />
+                <span className="nc-mcard-text">
+                  <b>{c.cell}</b>
+                  <small>{`${c.engine}${c.key ? `·${c.key}` : ''}`}{c.active ? '' : ` · ${t('cell-off')}`}</small>
+                </span>
+              </button>
+              {(g.capabilities || []).includes(c.active ? 'down' : 'up') && (
+                <button className={`nc-act power${c.active ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
+                  title={c.active ? t('power-off') : t('power-on')}
+                  onClick={() => setPowerCell({ ...c, route: g.route })}>
+                  <Icon name="power" size={15} />
+                </button>
+              )}
+            </div>
+          ))}
+          {g.status === 'up' && g.unmanaged.map((s) => (
             <div key={s.key} className="nc-mcard">
               <button className="nc-mcard-main" onClick={() => onPick({ session: s.name, node: s.node })}>
                 <span className={s.attached ? 'dot on' : 'dot'} />
@@ -281,11 +319,12 @@ export default function SessionList({ onPick, token, onSettings }) {
                 onClick={() => { if (window.confirm(t('terminate-confirm').replace('{name}', s.name))) onKill(s.name, g.route); }}>⋯</button>
             </div>
           ))}
-          {g.status === 'up' && g.sessions.length === 0 && (
+          {g.status === 'up' && g.cells.length === 0 && g.unmanaged.length === 0 && (
             <div className="nc-empty">{t('no-sessions-short')}</div>
           )}
         </section>
-      ))}
+        );
+      })}
 
       <footer className="nc-home-foot" onClick={copyEndpointUrl} title={t('copy-url')}>
         {version && <span>v{version}</span>}
@@ -300,14 +339,10 @@ export default function SessionList({ onPick, token, onSettings }) {
         </span>
       </footer>
 
-      <button className="nc-fab" onClick={() => setNewOpen(true)} title={t('new-session')} aria-label={t('new-session')}>+</button>
+      <button className="nc-fab" onClick={() => onSettings('fleet', true)} title={t('fleet-new-cell')} aria-label={t('fleet-new-cell')}>+</button>
 
       {powerCell && (
-        <PowerSheet cell={powerCell} engines={engines} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
-      )}
-      {newOpen && (
-        <NewSessionDialog presets={presets} targets={nodeGroups.filter((g) => g.status === 'up').map((g) => ({ route: g.route, label: g.label || g.name }))}
-          token={token} onCreate={onCreate} onClose={() => setNewOpen(false)} />
+        <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : []} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
       )}
     </div>
   );

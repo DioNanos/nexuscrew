@@ -194,6 +194,25 @@ test('selectProviderModeSync: external se fleetBin fidato presente (no companion
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test('selectProviderModeSync: scopre $PREFIX/bin/fleet come il resolver runtime Termux', () => {
+  const home = tmpHome();
+  const prefix = path.join(home, 'termux-prefix');
+  const bin = path.join(prefix, 'bin', 'fleet');
+  fs.mkdirSync(path.dirname(bin), { recursive: true });
+  fs.writeFileSync(bin, '#!/bin/sh\n', { mode: 0o755 });
+  const defsPath = path.join(home, '.nexuscrew', 'fleet.json');
+  writeValidFleet(defsPath, home);
+  const r = selectProviderModeSync({
+    home,
+    fleetDefsPath: defsPath,
+    fleetBin: path.join(home, 'missing-fleet'),
+    env: { PREFIX: prefix },
+  });
+  assert.equal(r.mode, 'external', 'init non deve installare il companion builtin');
+  assert.match(r.reason, /termux-prefix/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 test('selectProviderModeSync: forced onorati (disabled / builtin fail-closed senza fleet.json)', () => {
   const home = tmpHome();
   const missing = path.join(home, '.nexuscrew', 'fleet.json');
@@ -201,6 +220,22 @@ test('selectProviderModeSync: forced onorati (disabled / builtin fail-closed sen
   // forced builtin ma fleet.json mancante -> fail-closed disabled (§9g), senza
   // dipendere dall'eventuale fleet.json reale dell'utente che esegue la suite.
   assert.equal(selectProviderModeSync({ home, fleetDefsPath: missing, fleetProvider: 'builtin' }).mode, 'disabled');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('selectProviderModeSync: forced external non sostituisce un fleetBin pinnato con $PREFIX', () => {
+  const home = tmpHome();
+  const prefix = path.join(home, 'termux-prefix');
+  const fallback = path.join(prefix, 'bin', 'fleet');
+  fs.mkdirSync(path.dirname(fallback), { recursive: true });
+  fs.writeFileSync(fallback, '#!/bin/sh\n', { mode: 0o755 });
+  const r = selectProviderModeSync({
+    home,
+    env: { PREFIX: prefix },
+    fleetProvider: 'external',
+    fleetBin: path.join(home, 'missing-pinned-fleet'),
+  });
+  assert.equal(r.mode, 'disabled');
   fs.rmSync(home, { recursive: true, force: true });
 });
 

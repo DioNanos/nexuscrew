@@ -60,7 +60,7 @@ Per rigenerare la UI (sviluppo): `npm run build` (richiede dev deps).
 Apri l'URL stampato da `init` (con `#token=…`) nel browser, via tunnel SSH/VPN:
 
 ```bash
-ssh -L 41820:127.0.0.1:41820 dag@host    # porta da config.json
+ssh -L 41820:127.0.0.1:41820 user@host   # porta da config.json
 ```
 
 ## First launch

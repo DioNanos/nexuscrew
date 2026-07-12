@@ -10,6 +10,14 @@
 
 export const NODE_NAME_RE = /^[a-z0-9-]{1,32}$/;
 
+// Identita' route-qualified per pin/badge/contatori/SingleView: include la route
+// per evitare collisioni tra celle/sessioni omonime su posizioni diverse.
+// route = [] (Locale) -> id nudo; route = ['vps'] -> 'vps:id'.
+export function positionKey(route, id) {
+  const r = Array.isArray(route) ? route : [];
+  return r.length ? `${r.map(encodeURIComponent).join('/')}:${id}` : String(id);
+}
+
 // Base path HTTP delle route remote di un nodo ('' = locale). Le route dei
 // tile (files/preview/voice) passano dal proxy B1 con lo stesso token locale.
 export function nodeBase(node) {
@@ -31,23 +39,48 @@ export function trackDown(prev, nodes, nowSec) {
   return out; // nodi tornati up (o rimossi) spariscono dalla mappa
 }
 
-// buildNodeGroups({nodes, remote, down}) -> gruppi ordinati per nome.
-//   nodes:  lista /api/nodes (name, tunnel:{status,...}, ...)
-//   remote: {name: {sessions:[...]} | {error:string}} — risultato fetch per i
-//           soli nodi col tunnel up (best-effort)
+// Arricchisce le celle Fleet di una posizione con identita' route-qualified
+// (key + route), pronte per rendering/pin/azioni. f = payload fleetStatus(route).
+function enrichCells(f, route, key) {
+  if (!f || !Array.isArray(f.cells)) return [];
+  return f.cells.map((c) => ({
+    ...c,
+    route,
+    key: `${key}:${c.cell || c.tmuxSession}`,
+  }));
+}
+
+// buildNodeGroups({nodes, topology, remote, down, fleet}) -> gruppi ordinati.
+//   nodes:  lista /api/nodes (name, label?, tunnel:{status,...}, health?, ...)
+//   topology: lista /api/topology (route transitive, stale/lastSeen)
+//   remote: {routeKey: {sessions:[...]} | {error}} — fetch sessions per i nodi up
 //   down:   mappa trackDown (epochSec prima osservazione del down)
-// Zero nodi configurati -> [] (la UI resta identica a oggi).
-export function buildNodeGroups({ nodes, topology, remote, down } = {}) {
+//   fleet:  {routeKey: {available, cells, capabilities, provider}} — fetch fleet
+//           per ogni posizione (Locale + route). Permette di mostrare celle Fleet
+//           attive E inattive + tmux unmanaged anche sulle posizioni remote.
+// Ogni gruppo up porta: sessions (tutte le tmux, retro-compat), cells (Fleet,
+// con engine/model/active/boot), unmanaged (tmux non-cell), fleetAvailable,
+// capabilities. Zero nodi -> [] (UI identica a oggi).
+export function buildNodeGroups({ nodes, topology, remote, down, fleet } = {}) {
   const out = [];
   const directRoutes = new Set();
   const seenIds = new Set();
   for (const n of Array.isArray(nodes) ? nodes : []) {
     if (!n || typeof n.name !== 'string' || !NODE_NAME_RE.test(n.name)) continue;
     const route = [n.name]; const key = n.name; directRoutes.add(key);
-    const up = n.tunnel && n.tunnel.status === 'up';
-    const base = { name: n.name, label: n.name, route, direct: true, tunnelStatus: up ? 'up' : 'down', sessions: [] };
+    const tunnelStatus = n.tunnel?.status || 'unknown';
+    const up = tunnelStatus === 'up';
+    const base = {
+      name: n.name, label: n.label || n.name, route, direct: true,
+      tunnelStatus, sessions: [], cells: [], unmanaged: [],
+      fleetAvailable: false, capabilities: [], engines: [], health: n.health || null,
+    };
     if (n.nodeId) seenIds.add(n.nodeId);
     if (!n.nodeId && n.paired === false) {
+      out.push({ ...base, status: 'needs-repair', downSince: (down && down[key]) || null });
+      continue;
+    }
+    if (n.health?.auth === 'failed' || (tunnelStatus === 'degraded' && n.health?.status === 'degraded')) {
       out.push({ ...base, status: 'needs-repair', downSince: (down && down[key]) || null });
       continue;
     }
@@ -63,14 +96,27 @@ export function buildNodeGroups({ nodes, topology, remote, down } = {}) {
     const sessions = r.sessions
       .filter((s) => s && typeof s.name === 'string' && s.name)
       .map((s) => ({ ...s, node: key, route, key: `${key}:${s.name}` }));
-    out.push({ ...base, status: 'up', sessions });
+    const f = fleet && (fleet[key] || fleet[n.name]);
+    const cells = enrichCells(f, route, key);
+    const cellTmux = new Set(cells.map((c) => c.tmuxSession).filter(Boolean));
+    out.push({
+      ...base, status: 'up', sessions,
+      cells, unmanaged: sessions.filter((s) => !cellTmux.has(s.name)),
+      fleetAvailable: !!(f && f.available), capabilities: (f && f.capabilities) || [],
+      engines: (f && f.engines) || [],
+      fleetProvider: (f && f.provider) || null,
+    });
   }
   for (const n of Array.isArray(topology) ? topology : []) {
     if (!n || !Array.isArray(n.route) || n.route.length < 1 || n.route.some((x) => !NODE_NAME_RE.test(x))) continue;
     const key = n.route.join('/');
     if (directRoutes.has(key) || (n.instanceId && seenIds.has(n.instanceId))) continue;
     if (n.instanceId) seenIds.add(n.instanceId);
-    const base = { name: n.name, label: n.route.join(' › '), route: [...n.route], direct: false, tunnelStatus: null, sessions: [], lastSeen: n.lastSeen || null };
+    const base = {
+      name: n.name, label: n.label || n.route.join(' › '), route: [...n.route], direct: false,
+      tunnelStatus: null, sessions: [], cells: [], unmanaged: [], fleetAvailable: false,
+      capabilities: [], engines: [], health: n.health || null, lastSeen: n.lastSeen || null,
+    };
     if (n.stale) {
       out.push({ ...base, status: 'offline', downSince: (down && down[key]) || n.lastSeen || null });
       continue;
@@ -82,7 +128,16 @@ export function buildNodeGroups({ nodes, topology, remote, down } = {}) {
     }
     const sessions = r.sessions.filter((s) => s && typeof s.name === 'string' && s.name)
       .map((s) => ({ ...s, node: key, route: n.route, key: `${key}:${s.name}` }));
-    out.push({ ...base, status: 'up', sessions, lastSeen: n.lastSeen || null });
+    const f = fleet && fleet[key];
+    const cells = enrichCells(f, n.route, key);
+    const cellTmux = new Set(cells.map((c) => c.tmuxSession).filter(Boolean));
+    out.push({
+      ...base, status: 'up', sessions,
+      cells, unmanaged: sessions.filter((s) => !cellTmux.has(s.name)),
+      fleetAvailable: !!(f && f.available), capabilities: (f && f.capabilities) || [],
+      engines: (f && f.engines) || [],
+      fleetProvider: (f && f.provider) || null, lastSeen: n.lastSeen || null,
+    });
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));
 }

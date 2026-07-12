@@ -8,13 +8,12 @@ import Icon from './components/Icon.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import GridView from './components/GridView.jsx';
 import PowerSheet from './components/PowerSheet.jsx';
-import NewSessionDialog from './components/NewSessionDialog.jsx';
 import DeckBar from './components/DeckBar.jsx';
 import SettingsPanel from './components/SettingsPanel.jsx';
 import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import {
-  apiFetch, fleetStatus, fleetUp, fleetDown, createSession, killSession, getSettings, nodeAction,
+  apiFetch, fleetStatus, fleetUp, fleetDown, killSession, getSettings, nodeAction,
 } from './lib/api.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef } from './lib/grid-model.js';
 import {
@@ -25,6 +24,7 @@ import { useLang } from './hooks/useLang.js';
 import { useNodes } from './hooks/useNodes.js';
 import { useDecks } from './hooks/useDecks.js';
 import { reportServerVersions } from './lib/sw-update.js';
+import { parseBootstrapHash } from './lib/fragment.js';
 import './App.css';
 
 const FONT_MIN = 9;
@@ -44,19 +44,35 @@ function initialFontSize() {
   return v >= FONT_MIN && v <= FONT_MAX ? v : 13;
 }
 
-// token from the fragment (#token=...), so it never lands in the server logs.
-// Un token arrivato via fragment viene RICORDATO sul device (localStorage):
-// setup una volta sola per device, mai più la schermata di auth.
-function readToken() {
-  const hash = location.hash.replace(/^#/, '');
-  const m = hash.match(/(?:^|&)token=([^&]+)/);
-  if (m) {
-    const t = decodeURIComponent(m[1]);
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
-    try { localStorage.setItem('nc_token', t); } catch (_) {}
-    return t;
-  }
-  return sessionStorage.getItem('nc_token') || localStorage.getItem('nc_token') || '';
+// Bootstrap dal fragment: legge token (#token=) e pairing (#pair=) dalla hash
+// IN UN SOLO PASSO, persiste (token in localStorage, pairing in sessionStorage per
+// la sessione corrente) e rimuove il fragment sensibile dalla address bar con
+// history.replaceState — senza toccare pathname/search (la condivisione esplicita
+// del link non si rompe). Ritorna {token, pair} con fallback agli storage.
+//
+// #pair: deep-link di pairing generato da un altro NexusCrew (peering.js). Arriva
+// in address bar; lo acquisiamo e lo offriamo al wizard/settings precompilato,
+// poi lo scrubighiamo perche' l'invite e' one-time e sensibile.
+function bootstrapFromFragment() {
+  const out = { token: '', pair: '' };
+  try {
+    const { token, pair, nextUrl } = parseBootstrapHash({
+      hash: location.hash, origin: location.origin, pathname: location.pathname, search: location.search,
+    });
+    if (token) {
+      out.token = token;
+      try { localStorage.setItem('nc_token', token); } catch (_) {}
+    }
+    if (pair) {
+      out.pair = pair;
+      try { sessionStorage.setItem('nc_pair', pair); } catch (_) {}
+    }
+    // rimuove il fragment sensibile (token e/o pair), preserva path + query.
+    if (location.hash) { try { history.replaceState(null, '', nextUrl); } catch (_) {} }
+  } catch (_) { /* best-effort: la UI resta usabile */ }
+  if (!out.token) out.token = sessionStorage.getItem('nc_token') || localStorage.getItem('nc_token') || '';
+  if (!out.pair) { const p = sessionStorage.getItem('nc_pair'); if (p) out.pair = p; }
+  return out;
 }
 
 // Layout di un deck: legge la chiave per-deck (main = chiave storica nc_grid_v1)
@@ -112,11 +128,13 @@ function SingleView({ session, node, token, readonly = false, onBack }) {
   const toggleCtrl = () => { ctrlRef.current = !ctrlRef.current; setCtrlArmed(ctrlRef.current); };
 
   // Sottotitolo header: "engine·key" se la sessione è una cella, altrimenti
-  // "attached · Nm" (o tempo relativo). Dati da /api/sessions + /api/fleet/status.
-  // Sessione remota: /api/sessions del nodo via proxy; la flotta e' un concetto
-  // locale (si salta il fleetStatus).
+  // "attached · Nm" (o tempo relativo). Dati da /api/sessions + /api/fleet/status
+  // del nodo che possiede la sessione (Locale o route remota via proxy). La Fleet
+  // non e' piu' un concetto solo-locale: una sessione remota su un nodo che ha
+  // capability fleet mostra comunque engine/model (parita' mobile/desktop).
   useEffect(() => {
     let alive = true;
+    const route = node ? node.split('/') : [];
     const base = node ? `/api/route/${node.split('/').map(encodeURIComponent).join('/')}/_` : '/api';
     async function load() {
       let sess = null; let cell = null;
@@ -125,12 +143,10 @@ function SingleView({ session, node, token, readonly = false, onBack }) {
         const j = await r.json();
         if (Array.isArray(j.sessions)) sess = j.sessions.find((s) => s.name === session);
       } catch (_) { /* best-effort */ }
-      if (!node) {
-        try {
-          const fs = await fleetStatus(token);
-          if (fs.available && Array.isArray(fs.cells)) cell = fs.cells.find((c) => c.tmuxSession === session);
-        } catch (_) { /* best-effort */ }
-      }
+      try {
+        const fs = await fleetStatus(token, route);
+        if (fs.available && Array.isArray(fs.cells)) cell = fs.cells.find((c) => c.tmuxSession === session);
+      } catch (_) { /* best-effort: nodo senza capability fleet */ }
       if (!alive) return;
       let txt = '';
       if (cell) txt = `${cell.engine}${cell.key ? `·${cell.key}` : ''}`;
@@ -176,7 +192,15 @@ function SingleView({ session, node, token, readonly = false, onBack }) {
 
 export default function App() {
   useLang(); // re-render globale allo switch lingua
-  const [token, setToken] = useState(readToken());
+  const [boot] = useState(bootstrapFromFragment);
+  const [token, setToken] = useState(boot.token);
+  // pairing deep-link (#pair) acquisito dal fragment e tenuto in sessionStorage:
+  // se presente, apre il wizard precompilato. Consumato una volta (one-time invite).
+  const [pairPending, setPairPending] = useState(boot.pair || '');
+  const consumePair = useCallback(() => {
+    setPairPending('');
+    try { sessionStorage.removeItem('nc_pair'); } catch (_) {}
+  }, []);
   const [remember, setRemember] = useState(false);
   const isDesktop = useDesktop();
 
@@ -192,7 +216,6 @@ export default function App() {
   // desktop workspace state
   const [dSessions, setDSessions] = useState([]);
   const [cells, setCells] = useState([]);
-  const [engines, setEngines] = useState([]);       // dal contratto fleet ({id,label,rc})
   const [layout, setLayout] = useState(() => loadLayout(deck));
   const deckStore = useDecks(token, deck, layout, setLayout);
   const decks = deckStore.decks.length ? deckStore.decks : [MAIN_DECK];
@@ -204,8 +227,6 @@ export default function App() {
   const nodeGroups = useNodes(token, isDesktop);
   const [powerCell, setPowerCell] = useState(null);
   const [nodePowerBusy, setNodePowerBusy] = useState(false);
-  const [newOpen, setNewOpen] = useState(false);
-  const [presets, setPresets] = useState(['shell', 'claude', 'codex-vl', 'pi']);
   const [sideW, setSideW] = useState(loadSideW);
   // Finestre deck minimali: nei deck non-main la sidebar e' nascosta di default
   // (toggle flottante); quando riaperta parte in mini = session-picker compatto.
@@ -213,6 +234,12 @@ export default function App() {
   const [sideMin, setSideMin] = useState(() => (isMainDeck ? localStorage.getItem(SIDE_MIN_KEY) === '1' : true));
   // Settings + first-run wizard (B2-UI, design §5).
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState('nodes');
+  const [settingsNewCell, setSettingsNewCell] = useState(false);
+  const [settingsLocation, setSettingsLocation] = useState('');
+  const openSettings = (tab = 'nodes', newCell = false, location = '') => {
+    setSettingsTab(tab); setSettingsNewCell(newCell); setSettingsLocation(location); setSettingsOpen(true);
+  };
   const [wizardOpen, setWizardOpen] = useState(false);
   // READONLY del server (da /api/config): l'attach dei terminali deve essere
   // read-only quando il server lo e' (coerenza col gate server §4b(6) + il
@@ -239,9 +266,10 @@ export default function App() {
       if (cancelled) return;
       setRoDefault(!!c.readonlyDefault);
       if (s.firstRun === true && !c.readonlyDefault) setWizardOpen(true);
+      else if (pairPending) setWizardOpen(true); // deep-link #pair: apri wizard sul pairing
     }).catch(() => { /* wizard best-effort: la UI resta usabile */ });
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, pairPending]);
 
   const poll = useCallback(async () => {
     try {
@@ -252,8 +280,7 @@ export default function App() {
     try {
       const fs = await fleetStatus(token);
       setCells(fs.available ? (fs.cells || []) : []);
-      setEngines(fs.available ? (fs.engines || []) : []);
-    } catch (_) { setCells([]); setEngines([]); }
+    } catch (_) { setCells([]); }
   }, [token]);
 
   // Polling sessions + flotta (solo desktop: su mobile pensa SessionList).
@@ -264,11 +291,10 @@ export default function App() {
     return () => clearInterval(id);
   }, [isDesktop, poll]);
 
-  // Preset + coerenza versione UI/server (tutte le viste).
+  // Coerenza versione UI/server (tutte le viste).
   useEffect(() => {
     let cancelled = false;
     apiFetch('/api/config', token).then((r) => r.json()).then((j) => {
-      if (!cancelled && Array.isArray(j.presets) && j.presets.length) setPresets(j.presets);
       if (!cancelled && typeof __NC_BUILD_VERSION__ !== 'undefined')
         reportServerVersions(j.version, j.uiVersion, __NC_BUILD_VERSION__);
     }).catch(() => {});
@@ -293,15 +319,17 @@ export default function App() {
   const onFleetConfirm = async (payload) => {
     if (!powerCell) return;
     const { cell } = powerCell;
+    const route = Array.isArray(powerCell.route) ? powerCell.route : [];
     if (payload.action === 'up') {
-      await fleetUp(token, { cell, engine: payload.engine, model: payload.model || '', boot: !!payload.boot });
+      await fleetUp(token, {
+        cell, boot: !!payload.boot,
+        ...(payload.engine ? { engine: payload.engine } : {}),
+        ...(payload.model !== undefined ? { model: payload.model } : {}),
+        ...(payload.permissionPolicy ? { permissionPolicy: payload.permissionPolicy } : {}),
+      }, route);
     } else {
-      await fleetDown(token, { cell, boot: !!payload.boot });
+      await fleetDown(token, { cell, boot: !!payload.boot }, route);
     }
-    poll();
-  };
-  const onCreateSession = async (body, route = []) => {
-    await createSession(token, body, route);
     poll();
   };
   const onNodePower = async (group) => {
@@ -353,8 +381,11 @@ export default function App() {
   // + centro notifiche/ask del MCP bridge (SSE /api/events, presente ovunque).
   const settingsOverlays = (
     <>
-      {settingsOpen && <SettingsPanel token={token} onClose={() => setSettingsOpen(false)} />}
-      {wizardOpen && <Wizard token={token} onDone={() => setWizardOpen(false)} />}
+      {settingsOpen && <SettingsPanel token={token} initialTab={settingsTab} initialLocation={settingsLocation} startNewCell={settingsNewCell}
+        onClose={() => { setSettingsOpen(false); setSettingsNewCell(false); setSettingsLocation(''); }} />}
+      {wizardOpen && (
+        <Wizard token={token} initialPair={pairPending} onPairDone={consumePair} onDone={() => setWizardOpen(false)} />
+      )}
       <NotifyCenter token={token} />
     </>
   );
@@ -364,7 +395,7 @@ export default function App() {
     if (!session) {
       return (
         <>
-          <SessionList onPick={pickSession} token={token} onSettings={() => setSettingsOpen(true)} />
+          <SessionList onPick={pickSession} token={token} onSettings={openSettings} />
           {settingsOverlays}
         </>
       );
@@ -391,8 +422,8 @@ export default function App() {
           onPower={setPowerCell}
           onNodePower={onNodePower}
           onKill={onKill}
-          onNew={() => setNewOpen(true)}
-          onSettings={() => setSettingsOpen(true)}
+          onNew={() => openSettings('fleet', true)}
+          onSettings={openSettings}
           width={sideW}
           collapsed={sideMin}
           onResize={setSideW}
@@ -427,12 +458,7 @@ export default function App() {
         </div>
       )}
       {powerCell && (
-        <PowerSheet cell={powerCell} engines={engines} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
-      )}
-      {newOpen && (
-        <NewSessionDialog presets={presets}
-          targets={nodeGroups.filter((g) => g.status === 'up').map((g) => ({ route: g.route, label: g.label || g.name }))}
-          token={token} onCreate={onCreateSession} onClose={() => setNewOpen(false)} />
+        <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : []} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
       )}
       {settingsOverlays}
     </div>
