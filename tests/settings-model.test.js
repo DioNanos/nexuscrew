@@ -14,12 +14,12 @@ test('settings-model: isValidNodeName mirror ^[a-z0-9-]{1,32}$', async () => {
   }
 });
 
-test('settings-model: isValidSsh mirror parseSsh strict', async () => {
+test('settings-model: isValidSsh mirror parseSshTarget (user@host o Host alias)', async () => {
   const m = await mod();
-  for (const ok of ['user@host', 'user@10.0.0.1', 'u.x-y@host.example.com']) {
+  for (const ok of ['user@host', 'user@10.0.0.1', 'u.x-y@host.example.com', 'my-relay', 'Relay_1', 'host:22']) {
     assert.equal(m.isValidSsh(ok), true, `valido: ${ok}`);
   }
-  for (const bad of ['@host', 'user@', 'user', 'a@b@c', 'user @host', 'user@-flag',
+  for (const bad of ['@host', 'user@', '-flag', 'a@b@c', 'user @host', 'user@-flag',
     'user@host\n', '', null, 'u\0x@host', `user@${'h'.repeat(300)}${'x'.repeat(30)}`]) {
     assert.equal(m.isValidSsh(bad), false, `invalido: ${JSON.stringify(bad)}`);
   }
@@ -46,7 +46,8 @@ test('settings-model: validateNodeForm — separa porta SSH e porta NexusCrew', 
   const noPort = m.validateNodeForm({ name: 'host', ssh: 'user@host', sshPort: '', remotePort: '' });
   assert.deepEqual(noPort, { ok: true, value: { name: 'host', ssh: 'user@host' } });
   assert.deepEqual(m.validateNodeForm({ name: 'HOST', ssh: 'user@host' }), { ok: false, error: 'err-node-name' });
-  assert.deepEqual(m.validateNodeForm({ name: 'vps', ssh: 'nope' }), { ok: false, error: 'err-ssh' });
+  assert.deepEqual(m.validateNodeForm({ name: 'vps', ssh: '-nope' }), { ok: false, error: 'err-ssh' });
+  assert.deepEqual(m.validateNodeForm({ name: 'vps', ssh: 'relay-alias' }), { ok: true, value: { name: 'vps', ssh: 'relay-alias' } });
   assert.deepEqual(m.validateNodeForm({ name: 'host', ssh: 'user@host', sshPort: '0' }), { ok: false, error: 'err-ssh-port' });
   assert.deepEqual(m.validateNodeForm({ name: 'host', ssh: 'user@host', remotePort: '0' }), { ok: false, error: 'err-node-port' });
   assert.deepEqual(m.validateNodeForm({}), { ok: false, error: 'err-node-name' });

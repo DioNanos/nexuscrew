@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import {
   fleetStatus, fleetDefinitions, fleetDefineEngine, fleetEditEngine, fleetRemoveEngine,
-  fleetDefineCell, fleetEditCell, fleetRemoveCell, fleetRestart,
+  fleetDefineCell, fleetEditCell, fleetRemoveCell, fleetRestart, fleetUp, fleetDown,
+  fleetImportCell, killSession, getRouteSessions,
   listDirs, getRouteConfig,
 } from '../lib/api.js';
+import PowerSheet from './PowerSheet.jsx';
 
 const blankEngine = () => ({ kind: 'managed', id: 'claude.native', label: '', client: 'claude', provider: 'native', credentialProfile: '', managedModel: '', permissionPolicy: 'unsafe', displayName: '', protocol: 'anthropic_messages', baseUrl: '', envKey: '', providerId: 'nexuscrew-custom', command: '', argsText: '', rc: true, promptMode: 'send-keys', promptFlag: '', modelFlag: '', modelValue: '', envRows: [] });
 const blankCell = (engine = '') => ({ id: '', cwd: '', engine, boot: false, model: '', prompt: '' });
@@ -28,6 +30,8 @@ function buildEngine(form, creating, catalog = []) {
   if (form.kind === 'managed') {
     const managed = { client: form.client, provider: form.provider, model: form.managedModel || '', permissionPolicy: form.permissionPolicy || defaultPermission(form.client) };
     if (form.credentialProfile) managed.credentialProfile = form.credentialProfile;
+    const profile = catalogEntry(catalog, form);
+    if (profile?.credentialEnv) managed.envKey = form.envKey;
     if (form.provider === 'custom') Object.assign(managed, { displayName: form.displayName, protocol: form.protocol, baseUrl: form.baseUrl, envKey: form.envKey, providerId: form.providerId });
     return {
       ...(creating ? { id: form.id } : {}), label: form.label || managedLabel(catalog, form), rc: !!form.rc,
@@ -44,7 +48,7 @@ function buildEngine(form, creating, catalog = []) {
   return out;
 }
 
-export default function FleetTab({ token, readonly, targets = [] }) {
+export default function FleetTab({ token, readonly, targets = [], startNewCell = false, initialLocation = '' }) {
   const [defs, setDefs] = useState({ engines: [], cells: [], managedCatalog: [] });
   const [status, setStatus] = useState({ available: false, capabilities: [] });
   const [engineEdit, setEngineEdit] = useState(null);
@@ -52,8 +56,11 @@ export default function FleetTab({ token, readonly, targets = [] }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [note, setNote] = useState('');
-  const [location, setLocation] = useState('');
+  const [location, setLocation] = useState(initialLocation);
   const [remoteReadonly, setRemoteReadonly] = useState(false);
+  const [powerCell, setPowerCell] = useState(null);
+  const [importEdit, setImportEdit] = useState(null);
+  const autoCreateDone = useRef(false);
   const route = location ? location.split('/') : [];
 
   const refresh = useCallback(async () => {
@@ -72,6 +79,11 @@ export default function FleetTab({ token, readonly, targets = [] }) {
 
   const active = new Set((status.cells || []).filter((c) => c.active).map((c) => c.cell));
   const editable = status.provider === 'builtin' && (status.capabilities || []).includes('edit');
+  useEffect(() => {
+    if (!startNewCell || autoCreateDone.current || !editable || !defs.engines.length) return;
+    autoCreateDone.current = true;
+    setCellEdit({ mode: 'new', form: blankCell(defs.engines[0].id) });
+  }, [startNewCell, editable, defs.engines]);
   const run = async (fn) => {
     setBusy(true); setErr(''); setNote('');
     try { await fn(); await refresh(); } catch (e) { setErr(String(e.message || e)); }
@@ -117,16 +129,70 @@ export default function FleetTab({ token, readonly, targets = [] }) {
   });
 
   const locked = readonly || remoteReadonly;
+
+  // Launch editor condiviso (PowerSheet): Avvia dalla lista celle e dalla card
+  // inventory aprono lo stesso sheet (non fleetUp diretto, niente UI duplicata).
+  const onPower = (c) => setPowerCell({
+    ...c,
+    route: Array.isArray(c?.route) ? c.route : route,
+  });
+  const onFleetConfirm = async (payload) => {
+    if (!powerCell) return;
+    const id = powerCell.cell || powerCell.id;
+    const actionRoute = Array.isArray(powerCell.route) ? powerCell.route : route;
+    if (payload.action === 'up') {
+      await fleetUp(token, {
+        cell: id, boot: !!payload.boot,
+        ...(payload.engine ? { engine: payload.engine } : {}),
+        ...(payload.model !== undefined ? { model: payload.model } : {}),
+        ...(payload.permissionPolicy ? { permissionPolicy: payload.permissionPolicy } : {}),
+      }, actionRoute);
+    } else {
+      await fleetDown(token, { cell: id, boot: !!payload.boot }, actionRoute);
+    }
+  };
+
+  const openImport = (session, targetRoute) => setImportEdit({
+    mode: 'new',
+    route: Array.isArray(targetRoute) ? targetRoute : route,
+    form: { tmuxSession: session.name, id: '', engine: '', cwd: '', boot: false },
+    err: '',
+  });
+
+  // Import esplicito di una sessione tmux (cella Fleet legacy orfana, es jarvis)
+  // in una cella GESTITA fleet.json. NESSUNA invenzione: engine obbligatorio e
+  // già dichiarato; id/tmuxSession prefilled; cwd di default la home. Dopo l'import
+  // la sessione sparisce da "unmanaged" e compare in Fleet con lifecycle gestito.
+  const doImport = () => run(async () => {
+    const f = importEdit.form;
+    if (!f.engine) { setImportEdit({ ...importEdit, err: t('import-engine-required') }); return; }
+    await fleetImportCell(token, {
+      tmuxSession: f.tmuxSession, id: f.id || undefined, engine: f.engine,
+      cwd: f.cwd || undefined, boot: !!f.boot,
+    }, f.route || route);
+    setImportEdit(null);
+    setNote(t('fleet-saved'));
+  });
   const locationPicker = <label className="nc-field">{t('location')}<select value={location} onChange={(e) => {
     setLocation(e.target.value); setEngineEdit(null); setCellEdit(null); setErr(''); setNote(''); setRemoteReadonly(false);
     setStatus({ available: false, capabilities: [] }); setDefs({ engines: [], cells: [], managedCatalog: [] });
   }}>
-    <option value="">{t('local')}</option>{targets.map((x) => <option key={x.route.join('/')} value={x.route.join('/')}>{x.label}</option>)}
+    <option value="">{t('local')}</option>{targets.map((x) => <option key={x.route.join('/')} value={x.route.join('/')} disabled={x.status && x.status !== 'up'}>{x.label}{x.status && x.status !== 'up' ? ` · ${t('node-offline')}` : ''}</option>)}
   </select></label>;
-  if (!editable) return <div className="nc-set-tab">{locationPicker}<div className="nc-set-info">{t('fleet-editor-unavailable')}</div>{err && <div className="nc-err">{err}</div>}</div>;
+  if (!editable) return (
+    <div className="nc-set-tab">
+      {locationPicker}
+      <FleetInventory token={token} targets={targets} readonly={readonly} onPower={onPower} onImport={openImport} />
+      <div className="nc-set-info">{t('fleet-editor-unavailable')}</div>
+      {err && <div className="nc-err">{err}</div>}
+      {importEdit && <ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} />}
+      {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { await refresh(); } }} onClose={() => setPowerCell(null)} />}
+    </div>
+  );
   return (
     <div className="nc-set-tab nc-fleet-editor">
       {locationPicker}
+      <FleetInventory token={token} targets={targets} readonly={readonly} onPower={onPower} onImport={openImport} />
       <div className="nc-fleet-section-head"><b>{t('fleet-engines')}</b><button className="nc-btn primary" disabled={locked || busy} onClick={() => setEngineEdit({ mode: 'new', form: blankEngine() })}>+ {t('add')}</button></div>
       {defs.engines.map((e) => (
         <div className="nc-fleet-item" key={e.id}><span><b>{e.label}</b><small>{e.managed
@@ -139,14 +205,120 @@ export default function FleetTab({ token, readonly, targets = [] }) {
       {engineEdit && <EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} />}
 
       <div className="nc-fleet-section-head"><b>{t('fleet-cells')}</b><button className="nc-btn primary" disabled={locked || busy || !defs.engines.length} onClick={() => setCellEdit({ mode: 'new', form: blankCell(defs.engines[0]?.id) })}>+ {t('add')}</button></div>
-      {defs.cells.map((c) => (
-        <div className="nc-fleet-item" key={c.id}><span><b>{c.id}</b><small>{c.engine} · {c.cwd}{active.has(c.id) ? ` · ${t('service-active')}` : ''}</small></span><span>
+      {defs.cells.map((c) => {
+        const isOn = active.has(c.id);
+        const caps = status.capabilities || [];
+        return (
+        <div className="nc-fleet-item" key={c.id}><span><b>{c.id}</b><small>{c.engine} · {c.cwd}{isOn ? ` · ${t('service-active')}` : ` · ${t('cell-off')}`}</small></span><span>
+          {isOn && caps.includes('down') && <button className="nc-btn ghost" disabled={locked || busy}
+            onClick={() => run(() => fleetDown(token, { cell: c.id }, route))}>{t('stop')}</button>}
+          {!isOn && caps.includes('up') && <button className="nc-btn primary" disabled={locked || busy}
+            onClick={() => onPower({ cell: c.id, id: c.id, engine: c.engine, model: c.model, models: c.models, permissionPolicies: c.permissionPolicies, active: false, boot: c.boot })}>{t('start')}</button>}
+          {isOn && caps.includes('restart') && <button className="nc-btn ghost" disabled={locked || busy}
+            onClick={() => run(() => fleetRestart(token, c.id, route))}>{t('restart')}</button>}
           <button className="nc-btn ghost" disabled={locked || busy} onClick={() => setCellEdit({ mode: 'edit', original: c, form: { ...c } })}>{t('edit')}</button>
           <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-cell').replace('{id}', c.id))) await fleetRemoveCell(token, c.id, true, route); })}>×</button>
         </span></div>
-      ))}
-      {cellEdit && <CellEditor token={token} route={route} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} />}
+      );})}
+      {cellEdit && <CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} />}
       {note && <div className="nc-set-note">{note}</div>}{err && <div className="nc-err">{err}</div>}
+      {importEdit && <ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} />}
+      {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { await refresh(); } }} onClose={() => setPowerCell(null)} />}
+    </div>
+  );
+}
+
+// Inventario globale (task Hydra): per OGNI posizione (Locale + ogni route Hydra)
+// mostra celle Fleet attive e inattive (engine/stato) + sessioni tmux unmanaged,
+// raggruppate e etichettate. Le azioni start/stop/restart/delete compaiono SOLO
+// se la posizione le supporta (capability negotiation) e agiscono sulla ROUTE
+// corretta. Il power-off di una cella remota e' ripristinato dove il nodo ne
+// possiede il lifecycle; sulle posizioni non gestibili (peer inbound senza
+// capability, READONLY) non si mostra alcun power fittizio.
+function FleetInventory({ token, targets = [], readonly = false, onPower, onImport }) {
+  const [data, setData] = useState([]);
+  const [bump, setBump] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    async function poll() {
+      const positions = [{ route: [], label: t('local') }].concat(
+        (targets || []).map((x) => ({ route: Array.isArray(x.route) ? x.route : [], label: x.label || (x.route || []).join(' › ') })),
+      );
+      const results = await Promise.all(positions.map(async (pos) => {
+        const out = { ...pos, available: false, readonly: false, capabilities: [], provider: null, cells: [], unmanaged: [], err: '' };
+        try {
+          const fs = await fleetStatus(token, pos.route);
+          out.available = !!fs.available; out.capabilities = fs.capabilities || []; out.provider = fs.provider || null;
+          out.cells = (fs.cells || []).map((c) => ({ ...c, route: pos.route }));
+          try { out.readonly = !!(await getRouteConfig(token, pos.route)).readonlyDefault; } catch (_) { /* gate server resta autorità */ }
+          try {
+            const sj = await getRouteSessions(token, pos.route);
+            const cellTmux = new Set(out.cells.map((c) => c.tmuxSession).filter(Boolean));
+            out.unmanaged = (sj.sessions || []).filter((s) => s && !cellTmux.has(s.name));
+          } catch (_) { /* posizione senza /sessions: resta solo cells */ }
+        } catch (e) { out.err = String((e && e.message) || e); }
+        return out;
+      }));
+      if (alive) setData(results);
+    }
+    poll();
+    const id = setInterval(poll, 6000);
+    return () => { alive = false; clearInterval(id); };
+  }, [token, targets, bump]);
+
+  const can = (pos, cap) => Array.isArray(pos.capabilities) && pos.capabilities.includes(cap) && !readonly && !pos.readonly;
+  const after = () => setBump((b) => b + 1);
+  // up/down passano dal launch editor condiviso (PowerSheet): niente fleetUp diretto.
+  const cellUp = (c, route) => { if (onPower) onPower({ ...c, route }); };
+  const cellDown = (c, route) => { if (onPower) onPower({ ...c, route }); };
+  const cellRestart = async (c, route) => { try { await fleetRestart(token, c.cell, route); } catch (_) {} after(); };
+  const cellRemove = async (c, route) => {
+    if (!window.confirm(t('fleet-remove-cell').replace('{id}', c.cell))) return;
+    try { await fleetRemoveCell(token, c.cell, true, route); } catch (_) {} after();
+  };
+  const killUnmanaged = async (s, route) => {
+    if (!window.confirm(t('terminate-confirm').replace('{name}', s.name))) return;
+    try { await killSession(token, s.name, route); } catch (_) {} after();
+  };
+
+  return (
+    <div className="nc-fleet-inventory">
+      <div className="nc-fleet-section-head"><b>{t('fleet-inventory')}</b><small>{t('fleet-inventory-help')}</small></div>
+      {data.map((pos) => {
+        const key = pos.route.length ? pos.route.join('/') : 'local';
+        return (
+          <div className="nc-fleet-pos" key={key}>
+            <div className="nc-fleet-pos-title">
+              <span className={`dot ${pos.available ? 'on' : 'warn'}`} />
+              <b>{pos.label}</b>
+              <small>{pos.available ? `${pos.cells.length} ${t('fleet-cells')} · ${pos.unmanaged.length} ${t('fleet-tmux')}` : (pos.err || t('fleet-not-available'))}</small>
+            </div>
+            {pos.cells.map((c) => (
+              <div className="nc-fleet-item nc-fleet-cell" key={`${key}:${c.cell}`}>
+                <span><b>{c.cell}</b><small>{`${c.engine || ''}${c.key ? `·${c.key}` : ''}${c.active ? '' : ` · ${t('cell-off')}`}`}</small></span>
+                <span className="nc-fleet-cell-actions">
+                  {c.active && can(pos, 'down') && <button className="nc-btn ghost" title={t('power-off')} onClick={() => cellDown(c, pos.route)}>{t('stop')}</button>}
+                  {!c.active && can(pos, 'up') && <button className="nc-btn ghost" title={t('power-on')} onClick={() => cellUp(c, pos.route)}>{t('start')}</button>}
+                  {can(pos, 'restart') && c.active && <button className="nc-btn ghost" title={t('restart')} onClick={() => cellRestart(c, pos.route)}>{t('restart')}</button>}
+                  {can(pos, 'remove') && <button className="nc-btn danger" title={t('delete')} onClick={() => cellRemove(c, pos.route)}>×</button>}
+                </span>
+              </div>
+            ))}
+            {pos.unmanaged.map((s) => (
+              <div className="nc-fleet-item nc-fleet-unmanaged" key={`${key}:u:${s.name}`}>
+                <span><b>{s.name}</b><small>{t('fleet-tmux')}</small></span>
+                <span className="nc-fleet-cell-actions">
+                  {can(pos, 'import') && onImport && <button className="nc-btn ghost" title={t('import-as-cell')} onClick={() => onImport(s, pos.route)}>{t('import-as-cell')}</button>}
+                  <button className="nc-btn danger" title={t('terminate')} onClick={() => killUnmanaged(s, pos.route)}>×</button>
+                </span>
+              </div>
+            ))}
+            {pos.available && pos.cells.length === 0 && pos.unmanaged.length === 0 && (
+              <div className="nc-empty">{t('fleet-inventory-empty')}</div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -159,7 +331,7 @@ function EngineEditor({ state, setState, busy, onSave, catalog }) {
   const selectedProfile = catalogEntry(catalog, f);
   const setManagedProfile = (entry) => {
     if (!entry) return;
-    set({ client: entry.client, provider: entry.provider, credentialProfile: entry.credentialProfile || '', managedModel: entry.model || '', protocol: entry.protocol || '', permissionPolicy: entry.permissionPolicyDefault || 'standard', rc: !!entry.rc, displayName: entry.custom ? t('fleet-custom-provider-default') : '', baseUrl: entry.custom ? '' : entry.endpoint || '', envKey: '', providerId: 'nexuscrew-custom', ...(state.mode === 'new' ? { id: entry.id, label: '' } : {}) });
+    set({ client: entry.client, provider: entry.provider, credentialProfile: entry.credentialProfile || '', managedModel: entry.model || '', protocol: entry.protocol || '', permissionPolicy: entry.permissionPolicyDefault || 'standard', rc: !!entry.rc, displayName: entry.custom ? t('fleet-custom-provider-default') : '', baseUrl: entry.custom ? '' : entry.endpoint || '', envKey: entry.defaultEnvKey || '', providerId: 'nexuscrew-custom', ...(state.mode === 'new' ? { id: entry.id, label: '' } : {}) });
   };
   return <div className="nc-set-form nc-fleet-form">
     <b>{state.mode === 'new' ? t('fleet-new-engine') : `${t('edit')} ${f.id}`}</b>
@@ -175,6 +347,10 @@ function EngineEditor({ state, setState, busy, onSave, catalog }) {
       <datalist id="nc-managed-models">{[...(selectedProfile?.models || []), ...(f.modelOptions || [])].filter((value, index, all) => value && all.indexOf(value) === index).map((model) => <option key={model} value={model} />)}</datalist>
       {selectedProfile?.supportsUnsafe ? <select value={f.permissionPolicy} onChange={(e) => set({ permissionPolicy: e.target.value })}><option value="standard">{t('fleet-standard-permissions')}</option><option value="unsafe">{t('fleet-unsafe-permissions')}</option></select> : <small>{t('fleet-standard-permissions')}</small>}
       {selectedProfile?.supportsUnsafe && f.permissionPolicy === 'unsafe' && <small className="nc-err">{t('fleet-unsafe-warning')}</small>}
+      {selectedProfile?.credentialEnv && <>
+        <input value={f.envKey} placeholder={t('fleet-api-key-env')} onChange={(e) => set({ envKey: e.target.value })} />
+        <small>{t('fleet-custom-secret-help')}</small>
+      </>}
       {f.provider === 'custom' && <>
         <input value={f.displayName} placeholder={t('fleet-provider-display')} onChange={(e) => set({ displayName: e.target.value })} />
         <input value={f.baseUrl} placeholder="https://api.example.com/v1" onChange={(e) => set({ baseUrl: e.target.value })} />
@@ -194,11 +370,11 @@ function EngineEditor({ state, setState, busy, onSave, catalog }) {
       {rows.map((r, i) => <div className="nc-fleet-env" key={`${r.key}-${i}`}><input value={r.key} disabled={r.configured} placeholder="ENV_KEY" onChange={(e) => { const n = rows.slice(); n[i] = { ...r, key: e.target.value }; set({ envRows: n }); }} /><input type="password" value={r.value} placeholder={r.configured ? '•••••• (unchanged)' : 'value'} onChange={(e) => { const n = rows.slice(); n[i] = { ...r, value: e.target.value }; set({ envRows: n }); }} /><button className="nc-btn danger" onClick={() => set({ envRows: rows.filter((_, x) => x !== i) })}>×</button></div>)}
       <button className="nc-btn ghost" onClick={() => set({ envRows: [...rows, { key: '', value: '', configured: false }] })}>+ env</button>
     </>}
-    <div className="nc-sheet-actions"><button className="nc-btn ghost" onClick={() => setState(null)}>{t('cancel')}</button><button className="nc-btn primary" disabled={busy || !f.id || (f.kind === 'custom' && !f.command) || (f.kind === 'managed' && selectedProfile?.requiresModel && !f.managedModel) || (f.kind === 'managed' && f.provider === 'custom' && (!f.displayName || !f.baseUrl || !f.envKey || !f.providerId))} onClick={onSave}>{t('save')}</button></div>
+    <div className="nc-sheet-actions"><button className="nc-btn ghost" onClick={() => setState(null)}>{t('cancel')}</button><button className="nc-btn primary" disabled={busy || !f.id || (f.kind === 'custom' && !f.command) || (f.kind === 'managed' && selectedProfile?.requiresModel && !f.managedModel) || (f.kind === 'managed' && selectedProfile?.credentialEnv && !f.envKey) || (f.kind === 'managed' && f.provider === 'custom' && (!f.displayName || !f.baseUrl || !f.envKey || !f.providerId))} onClick={onSave}>{t('save')}</button></div>
   </div>;
 }
 
-function CellEditor({ token, route, state, setState, engines, busy, onSave }) {
+function CellEditor({ token, route, targets = [], location, setLocation, state, setState, engines, busy, onSave }) {
   const [picker, setPicker] = useState(null);
   const [pickErr, setPickErr] = useState('');
   const f = state.form; const set = (patch) => setState({ ...state, form: { ...f, ...patch } });
@@ -213,6 +389,17 @@ function CellEditor({ token, route, state, setState, engines, busy, onSave }) {
   };
   return <div className="nc-set-form nc-fleet-form">
     <b>{state.mode === 'new' ? t('fleet-new-cell') : `${t('edit')} ${f.id}`}</b>
+    {/* Posizione di creazione come campo obbligatorio DENTRO il form (task Hydra):
+        non dipende dal selettore fuori schermo. Cambiandola, l'editor si ri-arma
+        sulla nuova route (engine disponibili si aggiornano). */}
+    {state.mode === 'new' && (
+      <label className="nc-field">{t('location')}<span className="nc-req"> *</span>
+        <select value={location} onChange={(e) => { setLocation(e.target.value); set({ engine: '' }); }}>
+          <option value="">{t('local')}</option>
+          {targets.map((x) => <option key={x.route.join('/')} value={x.route.join('/')} disabled={x.status && x.status !== 'up'}>{x.label}{x.status && x.status !== 'up' ? ` · ${t('node-offline')}` : ''}</option>)}
+        </select>
+      </label>
+    )}
     <input value={f.id} disabled={state.mode !== 'new'} placeholder="id" onChange={(e) => set({ id: e.target.value })} />
     <div className="nc-fleet-pair"><input value={f.cwd} placeholder={t('cwd')} onChange={(e) => set({ cwd: e.target.value })} /><button className="nc-btn ghost" onClick={() => picker ? setPicker(null) : browse(f.cwd)}>{t('browse')}</button></div>
     {picker && <div className="nc-fs"><div className="nc-fs-path">{picker.path}</div><div className="nc-fs-list">
@@ -226,5 +413,46 @@ function CellEditor({ token, route, state, setState, engines, busy, onSave }) {
     <datalist id="nc-cell-models">{(selectedEngine?.availableModels || []).map((model) => <option key={model} value={model} />)}</datalist>
     <textarea value={f.prompt || ''} placeholder="prompt" onChange={(e) => set({ prompt: e.target.value })} />
     <div className="nc-sheet-actions"><button className="nc-btn ghost" onClick={() => setState(null)}>{t('cancel')}</button><button className="nc-btn primary" disabled={busy || !f.id || !f.cwd || !f.engine} onClick={onSave}>{t('save')}</button></div>
+  </div>;
+}
+
+// Import esplicito di una sessione tmux unmanaged (cella Fleet legacy orfana, es
+// "jarvis") in una cella GESTITA. Prefilla id/tmuxSession; l'engine è OBBLIGATORIO
+// e deve essere già dichiarato (nessuna invenzione). La cwd di default è la home.
+function ImportEditor({ token, route = [], state, setState, busy, onSave }) {
+  const [picker, setPicker] = useState(null);
+  const [engines, setEngines] = useState([]);
+  const [loadErr, setLoadErr] = useState('');
+  const routeKey = Array.isArray(route) ? route.join('/') : '';
+  useEffect(() => {
+    let alive = true;
+    fleetDefinitions(token, routeKey ? routeKey.split('/') : [])
+      .then((d) => { if (alive) { setEngines(d.engines || []); setLoadErr(''); } })
+      .catch((e) => { if (alive) { setEngines([]); setLoadErr(String(e.message || e)); } });
+    return () => { alive = false; };
+  }, [token, routeKey]);
+  const f = state.form; const set = (patch) => setState({ ...state, form: { ...f, ...patch } });
+  const browse = async (p) => {
+    try { const x = await listDirs(token, p, route); setPicker(x); set({ cwd: x.path }); }
+    catch (_) { /* best-effort */ }
+  };
+  const idSuggestion = !f.id && f.tmuxSession ? f.tmuxSession.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) : f.id;
+  return <div className="nc-set-form nc-fleet-form">
+    <b>{t('import-as-cell')} · {f.tmuxSession}</b>
+    <small>{t('import-help')}</small>
+    <input value={f.tmuxSession} disabled placeholder="tmux session" readOnly />
+    <input value={f.id} placeholder={t('name')} onChange={(e) => set({ id: e.target.value })} />
+    <div className="nc-fleet-pair"><input value={f.cwd} placeholder={t('cwd')} onChange={(e) => set({ cwd: e.target.value })} /><button className="nc-btn ghost" type="button" onClick={() => picker ? setPicker(null) : browse(f.cwd)}>{t('browse')}</button></div>
+    {picker && <div className="nc-fs"><div className="nc-fs-path">{picker.path}</div><div className="nc-fs-list">
+      {picker.parent && <button className="nc-fs-item nc-fs-nav" onClick={() => browse(picker.parent)}>↑ {t('fs-parent')}</button>}
+      {(picker.dirs || []).map((d) => <button className="nc-fs-item" key={d} onClick={() => browse(`${picker.path.replace(/\/$/, '')}/${d}`)}>📁 {d}</button>)}
+    </div></div>}
+    <select value={f.engine} onChange={(e) => set({ engine: e.target.value })}>
+      <option value="">{t('import-engine-required')}</option>
+      {engines.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
+    </select>
+    <label className="nc-check"><input type="checkbox" checked={!!f.boot} onChange={(e) => set({ boot: e.target.checked })} /> boot</label>
+    {(state.err || loadErr) && <div className="nc-err">{state.err || loadErr}</div>}
+    <div className="nc-sheet-actions"><button className="nc-btn ghost" onClick={() => setState(null)}>{t('cancel')}</button><button className="nc-btn primary" disabled={busy || !f.tmuxSession || !f.engine || !engines.length} onClick={onSave}>{idSuggestion ? t('import-as-cell') : t('save')}</button></div>
   </div>;
 }

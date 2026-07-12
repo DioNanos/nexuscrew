@@ -16,7 +16,7 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 
 ---
 
-## What it is (v0.8.3 "Simple and Clean")
+## What it is (v0.8.6 "Connected Fleet")
 
 - Runs a small server on the host where your tmux sessions live.
 - Each attach spawns a real PTY running `tmux attach` and bridges its bytes over a WebSocket
@@ -27,13 +27,18 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 - **Multi-window decks**: named workspaces at `/deck/<name>` — one browser window per
   monitor, each with its own remembered tile layout. The focused tile is the size owner;
   everything else attaches with `ignore-size`.
-- **Multi-node**: connect existing NexusCrew installations through the SSH configuration you
-  already control and see their tmux fleets in the same UI. Per-node groups, remote attach,
-  file exchange, and Fleet management travel through a scoped single-origin route.
+- **Federated Hydra inventory**: connect existing NexusCrew installations through the SSH
+  configuration you already control and see local, direct, and relayed tmux fleets in one UI.
+  Route labels show where every session lives; creation, attach, files, lifecycle and Fleet
+  management use the selected location through a scoped single-origin route.
 - **Settings and wizard**: manage roles, nodes, token rotation, and service regeneration
   from the UI; a skippable first-run wizard guides initial setup.
-- **Session lifecycle from the UI**: create sessions (name + cwd + an allowlisted preset)
-  and terminate generic ones with confirmation. Protected session names are always refused.
+- **Cell lifecycle from the UI**: the primary `+` creates a managed Fleet cell at Local or
+  any reachable node. Power opens one shared launch sheet where engine, model, permission
+  policy and boot can be reviewed before every start; deletion lives in Settings → Fleet.
+- **Legacy session adoption**: Settings → Fleet lists managed and unmanaged tmux sessions on
+  every route. A live unmanaged session can be explicitly imported as a managed cell without
+  inventing its engine, provider or model.
 - **Rich cards**: last activity, current command, a sanitized one-line preview per session.
 - **Fleet control**: a built-in schema-driven fleet manager handles cells, engines, model
   selection, and boot persistence; an existing external `fleet` CLI can take ownership through
@@ -41,6 +46,8 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 - **i18n**: English, Italian, Spanish — follows your browser language, switchable in the UI.
 - **localhost-only**: the server binds `127.0.0.1` and refuses any non-loopback bind.
 - **Stateless**: tmux *is* the persistence. No database, no accounts.
+- **Mobile terminal controls**: long-press begins local text selection, drag extends it, and
+  the composer send button keeps the software keyboard open for the next message.
 - **Universal**: a PTY is a PTY — a coding agent, a REPL, a plain shell, anything tmux holds.
 
 ## Screenshots
@@ -62,19 +69,34 @@ over a real PTY. On the right, a `codex-vl` session running inside the browser c
 ## Fleet integration
 
 A clean install includes the built-in, schema-driven fleet manager. Its safe defaults contain
-three engine templates — **Claude Native**, **Codex Native**, and **Codex-VL Native** — and no cells, prompts,
-API keys, or machine-specific paths. Add cells and enable optional managed providers from the
-Fleet settings. The managed matrix covers Claude Code, Codex, Codex-VL, and Pi with their
-documented native/local providers plus renameable custom providers. Custom Codex adapters are
-Responses-only. New custom credentials are read only from the environment variable named in
-the PWA; NexusCrew never stores the secret value. Existing Z.AI A/P and Ollama Cloud profiles
-retain their backwards-compatible credential loading.
+four CLI adapters — **Claude Code**, **Codex**, **Codex-VL**, and **Pi** — and no cells,
+prompts, API keys, or machine-specific paths. Provider, credential-variable name and reusable
+engine definitions live in Settings → Fleet. When a cell is off, its shared launch sheet lets
+you choose the engine, model, permission policy and boot state before starting it; the last
+model and permission choice is remembered separately for each cell and engine.
 
-Managed engines expose a permission selector. New Claude engines (native, Z.AI, Ollama, or
-custom) default to **Bypass permissions** and launch with
-`--dangerously-skip-permissions`; choose **Standard permissions** to disable it. New Codex and
-Codex-VL engines default to Standard and offer an explicit opt-in for
-`--dangerously-bypass-approvals-and-sandbox`. Pi keeps its native permission behavior.
+The concise provider catalog is scoped per CLI:
+
+- **Claude Code:** Anthropic account, Amazon Bedrock, Google Vertex AI, Microsoft Foundry,
+  Ollama Cloud, local Ollama, Z.AI, and a renameable Anthropic-compatible endpoint.
+- **Codex / Codex-VL:** OpenAI/ChatGPT account, OpenAI API, Ollama Cloud, local Ollama,
+  LM Studio, and a renameable custom endpoint using the real Responses wire API only.
+- **Pi:** its configured default, Anthropic, OpenAI API, OpenAI Codex OAuth, Google Gemini,
+  GitHub Copilot, OpenRouter, local Ollama, DeepSeek, Z.AI, and a custom provider.
+
+Provider credentials are resolved from the selected CLI's native login or from an environment
+variable named in the PWA; NexusCrew never stores a new secret value. Legacy Z.AI A/P engines
+remain launch-compatible for existing fleets but are not provider choices for new engines.
+Model discovery is used where the CLI/provider documents it, with a manual model field as the
+portable fallback.
+
+Managed engines expose a permission selector both in their definition and in the cell launch
+sheet. New Claude engines (native, Z.AI, Ollama, or custom) default to **Bypass permissions**
+and launch with `--dangerously-skip-permissions`; choose **Standard permissions** to disable
+it. New Codex and Codex-VL engines default to Standard and offer an explicit opt-in for
+`--dangerously-bypass-approvals-and-sandbox`. Pi is always launched with its native Standard
+permission behavior. Claude-compatible managed models also receive matching context and
+auto-compaction window variables, including one-million-token profiles where declared.
 
 Custom argv-based engines remain supported. Their command, environment, cwd, and prompt are
 validated against a strict trust boundary and launched without a shell.
@@ -92,14 +114,19 @@ trusted executable (default `~/.local/bin/fleet`, configurable via `fleet.bin` i
  "engines":[{"id":"native","label":"Claude","rc":true},{"id":"my-engine","label":"My Engine"}]}
 ```
 
-`engines` is optional: it declares the engine picker shown when powering a cell on — `id` is
-what `up --engine <id>` receives, `label` is what the UI displays, and `rc: true` marks engines
-that support your remote-control path. In external mode the external CLI owns its engine list.
+`engines` is optional: it declares the configured engine inventory — `id` is the stable
+identifier, `label` is what the UI displays, and `rc: true` marks engines that support your
+remote-control path. In external mode the external CLI owns its engine list and configuration;
+the NexusCrew power control starts or stops the cell without changing that configuration.
 
 and accepts `up <Cell> [--engine E] [--boot]`, `down <Cell> [--boot]`, `engine <Cell> <E>`,
 `boot|noboot <Cell>`. The binary is trust-checked (regular file, not a symlink, not
 world-writable) and the schema is validated strictly — anything else and the feature stays
-off. Set `NEXUSCREW_FLEET=0` to disable it entirely.
+off. Automatic discovery checks the configured path, Termux's `$PREFIX/bin/fleet`, then
+`~/.local/bin/fleet`; startup-service ownership uses the same resolver so built-in and external
+boot managers cannot both take ownership. An explicitly pinned external binary fails closed
+instead of silently switching to another executable. Set `NEXUSCREW_FLEET=0` to disable Fleet
+entirely.
 
 ## Requirements
 
@@ -107,8 +134,7 @@ off. Set `NEXUSCREW_FLEET=0` to disable it entirely.
 - **tmux** on the host (3.4+; the non-destructive `ignore-size` attach is honored on 3.4 and
   later)
 - A PTY backend is resolved automatically per platform: Darwin ARM64/x64 and Linux ARM64/x64
-  prebuilds, the native Android ARM64 provider on Termux, and `node-pty` as the
-  build-from-source fallback.
+  scriptless prebuilds, including the native Android ARM64 provider on Termux.
 
 ## Access model — read this
 
@@ -132,9 +158,16 @@ token travels in the URL **fragment** (`#token=…`), so it never reaches the se
 ## Federated Hydra nodes (configured from the PWA)
 
 Every installation is always the local node and can join other NexusCrew nodes. Open
-**Settings → Nodes**, create a ten-minute pairing link/QR on one device, then paste or scan it
-on the other together with an OpenSSH Host alias. That single pairing creates a reciprocal,
-loopback-only link and both sides exchange a redacted topology automatically.
+**Settings → Nodes** and create a ten-minute pairing link/QR. The creator supplies the
+OpenSSH target or Host alias through which that installation is reachable; the v2 link carries
+that routing information, its display label, route slug and optional SSH port. Paste or scan the
+single link on the other device, review the pre-filled fields, then choose **Test and connect**.
+Older v1 links remain accepted and simply require the missing routing fields to be entered.
+
+The link never contains an SSH key, identity file, API key or PWA token. Its only credential is
+the random, one-time pairing invite; SSH routing fields are non-secret configuration. A
+successful pairing creates a reciprocal loopback-only link and both sides exchange a redacted
+topology automatically.
 
 NexusCrew does not create SSH keys or edit `authorized_keys`. OpenSSH remains authoritative for
 identity files, agents, host keys, ports, ProxyJump and forwarding policy. NexusCrew uses
@@ -160,7 +193,8 @@ nexuscrew
 
 The first run creates a loopback-only configuration and starts a detached process. Run
 `nexuscrew boot` only if you want a persistent `systemd --user` service. Linux x64 and ARM64
-use platform PTY prebuilds; `node-pty` remains the build-from-source fallback.
+use platform PTY prebuilds only, so global installs do not compile native code or
+require install-script approval.
 
 ### macOS (Apple Silicon or Intel)
 
@@ -263,6 +297,10 @@ args = ["mcp"]
 The awkward tmux gestures, as buttons: **scroll** (enters copy-mode; then PgUp/↑/↓, `q` to
 exit), **window** prev/next, **pane** left/right, **esc**, **Ctrl-C**, **detach**.
 
+Long-press terminal text to enter local selection mode, then drag and use **Copy**. The
+composer send button writes the text followed by a real Enter while retaining textarea focus,
+so the mobile keyboard stays open between messages.
+
 Window and pane navigation run as **server-side, allowlisted tmux commands** on the active
 session — they are *not* emulated with client-side prefix keys, which are fragile and depend
 on each host's key bindings.
@@ -285,7 +323,7 @@ node bin/nexuscrew.js serve
 
 ## Status
 
-The current stable release is **v0.8.3**, published on npm under the **`latest`** dist-tag.
+The current stable release is **v0.8.6**, published on npm under the **`latest`** dist-tag.
 
 ## License
 

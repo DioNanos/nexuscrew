@@ -18,6 +18,22 @@ test('PWA invite -> public one-time join creates an inbound scoped peer', async 
   t.after(() => { made.server.close(); fs.rmSync(home, { recursive: true, force: true }); });
   made.cfg.port = made.server.address().port;
   const base = `http://127.0.0.1:${made.server.address().port}`;
+  const fullInviteRes = await fetch(`${base}/api/settings/peering/invite`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${made.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ label: 'VPS 3 Relay', ssh: 'relay-alias' }),
+  });
+  assert.equal(fullInviteRes.status, 200);
+  const fullInvite = peering.parsePairingUrl((await fullInviteRes.json()).pairingUrl);
+  assert.equal(fullInvite.v, 2);
+  assert.equal(fullInvite.name, 'vps-3-relay');
+  assert.equal(fullInvite.ssh, 'relay-alias');
+  const badPortOnly = await fetch(`${base}/api/settings/peering/invite`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${made.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ sshPort: 2222 }),
+  });
+  assert.equal(badPortOnly.status, 400, 'sshPort senza target SSH non deve sparire silenziosamente');
   const inviteRes = await fetch(`${base}/api/settings/peering/invite`, { method: 'POST', headers: { authorization: `Bearer ${made.token}` } });
   assert.equal(inviteRes.status, 200);
   const invite = peering.parsePairingUrl((await inviteRes.json()).pairingUrl);

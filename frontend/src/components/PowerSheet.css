@@ -5,6 +5,9 @@
   display: flex; align-items: center; justify-content: center;
   padding: 16px; box-sizing: border-box;
 }
+/* Launch editor condiviso: sopra il pannello Impostazioni (z 60) così resta
+   raggiungibile anche quando è aperto da FleetTab. Wizard è a 70 e non coesiste. */
+.nc-launch-overlay { z-index: 70; }
 .nc-sheet {
   width: 100%; max-width: 380px;
   background: #0e140e; color: #cfe;
@@ -12,6 +15,23 @@
   padding: 16px; display: flex; flex-direction: column; gap: 12px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
 }
+.nc-power-sheet {
+  max-width: min(620px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px); overflow-y: auto;
+  box-sizing: border-box; min-width: 0;
+}
+/* Launch sheet: una sola colonna, mai più larga di 520px; select/input al 100%.
+   Niente fila di chip/bottoni engine che esce dalla box: il selettore è un <select>. */
+.nc-launch-sheet {
+  max-width: min(520px, calc(100vw - 32px));
+  width: 100%; min-width: 0;
+}
+.nc-launch-fields {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0;
+}
+.nc-launch-fields .nc-field,
+.nc-launch-fields .nc-field input,
+.nc-launch-fields .nc-field select { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 .nc-sheet-head {
   display: flex; align-items: center; justify-content: space-between;
 }
@@ -19,16 +39,13 @@
 .nc-sheet-state { font-size: 12px; opacity: .6; }
 
 .nc-sheet-label { font-size: 12px; opacity: .7; text-transform: uppercase; letter-spacing: .5px; }
-.nc-engines {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+.nc-power-config {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px;
+  padding: 10px; border: 1px solid #243; border-radius: 8px; background: #0a0e0a;
+  min-width: 0; overflow-wrap: anywhere;
 }
-.nc-engine {
-  display: flex; align-items: center; gap: 6px;
-  padding: 7px 9px; border: 1px solid #1c241c; border-radius: 8px;
-  font-size: 12px; cursor: pointer; background: #0a0e0a;
-}
-.nc-engine.sel { border-color: #2e7d32; background: #14200f; }
-.nc-engine input { accent-color: #2e7d32; }
+.nc-power-config span { opacity: .7; }
+.nc-power-config small { grid-column: 1 / -1; opacity: .65; }
 
 .nc-check {
   display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;
@@ -42,12 +59,13 @@
   padding: 9px 10px; font: 14px/1.2 inherit;
   background: #0a0e0a; color: #cfe;
   border: 1px solid #243; border-radius: 8px;
+  width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box;
 }
 .nc-field input:focus, .nc-field select:focus { outline: none; border-color: #2e7d32; }
 
 .nc-err { color: #f88; font-size: 12px; }
 
-.nc-sheet-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.nc-sheet-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .nc-btn {
   border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer;
 }
@@ -55,4 +73,6 @@
 .nc-btn.primary { background: #2e7d32; color: #fff; }
 .nc-btn.primary:active { background: #255028; }
 .nc-btn:disabled { opacity: .5; cursor: default; }
-.nc-engine-id { opacity: 0.55; font-size: 0.85em; }
+@media (max-width: 600px) {
+  .nc-power-sheet { max-width: 380px; }
+}

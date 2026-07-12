@@ -7,6 +7,7 @@ const path = require('node:path');
 const {
   CATALOG, OLLAMA_CONTEXT, normalizeManagedSpec, defaultDefinitions, describeManaged,
   resolveManagedEngine, parseEnvFile, discoverOllamaModels, discoverPiModels,
+  publicCatalog,
 } = require('../lib/fleet/managed.js');
 const { parseDefinitions } = require('../lib/fleet/definitions.js');
 
@@ -19,14 +20,34 @@ function fakeClient(home, name) {
   return p;
 }
 
-test('app defaults: Claude unsafe opt-out, Codex e Codex-VL standard opt-in', () => {
+test('app defaults: quattro CLI base, provider separati e policy esplicite', () => {
   const d = defaultDefinitions();
-  assert.deepEqual(d.engines.map((e) => e.id), ['claude.native', 'codex.native', 'codex-vl.native']);
+  assert.deepEqual(d.engines.map((e) => e.id), ['claude.native', 'codex.native', 'codex-vl.native', 'pi.native']);
+  assert.deepEqual(d.engines.map((e) => e.label), ['Claude Code', 'Codex', 'Codex-VL', 'Pi']);
   assert.equal(d.engines.find((e) => e.id === 'claude.native').managed.permissionPolicy, 'unsafe');
   assert.ok(d.engines.filter((e) => e.id !== 'claude.native').every((e) => e.managed.permissionPolicy === 'standard'));
   assert.deepEqual(d.cells, []);
   assert.ok(parseDefinitions(d));
-  assert.equal(CATALOG.filter((p) => p.default).length, 3);
+  assert.equal(CATALOG.filter((p) => p.default).length, 4);
+});
+
+test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P', () => {
+  const catalog = publicCatalog();
+  const ids = new Set(catalog.map((p) => p.id));
+  for (const id of [
+    'claude.native', 'claude.bedrock', 'claude.vertex', 'claude.foundry',
+    'claude.ollama-cloud', 'claude.ollama', 'claude.zai', 'claude.custom',
+    'codex.native', 'codex.openai-api', 'codex.ollama', 'codex.lmstudio',
+    'codex.ollama-cloud', 'codex.custom',
+    'codex-vl.native', 'codex-vl.openai-api', 'codex-vl.ollama',
+    'codex-vl.lmstudio', 'codex-vl.ollama-cloud', 'codex-vl.custom',
+    'pi.native', 'pi.anthropic', 'pi.openai', 'pi.openai-codex', 'pi.google',
+    'pi.github-copilot', 'pi.ollama', 'pi.openrouter', 'pi.deepseek', 'pi.zai', 'pi.custom',
+  ]) assert.equal(ids.has(id), true, `${id} deve essere nel catalogo base`);
+  assert.equal(ids.has('claude.zai-a'), false);
+  assert.equal(ids.has('claude.zai-p'), false);
+  assert.equal(ids.has('pi.fireworks'), false, 'provider Pi avanzati restano fuori dalla lista base');
+  assert.equal(catalog.find((p) => p.id === 'claude.zai').defaultEnvKey, 'ZAI_API_KEY');
 });
 
 test('managed matrix: Z.AI solo Claude; Ollama Cloud su entrambi', () => {
@@ -93,7 +114,10 @@ test('Ollama Direct: usa ollama.com + OLLAMA_API_KEY, mai localhost', () => {
       assert.equal(JSON.stringify(r).includes('localhost'), false);
       assert.equal(client === 'claude' ? r.engine.env.ANTHROPIC_AUTH_TOKEN : r.engine.env.OPENAI_API_KEY, 'ollama-secret');
       assert.ok(JSON.stringify(r.engine).includes('https://ollama.com'));
-      if (client === 'claude') assert.equal(r.engine.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, String(OLLAMA_CONTEXT['glm-5.2']));
+      if (client === 'claude') {
+        assert.equal(r.engine.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, String(OLLAMA_CONTEXT['glm-5.2']));
+        assert.equal(r.engine.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, String(OLLAMA_CONTEXT['glm-5.2']));
+      }
       else {
         assert.ok(r.engine.args.includes(`model_context_window=${OLLAMA_CONTEXT['glm-5.2']}`));
         assert.ok(r.engine.args.includes(`model_catalog_json="${catalog}"`));
@@ -115,6 +139,38 @@ test('Claude native onora rc:false', () => {
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
+test('Claude enterprise providers usano solo i flag ambiente documentati', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'claude');
+    for (const [provider, key] of [
+      ['bedrock', 'CLAUDE_CODE_USE_BEDROCK'],
+      ['vertex', 'CLAUDE_CODE_USE_VERTEX'],
+      ['foundry', 'CLAUDE_CODE_USE_FOUNDRY'],
+    ]) {
+      const r = resolveManagedEngine({ id: `claude.${provider}`, label: provider, managed: { client: 'claude', provider, model: '' } }, { id: 'Dev' }, { home });
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.engine.env, { [key]: '1' });
+      assert.equal(r.engine.args.includes('--dangerously-skip-permissions'), true);
+      assert.equal(Object.keys(r.engine.env).some((name) => name.startsWith('ANTHROPIC_')), false);
+    }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('OpenAI API usa OPENAI_API_KEY senza creare un provider compatibile', () => {
+  const home = tmp();
+  try {
+    for (const client of ['codex', 'codex-vl']) {
+      fakeClient(home, client);
+      const r = resolveManagedEngine({ id: `${client}.openai-api`, label: 'OpenAI API', managed: { client, provider: 'openai-api', model: 'gpt-5.4' } }, { id: 'Dev' }, { home, env: { OPENAI_API_KEY: 'secret' } });
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.engine.env, { OPENAI_API_KEY: 'secret' });
+      assert.deepEqual(r.engine.args, ['-m', 'gpt-5.4']);
+      assert.equal(JSON.stringify(r.info).includes('secret'), false);
+    }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
 test('Z.AI: config visibile, secret redatto, launch env interno', () => {
   const home = tmp();
   try {
@@ -132,6 +188,20 @@ test('Z.AI: config visibile, secret redatto, launch env interno', () => {
     assert.equal(r.engine.env.ANTHROPIC_AUTH_TOKEN, 'super-secret');
     assert.equal(r.engine.args.includes('--dangerously-skip-permissions'), true);
     assert.deepEqual(r.engine.args.slice(-2), ['--model', 'glm-5.2[1m]']);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Z.AI generico: nome variabile configurabile, valore solo da environment', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'claude');
+    const spec = normalizeManagedSpec({ client: 'claude', provider: 'zai', envKey: 'TEAM_ZAI_KEY', model: 'glm-5.2[1m]' });
+    assert.equal(spec.envKey, 'TEAM_ZAI_KEY');
+    const r = resolveManagedEngine({ id: 'claude.zai', label: 'Z.AI', managed: spec }, { id: 'Dev' }, { home, env: { TEAM_ZAI_KEY: 'secret' } });
+    assert.equal(r.ok, true);
+    assert.equal(r.engine.env.ANTHROPIC_AUTH_TOKEN, 'secret');
+    assert.equal(JSON.stringify(r.info).includes('secret'), false);
+    assert.equal(normalizeManagedSpec({ client: 'claude', provider: 'zai', envKey: 'bad-key', model: 'glm-5.2[1m]' }), null);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -161,6 +231,17 @@ test('adapter separati: codex, codex-vl e pi risolvono binari distinti', () => {
       assert.equal(r.ok, true);
       assert.equal(r.engine.command, bins[client]);
     }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Pi native usa la configurazione propria senza forzare provider o modello', () => {
+  const home = tmp();
+  try {
+    const bin = fakeClient(home, 'pi');
+    const r = resolveManagedEngine({ id: 'pi.native', label: 'Pi', managed: { client: 'pi', provider: 'native', model: '' } }, { id: 'Dev', prompt: 'bootstrap' }, { home });
+    assert.equal(r.ok, true);
+    assert.equal(r.engine.command, bin);
+    assert.deepEqual(r.engine.args, ['bootstrap']);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -264,4 +345,66 @@ test('providers.env con permessi group/world viene rifiutato', () => {
     const info = describeManaged({ client: 'claude', provider: 'ollama-cloud', model: 'glm-5.2' }, { home, providerSecretsPath: p, env: {} });
     assert.equal(info.configured, false);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+// --- Policy PER-CELL PER-ENGINE (override del default engine) -----------------
+// Mai si mutationa engine.managed.permissionPolicy (globale): l'override vive nella
+// cella. resolveManagedEngine usa l'override ricordato, col default dell'engine.
+
+test('policy per-cell: Claude override standard NON mette --dangerously-skip-permissions', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'claude');
+    const engine = { id: 'claude.native', label: 'Claude', managed: { client: 'claude', provider: 'native', model: '' } };
+    // default engine (claude) = unsafe -> flag presente, info.policy = unsafe
+    const def = resolveManagedEngine(engine, { id: 'Dev' }, { home });
+    assert.equal(def.ok, true);
+    assert.equal(def.engine.args.includes('--dangerously-skip-permissions'), true);
+    assert.equal(def.info.permissionPolicy, 'unsafe');
+    // override PER-CELL standard -> flag assente, policy effettiva standard
+    const std = resolveManagedEngine(engine, { id: 'Dev', permissionPolicies: { 'claude.native': 'standard' } }, { home });
+    assert.equal(std.engine.args.includes('--dangerously-skip-permissions'), false);
+    assert.equal(std.info.permissionPolicy, 'standard');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('policy per-cell: Codex-VL override unsafe mette bypass; standard no', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'codex-vl');
+    const engine = { id: 'codex-vl.native', label: 'Codex', managed: { client: 'codex-vl', provider: 'native', model: '' } };
+    const unsafe = resolveManagedEngine(engine, { id: 'Dev', permissionPolicies: { 'codex-vl.native': 'unsafe' } }, { home });
+    assert.equal(unsafe.engine.args.includes('--dangerously-bypass-approvals-and-sandbox'), true);
+    const std = resolveManagedEngine(engine, { id: 'Dev', permissionPolicies: { 'codex-vl.native': 'standard' } }, { home });
+    assert.equal(std.engine.args.includes('--dangerously-bypass-approvals-and-sandbox'), false);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('policy per-cell: Pi resta sempre standard anche con override unsafe', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'pi');
+    const engine = { id: 'pi.openrouter', label: 'Pi', managed: { client: 'pi', provider: 'openrouter', model: 'x' } };
+    const r = resolveManagedEngine(engine, { id: 'Dev', permissionPolicies: { 'pi.openrouter': 'unsafe' } }, { home, env: { OPENROUTER_API_KEY: 'k' } });
+    assert.equal(r.ok, true);
+    assert.equal(r.info.permissionPolicy, 'standard');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('parseDefinitions: permissionPolicies round-trip; valore non ammesso -> null', () => {
+  const ok = parseDefinitions({
+    schemaVersion: 1,
+    engines: [
+      { id: 'claude.native', label: 'C', managed: { client: 'claude', provider: 'native', model: '' } },
+      { id: 'codex.native', label: 'X', managed: { client: 'codex', provider: 'native', model: '' } },
+    ],
+    cells: [{ id: 'Dev', cwd: '/home', engine: 'claude.native', permissionPolicies: { 'claude.native': 'standard', 'codex.native': 'unsafe' } }],
+  });
+  assert.deepEqual(ok.cells[0].permissionPolicies, { 'claude.native': 'standard', 'codex.native': 'unsafe' });
+  // valore fuori standard|unsafe -> intero documento rifiutato (fail-closed)
+  assert.equal(parseDefinitions({
+    schemaVersion: 1,
+    engines: [{ id: 'c', managed: { client: 'claude', provider: 'native', model: '' } }],
+    cells: [{ id: 'D', cwd: '/h', engine: 'c', permissionPolicies: { c: 'yolo' } }],
+  }), null);
 });

@@ -2,6 +2,71 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.6 — 2026-07-12 — "Connected Fleet"
+
+- Cell power now opens one shared launch editor from Home, the sidebar and Settings. When a
+  cell is off, engine, model, permission policy and boot can be reviewed before every start;
+  choices are remembered per cell and per engine. Provider and credential definitions remain
+  in Settings → Fleet, while Pi is always constrained to Standard permissions.
+- Settings → Fleet now inventories managed and unmanaged tmux sessions across Local and every
+  reachable Hydra route. A live unmanaged session can be explicitly adopted as a managed cell;
+  legacy `cloud-X` sessions become cell `X`, and the operator must choose an already declared
+  engine so no provider or model is inferred.
+- Pairing links now support a strict v2 payload containing the display label, route slug,
+  OpenSSH target or Host alias, and optional SSH port. Paste, QR scan and first-run deep links
+  pre-fill the same form before **Test and connect**; v1 links remain compatible. No SSH key,
+  API key or PWA token is added to the link.
+- Fleet inventory actions now follow the selected Hydra route and its real capabilities,
+  including READONLY. Power, restart, import and removal are shown only where the remote
+  provider actually permits them.
+- External Fleet discovery is portable across Linux, macOS and Termux: configured paths,
+  `$PREFIX/bin/fleet` and `~/.local/bin/fleet` use the same runtime and boot-owner resolver.
+  Explicit external pins fail closed instead of falling through to another executable.
+- Claude-compatible managed launches set matching context and auto-compaction windows,
+  including one-million-token profiles where declared. Permission overrides cannot bypass
+  Pi's Standard-only policy.
+- Tests: **636 total** (635 pass / 1 platform-dependent skip), plus a clean production build
+  and zero production dependency vulnerabilities.
+
+## 0.8.5 — 2026-07-12 — "Clean Fleet"
+
+- The primary `+` now creates a managed Fleet cell on Local or a selected reachable Hydra
+  node. Cell IDs accept uppercase characters, and every configured node remains visible in
+  the Fleet inventory while unreachable destinations are clearly disabled for creation.
+- Managed cell cards expose direct power and Settings buttons. Start, stop, restart and edit
+  are explicit in Settings → Fleet; deletion is confined to that settings surface, removing
+  the ambiguous three-dot/delete-only lifecycle.
+- The power sheet is lifecycle-only and responsive: it no longer mixes engine/provider/model
+  selection into start/stop, and boot changes are persisted without resetting an existing
+  boot choice on quick start.
+- Fresh fleets provide four clean CLI adapters: Claude Code, Codex, Codex-VL and Pi. Provider
+  choices are scoped to the selected CLI, with documented native/cloud/local options and a
+  renameable custom fallback. Legacy Z.AI A/P credential profiles remain runtime-compatible
+  but are absent from the new-provider catalog.
+- Claude enterprise providers launch through their dedicated Bedrock, Vertex or Foundry
+  environment selectors; Codex OpenAI API uses `OPENAI_API_KEY`; Pi can use its own configured
+  default without NexusCrew forcing a provider or model.
+- Node pairing now focuses and explains missing fields and makes explicit that the loopback
+  address in a pairing link is intentional and transported through the user's SSH Host.
+- Tests: **602 total** (601 pass / 1 platform-dependent skip), plus a clean production build
+  and zero production dependency vulnerabilities.
+
+## 0.8.4 — 2026-07-12 — "Hydra Everywhere"
+
+- The fleet roster is global rather than active-only: local, direct and transitive sessions
+  remain visible with route/location labels, stable slugs and offline last-seen state.
+- Session creation and Fleet engine/cell management can target Local or any reachable Hydra
+  route. Remote lifecycle controls use route-qualified identity and inbound peer health is
+  verified instead of trusting a running tunnel process alone.
+- Node cards restore explicit tunnel power controls and expose label rename independently of
+  the stable route slug; pairing and capabilities remain relay-policy scoped.
+- macOS terminal copying now supports Shift-drag / Shift-Control-drag local selection and
+  mobile terminals support long-press then drag selection without sending mouse events to tmux.
+- The composer send button writes text plus a real carriage return and preserves textarea
+  focus, keeping the mobile software keyboard open between messages.
+- Linux x64/ARM64, macOS x64/ARM64 and Termux Android ARM64 now resolve scriptless platform
+  PTY prebuilds only. Global installs no longer require native install-script approval.
+
 ## 0.8.3 — 2026-07-12 — "Simple and Clean"
 
 - `nexuscrew` starts or reuses the loopback server in the background, prints a compact

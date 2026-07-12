@@ -33,6 +33,11 @@ function nodeStateLabel(g) {
   return '';
 }
 
+// Dot di salute dal model health (NO verde hardcoded): 'on' solo se probe 200;
+// degraded (401) / down / unknown -> 'warn' + titolo diagnostico.
+function healthDot(h) { if (!h) return null; return h.status === 'healthy' ? 'on' : 'warn'; }
+function healthTitle(h) { if (!h) return ''; return h.detail || h.status || ''; }
+
 // Sidebar presentazionale: mostra la flotta (celle) + le altre sessioni tmux
 // + i gruppi per-nodo remoto (B2, design §5). Il polling e le azioni sono del
 // genitore; qui solo render + callback.
@@ -158,7 +163,7 @@ export default function Sidebar({
               ><span className="nc-dot warn" /></button>
             )]))}
         </div>
-        <button className="nc-side-gear mini" onClick={onSettings} title={t('settings')}
+        <button className="nc-side-gear mini" onClick={() => onSettings && onSettings('nodes', false)} title={t('settings')}
           onMouseEnter={(e) => showTip(e, t('settings'))} onMouseLeave={hideTip}>
           <Icon name="gear" size={16} />
         </button>
@@ -172,7 +177,7 @@ export default function Sidebar({
       <div className="nc-side-head">
         <button className="nc-collapse-btn" onClick={onToggleCollapse} title={t('collapse')}>⟨</button>
         <span className="nc-side-title">{t('fleet')}</span>
-        <button className="nc-new-btn" onClick={onNew} title={t('new-session')}>+ {t('new')}</button>
+        <button className="nc-new-btn" onClick={onNew} title={t('fleet-new-cell')}>+ {t('new')}</button>
       </div>
 
       {(cells || []).length > 0 && (
@@ -215,7 +220,7 @@ export default function Sidebar({
       )}
 
       {/* Voce settings sotto il pannello FLEET (design §5, B2-UI). */}
-      <button className="nc-side-gear" onClick={onSettings} title={t('settings')}>
+      <button className="nc-side-gear" onClick={() => onSettings && onSettings('nodes', false)} title={t('settings')}>
         <Icon name="gear" size={15} /> {t('settings')}
       </button>
 
@@ -259,26 +264,60 @@ export default function Sidebar({
         {others.length === 0 && <div className="nc-empty">{t('no-sessions-short')}</div>}
       </div>
 
-      {/* Gruppi per-nodo remoto (B2, design §5): "phone · 2 sessioni" accanto
-          alle sessioni locali; tunnel giu' = gruppo degradato statico (§7). */}
-      {(nodeGroups || []).map((g) => (
+      {/* Gruppi per-nodo remoto (Hydra): per ogni posizione celle Fleet (attive e
+          inattive, draggabili se live) + tmux unmanaged. Salute dal probe federato
+          (NO verde hardcoded): 401/degraded -> warn + diagnostica. Power del tunnel
+          solo per nodi diretti gestibili; peer inbound non ha power fittizio. */}
+      {(nodeGroups || []).map((g) => {
+        const hd = healthDot(g.health);
+        const dotClass = hd || (g.status === 'up' ? 'on' : 'warn');
+        const nodeRoute = (g.route || [g.name]).join('/');
+        return (
         <div key={`nodo-${(g.route || [g.name]).join('/')}`}>
           <div className="nc-side-group-title nc-node-title">
-            <span className={`nc-dot ${g.status === 'up' ? 'on' : 'warn'}`} />
+            <span className={`nc-dot ${dotClass}`} title={g.health ? healthTitle(g.health) : ''} />
             <b>{g.label || g.name}</b>
             <small>
               {' · '}
               {g.status === 'up'
-                ? t('node-sessions').replace('{n}', String(g.sessions.length))
-                : nodeStateLabel(g)}
+                ? t('node-sessions').replace('{n}', String((g.cells || []).length + (g.unmanaged || []).length))
+                : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
             </small>
-            {g.direct && <button type="button" className={`nc-power${g.tunnelStatus === 'up' ? ' on' : ''}`}
-              title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}
-              onClick={() => onNodePower && onNodePower(g)}><Icon name="power" size={14} /></button>}
+            {g.direct && g.health && g.health.managed !== false && (
+              <button type="button" className={`nc-power${g.tunnelStatus === 'up' ? ' on' : ''}`}
+                title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}
+                onClick={() => onNodePower && onNodePower(g)}><Icon name="power" size={14} /></button>
+            )}
           </div>
           {g.status === 'up' && (
             <div className="nc-side-group">
-              {g.sessions.map((s) => (
+              {(g.cells || []).map((c) => {
+                const live = !!c.tmux;
+                const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
+                return (
+                  <div
+                    key={c.key}
+                    className={`nc-side-card nc-cell${live ? ' live' : ''}${active.has(c.key) ? ' active' : ''}`}
+                    title={c.active ? t('cell-on') : t('cell-off')}
+                    draggable={live}
+                    onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', c.key) : undefined}
+                    onClick={live ? () => onAddTile && onAddTile(c.key) : undefined}
+                    onDoubleClick={live ? () => onPick && onPick({ session: c.tmuxSession, node: nodeRoute }) : undefined}
+                  >
+                    <span className={`nc-dot ${dot}`} />
+                    <span className="nc-card-main">
+                      <b>{c.cell}</b>
+                      <small>{c.engine}{c.key ? `·${c.key}` : ''}{c.active ? '' : ` · ${t('cell-off')}`}</small>
+                    </span>
+                    {(g.capabilities || []).includes(c.active ? 'down' : 'up') && (
+                      <button className={`nc-power${c.active ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); onPower && onPower({ ...c, route: g.route, availableEngines: g.engines || [] }); }}
+                        title={c.active ? t('power-off') : t('power-on')}><Icon name="power" size={14} /></button>
+                    )}
+                  </div>
+                );
+              })}
+              {(g.unmanaged || []).map((s) => (
                 <div
                   key={s.key}
                   className={`nc-side-card${active.has(s.key) ? ' active' : ''}`}
@@ -303,11 +342,12 @@ export default function Sidebar({
                   }}>⋯</button>
                 </div>
               ))}
-              {g.sessions.length === 0 && <div className="nc-empty">{t('no-sessions-short')}</div>}
+              {(g.cells || []).length === 0 && (g.unmanaged || []).length === 0 && <div className="nc-empty">{t('no-sessions-short')}</div>}
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
 
       <div className="nc-side-lang">
         {LANGUAGES.map((lg, i) => (

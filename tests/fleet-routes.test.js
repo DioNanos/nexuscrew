@@ -11,11 +11,11 @@ const FAKE_TMUX = path.join(__dirname, 'fixtures', 'fake-tmux.sh');
 
 // fleet.json valido minimale per i test del provider BUILTIN. NON serve che il
 // command sia realmente lanciato: i test delle route define/edit/schema/501 non
-// fanno up. /bin/sh è path assoluto + regular file (trust verificato solo a up).
+// fanno up. Il fixture è un path assoluto, regular file e owner-executable.
 const BUILTIN_DEFS = {
   schemaVersion: 1,
   engines: [
-    { id: 'sh', label: 'Shell', command: '/bin/sh', args: ['-i'], promptMode: 'send-keys' },
+    { id: 'sh', label: 'Shell', command: FAKE_TMUX, args: ['-i'], promptMode: 'send-keys' },
   ],
   cells: [
     { id: 'Dev', cwd: os.homedir(), engine: 'sh', boot: false },
@@ -40,9 +40,10 @@ function boot(t, over = {}) {
 async function bootBuiltin(t, over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncflbi-'));
   const defsPath = path.join(dir, 'fleet.json');
-  fs.writeFileSync(defsPath, JSON.stringify(BUILTIN_DEFS), { mode: 0o600 });
+  const defs = { ...BUILTIN_DEFS, cells: BUILTIN_DEFS.cells.map((cell) => ({ ...cell, cwd: dir })) };
+  fs.writeFileSync(defsPath, JSON.stringify(defs), { mode: 0o600 });
   fs.chmodSync(defsPath, 0o600);
-  const r = await boot(t, { fleetProvider: 'builtin', fleetDefsPath: defsPath, ...over });
+  const r = await boot(t, { home: dir, fleetProvider: 'builtin', fleetDefsPath: defsPath, ...over });
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return r;
 }
@@ -78,13 +79,14 @@ test('fleet available: status celle, up ok, cella ignota 400, Bearer richiesto',
 
 // --- Provider BUILTIN (B4.2) ---
 
-test('builtin: /status espone provider="builtin" e capabilities con define', async (t) => {
+test('builtin: /status espone provider="builtin" e capabilities con define/import', async (t) => {
   const { base, token } = await bootBuiltin(t);
   const st = await (await fetch(`${base}/api/fleet/status`, { headers: H(token) })).json();
   assert.equal(st.available, true);
   assert.equal(st.provider, 'builtin');
   assert.equal(st.bootOwner, 'builtin');
   assert.equal(st.capabilities.includes('define'), true);
+  assert.equal(st.capabilities.includes('import'), true);
   assert.equal(st.capabilities.includes('schema'), true);
   assert.equal(st.engines.some((e) => e.id === 'sh'), true);
 });
@@ -104,7 +106,7 @@ test('builtin: /definitions espone campi editabili ma non env values', async (t)
   const r = await fetch(`${base}/api/fleet/definitions`, { headers: H(token) });
   assert.equal(r.status, 200);
   const d = await r.json();
-  assert.equal(d.engines[0].command, '/bin/sh');
+  assert.equal(d.engines[0].command, FAKE_TMUX);
   assert.deepEqual(d.engines[0].envKeys, []);
   assert.equal(d.engines[0].env, undefined);
   assert.equal(d.cells[0].id, 'Dev');
@@ -148,9 +150,36 @@ test('builtin: define/edit/remove cell+engine funzionano (copertura nuove route)
   assert.equal((await post('remove-engine', { id: 'sh' })).status, 400);
 });
 
+test('builtin lifecycle: up preserva boot se omesso; PowerSheet puo abilitarlo o rimuoverlo', async (t) => {
+  const { base, token } = await bootBuiltin(t);
+  const post = (route, body) => fetch(`${base}/api/fleet/${route}`, {
+    method: 'POST', headers: H(token), body: JSON.stringify(body),
+  });
+  const definitions = async () => (await fetch(`${base}/api/fleet/definitions`, { headers: H(token) })).json();
+
+  assert.equal((await post('edit-cell', { id: 'Dev', patch: { boot: true } })).status, 200);
+  const firstUp = await post('up', { cell: 'Dev' });
+  assert.equal(firstUp.status, 200, JSON.stringify(await firstUp.json()));
+  assert.equal((await definitions()).cells[0].boot, true, 'start rapido non modifica il boot esistente');
+  assert.equal((await post('down', { cell: 'Dev', boot: true })).status, 200);
+  assert.equal((await definitions()).cells[0].boot, false, 'togli anche dal boot persiste lo stato');
+  const secondUp = await post('up', { cell: 'Dev', boot: true });
+  assert.equal(secondUp.status, 200, JSON.stringify(await secondUp.json()));
+  assert.equal((await definitions()).cells[0].boot, true, 'avvia al boot persiste lo stato');
+});
+
 test('external legacy: /schema -> 501 (capability mancante, design 9c)', async (t) => {
   const { base, token } = await boot(t, { fleetBin: FAKE, fleetProvider: 'external' });
   const r = await fetch(`${base}/api/fleet/schema`, { headers: H(token) });
+  assert.equal(r.status, 501);
+  assert.match((await r.json()).error, /not supported/);
+});
+
+test('external legacy: /import-cell -> 501 (capability dedicata mancante)', async (t) => {
+  const { base, token } = await boot(t, { fleetBin: FAKE, fleetProvider: 'external' });
+  const r = await fetch(`${base}/api/fleet/import-cell`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ tmuxSession: 'legacy', engine: 'sh' }),
+  });
   assert.equal(r.status, 501);
   assert.match((await r.json()).error, /not supported/);
 });

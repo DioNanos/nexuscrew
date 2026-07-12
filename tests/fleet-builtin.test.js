@@ -284,6 +284,7 @@ test('READONLY (cfg): up/mutazioni 403; status/schema/capabilities ok', async ()
     await assert.rejects(() => fleet.engine('Dev', 'claude'), (e) => e.status === 403);
     await assert.rejects(() => fleet.boot('Dev', false), (e) => e.status === 403);
     await assert.rejects(() => fleet.defineEngine({ id: 'x', command: w.command, promptMode: 'flag', promptFlag: '--ps' }), (e) => e.status === 403);
+    await assert.rejects(() => fleet.importCell({ tmuxSession: 'legacy', engine: 'claude' }), (e) => e.status === 403);
     await assert.rejects(() => fleet.removeCell('Dev'), (e) => e.status === 403);
     const { lines } = readLog(w);
     assert.ok(!lines.some((l) => l.startsWith('new-session\t')), 'READONLY: nessun launch');
@@ -291,7 +292,7 @@ test('READONLY (cfg): up/mutazioni 403; status/schema/capabilities ok', async ()
     // letture pure passano
     const st = await fleet.status();
     assert.equal(st.available, true);
-    assert.equal(fleet.capabilities().length, 11);
+    assert.equal(fleet.capabilities().length, 12);
     assert.ok(fleet.schema().engine.command);
   } finally { w.cleanup(); }
 });
@@ -384,7 +385,8 @@ test('managed codex-vl.native: launcher interno, login nativo, fake tmux', async
     const view = fleet.definitions();
     assert.equal(view.engines[0].managedInfo.configured, true);
     assert.equal(view.engines[0].managedInfo.provider, 'native');
-    assert.ok(view.managedCatalog.some((p) => p.id === 'claude.zai-a'));
+    assert.ok(view.managedCatalog.some((p) => p.id === 'claude.zai'));
+    assert.equal(view.managedCatalog.some((p) => p.id === 'claude.zai-a' || p.id === 'claude.zai-p'), false);
     await fleet.up('Dev');
     const argv = readLog(w).nsArgv[0];
     assert.ok(argv.includes(bin));
@@ -456,7 +458,7 @@ test('capabilities e schema: superficie estesa del built-in', async () => {
   try {
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     assert.deepEqual(fleet.capabilities(),
-      ['status', 'up', 'down', 'restart', 'engine', 'boot', 'define', 'edit', 'remove', 'schema', 'definitions']);
+      ['status', 'up', 'down', 'restart', 'engine', 'boot', 'define', 'edit', 'remove', 'import', 'schema', 'definitions']);
     const sch = fleet.schema();
     assert.equal(sch.schemaVersion, 1);
     for (const f of ['id', 'label', 'rc', 'command', 'args', 'env', 'model', 'promptMode', 'promptFlag']) {

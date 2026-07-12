@@ -36,6 +36,7 @@ export default function ComposerBar({ send, token, session, node }) {
   const [serverStt, setServerStt] = useState(false);
   const recognitionRef = useRef(null);
   const mediaRef = useRef(null);
+  const textareaRef = useRef(null);
   // Tasto allegati (design 2026-07-10_attach_button_design.md): popover 3 voci
   // File/Fotocamera/Galleria; upload con paste=false, path appesi al testo.
   const [menuOpen, setMenuOpen] = useState(false);
@@ -72,6 +73,11 @@ export default function ComposerBar({ send, token, session, node }) {
     send(t);
     send(CR); // Invio esplicito, mai implicito nel testo incollato
     setText('');
+    // Il tap sul send non deve trasferire il focus al bottone: su mobile questo
+    // chiuderebbe l'IME dopo ogni invio. Il focus viene riaffermato anche dopo il
+    // render che svuota il testo, mantenendo la tastiera pronta per il messaggio
+    // successivo.
+    requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
   }
 
   // --- Allegati ---
@@ -225,13 +231,16 @@ export default function ComposerBar({ send, token, session, node }) {
         <input ref={galInputRef} type="file" accept="image/*,video/*" multiple hidden
           onChange={(e) => { uploadFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
         <textarea
+          ref={textareaRef}
           rows={2} value={text} placeholder={t('composer-placeholder')}
           onChange={(e) => setText(e.target.value)}
         />
         {micVisible && (
           <button className={rec ? 'mic on' : 'mic'} onClick={rec ? stopVoice : startVoice} title={t('voice')}><Icon name="mic" size={22} /></button>
         )}
-        <button className="go" onClick={submit} title={t('send')}><Icon name="enter" size={22} /></button>
+        <button type="button" className="go"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={submit} title={t('send')}><Icon name="enter" size={22} /></button>
       </div>
     </div>
   );

@@ -38,6 +38,7 @@ export const fleetRemoveEngine = (t, id, route) => jsonFetch(fleetPath(route, 'r
 export const fleetDefineCell = (t, def, route) => jsonFetch(fleetPath(route, 'define-cell'), t, { method: 'POST', body: { def } });
 export const fleetEditCell = (t, id, patch, route) => jsonFetch(fleetPath(route, 'edit-cell'), t, { method: 'POST', body: { id, patch } });
 export const fleetRemoveCell = (t, id, stop = false, route) => jsonFetch(fleetPath(route, 'remove-cell'), t, { method: 'POST', body: { id, stop } });
+export const fleetImportCell = (t, b, route) => jsonFetch(fleetPath(route, 'import-cell'), t, { method: 'POST', body: b });
 export const createSession = (t, b, route) => jsonFetch(`${routeBase(route)}/sessions`, t, { method: 'POST', body: b });
 export const killSession = (t, name, route) => jsonFetch(`${routeBase(route)}/sessions/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
 export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs${p ? `?path=${encodeURIComponent(p)}` : ''}`, t);
@@ -56,7 +57,8 @@ export const saveConfig = (t, b) => jsonFetch('/api/settings/config', t, { metho
 export const rotateToken = (t) => jsonFetch('/api/settings/token/rotate', t, { method: 'POST' });
 export const addNode = (t, b) => jsonFetch('/api/settings/nodes', t, { method: 'POST', body: b });
 export const pairNode = (t, b) => jsonFetch('/api/settings/nodes/pair', t, { method: 'POST', body: b });
-export const createPeerInvite = (t) => jsonFetch('/api/settings/peering/invite', t, { method: 'POST' });
+export const createPeerInvite = (t, body) => jsonFetch('/api/settings/peering/invite', t, { method: 'POST', body: body || {} });
+export const renameNodeLabel = (t, name, label) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/label`, t, { method: 'PATCH', body: { label } });
 export const removeNode = (t, name) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
 // action ∈ {test, up, down, restart} — stringhe fisse dal chiamante, mai input utente.
 export const nodeAction = (t, name, action) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/${action}`, t, { method: 'POST' });
