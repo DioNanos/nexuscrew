@@ -16,7 +16,7 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 
 ---
 
-## What it is (v0.8.6 "Connected Fleet")
+## What it is (v0.8.7 "One-Link Pairing")
 
 - Runs a small server on the host where your tmux sessions live.
 - Each attach spawns a real PTY running `tmux attach` and bridges its bytes over a WebSocket
@@ -31,8 +31,11 @@ panes, windows. tmux does the work; the browser is just a faithful client.
   configuration you already control and see local, direct, and relayed tmux fleets in one UI.
   Route labels show where every session lives; creation, attach, files, lifecycle and Fleet
   management use the selected location through a scoped single-origin route.
+- **One-link node pairing**: paste a link or scan its QR in Settings → Nodes. A complete
+  link tests SSH, exchanges the one-time invitation, confirms both directions and verifies
+  the peer automatically; failures identify the exact connection stage.
 - **Settings and wizard**: manage roles, nodes, token rotation, and service regeneration
-  from the UI; a skippable first-run wizard guides initial setup.
+  from the UI; the first-run wizard uses the same pairing flow as Settings.
 - **Cell lifecycle from the UI**: the primary `+` creates a managed Fleet cell at Local or
   any reachable node. Power opens one shared launch sheet where engine, model, permission
   policy and boot can be reviewed before every start; deletion lives in Settings → Fleet.
@@ -59,12 +62,12 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 The **Fleet Deck** desktop grid (≥1024px): drag sessions into a tiling layout — live
 terminals side by side, each a real PTY streamed to the browser.
 
-| Mobile home | Attached session |
-|:---:|:---:|
-| <img src="docs/img/fleet-deck.gif" width="300" alt="NexusCrew mobile home: the tmux fleet with live cards, cursor blinking"> | <img src="docs/img/session-window.png" width="300" alt="A tmux session attached in the browser over a real PTY"> |
+<p align="center">
+  <img src="docs/img/fleet-mobile.png" width="420" alt="NexusCrew mobile Fleet overview with managed AI cells and direct power controls">
+</p>
 
-The mobile home lists your tmux fleet with live cards; tapping a session attaches it
-over a real PTY. On the right, a `codex-vl` session running inside the browser client.
+The mobile Fleet overview keeps managed cells, current engines, activity and direct power
+controls in one place. Tapping a live session still attaches through a real PTY.
 
 ## Fleet integration
 
@@ -157,12 +160,21 @@ token travels in the URL **fragment** (`#token=…`), so it never reaches the se
 
 ## Federated Hydra nodes (configured from the PWA)
 
-Every installation is always the local node and can join other NexusCrew nodes. Open
-**Settings → Nodes** and create a ten-minute pairing link/QR. The creator supplies the
-OpenSSH target or Host alias through which that installation is reachable; the v2 link carries
-that routing information, its display label, route slug and optional SSH port. Paste or scan the
-single link on the other device, review the pre-filled fields, then choose **Test and connect**.
-Older v1 links remain accepted and simply require the missing routing fields to be entered.
+Every installation is always the local node and can join other NexusCrew nodes. The normal
+flow stays entirely in the PWA:
+
+1. On the installation being shared, open **Settings → Nodes → Invite a node**. Enter the
+   OpenSSH target or Host alias that the *other device* uses to reach this installation, then
+   create the ten-minute link/QR.
+2. On the other device, open its own NexusCrew PWA (`nexuscrew show`), go to
+   **Settings → Nodes**, and use the first card, **Connect with one link**. Paste the complete
+   link in the prominent field or scan the QR. Do not navigate to the loopback address in the
+   link: it is only a portable container for the pairing payload.
+3. A complete v2 link connects automatically. NexusCrew starts a provisional SSH forward,
+   checks transport readiness, consumes the one-time invite once, negotiates the reciprocal
+   path, confirms it, and verifies authenticated federation health and peer identity. If a
+   stage fails, the PWA preserves the link and shows the exact stage, detail and safe retry
+   guidance. Older v1 links remain accepted and open only the missing routing fields.
 
 The link never contains an SSH key, identity file, API key or PWA token. Its only credential is
 the random, one-time pairing invite; SSH routing fields are non-secret configuration. A
@@ -323,7 +335,7 @@ node bin/nexuscrew.js serve
 
 ## Status
 
-The current stable release is **v0.8.6**, published on npm under the **`latest`** dist-tag.
+The current stable release is **v0.8.7**, published on npm under the **`latest`** dist-tag.
 
 ## License
 

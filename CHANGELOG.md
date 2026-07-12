@@ -2,6 +2,27 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.7 — 2026-07-12 — "One-Link Pairing"
+
+- Settings → Nodes and the first-run wizard now share one prominent **Connect with one link**
+  card. Deliberate paste, the clipboard button, QR scan and deep links use the same controller;
+  a complete v2 link connects automatically, while old or incomplete links reveal only the
+  routing details still required.
+- The QR flow now opens a live rear-camera scanner with distinct permission, no-camera and
+  unsupported-browser errors plus a photo fallback. Its scan region covers the QR instead of
+  cropping a code that fills the phone preview, and every success, cancel or unmount releases
+  the camera immediately.
+- Pairing reports structured validation, SSH start/readiness, invite exchange, final tunnel,
+  confirmation and health stages. Transport and protocol requests are bounded, ambiguous
+  one-time joins are never replayed, provisional state is rolled back, and success requires
+  authenticated federation health plus an identity match with the original link.
+- Retry controls now follow the server's actual retryability, manual Enter applies embedded v2
+  fields before submission, and the wizard cannot be dismissed while a pairing request is in
+  flight.
+- Tests: **660 total** (659 pass / 1 platform-dependent skip), production dependency audit
+  clean, plus a real Chrome camera smoke that reads a generated pairing QR, enters the shared
+  card and verifies MediaStream cleanup.
+
 ## 0.8.6 — 2026-07-12 — "Connected Fleet"
 
 - Cell power now opens one shared launch editor from Home, the sidebar and Settings. When a

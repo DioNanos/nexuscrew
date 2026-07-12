@@ -1,0 +1,33 @@
+/* Ricevitore "collega con un solo link": card prominente in Impostazioni → Nodi
+   e nel wizard. L'input è l'elemento primario; i campi avanzati stanno chiusi. */
+.nc-pair-card {
+  border: 1px solid #2f5;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(34, 255, 85, 0.08);
+}
+.nc-pair-input {
+  width: 100%; min-width: 0; box-sizing: border-box;
+  font-size: 15px; padding: 10px;
+}
+.nc-pair-actions {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+}
+.nc-pair-status { min-height: 1em; }
+.nc-pair-progress {
+  color: #9f9;
+  animation: nc-pair-pulse 1.2s ease-in-out infinite;
+}
+@keyframes nc-pair-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+.nc-pair-hint { opacity: 0.85; margin-top: 4px; font-size: 12px; }
+.nc-pair-notice { display: block; }
+.nc-pair-advanced-toggle { align-self: flex-start; }
+.nc-pair-advanced { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+/* Modale scanner QR live */
+.nc-qr-overlay { z-index: 80; }
+.nc-qr-modal { max-width: min(480px, calc(100vw - 32px)); width: 100%; }
+.nc-qr-video {
+  width: 100%; max-height: 60dvh; border-radius: 6px;
+  background: #000; object-fit: cover;
+}
+.nc-qr-upload { display: inline-flex; align-items: center; cursor: pointer; }

@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import QrScanner from 'qr-scanner';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import {
   apiFetch, getSettings, getNodes, saveConfig, rotateToken,
-  removeNode, nodeAction, setNodeRole, regenService, pairNode, createPeerInvite, setNodeVisibility, renameNodeLabel,
+  removeNode, nodeAction, setNodeRole, regenService, createPeerInvite, setNodeVisibility, renameNodeLabel,
 } from '../lib/api.js';
-import { validateNodeForm, validateRendezvousForm, tunnelInfo, toSlug, isValidLabel, decodePairingForm, mergePairingIntoForm } from '../lib/settings-model.js';
+import { validateNodeForm, validateRendezvousForm, tunnelInfo, toSlug, isValidLabel } from '../lib/settings-model.js';
+import PairingCard from './PairingCard.jsx';
 import { getPushState, subscribePush, unsubscribePush } from '../lib/push.js';
 import Icon from './Icon.jsx';
 import FleetTab from './FleetTab.jsx';
@@ -136,13 +136,6 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);        // `${name}:${action}` in corso
   const [testResult, setTestResult] = useState({}); // name -> {ok, result, detail}
-  const [form, setForm] = useState({ name: '', label: '', ssh: '', sshPort: '', pairingUrl: '', localLabel: '' });
-  const [formErr, setFormErr] = useState(null);
-  const nameRef = useRef(null);
-  const sshRef = useRef(null);
-  const pairingRef = useRef(null);
-  const touchedRef = useRef(new Set());
-  const [nameEdited, setNameEdited] = useState(false);
   const [invite, setInvite] = useState(null);
   const [inviteForm, setInviteForm] = useState({ ssh: '', sshPort: '', name: '' });
   const [devName, setDevName] = useState('');
@@ -167,65 +160,6 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
     setBusy(null);
   };
 
-  // label (display, es "Home Relay") -> slug (routing, "home-relay") derivato automaticamente
-  // finché l'utente non edita lo slug a mano. Così l'utente scrive in chiaro e
-  // il routing resta safe (segmento path/proxy). Backward-compat: name rimane lo
-  // slug valido richiesto dal backend; label è opzionale (fallback a name).
-  const onLabel = (v) => { touchedRef.current.add('label'); setForm((f) => ({ ...f, label: v, name: nameEdited ? f.name : toSlug(v) })); };
-  const onName = (v) => { touchedRef.current.add('name'); setNameEdited(true); setForm((f) => ({ ...f, name: v ? toSlug(v) : '' })); };
-  const onSsh = (v) => { touchedRef.current.add('ssh'); setForm((f) => ({ ...f, ssh: v })); };
-  const onSshPort = (v) => { touchedRef.current.add('sshPort'); setForm((f) => ({ ...f, sshPort: v })); };
-
-  // Un solo link basta: incolla/scansione/deep-link decodificano v1/v2 e precompilano
-  // label/slug/ssh/sshPort (v2) o solo label (v1), conservando le modifiche manuali.
-  const applyPairing = (url) => {
-    setForm((f) => ({ ...f, pairingUrl: url }));
-    const decoded = decodePairingForm(url);
-    if (!decoded.ok) return;
-    setForm((f) => {
-      const merged = mergePairingIntoForm(f, decoded, touchedRef.current);
-      // se il link porta uno slug e l'utente non ha editato name, usalo (e deriva label se vuota)
-      if (decoded.version === 2 && decoded.name && !touchedRef.current.has('name') && !nameEdited) {
-        merged.name = decoded.name;
-      }
-      if (!touchedRef.current.has('label') && !merged.label && decoded.label) merged.label = decoded.label;
-      return merged;
-    });
-  };
-
-  const onAdd = async () => {
-    setFormErr(null);
-    const missing = !form.name ? nameRef : !form.ssh ? sshRef : !form.pairingUrl ? pairingRef : null;
-    if (missing) {
-      setFormErr(t('pairing-required'));
-      requestAnimationFrame(() => {
-        missing.current?.focus({ preventScroll: true });
-        missing.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      });
-      return;
-    }
-    if (form.label && !isValidLabel(form.label)) return setFormErr(t('err-label'));
-    if (form.localLabel && !isValidLabel(form.localLabel)) return setFormErr(t('err-label'));
-    setBusy('add');
-    try {
-      // /nodes/pair fa gia' provisional tunnel + join + confirm + rollback locale/remoto:
-      // è il "Testa e collega". Su errore il form resta popolato e mostriamo la causa.
-      const body = {
-        name: form.name, ssh: form.ssh, pairingUrl: form.pairingUrl,
-        ...(form.label ? { label: form.label } : {}),
-        ...(form.sshPort ? { sshPort: Number(form.sshPort) } : {}),
-        localLabel: form.localLabel || deviceDefault,
-      };
-      await pairNode(token, body);
-      setForm({ name: '', label: '', ssh: '', sshPort: '', pairingUrl: '', localLabel: '' });
-      touchedRef.current = new Set();
-      setFormErr(null);
-      setNameEdited(false);
-      await refresh();
-    } catch (e) { setFormErr(String(e.message || e)); }
-    setBusy(null);
-  };
-
   const onCreateInvite = async () => {
     setErr(null);
     const name = toSlug(inviteForm.name || devName || deviceDefault || 'NexusCrew');
@@ -245,6 +179,9 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
 
   return (
     <div className="nc-set-tab">
+      {/* Percorso normale del ricevente: UNA card, UN link. I campi avanzati
+          (name/label/SSH/porta/etichetta locale) vivono dentro la card, chiusi. */}
+      <PairingCard token={token} deviceDefault={deviceDefault} readonly={readonly} onSuccess={refresh} />
       {(nodes || []).length === 0 && <div className="nc-empty">{t('no-nodes')}</div>}
       {(nodes || []).map((n) => {
         const ti = tunnelInfo(n.tunnel, now);
@@ -310,45 +247,6 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
       })}
 
       <div className="nc-set-form">
-        <div className="nc-sheet-label">{t('node-add')}</div>
-        <div className="nc-set-info">{t('pairing-connect-help')}</div>
-        <label className="nc-field">{t('node-display-label')}
-          <input placeholder="Home Relay" value={form.label} disabled={readonly}
-            onChange={(e) => onLabel(e.target.value)} />
-        </label>
-        <label className="nc-field">{t('node-name-label')}
-          <input ref={nameRef} required placeholder={t('node-name-ph')} value={form.name} disabled={readonly}
-            onChange={(e) => onName(e.target.value)} />
-        </label>
-        <small className="nc-set-hint">{t('node-slug-hint').replace('{slug}', form.name || 'home-relay')}</small>
-        <label className="nc-field">{t('node-ssh-label')}
-          <input ref={sshRef} required placeholder="my-relay" value={form.ssh} disabled={readonly}
-            onChange={(e) => onSsh(e.target.value)} />
-        </label>
-        <label className="nc-field">{t('node-ssh-port-label')}
-          <input inputMode="numeric" placeholder={t('node-ssh-port-help')} value={form.sshPort} disabled={readonly}
-            onChange={(e) => onSshPort(e.target.value.replace(/[^0-9]/g, '').slice(0, 5))} />
-        </label>
-        <label className="nc-field">{t('device-name-label')}
-          <input placeholder={deviceDefault || 'NexusCrew'} value={form.localLabel} disabled={readonly}
-            onChange={(e) => setForm({ ...form, localLabel: e.target.value })} />
-          <small className="nc-set-hint">{t('device-name-hint')}</small>
-        </label>
-        <label className="nc-field">{t('pairing-link')}
-          <input ref={pairingRef} required placeholder="http://127.0.0.1:…/#pair=…" value={form.pairingUrl} disabled={readonly}
-            onChange={(e) => applyPairing(e.target.value)} />
-          <small className="nc-set-hint">{t('pairing-v2-hint')}</small>
-          <input id="nc-pair-scan" type="file" accept="image/*" capture="environment" hidden
-            onChange={async (e) => { const f = e.target.files && e.target.files[0]; if (!f) return; try { const x = await QrScanner.scanImage(f); applyPairing(x); } catch (_) { setErr(t('pairing-qr-invalid')); } e.target.value = ''; }} />
-          <button type="button" className="nc-btn ghost" onClick={() => document.getElementById('nc-pair-scan')?.click()}>{t('scan-qr')}</button>
-        </label>
-        {formErr && <div className="nc-err" role="alert">{formErr}</div>}
-        <div className="nc-sheet-actions">
-          <button type="button" className="nc-btn primary" disabled={readonly || busy === 'add'}
-            title={readonly ? t('settings-readonly') : ''} onClick={onAdd}>{t('test-and-connect')}</button>
-        </div>
-      </div>
-      <div className="nc-set-form">
         <div className="nc-sheet-label">{t('invite-node')}</div>
         <small className="nc-set-hint">{t('invite-v2-hint')}</small>
         <label className="nc-field">{t('device-name-label')}
@@ -375,7 +273,13 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
           onClick={onCreateInvite}>
           {t('create-pairing-link')}
         </button>
-        {invite && <><PairingQr value={invite.pairingUrl} /><CopyLine text={invite.pairingUrl} /></>}
+        {invite && <>
+          <PairingQr value={invite.pairingUrl} />
+          <CopyLine text={invite.pairingUrl} />
+          {/* Il link è un contenitore del payload #pair (base 127.0.0.1 del
+              creatore): sull'altro dispositivo si INCOLLA/SCANSIONA, non si apre. */}
+          <div className="nc-set-info">{t('invite-next-steps')}</div>
+        </>}
       </div>
       {err && <div className="nc-err">{err}</div>}
     </div>
