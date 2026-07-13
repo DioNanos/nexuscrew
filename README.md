@@ -16,7 +16,7 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 
 ---
 
-## What it is (v0.8.10 "Hydra Federation")
+## What it is (v0.8.11 "Tmux Survival")
 
 - Runs a small server on the host where your tmux sessions live.
 - Each attach spawns a real PTY running `tmux attach` and bridges its bytes over a WebSocket
@@ -26,7 +26,8 @@ panes, windows. tmux does the work; the browser is just a faithful client.
   Tiles attach with `ignore-size` so they never resize your real terminals.
 - **Ordered Fleet roster**: local and remote locations are independently collapsible and
   filterable by all, pinned, active, or off. The desktop chrome stays fixed while the roster
-  scrolls; the mobile header stays visible above its own touch-scrolling list.
+  scrolls; the mobile header stays visible above its own touch-scrolling list, and the compact
+  version/endpoint/language footer remains readable on narrow screens.
 - **Attached decks by default**: named workspaces switch as tabs inside the same PWA without
   reloading terminals or losing a pending layout save. Use `↗` only when you want to detach a
   deck into another browser window or monitor.
@@ -65,7 +66,8 @@ panes, windows. tmux does the work; the browser is just a faithful client.
   inserts the saved paths without submitting Enter; ordinary text paste is unchanged.
 - **Safe npm auto-update**: global installs follow stable npm `latest` without downgrades,
   serialize installation across processes, verify the restarted runtime and roll back once
-  to the exact previous version if the new server does not become healthy.
+  to the exact previous version if the new server does not become healthy. On Linux, stopping
+  or restarting the HTTP service preserves the independent shared tmux server and every session.
 - **Universal**: a PTY is a PTY — a coding agent, a REPL, a plain shell, anything tmux holds.
 
 ## Screenshots
@@ -276,8 +278,8 @@ nexuscrew                 # background start; opens only on first run
 nexuscrew show            # background start when needed + open the authenticated PWA
 nexuscrew show token      # print the clickable authenticated URL; do not open a browser
 nexuscrew status          # compact service, port and hub-connection state
-nexuscrew stop            # stop server and every NexusCrew-managed SSH supervisor
-nexuscrew restart         # restart server; restore only autostart-enabled hub links
+nexuscrew stop            # stop server/tunnels; preserve every tmux session
+nexuscrew restart         # restart server safely; restore autostart hub links, preserve tmux
 nexuscrew boot            # opt in to startup persistence
 nexuscrew boot off        # disable startup persistence, keep the current run alive
 ```
@@ -302,6 +304,11 @@ restarts once; that failed version is then blocked from automatic retry. The upd
 accepts a prerelease from `latest`, never downgrades, and redacts registry credentials and local
 paths from PWA errors. Its current state and manual check/apply controls live in Settings →
 System. Set `NEXUSCREW_AUTO_UPDATE=0` (or `false`, `no`, `off`) to disable scheduling.
+
+On Linux, the installed service uses `KillMode=process`: service lifecycle affects NexusCrew,
+not the shared tmux server. Existing units are protected by an atomic drop-in before any CLI or
+auto-update restart; if systemd cannot apply that guard, the restart fails closed. `nexuscrew
+doctor` reports the effective runtime `KillMode`.
 
 ## CLI
 
@@ -384,14 +391,14 @@ holding.** On a screen smaller than the session you'll see a clipped view (expec
 ## Develop
 
 ```bash
-npm test            # node --test (config, tmux list, pty attach smoke, ws bridge, token)
+npm test            # node --test on a private tmux socket (never the operator's server)
 npm run build       # builds the frontend into frontend/dist
 node bin/nexuscrew.js serve
 ```
 
 ## Status
 
-The current stable release is **v0.8.10**. npm **`latest`**, the GitHub tag and the release
+The current release candidate is **v0.8.11**. npm **`latest`**, the GitHub tag and the release
 assets are promoted from the same verified artifact.
 
 ## License

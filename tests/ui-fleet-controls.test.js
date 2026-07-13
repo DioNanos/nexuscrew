@@ -25,6 +25,16 @@ test('mobile Fleet keeps its header fixed and scrolls only the roster', () => {
   assert.match(css, /\.nc-home-scroll\s*\{[^}]*padding:[^;}]*76px/s);
 });
 
+test('mobile Fleet footer aligns metadata and language controls without overlap', () => {
+  const mobile = read('SessionList.jsx');
+  const css = read('SessionList.css');
+  assert.match(mobile, /<span className="nc-home-meta">[\s\S]*?nc-home-version[\s\S]*?nc-home-endpoint/);
+  assert.match(mobile, /<span className="nc-lang"[\s\S]*?LANGUAGES\.map/);
+  assert.match(css, /\.nc-home-foot\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/s);
+  assert.match(css, /\.nc-home-endpoint\s*\{[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/s);
+  assert.match(css, /\.nc-lang\s*\{[^}]*white-space:\s*nowrap/s);
+});
+
 // Launch editor CONDIVISO: "Avvia" dalla lista celle e dalla card inventory apre
 // lo STESSO PowerSheet (non fleetUp diretto). fleetUp resta, ma nel confirm.
 test('managed Fleet start opens the shared launch PowerSheet (no direct fleetUp on start)', () => {

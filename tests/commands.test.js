@@ -59,7 +59,7 @@ test('dispatch: help -> code 0, stampa HELP', () => {
   assert.ok(long.join('\n').includes('nexuscrew show'));
   const version = [];
   assert.equal(dispatch(['--version'], { log: (m) => version.push(m) }).code, 0);
-  assert.equal(version[0], '0.8.10');
+  assert.equal(version[0], '0.8.11');
   assert.equal(dispatch(['--bogus'], { log: () => {} }).code, 1);
 });
 
@@ -227,12 +227,83 @@ test('dispatch: status, stop and restart are public lifecycle commands', () => {
   const logs = [];
   const execImpl = (_bin, args) => args.includes('is-active') ? 'active' : '';
   assert.equal(dispatch(['status'], { home, platform: 'linux', execImpl, log: (x) => logs.push(x) }).code, 0);
-  assert.equal(dispatch(['stop'], { home, platform: 'linux', execImpl, log: (x) => logs.push(x) }).code, 0);
-  assert.equal(dispatch(['restart'], { home, platform: 'linux', execImpl, log: (x) => logs.push(x) }).code, 0);
+  const lifecycle = { home, platform: 'linux', execImpl, ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }), log: (x) => logs.push(x) };
+  assert.equal(dispatch(['stop'], lifecycle).code, 0);
+  assert.equal(dispatch(['restart'], lifecycle).code, 0);
   assert.match(logs.join('\n'), /running:/);
   assert.match(logs.join('\n'), /systemctl --user stop nexuscrew/);
   assert.match(logs.join('\n'), /systemctl --user restart nexuscrew/);
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('managed stop/restart protect tmux before systemd and restart closes managed tunnels', () => {
+  const { home } = initHome();
+  const stopEvents = [];
+  const stopResult = stop({
+    home, platform: 'linux', log: () => {},
+    execImpl: (_bin, args) => args.includes('is-active') ? 'active' : '',
+    ensureTmuxSurvivalImpl: () => stopEvents.push('protect'),
+    stopTunnelsImpl: () => stopEvents.push('tunnels'),
+  });
+  assert.equal(stopResult.stopped, true);
+  assert.deepEqual(stopEvents, ['protect', 'tunnels']);
+
+  const restartEvents = [];
+  const restartResult = restart({
+    home, platform: 'linux', log: () => {},
+    execImpl: (_bin, args) => {
+      if (args.includes('is-active')) return 'active';
+      if (args.includes('restart')) restartEvents.push('restart');
+      return '';
+    },
+    ensureTmuxSurvivalImpl: () => restartEvents.push('protect'),
+    stopTunnelsImpl: () => restartEvents.push('tunnels'),
+  });
+  assert.equal(restartResult.restarted, true);
+  assert.deepEqual(restartEvents, ['protect', 'tunnels', 'restart']);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('managed restart fails closed when tmux survival protection cannot be installed', () => {
+  const { home } = initHome();
+  const calls = [];
+  const result = restart({
+    home, platform: 'linux', log: () => {}, stopTunnelsImpl: () => calls.push('tunnels'),
+    execImpl: (_bin, args) => {
+      if (args.includes('is-active')) return 'active';
+      if (args.includes('restart')) calls.push('restart');
+      return '';
+    },
+    ensureTmuxSurvivalImpl: () => { throw new Error('drop-in denied'); },
+  });
+  assert.equal(result.restarted, false);
+  assert.match(result.reason, /drop-in denied/);
+  assert.deepEqual(calls, []);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('managed stop/restart guard failure leaves portable owner and tunnels untouched', async (t) => {
+  const { home } = initHome();
+  const { child } = portableFixture(home);
+  t.after(() => { try { child.kill('SIGKILL'); } catch (_) {} fs.rmSync(home, { recursive: true, force: true }); });
+  for (const action of [stop, restart]) {
+    const mutations = [];
+    const result = action({
+      home, platform: 'linux', log: () => {},
+      execImpl: (_bin, args) => {
+        if (args.includes('is-active')) return 'active';
+        mutations.push(args[2] || args[0]);
+        return '';
+      },
+      ensureTmuxSurvivalImpl: () => { throw new Error('unsafe KillMode'); },
+      stopPortableImpl: () => { mutations.push('portable'); return { killed: true, pid: child.pid }; },
+      stopTunnelsImpl: () => mutations.push('tunnels'),
+    });
+    assert.equal(action === stop ? result.stopped : result.restarted, false);
+    assert.match(result.reason, /unsafe KillMode/);
+    assert.deepEqual(mutations, []);
+    assert.equal(pidf.pidExists(child.pid), true);
+  }
 });
 
 // --- dispatch init (tmpdir, dry-run) ---
@@ -322,6 +393,7 @@ test('stop linux: systemctl --user stop (mock)', () => {
   const r = stop({
     platform: 'linux',
     execImpl: (b, a) => { calls.push([b, a]); return a.includes('is-active') ? 'active' : ''; },
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
     stopTunnelsImpl: () => { tunnelsStopped += 1; }, log: () => {},
   });
   assert.equal(r.stopped, true);
@@ -330,6 +402,7 @@ test('stop linux: systemctl --user stop (mock)', () => {
   const failed = stop({
     platform: 'linux',
     execImpl: (_b, a) => { if (a.includes('is-active')) return 'active'; throw new Error('unit missing'); },
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
     stopTunnelsImpl: () => { tunnelsStopped += 1; }, log: () => {},
   });
   assert.equal(failed.stopped, false);
@@ -436,6 +509,7 @@ test('restart portable usa lo stesso owner; un conflitto viene ricondotto al man
   const conflict = restart({
     home, platform: 'linux', log: () => {}, stopTunnelsImpl: () => {},
     execImpl: (bin, args) => { calls.push([bin, args]); return args.includes('is-active') ? 'active' : ''; },
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
   });
   assert.equal(conflict.owner, 'conflict');
   assert.equal(conflict.runtimeOwner, 'managed');
@@ -531,8 +605,44 @@ test('token rotate: service attivo -> restart (invalidazione reale)', () => {
   tokenRotate({
     home, platform: 'linux', log: () => {},
     execImpl: (b, a) => { calls.push([b, a]); return (a && a.includes('is-active')) ? 'active' : ''; },
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
   });
   assert.ok(calls.some((c) => c[0] === 'systemctl' && c[1].includes('restart')));
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('token rotate: guard failure happens before the token is changed', () => {
+  const { home, token: oldToken } = initHome();
+  const logs = [];
+  const result = tokenRotate({
+    home, platform: 'linux', log: (line) => logs.push(line),
+    execImpl: (_bin, args) => args.includes('is-active') ? 'active' : '',
+    ensureTmuxSurvivalImpl: () => { throw new Error('unsafe KillMode'); },
+    restartImpl: () => { throw new Error('must not restart'); },
+  });
+  assert.equal(result.rotated, false);
+  assert.equal(result.tokenWritten, false);
+  assert.equal(result.restarted, false);
+  assert.equal(fs.readFileSync(path.join(home, '.nexuscrew', 'token'), 'utf8').trim(), oldToken);
+  assert.match(logs.join('\n'), /annullata/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('token rotate: restart failure reports an incomplete rotation without false invalidation claim', () => {
+  const { home, token: oldToken } = initHome();
+  const logs = [];
+  const result = tokenRotate({
+    home, platform: 'linux', log: (line) => logs.push(line),
+    execImpl: (_bin, args) => args.includes('is-active') ? 'active' : '',
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
+    restartImpl: () => ({ restarted: false, reason: 'health check failed' }),
+  });
+  assert.equal(result.rotated, false);
+  assert.equal(result.tokenWritten, true);
+  assert.equal(result.restarted, false);
+  assert.notEqual(fs.readFileSync(path.join(home, '.nexuscrew', 'token'), 'utf8').trim(), oldToken);
+  assert.match(logs.join('\n'), /INCOMPLETA/);
+  assert.doesNotMatch(logs.join('\n'), /vecchio token invalidato \(401\)/);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -593,6 +703,7 @@ test('doctor: tutto ok -> code 0', () => {
     execImpl: (b, a) => {
       if (a && a.includes('is-active')) return 'active';
       if (a && a.includes('is-enabled')) return 'enabled';
+      if (a && a.includes('--property=KillMode')) return 'process';
       return '';
     },
     ptyLoad: () => ({ spawn() {} }),
@@ -617,11 +728,32 @@ test('doctor: tmux mancante -> code 1', () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test('doctor: KillMode control-group e un blocker perche il restart uccide tmux', () => {
+  const { home } = initHome();
+  const svc = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
+  fs.mkdirSync(path.dirname(svc), { recursive: true });
+  fs.writeFileSync(svc, 'x');
+  const r = doctor({
+    home, platform: 'linux', installPath: svc, log: () => {},
+    execImpl: (_bin, args) => {
+      if (args.includes('is-active')) return 'active';
+      if (args.includes('is-enabled')) return 'enabled';
+      if (args.includes('--property=KillMode')) return 'control-group';
+      return '';
+    },
+    ptyLoad: () => ({}), commandExists: () => true,
+  });
+  assert.equal(r.code, 1);
+  assert.ok(r.checks.some((c) => c.name.includes('tmux survival') && !c.ok && /control-group/.test(c.detail)));
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 test('update: npm ok -> installa @latest + restart se attivo', () => {
   const calls = [];
   const r = update({
     platform: 'linux', log: () => {},
     execImpl: (b, a) => { calls.push([b, a]); if (a && a.includes('is-active')) return 'active'; return ''; },
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
   });
   assert.equal(r.code, 0);
   assert.ok(calls.some((c) => c[0] === 'npm' && c[1].join(' ').includes('@mmmbuto/nexuscrew@latest')));
@@ -637,6 +769,21 @@ test('update: npm fallito -> code 1 + messaggio chiaro', () => {
   assert.equal(r.code, 1);
   assert.equal(r.updated, false);
   assert.ok(l.join('\n').includes('fallito'));
+});
+
+test('update: restart fallito restituisce code 1 e non dichiara successo', () => {
+  const logs = [];
+  const r = update({
+    platform: 'linux', log: (line) => logs.push(line),
+    execImpl: (_bin, args) => args && args.includes('is-active') ? 'active' : '',
+    restartImpl: () => ({ restarted: false, reason: 'tmux survival guard failed' }),
+  });
+  assert.equal(r.updated, true);
+  assert.equal(r.restarted, false);
+  assert.equal(r.code, 1);
+  assert.match(r.reason, /tmux survival guard failed/);
+  assert.match(logs.join('\n'), /restart fallito/);
+  assert.doesNotMatch(logs.join('\n'), /servizio riavviato sul nuovo codice/);
 });
 
 test('smart-up idempotente: gia\' attivo e configurato -> no start, no output, no browser', async () => {

@@ -68,9 +68,19 @@
 .nc-empty { opacity: .5; padding: 18px 4px; font-size: 13px; }
 
 .nc-home-foot {
-  margin-top: auto; padding-top: 14px;
-  display: flex; justify-content: space-between; gap: 8px;
-  font-size: 11px; opacity: .4;
+  margin-top: auto; padding: 14px 4px 4px;
+  width: 100%; box-sizing: border-box;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end; column-gap: 14px;
+  font-size: 11px;
+}
+.nc-home-meta {
+  min-width: 0; display: flex; flex-wrap: wrap; align-items: center;
+  gap: 2px 8px; opacity: .48; line-height: 1.35;
+}
+.nc-home-version { flex: 0 0 auto; }
+.nc-home-endpoint {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 /* Gruppi home mobile (Flotta / Altre sessioni). */
@@ -127,12 +137,20 @@
 .nc-fab:active { background: #255028; }
 
 /* Picker lingua nel footer (IT · EN · ES). */
-.nc-lang { display: inline-flex; align-items: center; gap: 2px; }
+.nc-lang {
+  display: inline-flex; align-items: center; justify-content: flex-end;
+  gap: 2px; white-space: nowrap; opacity: .7;
+}
 .nc-lang-btn {
   background: none; border: none; color: inherit; cursor: pointer;
   font-size: 11px; padding: 0 1px; opacity: .5; text-transform: uppercase;
 }
 .nc-lang-btn.on { opacity: 1; font-weight: 700; color: #d8ffe8; }
+
+@media (max-width: 380px) {
+  .nc-home-meta { flex-direction: column; align-items: flex-start; gap: 0; }
+  .nc-home-endpoint { max-width: 100%; }
+}
 
 /* Azioni card mobile: bottoni rotondi con stato colorato:
    il glifo nudo non si vedeva). */

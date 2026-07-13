@@ -328,8 +328,10 @@ export default function SessionList({ onPick, token, onSettings }) {
       })}
 
       <footer className="nc-home-foot" onClick={copyEndpointUrl} title={t('copy-url')}>
-        {version && <span>v{version}</span>}
-        <span>{endpointLabel} · {t('ssh-only')}</span>
+        <span className="nc-home-meta">
+          {version && <span className="nc-home-version">v{version}</span>}
+          <span className="nc-home-endpoint">{endpointLabel} · {t('ssh-only')}</span>
+        </span>
         <span className="nc-lang" onClick={(e) => e.stopPropagation()}>
           {LANGUAGES.map((lg, i) => (
             <span key={lg}>
