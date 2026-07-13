@@ -37,6 +37,11 @@
 
 .nc-tile-body { flex: 1 1 auto; position: relative; min-height: 0; }
 .nc-tile-body .nc-terminal { width: 100%; height: 100%; }
+.nc-tile-unavailable {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  padding: 20px; color: #789a87; text-align: center; font-size: 12px;
+  background: repeating-linear-gradient(135deg, #0a0e0a, #0a0e0a 12px, #0d130d 12px, #0d130d 24px);
+}
 
 /* Composer e file come overlay/pannello interno al tile. */
 .nc-tile-composer { flex: 0 0 auto; border-top: 1px solid #1c241c; }

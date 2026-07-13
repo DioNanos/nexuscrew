@@ -26,18 +26,22 @@ function makePairingUrl(dir) {
   return peering.createInvite({ invitesPath: p, instanceId: PEER_ID, port: 41830, label: 'Peer' }).pairingUrl;
 }
 
-// fetchImpl scriptato per URL/uso: probe (GET senza auth), join, confirm, cancel,
-// health (GET con authorization). Registra le chiamate per le asserzioni.
+// fetchImpl scriptato per join, confirm, cancel e health autenticato. Il probe
+// capability-bound e' iniettato separatamente: questi test verificano la state
+// machine della route; la crittografia del probe ha test reali dedicati.
 function scriptedFetch(script) {
-  const calls = { probe: 0, join: 0, confirm: 0, cancel: 0, health: 0 };
+  const calls = { probe: 0, join: 0, confirm: 0, cancel: 0, health: 0, share: 0, shareBodies: [] };
   const impl = async (url, opts = {}) => {
     const u = String(url);
     if (u.endsWith('/pair/join')) { calls.join += 1; return script.join(calls.join, opts); }
     if (u.endsWith('/pair/confirm')) { calls.confirm += 1; return script.confirm(calls.confirm, opts); }
     if (u.endsWith('/pair/cancel')) { calls.cancel += 1; return (script.cancel || (() => R(200, { ok: true })))(calls.cancel, opts); }
+    if (u.endsWith('/federation/share')) {
+      calls.share += 1; calls.shareBodies.push(JSON.parse(opts.body || '{}'));
+      return (script.share || (() => R(200, { shared: calls.shareBodies.at(-1).shared })))(calls.share, opts);
+    }
     if (u.endsWith('/federation/health')) {
       if (opts.headers && opts.headers.authorization) { calls.health += 1; return script.health(calls.health, opts); }
-      calls.probe += 1; return script.probe(calls.probe);
     }
     throw new Error(`fetch inatteso: ${u}`);
   };
@@ -61,6 +65,18 @@ function boot(t, fetchScript) {
     fetchImpl: impl,
     pairDelay: async () => {},
     pairRequestTimeoutMs: 25,
+    ...(fetchScript.diagnosis ? { readTunnelDiagnostic: () => fetchScript.diagnosis } : {}),
+    probeTransportReady: async () => {
+      let lastError = '';
+      for (let i = 0; i < 6; i += 1) {
+        calls.probe += 1;
+        try {
+          const response = await fetchScript.probe(calls.probe);
+          if (response) return { ready: true, attempts: i + 1 };
+        } catch (e) { lastError = String((e && e.message) || e); }
+      }
+      return { ready: false, attempts: 6, code: 'transport-not-ready', lastError };
+    },
   };
   const made = createServer({
     home: dir, configDir, nodesPath,
@@ -141,12 +157,19 @@ test('pair stages: identita risposta diversa dal link -> rollback e nessuna conf
 test('pair stages: transport mai pronto -> ssh-ready, invite NON consumato, rollback', async (t) => {
   const { base, token, dir, nodesPath, calls } = await boot(t, {
     probe: () => { throw new Error('ECONNREFUSED'); },
+    diagnosis: {
+      code: 'forward-denied',
+      detail: 'SSH autenticato, ma il server ha negato il port forwarding verso 127.0.0.1:41830',
+      hint: "verifica AllowTcpForwarding e l'eventuale permitopen per 127.0.0.1:41830; il link NON e' stato consumato",
+    },
   });
   const r = await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) });
   assert.equal(r.status, 502);
   const j = await r.json();
   assert.equal(j.stage, 'ssh-ready');
-  assert.equal(j.code, 'transport-not-ready');
+  assert.equal(j.code, 'forward-denied');
+  assert.match(j.detail, /SSH autenticato/);
+  assert.match(j.detail, /127\.0\.0\.1:41830/);
   assert.equal(j.retryable, true, 'link non consumato -> retryable');
   assert.ok(j.hint.includes('NON'), 'hint dice che il link non e\' stato consumato');
   assert.equal(calls.join, 0, 'join MAI chiamato senza transport pronto');
@@ -250,7 +273,32 @@ test('pair stages: happy path -> paired:true solo dopo health autenticato ok', a
   assert.equal(n.token, CREDENTIAL);
   assert.equal(n.nodeId, PEER_ID);
   assert.equal(n.reversePort, 44001);
+  assert.equal(n.shared, false, 'pairing e privato finche Share non viene attivato');
   assert.equal(n.sshPort, 2222);
+});
+
+test('Share PWA: pairing resta -L privato, toggle aggiunge/rimuove pubblicazione in modo esplicito', async (t) => {
+  const { base, token, dir, nodesPath, calls } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID }),
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+    share: () => R(200, { shared: true }),
+  });
+  const paired = await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) });
+  assert.equal(paired.status, 200);
+  assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
+
+  const setShare = (shared) => fetch(`${base}/api/settings/nodes/peer/share`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ shared }),
+  });
+  const on = await setShare(true);
+  assert.equal(on.status, 200);
+  assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, true);
+  const off = await setShare(false);
+  assert.equal(off.status, 200);
+  assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
+  assert.deepEqual(calls.shareBodies, [{ shared: true }, { shared: false }]);
 });
 
 test('pair stages: i dettagli di errore redigono token/credenziali', async (t) => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import SessionList from './components/SessionList.jsx';
 import Terminal from './components/Terminal.jsx';
 import KeyBar from './components/KeyBar.jsx';
@@ -17,8 +17,9 @@ import {
 } from './lib/api.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
 import {
-  MAIN_DECK, deckFromPath, deckUrl, readLayoutRaw,
+  MAIN_DECK, deckLocationFromPath, deckUrl, readLayoutRaw,
 } from './lib/deck-model.js';
+import { deckId, refWithOwner, resolveLayoutForViewer } from './lib/deck-federation.js';
 import {t} from './lib/i18n.js';
 import { useLang } from './hooks/useLang.js';
 import { useNodes } from './hooks/useNodes.js';
@@ -207,8 +208,9 @@ export default function App() {
 
   // Deck corrente: il path sceglie quello iniziale (anche per una finestra
   // staccata), poi i click cambiano tab internamente senza reload della PWA.
-  const [deck, setDeck] = useState(() => deckFromPath(typeof location !== 'undefined' ? location.pathname : '/'));
-  const isMainDeck = deck === MAIN_DECK;
+  const [initialDeck] = useState(() => deckLocationFromPath(typeof location !== 'undefined' ? location.pathname : '/'));
+  const [deck, setDeck] = useState(initialDeck.id);
+  const isMainDeck = deck === deckId(null, MAIN_DECK);
 
   // mobile single-view session: ref {session, node?} (node = nodo remoto B2)
   const [session, setSession] = useState(null);
@@ -217,15 +219,19 @@ export default function App() {
   // desktop workspace state
   const [dSessions, setDSessions] = useState([]);
   const [cells, setCells] = useState([]);
-  const [layout, setLayout] = useState(() => loadLayout(deck));
-  const deckStore = useDecks(token, deck, layout, setLayout);
-  const decks = deckStore.decks.length ? deckStore.decks : [MAIN_DECK];
+  const [layout, setLayout] = useState(() => initialDeck.ownerId ? emptyLayout() : loadLayout(initialDeck.name));
   const [gridFocus, setGridFocus] = useState(null);   // refKey del tile focato
   const [single, setSingle] = useState(null);     // overlay vista singola desktop: ref {session, node?}
   const openSingle = (ref) => setSingle(parseRef(ref));
   // Gruppi per-nodo remoto (B2, design §5): polling separato, best-effort;
   // zero nodi configurati -> [] e workspace identico a oggi.
   const nodeGroups = useNodes(token, isDesktop);
+  const deckOwners = useMemo(() => (nodeGroups || []).filter((g) => g.instanceId).map((g) => ({
+    instanceId: g.instanceId, route: g.route, label: g.label, status: g.status,
+  })), [nodeGroups]);
+  const deckStore = useDecks(token, deck, layout, setLayout, deckOwners);
+  const decks = deckStore.decks;
+  const currentDeckRecord = decks.find((d) => d.id === deck) || null;
   // 0.8.8 salvava le celle remote come route:<cell-id> anziché usare la vera
   // tmuxSession route:cloud-<id>. Ripara una volta i deck esistenti, ma solo se
   // sul peer non esiste davvero una sessione unmanaged con quel nome.
@@ -241,6 +247,13 @@ export default function App() {
     }
     setLayout((current) => remapTileRefs(current, replacements));
   }, [nodeGroups]);
+  useEffect(() => {
+    if (!deckStore.localNodeId) return;
+    setLayout((current) => {
+      const resolved = resolveLayoutForViewer(current, deckStore.localNodeId, deckOwners);
+      return JSON.stringify(resolved) === JSON.stringify(current) ? current : resolved;
+    });
+  }, [deckOwners, deckStore.localNodeId]);
   const [powerCell, setPowerCell] = useState(null);
   const [nodePowerBusy, setNodePowerBusy] = useState(false);
   const [sideW, setSideW] = useState(loadSideW);
@@ -326,8 +339,9 @@ export default function App() {
 
   // --- actions ---
   const onAddTile = (name) => setLayout((l) => {
-    const next = addTileSmart(l, name);
-    if (next === l && !sessions(l).includes(typeof name === 'string' ? name : '') && sessions(l).length >= 9) {
+    const owned = refWithOwner(name, deckStore.localNodeId, deckOwners) || name;
+    const next = addTileSmart(l, owned);
+    if (next === l && sessions(l).length >= 9) {
       deckStore.setError(t('grid-full'));
     }
     return next;
@@ -362,29 +376,31 @@ export default function App() {
   };
 
   // --- deck actions (§5b) ---
-  const openDeckWindow = (name) => {
-    try { const w = window.open(deckUrl(name, token), '_blank'); if (w) w.opener = null; return !!w; } catch (_) { return false; }
+  const openDeckWindow = (id) => {
+    const target = decks.find((d) => d.id === id); if (!target) return false;
+    try { const w = window.open(deckUrl(target, token), '_blank'); if (w) w.opener = null; return !!w; } catch (_) { return false; }
   };
-  const selectDeck = async (name) => {
-    if (!name || name === deck) return;
-    const nextLayout = await deckStore.select(name);
-    setDeck(name); setLayout(nextLayout); setGridFocus(null); setSingle(null);
-    try { history.replaceState(null, '', deckUrl(name, null)); } catch (_) {}
+  const selectDeck = async (id) => {
+    if (!id || id === deck) return;
+    const nextLayout = await deckStore.select(id);
+    const target = deckStore.records.find((d) => d.id === id);
+    setDeck(id); setLayout(nextLayout); setGridFocus(null); setSingle(null);
+    try { history.replaceState(null, '', deckUrl(target || id, null)); } catch (_) {}
   };
   const onCreateDeck = async (name) => {
-    await deckStore.add(name);
-    await selectDeck(name);
+    const created = await deckStore.add(name, currentDeckRecord && currentDeckRecord.ownerId);
+    await selectDeck(created.id);
   };
   const onRenameDeck = async (from, to) => {
     const saved = await deckStore.rename(from, to);
     if (from === deck) {
-      setDeck(to); setLayout(normalize(saved.layout)); setGridFocus(null); setSingle(null);
-      try { history.replaceState(null, '', deckUrl(to, null)); } catch (_) {}
+      setDeck(saved.id); setLayout(resolveLayoutForViewer(saved.layout, deckStore.localNodeId, deckOwners)); setGridFocus(null); setSingle(null);
+      try { history.replaceState(null, '', deckUrl(saved, null)); } catch (_) {}
     }
   };
-  const onDeleteDeck = async (name) => {
-    await deckStore.remove(name);
-    if (name === deck) await selectDeck(MAIN_DECK);
+  const onDeleteDeck = async (id) => {
+    await deckStore.remove(id);
+    if (id === deck) await selectDeck(deckStore.localMainId);
   };
   // "manda al deck X": aggiunge il tile al layout del deck bersaglio. Le altre
   // finestre convergono tramite il poll server-side di useDecks (massimo 5 s).

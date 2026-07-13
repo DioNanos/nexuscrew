@@ -68,14 +68,15 @@ test('initialize: echo protocolVersion, capabilities.tools, serverInfo', async (
   assert.equal(out.lines.length, 1);
 });
 
-test('tools/list: 5 tool nc_* con readOnlyHint sui read-only', async () => {
+test('tools/list: 6 tool nc_* con readOnlyHint sui read-only', async () => {
   const { srv, out } = makeSrv();
   await srv.handleLine(rpc(2, 'tools/list'));
   const tools = out.lines[0].result.tools;
   assert.deepEqual(tools.map((t) => t.name).sort(),
-    ['nc_ask', 'nc_inbox', 'nc_notify', 'nc_send_file', 'nc_status']);
+    ['nc_ask', 'nc_deck', 'nc_inbox', 'nc_notify', 'nc_send_file', 'nc_status']);
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   assert.equal(byName.nc_status.annotations.readOnlyHint, true);
+  assert.equal(byName.nc_deck.annotations.readOnlyHint, true);
   assert.equal(byName.nc_inbox.annotations.readOnlyHint, true);
   assert.equal(byName.nc_notify.annotations, undefined);
   for (const t of tools) assert.equal(t.inputSchema.type, 'object');
@@ -169,6 +170,151 @@ test('nc_status: sessioni compatte + fleet null se non disponibile', async () =>
   const j = JSON.parse(out.lines[0].result.content[0].text);
   assert.deepEqual(j.sessions, [{ name: 'cloud-Sys', active: true }, { name: 'work', active: false }]);
   assert.equal(j.fleet, null);
+});
+
+test('nc_deck: trova i deck propri e risolve celle locali/remote in ordine visuale', async () => {
+  const localId = 'a'.repeat(32); const relayId = 'b'.repeat(32);
+  const layout = (columns) => ({ columns });
+  const tile = (session, node, ownerId) => ({ session, ...(node ? { node } : {}), ...(ownerId ? { ownerId } : {}), height: 50, fontSize: 14 });
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (c) => {
+      const pathname = new URL(c.url).pathname;
+      if (pathname === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (pathname === '/api/topology') return { status: 200, json: { instanceId: localId, nodes: [{ instanceId: relayId, name: 'relay', route: ['relay'] }] } };
+      if (pathname === '/api/route/relay/_/decks') return { status: 200, json: { schemaVersion: 1, decks: [] } };
+      if (pathname === '/api/route/relay/_/topology') return { status: 200, json: { instanceId: relayId, nodes: [] } };
+      if (pathname === '/api/decks') {
+        return {
+          status: 200,
+          json: {
+            schemaVersion: 1,
+            decks: [
+              {
+                name: 'main', revision: 2,
+                layout: layout([
+                  { width: 50, tiles: [tile('cloud-Dev'), tile('shell')] },
+                  { width: 50, tiles: [tile('cloud-Auditor', 'relay', relayId)] },
+                ]),
+              },
+              {
+                name: 'research', revision: 1,
+                layout: layout([{ width: 100, tiles: [tile('cloud-Dev')] }]),
+              },
+              {
+                name: 'remote-only', revision: 0,
+                layout: layout([{ width: 100, tiles: [tile('cloud-Dev', 'relay')] }]),
+              },
+            ],
+          },
+        };
+      }
+      if (pathname === '/api/fleet/status') {
+        return { status: 200, json: { available: true, cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev' }] } };
+      }
+      if (pathname === '/api/route/relay/_/fleet/status') {
+        return { status: 200, json: { available: true, cells: [{ cell: 'Auditor', tmuxSession: 'cloud-Auditor' }] } };
+      }
+      return { status: 404, json: { error: 'unexpected' } };
+    },
+  });
+
+  await srv.handleLine(rpc(14, 'tools/call', { name: 'nc_deck', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.deepEqual(j, {
+    tmuxSession: 'cloud-Dev', nodeId: localId,
+    decks: [
+      {
+        id: `${localId}:main`, name: 'main',
+        owner: { instanceId: localId, route: 'local', label: 'Local' },
+        members: [
+          { cell: 'Dev', tmuxSession: 'cloud-Dev', ownerId: localId, route: 'local', self: true },
+          { cell: 'Auditor', tmuxSession: 'cloud-Auditor', ownerId: relayId, route: 'relay', self: false },
+          { cell: null, tmuxSession: 'shell', ownerId: localId, route: 'local', self: false },
+        ],
+      },
+      {
+        id: `${localId}:research`, name: 'research',
+        owner: { instanceId: localId, route: 'local', label: 'Local' },
+        members: [{ cell: 'Dev', tmuxSession: 'cloud-Dev', ownerId: localId, route: 'local', self: true }],
+      },
+    ],
+  });
+  assert.deepEqual(new Set(calls.map((call) => new URL(call.url).pathname)), new Set([
+    '/api/config', '/api/topology', '/api/decks',
+    '/api/route/relay/_/decks', '/api/route/relay/_/topology',
+    '/api/fleet/status', '/api/route/relay/_/fleet/status',
+  ]));
+});
+
+test('nc_deck: scopre un deck posseduto da un nodo condiviso che contiene la cella locale', async () => {
+  const localId = 'a'.repeat(32); const relayId = 'b'.repeat(32);
+  const { srv, out } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (c) => {
+      const pathname = new URL(c.url).pathname;
+      if (pathname === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (pathname === '/api/topology') return { status: 200, json: { nodes: [{ instanceId: relayId, name: 'relay', route: ['relay'], label: 'Relay' }] } };
+      if (pathname === '/api/decks') return { status: 200, json: { decks: [{ name: 'main', revision: 0, layout: { columns: [] } }] } };
+      if (pathname === '/api/route/relay/_/topology') return { status: 200, json: { nodes: [] } };
+      if (pathname === '/api/route/relay/_/decks') return { status: 200, json: { decks: [{
+        name: 'shared', revision: 1, layout: { columns: [{ width: 1, tiles: [
+          { session: 'cloud-Dev', ownerId: localId, height: 1, fontSize: 11 },
+          { session: 'cloud-Research', ownerId: relayId, height: 1, fontSize: 11 },
+        ] }] },
+      }] } };
+      if (pathname === '/api/fleet/status') return { status: 200, json: { available: true, cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev' }] } };
+      if (pathname === '/api/route/relay/_/fleet/status') return { status: 200, json: { available: true, cells: [{ cell: 'Research', tmuxSession: 'cloud-Research' }] } };
+      return { status: 404, json: { error: pathname } };
+    },
+  });
+  await srv.handleLine(rpc(17, 'tools/call', { name: 'nc_deck', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.decks.length, 1);
+  assert.deepEqual(j.decks[0], {
+    id: `${relayId}:shared`, name: 'shared',
+    owner: { instanceId: relayId, route: 'relay', label: 'Relay' },
+    members: [
+      { cell: 'Dev', tmuxSession: 'cloud-Dev', ownerId: localId, route: 'local', self: true },
+      { cell: 'Research', tmuxSession: 'cloud-Research', ownerId: relayId, route: 'relay', self: false },
+    ],
+  });
+});
+
+test('nc_deck: senza identita tmux fallisce prima di leggere le API', async () => {
+  const { srv, out, calls } = makeSrv({ env: {} });
+  await srv.handleLine(rpc(15, 'tools/call', { name: 'nc_deck', arguments: {} }));
+  assert.equal(out.lines[0].result.isError, true);
+  assert.match(out.lines[0].result.content[0].text, /NEXUSCREW_MCP_SESSION/);
+  assert.equal(calls.length, 0);
+});
+
+test('nc_deck: sessione fuori dai deck ritorna vuoto senza interrogare Fleet', async () => {
+  const localId = 'a'.repeat(32);
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Other' },
+    responder: (c) => {
+      const pathname = new URL(c.url).pathname;
+      if (pathname === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (pathname === '/api/topology') return { status: 200, json: { nodes: [] } };
+      assert.equal(pathname, '/api/decks');
+      return {
+        status: 200,
+        json: {
+          schemaVersion: 1,
+          decks: [{
+            name: 'main', revision: 0,
+            layout: { columns: [{ width: 100, tiles: [{ session: 'cloud-Dev', height: 100, fontSize: 14 }] }] },
+          }],
+        },
+      };
+    },
+  });
+  await srv.handleLine(rpc(16, 'tools/call', { name: 'nc_deck', arguments: {} }));
+  assert.deepEqual(JSON.parse(out.lines[0].result.content[0].text), {
+    tmuxSession: 'cloud-Other', nodeId: localId, decks: [],
+  });
+  assert.equal(calls.length, 3);
 });
 
 test('garbage e protocollo: JSON rotto -> -32700, metodo ignoto -> -32601, tool ignoto -> -32602, MAI crash', async () => {
@@ -284,7 +430,7 @@ test('subprocess: handshake + tools/call nc_notify contro server HTTP finto', as
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
 
   const list = await call(2, 'tools/list');
-  assert.equal(list.result.tools.length, 5);
+  assert.equal(list.result.tools.length, 6);
 
   const notif = await call(3, 'tools/call', { name: 'nc_notify', arguments: { title: 'e2e ok' } });
   assert.deepEqual(JSON.parse(notif.result.content[0].text), { delivered: { ui: 1, push: 0 } });

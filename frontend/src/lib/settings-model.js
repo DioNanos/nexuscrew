@@ -85,55 +85,6 @@ export function validateNodeForm({ name, ssh, sshPort, remotePort } = {}) {
   return { ok: true, value };
 }
 
-// Valida il form rendezvous (wizard step 3 + toggle ruolo node nei settings).
-// hasStored=true → lo store ha già un rendezvous: ssh vuoto è ammesso (riuso).
-export function validateRendezvousForm({ ssh, publishedPort } = {}, hasStored = false) {
-  const s = typeof ssh === 'string' ? ssh.trim() : ssh;
-  const port = parsePort(publishedPort);
-  if (port === undefined) return { ok: false, error: 'err-port' };
-  if (!s) {
-    if (!hasStored) return { ok: false, error: 'err-rendezvous-required' };
-    const value = {};
-    if (port !== null) value.publishedPort = port;
-    return { ok: true, value };
-  }
-  if (!isValidSsh(s)) return { ok: false, error: 'err-ssh' };
-  const value = { rendezvousSsh: s };
-  if (port !== null) value.publishedPort = port;
-  return { ok: true, value };
-}
-
-// --- Wizard: macchina a stati ------------------------------------------------
-// Step: roles → node (opzionale, skippabile) → rendezvous (SOLO se ruolo node)
-// → done. La sequenza dipende dai ruoli scelti allo step 1.
-
-export function wizardSteps(roles) {
-  const steps = ['roles', 'node'];
-  if (roles && roles.node === true) steps.push('rendezvous');
-  steps.push('done');
-  return steps;
-}
-
-export function nextStep(current, roles) {
-  const steps = wizardSteps(roles);
-  const i = steps.indexOf(current);
-  if (i < 0) return steps[0];
-  return steps[Math.min(i + 1, steps.length - 1)];
-}
-
-export function prevStep(current, roles) {
-  const steps = wizardSteps(roles);
-  const i = steps.indexOf(current);
-  if (i <= 0) return steps[0];
-  return steps[i - 1];
-}
-
-export function initialWizard() {
-  // client:true è il default sensato (una installazione che apre la UI è un hub);
-  // node:false finché non scelto esplicitamente (richiede rendezvous).
-  return { step: 'roles', roles: { client: true, node: false } };
-}
-
 // --- Stato tunnel per-nodo (da GET /api/nodes) --------------------------------
 // tunnel: {status:'up', pid, since(ms)} | {status:'down'}. Ritorna un descrittore
 // puro per la UI: {up, label:<chiave i18n>, since:<'3m'|'2h'|null>}.

@@ -16,6 +16,15 @@ test('primary + creates a managed Fleet cell on mobile and desktop', () => {
   assert.doesNotMatch(mobile, /<NewSessionDialog/);
 });
 
+test('mobile Fleet keeps its header fixed and scrolls only the roster', () => {
+  const mobile = read('SessionList.jsx');
+  const css = read('SessionList.css');
+  assert.match(mobile, /<header className="nc-home-head">[\s\S]*?<\/header>\s*<main className="nc-home-scroll">/);
+  assert.match(css, /\.nc-home\s*\{[^}]*height:\s*100dvh[^}]*overflow:\s*hidden/s);
+  assert.match(css, /\.nc-home-scroll\s*\{[^}]*overflow-y:\s*auto[^}]*-webkit-overflow-scrolling:\s*touch/s);
+  assert.match(css, /\.nc-home-scroll\s*\{[^}]*padding:[^;}]*76px/s);
+});
+
 // Launch editor CONDIVISO: "Avvia" dalla lista celle e dalla card inventory apre
 // lo STESSO PowerSheet (non fleetUp diretto). fleetUp resta, ma nel confirm.
 test('managed Fleet start opens the shared launch PowerSheet (no direct fleetUp on start)', () => {
@@ -111,12 +120,34 @@ test('Fleet settings inventory keeps every node visible and routes remote settin
   assert.doesNotMatch(mobile, /onSettings\('fleet', false/);
 });
 
-test('PWA-created pairing links reuse the rendezvous endpoint and keep SSH advanced', () => {
+test('Fleet settings separates location management from the all-node overview', () => {
+  const fleet = read('FleetTab.jsx');
+  assert.match(fleet, /fleetView === 'manage'/);
+  assert.match(fleet, /fleetView === 'overview'/);
+  assert.match(fleet, /fleet-manage-location/);
+  assert.match(fleet, /fleet-network-overview/);
+  const manage = fleet.indexOf("t('fleet-cells')");
+  const engines = fleet.indexOf("t('fleet-engines')", manage);
+  assert.ok(manage > -1 && engines > manage, 'cells and +add must precede engines in Manage location');
+});
+
+test('standalone hub invitations require one explicit reachable SSH endpoint', () => {
   const settings = read('SettingsPanel.jsx');
   assert.match(settings, /const name = toSlug\(inviteForm\.name \|\| devName \|\| deviceDefault/);
-  assert.match(settings, /const automaticSsh = settings\?\.rendezvous\?\.ssh \|\| ''/);
-  assert.match(settings, /validateNodeForm\(\{ name, ssh: inviteForm\.ssh \|\| automaticSsh, sshPort: inviteForm\.sshPort \}\)/);
-  assert.match(settings, /disabled=\{readonly \|\| !!busy \|\| \(!configuredEndpoint && !inviteForm\.ssh\.trim\(\)\)\}/);
-  assert.match(settings, /inviteForm\.ssh\.trim\(\) \? \{ ssh: checked\.value\.ssh \} : \{\}/);
+  assert.match(settings, /validateNodeForm\(\{ name, ssh: inviteForm\.ssh, sshPort: inviteForm\.sshPort \}\)/);
+  assert.match(settings, /disabled=\{readonly \|\| !!busy \|\| \(!inviteHub && !inviteForm\.ssh\.trim\(\)\)\}/);
+  assert.match(settings, /ssh: checked\.value\.ssh/);
+  assert.doesNotMatch(settings, /settings\?\.rendezvous/, 'legacy rendezvous state cannot invent a connection route');
   assert.doesNotMatch(settings, /publishedPort[^\n]*sshPort|sshPort[^\n]*publishedPort/);
+});
+
+test('a connected client delegates new invitations to its outbound hub', () => {
+  const settings = read('SettingsPanel.jsx');
+  const api = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'lib', 'api.js'), 'utf8');
+  assert.match(settings, /direction === 'outbound'/);
+  assert.match(settings, /createPeerInvite\(token,[\s\S]*?\[inviteHub\.name\]\)/);
+  assert.match(settings, /invite-network-route/);
+  assert.match(api, /routeBase\(route\).*settings\/peering\/invite/s);
+  assert.doesNotMatch(settings, /createPeerInvite\(token,[\s\S]{0,260}label:[\s\S]{0,260}\[inviteHub\.name\]/,
+    'delegated invite must identify the hub, never the current client');
 });

@@ -4,6 +4,8 @@
 // chiave storica del layout (nc_grid_v1) per non perdere i layout esistenti.
 // Guard localStorage/window per importabilita' in node (test).
 
+import { deckId, parseDeckId, NODE_ID_RE } from './deck-federation.js';
+
 export const DECK_NAME_RE = /^[a-z0-9-]{1,32}$/;
 export const MAIN_DECK = 'main';
 export const DECKS_KEY = 'nc_decks';
@@ -38,11 +40,32 @@ export function deckFromPath(pathname) {
   return MAIN_DECK;
 }
 
+// Nuovo indirizzamento owner-aware. Il path remoto usa il nodeId stabile, non
+// una route mutabile: /deck/<ownerNodeId>/<name>. I path locali storici restano
+// invariati e retrocompatibili.
+export function deckLocationFromPath(pathname) {
+  const remote = String(pathname || '').match(/^\/deck\/([^/]+)\/([^/]+)\/?$/);
+  if (remote) {
+    let ownerId; let name;
+    try { ownerId = decodeURIComponent(remote[1]); name = decodeURIComponent(remote[2]); }
+    catch (_) { return { id: deckId(null, MAIN_DECK), ownerId: null, name: MAIN_DECK }; }
+    if (NODE_ID_RE.test(ownerId) && isValidDeckName(name)) return { id: deckId(ownerId, name), ownerId, name };
+  }
+  const name = deckFromPath(pathname);
+  return { id: deckId(null, name), ownerId: null, name };
+}
+
 // URL (path+fragment) per aprire un deck in una nuova finestra, col token nel
 // fragment (mai nei log del server). Il token e' opzionale (gia' ricordato dal
 // device via localStorage), ma passarlo rende la finestra apribile a freddo.
-export function deckUrl(name, token) {
-  const base = name === MAIN_DECK ? '/' : `/deck/${encodeURIComponent(name)}`;
+export function deckUrl(target, token) {
+  const parsed = typeof target === 'object' && target
+    ? { ownerId: target.ownerId || null, name: target.name }
+    : parseDeckId(target) || { ownerId: null, name: target };
+  const name = isValidDeckName(parsed.name) ? parsed.name : MAIN_DECK;
+  const base = parsed.ownerId
+    ? `/deck/${encodeURIComponent(parsed.ownerId)}/${encodeURIComponent(name)}`
+    : name === MAIN_DECK ? '/' : `/deck/${encodeURIComponent(name)}`;
   return token ? `${base}#token=${encodeURIComponent(token)}` : base;
 }
 

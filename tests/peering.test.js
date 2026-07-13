@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const peering = require('../lib/nodes/peering.js');
 
 test('pairing invite: URL round-trip, 0600, one-time and expiry', () => {
@@ -102,5 +103,70 @@ test('pairing strict allowlist: campi ignoti o segreti -> rifiutato (null)', () 
   const withKey = { ...x, apiKey: 'sk-secret' };
   const url2 = `http://127.0.0.1:41822/#pair=${Buffer.from(JSON.stringify(withKey)).toString('base64url')}`;
   assert.equal(peering.parsePairingUrl(url2), null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('transport probe: capability proof + instanceId esatti, non un HTTP/401 qualunque', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-pair-proof-'));
+  const invitesPath = path.join(dir, 'invites.json');
+  const pendingPath = path.join(dir, 'pending.json');
+  const instanceId = 'e'.repeat(32);
+  const made = peering.createInvite({ invitesPath, instanceId, port: 41820, label: 'Relay' });
+  const pair = peering.parsePairingUrl(made.pairingUrl);
+  const proofServer = async (_url, opts) => {
+    const body = JSON.parse(opts.body);
+    const proof = peering.capabilityIdentity({ invitesPath, pendingPath, ...body });
+    return { status: proof ? 200 : 404, json: async () => (proof ? { ok: true, instanceId, proof } : { error: 'not found' }) };
+  };
+  const ok = await peering.probeTransportReady({
+    port: 43001, capability: pair.invite, expectedInstanceId: instanceId,
+    fetchImpl: proofServer, attempts: 1,
+  });
+  assert.equal(ok.ready, true);
+
+  const foreign401 = await peering.probeTransportReady({
+    port: 43001, capability: pair.invite, expectedInstanceId: instanceId,
+    fetchImpl: async () => ({ status: 401, json: async () => ({}) }), attempts: 1,
+  });
+  assert.equal(foreign401.ready, false);
+  assert.equal(foreign401.code, 'identity-proof-rejected');
+
+  const fake200 = await peering.probeTransportReady({
+    port: 43001, capability: pair.invite, expectedInstanceId: instanceId,
+    fetchImpl: async () => ({ status: 200, json: async () => ({ ok: true, instanceId, proof: crypto.randomBytes(32).toString('base64url') }) }),
+    attempts: 1,
+  });
+  assert.equal(fake200.ready, false);
+  assert.equal(fake200.code, 'identity-proof-invalid');
+
+  const wrongIdentity = await peering.probeTransportReady({
+    port: 43001, capability: pair.invite, expectedInstanceId: 'f'.repeat(32),
+    fetchImpl: proofServer, attempts: 1,
+  });
+  assert.equal(wrongIdentity.ready, false);
+  assert.equal(wrongIdentity.code, 'peer-identity-mismatch');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('transport proof supports pending credential after invite consumption', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-pair-pending-proof-'));
+  const invitesPath = path.join(dir, 'invites.json');
+  const pendingPath = path.join(dir, 'pending.json');
+  const instanceId = 'a'.repeat(32);
+  const credential = peering.createPending({ pendingPath, data: { instanceId: 'b'.repeat(32) } });
+  const fetchImpl = async (_url, opts) => {
+    const body = JSON.parse(opts.body);
+    const proof = peering.capabilityIdentity({ invitesPath, pendingPath, ...body });
+    return { status: proof ? 200 : 404, json: async () => ({ ok: !!proof, instanceId, proof }) };
+  };
+  const out = await peering.probeTransportReady({
+    port: 44001, capability: credential, expectedInstanceId: instanceId, fetchImpl, attempts: 1,
+  });
+  assert.equal(out.ready, true);
+  peering.consumePending({ pendingPath, credential });
+  const consumed = await peering.probeTransportReady({
+    port: 44001, capability: credential, expectedInstanceId: instanceId, fetchImpl, attempts: 1,
+  });
+  assert.equal(consumed.ready, false);
   fs.rmSync(dir, { recursive: true, force: true });
 });

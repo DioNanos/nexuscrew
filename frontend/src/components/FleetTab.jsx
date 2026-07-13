@@ -104,6 +104,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   const [powerCell, setPowerCell] = useState(null);
   const [importEdit, setImportEdit] = useState(null);
   const [backupOpen, setBackupOpen] = useState(false);
+  const [fleetView, setFleetView] = useState('manage');
   const autoCreateDone = useRef(false);
   const route = location ? location.split('/') : [];
 
@@ -241,11 +242,18 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   }}>
     <option value="">{t('local')}</option>{targets.map((x) => <option key={x.route.join('/')} value={x.route.join('/')} disabled={x.status && x.status !== 'up'}>{x.label}{x.status && x.status !== 'up' ? ` · ${t('node-offline')}` : ''}</option>)}
   </select></label>;
+  const viewPicker = <div className="nc-fleet-view-tabs" role="tablist" aria-label={t('tab-fleet')}>
+    <button type="button" role="tab" aria-selected={fleetView === 'manage'} className={`nc-set-tabbtn${fleetView === 'manage' ? ' on' : ''}`}
+      onClick={() => setFleetView('manage')}>{t('fleet-manage-location')}</button>
+    <button type="button" role="tab" aria-selected={fleetView === 'overview'} className={`nc-set-tabbtn${fleetView === 'overview' ? ' on' : ''}`}
+      onClick={() => setFleetView('overview')}>{t('fleet-network-overview')}</button>
+  </div>;
   if (!editable) return (
     <div className="nc-set-tab">
-      {locationPicker}
-      <FleetInventory token={token} targets={targets} readonly={readonly} onPower={onPower} onImport={openImport} />
-      <div className="nc-set-info">{t('fleet-editor-unavailable')}</div>
+      {viewPicker}
+      {fleetView === 'overview'
+        ? <><div className="nc-set-info">{t('fleet-overview-help')}</div><FleetInventory token={token} targets={targets} readonly={readonly} onPower={onPower} onImport={openImport} /></>
+        : <>{locationPicker}<div className="nc-set-info">{t('fleet-editor-unavailable')}</div></>}
       {err && <div className="nc-err">{err}</div>}
       {importEdit && <FleetModal onClose={() => setImportEdit(null)} label={t('import-as-cell')} error={err}><ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} /></FleetModal>}
       {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { await refresh(); } }} onClose={() => setPowerCell(null)} />}
@@ -253,24 +261,18 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   );
   return (
     <div className="nc-set-tab nc-fleet-editor">
-      {locationPicker}
-      <FleetInventory token={token} targets={targets} readonly={readonly} onPower={onPower} onImport={openImport} />
-      <div className="nc-fleet-section-head"><b>{t('fleet-engines')}</b><button className="nc-btn primary" disabled={locked || busy} onClick={() => { setErr(''); setEngineEdit({ mode: 'new', form: blankEngine() }); }}>+ {t('add')}</button></div>
-      {defs.engines.map((e) => (
-        <div className="nc-fleet-item" key={e.id}><span><b>{e.label}</b><small>{e.managed
-          ? `${e.id} · ${e.managed.client} / ${e.managed.provider} · ${e.managedInfo?.configured ? t('fleet-ready') : e.managedInfo?.reason || t('fleet-not-ready')}`
-          : `${e.id} · ${e.command}`}</small></span><span>
-          <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setEngineEdit({ mode: 'edit', original: e, form: engineForm(e) }); }}>{t('edit')}</button>
-          <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-engine').replace('{id}', e.id))) await fleetRemoveEngine(token, e.id, route); })}>×</button>
+      {viewPicker}
+      {fleetView === 'overview' ? <>
+        <div className="nc-set-info">{t('fleet-overview-help')}</div>
+        <FleetInventory token={token} targets={targets} readonly={readonly} onPower={onPower} onImport={openImport} />
+      </> : <>
+        <div className="nc-set-info">{t('fleet-manage-help')}</div>
+        {locationPicker}
+        <div className="nc-fleet-section-head"><b>{t('fleet-cells')}</b><span className="nc-fleet-head-actions">
+          <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setBackupOpen(true); }}>{t('fleet-backup')}</button>
+          <button className="nc-btn primary" disabled={locked || busy || !defs.engines.length} onClick={() => { setErr(''); setCellEdit({ mode: 'new', form: blankCell(defs.engines[0]?.id) }); }}>+ {t('add')}</button>
         </span></div>
-      ))}
-      {engineEdit && <FleetModal onClose={() => setEngineEdit(null)} label={t('fleet-new-engine')} error={err}><EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} /></FleetModal>}
-
-      <div className="nc-fleet-section-head"><b>{t('fleet-cells')}</b><span className="nc-fleet-head-actions">
-        <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setBackupOpen(true); }}>{t('fleet-backup')}</button>
-        <button className="nc-btn primary" disabled={locked || busy || !defs.engines.length} onClick={() => { setErr(''); setCellEdit({ mode: 'new', form: blankCell(defs.engines[0]?.id) }); }}>+ {t('add')}</button>
-      </span></div>
-      {defs.cells.map((c) => {
+        {defs.cells.map((c) => {
         const isOn = active.has(c.id);
         const caps = status.capabilities || [];
         return (
@@ -284,7 +286,18 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
           <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setCellEdit({ mode: 'edit', original: c, form: { ...c } }); }}>{t('edit')}</button>
           <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-cell').replace('{id}', c.id))) await fleetRemoveCell(token, c.id, true, route); })}>×</button>
         </span></div>
-      );})}
+        );})}
+        <div className="nc-fleet-section-head"><b>{t('fleet-engines')}</b><button className="nc-btn primary" disabled={locked || busy} onClick={() => { setErr(''); setEngineEdit({ mode: 'new', form: blankEngine() }); }}>+ {t('add')}</button></div>
+        {defs.engines.map((e) => (
+          <div className="nc-fleet-item" key={e.id}><span><b>{e.label}</b><small>{e.managed
+            ? `${e.id} · ${e.managed.client} / ${e.managed.provider} · ${e.managedInfo?.configured ? t('fleet-ready') : e.managedInfo?.reason || t('fleet-not-ready')}`
+            : `${e.id} · ${e.command}`}</small></span><span>
+            <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setEngineEdit({ mode: 'edit', original: e, form: engineForm(e) }); }}>{t('edit')}</button>
+            <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-engine').replace('{id}', e.id))) await fleetRemoveEngine(token, e.id, route); })}>×</button>
+          </span></div>
+        ))}
+      </>}
+      {engineEdit && <FleetModal onClose={() => setEngineEdit(null)} label={t('fleet-new-engine')} error={err}><EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} /></FleetModal>}
       {cellEdit && <FleetModal onClose={() => setCellEdit(null)} label={t('fleet-new-cell')} error={err}><CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} /></FleetModal>}
       {note && <div className="nc-set-note">{note}</div>}{err && <div className="nc-err">{err}</div>}
       {backupOpen && <FleetModal onClose={() => setBackupOpen(false)} label={t('fleet-backup')} error={err}><FleetBackupDialog cells={defs.cells} engines={defs.engines} busy={busy} canRestore={canRestoreBackup} onRestore={restoreBackup} onClose={() => setBackupOpen(false)} /></FleetModal>}

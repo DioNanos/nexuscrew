@@ -53,48 +53,6 @@ test('settings-model: validateNodeForm — separa porta SSH e porta NexusCrew', 
   assert.deepEqual(m.validateNodeForm({}), { ok: false, error: 'err-node-name' });
 });
 
-test('settings-model: validateRendezvousForm — richiesto se non stored, riuso se stored', async () => {
-  const m = await mod();
-  assert.deepEqual(m.validateRendezvousForm({ ssh: 'user@host' }),
-    { ok: true, value: { rendezvousSsh: 'user@host' } });
-  assert.deepEqual(m.validateRendezvousForm({ ssh: 'user@host', publishedPort: '42000' }),
-    { ok: true, value: { rendezvousSsh: 'user@host', publishedPort: 42000 } });
-  assert.deepEqual(m.validateRendezvousForm({ ssh: '' }, false),
-    { ok: false, error: 'err-rendezvous-required' });
-  assert.deepEqual(m.validateRendezvousForm({ ssh: '' }, true), { ok: true, value: {} });
-  assert.deepEqual(m.validateRendezvousForm({ ssh: '', publishedPort: '42000' }, true),
-    { ok: true, value: { publishedPort: 42000 } });
-  assert.deepEqual(m.validateRendezvousForm({ ssh: 'bad ssh' }, true), { ok: false, error: 'err-ssh' });
-  assert.deepEqual(m.validateRendezvousForm({ ssh: 'user@host', publishedPort: 'x' }), { ok: false, error: 'err-port' });
-});
-
-test('wizard: sequenza step dipende dal ruolo node', async () => {
-  const m = await mod();
-  assert.deepEqual(m.wizardSteps({ client: true, node: false }), ['roles', 'node', 'done']);
-  assert.deepEqual(m.wizardSteps({ client: true, node: true }), ['roles', 'node', 'rendezvous', 'done']);
-  assert.deepEqual(m.wizardSteps(null), ['roles', 'node', 'done'], 'roles assenti = niente rendezvous');
-});
-
-test('wizard: nextStep/prevStep — transizioni, clamp agli estremi, step ignoto', async () => {
-  const m = await mod();
-  const noNode = { client: true, node: false };
-  const withNode = { client: false, node: true };
-  assert.equal(m.nextStep('roles', noNode), 'node');
-  assert.equal(m.nextStep('node', noNode), 'done', 'senza ruolo node salta il rendezvous');
-  assert.equal(m.nextStep('node', withNode), 'rendezvous');
-  assert.equal(m.nextStep('rendezvous', withNode), 'done');
-  assert.equal(m.nextStep('done', withNode), 'done', 'clamp in fondo');
-  assert.equal(m.prevStep('roles', noNode), 'roles', 'clamp in cima');
-  assert.equal(m.prevStep('done', noNode), 'node');
-  assert.equal(m.prevStep('done', withNode), 'rendezvous');
-  assert.equal(m.nextStep('garbage', noNode), 'roles', 'step ignoto riparte da roles');
-});
-
-test('wizard: initialWizard — client on, node off, step roles', async () => {
-  const m = await mod();
-  assert.deepEqual(m.initialWizard(), { step: 'roles', roles: { client: true, node: false } });
-});
-
 test('tunnelInfo: up con since relativo, down senza, garbage = down', async () => {
   const m = await mod();
   const now = 1_000_000_000_000;

@@ -16,10 +16,13 @@ const { createServer } = require('../lib/server.js');
 async function bootServer(t, { nodesPath, ...over } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncpre-'));
   const { server, token, watcher, wss } = createServer({
+    home: dir,
     tokenPath: path.join(dir, 'token'),
     filesRoot: path.join(dir, 'files'),
     nodesPath: nodesPath || path.join(dir, 'nodes.json'),
     fleetEnabled: false,
+    autoUpdate: false,
+    tunnelSpawnImpl: () => { throw new Error('ws-preauth tests must never autostart a tunnel'); },
     ...over,
   });
   await new Promise((res) => server.listen(0, '127.0.0.1', res));
@@ -104,7 +107,7 @@ test('e2e /node/<name>/ws: attach remoto col solo token del hub arriva al nodo (
   let st = nodesStore.emptyStore();
   st = nodesStore.addNode(st, {
     name: 'up1', ssh: 'u@h', remotePort: 1, localPort: remote.port,
-    keyPath: '/tmp/k_ed25519', roles: { client: true, node: false },
+    keyPath: '/tmp/k_ed25519', autostart: false, roles: { client: true, node: false },
   });
   st = nodesStore.setNodeToken(st, 'up1', remote.token);
   nodesStore.atomicWriteStore(nodesPath, st);

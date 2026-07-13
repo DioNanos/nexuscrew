@@ -2,6 +2,42 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.10 — 2026-07-13 — "Hydra Federation"
+
+- Hydra pairing now creates one supervised OpenSSH connection per hub: the private `-L`
+  channel is automatic, while `-R` exists only after an explicit Share toggle and a real
+  authenticated readiness probe. The retired rendezvous/node-role runtime can no longer
+  start a second hidden tunnel, and pairing cannot self-escalate to shared.
+- Tunnel liveness no longer mistakes a surviving `autossh` wrapper for a healthy SSH child.
+  `ssh` is the single runtime transport and a blocking doctor requirement; `autossh` is
+  reported separately as optional and unused. PWA failures no longer recommend private or
+  nonexistent CLI commands.
+- The read-only MCP bridge adds owner-aware `nc_deck`: a cell can discover every local or
+  authorized shared-owner deck containing its tmux session and read visually ordered members
+  with stable owner IDs, Fleet cell names, exact tmux sessions, viewer-valid Hydra routes and
+  self identity. The packaged NexusCrew skill documents discovery without direct state access.
+- Decks are owner-qualified and resolve their tiles from the viewer's route, so identically
+  named sessions on different nodes never collapse or fall back to a local session. Shared
+  owner decks are read through the existing scoped Hydra channel and remain visibly unavailable
+  when their owner is offline.
+- The Fleet roster keeps its desktop chrome fixed and groups every local or remote location
+  behind independent collapse and all/pinned/active/off controls. Pins use route-qualified
+  identities and deterministic ordering; the mobile header now remains fixed while its roster
+  scrolls naturally without hiding the last card under the create button.
+- Fleet Settings separates location management from the whole-network overview. Managed-cell
+  power opens the shared launch editor, while delete/import and engine definitions remain in
+  Settings and preserve the selected Hydra route.
+- A stopped managed session can restart inside its existing deck tile: only the terminal
+  generation is replaced, and transient WebSocket reconnects are bounded without reviving a
+  deliberately exited terminal.
+- Public `status`, `stop`, and `restart` now reconcile service-managed and portable runtimes,
+  clean stale PID ownership safely, stop NexusCrew-managed SSH supervisors, and refuse a silent
+  HTTP-port move when paired peers depend on the configured endpoint.
+- Tests: **726 total** (725 pass / 1 platform-dependent skip), frontend production build PASS,
+  dependency audit clean, isolated HOME clean, and package/public-tree verification required
+  before publication. Real Mac–Pixel–hub interoperability remains an external follow-up and is
+  not represented as an automated test.
+
 ## 0.8.9 — 2026-07-12 — "Hydra Workspaces"
 
 - Remote Fleet tiles now attach to their real `tmuxSession`, including an idempotent migration

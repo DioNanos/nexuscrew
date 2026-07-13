@@ -4,10 +4,10 @@ import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import {
   apiFetch, getSettings, getNodes, saveConfig, rotateToken,
-  removeNode, nodeAction, setNodeRole, regenService, createPeerInvite, setNodeVisibility, renameNodeLabel,
+  removeNode, nodeAction, setNodeShare, regenService, createPeerInvite, setNodeVisibility, renameNodeLabel,
   checkNpmUpdate, applyNpmUpdate,
 } from '../lib/api.js';
-import { validateNodeForm, validateRendezvousForm, tunnelInfo, toSlug, isValidLabel } from '../lib/settings-model.js';
+import { validateNodeForm, tunnelInfo, toSlug, isValidLabel } from '../lib/settings-model.js';
 import PairingCard from './PairingCard.jsx';
 import { getPushState, subscribePush, unsubscribePush } from '../lib/push.js';
 import Icon from './Icon.jsx';
@@ -24,8 +24,7 @@ import './SettingsPanel.css';
 // esplicita (jsonFetch propaga j.error); in READONLY i mutanti sono disabilitati
 // con motivo visibile (test/up/down/restart restano attivi: non sono gated).
 
-// Bottone "copia" con feedback: la riga authorized_keys e' una pubkey con
-// restrict/permitopen — NON un segreto (contratto B2-API).
+// Bottone copia con feedback per il link di pairing one-time.
 function CopyLine({ text }) {
   const [done, setDone] = useState(false);
   const copy = async () => {
@@ -42,94 +41,10 @@ function CopyLine({ text }) {
   );
 }
 
-// Blocco riga authorized_keys post add/node-role (hint + copia).
-export function AuthorizedKeysBlock({ line }) {
-  if (!line) return null;
-  return (
-    <div className="nc-set-akeys">
-      <div className="nc-set-hint">{t('authorized-keys-hint')}</div>
-      <CopyLine text={line} />
-    </div>
-  );
-}
-
 function PairingQr({ value }) {
   const [src, setSrc] = useState('');
   useEffect(() => { let live = true; QRCode.toDataURL(value, { margin: 1, width: 220 }).then((x) => { if (live) setSrc(x); }).catch(() => {}); return () => { live = false; }; }, [value]);
   return src ? <img src={src} width="220" height="220" alt="NexusCrew pairing QR" /> : null;
-}
-
-// --- scheda RUOLI -------------------------------------------------------------
-function RolesTab({ token, settings, readonly, refresh }) {
-  const roles = (settings && settings.roles) || { client: false, node: false };
-  const hasRendezvous = !!(settings && settings.rendezvous);
-  const [err, setErr] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [nodeForm, setNodeForm] = useState(null); // {ssh, publishedPort} quando serve il rendezvous
-  const [akeys, setAkeys] = useState(null);
-
-  const toggleClient = async (checked) => {
-    setErr(null); setBusy(true);
-    try { await saveConfig(token, { roles: { client: checked } }); await refresh(); }
-    catch (e) { setErr(String(e.message || e)); }
-    setBusy(false);
-  };
-
-  const applyNodeRole = async (body) => {
-    setErr(null); setBusy(true);
-    try {
-      const j = await setNodeRole(token, body);
-      setAkeys(j.authorizedKeys || null);
-      setNodeForm(null);
-      await refresh();
-    } catch (e) { setErr(String(e.message || e)); }
-    setBusy(false);
-  };
-
-  const toggleNode = (checked) => {
-    setAkeys(null);
-    if (!checked) return applyNodeRole({ enabled: false });
-    if (hasRendezvous) return applyNodeRole({ enabled: true });
-    setNodeForm({ ssh: '', publishedPort: '' });     // serve il rendezvous: form inline
-  };
-
-  const submitRendezvous = () => {
-    const v = validateRendezvousForm(nodeForm, hasRendezvous);
-    if (!v.ok) return setErr(t(v.error));
-    applyNodeRole({ enabled: true, ...v.value });
-  };
-
-  return (
-    <div className="nc-set-tab">
-      <label className="nc-check">
-        <input type="checkbox" checked={!!roles.client} disabled={readonly || busy}
-          onChange={(e) => toggleClient(e.target.checked)} />
-        <span><b>{t('role-client')}</b><small>{t('role-client-desc')}</small></span>
-      </label>
-      <label className="nc-check">
-        <input type="checkbox" checked={!!roles.node} disabled={readonly || busy}
-          onChange={(e) => toggleNode(e.target.checked)} />
-        <span><b>{t('role-node')}</b><small>{t('role-node-desc')}</small></span>
-      </label>
-      {settings && settings.rendezvous && (
-        <div className="nc-set-info">rendezvous: {settings.rendezvous.ssh}{settings.rendezvous.publishedPort ? ` :${settings.rendezvous.publishedPort}` : ''}</div>
-      )}
-      {nodeForm && (
-        <div className="nc-set-form">
-          <input placeholder={t('rendezvous-ssh')} value={nodeForm.ssh}
-            onChange={(e) => setNodeForm({ ...nodeForm, ssh: e.target.value })} />
-          <input placeholder={t('published-port')} inputMode="numeric" value={nodeForm.publishedPort}
-            onChange={(e) => setNodeForm({ ...nodeForm, publishedPort: e.target.value })} />
-          <div className="nc-sheet-actions">
-            <button type="button" className="nc-btn ghost" onClick={() => setNodeForm(null)}>{t('cancel')}</button>
-            <button type="button" className="nc-btn primary" disabled={busy} onClick={submitRendezvous}>{t('enable')}</button>
-          </div>
-        </div>
-      )}
-      <AuthorizedKeysBlock line={akeys} />
-      {err && <div className="nc-err">{err}</div>}
-    </div>
-  );
 }
 
 // --- scheda NODI ---------------------------------------------------------------
@@ -139,11 +54,17 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
   const [testResult, setTestResult] = useState({}); // name -> {ok, result, detail}
   const [invite, setInvite] = useState(null);
   const [inviteForm, setInviteForm] = useState({ ssh: '', sshPort: '', name: '' });
+  const [inviteHubName, setInviteHubName] = useState('');
   const [devName, setDevName] = useState('');
   const [inviteAdvanced, setInviteAdvanced] = useState(false);
   const now = Date.now();
   const deviceDefault = (settings && settings.deviceName) || '';
-  const configuredEndpoint = !!(settings && settings.rendezvous && settings.rendezvous.ssh);
+  // Un'installazione client invita nella rete a cui è già collegata, non crea
+  // un peer diretto verso sé stessa. In questo modo Pixel apre un solo forward
+  // verso la porta d'ingresso del relay; gli altri nodi restano route Hydra
+  // interne all'hub. I peer inbound non sono hub selezionabili.
+  const inviteHubs = (nodes || []).filter((n) => n && n.direction === 'outbound' && n.name && n.ssh);
+  const inviteHub = inviteHubs.find((n) => n.name === inviteHubName) || inviteHubs[0] || null;
 
   const run = async (name, action) => {
     setErr(null); setBusy(`${name}:${action}`);
@@ -165,19 +86,32 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
 
   const onCreateInvite = async () => {
     setErr(null);
+    if (inviteHub) {
+      const checkedHub = validateNodeForm({
+        name: inviteHub.name, ssh: inviteHub.ssh, sshPort: inviteHub.sshPort || '',
+      });
+      if (!checkedHub.ok) { setErr(t(checkedHub.error)); return; }
+      setBusy('invite');
+      try {
+        // Il POST è eseguito sul nodo hub selezionato. Non inoltriamo label/name
+        // locali: l'invito deve identificare l'hub, non questo client.
+        setInvite(await createPeerInvite(token, {
+          ssh: checkedHub.value.ssh,
+          ...(checkedHub.value.sshPort ? { sshPort: checkedHub.value.sshPort } : {}),
+        }, [inviteHub.name]));
+      } catch (e) { setErr(String(e.message || e)); }
+      setBusy(null);
+      return;
+    }
     const name = toSlug(inviteForm.name || devName || deviceDefault || 'NexusCrew');
-    const automaticSsh = settings?.rendezvous?.ssh || '';
-    const checked = validateNodeForm({ name, ssh: inviteForm.ssh || automaticSsh, sshPort: inviteForm.sshPort });
+    const checked = validateNodeForm({ name, ssh: inviteForm.ssh, sshPort: inviteForm.sshPort });
     if (!checked.ok) { setErr(t(checked.error)); return; }
     setBusy('invite');
     try {
       setInvite(await createPeerInvite(token, {
         ...(devName || deviceDefault ? { label: devName || deviceDefault } : {}),
         name,
-        // Empty means: let the server use its stored rendezvous endpoint. This
-        // keeps the normal creator path zero-field and avoids persisting UI
-        // guesses. A manually entered target still overrides it.
-        ...(inviteForm.ssh.trim() ? { ssh: checked.value.ssh } : {}),
+        ssh: checked.value.ssh,
         ...(checked.value.sshPort ? { sshPort: checked.value.sshPort } : {}),
       }));
     } catch (e) { setErr(String(e.message || e)); }
@@ -198,18 +132,36 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
             <div className="nc-set-node-head">
               <span className={`nc-dot ${ti.up ? 'on' : ''}`} />
               <b>{n.label || n.name}</b>
-              <small>{n.name} · {n.ssh}{n.sshPort ? `:${n.sshPort}` : ''} · :{n.localPort}→:{n.remotePort}</small>
+              <small>
+                {n.name}
+                {n.direction === 'outbound' ? ` · SSH ${n.ssh || ''}` : ` · ${t('node-connected-client')}`}
+                {n.tunnel?.transport ? ` · ${n.tunnel.transport} ${t('transport-used')}` : ''}
+              </small>
               <span className={`nc-set-tunnel${ti.up ? ' up' : ''}`}>
                 {t(ti.label)}{ti.since ? ` · ${ti.since}` : ''}
               </span>
-              <select value={n.visibility || 'network'} disabled={readonly || !!busy}
+              {n.shared && <select value={n.visibility || 'network'} disabled={readonly || !!busy}
                 onChange={async (e) => { setBusy(`${n.name}:visibility`); try { await setNodeVisibility(token, n.name, e.target.value); await refresh(); } catch (x) { setErr(String(x.message || x)); } setBusy(null); }}>
                 <option value="network">{t('visibility-network')}</option>
                 <option value="relay-only">{t('visibility-relay')}</option>
                 <option value="selected">{t('visibility-selected')}</option>
-              </select>
+              </select>}
             </div>
-            {n.visibility === 'selected' && <div className="nc-set-row">
+            {n.direction === 'outbound' ? (
+              <label className="nc-check nc-node-share">
+                <input type="checkbox" checked={n.shared === true} disabled={readonly || !!busy || (!ti.up && !n.shared)}
+                  onChange={async (e) => {
+                    setErr(null); setBusy(`${n.name}:share`);
+                    try { await setNodeShare(token, n.name, e.target.checked); await refresh(); }
+                    catch (x) { setErr(`${n.name}: ${String(x.message || x)}`); }
+                    setBusy(null);
+                  }} />
+                <span><b>{t('share-node')}</b><small>{t(n.shared ? 'share-node-on-desc' : 'share-node-off-desc')}</small></span>
+              </label>
+            ) : (
+              <div className="nc-set-info">{t(n.shared ? 'peer-shared' : 'peer-private')}</div>
+            )}
+            {n.shared && n.visibility === 'selected' && <div className="nc-set-row">
               {(nodes || []).filter((x) => x.name !== n.name && x.nodeId).map((x) => {
                 const checked = (n.selected || []).includes(x.nodeId);
                 return <label className="nc-check" key={x.nodeId}><input type="checkbox" checked={checked} disabled={readonly || !!busy}
@@ -255,12 +207,23 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
 
       <div className="nc-set-form">
         <div className="nc-sheet-label">{t('invite-node')}</div>
-        <small className="nc-set-hint">{t('invite-v2-hint')}</small>
-        {configuredEndpoint && !inviteAdvanced ? (
-          <div className="nc-set-info nc-invite-endpoint">
-            {t('invite-endpoint-auto')}: <b>{settings.rendezvous.ssh}</b>
-            {settings.rendezvous.publishedPort ? ` · Nexus :${settings.rendezvous.publishedPort}` : ''}
-          </div>
+        <small className="nc-set-hint">{inviteHub ? t('invite-network-hint') : t('invite-v2-hint')}</small>
+        {inviteHub ? (
+          <>
+            {inviteHubs.length > 1 && (
+              <label className="nc-field">{t('invite-network-label')}
+                <select value={inviteHub.name} disabled={readonly || !!busy}
+                  onChange={(e) => { setInviteHubName(e.target.value); setInvite(null); }}>
+                  {inviteHubs.map((hub) => <option key={hub.name} value={hub.name}>{hub.label || hub.name}</option>)}
+                </select>
+              </label>
+            )}
+            <div className="nc-set-info nc-invite-endpoint">
+              {t('invite-network-via')}: <b>{inviteHub.label || inviteHub.name}</b>
+              {' · '}{inviteHub.ssh}{inviteHub.sshPort ? `:${inviteHub.sshPort}` : ''}
+            </div>
+            <small className="nc-set-hint">{t('invite-network-route')}</small>
+          </>
         ) : (
           <label className="nc-field">{t('invite-endpoint-label')}
             <input placeholder="user@host" value={inviteForm.ssh} disabled={readonly}
@@ -268,7 +231,7 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
             <small className="nc-set-hint">{t('invite-endpoint-needed')}</small>
           </label>
         )}
-        {inviteAdvanced && (
+        {!inviteHub && inviteAdvanced && (
           <div className="nc-invite-advanced">
             <label className="nc-field">{t('node-ssh-port-label')}
               <input inputMode="numeric" placeholder="22" value={inviteForm.sshPort} disabled={readonly}
@@ -286,12 +249,12 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
           </div>
         )}
         <div className="nc-set-row nc-invite-actions">
-          <button type="button" className="nc-btn primary" disabled={readonly || !!busy || (!configuredEndpoint && !inviteForm.ssh.trim())}
+          <button type="button" className="nc-btn primary" disabled={readonly || !!busy || (!inviteHub && !inviteForm.ssh.trim())}
             onClick={onCreateInvite}>{t('create-pairing-link')}</button>
-          <button type="button" className="nc-btn ghost" disabled={!!busy}
+          {!inviteHub && <button type="button" className="nc-btn ghost" disabled={!!busy}
             onClick={() => setInviteAdvanced((value) => !value)}>
             {inviteAdvanced ? '▾' : '▸'} {t('pair-advanced')}
-          </button>
+          </button>}
         </div>
         {invite && <>
           <PairingQr value={invite.pairingUrl} />

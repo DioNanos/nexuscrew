@@ -2,7 +2,17 @@
   display: flex; flex-direction: column; gap: 12px;
   padding: 18px 14px 10px; color: #cfe;
   max-width: 560px; margin: 0 auto;
-  min-height: 100dvh; box-sizing: border-box;
+  height: 100dvh; min-height: 0; overflow: hidden; box-sizing: border-box;
+}
+
+/* Il root dell'app non scorre: su mobile header e comandi restano visibili,
+   mentre solo il roster sottostante usa lo spazio residuo. Il padding in fondo
+   evita che l'ultima card finisca sotto il FAB. */
+.nc-home-scroll {
+  min-height: 0; flex: 1 1 auto; overflow-y: auto;
+  overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 0 2px 76px 0;
 }
 
 /* Wordmark: identità da terminale — mono, cursore a blocco che lampeggia. */

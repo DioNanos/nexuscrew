@@ -34,6 +34,18 @@ test('/deck/<name>: nomi validi servono la SPA (stesso index.html)', async (t) =
   }
 });
 
+test('/deck/<ownerId>/<name>: owner stabile serve la stessa SPA', async (t) => {
+  const { base } = await boot(t);
+  const owner = 'a'.repeat(32);
+  const rootHtml = await fetch(`${base}/`).then((r) => r.text());
+  const r = await fetch(`${base}/deck/${owner}/work-1`);
+  assert.equal(r.status, 200);
+  assert.equal(await r.text(), rootHtml);
+  for (const bad of [`${'A'.repeat(32)}/work-1`, `${'a'.repeat(15)}/work-1`, `${owner}/Work`, `${owner}/work/extra`]) {
+    assert.equal((await fetch(`${base}/deck/${bad}`)).status, 404, bad);
+  }
+});
+
 test('/deck/<name>: nomi invalidi → 404 secco', async (t) => {
   const { base } = await boot(t);
   const bad = [

@@ -1,6 +1,6 @@
 ---
 name: nexuscrew-agent
-description: Use when an AI agent connected to NexusCrew must notify or ask the human, inspect NexusCrew session/fleet status, read its inbox, deliver a file (report, screenshot, export), send text/input to a tmux session, or recover from tmux send-keys messages that remain unsubmitted or arrive garbled. Prefer the NexusCrew MCP tools nc_notify, nc_ask, nc_status, nc_inbox, and nc_send_file when exposed; use the bundled tmux/file helpers as fallback.
+description: Use when an AI agent connected to NexusCrew must notify or ask the human, inspect NexusCrew session/fleet status or its own deck membership, read its inbox, deliver a file (report, screenshot, export), send text/input to a tmux session, or recover from tmux send-keys messages that remain unsubmitted or arrive garbled. Prefer the NexusCrew MCP tools nc_notify, nc_ask, nc_status, nc_deck, nc_inbox, and nc_send_file when exposed; use the bundled tmux/file helpers as fallback.
 ---
 
 # NexusCrew Agent I/O
@@ -16,6 +16,7 @@ When the client exposes the NexusCrew MCP server, use these tools directly:
 | Notify the human about a result, blocker, or milestone | `nc_notify` |
 | Ask for a decision without blocking the agent | `nc_ask` |
 | Inspect live tmux sessions and fleet cells | `nc_status` |
+| Read the caller's deck name(s) and member cells/tmux sessions | `nc_deck` |
 | List files received for the current session | `nc_inbox` |
 | Deliver an absolute file path under the user's home | `nc_send_file` |
 
@@ -24,7 +25,9 @@ Apply these rules:
 - Use `nc_notify` for meaningful asynchronous updates, failures requiring attention, and completion. Do not notify for every command or duplicate routine chat commentary.
 - Never include access tokens, credentials, private keys, push subscriptions, or other secrets in a notification, ask, file caption, or tool result.
 - Treat `nc_ask` as non-blocking: it returns an ask ID immediately. Continue safe independent work or wait normally; the human response arrives in the originating tmux session with a `[human reply · ask#<id>]` prefix by default.
-- Use `nc_status` instead of scraping NexusCrew state files. Use `nc_inbox` instead of guessing an inbox path when the tool is available.
+- Use `nc_status` instead of scraping NexusCrew state files. Use `nc_deck` instead of reading `decks.json`: it returns every local or authorized shared-owner deck containing the caller, preserves visual member order, identifies each deck and member by stable owner ID, includes viewer-valid Hydra routes, and reports `cell: null` when no managed Fleet match is available.
+- Treat `nc_deck` as discovery, not authorization to contact every member. Use the verified tmux-messaging flow below for actual delivery and confirm submission visually.
+- Use `nc_inbox` instead of guessing an inbox path when the tool is available.
 - Pass `nc_send_file` an existing absolute regular-file path below the user's home. Let NexusCrew choose and sanitize the outbox name.
 - Do not treat an MCP notification as a substitute for the final response required by the active client.
 
@@ -68,6 +71,7 @@ tmux capture-pane -t <session> -p | tail -8   # see the text / a running state
 | Notify the human | `nc_notify` |
 | Ask the human without blocking | `nc_ask` |
 | Inspect NexusCrew runtime state | `nc_status` |
+| Discover this session's deck neighbours | `nc_deck` |
 | Give the human a file | `nc_send_file` or fallback `nc-deliver <file>...` |
 | Read a file the human sent | `nc_inbox` or fallback to the path in the prompt |
 | Send a prompt/command to a session | `nc-send <session> "text"` |

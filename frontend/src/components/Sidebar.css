@@ -3,7 +3,7 @@
   display: flex; flex-direction: column; gap: 8px;
   padding: 12px 10px; color: #cfe;
   min-height: 0; position: relative;
-  overflow-y: auto; box-sizing: border-box;
+  overflow: hidden; box-sizing: border-box;
   border-right: 1px solid #1c241c;
   background: #0a0e0a;
 }
@@ -29,6 +29,8 @@
   padding: 2px 4px 6px;
 }
 .nc-side-head.mini { padding: 2px 0 6px; justify-content: center; }
+.nc-side-scroll { min-height: 0; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+.nc-side-scroll.mini { width: 100%; align-items: center; }
 
 /* Griglia dot in mini mode. */
 .nc-side-group.mini { align-items: center; gap: 6px; }
@@ -55,9 +57,17 @@
 }
 /* Titolo gruppo per-nodo remoto (B2): dot di stato + nome + conteggio/degrado. */
 .nc-node-title { display: flex; align-items: center; gap: 6px; opacity: .8; }
+.nc-node-title[role="button"] { cursor: pointer; border-radius: 6px; }
+.nc-node-title[role="button"]:focus-visible { outline: 1px solid #2e7d32; }
 .nc-node-title .nc-dot { width: 7px; height: 7px; flex: 0 0 auto; }
-.nc-node-title b { font-weight: 700; }
-.nc-node-title small { text-transform: none; letter-spacing: 0; opacity: .8; }
+.nc-node-title b { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.nc-node-title small { text-transform: none; letter-spacing: 0; opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-node-chevron { flex: 0 0 10px; font-size: 13px; }
+.nc-node-filter {
+  flex: 0 0 auto; max-width: 82px; min-width: 58px; padding: 3px 18px 3px 5px;
+  border: 1px solid #243; border-radius: 6px; background: #0a0e0a; color: #9fd;
+  font: 10px/1.2 inherit; text-transform: lowercase;
+}
 
 /* Cella flotta */
 .nc-cell {
@@ -117,7 +127,7 @@
   display: flex; align-items: center; gap: 8px;
   background: none; border: 1px solid #1c241c; border-radius: 10px;
   color: #9fd; font-size: 12px; padding: 7px 10px; cursor: pointer;
-  margin-top: 6px;
+  margin-top: 0; flex: 0 0 auto;
 }
 .nc-side-gear:hover { border-color: #2e7d32; color: #d8ffe8; }
 .nc-side-gear.mini {
@@ -127,7 +137,7 @@
 
 /* Picker lingua in fondo alla sidebar. */
 .nc-side-lang {
-  margin-top: auto; padding: 10px 4px 4px;
+  flex: 0 0 auto; padding: 4px;
   display: flex; align-items: center; gap: 2px;
   font-size: 11px; opacity: .6;
 }

@@ -199,20 +199,6 @@ test('removeNode / setNodeToken', () => {
   assert.throws(() => store.removeNode(s, 'a'), /sconosciuto/);
 });
 
-test('every durable rendezvous mutation upgrades a v1 store to schema v2 on disk', () => {
-  const dir = tmpDir(); const p = path.join(dir, 'nodes.json');
-  const v1 = store.parseStore({ schemaVersion: 1, nodeId: NODE_ID, nodes: [] });
-  const withRdv = store.setRendezvous(v1, { ssh: 'user@host', publishedPort: 41822, localPort: 41820, keyPath: '/tmp/key' });
-  store.atomicWriteStore(p, withRdv);
-  assert.equal(JSON.parse(fs.readFileSync(p, 'utf8')).schemaVersion, 2);
-  assert.equal(store.loadStore(p).schemaVersion, 2);
-  const cleared = store.clearRendezvous(store.parseStore({ schemaVersion: 1, nodeId: NODE_ID, nodes: [], rendezvous: { ssh: 'user@host', publishedPort: 41822, localPort: 41820, keyPath: '/tmp/key' } }));
-  store.atomicWriteStore(p, cleared);
-  assert.equal(JSON.parse(fs.readFileSync(p, 'utf8')).schemaVersion, 2);
-  assert.equal(store.loadStore(p).schemaVersion, 2);
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
 // --- redazione --------------------------------------------------------------
 
 test('redactStore/redactNode: MAI il token, solo hasToken', () => {

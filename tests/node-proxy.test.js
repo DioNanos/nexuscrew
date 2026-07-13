@@ -478,10 +478,13 @@ const { createServer } = require('../lib/server.js');
 async function bootServer(t, { nodesPath } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncproxy-'));
   const { server, token, watcher } = createServer({
+    home: dir,
     tokenPath: path.join(dir, 'token'),
     filesRoot: path.join(dir, 'files'),
     nodesPath: nodesPath || path.join(dir, 'nodes.json'),
     fleetEnabled: false,
+    autoUpdate: false,
+    tunnelSpawnImpl: () => { throw new Error('node-proxy tests must never autostart a tunnel'); },
   });
   await new Promise((res) => server.listen(0, '127.0.0.1', res));
   t.after(() => { server.close(); if (watcher) watcher.close(); });
@@ -492,7 +495,7 @@ test('createServer: /api/nodes redatto (token mai esposto) + stato tunnel', asyn
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncnodes-'));
   const nodesPath = path.join(dir, 'nodes.json');
   let st = nodesStore.emptyStore();
-  st = nodesStore.addNode(st, { name: 'up1', ssh: 'u@h', remotePort: 41820, localPort: 43101, keyPath: '/tmp/k_ed25519', roles: { client: true, node: false } });
+  st = nodesStore.addNode(st, { name: 'up1', ssh: 'u@h', remotePort: 41820, localPort: 43101, keyPath: '/tmp/k_ed25519', autostart: false, roles: { client: true, node: false } });
   st = nodesStore.setNodeToken(st, 'up1', REMOTE);
   nodesStore.atomicWriteStore(nodesPath, st);
   const { base, token } = await bootServer(t, { nodesPath });
@@ -516,7 +519,7 @@ test('createServer: proxy /node/<name> end-to-end inietta il token remoto', asyn
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncnodes2-'));
   const nodesPath = path.join(dir, 'nodes.json');
   let st = nodesStore.emptyStore();
-  st = nodesStore.addNode(st, { name: 'up1', ssh: 'u@h', remotePort: 41820, localPort: upPort, keyPath: '/tmp/k_ed25519', roles: { client: true, node: false } });
+  st = nodesStore.addNode(st, { name: 'up1', ssh: 'u@h', remotePort: 41820, localPort: upPort, keyPath: '/tmp/k_ed25519', autostart: false, roles: { client: true, node: false } });
   st = nodesStore.setNodeToken(st, 'up1', REMOTE);
   nodesStore.atomicWriteStore(nodesPath, st);
   const { base, token } = await bootServer(t, { nodesPath });

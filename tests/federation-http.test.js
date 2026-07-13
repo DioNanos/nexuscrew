@@ -21,14 +21,14 @@ const rawRequest = (url, headers = {}) => new Promise((resolve, reject) => {
   req.on('error', reject);
 });
 
-test('scoped federation HTTP reaches sessions and allowlisted fleet but never settings', async (t) => {
+test('scoped federation HTTP reaches sessions, fleet, owner decks and only the hub invite settings mutation', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fed-http-'));
   const destNodes = path.join(dir, 'dest.json');
   let ds = store.emptyStore('d'.repeat(32));
   ds = store.addNode(ds, { name: 'relay', remotePort: 41820, localPort: 44001, direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', nodeId: 'a'.repeat(32), token: 'dest-to-relay', acceptToken: 'relay-to-dest' });
   store.atomicWriteStore(destNodes, ds);
 
-  let sessionHits = 0; let fleetHits = 0; let forbiddenHits = 0; let deleteHits = 0; let seen = null;
+  let sessionHits = 0; let fleetHits = 0; let deckHits = 0; let inviteHits = 0; let forbiddenHits = 0; let deleteHits = 0; let seen = null;
   const local = express();
   local.use((req, res, next) => req.headers.authorization === 'Bearer dest-main' ? next() : res.sendStatus(401));
   local.get('/api/sessions', (req, res) => {
@@ -39,6 +39,14 @@ test('scoped federation HTTP reaches sessions and allowlisted fleet but never se
   });
   local.delete('/api/sessions/:name', (_req, res) => { deleteHits += 1; res.json({ killed: true }); });
   local.get('/api/fleet/status', (_req, res) => { fleetHits += 1; res.json({ available: true, provider: 'builtin' }); });
+  local.get('/api/decks', (_req, res) => { deckHits += 1; res.json({ schemaVersion: 1, decks: [{ name: 'main', revision: 0, layout: { columns: [] } }] }); });
+  local.post('/api/decks', express.json(), (req, res) => { deckHits += 1; res.status(201).json({ name: req.body.name, revision: 0, layout: { columns: [] } }); });
+  local.put('/api/decks/:name', express.json(), (req, res) => { deckHits += 1; res.json({ name: req.params.name, revision: req.body.expectedRevision + 1, layout: req.body.layout }); });
+  local.get('/api/topology', (_req, res) => res.json({ nodes: [] }));
+  local.post('/api/settings/peering/invite', express.json(), (req, res) => {
+    inviteHits += 1;
+    res.json({ pairingUrl: `http://127.0.0.1:41777/#pair=hub-${req.body.ssh}` });
+  });
   local.post('/api/files/outbox', (_req, res) => { forbiddenHits += 1; res.sendStatus(500); });
   local.all('/api/settings*', (_req, res) => { forbiddenHits += 1; res.sendStatus(500); });
   const localServer = await listen(local);
@@ -72,8 +80,25 @@ test('scoped federation HTTP reaches sessions and allowlisted fleet but never se
   assert.equal(deleteHits, 3, 'ordinary, capability-like, and underscore session names reach only the selected destination');
   assert.equal((await fetch(`${base}/api/route/mac/_/files/outbox`, { method: 'POST' })).status, 404);
   assert.equal((await fetch(`${base}/api/route/mac/_/settings`)).status, 404);
+  const invite = await fetch(`${base}/api/route/mac/_/settings/peering/invite`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ssh: 'relay' }),
+  });
+  assert.equal(invite.status, 200);
+  assert.equal((await invite.json()).pairingUrl, 'http://127.0.0.1:41777/#pair=hub-relay');
+  assert.equal(await fetch(`${base}/api/route/mac/_/settings/peering/invite`).then((r) => r.status), 404);
   assert.equal((await fetch(`${base}/api/route/mac/_/fleet/status`)).status, 200);
+  assert.equal((await fetch(`${base}/api/route/mac/_/decks`)).status, 200);
+  assert.equal((await fetch(`${base}/api/route/mac/_/decks`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'work' }),
+  })).status, 201);
+  assert.equal((await fetch(`${base}/api/route/mac/_/decks/work`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ expectedRevision: 0, layout: { columns: [] } }),
+  })).status, 200);
+  assert.equal((await fetch(`${base}/api/route/mac/_/topology`)).status, 200);
   assert.equal(fleetHits, 1);
+  assert.equal(deckHits, 3);
+  assert.equal(inviteHits, 1);
   assert.equal(forbiddenHits, 0);
 });
 
@@ -82,7 +107,7 @@ test('server-controlled visited IDs reject an HTTP federation cycle', async (t) 
   const reserve = async () => { const s = await listen((_q, r) => r.end()); const p = s.address().port; await close(s); return p; };
   const aPort = await reserve(); const bPort = await reserve(); const cPort = await reserve();
   const aPath = path.join(dir, 'a.json'); const bPath = path.join(dir, 'b.json'); const cPath = path.join(dir, 'c.json');
-  const node = (name, port, nodeId, token, acceptToken) => ({ name, ssh: name, remotePort: port, localPort: port, direction: 'outbound', transport: 'ssh', autostart: false, visibility: 'network', nodeId, token, acceptToken });
+  const node = (name, port, nodeId, token, acceptToken) => ({ name, ssh: name, remotePort: port, localPort: port, direction: 'outbound', transport: 'ssh', autostart: false, shared: true, visibility: 'network', nodeId, token, acceptToken });
   let a = store.emptyStore('a'.repeat(32));
   a = store.addNode(a, node('b', bPort, 'b'.repeat(32), 'a-to-b', 'b-to-a'));
   a = store.addNode(a, node('c', cPort, 'c'.repeat(32), 'a-to-c', 'c-to-a'));
@@ -118,6 +143,8 @@ test('relay READONLY blocks federated mutations before forwarding', async (t) =>
   const s = await listen(app); t.after(async () => { await close(s); fs.rmSync(dir, { recursive: true, force: true }); });
   const r = await fetch(`http://127.0.0.1:${s.address().port}/api/route/vps/_/sessions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   assert.equal(r.status, 403);
+  const deck = await fetch(`http://127.0.0.1:${s.address().port}/api/route/vps/_/decks`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"name":"work"}' });
+  assert.equal(deck.status, 403);
 });
 
 test('federated WebSocket uses scoped hop auth and reaches destination PTY gate', async (t) => {

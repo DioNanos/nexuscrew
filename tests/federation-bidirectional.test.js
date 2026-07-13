@@ -123,7 +123,7 @@ test('hub con peer inbound: usa la reversePort, vede il client e non ne possiede
   stB = store.removeNode(stB, 'a');
   stB = store.addNode(stB, {
     name: 'a', remotePort: 41820, localPort: A.port,
-    direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network',
+    direction: 'inbound', transport: 'inbound', autostart: true, shared: true, visibility: 'network',
     nodeId: NODE_ID_A, token: CRED_A, acceptToken: CRED_B,
   });
   store.atomicWriteStore(B.nodesPath, stB);
