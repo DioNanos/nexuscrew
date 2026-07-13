@@ -16,7 +16,7 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 
 ---
 
-## What it is (v0.8.11 "Tmux Survival")
+## What it is (v0.8.12 "Mobile Roster")
 
 - Runs a small server on the host where your tmux sessions live.
 - Each attach spawns a real PTY running `tmux attach` and bridges its bytes over a WebSocket
@@ -24,10 +24,12 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 - **Desktop grid** (≥1024px): drag sessions from the sidebar into a tiling column layout —
   live terminals side by side, draggable dividers, per-tile composer, layout remembered.
   Tiles attach with `ignore-size` so they never resize your real terminals.
-- **Ordered Fleet roster**: local and remote locations are independently collapsible and
-  filterable by all, pinned, active, or off. The desktop chrome stays fixed while the roster
-  scrolls; the mobile header stays visible above its own touch-scrolling list, and the compact
-  version/endpoint/language footer remains readable on narrow screens.
+- **Ordered Fleet roster**: desktop and mobile share the same per-location model. Local and
+  every Hydra route are independently collapsible and filterable by all, pinned, active, or
+  off; route-qualified pins and the deterministic pinned → live → fresh output → activity →
+  name order survive reloads. Search covers every visible node once the combined roster grows
+  beyond eight entries. Desktop chrome and the mobile header stay fixed while their lists
+  scroll, and the compact version/endpoint/language footer remains readable on narrow screens.
 - **Attached decks by default**: named workspaces switch as tabs inside the same PWA without
   reloading terminals or losing a pending layout save. Use `↗` only when you want to detach a
   deck into another browser window or monitor.
@@ -240,8 +242,10 @@ nexuscrew
 ```
 
 The first run creates a loopback-only configuration and starts a detached process. Run
-`nexuscrew boot` only if you want a persistent `systemd --user` service. Linux x64 and ARM64
-use platform PTY prebuilds only, so global installs do not compile native code or
+`nexuscrew boot` only if you want a persistent `systemd --user` service. The generated unit
+waits for `network-online.target`; `nexuscrew doctor` also warns when user lingering is disabled,
+because boot without an interactive login then depends on the host's systemd policy. Linux x64
+and ARM64 use platform PTY prebuilds only, so global installs do not compile native code or
 require install-script approval.
 
 ### macOS (Apple Silicon or Intel)
@@ -267,7 +271,9 @@ nexuscrew
 ```
 
 Termux uses the Android ARM64 PTY provider. The normal command starts NexusCrew in the
-background and exits. `nexuscrew boot` installs the Termux:Boot script explicitly.
+background and exits. `nexuscrew boot` installs the Termux:Boot script explicitly; install the
+Termux:Boot app and launch it once, because Android app activation cannot be verified by the
+CLI. `nexuscrew doctor` reports that limitation even when the script itself is valid.
 
 On every platform the first run starts the server in the background and opens the PWA wizard.
 After onboarding, the same command starts or reuses it, prints a compact status and guide, and
@@ -398,7 +404,7 @@ node bin/nexuscrew.js serve
 
 ## Status
 
-The current release candidate is **v0.8.11**. npm **`latest`**, the GitHub tag and the release
+The current release candidate is **v0.8.12**. npm **`latest`**, the GitHub tag and the release
 assets are promoted from the same verified artifact.
 
 ## License

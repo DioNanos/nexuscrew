@@ -1,6 +1,6 @@
 {
   "name": "@mmmbuto/nexuscrew",
-  "version": "0.8.11",
+  "version": "0.8.12",
   "description": "Faithful browser tmux client — attach to live sessions over a real PTY, localhost-only, mobile-easy",
   "main": "lib/server.js",
   "bin": {
@@ -20,7 +20,7 @@
     "start": "node bin/nexuscrew.js serve",
     "dev": "node bin/nexuscrew.js serve",
     "build": "cd frontend && npm install && npm run build && cd ..",
-    "test": "node tests/run-isolated.js"
+    "test": "node tests/run-isolated.js && npm --prefix frontend test"
   },
   "dependencies": {
     "express": "^4.21.0",

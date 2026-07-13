@@ -38,6 +38,8 @@ test('generateLinux: struttura systemd --user', () => {
   assert.doesNotMatch(s, /NEXUSCREW_PORT/, 'config.json resta la fonte autoritativa della porta');
   assert.match(s, /ExecStart=\/usr\/bin\/node .*\/bin\/nexuscrew\.js serve/);
   assert.match(s, /KillMode=process/, 'restart NexusCrew must never kill the shared tmux server');
+  assert.match(s, /Wants=network-online\.target/, 'network-online ordering must pull in the target');
+  assert.match(s, /After=network-online\.target/);
   assert.match(s, /WantedBy=default\.target/);
 });
 

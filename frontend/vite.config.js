@@ -20,6 +20,11 @@ export default defineConfig({
       '/health': 'http://localhost:41820'
     }
   },
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.js'],
+    clearMocks: true
+  },
   build: {
     outDir: 'dist'
   }

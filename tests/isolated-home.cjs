@@ -12,7 +12,11 @@ if (!root) throw new Error('NEXUSCREW_TEST_HOME_ROOT is required by the test har
 const home = path.join(root, `pid-${process.pid}`);
 const configHome = path.join(home, '.config');
 fs.mkdirSync(configHome, { recursive: true, mode: 0o700 });
-const tmuxRoot = process.env.NEXUSCREW_TEST_TMUX_ROOT || path.join(root, 'tmux');
+// One socket directory per test worker. A shared private socket was safe for
+// the operator but still let independent test files race while the last tmux
+// session made a server exit and another file created its first session.
+const tmuxBase = process.env.NEXUSCREW_TEST_TMUX_ROOT || path.join(root, 'tmux');
+const tmuxRoot = path.join(tmuxBase, `pid-${process.pid}`);
 fs.mkdirSync(tmuxRoot, { recursive: true, mode: 0o700 });
 
 process.env.HOME = home;

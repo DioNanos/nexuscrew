@@ -2,6 +2,30 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.12 — 2026-07-13 — "Mobile Roster"
+
+- The mobile Fleet home now uses the same per-location roster contract as the desktop sidebar.
+  Local and every Hydra route can be collapsed independently and filtered by all, pinned,
+  active, or off; state persists under one shared key.
+- Mobile pins are route-qualified, remote cells are pinnable, and both surfaces use the same
+  deterministic order: pinned, live, fresh output, recent activity, then label. Search counts
+  and scans the complete multi-node roster instead of only local sessions.
+- New jsdom component tests exercise real filter, collapse, persistence, pin and multi-node
+  search interactions. The official Node harness also gives every test worker its own private
+  tmux socket, eliminating cross-file server-exit races without touching operator sessions.
+- The SSH supervisor continuously proves ownership of its pidfile generation. Losing ownership
+  or failing a state write now terminates the child SSH process and supervisor instead of
+  leaving an invisible retry loop.
+- Explicit Share fails closed unless its local NexusCrew port is present; reverse forwarding
+  can no longer substitute the hub's remote port. macOS shutdown detects zombie supervisors
+  through argv-safe `ps` when `/proc` is unavailable.
+- Generated Linux user units now pull in `network-online.target`. Doctor warns when user linger
+  is disabled and explains that a Termux boot script still requires the Termux:Boot app to be
+  installed and launched once.
+- Tests: **749 total** (748 pass / 1 platform-dependent skip), production build PASS, root and
+  frontend dependency audits clean. Mac–Pixel–hub end-to-end pairing was not executed in this
+  release gate.
+
 ## 0.8.11 — 2026-07-13 — "Tmux Survival"
 
 - Linux service lifecycle is now tmux-safe. Generated units use `KillMode=process`, and an
