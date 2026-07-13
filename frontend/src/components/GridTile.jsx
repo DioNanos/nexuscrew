@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Terminal from './Terminal.jsx';
 import ComposerBar from './ComposerBar.jsx';
 import FilesPanel from './FilesPanel.jsx';
 import Icon from './Icon.jsx';
 import { t } from '../lib/i18n.js';
 import { TILE_FONT_DEF } from '../lib/grid-model.js';
+import { nextTerminalGeneration } from '../lib/terminal-lifecycle.js';
 import './GridTile.css';
 
 // Un tile della griglia. Ogni tile ha i PROPRI ref (audit F6: mai condivisi
@@ -15,7 +16,7 @@ import './GridTile.css';
 // node (opzionale, B2): il tile porta con se' il nodo remoto — terminale via
 // WS proxy, files/composer via HTTP proxy. Identita' del tile = refKey
 // "node:session" (drag, focus, close), locale = solo nome (retrocompatibile).
-export default function GridTile({ session, node, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck }) {
+export default function GridTile({ session, node, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, available = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck }) {
   const sendRef = useRef(() => {});
   const composerRef = useRef(() => false);
   const actionRef = useRef(() => {});
@@ -24,7 +25,20 @@ export default function GridTile({ session, node, token, readonly = false, focus
   const [showComposer, setShowComposer] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
   const [filesEvent, setFilesEvent] = useState(null);
+  const [terminalGeneration, setTerminalGeneration] = useState(0);
+  const previousAlive = useRef(alive);
   const tileKey = node ? `${node}:${session}` : session;
+  const deckTargets = decks.filter((deck) => deck.id !== currentDeck && deck.available !== false);
+
+  // Preserve the ended transcript while the cell is off. When the same tmux
+  // session becomes live again, remount just xterm/socket in this same tile.
+  useEffect(() => {
+    const wasAlive = previousAlive.current;
+    if (!wasAlive && alive) {
+      setTerminalGeneration((value) => nextTerminalGeneration(wasAlive, alive, value));
+    }
+    previousAlive.current = alive;
+  }, [alive]);
 
   return (
     <div
@@ -49,7 +63,7 @@ export default function GridTile({ session, node, token, readonly = false, focus
         <span className="nc-tile-actions">
           {onZoom && <button onClick={() => onZoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={14} /></button>}
           {onZoom && <button onClick={() => onZoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={14} /></button>}
-          {onSendToDeck && decks.filter((d) => d !== currentDeck).length > 0 && (
+          {onSendToDeck && deckTargets.length > 0 && (
             <select
               className="nc-tile-deck"
               title={t('send-to-deck')}
@@ -58,8 +72,8 @@ export default function GridTile({ session, node, token, readonly = false, focus
               onChange={(e) => { const d = e.target.value; if (d) onSendToDeck(tileKey, d); e.target.value = ''; }}
             >
               <option value="">{t('send-to-deck')}</option>
-              {decks.filter((d) => d !== currentDeck).map((d) => (
-                <option key={d} value={d}>{d}</option>
+              {deckTargets.map((deck) => (
+                <option key={deck.id} value={deck.id}>{deck.ownerLabel} · {deck.name}</option>
               ))}
             </select>
           )}
@@ -71,19 +85,24 @@ export default function GridTile({ session, node, token, readonly = false, focus
       </div>
 
       <div className="nc-tile-body">
-        <Terminal
-          session={session} node={node} token={token} readonly={readonly} takeSize={false} focused={focused}
-          sendRef={sendRef} composerRef={composerRef} actionRef={actionRef} ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
-          onFiles={setFilesEvent} fontSize={fontSize}
-        />
-        {showFiles && (
+        {available ? (
+          <Terminal
+            key={`${tileKey}:${terminalGeneration}`}
+            session={session} node={node} token={token} readonly={readonly} takeSize={false} focused={focused}
+            sendRef={sendRef} composerRef={composerRef} actionRef={actionRef} ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
+            onFiles={setFilesEvent} fontSize={fontSize}
+          />
+        ) : (
+          <div className="nc-tile-unavailable">{t('deck-owner-unavailable')}</div>
+        )}
+        {available && showFiles && (
           <div className="nc-tile-files" onMouseDown={(e) => e.stopPropagation()}>
             <FilesPanel session={session} node={node} token={token} filesEvent={filesEvent} onClose={() => setShowFiles(false)} />
           </div>
         )}
       </div>
 
-      {showComposer && (
+      {available && showComposer && (
         <div className="nc-tile-composer" onMouseDown={(e) => e.stopPropagation()}>
           <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} />
         </div>

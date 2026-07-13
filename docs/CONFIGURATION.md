@@ -63,19 +63,26 @@ Matrice:
 ## CLI
 
 ```
-nexuscrew init [--dry-run] [--port N]   setup: detect + config + token + service + URL
-nexuscrew serve [--pidfile]             HTTP server foreground (dev / ExecStart)
-nexuscrew start                         avvia il servizio (systemctl / launchctl / nohup+pidfile)
-nexuscrew stop                          stop del servizio (service manager / pidfile verificato)
-nexuscrew status                        platform + service + porta + URL
+nexuscrew                 avvia/riusa in background e mostra il riepilogo
+nexuscrew show            apre la PWA autenticata
+nexuscrew show token      stampa il link autenticato senza aprirlo
+nexuscrew status          mostra servizio, porta e connessioni
+nexuscrew stop            ferma servizio e tunnel gestiti
+nexuscrew restart         riavvia servizio e connessioni autostart
+nexuscrew boot            abilita l'avvio al boot (boot off|status)
+nexuscrew doctor          verifica runtime, PTY, tmux, SSH e servizio
+nexuscrew help            mostra la CLI pubblica
 ```
+
+Setup, nodi, Fleet, engine, provider, modelli e token si gestiscono nella PWA.
+`init`, `serve`, `fleet-boot` e `mcp` sono entrypoint interni, non workflow utente.
 
 ### Per-platform (start/stop/status)
 
 | Platform | start | stop | status |
 |---|---|---|---|
 | linux (systemd) | `systemctl --user start` | `systemctl --user stop` | `is-active` |
-| mac (launchd) | `launchctl kickstart` | `launchctl kill SIGTERM` | `launchctl print` |
+| mac (launchd) | bootstrap + `launchctl kickstart` | `launchctl bootout` | `launchctl print` |
 | termux | `nohup serve --pidfile` + wake-lock | kill pidfile verificato + wake-lock-release | boot-script vs pidfile vivo |
 
 Su Termux (niente service manager) il server gira via `serve --pidfile` che gestisce il
@@ -96,7 +103,9 @@ da "server running".
 ## Troubleshooting
 
 - **tmux mancante** → `init` non installa il service (WARN). Installa tmux, ri-runna `init`.
-- **Node < 18** → `init` abort before any write. Aggiorna Node.
+- **Node < 18** → il launcher interrompe il setup prima di scrivere. Aggiorna Node.
+- **OpenSSH mancante** → `nexuscrew doctor` fallisce: installa `ssh`. `autossh` è
+  opzionale e non viene usato dal runtime, perché NexusCrew supervisiona direttamente OpenSSH.
 - **systemctl --user fallisce** → `loginctl enable-linger $USER` (servizi user al boot).
 - **launchctl fallisce** → verifica permessi `~/Library/LaunchAgents/`, sintassi plist (`plutil -lint`).
 - **Termux:boot non avvia al reboot** → l'app Termux:Boot deve essere installata e aperta una volta

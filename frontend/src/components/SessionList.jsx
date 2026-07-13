@@ -179,6 +179,7 @@ export default function SessionList({ onPick, token, onSettings }) {
         </span>
       </header>
 
+      <main className="nc-home-scroll">
       {total > 8 && (
         <input
           className="nc-filter" type="search" placeholder={t('filter-placeholder')}
@@ -338,6 +339,7 @@ export default function SessionList({ onPick, token, onSettings }) {
           ))}
         </span>
       </footer>
+      </main>
 
       <button className="nc-fab" onClick={() => onSettings('fleet', true)} title={t('fleet-new-cell')} aria-label={t('fleet-new-cell')}>+</button>
 

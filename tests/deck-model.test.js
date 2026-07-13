@@ -42,10 +42,15 @@ test('layoutKey: main = chiave storica, altri namespaced', async () => {
 
 test('deckUrl: path + fragment token opzionale', async () => {
   const m = await mod();
+  const owner = 'a'.repeat(32);
   assert.equal(m.deckUrl('main'), '/');
   assert.equal(m.deckUrl('work-1'), '/deck/work-1');
   assert.equal(m.deckUrl('work-1', 'abc/def'), '/deck/work-1#token=abc%2Fdef');
   assert.equal(m.deckUrl('main', 'tk'), '/#token=tk');
+  assert.equal(m.deckUrl(`${owner}:main`), `/deck/${owner}/main`);
+  assert.equal(m.deckUrl({ ownerId: owner, name: 'work-1' }, 'tk'), `/deck/${owner}/work-1#token=tk`);
+  assert.deepEqual(m.deckLocationFromPath(`/deck/${owner}/work-1`), { id: `${owner}:work-1`, ownerId: owner, name: 'work-1' });
+  assert.deepEqual(m.deckLocationFromPath('/deck/not-an-owner/work-1'), { id: 'local:main', ownerId: null, name: 'main' });
 });
 
 test('normalizeDecks: main primo, validi, dedup, cap', async () => {

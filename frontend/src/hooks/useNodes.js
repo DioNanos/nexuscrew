@@ -29,7 +29,8 @@ export function useNodes(token, enabled = true) {
       const direct = new Set(nodes.map((n) => n.name));
       const routes = [];
       for (const n of nodes) {
-        if (n.tunnel?.status === 'up' && (n.nodeId || n.paired !== false)) routes.push([n.name]);
+        if (n.tunnel?.status === 'up' && (n.nodeId || n.paired !== false)
+          && (n.direction !== 'inbound' || n.shared === true)) routes.push([n.name]);
       }
       for (const n of topology) {
         if (!n.stale && Array.isArray(n.route) && !(n.route.length === 1 && direct.has(n.route[0]))) routes.push(n.route);

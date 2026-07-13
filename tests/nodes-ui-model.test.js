@@ -143,6 +143,19 @@ test('buildNodeGroups: zero nodi -> [] (UI identica a oggi); garbage filtrato', 
   assert.deepEqual(g, [], 'nomi fuori regex scartati');
 });
 
+test('buildNodeGroups: peer inbound privato resta nei settings ma non viene pubblicato nella sidebar', async () => {
+  const m = await nodes();
+  const g = m.buildNodeGroups({
+    nodes: [
+      { name: 'private-phone', direction: 'inbound', shared: false, tunnel: { status: 'up' } },
+      { name: 'shared-mac', direction: 'inbound', shared: true, tunnel: { status: 'up' } },
+      { name: 'hub', direction: 'outbound', shared: false, tunnel: { status: 'up' } },
+    ],
+    remote: { 'shared-mac': { sessions: [] }, hub: { sessions: [] } },
+  });
+  assert.deepEqual(g.map((x) => x.name), ['hub', 'shared-mac']);
+});
+
 test('buildNodeGroups: tunnel up ma sessions malformate -> unreachable (fail-closed)', async () => {
   const m = await nodes();
   const g = m.buildNodeGroups({

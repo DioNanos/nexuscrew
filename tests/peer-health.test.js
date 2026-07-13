@@ -83,7 +83,7 @@ test('probeHealth: 5xx -> transport up, reachability failed', async () => {
 
 test('nodeHealth: inbound usa localPort per un probe reale ma resta managed false', async () => {
   const h = await nodesHealth.nodeHealth({
-    node: { name: 'p', direction: 'inbound', localPort: 44001, token: 'peer-token', nodeId: NODE_ID },
+    node: { name: 'p', direction: 'inbound', shared: true, localPort: 44001, token: 'peer-token', nodeId: NODE_ID },
     home: tmpHome(), fetchImpl: mockFetch({ status: 200 }), force: true,
   });
   assert.equal(h.transport, 'up');
@@ -97,15 +97,16 @@ test('nodeHealth: inbound client/legacy non raggiungibile -> passive, non errore
     node: { name: 'p-down', direction: 'inbound', localPort: 44002, token: 'peer-token', nodeId: NODE_ID },
     home: tmpHome(), fetchImpl: mockFetch('throw'), force: true,
   });
-  assert.equal(h.transport, 'down');
+  assert.equal(h.transport, 'unknown', 'un client privato non espone una porta da sondare');
   assert.equal(h.status, 'passive');
   assert.equal(h.expected, true);
   assert.equal(h.managed, false);
+  assert.match(h.detail, /privato|Share/i);
 });
 
 test('nodeHealth: inbound nodo dichiarato non raggiungibile resta down reale', async () => {
   const h = await nodesHealth.nodeHealth({
-    node: { name: 'server-down', direction: 'inbound', localPort: 44003, token: 'peer-token', nodeId: NODE_ID,
+    node: { name: 'server-down', direction: 'inbound', shared: true, localPort: 44003, token: 'peer-token', nodeId: NODE_ID,
       roles: { client: true, node: true }, rolesKnown: true },
     home: tmpHome(), fetchImpl: mockFetch('throw'), force: true,
   });

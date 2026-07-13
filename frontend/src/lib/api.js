@@ -51,6 +51,7 @@ export const getNodes = (t) => jsonFetch('/api/nodes', t);
 export const getTopology = (t) => jsonFetch('/api/topology', t);
 export const getRouteSessions = (t, route) => jsonFetch(`${routeBase(route)}/sessions`, t);
 export const getRouteConfig = (t, route) => jsonFetch(`${routeBase(route)}/config`, t);
+export const getRouteTopology = (t, route) => jsonFetch(`${routeBase(route)}/topology`, t);
 // Sessioni di un nodo remoto via proxy B1 (stesso token locale: il proxy
 // verifica il Bearer e inietta LUI il token remoto — mai visto dal browser).
 export const getNodeSessions = (t, name) => jsonFetch(`/node/${encodeURIComponent(name)}/api/sessions`, t);
@@ -58,13 +59,19 @@ export const saveConfig = (t, b) => jsonFetch('/api/settings/config', t, { metho
 export const rotateToken = (t) => jsonFetch('/api/settings/token/rotate', t, { method: 'POST' });
 export const addNode = (t, b) => jsonFetch('/api/settings/nodes', t, { method: 'POST', body: b });
 export const pairNode = (t, b) => jsonFetch('/api/settings/nodes/pair', t, { method: 'POST', body: b });
-export const createPeerInvite = (t, body) => jsonFetch('/api/settings/peering/invite', t, { method: 'POST', body: body || {} });
+// route opzionale: da un client già collegato, l'invito viene creato DAL suo
+// hub. Il payload porta quindi instanceId + porta d'ingresso dell'hub, non la
+// porta reverse del dispositivo corrente. Il browser continua a parlare solo
+// col proprio loopback; Hydra autentica e smista il POST.
+export const createPeerInvite = (t, body, route = []) => jsonFetch(
+  `${routeBase(route)}/settings/peering/invite`, t, { method: 'POST', body: body || {} },
+);
 export const renameNodeLabel = (t, name, label) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/label`, t, { method: 'PATCH', body: { label } });
 export const removeNode = (t, name) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
 // action ∈ {test, up, down, restart} — stringhe fisse dal chiamante, mai input utente.
 export const nodeAction = (t, name, action) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/${action}`, t, { method: 'POST' });
+export const setNodeShare = (t, name, shared) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/share`, t, { method: 'PATCH', body: { shared } });
 export const setNodeVisibility = (t, name, visibility, selected = []) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/visibility`, t, { method: 'PATCH', body: { visibility, selected } });
-export const setNodeRole = (t, b) => jsonFetch('/api/settings/node-role', t, { method: 'POST', body: b });
 export const regenService = (t) => jsonFetch('/api/settings/service/regenerate', t, { method: 'POST' });
 export const checkNpmUpdate = (t) => jsonFetch('/api/settings/update/check', t, { method: 'POST' });
 export const applyNpmUpdate = (t) => jsonFetch('/api/settings/update/apply', t, { method: 'POST' });
@@ -74,8 +81,8 @@ export const applyNpmUpdate = (t) => jsonFetch('/api/settings/update/apply', t, 
 export const getAsks = (t, open = true) => jsonFetch(`/api/asks${open ? '?open=1' : ''}`, t);
 export const answerAsk = (t, id, text) => jsonFetch(`/api/asks/${encodeURIComponent(id)}/answer`, t, { method: 'POST', body: { text } });
 
-export const getDecks = (t) => jsonFetch('/api/decks', t);
-export const createDeck = (t, name) => jsonFetch('/api/decks', t, { method: 'POST', body: { name } });
-export const saveDeck = (t, name, layout, expectedRevision) => jsonFetch(`/api/decks/${encodeURIComponent(name)}`, t, { method: 'PUT', body: { layout, expectedRevision } });
-export const renameDeck = (t, name, next, expectedRevision) => jsonFetch(`/api/decks/${encodeURIComponent(name)}`, t, { method: 'PATCH', body: { name: next, expectedRevision } });
-export const deleteDeck = (t, name, expectedRevision) => jsonFetch(`/api/decks/${encodeURIComponent(name)}`, t, { method: 'DELETE', body: { expectedRevision } });
+export const getDecks = (t, route = []) => jsonFetch(`${routeBase(route)}/decks`, t);
+export const createDeck = (t, name, route = []) => jsonFetch(`${routeBase(route)}/decks`, t, { method: 'POST', body: { name } });
+export const saveDeck = (t, name, layout, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PUT', body: { layout, expectedRevision } });
+export const renameDeck = (t, name, next, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PATCH', body: { name: next, expectedRevision } });
+export const deleteDeck = (t, name, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'DELETE', body: { expectedRevision } });

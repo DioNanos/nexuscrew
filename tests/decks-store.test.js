@@ -31,11 +31,13 @@ test('decks store: rifiuta symlink target e duplicati', () => {
 });
 
 test('decks store persists strict multi-hop routes and rejects route cycles', () => {
+  const ownerA = 'a'.repeat(32); const ownerB = 'b'.repeat(32);
   const multi = { columns: [{ width: 1, tiles: [
-    { session: 'work', node: 'relay/phone', height: 1, fontSize: 11 },
-    { session: 'work', node: 'relay/mac', height: 1, fontSize: 11 },
+    { session: 'work', node: 'relay/phone', ownerId: ownerA, height: 1, fontSize: 11 },
+    { session: 'work', node: 'relay/mac', ownerId: ownerB, height: 1, fontSize: 11 },
   ] }] };
   assert.deepEqual(store.parseLayout(multi), multi);
+  assert.equal(store.parseLayout({ columns: [{ width: 1, tiles: [{ session: 'work', ownerId: 'bad', height: 1, fontSize: 11 }] }] }), null);
   assert.equal(store.parseLayout({ columns: [{ width: 1, tiles: [{ session: 'work', node: 'relay/phone/relay', height: 1, fontSize: 11 }] }] }), null);
   assert.equal(store.parseLayout({ columns: [{ width: 1, tiles: [{ session: 'work', node: 'a/b/c/d/e', height: 1, fontSize: 11 }] }] }), null);
 });

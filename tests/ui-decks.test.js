@@ -10,7 +10,7 @@ test('deck navigation flushes dirty state before switching or renaming', () => {
   const hook = src('hooks/useDecks.js');
   const rename = hook.slice(hook.indexOf('const rename = async'), hook.indexOf('const remove = async'));
   const select = hook.slice(hook.indexOf('const select = async'), hook.indexOf('return { decks:'));
-  assert.ok(rename.indexOf('await saveNow(from)') < rename.indexOf('await renameDeck('));
+  assert.ok(rename.indexOf('await saveNow(fromId)') < rename.indexOf('await renameDeck('));
   assert.match(rename, /if \(!savedDirty\) throw/);
   assert.ok(select.indexOf('await saveNow(currentRef.current)') < select.indexOf('const target ='));
   assert.match(select, /if \(!saved\) throw/);
@@ -19,10 +19,11 @@ test('deck navigation flushes dirty state before switching or renaming', () => {
 test('deck click stays in the current PWA; only detach opens a window', () => {
   const app = src('App.jsx');
   const bar = src('components/DeckBar.jsx');
-  assert.match(app, /const nextLayout = await deckStore\.select\(name\)/);
-  assert.match(app, /history\.replaceState\(null, '', deckUrl\(name, null\)\)/);
+  assert.match(app, /const nextLayout = await deckStore\.select\(id\)/);
+  assert.match(app, /history\.replaceState\(null, '', deckUrl\(target \|\| id, null\)\)/);
   assert.match(bar, /onClick=\{\(\) => navigate\(d\)\}/);
   assert.match(bar, /onClick=\{\(\) => popout\(d\)\}/);
+  assert.match(bar, /group\.decks\.map/);
   assert.doesNotMatch(bar, /location\.(?:assign|replace)/);
 });
 

@@ -86,15 +86,13 @@ test('inventario: nodo degradato (down/unreachable) -> cells vuote, niente crash
   assert.deepEqual(grp.unmanaged, []);
 });
 
-test('inventario: client inbound intermittente resta passivo e non accumula downSince', async () => {
+test('inventario: client inbound privato resta fuori dalla sidebar e non accumula downSince', async () => {
   const { buildNodeGroups, trackDown } = await nodes();
   const input = [{ name: 'phone', direction: 'inbound', roles: { client: true, node: false }, rolesKnown: true,
     tunnel: { status: 'passive' }, health: { status: 'passive', managed: false } }];
   assert.deepEqual(trackDown({ phone: 100 }, input, 200), {});
-  const group = buildNodeGroups({ nodes: input, remote: {}, down: { phone: 100 } })[0];
-  assert.equal(group.status, 'passive');
-  assert.equal(group.downSince, null);
-  assert.deepEqual(group.cells, []);
+  const groups = buildNodeGroups({ nodes: input, remote: {}, down: { phone: 100 } });
+  assert.deepEqual(groups, [], 'senza Share il client resta visibile solo in Settings > Nodes');
 });
 
 test('inventario: label umana usata quando presente (fallback a name)', async () => {

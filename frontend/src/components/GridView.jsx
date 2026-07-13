@@ -172,7 +172,8 @@ export default function GridView({
                     session={tile.session} node={tile.node} token={token} readonly={readonly}
                     focused={focusSession === key}
                     onFocus={onFocus} onClose={closeTile} onOpenSingle={onOpenSingle}
-                    alive={!sessionsAlive || sessionsAlive.has(key)}
+                    available={tile.unavailable !== true}
+                    alive={tile.unavailable !== true && (!sessionsAlive || sessionsAlive.has(key))}
                     fontSize={tile.fontSize}
                     onZoom={(delta) => onLayoutChange(zoomTile(layout, ci, ri, delta))}
                     decks={decks} currentDeck={currentDeck} onSendToDeck={onSendToDeck}

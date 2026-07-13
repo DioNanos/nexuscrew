@@ -48,18 +48,12 @@ test('buildForwardArgs: sshPort usa -p senza confonderla con remotePort', () => 
   assert.equal(args.at(-1), 'user@example.com');
 });
 
-test('buildReverseArgs: argv esatto con bind loopback esplicito lato remoto', () => {
-  const args = tunnel.buildReverseArgs({ ssh: 'user@host', publishedPort: 41821, localPort: 41820, keyPath: '/home/user/.nexuscrew/keys/rendezvous_ed25519' });
-  assert.deepEqual(args, [
-    '-N',
-    '-o', 'ExitOnForwardFailure=yes',
-    '-o', 'ServerAliveInterval=30',
-    '-o', 'ServerAliveCountMax=3',
-    '-o', 'BatchMode=yes',
-    '-i', '/home/user/.nexuscrew/keys/rendezvous_ed25519',
-    '-R', '127.0.0.1:41821:127.0.0.1:41820', // 127.0.0.1: esplicito, mai wildcard
-    'user@host',
-  ]);
+test('buildForwardArgs: reverse negoziata resta privata finche Share non e esplicito', () => {
+  const privateArgs = tunnel.buildForwardArgs({ ...NODE, reversePort: 44001, shared: false, localAppPort: 41777 });
+  assert.equal(privateArgs.includes('-R'), false, 'pairing privato = solo -L');
+  const sharedArgs = tunnel.buildForwardArgs({ ...NODE, reversePort: 44001, shared: true, localAppPort: 41777 });
+  assert.ok(sharedArgs.includes('-R'));
+  assert.ok(sharedArgs.includes('127.0.0.1:44001:127.0.0.1:41777'));
 });
 
 test('build*Args: spec invalida -> throw (no argv injection)', () => {
@@ -67,7 +61,6 @@ test('build*Args: spec invalida -> throw (no argv injection)', () => {
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, localPort: 0 }), /localPort/);
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, sshPort: 0 }), /sshPort/);
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, keyPath: 'relative' }), /keyPath/);
-  assert.throws(() => tunnel.buildReverseArgs({ ssh: 'u@h', publishedPort: 99999, localPort: 22, keyPath: '/k' }), /publishedPort/);
 });
 
 // --- backoff deterministico -------------------------------------------------
@@ -114,6 +107,20 @@ test('startForward: spawn con argv esatto, detached, pidfile scritto', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('startForward: auto usa un solo supervisor OpenSSH anche se autossh risulta disponibile', () => {
+  const dir = tmpDir(); const calls = [];
+  const r = tunnel.startForward({
+    home: dir, node: { ...NODE, transport: 'auto' }, logFd: null,
+    spawnSyncImpl: () => ({ stderr: 'OpenSSH_9.6p1\n' }),
+    spawnImpl: (bin, args) => { calls.push([bin, args]); return { pid: 4243, unref() {} }; },
+  });
+  assert.equal(r.started, true);
+  assert.equal(r.transport, 'ssh');
+  assert.equal(calls[0][1][1], 'ssh');
+  assert.equal(calls[0][1].includes('-M'), false, 'niente autossh annidato nel supervisor');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('startTunnel: idempotente se gia vivo (no doppio spawn)', () => {
   const dir = tmpDir();
   // pidfile vivo pre-esistente (cmd vuoto -> isAlive via solo pidExists, self pid)
@@ -130,26 +137,174 @@ test('startTunnel: idempotente se gia vivo (no doppio spawn)', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('startTunnel: specifica cambiata sostituisce il supervisor vivo verificato', () => {
+  const dir = tmpDir();
+  fs.mkdirSync(tunnel.tunnelDir(dir), { recursive: true });
+  const pidPath = tunnel.tunnelPidPath(dir, 'vps');
+  const previous = `${process.execPath} ${path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js')} ssh -N -L 127.0.0.1:43001:127.0.0.1:41820 x`;
+  pidf.writePidfile(pidPath, process.pid, previous);
+  let spawned = 0;
+  const originalKill = process.kill;
+  process.kill = (pid, signal) => {
+    if (pid === process.pid && signal === 'SIGTERM') return true;
+    return originalKill(pid, signal);
+  };
+  try {
+    const result = tunnel.startTunnel({
+      home: dir, name: 'vps', args: ['-N', '-L', '127.0.0.1:43001:127.0.0.1:41777', 'x'],
+      logFd: null, spawnSyncImpl: sshThere,
+      spawnImpl: () => { spawned += 1; return { pid: 987654, unref() {} }; },
+    });
+    assert.equal(result.started, true);
+    assert.equal(spawned, 1);
+    assert.match(pidf.readPidfile(pidPath).cmd, /41777/);
+  } finally {
+    process.kill = originalKill;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('readTunnelState: down se nessun pidfile', () => {
   const dir = tmpDir();
   assert.deepEqual(tunnel.readTunnelState(dir, 'vps'), { status: 'down' });
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('readTunnelState ignora sidecar di una generazione precedente', () => {
+  const dir = tmpDir();
+  fs.mkdirSync(tunnel.tunnelDir(dir), { recursive: true });
+  pidf.writePidfile(tunnel.tunnelPidPath(dir, 'vps'), process.pid, '', { runId: 'new-generation' });
+  fs.writeFileSync(tunnel.tunnelStatePath(dir, 'vps'), JSON.stringify({
+    status: 'transport-ready', supervisorPid: process.pid, runId: 'old-generation', transport: 'ssh',
+  }));
+  assert.equal(tunnel.readTunnelState(dir, 'vps').status, 'down');
+  assert.equal(tunnel.readTunnelState(dir, 'vps').reason, 'starting');
+
+  fs.writeFileSync(tunnel.tunnelStatePath(dir, 'vps'), JSON.stringify({
+    status: 'transport-ready', supervisorPid: process.pid, runId: 'new-generation', transport: 'ssh',
+  }));
+  const ready = tunnel.readTunnelState(dir, 'vps');
+  assert.equal(ready.status, 'up');
+  assert.equal(ready.phase, 'transport-ready');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('cleanup di una vecchia generazione non cancella lo stato nuovo', () => {
+  const dir = tmpDir();
+  fs.mkdirSync(tunnel.tunnelDir(dir), { recursive: true });
+  const statePath = tunnel.tunnelStatePath(dir, 'vps');
+  fs.writeFileSync(statePath, JSON.stringify({
+    status: 'starting', supervisorPid: 222, runId: 'new-generation',
+  }));
+  assert.equal(tunnel.removeStateIfOwned(dir, 'vps', { pid: 111, runId: 'old-generation' }), false);
+  assert.equal(fs.existsSync(statePath), true);
+  assert.equal(tunnel.removeStateIfOwned(dir, 'vps', { pid: 222, runId: 'new-generation' }), true);
+  assert.equal(fs.existsSync(statePath), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('diagnostica SSH distingue forward negato, auth, host key, DNS e rete senza esporre log grezzo', () => {
+  assert.deepEqual(tunnel.classifySshFailure('channel 2: open failed: administratively prohibited: open failed', 41777), {
+    code: 'forward-denied',
+    detail: 'SSH autenticato, ma il server ha negato il port forwarding verso 127.0.0.1:41777',
+    hint: "verifica AllowTcpForwarding e l'eventuale permitopen per 127.0.0.1:41777; il link NON e' stato consumato",
+  });
+  assert.equal(tunnel.classifySshFailure('Permission denied (publickey).', 41777).code, 'ssh-auth-failed');
+  assert.equal(tunnel.classifySshFailure('Host key verification failed.', 41777).code, 'ssh-host-key');
+  assert.equal(tunnel.classifySshFailure('ssh: Could not resolve hostname hub', 41777).code, 'ssh-dns');
+  assert.equal(tunnel.classifySshFailure('connect to host x port 22: Connection refused', 41777).code, 'ssh-unreachable');
+  assert.equal(tunnel.classifySshFailure('unrelated harmless line', 41777), null);
+});
+
+test('readTunnelDiagnostic legge solo un log regolare controllato e rifiuta symlink', () => {
+  const dir = tmpDir();
+  fs.mkdirSync(tunnel.tunnelDir(dir), { recursive: true });
+  fs.writeFileSync(tunnel.tunnelLogPath(dir, 'hub'), 'channel 3: open failed: administratively prohibited\n');
+  assert.equal(tunnel.readTunnelDiagnostic(dir, 'hub', 41777).code, 'forward-denied');
+  fs.unlinkSync(tunnel.tunnelLogPath(dir, 'hub'));
+  fs.symlinkSync('/etc/passwd', tunnel.tunnelLogPath(dir, 'hub'));
+  assert.equal(tunnel.readTunnelDiagnostic(dir, 'hub', 41777), null);
+  assert.equal(tunnel.readTunnelDiagnostic(dir, '../bad', 41777), null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('diagnoseTunnel espone solo stato strutturato e preferisce la causa SSH classificata', () => {
+  const dir = tmpDir();
+  const node = { ...NODE, name: 'hub', remotePort: 41777 };
+  assert.equal(tunnel.diagnoseTunnel(dir, node).code, 'tunnel-stopped');
+  assert.equal(tunnel.diagnoseTunnel(dir, node, { status: 'down', reason: 'starting' }).code, 'ssh-starting');
+  assert.equal(tunnel.diagnoseTunnel(dir, node, { status: 'down', reason: 'retrying', attempt: 2 }).code, 'ssh-retrying');
+  fs.mkdirSync(tunnel.tunnelDir(dir), { recursive: true });
+  fs.writeFileSync(tunnel.tunnelLogPath(dir, 'hub'), 'channel 3: open failed: administratively prohibited\nSECRET_PATH=/private/user\n');
+  const denied = tunnel.diagnoseTunnel(dir, node, { status: 'up', phase: 'transport-ready' });
+  assert.equal(denied.code, 'forward-denied');
+  assert.ok(!JSON.stringify(denied).includes('SECRET_PATH'));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('tunnel log: directory 0700, file 0600 e contenuto per-run (niente append stale)', () => {
+  const dir = tmpDir();
+  tunnel.prepareTunnelDir(dir);
+  const logPath = tunnel.tunnelLogPath(dir, 'secure');
+  fs.writeFileSync(logPath, 'stale diagnostic from a previous run\n', { mode: 0o666 });
+  fs.chmodSync(tunnel.tunnelDir(dir), 0o775);
+  fs.chmodSync(logPath, 0o664);
+
+  const result = tunnel.startTunnel({
+    home: dir, name: 'secure', args: ['-N', 'x'], spawnSyncImpl: sshThere,
+    spawnImpl: () => ({ pid: 998877, unref() {} }),
+  });
+  assert.equal(result.started, true);
+  assert.equal(fs.statSync(tunnel.tunnelDir(dir)).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(logPath).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(logPath).size, 0, 'ogni supervisor parte da un log diagnostico nuovo');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('tunnel log: symlink file o directory viene rifiutato prima dello spawn', () => {
+  const dir = tmpDir();
+  const outside = path.join(dir, 'outside');
+  fs.writeFileSync(outside, 'do not touch');
+  tunnel.prepareTunnelDir(dir);
+  fs.symlinkSync(outside, tunnel.tunnelLogPath(dir, 'unsafe'));
+  let spawned = 0;
+  const fileLink = tunnel.startTunnel({
+    home: dir, name: 'unsafe', args: ['-N', 'x'], spawnSyncImpl: sshThere,
+    spawnImpl: () => { spawned += 1; return { pid: 1, unref() {} }; },
+  });
+  assert.equal(fileLink.started, false);
+  assert.match(fileLink.reason, /unsafe tunnel log/);
+  assert.equal(spawned, 0);
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'do not touch');
+
+  const second = tmpDir();
+  const targetDir = path.join(second, 'target');
+  fs.mkdirSync(path.join(second, '.nexuscrew'), { recursive: true });
+  fs.mkdirSync(targetDir);
+  fs.symlinkSync(targetDir, tunnel.tunnelDir(second));
+  const dirLink = tunnel.startTunnel({
+    home: second, name: 'unsafe', args: ['-N', 'x'], spawnSyncImpl: sshThere,
+    spawnImpl: () => { spawned += 1; return { pid: 2, unref() {} }; },
+  });
+  assert.equal(dirLink.started, false);
+  assert.match(dirLink.reason, /unsafe tunnel log/);
+  assert.equal(spawned, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(second, { recursive: true, force: true });
+});
+
 // --- ssh version / permitlisten --------------------------------------------
 
-test('readSshVersion + sshSupportsPermitlisten', () => {
+test('readSshVersion e solo diagnostica locale, non certifica la policy remota', () => {
   const mkSpawn = (text) => () => ({ stdout: '', stderr: text });
   const v = tunnel.readSshVersion(mkSpawn('OpenSSH_9.6p1 Ubuntu, OpenSSL 3.0\n'));
   assert.deepEqual({ major: v.major, minor: v.minor }, { major: 9, minor: 6 });
-  assert.equal(tunnel.sshSupportsPermitlisten(v), true);
   const old = tunnel.readSshVersion(mkSpawn('OpenSSH_7.2p2\n'));
-  assert.equal(tunnel.sshSupportsPermitlisten(old), false);
+  assert.deepEqual({ major: old.major, minor: old.minor }, { major: 7, minor: 2 });
   const v78 = tunnel.readSshVersion(mkSpawn('OpenSSH_7.8\n'));
-  assert.equal(tunnel.sshSupportsPermitlisten(v78), true);
+  assert.deepEqual({ major: v78.major, minor: v78.minor }, { major: 7, minor: 8 });
   const none = tunnel.readSshVersion(mkSpawn('garbage'));
   assert.equal(none, null);
-  assert.equal(tunnel.sshSupportsPermitlisten(null), null);
 });
 
 // --- audit F2: spawn failure non crasha mai, failure esplicita ----------------
@@ -307,6 +462,8 @@ test('F1 supervisor: un ssh che cade viene rilanciato con stato retrying/backoff
   const attemptsPath = path.join(dir, 'attempts.log');
   const fakeSsh = path.join(dir, 'fake-ssh.js');
   const statePath = path.join(dir, 'tunnel.state.json');
+  const pidPath = path.join(dir, 'tunnel.pid');
+  const runId = 'retry-generation';
   fs.writeFileSync(fakeSsh, [
     "'use strict';",
     "const fs = require('node:fs');",
@@ -316,9 +473,16 @@ test('F1 supervisor: un ssh che cade viene rilanciato con stato retrying/backoff
   ].join('\n'), { mode: 0o700 });
   const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
   const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh], {
-    env: { ...process.env, NEXUSCREW_TUNNEL_STATE: statePath },
+    env: {
+      ...process.env,
+      NEXUSCREW_TUNNEL_STATE: statePath,
+      NEXUSCREW_TUNNEL_PIDFILE: pidPath,
+      NEXUSCREW_TUNNEL_RUN_ID: runId,
+      NEXUSCREW_TUNNEL_STABLE_MS: '100',
+    },
     stdio: 'ignore',
   });
+  pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId });
   try {
     const deadline = Date.now() + 6000;
     let attempts = 0;
@@ -333,6 +497,50 @@ test('F1 supervisor: un ssh che cade viene rilanciato con stato retrying/backoff
     assert.ok(state, 'sidecar stato supervisor non scritto');
     assert.ok(['starting', 'retrying'].includes(state.status));
     assert.ok(state.attempt >= 1);
+  } finally {
+    child.kill('SIGTERM');
+    await new Promise((resolve) => {
+      if (child.exitCode !== null) return resolve();
+      const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} resolve(); }, 2000);
+      child.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('F1 supervisor dichiara transport-ready e resetta il backoff solo dopo stabilita', async () => {
+  const dir = tmpDir();
+  const fakeSsh = path.join(dir, 'stable-ssh.js');
+  const statePath = path.join(dir, 'stable.state.json');
+  const pidPath = path.join(dir, 'stable.pid');
+  const runId = 'stable-generation';
+  fs.writeFileSync(fakeSsh, "setInterval(() => {}, 1000);\n", { mode: 0o700 });
+  const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
+  const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh], {
+    env: {
+      ...process.env,
+      NEXUSCREW_TUNNEL_STATE: statePath,
+      NEXUSCREW_TUNNEL_PIDFILE: pidPath,
+      NEXUSCREW_TUNNEL_RUN_ID: runId,
+      NEXUSCREW_TUNNEL_STABLE_MS: '120',
+    },
+    stdio: 'ignore',
+  });
+  pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId });
+  try {
+    const deadline = Date.now() + 3000;
+    let state = null;
+    while (Date.now() < deadline) {
+      try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) {}
+      if (state && state.status === 'transport-ready') break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(state, 'sidecar stato supervisor non scritto');
+    assert.equal(state.status, 'transport-ready');
+    assert.equal(state.runId, runId);
+    assert.equal(state.supervisorPid, child.pid);
+    assert.equal(state.attempt, 0);
+    assert.ok(state.stableMs >= 100);
   } finally {
     child.kill('SIGTERM');
     await new Promise((resolve) => {

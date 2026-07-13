@@ -10,7 +10,7 @@ const fed = require('../lib/proxy/federation.js');
 function peer(name, id, over = {}) {
   return { name, ssh: name, remotePort: 41820, localPort: 43001, nodeId: id,
     token: `to-${name}`, acceptToken: `from-${name}`, direction: 'outbound',
-    transport: 'auto', autostart: true, visibility: 'network', roles: { client: true, node: false }, ...over };
+    transport: 'auto', autostart: true, shared: true, visibility: 'network', roles: { client: true, node: false }, ...over };
 }
 
 test('federation route parser has an explicit capability allowlist and hop cap', () => {
@@ -27,6 +27,10 @@ test('federation route parser has an explicit capability allowlist and hop cap',
   assert.equal(fed.allowedResource('/fleet/define-cell', 'POST'), true);
   assert.equal(fed.allowedResource('/fleet/define-cell', 'GET'), false);
   assert.equal(fed.allowedResource('/settings', 'GET'), false);
+  assert.deepEqual(fed.parseRoute('/vps/_/settings/peering/invite'), { route: ['vps'], resource: '/settings/peering/invite' });
+  assert.equal(fed.allowedResource('/settings/peering/invite', 'POST'), true);
+  assert.equal(fed.allowedResource('/settings/peering/invite', 'GET'), false);
+  assert.equal(fed.parseRoute('/vps/_/settings/token/rotate'), null);
   assert.equal(fed.allowedResource('/files/outbox', 'POST'), false);
   assert.equal(fed.allowedResource('/files/upload', 'POST'), true);
 });
@@ -43,6 +47,7 @@ test('relay ACL is symmetric and peer credentials identify only their peer', () 
   assert.equal(fed.canTransit(st.nodes[0], st.nodes[1]), false);
   const openMac = { ...st.nodes[1], visibility: 'network' };
   assert.equal(fed.canTransit(st.nodes[0], openMac), true);
+  assert.equal(fed.canTransit(st.nodes[0], { ...openMac, shared: false }), false, 'un peer privato non diventa transitabile per la sola ACL');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

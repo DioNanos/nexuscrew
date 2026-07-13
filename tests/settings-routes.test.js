@@ -122,6 +122,25 @@ test('config: happy path scrive atomico (0600), whitelisted, note sul cambio por
   assert.equal(fs.statSync(configPath).mode & 0o777, 0o600);
 });
 
+test('config: rifiuta il cambio porta quando esistono peer già collegati', async (t) => {
+  const { base, token, nodesPath, configPath } = await boot(t);
+  let st = nodesStore.emptyStore('a'.repeat(32));
+  st = nodesStore.addNode(st, {
+    name: 'hub', ssh: 'user@hub', remotePort: 41820, localPort: 43001,
+    direction: 'outbound', transport: 'auto', autostart: true,
+    nodeId: 'b'.repeat(32), token: 'to-hub', acceptToken: 'from-hub',
+  });
+  nodesStore.atomicWriteStore(nodesPath, st);
+  fs.writeFileSync(configPath, JSON.stringify({ port: 41999, wizardDone: true }), { mode: 0o600 });
+  const r = await fetch(`${base}/api/settings/config`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ port: 42123 }),
+  });
+  assert.equal(r.status, 409);
+  const body = await r.json();
+  assert.equal(body.code, 'paired-port-change-refused');
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).port, 41999);
+});
+
 test('config: preserva le chiavi esistenti non gestite (merge, non overwrite)', async (t) => {
   const { base, token, configPath } = await boot(t);
   fs.writeFileSync(configPath, JSON.stringify({ port: 41999, custom: 'keepme' }), { mode: 0o600 });
@@ -199,7 +218,7 @@ test('token/rotate: ruota live, vecchio 401, nuovo 200, token MAI in risposta', 
   const raw = await r.text();
   const j = JSON.parse(raw);
   assert.equal(j.rotated, true);
-  assert.match(j.note, /nexuscrew url/);
+  assert.match(j.note, /nexuscrew show token/);
   const after = fs.readFileSync(tokenPath, 'utf8').trim();
   assert.notEqual(after, before);            // file ruotato davvero
   assert.ok(!raw.includes(after), 'il NUOVO token non deve MAI comparire in risposta');
@@ -355,49 +374,17 @@ test('nodes lifecycle: up/down/restart riusano il tunnel manager (spawn seam)', 
 
 // --- POST /settings/node-role ----------------------------------------------------
 
-test('node-role: on con rendezvous (permitlisten in authorized_keys), off, garbage', async (t) => {
-  const { base, token, configPath } = await boot(t);
+test('node-role legacy: sempre 410; la pubblicazione passa solo dal toggle Share del nodo associato', async (t) => {
+  const { base, token } = await boot(t);
   const post = (body) => fetch(`${base}/api/settings/node-role`, {
     method: 'POST', headers: H(token), body: JSON.stringify(body),
   });
 
-  for (const [body, status] of [
-    [{ enabled: 'si' }, 400],
-    [{}, 400],
-    [{ enabled: true, evil: 1 }, 400],
-    [{ enabled: true, rendezvousSsh: 'senza-chiocciola' }, 400],
-    [{ enabled: true, rendezvousSsh: 'a@b', publishedPort: 'x' }, 400],
-    [{ enabled: true }, 400], // nessun rendezvous configurato
-  ]) {
-    assert.equal((await post(body)).status, status, JSON.stringify(body));
+  for (const body of [{}, { enabled: false }, { enabled: true, rendezvousSsh: 'user@host' }]) {
+    const r = await post(body);
+    assert.equal(r.status, 410, JSON.stringify(body));
+    assert.match((await r.json()).error, /Share|ritirato/i);
   }
-
-  const on = await post({ enabled: true, rendezvousSsh: 'user@host', publishedPort: 45001 });
-  assert.equal(on.status, 200);
-  const oj = await on.json();
-  assert.equal(oj.enabled, true);
-  assert.deepEqual(oj.roles, { client: false, node: true });
-  assert.match(oj.authorizedKeys, /^restrict,port-forwarding,permitlisten="127\.0\.0\.1:45001",command="\/bin\/false" ssh-ed25519 /);
-  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).roles.node, true);
-
-  // GET /settings ora espone il rendezvous (redatto: nessun token nello shape)
-  const s = await (await fetch(`${base}/api/settings`, { headers: H(token) })).json();
-  assert.equal(s.rendezvous.ssh, 'user@host');
-  assert.equal(s.rendezvous.publishedPort, 45001);
-
-  const off = await post({ enabled: false });
-  assert.equal(off.status, 200);
-  assert.deepEqual((await off.json()).roles, { client: false, node: false });
-});
-
-test('node-role: OpenSSH < 7.8 (niente permitlisten) -> 409 conflitto esplicito', async (t) => {
-  const { base, token } = await boot(t, {}, { sshVersion: () => ({ major: 7, minor: 4 }) });
-  const r = await fetch(`${base}/api/settings/node-role`, {
-    method: 'POST', headers: H(token),
-    body: JSON.stringify({ enabled: true, rendezvousSsh: 'user@host' }),
-  });
-  assert.equal(r.status, 409);
-  assert.match((await r.json()).error, /permitlisten/);
 });
 
 // --- POST /settings/service/regenerate --------------------------------------------

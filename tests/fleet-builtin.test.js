@@ -213,15 +213,12 @@ test('up send-keys (vivo): bracketed paste load-buffer + paste-buffer -p', async
 // ---------------------------------------------------------------------------
 // 4. up send-keys + command uscito (sessione morta): NON digita
 // ---------------------------------------------------------------------------
-test('up send-keys (command uscito): sessione morta -> nessun paste', async () => {
+test('up send-keys (command uscito): errore esplicito e nessun paste', async () => {
   const w = makeWorld({ promptMode: 'send-keys', cellPrompt: 'p' });
   try {
     fs.writeFileSync(w.alive, '0'); // has-session sempre 1 -> simula command uscito
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, sendKeysReadyMs: 40 });
-    const res = await fleet.up('Dev');
-    assert.equal(res.ok, true);
-    assert.equal(res.prompt.injected, false, 'nessuna digitazione');
-    assert.match(res.prompt.reason, /non viva|uscito/);
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, launchReadyMs: 40, sendKeysReadyMs: 40 });
+    await assert.rejects(() => fleet.up('Dev'), (error) => error.status === 500 && /terminato subito/.test(error.message));
     const { lines } = readLog(w);
     assert.ok(!lines.some((l) => l.startsWith('paste-buffer')), 'nessun paste-buffer');
   } finally { w.cleanup(); }
@@ -673,5 +670,21 @@ test('redazione §9h: stderr NON avvelenato -> up ok, nessun marcatore', async (
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     const res = await fleet.up('Dev');
     assert.equal(res.ok, true);
+  } finally { w.cleanup(); }
+});
+
+test('up non dichiara successo quando il client esce subito, anche senza prompt send-keys', async () => {
+  const w = makeWorld({ promptMode: 'flag', cellPrompt: '' });
+  try {
+    fs.writeFileSync(w.alive, '0');
+    const fleet = await createBuiltinFleet({
+      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, launchReadyMs: 0,
+    });
+    await assert.rejects(() => fleet.up('Dev'), (error) => {
+      assert.equal(error.status, 500);
+      assert.match(error.message, /terminato subito/);
+      assert.match(error.message, /login, provider, modello/);
+      return true;
+    });
   } finally { w.cleanup(); }
 });

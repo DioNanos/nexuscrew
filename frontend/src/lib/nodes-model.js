@@ -71,11 +71,13 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet } = {}) {
   const seenIds = new Set();
   for (const n of Array.isArray(nodes) ? nodes : []) {
     if (!n || typeof n.name !== 'string' || !NODE_NAME_RE.test(n.name)) continue;
+    if (n.direction === 'inbound' && n.shared !== true) continue;
     const route = [n.name]; const key = n.name; directRoutes.add(key);
     const tunnelStatus = n.tunnel?.status || 'unknown';
     const up = tunnelStatus === 'up';
     const base = {
       name: n.name, label: n.label || n.name, route, direct: true,
+      instanceId: n.nodeId || null, shared: n.shared === true,
       tunnelStatus, sessions: [], cells: [], unmanaged: [],
       fleetAvailable: false, capabilities: [], engines: [], health: n.health || null,
       direction: n.direction || 'outbound', roles: n.roles || null, rolesKnown: n.rolesKnown === true,
@@ -123,6 +125,7 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet } = {}) {
     if (n.instanceId) seenIds.add(n.instanceId);
     const base = {
       name: n.name, label: n.label || n.route.join(' › '), route: [...n.route], direct: false,
+      instanceId: n.instanceId || null, shared: true,
       tunnelStatus: null, sessions: [], cells: [], unmanaged: [], fleetAvailable: false,
       capabilities: [], engines: [], health: n.health || null, lastSeen: n.lastSeen || null,
     };

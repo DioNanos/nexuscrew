@@ -67,6 +67,8 @@
 }
 .nc-set-form textarea { min-height: 72px; resize: vertical; }
 .nc-fleet-editor { gap: 10px; }
+.nc-fleet-view-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; position: sticky; top: 0; z-index: 2; background: #0e140e; padding-bottom: 6px; }
+.nc-fleet-view-tabs .nc-set-tabbtn { width: 100%; text-transform: none; }
 .nc-fleet-section-head, .nc-fleet-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .nc-fleet-section-head { margin-top: 4px; border-bottom: 1px solid #243; padding-bottom: 6px; }
 .nc-fleet-item { border: 1px solid #1c241c; border-radius: 8px; padding: 8px; }

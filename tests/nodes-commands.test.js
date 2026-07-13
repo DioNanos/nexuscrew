@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const net = require('node:net');
 const cmds = require('../lib/nodes/commands.js');
 const store = require('../lib/nodes/store.js');
 const tunnel = require('../lib/nodes/tunnel.js');
@@ -68,6 +69,22 @@ test('nodes add: Host alias valido; target argv ostile rifiutato', () => {
   const bad = cmds.nodesAdd({ home, log: () => {}, name: 'bad', ssh: '-oProxyCommand=evil' });
   assert.equal(bad.code, 1);
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('pairing port reservation: salta una porta realmente occupata dal sistema operativo', async (t) => {
+  const occupied = net.createServer();
+  await new Promise((resolve, reject) => {
+    occupied.once('error', reject);
+    occupied.listen({ host: '127.0.0.1', port: 0, exclusive: true }, resolve);
+  });
+  t.after(() => { try { occupied.close(); } catch (_) {} });
+  const start = occupied.address().port;
+  if (start === 65535) return;
+  const reservation = await cmds.reserveLocalPort({ nodes: [] }, { start });
+  assert.notEqual(reservation.port, start);
+  assert.ok(reservation.port > start);
+  await reservation.release();
+  await reservation.release(); // idempotente
 });
 
 // --- nodes list -------------------------------------------------------------
@@ -172,9 +189,12 @@ function markTunnelUp(home, name) {
 test('nodes test: tunnel DOWN', async () => {
   const home = nodeHome();
   seedNode(home, { token: 'T' });
-  const r = await cmds.nodesTest({ home, log: () => {}, name: 'vps', httpProbe: async () => ({ ok: true, status: 200 }) });
+  const lines = [];
+  const r = await cmds.nodesTest({ home, log: (x) => lines.push(x), name: 'vps', httpProbe: async () => ({ ok: true, status: 200 }) });
   assert.equal(r.result, 'tunnel-down');
   assert.equal(r.code, 1);
+  assert.doesNotMatch(lines.join('\n'), /nexuscrew nodes|nexuscrew up/);
+  assert.match(lines.join('\n'), /PWA/);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -222,7 +242,7 @@ test('nodes test: nodo sconosciuto -> code 1', async () => {
 
 // --- nodes up/down (spawn mockato) -----------------------------------------
 
-test('nodes up: spawn ssh con forward argv; down non tocca la config', () => {
+test('nodes up/down: spawn SSH e persistenza autostart quando richiesto dalla PWA', () => {
   const home = nodeHome();
   seedNode(home, { token: 'T' });
   const calls = [];
@@ -233,63 +253,13 @@ test('nodes up: spawn ssh con forward argv; down non tocca la config', () => {
   assert.ok(calls[0][1].includes('-L') && calls[0][1].includes('127.0.0.1:43001:127.0.0.1:41820'));
   // la config nodes.json e' intatta dopo up
   assert.equal(store.loadStore(nodesPathFor(home)).nodes.length, 1);
-  const d = cmds.nodesDown({ home, log: () => {}, name: 'vps' });
+  const d = cmds.nodesDown({ home, log: () => {}, name: 'vps', persistAutostart: true });
   assert.equal(d.code, 0);
-  assert.equal(store.loadStore(nodesPathFor(home)).nodes.length, 1); // config immutata
-  fs.rmSync(home, { recursive: true, force: true });
-});
-
-// --- node on/off ------------------------------------------------------------
-
-test('node on: gate permitlisten (<7.8 rifiuta), poi abilita ruolo + rendezvous', () => {
-  const home = nodeHome();
-  // ssh vecchio -> rifiuto PRIMA di abilitare
-  const old = cmds.nodeOn({ home, log: () => {}, rendezvousSsh: 'user@host', sshVersion: () => ({ major: 7, minor: 2 }), keygen: keygenSeam });
-  assert.equal(old.code, 1);
-  assert.equal(old.reason, 'permitlisten');
-  // config non modificata
-  assert.ok(!fs.existsSync(path.join(home, '.nexuscrew', 'config.json')) || !JSON.parse(fs.readFileSync(path.join(home, '.nexuscrew', 'config.json'), 'utf8')).roles);
-
-  // ssh moderno + rendezvous -> abilita, stampa permitlisten authorized_keys
-  const l = [];
-  const spawned = [];
-  const on = cmds.nodeOn({
-    home, log: (m) => l.push(m), rendezvousSsh: 'user@host', publishedPort: 41821,
-    sshVersion: () => ({ major: 9, minor: 6, raw: 'OpenSSH_9.6' }), keygen: keygenSeam,
-    logFd: null, spawnSyncImpl: () => ({ stderr: 'OpenSSH_9.6p1\n' }),
-    spawnImpl: (bin, args) => { spawned.push([bin, args]); return { pid: 4193999, unref() {} }; },
-  });
-  assert.equal(on.code, 0);
-  assert.equal(on.roles.node, true);
-  assert.equal(on.tunnel.started, true);
-  assert.equal(spawned[0][0], process.execPath);
-  assert.ok(spawned[0][1][0].endsWith('tunnel-supervisor.js'));
-  assert.ok(spawned[0][1].includes('-R'));
-  assert.ok(spawned[0][1].includes('127.0.0.1:41821:127.0.0.1:41820'));
-  const out = l.join('\n');
-  assert.ok(out.includes('permitlisten="127.0.0.1:41821"'));
-  assert.ok(out.includes(FAKE_PUB));
-  // rendezvous persistito in nodes.json
-  assert.equal(store.loadStore(nodesPathFor(home)).rendezvous.publishedPort, 41821);
-  // config.json roles.node true
-  assert.equal(JSON.parse(fs.readFileSync(path.join(home, '.nexuscrew', 'config.json'), 'utf8')).roles.node, true);
-  fs.rmSync(home, { recursive: true, force: true });
-});
-
-test('node on/off: READONLY blocca; off disabilita il ruolo', () => {
-  const home = nodeHome();
-  process.env.NEXUSCREW_READONLY = '1';
-  assert.equal(cmds.nodeOn({ home, log: () => {}, rendezvousSsh: 'user@host', sshVersion: () => ({ major: 9, minor: 6 }), keygen: keygenSeam }).code, 1);
-  assert.equal(cmds.nodeOff({ home, log: () => {} }).code, 1);
-  delete process.env.NEXUSCREW_READONLY;
-  cmds.nodeOn({
-    home, log: () => {}, rendezvousSsh: 'user@host', sshVersion: () => ({ major: 9, minor: 6 }),
-    keygen: keygenSeam, logFd: null,
-    spawnSyncImpl: () => ({ stderr: 'OpenSSH_9.6p1\n' }),
-    spawnImpl: () => ({ pid: 4193999, unref() {} }),
-  });
-  const off = cmds.nodeOff({ home, log: () => {} });
-  assert.equal(off.roles.node, false);
+  assert.equal(store.loadStore(nodesPathFor(home)).nodes[0].autostart, false);
+  const again = cmds.nodesUp({ home, log: () => {}, name: 'vps', persistAutostart: true, logFd: null,
+    spawnImpl: (bin, args) => { calls.push([bin, args]); return { pid: 999999998, unref() {} }; } });
+  assert.equal(again.code, 0);
+  assert.equal(store.loadStore(nodesPathFor(home)).nodes[0].autostart, true);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -313,7 +283,7 @@ test('status --json: nodes[] con stato tunnel reale, token REDATTI', () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('doctor: check ssh client + permitlisten (>=7.8 ok, <7.8 fail)', () => {
+test('doctor: riporta SSH/autossh usati senza fingere di certificare lo sshd remoto', () => {
   const home = nodeHome();
   fs.writeFileSync(path.join(home, '.nexuscrew', 'token'), 'TOK\n', { mode: 0o600 });
   const svc = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
@@ -323,14 +293,25 @@ test('doctor: check ssh client + permitlisten (>=7.8 ok, <7.8 fail)', () => {
     home, platform: 'linux', installPath: svc, log: () => {},
     execImpl: (b, a) => { if (a && a.includes('is-active')) return 'active'; if (a && a.includes('is-enabled')) return 'enabled'; return ''; },
     ptyLoad: () => ({ spawn() {} }),
+    commandExists: () => true,
   };
   const good = doctor({ ...common, sshVersion: () => ({ stdout: '', stderr: 'OpenSSH_9.6p1\n' }) });
-  assert.ok(good.checks.some((c) => c.name.includes('ssh client') && c.ok));
-  assert.ok(good.checks.some((c) => c.name.includes('permitlisten') && c.ok));
+  assert.ok(good.checks.some((c) => c.name.includes('OpenSSH') && c.ok && /USATO/.test(c.detail)));
+  assert.ok(good.checks.some((c) => c.name === 'autossh' && /NON usato/.test(c.detail)));
+  assert.ok(good.checks.some((c) => c.name === 'OpenSSH version' && c.ok));
   assert.equal(good.code, 0);
-  const bad = doctor({ ...common, sshVersion: () => ({ stdout: '', stderr: 'OpenSSH_7.2p2\n' }) });
-  assert.ok(bad.checks.some((c) => c.name.includes('permitlisten') && !c.ok));
-  assert.equal(bad.code, 1);
+  const old = doctor({ ...common, sshVersion: () => ({ stdout: '', stderr: 'OpenSSH_7.2p2\n' }) });
+  assert.ok(old.checks.some((c) => c.name === 'OpenSSH version' && c.ok));
+  assert.equal(old.code, 0, 'la versione locale non prova nega la policy del server');
+  const missing = doctor({ ...common, commandExists: (bin) => !['ssh', 'autossh'].includes(bin), sshVersion: () => ({ error: { code: 'ENOENT' } }) });
+  assert.ok(missing.checks.some((c) => c.name.includes('OpenSSH') && !c.ok));
+  assert.ok(missing.checks.some((c) => c.name === 'autossh' && c.warn));
+  assert.equal(missing.code, 1);
+  const noAutossh = doctor({ ...common, commandExists: (bin) => bin !== 'autossh' });
+  assert.equal(noAutossh.code, 0, 'autossh non e un requisito quando SSH e supervisionato');
+  assert.ok(noAutossh.checks.some((c) => c.name === 'autossh' && c.warn && /opzionale/.test(c.detail)));
+  const autosshCannotReplaceSsh = doctor({ ...common, commandExists: (bin) => bin !== 'ssh' });
+  assert.equal(autosshCannotReplaceSsh.code, 1, 'autossh presente non sostituisce il binario ssh obbligatorio');
   fs.rmSync(home, { recursive: true, force: true });
 });
 

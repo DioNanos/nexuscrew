@@ -16,7 +16,7 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 
 ---
 
-## What it is (v0.8.9 "Hydra Workspaces")
+## What it is (v0.8.10 "Hydra Federation")
 
 - Runs a small server on the host where your tmux sessions live.
 - Each attach spawns a real PTY running `tmux attach` and bridges its bytes over a WebSocket
@@ -24,6 +24,9 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 - **Desktop grid** (≥1024px): drag sessions from the sidebar into a tiling column layout —
   live terminals side by side, draggable dividers, per-tile composer, layout remembered.
   Tiles attach with `ignore-size` so they never resize your real terminals.
+- **Ordered Fleet roster**: local and remote locations are independently collapsible and
+  filterable by all, pinned, active, or off. The desktop chrome stays fixed while the roster
+  scrolls; the mobile header stays visible above its own touch-scrolling list.
 - **Attached decks by default**: named workspaces switch as tabs inside the same PWA without
   reloading terminals or losing a pending layout save. Use `↗` only when you want to detach a
   deck into another browser window or monitor.
@@ -33,8 +36,9 @@ panes, windows. tmux does the work; the browser is just a faithful client.
   management use the selected location through a scoped single-origin route.
 - **One-link node pairing**: paste a link or scan its QR in Settings → Nodes. A complete
   link tests SSH, exchanges the one-time invitation, confirms both directions and verifies
-  the peer automatically; failures identify the exact connection stage. Once a rendezvous
-  is configured, creating the link needs no repeated host or port fields.
+  the peer automatically; failures identify the exact connection stage. A device already
+  connected to a hub creates invitations through that hub; a standalone hub asks only for
+  the SSH address by which the receiving device can reach it.
 - **Settings and wizard**: manage roles, nodes, token rotation, and service regeneration
   from the UI; the first-run wizard uses the same pairing flow as Settings.
 - **Cell lifecycle from the UI**: the primary `+` creates a managed Fleet cell at Local or
@@ -153,6 +157,9 @@ entirely.
 - **Node.js ≥ 18**
 - **tmux** on the host (3.4+; the non-destructive `ignore-size` attach is honored on 3.4 and
   later)
+- **OpenSSH client (`ssh`)** for Hydra nodes and a clean `nexuscrew doctor`. A local-only tmux
+  session does not invoke it, but the installation is reported degraded until it is present.
+  `autossh` is detected by doctor but is not required.
 - A PTY backend is resolved automatically per platform: Darwin ARM64/x64 and Linux ARM64/x64
   scriptless prebuilds, including the native Android ARM64 provider on Termux.
 
@@ -168,7 +175,7 @@ ssh -L 41820:127.0.0.1:41820 user@your-host
 # then run `nexuscrew show` on the machine where the browser is available
 ```
 
-autossh reverse tunnels or a VPN work the same way. A local **authentication token** (0600 file,
+A user-managed autossh tunnel or a VPN works the same way. A local **authentication token** (0600 file,
 auto-generated and passed directly to the browser by `nexuscrew show`) is a second factor on top of your SSH/VPN gate. The
 token travels in the URL **fragment** (`#token=…`), so it never reaches the server logs.
 
@@ -181,9 +188,9 @@ Every installation is always the local node and can join other NexusCrew nodes. 
 flow stays entirely in the PWA:
 
 1. On the installation being shared, open **Settings → Nodes → Invite a node** and create the
-   ten-minute link/QR. If its rendezvous is already configured, this is a zero-field action.
-   Otherwise expand the advanced fields once and enter the OpenSSH target or Host alias that
-   the *other device* uses to reach this installation.
+   ten-minute link/QR. A device already connected to a hub uses that hub automatically.
+   A standalone hub needs one value: the OpenSSH target or Host alias that the *other device*
+   uses to reach it. This is not `127.0.0.1` and not a NexusCrew HTTP URL.
 2. On the other device, open its own NexusCrew PWA (`nexuscrew show`), go to
    **Settings → Nodes**, and use the first card, **Connect with one link**. Paste the complete
    link in the prominent field or scan the QR. Do not navigate to the loopback address in the
@@ -196,17 +203,21 @@ flow stays entirely in the PWA:
 
 The link never contains an SSH key, identity file, API key or PWA token. Its only credential is
 the random, one-time pairing invite; SSH routing fields are non-secret configuration. A
-successful pairing creates a reciprocal loopback-only link and both sides exchange a redacted
-topology automatically.
+successful pairing creates one supervised SSH connection to the hub. Its normal `-L` channel
+is private and provides access to the hub. The optional `-R` channel is added to that same SSH
+process only when the user enables **Share this node**, after which the hub verifies it before
+advertising the device. Both sides exchange only redacted topology.
 
-Pairing also exchanges node roles. An inbound phone or laptop that is not advertising itself as
-an always-reachable node is shown as **passive** while away, not as a broken red peer. A declared
-server/node that stops responding, or a live endpoint that rejects authentication, remains a
-real health error.
+A newly paired phone or laptop is private by default: the hub keeps it in Settings without
+probing it as a server or showing a false red error. Enabling Share makes it routable and turns
+authenticated reverse-channel health into a real requirement; a shared node that stops
+responding, or a live endpoint that rejects authentication, remains a real health error.
 
 NexusCrew does not create SSH keys or edit `authorized_keys`. OpenSSH remains authoritative for
 identity files, agents, host keys, ports, ProxyJump and forwarding policy. NexusCrew uses
-`autossh` when available and otherwise its supervised `ssh`; configured links return at boot.
+one built-in retry supervisor around `ssh`; it never nests `autossh`. `nexuscrew doctor` reports
+whether both binaries are installed and states that OpenSSH is the transport actually used.
+Missing `ssh` is a blocking error; `autossh` is optional. Configured links return at boot.
 Pair credentials are random, per-peer and scoped only to the federated session/file surface—the
 PWA token never crosses a peer link.
 
@@ -221,7 +232,7 @@ transitive nodes remain listed as offline with their last-seen time while a rela
 ### Linux
 
 ```bash
-# Install Node.js 18+ and tmux 3.4+ with your distribution package manager first.
+# Install Node.js 18+, tmux 3.4+ and OpenSSH with your package manager first.
 npm install -g @mmmbuto/nexuscrew
 nexuscrew
 ```
@@ -248,7 +259,7 @@ distribution, so it does not require Developer ID signing.
 
 ```bash
 pkg update
-pkg install nodejs-lts tmux
+pkg install nodejs-lts tmux openssh
 npm install -g @mmmbuto/nexuscrew
 nexuscrew
 ```
@@ -264,6 +275,9 @@ exits:
 nexuscrew                 # background start; opens only on first run
 nexuscrew show            # background start when needed + open the authenticated PWA
 nexuscrew show token      # print the clickable authenticated URL; do not open a browser
+nexuscrew status          # compact service, port and hub-connection state
+nexuscrew stop            # stop server and every NexusCrew-managed SSH supervisor
+nexuscrew restart         # restart server; restore only autostart-enabled hub links
 nexuscrew boot            # opt in to startup persistence
 nexuscrew boot off        # disable startup persistence, keep the current run alive
 ```
@@ -309,7 +323,8 @@ by normal startup, help, doctor, or service output.
 
 `nexuscrew mcp` runs a minimal **stdio MCP server** (JSON-RPC 2.0, one JSON message per
 line, zero SDK dependencies) that brings NexusCrew *inside* your AI sessions. An agent
-running in a tmux session gets five tools — the cell→human channel:
+running in a tmux session gets six tools — the cell→human channel plus its
+read-only deck context:
 
 - `nc_notify {title, body?, urgency?}` — human notification: toast on every open UI +
   web push on subscribed devices (enable push from Settings → System).
@@ -319,11 +334,17 @@ running in a tmux session gets five tools — the cell→human channel:
   `NEXUSCREW_REPLY_LABEL`; bracketed paste, never submits).
 - `nc_send_file {path, caption?}` — copies a file (absolute path under HOME) into the
   session outbox: badge + notification, downloadable from the Files panel.
+- `nc_deck {}` — identifies the caller's tmux session and node, then returns every local or
+  authorized shared-owner deck that contains it. Deck identity is owner-qualified; members
+  include stable owner ID, Fleet cell name (when managed), exact tmux session and the Hydra
+  route valid from the caller. Unavailable members remain visible with `cell: null`.
 - `nc_status {}` / `nc_inbox {}` — read-only: live sessions + fleet cells / inbox files.
 
 The caller's identity is the tmux session name (`$TMUX` → `tmux display-message`), with
 `NEXUSCREW_MCP_SESSION` as fallback for non-tmux contexts. The bridge talks to the local
 HTTP API (loopback + token from `~/.nexuscrew/token`); the cell↔cell bus stays out of scope.
+`nc_deck` is discovery only: use the AI client's verified tmux-messaging workflow to contact
+another member, and never scrape `decks.json` directly.
 
 Register it in **Claude Code** (`.mcp.json` in your project root, or `~/.claude.json`):
 
@@ -370,7 +391,7 @@ node bin/nexuscrew.js serve
 
 ## Status
 
-The current stable release is **v0.8.9**. npm **`latest`**, the GitHub tag and the release
+The current stable release is **v0.8.10**. npm **`latest`**, the GitHub tag and the release
 assets are promoted from the same verified artifact.
 
 ## License

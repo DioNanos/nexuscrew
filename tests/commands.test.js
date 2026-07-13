@@ -4,8 +4,11 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
+const pidf = require('../lib/cli/pidfile.js');
 const { dispatch, serve, start, stop, status, parseFlags, HELP,
-  smartUp, url, tokenRotate, logs, update, doctor, findAvailablePort, openPwa, startPortable } = require('../lib/cli/commands.js');
+  smartUp, url, tokenRotate, logs, update, doctor, restart,
+  findAvailablePort, openPwa, startPortable } = require('../lib/cli/commands.js');
 
 // Home "inizializzata" (config.json + token) per i test url/status/token/logs. [A2]
 function initHome(port = 41822, token = 'SECRETTOKEN12345') {
@@ -15,6 +18,22 @@ function initHome(port = 41822, token = 'SECRETTOKEN12345') {
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ port }) + '\n', { mode: 0o600 });
   fs.writeFileSync(path.join(dir, 'token'), token + '\n', { mode: 0o600 });
   return { home, token, port };
+}
+
+function portableFixture(home) {
+  const code = 'setInterval(() => {}, 1000)';
+  const child = spawn(process.execPath, ['-e', code], { stdio: 'ignore' });
+  const pidPath = path.join(home, '.nexuscrew', 'nexuscrew.pid');
+  pidf.writePidfile(pidPath, child.pid, `${process.execPath} -e ${code}`);
+  return { child, pidPath };
+}
+
+function childExit(child, timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    if (child.exitCode !== null || child.signalCode !== null) return resolve();
+    const timer = setTimeout(() => reject(new Error(`child ${child.pid} did not exit`)), timeoutMs);
+    child.once('exit', () => { clearTimeout(timer); resolve(); });
+  });
 }
 
 // --- parseFlags ---
@@ -40,7 +59,7 @@ test('dispatch: help -> code 0, stampa HELP', () => {
   assert.ok(long.join('\n').includes('nexuscrew show'));
   const version = [];
   assert.equal(dispatch(['--version'], { log: (m) => version.push(m) }).code, 0);
-  assert.equal(version[0], '0.8.9');
+  assert.equal(version[0], '0.8.10');
   assert.equal(dispatch(['--bogus'], { log: () => {} }).code, 1);
 });
 
@@ -174,6 +193,28 @@ test('smart-up: porta occupata da altro processo -> successiva libera e config a
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test('smart-up: non sposta la porta se esistono peer collegati', async () => {
+  const { home } = initHome(41822);
+  const dir = path.join(home, '.nexuscrew');
+  const nodesStore = require('../lib/nodes/store.js');
+  let st = nodesStore.emptyStore('a'.repeat(32));
+  st = nodesStore.addNode(st, {
+    name: 'hub', ssh: 'user@hub', remotePort: 41820, localPort: 43001,
+    direction: 'outbound', transport: 'auto', autostart: true,
+    nodeId: 'b'.repeat(32), token: 'to-hub', acceptToken: 'from-hub',
+  });
+  nodesStore.atomicWriteStore(path.join(dir, 'nodes.json'), st);
+  let wrote = false;
+  await assert.rejects(() => smartUp({
+    home, platform: 'linux', execImpl: () => { throw new Error('inactive'); },
+    probeImpl: async () => false, portAvailableImpl: async (port) => port === 41823,
+    runInitImpl: () => { wrote = true; }, waitAttempts: 1,
+  }), /paired peers exist/);
+  assert.equal(wrote, false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).port, 41822);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 test('dispatch: unknown command -> code 1', () => {
   const logs = [];
   const r = dispatch(['bogus'], { log: (m) => logs.push(m) });
@@ -181,11 +222,24 @@ test('dispatch: unknown command -> code 1', () => {
   assert.ok(logs.join('\n').includes('not a public CLI command'));
 });
 
+test('dispatch: status, stop and restart are public lifecycle commands', () => {
+  const { home } = initHome();
+  const logs = [];
+  const execImpl = (_bin, args) => args.includes('is-active') ? 'active' : '';
+  assert.equal(dispatch(['status'], { home, platform: 'linux', execImpl, log: (x) => logs.push(x) }).code, 0);
+  assert.equal(dispatch(['stop'], { home, platform: 'linux', execImpl, log: (x) => logs.push(x) }).code, 0);
+  assert.equal(dispatch(['restart'], { home, platform: 'linux', execImpl, log: (x) => logs.push(x) }).code, 0);
+  assert.match(logs.join('\n'), /running:/);
+  assert.match(logs.join('\n'), /systemctl --user stop nexuscrew/);
+  assert.match(logs.join('\n'), /systemctl --user restart nexuscrew/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 // --- dispatch init (tmpdir, dry-run) ---
 
 test('legacy configuration commands are not public CLI commands', () => {
   const logs = [];
-  for (const command of ['init', 'start', 'stop', 'status', 'url', 'logs', 'update', 'nodes']) {
+  for (const command of ['init', 'start', 'url', 'logs', 'update', 'nodes']) {
     assert.equal(dispatch([command], { log: (m) => logs.push(m) }).code, 1);
   }
   assert.ok(logs.join('\n').includes('nexuscrew show'));
@@ -264,29 +318,50 @@ test('start mac: se non caricato bootstrap domain-target, poi kickstart; errori 
 });
 
 test('stop linux: systemctl --user stop (mock)', () => {
-  const calls = [];
-  const r = stop({ platform: 'linux', execImpl: (b, a) => calls.push([b, a]), log: () => {} });
+  const calls = []; let tunnelsStopped = 0;
+  const r = stop({
+    platform: 'linux',
+    execImpl: (b, a) => { calls.push([b, a]); return a.includes('is-active') ? 'active' : ''; },
+    stopTunnelsImpl: () => { tunnelsStopped += 1; }, log: () => {},
+  });
   assert.equal(r.stopped, true);
   assert.ok(calls.some((c) => c[1].includes('stop')));
+  assert.equal(tunnelsStopped, 1);
+  const failed = stop({
+    platform: 'linux',
+    execImpl: (_b, a) => { if (a.includes('is-active')) return 'active'; throw new Error('unit missing'); },
+    stopTunnelsImpl: () => { tunnelsStopped += 1; }, log: () => {},
+  });
+  assert.equal(failed.stopped, false);
+  assert.equal(tunnelsStopped, 2, 'i tunnel vengono fermati anche se systemd fallisce');
 });
 
-test('stop mac: bootout ferma davvero il job KeepAlive e non propaga errori', () => {
+test('stop mac: bootout ferma davvero il job KeepAlive e pulisce i tunnel anche su errore', () => {
   const calls = [];
-  const r = stop({ platform: 'mac', uid: 501, execImpl: (b, a) => calls.push([b, a]), log: () => {} });
+  const r = stop({ platform: 'mac', uid: 501, execImpl: (b, a) => calls.push([b, a]), stopTunnelsImpl: () => {}, log: () => {} });
   assert.equal(r.stopped, true);
-  assert.deepEqual(calls[0], ['launchctl', ['bootout', 'gui/501/com.mmmbuto.nexuscrew']]);
-  const failed = stop({ platform: 'mac', uid: 501, execImpl: () => { throw new Error('not loaded'); }, log: () => {} });
+  assert.ok(calls.some(([b, a]) => b === 'launchctl' && a[0] === 'bootout' && a[1] === 'gui/501/com.mmmbuto.nexuscrew'));
+  let cleaned = 0;
+  const failed = stop({
+    platform: 'mac', uid: 501,
+    execImpl: (_b, a) => { if (a[0] === 'print') return ''; throw new Error('not loaded'); },
+    stopTunnelsImpl: () => { cleaned += 1; }, log: () => {},
+  });
   assert.equal(failed.stopped, false);
   assert.match(failed.reason, /not loaded/);
+  assert.equal(cleaned, 1);
 });
 
-test('stop termux: no pidfile -> no kill, reason', () => {
+test('stop termux: no pidfile e idempotente e pulisce supervisor orfani', () => {
   const tmpPid = path.join(os.tmpdir(), 'nc-stop-nopid-' + process.pid + '.pid');
   process.env.NEXUSCREW_PIDFILE = tmpPid;
   fs.rmSync(tmpPid, { force: true });
-  const r = stop({ platform: 'termux', execImpl: () => {}, log: () => {} });
-  assert.equal(r.stopped, false);
+  let tunnelsStopped = 0;
+  const r = stop({ platform: 'termux', execImpl: () => {}, stopTunnelsImpl: () => { tunnelsStopped += 1; }, log: () => {} });
+  assert.equal(r.stopped, true);
+  assert.equal(r.alreadyStopped, true);
   assert.match(r.reason, /no pidfile/);
+  assert.equal(tunnelsStopped, 1, 'Termux stop pulisce anche supervisor orfani');
   delete process.env.NEXUSCREW_PIDFILE;
 });
 
@@ -318,6 +393,55 @@ test('status termux: boot-script + pidfile state', () => {
   assert.equal(r2.running, false); // nessun pidfile vivo
   delete process.env.NEXUSCREW_PIDFILE;
   fs.rmSync(tmpHome, { recursive: true, force: true });
+});
+
+test('linux/mac lifecycle riconosce un runtime portable anche col service manager inattivo', async (t) => {
+  for (const platform of ['linux', 'mac']) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), `nc-portable-${platform}-`));
+    fs.mkdirSync(path.join(home, '.nexuscrew'), { recursive: true });
+    const { child } = portableFixture(home);
+    t.after(() => { try { child.kill('SIGKILL'); } catch (_) {} fs.rmSync(home, { recursive: true, force: true }); });
+    const out = status({ home, platform, uid: 501, log: () => {}, execImpl: () => { throw new Error('inactive'); } });
+    assert.equal(out.running, true);
+    assert.equal(out.runtimeOwner, 'portable');
+    assert.equal(out.portablePid, child.pid);
+    const stopped = stop({ home, platform, uid: 501, log: () => {}, execImpl: () => { throw new Error('inactive'); }, stopTunnelsImpl: () => {} });
+    assert.equal(stopped.stopped, true);
+    assert.deepEqual(stopped.stoppedOwners, ['portable']);
+    await childExit(child);
+  }
+});
+
+test('restart portable usa lo stesso owner; un conflitto viene ricondotto al managed owner', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-runtime-owner-'));
+  fs.mkdirSync(path.join(home, '.nexuscrew'), { recursive: true });
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+
+  let portableStarts = 0;
+  const first = portableFixture(home);
+  t.after(() => { try { first.child.kill('SIGKILL'); } catch (_) {} });
+  const portable = restart({
+    home, platform: 'linux', log: () => {}, execImpl: () => { throw new Error('inactive'); },
+    stopTunnelsImpl: () => {}, startPortableImpl: () => { portableStarts += 1; return { started: true }; },
+  });
+  assert.equal(portable.owner, 'portable');
+  assert.equal(portable.runtimeOwner, 'portable');
+  assert.equal(portable.restarted, true);
+  assert.equal(portableStarts, 1);
+  await childExit(first.child);
+
+  const second = portableFixture(home);
+  t.after(() => { try { second.child.kill('SIGKILL'); } catch (_) {} });
+  const calls = [];
+  const conflict = restart({
+    home, platform: 'linux', log: () => {}, stopTunnelsImpl: () => {},
+    execImpl: (bin, args) => { calls.push([bin, args]); return args.includes('is-active') ? 'active' : ''; },
+  });
+  assert.equal(conflict.owner, 'conflict');
+  assert.equal(conflict.runtimeOwner, 'managed');
+  assert.equal(conflict.restarted, true);
+  assert.ok(calls.some(([bin, args]) => bin === 'systemctl' && args.includes('restart')));
+  await childExit(second.child);
 });
 
 test('dispatch serve: chiama serve + keepAlive (no exit, server resta vivo)', () => {
@@ -416,7 +540,7 @@ test('token rotate end-to-end: vecchio token 401, nuovo 200 (restart = reload cr
   const { createServer } = require('../lib/server.js');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-rot-'));
   const tokenPath = path.join(dir, 'token');
-  const s1 = createServer({ tokenPath, filesRoot: path.join(dir, 'files'), fleetEnabled: false });
+  const s1 = createServer({ home: dir, tokenPath, nodesPath: path.join(dir, 'nodes.json'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, autoUpdate: false });
   await new Promise((res) => s1.server.listen(0, '127.0.0.1', res));
   const oldTok = s1.token;
   const base1 = `http://127.0.0.1:${s1.server.address().port}`;
@@ -425,7 +549,7 @@ test('token rotate end-to-end: vecchio token 401, nuovo 200 (restart = reload cr
   // rotazione atomica del file token (service non attivo nel test -> nessun restart reale)
   tokenRotate({ home: dir, configDir: dir, tokenPath, platform: 'linux', log: () => {}, execImpl: () => { throw new Error('inactive'); } });
   // restart-equivalente: un nuovo server rilegge il file -> nuove credenziali
-  const s2 = createServer({ tokenPath, filesRoot: path.join(dir, 'files'), fleetEnabled: false });
+  const s2 = createServer({ home: dir, tokenPath, nodesPath: path.join(dir, 'nodes.json'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, autoUpdate: false });
   await new Promise((res) => s2.server.listen(0, '127.0.0.1', res));
   t.after(() => { s2.server.close(); s2.watcher.close(); });
   const base2 = `http://127.0.0.1:${s2.server.address().port}`;
@@ -536,18 +660,19 @@ test('smart-up idempotente: gia\' attivo e configurato -> no start, no output, n
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-// F2 (audit run multi-fase): rotate con `serve` MANUALE vivo (pidfile) e service
-// manager spento -> warning esplicito (il vecchio token resta cachato nel processo).
-test('token rotate: serve manuale vivo (pidfile) -> warning esplicito', () => {
+test('token rotate: runtime portable vivo viene riavviato e invalida il vecchio token', async (t) => {
   const { home } = initHome();
-  const pidPath = path.join(home, '.nexuscrew', 'nexuscrew.pid');
-  // pid nostro (vivo per definizione), cmd vuoto = match conservativo di isAlive
-  fs.writeFileSync(pidPath, JSON.stringify({ pid: process.pid, cmd: '' }) + '\n', { mode: 0o600 });
-  process.env.NEXUSCREW_PIDFILE = pidPath;
+  const { child } = portableFixture(home);
+  t.after(() => { try { child.kill('SIGKILL'); } catch (_) {} fs.rmSync(home, { recursive: true, force: true }); });
   const l = [];
-  try {
-    tokenRotate({ home, platform: 'linux', log: (m) => l.push(m), execImpl: () => { throw new Error('inactive'); } });
-  } finally { delete process.env.NEXUSCREW_PIDFILE; }
-  assert.ok(l.join('\n').includes('server manuale attivo'), 'deve avvisare del serve manuale vivo');
-  fs.rmSync(home, { recursive: true, force: true });
+  let portableStarts = 0;
+  const result = tokenRotate({
+    home, platform: 'linux', log: (m) => l.push(m),
+    execImpl: () => { throw new Error('inactive'); }, stopTunnelsImpl: () => {},
+    startPortableImpl: () => { portableStarts += 1; return { started: true }; },
+  });
+  assert.equal(result.running, true);
+  assert.equal(portableStarts, 1);
+  assert.ok(l.join('\n').includes('servizio riavviato'));
+  await childExit(child);
 });

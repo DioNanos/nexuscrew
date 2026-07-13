@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { t, LANGUAGES } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { loadPins, togglePinIn, pinRank, cmpRank } from '../lib/pins.js';
+import { positionKey } from '../lib/nodes-model.js';
+import { normalizeSidebarFilter, sidebarItems } from '../lib/sidebar-model.js';
 import Icon from './Icon.jsx';
 import './Sidebar.css';
 
@@ -21,6 +23,14 @@ function initial(name) { return String(name || '?').replace(/^[^a-zA-Z0-9]+/, ''
 // Larghezza sidebar: clamp 180–480px.
 const SIDE_MIN_W = 180;
 const SIDE_MAX_W = 480;
+const VIEW_KEY = 'nc_sidebar_views_v1';
+
+function loadViews() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(VIEW_KEY));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  } catch (_) { return {}; }
+}
 
 // Etichetta di stato di un gruppo nodo degradato (design §7: mai spinner).
 function nodeStateLabel(g) {
@@ -49,6 +59,7 @@ export default function Sidebar({
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   const [pins, setPins] = useState(loadPins);
+  const [views, setViews] = useState(loadViews);
   const togglePin = (name) => setPins((p) => togglePinIn(p, name));
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
   const byName = new Map((sessions || []).map((s) => [s.name, s]));
@@ -64,6 +75,17 @@ export default function Sidebar({
     return d || a.name.localeCompare(b.name);
   });
   const active = new Set(activeSessions || []);
+  const viewFor = (key) => ({ open: views[key]?.open !== false, filter: normalizeSidebarFilter(views[key]?.filter) });
+  const updateView = (key, patch) => setViews((before) => {
+    const next = { ...before, [key]: { ...viewFor(key), ...patch } };
+    try { localStorage.setItem(VIEW_KEY, JSON.stringify(next)); } catch (_) {}
+    return next;
+  });
+
+  const localItems = sidebarItems([
+    ...sortedCells.map((c) => ({ type: 'cell', value: c, key: positionKey([], c.tmuxSession), label: c.cell, live: !!c.tmux, activity: (byName.get(c.tmuxSession) || {}).activity || 0 })),
+    ...others.map((s) => ({ type: 'session', value: s, key: positionKey([], s.name), label: s.name, live: true, activity: s.activity || 0 })),
+  ], pins, viewFor('local').filter);
   // Tooltip mini via JS (position:fixed): il ::after CSS veniva CLIPPATO
   // dall'overflow della sidebar da 48px.
   const [tip, setTip] = useState(null); // {text, y}
@@ -107,7 +129,11 @@ export default function Sidebar({
         <div className="nc-side-head mini">
           <button className="nc-collapse-btn" onClick={onToggleCollapse} title={t('expand')}>⟩</button>
         </div>
-        <div className="nc-side-group mini">
+        <button className="nc-side-gear mini" onClick={() => onSettings && onSettings('nodes', false)} title={t('settings')}
+          onMouseEnter={(e) => showTip(e, t('settings'))} onMouseLeave={hideTip}>
+          <Icon name="gear" size={16} />
+        </button>
+        <div className="nc-side-scroll mini"><div className="nc-side-group mini">
           {sortedCells.map((c) => {
             const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
             const live = !!c.tmux;
@@ -163,11 +189,7 @@ export default function Sidebar({
                 onMouseLeave={hideTip}
               ><span className={`nc-dot${g.status === 'passive' ? '' : ' warn'}`} /></button>
             )]))}
-        </div>
-        <button className="nc-side-gear mini" onClick={() => onSettings && onSettings('nodes', false)} title={t('settings')}
-          onMouseEnter={(e) => showTip(e, t('settings'))} onMouseLeave={hideTip}>
-          <Icon name="gear" size={16} />
-        </button>
+        </div></div>
         {tip && <div className="nc-mini-tip" style={{ top: tip.y }}>{tip.text}</div>}
       </aside>
     );
@@ -181,9 +203,22 @@ export default function Sidebar({
         <button className="nc-new-btn" onClick={onNew} title={t('fleet-new-cell')}>+ {t('new')}</button>
       </div>
 
-      {(cells || []).length > 0 && (
+      <button className="nc-side-gear" onClick={() => onSettings && onSettings('nodes', false)} title={t('settings')}>
+        <Icon name="gear" size={15} /> {t('settings')}
+      </button>
+
+      <div className="nc-side-scroll">
+      <PositionHeader
+        label={t('position-local')}
+        count={(cells || []).length + others.length}
+        state={viewFor('local')}
+        onToggle={() => updateView('local', { open: !viewFor('local').open })}
+        onFilter={(filter) => updateView('local', { filter })}
+      />
+      {viewFor('local').open && (
         <div className="nc-side-group">
-          {sortedCells.map((c) => {
+          {localItems.map((item) => item.type === 'cell' ? (() => {
+            const c = item.value;
             const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
             const title = c.degraded ? t('cell-degraded') : c.tmux ? t('cell-on') : t('cell-off');
             // Cella con tmux vivo = sessione a tutti gli effetti: draggabile
@@ -191,7 +226,7 @@ export default function Sidebar({
             const live = !!c.tmux;
             return (
               <div
-                key={c.cell}
+                key={item.key}
                 className={`nc-cell${live ? ' live' : ''}${active.has(c.tmuxSession) ? ' active' : ''}`}
                 title={`${c.cell} · ${c.engine}${c.key ? `·${c.key}` : ''} · ${title}`}
                 aria-label={`${c.cell}, ${c.engine}${c.key ? ` ${c.key}` : ''}, ${title}`}
@@ -206,10 +241,10 @@ export default function Sidebar({
                   <small title={`${c.engine}${c.key ? `·${c.key}` : ''}`}>{c.engine}{c.key ? `·${c.key}` : ''}</small>
                 </span>
                 <button
-                  className={`nc-pin${pins.includes(c.tmuxSession) ? ' on' : ''}`}
+                  className={`nc-pin${pins.includes(item.key) ? ' on' : ''}`}
                   title={t('pin')}
-                  onClick={(e) => { e.stopPropagation(); togglePin(c.tmuxSession); }}
-                >{pins.includes(c.tmuxSession) ? '★' : '☆'}</button>
+                  onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}
+                >{pins.includes(item.key) ? '★' : '☆'}</button>
                 <button
                   className={`nc-power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
                   onClick={(e) => { e.stopPropagation(); onPower && onPower(c); }}
@@ -217,54 +252,27 @@ export default function Sidebar({
                 ><Icon name="power" size={14} /></button>
               </div>
             );
-          })}
+          })() : (() => {
+            const s = item.value;
+            return <div
+              key={item.key}
+              className={`nc-side-card${active.has(s.name) ? ' active' : ''}`}
+              draggable
+              onDragStart={(e) => e.dataTransfer.setData('text/nc-session', s.name)}
+              onClick={() => onAddTile && onAddTile(s.name)}
+              onDoubleClick={() => onPick && onPick(s.name)}
+            >
+              <span className={s.attached ? 'nc-dot on' : 'nc-dot'} />
+              <span className="nc-card-main"><b>{s.name}</b><small>{s.preview || s.cmd || t('windows').replace('{n}', String(s.windows || 0))}{s.outbox?.count > 0 ? ` · 📦${s.outbox.count}` : ''}</small></span>
+              {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
+              <button className={`nc-pin${pins.includes(item.key) ? ' on' : ''}`} title={t('pin')}
+                onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}>{pins.includes(item.key) ? '★' : '☆'}</button>
+              <button className="nc-menu" title={t('terminate')} onClick={(e) => { e.stopPropagation(); if (window.confirm(t('terminate-confirm').replace('{name}', s.name))) onKill && onKill(s.name); }}>⋯</button>
+            </div>;
+          })())}
+          {localItems.length === 0 && <div className="nc-empty">{t('no-sessions-short')}</div>}
         </div>
       )}
-
-      {/* Voce settings sotto il pannello FLEET (design §5, B2-UI). */}
-      <button className="nc-side-gear" onClick={() => onSettings && onSettings('nodes', false)} title={t('settings')}>
-        <Icon name="gear" size={15} /> {t('settings')}
-      </button>
-
-      <div className="nc-side-group-title">{t('other-sessions')}</div>
-      <div className="nc-side-group">
-        {others.map((s) => (
-          <div
-            key={s.name}
-            className={`nc-side-card${active.has(s.name) ? ' active' : ''}`}
-            draggable
-            onDragStart={(e) => e.dataTransfer.setData('text/nc-session', s.name)}
-            onClick={() => onAddTile && onAddTile(s.name)}
-            onDoubleClick={() => onPick && onPick(s.name)}
-          >
-            <span className={s.attached ? 'nc-dot on' : 'nc-dot'} />
-            <span className="nc-card-main">
-              <b>{s.name}</b>
-              <small>
-                {s.preview
-                  ? s.preview
-                  : (s.cmd ? s.cmd : t('windows').replace('{n}', String(s.windows || 0)))}
-                {s.outbox && s.outbox.count > 0 ? ` · 📦${s.outbox.count}` : ''}
-              </small>
-            </span>
-            {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
-            <button
-              className={`nc-pin${pins.includes(s.name) ? ' on' : ''}`}
-              title={t('pin')}
-              onClick={(e) => { e.stopPropagation(); togglePin(s.name); }}
-            >{pins.includes(s.name) ? '\u2605' : '\u2606'}</button>
-            <button
-              className="nc-menu"
-              title={t('terminate')}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (window.confirm(t('terminate-confirm').replace('{name}', s.name))) onKill && onKill(s.name);
-              }}
-            >⋯</button>
-          </div>
-        ))}
-        {others.length === 0 && <div className="nc-empty">{t('no-sessions-short')}</div>}
-      </div>
 
       {/* Gruppi per-nodo remoto (Hydra): per ogni posizione celle Fleet (attive e
           inattive, draggabili se live) + tmux unmanaged. Salute dal probe federato
@@ -274,9 +282,17 @@ export default function Sidebar({
         const hd = healthDot(g.health);
         const dotClass = hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
         const nodeRoute = (g.route || [g.name]).join('/');
+        const groupView = viewFor(nodeRoute);
+        const remoteItems = sidebarItems([
+          ...(g.cells || []).map((c) => ({ type: 'cell', value: c, key: positionKey(g.route, c.tmuxSession || c.cell), label: c.cell, live: !!c.tmux, activity: c.activity || 0 })),
+          ...(g.unmanaged || []).map((s) => ({ type: 'session', value: s, key: positionKey(g.route, s.name), label: s.name, live: true, activity: s.activity || 0 })),
+        ], pins, groupView.filter);
         return (
         <div key={`nodo-${(g.route || [g.name]).join('/')}`}>
-          <div className="nc-side-group-title nc-node-title">
+          <div className="nc-side-group-title nc-node-title" role="button" tabIndex={0}
+            onClick={() => updateView(nodeRoute, { open: !groupView.open })}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); updateView(nodeRoute, { open: !groupView.open }); } }}>
+            <span className="nc-node-chevron">{groupView.open ? '⌄' : '›'}</span>
             <span className={`nc-dot ${dotClass}`} title={g.health ? healthTitle(g.health) : ''} />
             <b>{g.label || g.name}</b>
             <small>
@@ -285,20 +301,26 @@ export default function Sidebar({
                 ? t('node-sessions').replace('{n}', String((g.cells || []).length + (g.unmanaged || []).length))
                 : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
             </small>
+            <select className="nc-node-filter" value={groupView.filter} title={t(`view-${groupView.filter}`)}
+              onClick={(e) => e.stopPropagation()} onChange={(e) => updateView(nodeRoute, { filter: e.target.value })}>
+              <option value="all">{t('view-all')}</option><option value="pinned">{t('view-pinned')}</option>
+              <option value="active">{t('view-active')}</option><option value="off">{t('view-off')}</option>
+            </select>
             {g.direct && g.health && g.health.managed !== false && (
               <button type="button" className={`nc-power${g.tunnelStatus === 'up' ? ' on' : ''}`}
                 title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}
-                onClick={() => onNodePower && onNodePower(g)}><Icon name="power" size={14} /></button>
+                onClick={(e) => { e.stopPropagation(); onNodePower && onNodePower(g); }}><Icon name="power" size={14} /></button>
             )}
           </div>
-          {g.status === 'up' && (
+          {g.status === 'up' && groupView.open && (
             <div className="nc-side-group">
-              {(g.cells || []).map((c) => {
+              {remoteItems.map((item) => item.type === 'cell' ? (() => {
+                const c = item.value;
                 const live = !!c.tmux;
                 const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
                 return (
                   <div
-                    key={c.key}
+                    key={item.key}
                     className={`nc-side-card nc-cell${live ? ' live' : ''}${active.has(c.key) ? ' active' : ''}`}
                     title={c.active ? t('cell-on') : t('cell-off')}
                     draggable={live}
@@ -311,6 +333,8 @@ export default function Sidebar({
                       <b>{c.cell}</b>
                       <small>{c.engine}{c.key ? `·${c.key}` : ''}{c.active ? '' : ` · ${t('cell-off')}`}</small>
                     </span>
+                    <button className={`nc-pin${pins.includes(item.key) ? ' on' : ''}`} title={t('pin')}
+                      onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}>{pins.includes(item.key) ? '★' : '☆'}</button>
                     {(g.capabilities || []).includes(c.active ? 'down' : 'up') && (
                       <button className={`nc-power${c.active ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
                         onClick={(e) => { e.stopPropagation(); onPower && onPower({ ...c, route: g.route, availableEngines: g.engines || [] }); }}
@@ -318,10 +342,9 @@ export default function Sidebar({
                     )}
                   </div>
                 );
-              })}
-              {(g.unmanaged || []).map((s) => (
+              })() : (() => { const s = item.value; return (
                 <div
-                  key={s.key}
+                  key={item.key}
                   className={`nc-side-card${active.has(s.key) ? ' active' : ''}`}
                   draggable
                   onDragStart={(e) => e.dataTransfer.setData('text/nc-session', s.key)}
@@ -338,18 +361,22 @@ export default function Sidebar({
                     </small>
                   </span>
                   {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
+                  <button className={`nc-pin${pins.includes(item.key) ? ' on' : ''}`} title={t('pin')}
+                    onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}>{pins.includes(item.key) ? '★' : '☆'}</button>
                   <button className="nc-menu" title={t('terminate')} onClick={(e) => {
                     e.stopPropagation();
                     if (window.confirm(t('terminate-confirm').replace('{name}', s.name))) onKill && onKill(s.name, g.route);
                   }}>⋯</button>
                 </div>
-              ))}
-              {(g.cells || []).length === 0 && (g.unmanaged || []).length === 0 && <div className="nc-empty">{t('no-sessions-short')}</div>}
+              ); })())}
+              {remoteItems.length === 0 && <div className="nc-empty">{t('no-sessions-short')}</div>}
             </div>
           )}
         </div>
         );
       })}
+
+      </div>
 
       <div className="nc-side-lang">
         {LANGUAGES.map((lg, i) => (
@@ -363,4 +390,17 @@ export default function Sidebar({
       <div className="nc-side-resize" onPointerDown={startResize} title="" />
     </aside>
   );
+}
+
+function PositionHeader({ label, count, state, onToggle, onFilter }) {
+  return <div className="nc-side-group-title nc-node-title" role="button" tabIndex={0}
+    onClick={onToggle} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}>
+    <span className="nc-node-chevron">{state.open ? '⌄' : '›'}</span>
+    <span className="nc-dot on" /><b>{label}</b><small> · {t('node-sessions').replace('{n}', String(count))}</small>
+    <select className="nc-node-filter" value={state.filter} title={t(`view-${state.filter}`)}
+      onClick={(e) => e.stopPropagation()} onChange={(e) => onFilter(e.target.value)}>
+      <option value="all">{t('view-all')}</option><option value="pinned">{t('view-pinned')}</option>
+      <option value="active">{t('view-active')}</option><option value="off">{t('view-off')}</option>
+    </select>
+  </div>;
 }

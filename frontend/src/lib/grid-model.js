@@ -9,6 +9,7 @@ const MIN_W = 0.2;
 // Identita' di un tile = refKey "node:session" (tmux vieta ':' nei nomi di
 // sessione e i nomi nodo sono ^[a-z0-9-]+$ -> nessuna collisione possibile).
 export const NODE_RE = /^[a-z0-9-]{1,32}(?:\/[a-z0-9-]{1,32}){0,3}$/;
+export const OWNER_ID_RE = /^[a-f0-9]{16,64}$/;
 const validNodeRoute = (node) => NODE_RE.test(node) && new Set(node.split('/')).size === node.split('/').length;
 
 // ref: stringa ("sess" locale, "nodo:sess" remota) o oggetto {session, node?}.
@@ -23,8 +24,15 @@ export function parseRef(ref) {
     return { session, node };
   }
   if (ref && typeof ref === 'object' && typeof ref.session === 'string' && ref.session) {
-    if (ref.node === undefined || ref.node === null || ref.node === '') return { session: ref.session };
-    if (typeof ref.node === 'string' && validNodeRoute(ref.node)) return { session: ref.session, node: ref.node };
+    const ownerId = ref.ownerId === undefined ? undefined
+      : typeof ref.ownerId === 'string' && OWNER_ID_RE.test(ref.ownerId) ? ref.ownerId : null;
+    if (ownerId === null) return null;
+    if (ref.node === undefined || ref.node === null || ref.node === '') {
+      return { session: ref.session, ...(ownerId ? { ownerId } : {}) };
+    }
+    if (typeof ref.node === 'string' && validNodeRoute(ref.node)) {
+      return { session: ref.session, node: ref.node, ...(ownerId ? { ownerId } : {}) };
+    }
     return null;
   }
   return null;
@@ -76,6 +84,7 @@ export function addTile(layout, ref, drop, props) {
   const l = clone(layout);
   const tile = { session: r.session, height: 1, fontSize: TILE_FONT_DEF, ...(props || {}) };
   if (r.node) tile.node = r.node;
+  if (r.ownerId) tile.ownerId = r.ownerId;
   if (drop === 'end') { l.columns.push({ width: 1, tiles: [tile] }); return l; }
   if (drop && typeof drop.col === 'number' && typeof drop.row === 'number' && l.columns[drop.col]) {
     l.columns[drop.col].tiles.splice(drop.row, 0, tile); return l;
@@ -110,6 +119,7 @@ export function addTileSmart(layout, ref) {
   // 2 a 3 colonne. Font per-tile preservato; pesi tornano pari nel layout auto.
   const ordered = [...visualSessions(layout), key];
   const previous = new Map(layout.columns.flatMap((column) => column.tiles.map((tile) => [refKey(tile), tile])));
+  const incoming = parseRef(ref);
   const averageWidth = layout.columns.length
     ? layout.columns.reduce((sum, column) => sum + (Number(column.width) || 1), 0) / layout.columns.length
     : 1;
@@ -118,9 +128,11 @@ export function addTileSmart(layout, ref) {
   }));
   ordered.forEach((item, index) => {
     const parsed = parseRef(item); if (!parsed) return;
-    const old = previous.get(item) || {};
+    const old = previous.get(item) || (item === key ? incoming : {}) || {};
     const tile = { session: parsed.session, height: old.height || 1, fontSize: old.fontSize || TILE_FONT_DEF };
     if (parsed.node) tile.node = parsed.node;
+    if (old.ownerId) tile.ownerId = old.ownerId;
+    if (old.unavailable === true) tile.unavailable = true;
     columns[index % targetCols].tiles.push(tile);
   });
   return { columns: columns.filter((column) => column.tiles.length) };
@@ -139,7 +151,11 @@ export function moveTile(layout, ref, drop) {
   if (!sessions(layout).includes(key)) return layout;
   // Preserva le proprietà per-tile attraverso il remove+add.
   const old = layout.columns.flatMap((c) => c.tiles).find((t) => refKey(t) === key);
-  return addTile(removeTile(layout, key), key, drop, { fontSize: old.fontSize, height: old.height });
+  return addTile(removeTile(layout, key), key, drop, {
+    fontSize: old.fontSize, height: old.height,
+    ...(old.ownerId ? { ownerId: old.ownerId } : {}),
+    ...(old.unavailable === true ? { unavailable: true } : {}),
+  });
 }
 
 // Migrazione mirata di ref tile persistiti. replacements = Map<oldKey,newKey>;
@@ -157,6 +173,7 @@ export function remapTileRefs(layout, replacements) {
       if (!parsed) continue;
       tile.session = parsed.session;
       if (parsed.node) tile.node = parsed.node; else delete tile.node;
+      if (parsed.ownerId) tile.ownerId = parsed.ownerId;
       changed = true;
     }
   }
@@ -221,6 +238,8 @@ function rebuildTile(layout, key) {
   const t = tileByKey(layout, key) || {};
   const out = { session: t.session, height: 1, fontSize: t.fontSize || TILE_FONT_DEF };
   if (t.node) out.node = t.node;
+  if (t.ownerId) out.ownerId = t.ownerId;
+  if (t.unavailable === true) out.unavailable = true;
   return out;
 }
 
@@ -258,9 +277,12 @@ export function normalize(raw) {
       tiles: (Array.isArray(c && c.tiles) ? c.tiles : [])
         .filter((t) => t && typeof t.session === 'string' && t.session)
         .filter((t) => t.node == null || (typeof t.node === 'string' && validNodeRoute(t.node)))
+        .filter((t) => t.ownerId == null || (typeof t.ownerId === 'string' && OWNER_ID_RE.test(t.ownerId)))
         .map((t) => {
           const out = { session: t.session, height: Math.max(MIN_W, Number(t.height) || 1), fontSize: repairFont(t.fontSize) };
           if (t.node != null) out.node = t.node;
+          if (t.ownerId != null) out.ownerId = t.ownerId;
+          if (t.unavailable === true) out.unavailable = true;
           return out;
         }),
     }))

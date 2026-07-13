@@ -17,12 +17,23 @@
 }
 .nc-deck-sidebar-toggle:hover { border-color: #7aa903; }
 .nc-deck-chips { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
+.nc-deck-owner-group {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 4px 2px 2px; border: 1px solid #182318; border-radius: 8px;
+  background: #0b100b; flex: 0 0 auto;
+}
+.nc-deck-owner {
+  max-width: 120px; padding: 0 4px;
+  overflow: hidden; text-overflow: ellipsis;
+  color: #789a87; font-size: 9px; text-transform: uppercase; letter-spacing: .04em;
+}
 .nc-deck-chip {
   display: inline-flex; align-items: center;
   border: 1px solid #243; border-radius: 6px; overflow: hidden;
   background: #0a0e0a;
 }
 .nc-deck-chip.current { border-color: #7aa903; }
+.nc-deck-chip.offline { opacity: .58; border-style: dashed; }
 .nc-deck-open {
   background: none; border: none; color: #cfe;
   padding: 3px 8px; font: inherit; font-size: 12px; cursor: pointer; max-width: 180px;
@@ -30,6 +41,9 @@
 }
 .nc-deck-chip.current .nc-deck-open { color: #d9f7c7; }
 .nc-deck-open:hover { background: #132013; }
+.nc-deck-open:disabled, .nc-deck-mini:disabled, .nc-deck-newbtn:disabled {
+  cursor: not-allowed; opacity: .55;
+}
 .nc-deck-mini {
   background: none; border: none; border-left: 1px solid #1c2a1c;
   color: #7a9; padding: 3px 6px; font: inherit; font-size: 11px; cursor: pointer;

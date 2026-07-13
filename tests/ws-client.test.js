@@ -9,6 +9,7 @@ class FakeWebSocket {
   close() { this.readyState = 3; }
   open() { this.readyState = 1; this.onopen?.(); }
   end(code = 1006) { this.readyState = 3; this.onclose?.({ code }); }
+  message(value) { this.onmessage?.({ data: value }); }
 }
 
 test('ws client riconnette dopo close transiente e riattacca con size/focus correnti', async () => {
@@ -50,6 +51,42 @@ test('ws client non riconnette dopo close intenzionale o errore auth', async () 
     await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(FakeWebSocket.sockets.length, 1);
     auth.close();
+  } finally {
+    if (oldWs === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = oldWs;
+    if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
+  }
+});
+
+test('ws client cleanup annulla un reconnect già schedulato', async () => {
+  const oldWs = globalThis.WebSocket; const oldLocation = globalThis.location;
+  try {
+    FakeWebSocket.sockets = []; globalThis.WebSocket = FakeWebSocket;
+    globalThis.location = { hostname: 'localhost', protocol: 'http:', host: 'localhost:41820' };
+    const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?cleanup=${Date.now()}`);
+    const socket = openTerminalSocket({ session: 'work-build', token: 't', cols: 80, rows: 24, retryBaseMs: 20 });
+    FakeWebSocket.sockets[0].end(1006);
+    socket.close();
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    assert.equal(FakeWebSocket.sockets.length, 1, 'cleanup prevents an orphan socket after unmount');
+  } finally {
+    if (oldWs === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = oldWs;
+    if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
+  }
+});
+
+test('ws client marks a terminal exit final until GridTile creates the next generation', async () => {
+  const oldWs = globalThis.WebSocket; const oldLocation = globalThis.location;
+  try {
+    FakeWebSocket.sockets = []; globalThis.WebSocket = FakeWebSocket;
+    globalThis.location = { hostname: 'localhost', protocol: 'http:', host: 'localhost:41820' };
+    const exits = [];
+    const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?ended=${Date.now()}`);
+    const socket = openTerminalSocket({ session: 'work-build', token: 't', cols: 80, rows: 24, retryBaseMs: 1, onExit: (code) => exits.push(code) });
+    const ws = FakeWebSocket.sockets[0]; ws.open(); ws.message(JSON.stringify({ type: 'exit', code: 0 })); ws.end(1006);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(exits, [0]);
+    assert.equal(FakeWebSocket.sockets.length, 1, 'ended transcript does not reconnect by itself');
+    socket.close();
   } finally {
     if (oldWs === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = oldWs;
     if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
