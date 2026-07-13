@@ -2,6 +2,28 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.11 — 2026-07-13 — "Tmux Survival"
+
+- Linux service lifecycle is now tmux-safe. Generated units use `KillMode=process`, and an
+  existing installation receives a narrow atomic systemd drop-in plus `daemon-reload` before
+  `nexuscrew stop` or `nexuscrew restart`. If that protection cannot be installed, lifecycle
+  commands fail closed without touching the service or its tunnels.
+- Managed SSH supervisors are closed before a service restart and restored only through the
+  normal autostart path. The npm updater now rejects an unverified restart result instead of
+  continuing to health checks or reporting a successful update.
+- Token rotation verifies the tmux-safety guard before changing credentials and reports an
+  incomplete operation if the runtime cannot be restarted; the direct update helper likewise
+  returns failure instead of claiming that the new code is active.
+- `nexuscrew doctor` treats an unsafe Linux `KillMode` as a blocking failure and explains that
+  restarting the HTTP service could terminate the shared tmux server.
+- The official test harness removes inherited `TMUX` identity and places every real tmux smoke
+  test on a private socket below its disposable test root. Tests can no longer attach to,
+  resize, or terminate an operator session.
+- The mobile roster footer now keeps endpoint/version metadata and the IT/EN/ES language
+  controls aligned at narrow widths, with bounded ellipsis instead of overlap.
+- Tests: **739 total** (738 pass / 1 platform-dependent skip), targeted lifecycle isolation and
+  full-suite before/after tmux inventory checks, production build PASS, dependency audit clean.
+
 ## 0.8.10 — 2026-07-13 — "Hydra Federation"
 
 - Hydra pairing now creates one supervised OpenSSH connection per hub: the private `-L`

@@ -11,6 +11,8 @@ const { spawn } = require('node:child_process');
 const pidf = require('../lib/cli/pidfile.js');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-tests-'));
+const tmuxRoot = path.join(root, 'tmux');
+fs.mkdirSync(tmuxRoot, { recursive: true, mode: 0o700 });
 const bootstrap = path.join(__dirname, 'isolated-home.cjs');
 const testFiles = fs.readdirSync(__dirname)
   .filter((name) => name.endsWith('.test.js'))
@@ -49,9 +51,19 @@ async function terminateOwnedLeak(pidPath, meta) {
 }
 
 async function main() {
+  const childEnv = {
+    ...process.env,
+    NEXUSCREW_TEST_HOME_ROOT: root,
+    NEXUSCREW_TEST_TMUX_ROOT: tmuxRoot,
+    NEXUSCREW_AUTO_UPDATE: '0',
+    TMUX_TMPDIR: tmuxRoot,
+  };
+  // Never let a test client inherit the operator's live tmux socket.
+  delete childEnv.TMUX;
+  delete childEnv.TMUX_PANE;
   const child = spawn(process.execPath, ['--require', bootstrap, '--test', ...process.argv.slice(2), ...testFiles], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, NEXUSCREW_TEST_HOME_ROOT: root, NEXUSCREW_AUTO_UPDATE: '0' },
+    env: childEnv,
     stdio: 'inherit',
   });
   const code = await new Promise((resolve) => {

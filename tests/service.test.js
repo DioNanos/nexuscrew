@@ -8,6 +8,7 @@ const { execFileSync } = require('node:child_process');
 const {
   generateService, generateLinux, generateMac, generateTermux,
   installService, installPath, installCommands, fileMode,
+  ensureLinuxTmuxSurvival, linuxTmuxSurvivalPath,
   escapeSystemdPath, escapeSystemdExec, escapeXml, shellQuote,
 } = require('../lib/cli/service.js');
 
@@ -36,7 +37,50 @@ test('generateLinux: struttura systemd --user', () => {
   assert.match(s, /WorkingDirectory=\/home\/user\/nexuscrew/);
   assert.doesNotMatch(s, /NEXUSCREW_PORT/, 'config.json resta la fonte autoritativa della porta');
   assert.match(s, /ExecStart=\/usr\/bin\/node .*\/bin\/nexuscrew\.js serve/);
+  assert.match(s, /KillMode=process/, 'restart NexusCrew must never kill the shared tmux server');
   assert.match(s, /WantedBy=default\.target/);
+});
+
+test('ensureLinuxTmuxSurvival: drop-in atomico, idempotente e daemon-reload', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-survival-'));
+  const calls = [];
+  const execImpl = (bin, args) => {
+    calls.push([bin, args]);
+    return args.includes('--property=KillMode') ? 'process\n' : '';
+  };
+  const first = ensureLinuxTmuxSurvival({ home, execImpl });
+  assert.equal(first.target, linuxTmuxSurvivalPath(home));
+  assert.equal(first.written, true);
+  assert.equal(fs.statSync(first.target).mode & 0o777, 0o644);
+  assert.match(fs.readFileSync(first.target, 'utf8'), /KillMode=process/);
+  const second = ensureLinuxTmuxSurvival({ home, execImpl });
+  assert.equal(second.written, false);
+  assert.equal(calls.filter(([bin, args]) => bin === 'systemctl' && args.includes('daemon-reload')).length, 2);
+  assert.equal(calls.filter(([bin, args]) => bin === 'systemctl' && args.includes('--property=KillMode')).length, 2);
+  assert.deepEqual(fs.readdirSync(path.dirname(first.target)).filter((name) => name.includes('.tmp.')), []);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('ensureLinuxTmuxSurvival: rifiuta un override systemd effettivo non sicuro', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-survival-override-'));
+  assert.throws(() => ensureLinuxTmuxSurvival({
+    home,
+    execImpl: (_bin, args) => args.includes('--property=KillMode') ? 'control-group\n' : '',
+  }), /unsafe effective systemd KillMode=control-group/);
+  assert.match(fs.readFileSync(linuxTmuxSurvivalPath(home), 'utf8'), /KillMode=process/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('ensureLinuxTmuxSurvival: rifiuta un drop-in symlink', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-survival-link-'));
+  const target = linuxTmuxSurvivalPath(home);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const real = path.join(home, 'real.conf');
+  fs.writeFileSync(real, '[Service]\nKillMode=control-group\n');
+  fs.symlinkSync(real, target);
+  assert.throws(() => ensureLinuxTmuxSurvival({ home, execImpl: () => {} }), /unsafe systemd drop-in/);
+  assert.match(fs.readFileSync(real, 'utf8'), /control-group/);
+  fs.rmSync(home, { recursive: true, force: true });
 });
 
 test('generateLinux: escape %% su repo con % (hostile)', () => {

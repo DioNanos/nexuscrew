@@ -291,7 +291,7 @@ test('doctor: riporta SSH/autossh usati senza fingere di certificare lo sshd rem
   fs.writeFileSync(svc, 'x');
   const common = {
     home, platform: 'linux', installPath: svc, log: () => {},
-    execImpl: (b, a) => { if (a && a.includes('is-active')) return 'active'; if (a && a.includes('is-enabled')) return 'enabled'; return ''; },
+    execImpl: (b, a) => { if (a && a.includes('is-active')) return 'active'; if (a && a.includes('is-enabled')) return 'enabled'; if (a && a.includes('--property=KillMode')) return 'process'; return ''; },
     ptyLoad: () => ({ spawn() {} }),
     commandExists: () => true,
   };

@@ -8,7 +8,7 @@ const path = require('node:path');
 
 const core = require('../lib/update/core.js');
 const { createNpmUpdater, isGlobalInstall } = require('../lib/update/manager.js');
-const { runUpdate } = require('../lib/update/runner.js');
+const { restartRuntime, runUpdate } = require('../lib/update/runner.js');
 
 test('npm updater: confronto semver stabile/prerelease e parsing npm JSON', () => {
   assert.equal(core.compareVersions('0.8.9', '0.8.8'), 1);
@@ -93,6 +93,19 @@ test('npm update runner: failure redatta e nessun restart', async () => {
   }), /registry failed/);
   assert.equal(restarted, false);
   assert.equal(core.readState(statusPath).lastError.includes('A'.repeat(48)), false);
+});
+
+test('npm update runner: un restart service non verificato blocca update e health', async () => {
+  let health = false;
+  await assert.rejects(() => restartRuntime({
+    home: '/tmp/nc-update-restart-guard', platform: 'linux', port: 41820, token: 'test-token',
+    commands: {
+      isServiceRunning: () => true,
+      restart: () => ({ restarted: false, reason: 'tmux survival guard failed' }),
+    },
+    waitForRuntimeImpl: async () => { health = true; return true; },
+  }), /tmux survival guard failed/);
+  assert.equal(health, false);
 });
 
 test('npm updater: lock interprocesso rifiuta un secondo apply e check non clobbera installing', async () => {

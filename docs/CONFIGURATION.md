@@ -67,8 +67,8 @@ nexuscrew                 avvia/riusa in background e mostra il riepilogo
 nexuscrew show            apre la PWA autenticata
 nexuscrew show token      stampa il link autenticato senza aprirlo
 nexuscrew status          mostra servizio, porta e connessioni
-nexuscrew stop            ferma servizio e tunnel gestiti
-nexuscrew restart         riavvia servizio e connessioni autostart
+nexuscrew stop            ferma servizio/tunnel, preserva tutte le sessioni tmux
+nexuscrew restart         riavvia servizio e connessioni autostart senza fermare tmux
 nexuscrew boot            abilita l'avvio al boot (boot off|status)
 nexuscrew doctor          verifica runtime, PTY, tmux, SSH e servizio
 nexuscrew help            mostra la CLI pubblica
@@ -107,6 +107,9 @@ da "server running".
 - **OpenSSH mancante** → `nexuscrew doctor` fallisce: installa `ssh`. `autossh` è
   opzionale e non viene usato dal runtime, perché NexusCrew supervisiona direttamente OpenSSH.
 - **systemctl --user fallisce** → `loginctl enable-linger $USER` (servizi user al boot).
+- **doctor segnala KillMode non sicuro** → non usare `systemctl restart nexuscrew` direttamente.
+  Esegui il comando CLI della versione corrente: installa il drop-in `KillMode=process`, ricarica
+  systemd e rifiuta il restart se la protezione non può essere applicata.
 - **launchctl fallisce** → verifica permessi `~/Library/LaunchAgents/`, sintassi plist (`plutil -lint`).
 - **Termux:boot non avvia al reboot** → l'app Termux:Boot deve essere installata e aperta una volta
   (la detection da shell è best-effort, non può provare l'app Android).
