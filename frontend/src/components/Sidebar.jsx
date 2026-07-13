@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { seenKey } from '../lib/api.js';
 import { t, LANGUAGES } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { loadPins, togglePinIn, pinRank, cmpRank } from '../lib/pins.js';
 import { positionKey } from '../lib/nodes-model.js';
-import { normalizeSidebarFilter, sidebarItems } from '../lib/sidebar-model.js';
+import {
+  loadSidebarViews, saveSidebarViews, sidebarItems, sidebarView,
+} from '../lib/sidebar-model.js';
 import Icon from './Icon.jsx';
 import './Sidebar.css';
 
@@ -20,18 +23,15 @@ function rel(epochSec) {
 // Iniziale compatta per la modalità mini (prima lettera significativa).
 function initial(name) { return String(name || '?').replace(/^[^a-zA-Z0-9]+/, '').charAt(0).toUpperCase() || '?'; }
 
+function hasFreshOutput(session, key) {
+  if (!session?.outbox || session.outbox.count < 1) return false;
+  const seen = Number(localStorage.getItem(seenKey(key)) || 0);
+  return session.outbox.latest > seen;
+}
+
 // Larghezza sidebar: clamp 180–480px.
 const SIDE_MIN_W = 180;
 const SIDE_MAX_W = 480;
-const VIEW_KEY = 'nc_sidebar_views_v1';
-
-function loadViews() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(VIEW_KEY));
-    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  } catch (_) { return {}; }
-}
-
 // Etichetta di stato di un gruppo nodo degradato (design §7: mai spinner).
 function nodeStateLabel(g) {
   if (g.status === 'passive') return t('node-passive');
@@ -59,7 +59,7 @@ export default function Sidebar({
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   const [pins, setPins] = useState(loadPins);
-  const [views, setViews] = useState(loadViews);
+  const [views, setViews] = useState(loadSidebarViews);
   const togglePin = (name) => setPins((p) => togglePinIn(p, name));
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
   const byName = new Map((sessions || []).map((s) => [s.name, s]));
@@ -75,16 +75,24 @@ export default function Sidebar({
     return d || a.name.localeCompare(b.name);
   });
   const active = new Set(activeSessions || []);
-  const viewFor = (key) => ({ open: views[key]?.open !== false, filter: normalizeSidebarFilter(views[key]?.filter) });
+  const viewFor = (key) => sidebarView(views, key);
   const updateView = (key, patch) => setViews((before) => {
-    const next = { ...before, [key]: { ...viewFor(key), ...patch } };
-    try { localStorage.setItem(VIEW_KEY, JSON.stringify(next)); } catch (_) {}
-    return next;
+    const next = { ...before, [key]: { ...sidebarView(before, key), ...patch } };
+    return saveSidebarViews(next);
   });
 
   const localItems = sidebarItems([
-    ...sortedCells.map((c) => ({ type: 'cell', value: c, key: positionKey([], c.tmuxSession), label: c.cell, live: !!c.tmux, activity: (byName.get(c.tmuxSession) || {}).activity || 0 })),
-    ...others.map((s) => ({ type: 'session', value: s, key: positionKey([], s.name), label: s.name, live: true, activity: s.activity || 0 })),
+    ...sortedCells.map((c) => {
+      const session = byName.get(c.tmuxSession) || {};
+      const key = positionKey([], c.tmuxSession);
+      return { type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
+        fresh: hasFreshOutput(session, key), activity: session.activity || 0 };
+    }),
+    ...others.map((s) => {
+      const key = positionKey([], s.name);
+      return { type: 'session', value: s, key, label: s.name, live: true,
+        fresh: hasFreshOutput(s, key), activity: s.activity || 0 };
+    }),
   ], pins, viewFor('local').filter);
   // Tooltip mini via JS (position:fixed): il ::after CSS veniva CLIPPATO
   // dall'overflow della sidebar da 48px.
@@ -283,9 +291,19 @@ export default function Sidebar({
         const dotClass = hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
         const nodeRoute = (g.route || [g.name]).join('/');
         const groupView = viewFor(nodeRoute);
+        const remoteByName = new Map((g.sessions || []).map((s) => [s.name, s]));
         const remoteItems = sidebarItems([
-          ...(g.cells || []).map((c) => ({ type: 'cell', value: c, key: positionKey(g.route, c.tmuxSession || c.cell), label: c.cell, live: !!c.tmux, activity: c.activity || 0 })),
-          ...(g.unmanaged || []).map((s) => ({ type: 'session', value: s, key: positionKey(g.route, s.name), label: s.name, live: true, activity: s.activity || 0 })),
+          ...(g.cells || []).map((c) => {
+            const session = remoteByName.get(c.tmuxSession) || {};
+            const key = positionKey(g.route, c.tmuxSession || c.cell);
+            return { type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
+              fresh: hasFreshOutput(session, key), activity: session.activity || c.activity || 0 };
+          }),
+          ...(g.unmanaged || []).map((s) => {
+            const key = positionKey(g.route, s.name);
+            return { type: 'session', value: s, key, label: s.name, live: true,
+              fresh: hasFreshOutput(s, key), activity: s.activity || 0 };
+          }),
         ], pins, groupView.filter);
         return (
         <div key={`nodo-${(g.route || [g.name]).join('/')}`}>

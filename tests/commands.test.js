@@ -59,7 +59,7 @@ test('dispatch: help -> code 0, stampa HELP', () => {
   assert.ok(long.join('\n').includes('nexuscrew show'));
   const version = [];
   assert.equal(dispatch(['--version'], { log: (m) => version.push(m) }).code, 0);
-  assert.equal(version[0], '0.8.11');
+  assert.equal(version[0], '0.8.12');
   assert.equal(dispatch(['--bogus'], { log: () => {} }).code, 1);
 });
 
@@ -745,6 +745,27 @@ test('doctor: KillMode control-group e un blocker perche il restart uccide tmux'
   });
   assert.equal(r.code, 1);
   assert.ok(r.checks.some((c) => c.name.includes('tmux survival') && !c.ok && /control-group/.test(c.detail)));
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('doctor helpers: Termux dichiara il limite Termux:Boot e Linux segnala linger disabilitato', () => {
+  const { checkBoot, checkUserLinger } = require('../lib/cli/doctor.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-doctor-boot-'));
+  const script = path.join(home, '.termux', 'boot', 'nexuscrew.sh');
+  fs.mkdirSync(path.dirname(script), { recursive: true });
+  fs.writeFileSync(script, '#!/bin/sh\n');
+  const termux = checkBoot('termux', home, () => '');
+  assert.equal(termux.ok, true);
+  assert.equal(termux.warn, true);
+  assert.match(termux.detail, /Termux:Boot non verificabile/);
+  const calls = [];
+  const linger = checkUserLinger('linux', (bin, args) => {
+    calls.push([bin, args]); return 'no\n';
+  }, 1000);
+  assert.equal(linger.ok, true);
+  assert.equal(linger.warn, true);
+  assert.match(linger.detail, /enable-linger/);
+  assert.deepEqual(calls[0], ['loginctl', ['show-user', '1000', '--property=Linger', '--value']]);
   fs.rmSync(home, { recursive: true, force: true });
 });
 

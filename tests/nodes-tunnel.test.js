@@ -56,6 +56,14 @@ test('buildForwardArgs: reverse negoziata resta privata finche Share non e espli
   assert.ok(sharedArgs.includes('127.0.0.1:44001:127.0.0.1:41777'));
 });
 
+test('buildForwardArgs: Share non ripiega mai sulla porta remota se localAppPort manca', () => {
+  assert.throws(
+    () => tunnel.buildForwardArgs({ ...NODE, reversePort: 44001, shared: true }),
+    /Share richiede localAppPort esplicita/,
+  );
+  assert.doesNotThrow(() => tunnel.buildForwardArgs({ ...NODE, reversePort: 44001, shared: false }));
+});
+
 test('build*Args: spec invalida -> throw (no argv injection)', () => {
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, ssh: 'user@-evil' }), /ssh/);
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, localPort: 0 }), /localPort/);
@@ -168,6 +176,22 @@ test('readTunnelState: down se nessun pidfile', () => {
   const dir = tmpDir();
   assert.deepEqual(tunnel.readTunnelState(dir, 'vps'), { status: 'down' });
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('supervisorExited usa ps su macOS quando procfs non esiste', () => {
+  const common = {
+    pidExistsImpl: () => true,
+    procReadImpl: () => { throw new Error('ENOENT'); },
+  };
+  assert.equal(tunnel.supervisorExited(4242, 0, {
+    ...common, spawnSyncImpl: (bin, args) => {
+      assert.equal(bin, 'ps'); assert.deepEqual(args, ['-p', '4242', '-o', 'stat=']);
+      return { stdout: 'Z+\n' };
+    },
+  }), true);
+  assert.equal(tunnel.supervisorExited(4242, 0, {
+    ...common, spawnSyncImpl: () => ({ stdout: 'S+\n' }),
+  }), false);
 });
 
 test('readTunnelState ignora sidecar di una generazione precedente', () => {
@@ -548,6 +572,53 @@ test('F1 supervisor dichiara transport-ready e resetta il backoff solo dopo stab
       const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} resolve(); }, 2000);
       child.once('exit', () => { clearTimeout(timer); resolve(); });
     });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('F1 supervisor termina ssh e se stesso quando perde la generazione pidfile', async () => {
+  const dir = tmpDir();
+  const sshPidPath = path.join(dir, 'ssh.pid');
+  const fakeSsh = path.join(dir, 'owned-ssh.js');
+  const statePath = path.join(dir, 'owned.state.json');
+  const pidPath = path.join(dir, 'owned.pid');
+  const runId = 'owned-generation';
+  fs.writeFileSync(fakeSsh, `require('node:fs').writeFileSync(${JSON.stringify(sshPidPath)}, String(process.pid)); setInterval(() => {}, 1000);\n`, { mode: 0o700 });
+  const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
+  const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh], {
+    env: {
+      ...process.env,
+      NEXUSCREW_TUNNEL_STATE: statePath,
+      NEXUSCREW_TUNNEL_PIDFILE: pidPath,
+      NEXUSCREW_TUNNEL_RUN_ID: runId,
+      NEXUSCREW_TUNNEL_STABLE_MS: '100',
+    },
+    stdio: 'ignore',
+  });
+  pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId });
+  let sshPid = null;
+  try {
+    const readyBy = Date.now() + 3000;
+    while (Date.now() < readyBy) {
+      try { sshPid = Number(fs.readFileSync(sshPidPath, 'utf8')); } catch (_) {}
+      let state = null;
+      try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) {}
+      if (sshPid && state?.status === 'transport-ready') break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(sshPid, 'ssh child non avviato');
+    fs.writeFileSync(pidPath, `${JSON.stringify({ pid: child.pid, cmd: 'replacement', runId: 'replacement-generation' })}\n`, { mode: 0o600 });
+    await new Promise((resolve, reject) => {
+      if (child.exitCode !== null) return resolve();
+      const timer = setTimeout(() => reject(new Error('supervisor orfano non terminato')), 3500);
+      child.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
+    const sshGoneBy = Date.now() + 2000;
+    while (pidf.pidExists(sshPid) && Date.now() < sshGoneBy) await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(pidf.pidExists(sshPid), false, 'ssh child deve terminare con la generazione persa');
+  } finally {
+    try { child.kill('SIGKILL'); } catch (_) {}
+    if (sshPid) try { process.kill(sshPid, 'SIGKILL'); } catch (_) {}
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

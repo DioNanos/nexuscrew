@@ -83,7 +83,7 @@
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* Gruppi home mobile (Flotta / Altre sessioni). */
+/* Gruppi home mobile: una posizione locale + una per ogni route Hydra. */
 .nc-group { display: flex; flex-direction: column; gap: 8px; }
 .nc-group-title {
   font-size: 11px; opacity: .55; text-transform: uppercase; letter-spacing: .5px;
@@ -117,11 +117,40 @@
 .nc-mcard .dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #355; }
 .nc-mcard .dot.on { background: #00cc66; box-shadow: 0 0 6px #00cc6688; }
 
+.nc-mobile-position-head {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center; gap: 8px; min-height: 48px;
+  padding: 2px 0; border-bottom: 1px solid #1c2b20;
+}
+.nc-mobile-position-toggle {
+  min-width: 0; min-height: 44px; padding: 4px 2px;
+  display: flex; align-items: center; gap: 8px;
+  border: 0; background: none; color: inherit; text-align: left; cursor: pointer;
+}
+.nc-mobile-position-toggle .dot {
+  flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #355;
+}
+.nc-mobile-position-toggle .dot.on { background: #00cc66; box-shadow: 0 0 6px #00cc6688; }
+.nc-mobile-chevron { flex: 0 0 14px; font-size: 18px; color: #8fc; text-align: center; }
+.nc-mobile-position-copy {
+  min-width: 0; display: flex; flex-direction: column; gap: 1px;
+}
+.nc-mobile-position-copy b,
+.nc-mobile-position-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-mobile-position-copy b { font-size: 13px; color: #d8ffe8; }
+.nc-mobile-position-copy small { font-size: 11px; opacity: .55; }
+.nc-mobile-position-filter {
+  min-height: 44px; max-width: 104px; padding: 0 26px 0 9px;
+  border: 1px solid #294433; border-radius: 8px;
+  background: #0e140e; color: #bfe8cf; font: 12px/1 inherit;
+}
+.nc-mobile-position-head > .nc-act { width: 44px; height: 44px; }
+
 .nc-rel { flex: 0 0 auto; font-size: 11px; opacity: .45; }
 
 .nc-power, .nc-menu {
   flex: 0 0 auto; background: none; border: 1px solid #243; color: #9fd;
-  border-radius: 8px; min-width: 38px; min-height: 38px; font-size: 17px; cursor: pointer;
+  border-radius: 8px; min-width: 44px; min-height: 44px; font-size: 17px; cursor: pointer;
 }
 .nc-power:active, .nc-menu:active { border-color: #2e7d32; }
 .nc-menu:active { color: #f88; }
@@ -155,7 +184,7 @@
 /* Azioni card mobile: bottoni rotondi con stato colorato:
    il glifo nudo non si vedeva). */
 .nc-act {
-  width: 34px; height: 34px; border-radius: 50%;
+  width: 44px; height: 44px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.22);
@@ -166,3 +195,9 @@
 .nc-act.power.warn { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.10); }
 .nc-act.pin.on { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.08); }
 .nc-mcard { gap: 8px; }
+
+@media (max-width: 390px) {
+  .nc-mobile-position-head { gap: 5px; }
+  .nc-mobile-position-filter { max-width: 92px; padding-left: 7px; }
+  .nc-mcard { padding: 10px 9px; gap: 5px; }
+}

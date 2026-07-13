@@ -95,15 +95,16 @@ test('Fleet inventory negotiates dedicated import/remove capabilities', () => {
 test('managed cards expose only power, never a per-cell settings icon or ⋯ menu', () => {
   const mobile = read('SessionList.jsx');
   const sidebar = read('Sidebar.jsx');
-  assert.match(mobile, /sortedCells\.map\([\s\S]*?setPowerCell\(c\)/);
+  const roster = mobile.split('function renderRosterItem')[1] || '';
+  const cellBlock = roster.split('const s = item.value')[0] || '';
+  const unmanagedBlock = roster.split('const s = item.value')[1] || '';
+  assert.match(cellBlock, /item\.type === 'cell'[\s\S]*?setPowerCell\(/);
   assert.doesNotMatch(mobile, /onSettings\('fleet', false/);
   assert.doesNotMatch(sidebar, /onSettings && onSettings\('fleet', false/);
   assert.match(sidebar, /onPower && onPower\(c\)/);
-  // il glifo ⋯ (nc-menu) appare nella mappa di `others` (unmanaged), non nelle celle
-  const othersBlock = mobile.split('others.map')[1] || '';
-  assert.match(othersBlock, /⋯/);
-  const fleetBlock = mobile.split('sortedCells.map')[1].split('others.map')[0];
-  assert.doesNotMatch(fleetBlock, /⋯/, 'la card di una cella gestita non ha il menu ⋯');
+  // il glifo ⋯ (nc-menu) appare nel ramo unmanaged, non nel ramo cella.
+  assert.match(unmanagedBlock, /⋯/);
+  assert.doesNotMatch(cellBlock, /⋯/, 'la card di una cella gestita non ha il menu ⋯');
 });
 
 // Flusso "Importa come cella": le sessioni unmanaged nella inventory (Settings)

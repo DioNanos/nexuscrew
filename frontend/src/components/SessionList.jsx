@@ -3,21 +3,19 @@ import {
   apiFetch, seenKey, fleetStatus, fleetUp, fleetDown, killSession, nodeAction,
 } from '../lib/api.js';
 import Icon from './Icon.jsx';
-import { loadPins, togglePinIn, pinRank, cmpRank } from '../lib/pins.js';
+import { loadPins, togglePinIn } from '../lib/pins.js';
+import { positionKey } from '../lib/nodes-model.js';
+import {
+  loadSidebarViews, saveSidebarViews, sidebarItems, sidebarSearchVisible, sidebarView,
+} from '../lib/sidebar-model.js';
 import PowerSheet from './PowerSheet.jsx';
 import {t,  LANGUAGES} from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { useNodes } from '../hooks/useNodes.js';
 import './SessionList.css';
 
-// Home mobile: cockpit della flotta a gruppi (Flotta + Altre sessioni).
-// Ordinamento per rilevanza (deliverable nuovi in outbox, poi attached, poi
-// alfabetico) conservato dentro ciascun gruppo; filtro al volo oltre 8.
-function relevance(s, fresh) {
-  if (fresh) return 0;
-  if (s.attached) return 1;
-  return 2;
-}
+// Home mobile: lo stesso roster per-posizione della sidebar desktop. Stato di
+// apertura, filtro, pin e ordine hanno quindi un solo contratto condiviso.
 
 // Tempo relativo numerico (nessuna localizzazione, come da piano C3).
 function rel(epochSec) {
@@ -31,6 +29,7 @@ function rel(epochSec) {
 
 // Etichetta di stato di un gruppo nodo degradato (design §7: mai spinner).
 function nodeStateLabel(g) {
+  if (g.status === 'passive') return t('node-passive');
   if (g.status === 'down') {
     return g.downSince ? t('tunnel-down-since').replace('{t}', rel(g.downSince)) : t('tunnel-down');
   }
@@ -63,9 +62,10 @@ export default function SessionList({ onPick, token, onSettings }) {
   const [version, setVersion] = useState('');
   const [endpoint, setEndpoint] = useState({ bind: '127.0.0.1', port: '' });
   const [cells, setCells] = useState([]);
-  const [fleetAvailable, setFleetAvailable] = useState(false);
   const [powerCell, setPowerCell] = useState(null);
   const [nodeBusy, setNodeBusy] = useState(null);
+  const [pins, setPins] = useState(loadPins);
+  const [views, setViews] = useState(loadSidebarViews);
 
   async function refresh() {
     try {
@@ -77,9 +77,8 @@ export default function SessionList({ onPick, token, onSettings }) {
     // flotta nello stesso interval del polling sessioni (4s)
     try {
       const fs = await fleetStatus(token);
-      setFleetAvailable(!!fs.available);
       setCells(fs.available ? (fs.cells || []) : []);
-    } catch (_) { setFleetAvailable(false); setCells([]); }
+    } catch (_) { setCells([]); }
   }
 
   useEffect(() => {
@@ -129,42 +128,112 @@ export default function SessionList({ onPick, token, onSettings }) {
     setNodeBusy(null);
   }
 
-  // lookup sessione per tmuxSession (per activity/preview/outbox delle celle)
-  const byName = useMemo(() => {
-    const m = new Map();
-    for (const s of (sessions || [])) m.set(s.name, s);
-    return m;
-  }, [sessions]);
+  const togglePin = (key) => setPins((before) => togglePinIn(before, key));
+  const viewFor = (key) => sidebarView(views, key);
+  const updateView = (key, patch) => setViews((before) => {
+    const next = { ...before, [key]: { ...sidebarView(before, key), ...patch } };
+    return saveSidebarViews(next);
+  });
 
+  const sessionRows = useMemo(() => (sessions || []).map((s) => {
+    const seen = Number(localStorage.getItem(seenKey(s.name)) || 0);
+    const fresh = !!(s.outbox && s.outbox.count > 0 && s.outbox.latest > seen);
+    return { ...s, fresh };
+  }), [sessions]);
+  // lookup sessione per tmuxSession (activity/preview/outbox/fresh delle celle)
+  const byName = useMemo(() => new Map(sessionRows.map((s) => [s.name, s])), [sessionRows]);
   const cellSessions = useMemo(() => new Set(cells.map((c) => c.tmuxSession)), [cells]);
-  const [pins, setPins] = useState(loadPins);
-  const togglePin = (name) => setPins((p) => togglePinIn(p, name));
-
-  const rows = useMemo(() => {
-    const list = (sessions || []).map((s) => {
-      const seen = Number(localStorage.getItem(seenKey(s.name)) || 0);
-      const fresh = !!(s.outbox && s.outbox.count > 0 && s.outbox.latest > seen);
-      return { ...s, fresh };
-    });
-    const needle = q.trim().toLowerCase();
-    return list
-      .filter((s) => !needle || s.name.toLowerCase().includes(needle))
-      .sort((a, b) => cmpRank(pinRank(pins, a.name, a.activity), pinRank(pins, b.name, b.activity))
-        || relevance(a, a.fresh) - relevance(b, b.fresh) || a.name.localeCompare(b.name));
-  }, [sessions, q, pins]);
-
-  const others = rows.filter((s) => !cellSessions.has(s.name));
-  const sortedCells = useMemo(
-    () => [...cells].sort((a, b) =>
-      cmpRank(pinRank(pins, a.tmuxSession, (byName.get(a.tmuxSession) || {}).activity),
-              pinRank(pins, b.tmuxSession, (byName.get(b.tmuxSession) || {}).activity))
-      || (Number(b.active) - Number(a.active)) || a.cell.localeCompare(b.cell)),
-    [cells, pins, byName],
+  const unmanaged = useMemo(
+    () => sessionRows.filter((s) => !cellSessions.has(s.name)),
+    [sessionRows, cellSessions],
   );
+  const localRawItems = useMemo(() => [
+    ...cells.map((c) => {
+      const s = byName.get(c.tmuxSession) || {};
+      return {
+        type: 'cell', value: c, key: positionKey([], c.tmuxSession), label: c.cell,
+        live: !!c.tmux, fresh: !!s.fresh, activity: s.activity || 0,
+        searchText: `${c.engine || ''} ${c.key || ''} ${s.preview || ''}`,
+      };
+    }),
+    ...unmanaged.map((s) => ({
+      type: 'session', value: s, key: positionKey([], s.name), label: s.name,
+      live: true, fresh: !!s.fresh, activity: s.activity || 0,
+      searchText: `${s.preview || ''} ${s.cmd || ''}`,
+    })),
+  ], [cells, unmanaged, byName]);
+
+  const localView = viewFor('local');
+  const localItems = useMemo(
+    () => sidebarItems(localRawItems, pins, localView.filter)
+      .filter((item) => sidebarSearchVisible(item, q)),
+    [localRawItems, pins, localView.filter, q],
+  );
+  const remoteCount = nodeGroups.reduce(
+    (sum, g) => sum + (g.cells || []).length + (g.unmanaged || []).length, 0,
+  );
+  const rosterTotal = localRawItems.length + remoteCount;
 
   const total = sessions ? sessions.length : 0;
   const attached = (sessions || []).filter((s) => s.attached).length;
   const endpointLabel = endpoint.port ? `${endpoint.bind}:${endpoint.port}` : endpoint.bind;
+
+  function renderRosterItem(item, group = null) {
+    const route = Array.isArray(group?.route) ? group.route : [];
+    const routeKey = route.join('/');
+    if (item.type === 'cell') {
+      const c = item.value;
+      const session = route.length
+        ? (group?.sessions || []).find((candidate) => candidate.name === c.tmuxSession)
+        : byName.get(c.tmuxSession);
+      const preview = session?.preview || c.preview || '';
+      const sub = [`${c.engine}${c.key ? `·${c.key}` : ''}`, preview, c.active ? '' : t('cell-off')]
+        .filter(Boolean).join(' · ');
+      const canPower = route.length === 0 || (group?.capabilities || []).includes(c.active ? 'down' : 'up');
+      return (
+        <div key={item.key} className="nc-mcard" data-roster-key={item.key}>
+          <button className="nc-mcard-main"
+            onClick={() => c.tmux && onPick(route.length ? { session: c.tmuxSession, node: routeKey } : c.tmuxSession)}
+            title={c.degraded ? t('cell-degraded') : c.tmux ? t('cell-on') : t('cell-off')}>
+            <span className={`dot ${c.degraded ? 'warn' : c.tmux ? 'on' : ''}`} />
+            <span className="nc-mcard-text"><b>{c.cell}</b><small>{sub}</small></span>
+          </button>
+          {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
+          {item.fresh && session?.outbox?.count > 0 && <span className="nc-badge" title={t('new-files-outbox')}>{session.outbox.count}</span>}
+          <button className={`nc-act pin${pins.includes(item.key) ? ' on' : ''}`}
+            aria-label={`${t('pin')} ${c.cell}`} title={t('pin')} onClick={() => togglePin(item.key)}>
+            {pins.includes(item.key) ? '\u2605' : '\u2606'}
+          </button>
+          {canPower && <button className={`nc-act power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
+            onClick={() => setPowerCell(route.length ? { ...c, route, availableEngines: group?.engines || [] } : c)}
+            title={c.active ? t('power-off') : t('power-on')} aria-label={`${c.active ? t('power-off') : t('power-on')} ${c.cell}`}>
+            <Icon name="power" size={16} />
+          </button>}
+        </div>
+      );
+    }
+
+    const s = item.value;
+    return (
+      <div key={item.key} className="nc-mcard" data-roster-key={item.key}>
+        <button className="nc-mcard-main" onClick={() => onPick(route.length ? { session: s.name, node: routeKey } : s.name)}>
+          <span className={s.attached ? 'dot on' : 'dot'} />
+          <span className="nc-mcard-text">
+            <b>{s.name}</b>
+            <small>{s.preview ? s.preview : (s.cmd ? s.cmd : t('windows').replace('{n}', String(s.windows || 0)))}</small>
+          </span>
+        </button>
+        {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
+        {item.fresh && s.outbox?.count > 0 && <span className="nc-badge" title={t('new-files-outbox')}>{s.outbox.count}</span>}
+        <button className={`nc-act pin${pins.includes(item.key) ? ' on' : ''}`}
+          aria-label={`${t('pin')} ${s.name}`} title={t('pin')} onClick={() => togglePin(item.key)}>
+          {pins.includes(item.key) ? '\u2605' : '\u2606'}
+        </button>
+        <button className="nc-menu" title={t('terminate')} aria-label={`${t('terminate')} ${s.name}`}
+          onClick={() => { if (window.confirm(t('terminate-confirm').replace('{name}', s.name))) onKill(s.name, route); }}>⋯</button>
+      </div>
+    );
+  }
 
   return (
     <div className="nc-home">
@@ -180,86 +249,23 @@ export default function SessionList({ onPick, token, onSettings }) {
       </header>
 
       <main className="nc-home-scroll">
-      {total > 8 && (
+      {rosterTotal > 8 && (
         <input
-          className="nc-filter" type="search" placeholder={t('filter-placeholder')}
+          className="nc-filter" type="search" placeholder={t('filter-placeholder')} aria-label={t('filter-placeholder')}
           value={q} onChange={(e) => setQ(e.target.value)}
         />
       )}
 
       {err && <div className="nc-err">{err}</div>}
 
-      {fleetAvailable && cells.length > 0 && (
-        <section className="nc-group">
-          <div className="nc-group-title">{t('fleet')}</div>
-          {sortedCells.map((c) => {
-            const s = byName.get(c.tmuxSession) || {};
-            const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
-            const sub = [`${c.engine}${c.key ? `·${c.key}` : ''}`, s.preview]
-              .filter(Boolean).join(' · ');
-            return (
-              <div key={c.cell} className="nc-mcard">
-                <button
-                  className="nc-mcard-main"
-                  onClick={() => c.tmux && onPick(c.tmuxSession)}
-                  title={c.degraded ? t('cell-degraded') : c.tmux ? t('cell-on') : t('cell-off')}
-                >
-                  <span className={`dot ${dot}`} />
-                  <span className="nc-mcard-text">
-                    <b>{c.cell}</b>
-                    <small>{sub}</small>
-                  </span>
-                </button>
-                {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
-                {s.outbox && s.outbox.count > 0 && (
-                  <span className="nc-badge" title={t('new-files-outbox')}>{s.outbox.count}</span>
-                )}
-                <button
-                  className={`nc-act pin${pins.includes(c.tmuxSession) ? ' on' : ''}`}
-                  title={t('pin')}
-                  onClick={() => togglePin(c.tmuxSession)}
-                >{pins.includes(c.tmuxSession) ? '\u2605' : '\u2606'}</button>
-                <button
-                  className={`nc-act power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
-                  onClick={() => setPowerCell(c)}
-                  title={c.active ? t('power-off') : t('power-on')}
-                ><Icon name="power" size={16} /></button>
-              </div>
-            );
-          })}
-        </section>
-      )}
-
-      <section className="nc-group">
-        <div className="nc-group-title">{t('local')}</div>
-        {others.map((s) => (
-          <div key={s.name} className="nc-mcard">
-            <button className="nc-mcard-main" onClick={() => onPick(s.name)}>
-              <span className={s.attached ? 'dot on' : 'dot'} />
-              <span className="nc-mcard-text">
-                <b>{s.name}</b>
-                <small>{s.preview ? s.preview : (s.cmd ? s.cmd : t('windows').replace('{n}', String(s.windows || 0)))}</small>
-              </span>
-            </button>
-            {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
-            {s.fresh && <span className="nc-badge" title={t('new-files-outbox')}>{s.outbox.count}</span>}
-            <button
-              className={`nc-act pin${pins.includes(s.name) ? ' on' : ''}`}
-              title={t('pin')}
-              onClick={() => togglePin(s.name)}
-            >{pins.includes(s.name) ? '\u2605' : '\u2606'}</button>
-            <button
-              className="nc-menu"
-              title={t('terminate')}
-              onClick={() => { if (window.confirm(t('terminate-confirm').replace('{name}', s.name))) onKill(s.name); }}
-            >⋯</button>
-          </div>
-        ))}
-        {sessions === null && <div className="nc-empty">{t('loading-fleet')}</div>}
-        {sessions !== null && others.length === 0 && rows.length === 0 && !err && (
-          <div className="nc-empty">
-            {q ? t('no-match').replace('{q}', q) : t('no-sessions')}
-          </div>
+      <section className="nc-group" data-position="local">
+        <MobilePositionHeader label={t('position-local')} count={localRawItems.length} state={localView}
+          dotClass="on" onToggle={() => updateView('local', { open: !localView.open })}
+          onFilter={(filter) => updateView('local', { filter })} />
+        {localView.open && localItems.map((item) => renderRosterItem(item))}
+        {localView.open && sessions === null && <div className="nc-empty">{t('loading-fleet')}</div>}
+        {localView.open && sessions !== null && localItems.length === 0 && !err && (
+          <div className="nc-empty">{q ? t('no-match').replace('{q}', q) : t('no-sessions-short')}</div>
         )}
       </section>
 
@@ -270,58 +276,50 @@ export default function SessionList({ onPick, token, onSettings }) {
           non gestito da qui -> niente power finto. */}
       {nodeGroups.map((g) => {
         const hd = healthDot(g.health);
-        const dotClass = hd || (g.status === 'up' ? 'on' : 'warn');
+        const dotClass = hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
         const dotTitle = g.health ? healthTitle(g.health) : (g.status === 'up' ? '' : nodeStateLabel(g));
+        const route = g.route || [g.name];
+        const routeKey = route.join('/');
+        const groupView = viewFor(routeKey);
+        const remoteSessions = new Map((g.sessions || []).map((s) => [s.name, s]));
+        const remoteFresh = (s) => {
+          const seen = Number(localStorage.getItem(seenKey(positionKey(route, s.name))) || 0);
+          return !!(s.outbox && s.outbox.count > 0 && s.outbox.latest > seen);
+        };
+        const rawItems = [
+          ...(g.cells || []).map((c) => {
+            const session = remoteSessions.get(c.tmuxSession) || {};
+            return {
+              type: 'cell', value: c, key: positionKey(route, c.tmuxSession || c.cell), label: c.cell,
+              live: !!c.tmux, fresh: remoteFresh({ ...session, name: c.tmuxSession || c.cell }),
+              activity: session.activity || c.activity || 0,
+              searchText: `${c.engine || ''} ${c.key || ''} ${session.preview || c.preview || ''}`,
+            };
+          }),
+          ...(g.unmanaged || []).map((s) => ({
+            type: 'session', value: s, key: positionKey(route, s.name), label: s.name,
+            live: true, fresh: remoteFresh(s), activity: s.activity || 0,
+            searchText: `${s.preview || ''} ${s.cmd || ''}`,
+          })),
+        ];
+        const items = sidebarItems(rawItems, pins, groupView.filter)
+          .filter((item) => sidebarSearchVisible(item, q));
+        const nodePower = g.direct && g.health && g.health.managed !== false ? (
+          <button type="button" className={`nc-act power${g.tunnelStatus === 'up' ? ' on' : ''}`}
+            disabled={nodeBusy === g.name} title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}
+            aria-label={`${g.tunnelStatus === 'up' ? t('power-off') : t('power-on')} ${g.label || g.name}`}
+            onClick={() => onNodePower(g)}><Icon name="power" size={15} /></button>
+        ) : null;
         return (
-        <section key={`nodo-${(g.route || [g.name]).join('/')}`} className="nc-group">
-          <div className="nc-group-title nc-node-title">
-            <span className={`dot ${dotClass}`} title={dotTitle} />
-            {g.label || g.name}
-            {' · '}
-            {g.status === 'up'
-              ? t('node-sessions').replace('{n}', String(g.cells.length + g.unmanaged.length))
-              : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
-            {g.direct && g.health && g.health.managed !== false && (
-              <button type="button" className={`nc-act power${g.tunnelStatus === 'up' ? ' on' : ''}`}
-                disabled={nodeBusy === g.name} title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}
-                onClick={() => onNodePower(g)}><Icon name="power" size={15} /></button>
-            )}
-          </div>
-          {g.status === 'up' && g.cells.length > 0 && g.cells.map((c) => (
-            <div key={c.key} className="nc-mcard">
-              <button className="nc-mcard-main" onClick={() => c.tmux && onPick({ session: c.tmuxSession, node: (g.route || [g.name]).join('/') })}
-                title={c.active ? t('cell-on') : t('cell-off')}>
-                <span className={`dot ${c.degraded ? 'warn' : c.tmux ? 'on' : ''}`} />
-                <span className="nc-mcard-text">
-                  <b>{c.cell}</b>
-                  <small>{`${c.engine}${c.key ? `·${c.key}` : ''}`}{c.active ? '' : ` · ${t('cell-off')}`}</small>
-                </span>
-              </button>
-              {(g.capabilities || []).includes(c.active ? 'down' : 'up') && (
-                <button className={`nc-act power${c.active ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
-                  title={c.active ? t('power-off') : t('power-on')}
-                  onClick={() => setPowerCell({ ...c, route: g.route })}>
-                  <Icon name="power" size={15} />
-                </button>
-              )}
-            </div>
-          ))}
-          {g.status === 'up' && g.unmanaged.map((s) => (
-            <div key={s.key} className="nc-mcard">
-              <button className="nc-mcard-main" onClick={() => onPick({ session: s.name, node: s.node })}>
-                <span className={s.attached ? 'dot on' : 'dot'} />
-                <span className="nc-mcard-text">
-                  <b>{s.name}</b>
-                  <small>{s.preview ? s.preview : (s.cmd ? s.cmd : t('windows').replace('{n}', String(s.windows || 0)))}</small>
-                </span>
-              </button>
-              {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
-              <button className="nc-menu" title={t('terminate')}
-                onClick={() => { if (window.confirm(t('terminate-confirm').replace('{name}', s.name))) onKill(s.name, g.route); }}>⋯</button>
-            </div>
-          ))}
-          {g.status === 'up' && g.cells.length === 0 && g.unmanaged.length === 0 && (
-            <div className="nc-empty">{t('no-sessions-short')}</div>
+        <section key={`nodo-${routeKey}`} className="nc-group" data-position={routeKey}>
+          <MobilePositionHeader label={g.label || g.name} count={rawItems.length} state={groupView}
+            dotClass={dotClass} dotTitle={dotTitle}
+            detail={g.status === 'up' ? '' : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
+            onToggle={() => updateView(routeKey, { open: !groupView.open })}
+            onFilter={(filter) => updateView(routeKey, { filter })} action={nodePower} />
+          {g.status === 'up' && groupView.open && items.map((item) => renderRosterItem(item, g))}
+          {g.status === 'up' && groupView.open && items.length === 0 && (
+            <div className="nc-empty">{q ? t('no-match').replace('{q}', q) : t('no-sessions-short')}</div>
           )}
         </section>
         );
@@ -348,6 +346,33 @@ export default function SessionList({ onPick, token, onSettings }) {
       {powerCell && (
         <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : []} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
       )}
+    </div>
+  );
+}
+
+function MobilePositionHeader({
+  label, count, state, dotClass = '', dotTitle = '', detail = '', onToggle, onFilter, action = null,
+}) {
+  return (
+    <div className="nc-mobile-position-head">
+      <button type="button" className="nc-mobile-position-toggle" onClick={onToggle}
+        aria-expanded={state.open} aria-label={`${label} · ${t('node-sessions').replace('{n}', String(count))}`}>
+        <span className="nc-mobile-chevron" aria-hidden="true">{state.open ? '⌄' : '›'}</span>
+        <span className={`dot ${dotClass}`} title={dotTitle} />
+        <span className="nc-mobile-position-copy">
+          <b>{label}</b>
+          <small>{detail || t('node-sessions').replace('{n}', String(count))}</small>
+        </span>
+      </button>
+      <select className="nc-mobile-position-filter" value={state.filter}
+        aria-label={`${label} · ${t('filter-placeholder')}`} title={t(`view-${state.filter}`)}
+        onChange={(event) => onFilter(event.target.value)}>
+        <option value="all">{t('view-all')}</option>
+        <option value="pinned">{t('view-pinned')}</option>
+        <option value="active">{t('view-active')}</option>
+        <option value="off">{t('view-off')}</option>
+      </select>
+      {action}
     </div>
   );
 }
