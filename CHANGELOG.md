@@ -2,6 +2,70 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.16 — 2026-07-14 — "Honest Tunnel"
+
+- One-link pairing now treats its embedded SSH endpoint as portable routing rather than a
+  transferable identity. Authentication and SSH-stage failures automatically expose the local
+  override, where a device can use the same Host alias that already selects its own key, agent,
+  port or ProxyJump. The override is saved only in that node's local routing configuration;
+  private keys never enter the link, NexusCrew configuration, logs or federation payloads.
+- A supervised `ssh` process is no longer reported ready merely because it remains alive.
+  After the stability window NexusCrew probes the exact loopback `-L` port and advertises
+  transport readiness only when that forward accepts TCP; unreachable connects are bounded by
+  OpenSSH's 15-second timeout and remain in an explicit probing state.
+- Startup, stop and restart reconcile strict NexusCrew tunnel pidfiles against the authoritative
+  node store. Verified supervisors left by a removed node or interrupted older runtime are
+  stopped safely, while configured nodes, unrelated processes, symlinks and invalid names are
+  untouched.
+- Regression coverage exercises exact SSH argv, local-alias recovery in the real pairing
+  component, TCP-forward readiness versus a merely live child, generation ownership, safe
+  orphan reconciliation, server startup ordering and lifecycle cleanup. Gate: **788 Node
+  tests** (787 pass / 1 platform skip), **12 frontend component tests**, production build and
+  zero production dependency vulnerabilities.
+
+## 0.8.15 — 2026-07-14 — "Steady Link"
+
+- One-link pairing now waits against a real 20-second readiness deadline with bounded retries.
+  Immediate loopback refusals can no longer exhaust the probe in 3.75 seconds and tear down a
+  valid SSH session just as key negotiation completes on Termux, Linux, or macOS.
+- Per-tunnel diagnostics are never empty by design: NexusCrew writes safe supervisor lifecycle
+  markers and forces SSH error-level diagnostics even when a user Host stanza requests quiet
+  logging. The 0600 log omits synthetic argv dumps, key contents, tokens and credentials;
+  OpenSSH's own error text may identify the failed target.
+- Local and federated deck tabs can be reordered inside their owner group with a dedicated
+  Pointer Events handle on mouse, touch, or pen, plus keyboard left/right controls. The
+  owner-qualified order autosaves per browser, survives polling/reload, and follows rename and
+  deletion without changing deck ownership.
+- Regression coverage includes delayed SSH readiness at eight seconds, bounded permanent
+  failure, safe tunnel logging, owner-isolated deck ordering, pointer input, keyboard input,
+  and cross-owner rejection. Gate: **785 Node tests** (784 pass / 1 platform skip), **11
+  frontend component tests**, production build, and zero production dependency vulnerabilities.
+
+## 0.8.14 — 2026-07-14 — "Private Launch"
+
+- Managed provider credentials can now be supplied per node from the PWA when they are absent
+  from that device's runtime environment or compatible user-owned provider files. The local
+  store is write-only through the API, owner-only on disk, never federated or backed up, and the
+  UI reports only configured/source state plus the exact active cells affected by a change.
+- Secret-bearing launches use a private one-shot Unix-socket broker. The tmux command receives
+  only the helper path, socket path and a short-lived random nonce; provider values never enter
+  process arguments, `tmux -e`, tmux global/session environment, temporary files or logs. The
+  helper validates the bounded payload and directly spawns the configured CLI without a shell.
+- Credential lookup is deterministic across Linux, macOS and Termux: service environment,
+  node-local store, `providers.zsh`, canonical `ai.env`/secure files, then the legacy store.
+  Mixed-case environment names are accepted, unsafe files/symlinks are rejected, and unresolved
+  shell expansion is never interpreted as a credential.
+- Unmanaged tmux sessions can be explicitly marked technical. They stay hidden from normal
+  all/pinned/active/off views, appear in a dedicated technical view, and every Local/Hydra count
+  reflects only the rows currently displayed; managed cells remain protected from relabeling.
+- Fleet reorder handles now use one Pointer Events implementation for mouse, touch and pen.
+  Destination highlighting, pointer capture, edge auto-scroll, release-only commit and
+  Escape/cancel rollback preserve the same owner-qualified order on mobile, expanded desktop
+  and compact desktop while keeping native card-to-deck drag separate.
+- Tests: **781 total** (780 pass / 1 platform-dependent skip) in the isolated Node harness plus
+  8 passing frontend component tests; production build and dependency audit required before
+  publication. Real cross-device drag and provider launches remain operator field tests.
+
 ## 0.8.13 — 2026-07-14 — "Fleet Network"
 
 - The MCP bridge now exposes `nc_cells` and `nc_send_cell`. An active managed cell can discover
@@ -41,7 +105,7 @@ All notable changes to NexusCrew are tracked here.
   injection. Persistent offline queues, attachments and delegated capability workers remain
   explicitly deferred rather than being represented as implemented.
 - Tests: **770 total** (769 pass / 1 platform-dependent skip) in the isolated Node harness plus
-  5 passing frontend component tests; production build PASS. Real Mac–hub–Pixel end-to-end
+  5 passing frontend component tests; production build PASS. Real desktop–hub–mobile end-to-end
   pairing and delivery remain an operator field test and are not represented as automated.
 
 ## 0.8.12 — 2026-07-13 — "Mobile Roster"
@@ -65,7 +129,7 @@ All notable changes to NexusCrew are tracked here.
   is disabled and explains that a Termux boot script still requires the Termux:Boot app to be
   installed and launched once.
 - Tests: **749 total** (748 pass / 1 platform-dependent skip), production build PASS, root and
-  frontend dependency audits clean. Mac–Pixel–hub end-to-end pairing was not executed in this
+  frontend dependency audits clean. Desktop–mobile–hub end-to-end pairing was not executed in this
   release gate.
 
 ## 0.8.11 — 2026-07-13 — "Tmux Survival"
@@ -123,7 +187,7 @@ All notable changes to NexusCrew are tracked here.
   HTTP-port move when paired peers depend on the configured endpoint.
 - Tests: **726 total** (725 pass / 1 platform-dependent skip), frontend production build PASS,
   dependency audit clean, isolated HOME clean, and package/public-tree verification required
-  before publication. Real Mac–Pixel–hub interoperability remains an external follow-up and is
+  before publication. Real desktop–mobile–hub interoperability remains an external follow-up and is
   not represented as an automated test.
 
 ## 0.8.9 — 2026-07-12 — "Hydra Workspaces"

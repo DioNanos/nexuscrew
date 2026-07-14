@@ -75,3 +75,39 @@ test('addDeck/removeDeck/renameDeck: main indistruttibile', async () => {
   assert.deepEqual(m.renameDeck(d, 'work', 'main'), ['main', 'work'], 'collisione con main');
   assert.deepEqual(m.renameDeck(d, 'work', 'BAD'), ['main', 'work'], 'target invalido');
 });
+
+test('deck order: owner-qualified move, persistence and stale IDs are bounded', async () => {
+  const m = await mod();
+  const owner = 'a'.repeat(32);
+  const initial = {
+    local: ['local:main', 'local:work', 'local:notes'],
+    [owner]: [`${owner}:main`, `${owner}:remote`],
+  };
+  const moved = m.moveDeckInOrder(initial, 'local', 'local:notes', 'local:work', initial.local);
+  assert.deepEqual(moved.local, ['local:main', 'local:notes', 'local:work']);
+  assert.deepEqual(moved[owner], initial[owner], 'un drag locale non cambia i deck remoti');
+  assert.deepEqual(m.moveDeckInOrder(moved, 'local', 'local:notes', `${owner}:main`, initial.local), moved,
+    'cross-owner fail-closed');
+
+  const bag = new Map();
+  const storage = { getItem: (key) => bag.get(key) || null, setItem: (key, value) => bag.set(key, value) };
+  m.saveDeckOrders(moved, storage);
+  assert.deepEqual(m.loadDeckOrders(storage), moved);
+
+  const records = [
+    { id: 'local:main', local: true }, { id: 'local:work', local: true }, { id: 'local:notes', local: true },
+    { id: `${owner}:main`, ownerId: owner }, { id: `${owner}:remote`, ownerId: owner },
+  ];
+  assert.deepEqual(m.orderDeckRecords(records, moved).map((record) => record.id), [
+    'local:main', 'local:notes', 'local:work', `${owner}:main`, `${owner}:remote`,
+  ]);
+});
+
+test('deck order follows rename/delete without losing the surrounding position', async () => {
+  const m = await mod();
+  let orders = { local: ['local:main', 'local:work', 'local:notes'] };
+  orders = m.replaceDeckOrderId(orders, 'local', 'local:work', 'local:projects');
+  assert.deepEqual(orders.local, ['local:main', 'local:projects', 'local:notes']);
+  orders = m.removeDeckOrderId(orders, 'local', 'local:projects');
+  assert.deepEqual(orders.local, ['local:main', 'local:notes']);
+});

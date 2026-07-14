@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getDecks, createDeck, saveDeck, renameDeck, deleteDeck, getRouteConfig, getRouteTopology,
 } from '../lib/api.js';
-import { loadDecks, readLayoutRaw, saveDecks, writeLayoutRaw } from '../lib/deck-model.js';
+import {
+  loadDeckOrders, loadDecks, moveDeckInOrder, orderDeckRecords, readLayoutRaw,
+  removeDeckOrderId, replaceDeckOrderId, saveDeckOrders, saveDecks, writeLayoutRaw,
+} from '../lib/deck-model.js';
 import { addTileSmart, emptyLayout, normalize, sessions } from '../lib/grid-model.js';
 import {
   LOCAL_OWNER, NODE_ID_RE, annotateCanonicalLayout, canonicalizeLayoutForOwner,
@@ -78,9 +81,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   ), []);
 
   const install = useCallback((next, applyLayout = true, targetId = currentRef.current) => {
+    const ordered = orderDeckRecords(next, loadDeckOrders());
     const previousHadTarget = recordsRef.current.some((d) => d.id === targetId);
-    recordsRef.current = next; setRecords(next);
-    const rec = next.find((d) => d.id === targetId);
+    recordsRef.current = ordered; setRecords(ordered);
+    const rec = ordered.find((d) => d.id === targetId);
     if (applyLayout && rec) {
       skipRef.current = true;
       const viewed = viewLayout(rec);
@@ -93,7 +97,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       setLayout(emptyLayout());
       setError('deck non più condiviso dal nodo owner');
     }
-    saveDecks(next.filter((d) => d.local).map((d) => d.name));
+    saveDecks(ordered.filter((d) => d.local).map((d) => d.name));
   }, [setLayout, viewLayout]);
 
   const migrateLocal = useCallback(async (nodeId) => {
@@ -238,13 +242,31 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const fresh = recordsRef.current.find((x) => x.id === fromId); if (!fresh) throw new Error('deck inesistente');
     const saved = await renameDeck(token, fresh.name, to, fresh.revision, fresh.ownerRoute);
     const record = augmentDeck(saved, ownerForRecord(fresh), fresh.ownerTopology, fresh.local, true);
+    const ownerKey = fresh.local ? LOCAL_OWNER : fresh.ownerId;
+    saveDeckOrders(replaceDeckOrderId(loadDeckOrders(), ownerKey, fromId, record.id));
     install(recordsRef.current.map((x) => x.id === fromId ? record : x), false); return record;
   };
   const remove = async (id) => {
     const deck = recordsRef.current.find((x) => x.id === id); if (!deck) throw new Error('deck inesistente');
     if (id === currentRef.current) dirtyRef.current = false;
     await deleteDeck(token, deck.name, deck.revision, deck.ownerRoute);
+    const ownerKey = deck.local ? LOCAL_OWNER : deck.ownerId;
+    saveDeckOrders(removeDeckOrderId(loadDeckOrders(), ownerKey, id));
     install(recordsRef.current.filter((x) => x.id !== id), false);
+  };
+  const reorder = (sourceId, targetId) => {
+    const source = recordsRef.current.find((x) => x.id === sourceId);
+    const target = recordsRef.current.find((x) => x.id === targetId);
+    if (!source || !target) return false;
+    const sourceOwner = source.local ? LOCAL_OWNER : source.ownerId;
+    const targetOwner = target.local ? LOCAL_OWNER : target.ownerId;
+    if (sourceOwner !== targetOwner) return false;
+    const available = recordsRef.current
+      .filter((record) => (record.local ? LOCAL_OWNER : record.ownerId) === sourceOwner)
+      .map((record) => record.id);
+    const orders = saveDeckOrders(moveDeckInOrder(loadDeckOrders(), sourceOwner, sourceId, targetId, available));
+    install(orderDeckRecords(recordsRef.current, orders), false);
+    return true;
   };
   const addTileTo = async (targetId, ref) => {
     const deck = recordsRef.current.find((x) => x.id === targetId); if (!deck) throw new Error('deck inesistente');
@@ -270,7 +292,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
 
   return {
     decks: records, records, localNodeId, ready, saveState, error, setError,
-    saveNow, select, add, rename, remove, addTileTo,
+    saveNow, select, add, rename, remove, reorder, addTileTo,
     localMainId: deckId(null, 'main'), parseDeckId,
   };
 }

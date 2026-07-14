@@ -5,6 +5,7 @@ import {
   fleetDefineCell, fleetEditCell, fleetRemoveCell, fleetRestart, fleetUp, fleetDown,
   fleetImportCell, killSession, getRouteSessions,
   fleetRestoreCells, fleetRestoreEngines,
+  fleetCredentialStatus, fleetSetCredential, fleetRemoveCredential,
   listDirs, getRouteConfig,
 } from '../lib/api.js';
 import PowerSheet from './PowerSheet.jsx';
@@ -106,6 +107,8 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   const [powerCell, setPowerCell] = useState(null);
   const [importEdit, setImportEdit] = useState(null);
   const [backupOpen, setBackupOpen] = useState(false);
+  const [credentials, setCredentials] = useState([]);
+  const [credentialEdit, setCredentialEdit] = useState(null);
   const [fleetView, setFleetView] = useState('manage');
   const autoCreateDone = useRef(false);
   const route = location ? location.split('/') : [];
@@ -119,6 +122,10 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
         const runtime = new Map((st.engines || []).map((engine) => [engine.id, engine]));
         next.engines = (next.engines || []).map((engine) => ({ ...engine, availableModels: runtime.get(engine.id)?.models || [] }));
         setDefs(next);
+        if ((st.capabilities || []).includes('credentials')) {
+          try { setCredentials((await fleetCredentialStatus(token, route)).credentials || []); }
+          catch (_) { setCredentials([]); }
+        } else setCredentials([]);
       }
     } catch (e) { setErr(String(e.message || e)); }
   }, [token, location]);
@@ -177,6 +184,20 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   });
 
   const locked = readonly || remoteReadonly;
+  const credentialFor = (engine) => credentials.find((entry) => entry.engines?.includes(engine.id)) || null;
+  const saveCredential = () => run(async () => {
+    const result = await fleetSetCredential(token, credentialEdit.envKey, credentialEdit.value, route);
+    setCredentials(result.credentials || []); setCredentialEdit(null); setNote(t('fleet-credential-saved'));
+    const affected = (result.credentials || []).find((entry) => entry.envKey === credentialEdit.envKey)?.activeCells || [];
+    if (affected.length && window.confirm(t('fleet-restart-confirm').replace('{cells}', affected.join(', ')))) {
+      for (const id of affected) await fleetRestart(token, id, route);
+    }
+  });
+  const forgetCredential = (entry) => run(async () => {
+    if (!window.confirm(t('fleet-credential-remove-confirm').replace('{key}', entry.envKey))) return;
+    const result = await fleetRemoveCredential(token, entry.envKey, route);
+    setCredentials(result.credentials || []); setNote(t('fleet-credential-removed'));
+  });
 
   // Launch editor condiviso (PowerSheet): Avvia dalla lista celle e dalla card
   // inventory aprono lo stesso sheet (non fleetUp diretto, niente UI duplicata).
@@ -251,7 +272,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   });
   const locationPicker = <label className="nc-field">{t('location')}<select value={location} onChange={(e) => {
     setLocation(e.target.value); setEngineEdit(null); setCellEdit(null); setErr(''); setNote(''); setRemoteReadonly(false);
-    setStatus({ available: false, capabilities: [] }); setDefs({ engines: [], cells: [], managedCatalog: [] });
+    setStatus({ available: false, capabilities: [] }); setDefs({ engines: [], cells: [], managedCatalog: [] }); setCredentials([]); setCredentialEdit(null);
   }}>
     <option value="">{t('local')}</option>{targets.map((x) => <option key={x.route.join('/')} value={x.route.join('/')} disabled={x.status && x.status !== 'up'}>{x.label}{x.status && x.status !== 'up' ? ` · ${t('node-offline')}` : ''}</option>)}
   </select></label>;
@@ -281,8 +302,11 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
       </> : <>
         <div className="nc-set-info">{t('fleet-manage-help')}</div>
         {locationPicker}
-        <div className="nc-fleet-section-head"><b>{t('fleet-cells')}</b><span className="nc-fleet-head-actions">
+        <div className="nc-set-row nc-fleet-backup-actions">
           <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setBackupOpen(true); }}>{t('fleet-backup')}</button>
+          <small>{t('fleet-backup-help')}</small>
+        </div>
+        <div className="nc-fleet-section-head"><b>{t('fleet-cells')}</b><span className="nc-fleet-head-actions">
           <button className="nc-btn primary" disabled={locked || busy || !defs.engines.length} onClick={() => { setErr(''); setCellEdit({ mode: 'new', form: blankCell(defs.engines[0]?.id) }); }}>+ {t('add')}</button>
         </span></div>
         {defs.cells.map((c) => {
@@ -301,19 +325,33 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
         </span></div>
         );})}
         <div className="nc-fleet-section-head"><b>{t('fleet-engines')}</b><button className="nc-btn primary" disabled={locked || busy} onClick={() => { setErr(''); setEngineEdit({ mode: 'new', form: blankEngine() }); }}>+ {t('add')}</button></div>
-        {defs.engines.map((e) => (
+        {defs.engines.map((e) => {
+          const cred = credentialFor(e);
+          return (
           <div className="nc-fleet-item" key={e.id}><span><b>{e.label}</b><small>{e.managed
             ? `${e.id} · ${e.managed.client} / ${e.managed.provider} · ${e.managedInfo?.configured ? t('fleet-ready') : e.managedInfo?.reason || t('fleet-not-ready')}`
-            : `${e.id} · ${e.command}`}</small></span><span>
+            : `${e.id} · ${e.command}`}</small>{cred && <small>{cred.envKey} · {t(`fleet-credential-source-${cred.source || 'missing'}`)}</small>}</span><span>
+            {cred && <button className="nc-btn ghost" disabled={locked || busy}
+              onClick={() => { setErr(''); setCredentialEdit({ envKey: cred.envKey, value: '' }); }}>{cred.configured ? t('fleet-credential-change') : t('fleet-credential-set')}</button>}
+            {cred?.source === 'local' && <button className="nc-btn danger" disabled={locked || busy} onClick={() => forgetCredential(cred)}>{t('fleet-credential-forget')}</button>}
             <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setEngineEdit({ mode: 'edit', original: e, form: engineForm(e) }); }}>{t('edit')}</button>
             <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-engine').replace('{id}', e.id))) await fleetRemoveEngine(token, e.id, route); })}>×</button>
           </span></div>
-        ))}
+        );})}
       </>}
       {engineEdit && <FleetModal onClose={() => setEngineEdit(null)} label={t('fleet-new-engine')} error={err}><EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} /></FleetModal>}
       {cellEdit && <FleetModal onClose={() => setCellEdit(null)} label={t('fleet-new-cell')} error={err}><CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} /></FleetModal>}
       {note && <div className="nc-set-note">{note}</div>}{err && <div className="nc-err">{err}</div>}
       {backupOpen && <FleetModal onClose={() => setBackupOpen(false)} label={t('fleet-backup')} error={err}><FleetBackupDialog cells={defs.cells} engines={defs.engines} busy={busy} canRestore={canRestoreBackup} onRestore={restoreBackup} onClose={() => setBackupOpen(false)} /></FleetModal>}
+      {credentialEdit && <FleetModal onClose={() => setCredentialEdit(null)} label={t('fleet-credential-title')} error={err}>
+        <div className="nc-fleet-form nc-credential-form">
+          <b>{t('fleet-credential-title')}</b>
+          <small>{t('fleet-credential-help')}</small>
+          <label className="nc-field">{credentialEdit.envKey}<input type="password" autoComplete="off" spellCheck="false" autoCapitalize="none"
+            value={credentialEdit.value} onChange={(event) => setCredentialEdit({ ...credentialEdit, value: event.target.value })} /></label>
+          <div className="nc-sheet-actions"><button className="nc-btn ghost" onClick={() => setCredentialEdit(null)}>{t('cancel')}</button><button className="nc-btn primary" disabled={busy || !credentialEdit.value} onClick={saveCredential}>{t('save')}</button></div>
+        </div>
+      </FleetModal>}
       {importEdit && <FleetModal onClose={() => setImportEdit(null)} label={t('import-as-cell')} error={err}><ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} /></FleetModal>}
       {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { await refresh(); } }} onClose={() => setPowerCell(null)} />}
     </div>

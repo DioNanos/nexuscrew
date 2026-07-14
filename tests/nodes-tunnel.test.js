@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -26,6 +27,8 @@ test('buildForwardArgs: argv esatto dal template §4b(1)', () => {
     '-o', 'ServerAliveInterval=30',
     '-o', 'ServerAliveCountMax=3',
     '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=15',
+    '-o', 'LogLevel=ERROR',
     '-i', '/home/user/.nexuscrew/keys/host_ed25519',
     '-L', '127.0.0.1:43001:127.0.0.1:41820',
     'user@example.com',
@@ -36,12 +39,14 @@ test('buildForwardArgs: argv esatto dal template §4b(1)', () => {
 
 test('buildForwardArgs: sshPort usa -p senza confonderla con remotePort', () => {
   const args = tunnel.buildForwardArgs({ ...NODE, sshPort: 41822, remotePort: 41777 });
-  assert.deepEqual(args.slice(0, 11), [
+  assert.deepEqual(args.slice(0, 15), [
     '-N',
     '-o', 'ExitOnForwardFailure=yes',
     '-o', 'ServerAliveInterval=30',
     '-o', 'ServerAliveCountMax=3',
     '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=15',
+    '-o', 'LogLevel=ERROR',
     '-p', '41822',
   ]);
   assert.ok(args.includes('127.0.0.1:43001:127.0.0.1:41777'));
@@ -86,6 +91,27 @@ test('backoffDelay: esponenziale, cap, jitter deterministico', () => {
   assert.equal(tunnel.backoffDelay(1, { ...o, rng: () => 0 }), 1600);
   // mai negativo
   assert.ok(tunnel.backoffDelay(0, { ...o, rng: () => 0 }) >= 0);
+});
+
+test('reconcileTunnelSupervisors: ferma solo pidfile orfani con nomi stretti', () => {
+  const dir = tmpDir();
+  const root = tunnel.tunnelDir(dir);
+  fs.mkdirSync(root, { recursive: true });
+  for (const name of ['configured', 'orphan', tunnel.REVERSE_NAME, 'bad name']) {
+    fs.writeFileSync(path.join(root, `${name}.pid`), '{}\n', { mode: 0o600 });
+  }
+  fs.symlinkSync(path.join(root, 'orphan.pid'), path.join(root, 'linked.pid'));
+  const stopped = [];
+  const result = tunnel.reconcileTunnelSupervisors({
+    home: dir,
+    configuredNames: ['configured'],
+    stopImpl: ({ name }) => { stopped.push(name); return { stopped: true }; },
+  });
+  assert.deepEqual(result.kept, ['configured']);
+  assert.deepEqual(stopped, [tunnel.REVERSE_NAME, 'orphan']);
+  assert.deepEqual(result.stopped, [tunnel.REVERSE_NAME, 'orphan']);
+  assert.deepEqual(result.failed, []);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 // --- lifecycle con spawn mockato (mai ssh reale) ---------------------------
@@ -281,7 +307,10 @@ test('tunnel log: directory 0700, file 0600 e contenuto per-run (niente append s
   assert.equal(result.started, true);
   assert.equal(fs.statSync(tunnel.tunnelDir(dir)).mode & 0o777, 0o700);
   assert.equal(fs.statSync(logPath).mode & 0o777, 0o600);
-  assert.equal(fs.statSync(logPath).size, 0, 'ogni supervisor parte da un log diagnostico nuovo');
+  const diagnostic = fs.readFileSync(logPath, 'utf8');
+  assert.match(diagnostic, /^\[nexuscrew\] supervisor requested transport=/,
+    'ogni supervisor scrive un breadcrumb sicuro anche quando ssh è silenzioso');
+  assert.ok(!diagnostic.includes('stale diagnostic'), 'il log precedente viene troncato');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -502,7 +531,10 @@ test('F1 supervisor: un ssh che cade viene rilanciato con stato retrying/backoff
       NEXUSCREW_TUNNEL_STATE: statePath,
       NEXUSCREW_TUNNEL_PIDFILE: pidPath,
       NEXUSCREW_TUNNEL_RUN_ID: runId,
-      NEXUSCREW_TUNNEL_STABLE_MS: '100',
+      // Questo test misura retry/backoff di un child che cade, non readiness.
+      // Tieni il probe oltre il deadline per non osservare lo stato concorrente
+      // transport-probing sotto carico: quel path ha test dedicati qui sotto.
+      NEXUSCREW_TUNNEL_STABLE_MS: '30000',
     },
     stdio: 'ignore',
   });
@@ -534,13 +566,17 @@ test('F1 supervisor: un ssh che cade viene rilanciato con stato retrying/backoff
 
 test('F1 supervisor dichiara transport-ready e resetta il backoff solo dopo stabilita', async () => {
   const dir = tmpDir();
+  const forward = net.createServer((socket) => socket.end());
+  await new Promise((resolve) => forward.listen(0, '127.0.0.1', resolve));
+  const forwardPort = forward.address().port;
   const fakeSsh = path.join(dir, 'stable-ssh.js');
   const statePath = path.join(dir, 'stable.state.json');
   const pidPath = path.join(dir, 'stable.pid');
   const runId = 'stable-generation';
   fs.writeFileSync(fakeSsh, "setInterval(() => {}, 1000);\n", { mode: 0o700 });
   const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
-  const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh], {
+  const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh,
+    '-L', `127.0.0.1:${forwardPort}:127.0.0.1:41777`], {
     env: {
       ...process.env,
       NEXUSCREW_TUNNEL_STATE: statePath,
@@ -572,12 +608,65 @@ test('F1 supervisor dichiara transport-ready e resetta il backoff solo dopo stab
       const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} resolve(); }, 2000);
       child.once('exit', () => { clearTimeout(timer); resolve(); });
     });
+    await new Promise((resolve) => forward.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('F1 supervisor non dichiara ready finche il forward TCP non risponde', async () => {
+  const dir = tmpDir();
+  const reservation = net.createServer();
+  await new Promise((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+  const unavailablePort = reservation.address().port;
+  await new Promise((resolve) => reservation.close(resolve));
+  const fakeSsh = path.join(dir, 'blocked-ssh.js');
+  const statePath = path.join(dir, 'blocked.state.json');
+  const pidPath = path.join(dir, 'blocked.pid');
+  const runId = 'blocked-generation';
+  fs.writeFileSync(fakeSsh, "setInterval(() => {}, 1000);\n", { mode: 0o700 });
+  const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
+  const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh,
+    '-L', `127.0.0.1:${unavailablePort}:127.0.0.1:41777`], {
+    env: {
+      ...process.env,
+      NEXUSCREW_TUNNEL_STATE: statePath,
+      NEXUSCREW_TUNNEL_PIDFILE: pidPath,
+      NEXUSCREW_TUNNEL_RUN_ID: runId,
+      NEXUSCREW_TUNNEL_STABLE_MS: '100',
+    },
+    stdio: 'ignore',
+  });
+  pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId });
+  try {
+    const deadline = Date.now() + 1500;
+    let state = null;
+    while (Date.now() < deadline) {
+      try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) {}
+      if (state?.status === 'transport-probing') break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(state, 'sidecar stato supervisor non scritto');
+    assert.equal(state.status, 'transport-probing');
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.notEqual(state.status, 'transport-ready');
+    assert.equal(state.attempt, 0, 'il processo e vivo ma non deve qualificarsi come trasporto pronto');
+  } finally {
+    child.kill('SIGTERM');
+    await new Promise((resolve) => {
+      if (child.exitCode !== null) return resolve();
+      const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} resolve(); }, 2000);
+      child.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test('F1 supervisor termina ssh e se stesso quando perde la generazione pidfile', async () => {
   const dir = tmpDir();
+  const forward = net.createServer((socket) => socket.end());
+  await new Promise((resolve) => forward.listen(0, '127.0.0.1', resolve));
+  const forwardPort = forward.address().port;
   const sshPidPath = path.join(dir, 'ssh.pid');
   const fakeSsh = path.join(dir, 'owned-ssh.js');
   const statePath = path.join(dir, 'owned.state.json');
@@ -585,7 +674,8 @@ test('F1 supervisor termina ssh e se stesso quando perde la generazione pidfile'
   const runId = 'owned-generation';
   fs.writeFileSync(fakeSsh, `require('node:fs').writeFileSync(${JSON.stringify(sshPidPath)}, String(process.pid)); setInterval(() => {}, 1000);\n`, { mode: 0o700 });
   const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
-  const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh], {
+  const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh,
+    '-L', `127.0.0.1:${forwardPort}:127.0.0.1:41777`], {
     env: {
       ...process.env,
       NEXUSCREW_TUNNEL_STATE: statePath,
@@ -619,6 +709,7 @@ test('F1 supervisor termina ssh e se stesso quando perde la generazione pidfile'
   } finally {
     try { child.kill('SIGKILL'); } catch (_) {}
     if (sshPid) try { process.kill(sshPid, 'SIGKILL'); } catch (_) {}
+    await new Promise((resolve) => forward.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

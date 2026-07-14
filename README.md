@@ -16,7 +16,7 @@ panes, windows. tmux does the work; the browser is just a faithful client.
 
 ---
 
-## What it is (v0.8.13 "Fleet Network")
+## What it is (v0.8.16 "Honest Tunnel")
 
 - Runs a small server on the host where your tmux sessions live.
 - Each attach spawns a real PTY running `tmux attach` and bridges its bytes over a WebSocket
@@ -25,17 +25,21 @@ panes, windows. tmux does the work; the browser is just a faithful client.
   live terminals side by side, draggable dividers, per-tile composer, layout remembered.
   Tiles attach with `ignore-size` so they never resize your real terminals.
 - **Ordered Fleet roster**: desktop and mobile share the same per-location model. Local and
-  every Hydra route are independently collapsible and filterable by all, pinned, active, or
-  off. Route-qualified pins keep priority, while cells can be reordered directly with a mouse,
-  a dedicated touch handle, or keyboard move controls; the owner-qualified order survives
-  reloads and is shared by the compact and expanded views. Search covers every visible node
-  once the combined roster grows beyond eight entries. Desktop chrome and the mobile header
-  stay fixed while their lists scroll, and the compact version/endpoint/language footer remains
-  readable on narrow screens.
+  every Hydra route are independently collapsible and filterable by all, pinned, active, off,
+  or technical. Technical tmux sessions stay out of the normal roster until explicitly shown,
+  and every location count reflects the rows actually displayed. Route-qualified pins keep
+  priority, while cells can be reordered from the dedicated handle with Pointer Events on
+  mouse, touch, or pen, or with keyboard move controls. Reorder highlights the destination,
+  scrolls at list edges, commits only on release and can be cancelled without changing the
+  saved order. The owner-qualified order survives reloads and is shared by compact and expanded
+  views. Desktop chrome and the mobile header stay fixed while their lists scroll, and the
+  compact version/endpoint/language footer remains readable on narrow screens.
 - **Attached decks by default**: named workspaces switch as tabs inside the same PWA without
   reloading terminals or losing a pending layout save. Use `↗` only when you want to detach a
   deck into another browser window or monitor. Every Local or remote owner group ends with its
   own compact `+ new`, so the creation destination is explicit and never falls back elsewhere.
+  A dedicated handle reorders owner-qualified deck tabs with mouse, touch, pen, or keyboard;
+  the order autosaves locally and survives polling, reloads, rename, and deletion.
 - **Federated Hydra inventory**: connect existing NexusCrew installations through the SSH
   configuration you already control and see local, direct, and relayed tmux fleets in one UI.
   Route labels show where every session lives; creation, attach, files, lifecycle and Fleet
@@ -44,7 +48,14 @@ panes, windows. tmux does the work; the browser is just a faithful client.
   link tests SSH, exchanges the one-time invitation, confirms both directions and verifies
   the peer automatically; failures identify the exact connection stage. A device already
   connected to a hub creates invitations through that hub; a standalone hub asks only for
-  the SSH address by which the receiving device can reach it.
+  the SSH address by which the receiving device can reach it. Readiness uses a real bounded
+  deadline and a live TCP-forward probe instead of treating a merely running `ssh` process as
+  connected. When a portable address cannot select this device's key, the failure opens the
+  local fields so it can be replaced with the same SSH alias that works in the terminal.
+  Per-tunnel logs contain safe supervisor lifecycle markers and actionable SSH errors, never
+  synthetic argv dumps, key contents, tokens, or credentials. OpenSSH may name the failed
+  target in this owner-only 0600 diagnostic. Startup and lifecycle commands also recover
+  verified orphan supervisors left by removed nodes or interrupted older runtimes.
 - **Settings and wizard**: manage roles, nodes, token rotation, and service regeneration
   from the UI; the first-run wizard uses the same pairing flow as Settings.
 - **Cell lifecycle from the UI**: the primary `+` creates a managed Fleet cell at Local or
@@ -59,6 +70,11 @@ panes, windows. tmux does the work; the browser is just a faithful client.
   engine mapping and system prompts, then select exactly what to restore. Archives contain
   credential-variable names but never their values, provider keys or runtime session state;
   conflicts and active cells that need a restart are reported explicitly.
+- **Private provider credentials**: each node resolves a required key from its runtime
+  environment, compatible user-owned provider files, or an optional local write-only store.
+  The PWA can set, replace, or forget a missing key on that exact node without displaying it.
+  Values never enter Fleet definitions, backups, API responses, tmux state, process arguments,
+  temporary files, or logs.
 - **Rich cards**: last activity, current command, a sanitized one-line preview per session.
 - **Fleet control**: a built-in schema-driven fleet manager handles cells, engines, model
   selection, and boot persistence; an existing external `fleet` CLI can take ownership through
@@ -120,13 +136,19 @@ The concise provider catalog is scoped per CLI:
   GitHub Copilot, OpenRouter, local Ollama, DeepSeek, Z.AI, and a custom provider.
 
 Provider credentials are resolved from the selected CLI's native login or from an environment
-variable named in the PWA; NexusCrew never stores a new secret value. A named variable is read
-first from the service environment, then—when present—from the user-owned
-`~/.config/ai-shell/providers.zsh`, parsed strictly as assignment data and never sourced or
-executed. Only requested names are resolved, and values are never copied into NexusCrew config,
-service files or backups. Legacy Z.AI A/P engines remain launch-compatible for existing fleets
-but are not provider choices for new engines. Model discovery is used where the CLI/provider
-documents it, with a manual model field as the portable fallback.
+variable named in the PWA. A named variable is read first from the service environment, then
+from the optional node-local NexusCrew store, then—when present—from the user-owned
+`~/.config/ai-shell/providers.zsh`, `~/.config/keys/ai.env`, or
+`~/.config/secure/.env`, parsed strictly as assignment data and never sourced or executed.
+The PWA shows only whether the requested name is configured and its source category; a missing
+value can be saved locally in `~/.nexuscrew/credentials.json` under a user-owned `0700`
+directory and `0600` file, or removed again. The store is write-only through the API and is
+never included in config, services, Fleet backups, federation payloads, logs, or responses.
+At launch, secret-bearing environment data crosses a private one-shot Unix socket and reaches
+the CLI by direct process spawn; it never enters tmux environment state, argv, or a temporary
+file. Legacy Z.AI A/P engines remain launch-compatible for existing fleets but are not provider
+choices for new engines. Model discovery is used where the CLI/provider documents it, with a
+manual model field as the portable fallback.
 
 Managed engines expose a permission selector both in their definition and in the cell launch
 sheet. New Claude engines (native, Z.AI, Ollama, or custom) default to **Bypass permissions**
@@ -217,12 +239,16 @@ flow stays entirely in the PWA:
 2. On the other device, open its own NexusCrew PWA (`nexuscrew show`), go to
    **Settings → Nodes**, and use the first card, **Connect with one link**. Paste the complete
    link in the prominent field or scan the QR. Do not navigate to the loopback address in the
-   link: it is only a portable container for the pairing payload.
+   link: it is only a portable container for the pairing payload. The embedded host is a
+   portable suggestion, not an SSH identity. If `ssh my-relay` works on this device but the raw
+   address does not select the same key, open **Advanced / edit** and enter `my-relay`; aliases,
+   agents and private keys always stay on this device.
 3. A complete v2 link connects automatically. NexusCrew starts a provisional SSH forward,
-   checks transport readiness, consumes the one-time invite once, negotiates the reciprocal
-   path, confirms it, and verifies authenticated federation health and peer identity. If a
-   stage fails, the PWA preserves the link and shows the exact stage, detail and safe retry
-   guidance. Older v1 links remain accepted and open only the missing routing fields.
+   proves the local TCP forward rather than only the supervisor PID, consumes the one-time
+   invite once, negotiates the reciprocal path, confirms it, and verifies authenticated
+   federation health and peer identity. If SSH authentication or routing fails, the PWA
+   preserves the link, opens the editable local SSH fields and shows the exact stage, detail
+   and safe retry guidance. Older v1 links remain accepted and open only the missing fields.
 
 The link never contains an SSH key, identity file, API key or PWA token. Its only credential is
 the random, one-time pairing invite; SSH routing fields are non-secret configuration. A
@@ -244,7 +270,11 @@ NexusCrew does not create SSH keys or edit `authorized_keys`. OpenSSH remains au
 identity files, agents, host keys, ports, ProxyJump and forwarding policy. NexusCrew uses
 one built-in retry supervisor around `ssh`; it never nests `autossh`. `nexuscrew doctor` reports
 whether both binaries are installed and states that OpenSSH is the transport actually used.
-Missing `ssh` is a blocking error; `autossh` is optional. Configured links return at boot.
+Missing `ssh` is a blocking error; `autossh` is optional. A 15-second OpenSSH connect timeout
+bounds unreachable endpoints, while readiness is advertised only after the configured local
+forward accepts TCP. On startup, stop and restart, NexusCrew reconciles strict, verified tunnel
+pidfiles against the node store so a removed node cannot leave a hidden retry supervisor.
+Configured links return at boot.
 Pair credentials are random, per-peer and scoped only to the federated session/file surface—the
 PWA token never crosses a peer link.
 
@@ -444,8 +474,8 @@ node bin/nexuscrew.js serve
 
 ## Status
 
-The current release candidate is **v0.8.13**. npm **`latest`**, the GitHub tag and the release
-assets are promoted from the same verified artifact.
+The current stable release is **v0.8.16**. npm **`latest`**, the GitHub tag and the release use
+the same audited package artifact.
 
 ## License
 

@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { isValidDeckName, normalizeDeckName, MAIN_DECK } from '../lib/deck-model.js';
+import DeckHandle from './DeckHandle.jsx';
 import './DeckBar.css';
 
 // Gestione deck (finestra principale, §5b): crea/rinomina/elimina, apri un deck
 // in una nuova finestra (un monitor = una finestra). I deck sono client-side.
 export default function DeckBar({
-  decks = [], currentDeck = 'local:main', onCreate, onRename, onDelete, onOpenWindow, onNavigate,
+  decks = [], currentDeck = 'local:main', onCreate, onRename, onDelete, onReorder, onOpenWindow, onNavigate,
   saveState = 'idle', error = '', sidebarVisible, onToggleSidebar,
 }) {
   useLang();
@@ -51,6 +52,12 @@ export default function DeckBar({
     setBusy(false);
   };
 
+  const stepDeck = (group, deck, delta) => {
+    const at = group.decks.findIndex((item) => item.id === deck.id);
+    const target = group.decks[at + delta];
+    if (at >= 0 && target && onReorder && !busy) onReorder(deck.id, target.id);
+  };
+
   return (
     <div className="nc-deckbar">
       {onToggleSidebar && (
@@ -64,7 +71,11 @@ export default function DeckBar({
           <span key={group.key} className="nc-deck-owner-group">
             <span className="nc-deck-owner">{group.local ? 'Local' : group.label}</span>
             {group.decks.map((d) => (
-              <span key={d.id} className={`nc-deck-chip${d.id === currentDeck ? ' current' : ''}${d.available === false ? ' offline' : ''}`}>
+              <span key={d.id} data-deck-id={d.id} data-owner-key={group.key}
+                className={`nc-deck-chip${d.id === currentDeck ? ' current' : ''}${d.available === false ? ' offline' : ''}`}>
+                <DeckHandle ownerKey={group.key} deckId={d.id} label={`${group.label} · ${d.name}`}
+                  onMove={(source, target) => { if (onReorder && !busy) onReorder(source, target); }}
+                  onStep={(delta) => stepDeck(group, d, delta)} />
                 <button
                   className="nc-deck-open"
                   title={d.available === false ? `${d.ownerLabel} offline` : d.id === currentDeck ? t('deck-current') : `${d.ownerLabel} · ${d.name}`}

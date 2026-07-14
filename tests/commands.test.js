@@ -8,7 +8,7 @@ const { spawn } = require('node:child_process');
 const pidf = require('../lib/cli/pidfile.js');
 const { dispatch, serve, start, stop, status, parseFlags, HELP,
   smartUp, url, tokenRotate, logs, update, doctor, restart,
-  findAvailablePort, openPwa, startPortable } = require('../lib/cli/commands.js');
+  findAvailablePort, openPwa, startPortable, stopManagedTunnels } = require('../lib/cli/commands.js');
 
 // Home "inizializzata" (config.json + token) per i test url/status/token/logs. [A2]
 function initHome(port = 41822, token = 'SECRETTOKEN12345') {
@@ -59,7 +59,7 @@ test('dispatch: help -> code 0, stampa HELP', () => {
   assert.ok(long.join('\n').includes('nexuscrew show'));
   const version = [];
   assert.equal(dispatch(['--version'], { log: (m) => version.push(m) }).code, 0);
-  assert.equal(version[0], '0.8.13');
+  assert.equal(version[0], '0.8.16');
   assert.equal(dispatch(['--bogus'], { log: () => {} }).code, 1);
 });
 
@@ -261,6 +261,16 @@ test('managed stop/restart protect tmux before systemd and restart closes manage
   });
   assert.equal(restartResult.restarted, true);
   assert.deepEqual(restartEvents, ['protect', 'tunnels', 'restart']);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('stopManagedTunnels ripulisce anche un supervisor orfano non piu nel node store', () => {
+  const { home } = initHome();
+  const orphan = path.join(home, '.nexuscrew', 'tunnels', 'orphan.pid');
+  pidf.writePidfile(orphan, 2147483647, 'node tunnel-supervisor.js ssh -N');
+  const stopped = stopManagedTunnels({ home });
+  assert.deepEqual(stopped, ['orphan']);
+  assert.equal(fs.existsSync(orphan), false);
   fs.rmSync(home, { recursive: true, force: true });
 });
 

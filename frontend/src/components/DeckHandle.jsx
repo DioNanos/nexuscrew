@@ -2,20 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
 
 const EDGE_PX = 52;
-const EDGE_STEP = 14;
+const EDGE_STEP = 18;
 
-// Dedicated Pointer Events reorder handle. It works identically with mouse,
-// touch and pen, never competes with the card's native session-to-deck drag,
-// and commits only on pointerup so cancel/Escape leaves the saved order intact.
-export default function RosterHandle({ position, itemKey, label, onMove, onStep, canMove = () => true }) {
+// Pointer Events, non HTML5 drag: mouse, touch e pen seguono lo stesso path.
+// Il riordino resta confinato all'owner del deck; non cambia mai nodo/ownership.
+export default function DeckHandle({ ownerKey, deckId, label, onMove, onStep }) {
   const state = useRef(null);
   const frame = useRef(0);
   const [active, setActive] = useState(false);
 
   const clearTarget = () => {
     const current = state.current;
-    current?.over?.classList?.remove('nc-roster-over');
-    current?.source?.classList?.remove('nc-roster-dragging');
+    current?.over?.classList?.remove('nc-deck-over');
+    current?.source?.classList?.remove('nc-deck-dragging');
     if (frame.current) cancelAnimationFrame(frame.current);
     frame.current = 0;
   };
@@ -26,20 +25,20 @@ export default function RosterHandle({ position, itemKey, label, onMove, onStep,
     const target = current.target;
     clearTarget(); state.current = null; setActive(false);
     try { current.handle.releasePointerCapture(current.pointerId); } catch (_) {}
-    if (commit && target && target !== itemKey && canMove(itemKey, target)) onMove(itemKey, target);
+    if (commit && target && target !== deckId) onMove(deckId, target);
   };
 
   const updateTarget = (x, y) => {
     const current = state.current;
     if (!current) return;
     current.x = x; current.y = y;
-    const card = document.elementFromPoint(x, y)?.closest?.('[data-roster-key][data-position]');
-    const target = card?.dataset?.rosterKey;
-    const valid = card?.dataset?.position === position && target && target !== itemKey && canMove(itemKey, target);
-    if (current.over !== (valid ? card : null)) {
-      current.over?.classList?.remove('nc-roster-over');
-      current.over = valid ? card : null;
-      current.over?.classList?.add('nc-roster-over');
+    const chip = document.elementFromPoint(x, y)?.closest?.('[data-deck-id][data-owner-key]');
+    const target = chip?.dataset?.deckId;
+    const valid = chip?.dataset?.ownerKey === ownerKey && target && target !== deckId;
+    if (current.over !== (valid ? chip : null)) {
+      current.over?.classList?.remove('nc-deck-over');
+      current.over = valid ? chip : null;
+      current.over?.classList?.add('nc-deck-over');
     }
     current.target = valid ? target : null;
   };
@@ -47,13 +46,12 @@ export default function RosterHandle({ position, itemKey, label, onMove, onStep,
   const autoScroll = () => {
     const current = state.current;
     if (!current) { frame.current = 0; return; }
-    const container = current.container;
-    if (container) {
-      const rect = container.getBoundingClientRect();
-      const delta = current.y < rect.top + EDGE_PX ? -EDGE_STEP
-        : current.y > rect.bottom - EDGE_PX ? EDGE_STEP : 0;
+    const rect = current.container?.getBoundingClientRect?.();
+    if (rect) {
+      const delta = current.x < rect.left + EDGE_PX ? -EDGE_STEP
+        : current.x > rect.right - EDGE_PX ? EDGE_STEP : 0;
       if (delta) {
-        container.scrollTop += delta;
+        current.container.scrollLeft += delta;
         updateTarget(current.x, current.y);
       }
     }
@@ -61,38 +59,40 @@ export default function RosterHandle({ position, itemKey, label, onMove, onStep,
   };
 
   useEffect(() => {
-    const key = (event) => { if (event.key === 'Escape' && state.current) { event.preventDefault(); finish(false); } };
+    const key = (event) => {
+      if (event.key === 'Escape' && state.current) { event.preventDefault(); finish(false); }
+    };
     const blur = () => finish(false);
     window.addEventListener('keydown', key); window.addEventListener('blur', blur);
     return () => {
       window.removeEventListener('keydown', key); window.removeEventListener('blur', blur);
       clearTarget(); state.current = null;
     };
-  }, [itemKey, position]);
+  }, [deckId, ownerKey]);
 
   const pointerDown = (event) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault(); event.stopPropagation(); event.currentTarget.focus({ preventScroll: true });
-    const source = event.currentTarget.closest('[data-roster-key][data-position]');
-    const container = event.currentTarget.closest('.nc-side-scroll, .nc-home-scroll');
+    const source = event.currentTarget.closest('[data-deck-id][data-owner-key]');
+    const container = event.currentTarget.closest('.nc-deckbar');
     state.current = {
       pointerId: event.pointerId, handle: event.currentTarget, source, container,
       target: null, over: null, x: event.clientX, y: event.clientY,
     };
-    source?.classList?.add('nc-roster-dragging');
+    source?.classList?.add('nc-deck-dragging');
     try { event.currentTarget.setPointerCapture(event.pointerId); } catch (_) {}
     setActive(true); frame.current = requestAnimationFrame(autoScroll);
   };
 
   return (
-    <button type="button" className={`nc-roster-handle${active ? ' active' : ''}`}
-      aria-label={`${t('reorder')} ${label}`} aria-keyshortcuts="ArrowUp ArrowDown"
-      title={t('reorder-help')}
+    <button type="button" className={`nc-deck-handle${active ? ' active' : ''}`}
+      aria-label={`${t('reorder')} ${label}`} aria-keyshortcuts="ArrowLeft ArrowRight"
+      title={t('reorder-deck-help')}
       onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
       onDragStart={(event) => event.preventDefault()}
       onKeyDown={(event) => {
-        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-        event.preventDefault(); event.stopPropagation(); onStep(event.key === 'ArrowUp' ? -1 : 1);
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault(); event.stopPropagation(); onStep(event.key === 'ArrowLeft' ? -1 : 1);
       }}
       onPointerDown={pointerDown}
       onPointerMove={(event) => {
@@ -105,6 +105,6 @@ export default function RosterHandle({ position, itemKey, label, onMove, onStep,
       }}
       onPointerCancel={() => finish(false)}
       onLostPointerCapture={() => { if (state.current) finish(false); }}
-    >↕</button>
+    >↔</button>
   );
 }

@@ -34,6 +34,17 @@
 }
 .nc-deck-chip.current { border-color: #7aa903; }
 .nc-deck-chip.offline { opacity: .58; border-style: dashed; }
+.nc-deck-chip.nc-deck-dragging { opacity: .58; }
+.nc-deck-chip.nc-deck-over { box-shadow: 0 0 0 2px #00cc66 inset; }
+.nc-deck-handle {
+  align-self: stretch; min-width: 25px; padding: 0 5px;
+  background: rgba(255,255,255,.035); border: 0; border-right: 1px solid #1c2a1c;
+  color: #789a87; cursor: grab; touch-action: none; user-select: none; font: 11px/1 monospace;
+}
+.nc-deck-handle:hover, .nc-deck-handle:focus-visible, .nc-deck-handle.active {
+  color: #bfffd8; background: rgba(0,204,102,.12); outline: none;
+}
+.nc-deck-handle.active { cursor: grabbing; }
 .nc-deck-open {
   background: none; border: none; color: #cfe;
   padding: 3px 8px; font: inherit; font-size: 12px; cursor: pointer; max-width: 180px;

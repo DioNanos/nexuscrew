@@ -12,6 +12,16 @@ export function togglePinIn(pins, name) {
   return next;
 }
 
+export function movePinIn(pins, source, target) {
+  if (!pins.includes(source) || !pins.includes(target) || source === target) return pins;
+  const next = [...pins]; const from = next.indexOf(source); const to = next.indexOf(target);
+  next.splice(from, 1);
+  const targetAfterRemoval = next.indexOf(target);
+  next.splice(from < to ? targetAfterRemoval + 1 : targetAfterRemoval, 0, source);
+  try { localStorage.setItem(KEY, JSON.stringify(next)); } catch (_) {}
+  return next;
+}
+
 // Comparatore: pinnati prima (ordine di pin), poi attività recente.
 export function pinRank(pins, key, activity) {
   const pi = pins.indexOf(key);

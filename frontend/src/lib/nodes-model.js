@@ -49,7 +49,7 @@ function enrichCells(f, route, key) {
     route,
     // Il tile deve aprire la VERA sessione tmux, non l'id logico della cella.
     // Usare c.cell (es. Dev) produceva header plausibile ma attach WS a una
-    // sessione inesistente invece di cloud-Dev -> terminale remoto vuoto.
+    // sessione inesistente invece di cloud-worker -> terminale remoto vuoto.
     key: `${key}:${c.tmuxSession || c.cell}`,
   }));
 }

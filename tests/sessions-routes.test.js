@@ -47,6 +47,20 @@ test('READONLY is a destination floor for direct session create and kill', async
   const create = await fetch(`${base}/api/sessions`, { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'blocked', cwd: os.homedir(), preset: 'shell' }) });
   assert.equal(create.status, 403);
   assert.equal((await fetch(`${base}/api/sessions/w1`, { method: 'DELETE', headers: H(token) })).status, 403);
+  assert.equal((await fetch(`${base}/api/sessions/w1/visibility`, { method: 'PATCH', headers: H(token), body: JSON.stringify({ technical: true }) })).status, 403);
+});
+
+test('visibility marks only unmanaged sessions using explicit tmux metadata', async (t) => {
+  const { base, token, dir } = await boot(t);
+  const marked = await fetch(`${base}/api/sessions/w1/visibility`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ technical: true }),
+  });
+  assert.equal(marked.status, 200);
+  assert.deepEqual(await marked.json(), { name: 'w1', technical: true });
+  assert.match(fs.readFileSync(path.join(dir, 'tmux.log'), 'utf8'), /set-option -t =w1 @nexuscrew_visibility technical/);
+  assert.equal((await fetch(`${base}/api/sessions/cloud-Build/visibility`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ technical: true }),
+  })).status, 409, 'managed namespace cannot be hidden as an unmanaged technical session');
 });
 
 test('destination READONLY also wins through the compatible /node path', async (t) => {
