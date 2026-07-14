@@ -6,12 +6,14 @@ import Icon from './Icon.jsx';
 import { loadPins, togglePinIn } from '../lib/pins.js';
 import { positionKey } from '../lib/nodes-model.js';
 import {
-  loadSidebarViews, saveSidebarViews, sidebarItems, sidebarSearchVisible, sidebarView,
+  loadSidebarOrders, loadSidebarViews, moveSidebarItem, saveSidebarOrders,
+  saveSidebarViews, sidebarItems, sidebarOrder, sidebarSearchVisible, sidebarView,
 } from '../lib/sidebar-model.js';
 import PowerSheet from './PowerSheet.jsx';
 import {t,  LANGUAGES} from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { useNodes } from '../hooks/useNodes.js';
+import RosterHandle, { rosterDropHandlers } from './RosterHandle.jsx';
 import './SessionList.css';
 
 // Home mobile: lo stesso roster per-posizione della sidebar desktop. Stato di
@@ -66,6 +68,7 @@ export default function SessionList({ onPick, token, onSettings }) {
   const [nodeBusy, setNodeBusy] = useState(null);
   const [pins, setPins] = useState(loadPins);
   const [views, setViews] = useState(loadSidebarViews);
+  const [orders, setOrders] = useState(loadSidebarOrders);
 
   async function refresh() {
     try {
@@ -165,9 +168,9 @@ export default function SessionList({ onPick, token, onSettings }) {
 
   const localView = viewFor('local');
   const localItems = useMemo(
-    () => sidebarItems(localRawItems, pins, localView.filter)
+    () => sidebarItems(localRawItems, pins, localView.filter, sidebarOrder(orders, 'local'))
       .filter((item) => sidebarSearchVisible(item, q)),
-    [localRawItems, pins, localView.filter, q],
+    [localRawItems, pins, localView.filter, q, orders],
   );
   const remoteCount = nodeGroups.reduce(
     (sum, g) => sum + (g.cells || []).length + (g.unmanaged || []).length, 0,
@@ -178,9 +181,24 @@ export default function SessionList({ onPick, token, onSettings }) {
   const attached = (sessions || []).filter((s) => s.attached).length;
   const endpointLabel = endpoint.port ? `${endpoint.bind}:${endpoint.port}` : endpoint.bind;
 
-  function renderRosterItem(item, group = null) {
+  function moveRoster(position, source, target, rawItems) {
+    setOrders((before) => {
+      const available = sidebarItems(rawItems, pins, 'all', sidebarOrder(before, position)).map((item) => item.key);
+      return saveSidebarOrders(moveSidebarItem(before, position, source, target, available));
+    });
+  }
+
+  function stepRoster(position, source, delta, rawItems) {
+    const available = sidebarItems(rawItems, pins, 'all', sidebarOrder(orders, position)).map((item) => item.key);
+    const at = available.indexOf(source); const target = available[at + delta];
+    if (at >= 0 && target) moveRoster(position, source, target, rawItems);
+  }
+
+  function renderRosterItem(item, group = null, rawItems = localRawItems) {
     const route = Array.isArray(group?.route) ? group.route : [];
-    const routeKey = route.join('/');
+    const routeKey = route.join('/'); const position = routeKey || 'local';
+    const drop = rosterDropHandlers(position, item.key,
+      (source, target) => moveRoster(position, source, target, rawItems));
     if (item.type === 'cell') {
       const c = item.value;
       const session = route.length
@@ -191,7 +209,10 @@ export default function SessionList({ onPick, token, onSettings }) {
         .filter(Boolean).join(' · ');
       const canPower = route.length === 0 || (group?.capabilities || []).includes(c.active ? 'down' : 'up');
       return (
-        <div key={item.key} className="nc-mcard" data-roster-key={item.key}>
+        <div key={item.key} className="nc-mcard" data-roster-key={item.key} data-position={position} {...drop}>
+          <RosterHandle position={position} itemKey={item.key} label={c.cell}
+            onMove={(source, target) => moveRoster(position, source, target, rawItems)}
+            onStep={(delta) => stepRoster(position, item.key, delta, rawItems)} />
           <button className="nc-mcard-main"
             onClick={() => c.tmux && onPick(route.length ? { session: c.tmuxSession, node: routeKey } : c.tmuxSession)}
             title={c.degraded ? t('cell-degraded') : c.tmux ? t('cell-on') : t('cell-off')}>
@@ -215,7 +236,10 @@ export default function SessionList({ onPick, token, onSettings }) {
 
     const s = item.value;
     return (
-      <div key={item.key} className="nc-mcard" data-roster-key={item.key}>
+      <div key={item.key} className="nc-mcard" data-roster-key={item.key} data-position={position} {...drop}>
+        <RosterHandle position={position} itemKey={item.key} label={s.name}
+          onMove={(source, target) => moveRoster(position, source, target, rawItems)}
+          onStep={(delta) => stepRoster(position, item.key, delta, rawItems)} />
         <button className="nc-mcard-main" onClick={() => onPick(route.length ? { session: s.name, node: routeKey } : s.name)}>
           <span className={s.attached ? 'dot on' : 'dot'} />
           <span className="nc-mcard-text">
@@ -262,7 +286,7 @@ export default function SessionList({ onPick, token, onSettings }) {
         <MobilePositionHeader label={t('position-local')} count={localRawItems.length} state={localView}
           dotClass="on" onToggle={() => updateView('local', { open: !localView.open })}
           onFilter={(filter) => updateView('local', { filter })} />
-        {localView.open && localItems.map((item) => renderRosterItem(item))}
+        {localView.open && localItems.map((item) => renderRosterItem(item, null, localRawItems))}
         {localView.open && sessions === null && <div className="nc-empty">{t('loading-fleet')}</div>}
         {localView.open && sessions !== null && localItems.length === 0 && !err && (
           <div className="nc-empty">{q ? t('no-match').replace('{q}', q) : t('no-sessions-short')}</div>
@@ -302,7 +326,7 @@ export default function SessionList({ onPick, token, onSettings }) {
             searchText: `${s.preview || ''} ${s.cmd || ''}`,
           })),
         ];
-        const items = sidebarItems(rawItems, pins, groupView.filter)
+        const items = sidebarItems(rawItems, pins, groupView.filter, sidebarOrder(orders, routeKey))
           .filter((item) => sidebarSearchVisible(item, q));
         const nodePower = g.direct && g.health && g.health.managed !== false ? (
           <button type="button" className={`nc-act power${g.tunnelStatus === 'up' ? ' on' : ''}`}
@@ -317,7 +341,7 @@ export default function SessionList({ onPick, token, onSettings }) {
             detail={g.status === 'up' ? '' : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
             onToggle={() => updateView(routeKey, { open: !groupView.open })}
             onFilter={(filter) => updateView(routeKey, { filter })} action={nodePower} />
-          {g.status === 'up' && groupView.open && items.map((item) => renderRosterItem(item, g))}
+          {g.status === 'up' && groupView.open && items.map((item) => renderRosterItem(item, g, rawItems))}
           {g.status === 'up' && groupView.open && items.length === 0 && (
             <div className="nc-empty">{q ? t('no-match').replace('{q}', q) : t('no-sessions-short')}</div>
           )}

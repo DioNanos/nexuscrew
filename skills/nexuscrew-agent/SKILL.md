@@ -1,11 +1,11 @@
 ---
 name: nexuscrew-agent
-description: Use when an AI agent connected to NexusCrew must notify or ask the human, inspect NexusCrew session/fleet status or its own deck membership, read its inbox, deliver a file (report, screenshot, export), send text/input to a tmux session, or recover from tmux send-keys messages that remain unsubmitted or arrive garbled. Prefer the NexusCrew MCP tools nc_notify, nc_ask, nc_status, nc_deck, nc_inbox, and nc_send_file when exposed; use the bundled tmux/file helpers as fallback.
+description: Use when an AI agent connected to NexusCrew must notify or ask the human, inspect runtime or deck context, list authorized Fleet cells, message an exact active cell, read its inbox, deliver a file, or recover from local tmux messages that remain unsubmitted or garbled. Prefer nc_notify, nc_ask, nc_status, nc_deck, nc_cells, nc_send_cell, nc_inbox, and nc_send_file; use bundled tmux/file helpers only as a declared compatibility fallback.
 ---
 
 # NexusCrew Agent I/O
 
-Use the [NexusCrew](https://github.com/DioNanos/nexuscrew) MCP bridge for communication with the human and read-only runtime status. Use the bundled helpers for direct tmux messaging or as a compatibility fallback.
+Use the [NexusCrew](https://github.com/DioNanos/nexuscrew) MCP bridge for communication with the human, read-only runtime discovery, and authenticated delivery to active Fleet cells. Use the bundled helpers only for same-host tmux compatibility fallbacks.
 
 ## MCP bridge (preferred)
 
@@ -17,6 +17,8 @@ When the client exposes the NexusCrew MCP server, use these tools directly:
 | Ask for a decision without blocking the agent | `nc_ask` |
 | Inspect live tmux sessions and fleet cells | `nc_status` |
 | Read the caller's deck name(s) and member cells/tmux sessions | `nc_deck` |
+| List every authorized owner-qualified Fleet cell | `nc_cells` |
+| Submit a bounded message to an exact active Fleet cell | `nc_send_cell` |
 | List files received for the current session | `nc_inbox` |
 | Deliver an absolute file path under the user's home | `nc_send_file` |
 
@@ -26,7 +28,8 @@ Apply these rules:
 - Never include access tokens, credentials, private keys, push subscriptions, or other secrets in a notification, ask, file caption, or tool result.
 - Treat `nc_ask` as non-blocking: it returns an ask ID immediately. Continue safe independent work or wait normally; the human response arrives in the originating tmux session with a `[human reply · ask#<id>]` prefix by default.
 - Use `nc_status` instead of scraping NexusCrew state files. Use `nc_deck` instead of reading `decks.json`: it returns every local or authorized shared-owner deck containing the caller, preserves visual member order, identifies each deck and member by stable owner ID, includes viewer-valid Hydra routes, and reports `cell: null` when no managed Fleet match is available.
-- Treat `nc_deck` as discovery, not authorization to contact every member. Use the verified tmux-messaging flow below for actual delivery and confirm submission visually.
+- Use `nc_cells` immediately before cross-cell delivery. Select its exact owner-qualified `id`; require `canReceive: true`; never guess a duplicate name or stale route.
+- Use `nc_send_cell {target, message}` for actual Fleet-cell delivery. `submitted` confirms bracketed paste plus Enter only, never task acceptance or completion. Inactive targets are not queued.
 - Use `nc_inbox` instead of guessing an inbox path when the tool is available.
 - Pass `nc_send_file` an existing absolute regular-file path below the user's home. Let NexusCrew choose and sanitize the outbox name.
 - Do not treat an MCP notification as a substitute for the final response required by the active client.
@@ -50,6 +53,10 @@ Don't hand-craft the path from a guessed session name — use `nc-deliver`, or d
 
 ## Sending text to a tmux session
 
+For an active managed Fleet cell, prefer `nc_cells` followed by `nc_send_cell`.
+The helper below is a same-host fallback for older NexusCrew runtimes or
+non-Fleet sessions; it must not bypass federation visibility or routing ACLs.
+
 `tmux send-keys 'msg' Enter` is **not** reliable: a TUI's paste-burst detector swallows the Enter and the message just sits in the composer, while exit code is still 0. Use the helper:
 
 ```bash
@@ -72,6 +79,8 @@ tmux capture-pane -t <session> -p | tail -8   # see the text / a running state
 | Ask the human without blocking | `nc_ask` |
 | Inspect NexusCrew runtime state | `nc_status` |
 | Discover this session's deck neighbours | `nc_deck` |
+| Discover authorized cells across nodes | `nc_cells` |
+| Submit to an exact active Fleet cell | `nc_send_cell` |
 | Give the human a file | `nc_send_file` or fallback `nc-deliver <file>...` |
 | Read a file the human sent | `nc_inbox` or fallback to the path in the prompt |
 | Send a prompt/command to a session | `nc-send <session> "text"` |
@@ -85,3 +94,5 @@ tmux capture-pane -t <session> -p | tail -8   # see the text / a running state
 - **`tmux` aliased/wrapped by the shell** (e.g. an oh-my-zsh plugin) → the nudge silently fails. Helpers resolve the real binary; in ad-hoc commands use `/usr/bin/tmux` or `command tmux`.
 - **Pasting onto a dirty composer** → text concatenates with whatever was there. Clear it first, or the previous line will merge with yours.
 - **Delivering to a guessed session name** → file lands in an orphan folder with no badge. Use `nc-deliver` (it reads the real session).
+- **Sending to an ambiguous cell name** → call `nc_cells` and use the full owner-qualified ID.
+- **Calling `submitted` a completed task** → it is only a transport receipt; require an explicit result callback.

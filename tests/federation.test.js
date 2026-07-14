@@ -25,6 +25,8 @@ test('federation route parser has an explicit capability allowlist and hop cap',
   assert.equal(fed.allowedResource('/sessions', 'POST'), true);
   assert.equal(fed.allowedResource('/fleet/status', 'GET'), true);
   assert.equal(fed.allowedResource('/fleet/define-cell', 'POST'), true);
+  assert.equal(fed.allowedResource('/fleet/restore-engines', 'POST'), true);
+  assert.deepEqual(fed.parseRoute('/vps/_/fleet/restore-engines'), { route: ['vps'], resource: '/fleet/restore-engines' });
   assert.equal(fed.allowedResource('/fleet/define-cell', 'GET'), false);
   assert.equal(fed.allowedResource('/settings', 'GET'), false);
   assert.deepEqual(fed.parseRoute('/vps/_/settings/peering/invite'), { route: ['vps'], resource: '/settings/peering/invite' });

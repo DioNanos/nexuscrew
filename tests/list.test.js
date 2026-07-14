@@ -16,3 +16,8 @@ test('parseSessions maps tab-separated tmux output', () => {
 test('parseSessions returns [] on empty', () => {
   assert.deepStrictEqual(parseSessions(''), []);
 });
+
+test('parseSessions hides transient zero-window sessions', () => {
+  const raw = 'cloud-phantom\t0\t0\t1718380800\t1718380801\t\nreal\t0\t1\t1718380800\t1718380801\tbash\n';
+  assert.deepStrictEqual(parseSessions(raw).map((row) => row.name), ['real']);
+});

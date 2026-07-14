@@ -10,6 +10,7 @@ const path = require('node:path');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
 const {
   createBuiltinFleet, composeLaunchArgv, minimalEnv, promptCharsOk, redactSecrets,
+  sanitizeEarlyDiagnostic,
 } = require('../lib/fleet/builtin.js');
 const { selectProvider } = require('../lib/fleet/provider.js');
 
@@ -222,6 +223,45 @@ test('up send-keys (command uscito): errore esplicito e nessun paste', async () 
     const { lines } = readLog(w);
     assert.ok(!lines.some((l) => l.startsWith('paste-buffer')), 'nessun paste-buffer');
   } finally { w.cleanup(); }
+});
+
+test('early exit: cattura bounded/redacted, exit code e rimuove il pane diagnostico', async () => {
+  const w = makeWorld({ cellPrompt: 'prompt-private' });
+  try {
+    const script = `#!/bin/sh
+LOG=${shellQ(w.log)}
+case "$1" in
+  new-session) echo '%9'; exit 0 ;;
+  display-message) printf '1\\t7\\t%%9\\n'; exit 0 ;;
+  capture-pane) printf 'failed in ${w.home}/Dev\\nANTHROPIC_API_KEY=sk-x\\nBearer hidden-token\\n'; exit 0 ;;
+  kill-session) echo 'kill-session' >> "$LOG"; exit 0 ;;
+  *) exit 0 ;;
+esac
+`;
+    fs.writeFileSync(w.tmuxBin, script); fs.chmodSync(w.tmuxBin, 0o755);
+    const fleet = await createBuiltinFleet({
+      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, launchReadyMs: 40,
+    });
+    await assert.rejects(() => fleet.up('Dev'), (error) => {
+      assert.equal(error.status, 500);
+      assert.match(error.message, /exit 7/);
+      assert.match(error.message, /failed in ~\/Dev/);
+      assert.doesNotMatch(error.message, /sk-x|hidden-token|prompt-private/);
+      assert.match(error.message, /‹redacted›/);
+      return true;
+    });
+    assert.match(fs.readFileSync(w.log, 'utf8'), /kill-session/);
+  } finally { w.cleanup(); }
+});
+
+test('sanitizeEarlyDiagnostic limita output e nasconde home e credential-shaped values', () => {
+  const out = sanitizeEarlyDiagnostic(
+    `${'/home/test/private'}\nTOKEN=super-secret\nBearer bearer-secret\n${'x'.repeat(2000)}`,
+    { env: {} }, {}, '/home/test',
+  );
+  assert.ok(out.length <= 1200);
+  assert.doesNotMatch(out, /\/home\/test|super-secret|bearer-secret/);
+  assert.match(out, /…/);
 });
 
 // ---------------------------------------------------------------------------
@@ -482,6 +522,56 @@ test('restoreCells: missing engines strutturati e input invalido non scrive parz
     await assert.rejects(() => fleet.restoreCells([
       { id: 'Leak', cwd: w.cwd, engine: 'claude', boot: false, token: 'secret' },
     ]), (error) => error.status === 400 && /non ammesso/.test(error.message));
+  } finally { w.cleanup(); }
+});
+
+test('restoreEngines: imports env names without values and preserves target values on overwrite', async () => {
+  const w = makeWorld();
+  try {
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const created = await fleet.restoreEngines([{
+      id: 'custom', label: 'Custom', rc: false, command: w.command, args: [],
+      envKeys: ['API_TOKEN'], promptMode: 'send-keys',
+    }]);
+    assert.deepEqual(created.created, ['custom']);
+    let disk = require('../lib/fleet/definitions.js').loadDefinitions(w.defsPath);
+    assert.deepEqual(disk.engines.find((engine) => engine.id === 'custom').env, { API_TOKEN: '' });
+    await fleet.editEngine('custom', {}, { set: { API_TOKEN: 'write-only-secret' }, remove: [] });
+    const replaced = await fleet.restoreEngines([{
+      id: 'custom', label: 'Custom 2', rc: true, command: w.command, args: ['--safe'],
+      envKeys: ['API_TOKEN', 'PROFILE'], promptMode: 'send-keys',
+    }], { overwrite: true });
+    assert.deepEqual(replaced.replaced, ['custom']);
+    disk = require('../lib/fleet/definitions.js').loadDefinitions(w.defsPath);
+    assert.deepEqual(disk.engines.find((engine) => engine.id === 'custom').env, {
+      API_TOKEN: 'write-only-secret', PROFILE: '',
+    });
+  } finally { w.cleanup(); }
+});
+
+test('restoreEngines: rejects secrets, malformed env names and conflicts atomically', async () => {
+  const w = makeWorld();
+  try {
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const before = fs.readFileSync(w.defsPath, 'utf8');
+    await assert.rejects(() => fleet.restoreEngines([{
+      id: 'claude', label: 'Collision', rc: false, command: w.command, args: [], envKeys: [], promptMode: 'send-keys',
+    }]), (error) => error.status === 409 && error.data?.code === 'engine-conflicts');
+    await assert.rejects(() => fleet.restoreEngines([{
+      id: 'bad', label: 'Bad', rc: false, command: w.command, args: [], envKeys: ['BAD-NAME'], promptMode: 'send-keys',
+    }]), (error) => error.status === 400);
+    await assert.rejects(() => fleet.restoreEngines([{
+      id: 'leak', label: 'Leak', rc: false, command: w.command, args: ['--api-key=secret'], envKeys: [], promptMode: 'send-keys',
+    }]), (error) => error.status === 400);
+    await assert.rejects(() => fleet.restoreEngines([{
+      id: 'split-leak', label: 'Split leak', rc: false, command: w.command,
+      args: ['--api-key', 'opaque-value'], envKeys: [], promptMode: 'send-keys',
+    }]), (error) => error.status === 400);
+    await assert.rejects(() => fleet.restoreEngines([{
+      id: 'prefix-leak', label: 'Prefix leak', rc: false, command: w.command,
+      args: ['sk-exampleCredentialValue123'], envKeys: [], promptMode: 'send-keys',
+    }]), (error) => error.status === 400);
+    assert.equal(fs.readFileSync(w.defsPath, 'utf8'), before);
   } finally { w.cleanup(); }
 });
 

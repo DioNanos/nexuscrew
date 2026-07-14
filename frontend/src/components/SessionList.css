@@ -195,6 +195,16 @@
 .nc-act.power.warn { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.10); }
 .nc-act.pin.on { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.08); }
 .nc-mcard { gap: 8px; }
+.nc-mcard .nc-roster-handle {
+  flex: 0 0 36px; width: 36px; min-width: 36px; height: 44px;
+  border: 1px solid transparent; border-radius: 9px;
+  background: rgba(255,255,255,.025); color: #688475;
+  touch-action: none;
+}
+.nc-mcard .nc-roster-handle.active,
+.nc-mcard .nc-roster-handle:focus-visible {
+  color: #bfffd8; border-color: rgba(0,204,102,.45); background: rgba(0,204,102,.12);
+}
 
 @media (max-width: 390px) {
   .nc-mobile-position-head { gap: 5px; }

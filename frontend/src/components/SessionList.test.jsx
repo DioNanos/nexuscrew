@@ -8,7 +8,7 @@ const fixture = vi.hoisted(() => ({ sessions: [], cells: [], nodes: [] }));
 vi.mock('../lib/api.js', () => ({
   apiFetch: vi.fn(async (path) => ({
     json: async () => path === '/api/config'
-      ? { version: '0.8.12', bind: '127.0.0.1', port: 41820 }
+      ? { version: '0.8.13', bind: '127.0.0.1', port: 41820 }
       : { sessions: fixture.sessions },
   })),
   seenKey: (session) => `nc_seen_${session}`,
@@ -106,5 +106,22 @@ describe('mobile roster parity', () => {
     expect(local.getAttribute('aria-expanded')).toBe('true');
     expect(relay.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByLabelText('Relay · filter sessions…').tagName).toBe('SELECT');
+  });
+
+  it('reorders with the accessible keyboard handle and persists one shared order', async () => {
+    const user = userEvent.setup();
+    renderRoster();
+    await screen.findByText('Off Cell');
+    const local = document.querySelector('[data-position="local"]');
+    const before = [...local.querySelectorAll(':scope > [data-roster-key], :scope > * > [data-roster-key]')]
+      .map((node) => node.dataset.rosterKey);
+    const handle = screen.getByRole('button', { name: 'reorder Off Cell' });
+    handle.focus();
+    await user.keyboard('{ArrowUp}');
+    const stored = JSON.parse(localStorage.getItem('nc_sidebar_order_v1'));
+    expect(stored.local).toContain('local-off');
+    const after = [...local.querySelectorAll('[data-roster-key]')].map((node) => node.dataset.rosterKey);
+    expect(after).not.toEqual(before);
+    expect(handle.getAttribute('aria-keyshortcuts')).toBe('ArrowUp ArrowDown');
   });
 });

@@ -1,10 +1,23 @@
-const { test } = require('node:test');
+const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const { openAttach } = require('../lib/pty/attach.js');
 const { runAction } = require('../lib/tmux/actions.js');
 
 const S = 'nc_smoke_' + process.pid;
+const KEEPER = `${S}_keeper`;
+
+// Keep the private per-worker tmux server alive for the whole file. Killing
+// the last session makes tmux exit asynchronously; an immediately following
+// `new-session` can then fail with "server exited unexpectedly" even though
+// both the product and the assertion are healthy. A sentinel session removes
+// only that server-lifecycle race and is cleaned up with the worker.
+before(() => {
+  execFileSync('tmux', ['new-session', '-d', '-s', KEEPER, 'sh']);
+});
+after(() => {
+  try { execFileSync('tmux', ['kill-session', '-t', KEEPER]); } catch (_) {}
+});
 
 test('attach streams real tmux bytes and forwards input', { timeout: 15000 }, async () => {
   // Use a minimal shell: the user's interactive zsh/theme may still be

@@ -1,15 +1,34 @@
-export const FLEET_BACKUP_FORMAT = 'nexuscrew.cells';
-export const FLEET_BACKUP_VERSION = 1;
+export const FLEET_BACKUP_FORMAT = 'nexuscrew.fleet';
+export const FLEET_BACKUP_VERSION = 2;
+export const LEGACY_BACKUP_FORMAT = 'nexuscrew.cells';
 
 const CELL_ID_RE = /^[A-Za-z0-9._-]{1,32}$/;
 const ENGINE_ID_RE = /^[a-z0-9._-]{1,32}$/;
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const POLICY = new Set(['standard', 'unsafe']);
 const MAX_CWD = 4096;
 const MAX_MODEL = 256;
 const MAX_PROMPT = 8192;
 const MAX_CELLS = 32;
-const TOP_KEYS = new Set(['format', 'version', 'exportedAt', 'cells']);
+const MAX_ENGINES = 24;
+const TOP_KEYS = new Set(['format', 'version', 'exportedAt', 'cells', 'engines']);
 const CELL_KEYS = new Set(['id', 'cwd', 'engine', 'boot', 'model', 'models', 'permissionPolicies', 'systemPrompt', 'prompt']);
+const ENGINE_KEYS = new Set(['id', 'label', 'rc', 'managed', 'command', 'args', 'envKeys', 'model', 'promptMode', 'promptFlag']);
+const MANAGED_KEYS = new Set(['client', 'provider', 'credentialProfile', 'model', 'permissionPolicy', 'displayName', 'protocol', 'baseUrl', 'envKey', 'providerId']);
+
+function printable(value, max) {
+  return typeof value === 'string' && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
+}
+
+function looksSecret(value) {
+  const text = String(value || '');
+  return /(?:bearer\s+|authorization\s*[:=]|(?:api[_-]?key|secret|token)\s*[:=])/i.test(text)
+    // A sensitive flag is unsafe even when its value is the *next* argv item.
+    // Rejecting the flag closes split forms such as `--api-key`, `sk-...`.
+    || /^-{1,2}(?:api[-_]?key|access[-_]?key|auth(?:orization)?[-_]?token|token|secret|password|credential)(?:$|=)/i.test(text)
+    || /\b(?:sk|fw|fpk|hf|zai)[-_][A-Za-z0-9._-]{8,}\b/i.test(text)
+    || /https?:\/\/[^\s/@:]+:[^\s/@]+@/i.test(text);
+}
 
 function cleanMap(value, validate) {
   if (value === undefined) return {};
@@ -38,71 +57,135 @@ export function cleanBackupCell(raw) {
   const models = cleanMap(raw.models, (v) => typeof v === 'string' && !!v && v.length <= MAX_MODEL);
   const permissionPolicies = cleanMap(raw.permissionPolicies, (v) => POLICY.has(v));
   if (models === null || permissionPolicies === null) return null;
-  const out = {
-    id: raw.id, cwd: raw.cwd, engine: raw.engine, boot: raw.boot === true,
-    systemPrompt,
-  };
+  const out = { id: raw.id, cwd: raw.cwd, engine: raw.engine, boot: raw.boot === true, systemPrompt };
   if (raw.model) out.model = raw.model;
   if (Object.keys(models).length) out.models = models;
   if (Object.keys(permissionPolicies).length) out.permissionPolicies = permissionPolicies;
   return out;
 }
 
-export function createFleetBackup(cells, selectedIds, now = new Date()) {
-  const selected = selectedIds instanceof Set ? selectedIds : new Set(selectedIds || []);
-  const out = [];
+function cleanManaged(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.keys(raw).some((key) => !MANAGED_KEYS.has(key))) return null;
+  const out = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value !== 'string' || !printable(value, key === 'baseUrl' ? 512 : 128) || looksSecret(value)) return null;
+    out[key] = value;
+  }
+  if (!out.client || !out.provider) return null;
+  if (out.envKey && !ENV_KEY_RE.test(out.envKey)) return null;
+  return out;
+}
+
+export function cleanBackupEngine(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.keys(raw).some((key) => !ENGINE_KEYS.has(key))) return null;
+  if (!ENGINE_ID_RE.test(String(raw.id || '')) || !printable(raw.label || raw.id, 64)) return null;
+  if (raw.rc !== undefined && typeof raw.rc !== 'boolean') return null;
+  const out = { id: raw.id, label: raw.label || raw.id, rc: raw.rc === true };
+  if (raw.managed !== undefined) {
+    const managed = cleanManaged(raw.managed);
+    if (!managed || ['command', 'args', 'envKeys', 'model', 'promptMode', 'promptFlag'].some((key) => raw[key] !== undefined)) return null;
+    out.managed = managed;
+    return out;
+  }
+  if (!printable(raw.command, 512) || !raw.command.startsWith('/')) return null;
+  if (!Array.isArray(raw.args) || raw.args.length > 32
+    || raw.args.some((arg) => !printable(arg, 1024) || looksSecret(arg))) return null;
+  if (raw.promptMode !== 'flag' && raw.promptMode !== 'send-keys') return null;
+  if (raw.promptMode === 'flag' && (!printable(raw.promptFlag, 32) || /\s/.test(raw.promptFlag))) return null;
+  if (raw.model !== undefined) {
+    if (!raw.model || typeof raw.model !== 'object' || Array.isArray(raw.model)
+      || Object.keys(raw.model).some((key) => key !== 'flag' && key !== 'value')
+      || !printable(raw.model.flag, 32) || /\s/.test(raw.model.flag)
+      || !printable(raw.model.value || '', 128)) return null;
+    out.model = { flag: raw.model.flag, value: raw.model.value || '' };
+  }
+  const envKeys = raw.envKeys === undefined ? [] : raw.envKeys;
+  if (!Array.isArray(envKeys) || envKeys.length > 32 || envKeys.some((key) => !ENV_KEY_RE.test(key))) return null;
+  Object.assign(out, { command: raw.command, args: [...raw.args], envKeys: [...new Set(envKeys)].sort(), promptMode: raw.promptMode });
+  if (raw.promptMode === 'flag') out.promptFlag = raw.promptFlag;
+  return out;
+}
+
+export function portableEngineDefinition(engine) {
+  if (!engine || typeof engine !== 'object' || Array.isArray(engine)) return null;
+  // `/fleet/definitions` adds runtime-only fields (`managedInfo`, and an empty
+  // `envKeys` view for managed engines).  Build the portable allowlist
+  // explicitly instead of silently dropping every managed engine export.
+  const candidate = engine.managed ? {
+    id: engine.id, label: engine.label, rc: engine.rc, managed: engine.managed,
+  } : {
+    id: engine.id, label: engine.label, rc: engine.rc, command: engine.command,
+    args: engine.args, envKeys: engine.envKeys, model: engine.model,
+    promptMode: engine.promptMode, promptFlag: engine.promptFlag,
+  };
+  const clean = cleanBackupEngine(candidate);
+  if (!clean) return null;
+  return clean;
+}
+
+export function createFleetBackup(cells, selectedCellIds, engines = [], selectedEngineIds = [], now = new Date()) {
+  // Backward-compatible call used by old tests/callers: third argument was Date.
+  if (engines instanceof Date) { now = engines; engines = []; selectedEngineIds = []; }
+  const selectedCells = selectedCellIds instanceof Set ? selectedCellIds : new Set(selectedCellIds || []);
+  const selectedEngines = selectedEngineIds instanceof Set ? selectedEngineIds : new Set(selectedEngineIds || []);
+  const cleanCells = [];
   for (const cell of Array.isArray(cells) ? cells : []) {
-    if (!selected.has(cell.id)) continue;
+    if (!selectedCells.has(cell.id)) continue;
     const clean = cleanBackupCell({
       id: cell.id, cwd: cell.cwd, engine: cell.engine, boot: cell.boot === true,
-      ...(cell.model ? { model: cell.model } : {}),
-      ...(cell.models ? { models: cell.models } : {}),
-      ...(cell.permissionPolicies ? { permissionPolicies: cell.permissionPolicies } : {}),
-      systemPrompt: cell.prompt || '',
+      ...(cell.model ? { model: cell.model } : {}), ...(cell.models ? { models: cell.models } : {}),
+      ...(cell.permissionPolicies ? { permissionPolicies: cell.permissionPolicies } : {}), systemPrompt: cell.prompt || '',
     });
-    if (clean) out.push(clean);
+    if (clean) cleanCells.push(clean);
   }
-  return {
-    format: FLEET_BACKUP_FORMAT,
-    version: FLEET_BACKUP_VERSION,
-    exportedAt: now.toISOString(),
-    cells: out,
-  };
+  const cleanEngines = [];
+  for (const engine of Array.isArray(engines) ? engines : []) {
+    if (!selectedEngines.has(engine.id)) continue;
+    const clean = portableEngineDefinition(engine);
+    if (clean) cleanEngines.push(clean);
+  }
+  return { format: FLEET_BACKUP_FORMAT, version: FLEET_BACKUP_VERSION, exportedAt: now.toISOString(), cells: cleanCells, engines: cleanEngines };
 }
 
 export function parseFleetBackup(text) {
   let value;
   try { value = JSON.parse(String(text || '')); }
-  catch (_) { return { ok: false, error: 'invalid-json', cells: [] }; }
+  catch (_) { return { ok: false, error: 'invalid-json', cells: [], engines: [] }; }
+  const legacy = value?.format === LEGACY_BACKUP_FORMAT && value?.version === 1;
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some((key) => !TOP_KEYS.has(key))
-    || value.format !== FLEET_BACKUP_FORMAT || value.version !== FLEET_BACKUP_VERSION
-    || !Array.isArray(value.cells) || value.cells.length > MAX_CELLS) {
-    return { ok: false, error: 'invalid-format', cells: [] };
+    || (!legacy && (value.format !== FLEET_BACKUP_FORMAT || value.version !== FLEET_BACKUP_VERSION))
+    || !Array.isArray(value.cells) || value.cells.length > MAX_CELLS
+    || (!legacy && (!Array.isArray(value.engines) || value.engines.length > MAX_ENGINES))) {
+    return { ok: false, error: 'invalid-format', cells: [], engines: [] };
   }
-  const seen = new Set();
-  const cells = [];
+  const cells = []; const cellSeen = new Set();
   for (const raw of value.cells) {
     const cell = cleanBackupCell(raw);
-    if (!cell) return { ok: false, error: 'invalid-cell', cells: [] };
-    if (seen.has(cell.id)) return { ok: false, error: 'duplicate-cell', cells: [] };
-    seen.add(cell.id); cells.push(cell);
+    if (!cell) return { ok: false, error: 'invalid-cell', cells: [], engines: [] };
+    if (cellSeen.has(cell.id)) return { ok: false, error: 'duplicate-cell', cells: [], engines: [] };
+    cellSeen.add(cell.id); cells.push(cell);
   }
-  return { ok: true, cells, exportedAt: typeof value.exportedAt === 'string' ? value.exportedAt : '' };
+  const engines = []; const engineSeen = new Set();
+  for (const raw of legacy ? [] : value.engines) {
+    const engine = cleanBackupEngine(raw);
+    if (!engine) return { ok: false, error: 'invalid-engine', cells: [], engines: [] };
+    if (engineSeen.has(engine.id)) return { ok: false, error: 'duplicate-engine', cells: [], engines: [] };
+    engineSeen.add(engine.id); engines.push(engine);
+  }
+  return { ok: true, cells, engines, legacy, exportedAt: typeof value.exportedAt === 'string' ? value.exportedAt : '' };
 }
 
 export function restoreCellDefinition(cell, selectedEngine, availableEngineIds) {
   const engines = new Set(availableEngineIds || []);
   if (!engines.has(selectedEngine)) return null;
   const filterMap = (source) => Object.fromEntries(Object.entries(source || {}).filter(([id]) => engines.has(id)));
-  const out = {
-    id: cell.id, cwd: cell.cwd, engine: selectedEngine, boot: cell.boot === true,
-    prompt: cell.systemPrompt || '',
-  };
+  const out = { id: cell.id, cwd: cell.cwd, engine: selectedEngine, boot: cell.boot === true, prompt: cell.systemPrompt || '' };
   if (selectedEngine === cell.engine && cell.model) out.model = cell.model;
   else if (cell.models && cell.models[selectedEngine]) out.model = cell.models[selectedEngine];
-  const models = filterMap(cell.models);
-  const permissionPolicies = filterMap(cell.permissionPolicies);
+  const models = filterMap(cell.models); const permissionPolicies = filterMap(cell.permissionPolicies);
   if (Object.keys(models).length) out.models = models;
   if (Object.keys(permissionPolicies).length) out.permissionPolicies = permissionPolicies;
   return out;

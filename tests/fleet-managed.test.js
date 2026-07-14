@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const {
   CATALOG, OLLAMA_CONTEXT, normalizeManagedSpec, defaultDefinitions, describeManaged,
-  resolveManagedEngine, parseEnvFile, discoverOllamaModels, discoverPiModels,
+  resolveManagedEngine, parseEnvFile, parseProviderShellFile, discoverOllamaModels, discoverPiModels, needsExplicitNode,
   publicCatalog,
 } = require('../lib/fleet/managed.js');
 const { parseDefinitions } = require('../lib/fleet/definitions.js');
@@ -205,6 +205,35 @@ test('Z.AI generico: nome variabile configurabile, valore solo da environment', 
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
+test('provider shell: launchd risolve export esistenti senza eseguire il file o esporre valori', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'claude');
+    const shellFile = path.join(home, 'providers.zsh');
+    fs.writeFileSync(shellFile, "export TEAM_ZAI_KEY='secret-from-shell'\nIGNORED=$(touch /tmp/nc-must-not-run)\n", { mode: 0o644 });
+    assert.deepEqual(parseProviderShellFile(shellFile), { TEAM_ZAI_KEY: 'secret-from-shell' });
+    const managed = { client: 'claude', provider: 'zai', envKey: 'TEAM_ZAI_KEY', model: 'glm-5.2[1m]' };
+    const info = describeManaged(managed, { home, providerShellPath: shellFile, env: {} });
+    assert.equal(info.configured, true);
+    assert.equal(JSON.stringify(info).includes('secret-from-shell'), false);
+    const resolved = resolveManagedEngine({ id: 'claude.zai', label: 'Z.AI', managed }, { id: 'Dev' }, { home, providerShellPath: shellFile, env: {} });
+    assert.equal(resolved.ok, true);
+    assert.equal(resolved.engine.env.ANTHROPIC_AUTH_TOKEN, 'secret-from-shell');
+    assert.equal(fs.existsSync('/tmp/nc-must-not-run'), false);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('provider shell: symlink, owner diverso e file scrivibile da altri sono rifiutati', () => {
+  const home = tmp();
+  try {
+    const real = path.join(home, 'real.zsh'); const link = path.join(home, 'providers.zsh');
+    fs.writeFileSync(real, 'export ZAI_API_KEY=secret\n', { mode: 0o666 });
+    fs.symlinkSync(real, link);
+    assert.deepEqual(parseProviderShellFile(link), {});
+    assert.deepEqual(parseProviderShellFile(real), {});
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
 test('Codex-VL Native: standard non forza bypass; unsafe e opt-in', () => {
   const home = tmp();
   try {
@@ -218,6 +247,41 @@ test('Codex-VL Native: standard non forza bypass; unsafe e opt-in', () => {
     assert.equal(r.engine.promptMode, 'managed-argv');
     const unsafe = resolveManagedEngine({ id: 'codex-vl.native', label: 'Codex', managed: { ...managed, permissionPolicy: 'unsafe' } }, { id: 'Dev', prompt: 'bootstrap' }, { home });
     assert.deepEqual(unsafe.engine.args, ['--dangerously-bypass-approvals-and-sandbox', 'bootstrap']);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Termux: npm CLI con shebang /usr/bin/env node usa process.execPath esplicito', () => {
+  const home = tmp();
+  try {
+    const bin = path.join(home, '.local', 'bin', 'codex-vl');
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.writeFileSync(bin, '#!/usr/bin/env node\nconsole.log("ok")\n', { mode: 0o755 });
+    fs.chmodSync(bin, 0o755);
+    const node = path.join(home, 'node');
+    fs.writeFileSync(node, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.chmodSync(node, 0o755);
+    assert.equal(needsExplicitNode(bin, 'android'), true);
+    assert.equal(needsExplicitNode(bin, 'linux'), false);
+    const r = resolveManagedEngine({
+      id: 'codex-vl.native', label: 'Codex-VL',
+      managed: { client: 'codex-vl', provider: 'native', model: '', permissionPolicy: 'standard' },
+    }, { id: 'Dev', prompt: 'bootstrap' }, { home, platform: 'android', nodeExecPath: node });
+    assert.equal(r.ok, true);
+    assert.equal(r.engine.command, node);
+    assert.deepEqual(r.engine.args, [bin, 'bootstrap']);
+    assert.equal(r.engine.clientBinary, bin);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Termux: native or shell CLI remains direct exec', () => {
+  const home = tmp();
+  try {
+    const bin = fakeClient(home, 'pi');
+    assert.equal(needsExplicitNode(bin, 'android'), false);
+    const r = resolveManagedEngine({ id: 'pi.native', label: 'Pi', managed: {
+      client: 'pi', provider: 'native', model: '', permissionPolicy: 'standard',
+    } }, { id: 'Dev' }, { home, platform: 'android', nodeExecPath: '/should/not/be/used' });
+    assert.equal(r.engine.command, bin);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 

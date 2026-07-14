@@ -34,7 +34,7 @@ test('generateLinux: struttura systemd --user', () => {
   assert.match(s, /\[Unit\]/);
   assert.match(s, /\[Service\]/);
   assert.match(s, /\[Install\]/);
-  assert.match(s, /WorkingDirectory=\/home\/user\/nexuscrew/);
+  assert.match(s, /WorkingDirectory=\/home\/user\/\.nexuscrew/);
   assert.doesNotMatch(s, /NEXUSCREW_PORT/, 'config.json resta la fonte autoritativa della porta');
   assert.match(s, /ExecStart=\/usr\/bin\/node .*\/bin\/nexuscrew\.js serve/);
   assert.match(s, /KillMode=process/, 'restart NexusCrew must never kill the shared tmux server');
@@ -85,12 +85,12 @@ test('ensureLinuxTmuxSurvival: rifiuta un drop-in symlink', () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('generateLinux: escape %% su repo con % (hostile)', () => {
-  const s = generateLinux(ctx({ repoRoot: '/home/user/100%repo' }));
+test('generateLinux: escape %% su runtime dir con % (hostile)', () => {
+  const s = generateLinux(ctx({ runtimeDir: '/home/user/100%runtime' }));
   // WorkingDirectory escape % -> %%
-  assert.match(s, /WorkingDirectory=\/home\/user\/100%%repo/);
+  assert.match(s, /WorkingDirectory=\/home\/user\/100%%runtime/);
   // nessun % singolo residuo nel WorkingDirectory
-  assert.ok(!/WorkingDirectory=\/home\/user\/100%repo/.test(s));
+  assert.ok(!/WorkingDirectory=\/home\/user\/100%runtime/.test(s));
 });
 
 test('generateLinux: ExecStart escape spazi (hostile path con spazio)', () => {
@@ -134,6 +134,9 @@ test('generateMac: struttura plist valida (key/string/array/dict)', () => {
   assert.match(s, /<key>StandardOutPath<\/key>/);
   assert.match(s, /<key>StandardErrorPath<\/key>/);
   assert.match(s, /<key>PATH<\/key>\s*<string>\/usr\/bin:\/opt\/homebrew\/bin:\/usr\/local\/bin:\/bin<\/string>/);
+  assert.match(s, /<key>LANG<\/key>\s*<string>en_US\.UTF-8<\/string>/);
+  assert.match(s, /<key>LC_CTYPE<\/key>\s*<string>UTF-8<\/string>/);
+  assert.match(s, /<key>WorkingDirectory<\/key>\s*<string>\/home\/user\/\.nexuscrew<\/string>/);
 });
 
 test('generateMac: PATH usa dirname Node + Homebrew e bin di sistema', () => {
@@ -174,6 +177,8 @@ test('generateTermux: shebang + contesto completo', () => {
   assert.doesNotMatch(s, /NEXUSCREW_PORT/, 'config.json resta la fonte autoritativa della porta');
   assert.match(s, /termux-wake-lock/);
   assert.match(s, /mkdir -p "\$HOME\/\.nexuscrew"/);
+  assert.match(s, /cd -- "\$HOME\/\.nexuscrew"/);
+  assert.match(s, /export LANG=\$\{LANG:-en_US\.UTF-8\}/);
 });
 
 test('generateTermux: serve --pidfile + log redirect (R1.1 + R3)', () => {

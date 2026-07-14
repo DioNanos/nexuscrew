@@ -11,14 +11,13 @@ export default function DeckBar({
   saveState = 'idle', error = '', sidebarVisible, onToggleSidebar,
 }) {
   useLang();
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [localErr, setLocalErr] = useState('');
   const [blockedUrl, setBlockedUrl] = useState('');
   const normalizedName = normalizeDeckName(name);
   const valid = isValidDeckName(normalizedName);
-  const current = decks.find((deck) => deck.id === currentDeck) || null;
   const groups = [];
   for (const deck of decks) {
     const ownerKey = deck.local ? 'local' : deck.ownerId;
@@ -33,7 +32,7 @@ export default function DeckBar({
   const submit = async () => {
     if (!valid) return;
     setBusy(true); setLocalErr('');
-    try { if (onCreate) await onCreate(normalizedName); setName(''); setAdding(false); }
+    try { if (onCreate) await onCreate(normalizedName, adding); setName(''); setAdding(null); }
     catch (e) { setLocalErr(String(e.message || e)); }
     setBusy(false);
   };
@@ -100,27 +99,27 @@ export default function DeckBar({
                 )}
               </span>
             ))}
+            {adding === group.key ? (
+              <span className="nc-deck-add">
+                <input
+                  autoFocus
+                  className={valid || !name ? '' : 'invalid'}
+                  placeholder={t('deck-name')}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { setName(''); setAdding(null); } }}
+                />
+                {name && valid && normalizedName !== name && <span className="nc-deck-slug">→ {normalizedName}</span>}
+                <button className="nc-deck-ok" disabled={!valid || busy} onClick={submit}>{t('create')}</button>
+                <button className="nc-deck-cancel" onClick={() => { setName(''); setAdding(null); }}>{t('cancel')}</button>
+              </span>
+            ) : (
+              <button className="nc-deck-newbtn" disabled={busy || group.decks.every((deck) => deck.available === false)}
+                title={`${t('new-deck')} · ${group.label}`} onClick={() => { setName(''); setAdding(group.key); }}>+ {t('new')}</button>
+            )}
           </span>
         ))}
       </div>
-
-      {adding ? (
-        <span className="nc-deck-add">
-          <input
-            autoFocus
-            className={valid || !name ? '' : 'invalid'}
-            placeholder={t('deck-name')}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { setName(''); setAdding(false); } }}
-          />
-          {name && valid && normalizedName !== name && <span className="nc-deck-slug">→ {normalizedName}</span>}
-          <button className="nc-deck-ok" disabled={!valid || busy} onClick={submit}>{t('create')}</button>
-          <button className="nc-deck-cancel" onClick={() => { setName(''); setAdding(false); }}>{t('cancel')}</button>
-        </span>
-      ) : (
-        <button className="nc-deck-newbtn" disabled={current?.available === false} title={t('new-deck')} onClick={() => setAdding(true)}>+ {t('new-deck')}{current ? ` @${current.ownerLabel}` : ''}</button>
-      )}
       <span className={`nc-deck-state ${saveState}`} title={t('deck-autosave')}>
         {saveState === 'saving' ? t('saving') : saveState === 'saved' ? t('saved') : t('deck-autosave')}
       </span>

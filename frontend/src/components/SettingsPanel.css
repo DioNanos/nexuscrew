@@ -105,6 +105,8 @@
 }
 
 .nc-invite-endpoint { border: 1px solid #243; border-radius: 8px; padding: 9px 10px; overflow-wrap: anywhere; }
+.nc-local-share { border: 1px solid #243; border-radius: 10px; padding: 10px; background: #0a0e0a; }
+.nc-local-share .nc-node-share { padding: 2px 0; }
 .nc-invite-advanced { display: flex; flex-direction: column; gap: 8px; padding: 9px; border-left: 2px solid #243; }
 .nc-invite-actions { flex-wrap: wrap; }
 .nc-update-settings, .nc-backup-dialog { border: 1px solid #243; border-radius: 10px; padding: 10px; }

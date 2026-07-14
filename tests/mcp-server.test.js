@@ -37,7 +37,7 @@ function makeFetch(responder) {
   return { calls, impl };
 }
 
-function makeSrv({ env = {}, responder, execFileImpl, tokenPath } = {}) {
+function makeSrv({ env = {}, responder, execFileImpl, tokenPath, idFactory } = {}) {
   const dir = tmpdir();
   const tp = tokenPath || writeToken(dir);
   const out = makeOut();
@@ -48,6 +48,7 @@ function makeSrv({ env = {}, responder, execFileImpl, tokenPath } = {}) {
     config: { port: 4242, tokenPath: tp, tmuxBin: 'tmux' },
     fetchImpl: f.impl,
     execFileImpl: execFileImpl || (() => { throw new Error('tmux non deve essere chiamato'); }),
+    ...(idFactory ? { idFactory } : {}),
     errlog: () => {},
   });
   return { srv, out, calls: f.calls, dir };
@@ -68,18 +69,84 @@ test('initialize: echo protocolVersion, capabilities.tools, serverInfo', async (
   assert.equal(out.lines.length, 1);
 });
 
-test('tools/list: 6 tool nc_* con readOnlyHint sui read-only', async () => {
+test('tools/list: 8 tool nc_* con readOnlyHint sui read-only', async () => {
   const { srv, out } = makeSrv();
   await srv.handleLine(rpc(2, 'tools/list'));
   const tools = out.lines[0].result.tools;
   assert.deepEqual(tools.map((t) => t.name).sort(),
-    ['nc_ask', 'nc_deck', 'nc_inbox', 'nc_notify', 'nc_send_file', 'nc_status']);
+    ['nc_ask', 'nc_cells', 'nc_deck', 'nc_inbox', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_status']);
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   assert.equal(byName.nc_status.annotations.readOnlyHint, true);
   assert.equal(byName.nc_deck.annotations.readOnlyHint, true);
+  assert.equal(byName.nc_cells.annotations.readOnlyHint, true);
   assert.equal(byName.nc_inbox.annotations.readOnlyHint, true);
   assert.equal(byName.nc_notify.annotations, undefined);
+  assert.equal(byName.nc_send_cell.annotations, undefined);
   for (const t of tools) assert.equal(t.inputSchema.type, 'object');
+});
+
+test('nc_cells: aggrega celle locali e remote con id owner-qualified', async () => {
+  const localId = 'a'.repeat(32); const remoteId = 'b'.repeat(32);
+  const { srv, out } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') return { status: 200, json: { nodes: [{ instanceId: remoteId, route: ['pixel'], label: 'Pixel' }] } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'codex.native', active: true, canReceive: true, lastSeen: 1 },
+      ] } };
+      if (p === '/api/route/pixel/_/cells') return { status: 200, json: { instanceId: remoteId, cells: [
+        { instanceId: remoteId, cell: 'Worker', tmuxSession: 'cloud-Worker', engine: 'claude.native', active: false, canReceive: false },
+      ] } };
+      return { status: 404, json: { error: p } };
+    },
+  });
+  await srv.handleLine(rpc(20, 'tools/call', { name: 'nc_cells', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.nodeId, localId);
+  assert.deepEqual(j.cells.map((cell) => [cell.id, cell.route, cell.self, cell.canReceive]), [
+    [`${localId}:Dev`, 'local', true, true],
+    [`${remoteId}:Worker`, 'pixel', false, false],
+  ]);
+  assert.deepEqual(j.unavailable, []);
+});
+
+test('nc_send_cell: risolve sender e target dalla directory e restituisce receipt onesto', async () => {
+  const localId = 'a'.repeat(32); const remoteId = 'b'.repeat(32);
+  const messageId = '12345678-1234-1234-1234-123456789abc';
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' }, idFactory: () => messageId,
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') return { status: 200, json: { nodes: [{ instanceId: remoteId, route: ['pixel'], label: 'Pixel' }] } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev', active: true, canReceive: true },
+      ] } };
+      if (p === '/api/route/pixel/_/cells') return { status: 200, json: { instanceId: remoteId, cells: [
+        { instanceId: remoteId, cell: 'Worker', tmuxSession: 'cloud-Worker', active: true, canReceive: true },
+      ] } };
+      if (p === '/api/route/pixel/_/cells/send') return { status: 200, json: {
+        id: messageId, status: 'submitted', at: 42,
+        to: { instanceId: remoteId, cell: 'Worker', tmuxSession: 'cloud-Worker' },
+        note: 'transport only',
+      } };
+      return { status: 404, json: { error: p } };
+    },
+  });
+  await srv.handleLine(rpc(21, 'tools/call', {
+    name: 'nc_send_cell', arguments: { target: `${remoteId}:Worker`, message: 'fai il debug' },
+  }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.deepEqual(j, {
+    id: messageId, status: 'submitted', at: 42,
+    to: { instanceId: remoteId, cell: 'Worker', tmuxSession: 'cloud-Worker' }, note: 'transport only',
+  });
+  const post = calls.find((call) => call.method === 'POST');
+  assert.equal(new URL(post.url).pathname, '/api/route/pixel/_/cells/send');
+  assert.deepEqual(post.body.from, { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev' });
+  assert.deepEqual(post.body.to, { instanceId: remoteId, cell: 'Worker', tmuxSession: 'cloud-Worker' });
 });
 
 test('nc_notify: POST /api/notify con Bearer + sessione da NEXUSCREW_MCP_SESSION', async () => {
@@ -430,7 +497,7 @@ test('subprocess: handshake + tools/call nc_notify contro server HTTP finto', as
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
 
   const list = await call(2, 'tools/list');
-  assert.equal(list.result.tools.length, 6);
+  assert.equal(list.result.tools.length, 8);
 
   const notif = await call(3, 'tools/call', { name: 'nc_notify', arguments: { title: 'e2e ok' } });
   assert.deepEqual(JSON.parse(notif.result.content[0].text), { delivered: { ui: 1, push: 0 } });
