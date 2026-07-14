@@ -5,9 +5,11 @@ import { useLang } from '../hooks/useLang.js';
 import { loadPins, togglePinIn, pinRank, cmpRank } from '../lib/pins.js';
 import { positionKey } from '../lib/nodes-model.js';
 import {
-  loadSidebarViews, saveSidebarViews, sidebarItems, sidebarView,
+  loadSidebarOrders, loadSidebarViews, moveSidebarItem, saveSidebarOrders,
+  saveSidebarViews, sidebarItems, sidebarOrder, sidebarView,
 } from '../lib/sidebar-model.js';
 import Icon from './Icon.jsx';
+import RosterHandle, { rosterDropHandlers } from './RosterHandle.jsx';
 import './Sidebar.css';
 
 // Tempo relativo compatto da epoch sec: 'ora' | 'Nm' | 'Nh' | 'Ng'.
@@ -60,6 +62,7 @@ export default function Sidebar({
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   const [pins, setPins] = useState(loadPins);
   const [views, setViews] = useState(loadSidebarViews);
+  const [orders, setOrders] = useState(loadSidebarOrders);
   const togglePin = (name) => setPins((p) => togglePinIn(p, name));
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
   const byName = new Map((sessions || []).map((s) => [s.name, s]));
@@ -81,7 +84,7 @@ export default function Sidebar({
     return saveSidebarViews(next);
   });
 
-  const localItems = sidebarItems([
+  const localRawItems = [
     ...sortedCells.map((c) => {
       const session = byName.get(c.tmuxSession) || {};
       const key = positionKey([], c.tmuxSession);
@@ -93,7 +96,39 @@ export default function Sidebar({
       return { type: 'session', value: s, key, label: s.name, live: true,
         fresh: hasFreshOutput(s, key), activity: s.activity || 0 };
     }),
-  ], pins, viewFor('local').filter);
+  ];
+  const localItems = sidebarItems(localRawItems, pins, viewFor('local').filter, sidebarOrder(orders, 'local'));
+  const remoteRosters = (nodeGroups || []).map((g) => {
+    const nodeRoute = (g.route || [g.name]).join('/');
+    const groupView = viewFor(nodeRoute);
+    const remoteByName = new Map((g.sessions || []).map((s) => [s.name, s]));
+    const rawItems = [
+      ...(g.cells || []).map((c) => {
+        const session = remoteByName.get(c.tmuxSession) || {};
+        const key = positionKey(g.route, c.tmuxSession || c.cell);
+        return { type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
+          fresh: hasFreshOutput(session, key), activity: session.activity || c.activity || 0 };
+      }),
+      ...(g.unmanaged || []).map((s) => {
+        const key = positionKey(g.route, s.name);
+        return { type: 'session', value: s, key, label: s.name, live: true,
+          fresh: hasFreshOutput(s, key), activity: s.activity || 0 };
+      }),
+    ];
+    const items = sidebarItems(rawItems, pins, groupView.filter, sidebarOrder(orders, nodeRoute));
+    return { g, nodeRoute, groupView, rawItems, items };
+  });
+  function moveRoster(position, source, target, rawItems) {
+    setOrders((before) => {
+      const available = sidebarItems(rawItems, pins, 'all', sidebarOrder(before, position)).map((item) => item.key);
+      return saveSidebarOrders(moveSidebarItem(before, position, source, target, available));
+    });
+  }
+  function stepRoster(position, source, delta, rawItems) {
+    const available = sidebarItems(rawItems, pins, 'all', sidebarOrder(orders, position)).map((item) => item.key);
+    const at = available.indexOf(source); const target = available[at + delta];
+    if (at >= 0 && target) moveRoster(position, source, target, rawItems);
+  }
   // Tooltip mini via JS (position:fixed): il ::after CSS veniva CLIPPATO
   // dall'overflow della sidebar da 48px.
   const [tip, setTip] = useState(null); // {text, y}
@@ -142,12 +177,13 @@ export default function Sidebar({
           <Icon name="gear" size={16} />
         </button>
         <div className="nc-side-scroll mini"><div className="nc-side-group mini">
-          {sortedCells.map((c) => {
+          {viewFor('local').open && localItems.map((item) => item.type === 'cell' ? (() => {
+            const c = item.value;
             const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
             const live = !!c.tmux;
             return (
               <button
-                key={c.cell}
+                key={item.key}
                 type="button"
                 className={`nc-mini-dot${active.has(c.tmuxSession) ? ' active' : ''}`}
                 onMouseEnter={(e) => showTip(e, c.cell)}
@@ -158,10 +194,9 @@ export default function Sidebar({
                 onDoubleClick={live ? () => onPick && onPick(c.tmuxSession) : undefined}
               ><span className={`nc-dot ${dot}`} /></button>
             );
-          })}
-          {others.map((s) => (
+          })() : (() => { const s = item.value; return (
             <button
-              key={s.name}
+              key={item.key}
               type="button"
               className={`nc-mini-init${active.has(s.name) ? ' active' : ''}`}
               onMouseEnter={(e) => showTip(e, s.name)}
@@ -171,23 +206,38 @@ export default function Sidebar({
               onClick={() => onAddTile && onAddTile(s.name)}
               onDoubleClick={() => onPick && onPick(s.name)}
             >{initial(s.name)}</button>
-          ))}
+          ); })())}
           {/* Sessioni dei nodi remoti (B2): iniziali col tooltip "nodo:sessione";
               nodo degradato = dot warn statico (mai spinner, design §7). */}
-          {(nodeGroups || []).flatMap((g) => (g.status === 'up'
-            ? g.sessions.map((s) => (
+          {remoteRosters.flatMap(({ g, nodeRoute, groupView, items }) => (g.status === 'up'
+            ? (groupView.open ? items.map((item) => item.type === 'cell' ? (() => {
+              const c = item.value; const live = !!c.tmux;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`nc-mini-dot${active.has(item.key) ? ' active' : ''}`}
+                  onMouseEnter={(e) => showTip(e, `${g.label || nodeRoute}: ${c.cell}`)}
+                  onMouseLeave={hideTip}
+                  draggable={live}
+                  onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', item.key) : undefined}
+                  onClick={live ? () => onAddTile && onAddTile(item.key) : () => onPower && onPower({ ...c, route: g.route, availableEngines: g.engines || [] })}
+                  onDoubleClick={live ? () => onPick && onPick({ session: c.tmuxSession, node: nodeRoute }) : undefined}
+                ><span className={`nc-dot ${c.degraded ? 'warn' : live ? 'on' : ''}`} /></button>
+              );
+            })() : (() => { const s = item.value; return (
               <button
-                key={s.key}
+                key={item.key}
                 type="button"
-                className={`nc-mini-init${active.has(s.key) ? ' active' : ''}`}
-                onMouseEnter={(e) => showTip(e, s.key)}
+                className={`nc-mini-init${active.has(item.key) ? ' active' : ''}`}
+                onMouseEnter={(e) => showTip(e, `${g.label || nodeRoute}: ${s.name}`)}
                 onMouseLeave={hideTip}
                 draggable
-                onDragStart={(e) => e.dataTransfer.setData('text/nc-session', s.key)}
-                onClick={() => onAddTile && onAddTile(s.key)}
-                onDoubleClick={() => onPick && onPick({ session: s.name, node: s.node })}
+                onDragStart={(e) => e.dataTransfer.setData('text/nc-session', item.key)}
+                onClick={() => onAddTile && onAddTile(item.key)}
+                onDoubleClick={() => onPick && onPick({ session: s.name, node: nodeRoute })}
               >{initial(s.name)}</button>
-            ))
+            ); })()) : [])
             : [(
               <button
                 key={`nodo-${(g.route || [g.name]).join('/')}`}
@@ -235,6 +285,8 @@ export default function Sidebar({
             return (
               <div
                 key={item.key}
+                data-roster-key={item.key}
+                data-position="local"
                 className={`nc-cell${live ? ' live' : ''}${active.has(c.tmuxSession) ? ' active' : ''}`}
                 title={`${c.cell} · ${c.engine}${c.key ? `·${c.key}` : ''} · ${title}`}
                 aria-label={`${c.cell}, ${c.engine}${c.key ? ` ${c.key}` : ''}, ${title}`}
@@ -242,7 +294,12 @@ export default function Sidebar({
                 onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', c.tmuxSession) : undefined}
                 onClick={live ? () => onAddTile && onAddTile(c.tmuxSession) : undefined}
                 onDoubleClick={live ? () => onPick && onPick(c.tmuxSession) : undefined}
+                {...rosterDropHandlers('local', item.key,
+                  (source, target) => moveRoster('local', source, target, localRawItems))}
               >
+                <RosterHandle position="local" itemKey={item.key} label={c.cell}
+                  onMove={(source, target) => moveRoster('local', source, target, localRawItems)}
+                  onStep={(delta) => stepRoster('local', item.key, delta, localRawItems)} />
                 <span className={`nc-dot ${dot}`} />
                 <span className="nc-cell-main">
                   <b title={c.cell}>{c.cell}</b>
@@ -264,12 +321,19 @@ export default function Sidebar({
             const s = item.value;
             return <div
               key={item.key}
+              data-roster-key={item.key}
+              data-position="local"
               className={`nc-side-card${active.has(s.name) ? ' active' : ''}`}
               draggable
               onDragStart={(e) => e.dataTransfer.setData('text/nc-session', s.name)}
               onClick={() => onAddTile && onAddTile(s.name)}
               onDoubleClick={() => onPick && onPick(s.name)}
+              {...rosterDropHandlers('local', item.key,
+                (source, target) => moveRoster('local', source, target, localRawItems))}
             >
+              <RosterHandle position="local" itemKey={item.key} label={s.name}
+                onMove={(source, target) => moveRoster('local', source, target, localRawItems)}
+                onStep={(delta) => stepRoster('local', item.key, delta, localRawItems)} />
               <span className={s.attached ? 'nc-dot on' : 'nc-dot'} />
               <span className="nc-card-main"><b>{s.name}</b><small>{s.preview || s.cmd || t('windows').replace('{n}', String(s.windows || 0))}{s.outbox?.count > 0 ? ` · 📦${s.outbox.count}` : ''}</small></span>
               {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
@@ -286,25 +350,9 @@ export default function Sidebar({
           inattive, draggabili se live) + tmux unmanaged. Salute dal probe federato
           (NO verde hardcoded): 401/degraded -> warn + diagnostica. Power del tunnel
           solo per nodi diretti gestibili; peer inbound non ha power fittizio. */}
-      {(nodeGroups || []).map((g) => {
+      {remoteRosters.map(({ g, nodeRoute, groupView, rawItems, items: remoteItems }) => {
         const hd = healthDot(g.health);
         const dotClass = hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
-        const nodeRoute = (g.route || [g.name]).join('/');
-        const groupView = viewFor(nodeRoute);
-        const remoteByName = new Map((g.sessions || []).map((s) => [s.name, s]));
-        const remoteItems = sidebarItems([
-          ...(g.cells || []).map((c) => {
-            const session = remoteByName.get(c.tmuxSession) || {};
-            const key = positionKey(g.route, c.tmuxSession || c.cell);
-            return { type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
-              fresh: hasFreshOutput(session, key), activity: session.activity || c.activity || 0 };
-          }),
-          ...(g.unmanaged || []).map((s) => {
-            const key = positionKey(g.route, s.name);
-            return { type: 'session', value: s, key, label: s.name, live: true,
-              fresh: hasFreshOutput(s, key), activity: s.activity || 0 };
-          }),
-        ], pins, groupView.filter);
         return (
         <div key={`nodo-${(g.route || [g.name]).join('/')}`}>
           <div className="nc-side-group-title nc-node-title" role="button" tabIndex={0}
@@ -339,13 +387,20 @@ export default function Sidebar({
                 return (
                   <div
                     key={item.key}
+                    data-roster-key={item.key}
+                    data-position={nodeRoute}
                     className={`nc-side-card nc-cell${live ? ' live' : ''}${active.has(c.key) ? ' active' : ''}`}
                     title={c.active ? t('cell-on') : t('cell-off')}
                     draggable={live}
                     onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', c.key) : undefined}
                     onClick={live ? () => onAddTile && onAddTile(c.key) : undefined}
                     onDoubleClick={live ? () => onPick && onPick({ session: c.tmuxSession, node: nodeRoute }) : undefined}
+                    {...rosterDropHandlers(nodeRoute, item.key,
+                      (source, target) => moveRoster(nodeRoute, source, target, rawItems))}
                   >
+                    <RosterHandle position={nodeRoute} itemKey={item.key} label={c.cell}
+                      onMove={(source, target) => moveRoster(nodeRoute, source, target, rawItems)}
+                      onStep={(delta) => stepRoster(nodeRoute, item.key, delta, rawItems)} />
                     <span className={`nc-dot ${dot}`} />
                     <span className="nc-card-main">
                       <b>{c.cell}</b>
@@ -363,12 +418,19 @@ export default function Sidebar({
               })() : (() => { const s = item.value; return (
                 <div
                   key={item.key}
+                  data-roster-key={item.key}
+                  data-position={nodeRoute}
                   className={`nc-side-card${active.has(s.key) ? ' active' : ''}`}
                   draggable
                   onDragStart={(e) => e.dataTransfer.setData('text/nc-session', s.key)}
                   onClick={() => onAddTile && onAddTile(s.key)}
                   onDoubleClick={() => onPick && onPick({ session: s.name, node: s.node })}
+                  {...rosterDropHandlers(nodeRoute, item.key,
+                    (source, target) => moveRoster(nodeRoute, source, target, rawItems))}
                 >
+                  <RosterHandle position={nodeRoute} itemKey={item.key} label={s.name}
+                    onMove={(source, target) => moveRoster(nodeRoute, source, target, rawItems)}
+                    onStep={(delta) => stepRoster(nodeRoute, item.key, delta, rawItems)} />
                   <span className={s.attached ? 'nc-dot on' : 'nc-dot'} />
                   <span className="nc-card-main">
                     <b>{s.name}</b>

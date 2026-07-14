@@ -29,6 +29,7 @@ test('scoped federation HTTP reaches sessions, fleet, owner decks and only the h
   store.atomicWriteStore(destNodes, ds);
 
   let sessionHits = 0; let fleetHits = 0; let deckHits = 0; let inviteHits = 0; let forbiddenHits = 0; let deleteHits = 0; let seen = null;
+  let cellGetHits = 0; let cellSendHits = 0; let cellVisited = null;
   const local = express();
   local.use((req, res, next) => req.headers.authorization === 'Bearer dest-main' ? next() : res.sendStatus(401));
   local.get('/api/sessions', (req, res) => {
@@ -39,6 +40,12 @@ test('scoped federation HTTP reaches sessions, fleet, owner decks and only the h
   });
   local.delete('/api/sessions/:name', (_req, res) => { deleteHits += 1; res.json({ killed: true }); });
   local.get('/api/fleet/status', (_req, res) => { fleetHits += 1; res.json({ available: true, provider: 'builtin' }); });
+  local.get('/api/cells', (_req, res) => { cellGetHits += 1; res.json({ instanceId: 'd'.repeat(32), cells: [] }); });
+  local.post('/api/cells/send', express.json(), (req, res) => {
+    cellSendHits += 1;
+    cellVisited = req.headers['x-nexuscrew-visited'];
+    res.json({ id: req.body.id, status: 'submitted' });
+  });
   local.get('/api/decks', (_req, res) => { deckHits += 1; res.json({ schemaVersion: 1, decks: [{ name: 'main', revision: 0, layout: { columns: [] } }] }); });
   local.post('/api/decks', express.json(), (req, res) => { deckHits += 1; res.status(201).json({ name: req.body.name, revision: 0, layout: { columns: [] } }); });
   local.put('/api/decks/:name', express.json(), (req, res) => { deckHits += 1; res.json({ name: req.params.name, revision: req.body.expectedRevision + 1, layout: req.body.layout }); });
@@ -87,6 +94,25 @@ test('scoped federation HTTP reaches sessions, fleet, owner decks and only the h
   assert.equal((await invite.json()).pairingUrl, 'http://127.0.0.1:41777/#pair=hub-relay');
   assert.equal(await fetch(`${base}/api/route/mac/_/settings/peering/invite`).then((r) => r.status), 404);
   assert.equal((await fetch(`${base}/api/route/mac/_/fleet/status`)).status, 200);
+  assert.equal((await fetch(`${base}/api/route/mac/_/cells`)).status, 200);
+  const cellMessage = await fetch(`${base}/api/route/mac/_/cells/send`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-nexuscrew-visited': 'f'.repeat(32) },
+    body: JSON.stringify({ id: 'message-id' }),
+  });
+  assert.equal(cellMessage.status, 200);
+  assert.equal(cellVisited, `${'a'.repeat(32)},${'d'.repeat(32)}`,
+    'client header is replaced by the server-controlled route identity');
+  const forgedOrigin = await fetch(`http://127.0.0.1:${destServer.address().port}/federation/route/_/cells/send`, {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer relay-to-dest',
+      'content-type': 'application/json',
+      'x-nexuscrew-visited': 'f'.repeat(32),
+    },
+    body: JSON.stringify({ id: 'forged-origin' }),
+  });
+  assert.equal(forgedOrigin.status, 409, 'visited origin must be bound to the authenticated ingress peer');
+  assert.equal(cellSendHits, 1, 'forged origin never reaches the destination cells API');
   assert.equal((await fetch(`${base}/api/route/mac/_/decks`)).status, 200);
   assert.equal((await fetch(`${base}/api/route/mac/_/decks`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'work' }),
@@ -97,6 +123,8 @@ test('scoped federation HTTP reaches sessions, fleet, owner decks and only the h
   })).status, 200);
   assert.equal((await fetch(`${base}/api/route/mac/_/topology`)).status, 200);
   assert.equal(fleetHits, 1);
+  assert.equal(cellGetHits, 1);
+  assert.equal(cellSendHits, 1);
   assert.equal(deckHits, 3);
   assert.equal(inviteHits, 1);
   assert.equal(forbiddenHits, 0);

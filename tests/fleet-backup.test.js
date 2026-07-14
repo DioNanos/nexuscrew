@@ -36,3 +36,34 @@ test('fleet backup: mapping engine non trascina il modello sorgente', async () =
   assert.equal(restoreCellDefinition(cell, 'codex', ['claude', 'codex']).model, 'gpt-5');
   assert.equal(restoreCellDefinition(cell, 'pi', ['claude', 'pi']).model, undefined);
 });
+
+test('fleet backup: engine managed/custom round-trip keeps env names but never values', async () => {
+  const { createFleetBackup, parseFleetBackup, portableEngineDefinition } = await mod();
+  const engines = [
+    { id: 'claude.zai-a', label: 'Claude Z.AI A', rc: true, envKeys: [],
+      managedInfo: { configured: true, reason: 'runtime-only' }, managed: {
+      client: 'claude', provider: 'zai', credentialProfile: 'a', model: 'glm-5', permissionPolicy: 'unsafe',
+    } },
+    { id: 'custom', label: 'Custom', rc: false, command: '/usr/bin/custom', args: ['--safe'],
+      envKeys: ['API_TOKEN', 'PROFILE'], promptMode: 'send-keys' },
+  ];
+  const backup = createFleetBackup([], new Set(), engines, new Set(engines.map((engine) => engine.id)), new Date('2026-07-14T00:00:00Z'));
+  const parsed = parseFleetBackup(JSON.stringify(backup));
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.engines[0].managed.client, 'claude');
+  assert.equal(Object.hasOwn(parsed.engines[0], 'managedInfo'), false);
+  assert.equal(Object.hasOwn(parsed.engines[0], 'envKeys'), false);
+  assert.deepEqual(parsed.engines[1].envKeys, ['API_TOKEN', 'PROFILE']);
+  assert.deepEqual(portableEngineDefinition(parsed.engines[1]).envKeys, ['API_TOKEN', 'PROFILE']);
+  assert.equal(JSON.stringify(backup).includes('secret-value'), false);
+});
+
+test('fleet backup: custom engine rejects secret-looking argv and invalid env names', async () => {
+  const { parseFleetBackup } = await mod();
+  const base = { format: 'nexuscrew.fleet', version: 2, cells: [], engines: [] };
+  const custom = { id: 'custom', label: 'Custom', rc: false, command: '/usr/bin/custom', args: [], envKeys: [], promptMode: 'send-keys' };
+  assert.equal(parseFleetBackup(JSON.stringify({ ...base, engines: [{ ...custom, args: ['--api-key=secret-value'] }] })).ok, false);
+  assert.equal(parseFleetBackup(JSON.stringify({ ...base, engines: [{ ...custom, args: ['--api-key', 'opaque-value'] }] })).ok, false);
+  assert.equal(parseFleetBackup(JSON.stringify({ ...base, engines: [{ ...custom, args: ['sk-exampleCredentialValue123'] }] })).ok, false);
+  assert.equal(parseFleetBackup(JSON.stringify({ ...base, engines: [{ ...custom, envKeys: ['BAD-NAME'] }] })).ok, false);
+});

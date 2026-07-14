@@ -52,7 +52,7 @@
 .nc-deck-del:hover { color: #f99; }
 .nc-deck-newbtn {
   background: none; border: 1px dashed #2a3a2a; color: #9fd;
-  border-radius: 6px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer;
+  border-radius: 6px; padding: 3px 7px; font: inherit; font-size: 11px; cursor: pointer;
   flex: 0 0 auto;
 }
 .nc-deck-newbtn:hover { border-color: #7aa903; }

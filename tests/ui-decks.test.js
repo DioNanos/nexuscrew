@@ -27,6 +27,17 @@ test('deck click stays in the current PWA; only detach opens a window', () => {
   assert.doesNotMatch(bar, /location\.(?:assign|replace)/);
 });
 
+test('every local or remote owner group has its own translated compact new action', () => {
+  const app = src('App.jsx');
+  const bar = src('components/DeckBar.jsx');
+  const hook = src('hooks/useDecks.js');
+  assert.match(bar, /setAdding\(group\.key\)/);
+  assert.match(bar, />\+ \{t\('new'\)\}<\/button>/);
+  assert.doesNotMatch(bar, /@\$\{current\.ownerLabel\}/);
+  assert.match(app, /deckStore\.add\(name, ownerId\)/);
+  assert.match(hook, /ownerId === LOCAL_OWNER/);
+});
+
 test('fleet modal owns keyboard focus and reports errors inside the dialog', () => {
   const fleet = src('components/FleetTab.jsx');
   assert.match(fleet, /event\.key === 'Escape'/);

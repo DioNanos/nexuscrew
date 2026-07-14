@@ -219,9 +219,11 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   }, [ready, loadAll, install]);
 
   const add = async (name, ownerId = null) => {
-    const basis = ownerId
+    const basis = ownerId === LOCAL_OWNER
+      ? recordsRef.current.find((d) => d.local)
+      : ownerId
       ? recordsRef.current.find((d) => d.ownerId === ownerId)
-      : recordsRef.current.find((d) => d.id === currentRef.current) || recordsRef.current.find((d) => d.local);
+      : null;
     if (!basis || basis.available === false) throw new Error('nodo owner non disponibile');
     const made = await createDeck(token, name, basis.ownerRoute);
     const record = augmentDeck(made, ownerForRecord(basis), basis.ownerTopology, basis.local, true);

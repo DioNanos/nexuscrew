@@ -162,3 +162,15 @@ test('a connected client delegates new invitations to its outbound hub', () => {
   assert.doesNotMatch(settings, /createPeerInvite\(token,[\s\S]{0,260}label:[\s\S]{0,260}\[inviteHub\.name\]/,
     'delegated invite must identify the hub, never the current client');
 });
+
+test('Share publishes the local device through the selected hub, not the remote target card', () => {
+  const settings = read('SettingsPanel.jsx');
+  assert.match(settings, /share-local-through/);
+  assert.match(settings, /setNodeShare\(token, shareHub\.name/);
+  assert.match(settings, /shareHub\.label \|\| shareHub\.name/);
+  const nodeCards = settings.slice(settings.indexOf("(nodes || []).map"));
+  assert.doesNotMatch(nodeCards, /setNodeShare\(token, n\.name/);
+  assert.match(nodeCards, /n\.direction === 'inbound' && n\.shared/);
+  assert.match(nodeCards, /setNodeVisibility\(token, n\.name/,
+    'the hub keeps visibility ACL controls for shared inbound clients');
+});

@@ -2,6 +2,48 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.13 — 2026-07-14 — "Fleet Network"
+
+- The MCP bridge now exposes `nc_cells` and `nc_send_cell`. An active managed cell can discover
+  the owner-qualified Fleet directory allowed by the current Hydra topology and submit bounded
+  text to one exact active destination. Remote ingress is bound to the authenticated route,
+  inactive cells are never silently queued, and `submitted` means only verified paste plus
+  Enter—not model acceptance or task completion.
+- Cell submission uses an exact Fleet-cell/tmux match, bracketed paste, pane revalidation and a
+  separate submit. Codex and Codex-VL receive a paced burst flush before Enter to avoid long
+  composer input loss; the printable envelope prevents Pi from treating a trailing newline as
+  a second submit.
+- The desktop and mobile Fleet rosters now persist the same owner-qualified manual order.
+  Dedicated mouse/touch handles and keyboard move controls avoid accidental power actions,
+  preserve pin priority and keep compact and expanded desktop views consistent.
+- Selective backup schema v2 exports cells and reusable engines independently, accepts legacy
+  cell-only v1 files, previews conflicts and confirms every overwrite before mutation. Archives
+  contain environment-variable names only; secret values, tokens, live tmux IDs and provider
+  credentials remain local.
+- Provider variables can be resolved by name from the service environment or a user-owned
+  `~/.config/ai-shell/providers.zsh` parsed strictly as data. The file is never sourced or
+  executed, and values are never copied into NexusCrew config, services or backups.
+- Share is now a property of the local device and uses one selected, existing hub connection.
+  Outbound target cards no longer imply that the hub itself is being shared; inbound shared
+  clients retain hub-controlled network/relay/selected visibility, and publication waits for a
+  bounded authenticated readiness acknowledgement.
+- Every Local or remote deck owner has its own inline `+ new` action, with no fallback to a
+  different owner. Deck tile layout and Fleet roster order continue to autosave independently.
+- npm update checks and generated services use a stable NexusCrew working directory, parse npm
+  JSON-scalar and plain-semver output, and preserve a deterministic UTF-8 environment. Local
+  PTYs inherit only reviewed cross-platform variables; loader injection remains stripped.
+- Real Termux launches npm-installed Codex and Codex-VL scripts through the active Node binary
+  when `/usr/bin/env` is unavailable, while native clients such as Pi stay direct. Immediate
+  managed-client exits produce bounded, redacted diagnostics and zero-window tmux phantoms are
+  removed from both session discovery and Fleet state.
+- The packaged and canonical NexusCrew/tmux messaging skills plus shared AGENTS/CLAUDE guidance
+  document the eight-tool contract and prefer authenticated cell delivery over direct tmux
+  injection. Persistent offline queues, attachments and delegated capability workers remain
+  explicitly deferred rather than being represented as implemented.
+- Tests: **770 total** (769 pass / 1 platform-dependent skip) in the isolated Node harness plus
+  5 passing frontend component tests; production build PASS. Real Mac–hub–Pixel end-to-end
+  pairing and delivery remain an operator field test and are not represented as automated.
+
 ## 0.8.12 — 2026-07-13 — "Mobile Roster"
 
 - The mobile Fleet home now uses the same per-location roster contract as the desktop sidebar.

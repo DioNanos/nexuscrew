@@ -231,7 +231,6 @@ export default function App() {
   })), [nodeGroups]);
   const deckStore = useDecks(token, deck, layout, setLayout, deckOwners);
   const decks = deckStore.decks;
-  const currentDeckRecord = decks.find((d) => d.id === deck) || null;
   // 0.8.8 salvava le celle remote come route:<cell-id> anziché usare la vera
   // tmuxSession route:cloud-<id>. Ripara una volta i deck esistenti, ma solo se
   // sul peer non esiste davvero una sessione unmanaged con quel nome.
@@ -387,8 +386,8 @@ export default function App() {
     setDeck(id); setLayout(nextLayout); setGridFocus(null); setSingle(null);
     try { history.replaceState(null, '', deckUrl(target || id, null)); } catch (_) {}
   };
-  const onCreateDeck = async (name) => {
-    const created = await deckStore.add(name, currentDeckRecord && currentDeckRecord.ownerId);
+  const onCreateDeck = async (name, ownerId) => {
+    const created = await deckStore.add(name, ownerId);
     await selectDeck(created.id);
   };
   const onRenameDeck = async (from, to) => {

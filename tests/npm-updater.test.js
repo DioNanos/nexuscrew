@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const core = require('../lib/update/core.js');
-const { createNpmUpdater, isGlobalInstall } = require('../lib/update/manager.js');
+const { createNpmUpdater, isGlobalInstall, lookupLatestNpm } = require('../lib/update/manager.js');
 const { restartRuntime, runUpdate } = require('../lib/update/runner.js');
 
 test('npm updater: confronto semver stabile/prerelease e parsing npm JSON', () => {
@@ -16,7 +16,23 @@ test('npm updater: confronto semver stabile/prerelease e parsing npm JSON', () =
   assert.equal(core.compareVersions('0.8.9-beta.2', '0.8.9-beta.10'), -1);
   assert.equal(core.compareVersions('0.8.9', '0.8.9-rc.1'), 1);
   assert.equal(core.registryVersion('"1.2.3"\n'), '1.2.3');
+  assert.equal(core.registryVersion('1.2.3\n'), '1.2.3');
+  assert.equal(core.registryVersion('["1.2.3"]\n'), '1.2.3');
+  assert.equal(core.registryVersion('{"version":"1.2.3"}\n'), '1.2.3');
+  assert.equal(core.registryVersion('\u001b[32m1.2.3\u001b[0m\n'), '1.2.3');
   assert.throws(() => core.registryVersion('latest'), /versione non valida/);
+});
+
+test('npm updater: npm view usa cwd stabile anche se il cwd originario è stato eliminato', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-updater-cwd-'));
+  let seen = null;
+  const latest = await lookupLatestNpm({ home, execFileImpl: (_bin, _args, opts, cb) => {
+    seen = opts.cwd; cb(null, '"0.8.13"\n');
+  } });
+  assert.equal(latest, '0.8.13');
+  assert.equal(seen, path.join(home, '.nexuscrew'));
+  assert.equal(fs.statSync(seen).isDirectory(), true);
+  fs.rmSync(home, { recursive: true, force: true });
 });
 
 test('npm updater: riconosce installazioni globali Linux/macOS/Termux, non il checkout', () => {
@@ -56,17 +72,18 @@ test('npm updater: applica esclusivamente la versione esatta verificata', async 
   assert.equal(status.phase, 'installing');
   assert.deepEqual(call.argv.slice(0, 3), ['/safe/runner.js', '--version', '0.8.9']);
   assert.equal(call.opts.detached, true);
+  assert.equal(call.opts.cwd, path.join(dir, '.nexuscrew'));
   assert.equal(unref, true);
   updater.close();
 });
 
-test('npm update runner: install globale pin esatto, verifica e restart', async () => {
+test('npm update runner: install globale pin esatto, cwd stabile, verifica e restart', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-runner-'));
   const statusPath = path.join(dir, 'state.json');
-  let install = null; let restarted = false;
+  let install = null; let installOpts = null; let restarted = false;
   const out = await runUpdate({
     version: '0.8.9', home: dir, statusPath,
-    execImpl: (bin, argv) => { install = { bin, argv }; },
+    execImpl: (bin, argv, opts) => { install = { bin, argv }; installOpts = opts; },
     readInstalledVersion: () => '0.8.9',
     preflightImpl: async () => true,
     restartImpl: async () => { restarted = true; return 'portable'; },
@@ -74,6 +91,7 @@ test('npm update runner: install globale pin esatto, verifica e restart', async 
   assert.equal(install.bin, 'npm');
   assert.ok(install.argv.includes('@mmmbuto/nexuscrew@0.8.9'));
   assert.equal(install.argv.includes('latest'), false);
+  assert.equal(installOpts.cwd, path.join(dir, '.nexuscrew'));
   assert.equal(restarted, true);
   assert.deepEqual(out, { updated: true, version: '0.8.9', restartMode: 'portable' });
   const saved = core.readState(statusPath);

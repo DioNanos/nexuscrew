@@ -55,6 +55,7 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
   const [invite, setInvite] = useState(null);
   const [inviteForm, setInviteForm] = useState({ ssh: '', sshPort: '', name: '' });
   const [inviteHubName, setInviteHubName] = useState('');
+  const [shareHubName, setShareHubName] = useState('');
   const [devName, setDevName] = useState('');
   const [inviteAdvanced, setInviteAdvanced] = useState(false);
   const now = Date.now();
@@ -65,6 +66,8 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
   // interne all'hub. I peer inbound non sono hub selezionabili.
   const inviteHubs = (nodes || []).filter((n) => n && n.direction === 'outbound' && n.name && n.ssh);
   const inviteHub = inviteHubs.find((n) => n.name === inviteHubName) || inviteHubs[0] || null;
+  const shareHub = inviteHubs.find((n) => n.name === shareHubName) || inviteHubs[0] || null;
+  const shareTunnel = shareHub ? tunnelInfo(shareHub.tunnel, now) : null;
 
   const run = async (name, action) => {
     setErr(null); setBusy(`${name}:${action}`);
@@ -123,6 +126,36 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
       {/* Percorso normale del ricevente: UNA card, UN link. I campi avanzati
           (name/label/SSH/porta/etichetta locale) vivono dentro la card, chiusi. */}
       <PairingCard token={token} deviceDefault={deviceDefault} readonly={readonly} onSuccess={refresh} />
+      {shareHub && (
+        <div className="nc-set-form nc-local-share">
+          <div className="nc-sheet-label">{t('share-local-heading')}</div>
+          {inviteHubs.length > 1 && (
+            <label className="nc-field">{t('share-local-hub')}
+              <select value={shareHub.name} disabled={readonly || !!busy}
+                onChange={(e) => setShareHubName(e.target.value)}>
+                {inviteHubs.map((hub) => <option key={hub.name} value={hub.name}>{hub.label || hub.name}</option>)}
+              </select>
+            </label>
+          )}
+          <label className="nc-check nc-node-share">
+            <input type="checkbox" checked={shareHub.shared === true}
+              disabled={readonly || !!busy || (!shareTunnel?.up && !shareHub.shared)}
+              onChange={async (e) => {
+                setErr(null); setBusy(`${shareHub.name}:share`);
+                try { await setNodeShare(token, shareHub.name, e.target.checked); await refresh(); }
+                catch (x) { setErr(`${shareHub.name}: ${String(x.message || x)}`); }
+                setBusy(null);
+              }} />
+            <span>
+              <b>{t('share-local-through').replace('{device}', deviceDefault || t('local')).replace('{hub}', shareHub.label || shareHub.name)}</b>
+              <small>{t(shareHub.shared ? 'share-node-on-desc' : 'share-node-off-desc')}</small>
+            </span>
+          </label>
+          <div className={`nc-set-test${shareHub.shared && shareTunnel?.up ? ' ok' : ''}`}>
+            {shareHub.shared ? t('share-local-active') : t('share-local-private')}
+          </div>
+        </div>
+      )}
       {(nodes || []).length === 0 && <div className="nc-empty">{t('no-nodes')}</div>}
       {(nodes || []).map((n) => {
         const ti = tunnelInfo(n.tunnel, now);
@@ -140,34 +173,25 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
               <span className={`nc-set-tunnel${ti.up ? ' up' : ''}`}>
                 {t(ti.label)}{ti.since ? ` · ${ti.since}` : ''}
               </span>
-              {n.shared && <select value={n.visibility || 'network'} disabled={readonly || !!busy}
+            </div>
+            {n.direction === 'inbound' && (
+              <div className="nc-set-info">{t(n.shared ? 'peer-shared' : 'peer-private')}</div>
+            )}
+            {n.direction === 'inbound' && n.shared && <>
+              <select value={n.visibility || 'network'} disabled={readonly || !!busy}
                 onChange={async (e) => { setBusy(`${n.name}:visibility`); try { await setNodeVisibility(token, n.name, e.target.value); await refresh(); } catch (x) { setErr(String(x.message || x)); } setBusy(null); }}>
                 <option value="network">{t('visibility-network')}</option>
                 <option value="relay-only">{t('visibility-relay')}</option>
                 <option value="selected">{t('visibility-selected')}</option>
-              </select>}
-            </div>
-            {n.direction === 'outbound' ? (
-              <label className="nc-check nc-node-share">
-                <input type="checkbox" checked={n.shared === true} disabled={readonly || !!busy || (!ti.up && !n.shared)}
-                  onChange={async (e) => {
-                    setErr(null); setBusy(`${n.name}:share`);
-                    try { await setNodeShare(token, n.name, e.target.checked); await refresh(); }
-                    catch (x) { setErr(`${n.name}: ${String(x.message || x)}`); }
-                    setBusy(null);
-                  }} />
-                <span><b>{t('share-node')}</b><small>{t(n.shared ? 'share-node-on-desc' : 'share-node-off-desc')}</small></span>
-              </label>
-            ) : (
-              <div className="nc-set-info">{t(n.shared ? 'peer-shared' : 'peer-private')}</div>
-            )}
-            {n.shared && n.visibility === 'selected' && <div className="nc-set-row">
-              {(nodes || []).filter((x) => x.name !== n.name && x.nodeId).map((x) => {
-                const checked = (n.selected || []).includes(x.nodeId);
-                return <label className="nc-check" key={x.nodeId}><input type="checkbox" checked={checked} disabled={readonly || !!busy}
-                  onChange={async (e) => { const selected = e.target.checked ? [...(n.selected || []), x.nodeId] : (n.selected || []).filter((id) => id !== x.nodeId); setBusy(`${n.name}:visibility`); try { await setNodeVisibility(token, n.name, 'selected', selected); await refresh(); } catch (z) { setErr(String(z.message || z)); } setBusy(null); }} /> {x.name}</label>;
-              })}
-            </div>}
+              </select>
+              {n.visibility === 'selected' && <div className="nc-set-row">
+                {(nodes || []).filter((x) => x.name !== n.name && x.nodeId).map((x) => {
+                  const checked = (n.selected || []).includes(x.nodeId);
+                  return <label className="nc-check" key={x.nodeId}><input type="checkbox" checked={checked} disabled={readonly || !!busy}
+                    onChange={async (e) => { const selected = e.target.checked ? [...(n.selected || []), x.nodeId] : (n.selected || []).filter((id) => id !== x.nodeId); setBusy(`${n.name}:visibility`); try { await setNodeVisibility(token, n.name, 'selected', selected); await refresh(); } catch (z) { setErr(String(z.message || z)); } setBusy(null); }} /> {x.label || x.name}</label>;
+                })}
+              </div>}
+            </>}
             <div className="nc-set-node-actions">
               <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
                 onClick={async () => {

@@ -38,6 +38,28 @@ test('sidebar order promotes fresh output after liveness and before activity', a
   assert.deepEqual(sidebarItems(rows).map((x) => x.key), ['fresh-live', 'old-live', 'fresh-off']);
 });
 
+test('manual owner-qualified order persists and moves adjacent items both directions', async () => {
+  const {
+    SIDEBAR_ORDER_KEY, loadSidebarOrders, moveSidebarItem, saveSidebarOrders, sidebarItems,
+  } = await model();
+  const rows = [
+    { key: 'relay:a', label: 'A', live: true },
+    { key: 'relay:b', label: 'B', live: true },
+    { key: 'relay:c', label: 'C', live: true },
+  ];
+  let orders = {};
+  orders = moveSidebarItem(orders, 'relay', 'relay:a', 'relay:b', rows.map((row) => row.key));
+  assert.deepEqual(orders.relay, ['relay:b', 'relay:a', 'relay:c'], 'move down swaps adjacent rows');
+  orders = moveSidebarItem(orders, 'relay', 'relay:c', 'relay:a', rows.map((row) => row.key));
+  assert.deepEqual(orders.relay, ['relay:b', 'relay:c', 'relay:a'], 'move up inserts before target');
+  assert.deepEqual(sidebarItems(rows, [], 'all', orders.relay).map((row) => row.key), orders.relay);
+  const values = new Map();
+  const storage = { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, value) };
+  saveSidebarOrders(orders, storage);
+  assert.equal(values.has(SIDEBAR_ORDER_KEY), true);
+  assert.deepEqual(loadSidebarOrders(storage), orders);
+});
+
 test('sidebar view persistence and search are shared by desktop and mobile', async () => {
   const {
     SIDEBAR_VIEW_KEY, loadSidebarViews, saveSidebarViews, sidebarSearchVisible, sidebarView,

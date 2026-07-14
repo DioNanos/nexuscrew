@@ -169,3 +169,14 @@
   padding:3px 10px; border-radius:4px; white-space:nowrap; z-index:1000;
   pointer-events:none; font-size:12px;
 }
+
+.nc-roster-handle {
+  flex: 0 0 24px; width: 24px; min-width: 24px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; border-radius: 6px;
+  background: transparent; color: #668875; cursor: grab;
+  font: 15px/1 monospace; touch-action: none;
+}
+.nc-roster-handle:hover, .nc-roster-handle:focus-visible,
+.nc-roster-handle.active { color: #9fd; background: rgba(0,204,102,.10); outline: none; }
+.nc-roster-handle:active, .nc-roster-handle.active { cursor: grabbing; }
