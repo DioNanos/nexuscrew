@@ -55,8 +55,12 @@ export default function PairingCard({ token, initial = '', autoStart = false, de
       const d = describePairError(e);
       setFail(d); setPhase('idle');
       guardRef.current.finish();
-      // dati mancanti/conflitto: la correzione sta nei campi avanzati
-      if (d.stage === 'validation' || d.stage === 'conflict') setAdvanced(true);
+      // Dati mancanti, conflitto o problemi SSH: la correzione sta nei campi
+      // avanzati locali. In particolare l'endpoint del link può essere
+      // sostituito con l'alias che seleziona chiave/agent su questo dispositivo.
+      if (d.stage === 'validation' || d.stage === 'conflict'
+        || d.stage === 'ssh-start' || d.stage === 'ssh-ready'
+        || String(d.code || '').startsWith('ssh-')) setAdvanced(true);
     }
   };
 
@@ -172,9 +176,10 @@ export default function PairingCard({ token, initial = '', autoStart = false, de
               onChange={(e) => { setNameEdited(true); touchedRef.current.add('name'); setForm((f) => ({ ...f, name: e.target.value ? toSlug(e.target.value) : '' })); }} />
           </label>
           <small className="nc-set-hint">{t('node-slug-hint').replace('{slug}', form.name || 'home-relay')}</small>
-          <label className="nc-field">{t('node-ssh-label')}
+          <label className="nc-field">{t('pair-ssh-local-label')}
             <input placeholder="my-relay" value={form.ssh} disabled={readonly || busy}
               onChange={(e) => { touchedRef.current.add('ssh'); set('ssh', e.target.value); }} />
+            <small className="nc-set-hint">{t('node-ssh-local-help')}</small>
           </label>
           <label className="nc-field">{t('node-ssh-port-label')}
             <input inputMode="numeric" placeholder={t('node-ssh-port-help')} value={form.sshPort} disabled={readonly || busy}

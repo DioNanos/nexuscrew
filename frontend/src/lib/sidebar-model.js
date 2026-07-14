@@ -1,7 +1,7 @@
 // Pure sidebar roster model.  Every item has a route-qualified `key`, a
 // human-readable `label`, a `live` flag and optional `activity` epoch.
 
-export const SIDEBAR_FILTERS = ['all', 'pinned', 'active', 'off'];
+export const SIDEBAR_FILTERS = ['all', 'pinned', 'active', 'off', 'technical'];
 export const SIDEBAR_VIEW_KEY = 'nc_sidebar_views_v1';
 export const SIDEBAR_ORDER_KEY = 'nc_sidebar_order_v1';
 
@@ -11,6 +11,8 @@ export function normalizeSidebarFilter(value) {
 
 export function sidebarItemVisible(item, pins = [], filter = 'all') {
   const mode = normalizeSidebarFilter(filter);
+  if (mode === 'technical') return item.technical === true;
+  if (item.technical === true) return false;
   if (mode === 'pinned') return pins.includes(item.key);
   if (mode === 'active') return !!item.live;
   if (mode === 'off') return !item.live;

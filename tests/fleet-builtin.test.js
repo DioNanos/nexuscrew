@@ -19,7 +19,7 @@ const FAKE_FLEET = path.join(__dirname, 'fixtures', 'fake-fleet.sh'); // externa
 // --- Fixture: una definizione valida (engine fidato + cella reale sotto home) ---
 function makeWorld(over = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbi-'));
-  const home = path.join(root, 'home'); fs.mkdirSync(home);
+  const home = path.join(root, 'home'); fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700);
   const cwd = path.join(home, 'Dev'); fs.mkdirSync(cwd);
   fs.mkdirSync(path.join(home, 'bin'));
   const command = path.join(home, 'bin', 'myclaude');
@@ -118,7 +118,7 @@ function readLog(w) {
 // ---------------------------------------------------------------------------
 // 1. composeLaunchArgv — argv preciso, puro
 // ---------------------------------------------------------------------------
-test('composeLaunchArgv flag: command+args+env(-e)+model+promptFlag, no shell', () => {
+test('composeLaunchArgv flag: command+args+model+promptFlag, no secrets or tmux -e', () => {
   const w = makeWorld();
   try {
     const engine = {
@@ -132,9 +132,8 @@ test('composeLaunchArgv flag: command+args+env(-e)+model+promptFlag, no shell', 
     assert.equal(argv[1], '-d');
     assert.deepEqual([argv[2], argv[3]], ['-s', 'work-build']);
     assert.deepEqual([argv[4], argv[5]], ['-c', w.cwd]);
-    // engine.env via -e (chiave validata, NON in env del processo)
-    const eIdx = argv.indexOf('-e');
-    assert.deepEqual([argv[eIdx], argv[eIdx + 1]], ['-e', 'ANTHROPIC_API_KEY=sk-x']);
+    assert.equal(argv.includes('-e'), false, 'provider env never enters tmux argv');
+    assert.equal(argv.join(' ').includes('sk-x'), false, 'secret never enters tmux argv');
     // command + args come argv SEPARATI (tmux exec, no sh -c)
     assert.ok(argv.includes(w.command), 'command presente come token');
     assert.ok(argv.includes('--dangerously-skip-permissions'), 'arg separato (no shell-join)');
@@ -165,7 +164,7 @@ test('composeLaunchArgv: model con valore solo engine; senza prompt non aggiunge
 // ---------------------------------------------------------------------------
 // 2. up flag-mode: lancia in tmux, argv diretto, nessuna digitazione prompt
 // ---------------------------------------------------------------------------
-test('up flag-mode: new-session con argv diretto; engine.env via -e; nessun paste', async () => {
+test('up flag-mode: tmux starts one-shot helper; no secret argv and no paste', async () => {
   process.env.NC_SENTINEL_SHOULD_NOT_LEAK = '1';
   const w = makeWorld();
   try {
@@ -178,8 +177,10 @@ test('up flag-mode: new-session con argv diretto; engine.env via -e; nessun past
     const { lines, nsArgv } = readLog(w);
     assert.ok(lines.some((l) => l.startsWith('new-session\t')), 'new-session lanciato');
     const argv = nsArgv[0];
-    assert.ok(argv.includes(w.command) && argv.includes('--dangerously-skip-permissions'), 'argv diretto (token separati)');
-    assert.ok(argv.includes('-e') && argv.includes('ANTHROPIC_API_KEY=sk-x'), 'env via -e');
+    assert.ok(argv.includes(process.execPath) && argv.some((x) => /cell-exec\.js$/.test(x)), 'secure helper launched directly');
+    assert.ok(argv.includes('--socket') && argv.includes('--nonce'), 'one-shot broker coordinates launch');
+    assert.equal(argv.includes('-e'), false, 'tmux session env does not carry provider keys');
+    assert.equal(argv.join(' ').includes('sk-x'), false, 'secret absent from argv');
     assert.ok(!lines.some((l) => l.startsWith('paste-buffer')), 'nessun paste in flag mode');
 
     // env minimale: il sentinel del processo NON raggiunge il launcher
@@ -329,7 +330,7 @@ test('READONLY (cfg): up/mutazioni 403; status/schema/capabilities ok', async ()
     // letture pure passano
     const st = await fleet.status();
     assert.equal(st.available, true);
-    assert.equal(fleet.capabilities().length, 13);
+    assert.equal(fleet.capabilities().length, 14);
     assert.ok(fleet.schema().engine.command);
   } finally { w.cleanup(); }
 });
@@ -583,7 +584,7 @@ test('capabilities e schema: superficie estesa del built-in', async () => {
   try {
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     assert.deepEqual(fleet.capabilities(),
-      ['status', 'up', 'down', 'restart', 'engine', 'boot', 'define', 'edit', 'remove', 'import', 'restore', 'schema', 'definitions']);
+      ['status', 'up', 'down', 'restart', 'engine', 'boot', 'define', 'edit', 'remove', 'import', 'restore', 'schema', 'definitions', 'credentials']);
     const sch = fleet.schema();
     assert.equal(sch.schemaVersion, 1);
     for (const f of ['id', 'label', 'rc', 'command', 'args', 'env', 'model', 'promptMode', 'promptFlag']) {

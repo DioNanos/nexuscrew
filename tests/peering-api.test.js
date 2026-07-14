@@ -27,12 +27,12 @@ test('PWA invite -> public one-time join creates an inbound scoped peer', async 
   const fullInviteRes = await fetch(`${base}/api/settings/peering/invite`, {
     method: 'POST',
     headers: { authorization: `Bearer ${made.token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ label: 'VPS 3 Relay', ssh: 'relay-alias' }),
+    body: JSON.stringify({ label: 'Relay 3 Node', ssh: 'relay-alias' }),
   });
   assert.equal(fullInviteRes.status, 200);
   const fullInvite = peering.parsePairingUrl((await fullInviteRes.json()).pairingUrl);
   assert.equal(fullInvite.v, 2);
-  assert.equal(fullInvite.name, 'vps-3-relay');
+  assert.equal(fullInvite.name, 'relay-3-node');
   assert.equal(fullInvite.ssh, 'relay-alias');
   assert.equal(fullInvite.port, made.server.address().port,
     'an invite minted by the hub always targets the hub single entry port');

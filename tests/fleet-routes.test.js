@@ -43,9 +43,19 @@ async function bootBuiltin(t, over = {}) {
   const defs = { ...BUILTIN_DEFS, cells: BUILTIN_DEFS.cells.map((cell) => ({ ...cell, cwd: dir })) };
   fs.writeFileSync(defsPath, JSON.stringify(defs), { mode: 0o600 });
   fs.chmodSync(defsPath, 0o600);
-  const r = await boot(t, { home: dir, fleetProvider: 'builtin', fleetDefsPath: defsPath, ...over });
+  const r = await boot(t, {
+    home: dir,
+    fleetProvider: 'builtin',
+    fleetDefsPath: defsPath,
+    providerSecretsPath: path.join(dir, '.nexuscrew', 'providers.env'),
+    providerShellPath: path.join(dir, '.config', 'ai-shell', 'providers.zsh'),
+    providerKeysPath: path.join(dir, '.config', 'keys', 'ai.env'),
+    providerSecurePath: path.join(dir, '.config', 'secure', '.env'),
+    credentialsPath: path.join(dir, '.nexuscrew', 'credentials.json'),
+    ...over,
+  });
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return r;
+  return { ...r, dir, defsPath };
 }
 const H = (token) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
 
@@ -110,6 +120,31 @@ test('builtin: /definitions espone campi editabili ma non env values', async (t)
   assert.deepEqual(d.engines[0].envKeys, []);
   assert.equal(d.engines[0].env, undefined);
   assert.equal(d.cells[0].id, 'Dev');
+});
+
+test('builtin: credential API is write-only, local to the selected node and reports affected cells', async (t) => {
+  const { base, token, dir } = await bootBuiltin(t);
+  const binDir = path.join(dir, '.local', 'bin'); fs.mkdirSync(binDir, { recursive: true });
+  const binary = path.join(binDir, 'codex-vl'); fs.writeFileSync(binary, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); fs.chmodSync(binary, 0o755);
+  const post = (action, body) => fetch(`${base}/api/fleet/${action}`, { method: 'POST', headers: H(token), body: JSON.stringify(body) });
+  const def = {
+    id: 'codex-vl.ollama-cloud', label: 'Ollama Cloud',
+    managed: { client: 'codex-vl', provider: 'ollama-cloud', model: 'glm-5.2', permissionPolicy: 'standard' },
+  };
+  assert.equal((await post('define-engine', { def })).status, 200);
+  let status = await (await fetch(`${base}/api/fleet/credentials/status`, { headers: H(token) })).json();
+  assert.deepEqual(status.credentials.map((entry) => ({ envKey: entry.envKey, configured: entry.configured, source: entry.source })), [
+    { envKey: 'OLLAMA_API_KEY', configured: false, source: 'missing' },
+  ]);
+  const savedResponse = await post('credentials/set', { envKey: 'OLLAMA_API_KEY', value: 'route-secret' });
+  assert.equal(savedResponse.status, 200);
+  status = await savedResponse.json();
+  assert.equal(status.credentials[0].source, 'local');
+  assert.equal(JSON.stringify(status).includes('route-secret'), false, 'secret never leaves the API');
+  const stored = path.join(dir, '.nexuscrew', 'credentials.json');
+  assert.equal(fs.statSync(stored).mode & 0o777, 0o600);
+  assert.equal((await post('credentials/set', { envKey: 'UNUSED_KEY', value: 'x' })).status, 400);
+  assert.equal((await post('credentials/remove', { envKey: 'OLLAMA_API_KEY' })).status, 200);
 });
 
 test('builtin: restore-cells usa body cap dedicato e missing engines strutturati', async (t) => {

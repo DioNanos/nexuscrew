@@ -26,6 +26,9 @@ test('defaults: profilo portatile (voice null, port 41820)', () => {
   assert.equal(d.voiceTokenFile, null); // niente path host-specifico hardcoded
   assert.equal(d.port, 41820); // default unificato (override host via config/env)
   assert.equal(typeof d.voiceToken, 'string');
+  assert.ok(d.providerKeysPath.endsWith(path.join('.config', 'keys', 'ai.env')));
+  assert.ok(d.providerSecurePath.endsWith(path.join('.config', 'secure', '.env')));
+  assert.ok(d.credentialsPath.endsWith(path.join('.nexuscrew', 'credentials.json')));
 });
 
 test('baseDefaults: nessun path assoluto hardcoded', () => {

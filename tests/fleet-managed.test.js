@@ -7,7 +7,7 @@ const path = require('node:path');
 const {
   CATALOG, OLLAMA_CONTEXT, normalizeManagedSpec, defaultDefinitions, describeManaged,
   resolveManagedEngine, parseEnvFile, parseProviderShellFile, discoverOllamaModels, discoverPiModels, needsExplicitNode,
-  publicCatalog,
+  publicCatalog, parseProviderKeyFiles,
 } = require('../lib/fleet/managed.js');
 const { parseDefinitions } = require('../lib/fleet/definitions.js');
 
@@ -220,6 +220,47 @@ test('provider shell: launchd risolve export esistenti senza eseguire il file o 
     assert.equal(resolved.ok, true);
     assert.equal(resolved.engine.env.ANTHROPIC_AUTH_TOKEN, 'secret-from-shell');
     assert.equal(fs.existsSync('/tmp/nc-must-not-run'), false);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('provider canonico: Termux risolve ai.env senza eseguire source o esporre la key', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'codex-vl');
+    const shellFile = path.join(home, '.config', 'ai-shell', 'providers.zsh');
+    const keysFile = path.join(home, '.config', 'keys', 'ai.env');
+    fs.mkdirSync(path.dirname(shellFile), { recursive: true });
+    fs.mkdirSync(path.dirname(keysFile), { recursive: true });
+    fs.writeFileSync(shellFile, 'source "$HOME/.config/keys/ai.env"\n', { mode: 0o644 });
+    fs.writeFileSync(keysFile, "export OLLAMA_API_KEY='termux-secret'\n", { mode: 0o600 });
+    fs.chmodSync(keysFile, 0o600);
+
+    assert.deepEqual(parseProviderShellFile(shellFile), {});
+    assert.deepEqual(parseProviderKeyFiles({}, home), { OLLAMA_API_KEY: 'termux-secret' });
+    const managed = { client: 'codex-vl', provider: 'ollama-cloud', model: 'glm-5.2' };
+    const info = describeManaged(managed, { home, env: {} });
+    assert.equal(info.configured, true);
+    assert.equal(JSON.stringify(info).includes('termux-secret'), false);
+    const resolved = resolveManagedEngine({ id: 'codex-vl.ollama-cloud', label: 'Ollama', managed }, { id: 'Dev' }, { home, env: {}, platform: 'android' });
+    assert.equal(resolved.ok, true);
+    assert.equal(resolved.engine.env.OPENAI_API_KEY, 'termux-secret');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('provider canonico: ai.env non privato o symlink viene rifiutato', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'codex-vl');
+    const real = path.join(home, 'shared.env');
+    const link = path.join(home, '.config', 'keys', 'ai.env');
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.writeFileSync(real, 'OLLAMA_API_KEY=unsafe\n', { mode: 0o644 });
+    fs.chmodSync(real, 0o644);
+    fs.symlinkSync(real, link);
+    assert.deepEqual(parseProviderKeyFiles({}, home), {});
+    const info = describeManaged({ client: 'codex-vl', provider: 'ollama-cloud', model: 'glm-5.2' }, { home, env: {} });
+    assert.equal(info.configured, false);
+    assert.match(info.reason, /set it on this device/);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 

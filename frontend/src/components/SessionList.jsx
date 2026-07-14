@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  apiFetch, seenKey, fleetStatus, fleetUp, fleetDown, killSession, nodeAction,
+  apiFetch, seenKey, fleetStatus, fleetUp, fleetDown, killSession, nodeAction, setSessionTechnical,
 } from '../lib/api.js';
 import Icon from './Icon.jsx';
-import { loadPins, togglePinIn } from '../lib/pins.js';
+import { loadPins, movePinIn, togglePinIn } from '../lib/pins.js';
 import { positionKey } from '../lib/nodes-model.js';
 import {
   loadSidebarOrders, loadSidebarViews, moveSidebarItem, saveSidebarOrders,
@@ -13,7 +13,7 @@ import PowerSheet from './PowerSheet.jsx';
 import {t,  LANGUAGES} from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { useNodes } from '../hooks/useNodes.js';
-import RosterHandle, { rosterDropHandlers } from './RosterHandle.jsx';
+import RosterHandle from './RosterHandle.jsx';
 import './SessionList.css';
 
 // Home mobile: lo stesso roster per-posizione della sidebar desktop. Stato di
@@ -123,6 +123,11 @@ export default function SessionList({ onPick, token, onSettings }) {
     refresh();
   }
 
+  async function onTechnical(name, technical, route = []) {
+    try { await setSessionTechnical(token, name, technical, route); } catch (_) { return; }
+    refresh();
+  }
+
   async function onNodePower(group) {
     if (!group?.direct || nodeBusy) return;
     setNodeBusy(group.name);
@@ -161,7 +166,7 @@ export default function SessionList({ onPick, token, onSettings }) {
     }),
     ...unmanaged.map((s) => ({
       type: 'session', value: s, key: positionKey([], s.name), label: s.name,
-      live: true, fresh: !!s.fresh, activity: s.activity || 0,
+      live: true, technical: s.technical === true, fresh: !!s.fresh, activity: s.activity || 0,
       searchText: `${s.preview || ''} ${s.cmd || ''}`,
     })),
   ], [cells, unmanaged, byName]);
@@ -173,23 +178,30 @@ export default function SessionList({ onPick, token, onSettings }) {
     [localRawItems, pins, localView.filter, q, orders],
   );
   const remoteCount = nodeGroups.reduce(
-    (sum, g) => sum + (g.cells || []).length + (g.unmanaged || []).length, 0,
+    (sum, g) => sum + (g.cells || []).length + (g.unmanaged || []).filter((s) => !s.technical).length, 0,
   );
-  const rosterTotal = localRawItems.length + remoteCount;
+  const rosterTotal = sidebarItems(localRawItems, pins, 'all', sidebarOrder(orders, 'local')).length + remoteCount;
 
   const total = sessions ? sessions.length : 0;
   const attached = (sessions || []).filter((s) => s.attached).length;
   const endpointLabel = endpoint.port ? `${endpoint.bind}:${endpoint.port}` : endpoint.bind;
 
   function moveRoster(position, source, target, rawItems) {
+    const sourcePinned = pins.includes(source); const targetPinned = pins.includes(target);
+    if (sourcePinned !== targetPinned) return;
+    if (sourcePinned) { setPins((before) => movePinIn(before, source, target)); return; }
     setOrders((before) => {
-      const available = sidebarItems(rawItems, pins, 'all', sidebarOrder(before, position)).map((item) => item.key);
+      const sourceTechnical = rawItems.find((item) => item.key === source)?.technical === true;
+      const available = sidebarItems(rawItems, pins, sourceTechnical ? 'technical' : 'all', sidebarOrder(before, position)).map((item) => item.key);
       return saveSidebarOrders(moveSidebarItem(before, position, source, target, available));
     });
   }
 
   function stepRoster(position, source, delta, rawItems) {
-    const available = sidebarItems(rawItems, pins, 'all', sidebarOrder(orders, position)).map((item) => item.key);
+    const sourceTechnical = rawItems.find((item) => item.key === source)?.technical === true;
+    const sourcePinned = pins.includes(source);
+    const available = sidebarItems(rawItems, pins, sourceTechnical ? 'technical' : 'all', sidebarOrder(orders, position))
+      .map((item) => item.key).filter((key) => pins.includes(key) === sourcePinned);
     const at = available.indexOf(source); const target = available[at + delta];
     if (at >= 0 && target) moveRoster(position, source, target, rawItems);
   }
@@ -197,8 +209,7 @@ export default function SessionList({ onPick, token, onSettings }) {
   function renderRosterItem(item, group = null, rawItems = localRawItems) {
     const route = Array.isArray(group?.route) ? group.route : [];
     const routeKey = route.join('/'); const position = routeKey || 'local';
-    const drop = rosterDropHandlers(position, item.key,
-      (source, target) => moveRoster(position, source, target, rawItems));
+    const canMove = (source, target) => pins.includes(source) === pins.includes(target);
     if (item.type === 'cell') {
       const c = item.value;
       const session = route.length
@@ -209,8 +220,9 @@ export default function SessionList({ onPick, token, onSettings }) {
         .filter(Boolean).join(' · ');
       const canPower = route.length === 0 || (group?.capabilities || []).includes(c.active ? 'down' : 'up');
       return (
-        <div key={item.key} className="nc-mcard" data-roster-key={item.key} data-position={position} {...drop}>
+        <div key={item.key} className="nc-mcard" data-roster-key={item.key} data-position={position}>
           <RosterHandle position={position} itemKey={item.key} label={c.cell}
+            canMove={canMove}
             onMove={(source, target) => moveRoster(position, source, target, rawItems)}
             onStep={(delta) => stepRoster(position, item.key, delta, rawItems)} />
           <button className="nc-mcard-main"
@@ -236,8 +248,9 @@ export default function SessionList({ onPick, token, onSettings }) {
 
     const s = item.value;
     return (
-      <div key={item.key} className="nc-mcard" data-roster-key={item.key} data-position={position} {...drop}>
+      <div key={item.key} className="nc-mcard" data-roster-key={item.key} data-position={position}>
         <RosterHandle position={position} itemKey={item.key} label={s.name}
+          canMove={canMove}
           onMove={(source, target) => moveRoster(position, source, target, rawItems)}
           onStep={(delta) => stepRoster(position, item.key, delta, rawItems)} />
         <button className="nc-mcard-main" onClick={() => onPick(route.length ? { session: s.name, node: routeKey } : s.name)}>
@@ -253,6 +266,10 @@ export default function SessionList({ onPick, token, onSettings }) {
           aria-label={`${t('pin')} ${s.name}`} title={t('pin')} onClick={() => togglePin(item.key)}>
           {pins.includes(item.key) ? '\u2605' : '\u2606'}
         </button>
+        <button className={`nc-act technical${s.technical ? ' on' : ''}`}
+          title={s.technical ? t('mark-normal') : t('mark-technical')}
+          aria-label={`${s.technical ? t('mark-normal') : t('mark-technical')} ${s.name}`}
+          onClick={() => onTechnical(s.name, !s.technical, route)}>T</button>
         <button className="nc-menu" title={t('terminate')} aria-label={`${t('terminate')} ${s.name}`}
           onClick={() => { if (window.confirm(t('terminate-confirm').replace('{name}', s.name))) onKill(s.name, route); }}>⋯</button>
       </div>
@@ -283,7 +300,7 @@ export default function SessionList({ onPick, token, onSettings }) {
       {err && <div className="nc-err">{err}</div>}
 
       <section className="nc-group" data-position="local">
-        <MobilePositionHeader label={t('position-local')} count={localRawItems.length} state={localView}
+        <MobilePositionHeader label={t('position-local')} count={localItems.length} state={localView}
           dotClass="on" onToggle={() => updateView('local', { open: !localView.open })}
           onFilter={(filter) => updateView('local', { filter })} />
         {localView.open && localItems.map((item) => renderRosterItem(item, null, localRawItems))}
@@ -322,7 +339,7 @@ export default function SessionList({ onPick, token, onSettings }) {
           }),
           ...(g.unmanaged || []).map((s) => ({
             type: 'session', value: s, key: positionKey(route, s.name), label: s.name,
-            live: true, fresh: remoteFresh(s), activity: s.activity || 0,
+            live: true, technical: s.technical === true, fresh: remoteFresh(s), activity: s.activity || 0,
             searchText: `${s.preview || ''} ${s.cmd || ''}`,
           })),
         ];
@@ -336,7 +353,7 @@ export default function SessionList({ onPick, token, onSettings }) {
         ) : null;
         return (
         <section key={`nodo-${routeKey}`} className="nc-group" data-position={routeKey}>
-          <MobilePositionHeader label={g.label || g.name} count={rawItems.length} state={groupView}
+          <MobilePositionHeader label={g.label || g.name} count={items.length} state={groupView}
             dotClass={dotClass} dotTitle={dotTitle}
             detail={g.status === 'up' ? '' : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
             onToggle={() => updateView(routeKey, { open: !groupView.open })}
@@ -395,6 +412,7 @@ function MobilePositionHeader({
         <option value="pinned">{t('view-pinned')}</option>
         <option value="active">{t('view-active')}</option>
         <option value="off">{t('view-off')}</option>
+        <option value="technical">{t('view-technical')}</option>
       </select>
       {action}
     </div>

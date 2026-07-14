@@ -170,3 +170,43 @@ test('transport proof supports pending credential after invite consumption', asy
   assert.equal(consumed.ready, false);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('transport probe waits for a slow SSH forward instead of exhausting in 3.75 seconds', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-pair-slow-forward-'));
+  const invitesPath = path.join(dir, 'invites.json');
+  const pendingPath = path.join(dir, 'pending.json');
+  const instanceId = 'c'.repeat(32);
+  const made = peering.createInvite({ invitesPath, instanceId, port: 41777, label: 'Slow relay' });
+  const pair = peering.parsePairingUrl(made.pairingUrl);
+  let clock = 0;
+  let calls = 0;
+  const fetchImpl = async (_url, opts) => {
+    calls += 1;
+    if (clock < 8000) throw new Error('fetch failed');
+    const body = JSON.parse(opts.body);
+    const proof = peering.capabilityIdentity({ invitesPath, pendingPath, ...body });
+    return { status: 200, json: async () => ({ ok: true, instanceId, proof }) };
+  };
+  const out = await peering.probeTransportReady({
+    port: 43001, capability: pair.invite, expectedInstanceId: instanceId,
+    fetchImpl, now: () => clock, sleep: async (ms) => { clock += ms; },
+  });
+  assert.equal(out.ready, true);
+  assert.ok(clock >= 8000, `probe terminated too early at ${clock}ms`);
+  assert.ok(calls > 6, 'regression: the old implementation stopped after six immediate refusals');
+  assert.equal(out.elapsedMs, clock);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('transport probe remains deadline-bounded when the SSH forward never appears', async () => {
+  let clock = 0;
+  const out = await peering.probeTransportReady({
+    port: 43001, capability: 'A'.repeat(43), expectedInstanceId: 'd'.repeat(32),
+    fetchImpl: async () => { throw new Error('ECONNREFUSED'); },
+    deadlineMs: 5000, now: () => clock, sleep: async (ms) => { clock += ms; },
+  });
+  assert.equal(out.ready, false);
+  assert.equal(out.code, 'transport-not-ready');
+  assert.ok(clock >= 5000 && clock <= 5000, `deadline non rispettata: ${clock}`);
+  assert.ok(out.attempts > 1 && out.attempts < 16);
+});

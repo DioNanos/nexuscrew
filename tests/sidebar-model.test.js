@@ -12,6 +12,8 @@ test('sidebar filters are explicit and invalid values fall back to all', async (
   assert.equal(sidebarItemVisible({ key: 'node:x', live: false }, ['node:x'], 'pinned'), true);
   assert.equal(sidebarItemVisible({ key: 'node:x', live: false }, [], 'active'), false);
   assert.equal(sidebarItemVisible({ key: 'node:x', live: false }, [], 'off'), true);
+  assert.equal(sidebarItemVisible({ key: 'tech', live: true, technical: true }, [], 'all'), false);
+  assert.equal(sidebarItemVisible({ key: 'tech', live: true, technical: true }, [], 'technical'), true);
 });
 
 test('sidebar order is pin, live, recent activity, label and route-qualified key', async () => {

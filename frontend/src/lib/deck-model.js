@@ -9,6 +9,7 @@ import { deckId, parseDeckId, NODE_ID_RE } from './deck-federation.js';
 export const DECK_NAME_RE = /^[a-z0-9-]{1,32}$/;
 export const MAIN_DECK = 'main';
 export const DECKS_KEY = 'nc_decks';
+export const DECK_ORDER_KEY = 'nc_deck_order_v1';
 const MAX_DECKS = 24;
 
 // Accetta un nome umano nel form e lo converte nell'id URL-safe usato dal
@@ -118,6 +119,98 @@ export function saveDecks(list) {
   const s = ls();
   if (!s) return;
   try { s.setItem(DECKS_KEY, JSON.stringify(normalizeDecks(list))); } catch (_) {}
+}
+
+// Ordine visuale owner-qualified.  I deck restano sul nodo che li possiede:
+// il drag riordina soltanto i tab dello stesso gruppo Local/remoto e salva una
+// preferenza per-browser, come il roster delle celle.
+function validOwnerKey(value) {
+  return value === 'local' || NODE_ID_RE.test(String(value || ''));
+}
+
+function idBelongsToOwner(id, ownerKey) {
+  const parsed = parseDeckId(id);
+  return !!parsed && (parsed.ownerId || 'local') === ownerKey;
+}
+
+export function normalizeDeckOrders(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out = {};
+  for (const [ownerKey, ids] of Object.entries(input).slice(0, 64)) {
+    if (!validOwnerKey(ownerKey) || !Array.isArray(ids)) continue;
+    const clean = [...new Set(ids.filter((id) => typeof id === 'string'
+      && id.length <= 100 && idBelongsToOwner(id, ownerKey)))].slice(0, MAX_DECKS);
+    if (clean.length) out[ownerKey] = clean;
+  }
+  return out;
+}
+
+export function loadDeckOrders(storage = ls()) {
+  if (!storage) return {};
+  try { return normalizeDeckOrders(JSON.parse(storage.getItem(DECK_ORDER_KEY) || 'null')); }
+  catch (_) { return {}; }
+}
+
+export function saveDeckOrders(orders, storage = ls()) {
+  const clean = normalizeDeckOrders(orders);
+  if (storage) {
+    try { storage.setItem(DECK_ORDER_KEY, JSON.stringify(clean)); } catch (_) {}
+  }
+  return clean;
+}
+
+export function deckOrder(orders, ownerKey) {
+  return Array.isArray(orders?.[ownerKey]) ? orders[ownerKey] : [];
+}
+
+// Sposta source nella posizione occupata da target. Come per le celle,
+// adiacenti su/giu (qui sinistra/destra) funzionano in entrambe le direzioni.
+export function moveDeckInOrder(orders, ownerKey, source, target, availableIds = []) {
+  if (!validOwnerKey(ownerKey) || source === target) return normalizeDeckOrders(orders);
+  const available = [...new Set(availableIds.filter((id) => idBelongsToOwner(id, ownerKey)))];
+  if (!available.includes(source) || !available.includes(target)) return normalizeDeckOrders(orders);
+  const stored = deckOrder(orders, ownerKey).filter((id) => available.includes(id));
+  const base = [...stored, ...available.filter((id) => !stored.includes(id))];
+  const sourceIndex = base.indexOf(source); const targetIndex = base.indexOf(target);
+  base.splice(sourceIndex, 1);
+  const targetAfterRemoval = base.indexOf(target);
+  base.splice(sourceIndex < targetIndex ? targetAfterRemoval + 1 : targetAfterRemoval, 0, source);
+  return normalizeDeckOrders({ ...orders, [ownerKey]: base });
+}
+
+export function replaceDeckOrderId(orders, ownerKey, from, to) {
+  if (!validOwnerKey(ownerKey) || !idBelongsToOwner(to, ownerKey)) return normalizeDeckOrders(orders);
+  const current = deckOrder(orders, ownerKey);
+  if (!current.includes(from)) return normalizeDeckOrders(orders);
+  return normalizeDeckOrders({ ...orders, [ownerKey]: current.map((id) => id === from ? to : id) });
+}
+
+export function removeDeckOrderId(orders, ownerKey, id) {
+  if (!validOwnerKey(ownerKey)) return normalizeDeckOrders(orders);
+  return normalizeDeckOrders({ ...orders, [ownerKey]: deckOrder(orders, ownerKey).filter((item) => item !== id) });
+}
+
+export function orderDeckRecords(records, orders = {}) {
+  const groups = new Map();
+  for (const record of Array.isArray(records) ? records : []) {
+    const ownerKey = record?.local ? 'local' : String(record?.ownerId || '');
+    if (!validOwnerKey(ownerKey) || !idBelongsToOwner(record?.id, ownerKey)) continue;
+    if (!groups.has(ownerKey)) groups.set(ownerKey, []);
+    groups.get(ownerKey).push(record);
+  }
+  const out = [];
+  for (const [, group] of groups) {
+    const ownerKey = group[0].local ? 'local' : group[0].ownerId;
+    const saved = deckOrder(orders, ownerKey);
+    const rank = new Map(saved.map((id, index) => [id, index]));
+    group.sort((a, b) => {
+      const ai = rank.has(a.id) ? rank.get(a.id) : Number.MAX_SAFE_INTEGER;
+      const bi = rank.has(b.id) ? rank.get(b.id) : Number.MAX_SAFE_INTEGER;
+      return ai - bi;
+    });
+    out.push(...group);
+  }
+  return out;
 }
 
 // Layout grezzo (JSON) di un deck qualunque: usato dal "manda al deck X" per

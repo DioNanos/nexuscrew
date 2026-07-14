@@ -142,6 +142,20 @@ test('Fleet settings separates location management from the all-node overview', 
   assert.ok(manage > -1 && engines > manage, 'cells and +add must precede engines in Manage location');
 });
 
+test('Fleet backup is a global engine + cell action, not a cells-only action', () => {
+  const fleet = read('FleetTab.jsx');
+  const globalBackup = fleet.indexOf('nc-fleet-backup-actions');
+  const cells = fleet.indexOf("t('fleet-cells')", globalBackup);
+  const engines = fleet.indexOf("t('fleet-engines')", cells);
+  assert.ok(globalBackup > -1 && cells > globalBackup && engines > cells,
+    'backup action must appear before both managed lists');
+  const dialog = fleet.indexOf('function FleetBackupDialog');
+  assert.ok(dialog > engines, 'shared backup dialog must remain available');
+  const dialogSource = fleet.slice(dialog);
+  assert.match(dialogSource, /selectedEnginesOut/);
+  assert.match(dialogSource, /selectedCellsOut/);
+});
+
 test('standalone hub invitations require one explicit reachable SSH endpoint', () => {
   const settings = read('SettingsPanel.jsx');
   assert.match(settings, /const name = toSlug\(inviteForm\.name \|\| devName \|\| deviceDefault/);

@@ -32,6 +32,9 @@ export const fleetBoot = (t, b, route) => jsonFetch(fleetPath(route, 'boot'), t,
 export const fleetRestart = (t, cell, route) => jsonFetch(fleetPath(route, 'restart'), t, { method: 'POST', body: { cell } });
 export const fleetSchema = (t, route) => jsonFetch(fleetPath(route, 'schema'), t);
 export const fleetDefinitions = (t, route) => jsonFetch(fleetPath(route, 'definitions'), t);
+export const fleetCredentialStatus = (t, route) => jsonFetch(fleetPath(route, 'credentials/status'), t);
+export const fleetSetCredential = (t, envKey, value, route) => jsonFetch(fleetPath(route, 'credentials/set'), t, { method: 'POST', body: { envKey, value } });
+export const fleetRemoveCredential = (t, envKey, route) => jsonFetch(fleetPath(route, 'credentials/remove'), t, { method: 'POST', body: { envKey } });
 export const fleetDefineEngine = (t, def, route) => jsonFetch(fleetPath(route, 'define-engine'), t, { method: 'POST', body: { def } });
 export const fleetEditEngine = (t, id, patch, envChanges, route) => jsonFetch(fleetPath(route, 'edit-engine'), t, { method: 'POST', body: { id, patch, envChanges } });
 export const fleetRemoveEngine = (t, id, route) => jsonFetch(fleetPath(route, 'remove-engine'), t, { method: 'POST', body: { id } });
@@ -43,6 +46,7 @@ export const fleetRestoreCells = (t, cells, route) => jsonFetch(fleetPath(route,
 export const fleetRestoreEngines = (t, engines, overwrite, route) => jsonFetch(fleetPath(route, 'restore-engines'), t, { method: 'POST', body: { engines, overwrite: !!overwrite } });
 export const createSession = (t, b, route) => jsonFetch(`${routeBase(route)}/sessions`, t, { method: 'POST', body: b });
 export const killSession = (t, name, route) => jsonFetch(`${routeBase(route)}/sessions/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
+export const setSessionTechnical = (t, name, technical, route) => jsonFetch(`${routeBase(route)}/sessions/${encodeURIComponent(name)}/visibility`, t, { method: 'PATCH', body: { technical: !!technical } });
 export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs${p ? `?path=${encodeURIComponent(p)}` : ''}`, t);
 
 // Settings API B2 (design §4b(6)): read-only + mutanti lista chiusa. jsonFetch

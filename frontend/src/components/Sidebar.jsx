@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { seenKey } from '../lib/api.js';
 import { t, LANGUAGES } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
-import { loadPins, togglePinIn, pinRank, cmpRank } from '../lib/pins.js';
+import { loadPins, movePinIn, togglePinIn, pinRank, cmpRank } from '../lib/pins.js';
 import { positionKey } from '../lib/nodes-model.js';
 import {
   loadSidebarOrders, loadSidebarViews, moveSidebarItem, saveSidebarOrders,
   saveSidebarViews, sidebarItems, sidebarOrder, sidebarView,
 } from '../lib/sidebar-model.js';
 import Icon from './Icon.jsx';
-import RosterHandle, { rosterDropHandlers } from './RosterHandle.jsx';
+import RosterHandle from './RosterHandle.jsx';
 import './Sidebar.css';
 
 // Tempo relativo compatto da epoch sec: 'ora' | 'Nm' | 'Nh' | 'Ng'.
@@ -56,7 +56,7 @@ function healthTitle(h) { if (!h) return ''; return h.detail || h.status || ''; 
 // genitore; qui solo render + callback.
 // Collassabile (mini 48px, solo dot) e ridimensionabile (maniglia bordo destro).
 export default function Sidebar({
-  sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onNodePower, onKill, onNew,
+  sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onNodePower, onKill, onVisibility, onNew,
   onSettings, width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
@@ -93,7 +93,7 @@ export default function Sidebar({
     }),
     ...others.map((s) => {
       const key = positionKey([], s.name);
-      return { type: 'session', value: s, key, label: s.name, live: true,
+      return { type: 'session', value: s, key, label: s.name, live: true, technical: s.technical === true,
         fresh: hasFreshOutput(s, key), activity: s.activity || 0 };
     }),
   ];
@@ -111,7 +111,7 @@ export default function Sidebar({
       }),
       ...(g.unmanaged || []).map((s) => {
         const key = positionKey(g.route, s.name);
-        return { type: 'session', value: s, key, label: s.name, live: true,
+        return { type: 'session', value: s, key, label: s.name, live: true, technical: s.technical === true,
           fresh: hasFreshOutput(s, key), activity: s.activity || 0 };
       }),
     ];
@@ -119,16 +119,24 @@ export default function Sidebar({
     return { g, nodeRoute, groupView, rawItems, items };
   });
   function moveRoster(position, source, target, rawItems) {
+    const sourcePinned = pins.includes(source); const targetPinned = pins.includes(target);
+    if (sourcePinned !== targetPinned) return;
+    if (sourcePinned) { setPins((before) => movePinIn(before, source, target)); return; }
     setOrders((before) => {
-      const available = sidebarItems(rawItems, pins, 'all', sidebarOrder(before, position)).map((item) => item.key);
+      const sourceTechnical = rawItems.find((item) => item.key === source)?.technical === true;
+      const available = sidebarItems(rawItems, pins, sourceTechnical ? 'technical' : 'all', sidebarOrder(before, position)).map((item) => item.key);
       return saveSidebarOrders(moveSidebarItem(before, position, source, target, available));
     });
   }
   function stepRoster(position, source, delta, rawItems) {
-    const available = sidebarItems(rawItems, pins, 'all', sidebarOrder(orders, position)).map((item) => item.key);
+    const sourceTechnical = rawItems.find((item) => item.key === source)?.technical === true;
+    const sourcePinned = pins.includes(source);
+    const available = sidebarItems(rawItems, pins, sourceTechnical ? 'technical' : 'all', sidebarOrder(orders, position))
+      .map((item) => item.key).filter((key) => pins.includes(key) === sourcePinned);
     const at = available.indexOf(source); const target = available[at + delta];
     if (at >= 0 && target) moveRoster(position, source, target, rawItems);
   }
+  const canMoveRoster = (source, target) => pins.includes(source) === pins.includes(target);
   // Tooltip mini via JS (position:fixed): il ::after CSS veniva CLIPPATO
   // dall'overflow della sidebar da 48px.
   const [tip, setTip] = useState(null); // {text, y}
@@ -268,7 +276,7 @@ export default function Sidebar({
       <div className="nc-side-scroll">
       <PositionHeader
         label={t('position-local')}
-        count={(cells || []).length + others.length}
+        count={localItems.length}
         state={viewFor('local')}
         onToggle={() => updateView('local', { open: !viewFor('local').open })}
         onFilter={(filter) => updateView('local', { filter })}
@@ -294,10 +302,9 @@ export default function Sidebar({
                 onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', c.tmuxSession) : undefined}
                 onClick={live ? () => onAddTile && onAddTile(c.tmuxSession) : undefined}
                 onDoubleClick={live ? () => onPick && onPick(c.tmuxSession) : undefined}
-                {...rosterDropHandlers('local', item.key,
-                  (source, target) => moveRoster('local', source, target, localRawItems))}
               >
                 <RosterHandle position="local" itemKey={item.key} label={c.cell}
+                  canMove={canMoveRoster}
                   onMove={(source, target) => moveRoster('local', source, target, localRawItems)}
                   onStep={(delta) => stepRoster('local', item.key, delta, localRawItems)} />
                 <span className={`nc-dot ${dot}`} />
@@ -328,10 +335,9 @@ export default function Sidebar({
               onDragStart={(e) => e.dataTransfer.setData('text/nc-session', s.name)}
               onClick={() => onAddTile && onAddTile(s.name)}
               onDoubleClick={() => onPick && onPick(s.name)}
-              {...rosterDropHandlers('local', item.key,
-                (source, target) => moveRoster('local', source, target, localRawItems))}
             >
               <RosterHandle position="local" itemKey={item.key} label={s.name}
+                canMove={canMoveRoster}
                 onMove={(source, target) => moveRoster('local', source, target, localRawItems)}
                 onStep={(delta) => stepRoster('local', item.key, delta, localRawItems)} />
               <span className={s.attached ? 'nc-dot on' : 'nc-dot'} />
@@ -339,6 +345,10 @@ export default function Sidebar({
               {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
               <button className={`nc-pin${pins.includes(item.key) ? ' on' : ''}`} title={t('pin')}
                 onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}>{pins.includes(item.key) ? '★' : '☆'}</button>
+              <button className={`nc-technical${s.technical ? ' on' : ''}`}
+                title={s.technical ? t('mark-normal') : t('mark-technical')}
+                aria-label={`${s.technical ? t('mark-normal') : t('mark-technical')} ${s.name}`}
+                onClick={(e) => { e.stopPropagation(); onVisibility && onVisibility(s.name, !s.technical, []); }}>T</button>
               <button className="nc-menu" title={t('terminate')} onClick={(e) => { e.stopPropagation(); if (window.confirm(t('terminate-confirm').replace('{name}', s.name))) onKill && onKill(s.name); }}>⋯</button>
             </div>;
           })())}
@@ -364,13 +374,13 @@ export default function Sidebar({
             <small>
               {' · '}
               {g.status === 'up'
-                ? t('node-sessions').replace('{n}', String((g.cells || []).length + (g.unmanaged || []).length))
+                ? t('node-sessions').replace('{n}', String(remoteItems.length))
                 : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
             </small>
             <select className="nc-node-filter" value={groupView.filter} title={t(`view-${groupView.filter}`)}
               onClick={(e) => e.stopPropagation()} onChange={(e) => updateView(nodeRoute, { filter: e.target.value })}>
               <option value="all">{t('view-all')}</option><option value="pinned">{t('view-pinned')}</option>
-              <option value="active">{t('view-active')}</option><option value="off">{t('view-off')}</option>
+              <option value="active">{t('view-active')}</option><option value="off">{t('view-off')}</option><option value="technical">{t('view-technical')}</option>
             </select>
             {g.direct && g.health && g.health.managed !== false && (
               <button type="button" className={`nc-power${g.tunnelStatus === 'up' ? ' on' : ''}`}
@@ -395,10 +405,9 @@ export default function Sidebar({
                     onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', c.key) : undefined}
                     onClick={live ? () => onAddTile && onAddTile(c.key) : undefined}
                     onDoubleClick={live ? () => onPick && onPick({ session: c.tmuxSession, node: nodeRoute }) : undefined}
-                    {...rosterDropHandlers(nodeRoute, item.key,
-                      (source, target) => moveRoster(nodeRoute, source, target, rawItems))}
                   >
                     <RosterHandle position={nodeRoute} itemKey={item.key} label={c.cell}
+                      canMove={canMoveRoster}
                       onMove={(source, target) => moveRoster(nodeRoute, source, target, rawItems)}
                       onStep={(delta) => stepRoster(nodeRoute, item.key, delta, rawItems)} />
                     <span className={`nc-dot ${dot}`} />
@@ -425,10 +434,9 @@ export default function Sidebar({
                   onDragStart={(e) => e.dataTransfer.setData('text/nc-session', s.key)}
                   onClick={() => onAddTile && onAddTile(s.key)}
                   onDoubleClick={() => onPick && onPick({ session: s.name, node: s.node })}
-                  {...rosterDropHandlers(nodeRoute, item.key,
-                    (source, target) => moveRoster(nodeRoute, source, target, rawItems))}
                 >
                   <RosterHandle position={nodeRoute} itemKey={item.key} label={s.name}
+                    canMove={canMoveRoster}
                     onMove={(source, target) => moveRoster(nodeRoute, source, target, rawItems)}
                     onStep={(delta) => stepRoster(nodeRoute, item.key, delta, rawItems)} />
                   <span className={s.attached ? 'nc-dot on' : 'nc-dot'} />
@@ -443,6 +451,10 @@ export default function Sidebar({
                   {s.activity ? <span className="nc-rel">{rel(s.activity)}</span> : null}
                   <button className={`nc-pin${pins.includes(item.key) ? ' on' : ''}`} title={t('pin')}
                     onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}>{pins.includes(item.key) ? '★' : '☆'}</button>
+                  <button className={`nc-technical${s.technical ? ' on' : ''}`}
+                    title={s.technical ? t('mark-normal') : t('mark-technical')}
+                    aria-label={`${s.technical ? t('mark-normal') : t('mark-technical')} ${s.name}`}
+                    onClick={(e) => { e.stopPropagation(); onVisibility && onVisibility(s.name, !s.technical, g.route || []); }}>T</button>
                   <button className="nc-menu" title={t('terminate')} onClick={(e) => {
                     e.stopPropagation();
                     if (window.confirm(t('terminate-confirm').replace('{name}', s.name))) onKill && onKill(s.name, g.route);
@@ -480,7 +492,7 @@ function PositionHeader({ label, count, state, onToggle, onFilter }) {
     <select className="nc-node-filter" value={state.filter} title={t(`view-${state.filter}`)}
       onClick={(e) => e.stopPropagation()} onChange={(e) => onFilter(e.target.value)}>
       <option value="all">{t('view-all')}</option><option value="pinned">{t('view-pinned')}</option>
-      <option value="active">{t('view-active')}</option><option value="off">{t('view-off')}</option>
+      <option value="active">{t('view-active')}</option><option value="off">{t('view-off')}</option><option value="technical">{t('view-technical')}</option>
     </select>
   </div>;
 }

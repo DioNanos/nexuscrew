@@ -65,8 +65,8 @@ test('resolvePairingInput: un link v2 digitato e confermato con Enter applica ro
 
 test('buildPairBody: numeri e default coerenti, niente campi vuoti fabbricati', async () => {
   const { buildPairBody } = await pf();
-  const full = buildPairBody({ name: 'peer', ssh: 'relay', sshPort: '2222', pairingUrl: 'u', label: 'Peer', localLabel: '' }, { deviceDefault: 'Pixel' });
-  assert.deepEqual(full, { name: 'peer', ssh: 'relay', pairingUrl: 'u', label: 'Peer', sshPort: 2222, localLabel: 'Pixel' });
+  const full = buildPairBody({ name: 'peer', ssh: 'relay', sshPort: '2222', pairingUrl: 'u', label: 'Peer', localLabel: '' }, { deviceDefault: 'Phone' });
+  assert.deepEqual(full, { name: 'peer', ssh: 'relay', pairingUrl: 'u', label: 'Peer', sshPort: 2222, localLabel: 'Phone' });
   const lean = buildPairBody({ name: 'peer', ssh: 'relay', sshPort: '', pairingUrl: 'u', label: '', localLabel: '' }, {});
   assert.deepEqual(lean, { name: 'peer', ssh: 'relay', pairingUrl: 'u' });
 });

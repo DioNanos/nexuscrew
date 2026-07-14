@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const fixture = vi.hoisted(() => ({ sessions: [], cells: [], nodes: [] }));
@@ -8,7 +8,7 @@ const fixture = vi.hoisted(() => ({ sessions: [], cells: [], nodes: [] }));
 vi.mock('../lib/api.js', () => ({
   apiFetch: vi.fn(async (path) => ({
     json: async () => path === '/api/config'
-      ? { version: '0.8.13', bind: '127.0.0.1', port: 41820 }
+      ? { version: '0.8.14', bind: '127.0.0.1', port: 41820 }
       : { sessions: fixture.sessions },
   })),
   seenKey: (session) => `nc_seen_${session}`,
@@ -18,12 +18,14 @@ vi.mock('../lib/api.js', () => ({
   fleetDown: vi.fn(async () => ({})),
   killSession: vi.fn(async () => ({})),
   nodeAction: vi.fn(async () => ({})),
+  setSessionTechnical: vi.fn(async () => ({})),
 }));
 
 vi.mock('../hooks/useNodes.js', () => ({ useNodes: () => fixture.nodes }));
 vi.mock('../hooks/useLang.js', () => ({ useLang: () => ['en', vi.fn()] }));
 
 import SessionList from './SessionList.jsx';
+import { setSessionTechnical } from '../lib/api.js';
 
 function cell(cell, tmuxSession, live, engine = 'claude.native') {
   return { cell, tmuxSession, tmux: live, active: live, engine, key: '', degraded: false };
@@ -81,7 +83,7 @@ describe('mobile roster parity', () => {
     expect(ordered[0]).toBe('relay:remote-off');
 
     await user.selectOptions(screen.getByLabelText('Relay · filter sessions…'), 'pinned');
-    await user.click(within(relay).getByRole('button', { name: /Relay · 3 sessions/ }));
+    await user.click(within(relay).getByRole('button', { name: /Relay · 1 sessions/ }));
     expect(within(relay).queryByText('Relay Off')).toBeNull();
     expect(JSON.parse(localStorage.getItem('nc_sidebar_views_v1')).relay).toEqual({ open: false, filter: 'pinned' });
   });
@@ -123,5 +125,32 @@ describe('mobile roster parity', () => {
     const after = [...local.querySelectorAll('[data-roster-key]')].map((node) => node.dataset.rosterKey);
     expect(after).not.toEqual(before);
     expect(handle.getAttribute('aria-keyshortcuts')).toBe('ArrowUp ArrowDown');
+  });
+
+  it('hides technical tmux sessions by default, counts displayed rows and can restore them', async () => {
+    const user = userEvent.setup();
+    fixture.sessions.push(session('runtime-helper', 40, { technical: true }));
+    renderRoster();
+    const local = await screen.findByRole('button', { name: /Local · 3 sessions/ });
+    expect(local).toBeTruthy();
+    expect(screen.queryByText('runtime-helper')).toBeNull();
+    await user.selectOptions(screen.getByLabelText('Local · filter sessions…'), 'technical');
+    expect(await screen.findByText('runtime-helper')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'show as normal session runtime-helper' }));
+    expect(setSessionTechnical).toHaveBeenCalledWith('test-token', 'runtime-helper', false, []);
+  });
+
+  it.each(['mouse', 'touch'])('reorders from the dedicated handle with a %s pointer', async (pointerType) => {
+    renderRoster();
+    await screen.findByText('Off Cell');
+    const source = screen.getByRole('button', { name: 'reorder Off Cell' });
+    const target = screen.getByText('Live Cell').closest('[data-roster-key]');
+    const previous = document.elementFromPoint;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: vi.fn(() => target) });
+    fireEvent.pointerDown(source, { pointerId: 7, pointerType, button: 0, clientX: 10, clientY: 20 });
+    fireEvent.pointerMove(source, { pointerId: 7, pointerType, clientX: 10, clientY: 40 });
+    fireEvent.pointerUp(source, { pointerId: 7, pointerType, clientX: 10, clientY: 40 });
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('nc_sidebar_order_v1'))?.local).toContain('local-off'));
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: previous });
   });
 });

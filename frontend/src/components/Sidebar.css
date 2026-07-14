@@ -162,6 +162,13 @@
 }
 .nc-pin:hover { filter: brightness(1.25); }
 .nc-pin.on { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.08); }
+.nc-technical {
+  flex: 0 0 auto; width: 28px; height: 28px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.22);
+  color: #9aa89a; cursor: pointer; border-radius: 50%; font: 12px/1 monospace;
+}
+.nc-technical.on { color: #d8a8ff; border-color: rgba(180,120,255,.55); background: rgba(180,120,255,.10); }
 /* tooltip mini via JS position:fixed — il ::after veniva clippato dall'overflow */
 .nc-mini-tip {
   position:fixed; left:56px; transform:translateY(-50%);
@@ -180,3 +187,5 @@
 .nc-roster-handle:hover, .nc-roster-handle:focus-visible,
 .nc-roster-handle.active { color: #9fd; background: rgba(0,204,102,.10); outline: none; }
 .nc-roster-handle:active, .nc-roster-handle.active { cursor: grabbing; }
+.nc-side-card.nc-roster-dragging, .nc-cell.nc-roster-dragging { opacity: .62; }
+.nc-side-card.nc-roster-over, .nc-cell.nc-roster-over { outline: 2px solid rgba(0,204,102,.72); outline-offset: 2px; }

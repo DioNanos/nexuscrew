@@ -13,7 +13,7 @@ import SettingsPanel from './components/SettingsPanel.jsx';
 import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import {
-  apiFetch, fleetStatus, fleetUp, fleetDown, killSession, getSettings, nodeAction,
+  apiFetch, fleetStatus, fleetUp, fleetDown, killSession, getSettings, nodeAction, setSessionTechnical,
 } from './lib/api.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
 import {
@@ -345,10 +345,14 @@ export default function App() {
     }
     return next;
   });
-    const onKill = async (name, route = []) => {
+  const onKill = async (name, route = []) => {
     try { await killSession(token, name, route); } catch (_) { return; }
     const key = route.length ? `${route.join('/')}:${name}` : name;
     setLayout((l) => removeTile(l, key));
+    poll();
+  };
+  const onVisibility = async (name, technical, route = []) => {
+    try { await setSessionTechnical(token, name, technical, route); } catch (_) { return; }
     poll();
   };
   const onFleetConfirm = async (payload) => {
@@ -463,6 +467,7 @@ export default function App() {
           onPower={setPowerCell}
           onNodePower={onNodePower}
           onKill={onKill}
+          onVisibility={onVisibility}
           onNew={() => openSettings('fleet', true)}
           onSettings={openSettings}
           width={sideW}
@@ -475,6 +480,7 @@ export default function App() {
         <DeckBar
           decks={decks} currentDeck={deck}
           onCreate={onCreateDeck} onRename={onRenameDeck} onDelete={onDeleteDeck}
+          onReorder={deckStore.reorder}
           onOpenWindow={openDeckWindow} onNavigate={selectDeck}
           saveState={deckStore.saveState} error={deckStore.error}
           sidebarVisible={sidebarVisible}
