@@ -1,24 +1,31 @@
-.nc-composer { border-top: 1px solid #2a332a; padding: 6px 8px; background: var(--bg, #111511); }
+.nc-composer {
+  border-top: 1px solid #2a332a;
+  padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  background: var(--bg, #111511);
+}
 .nc-composer-row { display: flex; gap: 6px; align-items: flex-end; }
 .nc-composer textarea {
-  flex: 1; resize: none; background: #0a0e0a; color: #d8e0d8;
+  flex: 1; min-width: 0; min-height: 42px; max-height: 42vh; max-height: 42dvh;
+  resize: vertical; overflow-y: auto; background: #0a0e0a; color: #d8e0d8;
   border: 1px solid #2a332a; border-radius: 8px; padding: 6px 8px;
   font: 13px/1.4 inherit;
 }
+.nc-composer textarea.expanded { height: clamp(128px, 32dvh, 320px); }
 .nc-composer .mic.on { background: #b02a2a; color: #fff; }
 .nc-composer-err { font-size: 12px; color: #e0a030; padding-bottom: 4px; }
 
 /* Touch targets: attach/mic/go grandi; textarea a 16px evita l'auto-zoom iOS/Android. */
 @media (pointer: coarse) {
-  .nc-composer .mic, .nc-composer .go, .nc-composer .attach { min-width: 46px; min-height: 46px; font-size: 20px; }
-  .nc-composer textarea { font-size: 16px; }
+  .nc-composer .mic, .nc-composer .go, .nc-composer .attach, .nc-composer .history { min-width: 46px; min-height: 46px; font-size: 20px; }
+  .nc-composer textarea { resize: none; font-size: 16px; }
   .nc-attach-menu button { min-height: 48px; }
+  .nc-composer-history-menu button { min-height: 48px; }
 }
 
 /* Stesso linguaggio dei bottoni header: verde tema su bordo scuro (non grigio).
    Lo stato .mic.on (registrazione, rosso) vince per specificità.
    Il verde pieno resta SOLO sul send destro (.go): attach è neutro come mic. */
-.nc-composer .mic, .nc-composer .go, .nc-composer .attach {
+.nc-composer .mic, .nc-composer .go, .nc-composer .attach, .nc-composer .history {
   display: inline-flex; align-items: center; justify-content: center;
   background: none; border: 1px solid #243; color: #9fd; border-radius: 8px;
   cursor: pointer;
@@ -42,3 +49,35 @@
   background: none; color: #d8e0d8; font: 14px/1 inherit; cursor: pointer;
 }
 .nc-attach-menu button:hover, .nc-attach-menu button:focus-visible { background: #1a241a; color: #7ee787; }
+
+.nc-composer-history-menu {
+  position: fixed; z-index: 1000; max-height: min(55dvh, 420px); overflow-y: auto;
+  display: flex; flex-direction: column; padding: 4px;
+  background: #0e130e; border: 1px solid #2e7d32; border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+}
+.nc-composer-history-menu button {
+  border: 0; border-radius: 7px; background: none; color: #d8e0d8;
+  font: 13px/1.35 inherit; cursor: pointer;
+}
+.nc-composer-history-menu button:hover,
+.nc-composer-history-menu button:focus-visible { background: #1a241a; color: #7ee787; }
+.nc-composer-history-action {
+  display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 7px 10px; text-align: left;
+  border-bottom: 1px solid #243 !important; border-radius: 7px 7px 0 0 !important;
+}
+.nc-composer-history-title {
+  padding: 8px 10px 5px; color: #7fb89a; font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+}
+.nc-composer-history-empty { padding: 10px; color: #789a87; font-size: 12px; }
+.nc-composer-history-entry {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 8px 10px; text-align: left;
+}
+.nc-composer-history-entry span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-composer-history-entry small { color: #789a87; font-size: 10px; }
+.nc-composer-history-clear { min-height: 36px; margin-top: 3px; padding: 7px 10px; color: #f99 !important; text-align: left; }
+
+@media (max-width: 420px) and (pointer: coarse) {
+  .nc-composer-row { gap: 4px; }
+  .nc-composer .mic, .nc-composer .go, .nc-composer .attach, .nc-composer .history { min-width: 42px; width: 42px; }
+}

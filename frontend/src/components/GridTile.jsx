@@ -16,7 +16,7 @@ import './GridTile.css';
 // node (opzionale, B2): il tile porta con se' il nodo remoto — terminale via
 // WS proxy, files/composer via HTTP proxy. Identita' del tile = refKey
 // "node:session" (drag, focus, close), locale = solo nome (retrocompatibile).
-export default function GridTile({ session, node, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, available = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck }) {
+export default function GridTile({ session, node, ownerId, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, available = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck }) {
   const sendRef = useRef(() => {});
   const composerRef = useRef(() => false);
   const actionRef = useRef(() => {});
@@ -79,7 +79,7 @@ export default function GridTile({ session, node, token, readonly = false, focus
           )}
           <button onClick={() => setShowComposer((v) => !v)} title="composer">⌨</button>
           <button onClick={() => setShowFiles((v) => !v)} title="file">📁</button>
-          {onOpenSingle && <button onClick={() => onOpenSingle({ session, node })} title="vista singola">↗</button>}
+          {onOpenSingle && <button onClick={() => onOpenSingle({ session, node, ownerId })} title="vista singola">↗</button>}
           {onClose && <button className="nc-tile-close" onClick={() => onClose(tileKey)} title="chiudi">✕</button>}
         </span>
       </div>
@@ -104,7 +104,7 @@ export default function GridTile({ session, node, token, readonly = false, focus
 
       {available && showComposer && (
         <div className="nc-tile-composer" onMouseDown={(e) => e.stopPropagation()}>
-          <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} />
+          <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId} />
         </div>
       )}
     </div>

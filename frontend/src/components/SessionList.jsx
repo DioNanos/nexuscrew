@@ -13,6 +13,7 @@ import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import {
   rel, nodeStateLabel, healthDot, healthTitle, buildLocalRoster, buildRemoteRoster,
 } from '../lib/roster-view-model.js';
+import { OWNER_ID_RE } from '../lib/grid-model.js';
 import './SessionList.css';
 
 // Home mobile: lo stesso roster per-posizione della sidebar desktop. Stato di
@@ -28,6 +29,7 @@ export default function SessionList({ onPick, token, onSettings }) {
   const [q, setQ] = useState('');
   const [version, setVersion] = useState('');
   const [endpoint, setEndpoint] = useState({ bind: '127.0.0.1', port: '' });
+  const [localNodeId, setLocalNodeId] = useState('');
   const [cells, setCells] = useState([]);
   const [powerCell, setPowerCell] = useState(null);
   const [nodeBusy, setNodeBusy] = useState(null);
@@ -55,6 +57,7 @@ export default function SessionList({ onPick, token, onSettings }) {
       .then((j) => {
         setVersion(j.version || '');
         setEndpoint({ bind: j.bind || '127.0.0.1', port: j.port || '' });
+        setLocalNodeId(OWNER_ID_RE.test(String(j.instanceId || '')) ? j.instanceId : '');
       }).catch(() => {});
     const id = setInterval(refresh, 4000);
     return () => clearInterval(id);
@@ -131,6 +134,12 @@ export default function SessionList({ onPick, token, onSettings }) {
   function renderRosterItem(item, group = null, rawItems = localRawItems) {
     const route = Array.isArray(group?.route) ? group.route : [];
     const routeKey = route.join('/'); const position = routeKey || 'local';
+    const ownerId = route.length ? group?.instanceId : localNodeId;
+    const pickOwned = (name) => onPick({
+      session: name,
+      ...(routeKey ? { node: routeKey } : {}),
+      ...(OWNER_ID_RE.test(String(ownerId || '')) ? { ownerId } : {}),
+    });
     const canMove = canMoveRoster;
     if (item.type === 'cell') {
       const c = item.value;
@@ -148,7 +157,7 @@ export default function SessionList({ onPick, token, onSettings }) {
             onMove={(source, target) => moveRoster(position, source, target, rawItems)}
             onStep={(delta) => stepRoster(position, item.key, delta, rawItems)} />
           <button className="nc-mcard-main"
-            onClick={() => c.tmux && onPick(route.length ? { session: c.tmuxSession, node: routeKey } : c.tmuxSession)}
+            onClick={() => c.tmux && pickOwned(c.tmuxSession)}
             title={c.degraded ? t('cell-degraded') : c.tmux ? t('cell-on') : t('cell-off')}>
             <span className={`dot ${c.degraded ? 'warn' : c.tmux ? 'on' : ''}`} />
             <span className="nc-mcard-text"><b>{c.cell}</b><small>{sub}</small></span>
@@ -175,7 +184,7 @@ export default function SessionList({ onPick, token, onSettings }) {
           canMove={canMove}
           onMove={(source, target) => moveRoster(position, source, target, rawItems)}
           onStep={(delta) => stepRoster(position, item.key, delta, rawItems)} />
-        <button className="nc-mcard-main" onClick={() => onPick(route.length ? { session: s.name, node: routeKey } : s.name)}>
+        <button className="nc-mcard-main" onClick={() => pickOwned(s.name)}>
           <span className={s.attached ? 'dot on' : 'dot'} />
           <span className="nc-mcard-text">
             <b>{s.name}</b>

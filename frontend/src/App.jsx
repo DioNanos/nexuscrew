@@ -108,7 +108,7 @@ function useDesktop() {
 // Vista singola autosufficiente: usata dal flusso mobile e dall'overlay desktop.
 // Comportamento intatto rispetto alla vista singola pre-griglia.
 // node (opzionale, B2): sessione su nodo remoto via proxy /node/<name>.
-function SingleView({ session, node, token, readonly = false, onBack }) {
+function SingleView({ session, node, ownerId, token, readonly = false, onBack }) {
   useLang(); // re-render allo switch lingua
   const [showFiles, setShowFiles] = useState(false);
   // Su touch il composer è aperto di default (l'IME Gboard corrompe l'input in xterm).
@@ -183,7 +183,7 @@ function SingleView({ session, node, token, readonly = false, onBack }) {
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
         ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} selectionMode={selectionMode} onSelectionMode={setSelectionMode} />
       {showComposer && (
-        <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} />
+        <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId} />
       )}
       {showFiles && (
         <FilesPanel session={session} node={node} token={token} filesEvent={filesEvent} onClose={() => setShowFiles(false)} />
@@ -449,7 +449,7 @@ export default function App() {
         </>
       );
     }
-    return <><SingleView session={session.session} node={session.node} token={token} readonly={roDefault} onBack={() => setSession(null)} />{settingsOverlays}</>;
+    return <><SingleView session={session.session} node={session.node} ownerId={session.ownerId} token={token} readonly={roDefault} onBack={() => setSession(null)} />{settingsOverlays}</>;
   }
 
   // Workspace desktop: Sidebar + GridView + overlay vista singola + dialoghi.
@@ -462,6 +462,7 @@ export default function App() {
           cells={cells}
           activeSessions={activeSessions}
           nodeGroups={nodeGroups}
+          localNodeId={deckStore.localNodeId}
           onPick={openSingle}
           onAddTile={onAddTile}
           onPower={setPowerCell}
@@ -503,7 +504,7 @@ export default function App() {
 
       {single && (
         <div className="nc-single-overlay">
-          <SingleView session={single.session} node={single.node} token={token} readonly={roDefault} onBack={() => setSingle(null)} />
+          <SingleView session={single.session} node={single.node} ownerId={single.ownerId} token={token} readonly={roDefault} onBack={() => setSingle(null)} />
         </div>
       )}
       {powerCell && (

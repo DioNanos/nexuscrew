@@ -169,7 +169,7 @@ export default function GridView({
                   }}
                 >
                   <GridTile
-                    session={tile.session} node={tile.node} token={token} readonly={readonly}
+                    session={tile.session} node={tile.node} ownerId={tile.ownerId} token={token} readonly={readonly}
                     focused={focusSession === key}
                     onFocus={onFocus} onClose={closeTile} onOpenSingle={onOpenSingle}
                     available={tile.unavailable !== true}
