@@ -17,7 +17,7 @@ function pairingUrl() {
     label: 'Relay',
     invite: 'i'.repeat(43),
     name: 'home-relay',
-    ssh: 'user@relay.example',
+    ssh: 'dag@relay.example',
     sshPort: 41822,
   };
   return `http://127.0.0.1:41820/#pair=${Buffer.from(JSON.stringify(payload)).toString('base64url')}`;
@@ -46,7 +46,7 @@ describe('pairing SSH locale', () => {
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.getByText('SSH host or alias on this device')).toBeTruthy();
     expect(screen.getByText(/Aliases, agents and private keys stay local/)).toBeTruthy();
-    expect(screen.getByDisplayValue('user@relay.example').disabled).toBe(false);
+    expect(screen.getByDisplayValue('dag@relay.example').disabled).toBe(false);
     expect(screen.getByDisplayValue('41822').disabled).toBe(false);
   });
 });

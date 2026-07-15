@@ -33,13 +33,13 @@ test('updater routes: authenticated check/apply ignore client package/version', 
 });
 
 test('updater routes: busy is 409 redacted and READONLY blocks before manager', async (t) => {
-  const busy = new Error('busy /home/alice/private'); busy.status = 409; busy.code = 'update-busy';
+  const busy = new Error('busy /home/example/private'); busy.status = 409; busy.code = 'update-busy';
   let calls = 0;
   const { base, token } = await boot(t, manager({ apply: async () => { calls += 1; throw busy; } }));
   const headers = { authorization: `Bearer ${token}` };
   const response = await fetch(`${base}/api/settings/update/apply`, { method: 'POST', headers });
   assert.equal(response.status, 409);
-  const body = await response.json(); assert.equal(body.code, 'update-busy'); assert.equal(body.error.includes('/home/alice'), false);
+  const body = await response.json(); assert.equal(body.code, 'update-busy'); assert.equal(body.error.includes('/home/example'), false);
   assert.equal(calls, 1);
 
   const readonlyManager = manager({ apply: async () => { throw new Error('must not run'); } });

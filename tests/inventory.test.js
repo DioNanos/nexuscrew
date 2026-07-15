@@ -13,16 +13,16 @@ const ID = 'a'.repeat(32);
 test('inventario: posizione remota con fleet mostra cells attive+inattive e unmanaged', async () => {
   const { buildNodeGroups } = await nodes();
   const g = buildNodeGroups({
-    nodes: [{ name: 'relay', label: 'Relay', tunnel: { status: 'up' }, nodeId: ID }],
-    remote: { relay: { sessions: [{ name: 'work' }, { name: 'cloud-dev' }] } },
-    fleet: { relay: { available: true, capabilities: ['status', 'up', 'down', 'edit'],
+    nodes: [{ name: 'vps', label: 'Relay3', tunnel: { status: 'up' }, nodeId: ID }],
+    remote: { vps: { sessions: [{ name: 'work' }, { name: 'cloud-dev' }] } },
+    fleet: { vps: { available: true, capabilities: ['status', 'up', 'down', 'edit'],
       cells: [
         { cell: 'dev', tmuxSession: 'cloud-dev', engine: 'claude', active: true, boot: true },
         { cell: 'fork', tmuxSession: 'cloud-fork', engine: 'glm', active: false, boot: true },
       ] } },
     down: {},
   });
-  const grp = g.find((x) => x.name === 'relay');
+  const grp = g.find((x) => x.name === 'vps');
   assert.equal(grp.status, 'up');
   assert.equal(grp.fleetAvailable, true);
   assert.equal(grp.cells.length, 2);
@@ -36,15 +36,15 @@ test('inventario: chiavi route-qualified (nessuna collisione tra omonimi)', asyn
   const { buildNodeGroups, positionKey } = await nodes();
   const g = buildNodeGroups({
     nodes: [
-      { name: 'relay', tunnel: { status: 'up' }, nodeId: 'b'.repeat(32) },
+      { name: 'vps', tunnel: { status: 'up' }, nodeId: 'b'.repeat(32) },
       { name: 'mac', tunnel: { status: 'up' }, nodeId: 'c'.repeat(32) },
     ],
     remote: {
-      relay: { sessions: [{ name: 'dev' }] },
+      vps: { sessions: [{ name: 'dev' }] },
       mac: { sessions: [{ name: 'dev' }] },
     },
     fleet: {
-      relay: { available: true, cells: [{ cell: 'dev', tmuxSession: 'cloud-dev', engine: 'x', active: true }] },
+      vps: { available: true, cells: [{ cell: 'dev', tmuxSession: 'cloud-dev', engine: 'x', active: true }] },
       mac: { available: true, cells: [{ cell: 'dev', tmuxSession: 'cloud-dev', engine: 'y', active: true }] },
     },
     down: {},
@@ -53,22 +53,22 @@ test('inventario: chiavi route-qualified (nessuna collisione tra omonimi)', asyn
   assert.equal(new Set(keys).size, keys.length, 'chiavi cell univoche anche con cell omonime');
   // La chiave punta alla sessione tmux reale, non all'id logico della cella:
   // l'attach di `dev` aprirebbe un terminale vuoto al posto di `cloud-dev`.
-  assert.ok(keys.includes('relay:cloud-dev'));
+  assert.ok(keys.includes('vps:cloud-dev'));
   assert.ok(keys.includes('mac:cloud-dev'));
   // positionKey: locale nuda, remota route-qualified
   assert.equal(positionKey([], 'x'), 'x');
-  assert.equal(positionKey(['relay'], 'x'), 'relay:x');
+  assert.equal(positionKey(['vps'], 'x'), 'vps:x');
   assert.equal(positionKey(['relay', 'phone'], 'x'), 'relay/phone:x');
 });
 
 test('inventario: backward-compat senza fleet -> cells vuote, sessions tutte le tmux', async () => {
   const { buildNodeGroups } = await nodes();
   const g = buildNodeGroups({
-    nodes: [{ name: 'relay', tunnel: { status: 'up' }, nodeId: ID }],
-    remote: { relay: { sessions: [{ name: 'cloud-dev' }, { name: 'work' }] } },
+    nodes: [{ name: 'vps', tunnel: { status: 'up' }, nodeId: ID }],
+    remote: { vps: { sessions: [{ name: 'cloud-dev' }, { name: 'work' }] } },
     down: {},
   });
-  const grp = g.find((x) => x.name === 'relay');
+  const grp = g.find((x) => x.name === 'vps');
   assert.deepEqual(grp.cells, [], 'senza fleet nessuna cell');
   assert.deepEqual(grp.sessions.map((s) => s.name), ['cloud-dev', 'work'], 'sessions = tutte le tmux (retrocompat)');
 });
@@ -98,23 +98,23 @@ test('inventario: client inbound privato resta fuori dalla sidebar e non accumul
 test('inventario: label umana usata quando presente (fallback a name)', async () => {
   const { buildNodeGroups } = await nodes();
   const withLabel = buildNodeGroups({
-    nodes: [{ name: 'relay', label: 'Relay Server', tunnel: { status: 'up' }, nodeId: ID }],
-    remote: { relay: { sessions: [] } }, down: {},
+    nodes: [{ name: 'vps', label: 'Relay3 Server', tunnel: { status: 'up' }, nodeId: ID }],
+    remote: { vps: { sessions: [] } }, down: {},
   });
-  assert.equal(withLabel[0].label, 'Relay Server');
+  assert.equal(withLabel[0].label, 'Relay3 Server');
   const noLabel = buildNodeGroups({
-    nodes: [{ name: 'relay', tunnel: { status: 'up' }, nodeId: ID }],
-    remote: { relay: { sessions: [] } }, down: {},
+    nodes: [{ name: 'vps', tunnel: { status: 'up' }, nodeId: ID }],
+    remote: { vps: { sessions: [] } }, down: {},
   });
-  assert.equal(noLabel[0].label, 'relay', 'fallback a name quando label assente');
+  assert.equal(noLabel[0].label, 'vps', 'fallback a name quando label assente');
 });
 
 test('inventario: capabilities propagate (per gating azioni Settings > Fleet)', async () => {
   const { buildNodeGroups } = await nodes();
   const g = buildNodeGroups({
-    nodes: [{ name: 'relay', tunnel: { status: 'up' }, nodeId: ID }],
-    remote: { relay: { sessions: [] } },
-    fleet: { relay: { available: true, capabilities: ['status', 'up', 'down', 'restart', 'edit'], cells: [] } },
+    nodes: [{ name: 'vps', tunnel: { status: 'up' }, nodeId: ID }],
+    remote: { vps: { sessions: [] } },
+    fleet: { vps: { available: true, capabilities: ['status', 'up', 'down', 'restart', 'edit'], cells: [] } },
     down: {},
   });
   assert.deepEqual(g[0].capabilities, ['status', 'up', 'down', 'restart', 'edit']);

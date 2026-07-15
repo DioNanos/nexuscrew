@@ -81,11 +81,12 @@ test('Fleet settings preserves the clicked Hydra route for power actions', () =>
 });
 
 test('Fleet inventory negotiates dedicated import/remove capabilities', () => {
-  const fleet = read('FleetTab.jsx');
-  assert.match(fleet, /can\(pos, 'import'\) && onImport/);
-  assert.match(fleet, /can\(pos, 'remove'\)[\s\S]*?cellRemove/);
-  assert.doesNotMatch(fleet, /can\(pos, 'edit'\)[\s\S]{0,160}cellRemove/);
-  assert.match(fleet, /!readonly && !pos\.readonly/);
+  // FleetInventory now lives in components/fleet/FleetInventory.jsx.
+  const inventory = read('fleet/FleetInventory.jsx');
+  assert.match(inventory, /can\(pos, 'import'\) && onImport/);
+  assert.match(inventory, /can\(pos, 'remove'\)[\s\S]*?cellRemove/);
+  assert.doesNotMatch(inventory, /can\(pos, 'edit'\)[\s\S]{0,160}cellRemove/);
+  assert.match(inventory, /!readonly && !pos\.readonly/);
 });
 
 // Le card gestite espongono SOLO il power condiviso: engine/model/policy vivono
@@ -114,11 +115,13 @@ test('Fleet inventory exposes an explicit "Import as cell" flow for unmanaged se
   assert.match(fleet, /fleetImportCell/);
   assert.match(fleet, /import-as-cell/);
   assert.match(fleet, /ImportEditor/);
-  // l'import richiede engine dichiarato (niente invenzione)
-  assert.match(fleet, /disabled=\{busy \|\| !f\.tmuxSession \|\| !f\.engine \|\| !engines\.length\}/);
+  // l'import richiede engine dichiarato (niente invenzione) — il gate vive
+  // nell'editor, ora in components/fleet/ImportEditor.jsx
+  const importer = read('fleet/ImportEditor.jsx');
+  assert.match(importer, /disabled=\{busy \|\| !f\.tmuxSession \|\| !f\.engine \|\| !engines\.length\}/);
   // Le definitions vanno lette dalla route della sessione, non dalla posizione
   // che era selezionata quando l'utente ha cliccato Importa.
-  assert.match(fleet, /fleetDefinitions\(token, routeKey \? routeKey\.split\('\/'\) : \[\]\)/);
+  assert.match(importer, /fleetDefinitions\(token, routeKey \? routeKey\.split\('\/'\) : \[\]\)/);
 });
 
 test('Fleet settings inventory keeps every node visible and routes remote settings', () => {
@@ -149,11 +152,12 @@ test('Fleet backup is a global engine + cell action, not a cells-only action', (
   const engines = fleet.indexOf("t('fleet-engines')", cells);
   assert.ok(globalBackup > -1 && cells > globalBackup && engines > cells,
     'backup action must appear before both managed lists');
-  const dialog = fleet.indexOf('function FleetBackupDialog');
-  assert.ok(dialog > engines, 'shared backup dialog must remain available');
-  const dialogSource = fleet.slice(dialog);
-  assert.match(dialogSource, /selectedEnginesOut/);
-  assert.match(dialogSource, /selectedCellsOut/);
+  // The shared backup dialog was extracted to components/fleet/FleetBackupDialog.jsx
+  // but must still expose both engine and cell selection.
+  const dialog = read('fleet/FleetBackupDialog.jsx');
+  assert.ok(dialog.indexOf('function FleetBackupDialog') > -1, 'shared backup dialog must remain available');
+  assert.match(dialog, /selectedEnginesOut/);
+  assert.match(dialog, /selectedCellsOut/);
 });
 
 test('standalone hub invitations require one explicit reachable SSH endpoint', () => {

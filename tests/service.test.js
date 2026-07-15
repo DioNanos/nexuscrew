@@ -174,9 +174,12 @@ test('generateTermux: shebang + contesto completo', () => {
   assert.match(s, /^#!\/data\/data\/com\.termux\/files\/usr\/bin\/sh/);
   assert.match(s, /export PATH=\/data\/data\/com\.termux\/files\/usr\/bin:\$PATH/);
   assert.match(s, /export HOME=\/data\/data\/com\.termux\/files\/home/);
+  assert.match(s, /export PREFIX=\/data\/data\/com\.termux\/files\/usr/);
+  assert.match(s, /export TMPDIR=\$PREFIX\/tmp/);
+  assert.match(s, /export TMUX_TMPDIR=\$PREFIX\/var\/run/);
   assert.doesNotMatch(s, /NEXUSCREW_PORT/, 'config.json resta la fonte autoritativa della porta');
   assert.match(s, /termux-wake-lock/);
-  assert.match(s, /mkdir -p "\$HOME\/\.nexuscrew"/);
+  assert.match(s, /mkdir -p "\$HOME\/\.nexuscrew" "\$TMPDIR" "\$TMUX_TMPDIR"/);
   assert.match(s, /cd -- "\$HOME\/\.nexuscrew"/);
   assert.match(s, /export LANG=\$\{LANG:-en_US\.UTF-8\}/);
 });

@@ -349,7 +349,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.16**. npm `latest`, the GitHub tag and the release use the
+The current stable release is **v0.8.17**. npm `latest`, the GitHub tag and the release use the
 same audited package artifact.
 
 ## License

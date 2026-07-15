@@ -38,11 +38,14 @@ test('every local or remote owner group has its own translated compact new actio
   assert.match(hook, /ownerId === LOCAL_OWNER/);
 });
 
+// FleetModal was extracted into components/fleet/FleetModal.jsx during the
+// behavior-preserving FleetTab modularization; the focus-trap contract now
+// lives there.
 test('fleet modal owns keyboard focus and reports errors inside the dialog', () => {
-  const fleet = src('components/FleetTab.jsx');
-  assert.match(fleet, /event\.key === 'Escape'/);
-  assert.match(fleet, /event\.key !== 'Tab'/);
-  assert.match(fleet, /previous\.focus\(\{ preventScroll: true \}\)/);
-  assert.match(fleet, /role="alert" aria-live="assertive"/);
-  assert.match(fleet, /scrollIntoView\(\{ block: 'nearest' \}\)/);
+  const modal = src('components/fleet/FleetModal.jsx');
+  assert.match(modal, /event\.key === 'Escape'/);
+  assert.match(modal, /event\.key !== 'Tab'/);
+  assert.match(modal, /previous\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(modal, /role="alert" aria-live="assertive"/);
+  assert.match(modal, /scrollIntoView\(\{ block: 'nearest' \}\)/);
 });

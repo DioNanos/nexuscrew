@@ -88,10 +88,10 @@ test('scoped federation HTTP reaches sessions, fleet, owner decks and only the h
   assert.equal((await fetch(`${base}/api/route/mac/_/files/outbox`, { method: 'POST' })).status, 404);
   assert.equal((await fetch(`${base}/api/route/mac/_/settings`)).status, 404);
   const invite = await fetch(`${base}/api/route/mac/_/settings/peering/invite`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ssh: 'relay-alias' }),
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ssh: 'relay' }),
   });
   assert.equal(invite.status, 200);
-  assert.equal((await invite.json()).pairingUrl, 'http://127.0.0.1:41777/#pair=hub-relay-alias');
+  assert.equal((await invite.json()).pairingUrl, 'http://127.0.0.1:41777/#pair=hub-relay');
   assert.equal(await fetch(`${base}/api/route/mac/_/settings/peering/invite`).then((r) => r.status), 404);
   assert.equal((await fetch(`${base}/api/route/mac/_/fleet/status`)).status, 200);
   assert.equal((await fetch(`${base}/api/route/mac/_/cells`)).status, 200);

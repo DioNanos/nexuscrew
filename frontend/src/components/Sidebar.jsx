@@ -1,55 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { seenKey } from '../lib/api.js';
 import { t, LANGUAGES } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
-import { loadPins, movePinIn, togglePinIn, pinRank, cmpRank } from '../lib/pins.js';
-import { positionKey } from '../lib/nodes-model.js';
+import { pinRank, cmpRank } from '../lib/pins.js';
+import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
+import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import {
-  loadSidebarOrders, loadSidebarViews, moveSidebarItem, saveSidebarOrders,
-  saveSidebarViews, sidebarItems, sidebarOrder, sidebarView,
-} from '../lib/sidebar-model.js';
+  rel, nodeStateLabel, healthDot, healthTitle, buildLocalRoster, buildRemoteRoster,
+} from '../lib/roster-view-model.js';
 import Icon from './Icon.jsx';
 import RosterHandle from './RosterHandle.jsx';
 import './Sidebar.css';
 
-// Tempo relativo compatto da epoch sec: 'ora' | 'Nm' | 'Nh' | 'Ng'.
-function rel(epochSec) {
-  if (!epochSec) return '';
-  const s = Math.floor(Date.now() / 1000) - epochSec;
-  if (s < 0 || s < 60) return 'ora';
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}g`;
-}
-
 // Iniziale compatta per la modalità mini (prima lettera significativa).
 function initial(name) { return String(name || '?').replace(/^[^a-zA-Z0-9]+/, '').charAt(0).toUpperCase() || '?'; }
-
-function hasFreshOutput(session, key) {
-  if (!session?.outbox || session.outbox.count < 1) return false;
-  const seen = Number(localStorage.getItem(seenKey(key)) || 0);
-  return session.outbox.latest > seen;
-}
 
 // Larghezza sidebar: clamp 180–480px.
 const SIDE_MIN_W = 180;
 const SIDE_MAX_W = 480;
-// Etichetta di stato di un gruppo nodo degradato (design §7: mai spinner).
-function nodeStateLabel(g) {
-  if (g.status === 'passive') return t('node-passive');
-  if (g.status === 'down') {
-    return g.downSince ? t('tunnel-down-since').replace('{t}', rel(g.downSince)) : t('tunnel-down');
-  }
-  if (g.status === 'unreachable') return t('node-unreachable');
-  if (g.status === 'offline') return g.lastSeen ? t('node-offline-seen').replace('{t}', rel(g.lastSeen)) : t('node-offline');
-  if (g.status === 'needs-repair') return t('node-needs-repair');
-  return '';
-}
-
-// Dot di salute dal model health (NO verde hardcoded): 'on' solo se probe 200;
-// degraded (401) / down / unknown -> 'warn' + titolo diagnostico.
-function healthDot(h) { if (!h || h.status === 'passive') return null; return h.status === 'healthy' ? 'on' : 'warn'; }
-function healthTitle(h) { if (!h) return ''; return h.detail || h.status || ''; }
 
 // Sidebar presentazionale: mostra la flotta (celle) + le altre sessioni tmux
 // + i gruppi per-nodo remoto (B2, design §5). Il polling e le azioni sono del
@@ -60,10 +27,9 @@ export default function Sidebar({
   onSettings, width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
-  const [pins, setPins] = useState(loadPins);
-  const [views, setViews] = useState(loadSidebarViews);
-  const [orders, setOrders] = useState(loadSidebarOrders);
-  const togglePin = (name) => setPins((p) => togglePinIn(p, name));
+  const {
+    pins, orders, togglePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
+  } = useRosterPreferences();
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
   const byName = new Map((sessions || []).map((s) => [s.name, s]));
   // Ordinamento: pinnate in cima (ordine di pin), poi attivita' recente,
@@ -78,65 +44,15 @@ export default function Sidebar({
     return d || a.name.localeCompare(b.name);
   });
   const active = new Set(activeSessions || []);
-  const viewFor = (key) => sidebarView(views, key);
-  const updateView = (key, patch) => setViews((before) => {
-    const next = { ...before, [key]: { ...sidebarView(before, key), ...patch } };
-    return saveSidebarViews(next);
-  });
-
-  const localRawItems = [
-    ...sortedCells.map((c) => {
-      const session = byName.get(c.tmuxSession) || {};
-      const key = positionKey([], c.tmuxSession);
-      return { type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
-        fresh: hasFreshOutput(session, key), activity: session.activity || 0 };
-    }),
-    ...others.map((s) => {
-      const key = positionKey([], s.name);
-      return { type: 'session', value: s, key, label: s.name, live: true, technical: s.technical === true,
-        fresh: hasFreshOutput(s, key), activity: s.activity || 0 };
-    }),
-  ];
+  const localRawItems = buildLocalRoster(sortedCells, others, byName);
   const localItems = sidebarItems(localRawItems, pins, viewFor('local').filter, sidebarOrder(orders, 'local'));
   const remoteRosters = (nodeGroups || []).map((g) => {
     const nodeRoute = (g.route || [g.name]).join('/');
     const groupView = viewFor(nodeRoute);
-    const remoteByName = new Map((g.sessions || []).map((s) => [s.name, s]));
-    const rawItems = [
-      ...(g.cells || []).map((c) => {
-        const session = remoteByName.get(c.tmuxSession) || {};
-        const key = positionKey(g.route, c.tmuxSession || c.cell);
-        return { type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
-          fresh: hasFreshOutput(session, key), activity: session.activity || c.activity || 0 };
-      }),
-      ...(g.unmanaged || []).map((s) => {
-        const key = positionKey(g.route, s.name);
-        return { type: 'session', value: s, key, label: s.name, live: true, technical: s.technical === true,
-          fresh: hasFreshOutput(s, key), activity: s.activity || 0 };
-      }),
-    ];
+    const { rawItems } = buildRemoteRoster(g);
     const items = sidebarItems(rawItems, pins, groupView.filter, sidebarOrder(orders, nodeRoute));
     return { g, nodeRoute, groupView, rawItems, items };
   });
-  function moveRoster(position, source, target, rawItems) {
-    const sourcePinned = pins.includes(source); const targetPinned = pins.includes(target);
-    if (sourcePinned !== targetPinned) return;
-    if (sourcePinned) { setPins((before) => movePinIn(before, source, target)); return; }
-    setOrders((before) => {
-      const sourceTechnical = rawItems.find((item) => item.key === source)?.technical === true;
-      const available = sidebarItems(rawItems, pins, sourceTechnical ? 'technical' : 'all', sidebarOrder(before, position)).map((item) => item.key);
-      return saveSidebarOrders(moveSidebarItem(before, position, source, target, available));
-    });
-  }
-  function stepRoster(position, source, delta, rawItems) {
-    const sourceTechnical = rawItems.find((item) => item.key === source)?.technical === true;
-    const sourcePinned = pins.includes(source);
-    const available = sidebarItems(rawItems, pins, sourceTechnical ? 'technical' : 'all', sidebarOrder(orders, position))
-      .map((item) => item.key).filter((key) => pins.includes(key) === sourcePinned);
-    const at = available.indexOf(source); const target = available[at + delta];
-    if (at >= 0 && target) moveRoster(position, source, target, rawItems);
-  }
-  const canMoveRoster = (source, target) => pins.includes(source) === pins.includes(target);
   // Tooltip mini via JS (position:fixed): il ::after CSS veniva CLIPPATO
   // dall'overflow della sidebar da 48px.
   const [tip, setTip] = useState(null); // {text, y}

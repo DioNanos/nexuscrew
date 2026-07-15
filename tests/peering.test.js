@@ -50,13 +50,13 @@ test('pairing v2: un solo link porta slug + Host SSH + porta; round-trip', () =>
   const p = path.join(dir, 'invites.json');
   const made = peering.createInvite({
     invitesPath: p, instanceId: 'a'.repeat(32), port: 41820, label: 'Relay',
-    ssh: 'user@relay.example', sshPort: 2222, name: 'home-relay',
+    ssh: 'dag@relay.example', sshPort: 2222, name: 'home-relay',
   });
   assert.equal(made.version, 2);
   const parsed = peering.parsePairingUrl(made.pairingUrl);
   assert.equal(parsed.v, 2);
   assert.equal(parsed.name, 'home-relay');
-  assert.equal(parsed.ssh, 'user@relay.example');
+  assert.equal(parsed.ssh, 'dag@relay.example');
   assert.equal(parsed.sshPort, 2222);
   assert.equal(parsed.label, 'Relay');
   assert.ok(parsed.invite);
@@ -68,12 +68,12 @@ test('pairing v2: con Host SSH e senza name deriva sempre lo slug dalla label', 
   const p = path.join(dir, 'invites.json');
   const made = peering.createInvite({
     invitesPath: p, instanceId: 'd'.repeat(32), port: 41820,
-    label: 'Relay 3 Node', ssh: 'relay-host',
+    label: 'Edge 3 Relay', ssh: 'edge3-relay',
   });
   const parsed = peering.parsePairingUrl(made.pairingUrl);
   assert.equal(made.version, 2);
-  assert.equal(parsed.name, 'relay-3-node');
-  assert.equal(parsed.ssh, 'relay-host');
+  assert.equal(parsed.name, 'edge-3-relay');
+  assert.equal(parsed.ssh, 'edge3-relay');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -96,7 +96,7 @@ test('pairing strict allowlist: campi ignoti o segreti -> rifiutato (null)', () 
   const base = made.pairingUrl;
   // Campo segreto in più (identityFile) -> rifiutato
   const x = JSON.parse(Buffer.from(new URL(base).hash.replace(/^#pair=/, ''), 'base64url').toString('utf8'));
-  const withSecret = { ...x, identityFile: '/home/alice/.ssh/id_ed25519' };
+  const withSecret = { ...x, identityFile: '/home/example/.ssh/id_ed25519' };
   const url = `http://127.0.0.1:41822/#pair=${Buffer.from(JSON.stringify(withSecret)).toString('base64url')}`;
   assert.equal(peering.parsePairingUrl(url), null);
   // apiKey extra -> rifiutato

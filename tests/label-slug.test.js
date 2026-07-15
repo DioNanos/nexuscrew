@@ -71,9 +71,9 @@ test('suggestNodeName: candidato sempre conforme a NODE_NAME_RE e <=32', () => {
 // --- label nello store ------------------------------------------------------
 
 test('parseNode: accetta label valida (display, maiuscole/spazi)', () => {
-  const s = mk({ label: 'Relay Server' });
+  const s = mk({ label: 'Relay3 Server' });
   assert.ok(s);
-  assert.equal(s.nodes[0].label, 'Relay Server');
+  assert.equal(s.nodes[0].label, 'Relay3 Server');
   assert.equal(s.nodes[0].name, 'relay3'); // name (slug) invariato
 });
 
