@@ -22,7 +22,7 @@ listener.
 | Area | What NexusCrew provides |
 |---|---|
 | Terminal | Real PTY attachment to live tmux sessions through WebSocket and xterm.js |
-| Workspaces | Named decks, tiled desktop layouts, mobile session view, saved ordering and pins |
+| Workspaces | Named decks, tiled desktop layouts, mobile session view, saved ordering, pins and per-cell composer state |
 | Fleet | Reusable cells, engines, providers, models, permission policies, prompts and boot state |
 | Nodes | One-link pairing and owner-qualified routing over supervised OpenSSH connections |
 | Operations | Background service, boot integration, diagnostics, stable npm updates and selective backup |
@@ -184,6 +184,11 @@ copy-mode scrolling, window and pane navigation, Escape, Ctrl-C and detach. Long
 multiline prompts use the terminal application's bracketed-paste mode; clipboard images and
 dropped files are stored in the selected session inbox and their paths are inserted without
 submitting Enter.
+
+The input composer can expand for longer prompts. Each owner-qualified tmux cell keeps its own
+draft, size preference and bounded prompt history in the current browser, including safe
+ArrowUp/ArrowDown recall at textarea boundaries. This browser-local state is not federated or
+included in Fleet backups and can be cleared from Settings → System.
 
 ## Connect nodes through SSH
 
@@ -349,7 +354,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.17**. npm `latest`, the GitHub tag and the release use the
+The current stable release is **v0.8.18**. npm `latest`, the GitHub tag and the release use the
 same audited package artifact.
 
 ## License

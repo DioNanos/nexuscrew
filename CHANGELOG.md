@@ -2,6 +2,22 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.18 — 2026-07-15 — "Persistent Composer"
+
+- The input composer now expands for long prompts and keeps a separate browser-local draft,
+  size preference and bounded prompt history for each owner-qualified tmux cell. State survives
+  route renames and reloads, synchronizes safely between tabs and can be cleared from System
+  settings; it is never federated or included in Fleet backups.
+- History can be selected from the composer menu or recalled with ArrowUp/ArrowDown only at safe
+  textarea boundaries. Active IME composition is left untouched, failed sends preserve the draft,
+  and a delayed successful send cannot erase newer typing or another cell's draft.
+- Persistence is bounded by per-entry, per-cell and browser-wide limits with 30-day expiry and
+  quota-aware eviction. Regression coverage includes long Unicode prompts above 32 KiB, async
+  send races, owner/session identity changes, cross-tab ordering, hostile stored objects and
+  mounted-state reset.
+- Gate: **825 Node tests** (824 pass / 1 platform skip), **22 frontend component tests**,
+  production build and zero dependency vulnerabilities.
+
 ## 0.8.17 — 2026-07-15 — "Modular Core"
 
 - Termux can now start the first managed cell when no tmux server exists. NexusCrew reconstructs

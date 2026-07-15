@@ -61,6 +61,15 @@ const PATHS = {
     </>
   ),
   chevronLeft: <polyline points="14 6 8 12 14 18" />,
+  chevronUp: <polyline points="6 14 12 8 18 14" />,
+  chevronDown: <polyline points="6 10 12 16 18 10" />,
+  history: (
+    <>
+      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+      <polyline points="3 3 3 8 8 8" />
+      <path d="M12 7v5l3 2" />
+    </>
+  ),
   // Paperclip (feather): tasto allegati del composer.
   attach: (
     <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />

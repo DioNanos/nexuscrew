@@ -8,7 +8,7 @@ const fixture = vi.hoisted(() => ({ sessions: [], cells: [], nodes: [] }));
 vi.mock('../lib/api.js', () => ({
   apiFetch: vi.fn(async (path) => ({
     json: async () => path === '/api/config'
-      ? { version: '0.8.14', bind: '127.0.0.1', port: 41820 }
+      ? { version: '0.8.14', bind: '127.0.0.1', port: 41820, instanceId: 'c'.repeat(32) }
       : { sessions: fixture.sessions },
   })),
   seenKey: (session) => `nc_seen_${session}`,
@@ -35,8 +35,8 @@ function session(name, activity = 1, extra = {}) {
   return { name, activity, windows: 1, attached: false, preview: `${name} preview`, ...extra };
 }
 
-function renderRoster() {
-  return render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()} />);
+function renderRoster(onPick = vi.fn()) {
+  return render(<SessionList token="test-token" onPick={onPick} onSettings={vi.fn()} />);
 }
 
 beforeEach(() => {
@@ -46,6 +46,7 @@ beforeEach(() => {
   fixture.cells = [cell('Live Cell', 'local-live', true), cell('Off Cell', 'local-off', false)];
   fixture.nodes = [{
     name: 'relay', label: 'Relay', route: ['relay'], status: 'up', direct: true,
+    instanceId: 'd'.repeat(32),
     tunnelStatus: 'up', health: { status: 'healthy', managed: true },
     capabilities: ['up', 'down'], engines: [],
     sessions: [session('remote-live', 30), session('remote-shell', 15)],
@@ -108,6 +109,23 @@ describe('mobile roster parity', () => {
     expect(local.getAttribute('aria-expanded')).toBe('true');
     expect(relay.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByLabelText('Relay · filter sessions…').tagName).toBe('SELECT');
+  });
+
+  it('opens local and remote sessions with stable owner-qualified identities', async () => {
+    const user = userEvent.setup();
+    const onPick = vi.fn();
+    renderRoster(onPick);
+    await waitFor(() => expect(document.body.textContent).toContain('v0.8.14'));
+
+    await user.click(screen.getByText('Live Cell').closest('button'));
+    expect(onPick).toHaveBeenLastCalledWith({
+      session: 'local-live', ownerId: 'c'.repeat(32),
+    });
+
+    await user.click(screen.getByText('Relay Live').closest('button'));
+    expect(onPick).toHaveBeenLastCalledWith({
+      session: 'remote-live', node: 'relay', ownerId: 'd'.repeat(32),
+    });
   });
 
   it('reorders with the accessible keyboard handle and persists one shared order', async () => {

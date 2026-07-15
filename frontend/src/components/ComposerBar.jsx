@@ -3,6 +3,7 @@ import { apiFetch } from '../lib/api.js';
 import { stripTrailingNewlines } from '../lib/composer-input.js';
 import {t} from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
+import { useComposerState } from '../hooks/useComposerState.js';
 import Icon from './Icon.jsx';
 import { uploadSessionFiles } from '../lib/attachments.js';
 import './ComposerBar.css';
@@ -13,10 +14,14 @@ import './ComposerBar.css';
 // non lascia la VPS).
 //
 // node (opzionale): sessione remota — upload/voice passano dal proxy /node/<name>.
-export default function ComposerBar({ submitText, token, session, node }) {
+export default function ComposerBar({ submitText, token, session, node, ownerId }) {
   useLang();
   const base = node ? `/api/route/${String(node).split('/').map(encodeURIComponent).join('/')}/_` : '/api';
-  const [text, setText] = useState('');
+  const {
+    cellKey, text, setText, expanded, toggleExpanded, history, historyCursor,
+    recallPrevious, recallNext, selectHistory, confirmSubmitted,
+    clearHistory, flush,
+  } = useComposerState({ ownerId, node, session });
   const [rec, setRec] = useState(false);
   const [err, setErr] = useState('');
   const [serverStt, setServerStt] = useState(false);
@@ -31,9 +36,14 @@ export default function ComposerBar({ submitText, token, session, node }) {
   const [sending, setSending] = useState(false);
   const attachBtnRef = useRef(null);
   const menuRef = useRef(null);
+  const historyBtnRef = useRef(null);
+  const historyMenuRef = useRef(null);
   const fileInputRef = useRef(null);
   const camInputRef = useRef(null);
   const galInputRef = useRef(null);
+  const composingRef = useRef(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyPos, setHistoryPos] = useState({ left: 0, bottom: 0, width: 320 });
   // id univoco per aria-controls (un composer per tile nel grid)
   const menuIdRef = useRef(`nc-attach-${Math.random().toString(36).slice(2, 8)}`);
 
@@ -62,7 +72,7 @@ export default function ComposerBar({ submitText, token, session, node }) {
     setErr('');
     let ok = false;
     try { ok = !!(await submitText(value)); } catch (_) { ok = false; }
-    if (ok) setText((current) => (current === draft ? '' : current));
+    if (ok) confirmSubmitted(cellKey, draft, value);
     else setErr(t('composer-send-failed'));
     setSending(false);
     // Il tap sul send non deve trasferire il focus al bottone: su mobile questo
@@ -91,6 +101,23 @@ export default function ComposerBar({ submitText, token, session, node }) {
     if (restoreFocus && attachBtnRef.current) attachBtnRef.current.focus();
   }
 
+  function openHistory() {
+    const r = historyBtnRef.current && historyBtnRef.current.getBoundingClientRect();
+    if (r) {
+      const width = Math.max(220, Math.min(360, window.innerWidth - 12));
+      setHistoryPos({
+        left: Math.max(6, Math.min(r.right - width, window.innerWidth - width - 6)),
+        bottom: window.innerHeight - r.top + 6,
+        width,
+      });
+    }
+    setHistoryOpen(true);
+  }
+  function closeHistory(restoreFocus) {
+    setHistoryOpen(false);
+    if (restoreFocus && historyBtnRef.current) historyBtnRef.current.focus();
+  }
+
   // Esc + click fuori chiudono il popover (review Codex: niente focus-trap
   // completa per 3 voci, ma Esc/outside-click/ripristino focus servono).
   useEffect(() => {
@@ -108,6 +135,34 @@ export default function ComposerBar({ submitText, token, session, node }) {
       document.removeEventListener('pointerdown', onDown);
     };
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!historyOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') closeHistory(true); };
+    const onDown = (e) => {
+      const inMenu = historyMenuRef.current && historyMenuRef.current.contains(e.target);
+      const inBtn = historyBtnRef.current && historyBtnRef.current.contains(e.target);
+      if (!inMenu && !inBtn) closeHistory(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown);
+    };
+  }, [historyOpen]);
+
+  function onComposerKeyDown(e) {
+    if (e.isComposing || composingRef.current || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === 'ArrowUp' && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
+      if (recallPrevious()) e.preventDefault();
+      return;
+    }
+    if (e.key === 'ArrowDown' && historyCursor >= 0
+      && e.currentTarget.selectionStart === text.length && e.currentTarget.selectionEnd === text.length) {
+      if (recallNext()) e.preventDefault();
+    }
+  }
 
   function pick(ref) {
     closeMenu(false);
@@ -203,6 +258,54 @@ export default function ComposerBar({ submitText, token, session, node }) {
             <button role="menuitem" onClick={() => pick(galInputRef)}><Icon name="image" size={18} /> {t('attach-gallery')}</button>
           </div>
         )}
+        <button
+          ref={historyBtnRef} type="button" className="history"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => (historyOpen ? closeHistory(false) : openHistory())}
+          title={t('composer-history-tools')} aria-label={t('composer-history-tools')}
+          aria-haspopup="menu" aria-expanded={historyOpen}
+        ><Icon name="history" size={21} /></button>
+        {historyOpen && (
+          <div
+            ref={historyMenuRef} role="menu" className="nc-composer-history-menu"
+            style={{ left: historyPos.left, bottom: historyPos.bottom, width: historyPos.width }}
+          >
+            <button
+              role="menuitem" className="nc-composer-history-action"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => {
+                toggleExpanded(); closeHistory(false);
+                requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
+              }}
+            >
+              <Icon name={expanded ? 'chevronDown' : 'chevronUp'} size={18} />
+              {t(expanded ? 'composer-collapse' : 'composer-expand')}
+            </button>
+            <div className="nc-composer-history-title">{t('composer-history')}</div>
+            {history.length === 0 && <div className="nc-composer-history-empty">{t('composer-history-empty')}</div>}
+            {history.map((item, index) => (
+              <button
+                type="button" role="menuitem" className="nc-composer-history-entry"
+                key={`${item.at}:${index}`}
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  selectHistory(item.text); closeHistory(false);
+                  requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
+                }}
+              >
+                <span>{item.text.replace(/\s+/g, ' ').slice(0, 180)}</span>
+                {item.at > 0 && <small>{new Date(item.at).toLocaleString()}</small>}
+              </button>
+            ))}
+            {history.length > 0 && (
+              <button
+                type="button" role="menuitem" className="nc-composer-history-clear"
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => { clearHistory(); closeHistory(false); }}
+              >{t('composer-history-clear')}</button>
+            )}
+          </div>
+        )}
         {/* input nascosti: File (tutto, multi) / Fotocamera (capture=hint best-effort,
             degrada a picker senza errore) / Galleria (media, multi) */}
         <input ref={fileInputRef} type="file" multiple hidden
@@ -213,8 +316,13 @@ export default function ComposerBar({ submitText, token, session, node }) {
           onChange={(e) => { uploadFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
         <textarea
           ref={textareaRef}
-          rows={2} value={text} placeholder={t('composer-placeholder')}
+          className={expanded ? 'expanded' : ''}
+          rows={expanded ? 8 : 2} value={text} placeholder={t('composer-placeholder')}
           onChange={(e) => setText(e.target.value)}
+          onKeyDown={onComposerKeyDown}
+          onCompositionStart={() => { composingRef.current = true; }}
+          onCompositionEnd={() => { composingRef.current = false; }}
+          onBlur={flush}
         />
         {micVisible && (
           <button className={rec ? 'mic on' : 'mic'} onClick={rec ? stopVoice : startVoice} title={t('voice')}><Icon name="mic" size={22} /></button>

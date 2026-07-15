@@ -13,6 +13,7 @@ import { getPushState, subscribePush, unsubscribePush } from '../lib/push.js';
 import Icon from './Icon.jsx';
 import FleetTab from './FleetTab.jsx';
 import { useNodes } from '../hooks/useNodes.js';
+import { COMPOSER_RESET_EVENT, clearAllComposerData } from '../lib/composer-model.js';
 import './SettingsPanel.css';
 
 // Pannello settings (design §5, B2-UI). Stessa struttura a schede su desktop
@@ -397,6 +398,16 @@ function SystemTab({ token, settings, readonly, refresh }) {
     setBusy(false);
   };
 
+  const clearComposerData = () => {
+    if (!window.confirm(t('composer-clear-confirm'))) return;
+    setErr(null);
+    if (clearAllComposerData()) {
+      window.dispatchEvent(new Event(COMPOSER_RESET_EVENT));
+      setNote(t('composer-clear-done'));
+    }
+    else setErr(t('composer-clear-failed'));
+  };
+
   const svc = settings && settings.service;
   return (
     <div className="nc-set-tab">
@@ -443,6 +454,14 @@ function SystemTab({ token, settings, readonly, refresh }) {
       </div>
 
       <PushRow token={token} readonly={readonly} />
+
+      <div className="nc-set-form">
+        <div className="nc-sheet-label">{t('composer-clear-data')}</div>
+        <small className="nc-set-hint">{t('composer-clear-data-help')}</small>
+        <div className="nc-set-row">
+          <button type="button" className="nc-btn ghost" onClick={clearComposerData}>{t('composer-clear-data')}</button>
+        </div>
+      </div>
 
       {confirmRotate && (
         <div className="nc-set-confirm">
