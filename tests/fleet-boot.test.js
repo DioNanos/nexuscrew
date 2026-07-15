@@ -152,6 +152,10 @@ test('generateFleetService termux: boot script + exec fleet-boot + log redirect'
   assert.match(s, /^#!\/data\/data\/com\.termux\/files\/usr\/bin\/sh/);
   assert.match(s, /export PATH=\/data\/data\/com\.termux\/files\/usr\/bin:\$PATH/);
   assert.match(s, /export HOME=\/data\/data\/com\.termux\/files\/home/);
+  assert.match(s, /export PREFIX=\/data\/data\/com\.termux\/files\/usr/);
+  assert.match(s, /export TMPDIR=\$PREFIX\/tmp/);
+  assert.match(s, /export TMUX_TMPDIR=\$PREFIX\/var\/run/);
+  assert.match(s, /mkdir -p "\$TMPDIR" "\$TMUX_TMPDIR"/);
   assert.match(s, /exec '\/usr\/bin\/node' '\/home\/user\/nexuscrew\/bin\/nexuscrew\.js' fleet-boot/);
   assert.match(s, />> "\$HOME\/\.nexuscrew\/fleet-boot\.log" 2>&1/);
 });

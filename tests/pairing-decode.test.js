@@ -30,12 +30,12 @@ test('decodePairingForm v1: solo label, nessun ssh/slug', async () => {
 
 test('decodePairingForm v2: label+slug+ssh+sshPort prefilled', async () => {
   const { decodePairingForm } = await sm();
-  const d = decodePairingForm(makeLink({ ssh: 'user@relay.example', sshPort: 2222, name: 'home-relay' }));
+  const d = decodePairingForm(makeLink({ ssh: 'dag@relay.example', sshPort: 2222, name: 'home-relay' }));
   assert.equal(d.ok, true);
   assert.equal(d.version, 2);
   assert.equal(d.label, 'Relay');
   assert.equal(d.name, 'home-relay');
-  assert.equal(d.ssh, 'user@relay.example');
+  assert.equal(d.ssh, 'dag@relay.example');
   assert.equal(d.sshPort, 2222);
 });
 

@@ -1,58 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  apiFetch, seenKey, fleetStatus, fleetUp, fleetDown, killSession, nodeAction, setSessionTechnical,
+  apiFetch, fleetStatus, fleetUp, fleetDown, killSession, nodeAction, setSessionTechnical,
 } from '../lib/api.js';
 import Icon from './Icon.jsx';
-import { loadPins, movePinIn, togglePinIn } from '../lib/pins.js';
-import { positionKey } from '../lib/nodes-model.js';
-import {
-  loadSidebarOrders, loadSidebarViews, moveSidebarItem, saveSidebarOrders,
-  saveSidebarViews, sidebarItems, sidebarOrder, sidebarSearchVisible, sidebarView,
-} from '../lib/sidebar-model.js';
+import { sidebarItems, sidebarOrder, sidebarSearchVisible } from '../lib/sidebar-model.js';
 import PowerSheet from './PowerSheet.jsx';
 import {t,  LANGUAGES} from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { useNodes } from '../hooks/useNodes.js';
 import RosterHandle from './RosterHandle.jsx';
+import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
+import {
+  rel, nodeStateLabel, healthDot, healthTitle, buildLocalRoster, buildRemoteRoster,
+} from '../lib/roster-view-model.js';
 import './SessionList.css';
 
 // Home mobile: lo stesso roster per-posizione della sidebar desktop. Stato di
-// apertura, filtro, pin e ordine hanno quindi un solo contratto condiviso.
-
-// Tempo relativo numerico (nessuna localizzazione, come da piano C3).
-function rel(epochSec) {
-  if (!epochSec) return '';
-  const s = Math.floor(Date.now() / 1000) - epochSec;
-  if (s < 0 || s < 60) return 'ora';
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}g`;
-}
-
-// Etichetta di stato di un gruppo nodo degradato (design §7: mai spinner).
-function nodeStateLabel(g) {
-  if (g.status === 'passive') return t('node-passive');
-  if (g.status === 'down') {
-    return g.downSince ? t('tunnel-down-since').replace('{t}', rel(g.downSince)) : t('tunnel-down');
-  }
-  if (g.status === 'unreachable') return t('node-unreachable');
-  if (g.status === 'offline') return g.lastSeen ? t('node-offline-seen').replace('{t}', rel(g.lastSeen)) : t('node-offline');
-  if (g.status === 'needs-repair') return t('node-needs-repair');
-  return '';
-}
-
-// Dot di salute dal model health a 3 dimensioni (NO verde hardcoded): healthy
-// solo se il probe federation e' 200; 401/degraded/down/unknown -> warn + titolo
-// diagnostico. h = node.health da /api/nodes (assente sui nodi senza probe).
-function healthDot(h) {
-  if (!h) return null;
-  if (h.status === 'healthy') return 'on';
-  return 'warn'; // degraded | down | unknown
-}
-function healthTitle(h) {
-  if (!h) return '';
-  return h.detail || h.status || '';
-}
+// apertura, filtro, pin e ordine hanno quindi un solo contratto condiviso
+// (hook useRosterPreferences + model roster-view-model).
 
 export default function SessionList({ onPick, token, onSettings }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
@@ -66,9 +31,9 @@ export default function SessionList({ onPick, token, onSettings }) {
   const [cells, setCells] = useState([]);
   const [powerCell, setPowerCell] = useState(null);
   const [nodeBusy, setNodeBusy] = useState(null);
-  const [pins, setPins] = useState(loadPins);
-  const [views, setViews] = useState(loadSidebarViews);
-  const [orders, setOrders] = useState(loadSidebarOrders);
+  const {
+    pins, orders, togglePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
+  } = useRosterPreferences();
 
   async function refresh() {
     try {
@@ -136,40 +101,17 @@ export default function SessionList({ onPick, token, onSettings }) {
     setNodeBusy(null);
   }
 
-  const togglePin = (key) => setPins((before) => togglePinIn(before, key));
-  const viewFor = (key) => sidebarView(views, key);
-  const updateView = (key, patch) => setViews((before) => {
-    const next = { ...before, [key]: { ...sidebarView(before, key), ...patch } };
-    return saveSidebarViews(next);
-  });
-
-  const sessionRows = useMemo(() => (sessions || []).map((s) => {
-    const seen = Number(localStorage.getItem(seenKey(s.name)) || 0);
-    const fresh = !!(s.outbox && s.outbox.count > 0 && s.outbox.latest > seen);
-    return { ...s, fresh };
-  }), [sessions]);
-  // lookup sessione per tmuxSession (activity/preview/outbox/fresh delle celle)
-  const byName = useMemo(() => new Map(sessionRows.map((s) => [s.name, s])), [sessionRows]);
+  // lookup sessione per tmuxSession (activity/preview/outbox delle celle)
+  const byName = useMemo(() => new Map((sessions || []).map((s) => [s.name, s])), [sessions]);
   const cellSessions = useMemo(() => new Set(cells.map((c) => c.tmuxSession)), [cells]);
   const unmanaged = useMemo(
-    () => sessionRows.filter((s) => !cellSessions.has(s.name)),
-    [sessionRows, cellSessions],
+    () => (sessions || []).filter((s) => !cellSessions.has(s.name)),
+    [sessions, cellSessions],
   );
-  const localRawItems = useMemo(() => [
-    ...cells.map((c) => {
-      const s = byName.get(c.tmuxSession) || {};
-      return {
-        type: 'cell', value: c, key: positionKey([], c.tmuxSession), label: c.cell,
-        live: !!c.tmux, fresh: !!s.fresh, activity: s.activity || 0,
-        searchText: `${c.engine || ''} ${c.key || ''} ${s.preview || ''}`,
-      };
-    }),
-    ...unmanaged.map((s) => ({
-      type: 'session', value: s, key: positionKey([], s.name), label: s.name,
-      live: true, technical: s.technical === true, fresh: !!s.fresh, activity: s.activity || 0,
-      searchText: `${s.preview || ''} ${s.cmd || ''}`,
-    })),
-  ], [cells, unmanaged, byName]);
+  const localRawItems = useMemo(
+    () => buildLocalRoster(cells, unmanaged, byName),
+    [cells, unmanaged, byName],
+  );
 
   const localView = viewFor('local');
   const localItems = useMemo(
@@ -186,30 +128,10 @@ export default function SessionList({ onPick, token, onSettings }) {
   const attached = (sessions || []).filter((s) => s.attached).length;
   const endpointLabel = endpoint.port ? `${endpoint.bind}:${endpoint.port}` : endpoint.bind;
 
-  function moveRoster(position, source, target, rawItems) {
-    const sourcePinned = pins.includes(source); const targetPinned = pins.includes(target);
-    if (sourcePinned !== targetPinned) return;
-    if (sourcePinned) { setPins((before) => movePinIn(before, source, target)); return; }
-    setOrders((before) => {
-      const sourceTechnical = rawItems.find((item) => item.key === source)?.technical === true;
-      const available = sidebarItems(rawItems, pins, sourceTechnical ? 'technical' : 'all', sidebarOrder(before, position)).map((item) => item.key);
-      return saveSidebarOrders(moveSidebarItem(before, position, source, target, available));
-    });
-  }
-
-  function stepRoster(position, source, delta, rawItems) {
-    const sourceTechnical = rawItems.find((item) => item.key === source)?.technical === true;
-    const sourcePinned = pins.includes(source);
-    const available = sidebarItems(rawItems, pins, sourceTechnical ? 'technical' : 'all', sidebarOrder(orders, position))
-      .map((item) => item.key).filter((key) => pins.includes(key) === sourcePinned);
-    const at = available.indexOf(source); const target = available[at + delta];
-    if (at >= 0 && target) moveRoster(position, source, target, rawItems);
-  }
-
   function renderRosterItem(item, group = null, rawItems = localRawItems) {
     const route = Array.isArray(group?.route) ? group.route : [];
     const routeKey = route.join('/'); const position = routeKey || 'local';
-    const canMove = (source, target) => pins.includes(source) === pins.includes(target);
+    const canMove = canMoveRoster;
     if (item.type === 'cell') {
       const c = item.value;
       const session = route.length
@@ -316,33 +238,13 @@ export default function SessionList({ onPick, token, onSettings }) {
           diagnostica. Tunnel del nodo diretto controllabile (power); peer inbound
           non gestito da qui -> niente power finto. */}
       {nodeGroups.map((g) => {
-        const hd = healthDot(g.health);
+        const hd = healthDot(g.health, { passive: 'warn' });
         const dotClass = hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
         const dotTitle = g.health ? healthTitle(g.health) : (g.status === 'up' ? '' : nodeStateLabel(g));
         const route = g.route || [g.name];
         const routeKey = route.join('/');
         const groupView = viewFor(routeKey);
-        const remoteSessions = new Map((g.sessions || []).map((s) => [s.name, s]));
-        const remoteFresh = (s) => {
-          const seen = Number(localStorage.getItem(seenKey(positionKey(route, s.name))) || 0);
-          return !!(s.outbox && s.outbox.count > 0 && s.outbox.latest > seen);
-        };
-        const rawItems = [
-          ...(g.cells || []).map((c) => {
-            const session = remoteSessions.get(c.tmuxSession) || {};
-            return {
-              type: 'cell', value: c, key: positionKey(route, c.tmuxSession || c.cell), label: c.cell,
-              live: !!c.tmux, fresh: remoteFresh({ ...session, name: c.tmuxSession || c.cell }),
-              activity: session.activity || c.activity || 0,
-              searchText: `${c.engine || ''} ${c.key || ''} ${session.preview || c.preview || ''}`,
-            };
-          }),
-          ...(g.unmanaged || []).map((s) => ({
-            type: 'session', value: s, key: positionKey(route, s.name), label: s.name,
-            live: true, technical: s.technical === true, fresh: remoteFresh(s), activity: s.activity || 0,
-            searchText: `${s.preview || ''} ${s.cmd || ''}`,
-          })),
-        ];
+        const { rawItems } = buildRemoteRoster(g);
         const items = sidebarItems(rawItems, pins, groupView.filter, sidebarOrder(orders, routeKey))
           .filter((item) => sidebarSearchVisible(item, q));
         const nodePower = g.direct && g.health && g.health.managed !== false ? (

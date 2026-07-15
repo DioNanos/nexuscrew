@@ -2,6 +2,22 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.17 — 2026-07-15 — "Modular Core"
+
+- Termux can now start the first managed cell when no tmux server exists. NexusCrew reconstructs
+  the canonical `PREFIX`, `TMPDIR` and `TMUX_TMPDIR=$PREFIX/var/run` values even when it starts
+  outside an interactive shell, while generated NexusCrew and Fleet boot scripts create and
+  export the same runtime paths explicitly. Existing custom `TMUX_TMPDIR` values remain
+  authoritative; Linux and macOS behavior is unchanged.
+- The Fleet runtime/launch layer, CLI lifecycle, MCP tool directory, pairing coordinator, shared
+  roster model and Fleet settings components are split into focused modules without changing
+  their public routes, commands, payloads or security boundaries. This keeps the current product
+  behavior while making the next gateway and federation work reviewable in smaller units.
+- Regression coverage includes a real private-socket cold start with no existing tmux server,
+  profile-less Termux environment reconstruction, generated boot scripts and the extracted module
+  boundaries. Gate: **819 Node tests** (818 pass / 1 platform skip), **12 frontend component
+  tests**, production build and zero production dependency vulnerabilities.
+
 ## 0.8.16 — 2026-07-14 — "Honest Tunnel"
 
 - One-link pairing now treats its embedded SSH endpoint as portable routing rather than a
@@ -105,7 +121,7 @@ All notable changes to NexusCrew are tracked here.
   injection. Persistent offline queues, attachments and delegated capability workers remain
   explicitly deferred rather than being represented as implemented.
 - Tests: **770 total** (769 pass / 1 platform-dependent skip) in the isolated Node harness plus
-  5 passing frontend component tests; production build PASS. Real desktop–hub–mobile end-to-end
+  5 passing frontend component tests; production build PASS. Real Mac–hub–Pixel end-to-end
   pairing and delivery remain an operator field test and are not represented as automated.
 
 ## 0.8.12 — 2026-07-13 — "Mobile Roster"
@@ -129,7 +145,7 @@ All notable changes to NexusCrew are tracked here.
   is disabled and explains that a Termux boot script still requires the Termux:Boot app to be
   installed and launched once.
 - Tests: **749 total** (748 pass / 1 platform-dependent skip), production build PASS, root and
-  frontend dependency audits clean. Desktop–mobile–hub end-to-end pairing was not executed in this
+  frontend dependency audits clean. Mac–Pixel–hub end-to-end pairing was not executed in this
   release gate.
 
 ## 0.8.11 — 2026-07-13 — "Tmux Survival"
@@ -187,7 +203,7 @@ All notable changes to NexusCrew are tracked here.
   HTTP-port move when paired peers depend on the configured endpoint.
 - Tests: **726 total** (725 pass / 1 platform-dependent skip), frontend production build PASS,
   dependency audit clean, isolated HOME clean, and package/public-tree verification required
-  before publication. Real desktop–mobile–hub interoperability remains an external follow-up and is
+  before publication. Real Mac–Pixel–hub interoperability remains an external follow-up and is
   not represented as an automated test.
 
 ## 0.8.9 — 2026-07-12 — "Hydra Workspaces"

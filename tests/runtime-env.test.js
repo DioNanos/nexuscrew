@@ -21,6 +21,26 @@ test('runtime env: Termux paths survive but secrets and loader injection do not'
   assert.equal(env.API_KEY, undefined);
 });
 
+test('runtime env: Termux cold start reconstructs tmux paths without a shell profile', () => {
+  const env = minimalRuntimeEnv({
+    HOME: '/data/data/com.termux/files/home',
+    PATH: '/data/data/com.termux/files/usr/bin',
+  }, { platform: 'android' });
+  assert.equal(env.PREFIX, '/data/data/com.termux/files/usr');
+  assert.equal(env.TMPDIR, '/data/data/com.termux/files/usr/tmp');
+  assert.equal(env.TMUX_TMPDIR, '/data/data/com.termux/files/usr/var/run');
+});
+
+test('runtime env: an explicit Termux tmux socket remains authoritative', () => {
+  const env = minimalRuntimeEnv({
+    HOME: '/data/data/com.termux/files/home',
+    PATH: '/data/data/com.termux/files/usr/bin',
+    PREFIX: '/data/data/com.termux/files/usr',
+    TMUX_TMPDIR: '/data/data/com.termux/files/usr/var/run-custom',
+  }, { platform: 'android' });
+  assert.equal(env.TMUX_TMPDIR, '/data/data/com.termux/files/usr/var/run-custom');
+});
+
 test('runtime env: local macOS PTY gets UTF-8 while preserving its tmux context', () => {
   const source = { HOME: '/Users/test', PATH: '/usr/bin', TMUX: '/tmp/tmux,1,0', LANG: 'C' };
   const env = attachEnv(source, 'darwin');

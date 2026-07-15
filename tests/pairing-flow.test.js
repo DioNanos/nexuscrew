@@ -23,9 +23,9 @@ test('normalizeScanResult: string, {data} e garbage', async () => {
 
 test('classifyPairingInput: v2 completo -> complete; v2 senza ssh e v1 -> partial con missing precisi; garbage -> invalid', async () => {
   const { classifyPairingInput } = await pf();
-  const complete = classifyPairingInput(urlFor({ v: 2, ...BASE, name: 'home-relay', ssh: 'user@relay' }));
+  const complete = classifyPairingInput(urlFor({ v: 2, ...BASE, name: 'home-relay', ssh: 'dag@relay' }));
   assert.equal(complete.kind, 'complete');
-  assert.equal(complete.decoded.ssh, 'user@relay');
+  assert.equal(complete.decoded.ssh, 'dag@relay');
   const noSsh = classifyPairingInput(urlFor({ v: 2, ...BASE, name: 'home-relay' }));
   assert.equal(noSsh.kind, 'partial');
   assert.deepEqual(noSsh.missing, ['ssh']);
@@ -40,11 +40,11 @@ test('classifyPairingInput: v2 completo -> complete; v2 senza ssh e v1 -> partia
 
 test('applyDecodedToForm: prefill dei campi non toccati, edit manuali conservati', async () => {
   const { classifyPairingInput, applyDecodedToForm } = await pf();
-  const { decoded } = classifyPairingInput(urlFor({ v: 2, ...BASE, name: 'home-relay', ssh: 'user@relay', sshPort: 2222 }));
+  const { decoded } = classifyPairingInput(urlFor({ v: 2, ...BASE, name: 'home-relay', ssh: 'dag@relay', sshPort: 2222 }));
   const blank = { name: '', label: '', ssh: '', sshPort: '', pairingUrl: '' };
   const fresh = applyDecodedToForm(blank, decoded, new Set(), false);
   assert.equal(fresh.name, 'home-relay');
-  assert.equal(fresh.ssh, 'user@relay');
+  assert.equal(fresh.ssh, 'dag@relay');
   assert.equal(fresh.sshPort, '2222');
   assert.equal(fresh.label, 'Relay');
   const edited = applyDecodedToForm({ ...blank, ssh: 'manual@host' }, decoded, new Set(['ssh']), false);
@@ -53,20 +53,20 @@ test('applyDecodedToForm: prefill dei campi non toccati, edit manuali conservati
 
 test('resolvePairingInput: un link v2 digitato e confermato con Enter applica routing e nome prima del submit', async () => {
   const { resolvePairingInput } = await pf();
-  const raw = urlFor({ v: 2, ...BASE, name: 'home-relay', ssh: 'user@relay', sshPort: 2222 });
+  const raw = urlFor({ v: 2, ...BASE, name: 'home-relay', ssh: 'dag@relay', sshPort: 2222 });
   const blank = { name: '', label: '', ssh: '', sshPort: '', pairingUrl: '', localLabel: '' };
   const out = resolvePairingInput(blank, raw, new Set(), false);
   assert.equal(out.classification.kind, 'complete');
   assert.equal(out.form.pairingUrl, raw);
   assert.equal(out.form.name, 'home-relay');
-  assert.equal(out.form.ssh, 'user@relay');
+  assert.equal(out.form.ssh, 'dag@relay');
   assert.equal(out.form.sshPort, '2222');
 });
 
 test('buildPairBody: numeri e default coerenti, niente campi vuoti fabbricati', async () => {
   const { buildPairBody } = await pf();
-  const full = buildPairBody({ name: 'peer', ssh: 'relay', sshPort: '2222', pairingUrl: 'u', label: 'Peer', localLabel: '' }, { deviceDefault: 'Phone' });
-  assert.deepEqual(full, { name: 'peer', ssh: 'relay', pairingUrl: 'u', label: 'Peer', sshPort: 2222, localLabel: 'Phone' });
+  const full = buildPairBody({ name: 'peer', ssh: 'relay', sshPort: '2222', pairingUrl: 'u', label: 'Peer', localLabel: '' }, { deviceDefault: 'Pixel' });
+  assert.deepEqual(full, { name: 'peer', ssh: 'relay', pairingUrl: 'u', label: 'Peer', sshPort: 2222, localLabel: 'Pixel' });
   const lean = buildPairBody({ name: 'peer', ssh: 'relay', sshPort: '', pairingUrl: 'u', label: '', localLabel: '' }, {});
   assert.deepEqual(lean, { name: 'peer', ssh: 'relay', pairingUrl: 'u' });
 });

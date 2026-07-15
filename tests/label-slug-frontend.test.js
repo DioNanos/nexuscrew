@@ -33,7 +33,7 @@ test('suggestNodeName: univoco, disambigua -2/-3 su collisione', async () => {
 
 test('isValidLabel: ok per stringhe display; rifiuta control/empty/lunghe', async () => {
   const { isValidLabel } = await sm();
-  assert.equal(isValidLabel('Relay Server'), true);
+  assert.equal(isValidLabel('Relay3 Server'), true);
   assert.equal(isValidLabel('a'), true);
   assert.equal(isValidLabel(''), false);
   assert.equal(isValidLabel('   '), false);
