@@ -12,7 +12,7 @@ esac
 if [ "$1" = "status" ] && [ "$2" = "--json" ]; then
   cat <<'EOF'
 {"schemaVersion":1,"kind":"ai-fleet","cells":[
- {"cell":"Build","tmuxSession":"work-build","engine":"glm","active":true,"boot":true,"tmux":true,"rc":"","key":"A"},
+ {"cell":"Build","tmuxSession":"work-build","engine":"glm","model":"glm-5.2","active":true,"boot":true,"tmux":true,"rc":"","key":"A"},
  {"cell":"Review","tmuxSession":"work-review","engine":"native","active":false,"boot":false,"tmux":false,"rc":"RC_Review","key":""},
  {"cell":"Ops","tmuxSession":"work-ops","engine":"native","active":true,"boot":true,"tmux":false,"rc":"RC_Ops","key":""}
 ],"engines":[{"id":"native","label":"Claude"},{"id":"glm","label":"GLM"},{"id":"glm-a","label":"GLM · A"}]}

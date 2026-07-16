@@ -63,6 +63,45 @@ export function hasFreshOutput(session, key, storage = globalThis.localStorage) 
   return session.outbox.latest > seen;
 }
 
+// Riga di stato condivisa da mobile e desktop. Da spenta mostra il modello
+// configurato (con fallback all'engine); da accesa usa il segnale esplicito
+// derivato dal pane_title tmux. Un peer precedente al nuovo contratto non viene
+// marcato come working: conserva il preview come fallback compatibile.
+export function cellRuntime(cell, session = {}) {
+  const c = cell || {};
+  if (!c.tmux) {
+    const engine = `${c.engine || ''}${c.key ? `·${c.key}` : ''}`;
+    const startup = [engine, c.model && c.model !== engine ? c.model : ''].filter(Boolean).join(' · ');
+    return {
+      working: false,
+      subtitle: String(startup || t('cell-off')).trim(),
+    };
+  }
+  if (session.working === true) {
+    const label = t('cell-working');
+    const detail = String(session.status || '').trim();
+    const generic = !detail || /^working(?:\.{3}|…)?$/i.test(detail);
+    return {
+      working: true,
+      subtitle: generic ? label : `${label} · ${detail}`,
+    };
+  }
+  if (session.working === false) {
+    return { working: false, subtitle: t('cell-idle') };
+  }
+  return {
+    working: false,
+    subtitle: String(session.preview || c.preview || t('cell-on')).trim(),
+  };
+}
+
+function cellSearchText(cell, session) {
+  return [...new Set(
+    [cell.engine, cell.model, cell.key, session.preview, cell.preview, session.status]
+      .filter(Boolean).map(String),
+  )].join(' ');
+}
+
 // Costruisce le righe normalizzate della posizione Locale: celle Fleet (con
 // activity/preview dalla sessione tmux omonima) + tmux unmanaged. L'ordine e'
 // quello dell'input: sidebarItems riordina comunque in modo totale (pin, ordine
@@ -74,10 +113,12 @@ export function buildLocalRoster(cells, unmanaged, byName, storage = globalThis.
     ...(Array.isArray(cells) ? cells : []).map((c) => {
       const session = byName.get(c.tmuxSession) || {};
       const key = positionKey([], c.tmuxSession);
+      const runtime = cellRuntime(c, session);
       return {
         type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
         fresh: hasFreshOutput(session, key, storage), activity: session.activity || 0,
-        searchText: `${c.engine || ''} ${c.key || ''} ${session.preview || ''}`,
+        working: runtime.working, subtitle: runtime.subtitle,
+        searchText: cellSearchText(c, session),
       };
     }),
     ...(Array.isArray(unmanaged) ? unmanaged : []).map((s) => {
@@ -103,10 +144,12 @@ export function buildRemoteRoster(group, storage = globalThis.localStorage) {
     ...(g.cells || []).map((c) => {
       const session = remoteByName.get(c.tmuxSession) || {};
       const key = positionKey(route, c.tmuxSession || c.cell);
+      const runtime = cellRuntime(c, session);
       return {
         type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
         fresh: hasFreshOutput(session, key, storage), activity: session.activity || c.activity || 0,
-        searchText: `${c.engine || ''} ${c.key || ''} ${session.preview || c.preview || ''}`,
+        working: runtime.working, subtitle: runtime.subtitle,
+        searchText: cellSearchText(c, session),
       };
     }),
     ...(g.unmanaged || []).map((s) => {

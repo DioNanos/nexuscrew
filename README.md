@@ -23,7 +23,7 @@ listener.
 |---|---|
 | Terminal | Real PTY attachment to live tmux sessions through WebSocket and xterm.js |
 | Workspaces | Named decks, tiled desktop layouts, mobile session view, saved ordering, pins and per-cell composer state |
-| Fleet | Reusable cells, engines, providers, models, permission policies, prompts and boot state |
+| Fleet | Reusable cells, engines, providers, models, permission policies, prompts, boot state and live working status |
 | Nodes | One-link pairing and owner-qualified routing over supervised OpenSSH connections |
 | Operations | Background service, boot integration, diagnostics, stable npm updates and selective backup |
 | AI integration | A stdio MCP bridge for operator communication, deck discovery and cell-to-cell delivery |
@@ -354,7 +354,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.18**. npm `latest`, the GitHub tag and the release use the
+The current stable release is **v0.8.19**. npm `latest`, the GitHub tag and the release use the
 same audited package artifact.
 
 ## License

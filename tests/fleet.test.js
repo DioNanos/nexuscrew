@@ -37,6 +37,8 @@ test('status: celle con degraded calcolato + cache', async () => {
   const st = await fleet.status();
   const by = Object.fromEntries(st.cells.map((c) => [c.cell, c]));
   assert.equal(by.Build.degraded, false);          // active+tmux
+  assert.equal(by.Build.model, 'glm-5.2');         // optional external v1 field, if provided
+  assert.equal(by.Review.model, '');               // provider-default / older external contract
   assert.equal(by.Review.degraded, false);         // inactive+no tmux
   assert.equal(by.Ops.degraded, true);             // active MA tmux morto
   assert.equal(fleet.isCellSession('work-build'), true);
@@ -66,6 +68,10 @@ test('engines dal contratto: dichiarati, fallback derivato, malformati fail-clos
   ]);
   // assenti → [] nel parse (il fallback derivato dalle celle lo fa status())
   assert.deepEqual(parseStatus(JSON.stringify(base)).engines, []);
+  assert.equal(parseStatus(JSON.stringify(base)).cells[0].model, '');
+  assert.equal(parseStatus(JSON.stringify({ ...base, cells: [{ ...cell, model: 'zorp-2' }] })).cells[0].model, 'zorp-2');
+  assert.equal(parseStatus(JSON.stringify({ ...base, cells: [{ ...cell, model: 42 }] })), null, 'model opzionale malformato rifiutato');
+  assert.equal(parseStatus(JSON.stringify({ ...base, cells: [{ ...cell, model: 'bad\nmodel' }] })), null, 'model multilinea rifiutato');
   // malformati → intero status rifiutato (fail-closed)
   for (const bad of [[{ label: 'no-id' }], ['id non valido!'], [{ id: 'a', rc: 'yes' }], 'not-array']) {
     assert.equal(parseStatus(JSON.stringify({ ...base, engines: bad })), null, `engines ${JSON.stringify(bad)} rifiutato`);

@@ -103,16 +103,57 @@ test('hasFreshOutput reads the seen-marker from injectable storage', async () =>
   assert.equal(hasFreshOutput({ outbox: { count: 1, latest: 1 } }, 'never-seen', storage), true);
 });
 
+test('cellRuntime exposes one shared off, idle, working and legacy contract', async () => {
+  const { cellRuntime } = await model();
+  const { t } = await i18n();
+  assert.deepEqual(
+    cellRuntime({ tmux: false, model: 'claude-opus-4-1', engine: 'claude.native' }),
+    { working: false, subtitle: 'claude.native · claude-opus-4-1' },
+    'off cells show the configured startup engine and model',
+  );
+  assert.deepEqual(
+    cellRuntime({ tmux: false, engine: 'codex.responses' }),
+    { working: false, subtitle: 'codex.responses' },
+    'off cells fall back to the startup engine when model is provider-default',
+  );
+  assert.deepEqual(
+    cellRuntime({ tmux: true }, { working: false, paneTitle: 'Dev' }),
+    { working: false, subtitle: t('cell-idle') },
+  );
+  assert.deepEqual(
+    cellRuntime({ tmux: true }, { working: true, status: 'Implement activity UI' }),
+    { working: true, subtitle: `${t('cell-working')} · Implement activity UI` },
+  );
+  assert.deepEqual(
+    cellRuntime({ tmux: true }, { working: true, status: '' }),
+    { working: true, subtitle: t('cell-working') },
+  );
+  assert.deepEqual(
+    cellRuntime({ tmux: true }, { working: true, status: 'Working...' }),
+    { working: true, subtitle: t('cell-working') },
+    'Pi generic status is localized without a duplicated label',
+  );
+  assert.deepEqual(
+    cellRuntime({ tmux: true }, { preview: 'older peer preview' }),
+    { working: false, subtitle: 'older peer preview' },
+    'older peers without an explicit boolean keep their preview and never fake working',
+  );
+});
+
 test('buildLocalRoster normalizes cells and unmanaged with route-qualified local keys', async () => {
   const { buildLocalRoster } = await model();
+  const { t } = await i18n();
   const { positionKey } = await nodes();
   const storage = makeStorage();
   const byName = new Map([
-    ['local-live', { name: 'local-live', activity: 20, preview: 'p-live', outbox: { count: 1, latest: 5 } }],
+    ['local-live', {
+      name: 'local-live', activity: 20, preview: 'p-live', working: true, status: 'Implement activity UI',
+      outbox: { count: 1, latest: 5 },
+    }],
   ]);
   const cells = [
     { cell: 'Live Cell', tmuxSession: 'local-live', tmux: true, engine: 'claude', key: 'K1' },
-    { cell: 'Off Cell', tmuxSession: 'local-off', tmux: false },
+    { cell: 'Off Cell', tmuxSession: 'local-off', tmux: false, model: 'gpt-5.4' },
   ];
   const unmanaged = [
     { name: 'scratch', activity: 10, preview: 'p-scratch', cmd: 'vim', technical: false },
@@ -123,7 +164,8 @@ test('buildLocalRoster normalizes cells and unmanaged with route-qualified local
   // Active cell: activity/preview from the matched session, fresh via seen-marker.
   assert.deepEqual(items[0], {
     type: 'cell', value: cells[0], key: positionKey([], 'local-live'), label: 'Live Cell',
-    live: true, fresh: true, activity: 20, searchText: 'claude K1 p-live',
+    live: true, fresh: true, activity: 20, working: true, subtitle: `${t('cell-working')} · Implement activity UI`,
+    searchText: 'claude K1 p-live Implement activity UI',
   });
   // Off cell: no matching session -> blank fresh/preview, key is the bare tmuxSession
   // (local position: positionKey([], id) === id), so the seen key matches the old
@@ -134,7 +176,9 @@ test('buildLocalRoster normalizes cells and unmanaged with route-qualified local
   assert.equal(off.live, false);
   assert.equal(off.fresh, false);
   assert.equal(off.activity, 0);
-  assert.equal(off.searchText, '  ', 'engine/key/preview all blank -> spaced haystack');
+  assert.equal(off.working, false);
+  assert.equal(off.subtitle, 'gpt-5.4');
+  assert.equal(off.searchText, 'gpt-5.4');
   // Unmanaged tmux sessions.
   assert.deepEqual(items[2], {
     type: 'session', value: unmanaged[0], key: positionKey([], 'scratch'), label: 'scratch',
@@ -150,11 +194,12 @@ test('buildLocalRoster normalizes cells and unmanaged with route-qualified local
 
 test('buildRemoteRoster qualifies keys with the node route and falls back to cell preview/activity', async () => {
   const { buildRemoteRoster } = await model();
+  const { t } = await i18n();
   const { positionKey } = await nodes();
   const storage = makeStorage();
   const group = {
     route: ['relay'],
-    sessions: [{ name: 'remote-live', activity: 30, preview: 'rp-live' }],
+    sessions: [{ name: 'remote-live', activity: 30, preview: 'rp-live', working: false, paneTitle: 'Dev' }],
     cells: [
       { cell: 'Relay Live', tmuxSession: 'remote-live', tmux: true, engine: 'glm', key: 'G1' },
       { cell: 'Relay Orphan', tmuxSession: 'remote-x', tmux: false, preview: 'cp-orphan', activity: 2 },
@@ -167,13 +212,16 @@ test('buildRemoteRoster qualifies keys with the node route and falls back to cel
   // Active remote cell: activity/preview from the matched session.
   assert.deepEqual(rawItems[0], {
     type: 'cell', value: group.cells[0], key: positionKey(['relay'], 'remote-live'), label: 'Relay Live',
-    live: true, fresh: false, activity: 30, searchText: 'glm G1 rp-live',
+    live: true, fresh: false, activity: 30, working: false, subtitle: t('cell-idle'),
+    searchText: 'glm G1 rp-live',
   });
   // Orphan cell (no matching session): falls back to the cell's own activity/preview.
   const orphan = rawItems[1];
   assert.equal(orphan.key, positionKey(['relay'], 'remote-x'));
   assert.equal(orphan.activity, 2, 'cell.activity fallback when session missing');
-  assert.equal(orphan.searchText, '  cp-orphan', 'preview falls back to cell.preview');
+  assert.equal(orphan.working, false);
+  assert.equal(orphan.subtitle, group.cells[1].engine || t('cell-off'));
+  assert.equal(orphan.searchText, 'cp-orphan', 'preview remains searchable while off subtitle wins');
   assert.equal(orphan.fresh, false);
   // Remote unmanaged session, route-qualified key.
   const shell = rawItems[2];

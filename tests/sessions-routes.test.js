@@ -24,6 +24,33 @@ function boot(t, over = {}) {
 }
 const H = (token) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
 
+test('list: exposes a shared working/status contract including the Pi capture fallback', async (t) => {
+  process.env.FAKE_TMUX_ACTIVITY_MODE = 'pi-working';
+  t.after(() => { delete process.env.FAKE_TMUX_ACTIVITY_MODE; });
+  const { base, token } = await boot(t);
+  const response = await fetch(`${base}/api/sessions`, { headers: H(token) });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.sessions.length, 1);
+  assert.equal(body.sessions[0].name, 'pi-cell');
+  assert.equal(body.sessions[0].paneTitle, 'π - project');
+  assert.equal(body.sessions[0].working, true);
+  assert.equal(body.sessions[0].status, 'Working...');
+  assert.equal(body.sessions[0].preview, 'pi-model footer');
+});
+
+test('list: capture fallback cannot mark a non-Pi transcript as working', async (t) => {
+  process.env.FAKE_TMUX_ACTIVITY_MODE = 'quoted-working';
+  t.after(() => { delete process.env.FAKE_TMUX_ACTIVITY_MODE; });
+  const { base, token } = await boot(t);
+  const response = await fetch(`${base}/api/sessions`, { headers: H(token) });
+  const body = await response.json();
+  assert.equal(body.sessions[0].paneTitle, 'Dev');
+  assert.equal(body.sessions[0].working, false);
+  assert.equal(body.sessions[0].status, '');
+  assert.equal(body.sessions[0].preview, 'claude-model footer');
+});
+
 test('create: 201 con preset shell, 400 nome/preset invalidi', async (t) => {
   const { base, token } = await boot(t);
   const home = os.homedir();

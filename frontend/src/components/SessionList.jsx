@@ -146,9 +146,9 @@ export default function SessionList({ onPick, token, onSettings }) {
       const session = route.length
         ? (group?.sessions || []).find((candidate) => candidate.name === c.tmuxSession)
         : byName.get(c.tmuxSession);
-      const preview = session?.preview || c.preview || '';
-      const sub = [`${c.engine}${c.key ? `·${c.key}` : ''}`, preview, c.active ? '' : t('cell-off')]
-        .filter(Boolean).join(' · ');
+      const stateTitle = c.degraded
+        ? t('cell-degraded')
+        : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
       const canPower = route.length === 0 || (group?.capabilities || []).includes(c.active ? 'down' : 'up');
       return (
         <div key={item.key} className="nc-mcard" data-roster-key={item.key} data-position={position}>
@@ -158,9 +158,9 @@ export default function SessionList({ onPick, token, onSettings }) {
             onStep={(delta) => stepRoster(position, item.key, delta, rawItems)} />
           <button className="nc-mcard-main"
             onClick={() => c.tmux && pickOwned(c.tmuxSession)}
-            title={c.degraded ? t('cell-degraded') : c.tmux ? t('cell-on') : t('cell-off')}>
-            <span className={`dot ${c.degraded ? 'warn' : c.tmux ? 'on' : ''}`} />
-            <span className="nc-mcard-text"><b>{c.cell}</b><small>{sub}</small></span>
+            title={stateTitle} aria-label={`${c.cell}, ${stateTitle}`}>
+            <span className={`dot ${c.degraded ? 'warn' : c.tmux ? `on${item.working ? ' working' : ''}` : ''}`} />
+            <span className="nc-mcard-text"><b>{c.cell}</b><small title={item.subtitle}>{item.subtitle}</small></span>
           </button>
           {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
           {item.fresh && session?.outbox?.count > 0 && <span className="nc-badge" title={t('new-files-outbox')}>{session.outbox.count}</span>}

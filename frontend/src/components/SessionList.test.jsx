@@ -56,6 +56,36 @@ beforeEach(() => {
 });
 
 describe('mobile roster parity', () => {
+  it('blips working cells and switches the one-line subtitle between work, idle and startup model', async () => {
+    const user = userEvent.setup();
+    fixture.sessions[0] = session('local-live', 20, {
+      working: true, status: 'Implement activity UI', paneTitle: '⠐ Implement activity UI',
+    });
+    fixture.nodes[0].sessions[0] = session('remote-live', 30, {
+      working: true, status: 'Review remote diff', paneTitle: '⠙ Review remote diff',
+    });
+    fixture.cells[1].model = 'claude-opus-4-1';
+    renderRoster();
+
+    const workingLabel = await screen.findByText(/Implement activity UI/);
+    const workingRow = workingLabel.closest('.nc-mcard');
+    expect(workingRow.querySelector('.dot').classList.contains('working')).toBe(true);
+    const offRow = screen.getByText('Off Cell').closest('.nc-mcard');
+    expect(within(offRow).getByText('claude.native · claude-opus-4-1')).toBeTruthy();
+    expect(offRow.querySelector('.dot').classList.contains('on')).toBe(false);
+    const remoteRow = screen.getByText(/Review remote diff/).closest('.nc-mcard');
+    expect(remoteRow.querySelector('.dot').classList.contains('working')).toBe(true);
+
+    fixture.sessions = [
+      session('local-live', 21, { working: false, status: '', paneTitle: 'Dev' }),
+      ...fixture.sessions.slice(1),
+    ];
+    await user.click(screen.getByTitle('refresh'));
+    await waitFor(() => expect(within(workingRow).getByText('idle')).toBeTruthy());
+    expect(workingRow.querySelector('.dot').classList.contains('working')).toBe(false);
+    expect(workingRow.querySelector('.dot').classList.contains('on')).toBe(true);
+  });
+
   it('filters local and remote positions with the shared active/off model', async () => {
     const user = userEvent.setup();
     renderRoster();

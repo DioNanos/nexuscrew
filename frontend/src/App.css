@@ -68,6 +68,20 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
 }
 @media (prefers-reduced-motion: reduce) { .nc-app { animation: none; } }
 
+/* Una cella viva resta verde; quando il pane tmux dichiara lavoro attivo il
+   dot pulsa. La riga testuale conserva lo stesso stato anche con motion off. */
+@keyframes nc-cell-working-blip {
+  0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 7px #00cc66cc; }
+  50% { opacity: .22; transform: scale(.72); box-shadow: 0 0 1px #00cc6622; }
+}
+.nc-dot.on.working, .dot.on.working {
+  animation: nc-cell-working-blip 1.1s ease-in-out infinite;
+  transform-origin: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nc-dot.on.working, .dot.on.working { animation: none; }
+}
+
 .nc-stale {
   position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
   z-index: 2000; cursor: pointer;
