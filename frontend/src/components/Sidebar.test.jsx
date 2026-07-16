@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 
 import Sidebar from './Sidebar.jsx';
 
@@ -35,5 +35,59 @@ describe('Sidebar session identity', () => {
     expect(onPick).toHaveBeenLastCalledWith({
       session: 'remote-shell', node: 'relay', ownerId: 'd'.repeat(32),
     });
+  });
+
+  it('renders working, idle and off cell state from the shared runtime contract', () => {
+    const baseProps = {
+      localNodeId: 'c'.repeat(32),
+      cells: [
+        { cell: 'Working Cell', tmuxSession: 'cell-working', tmux: true, active: true, engine: 'codex.responses' },
+        { cell: 'Off Cell', tmuxSession: 'cell-off', tmux: false, active: false, engine: 'claude.native', model: 'claude-opus-4-1' },
+      ],
+      onPick: vi.fn(), onAddTile: vi.fn(), onSettings: vi.fn(),
+    };
+    const { rerender } = render(
+      <Sidebar {...baseProps} sessions={[{
+        name: 'cell-working', activity: 2, windows: 1,
+        working: true, status: 'Implement activity UI', preview: 'gpt-5.6-sol',
+      }]} />,
+    );
+
+    const workingRow = screen.getByText('Working Cell').closest('[data-roster-key]');
+    expect(within(workingRow).getByText(/Implement activity UI/)).toBeTruthy();
+    expect(workingRow.querySelector('.nc-dot').classList.contains('working')).toBe(true);
+    const offRow = screen.getByText('Off Cell').closest('[data-roster-key]');
+    expect(within(offRow).getByText('claude.native · claude-opus-4-1')).toBeTruthy();
+    expect(offRow.querySelector('.nc-dot').classList.contains('on')).toBe(false);
+
+    rerender(<Sidebar {...baseProps} sessions={[{
+      name: 'cell-working', activity: 3, windows: 1,
+      working: false, status: '', paneTitle: 'Dev', preview: 'gpt-5.6-sol',
+    }]} />);
+    const idleRow = screen.getByText('Working Cell').closest('[data-roster-key]');
+    expect(within(idleRow).getByText('idle')).toBeTruthy();
+    expect(idleRow.querySelector('.nc-dot').classList.contains('working')).toBe(false);
+    expect(idleRow.querySelector('.nc-dot').classList.contains('on')).toBe(true);
+  });
+
+  it('keeps the working signal in collapsed desktop and routed remote cells', () => {
+    const common = { onPick: vi.fn(), onAddTile: vi.fn(), onSettings: vi.fn() };
+    const { container, rerender } = render(<Sidebar {...common} collapsed
+      cells={[{ cell: 'Local Worker', tmuxSession: 'local-worker', tmux: true, active: true, engine: 'codex.native' }]}
+      sessions={[{ name: 'local-worker', working: true, status: 'Build release' }]} />);
+    expect(container.querySelector('.nc-mini-dot .nc-dot').classList.contains('working')).toBe(true);
+
+    rerender(<Sidebar {...common} cells={[]} sessions={[]} nodeGroups={[{
+      name: 'relay', label: 'Relay', route: ['relay'], status: 'up', instanceId: 'd'.repeat(32),
+      sessions: [{ name: 'remote-worker', working: true, status: 'Review remote diff' }],
+      cells: [{
+        cell: 'Remote Worker', tmuxSession: 'remote-worker', tmux: true, active: true,
+        engine: 'claude.native', key: 'relay:remote-worker',
+      }],
+      unmanaged: [], capabilities: [], engines: [],
+    }]} />);
+    const remoteRow = screen.getByText('Remote Worker').closest('[data-roster-key]');
+    expect(within(remoteRow).getByText(/Review remote diff/)).toBeTruthy();
+    expect(remoteRow.querySelector('.nc-dot').classList.contains('working')).toBe(true);
   });
 });

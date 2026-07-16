@@ -2,6 +2,21 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.19 — 2026-07-17 — "Live Activity"
+
+- Fleet status dots now distinguish all three cell states on mobile and desktop: gray when off,
+  fixed green when powered but idle, and a pulsing green signal only while the attached AI client
+  is actively working. Reduced-motion preferences disable the pulse without hiding the text state.
+- Each cell keeps a single useful subtitle. Powered-off rows show the engine, credential profile
+  and model when available; powered-on rows switch to a live localized status such as working,
+  the current task label, or idle. The same contract covers expanded, compact and remote rosters.
+- Working detection uses the tmux pane title's Braille progress frame as the primary cross-client
+  signal. Pi receives a narrowly gated capture fallback, while activity timestamps and persistent
+  transcript text cannot mark unrelated or stale cells as busy. The sessions API adds bounded,
+  sanitized activity fields without breaking older peers.
+- Gate: **830 Node tests** (829 pass / 1 platform skip), **25 frontend component tests**,
+  production build and zero dependency vulnerabilities.
+
 ## 0.8.18 — 2026-07-15 — "Persistent Composer"
 
 - The input composer now expands for long prompts and keeps a separate browser-local draft,

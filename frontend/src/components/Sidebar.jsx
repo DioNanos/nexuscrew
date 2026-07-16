@@ -116,13 +116,13 @@ export default function Sidebar({
                 key={item.key}
                 type="button"
                 className={`nc-mini-dot${active.has(c.tmuxSession) ? ' active' : ''}`}
-                onMouseEnter={(e) => showTip(e, c.cell)}
+                onMouseEnter={(e) => showTip(e, `${c.cell}: ${item.subtitle}`)}
                 onMouseLeave={hideTip}
                 draggable={live}
                 onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', c.tmuxSession) : undefined}
                 onClick={live ? () => onAddTile && onAddTile(c.tmuxSession) : () => onPower && onPower(c)}
                 onDoubleClick={live ? () => pickOwned(c.tmuxSession, '', localNodeId) : undefined}
-              ><span className={`nc-dot ${dot}`} /></button>
+              ><span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} /></button>
             );
           })() : (() => { const s = item.value; return (
             <button
@@ -147,13 +147,13 @@ export default function Sidebar({
                   key={item.key}
                   type="button"
                   className={`nc-mini-dot${active.has(item.key) ? ' active' : ''}`}
-                  onMouseEnter={(e) => showTip(e, `${g.label || nodeRoute}: ${c.cell}`)}
+                  onMouseEnter={(e) => showTip(e, `${g.label || nodeRoute}: ${c.cell} · ${item.subtitle}`)}
                   onMouseLeave={hideTip}
                   draggable={live}
                   onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', item.key) : undefined}
                   onClick={live ? () => onAddTile && onAddTile(item.key) : () => onPower && onPower({ ...c, route: g.route, availableEngines: g.engines || [] })}
                   onDoubleClick={live ? () => pickOwned(c.tmuxSession, nodeRoute, g.instanceId) : undefined}
-                ><span className={`nc-dot ${c.degraded ? 'warn' : live ? 'on' : ''}`} /></button>
+                ><span className={`nc-dot ${c.degraded ? 'warn' : live ? `on${item.working ? ' working' : ''}` : ''}`} /></button>
               );
             })() : (() => { const s = item.value; return (
               <button
@@ -208,7 +208,9 @@ export default function Sidebar({
           {localItems.map((item) => item.type === 'cell' ? (() => {
             const c = item.value;
             const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
-            const title = c.degraded ? t('cell-degraded') : c.tmux ? t('cell-on') : t('cell-off');
+            const title = c.degraded
+              ? t('cell-degraded')
+              : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
             // Cella con tmux vivo = sessione a tutti gli effetti: draggabile
             // nella griglia, click = tile, doppio click = vista singola.
             const live = !!c.tmux;
@@ -218,8 +220,8 @@ export default function Sidebar({
                 data-roster-key={item.key}
                 data-position="local"
                 className={`nc-cell${live ? ' live' : ''}${active.has(c.tmuxSession) ? ' active' : ''}`}
-                title={`${c.cell} · ${c.engine}${c.key ? `·${c.key}` : ''} · ${title}`}
-                aria-label={`${c.cell}, ${c.engine}${c.key ? ` ${c.key}` : ''}, ${title}`}
+                title={`${c.cell} · ${item.subtitle}${title === item.subtitle ? '' : ` · ${title}`}`}
+                aria-label={`${c.cell}, ${item.subtitle}${title === item.subtitle ? '' : `, ${title}`}`}
                 draggable={live}
                 onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', c.tmuxSession) : undefined}
                 onClick={live ? () => onAddTile && onAddTile(c.tmuxSession) : undefined}
@@ -229,10 +231,10 @@ export default function Sidebar({
                   canMove={canMoveRoster}
                   onMove={(source, target) => moveRoster('local', source, target, localRawItems)}
                   onStep={(delta) => stepRoster('local', item.key, delta, localRawItems)} />
-                <span className={`nc-dot ${dot}`} />
+                <span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} />
                 <span className="nc-cell-main">
                   <b title={c.cell}>{c.cell}</b>
-                  <small title={`${c.engine}${c.key ? `·${c.key}` : ''}`}>{c.engine}{c.key ? `·${c.key}` : ''}</small>
+                  <small title={item.subtitle}>{item.subtitle}</small>
                 </span>
                 <button
                   className={`nc-pin${pins.includes(item.key) ? ' on' : ''}`}
@@ -322,7 +324,7 @@ export default function Sidebar({
                     data-roster-key={item.key}
                     data-position={nodeRoute}
                     className={`nc-side-card nc-cell${live ? ' live' : ''}${active.has(c.key) ? ' active' : ''}`}
-                    title={c.active ? t('cell-on') : t('cell-off')}
+                    title={item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off')}
                     draggable={live}
                     onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', c.key) : undefined}
                     onClick={live ? () => onAddTile && onAddTile(c.key) : undefined}
@@ -332,10 +334,10 @@ export default function Sidebar({
                       canMove={canMoveRoster}
                       onMove={(source, target) => moveRoster(nodeRoute, source, target, rawItems)}
                       onStep={(delta) => stepRoster(nodeRoute, item.key, delta, rawItems)} />
-                    <span className={`nc-dot ${dot}`} />
+                    <span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} />
                     <span className="nc-card-main">
                       <b>{c.cell}</b>
-                      <small>{c.engine}{c.key ? `·${c.key}` : ''}{c.active ? '' : ` · ${t('cell-off')}`}</small>
+                      <small title={item.subtitle}>{item.subtitle}</small>
                     </span>
                     <button className={`nc-pin${pins.includes(item.key) ? ' on' : ''}`} title={t('pin')}
                       onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}>{pins.includes(item.key) ? '★' : '☆'}</button>

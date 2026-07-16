@@ -9,6 +9,19 @@ case "$1" in
   has-session)
     case "$*" in *"=ghost"*) exit 1 ;; esac
     exit 0 ;;
-  list-sessions) exit 0 ;;
+  list-sessions)
+    if [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "pi-working" ]; then
+      printf 'pi-cell\t0\t1\t1718380800\t1751990000\tnode\t\tπ - project\n'
+    elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "quoted-working" ]; then
+      printf 'claude-idle\t0\t1\t1718380800\t1751990000\tnode\t\tDev\n'
+    fi
+    exit 0 ;;
+  capture-pane)
+    if [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "pi-working" ]; then
+      printf '\n⠙ Working...\npi-model footer\n'
+    elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "quoted-working" ]; then
+      printf '\n• Working (quoted in transcript)\nclaude-model footer\n'
+    fi
+    exit 0 ;;
   *) exit 0 ;;
 esac
