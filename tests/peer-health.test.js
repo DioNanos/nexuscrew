@@ -148,6 +148,7 @@ test('nodeHealth: outbound tunnel up + probe 401 -> degraded/auth failed (riprod
 async function boot(t, over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-srv-'));
   const nodesPath = path.join(dir, 'nodes.json');
+  store.initStore(nodesPath);
   const configPath = path.join(dir, 'config.json');
   fs.writeFileSync(configPath, JSON.stringify({ roles: { client: false, node: false } }));
   const { server, token, watcher } = createServer({
@@ -172,7 +173,7 @@ function get(port, pathh, headers = {}) {
 
 test('route /federation/health: 401 senza Bearer o acceptToken non matching', async (t) => {
   const { port, nodesPath } = await boot(t);
-  let st = store.loadOrInitStore(nodesPath);
+  let st = store.loadStoreStrict(nodesPath);
   st = store.addNode(st, { name: 'peer', remotePort: 41820, localPort: 44001, direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', nodeId: 'b'.repeat(32), token: 'PEER-TOK', acceptToken: 'GOOD-ACCEPT' });
   store.atomicWriteStore(nodesPath, st);
   nodesHealth.clearHealthCache();
@@ -186,7 +187,7 @@ test('route /federation/health: 401 senza Bearer o acceptToken non matching', as
 
 test('route /federation/health: 200 + instanceId/version con acceptToken valido', async (t) => {
   const { port, nodesPath } = await boot(t);
-  let st = store.loadOrInitStore(nodesPath);
+  let st = store.loadStoreStrict(nodesPath);
   st = store.addNode(st, { name: 'peer', remotePort: 41820, localPort: 44001, direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', nodeId: 'b'.repeat(32), token: 'PEER-TOK', acceptToken: 'GOOD-ACCEPT' });
   store.atomicWriteStore(nodesPath, st);
   nodesHealth.clearHealthCache();
@@ -203,7 +204,7 @@ test('route /federation/health: 200 + instanceId/version con acceptToken valido'
 
 test('route /api/nodes: ogni nodo porta {health, tunnel}; token MAI esposto', async (t) => {
   const { port, token, nodesPath } = await boot(t);
-  let st = store.loadOrInitStore(nodesPath);
+  let st = store.loadStoreStrict(nodesPath);
   st = store.addNode(st, { name: 'out', ssh: 'u@h', remotePort: 41820, localPort: 43999, direction: 'outbound', transport: 'auto', autostart: false, visibility: 'network', token: 'SECRET-OUTBOUND' });
   st = store.addNode(st, { name: 'inb', remotePort: 41820, localPort: 44002, direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', nodeId: 'c'.repeat(32), token: 'PEER', acceptToken: 'ACC' });
   store.atomicWriteStore(nodesPath, st);

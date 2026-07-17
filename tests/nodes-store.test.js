@@ -109,6 +109,11 @@ test('parseStore: name duplicato / self-reference / nodeId remoto duplicato -> n
     { name: 'b', ssh: 'u@h2', remotePort: 22, localPort: 43002, keyPath: '/k2', nodeId: 'b'.repeat(32) },
   ] };
   assert.equal(store.parseStore(dupId), null);
+  const dupPort = { schemaVersion: 1, nodeId: NODE_ID, nodes: [
+    { name: 'a', ssh: 'u@h', remotePort: 22, localPort: 43001, keyPath: '/k' },
+    { name: 'b', ssh: 'u@h2', remotePort: 22, localPort: 43001, keyPath: '/k2' },
+  ] };
+  assert.equal(store.parseStore(dupPort), null, 'two records cannot own the same local listener');
 });
 
 test('parseStore: rendezvous opzionale, strict', () => {
@@ -161,19 +166,25 @@ test('loadStore: symlink -> null; file invalido -> null', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('loadOrInitStore: crea vuoto con nodeId stabile; invalido -> throw', () => {
+test('initStore crea esplicitamente; runtime strict non ricrea ENOENT e rifiuta invalido', () => {
   const dir = tmpDir();
   const p = path.join(dir, 'nodes.json');
-  const s1 = store.loadOrInitStore(p);
+  const s1 = store.initStore(p);
   assert.match(s1.nodeId, /^[a-f0-9]{32}$/);
   assert.deepEqual(s1.nodes, []);
   assert.equal(fs.lstatSync(p).mode & 0o777, 0o600);
   // stabile: seconda load stesso nodeId
-  const s2 = store.loadOrInitStore(p);
+  const s2 = store.loadStoreStrict(p);
   assert.equal(s2.nodeId, s1.nodeId);
+  // Runtime: una cancellazione non deve creare una nuova identita silenziosa.
+  fs.unlinkSync(p);
+  assert.throws(() => store.loadStoreStrict(p), (e) => e.code === 'NODES_STORE_MISSING' && e.status === 503);
+  assert.throws(() => store.loadOrInitStore(p), (e) => e.code === 'NODES_STORE_MISSING');
+  assert.equal(fs.existsSync(p), false);
+  store.initStore(p);
   // file presente ma corrotto -> throw (no overwrite silenzioso)
   fs.writeFileSync(p, 'nope{');
-  assert.throws(() => store.loadOrInitStore(p), /invalido/);
+  assert.throws(() => store.loadStoreStrict(p), (e) => e.code === 'NODES_STORE_INVALID' && /invalido/.test(e.message));
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -184,6 +195,7 @@ test('addNode: rifiuta duplicati e self-reference', () => {
   const s1 = store.addNode(s0, { name: 'a', ssh: 'u@h', remotePort: 22, localPort: 43001, keyPath: '/k' });
   assert.equal(s1.nodes.length, 1);
   assert.throws(() => store.addNode(s1, { name: 'a', ssh: 'u@h2', remotePort: 22, localPort: 43002, keyPath: '/k2' }), /duplicato/);
+  assert.throws(() => store.addNode(s1, { name: 'b', ssh: 'u@h2', remotePort: 22, localPort: 43001, keyPath: '/k2' }), /localPort/);
   assert.throws(() => store.addNode(s1, { name: 'b', ssh: 'u@h', remotePort: 22, localPort: 43002, keyPath: '/k', nodeId: NODE_ID }), /self-reference/);
   assert.throws(() => store.addNode(s1, { name: 'BAD NAME', ssh: 'u@h', remotePort: 22, localPort: 43002, keyPath: '/k' }), /non valido/);
 });

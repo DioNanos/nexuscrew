@@ -4,10 +4,11 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const {
   CATALOG, OLLAMA_CONTEXT, normalizeManagedSpec, defaultDefinitions, describeManaged,
   resolveManagedEngine, parseEnvFile, parseProviderShellFile, discoverOllamaModels, discoverPiModels, needsExplicitNode,
-  publicCatalog, parseProviderKeyFiles,
+  publicCatalog, parseProviderKeyFiles, describeCatalogCredential,
 } = require('../lib/fleet/managed.js');
 const { parseDefinitions } = require('../lib/fleet/definitions.js');
 
@@ -36,11 +37,11 @@ test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P',
   const ids = new Set(catalog.map((p) => p.id));
   for (const id of [
     'claude.native', 'claude.bedrock', 'claude.vertex', 'claude.foundry',
-    'claude.ollama-cloud', 'claude.ollama', 'claude.zai', 'claude.custom',
+    'claude.openrouter', 'claude.kimi-code', 'claude.ollama-cloud', 'claude.ollama', 'claude.zai', 'claude.custom',
     'codex.native', 'codex.openai-api', 'codex.ollama', 'codex.lmstudio',
     'codex.ollama-cloud', 'codex.custom',
     'codex-vl.native', 'codex-vl.openai-api', 'codex-vl.ollama',
-    'codex-vl.lmstudio', 'codex-vl.ollama-cloud', 'codex-vl.custom',
+    'codex-vl.openrouter', 'codex-vl.lmstudio', 'codex-vl.ollama-cloud', 'codex-vl.custom',
     'pi.native', 'pi.anthropic', 'pi.openai', 'pi.openai-codex', 'pi.google',
     'pi.github-copilot', 'pi.ollama', 'pi.openrouter', 'pi.deepseek', 'pi.zai', 'pi.custom',
   ]) assert.equal(ids.has(id), true, `${id} deve essere nel catalogo base`);
@@ -48,6 +49,23 @@ test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P',
   assert.equal(ids.has('claude.zai-p'), false);
   assert.equal(ids.has('pi.fireworks'), false, 'provider Pi avanzati restano fuori dalla lista base');
   assert.equal(catalog.find((p) => p.id === 'claude.zai').defaultEnvKey, 'ZAI_API_KEY');
+  assert.equal(catalog.find((p) => p.id === 'claude.openrouter').credentialEnv, 'OPENROUTER_API_KEY');
+  assert.equal(catalog.find((p) => p.id === 'codex-vl.openrouter').credentialEnv, 'OPENROUTER_API_KEY');
+  assert.equal(catalog.find((p) => p.id === 'claude.kimi-code').credentialEnv, 'KIMI_API_KEY');
+  assert.equal(catalog.filter((p) => p.default).length, 4, 'i nuovi profili core non diventano default');
+});
+
+test('OpenRouter richiede un modello; Kimi Code accetta solo gli slug documentati', () => {
+  assert.equal(normalizeManagedSpec({ client: 'claude', provider: 'openrouter' }), null);
+  assert.equal(normalizeManagedSpec({ client: 'codex-vl', provider: 'openrouter' }), null);
+  assert.ok(normalizeManagedSpec({ client: 'claude', provider: 'openrouter', model: 'anthropic/claude-sonnet-4' }));
+  assert.ok(normalizeManagedSpec({ client: 'codex-vl', provider: 'openrouter', model: 'moonshotai/kimi-k3' }));
+  assert.equal(normalizeManagedSpec({ client: 'claude', provider: 'openrouter', model: `x${'y'.repeat(128)}` }), null);
+  assert.equal(normalizeManagedSpec({ client: 'claude', provider: 'openrouter', model: 'bad\nmodel' }), null);
+  for (const model of ['k3', 'k3[1m]', 'kimi-for-coding', 'kimi-for-coding-highspeed']) {
+    assert.ok(normalizeManagedSpec({ client: 'claude', provider: 'kimi-code', model }));
+  }
+  assert.equal(normalizeManagedSpec({ client: 'claude', provider: 'kimi-code', model: 'unknown' }), null);
 });
 
 test('managed matrix: Z.AI solo Claude; Ollama Cloud su entrambi', () => {
@@ -154,6 +172,121 @@ test('Claude enterprise providers usano solo i flag ambiente documentati', () =>
       assert.equal(r.engine.args.includes('--dangerously-skip-permissions'), true);
       assert.equal(Object.keys(r.engine.env).some((name) => name.startsWith('ANTHROPIC_')), false);
     }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Claude OpenRouter usa il contratto Anthropic-skin dedicato senza finestre inventate', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'claude');
+    const model = 'anthropic/claude-sonnet-4';
+    const r = resolveManagedEngine({ id: 'claude.openrouter', label: 'OpenRouter', managed: { client: 'claude', provider: 'openrouter', model } }, { id: 'Dev' }, { home, env: { OPENROUTER_API_KEY: 'synthetic-openrouter-token' } });
+    assert.equal(r.ok, true);
+    assert.equal(r.engine.env.ANTHROPIC_BASE_URL, 'https://openrouter.ai/api');
+    assert.equal(r.engine.env.ANTHROPIC_AUTH_TOKEN, 'synthetic-openrouter-token');
+    assert.equal(r.engine.env.ANTHROPIC_API_KEY, '');
+    assert.equal(r.engine.env.ANTHROPIC_MODEL, model);
+    assert.equal(r.engine.env.CLAUDE_CODE_SUBAGENT_MODEL, model);
+    assert.equal(r.engine.env.API_TIMEOUT_MS, '3000000');
+    assert.equal(Object.prototype.hasOwnProperty.call(r.engine.env, 'CLAUDE_CODE_MAX_CONTEXT_TOKENS'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(r.engine.env, 'CLAUDE_CODE_AUTO_COMPACT_WINDOW'), false);
+    assert.deepEqual(r.engine.args.slice(-2), ['--model', model]);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Claude Kimi Code isola config, usa API_KEY child-only e applica il profilo per modello', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'claude');
+    for (const [model, context, effort] of [
+      ['k3', '262144', true], ['k3[1m]', '1048576', true],
+      ['kimi-for-coding', '262144', false], ['kimi-for-coding-highspeed', '262144', false],
+    ]) {
+      const r = resolveManagedEngine({ id: `claude.kimi-${model}`, label: 'Kimi Code', managed: { client: 'claude', provider: 'kimi-code', model } }, { id: 'Dev' }, { home, env: { KIMI_API_KEY: 'synthetic-kimi-token' } });
+      assert.equal(r.ok, true);
+      assert.equal(r.engine.env.ANTHROPIC_BASE_URL, 'https://api.kimi.com/coding/');
+      assert.equal(r.engine.env.ANTHROPIC_API_KEY, 'synthetic-kimi-token');
+      assert.equal(Object.prototype.hasOwnProperty.call(r.engine.env, 'ANTHROPIC_AUTH_TOKEN'), false);
+      assert.equal(r.engine.env.ANTHROPIC_DEFAULT_FABLE_MODEL, model);
+      assert.equal(r.engine.env.CLAUDE_CODE_SUBAGENT_MODEL, model);
+      assert.equal(r.engine.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, context);
+      assert.equal(r.engine.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, context);
+      assert.equal(r.engine.env.API_TIMEOUT_MS, '3000000');
+      assert.equal(r.engine.env.CLAUDE_CODE_EFFORT_LEVEL, effort ? 'max' : undefined);
+      assert.equal(r.engine.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT, effort ? '1' : undefined);
+      assert.equal(r.engine.env.CLAUDE_CONFIG_DIR, path.join(home, '.nexuscrew', 'claude-profiles', 'kimi-code'));
+    }
+    const file = path.join(home, '.nexuscrew', 'claude-profiles', 'kimi-code', '.claude.json');
+    assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), {
+      hasCompletedOnboarding: true, penguinModeOrgEnabled: true,
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Codex-VL OpenRouter usa Responses command-auth senza env_key e pinna Kimi K3 a 1M', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'codex-vl');
+    const secret = 'synthetic-openrouter-token';
+    const r = resolveManagedEngine({ id: 'codex-vl.openrouter', label: 'OpenRouter', managed: { client: 'codex-vl', provider: 'openrouter', model: 'moonshotai/kimi-k3' } }, { id: 'Dev' }, { home, env: { OPENROUTER_API_KEY: secret } });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.engine.env, { OPENROUTER_API_KEY: secret });
+    const joined = r.engine.args.join('\n');
+    assert.match(joined, /model_provider="openrouter"/);
+    assert.match(joined, /base_url="https:\/\/openrouter\.ai\/api\/v1"/);
+    assert.match(joined, /wire_api="responses"/);
+    assert.match(joined, /auth\.command=/);
+    assert.match(joined, /OPENROUTER_API_KEY/);
+    assert.match(joined, /stream_idle_timeout_ms=600000/);
+    assert.match(joined, /model_context_window=1048576/);
+    assert.match(joined, /openrouter-kimi-k3\.json/);
+    assert.equal(joined.includes('.env_key='), false);
+    assert.equal(joined.includes(secret), false);
+    assert.deepEqual(r.engine.args.slice(-2), ['-m', 'moonshotai/kimi-k3']);
+    const catalogArg = r.engine.args.find((arg) => arg.startsWith('model_catalog_json='));
+    const catalog = JSON.parse(fs.readFileSync(JSON.parse(catalogArg.slice('model_catalog_json='.length)), 'utf8')).models[0];
+    assert.equal(catalog.context_window, 1048576);
+    assert.equal(catalog.max_context_window, 1048576);
+    assert.equal(catalog.default_reasoning_level, 'max');
+    assert.deepEqual(catalog.supported_reasoning_levels.map((entry) => entry.effort), ['max']);
+    assert.equal(catalog.supports_reasoning_summaries, true);
+    assert.equal(catalog.default_reasoning_summary, 'none');
+    assert.deepEqual(catalog.input_modalities, ['text', 'image']);
+    assert.equal(catalog.supports_parallel_tool_calls, false);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('OpenRouter auth helper is no-shell, fixed-name and silent on invalid input', () => {
+  const helper = require.resolve('../lib/fleet/openrouter-auth-helper.js');
+  const ok = spawnSync(process.execPath, [helper, 'OPENROUTER_API_KEY'], {
+    env: { OPENROUTER_API_KEY: 'synthetic-helper-token' }, encoding: 'utf8',
+  });
+  assert.equal(ok.status, 0);
+  assert.equal(ok.stdout, 'synthetic-helper-token');
+  assert.equal(ok.stderr, '');
+  for (const [name, value] of [
+    ['OTHER_KEY', 'synthetic-helper-token'], ['OPENROUTER_API_KEY', ''],
+    ['OPENROUTER_API_KEY', 'bad\nvalue'], ['OPENROUTER_API_KEY', 'x'.repeat((16 * 1024) + 1)],
+  ]) {
+    const result = spawnSync(process.execPath, [helper, name], { env: { [name]: value }, encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+  }
+});
+
+test('catalog credential status is value-free and limited to fixed catalog keys', () => {
+  const home = tmp();
+  try {
+    assert.deepEqual(describeCatalogCredential('claude', 'openrouter', '', { home, env: { OPENROUTER_API_KEY: 'synthetic-token' } }), {
+      envKey: 'OPENROUTER_API_KEY', authConfigured: true, credentialSource: 'environment',
+    });
+    assert.deepEqual(describeCatalogCredential('claude', 'kimi-code', '', { home, env: {} }), {
+      envKey: 'KIMI_API_KEY', authConfigured: false, credentialSource: 'missing',
+    });
+    assert.equal(describeCatalogCredential('claude', 'custom', '', { home, env: { ARBITRARY_KEY: 'value' } }), null);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 

@@ -301,6 +301,46 @@ test('Share PWA: pairing resta -L privato, toggle aggiunge/rimuove pubblicazione
   assert.deepEqual(calls.shareBodies, [{ shared: true }, { shared: false }]);
 });
 
+test('Share ON: ACK hub fallito torna deterministicamente a -L privato', async (t) => {
+  const { base, token, dir, nodesPath, calls } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID }),
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+    share: () => R(500, { error: 'hub unavailable' }),
+  });
+  assert.equal((await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) })).status, 200);
+  const response = await fetch(`${base}/api/settings/nodes/peer/share`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ shared: true }),
+  });
+  assert.equal(response.status, 502);
+  assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
+  assert.deepEqual(calls.shareBodies, [{ shared: true }]);
+});
+
+test('Share OFF: stato locale resta false se l ACK hub fallisce e il boot potra riconciliare', async (t) => {
+  const { base, token, dir, nodesPath, calls } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID }),
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+    share: (_n, opts) => JSON.parse(opts.body || '{}').shared ? R(200, { shared: true }) : R(500, { error: 'hub unavailable' }),
+  });
+  assert.equal((await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) })).status, 200);
+  const setShare = (shared) => fetch(`${base}/api/settings/nodes/peer/share`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ shared }),
+  });
+  assert.equal((await setShare(true)).status, 200);
+  const off = await setShare(false);
+  assert.equal(off.status, 502);
+  const body = await off.json();
+  assert.equal(body.shared, false);
+  assert.equal(body.reconcilePending, true);
+  assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false,
+    'un ACK perso non deve riattivare il reverse channel');
+  assert.deepEqual(calls.shareBodies, [{ shared: true }, { shared: false }]);
+});
+
 test('pair stages: i dettagli di errore redigono token/credenziali', async (t) => {
   const secret = 'S'.repeat(43);
   const { base, token, dir } = await boot(t, {

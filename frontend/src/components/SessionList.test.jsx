@@ -201,4 +201,28 @@ describe('mobile roster parity', () => {
     await waitFor(() => expect(JSON.parse(localStorage.getItem('nc_sidebar_order_v1'))?.local).toContain('local-off'));
     Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: previous });
   });
+
+  it('keeps mobile node aliases and node order local to this interface', async () => {
+    const user = userEvent.setup();
+    fixture.nodes.push({
+      name: 'pixel', label: 'Pixel', route: ['relay', 'pixel'], status: 'up', direct: false,
+      instanceId: 'e'.repeat(32), tunnelStatus: null, health: { status: 'healthy', managed: false },
+      capabilities: [], engines: [], sessions: [], cells: [], unmanaged: [],
+    });
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('Hub personale');
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    renderRoster();
+    await screen.findByText('Relay');
+
+    await user.click(screen.getByRole('button', { name: 'rename node Relay' }));
+    expect(await screen.findByText('Hub personale')).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem('nc_node_aliases_v1'))[`id:${'d'.repeat(32)}`]).toBe('Hub personale');
+
+    const pixelHandle = screen.getByRole('button', { name: 'reorder Pixel' });
+    pixelHandle.focus();
+    await user.keyboard('{ArrowUp}');
+    expect(JSON.parse(localStorage.getItem('nc_node_order_v1'))[0]).toBe(`id:${'e'.repeat(32)}`);
+    expect(alert).not.toHaveBeenCalled();
+    prompt.mockRestore(); alert.mockRestore();
+  });
 });

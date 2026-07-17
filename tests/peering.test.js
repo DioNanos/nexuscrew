@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { EventEmitter } = require('node:events');
 const peering = require('../lib/nodes/peering.js');
 
 test('pairing invite: URL round-trip, 0600, one-time and expiry', () => {
@@ -41,6 +42,28 @@ test('pairing parser rejects malformed payloads and reverse ports do not collide
   assert.equal(peering.parsePairingUrl('not a URL'), null);
   assert.equal(peering.decodePairing('garbage'), null);
   assert.equal(peering.allocateReversePort([{ localPort: 44001 }, { reversePort: 44002 }]), 44003);
+  assert.equal(peering.allocateReversePort([{ localPort: 44001 }], [{ reversePort: 44002 }]), 44003,
+    'active pending reservations participate in allocation');
+});
+
+test('reverse allocator skips a live loopback listener absent from persistent state', async () => {
+  let calls = 0;
+  const createServerImpl = () => {
+    const server = new EventEmitter();
+    server.listen = () => {
+      calls += 1;
+      queueMicrotask(() => {
+        if (calls === 1) {
+          const error = new Error('busy'); error.code = 'EADDRINUSE'; server.emit('error', error);
+        } else server.emit('listening');
+      });
+    };
+    server.close = (done) => done();
+    server.unref = () => {};
+    return server;
+  };
+  assert.equal(await peering.allocateAvailableReversePort([], [], { createServerImpl }), 44002);
+  assert.equal(calls, 2);
 });
 
 // --- v2: singolo link con SSH/slug (NIENTE segreti); v1 backward-compat --------

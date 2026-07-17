@@ -118,19 +118,23 @@ test('createServer: outbound autostart usa SSH reale dopo listen; -R solo con Sh
       name: 'hub', ssh: 'user@hub', remotePort: 41777, localPort: 43001,
       direction: 'outbound', transport: 'auto', autostart: true,
       shared, reversePort: 44001, visibility: 'network',
+      token: 'hub-scoped-token', acceptToken: 'local-scoped-token', nodeId: 'a'.repeat(32),
     });
     nodesStore.atomicWriteStore(nodesPath, st);
     const calls = [];
     const reconciled = [];
+    const shareReconciled = [];
     const made = createServer({
       home: dir, configDir, nodesPath, tokenPath: path.join(configDir, 'token'),
       filesRoot: path.join(dir, 'files'), fleetEnabled: false, tunnelLogFd: null,
       tunnelSpawnSyncImpl: () => ({ stderr: 'OpenSSH_9.6p1\n' }),
       tunnelSpawnImpl: (bin, args) => { calls.push([bin, args]); return { pid: shared ? 4193998 : 4193997, unref() {} }; },
       reconcileTunnelSupervisorsImpl: (input) => { reconciled.push(input); return { kept: [], stopped: [], cleaned: [], failed: [] }; },
+      reconcilePeerShareImpl: async (input) => { shareReconciled.push(input); return { shared: input.shared }; },
     });
     assert.equal(calls.length, 0);
     await new Promise((resolve) => made.server.listen(0, '127.0.0.1', resolve));
+    await new Promise((resolve) => setImmediate(resolve));
     assert.equal(calls.length, 1);
     assert.equal(reconciled.length, 1);
     assert.deepEqual(reconciled[0].configuredNames, ['hub']);
@@ -138,6 +142,8 @@ test('createServer: outbound autostart usa SSH reale dopo listen; -R solo con Sh
     assert.equal(calls[0][1][1], 'ssh', 'auto = OpenSSH sotto un solo supervisor');
     assert.ok(calls[0][1].includes('-L'));
     assert.equal(calls[0][1].includes('-R'), shared);
+    assert.equal(shareReconciled.length, 1, 'paired peer republishes desired Share state after boot');
+    assert.equal(shareReconciled[0].shared, shared);
     if (shared) assert.ok(calls[0][1].includes(`127.0.0.1:44001:127.0.0.1:${made.server.address().port}`));
     await new Promise((resolve) => made.server.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });

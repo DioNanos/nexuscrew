@@ -34,6 +34,7 @@ function boot(t, over = {}, seams = {}) {
     nodesPath: path.join(configDir, 'nodes.json'),
     tokenPath: path.join(configDir, 'token'),
   };
+  nodesStore.initStore(paths.nodesPath);
   const settingsSeams = {
     platform: 'linux',
     uid: 1000,
@@ -269,6 +270,17 @@ test('nodes add: duplicato -> 409, garbage -> 400 con causa', async (t) => {
     assert.equal(r.status, 400, `atteso 400 per ${JSON.stringify(body)}`);
     assert.match((await r.json()).error, why);
   }
+});
+
+test('nodes add: ENOENT runtime -> 503 e nessuna rigenerazione silenziosa', async (t) => {
+  const { base, token, nodesPath } = await boot(t);
+  fs.unlinkSync(nodesPath);
+  const response = await addNode(base, token, 'lost-store');
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.equal(body.code, 'NODES_STORE_MISSING');
+  assert.match(body.error, /nexuscrew init/);
+  assert.equal(fs.existsSync(nodesPath), false);
 });
 
 test('nodes remove: happy path, sconosciuto -> 404, name invalido -> 400', async (t) => {

@@ -126,13 +126,25 @@ The provider catalog is scoped to the selected CLI rather than to a machine-spec
 
 | CLI | Built-in provider choices |
 |---|---|
-| Claude Code | Anthropic, Amazon Bedrock, Google Vertex AI, Microsoft Foundry, Ollama Cloud, local Ollama, Z.AI, custom Anthropic-compatible endpoint |
-| Codex / Codex-VL | OpenAI or ChatGPT login, OpenAI API, Ollama Cloud, local Ollama, LM Studio, custom OpenAI Responses endpoint |
+| Claude Code | Anthropic, OpenRouter, Kimi Code, Amazon Bedrock, Google Vertex AI, Microsoft Foundry, Ollama Cloud, local Ollama, Z.AI, custom Anthropic-compatible endpoint |
+| Codex | OpenAI or ChatGPT login, OpenAI API, Ollama Cloud, local Ollama, LM Studio, custom OpenAI Responses endpoint |
+| Codex-VL | OpenAI or ChatGPT login, OpenAI API, OpenRouter, Ollama Cloud, local Ollama, LM Studio, custom OpenAI Responses endpoint |
 | Pi | Native default, Anthropic, OpenAI API, Codex OAuth, Gemini, GitHub Copilot, OpenRouter, Ollama, DeepSeek, Z.AI, custom provider |
 
 Custom Codex-compatible endpoints use the real Responses wire API; NexusCrew does not silently
 fall back to Chat Completions. Custom argv-based engines are also supported and are launched
 directly without a shell after trust-boundary validation.
+
+OpenRouter is first-class for Claude Code and Codex-VL. Claude uses OpenRouter's Anthropic
+Messages compatibility endpoint, while Codex-VL uses the beta, stateless Responses endpoint
+with direct command-based authentication and no shell. Because provider/model compatibility can
+change independently, the selected OpenRouter model remains explicit. The packaged Kimi K3
+profile pins its one-million-token metadata instead of falling back to a smaller generic window.
+
+Kimi Code is a separate Claude Code provider for Kimi membership keys. It defaults to `k3[1m]`,
+uses `https://api.kimi.com/coding/`, and runs with an isolated Claude configuration so a native
+Anthropic account remains untouched. A Kimi Code membership key is not interchangeable with a
+Moonshot pay-as-you-go API key.
 
 Permission handling is explicit per cell and engine:
 
@@ -146,6 +158,11 @@ service environment, compatible user-owned provider files, or an optional node-l
 write-only credential store. The PWA reports whether a variable is configured but never
 returns its value. Keys are excluded from Fleet definitions, backups, API responses, tmux
 state, process arguments, temporary files and logs.
+
+Built-in providers with a fixed variable expose a dedicated **KEY** section in the engine editor.
+It shows only the variable name, configured source and affected engines on the selected node.
+Replacing or removing a shared key warns which engines use it; the entered value is transient in
+the browser and is written only to the node-local credential store.
 
 ### External fleet manager
 
@@ -212,6 +229,17 @@ Newly joined devices are private by default. Enabling **Share this device throug
 hub** adds a verified reverse channel to the existing SSH process. The hub then decides whether
 authorized peers see the whole network, only the hub, or an explicit subset. Clients do not
 need direct SSH reachability to one another.
+
+Reverse ports are reserved across active and pending pairings, probed before use and protected
+by a persistent uniqueness check. Share is stored as desired state: failed activation rolls back
+to private, while a failed deactivation remains private and is reconciled after restart. A stale
+same-name peer or a late allocation collision returns an actionable conflict instead of silently
+creating a duplicate record or consuming the invitation.
+
+Node groups can be renamed and reordered independently in each browser from both desktop and
+mobile lists. These aliases and positions are presentation-only: they never change the technical
+node name, route, credentials, Share state or deck identity. Display precedence is browser alias,
+shared node label, then technical name.
 
 Pairing links contain a short-lived one-time invite and routing fields, but no SSH private key,
 provider key or PWA token. Node and deck identities remain owner-qualified across the network,
@@ -354,7 +382,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.19**. npm `latest`, the GitHub tag and the release use the
+The current stable release is **v0.8.20**. npm `latest`, the GitHub tag and the release use the
 same audited package artifact.
 
 ## License

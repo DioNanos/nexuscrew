@@ -7,7 +7,9 @@ const EDGE_STEP = 14;
 // Dedicated Pointer Events reorder handle. It works identically with mouse,
 // touch and pen, never competes with the card's native session-to-deck drag,
 // and commits only on pointerup so cancel/Escape leaves the saved order intact.
-export default function RosterHandle({ position, itemKey, label, onMove, onStep, canMove = () => true }) {
+export default function RosterHandle({
+  position, itemKey, label, onMove, onStep, canMove = () => true, scope = 'roster',
+}) {
   const state = useRef(null);
   const frame = useRef(0);
   const [active, setActive] = useState(false);
@@ -33,9 +35,11 @@ export default function RosterHandle({ position, itemKey, label, onMove, onStep,
     const current = state.current;
     if (!current) return;
     current.x = x; current.y = y;
-    const card = document.elementFromPoint(x, y)?.closest?.('[data-roster-key][data-position]');
-    const target = card?.dataset?.rosterKey;
-    const valid = card?.dataset?.position === position && target && target !== itemKey && canMove(itemKey, target);
+    const selector = scope === 'node' ? '[data-node-order-key]' : '[data-roster-key][data-position]';
+    const card = document.elementFromPoint(x, y)?.closest?.(selector);
+    const target = scope === 'node' ? card?.dataset?.nodeOrderKey : card?.dataset?.rosterKey;
+    const samePosition = scope === 'node' || card?.dataset?.position === position;
+    const valid = samePosition && target && target !== itemKey && canMove(itemKey, target);
     if (current.over !== (valid ? card : null)) {
       current.over?.classList?.remove('nc-roster-over');
       current.over = valid ? card : null;
@@ -68,12 +72,13 @@ export default function RosterHandle({ position, itemKey, label, onMove, onStep,
       window.removeEventListener('keydown', key); window.removeEventListener('blur', blur);
       clearTarget(); state.current = null;
     };
-  }, [itemKey, position]);
+  }, [itemKey, position, scope]);
 
   const pointerDown = (event) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault(); event.stopPropagation(); event.currentTarget.focus({ preventScroll: true });
-    const source = event.currentTarget.closest('[data-roster-key][data-position]');
+    const selector = scope === 'node' ? '[data-node-order-key]' : '[data-roster-key][data-position]';
+    const source = event.currentTarget.closest(selector);
     const container = event.currentTarget.closest('.nc-side-scroll, .nc-home-scroll');
     state.current = {
       pointerId: event.pointerId, handle: event.currentTarget, source, container,

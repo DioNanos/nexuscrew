@@ -12,7 +12,7 @@ import PowerSheet from './PowerSheet.jsx';
 import {
   portableEngineDefinition, restoreCellDefinition,
 } from '../lib/fleet-backup.js';
-import { blankEngine, blankCell, engineForm, buildEngine } from '../lib/fleet-forms.js';
+import { blankEngine, blankCell, engineForm, buildEngine, catalogEntry } from '../lib/fleet-forms.js';
 import FleetModal from './fleet/FleetModal.jsx';
 import FleetInventory from './fleet/FleetInventory.jsx';
 import FleetBackupDialog from './fleet/FleetBackupDialog.jsx';
@@ -73,20 +73,44 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
 
   const saveEngine = () => run(async () => {
     const creating = engineEdit.mode === 'new';
-    const def = buildEngine(engineEdit.form, creating, defs.managedCatalog || []);
+    const form = engineEdit.form;
+    const catalog = defs.managedCatalog || [];
+    const profile = form.kind === 'managed' ? catalogEntry(catalog, form) : null;
+    const credentialEnv = typeof profile?.credentialEnv === 'string' ? profile.credentialEnv : '';
+    const credentialValue = credentialEnv ? (form.credentialValue || '') : '';
+    const def = buildEngine(form, creating, catalog);
     if (!creating && engineEdit.form.kind === 'custom' && !engineEdit.form.modelFlag) def.model = null;
     if (!creating && engineEdit.form.kind === 'custom' && engineEdit.form.promptMode !== 'flag') def.promptFlag = null;
-    let result;
-    if (creating) result = await fleetDefineEngine(token, def, route);
+    let definitionResult;
+    if (creating) definitionResult = await fleetDefineEngine(token, def, route);
     else {
       const original = engineEdit.original;
       const currentKeys = new Set(engineEdit.form.envRows.filter((r) => !r.remove).map((r) => r.key));
       const remove = (original.envKeys || []).filter((k) => !currentKeys.has(k));
       const set = Object.fromEntries(engineEdit.form.envRows.filter((r) => !r.remove && r.key && (!r.configured || r.value !== '')).map((r) => [r.key, r.value]));
-      result = await fleetEditEngine(token, original.id, def, engineEdit.form.kind === 'custom' ? { set, remove } : undefined, route);
+      definitionResult = await fleetEditEngine(token, original.id, def, engineEdit.form.kind === 'custom' ? { set, remove } : undefined, route);
     }
+    let credentialResult = null;
+    if (credentialEnv && credentialValue) {
+      try {
+        credentialResult = await fleetSetCredential(token, credentialEnv, credentialValue, route);
+        setCredentials(credentialResult.credentials || []);
+      } catch (_) {
+        await refresh();
+        if (creating) {
+          setEngineEdit({
+            mode: 'edit', original: { ...def, id: form.id },
+            form: { ...form, credentialReveal: false },
+          });
+        }
+        throw new Error(t(creating ? 'fleet-key-partial-create' : 'fleet-key-partial-edit'));
+      }
+    }
+    await refresh();
     setEngineEdit(null); setNote(t('fleet-saved'));
-    const affected = result?.activeCells || [];
+    const credentialAffected = (credentialResult?.credentials || [])
+      .find((entry) => entry.envKey === credentialEnv)?.activeCells || [];
+    const affected = [...new Set([...(definitionResult?.activeCells || []), ...credentialAffected])];
     if (affected.length && window.confirm(t('fleet-restart-confirm').replace('{cells}', affected.join(', ')))) {
       for (const id of affected) await fleetRestart(token, id, route);
     }

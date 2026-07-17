@@ -59,7 +59,7 @@ test('dispatch: help -> code 0, stampa HELP', () => {
   assert.ok(long.join('\n').includes('nexuscrew show'));
   const version = [];
   assert.equal(dispatch(['--version'], { log: (m) => version.push(m) }).code, 0);
-  assert.equal(version[0], '0.8.19');
+  assert.equal(version[0], '0.8.20');
   assert.equal(dispatch(['--bogus'], { log: () => {} }).code, 1);
 });
 

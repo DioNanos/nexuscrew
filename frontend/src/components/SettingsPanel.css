@@ -81,6 +81,14 @@
 }
 .nc-fleet-item small { opacity: .6; }
 .nc-fleet-form { border: 1px solid #2e7d32; border-radius: 10px; padding: 10px; }
+.nc-fleet-key { display: flex; flex-direction: column; gap: 7px; border: 1px solid #36523b; border-radius: 9px; padding: 10px; background: #0a100b; }
+.nc-fleet-key-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.nc-fleet-key-head > b { letter-spacing: .08em; }
+.nc-fleet-key-head > span { font-size: 11px; opacity: .72; }
+.nc-fleet-key-input { display: flex; gap: 6px; }
+.nc-fleet-key-input > input { flex: 1; min-width: 0; }
+.nc-fleet-key-missing { align-items: flex-start; color: #ffca80; }
+.nc-fleet-provider-notice { border-left: 2px solid #6b7f3e; padding-left: 8px; line-height: 1.35; }
 .nc-fleet-modal {
   position: fixed; inset: 0; z-index: 75; padding: 16px;
   display: flex; align-items: center; justify-content: center;

@@ -5,15 +5,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createServer } = require('../lib/server.js');
+const decksStore = require('../lib/decks/store.js');
 
 const H = (t) => ({ authorization: `Bearer ${t}`, 'content-type': 'application/json' });
 const layout = { columns: [{ width: 1, tiles: [{ session: 'dev', height: 1, fontSize: 11 }] }] };
 async function boot(t, over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncdapi-'));
-  const made = createServer({ home: dir, decksPath: path.join(dir, '.nexuscrew', 'decks.json'), tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, ...over });
+  const decksPath = path.join(dir, '.nexuscrew', 'decks.json');
+  decksStore.initStore(decksPath);
+  const made = createServer({ home: dir, decksPath, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, ...over });
   await new Promise((r) => made.server.listen(0, '127.0.0.1', r));
   t.after(() => { made.server.close(); fs.rmSync(dir, { recursive: true, force: true }); });
-  return { base: `http://127.0.0.1:${made.server.address().port}`, token: made.token };
+  return { base: `http://127.0.0.1:${made.server.address().port}`, token: made.token, decksPath };
 }
 
 test('decks API: auth + create/save/conflict/rename/delete', async (t) => {
@@ -49,4 +52,13 @@ test('decks API round-trips multi-hop tiles with duplicate session names at dist
   assert.equal(saved.status, 200);
   const listed = await (await fetch(`${base}/api/decks`, { headers: h })).json();
   assert.deepEqual(listed.decks[0].layout, multi);
+});
+
+test('decks API: ENOENT runtime risponde 503 senza ricreare lo store', async (t) => {
+  const { base, token, decksPath } = await boot(t);
+  fs.unlinkSync(decksPath);
+  const response = await fetch(`${base}/api/decks`, { headers: H(token) });
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).error.includes('nexuscrew init'), true);
+  assert.equal(fs.existsSync(decksPath), false);
 });
