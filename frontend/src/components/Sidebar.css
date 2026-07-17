@@ -68,6 +68,17 @@
   border: 1px solid #243; border-radius: 6px; background: #0a0e0a; color: #9fd;
   font: 10px/1.2 inherit; text-transform: lowercase;
 }
+.nc-node-title > .nc-roster-handle { flex-basis: 20px; width: 20px; min-width: 20px; height: 24px; }
+.nc-node-rename {
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
+  border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: #7fa892; cursor: pointer; font: 15px/1 inherit;
+}
+.nc-node-rename:hover, .nc-node-rename:focus-visible {
+  color: #caffe0; border-color: rgba(0,204,102,.35); outline: none;
+}
+.nc-node-order-wrap.nc-roster-dragging { opacity: .62; }
+.nc-node-order-wrap.nc-roster-over { outline: 2px solid rgba(0,204,102,.72); outline-offset: 2px; border-radius: 8px; }
 
 /* Cella flotta */
 .nc-cell {

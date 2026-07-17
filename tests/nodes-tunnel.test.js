@@ -263,6 +263,10 @@ test('diagnostica SSH distingue forward negato, auth, host key, DNS e rete senza
   assert.equal(tunnel.classifySshFailure('Host key verification failed.', 41777).code, 'ssh-host-key');
   assert.equal(tunnel.classifySshFailure('ssh: Could not resolve hostname hub', 41777).code, 'ssh-dns');
   assert.equal(tunnel.classifySshFailure('connect to host x port 22: Connection refused', 41777).code, 'ssh-unreachable');
+  const reverse = tunnel.classifySshFailure('remote port forwarding failed for listen port 44001', 41777);
+  assert.equal(reverse.code, 'reverse-forward-failed');
+  assert.doesNotMatch(reverse.detail, /ha negato/i, 'a generic remote failure must not claim a policy denial');
+  assert.equal(tunnel.classifySshFailure('remote port forwarding failed: bind 127.0.0.1:44001: Address already in use', 41777).code, 'reverse-forward-bind');
   assert.equal(tunnel.classifySshFailure('unrelated harmless line', 41777), null);
 });
 
@@ -560,6 +564,61 @@ test('F1 supervisor: un ssh che cade viene rilanciato con stato retrying/backoff
       const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} resolve(); }, 2000);
       child.once('exit', () => { clearTimeout(timer); resolve(); });
     });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('reverse-forward failure ripetuto apre il circuit breaker e conserva una diagnosi terminale', async () => {
+  const dir = tmpDir();
+  const attemptsPath = path.join(dir, 'reverse-attempts.log');
+  const fakeSsh = path.join(dir, 'fake-reverse-failure.js');
+  const statePath = tunnel.tunnelStatePath(dir, 'hub');
+  const pidPath = tunnel.tunnelPidPath(dir, 'hub');
+  const runId = 'reverse-terminal-generation';
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  fs.writeFileSync(fakeSsh, [
+    "'use strict';",
+    "const fs = require('node:fs');",
+    `fs.appendFileSync(${JSON.stringify(attemptsPath)}, 'attempt\\n');`,
+    "console.error('remote port forwarding failed for listen port 44001');",
+    'process.exit(255);',
+    '',
+  ].join('\n'), { mode: 0o700 });
+  const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
+  const child = spawn(process.execPath, [
+    supervisor, process.execPath, fakeSsh,
+    '-N', '-L', '127.0.0.1:43001:127.0.0.1:41820',
+    '-R', '127.0.0.1:44001:127.0.0.1:41820', 'hub',
+  ], {
+    env: {
+      ...process.env,
+      NEXUSCREW_TUNNEL_STATE: statePath,
+      NEXUSCREW_TUNNEL_PIDFILE: pidPath,
+      NEXUSCREW_TUNNEL_RUN_ID: runId,
+      NEXUSCREW_TUNNEL_STABLE_MS: '30000',
+      NEXUSCREW_TUNNEL_REVERSE_FAILURE_MAX: '2',
+    },
+    stdio: 'ignore',
+  });
+  pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId });
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('circuit breaker non terminato')), 6000);
+      child.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
+    const attempts = fs.readFileSync(attemptsPath, 'utf8').trim().split('\n').filter(Boolean).length;
+    assert.equal(attempts, 2, 'retry count is bounded for a persistent reverse-forward failure');
+    const raw = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.equal(raw.status, 'failed');
+    assert.equal(raw.terminal, true);
+    assert.equal(raw.code, 'reverse-forward-failed');
+    assert.doesNotMatch(raw.detail, /ha negato/i);
+    const visible = tunnel.readTunnelState(dir, 'hub');
+    assert.equal(visible.phase, 'failed');
+    assert.equal(visible.code, 'reverse-forward-failed');
+    assert.equal(tunnel.diagnoseTunnel(dir, { ...NODE, name: 'hub' }, visible).code, 'reverse-forward-failed');
+  } finally {
+    if (child.exitCode === null) child.kill('SIGKILL');
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -9,15 +9,19 @@ const store = require('../lib/decks/store.js');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ncdeck-'));
 const layout = { columns: [{ width: 1, tiles: [{ session: 'dev', height: 1, fontSize: 11 }] }] };
 
-test('decks store: create 0600, round-trip e layout strict', () => {
+test('decks store: init esplicito 0600, runtime strict e layout strict', () => {
   const dir = tmp(); const p = path.join(dir, 'decks.json');
-  const st = store.loadOrCreate(p);
+  const st = store.initStore(p);
   assert.equal(st.decks[0].name, 'main');
   assert.equal(fs.statSync(p).mode & 0o777, 0o600);
   st.decks[0].layout = layout; st.decks[0].revision = 1;
   store.atomicWrite(p, st);
   assert.deepEqual(store.loadStore(p).decks[0].layout, layout);
   assert.equal(store.parseLayout({ columns: [{ width: 1, tiles: Array(10).fill({ session: 'x', height: 1, fontSize: 11 }) }] }), null);
+  fs.unlinkSync(p);
+  assert.throws(() => store.loadStoreStrict(p), (e) => e.code === 'DECKS_STORE_MISSING' && e.status === 503);
+  assert.throws(() => store.loadOrCreate(p), (e) => e.code === 'DECKS_STORE_MISSING');
+  assert.equal(fs.existsSync(p), false, 'runtime non rigenera decks.json dopo ENOENT');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

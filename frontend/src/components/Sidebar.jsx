@@ -4,6 +4,7 @@ import { useLang } from '../hooks/useLang.js';
 import { pinRank, cmpRank } from '../lib/pins.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
+import { useNodePreferences } from '../hooks/useNodePreferences.js';
 import {
   rel, nodeStateLabel, healthDot, healthTitle, buildLocalRoster, buildRemoteRoster,
 } from '../lib/roster-view-model.js';
@@ -31,6 +32,9 @@ export default function Sidebar({
   const {
     pins, orders, togglePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
+  const {
+    groupsFor: preferredGroups, renameNode, moveNode, stepNode, nodeKey,
+  } = useNodePreferences();
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
   const byName = new Map((sessions || []).map((s) => [s.name, s]));
   // Ordinamento: pinnate in cima (ordine di pin), poi attivita' recente,
@@ -47,7 +51,8 @@ export default function Sidebar({
   const active = new Set(activeSessions || []);
   const localRawItems = buildLocalRoster(sortedCells, others, byName);
   const localItems = sidebarItems(localRawItems, pins, viewFor('local').filter, sidebarOrder(orders, 'local'));
-  const remoteRosters = (nodeGroups || []).map((g) => {
+  const preferredNodeGroups = preferredGroups(nodeGroups || []);
+  const remoteRosters = preferredNodeGroups.map((g) => {
     const nodeRoute = (g.route || [g.name]).join('/');
     const groupView = viewFor(nodeRoute);
     const { rawItems } = buildRemoteRoster(g);
@@ -59,6 +64,11 @@ export default function Sidebar({
     ...(node ? { node } : {}),
     ...(OWNER_ID_RE.test(String(ownerId || '')) ? { ownerId } : {}),
   });
+  const promptNodeRename = (group) => {
+    const next = window.prompt(`${t('rename-node-prompt')}\n${t('rename-node-reset')}`, group.label || group.name);
+    if (next === null) return;
+    if (!renameNode(group, next)) window.alert(t('rename-node-invalid'));
+  };
   // Tooltip mini via JS (position:fixed): il ::after CSS veniva CLIPPATO
   // dall'overflow della sidebar da 48px.
   const [tip, setTip] = useState(null); // {text, y}
@@ -288,10 +298,15 @@ export default function Sidebar({
         const hd = healthDot(g.health);
         const dotClass = hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
         return (
-        <div key={`nodo-${(g.route || [g.name]).join('/')}`}>
+        <div key={`nodo-${(g.route || [g.name]).join('/')}`} className="nc-node-order-wrap"
+          data-node-order-key={nodeKey(g)}>
           <div className="nc-side-group-title nc-node-title" role="button" tabIndex={0}
+            onContextMenu={(e) => { e.preventDefault(); promptNodeRename(g); }}
             onClick={() => updateView(nodeRoute, { open: !groupView.open })}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); updateView(nodeRoute, { open: !groupView.open }); } }}>
+            <RosterHandle scope="node" position="nodes" itemKey={nodeKey(g)} label={g.label || g.name}
+              onMove={(source, target) => moveNode(source, target, nodeGroups || [])}
+              onStep={(delta) => stepNode(nodeKey(g), delta, nodeGroups || [])} />
             <span className="nc-node-chevron">{groupView.open ? '⌄' : '›'}</span>
             <span className={`nc-dot ${dotClass}`} title={g.health ? healthTitle(g.health) : ''} />
             <b>{g.label || g.name}</b>
@@ -306,6 +321,9 @@ export default function Sidebar({
               <option value="all">{t('view-all')}</option><option value="pinned">{t('view-pinned')}</option>
               <option value="active">{t('view-active')}</option><option value="off">{t('view-off')}</option><option value="technical">{t('view-technical')}</option>
             </select>
+            <button type="button" className="nc-node-rename" title={t('rename-node')}
+              aria-label={`${t('rename-node')} ${g.label || g.name}`}
+              onClick={(e) => { e.stopPropagation(); promptNodeRename(g); }}>✎</button>
             {g.direct && g.health && g.health.managed !== false && (
               <button type="button" className={`nc-power${g.tunnelStatus === 'up' ? ' on' : ''}`}
                 title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}

@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { FMT, parsePaneTitle, parseSessions } = require('../lib/tmux/list.js');
+const { FMT, parsePaneTitle, parseSessions, isNoTmuxServerError } = require('../lib/tmux/list.js');
 
 test('parseSessions maps tab-separated tmux output', () => {
   const raw = 'claude_dev\t1\t3\t1718380800\t1751990000\tclaude\t\t⠐ Implement activity UI\nidle_box\t0\t1\t1718384400\t1718390000\tbash\ttechnical\tDev\n';
@@ -44,4 +44,11 @@ test('parseSessions returns [] on empty', () => {
 test('parseSessions hides transient zero-window sessions', () => {
   const raw = 'cloud-phantom\t0\t0\t1718380800\t1718380801\t\nreal\t0\t1\t1718380800\t1718380801\tbash\n';
   assert.deepStrictEqual(parseSessions(raw).map((row) => row.name), ['real']);
+});
+
+test('expected no-tmux-server signatures include the macOS missing socket', () => {
+  assert.equal(isNoTmuxServerError('no server running on /tmp/tmux-1000/default'), true);
+  assert.equal(isNoTmuxServerError('error connecting to /private/tmp/tmux-501/default (No such file or directory)'), true);
+  assert.equal(isNoTmuxServerError('error connecting to /tmp/tmux-1000/default (Connection refused)'), true);
+  assert.equal(isNoTmuxServerError('permission denied while reading tmux config'), false);
 });

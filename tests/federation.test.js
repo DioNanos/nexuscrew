@@ -86,6 +86,55 @@ test('topology rejects a response not bound to the paired instance ID', async ()
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('topology probes peers in parallel and returns partial results within a per-peer budget', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-topo-timeout-'));
+  const p = path.join(dir, 'nodes.json');
+  let st = store.emptyStore('f'.repeat(32));
+  st = store.addNode(st, peer('silent', 'a'.repeat(32), { localPort: 43001 }));
+  st = store.addNode(st, peer('fast', 'b'.repeat(32), { localPort: 43002 }));
+  store.atomicWriteStore(p, st);
+  const started = [];
+  const before = Date.now();
+  const out = await fed.collectTopologyDetailed({
+    nodesPath: p, timeoutMs: 25,
+    fetchImpl: async (url) => {
+      started.push(url);
+      if (url.includes(':43001/')) return new Promise(() => {});
+      return { ok: true, json: async () => ({
+        instanceId: 'b'.repeat(32),
+        nodes: [{ instanceId: 'c'.repeat(32), name: 'pixel', route: ['pixel'] }],
+      }) };
+    },
+  });
+  assert.equal(started.length, 2, 'both peer probes start without waiting for the silent peer');
+  assert.ok(Date.now() - before < 300, 'silent peer is bounded independently of the OS TCP timeout');
+  assert.deepEqual(out.nodes.map((n) => n.route.join('/')), ['silent', 'fast', 'fast/pixel']);
+  assert.deepEqual(out.authoritative, ['fast']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('Share reconciliation waits for authenticated health and republishes desired state', async () => {
+  const calls = [];
+  let shareAttempts = 0;
+  const node = peer('hub', 'a'.repeat(32), { localPort: 43009, shared: true });
+  const result = await fed.reconcilePeerShare({
+    node, shared: true, healthAttempts: 1, notifyAttempts: 2, delay: async () => {},
+    fetchImpl: async (url, opts = {}) => {
+      calls.push(String(url));
+      if (String(url).endsWith('/federation/health')) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, instanceId: node.nodeId }) };
+      }
+      assert.equal(String(url).endsWith('/federation/share'), true);
+      assert.deepEqual(JSON.parse(opts.body), { shared: true });
+      shareAttempts += 1;
+      return { ok: shareAttempts > 1, status: shareAttempts > 1 ? 200 : 409 };
+    },
+  });
+  assert.equal(result.shared, true);
+  assert.equal(calls.filter((url) => url.endsWith('/federation/health')).length, 1);
+  assert.equal(shareAttempts, 2, 'reverse channel race is retried within a bounded budget');
+});
+
 test('federated raw WS rejects a server-tracked instance cycle before dialing', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-ws-cycle-')); const p = path.join(dir, 'nodes.json');
   store.atomicWriteStore(p, store.emptyStore('a'.repeat(32)));

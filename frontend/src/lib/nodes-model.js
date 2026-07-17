@@ -100,14 +100,18 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet } = {}) {
       continue;
     }
     const r = (remote && (remote[key] || remote[n.name])) || null;
-    if (!r || r.error || !Array.isArray(r.sessions)) {
+    const f = fleet && (fleet[key] || fleet[n.name]);
+    const sessionsAvailable = !!(r && !r.error && Array.isArray(r.sessions));
+    const fleetInventoryAvailable = !!(f && f.available === true && Array.isArray(f.cells));
+    // A host without a running tmux server can still expose a complete Fleet
+    // inventory. Do not hide its cells merely because /sessions is degraded.
+    if (!sessionsAvailable && !fleetInventoryAvailable) {
       out.push({ ...base, status: 'unreachable' });
       continue;
     }
-    const sessions = r.sessions
+    const sessions = (sessionsAvailable ? r.sessions : [])
       .filter((s) => s && typeof s.name === 'string' && s.name)
       .map((s) => ({ ...s, node: key, route, key: `${key}:${s.name}` }));
-    const f = fleet && (fleet[key] || fleet[n.name]);
     const cells = enrichCells(f, route, key);
     const cellTmux = new Set(cells.map((c) => c.tmuxSession).filter(Boolean));
     out.push({
@@ -116,6 +120,7 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet } = {}) {
       fleetAvailable: !!(f && f.available), capabilities: (f && f.capabilities) || [],
       engines: (f && f.engines) || [],
       fleetProvider: (f && f.provider) || null,
+      sessionsAvailable, inventoryPartial: !sessionsAvailable,
     });
   }
   for (const n of Array.isArray(topology) ? topology : []) {
@@ -134,13 +139,15 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet } = {}) {
       continue;
     }
     const r = (remote && remote[key]) || null;
-    if (!r || r.error || !Array.isArray(r.sessions)) {
+    const f = fleet && fleet[key];
+    const sessionsAvailable = !!(r && !r.error && Array.isArray(r.sessions));
+    const fleetInventoryAvailable = !!(f && f.available === true && Array.isArray(f.cells));
+    if (!sessionsAvailable && !fleetInventoryAvailable) {
       out.push({ ...base, status: 'unreachable', downSince: (down && down[key]) || null });
       continue;
     }
-    const sessions = r.sessions.filter((s) => s && typeof s.name === 'string' && s.name)
+    const sessions = (sessionsAvailable ? r.sessions : []).filter((s) => s && typeof s.name === 'string' && s.name)
       .map((s) => ({ ...s, node: key, route: n.route, key: `${key}:${s.name}` }));
-    const f = fleet && fleet[key];
     const cells = enrichCells(f, n.route, key);
     const cellTmux = new Set(cells.map((c) => c.tmuxSession).filter(Boolean));
     out.push({
@@ -149,6 +156,7 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet } = {}) {
       fleetAvailable: !!(f && f.available), capabilities: (f && f.capabilities) || [],
       engines: (f && f.engines) || [],
       fleetProvider: (f && f.provider) || null, lastSeen: n.lastSeen || null,
+      sessionsAvailable, inventoryPartial: !sessionsAvailable,
     });
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));

@@ -2,6 +2,29 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.20 — 2026-07-17 — "Reliable Routes"
+
+- OpenRouter is now a first-class provider for Claude Code and Codex-VL. Claude uses the
+  Anthropic-compatible endpoint without guessed context limits; Codex-VL uses the beta,
+  stateless Responses wire API, direct no-shell command authentication and a ten-minute stream
+  idle timeout. Kimi K3 receives packaged one-million-token model metadata.
+- Kimi Code is available as a non-default Claude provider with `k3[1m]`, its documented coding
+  endpoint, model-specific context and effort settings, and an isolated Claude configuration
+  that leaves native Anthropic account state unchanged.
+- Built-in provider editors gain a write-only KEY section with value-free configured source and
+  target-local “used by” impact. Credential values remain outside engine definitions, backups,
+  federation payloads, argv, tmux state, logs and API responses.
+- Shared-node reverse ports are reserved across pending and active pairings and bind-probed before
+  use. Share desired state now fails safely, reconciles after restart, rejects duplicate peer
+  names without burning invitations and returns actionable allocation conflicts.
+- Remote inventory survives a missing tmux socket and partial peer failures. Topology probes are
+  parallel and bounded, repeated reverse-forward failures stop retrying, and diagnostics no
+  longer claim that the SSH server denied forwarding without supporting evidence.
+- Desktop and mobile node groups support browser-local rename and reorder controls without
+  changing node identity, routes, credentials, Share state, deck identity or cell ordering.
+- Gate: **853 Node tests** (852 pass / 1 platform skip), **30 frontend component tests**,
+  production build, zero dependency vulnerabilities and sanitized npm package inspection.
+
 ## 0.8.19 — 2026-07-17 — "Live Activity"
 
 - Fleet status dots now distinguish all three cell states on mobile and desktop: gray when off,

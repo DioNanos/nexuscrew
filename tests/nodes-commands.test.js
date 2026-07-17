@@ -11,9 +11,10 @@ const tunnel = require('../lib/nodes/tunnel.js');
 const pidf = require('../lib/cli/pidfile.js');
 const { status, doctor, dispatch } = require('../lib/cli/commands.js');
 
-function nodeHome() {
+function nodeHome({ init = true } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-ncmd-'));
   fs.mkdirSync(path.join(home, '.nexuscrew'), { recursive: true });
+  if (init) store.initStore(path.join(home, '.nexuscrew', 'nodes.json'));
   return home;
 }
 const nodesPathFor = (home) => path.join(home, '.nexuscrew', 'nodes.json');
@@ -39,13 +40,23 @@ test('nodes add: scrive nodes.json 0600 + stampa authorized_keys forward (permit
 });
 
 test('nodes add: READONLY blocca, nessun file scritto', () => {
-  const home = nodeHome();
+  const home = nodeHome({ init: false });
   process.env.NEXUSCREW_READONLY = '1';
   const r = cmds.nodesAdd({ home, log: () => {}, name: 'vps', ssh: 'user@h', keygen: keygenSeam });
   delete process.env.NEXUSCREW_READONLY;
   assert.equal(r.code, 1);
   assert.equal(r.reason, 'readonly');
   assert.ok(!fs.existsSync(nodesPathFor(home)));
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('nodes add: store mancante fallisce 503 senza inizializzarlo implicitamente', () => {
+  const home = nodeHome({ init: false });
+  const out = cmds.nodesAdd({ home, log: () => {}, name: 'vps', ssh: 'user@h', keygen: keygenSeam });
+  assert.equal(out.code, 1);
+  assert.equal(out.status, 503);
+  assert.equal(out.errorCode, 'NODES_STORE_MISSING');
+  assert.equal(fs.existsSync(nodesPathFor(home)), false);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -186,6 +197,15 @@ function markTunnelUp(home, name) {
   pidf.writePidfile(tunnel.tunnelPidPath(home, name), process.pid, '');
 }
 
+function seedInbound(home, { shared = true, token = 'T' } = {}) {
+  const st = store.addNode(store.emptyStore(), {
+    name: 'mac', remotePort: 41820, localPort: 44001,
+    direction: 'inbound', transport: 'inbound', autostart: false,
+    shared, token, nodeId: 'b'.repeat(32), roles: { client: true, node: true }, rolesKnown: true,
+  });
+  store.atomicWriteStore(nodesPathFor(home), st);
+}
+
 test('nodes test: tunnel DOWN', async () => {
   const home = nodeHome();
   seedNode(home, { token: 'T' });
@@ -237,6 +257,25 @@ test('nodes test: nodo sconosciuto -> code 1', async () => {
   const home = nodeHome();
   const r = await cmds.nodesTest({ home, log: () => {}, name: 'ghost', httpProbe: async () => ({ ok: true, status: 200 }) });
   assert.equal(r.result, 'unknown-node');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('nodes test: inbound usa la health federation, non un pidfile locale o /api/config', async () => {
+  const home = nodeHome(); seedInbound(home);
+  let calls = 0;
+  const ok = await cmds.nodesTest({
+    home, log: () => {}, name: 'mac',
+    federationProbe: async (opts) => {
+      calls += 1;
+      assert.equal(opts.port, 44001);
+      assert.equal(opts.expectedInstanceId, 'b'.repeat(32));
+      return { status: 'healthy', transport: 'up', auth: 'ok', reachability: 'ok' };
+    },
+    httpProbe: async () => { throw new Error('/api/config must not be used for inbound peers'); },
+  });
+  assert.equal(calls, 1);
+  assert.equal(ok.code, 0);
+  assert.equal(ok.result, 'ok');
   fs.rmSync(home, { recursive: true, force: true });
 });
 

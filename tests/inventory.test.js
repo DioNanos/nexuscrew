@@ -32,6 +32,23 @@ test('inventario: posizione remota con fleet mostra cells attive+inattive e unma
   assert.deepEqual(grp.unmanaged.map((s) => s.name), ['work']);
 });
 
+test('inventario: Fleet resta visibile quando il nodo non ha un server tmux', async () => {
+  const { buildNodeGroups } = await nodes();
+  const groups = buildNodeGroups({
+    nodes: [{ name: 'mac', label: 'Mac', tunnel: { status: 'up' }, nodeId: 'b'.repeat(32) }],
+    remote: { mac: { error: 'tmux socket assente' } },
+    fleet: { mac: { available: true, capabilities: ['status'], cells: [
+      { cell: 'dev', tmuxSession: 'cloud-dev', engine: 'claude', active: true },
+      { cell: 'fork', tmuxSession: 'cloud-fork', engine: 'codex-vl', active: false },
+    ] } },
+  });
+  assert.equal(groups[0].status, 'up');
+  assert.equal(groups[0].inventoryPartial, true);
+  assert.equal(groups[0].sessionsAvailable, false);
+  assert.deepEqual(groups[0].cells.map((cell) => cell.cell), ['dev', 'fork']);
+  assert.deepEqual(groups[0].sessions, []);
+});
+
 test('inventario: chiavi route-qualified (nessuna collisione tra omonimi)', async () => {
   const { buildNodeGroups, positionKey } = await nodes();
   const g = buildNodeGroups({

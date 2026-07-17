@@ -435,6 +435,45 @@ test('managed codex-vl.native: launcher interno, login nativo, fake tmux', async
   } finally { w.cleanup(); }
 });
 
+test('definitions: catalog credential status is target-local, value-free and reports shared used-by', async () => {
+  const w = makeWorld();
+  try {
+    const binDir = path.join(w.home, '.local', 'bin'); fs.mkdirSync(binDir, { recursive: true });
+    for (const client of ['claude', 'codex-vl', 'pi']) {
+      const binary = path.join(binDir, client); fs.writeFileSync(binary, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); fs.chmodSync(binary, 0o755);
+    }
+    atomicWrite(w.defsPath, {
+      schemaVersion: 1,
+      engines: [
+        { id: 'claude.or', label: 'Claude OR', managed: { client: 'claude', provider: 'openrouter', model: 'anthropic/claude-sonnet-4', permissionPolicy: 'unsafe' } },
+        { id: 'codex.or', label: 'Codex OR', managed: { client: 'codex-vl', provider: 'openrouter', model: 'moonshotai/kimi-k3', permissionPolicy: 'standard' } },
+        { id: 'pi.or', label: 'Pi OR', managed: { client: 'pi', provider: 'openrouter', model: 'openai/gpt-5', permissionPolicy: 'standard' } },
+        { id: 'claude.kimi', label: 'Kimi', managed: { client: 'claude', provider: 'kimi-code', model: 'k3[1m]', permissionPolicy: 'unsafe' } },
+      ],
+      cells: [],
+    });
+    const secret = 'synthetic-catalog-token';
+    const fleet = await createBuiltinFleet({
+      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+      env: { OPENROUTER_API_KEY: secret },
+    });
+    const view = fleet.definitions();
+    for (const id of ['claude.openrouter', 'codex-vl.openrouter', 'pi.openrouter']) {
+      const profile = view.managedCatalog.find((entry) => entry.id === id);
+      assert.equal(profile.credentialEnv, 'OPENROUTER_API_KEY');
+      assert.equal(profile.authConfigured, true);
+      assert.equal(profile.credentialSource, 'environment');
+      assert.deepEqual(profile.credentialUsedBy, ['claude.or', 'codex.or', 'pi.or']);
+    }
+    const kimi = view.managedCatalog.find((entry) => entry.id === 'claude.kimi-code');
+    assert.equal(kimi.credentialEnv, 'KIMI_API_KEY');
+    assert.equal(kimi.authConfigured, false);
+    assert.equal(kimi.credentialSource, 'missing');
+    assert.deepEqual(kimi.credentialUsedBy, ['claude.kimi']);
+    assert.equal(JSON.stringify(view).includes(secret), false);
+  } finally { w.cleanup(); }
+});
+
 test('editCell engine ripristina il proprio modello e non trascina quello precedente', async () => {
   const w = makeWorld();
   try {

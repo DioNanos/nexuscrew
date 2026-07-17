@@ -10,6 +10,7 @@ import { useLang } from '../hooks/useLang.js';
 import { useNodes } from '../hooks/useNodes.js';
 import RosterHandle from './RosterHandle.jsx';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
+import { useNodePreferences } from '../hooks/useNodePreferences.js';
 import {
   rel, nodeStateLabel, healthDot, healthTitle, buildLocalRoster, buildRemoteRoster,
 } from '../lib/roster-view-model.js';
@@ -36,6 +37,10 @@ export default function SessionList({ onPick, token, onSettings }) {
   const {
     pins, orders, togglePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
+  const {
+    groupsFor: preferredGroups, renameNode, moveNode, stepNode, nodeKey,
+  } = useNodePreferences();
+  const preferredNodeGroups = preferredGroups(nodeGroups);
 
   async function refresh() {
     try {
@@ -104,6 +109,12 @@ export default function SessionList({ onPick, token, onSettings }) {
     setNodeBusy(null);
   }
 
+  function promptNodeRename(group) {
+    const next = window.prompt(`${t('rename-node-prompt')}\n${t('rename-node-reset')}`, group.label || group.name);
+    if (next === null) return;
+    if (!renameNode(group, next)) window.alert(t('rename-node-invalid'));
+  }
+
   // lookup sessione per tmuxSession (activity/preview/outbox delle celle)
   const byName = useMemo(() => new Map((sessions || []).map((s) => [s.name, s])), [sessions]);
   const cellSessions = useMemo(() => new Set(cells.map((c) => c.tmuxSession)), [cells]);
@@ -122,7 +133,7 @@ export default function SessionList({ onPick, token, onSettings }) {
       .filter((item) => sidebarSearchVisible(item, q)),
     [localRawItems, pins, localView.filter, q, orders],
   );
-  const remoteCount = nodeGroups.reduce(
+  const remoteCount = preferredNodeGroups.reduce(
     (sum, g) => sum + (g.cells || []).length + (g.unmanaged || []).filter((s) => !s.technical).length, 0,
   );
   const rosterTotal = sidebarItems(localRawItems, pins, 'all', sidebarOrder(orders, 'local')).length + remoteCount;
@@ -246,7 +257,7 @@ export default function SessionList({ onPick, token, onSettings }) {
           quella del probe federato (NO verde hardcoded): 401/degraded -> warn con
           diagnostica. Tunnel del nodo diretto controllabile (power); peer inbound
           non gestito da qui -> niente power finto. */}
-      {nodeGroups.map((g) => {
+      {preferredNodeGroups.map((g) => {
         const hd = healthDot(g.health, { passive: 'warn' });
         const dotClass = hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
         const dotTitle = g.health ? healthTitle(g.health) : (g.status === 'up' ? '' : nodeStateLabel(g));
@@ -262,13 +273,26 @@ export default function SessionList({ onPick, token, onSettings }) {
             aria-label={`${g.tunnelStatus === 'up' ? t('power-off') : t('power-on')} ${g.label || g.name}`}
             onClick={() => onNodePower(g)}><Icon name="power" size={15} /></button>
         ) : null;
+        const nodeActions = (
+          <span className="nc-node-actions">
+            <RosterHandle scope="node" position="nodes" itemKey={nodeKey(g)} label={g.label || g.name}
+              onMove={(source, target) => moveNode(source, target, nodeGroups)}
+              onStep={(delta) => stepNode(nodeKey(g), delta, nodeGroups)} />
+            <button type="button" className="nc-node-rename" title={t('rename-node')}
+              aria-label={`${t('rename-node')} ${g.label || g.name}`}
+              onClick={() => promptNodeRename(g)}>✎</button>
+            {nodePower}
+          </span>
+        );
         return (
-        <section key={`nodo-${routeKey}`} className="nc-group" data-position={routeKey}>
+        <section key={`nodo-${routeKey}`} className="nc-group nc-node-order-wrap" data-position={routeKey}
+          data-node-order-key={nodeKey(g)}>
           <MobilePositionHeader label={g.label || g.name} count={items.length} state={groupView}
             dotClass={dotClass} dotTitle={dotTitle}
             detail={g.status === 'up' ? '' : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
             onToggle={() => updateView(routeKey, { open: !groupView.open })}
-            onFilter={(filter) => updateView(routeKey, { filter })} action={nodePower} />
+            onFilter={(filter) => updateView(routeKey, { filter })}
+            onRename={() => promptNodeRename(g)} action={nodeActions} />
           {g.status === 'up' && groupView.open && items.map((item) => renderRosterItem(item, g, rawItems))}
           {g.status === 'up' && groupView.open && items.length === 0 && (
             <div className="nc-empty">{q ? t('no-match').replace('{q}', q) : t('no-sessions-short')}</div>
@@ -303,10 +327,11 @@ export default function SessionList({ onPick, token, onSettings }) {
 }
 
 function MobilePositionHeader({
-  label, count, state, dotClass = '', dotTitle = '', detail = '', onToggle, onFilter, action = null,
+  label, count, state, dotClass = '', dotTitle = '', detail = '', onToggle, onFilter, onRename = null, action = null,
 }) {
   return (
-    <div className="nc-mobile-position-head">
+    <div className="nc-mobile-position-head"
+      onContextMenu={onRename ? (event) => { event.preventDefault(); onRename(); } : undefined}>
       <button type="button" className="nc-mobile-position-toggle" onClick={onToggle}
         aria-expanded={state.open} aria-label={`${label} · ${t('node-sessions').replace('{n}', String(count))}`}>
         <span className="nc-mobile-chevron" aria-hidden="true">{state.open ? '⌄' : '›'}</span>

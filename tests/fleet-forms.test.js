@@ -27,6 +27,9 @@ test('blankEngine/blankCell: stable defaults for a fresh form', async () => {
   assert.equal(e.rc, true);
   assert.equal(e.promptMode, 'send-keys');
   assert.deepEqual(e.envRows, []);
+  assert.equal(e.credentialValue, '');
+  assert.equal(e.credentialReveal, false);
+  assert.equal(e.allowMissingCredential, false);
   assert.equal(blankCell().engine, '');
   assert.deepEqual(blankCell('claude.native'), { id: '', cwd: '', engine: 'claude.native', boot: false, model: '', prompt: '' });
 });
@@ -67,6 +70,9 @@ test('engineForm maps a managed definition into editable form state', async () =
   assert.equal(form.permissionPolicy, 'unsafe');
   assert.deepEqual(form.modelOptions, ['sonnet', 'opus']);
   assert.deepEqual(form.envRows, [{ key: 'ANTHROPIC_API_KEY', value: '', configured: true, remove: false }]);
+  assert.equal(form.credentialValue, '');
+  assert.equal(form.credentialReveal, false);
+  assert.equal(form.allowMissingCredential, false);
   assert.equal(form.rc, true);
 });
 
@@ -92,16 +98,20 @@ test('buildEngine managed (create): catalog label, model and inherited default p
   assert.deepEqual(out, { id: 'claude.native', label: 'Claude', rc: true, managed: { client: 'claude', provider: 'native', model: 'sonnet', permissionPolicy: 'unsafe' } });
 });
 
-test('buildEngine managed: credentialProfile set; envKey only when the profile declares credentialEnv', async () => {
+test('buildEngine managed: dynamic env names persist, fixed KEY values never enter definitions', async () => {
   const { buildEngine } = await mod();
   const catalog = [
-    { id: 'b', client: 'claude', provider: 'zai', credentialProfile: 'a', label: 'Claude Z.AI', credentialEnv: 'ZAI_API_KEY' },
+    { id: 'b', client: 'claude', provider: 'zai', credentialProfile: 'a', label: 'Claude Z.AI', credentialEnv: true },
+    { id: 'c', client: 'claude', provider: 'openrouter', label: 'OpenRouter', credentialEnv: 'OPENROUTER_API_KEY' },
     { id: 'd', client: 'pi', provider: 'native', label: 'Pi' },
   ];
   const out = buildEngine({ kind: 'managed', client: 'claude', provider: 'zai', credentialProfile: 'a', managedModel: '', permissionPolicy: 'standard', label: '', rc: true, envKey: 'sk-x', envRows: [] }, false, catalog);
   assert.equal(out.id, undefined, 'no id on edit');
   assert.equal(out.managed.credentialProfile, 'a');
-  assert.equal(out.managed.envKey, 'sk-x', 'envKey copied because profile declares credentialEnv');
+  assert.equal(out.managed.envKey, 'sk-x', 'validated dynamic env name is copied');
+  const fixed = buildEngine({ kind: 'managed', client: 'claude', provider: 'openrouter', managedModel: 'model', permissionPolicy: 'unsafe', label: '', rc: true, envKey: '', credentialValue: 'synthetic-secret', envRows: [] }, false, catalog);
+  assert.equal(Object.hasOwn(fixed.managed, 'envKey'), false, 'fixed env name comes from the catalog');
+  assert.equal(JSON.stringify(fixed).includes('synthetic-secret'), false, 'transient KEY value is excluded');
   // a profile without credentialEnv never attaches envKey, even with a value present
   const out2 = buildEngine({ kind: 'managed', client: 'pi', provider: 'native', managedModel: '', permissionPolicy: 'standard', label: '', rc: true, envKey: 'sk-y', envRows: [] }, false, catalog);
   assert.equal(Object.hasOwn(out2.managed, 'envKey'), false, 'no envKey without a declared credentialEnv');

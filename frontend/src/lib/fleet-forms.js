@@ -7,7 +7,7 @@
 // place. Behaviour must stay byte-for-byte identical to the original inline
 // definitions.
 
-export const blankEngine = () => ({ kind: 'managed', id: 'claude.native', label: '', client: 'claude', provider: 'native', credentialProfile: '', managedModel: '', permissionPolicy: 'unsafe', displayName: '', protocol: 'anthropic_messages', baseUrl: '', envKey: '', providerId: 'nexuscrew-custom', command: '', argsText: '', rc: true, promptMode: 'send-keys', promptFlag: '', modelFlag: '', modelValue: '', envRows: [] });
+export const blankEngine = () => ({ kind: 'managed', id: 'claude.native', label: '', client: 'claude', provider: 'native', credentialProfile: '', managedModel: '', permissionPolicy: 'unsafe', displayName: '', protocol: 'anthropic_messages', baseUrl: '', envKey: '', providerId: 'nexuscrew-custom', command: '', argsText: '', rc: true, promptMode: 'send-keys', promptFlag: '', modelFlag: '', modelValue: '', envRows: [], credentialValue: '', credentialReveal: false, allowMissingCredential: false });
 export const blankCell = (engine = '') => ({ id: '', cwd: '', engine, boot: false, model: '', prompt: '' });
 export const defaultPermission = (client) => client === 'claude' ? 'unsafe' : 'standard';
 export const catalogEntry = (catalog, form) => catalog.find((p) => p.client === form.client && p.provider === form.provider && (p.credentialProfile || '') === (form.credentialProfile || ''));
@@ -22,6 +22,7 @@ export function engineForm(e) {
     promptMode: e.promptMode || 'send-keys', promptFlag: e.promptFlag || '',
     modelFlag: e.model?.flag || '', modelValue: e.model?.value || '',
     envRows: (e.envKeys || []).map((key) => ({ key, value: '', configured: true, remove: false })),
+    credentialValue: '', credentialReveal: false, allowMissingCredential: false,
   };
 }
 
@@ -30,7 +31,7 @@ export function buildEngine(form, creating, catalog = []) {
     const managed = { client: form.client, provider: form.provider, model: form.managedModel || '', permissionPolicy: form.permissionPolicy || defaultPermission(form.client) };
     if (form.credentialProfile) managed.credentialProfile = form.credentialProfile;
     const profile = catalogEntry(catalog, form);
-    if (profile?.credentialEnv) managed.envKey = form.envKey;
+    if (profile?.credentialEnv === true) managed.envKey = form.envKey;
     if (form.provider === 'custom') Object.assign(managed, { displayName: form.displayName, protocol: form.protocol, baseUrl: form.baseUrl, envKey: form.envKey, providerId: form.providerId });
     return {
       ...(creating ? { id: form.id } : {}), label: form.label || managedLabel(catalog, form), rc: !!form.rc,
