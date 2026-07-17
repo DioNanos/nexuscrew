@@ -53,6 +53,7 @@ export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs$
 // propaga la causa esplicita (j.error) su ogni failure — MAI errori muti in UI.
 export const getSettings = (t) => jsonFetch('/api/settings', t);
 export const getNodes = (t) => jsonFetch('/api/nodes', t);
+export const getPeers = (t) => jsonFetch('/api/peers', t);
 export const getTopology = (t) => jsonFetch('/api/topology', t);
 export const getRouteSessions = (t, route) => jsonFetch(`${routeBase(route)}/sessions`, t);
 export const getRouteConfig = (t, route) => jsonFetch(`${routeBase(route)}/config`, t);
@@ -72,6 +73,7 @@ export const createPeerInvite = (t, body, route = []) => jsonFetch(
   `${routeBase(route)}/settings/peering/invite`, t, { method: 'POST', body: body || {} },
 );
 export const renameNodeLabel = (t, name, label) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/label`, t, { method: 'PATCH', body: { label } });
+export const updateNode = (t, name, patch) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}`, t, { method: 'PATCH', body: patch });
 export const removeNode = (t, name) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
 // action ∈ {test, up, down, restart} — stringhe fisse dal chiamante, mai input utente.
 export const nodeAction = (t, name, action) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/${action}`, t, { method: 'POST' });

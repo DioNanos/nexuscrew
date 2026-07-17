@@ -91,20 +91,21 @@ describe('Sidebar session identity', () => {
     expect(remoteRow.querySelector('.nc-dot').classList.contains('working')).toBe(true);
   });
 
-  it('renames nodes locally from right click and reorders node groups with the keyboard handle', async () => {
+  it('renames direct nodes through the server callback and keeps local node ordering', async () => {
     const prompt = vi.spyOn(window, 'prompt').mockReturnValue('Studio Mac');
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const onNodeRename = vi.fn(async () => true);
     const nodeGroups = [
-      { name: 'relay', label: 'Relay', route: ['relay'], instanceId: 'd'.repeat(32), status: 'up', sessions: [], unmanaged: [], cells: [] },
+      { name: 'relay', label: 'Relay', route: ['relay'], instanceId: 'd'.repeat(32), status: 'up', direct: true, sessions: [], unmanaged: [], cells: [] },
       { name: 'pixel', label: 'Pixel', route: ['relay', 'pixel'], instanceId: 'e'.repeat(32), status: 'up', sessions: [], unmanaged: [], cells: [] },
     ];
-    render(<Sidebar nodeGroups={nodeGroups} onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()} />);
+    render(<Sidebar nodeGroups={nodeGroups} onPick={vi.fn()} onAddTile={vi.fn()}
+      onNodeRename={onNodeRename} onSettings={vi.fn()} />);
 
     fireEvent.contextMenu(screen.getByText('Relay').closest('.nc-node-title'));
     expect(prompt).toHaveBeenCalled();
-    expect(await screen.findByText('Studio Mac')).toBeTruthy();
-    const aliases = JSON.parse(localStorage.getItem('nc_node_aliases_v1'));
-    expect(aliases[`id:${'d'.repeat(32)}`]).toBe('Studio Mac');
+    expect(onNodeRename).toHaveBeenCalledWith(nodeGroups[0], 'Studio Mac');
+    expect(localStorage.getItem('nc_node_aliases_v1')).toBeNull();
 
     fireEvent.keyDown(screen.getByRole('button', { name: 'reorder Pixel' }), { key: 'ArrowUp' });
     expect(JSON.parse(localStorage.getItem('nc_node_order_v1'))[0]).toBe(`id:${'e'.repeat(32)}`);

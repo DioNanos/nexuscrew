@@ -2,6 +2,41 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.22 — 2026-07-17 — "Sole Authority"
+
+- Makes NexusCrew the only Fleet owner. The legacy executable adapter, discovery paths,
+  `fleetBin` configuration and alternate boot ownership are removed; `NEXUSCREW_FLEET=0`
+  remains the explicit kill switch.
+- Supervises every built-in cell behind the private one-shot launch broker. A client that exits
+  after readiness is restarted with bounded exponential backoff and a rapid-failure circuit
+  breaker; explicit stop disarms relaunch even during backoff, while restart remains intentional.
+- Adds a canonical hub peer inventory to Settings with separate direct hubs, inbound clients and
+  routed inspect-only nodes. Direct peers expose direction-aware **Edit**, **Disconnect** and
+  **Delete** actions, stale routed peers no longer appear healthy, and labels now have one
+  server-backed source across Settings, desktop and mobile.
+- Expands the headless CLI with stable `name|nodeId` lookup for list/show/doctor, edit/rename,
+  visibility, connect/disconnect/reconnect, Share, revoke/remove, invite and stdin-only pair/join.
+  Every mutation honors READONLY; pairing capabilities never need to appear in argv.
+- Gate: **845 Node tests** (844 pass / 1 platform skip), **30 frontend component tests**, a
+  production build and zero production dependency vulnerabilities.
+
+## 0.8.21 — 2026-07-17 — "Reconciled Share"
+
+- Reconciles the detached SSH supervisor with the persisted Share state even when the requested
+  value is unchanged. A pre-upgrade process that still carries `-R` while the store says private
+  is replaced through the existing verified, spec-aware pidfile lifecycle before the hub is
+  notified.
+- Keeps the Share checkbox usable while the tunnel is down and adds an explicit **Reconnect and
+  reconcile** action that reapplies the current state without toggling consent. Desired Share
+  state, verified reachability and a down private connection now have distinct UI messages.
+- Reverse-forward diagnostics extract the negotiated listen port from OpenSSH and show the exact
+  `permitlisten="127.0.0.1:<port>"` restriction to verify, while retaining neutral wording when a
+  port collision and a key/server policy denial cannot yet be distinguished.
+- Gate: **855 Node tests** (854 pass / 1 platform skip), **30 frontend component tests** and a
+  production build with aligned package/UI version `0.8.21`.
+- Release scope: published to npm `latest` and installed on the local runtime. GitHub commit,
+  push, tag and release remain outside this maintenance rollout.
+
 ## 0.8.20 — 2026-07-17 — "Reliable Routes"
 
 - OpenRouter is now a first-class provider for Claude Code and Codex-VL. Claude uses the

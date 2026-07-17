@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  apiFetch, fleetStatus, fleetUp, fleetDown, killSession, nodeAction, setSessionTechnical,
+  apiFetch, fleetStatus, fleetUp, fleetDown, killSession, nodeAction, renameNodeLabel, setSessionTechnical,
 } from '../lib/api.js';
 import Icon from './Icon.jsx';
 import { sidebarItems, sidebarOrder, sidebarSearchVisible } from '../lib/sidebar-model.js';
@@ -15,6 +15,7 @@ import {
   rel, nodeStateLabel, healthDot, healthTitle, buildLocalRoster, buildRemoteRoster,
 } from '../lib/roster-view-model.js';
 import { OWNER_ID_RE } from '../lib/grid-model.js';
+import { isValidLabel } from '../lib/settings-model.js';
 import './SessionList.css';
 
 // Home mobile: lo stesso roster per-posizione della sidebar desktop. Stato di
@@ -38,7 +39,7 @@ export default function SessionList({ onPick, token, onSettings }) {
     pins, orders, togglePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
   const {
-    groupsFor: preferredGroups, renameNode, moveNode, stepNode, nodeKey,
+    groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
   } = useNodePreferences();
   const preferredNodeGroups = preferredGroups(nodeGroups);
 
@@ -109,10 +110,14 @@ export default function SessionList({ onPick, token, onSettings }) {
     setNodeBusy(null);
   }
 
-  function promptNodeRename(group) {
-    const next = window.prompt(`${t('rename-node-prompt')}\n${t('rename-node-reset')}`, group.label || group.name);
+  async function promptNodeRename(group) {
+    if (!group?.direct) return;
+    const next = window.prompt(t('rename-node-prompt'), group.label || group.name);
     if (next === null) return;
-    if (!renameNode(group, next)) window.alert(t('rename-node-invalid'));
+    const label = String(next).trim();
+    if (!isValidLabel(label)) { window.alert(t('rename-node-invalid')); return; }
+    try { await renameNodeLabel(token, group.name, label); }
+    catch (error) { window.alert(String(error?.message || error)); }
   }
 
   // lookup sessione per tmuxSession (activity/preview/outbox delle celle)
@@ -278,9 +283,9 @@ export default function SessionList({ onPick, token, onSettings }) {
             <RosterHandle scope="node" position="nodes" itemKey={nodeKey(g)} label={g.label || g.name}
               onMove={(source, target) => moveNode(source, target, nodeGroups)}
               onStep={(delta) => stepNode(nodeKey(g), delta, nodeGroups)} />
-            <button type="button" className="nc-node-rename" title={t('rename-node')}
+            {g.direct && <button type="button" className="nc-node-rename" title={t('rename-node')}
               aria-label={`${t('rename-node')} ${g.label || g.name}`}
-              onClick={() => promptNodeRename(g)}>✎</button>
+              onClick={() => promptNodeRename(g)}>✎</button>}
             {nodePower}
           </span>
         );
@@ -292,7 +297,7 @@ export default function SessionList({ onPick, token, onSettings }) {
             detail={g.status === 'up' ? '' : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
             onToggle={() => updateView(routeKey, { open: !groupView.open })}
             onFilter={(filter) => updateView(routeKey, { filter })}
-            onRename={() => promptNodeRename(g)} action={nodeActions} />
+            onRename={g.direct ? () => promptNodeRename(g) : null} action={nodeActions} />
           {g.status === 'up' && groupView.open && items.map((item) => renderRosterItem(item, g, rawItems))}
           {g.status === 'up' && groupView.open && items.length === 0 && (
             <div className="nc-empty">{q ? t('no-match').replace('{q}', q) : t('no-sessions-short')}</div>

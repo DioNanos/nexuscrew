@@ -12,12 +12,12 @@ const path = require('node:path');
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'components', f), 'utf8');
 const readLib = (f) => fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'lib', f), 'utf8');
 
-test('Settings -> Nodi: la card single-link e\' la PRIMA cosa della tab; il vecchio form add-node e\' sparito', () => {
+test('Settings -> Nodi: inventario prima del pairing; il vecchio form add-node e\' sparito', () => {
   const s = read('SettingsPanel.jsx');
   assert.match(s, /<PairingCard token=\{token\}/);
   const cardAt = s.indexOf('<PairingCard');
-  const listAt = s.indexOf("(nodes || []).length === 0");
-  assert.ok(cardAt > 0 && listAt > 0 && cardAt < listAt, 'PairingCard viene PRIMA della lista nodi');
+  const listAt = s.indexOf("t('peer-inventory-title')");
+  assert.ok(cardAt > 0 && listAt > 0 && listAt < cardAt, 'inventario viene PRIMA della PairingCard');
   assert.doesNotMatch(s, /onAdd|nc-pair-scan|applyPairing/, 'form legacy e scan-input nascosto rimossi');
   // invite creator: istruzioni esplicite post-generazione + semantica del target SSH
   assert.match(s, /invite-next-steps/);

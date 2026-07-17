@@ -262,16 +262,6 @@ test('dispatch fleet-boot: builtin con 409 -> exit 0 (skip non fatale)', async (
   assert.equal(code, 0); // solo skipped, failed vuoto
 });
 
-test('dispatch fleet-boot: external -> exit 0 (boot gestito dal fleet esterno)', async () => {
-  const logs = [];
-  const { code } = await runBootDispatch({
-    log: (m) => logs.push(m),
-    selectProvider: async () => ({ mode: 'external', fleet: { available: true } }),
-  });
-  assert.equal(code, 0);
-  assert.ok(logs.some((l) => /fleet esterno/i.test(l)));
-});
-
 test('dispatch fleet-boot: disabled -> exit 0', async () => {
   const { code } = await runBootDispatch({
     selectProvider: async () => ({ mode: 'disabled', fleet: { available: false }, reason: 'nessun provider' }),

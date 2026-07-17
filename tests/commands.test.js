@@ -59,7 +59,7 @@ test('dispatch: help -> code 0, stampa HELP', () => {
   assert.ok(long.join('\n').includes('nexuscrew show'));
   const version = [];
   assert.equal(dispatch(['--version'], { log: (m) => version.push(m) }).code, 0);
-  assert.equal(version[0], '0.8.20');
+  assert.equal(version[0], require('../package.json').version);
   assert.equal(dispatch(['--bogus'], { log: () => {} }).code, 1);
 });
 
@@ -320,7 +320,7 @@ test('managed stop/restart guard failure leaves portable owner and tunnels untou
 
 test('legacy configuration commands are not public CLI commands', () => {
   const logs = [];
-  for (const command of ['init', 'start', 'url', 'logs', 'update', 'nodes']) {
+  for (const command of ['init', 'start', 'url', 'logs', 'update']) {
     assert.equal(dispatch([command], { log: (m) => logs.push(m) }).code, 1);
   }
   assert.ok(logs.join('\n').includes('nexuscrew show'));
