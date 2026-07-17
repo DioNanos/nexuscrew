@@ -8,6 +8,7 @@ const net = require('node:net');
 const cmds = require('../lib/nodes/commands.js');
 const store = require('../lib/nodes/store.js');
 const tunnel = require('../lib/nodes/tunnel.js');
+const peering = require('../lib/nodes/peering.js');
 const pidf = require('../lib/cli/pidfile.js');
 const { status, doctor, dispatch } = require('../lib/cli/commands.js');
 
@@ -356,9 +357,108 @@ test('doctor: riporta SSH/autossh usati senza fingere di certificare lo sshd rem
 
 // --- dispatch wiring --------------------------------------------------------
 
-test('dispatch: gestione nodes e test tunnel sono disponibili solo dalla PWA', () => {
+test('dispatch: gestione nodes pubblica con remove esplicitamente confermato', async () => {
+  const home = nodeHome();
+  cmds.nodesAdd({ home, log: () => {}, name: 'vps', ssh: 'user@example.com', keygen: keygenSeam });
   const logs = [];
-  const add = dispatch(['nodes', 'add', 'vps', '--ssh', 'user@example.com'], { log: (m) => logs.push(m) });
-  assert.equal(add.code, 1);
-  assert.match(logs.join('\n'), /nexuscrew show/);
+  assert.equal((await dispatch(['nodes', 'list', '--json'], { home, log: (m) => logs.push(m) })).code, 0);
+  const listed = JSON.parse(logs.join('\n'));
+  assert.equal(listed.peers[0].name, 'vps');
+  assert.equal(listed.peers[0].actions.remove, true);
+  assert.equal((await dispatch(['nodes', 'remove', 'vps'], { home, log: () => {} })).code, 1);
+  assert.equal(store.loadStore(nodesPathFor(home)).nodes.length, 1);
+  assert.equal((await dispatch(['nodes', 'remove', 'vps', '--yes'], { home, log: () => {} })).code, 0);
+  assert.equal(store.loadStore(nodesPathFor(home)).nodes.length, 0);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('dispatch nodes edit: risolve nodeId e READONLY blocca lifecycle e config', async () => {
+  const home = nodeHome();
+  cmds.nodesAdd({ home, log: () => {}, name: 'vps', ssh: 'user@example.com', nodeId: 'b'.repeat(32), keygen: keygenSeam });
+  assert.equal((await dispatch(['nodes', 'edit', 'b'.repeat(32), '--label', 'Asus Hub'], { home, log: () => {} })).code, 0);
+  assert.equal(store.loadStore(nodesPathFor(home)).nodes[0].label, 'Asus Hub');
+  process.env.NEXUSCREW_READONLY = '1';
+  try {
+    assert.equal((await dispatch(['nodes', 'edit', 'vps', '--label', 'Blocked'], { home, log: () => {} })).code, 1);
+    assert.equal((await dispatch(['nodes', 'down', 'vps'], { home, log: () => {} })).code, 1);
+  } finally { delete process.env.NEXUSCREW_READONLY; }
+  assert.equal(store.loadStore(nodesPathFor(home)).nodes[0].label, 'Asus Hub');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('dispatch nodes aliases: show/rename/visibility/doctor usano il dominio canonico', async () => {
+  const home = nodeHome();
+  let st = store.loadStore(nodesPathFor(home));
+  st = store.addNode(st, {
+    name: 'asus', remotePort: 41820, localPort: 44001,
+    direction: 'inbound', transport: 'inbound', autostart: false,
+    visibility: 'network', nodeId: 'c'.repeat(32), token: 'PEER', acceptToken: 'ACCEPT',
+  });
+  store.atomicWriteStore(nodesPathFor(home), st);
+
+  assert.equal((await dispatch(['nodes', 'show', 'c'.repeat(32)], { home, log: () => {} })).code, 0);
+  assert.equal((await dispatch(['nodes', 'rename', 'c'.repeat(32), '--label', 'AsusRP3'], { home, log: () => {} })).code, 0);
+  assert.equal((await dispatch(['nodes', 'visibility', 'asus', 'relay-only'], { home, log: () => {} })).code, 0);
+  const saved = store.loadStore(nodesPathFor(home)).nodes[0];
+  assert.equal(saved.label, 'AsusRP3');
+  assert.equal(saved.visibility, 'relay-only');
+
+  const logs = [];
+  assert.equal((await dispatch(['doctor', '--peers', '--json'], { home, log: (line) => logs.push(line) })).code, 0);
+  const report = JSON.parse(logs.join('\n'));
+  assert.equal(report.checks[0].result, 'passive');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('dispatch nodes share risolve nodeId e usa PATCH locale senza segreti in argv', async () => {
+  const home = nodeHome();
+  cmds.nodesAdd({
+    home, log: () => {}, name: 'hub', ssh: 'user@example.com',
+    nodeId: 'd'.repeat(32), keygen: keygenSeam,
+  });
+  const calls = [];
+  const out = await dispatch(['nodes', 'share', 'd'.repeat(32), 'on'], {
+    home, log: () => {},
+    localApiImpl: async (pathname, body, request) => {
+      calls.push({ pathname, body, request });
+      return { name: 'hub', shared: true };
+    },
+  });
+  assert.equal(out.code, 0);
+  assert.deepEqual(calls, [{
+    pathname: '/api/settings/nodes/hub/share',
+    body: { shared: true }, request: { method: 'PATCH' },
+  }]);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('dispatch nodes invite/pair: link passa via stdout/stdin, mai come argv', async () => {
+  const inviteHome = nodeHome();
+  const link = peering.createInvite({
+    invitesPath: path.join(inviteHome, '.nexuscrew', 'invites.json'),
+    instanceId: 'a'.repeat(32), port: 41777, linkPort: 41777,
+    label: 'Asus', name: 'asus', ssh: 'asus-vps',
+  }).pairingUrl;
+  const calls = [];
+  const inviteLogs = [];
+  const invited = await dispatch(['nodes', 'invite', '--ssh', 'asus-vps'], {
+    log: (x) => inviteLogs.push(x),
+    localApiImpl: async (pathname, body) => { calls.push([pathname, body]); return { pairingUrl: link, expiresAt: Date.now() + 1000 }; },
+  });
+  assert.equal(invited.code, 0);
+  assert.equal(calls[0][0], '/api/settings/peering/invite');
+  assert.match(inviteLogs[0], /#pair=/);
+  const paired = await dispatch(['nodes', 'pair'], {
+    stdin: `${link.slice(0, 20)}\r\n${link.slice(20)}`, log: () => {},
+    localApiImpl: async (pathname, body) => { calls.push([pathname, body]); return { name: body.name, instanceId: 'a'.repeat(32) }; },
+  });
+  assert.equal(paired.code, 0);
+  assert.equal(calls[1][0], '/api/settings/nodes/pair');
+  assert.equal(calls[1][1].pairingUrl, link);
+  const joined = await dispatch(['nodes', 'join'], {
+    stdin: link, log: () => {},
+    localApiImpl: async () => ({ name: 'asus', instanceId: 'a'.repeat(32) }),
+  });
+  assert.equal(joined.code, 0);
+  fs.rmSync(inviteHome, { recursive: true, force: true });
 });

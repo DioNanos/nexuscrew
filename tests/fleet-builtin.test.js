@@ -14,7 +14,6 @@ const {
 } = require('../lib/fleet/builtin.js');
 const { selectProvider } = require('../lib/fleet/provider.js');
 
-const FAKE_FLEET = path.join(__dirname, 'fixtures', 'fake-fleet.sh'); // external fidato
 
 // --- Fixture: una definizione valida (engine fidato + cella reale sotto home) ---
 function makeWorld(over = {}) {
@@ -417,9 +416,16 @@ test('managed codex-vl.native: launcher interno, login nativo, fake tmux', async
     atomicWrite(w.defsPath, {
       schemaVersion: 1,
       engines: [{ id: 'codex-vl.native', label: 'Codex-VL · Native', managed: { client: 'codex-vl', provider: 'native', model: '' } }],
-      cells: [{ id: 'Dev', cwd: w.cwd, engine: 'codex-vl.native', prompt: 'bootstrap managed' }],
+      cells: [{ id: 'Dev', tmuxSession: 'worker-managed', cwd: w.cwd, engine: 'codex-vl.native', prompt: 'bootstrap managed' }],
     });
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, sendKeysReadyMs: 0 });
+    let launchPayload = null;
+    const fleet = await createBuiltinFleet({
+      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, sendKeysReadyMs: 0,
+      launchBroker: {
+        issue: async (payload) => { launchPayload = payload; return { socketPath: '/tmp/nexuscrew-test.sock', nonce: 'a'.repeat(64) }; },
+        close: async () => {},
+      },
+    });
     const view = fleet.definitions();
     assert.equal(view.engines[0].managedInfo.configured, true);
     assert.equal(view.engines[0].managedInfo.provider, 'native');
@@ -427,9 +433,13 @@ test('managed codex-vl.native: launcher interno, login nativo, fake tmux', async
     assert.equal(view.managedCatalog.some((p) => p.id === 'claude.zai-a' || p.id === 'claude.zai-p'), false);
     await fleet.up('Dev');
     const argv = readLog(w).nsArgv[0];
-    assert.ok(argv.includes(bin));
-    assert.equal(argv.includes('--dangerously-bypass-approvals-and-sandbox'), false, 'standard e il default sicuro');
-    assert.ok(argv.includes('bootstrap managed'));
+    assert.ok(argv.some((value) => /cell-exec\.js$/.test(value)), 'tmux vede solo il supervisor');
+    assert.equal(argv.includes(bin), false, 'comando reale resta nel broker in-memory');
+    assert.equal(launchPayload.command, bin);
+    assert.equal(launchPayload.args.includes('--dangerously-bypass-approvals-and-sandbox'), false, 'standard e il default sicuro');
+    assert.ok(launchPayload.args.includes('bootstrap managed'));
+    assert.equal(launchPayload.supervise.enabled, true);
+    assert.equal(launchPayload.env.NEXUSCREW_MCP_SESSION, 'worker-managed');
     assert.equal(argv.some((x) => /zai|ollama/i.test(x)), false);
     assert.equal(readLog(w).lines.some((x) => x.startsWith('load-buffer')), false);
   } finally { w.cleanup(); }
@@ -682,51 +692,38 @@ test('fleet.json invalido/mancante -> unavailable (fail-closed)', async () => {
 // ---------------------------------------------------------------------------
 // 11. provider selection
 // ---------------------------------------------------------------------------
-test('selectProvider: external fidato vince; poi builtin; poi disabled', async () => {
-  // external fidato + risponde al contratto (fake-fleet.sh)
-  const ext = await selectProvider({ fleetBin: FAKE_FLEET, builtinEnabled: true, home: fs.mkdtempSync(path.join(os.tmpdir(), 'p-')) });
-  assert.equal(ext.mode, 'external');
-
-  // nessun external -> builtin (fleet.json valido)
+test('selectProvider: il builtin e unica autorita; poi disabled', async () => {
   const w = makeWorld();
   try {
-    const bi = await selectProvider({ fleetBin: undefined, builtinEnabled: true, home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const bi = await selectProvider({
+      builtinEnabled: true, home: w.home, fleetDefsPath: w.defsPath,
+      tmuxBin: w.tmuxBin,
+    });
     assert.equal(bi.mode, 'builtin');
     assert.equal(bi.fleet.available, true);
 
-    // builtin disabilitato + nessun external -> disabled
-    const dis = await selectProvider({ fleetBin: undefined, builtinEnabled: false, home: w.home, fleetDefsPath: w.defsPath });
+    // Un vecchio path fleet non viene scoperto ne eseguito.
+    assert.match(bi.reason, /builtin/);
+
+    const dis = await selectProvider({ builtinEnabled: false, home: w.home, fleetDefsPath: w.defsPath });
     assert.equal(dis.mode, 'disabled');
     assert.equal(dis.fleet.available, false);
-
-    // external presente ma SCADUTO (schema estraneo): binTrusted ok ma non risponde
-    process.env.FAKE_FLEET_MODE = 'wrong-kind';
-    const extBad = await selectProvider({ fleetBin: FAKE_FLEET, builtinEnabled: true, home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
-    assert.equal(extBad.mode, 'builtin', 'external non risponde -> builtin (auto, non fail-closed)');
-    delete process.env.FAKE_FLEET_MODE;
   } finally { w.cleanup(); }
 });
 
-test('selectProvider: forced fail-closed (no auto-fallback silenzioso)', async () => {
-  // forced external ma nessun external disponibile -> disabled (fail-closed)
-  const forced = await selectProvider({ fleetProvider: 'external', fleetBin: undefined, home: fs.mkdtempSync(path.join(os.tmpdir(), 'p-')) });
-  assert.equal(forced.mode, 'disabled');
-  assert.match(forced.reason, /fail-closed/i);
-
+test('selectProvider: builtin invalido fail-closed e kill switch esplicito', async () => {
   const w = makeWorld();
   try {
-    // forced builtin con fleet.json valido -> builtin
-    const fb = await selectProvider({ fleetProvider: 'builtin', fleetDefsPath: w.defsPath, home: w.home, tmuxBin: w.tmuxBin });
+    const fb = await selectProvider({ fleetDefsPath: w.defsPath, home: w.home, tmuxBin: w.tmuxBin });
     assert.equal(fb.mode, 'builtin');
 
-    // forced builtin ma fleet.json invalido -> disabled (fail-closed, NO fallback a external)
+    // forced builtin ma fleet.json invalido -> disabled fail-closed.
     const badPath = path.join(w.root, 'bad.json');
     fs.writeFileSync(badPath, 'garbage');
-    const fbb = await selectProvider({ fleetProvider: 'builtin', fleetBin: FAKE_FLEET, fleetDefsPath: badPath, home: w.home });
-    assert.equal(fbb.mode, 'disabled', 'forced builtin invalido -> disabled, non external');
+    const fbb = await selectProvider({ fleetDefsPath: badPath, home: w.home });
+    assert.equal(fbb.mode, 'disabled');
 
-    // forced disabled
-    const fd = await selectProvider({ fleetProvider: 'disabled', fleetBin: FAKE_FLEET, fleetDefsPath: w.defsPath, home: w.home });
+    const fd = await selectProvider({ fleetEnabled: false, fleetDefsPath: w.defsPath, home: w.home });
     assert.equal(fd.mode, 'disabled');
   } finally { w.cleanup(); }
 });

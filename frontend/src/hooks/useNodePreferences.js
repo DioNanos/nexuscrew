@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  cleanNodeAlias, loadNodeAliases, loadNodeOrder, moveNodeGroup, nodeDisplayLabel,
-  nodePreferenceKey, orderNodeGroups, saveNodeAliases, saveNodeOrder, updateNodeAlias,
+  loadNodeOrder, moveNodeGroup, nodePreferenceKey, orderNodeGroups, saveNodeOrder,
 } from '../lib/node-preferences.js';
 
 const CHANGE_EVENT = 'nexuscrew-node-preferences';
@@ -11,11 +10,10 @@ function announceChange() {
 }
 
 export function useNodePreferences() {
-  const [aliases, setAliases] = useState(loadNodeAliases);
   const [order, setOrder] = useState(loadNodeOrder);
 
   useEffect(() => {
-    const reload = () => { setAliases(loadNodeAliases()); setOrder(loadNodeOrder()); };
+    const reload = () => setOrder(loadNodeOrder());
     window.addEventListener('storage', reload);
     window.addEventListener(CHANGE_EVENT, reload);
     return () => {
@@ -24,17 +22,7 @@ export function useNodePreferences() {
     };
   }, []);
 
-  const labelFor = (node) => nodeDisplayLabel(node, aliases);
-  const groupsFor = (groups) => orderNodeGroups(groups, order).map((group) => ({ ...group, label: labelFor(group) }));
-
-  const renameNode = (node, value) => {
-    if (cleanNodeAlias(value) === null || !nodePreferenceKey(node)) return false;
-    setAliases((before) => {
-      const next = updateNodeAlias(before, node, value);
-      saveNodeAliases(next); announceChange(); return next;
-    });
-    return true;
-  };
+  const groupsFor = (groups) => orderNodeGroups(groups, order);
 
   const moveNode = (source, target, groups) => setOrder((before) => {
     const next = moveNodeGroup(before, source, target, groups);
@@ -47,5 +35,5 @@ export function useNodePreferences() {
     if (index >= 0 && target) moveNode(source, target, groups);
   };
 
-  return { aliases, order, labelFor, groupsFor, renameNode, moveNode, stepNode, nodeKey: nodePreferenceKey };
+  return { order, groupsFor, moveNode, stepNode, nodeKey: nodePreferenceKey };
 }

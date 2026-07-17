@@ -13,8 +13,9 @@ import SettingsPanel from './components/SettingsPanel.jsx';
 import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import {
-  apiFetch, fleetStatus, fleetUp, fleetDown, killSession, getSettings, nodeAction, setSessionTechnical,
+  apiFetch, fleetStatus, fleetUp, fleetDown, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
 } from './lib/api.js';
+import { isValidLabel } from './lib/settings-model.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
 import {
   MAIN_DECK, deckLocationFromPath, deckUrl, readLayoutRaw,
@@ -377,6 +378,12 @@ export default function App() {
     try { await nodeAction(token, group.name, group.tunnelStatus === 'up' ? 'down' : 'up'); }
     finally { setNodePowerBusy(false); }
   };
+  const onNodeRename = async (group, value) => {
+    const label = String(value || '').trim();
+    if (!group?.direct || !isValidLabel(label)) return false;
+    await renameNodeLabel(token, group.name, label);
+    return true;
+  };
 
   // --- deck actions (§5b) ---
   const openDeckWindow = (id) => {
@@ -467,6 +474,7 @@ export default function App() {
           onAddTile={onAddTile}
           onPower={setPowerCell}
           onNodePower={onNodePower}
+          onNodeRename={onNodeRename}
           onKill={onKill}
           onVisibility={onVisibility}
           onNew={() => openSettings('fleet', true)}

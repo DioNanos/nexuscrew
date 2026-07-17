@@ -18,6 +18,7 @@ vi.mock('../lib/api.js', () => ({
   fleetDown: vi.fn(async () => ({})),
   killSession: vi.fn(async () => ({})),
   nodeAction: vi.fn(async () => ({})),
+  renameNodeLabel: vi.fn(async () => ({})),
   setSessionTechnical: vi.fn(async () => ({})),
 }));
 
@@ -25,7 +26,7 @@ vi.mock('../hooks/useNodes.js', () => ({ useNodes: () => fixture.nodes }));
 vi.mock('../hooks/useLang.js', () => ({ useLang: () => ['en', vi.fn()] }));
 
 import SessionList from './SessionList.jsx';
-import { setSessionTechnical } from '../lib/api.js';
+import { renameNodeLabel, setSessionTechnical } from '../lib/api.js';
 
 function cell(cell, tmuxSession, live, engine = 'claude.native') {
   return { cell, tmuxSession, tmux: live, active: live, engine, key: '', degraded: false };
@@ -202,7 +203,7 @@ describe('mobile roster parity', () => {
     Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: previous });
   });
 
-  it('keeps mobile node aliases and node order local to this interface', async () => {
+  it('renames a direct mobile node on the server and keeps node order local', async () => {
     const user = userEvent.setup();
     fixture.nodes.push({
       name: 'pixel', label: 'Pixel', route: ['relay', 'pixel'], status: 'up', direct: false,
@@ -215,8 +216,8 @@ describe('mobile roster parity', () => {
     await screen.findByText('Relay');
 
     await user.click(screen.getByRole('button', { name: 'rename node Relay' }));
-    expect(await screen.findByText('Hub personale')).toBeTruthy();
-    expect(JSON.parse(localStorage.getItem('nc_node_aliases_v1'))[`id:${'d'.repeat(32)}`]).toBe('Hub personale');
+    await waitFor(() => expect(renameNodeLabel).toHaveBeenCalledWith('test-token', 'relay', 'Hub personale'));
+    expect(localStorage.getItem('nc_node_aliases_v1')).toBeNull();
 
     const pixelHandle = screen.getByRole('button', { name: 'reorder Pixel' });
     pixelHandle.focus();

@@ -30,7 +30,7 @@ function makePairingUrl(dir) {
 // capability-bound e' iniettato separatamente: questi test verificano la state
 // machine della route; la crittografia del probe ha test reali dedicati.
 function scriptedFetch(script) {
-  const calls = { probe: 0, join: 0, confirm: 0, cancel: 0, health: 0, share: 0, shareBodies: [] };
+  const calls = { probe: 0, join: 0, confirm: 0, cancel: 0, health: 0, share: 0, spawns: 0, shareBodies: [] };
   const impl = async (url, opts = {}) => {
     const u = String(url);
     if (u.endsWith('/pair/join')) { calls.join += 1; return script.join(calls.join, opts); }
@@ -59,7 +59,7 @@ function boot(t, fetchScript) {
     platform: 'linux',
     uid: 1000,
     execImpl: () => { throw new Error('exec disabled in test'); },
-    spawnImpl: () => ({ pid: DEAD_PID, unref() {} }),
+    spawnImpl: () => { calls.spawns += 1; return { pid: DEAD_PID, unref() {} }; },
     spawnSyncImpl: () => ({ status: 0 }),
     sshVersion: () => ({ major: 9, minor: 6 }),
     fetchImpl: impl,
@@ -299,6 +299,57 @@ test('Share PWA: pairing resta -L privato, toggle aggiunge/rimuove pubblicazione
   assert.equal(off.status, 200);
   assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
   assert.deepEqual(calls.shareBodies, [{ shared: true }, { shared: false }]);
+});
+
+test('Share PWA: stato OFF invariato riconcilia comunque il supervisor prima di notificare il hub', async (t) => {
+  const { base, token, dir, nodesPath, calls } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID }),
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+    share: () => R(200, { shared: false }),
+  });
+  assert.equal((await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) })).status, 200);
+  assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
+  const before = calls.spawns;
+
+  const response = await fetch(`${base}/api/settings/nodes/peer/share`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ shared: false }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.unchanged, true);
+  assert.equal(body.reconciled, true);
+  assert.equal(calls.spawns, before + 1,
+    'same-state OFF deve rientrare nello start spec-aware, non limitarsi alla notifica hub');
+  assert.deepEqual(calls.shareBodies, [{ shared: false }]);
+  assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
+});
+
+test('Share PWA: un reverse rifiutato espone la permitlisten esatta senza log grezzo', async (t) => {
+  const required = 'permitlisten="127.0.0.1:44001"';
+  const { base, token, dir, nodesPath } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID }),
+    confirm: () => R(200, { ok: true }),
+    health: (attempt) => attempt === 1
+      ? R(200, { ok: true, instanceId: PEER_ID }) : R(503, { error: 'not ready' }),
+    diagnosis: {
+      code: 'reverse-forward-failed',
+      detail: 'il canale inverso non è stato aperto dal nodo hub',
+      hint: `verifica che la chiave SSH autorizzi ${required}`,
+    },
+  });
+  assert.equal((await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) })).status, 200);
+  const response = await fetch(`${base}/api/settings/nodes/peer/share`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ shared: true }),
+  });
+  assert.equal(response.status, 502);
+  const body = await response.json();
+  assert.match(body.detail, /canale inverso/);
+  assert.match(body.hint, /permitlisten="127\.0\.0\.1:44001"/);
+  assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false,
+    'la diagnosi non deve impedire il rollback privato');
 });
 
 test('Share ON: ACK hub fallito torna deterministicamente a -L privato', async (t) => {

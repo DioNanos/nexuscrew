@@ -88,7 +88,8 @@ loopback port and records the result.
 
 ## CLI
 
-The CLI deliberately stays small. Configuration and routine lifecycle work belong in the PWA.
+The PWA remains the visual control surface, while the CLI exposes the complete peer workflow for
+headless hosts and VPS installations.
 
 | Command | Purpose |
 |---|---|
@@ -101,6 +102,14 @@ The CLI deliberately stays small. Configuration and routine lifecycle work belon
 | `nexuscrew boot` | Enable startup persistence |
 | `nexuscrew boot off` | Disable startup persistence while leaving the current runtime alive |
 | `nexuscrew doctor` | Check Node, PTY, tmux, SSH, service and platform integration |
+| `nexuscrew nodes list [--json]` | List direct hubs, connected clients and routed read-only peers |
+| `nexuscrew nodes inspect <name\|nodeId>` | Inspect a peer by stable identity |
+| `nexuscrew nodes edit <name\|nodeId> ...` | Change the canonical label or direction-specific connection settings |
+| `nexuscrew nodes up\|down\|connect\|disconnect\|restart\|reconnect <name\|nodeId>` | Manage a direct node link without requiring the PWA |
+| `nexuscrew nodes share <name\|nodeId> on\|off` | Publish or withdraw a direct node from the authorized network |
+| `nexuscrew nodes remove <name\|nodeId> --yes` | Revoke/forget a direct peer after explicit confirmation |
+| `nexuscrew nodes invite --ssh <target>` | Create a one-time pairing link from a headless hub |
+| `nexuscrew nodes pair\|join` | Read a one-time pairing link from stdin and join headlessly |
 | `nexuscrew help` | Show command help |
 | `nexuscrew version` | Show the installed version |
 
@@ -164,22 +173,14 @@ It shows only the variable name, configured source and affected engines on the s
 Replacing or removing a shared key warns which engines use it; the entered value is transient in
 the browser and is written only to the node-local credential store.
 
-### External fleet manager
+### Built-in Fleet ownership
 
-The built-in Fleet manager can be replaced by a trusted executable, configured as `fleetBin`
-in `~/.nexuscrew/config.json`. The executable must be a regular, non-world-writable file and
-must return the documented `schemaVersion: 1`, `kind: "ai-fleet"` JSON from
-`fleet status --json`. It owns cell and engine configuration and must accept:
+NexusCrew is the only Fleet manager. Cell and engine definitions, lifecycle, boot ownership,
+restart supervision and write-only credentials are all handled by the built-in runtime; no
+external `fleet` executable is discovered or invoked. `nexuscrew-fleet.service` is the optional
+NexusCrew boot companion and starts only cells marked `boot:true`.
 
-```text
-up <Cell> [--engine E] [--boot]
-down <Cell> [--boot]
-engine <Cell> <E>
-boot <Cell>
-noboot <Cell>
-```
-
-Invalid binaries or schemas fail closed. Set `NEXUSCREW_FLEET=0` to disable Fleet entirely.
+Set `NEXUSCREW_FLEET=0` to disable Fleet entirely.
 
 ## Workspaces and terminal behavior
 
@@ -236,10 +237,20 @@ to private, while a failed deactivation remains private and is reconciled after 
 same-name peer or a late allocation collision returns an actionable conflict instead of silently
 creating a duplicate record or consuming the invitation.
 
-Node groups can be renamed and reordered independently in each browser from both desktop and
-mobile lists. These aliases and positions are presentation-only: they never change the technical
-node name, route, credentials, Share state or deck identity. Display precedence is browser alias,
-shared node label, then technical name.
+The Share control reports desired publication separately from verified tunnel reachability. If a
+detached process survives an upgrade with stale `-R` arguments, **Reconnect and reconcile** applies
+the current checkbox state without changing consent and replaces only the verified NexusCrew
+supervisor when its saved command differs. The checkbox itself remains usable while disconnected.
+
+OpenSSH key restrictions still apply after global `AllowTcpForwarding` is enabled. A shared client
+needs its accepted hub key to allow the exact negotiated reverse listener, for example
+`permitlisten="127.0.0.1:44002"`; the actionable tunnel diagnostic prints the actual required port.
+NexusCrew never edits `authorized_keys`, so this policy remains an explicit hub-operator action.
+
+Node groups can be reordered independently in each browser from both desktop and mobile lists.
+Their human-readable label has one server-backed source: rename from Settings or a roster and the
+same canonical label appears everywhere without changing the technical route name, node identity,
+credentials, Share state or deck identity.
 
 Pairing links contain a short-lived one-time invite and routing fields, but no SSH private key,
 provider key or PWA token. Node and deck identities remain owner-qualified across the network,
@@ -382,8 +393,9 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.20**. npm `latest`, the GitHub tag and the release use the
-same audited package artifact.
+The current npm stable release is **v0.8.22** and the local runtime has been migrated to it. The
+GitHub tag and release remain on **v0.8.20** until the prepared `main` release receives explicit
+approval.
 
 ## License
 

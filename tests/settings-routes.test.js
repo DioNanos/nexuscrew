@@ -15,6 +15,7 @@ const WebSocket = require('ws');
 const { createServer } = require('../lib/server.js');
 const nodesStore = require('../lib/nodes/store.js');
 const nodesTunnel = require('../lib/nodes/tunnel.js');
+const topologyCache = require('../lib/nodes/topology-cache.js');
 const pidf = require('../lib/cli/pidfile.js');
 
 // pid che non puo' esistere (>= pid_max tipici o comunque libero): readTunnelState
@@ -64,6 +65,38 @@ const addNode = (base, token, name, extra = {}) =>
     method: 'POST', headers: H(token),
     body: JSON.stringify({ name, ssh: `user@host-${name}`, ...extra }),
   });
+
+test('peer inventory + edit: API aggrega diretti/transitivi e modifica solo il record diretto', async (t) => {
+  const { base, token, home, nodesPath } = await boot(t);
+  assert.equal((await addNode(base, token, 'asus')).status, 200);
+  let st = nodesStore.loadStoreStrict(nodesPath);
+  st = nodesStore.updateNode(st, 'asus', { nodeId: 'a'.repeat(32) });
+  nodesStore.atomicWriteStore(nodesPath, st);
+  topologyCache.atomicWriteCache(topologyCache.defaultPath(home), {
+    schemaVersion: 1,
+    nodes: [{ name: 'mac', instanceId: 'b'.repeat(32), route: ['asus', 'mac'], lastSeen: Date.now() }],
+  });
+
+  const before = await (await fetch(`${base}/api/peers`, { headers: H(token) })).json();
+  assert.equal(before.peers.length, 2);
+  assert.equal(before.peers[0].actions.edit, true);
+  assert.deepEqual(before.peers[1].actions, { inspect: true });
+
+  const edited = await fetch(`${base}/api/settings/nodes/asus`, {
+    method: 'PATCH', headers: H(token),
+    body: JSON.stringify({ label: 'Asus Hub', ssh: 'asus-vps', autostart: true }),
+  });
+  assert.equal(edited.status, 200);
+  const saved = nodesStore.getNode(nodesStore.loadStoreStrict(nodesPath), 'asus');
+  assert.equal(saved.label, 'Asus Hub');
+  assert.equal(saved.ssh, 'asus-vps');
+  assert.equal(saved.nodeId, 'a'.repeat(32), 'edit non cambia identita stabile');
+
+  const routedEdit = await fetch(`${base}/api/settings/nodes/mac`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ label: 'No' }),
+  });
+  assert.equal(routedEdit.status, 404);
+});
 
 // Simula un tunnel "up" senza processi: pidfile col NOSTRO pid e cmd vuoto
 // (isAlive: pid vivo + cmd non verificabile -> up). Solo per /test, MAI per down.

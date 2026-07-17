@@ -266,6 +266,8 @@ test('diagnostica SSH distingue forward negato, auth, host key, DNS e rete senza
   const reverse = tunnel.classifySshFailure('remote port forwarding failed for listen port 44001', 41777);
   assert.equal(reverse.code, 'reverse-forward-failed');
   assert.doesNotMatch(reverse.detail, /ha negato/i, 'a generic remote failure must not claim a policy denial');
+  assert.match(reverse.hint, /permitlisten="127\.0\.0\.1:44001"/,
+    'la remediation deve indicare la porta reverse esatta richiesta alla chiave SSH');
   assert.equal(tunnel.classifySshFailure('remote port forwarding failed: bind 127.0.0.1:44001: Address already in use', 41777).code, 'reverse-forward-bind');
   assert.equal(tunnel.classifySshFailure('unrelated harmless line', 41777), null);
 });

@@ -1,7 +1,6 @@
 'use strict';
-// Task reconciliation Fleet legacy: import di una sessione tmux (cella legacy
-// orfana, es "jarvis") in cella gestita fleet.json + discovery cross-platform
-// del binario fleet legacy ($PREFIX/bin/fleet su Termux).
+// Reconciliation di una sessione tmux non gestita (es. "jarvis") in una cella
+// NexusCrew persistita in fleet.json.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -9,9 +8,6 @@ const os = require('node:os');
 const path = require('node:path');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
 const { loadDefinitions } = require('../lib/fleet/definitions.js');
-const { fleetCandidates, resolveExternalFleet } = require('../lib/fleet/index.js');
-
-const FAKE = path.join(__dirname, 'fixtures', 'fake-fleet.sh');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'ncimp-')); }
 
@@ -133,54 +129,5 @@ test('import-cell: id esplicito duplicato -> 409 conflitto', async () => {
       assert.equal(e.status, 409);
       return true;
     });
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-// --- Discovery fleet legacy cross-platform ($PREFIX/bin/fleet su Termux) -------
-
-test('fleetCandidates: ordine cfg.fleetBin > $PREFIX/bin/fleet > ~/.local/bin/fleet', () => {
-  const c = fleetCandidates({ fleetBin: '/x/fleet', home: '/h', env: { PREFIX: '/data/data/com.termux/files/usr' } });
-  assert.equal(c[0], '/x/fleet', 'config/env esplicita prima');
-  assert.ok(c.includes('/data/data/com.termux/files/usr/bin/fleet'), '$PREFIX/bin/fleet candidato');
-  assert.ok(c.includes(path.join('/h', '.local', 'bin', 'fleet')), '~/.local/bin/fleet candidato');
-});
-
-test('resolveExternalFleet: sceglie un fleet fidato in $PREFIX quando cfg.fleetBin non valido', async () => {
-  const dir = tmp();
-  try {
-    const prefix = path.join(dir, 'prefix');
-    fs.mkdirSync(path.join(prefix, 'bin'), { recursive: true });
-    const bin = path.join(prefix, 'bin', 'fleet');
-    fs.copyFileSync(FAKE, bin);
-    fs.chmodSync(bin, 0o755);
-    // cfg.fleetBin punta a un path inesistente: deve cadere sul candidato $PREFIX
-    const r = await resolveExternalFleet({ home: dir, env: { PREFIX: prefix }, fleetBin: path.join(dir, 'nope') });
-    assert.ok(r && r.fleet.available, 'external valido trovato in $PREFIX');
-    assert.equal(r.bin, bin);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('resolveExternalFleet: nessun candidato valido -> null (resta builtin/disabled, no doppio boot)', async () => {
-  const dir = tmp();
-  try {
-    const r = await resolveExternalFleet({ home: dir, env: {}, fleetBin: path.join(dir, 'nope') });
-    assert.equal(r, null);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('resolveExternalFleet: forced external con fleetBin esplicito non cade sui fallback', async () => {
-  const dir = tmp();
-  try {
-    const prefix = path.join(dir, 'prefix');
-    fs.mkdirSync(path.join(prefix, 'bin'), { recursive: true });
-    const fallback = path.join(prefix, 'bin', 'fleet');
-    fs.copyFileSync(FAKE, fallback); fs.chmodSync(fallback, 0o755);
-    const r = await resolveExternalFleet({
-      home: dir,
-      env: { PREFIX: prefix },
-      fleetProvider: 'external',
-      fleetBin: path.join(dir, 'pinned-but-missing'),
-    });
-    assert.equal(r, null, 'forced external deve fallire chiuso sul path esplicito');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

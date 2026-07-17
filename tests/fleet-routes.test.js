@@ -6,12 +6,11 @@ const os = require('node:os');
 const path = require('node:path');
 const { createServer } = require('../lib/server.js');
 
-const FAKE = path.join(__dirname, 'fixtures', 'fake-fleet.sh');
 const FAKE_TMUX = path.join(__dirname, 'fixtures', 'fake-tmux.sh');
 
 // fleet.json valido minimale per i test del provider BUILTIN. NON serve che il
-// command sia realmente lanciato: i test delle route define/edit/schema/501 non
-// fanno up. Il fixture è un path assoluto, regular file e owner-executable.
+// command sia realmente lanciato per la maggior parte delle route. Il fixture
+// è un path assoluto, regular file e owner-executable.
 const BUILTIN_DEFS = {
   schemaVersion: 1,
   engines: [
@@ -34,9 +33,7 @@ function boot(t, over = {}) {
   }));
 }
 
-// Boot alternativo che forza il provider BUILTIN su un fleet.json temporaneo.
-// fleetProvider:'builtin' vincola selectProvider (evita che il default real-device
-// fleetBin vinca in auto-mode).
+// Boot con un fleet.json temporaneo gestito dal provider interno NexusCrew.
 async function bootBuiltin(t, over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncflbi-'));
   const defsPath = path.join(dir, 'fleet.json');
@@ -45,7 +42,6 @@ async function bootBuiltin(t, over = {}) {
   fs.chmodSync(defsPath, 0o600);
   const r = await boot(t, {
     home: dir,
-    fleetProvider: 'builtin',
     fleetDefsPath: defsPath,
     providerSecretsPath: path.join(dir, '.nexuscrew', 'providers.env'),
     providerShellPath: path.join(dir, '.config', 'ai-shell', 'providers.zsh'),
@@ -70,19 +66,18 @@ test('fleet unavailable: status {available:false} + provider/caps, comandi 404',
   assert.equal(up.status, 404);
 });
 
-test('fleet available: status celle, up ok, cella ignota 400, Bearer richiesto', async (t) => {
-  const { base, token } = await boot(t, { fleetBin: FAKE, fleetProvider: 'external' });
+test('fleet builtin: Bearer richiesto, status e lifecycle disponibili', async (t) => {
+  const { base, token } = await bootBuiltin(t);
   assert.equal((await fetch(`${base}/api/fleet/status`)).status, 401);
   const st = await (await fetch(`${base}/api/fleet/status`, { headers: H(token) })).json();
   assert.equal(st.available, true);
-  assert.equal(st.cells.length, 3);
-  // external legacy: provider derivato + DEFAULT_CAPS (niente define/schema)
-  assert.equal(st.provider, 'external');
-  assert.equal(st.bootOwner, 'external');
+  assert.equal(st.cells.length, 1);
+  assert.equal(st.provider, 'builtin');
+  assert.equal(st.bootOwner, 'builtin');
   assert.equal(st.capabilities.includes('status'), true);
-  assert.equal(st.capabilities.includes('schema'), false);
-  const up = await fetch(`${base}/api/fleet/up`, { method: 'POST', headers: H(token), body: JSON.stringify({ cell: 'Build', engine: 'glm-a', boot: true }) });
-  assert.deepEqual(await up.json(), { ok: true });
+  assert.equal(st.capabilities.includes('schema'), true);
+  const up = await fetch(`${base}/api/fleet/up`, { method: 'POST', headers: H(token), body: JSON.stringify({ cell: 'Dev', boot: true }) });
+  assert.equal(up.status, 200);
   const bad = await fetch(`${base}/api/fleet/up`, { method: 'POST', headers: H(token), body: JSON.stringify({ cell: 'Nope' }) });
   assert.equal(bad.status, 400);
 });
@@ -233,32 +228,6 @@ test('builtin lifecycle: up preserva boot se omesso; PowerSheet puo abilitarlo o
   assert.equal((await definitions()).cells[0].boot, true, 'avvia al boot persiste lo stato');
 });
 
-test('external legacy: /schema -> 501 (capability mancante, design 9c)', async (t) => {
-  const { base, token } = await boot(t, { fleetBin: FAKE, fleetProvider: 'external' });
-  const r = await fetch(`${base}/api/fleet/schema`, { headers: H(token) });
-  assert.equal(r.status, 501);
-  assert.match((await r.json()).error, /not supported/);
-});
-
-test('external legacy: /import-cell -> 501 (capability dedicata mancante)', async (t) => {
-  const { base, token } = await boot(t, { fleetBin: FAKE, fleetProvider: 'external' });
-  const r = await fetch(`${base}/api/fleet/import-cell`, {
-    method: 'POST', headers: H(token), body: JSON.stringify({ tmuxSession: 'legacy', engine: 'sh' }),
-  });
-  assert.equal(r.status, 501);
-  assert.match((await r.json()).error, /not supported/);
-});
-
-test('restart: provider legacy senza capability restart -> 501', async (t) => {
-  // DEFAULT_CAPS non include 'restart' (solo il built-in lo espone): route -> 501.
-  const { base, token } = await boot(t, { fleetBin: FAKE, fleetProvider: 'external' });
-  const r = await fetch(`${base}/api/fleet/restart`, {
-    method: 'POST', headers: H(token), body: JSON.stringify({ cell: 'Dev' }),
-  });
-  assert.equal(r.status, 501);
-  assert.match((await r.json()).error, /not supported/);
-});
-
 test('builtin: /status capabilities include restart (capability del built-in)', async (t) => {
   // verifica indiretta che il builtin espone 'restart': non viene lanciato davvero
   // (manca il mock tmux a livello route) — si controlla solo la capability negoziata.
@@ -291,23 +260,4 @@ test('READONLY: builtin blocca mutazioni (403) ma lascia passare letture', async
   const def = { id: 'codex', command: '/bin/sh', promptMode: 'send-keys' };
   assert.equal((await post('define-engine', { def })).status, 403);
   assert.equal((await post('up', { cell: 'Dev' })).status, 403);
-});
-
-test('READONLY a livello route: blocca le mutazioni anche sul provider EXTERNAL legacy', async (t) => {
-  // Audit impl finding #3 (MAJOR): il gate readonly del builtin non copre
-  // l'external (createFleet legacy non lo controlla) — l'enforcement vive
-  // nel router, PRIMA del dispatch, per QUALUNQUE provider.
-  const { base, token } = await boot(t, { readonlyDefault: true });
-  const H = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
-  // status resta leggibile
-  assert.equal((await fetch(`${base}/api/fleet/status`, { headers: H })).status, 200);
-  // ogni mutazione → 403, senza raggiungere il fleet esterno
-  for (const [route, body] of [
-    ['up', { cell: 'Dev' }], ['down', { cell: 'Dev' }],
-    ['engine', { cell: 'Dev', engine: 'native' }], ['boot', { cell: 'Dev', enabled: true }],
-    ['define-engine', { def: {} }], ['edit-cell', { id: 'x', patch: {} }],
-  ]) {
-    const r = await fetch(`${base}/api/fleet/${route}`, { method: 'POST', headers: H, body: JSON.stringify(body) });
-    assert.equal(r.status, 403, `${route} deve dare 403 in READONLY (external)`);
-  }
 });

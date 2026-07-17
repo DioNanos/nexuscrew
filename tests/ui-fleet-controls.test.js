@@ -184,11 +184,19 @@ test('a connected client delegates new invitations to its outbound hub', () => {
 test('Share publishes the local device through the selected hub, not the remote target card', () => {
   const settings = read('SettingsPanel.jsx');
   assert.match(settings, /share-local-through/);
-  assert.match(settings, /setNodeShare\(token, shareHub\.name/);
+  assert.match(settings, /setNodeShare\(token, shareHub\.name, shared\)/);
   assert.match(settings, /shareHub\.label \|\| shareHub\.name/);
-  const nodeCards = settings.slice(settings.indexOf("(nodes || []).map"));
+  assert.match(settings, /applyShare\(shareHub\.shared === true\)/,
+    'un tunnel down deve offrire la riconciliazione dello stato corrente senza invertire Share');
+  assert.match(settings, /share-local-pending/);
+  assert.match(settings, /share-local-private-down/);
+  assert.match(settings, /e\?\.data && typeof e\.data\.hint === 'string'/,
+    'la remediation strutturata della PATCH Share deve essere visibile nella UI');
+  assert.doesNotMatch(settings, /!shareTunnel\?\.up && !shareHub\.shared/,
+    'il checkbox Share non deve restare bloccato quando il tunnel e giu');
+  const nodeCards = settings.slice(settings.indexOf('peerGroups.map'));
   assert.doesNotMatch(nodeCards, /setNodeShare\(token, n\.name/);
-  assert.match(nodeCards, /n\.direction === 'inbound' && n\.shared/);
+  assert.match(nodeCards, /actions\.visibility && n\.shared/);
   assert.match(nodeCards, /setNodeVisibility\(token, n\.name/,
     'the hub keeps visibility ACL controls for shared inbound clients');
 });

@@ -91,12 +91,12 @@ test('pairing v2: con Host SSH e senza name deriva sempre lo slug dalla label', 
   const p = path.join(dir, 'invites.json');
   const made = peering.createInvite({
     invitesPath: p, instanceId: 'd'.repeat(32), port: 41820,
-    label: 'Edge 3 Relay', ssh: 'edge3-relay',
+    label: 'VPS 3 Relay', ssh: 'vps3-relay',
   });
   const parsed = peering.parsePairingUrl(made.pairingUrl);
   assert.equal(made.version, 2);
-  assert.equal(parsed.name, 'edge-3-relay');
-  assert.equal(parsed.ssh, 'edge3-relay');
+  assert.equal(parsed.name, 'vps-3-relay');
+  assert.equal(parsed.ssh, 'vps3-relay');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -119,7 +119,7 @@ test('pairing strict allowlist: campi ignoti o segreti -> rifiutato (null)', () 
   const base = made.pairingUrl;
   // Campo segreto in più (identityFile) -> rifiutato
   const x = JSON.parse(Buffer.from(new URL(base).hash.replace(/^#pair=/, ''), 'base64url').toString('utf8'));
-  const withSecret = { ...x, identityFile: '/home/example/.ssh/id_ed25519' };
+  const withSecret = { ...x, identityFile: '/home/alice/.ssh/id_ed25519' };
   const url = `http://127.0.0.1:41822/#pair=${Buffer.from(JSON.stringify(withSecret)).toString('base64url')}`;
   assert.equal(peering.parsePairingUrl(url), null);
   // apiKey extra -> rifiutato

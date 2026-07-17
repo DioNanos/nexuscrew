@@ -26,14 +26,14 @@ const SIDE_MAX_W = 480;
 // Collassabile (mini 48px, solo dot) e ridimensionabile (maniglia bordo destro).
 export default function Sidebar({
   sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onNodePower, onKill, onVisibility, onNew,
-  onSettings, localNodeId, width = 240, collapsed = false, onResize, onToggleCollapse,
+  onNodeRename, onSettings, localNodeId, width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   const {
     pins, orders, togglePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
   const {
-    groupsFor: preferredGroups, renameNode, moveNode, stepNode, nodeKey,
+    groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
   } = useNodePreferences();
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
   const byName = new Map((sessions || []).map((s) => [s.name, s]));
@@ -64,10 +64,13 @@ export default function Sidebar({
     ...(node ? { node } : {}),
     ...(OWNER_ID_RE.test(String(ownerId || '')) ? { ownerId } : {}),
   });
-  const promptNodeRename = (group) => {
-    const next = window.prompt(`${t('rename-node-prompt')}\n${t('rename-node-reset')}`, group.label || group.name);
+  const promptNodeRename = async (group) => {
+    if (!group?.direct || !onNodeRename) return;
+    const next = window.prompt(t('rename-node-prompt'), group.label || group.name);
     if (next === null) return;
-    if (!renameNode(group, next)) window.alert(t('rename-node-invalid'));
+    try {
+      if (!await onNodeRename(group, next)) window.alert(t('rename-node-invalid'));
+    } catch (error) { window.alert(String(error?.message || error)); }
   };
   // Tooltip mini via JS (position:fixed): il ::after CSS veniva CLIPPATO
   // dall'overflow della sidebar da 48px.
@@ -301,7 +304,7 @@ export default function Sidebar({
         <div key={`nodo-${(g.route || [g.name]).join('/')}`} className="nc-node-order-wrap"
           data-node-order-key={nodeKey(g)}>
           <div className="nc-side-group-title nc-node-title" role="button" tabIndex={0}
-            onContextMenu={(e) => { e.preventDefault(); promptNodeRename(g); }}
+            onContextMenu={g.direct && onNodeRename ? (e) => { e.preventDefault(); promptNodeRename(g); } : undefined}
             onClick={() => updateView(nodeRoute, { open: !groupView.open })}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); updateView(nodeRoute, { open: !groupView.open }); } }}>
             <RosterHandle scope="node" position="nodes" itemKey={nodeKey(g)} label={g.label || g.name}
@@ -321,9 +324,9 @@ export default function Sidebar({
               <option value="all">{t('view-all')}</option><option value="pinned">{t('view-pinned')}</option>
               <option value="active">{t('view-active')}</option><option value="off">{t('view-off')}</option><option value="technical">{t('view-technical')}</option>
             </select>
-            <button type="button" className="nc-node-rename" title={t('rename-node')}
+            {g.direct && onNodeRename && <button type="button" className="nc-node-rename" title={t('rename-node')}
               aria-label={`${t('rename-node')} ${g.label || g.name}`}
-              onClick={(e) => { e.stopPropagation(); promptNodeRename(g); }}>✎</button>
+              onClick={(e) => { e.stopPropagation(); promptNodeRename(g); }}>✎</button>}
             {g.direct && g.health && g.health.managed !== false && (
               <button type="button" className={`nc-power${g.tunnelStatus === 'up' ? ' on' : ''}`}
                 title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}

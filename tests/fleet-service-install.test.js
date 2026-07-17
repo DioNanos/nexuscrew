@@ -176,7 +176,7 @@ test('selectProviderModeSync: disabled se fleetEnabled=false', () => {
   assert.equal(selectProviderModeSync({ fleetEnabled: false }).mode, 'disabled');
 });
 
-test('selectProviderModeSync: builtin se fleet.json valido e nessun external fidato', () => {
+test('selectProviderModeSync: builtin se fleet.json valido', () => {
   const home = tmpHome();
   const defsPath = path.join(home, '.nexuscrew', 'fleet.json');
   writeValidFleet(defsPath, home);
@@ -185,16 +185,19 @@ test('selectProviderModeSync: builtin se fleet.json valido e nessun external fid
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('selectProviderModeSync: external se fleetBin fidato presente (no companion, no doppio boot)', () => {
+test('selectProviderModeSync: un vecchio binario fleet non cambia il provider builtin', () => {
   const home = tmpHome();
-  const bin = path.join(home, 'fleet'); // regular file + exec + non world-writable = fidato
+  const defsPath = path.join(home, '.nexuscrew', 'fleet.json');
+  writeValidFleet(defsPath, home);
+  const bin = path.join(home, '.local', 'bin', 'fleet');
+  fs.mkdirSync(path.dirname(bin), { recursive: true });
   fs.writeFileSync(bin, '#!/bin/sh\n', { mode: 0o755 });
-  const r = selectProviderModeSync({ home, fleetBin: bin });
-  assert.equal(r.mode, 'external');
+  const r = selectProviderModeSync({ home, fleetDefsPath: defsPath });
+  assert.equal(r.mode, 'builtin');
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('selectProviderModeSync: scopre $PREFIX/bin/fleet come il resolver runtime Termux', () => {
+test('selectProviderModeSync: ignora anche un vecchio fleet sotto $PREFIX', () => {
   const home = tmpHome();
   const prefix = path.join(home, 'termux-prefix');
   const bin = path.join(prefix, 'bin', 'fleet');
@@ -205,41 +208,20 @@ test('selectProviderModeSync: scopre $PREFIX/bin/fleet come il resolver runtime 
   const r = selectProviderModeSync({
     home,
     fleetDefsPath: defsPath,
-    fleetBin: path.join(home, 'missing-fleet'),
     env: { PREFIX: prefix },
   });
-  assert.equal(r.mode, 'external', 'init non deve installare il companion builtin');
-  assert.match(r.reason, /termux-prefix/);
+  assert.equal(r.mode, 'builtin');
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('selectProviderModeSync: forced onorati (disabled / builtin fail-closed senza fleet.json)', () => {
+test('selectProviderModeSync: fleet.json mancante fallisce chiuso', () => {
   const home = tmpHome();
   const missing = path.join(home, '.nexuscrew', 'fleet.json');
-  assert.equal(selectProviderModeSync({ home, fleetDefsPath: missing, fleetProvider: 'disabled' }).mode, 'disabled');
-  // forced builtin ma fleet.json mancante -> fail-closed disabled (§9g), senza
-  // dipendere dall'eventuale fleet.json reale dell'utente che esegue la suite.
-  assert.equal(selectProviderModeSync({ home, fleetDefsPath: missing, fleetProvider: 'builtin' }).mode, 'disabled');
+  assert.equal(selectProviderModeSync({ home, fleetDefsPath: missing }).mode, 'disabled');
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('selectProviderModeSync: forced external non sostituisce un fleetBin pinnato con $PREFIX', () => {
-  const home = tmpHome();
-  const prefix = path.join(home, 'termux-prefix');
-  const fallback = path.join(prefix, 'bin', 'fleet');
-  fs.mkdirSync(path.dirname(fallback), { recursive: true });
-  fs.writeFileSync(fallback, '#!/bin/sh\n', { mode: 0o755 });
-  const r = selectProviderModeSync({
-    home,
-    env: { PREFIX: prefix },
-    fleetProvider: 'external',
-    fleetBin: path.join(home, 'missing-pinned-fleet'),
-  });
-  assert.equal(r.mode, 'disabled');
-  fs.rmSync(home, { recursive: true, force: true });
-});
-
-test('selectProviderModeSync: auto disabled se niente external nè fleet.json', () => {
+test('selectProviderModeSync: auto disabled se fleet.json non esiste', () => {
   const home = tmpHome();
   const r = selectProviderModeSync({ home, fleetDefsPath: path.join(home, '.nexuscrew', 'fleet.json') });
   assert.equal(r.mode, 'disabled');
@@ -286,22 +268,6 @@ test('runInit companion: NEXUSCREW_READONLY=1 (env) -> non installato (§9d)', (
   } finally {
     delete process.env.NEXUSCREW_READONLY;
   }
-  fs.rmSync(home, { recursive: true, force: true });
-});
-
-test('runInit companion: provider external -> non installato (§9b)', () => {
-  const home = tmpHome();
-  const fleetTarget = path.join(home, 'fleet.service');
-  const r = runInit({
-    platform: 'linux', home, tmuxOk: true,
-    installPath: path.join(home, 'svc.service'), fleetInstallPath: fleetTarget,
-    selectProvider: () => ({ mode: 'external' }),
-    migrationGate: () => ({ blocked: false }),
-    execImpl: () => {},
-    log: () => {},
-  });
-  assert.ok(r.actions.some((a) => /fleet companion: non installato \(provider external\)/.test(a)));
-  assert.ok(!fs.existsSync(fleetTarget));
   fs.rmSync(home, { recursive: true, force: true });
 });
 

@@ -24,8 +24,8 @@ export default function PowerSheet({ cell, token, route = [], onConfirm, onClose
   const isOn = !!(cell && cell.active);
   const routeKey = Array.isArray(route) ? route.join('/') : '';
 
-  // Definizioni + status sulla route corretta: builtin mostra engine/model/policy;
-  // external senza 'definitions' degrada a soli lifecycle+boot (niente controlli finti).
+  // Definizioni + status sulla route corretta. Se il nodo non espone ancora le
+  // definizioni, il foglio degrada a lifecycle+boot senza controlli fittizi.
   const [engines, setEngines] = useState([]);
   const [canEdit, setCanEdit] = useState(false);
   useEffect(() => {
@@ -171,7 +171,7 @@ export default function PowerSheet({ cell, token, route = [], onConfirm, onClose
               <div className="nc-power-config">
                 <span>{t('engine')}</span><b>{cell?.engine || '—'}</b>
                 {cell?.model && <small>{t('model')}: {cell.model}</small>}
-                <small>{t('launch-external-hint')}</small>
+                <small>{t('launch-unavailable-hint')}</small>
               </div>
             )}
             <label className="nc-check">

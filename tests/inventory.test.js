@@ -13,7 +13,7 @@ const ID = 'a'.repeat(32);
 test('inventario: posizione remota con fleet mostra cells attive+inattive e unmanaged', async () => {
   const { buildNodeGroups } = await nodes();
   const g = buildNodeGroups({
-    nodes: [{ name: 'vps', label: 'Relay3', tunnel: { status: 'up' }, nodeId: ID }],
+    nodes: [{ name: 'vps', label: 'VPS3', tunnel: { status: 'up' }, nodeId: ID }],
     remote: { vps: { sessions: [{ name: 'work' }, { name: 'cloud-dev' }] } },
     fleet: { vps: { available: true, capabilities: ['status', 'up', 'down', 'edit'],
       cells: [
@@ -115,10 +115,10 @@ test('inventario: client inbound privato resta fuori dalla sidebar e non accumul
 test('inventario: label umana usata quando presente (fallback a name)', async () => {
   const { buildNodeGroups } = await nodes();
   const withLabel = buildNodeGroups({
-    nodes: [{ name: 'vps', label: 'Relay3 Server', tunnel: { status: 'up' }, nodeId: ID }],
+    nodes: [{ name: 'vps', label: 'VPS3 Server', tunnel: { status: 'up' }, nodeId: ID }],
     remote: { vps: { sessions: [] } }, down: {},
   });
-  assert.equal(withLabel[0].label, 'Relay3 Server');
+  assert.equal(withLabel[0].label, 'VPS3 Server');
   const noLabel = buildNodeGroups({
     nodes: [{ name: 'vps', tunnel: { status: 'up' }, nodeId: ID }],
     remote: { vps: { sessions: [] } }, down: {},
@@ -142,7 +142,7 @@ test('inventario: engines e route restano associati alle celle remote per il Pow
   const groups = buildNodeGroups({
     nodes: [{ name: 'relay', nodeId: 'a'.repeat(32), tunnel: { status: 'up' } }],
     remote: { relay: { sessions: [] } },
-    fleet: { relay: { available: true, capabilities: ['up', 'down'], engines: [{ id: 'claude.zai-p' }], cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev', active: false, engine: 'claude.zai-p' }] } },
+    fleet: { relay: { available: true, capabilities: ['up', 'down'], engines: [{ id: 'claude.zai-p' }], cells: [{ cell: 'Worker', tmuxSession: 'cloud-Worker', active: false, engine: 'claude.zai-p' }] } },
   });
   assert.deepEqual(groups[0].engines, [{ id: 'claude.zai-p' }]);
   assert.deepEqual(groups[0].cells[0].route, ['relay']);
