@@ -61,6 +61,8 @@ test('installFleetService linux: scrive unit + daemon-reload + enable, NESSUN re
   const onDisk = fs.readFileSync(target, 'utf8');
   assert.ok(onDisk.includes('fleet-boot'));
   assert.ok(/Type=oneshot/.test(onDisk));
+  assert.match(onDisk, /KillMode=process/,
+    'fleet oneshot must not reap the shared tmux server when ExecStart exits');
   // daemon-reload + enable del companion; NESSUN restart (oneshot, parte al boot)
   assert.ok(calls.some(([b, a]) => b === 'systemctl' && a.join(' ') === '--user daemon-reload'));
   assert.ok(calls.some(([b, a]) => b === 'systemctl' && a.join(' ') === '--user enable nexuscrew-fleet.service'));

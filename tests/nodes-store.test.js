@@ -124,6 +124,31 @@ test('parseStore: rendezvous opzionale, strict', () => {
   assert.equal(bad, null);
 });
 
+test('deriveNodeHandle: slug stabile da label + nodeId, mai localhost nudo', () => {
+  const asus = store.deriveNodeHandle('AsusRP3', 'localhost', '5bd6'.repeat(8));
+  const pixel = store.deriveNodeHandle('', 'localhost', 'a17c'.repeat(8));
+  assert.equal(asus, 'asus-rp3-5bd6');
+  assert.equal(pixel, 'nexuscrew-a17c');
+  assert.equal(store.deriveNodeHandle('AsusRP3', 'localhost', '5bd6'.repeat(8)), asus,
+    'retry dello stesso nodeId deve essere deterministico');
+  assert.notEqual(asus, pixel, 'due Termux con hostname localhost devono avere route diverse');
+});
+
+test('deriveNodeHandle: collisione estende il suffisso stabile senza random', () => {
+  const id = '5bd61234'.repeat(4);
+  assert.equal(store.deriveNodeHandle('Asus RP3', 'localhost', id), 'asus-rp3-5bd6');
+  assert.equal(
+    store.deriveNodeHandle('Asus RP3', 'localhost', id, ['asus-rp3-5bd6']),
+    'asus-rp3-5bd612',
+  );
+  assert.equal(
+    store.deriveNodeHandle('asus-rp3-5bd6', 'localhost', id, ['asus-rp3-5bd6']),
+    'asus-rp3-5bd612',
+    'un handle gia suffissato non deve duplicare il suffisso',
+  );
+  assert.throws(() => store.deriveNodeHandle('Asus', 'localhost', 'not-a-node-id'), /nodeId/);
+});
+
 // --- I/O: permessi 0600, atomicita, no symlink ------------------------------
 
 test('atomicWriteStore + loadStore: 0600, round-trip, rifiuta symlink target', () => {

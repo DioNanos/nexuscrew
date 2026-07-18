@@ -6,6 +6,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const pidf = require('../lib/cli/pidfile.js');
+const { atomicWrite: writeFleet } = require('../lib/fleet/definitions.js');
+const { defaultDefinitions } = require('../lib/fleet/managed.js');
 const { dispatch, serve, start, stop, status, parseFlags, HELP,
   smartUp, url, tokenRotate, logs, update, doctor, restart,
   findAvailablePort, openPwa, startPortable, stopManagedTunnels } = require('../lib/cli/commands.js');
@@ -17,6 +19,7 @@ function initHome(port = 41822, token = 'SECRETTOKEN12345') {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ port }) + '\n', { mode: 0o600 });
   fs.writeFileSync(path.join(dir, 'token'), token + '\n', { mode: 0o600 });
+  writeFleet(path.join(dir, 'fleet.json'), defaultDefinitions());
   return { home, token, port };
 }
 
@@ -63,6 +66,24 @@ test('dispatch: help -> code 0, stampa HELP', () => {
   assert.equal(dispatch(['--bogus'], { log: () => {} }).code, 1);
 });
 
+test('dispatch: init e pubblico, idempotente e inoltra dry-run/port senza tmux runtime', () => {
+  const calls = [];
+  const opts = {
+    log: () => {},
+    runInitImpl: (value) => { calls.push(value); return { actions: [] }; },
+  };
+  assert.equal(dispatch(['init', '--dry-run', '--port', '41923'], opts).code, 0);
+  assert.equal(dispatch(['init'], opts).code, 0);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].dryRun, true);
+  assert.equal(calls[0].port, 41923);
+  assert.equal(calls[1].dryRun, false);
+  assert.equal(calls[1].port, undefined);
+  assert.match(HELP, /nexuscrew init/);
+  assert.equal(dispatch(['init', '--port', '70000'], opts).code, 1);
+  assert.equal(calls.length, 2, 'porta invalida non deve invocare init');
+});
+
 test('dispatch: no args -> background, mini summary senza token + wizard solo al primo avvio', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-smartup-'));
   const logs = [];
@@ -104,6 +125,26 @@ test('smart-up configurato: avvia/riusa in background senza aprire; show apre', 
   const shown = await dispatch(['show'], common);
   assert.equal(shown.code, 0);
   assert.equal(opened.length, 1);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('smart-up ripara fleet.json mancante e riavvia un runtime gia vivo', async () => {
+  const { home } = initHome();
+  const fleetPath = path.join(home, '.nexuscrew', 'fleet.json');
+  fs.unlinkSync(fleetPath);
+  let restarts = 0;
+  const r = await smartUp({
+    home, platform: 'linux', probeImpl: async () => true,
+    execImpl: () => { throw new Error('inactive'); },
+    restartImpl: () => { restarts += 1; return { restarted: true }; },
+    waitAttempts: 1,
+  });
+  assert.equal(r.running, true);
+  assert.equal(restarts, 1);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(fleetPath, 'utf8')).engines.map((engine) => engine.id),
+    ['claude.native', 'codex.native', 'codex-vl.native', 'pi.native'],
+  );
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -316,11 +357,11 @@ test('managed stop/restart guard failure leaves portable owner and tunnels untou
   }
 });
 
-// --- dispatch init (tmpdir, dry-run) ---
+// --- legacy commands removed from the public surface ---
 
-test('legacy configuration commands are not public CLI commands', () => {
+test('legacy configuration commands restano privati mentre init e pubblico', () => {
   const logs = [];
-  for (const command of ['init', 'start', 'url', 'logs', 'update']) {
+  for (const command of ['start', 'url', 'logs', 'update']) {
     assert.equal(dispatch([command], { log: (m) => logs.push(m) }).code, 1);
   }
   assert.ok(logs.join('\n').includes('nexuscrew show'));
@@ -330,8 +371,19 @@ test('legacy configuration commands are not public CLI commands', () => {
 
 test('serve: serverStart chiamato (mock)', () => {
   let called = false;
-  serve({ serverStart: () => { called = true; } });
+  serve({ fleetEnabled: false, serverStart: () => { called = true; } });
   assert.equal(called, true);
+});
+
+test('serve: bootstrap Fleet copre service manager e Termux:Boot', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-serve-fleet-'));
+  let presentAtStart = false;
+  serve({
+    home,
+    serverStart: () => { presentAtStart = fs.existsSync(path.join(home, '.nexuscrew', 'fleet.json')); },
+  });
+  assert.equal(presentAtStart, true);
+  fs.rmSync(home, { recursive: true, force: true });
 });
 
 test('serve --pidfile: scrive pidfile + cleanup (mock serverStart)', () => {
@@ -339,7 +391,7 @@ test('serve --pidfile: scrive pidfile + cleanup (mock serverStart)', () => {
   process.env.NEXUSCREW_PIDFILE = tmpPid;
   fs.rmSync(tmpPid, { force: true });
   let started = false;
-  serve({ pidfile: true, serverStart: () => { started = true; } });
+  serve({ pidfile: true, fleetEnabled: false, serverStart: () => { started = true; } });
   assert.equal(started, true);
   assert.ok(fs.existsSync(tmpPid)); // pidfile scritto
   // cleanup su exit
@@ -355,7 +407,7 @@ test('serve --pidfile: already-running -> throw (no double start)', () => {
   // pre-crea pidfile con pid vivo (self)
   fs.writeFileSync(tmpPid, JSON.stringify({ pid: process.pid, cmd: 'node', startTs: Date.now() }) + '\n');
   assert.throws(
-    () => serve({ pidfile: true, serverStart: () => {} }),
+    () => serve({ pidfile: true, fleetEnabled: false, serverStart: () => {} }),
     /already running/i,
   );
   fs.rmSync(tmpPid, { force: true });
@@ -530,7 +582,7 @@ test('restart portable usa lo stesso owner; un conflitto viene ricondotto al man
 
 test('dispatch serve: chiama serve + keepAlive (no exit, server resta vivo)', () => {
   let called = false;
-  const r = dispatch(['serve'], { serverStart: () => { called = true; }, log: () => {} });
+  const r = dispatch(['serve'], { fleetEnabled: false, serverStart: () => { called = true; }, log: () => {} });
   assert.equal(r.code, 0);
   assert.equal(r.keepAlive, true); // serve non deve exit (server.listen tiene il processo)
   assert.equal(called, true);
@@ -738,7 +790,25 @@ test('doctor: tmux mancante -> code 1', () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('doctor: KillMode control-group e un blocker perche il restart uccide tmux', () => {
+test('doctor: fleet.json mancante o invalido e un FAIL azionabile', () => {
+  const { checkFleetDefinitions } = require('../lib/cli/doctor.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-doctor-fleet-'));
+  const fleetPath = path.join(home, '.nexuscrew', 'fleet.json');
+  const missing = checkFleetDefinitions(home, fleetPath, true);
+  assert.equal(missing.ok, false);
+  assert.match(missing.detail, /assente.*nexuscrew/);
+  fs.mkdirSync(path.dirname(fleetPath), { recursive: true });
+  fs.writeFileSync(fleetPath, '{broken\n', { mode: 0o600 });
+  const invalid = checkFleetDefinitions(home, fleetPath, true);
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.detail, /invalido.*preservato/);
+  const disabled = checkFleetDefinitions(home, fleetPath, false);
+  assert.equal(disabled.ok, true);
+  assert.equal(disabled.warn, true);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('doctor: controlla anche il companion Fleet e blocca KillMode control-group', () => {
   const { home } = initHome();
   const svc = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
   fs.mkdirSync(path.dirname(svc), { recursive: true });
@@ -748,13 +818,19 @@ test('doctor: KillMode control-group e un blocker perche il restart uccide tmux'
     execImpl: (_bin, args) => {
       if (args.includes('is-active')) return 'active';
       if (args.includes('is-enabled')) return 'enabled';
-      if (args.includes('--property=KillMode')) return 'control-group';
+      if (args.includes('--property=LoadState')) return 'loaded';
+      if (args.includes('--property=KillMode')) {
+        return args.includes('nexuscrew-fleet.service') ? 'control-group' : 'process';
+      }
       return '';
     },
     ptyLoad: () => ({}), commandExists: () => true,
   });
   assert.equal(r.code, 1);
-  assert.ok(r.checks.some((c) => c.name.includes('tmux survival') && !c.ok && /control-group/.test(c.detail)));
+  assert.ok(r.checks.some((c) => c.name.includes('tmux survival')
+    && !c.ok
+    && /nexuscrew\.service: KillMode=process/.test(c.detail)
+    && /nexuscrew-fleet\.service: KillMode=control-group/.test(c.detail)));
   fs.rmSync(home, { recursive: true, force: true });
 });
 

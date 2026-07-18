@@ -48,6 +48,14 @@ test('PWA invite -> public one-time join creates an inbound scoped peer', async 
   });
   assert.equal(badPortOnly.status, 400, 'sshPort senza target SSH non deve sparire silenziosamente');
   const body = { invite: fullInvite.invite, instanceId: 'b'.repeat(32), name: 'pixel', port: 41821, acceptToken: 'pixel-accept-secret', roles: { client: true, node: false } };
+  const legacyLocalhost = await fetch(`${base}/pair/join`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...body, name: 'localhost', label: 'AsusRP3' }),
+  });
+  assert.equal(legacyLocalhost.status, 409, 'localhost e riservato anche prima della prima collisione');
+  const legacyConflict = await legacyLocalhost.json();
+  assert.equal(legacyConflict.code, 'peer-name-conflict');
+  assert.equal(legacyConflict.suggestedName, 'asus-rp3-bbbb');
   const escalation = await fetch(`${base}/pair/join`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ ...body, shared: true }),
@@ -72,10 +80,11 @@ test('PWA invite -> public one-time join creates an inbound scoped peer', async 
   assert.equal(sameName.status, 409);
   const sameNameBody = await sameName.json();
   assert.equal(sameNameBody.code, 'peer-name-conflict');
+  assert.equal(sameNameBody.suggestedName, 'pixel-cccc');
   assert.ok(sameNameBody.hint);
   const joined2 = await fetch(`${base}/pair/join`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ...body2, name: 'tablet' }),
+    body: JSON.stringify({ ...body2, name: sameNameBody.suggestedName }),
   });
   assert.equal(joined2.status, 200);
   const j2 = await joined2.json();
@@ -93,7 +102,7 @@ test('PWA invite -> public one-time join creates an inbound scoped peer', async 
   assert.equal(confirmed2.status, 200);
   const peersAfterConcurrentConfirm = store.loadStore(nodesPath).nodes;
   assert.equal(new Set(peersAfterConcurrentConfirm.map((node) => node.localPort)).size, 2);
-  assert.deepEqual(peersAfterConcurrentConfirm.map((node) => node.name).sort(), ['pixel', 'tablet']);
+  assert.deepEqual(peersAfterConcurrentConfirm.map((node) => node.name).sort(), ['pixel', 'pixel-cccc']);
   const identityConsumed = await peering.probeTransportReady({
     port: made.server.address().port, capability: j.credential,
     expectedInstanceId: 'a'.repeat(32), attempts: 1,

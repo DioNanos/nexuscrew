@@ -119,7 +119,25 @@ test('GET /settings: 401 senza Bearer, vista completa con Bearer (firstRun true)
   assert.equal(s.platform, 'linux');
   assert.deepEqual(s.service, { installed: false, active: false, boot: false });
   assert.equal(typeof s.version, 'string');
+  assert.match(s.nodeId, /^[a-f0-9]{32}$/);
+  assert.ok(s.localName.endsWith(`-${s.nodeId.slice(0, 4)}`));
+  assert.notEqual(s.localName, 'localhost');
   assert.equal(s.rendezvous, undefined);
+});
+
+test('GET /settings: due Termux hostname localhost ricevono handle stabili distinti dal nodeId', async (t) => {
+  const first = await boot(t, {}, { hostname: () => 'localhost' });
+  const second = await boot(t, {}, { hostname: () => 'localhost' });
+  nodesStore.atomicWriteStore(first.nodesPath, nodesStore.emptyStore('1'.repeat(32)));
+  nodesStore.atomicWriteStore(second.nodesPath, nodesStore.emptyStore('2'.repeat(32)));
+
+  const a = await (await fetch(`${first.base}/api/settings`, { headers: H(first.token) })).json();
+  const b = await (await fetch(`${second.base}/api/settings`, { headers: H(second.token) })).json();
+  assert.equal(a.deviceName, 'NexusCrew');
+  assert.equal(b.deviceName, 'NexusCrew');
+  assert.equal(a.localName, 'nexus-crew-1111');
+  assert.equal(b.localName, 'nexus-crew-2222');
+  assert.notEqual(a.localName, b.localName);
 });
 
 test('GET /settings: firstRun resta true finche\' wizardDone non e\' true', async (t) => {

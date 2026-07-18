@@ -69,4 +69,33 @@ describe('FleetTab engine + KEY save ordering', () => {
     expect(api.fleetSetCredential).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
+
+  it('shows an honest loading state before fleet status resolves', async () => {
+    let resolveStatus;
+    api.fleetStatus.mockReturnValueOnce(new Promise((resolve) => { resolveStatus = resolve; }));
+    render(<FleetTab token="token" readonly={false} />);
+    expect(screen.getByText('Loading the Fleet editor…')).toBeTruthy();
+    expect(screen.queryByText('The Fleet editor is unavailable at this location.')).toBeNull();
+    resolveStatus({ provider: 'builtin', capabilities: ['definitions', 'edit'], engines: [], cells: [] });
+    await screen.findByText('Engines');
+  });
+
+  it('distinguishes a status fetch failure from a disabled provider', async () => {
+    api.fleetStatus.mockRejectedValue(new Error('synthetic status failure'));
+    render(<FleetTab token="token" readonly={false} />);
+    await screen.findByText('Unable to load the Fleet editor.');
+    expect(screen.getByText('synthetic status failure')).toBeTruthy();
+    expect(screen.queryByText('The Fleet editor is unavailable at this location.')).toBeNull();
+  });
+
+  it('shows the backend reason when the provider is intentionally unavailable', async () => {
+    api.fleetStatus.mockResolvedValue({
+      available: false, provider: 'disabled', capabilities: [],
+      reason: 'fleet.json missing or invalid (fail-closed)',
+    });
+    render(<FleetTab token="token" readonly={false} />);
+    await screen.findByText(/fleet\.json missing or invalid/);
+    expect(screen.getByText(/The Fleet editor is unavailable at this location/)).toBeTruthy();
+    expect(screen.queryByText('Unable to load the Fleet editor.')).toBeNull();
+  });
 });

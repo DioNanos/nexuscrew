@@ -94,6 +94,7 @@ headless hosts and VPS installations.
 | Command | Purpose |
 |---|---|
 | `nexuscrew` | Start or reuse the background runtime and print a short status |
+| `nexuscrew init [--dry-run] [--port PORT]` | Initialize missing local stores idempotently or preview the operation |
 | `nexuscrew show` | Start when needed and open the authenticated PWA |
 | `nexuscrew show token` | Print the authenticated browser link without opening it |
 | `nexuscrew status` | Show service, port, role and node status |
@@ -116,6 +117,10 @@ headless hosts and VPS installations.
 Boot integration uses a user systemd service on Linux, a LaunchAgent on macOS, and a
 Termux:Boot script on Android. Termux users must install the Termux:Boot app and open it once;
 the CLI can validate the script but cannot prove Android app activation.
+
+Cells marked `boot:true` are started when that platform boot integration runs. This is startup
+persistence, not a watchdog for the tmux server itself: if the entire tmux server disappears
+later, the boot companion is not automatically rerun.
 
 ## Fleet: cells, engines and providers
 
@@ -221,6 +226,11 @@ single pairing link or QR code:
    **Test and connect**. The link is a pairing payload; it is not a browser address to open.
 4. If the portable address cannot select the correct key, open **Advanced / edit** and replace
    it with the SSH alias that already works from that device.
+
+Advanced settings keep the local display label separate from the local route handle. The route
+defaults to a readable slug plus a stable node-ID suffix, so devices that all report the hostname
+`localhost` still receive distinct handles. If a hub reports a collision, NexusCrew applies its
+deterministic suggestion and lets the device retry with the same invitation.
 
 NexusCrew creates one supervised `ssh` process for the hub connection and proves the forwarded
 TCP endpoint before reporting success. It does not generate SSH keys, edit `authorized_keys`,
@@ -393,8 +403,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.22** on npm and GitHub. The local runtime has also been
-migrated to this release.
+The current stable release is **v0.8.24** on npm and GitHub.
 
 ## License
 

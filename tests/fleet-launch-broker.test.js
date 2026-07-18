@@ -68,7 +68,7 @@ test('cell-exec restarts stable children with backoff, reinjects send-keys promp
       maxRestartDelayMs: 100, resetAfterMs: 1000,
       rapidWindowMs: 1000, maxRapidRestarts: 1,
     },
-    restartPrompt: { tmuxBin: 'tmux', tmuxSession: 'cloud-Worker', prompt: 'resume', readyMs: 0 },
+    restartPrompt: { tmuxBin: 'tmux', tmuxSession: 'cloud-Dev', prompt: 'resume', readyMs: 0 },
   };
   const code = await main(['--socket', '/tmp/x', '--nonce', 'b'.repeat(64)], {
     receivePayload: async () => payload,
@@ -87,7 +87,7 @@ test('cell-exec restarts stable children with backoff, reinjects send-keys promp
   assert.equal(code, 1);
   assert.equal(launches, 2);
   assert.deepEqual(waits, [50]);
-  assert.deepEqual(prompts, [['cloud-Worker', 'resume']]);
+  assert.deepEqual(prompts, [['cloud-Dev', 'resume']]);
   assert.equal(proc.listenerCount('SIGTERM'), 0, 'signal handlers cleaned up');
 });
 

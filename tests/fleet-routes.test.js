@@ -62,6 +62,7 @@ test('fleet unavailable: status {available:false} + provider/caps, comandi 404',
   assert.equal(st.provider, 'disabled');
   assert.equal(st.bootOwner, 'none');
   assert.deepEqual(st.capabilities, []);
+  assert.match(st.reason, /fleet disabilitata/);
   const up = await fetch(`${base}/api/fleet/up`, { method: 'POST', headers: H(token), body: JSON.stringify({ cell: 'Dev' }) });
   assert.equal(up.status, 404);
 });

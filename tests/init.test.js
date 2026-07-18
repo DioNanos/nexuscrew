@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { runInit, readExistingPort, haveTmux, nodeMajor } = require('../lib/cli/init.js');
+const { runInit, readExistingPort, haveTmux, nodeMajor, ensureFleetDefaults } = require('../lib/cli/init.js');
 
 test('haveTmux: risolve PATH senza shell', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-path-'));
@@ -58,6 +58,22 @@ test('runInit: crea config + token + NexusFiles (linux, tmux ok)', () => {
   assert.equal(r.port, 41820);
   assert.ok(r.url.includes('#token='));
   assert.ok(calls.some((c) => c[0] === 'systemctl'));
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('ensureFleetDefaults: crea solo se mancante e preserva un file invalido', () => {
+  const home = tmpHome();
+  const fleetPath = path.join(home, '.nexuscrew', 'fleet.json');
+  const created = ensureFleetDefaults({ home });
+  assert.equal(created.created, true);
+  const first = fs.readFileSync(fleetPath, 'utf8');
+  const preserved = ensureFleetDefaults({ home });
+  assert.equal(preserved.created, false);
+  assert.equal(fs.readFileSync(fleetPath, 'utf8'), first);
+  fs.writeFileSync(fleetPath, '{broken\n', { mode: 0o600 });
+  const invalid = ensureFleetDefaults({ home });
+  assert.equal(invalid.created, false);
+  assert.equal(fs.readFileSync(fleetPath, 'utf8'), '{broken\n');
   fs.rmSync(home, { recursive: true, force: true });
 });
 

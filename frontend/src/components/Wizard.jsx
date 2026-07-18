@@ -16,7 +16,7 @@ import './Wizard.css';
 // "consuma" (onPairDone pulisce il fragment dal sessionStorage) SOLO a
 // connessione avvenuta o su annulla esplicito: un tentativo fallito resta
 // riprovabile per tutta la sessione del tab.
-export default function Wizard({ token, initialPair, onPairDone, onDone }) {
+export default function Wizard({ token, initialPair, deviceDefault = '', localNodeId = '', localNameDefault = '', onPairDone, onDone }) {
   useLang();
   const [step, setStep] = useState(initialPair ? 'pair' : 'welcome');
   const [busy, setBusy] = useState(false);
@@ -40,6 +40,7 @@ export default function Wizard({ token, initialPair, onPairDone, onDone }) {
       </div>}
       {step === 'pair' && <div className="nc-wiz-body">
         <PairingCard token={token} initial={initialPair || ''} autoStart={!!initialPair}
+          deviceDefault={deviceDefault} localNodeId={localNodeId} localNameDefault={localNameDefault}
           onBusyChange={setBusy}
           onSuccess={async () => { if (onPairDone) onPairDone(); setStep('done'); }} />
         <div className="nc-sheet-actions">

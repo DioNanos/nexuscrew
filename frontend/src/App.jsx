@@ -270,6 +270,9 @@ export default function App() {
     setSettingsTab(tab); setSettingsNewCell(newCell); setSettingsLocation(location); setSettingsOpen(true);
   };
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [pairDefaults, setPairDefaults] = useState({
+    deviceDefault: '', localNodeId: '', localNameDefault: '',
+  });
   // READONLY del server (da /api/config): l'attach dei terminali deve essere
   // read-only quando il server lo e' (coerenza col gate server §4b(6) + il
   // banner settings che lo dichiara). Default false finche' non arriva la config.
@@ -293,6 +296,11 @@ export default function App() {
       apiFetch('/api/config', token).then((r) => r.json()),
     ]).then(([s, c]) => {
       if (cancelled) return;
+      setPairDefaults({
+        deviceDefault: s.deviceName || '',
+        localNodeId: s.nodeId || '',
+        localNameDefault: s.localName || '',
+      });
       setRoDefault(!!c.readonlyDefault);
       if (s.firstRun === true && !c.readonlyDefault) setWizardOpen(true);
       else if (pairPending) setWizardOpen(true); // deep-link #pair: apri wizard sul pairing
@@ -440,7 +448,8 @@ export default function App() {
       {settingsOpen && <SettingsPanel token={token} initialTab={settingsTab} initialLocation={settingsLocation} startNewCell={settingsNewCell}
         onClose={() => { setSettingsOpen(false); setSettingsNewCell(false); setSettingsLocation(''); }} />}
       {wizardOpen && (
-        <Wizard token={token} initialPair={pairPending} onPairDone={consumePair} onDone={() => setWizardOpen(false)} />
+        <Wizard token={token} initialPair={pairPending} {...pairDefaults}
+          onPairDone={consumePair} onDone={() => setWizardOpen(false)} />
       )}
       <NotifyCenter token={token} />
     </>

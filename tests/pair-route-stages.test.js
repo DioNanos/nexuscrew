@@ -65,6 +65,7 @@ function boot(t, fetchScript) {
     fetchImpl: impl,
     pairDelay: async () => {},
     pairRequestTimeoutMs: 25,
+    ...(fetchScript.hostname ? { hostname: fetchScript.hostname } : {}),
     ...(fetchScript.diagnosis ? { readTunnelDiagnostic: () => fetchScript.diagnosis } : {}),
     probeTransportReady: async () => {
       let lastError = '';
@@ -107,6 +108,13 @@ test('pair stages: validation distingue name/ssh/link con code e retryable', asy
   const badLink = await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: 'http://x/#pair=garbage' });
   const jl = await badLink.json();
   assert.equal(jl.code, 'bad-link'); assert.ok(jl.hint);
+  const badLocalName = await pairReq(base, token, {
+    name: 'peer', ssh: 'relay', pairingUrl: link, localName: 'localhost',
+  });
+  const jLocal = await badLocalName.json();
+  assert.equal(jLocal.stage, 'validation');
+  assert.equal(jLocal.code, 'bad-local-name');
+  assert.equal(jLocal.retryable, true);
 });
 
 test('pair stages: nome gia\' presente -> 409 conflict', async (t) => {
@@ -200,6 +208,63 @@ test('pair stages: rete morta DOPO il join -> join-ambiguous, mai replay', async
   const j = await r.json();
   assert.equal(j.stage, 'join'); assert.equal(j.code, 'join-ambiguous'); assert.equal(j.retryable, false);
   assert.equal(calls.join, 1, 'risposta ambigua: il join non viene rigiocato');
+});
+
+test('pair stages: client legacy senza localName deriva handle stabile e mai localhost nudo', async (t) => {
+  let joinBody;
+  const { base, token, dir } = await boot(t, {
+    hostname: () => 'localhost',
+    probe: () => R(401, {}),
+    join: (_n, opts) => { joinBody = JSON.parse(opts.body); return R(410, { error: 'stop after capture' }); },
+  });
+  const response = await pairReq(base, token, {
+    name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir), localLabel: 'AsusRP3',
+  });
+  assert.equal(response.status, 502);
+  assert.equal(joinBody.name, 'asus-rp3-aaaa');
+  assert.equal(joinBody.label, 'AsusRP3');
+  assert.notEqual(joinBody.name, 'localhost');
+});
+
+test('pair stages: conflitto localName propaga proposta e riusa lo stesso invito', async (t) => {
+  const seenNames = [];
+  const { base, token, dir, calls } = await boot(t, {
+    hostname: () => 'localhost',
+    probe: () => R(401, {}),
+    join: (attempt, opts) => {
+      const body = JSON.parse(opts.body); seenNames.push(body.name);
+      if (attempt === 1) {
+        return R(409, {
+          error: `nome peer gia' in uso: ${body.name}`,
+          code: 'peer-name-conflict',
+          suggestedName: 'asus-rp3-aaaaaa',
+        });
+      }
+      return R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID });
+    },
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+  });
+  const link = makePairingUrl(dir);
+  const first = await pairReq(base, token, {
+    name: 'peer', ssh: 'relay', pairingUrl: link,
+    localLabel: 'AsusRP3', localName: 'asus-rp3-aaaa',
+  });
+  assert.equal(first.status, 409);
+  const conflict = await first.json();
+  assert.equal(conflict.stage, 'conflict');
+  assert.equal(conflict.code, 'peer-name-conflict');
+  assert.equal(conflict.suggestedName, 'asus-rp3-aaaaaa');
+  assert.equal(conflict.retryable, true);
+  assert.match(conflict.hint, /non e' stato consumato/);
+
+  const second = await pairReq(base, token, {
+    name: 'peer', ssh: 'relay', pairingUrl: link,
+    localLabel: 'AsusRP3', localName: conflict.suggestedName,
+  });
+  assert.equal(second.status, 200);
+  assert.deepEqual(seenNames, ['asus-rp3-aaaa', 'asus-rp3-aaaaaa']);
+  assert.equal(calls.join, 2);
 });
 
 test('pair stages: join half-open termina col timeout strutturato invece di restare appeso', async (t) => {

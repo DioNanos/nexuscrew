@@ -119,7 +119,7 @@ test('pairing strict allowlist: campi ignoti o segreti -> rifiutato (null)', () 
   const base = made.pairingUrl;
   // Campo segreto in più (identityFile) -> rifiutato
   const x = JSON.parse(Buffer.from(new URL(base).hash.replace(/^#pair=/, ''), 'base64url').toString('utf8'));
-  const withSecret = { ...x, identityFile: '/home/alice/.ssh/id_ed25519' };
+  const withSecret = { ...x, identityFile: '/home/tester/.ssh/id_ed25519' };
   const url = `http://127.0.0.1:41822/#pair=${Buffer.from(JSON.stringify(withSecret)).toString('base64url')}`;
   assert.equal(peering.parsePairingUrl(url), null);
   // apiKey extra -> rifiutato

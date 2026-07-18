@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { pairNode } from '../lib/api.js';
-import { isValidLabel, toSlug } from '../lib/settings-model.js';
+import { isValidLabel, isValidNodeName, toSlug } from '../lib/settings-model.js';
 import {
-  buildPairBody,
+  buildPairBody, deriveLocalName,
   createSubmitGuard, describePairError, resolvePairingInput, PAIR_STAGES,
 } from '../lib/pairing-flow.js';
 import QrScanModal from './QrScanModal.jsx';
 import './PairingCard.css';
 
-const blankForm = () => ({ name: '', label: '', ssh: '', sshPort: '', pairingUrl: '', localLabel: '' });
+const blankForm = () => ({ name: '', label: '', ssh: '', sshPort: '', pairingUrl: '', localLabel: '', localName: '' });
 
 // Ricevitore "collega con un solo link" — condiviso da Settings → Nodi e dal
 // Wizard/deep-link #pair (prima esecuzione), così i due flussi non divergono.
@@ -22,7 +22,7 @@ const blankForm = () => ({ name: '', label: '', ssh: '', sshPort: '', pairingUrl
 // richiesta. Su errore il link e i dati restano nel form: retry sempre possibile
 // nel corso della sessione; il deep-link si consuma solo su successo o annulla
 // esplicito (responsabilità del genitore via onSuccess/flusso wizard).
-export default function PairingCard({ token, initial = '', autoStart = false, deviceDefault = '', readonly = false, onSuccess, onBusyChange }) {
+export default function PairingCard({ token, initial = '', autoStart = false, deviceDefault = '', localNodeId = '', localNameDefault = '', readonly = false, onSuccess, onBusyChange }) {
   const [form, setForm] = useState(blankForm);
   const [advanced, setAdvanced] = useState(false);
   const [scan, setScan] = useState(false);
@@ -30,10 +30,14 @@ export default function PairingCard({ token, initial = '', autoStart = false, de
   const [fail, setFail] = useState(null);     // describePairError()
   const [notice, setNotice] = useState('');
   const [nameEdited, setNameEdited] = useState(false);
+  const [localNameEdited, setLocalNameEdited] = useState(false);
   const guardRef = useRef(createSubmitGuard());
   const touchedRef = useRef(new Set());
 
   const busy = phase === 'busy';
+  const derivedLocalName = deriveLocalName(form.localLabel || deviceDefault, localNodeId)
+    || localNameDefault;
+  const effectiveLocalName = localNameEdited ? form.localName : derivedLocalName;
 
   useEffect(() => {
     if (onBusyChange) onBusyChange(busy);
@@ -45,16 +49,26 @@ export default function PairingCard({ token, initial = '', autoStart = false, de
     if (!guardRef.current.start(value)) return;
     setPhase('busy'); setFail(null); setNotice('');
     try {
-      await pairNode(token, buildPairBody(f, { deviceDefault }));
+      await pairNode(token, buildPairBody({
+        ...f,
+        localName: localNameEdited ? f.localName : (
+          deriveLocalName(f.localLabel || deviceDefault, localNodeId) || localNameDefault
+        ),
+      }, { deviceDefault, localNodeId, localNameDefault }));
       // Stato locale PRIMA del callback: il genitore può smontare la card.
       setPhase('ok'); setAdvanced(false); setForm(blankForm());
-      touchedRef.current = new Set(); setNameEdited(false);
+      touchedRef.current = new Set(); setNameEdited(false); setLocalNameEdited(false);
       guardRef.current.finish();
       if (onSuccess) await onSuccess();
     } catch (e) {
       const d = describePairError(e);
       setFail(d); setPhase('idle');
       guardRef.current.finish();
+      if (d.code === 'peer-name-conflict' && isValidNodeName(d.suggestedName)) {
+        setLocalNameEdited(true);
+        touchedRef.current.add('localName');
+        setForm((current) => ({ ...current, localName: d.suggestedName }));
+      }
       // Dati mancanti, conflitto o problemi SSH: la correzione sta nei campi
       // avanzati locali. In particolare l'endpoint del link può essere
       // sostituito con l'alias che seleziona chiave/agent su questo dispositivo.
@@ -110,6 +124,14 @@ export default function PairingCard({ token, initial = '', autoStart = false, de
     }
     if (next.label && !isValidLabel(next.label)) { setFail({ stage: 'validation', message: t('err-label'), retryable: true }); return; }
     if (next.localLabel && !isValidLabel(next.localLabel)) { setFail({ stage: 'validation', message: t('err-label'), retryable: true }); return; }
+    const localName = localNameEdited ? next.localName : (
+      deriveLocalName(next.localLabel || deviceDefault, localNodeId) || localNameDefault
+    );
+    if (!isValidNodeName(localName) || localName === 'localhost') {
+      setAdvanced(true);
+      setFail({ stage: 'validation', code: 'bad-local-name', message: t('err-local-name'), retryable: true });
+      return;
+    }
     guardRef.current.reset(value);
     connect(next);
   };
@@ -189,6 +211,15 @@ export default function PairingCard({ token, initial = '', autoStart = false, de
             <input placeholder={deviceDefault || 'NexusCrew'} value={form.localLabel} disabled={readonly || busy}
               onChange={(e) => set('localLabel', e.target.value)} />
             <small className="nc-set-hint">{t('device-name-hint')}</small>
+          </label>
+          <label className="nc-field">{t('local-route-name-label')}
+            <input placeholder={derivedLocalName || 'nexuscrew-5bd6'} value={effectiveLocalName}
+              disabled={readonly || busy}
+              onChange={(e) => {
+                setLocalNameEdited(true); touchedRef.current.add('localName');
+                setForm((f) => ({ ...f, localName: e.target.value ? toSlug(e.target.value) : '' }));
+              }} />
+            <small className="nc-set-hint">{t('local-route-name-hint')}</small>
           </label>
         </div>
       )}
