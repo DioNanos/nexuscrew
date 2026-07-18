@@ -3,7 +3,7 @@
 // input (incolla/QR), classificazione completo-vs-incompleto, corpo della
 // richiesta, guard anti doppio submit e resa strutturata degli errori a stadi
 // del server. Usato da PairingCard (Settings → Nodi e Wizard/deep-link #pair).
-import { decodePairingForm, mergePairingIntoForm } from './settings-model.js';
+import { decodePairingForm, mergePairingIntoForm, toSlug } from './settings-model.js';
 
 // QrScanner ritorna una string (API legacy, scanImage default) oppure {data}
 // (returnDetailedScanResult: true). Qualunque altra cosa -> ''.
@@ -60,7 +60,18 @@ export function resolvePairingInput(form, raw, touched = new Set(), nameEdited =
 
 // Form -> body di POST /api/settings/nodes/pair. Non fabbrica mai routing: i
 // campi assenti restano assenti e il server risponde per stadio (validation).
-export function buildPairBody(form, { deviceDefault = '' } = {}) {
+export function deriveLocalName(label, nodeId) {
+  const id = String(nodeId || '').toLowerCase();
+  if (!/^[a-f0-9]{16,64}$/.test(id)) return '';
+  const readable = String(label || 'NexusCrew').replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+  let base = toSlug(readable);
+  if (base === 'localhost' || base === 'node') base = 'nexuscrew';
+  const suffix = id.slice(0, 4);
+  const room = Math.max(1, 32 - suffix.length - 1);
+  return `${base.slice(0, room).replace(/-+$/g, '') || 'n'}-${suffix}`;
+}
+
+export function buildPairBody(form, { deviceDefault = '', localNodeId = '', localNameDefault = '' } = {}) {
   const body = {
     name: form.name, ssh: form.ssh, pairingUrl: form.pairingUrl,
     ...(form.label ? { label: form.label } : {}),
@@ -68,6 +79,10 @@ export function buildPairBody(form, { deviceDefault = '' } = {}) {
   };
   const localLabel = form.localLabel || deviceDefault;
   if (localLabel) body.localLabel = localLabel;
+  const localName = String(
+    form.localName || deriveLocalName(localLabel, localNodeId) || localNameDefault || '',
+  ).trim();
+  if (localName) body.localName = localName;
   return body;
 }
 
@@ -105,6 +120,7 @@ export function describePairError(e) {
     code: typeof d.code === 'string' ? d.code : '',
     detail,
     hint: typeof d.hint === 'string' ? d.hint : '',
+    suggestedName: typeof d.suggestedName === 'string' ? d.suggestedName : '',
     retryable: typeof d.retryable === 'boolean' ? d.retryable : !stage,
     message: detail || String((e && e.message) || e),
   };

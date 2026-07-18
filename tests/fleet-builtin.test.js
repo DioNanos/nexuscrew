@@ -416,7 +416,7 @@ test('managed codex-vl.native: launcher interno, login nativo, fake tmux', async
     atomicWrite(w.defsPath, {
       schemaVersion: 1,
       engines: [{ id: 'codex-vl.native', label: 'Codex-VL · Native', managed: { client: 'codex-vl', provider: 'native', model: '' } }],
-      cells: [{ id: 'Dev', tmuxSession: 'worker-managed', cwd: w.cwd, engine: 'codex-vl.native', prompt: 'bootstrap managed' }],
+      cells: [{ id: 'Dev', cwd: w.cwd, engine: 'codex-vl.native', prompt: 'bootstrap managed' }],
     });
     let launchPayload = null;
     const fleet = await createBuiltinFleet({
@@ -439,7 +439,7 @@ test('managed codex-vl.native: launcher interno, login nativo, fake tmux', async
     assert.equal(launchPayload.args.includes('--dangerously-bypass-approvals-and-sandbox'), false, 'standard e il default sicuro');
     assert.ok(launchPayload.args.includes('bootstrap managed'));
     assert.equal(launchPayload.supervise.enabled, true);
-    assert.equal(launchPayload.env.NEXUSCREW_MCP_SESSION, 'worker-managed');
+    assert.equal(launchPayload.env.NEXUSCREW_MCP_SESSION, 'cloud-Dev');
     assert.equal(argv.some((x) => /zai|ollama/i.test(x)), false);
     assert.equal(readLog(w).lines.some((x) => x.startsWith('load-buffer')), false);
   } finally { w.cleanup(); }

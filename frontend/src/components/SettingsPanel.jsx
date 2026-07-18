@@ -319,7 +319,10 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
 
       {/* Percorso normale del ricevente: UNA card, UN link. I campi avanzati
           (name/label/SSH/porta/etichetta locale) vivono dentro la card, chiusi. */}
-      <PairingCard token={token} deviceDefault={deviceDefault} readonly={readonly} onSuccess={refresh} />
+      <PairingCard token={token} deviceDefault={deviceDefault}
+        localNodeId={(settings && settings.nodeId) || ''}
+        localNameDefault={(settings && settings.localName) || ''}
+        readonly={readonly} onSuccess={refresh} />
 
       <div className="nc-set-form">
         <div className="nc-sheet-label">{t('invite-node')}</div>

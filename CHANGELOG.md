@@ -2,6 +2,46 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.24 — 2026-07-18 — "Safe Pairing"
+
+- Gives every joining installation an explicit, editable local route handle that is separate
+  from its display label. The default is deterministic and readable, combines the label or
+  hostname with a stable node-ID suffix, stays within 32 characters and never sends bare
+  `localhost` from Termux devices.
+- Keeps `nodeId` as the peer identity while treating the route slug only as a unique handle.
+  Older clients that omit `localName` receive the same safe server-side derivation, so two
+  phones whose operating system hostname is `localhost` can join the same hub independently.
+- Returns a deterministic replacement handle when a committed or pending peer already owns the
+  requested name. The PWA applies that suggestion, preserves the freely editable display label
+  and retries with the same unconsumed invitation; headless pairing exposes matching
+  `--local-name` and `--local-label` options.
+- Restores `nexuscrew init` as a public, idempotent command with validated `--port` and
+  side-effect-free `--dry-run` support, so first-run recovery instructions always name a command
+  that the dispatcher actually accepts.
+- Gate: **861 isolated Node tests** (860 pass / 1 platform skip), **34/34 frontend component
+  tests**, production PWA build and zero production dependency vulnerabilities.
+
+## 0.8.23 — 2026-07-18 — "Fleet Ready"
+
+- Repairs partial or migrated installations that have NexusCrew configuration and a token but no
+  `fleet.json`. Runtime startup now creates the built-in Fleet defaults only when the file is
+  absent, including service-manager and Termux:Boot paths; an existing invalid file remains
+  fail-closed and is never overwritten.
+- Makes smart startup restart an already-running runtime when it has just repaired the missing
+  definitions, so provider selection is refreshed before the PWA is reused. `nexuscrew doctor`
+  now reports missing, invalid, intentionally disabled and valid Fleet definitions explicitly.
+- Separates Fleet editor loading, API failure and genuinely unavailable-provider states in the
+  PWA. A disabled provider can expose a safe operational reason instead of the misleading
+  “builtin provider only” message shown during initial loading or on partial Termux installs.
+- Contains shared-tmux failure containment: generated Linux services require `KillMode=process`,
+  lifecycle commands fail closed if that protection is absent, shared servers pin
+  `exit-empty off` and guard `kill-server`, and cleanup tests require a unique private `-L`
+  socket instead of ever targeting the operator's default server.
+- Gate: **854 isolated Node tests** (853 pass / 1 platform skip), **33/33 frontend component
+  tests**, production PWA build and zero production dependency vulnerabilities.
+- Release scope at the time: npm `latest` only; 0.8.24 now carries the same changes into the
+  public GitHub history.
+
 ## 0.8.22 — 2026-07-17 — "Sole Authority"
 
 - Makes NexusCrew the only Fleet owner. The legacy executable adapter, discovery paths,

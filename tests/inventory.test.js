@@ -142,7 +142,7 @@ test('inventario: engines e route restano associati alle celle remote per il Pow
   const groups = buildNodeGroups({
     nodes: [{ name: 'relay', nodeId: 'a'.repeat(32), tunnel: { status: 'up' } }],
     remote: { relay: { sessions: [] } },
-    fleet: { relay: { available: true, capabilities: ['up', 'down'], engines: [{ id: 'claude.zai-p' }], cells: [{ cell: 'Worker', tmuxSession: 'cloud-Worker', active: false, engine: 'claude.zai-p' }] } },
+    fleet: { relay: { available: true, capabilities: ['up', 'down'], engines: [{ id: 'claude.zai-p' }], cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev', active: false, engine: 'claude.zai-p' }] } },
   });
   assert.deepEqual(groups[0].engines, [{ id: 'claude.zai-p' }]);
   assert.deepEqual(groups[0].cells[0].route, ['relay']);

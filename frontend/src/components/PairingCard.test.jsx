@@ -1,6 +1,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 const mocks = vi.hoisted(() => ({ pairNode: vi.fn() }));
 
@@ -48,5 +49,35 @@ describe('pairing SSH locale', () => {
     expect(screen.getByText(/Aliases, agents and private keys stay local/)).toBeTruthy();
     expect(screen.getByDisplayValue('dag@relay.example').disabled).toBe(false);
     expect(screen.getByDisplayValue('41822').disabled).toBe(false);
+  });
+
+  it('invia localName stabile e applica il suffisso suggerito riusando lo stesso invito', async () => {
+    const conflict = new Error('name conflict');
+    conflict.data = {
+      stage: 'conflict',
+      code: 'peer-name-conflict',
+      detail: 'peer name already in use',
+      hint: 'use the suggested handle and retry with the same invite',
+      suggestedName: 'asus-rp3-5bd612',
+      retryable: true,
+    };
+    mocks.pairNode.mockRejectedValueOnce(conflict).mockResolvedValueOnce({ paired: true });
+    const initial = pairingUrl();
+
+    render(<PairingCard token="token" initial={initial} autoStart
+      deviceDefault="AsusRP3" localNodeId={'5bd61234'.repeat(4)}
+      localNameDefault="asus-rp3-5bd6" />);
+
+    await waitFor(() => expect(mocks.pairNode).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(mocks.pairNode.mock.calls[0][1].localLabel).toBe('AsusRP3');
+    expect(mocks.pairNode.mock.calls[0][1].localName).toBe('asus-rp3-5bd6');
+    expect(screen.getByDisplayValue('asus-rp3-5bd612')).toBeTruthy();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'retry' }));
+    await waitFor(() => expect(mocks.pairNode).toHaveBeenCalledTimes(2));
+    expect(mocks.pairNode.mock.calls[1][1].localName).toBe('asus-rp3-5bd612');
+    expect(mocks.pairNode.mock.calls[1][1].pairingUrl).toBe(initial);
   });
 });

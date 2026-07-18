@@ -39,7 +39,7 @@ test('npm updater: riconosce installazioni globali Linux/macOS/Termux, non il ch
   assert.equal(isGlobalInstall('/usr/lib/node_modules/@mmmbuto/nexuscrew'), true);
   assert.equal(isGlobalInstall('/opt/homebrew/lib/node_modules/@mmmbuto/nexuscrew'), true);
   assert.equal(isGlobalInstall('/data/data/com.termux/files/usr/lib/node_modules/@mmmbuto/nexuscrew'), true);
-  assert.equal(isGlobalInstall('/home/alice/projects/nexuscrew'), false);
+  assert.equal(isGlobalInstall('/home/tester/projects/nexuscrew'), false);
 });
 
 test('npm updater: latest inferiore non provoca mai downgrade', async () => {
@@ -175,8 +175,8 @@ test('npm update runner: boot failure rolls back exact previous version once', a
 });
 
 test('update errors redact registry credentials and local home paths', () => {
-  const message = core.scrubError(new Error('https://user:password@registry.example /home/alice/.npm/_logs/x Bearer ' + 'Z'.repeat(44)));
+  const message = core.scrubError(new Error('https://user:password@registry.example /home/tester/.npm/_logs/x Bearer ' + 'Z'.repeat(44)));
   assert.equal(message.includes('password'), false);
-  assert.equal(message.includes('/home/alice'), false);
+  assert.equal(message.includes('/home/tester'), false);
   assert.equal(message.includes('Z'.repeat(44)), false);
 });

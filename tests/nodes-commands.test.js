@@ -330,7 +330,7 @@ test('doctor: riporta SSH/autossh usati senza fingere di certificare lo sshd rem
   fs.mkdirSync(path.dirname(svc), { recursive: true });
   fs.writeFileSync(svc, 'x');
   const common = {
-    home, platform: 'linux', installPath: svc, log: () => {},
+    home, platform: 'linux', installPath: svc, fleetEnabled: false, log: () => {},
     execImpl: (b, a) => { if (a && a.includes('is-active')) return 'active'; if (a && a.includes('is-enabled')) return 'enabled'; if (a && a.includes('--property=KillMode')) return 'process'; return ''; },
     ptyLoad: () => ({ spawn() {} }),
     commandExists: () => true,
@@ -448,13 +448,17 @@ test('dispatch nodes invite/pair: link passa via stdout/stdin, mai come argv', a
   assert.equal(invited.code, 0);
   assert.equal(calls[0][0], '/api/settings/peering/invite');
   assert.match(inviteLogs[0], /#pair=/);
-  const paired = await dispatch(['nodes', 'pair'], {
+  const paired = await dispatch([
+    'nodes', 'pair', '--local-label', 'AsusRP3', '--local-name', 'asus-rp3-5bd6',
+  ], {
     stdin: `${link.slice(0, 20)}\r\n${link.slice(20)}`, log: () => {},
     localApiImpl: async (pathname, body) => { calls.push([pathname, body]); return { name: body.name, instanceId: 'a'.repeat(32) }; },
   });
   assert.equal(paired.code, 0);
   assert.equal(calls[1][0], '/api/settings/nodes/pair');
   assert.equal(calls[1][1].pairingUrl, link);
+  assert.equal(calls[1][1].localLabel, 'AsusRP3');
+  assert.equal(calls[1][1].localName, 'asus-rp3-5bd6');
   const joined = await dispatch(['nodes', 'join'], {
     stdin: link, log: () => {},
     localApiImpl: async () => ({ name: 'asus', instanceId: 'a'.repeat(32) }),

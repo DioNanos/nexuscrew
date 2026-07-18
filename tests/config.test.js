@@ -9,6 +9,7 @@ test('defaults bind to loopback only', () => {
   assert.strictEqual(defaults().bind, '127.0.0.1');
   assert.strictEqual(defaults().readonlyDefault, false); // read-write di default
   assert.strictEqual(defaults().replyLabel, 'human');
+  assert.strictEqual(defaults().protectSharedTmuxServer, true);
 });
 
 test('assertLoopback rejects non-loopback bind', () => {
@@ -92,6 +93,14 @@ test('loadConfig: env voice override', () => {
   try {
     assert.equal(loadConfig().voiceUrl, 'http://1.2.3.4:9');
   } finally { delete process.env.NEXUSCREW_VOICE_URL; }
+});
+
+test('loadConfig: shared tmux protection defaults on and has an explicit env opt-out', () => {
+  assert.equal(loadConfig().protectSharedTmuxServer, true);
+  process.env.NEXUSCREW_PROTECT_SHARED_TMUX_SERVER = 'false';
+  try {
+    assert.equal(loadConfig().protectSharedTmuxServer, false);
+  } finally { delete process.env.NEXUSCREW_PROTECT_SHARED_TMUX_SERVER; }
 });
 
 test('loadConfig: reply label neutra e override env', () => {

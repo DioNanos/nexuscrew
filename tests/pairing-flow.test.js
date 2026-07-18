@@ -65,10 +65,26 @@ test('resolvePairingInput: un link v2 digitato e confermato con Enter applica ro
 
 test('buildPairBody: numeri e default coerenti, niente campi vuoti fabbricati', async () => {
   const { buildPairBody } = await pf();
-  const full = buildPairBody({ name: 'peer', ssh: 'relay', sshPort: '2222', pairingUrl: 'u', label: 'Peer', localLabel: '' }, { deviceDefault: 'Pixel' });
-  assert.deepEqual(full, { name: 'peer', ssh: 'relay', pairingUrl: 'u', label: 'Peer', sshPort: 2222, localLabel: 'Pixel' });
+  const full = buildPairBody(
+    { name: 'peer', ssh: 'relay', sshPort: '2222', pairingUrl: 'u', label: 'Peer', localLabel: '' },
+    { deviceDefault: 'Pixel', localNodeId: 'b'.repeat(32) },
+  );
+  assert.deepEqual(full, {
+    name: 'peer', ssh: 'relay', pairingUrl: 'u', label: 'Peer', sshPort: 2222,
+    localLabel: 'Pixel', localName: 'pixel-bbbb',
+  });
   const lean = buildPairBody({ name: 'peer', ssh: 'relay', sshPort: '', pairingUrl: 'u', label: '', localLabel: '' }, {});
   assert.deepEqual(lean, { name: 'peer', ssh: 'relay', pairingUrl: 'u' });
+});
+
+test('deriveLocalName: due Termux localhost usano label + suffisso nodeId stabile', async () => {
+  const { deriveLocalName } = await pf();
+  assert.equal(deriveLocalName('AsusRP3', '5bd6'.repeat(8)), 'asus-rp3-5bd6');
+  assert.equal(deriveLocalName('localhost', '1'.repeat(32)), 'nexuscrew-1111');
+  assert.equal(deriveLocalName('localhost', '2'.repeat(32)), 'nexuscrew-2222');
+  assert.equal(deriveLocalName('localhost', '1'.repeat(32)), 'nexuscrew-1111');
+  assert.equal(deriveLocalName('Pixel 9 Pro With A Name That Is Far Too Long', 'a'.repeat(32)).length <= 32, true);
+  assert.equal(deriveLocalName('Pixel', 'invalid'), '');
 });
 
 test('createSubmitGuard: un solo auto-submit per link, retry manuale via reset', async () => {
@@ -88,11 +104,12 @@ test('createSubmitGuard: un solo auto-submit per link, retry manuale via reset',
 test('describePairError: usa e.data (stage/code/detail/hint/retryable), fallback a message', async () => {
   const { describePairError } = await pf();
   const e = new Error('ssh-ready: peer non risponde');
-  e.data = { error: 'x', stage: 'ssh-ready', code: 'transport-not-ready', detail: 'peer non risponde (6 tentativi)', hint: 'controlla chiavi', retryable: true };
+  e.data = { error: 'x', stage: 'ssh-ready', code: 'transport-not-ready', detail: 'peer non risponde (6 tentativi)', hint: 'controlla chiavi', retryable: true, suggestedName: 'pixel-bbbb' };
   const d = describePairError(e);
   assert.equal(d.stage, 'ssh-ready');
   assert.equal(d.code, 'transport-not-ready');
   assert.equal(d.hint, 'controlla chiavi');
+  assert.equal(d.suggestedName, 'pixel-bbbb');
   assert.equal(d.retryable, true);
   assert.equal(d.message, 'peer non risponde (6 tentativi)', 'detail del server vince sul message generico');
   const legacy = describePairError(new Error('HTTP 502'));

@@ -23,6 +23,7 @@ import ImportEditor from './fleet/ImportEditor.jsx';
 export default function FleetTab({ token, readonly, targets = [], startNewCell = false, initialLocation = '' }) {
   const [defs, setDefs] = useState({ engines: [], cells: [], managedCatalog: [] });
   const [status, setStatus] = useState({ available: false, capabilities: [] });
+  const [loaded, setLoaded] = useState(false);
   const [engineEdit, setEngineEdit] = useState(null);
   const [cellEdit, setCellEdit] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -53,7 +54,9 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
           catch (_) { setCredentials([]); }
         } else setCredentials([]);
       }
+      setErr('');
     } catch (e) { setErr(String(e.message || e)); }
+    finally { setLoaded(true); }
   }, [token, location]);
   useEffect(() => { refresh(); const id = setInterval(refresh, 5000); return () => clearInterval(id); }, [refresh]);
 
@@ -222,7 +225,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   });
   const locationPicker = <label className="nc-field">{t('location')}<select value={location} onChange={(e) => {
     setLocation(e.target.value); setEngineEdit(null); setCellEdit(null); setErr(''); setNote(''); setRemoteReadonly(false);
-    setStatus({ available: false, capabilities: [] }); setDefs({ engines: [], cells: [], managedCatalog: [] }); setCredentials([]); setCredentialEdit(null);
+    setLoaded(false); setStatus({ available: false, capabilities: [] }); setDefs({ engines: [], cells: [], managedCatalog: [] }); setCredentials([]); setCredentialEdit(null);
   }}>
     <option value="">{t('local')}</option>{targets.map((x) => <option key={x.route.join('/')} value={x.route.join('/')} disabled={x.status && x.status !== 'up'}>{x.label}{x.status && x.status !== 'up' ? ` · ${t('node-offline')}` : ''}</option>)}
   </select></label>;
@@ -232,12 +235,20 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     <button type="button" role="tab" aria-selected={fleetView === 'overview'} className={`nc-set-tabbtn${fleetView === 'overview' ? ' on' : ''}`}
       onClick={() => setFleetView('overview')}>{t('fleet-network-overview')}</button>
   </div>;
+  if (!loaded) return (
+    <div className="nc-set-tab">
+      {viewPicker}
+      {fleetView === 'overview'
+        ? <><div className="nc-set-info">{t('fleet-overview-help')}</div><FleetInventory token={token} targets={targets} readonly={readonly} onPower={onPower} onImport={openImport} /></>
+        : <>{locationPicker}<div className="nc-set-info">{t('fleet-editor-loading')}</div></>}
+    </div>
+  );
   if (!editable) return (
     <div className="nc-set-tab">
       {viewPicker}
       {fleetView === 'overview'
         ? <><div className="nc-set-info">{t('fleet-overview-help')}</div><FleetInventory token={token} targets={targets} readonly={readonly} onPower={onPower} onImport={openImport} /></>
-        : <>{locationPicker}<div className="nc-set-info">{t('fleet-editor-unavailable')}</div></>}
+        : <>{locationPicker}<div className="nc-set-info">{err ? t('fleet-editor-load-error') : t('fleet-editor-unavailable')}{!err && status.reason ? ` ${status.reason}` : ''}</div></>}
       {err && <div className="nc-err">{err}</div>}
       {importEdit && <FleetModal onClose={() => setImportEdit(null)} label={t('import-as-cell')} error={err}><ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} /></FleetModal>}
       {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { await refresh(); } }} onClose={() => setPowerCell(null)} />}

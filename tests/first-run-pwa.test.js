@@ -38,7 +38,7 @@ test('fresh install -> background orchestration -> authenticated PWA wizard reac
     startPortableImpl: () => {
       runtime = createServer({
         home, configDir, configPath, tokenPath, port,
-        filesRoot: path.join(home, 'NexusFiles'), fleetEnabled: false,
+        filesRoot: path.join(home, 'NexusFiles'),
       });
       runtime.server.listen(port, '127.0.0.1');
       return { started: true };
@@ -63,4 +63,12 @@ test('fresh install -> background orchestration -> authenticated PWA wizard reac
   });
   assert.equal(settings.status, 200);
   assert.equal((await settings.json()).firstRun, true);
+  const fleet = await fetch(`http://127.0.0.1:${port}/api/fleet/status`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(fleet.status, 200);
+  const fleetStatus = await fleet.json();
+  assert.equal(fleetStatus.available, true);
+  assert.equal(fleetStatus.provider, 'builtin');
+  assert.equal(fleetStatus.capabilities.includes('edit'), true);
 });
