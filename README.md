@@ -393,9 +393,8 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current npm stable release is **v0.8.22** and the local runtime has been migrated to it. The
-GitHub tag and release remain on **v0.8.20** until the prepared `main` release receives explicit
-approval.
+The current stable release is **v0.8.22** on npm and GitHub. The local runtime has also been
+migrated to this release.
 
 ## License
 
