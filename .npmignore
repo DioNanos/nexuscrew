@@ -4,4 +4,6 @@ frontend/node_modules/
 *.db
 .git/
 *.log
+__pycache__/
+*.pyc
 docs/

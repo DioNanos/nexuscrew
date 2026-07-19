@@ -53,6 +53,13 @@ const PATHS = {
       <polyline points="21 3 21 8 16 8" />
     </>
   ),
+  boot: (
+    <>
+      <rect x="3" y="4" width="18" height="13" rx="2" />
+      <path d="M8 21h8M12 17v4M12 12V7" />
+      <polyline points="9 10 12 7 15 10" />
+    </>
+  ),
   upload: (
     <>
       <path d="M12 16V5" />

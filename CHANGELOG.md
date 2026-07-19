@@ -12,7 +12,9 @@ All notable changes to NexusCrew are tracked here.
 - Configures Claude Code against the plan's Anthropic-compatible base with isolated private
   state, a 983,616-token context and explicit Qwen aliases for model, Sonnet, Opus, Haiku,
   subagents and Fable. The API-key variable remains empty while the resolved value is supplied
-  only through the authentication-token variable expected by the client.
+  only through the authentication-token variable expected by the client. Selecting a non-default
+  plan model keeps every alias aligned with that model and omits qwen3.8-only context and effort
+  overrides.
 - Configures Codex-VL through the Responses wire API with a Qwen-only plan allowlist and a
   packaged qwen3.8 catalog: 95% effective context, `xhigh` default reasoning, text and image
   input, original image detail and parallel tool calls disabled. The profile has no OpenAI or
@@ -32,10 +34,12 @@ All notable changes to NexusCrew are tracked here.
 - Adds a direct per-cell boot toggle to the mobile and desktop rosters. It changes only the next
   reboot preference, never the current power state, and stays synchronized with the same boot
   setting used by the existing power sheet.
-- Gate: **873 isolated Node tests** (872 pass / 1 platform skip), **38/38 frontend component
+- Gate: **877 isolated Node tests** (876 pass / 1 platform skip), **39/39 frontend component
   tests**, production PWA build, zero production dependency vulnerabilities, sanitized package
   inspection and an offline install smoke. Provider calls and Token Plan credit consumption are
   intentionally outside the release build gate.
+- Known debt: the minified PWA main chunk is 806.31 kB (231.02 kB gzip), so Vite's 500 kB
+  advisory remains visible and code splitting stays on the performance backlog.
 
 ## 0.8.24 — 2026-07-18 — "Safe Pairing"
 
