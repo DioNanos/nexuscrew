@@ -1,0 +1,4 @@
+interface:
+  display_name: "Alibaba Token Media"
+  short_description: "Generate Wan images and HappyHorse videos"
+  default_prompt: "Use $alibaba-token-media to generate or edit media safely with my Alibaba Token Plan."

@@ -19,13 +19,14 @@ function initial(name) { return String(name || '?').replace(/^[^a-zA-Z0-9]+/, ''
 // Larghezza sidebar: clamp 180–480px.
 const SIDE_MIN_W = 180;
 const SIDE_MAX_W = 480;
+const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'local'}:${cell}`;
 
 // Sidebar presentazionale: mostra la flotta (celle) + le altre sessioni tmux
 // + i gruppi per-nodo remoto (B2, design §5). Il polling e le azioni sono del
 // genitore; qui solo render + callback.
 // Collassabile (mini 48px, solo dot) e ridimensionabile (maniglia bordo destro).
 export default function Sidebar({
-  sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onNodePower, onKill, onVisibility, onNew,
+  sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onBoot, onNodePower, onKill, onVisibility, onNew,
   onNodeRename, onSettings, localNodeId, width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
@@ -71,6 +72,54 @@ export default function Sidebar({
     try {
       if (!await onNodeRename(group, next)) window.alert(t('rename-node-invalid'));
     } catch (error) { window.alert(String(error?.message || error)); }
+  };
+  // Override UI temporaneo: rende il toggle immediato mentre il polling locale
+  // o Hydra converge. Quando il backend restituisce lo stesso valore, l'override
+  // sparisce e la definizione Fleet torna unica source of truth.
+  const [bootOverrides, setBootOverrides] = useState({});
+  const [bootBusy, setBootBusy] = useState(new Set());
+  useEffect(() => {
+    const actual = new Map();
+    for (const c of cells || []) actual.set(bootCellKey(c.cell), !!c.boot);
+    for (const g of nodeGroups || []) {
+      const route = g.route || [g.name];
+      for (const c of g.cells || []) actual.set(bootCellKey(c.cell, route), !!c.boot);
+    }
+    setBootOverrides((current) => {
+      let changed = false; const next = { ...current };
+      for (const [key, value] of Object.entries(current)) {
+        if (actual.has(key) && actual.get(key) === value) { delete next[key]; changed = true; }
+      }
+      return changed ? next : current;
+    });
+  }, [cells, nodeGroups]);
+  const bootEnabled = (c, route = []) => {
+    const key = bootCellKey(c.cell, route);
+    return Object.prototype.hasOwnProperty.call(bootOverrides, key) ? bootOverrides[key] : !!c.boot;
+  };
+  const toggleBoot = async (event, c, route = []) => {
+    event.stopPropagation();
+    if (!onBoot) return;
+    const key = bootCellKey(c.cell, route); const enabled = !bootEnabled(c, route);
+    setBootOverrides((current) => ({ ...current, [key]: enabled }));
+    setBootBusy((current) => new Set(current).add(key));
+    try {
+      await onBoot(c.cell, enabled, route);
+    } catch (_) {
+      setBootOverrides((current) => { const next = { ...current }; delete next[key]; return next; });
+    } finally {
+      setBootBusy((current) => { const next = new Set(current); next.delete(key); return next; });
+    }
+  };
+  const bootButton = (c, route = []) => {
+    const key = bootCellKey(c.cell, route); const enabled = bootEnabled(c, route);
+    const label = `${t(enabled ? 'boot-disable' : 'boot-enable')} ${c.cell}`;
+    return (
+      <button className={`nc-boot${enabled ? ' on' : ''}`} disabled={bootBusy.has(key)}
+        onClick={(event) => toggleBoot(event, c, route)} title={label} aria-label={label}>
+        <Icon name="refresh" size={14} />
+      </button>
+    );
   };
   // Tooltip mini via JS (position:fixed): il ::after CSS veniva CLIPPATO
   // dall'overflow della sidebar da 48px.
@@ -254,9 +303,10 @@ export default function Sidebar({
                   title={t('pin')}
                   onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}
                 >{pins.includes(item.key) ? '★' : '☆'}</button>
+                {onBoot && bootButton(c)}
                 <button
                   className={`nc-power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
-                  onClick={(e) => { e.stopPropagation(); onPower && onPower(c); }}
+                  onClick={(e) => { e.stopPropagation(); onPower && onPower({ ...c, boot: bootEnabled(c) }); }}
                   title={c.active ? t('power-off') : t('power-on')}
                 ><Icon name="power" size={14} /></button>
               </div>
@@ -362,9 +412,18 @@ export default function Sidebar({
                     </span>
                     <button className={`nc-pin${pins.includes(item.key) ? ' on' : ''}`} title={t('pin')}
                       onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}>{pins.includes(item.key) ? '★' : '☆'}</button>
+                    {onBoot && (g.capabilities || []).includes('boot') && bootButton(c, g.route || [])}
                     {(g.capabilities || []).includes(c.active ? 'down' : 'up') && (
                       <button className={`nc-power${c.active ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
-                        onClick={(e) => { e.stopPropagation(); onPower && onPower({ ...c, route: g.route, availableEngines: g.engines || [] }); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onPower && onPower({
+                            ...c,
+                            boot: bootEnabled(c, g.route || []),
+                            route: g.route,
+                            availableEngines: g.engines || [],
+                          });
+                        }}
                         title={c.active ? t('power-off') : t('power-on')}><Icon name="power" size={14} /></button>
                     )}
                   </div>

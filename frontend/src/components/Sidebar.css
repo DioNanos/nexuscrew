@@ -90,15 +90,17 @@
 .nc-cell-main b { font-size: 13px; color: #d8ffe8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .nc-cell-main small { font-size: 11px; opacity: .6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 /* Azioni card: stesso design delle .nc-act mobile (desktop = mobile). */
-.nc-power {
+.nc-power, .nc-boot {
   flex: 0 0 auto; width: 28px; height: 28px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.22);
   color: #9aa89a; border-radius: 50%; cursor: pointer;
 }
 .nc-power.on { color: #00cc66; border-color: rgba(0,204,102,0.55); background: rgba(0,204,102,0.10); }
+.nc-boot.on { color: #69b7ff; border-color: rgba(105,183,255,.58); background: rgba(105,183,255,.10); }
 .nc-power.warn { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.10); }
-.nc-power:hover { filter: brightness(1.25); }
+.nc-power:hover, .nc-boot:hover { filter: brightness(1.25); }
+.nc-boot:disabled { cursor: wait; opacity: .55; }
 
 /* Dot di stato (condiviso cella + card) */
 .nc-dot {

@@ -13,7 +13,7 @@ import SettingsPanel from './components/SettingsPanel.jsx';
 import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import {
-  apiFetch, fleetStatus, fleetUp, fleetDown, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
+  apiFetch, fleetStatus, fleetUp, fleetDown, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
 } from './lib/api.js';
 import { isValidLabel } from './lib/settings-model.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
@@ -364,6 +364,13 @@ export default function App() {
     try { await setSessionTechnical(token, name, technical, route); } catch (_) { return; }
     poll();
   };
+  // Il boot e' una preferenza di riavvio indipendente dal lifecycle corrente:
+  // questo toggle non accende ne' spegne la cella. PowerSheet continua a poter
+  // aggiornare la stessa proprieta' durante un'azione on/off.
+  const onBoot = async (cell, enabled, route = []) => {
+    await fleetBoot(token, { cell, enabled: !!enabled }, route);
+    poll();
+  };
   const onFleetConfirm = async (payload) => {
     if (!powerCell) return;
     const { cell } = powerCell;
@@ -482,6 +489,7 @@ export default function App() {
           onPick={openSingle}
           onAddTile={onAddTile}
           onPower={setPowerCell}
+          onBoot={onBoot}
           onNodePower={onNodePower}
           onNodeRename={onNodeRename}
           onKill={onKill}

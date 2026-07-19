@@ -2,6 +2,41 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.25 — 2026-07-19 — "Token Plan"
+
+- Adds Alibaba Token Plan Personal as a first-class managed provider for Claude Code,
+  Codex-VL and Pi, with `qwen3.8-max-preview` as the default and one fixed local credential
+  reference, `ALIBABA_CODE_API_KEY`. Credential values stay in the existing write-only
+  credential layer and selected child environment; they never enter engine definitions,
+  generated extensions, argv, status responses, logs or the package.
+- Configures Claude Code against the plan's Anthropic-compatible base with isolated private
+  state, a 983,616-token context and explicit Qwen aliases for model, Sonnet, Opus, Haiku,
+  subagents and Fable. The API-key variable remains empty while the resolved value is supplied
+  only through the authentication-token variable expected by the client.
+- Configures Codex-VL through the Responses wire API with a Qwen-only plan allowlist and a
+  packaged qwen3.8 catalog: 95% effective context, `xhigh` default reasoning, text and image
+  input, original image detail and parallel tool calls disabled. The profile has no OpenAI or
+  pay-as-you-go fallback.
+- Gives Pi a private, value-free provider extension. Response-capable Qwen models use Pi's
+  Responses adapter; GLM and DeepSeek use Chat Completions with `reasoning_content` preserved
+  across assistant and tool replay. Standard permissions remain the only supported policy.
+- Packages the portable `alibaba-token-media` skill for Claude Code, Codex, Codex-VL and Pi.
+  Its dependency-free CLI provides dry-run-first Wan 2.7 image/edit and HappyHorse video
+  workflows with fixed Token Plan endpoints, one concurrent submit, explicit Credit/high-cost
+  consent, private file handling and safe unique downloads under the user's Downloads folder.
+- Keeps the existing public Z.AI surface unchanged: `claude.zai` remains the only generic
+  Claude profile, while the historical A/P names stay hidden compatibility aliases.
+- Makes the mobile Fleet header count live cells and unmanaged tmux sessions across local and
+  routed inventories, so an inventory-only or Hydra view can no longer report zero while cells
+  are active.
+- Adds a direct per-cell boot toggle to the mobile and desktop rosters. It changes only the next
+  reboot preference, never the current power state, and stays synchronized with the same boot
+  setting used by the existing power sheet.
+- Gate: **873 isolated Node tests** (872 pass / 1 platform skip), **38/38 frontend component
+  tests**, production PWA build, zero production dependency vulnerabilities, sanitized package
+  inspection and an offline install smoke. Provider calls and Token Plan credit consumption are
+  intentionally outside the release build gate.
+
 ## 0.8.24 — 2026-07-18 — "Safe Pairing"
 
 - Gives every joining installation an explicit, editable local route handle that is separate
