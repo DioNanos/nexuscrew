@@ -12,6 +12,7 @@
     "skills/",
     "frontend/dist/",
     "frontend/index.html",
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "NOTICE"
@@ -19,7 +20,7 @@
   "scripts": {
     "start": "node bin/nexuscrew.js serve",
     "dev": "node bin/nexuscrew.js serve",
-    "build": "cd frontend && npm install && npm run build && cd ..",
+    "build": "npm --prefix frontend ci && npm --prefix frontend run build",
     "test": "node tests/run-isolated.js && npm --prefix frontend test"
   },
   "dependencies": {

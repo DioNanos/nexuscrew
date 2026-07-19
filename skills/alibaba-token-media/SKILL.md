@@ -1,12 +1,12 @@
 ---
 name: alibaba-token-media
-description: "Generate or edit images with Wan 2.7 and create videos with HappyHorse through an Alibaba Qwen Cloud Token Plan Individual subscription. Use when the user asks Claude Code, Codex, Codex-VL, or Pi to draw, generate, or edit an image with wan2.7-image or wan2.7-image-pro; create text-to-video or image-to-video media with happyhorse-1.1-t2v or happyhorse-1.1-i2v; inspect a submitted HappyHorse task; or validate the Token Plan media setup. Do not use this skill for chat, visual understanding, batch automation, backend services, or pay-as-you-go DashScope APIs."
+description: "Generate or edit images with Wan 2.7 and create videos with HappyHorse through an Alibaba Qwen Cloud Token Plan Personal subscription. Use when the user asks Claude Code, Codex, Codex-VL, or Pi to draw, generate, or edit an image with wan2.7-image or wan2.7-image-pro; create text-to-video or image-to-video media with happyhorse-1.1-t2v or happyhorse-1.1-i2v; inspect a submitted HappyHorse task; or validate the Token Plan media setup. Do not use this skill for chat, visual understanding, batch automation, backend services, or pay-as-you-go DashScope APIs."
 ---
 
 # Alibaba Token Media
 
 Use the bundled, dependency-free CLI to access only the media models included
-in Alibaba Token Plan Individual Lite. The same skill and Python script work
+with the Lite guardrails of Alibaba Token Plan Personal. The same skill and Python script work
 with Claude Code, Codex, Codex-VL, and Pi. Invoke the script directly from Pi;
 do not assume that Pi provides a native MCP client.
 
@@ -33,7 +33,8 @@ the plan is not for unattended batch or backend workloads.
   automatically, or run more than one generation submit concurrently. A task
   status GET may be retried, but never with a tight polling loop.
 - Accept local input only as a regular, non-symlink JPEG, PNG, BMP, or WEBP
-  file below 20 MiB and under the current user's home. Accept remote input only
+  file below 20 MiB and under the current user's home. Image-to-video accepts
+  JPEG, PNG, or WEBP first frames, not BMP. Accept remote input only
   over public HTTPS; reject localhost, private IP literals, credentials, and
   non-standard ports.
 - Download signed result URLs immediately. Never paste signed URLs into chat,
@@ -76,7 +77,7 @@ python3 <skill-dir>/scripts/alibaba_token_media.py image \
 Use `--model wan2.7-image-pro --size 2K --confirm-high-cost` only after the
 user selects that higher-cost variant. `4K` is allowed only for Pro
 text-to-image with no input images. The script fixes `n=1` and disables image
-sets.
+sets. Image watermarking is off by default and enabled only with `--watermark`.
 
 ## Submit a video
 
@@ -91,7 +92,8 @@ python3 <skill-dir>/scripts/alibaba_token_media.py video-submit \
 For a real request, add both `--confirm-credit-use` and
 `--confirm-expensive`. For image-to-video, select `happyhorse-1.1-i2v` and
 supply exactly one first-frame image with `--image`. Do not supply `--ratio`
-for image-to-video; its aspect ratio follows the input.
+for image-to-video; its aspect ratio follows the input. Video watermarking is
+on by default and can be disabled explicitly with `--no-watermark`.
 
 ```bash
 python3 <skill-dir>/scripts/alibaba_token_media.py video-submit \

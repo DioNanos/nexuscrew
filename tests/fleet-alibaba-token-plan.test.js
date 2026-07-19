@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const {
   ALIBABA_TOKEN_PLAN_MODELS, ALIBABA_CODEX_MODELS, ALIBABA_TOKEN_PLAN_CONTEXT,
   normalizeManagedSpec, describeManaged, describeCatalogCredential,
@@ -104,7 +105,7 @@ test('Claude profile uses isolated config, official aliases and exact xhigh effo
     assert.equal(result.engine.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, String(ALIBABA_TOKEN_PLAN_CONTEXT));
     assert.equal(Object.prototype.hasOwnProperty.call(result.engine.env, 'CLAUDE_CODE_AUTO_COMPACT_WINDOW'), false);
     assert.equal(result.engine.env.CLAUDE_CODE_EFFORT_LEVEL, 'xhigh');
-    assert.equal(Object.prototype.hasOwnProperty.call(result.engine.env, 'CLAUDE_CODE_ALWAYS_ENABLE_EFFORT'), false);
+    assert.equal(result.engine.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT, '1');
     assert.deepEqual(result.engine.args.slice(-2), ['--model', 'qwen3.8-max-preview']);
     assert.equal(result.engine.args.join('\n').includes(value), false);
     assert.equal(JSON.stringify(result.info).includes(value), false);
@@ -118,7 +119,29 @@ test('Claude profile uses isolated config, official aliases and exact xhigh effo
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('Codex-VL 0.144.7 profile is Responses-only with local qwen3.8 metadata and dedicated env key', () => {
+test('Claude non-default selections keep argv and every alias coherent without qwen3.8-only tuning', () => {
+  const home = world();
+  const value = credentialValue();
+  try {
+    for (const model of ALIBABA_TOKEN_PLAN_MODELS.filter((entry) => entry !== 'qwen3.8-max-preview')) {
+      const result = resolveManagedEngine({
+        id: 'claude.alibaba-token-plan', label: 'Alibaba Token Plan',
+        managed: { client: 'claude', provider: 'alibaba-token-plan', model },
+      }, { id: 'Dev' }, { home, env: { ALIBABA_CODE_API_KEY: value } });
+      assert.equal(result.ok, true);
+      for (const key of [
+        'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_FABLE_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL',
+        'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL',
+      ]) assert.equal(result.engine.env[key], model, `${key} follows ${model}`);
+      for (const key of [
+        'CLAUDE_CODE_MAX_CONTEXT_TOKENS', 'CLAUDE_CODE_EFFORT_LEVEL', 'CLAUDE_CODE_ALWAYS_ENABLE_EFFORT',
+      ]) assert.equal(Object.prototype.hasOwnProperty.call(result.engine.env, key), false, `${key} absent for ${model}`);
+      assert.deepEqual(result.engine.args.slice(-2), ['--model', model]);
+    }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Codex-VL 0.144.7 profile is Responses-only and its catalog loads in the real consumer', (t) => {
   const home = world();
   const value = credentialValue();
   try {
@@ -149,6 +172,33 @@ test('Codex-VL 0.144.7 profile is Responses-only with local qwen3.8 metadata and
     assert.equal(model.supports_parallel_tool_calls, false);
     assert.equal(model.supports_image_detail_original, true);
     assert.deepEqual(model.input_modalities, ['text', 'image']);
+    const requiredModelInfoFields = [
+      'shell_type', 'visibility', 'supported_in_api', 'priority', 'availability_nux', 'upgrade',
+      'supports_reasoning_summaries', 'support_verbosity', 'default_verbosity', 'apply_patch_tool_type',
+      'truncation_policy', 'experimental_supported_tools',
+    ];
+    for (const key of requiredModelInfoFields) {
+      assert.equal(Object.prototype.hasOwnProperty.call(model, key), true, `ModelInfo field ${key} is explicit`);
+    }
+    assert.deepEqual(model.truncation_policy, { mode: 'tokens', limit: ALIBABA_TOKEN_PLAN_CONTEXT });
+
+    const version = spawnSync('codex-vl', ['--version'], { encoding: 'utf8' });
+    if (version.status === 0 && /0\.144\.7\b/.test(`${version.stdout}\n${version.stderr}`)) {
+      const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-codex-vl-catalog-'));
+      try {
+        const env = { ...process.env, CODEX_HOME: codexHome };
+        delete env.ALIBABA_CODE_API_KEY;
+        const loaded = spawnSync('codex-vl', [
+          'mcp', 'list',
+          '-c', `model_catalog_json=${JSON.stringify(catalogPath)}`,
+          '-c', `model_context_window=${ALIBABA_TOKEN_PLAN_CONTEXT}`,
+        ], { encoding: 'utf8', env, timeout: 30_000 });
+        assert.equal(loaded.status, 0, loaded.stderr || loaded.stdout);
+        assert.doesNotMatch(`${loaded.stdout}\n${loaded.stderr}`, /failed to parse model_catalog_json|failed to load configuration/i);
+      } finally { fs.rmSync(codexHome, { recursive: true, force: true }); }
+    } else {
+      t.diagnostic('real codex-vl 0.144.7 unavailable; required ModelInfo schema assertions still ran');
+    }
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 

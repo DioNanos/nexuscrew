@@ -4,7 +4,9 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const express = require('express');
 const { createServer } = require('../lib/server.js');
+const { fleetRoutes } = require('../lib/fleet/routes.js');
 
 const FAKE_TMUX = path.join(__dirname, 'fixtures', 'fake-tmux.sh');
 
@@ -54,6 +56,16 @@ async function bootBuiltin(t, over = {}) {
   return { ...r, dir, defsPath };
 }
 const H = (token) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
+
+function bootRouteOnly(t, fleet) {
+  const app = express();
+  app.use('/api/fleet', fleetRoutes(Promise.resolve(fleet)));
+  const server = app.listen(0, '127.0.0.1');
+  t.after(() => server.close());
+  return new Promise((resolve) => server.once('listening', () => {
+    resolve(`http://127.0.0.1:${server.address().port}`);
+  }));
+}
 
 test('fleet unavailable: status {available:false} + provider/caps, comandi 404', async (t) => {
   const { base, token } = await boot(t, { fleetEnabled: false });
@@ -227,6 +239,34 @@ test('builtin lifecycle: up preserva boot se omesso; PowerSheet puo abilitarlo o
   const secondUp = await post('up', { cell: 'Dev', boot: true });
   assert.equal(secondUp.status, 200, JSON.stringify(await secondUp.json()));
   assert.equal((await definitions()).cells[0].boot, true, 'avvia al boot persiste lo stato');
+});
+
+test('builtin: POST /boot cambia solo la preferenza e non invoca lifecycle', async (t) => {
+  const { base, token, defsPath } = await bootBuiltin(t);
+  const tmuxLog = process.env.FAKE_TMUX_LOG;
+  const before = fs.existsSync(tmuxLog) ? fs.readFileSync(tmuxLog, 'utf8') : '';
+  const response = await fetch(`${base}/api/fleet/boot`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ cell: 'Dev', enabled: true }),
+  });
+  assert.equal(response.status, 200, JSON.stringify(await response.json()));
+  assert.equal(JSON.parse(fs.readFileSync(defsPath, 'utf8')).cells[0].boot, true);
+  const after = fs.existsSync(tmuxLog) ? fs.readFileSync(tmuxLog, 'utf8') : '';
+  assert.equal(after, before, 'boot preference endpoint must not call tmux up/down');
+});
+
+test('POST /boot returns 501 without the negotiated boot capability', async (t) => {
+  let calls = 0;
+  const base = await bootRouteOnly(t, {
+    available: true,
+    capabilities: () => ['status'],
+    boot: async () => { calls += 1; return { ok: true }; },
+  });
+  const response = await fetch(`${base}/api/fleet/boot`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ cell: 'Dev', enabled: true }),
+  });
+  assert.equal(response.status, 501);
+  assert.equal(calls, 0);
 });
 
 test('builtin: /status capabilities include restart (capability del built-in)', async (t) => {

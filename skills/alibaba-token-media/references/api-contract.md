@@ -9,13 +9,13 @@ Verified against the official Qwen Cloud documentation on 2026-07-19.
 - Authorization: `Bearer <token>`
 - Supported invocation surfaces: Claude Code, Codex, Codex-VL, and Pi through
   the packaged skill and CLI. Pi is not assumed to support MCP natively.
-- Token Plan Individual Lite guardrails: interactive use only, one submit at a
+- Token Plan Personal Lite guardrails: interactive use only, one submit at a
   time, no batch generation, and no automatic retry of a generation POST.
 - Never substitute the DashScope pay-as-you-go host.
 
 The Token Plan documentation says coding tools cannot configure media models
 as chat models. They must use a skill, command, agent, or equivalent extension.
-The Individual plan is intended for interactive programming and agent-tool
+The Personal plan is intended for interactive programming and agent-tool
 work, not unattended scripts, backend services, or batch processing.
 
 ## Wan 2.7 image generation and editing
@@ -52,7 +52,7 @@ Request shape:
 
 The content array requires exactly one text object and accepts zero to nine
 image objects. Prompt maximum is 5,000 characters. Inputs may be JPEG, PNG,
-BMP, or WEBP and are limited to 20 MB each. `wan2.7-image` supports 1K and 2K;
+BMP, or WEBP and are limited to 20 MiB each. `wan2.7-image` supports 1K and 2K;
 Pro also supports 4K for text-to-image only. The output image URL is under
 `output.choices[*].message.content[*].image` and expires after 24 hours.
 
@@ -72,7 +72,9 @@ Allowed plan models:
 Text-to-video input contains `prompt`; parameters contain `resolution`,
 `ratio`, and `duration`. Image-to-video input additionally contains exactly one
 `media` item with `type: first_frame` and an HTTPS or Base64 image in `url`;
-its parameters omit `ratio` because output follows the first frame.
+its parameters omit `ratio` because output follows the first frame. The CLI
+enables video watermarking by default; image watermarking is disabled by
+default. Image-to-video first frames accept JPEG, PNG, or WEBP, not BMP.
 
 Duration is an integer from 3 through 15 seconds. Resolution is 720P or 1080P.
 Text-to-video ratios are 16:9, 9:16, 1:1, 4:3, 3:4, 4:5, 5:4, 9:21, or 21:9.

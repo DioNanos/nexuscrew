@@ -220,6 +220,7 @@ export default function App() {
   // desktop workspace state
   const [dSessions, setDSessions] = useState([]);
   const [cells, setCells] = useState([]);
+  const [fleetCapabilities, setFleetCapabilities] = useState([]);
   const [layout, setLayout] = useState(() => initialDeck.ownerId ? emptyLayout() : loadLayout(initialDeck.name));
   const [gridFocus, setGridFocus] = useState(null);   // refKey del tile focato
   const [single, setSingle] = useState(null);     // overlay vista singola desktop: ref {session, node?}
@@ -255,6 +256,7 @@ export default function App() {
     });
   }, [deckOwners, deckStore.localNodeId]);
   const [powerCell, setPowerCell] = useState(null);
+  const [bootSettlement, setBootSettlement] = useState(null);
   const [nodePowerBusy, setNodePowerBusy] = useState(false);
   const [sideW, setSideW] = useState(loadSideW);
   // Finestre staccate: nei deck non-main la sidebar e' nascosta di default;
@@ -317,7 +319,8 @@ export default function App() {
     try {
       const fs = await fleetStatus(token);
       setCells(fs.available ? (fs.cells || []) : []);
-    } catch (_) { setCells([]); }
+      setFleetCapabilities(fs.available ? (fs.capabilities || []) : []);
+    } catch (_) { setCells([]); setFleetCapabilities([]); }
   }, [token]);
 
   // Polling sessions + flotta (solo desktop: su mobile pensa SessionList).
@@ -385,6 +388,10 @@ export default function App() {
     } else {
       await fleetDown(token, { cell, boot: !!payload.boot }, route);
     }
+    const enabled = payload.action === 'up'
+      ? !!payload.boot
+      : (payload.boot ? false : !!powerCell.boot);
+    setBootSettlement({ cell, route, enabled });
     poll();
   };
   const onNodePower = async (group) => {
@@ -485,11 +492,14 @@ export default function App() {
           cells={cells}
           activeSessions={activeSessions}
           nodeGroups={nodeGroups}
+          fleetCapabilities={fleetCapabilities}
+          bootSettlement={bootSettlement}
           localNodeId={deckStore.localNodeId}
           onPick={openSingle}
           onAddTile={onAddTile}
           onPower={setPowerCell}
           onBoot={onBoot}
+          onBootError={(error) => deckStore.setError(String(error?.message || error))}
           onNodePower={onNodePower}
           onNodeRename={onNodeRename}
           onKill={onKill}

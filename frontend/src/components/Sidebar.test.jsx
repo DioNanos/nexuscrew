@@ -12,22 +12,35 @@ beforeEach(() => {
 describe('Sidebar session identity', () => {
   it('toggles boot from local and routed desktop rows without using power', async () => {
     const onBoot = vi.fn(async () => {}); const onPower = vi.fn();
-    render(<Sidebar
-      cells={[{ cell: 'Local Cell', tmuxSession: 'local-cell', tmux: true, active: true, boot: false }]}
-      sessions={[{ name: 'local-cell' }]}
-      nodeGroups={[{
+    const props = {
+      cells: [{ cell: 'Local Cell', tmuxSession: 'local-cell', tmux: true, active: true, boot: false }],
+      sessions: [{ name: 'local-cell' }],
+      nodeGroups: [{
         name: 'relay', label: 'Relay', route: ['relay'], status: 'up', instanceId: 'd'.repeat(32),
         sessions: [{ name: 'remote-cell' }], unmanaged: [], capabilities: ['up', 'down', 'boot'], engines: [],
         cells: [{ cell: 'Remote Cell', tmuxSession: 'remote-cell', tmux: true, active: true, boot: true, key: 'relay:remote-cell' }],
-      }]}
-      onBoot={onBoot} onPower={onPower} onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
-    />);
+      }],
+      fleetCapabilities: ['up', 'down', 'boot'],
+      onBoot,
+      onPower,
+      onPick: vi.fn(),
+      onAddTile: vi.fn(),
+      onSettings: vi.fn(),
+    };
+    const { rerender } = render(<Sidebar {...props} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'enable at boot Local Cell' }));
     await waitFor(() => expect(onBoot).toHaveBeenCalledWith('Local Cell', true, []));
     expect(screen.getByRole('button', { name: 'disable at boot Local Cell' }).classList.contains('on')).toBe(true);
     fireEvent.click(screen.getAllByRole('button', { name: 'power off' })[0]);
     expect(onPower).toHaveBeenLastCalledWith(expect.objectContaining({ cell: 'Local Cell', boot: true }));
+
+    // PowerSheet conferma il valore opposto prima del poll: l'evento del
+    // genitore deve sostituire subito l'override del toggle diretto.
+    rerender(<Sidebar {...props} bootSettlement={{ cell: 'Local Cell', route: [], enabled: false }} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'enable at boot Local Cell' })).toBeTruthy());
+    fireEvent.click(screen.getAllByRole('button', { name: 'power off' })[0]);
+    expect(onPower).toHaveBeenLastCalledWith(expect.objectContaining({ cell: 'Local Cell', boot: false }));
 
     fireEvent.click(screen.getByRole('button', { name: 'disable at boot Remote Cell' }));
     await waitFor(() => expect(onBoot).toHaveBeenCalledWith('Remote Cell', false, ['relay']));

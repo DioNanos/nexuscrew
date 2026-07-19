@@ -148,3 +148,45 @@ test('media CLI enforces one cross-process submit lock without storing credentia
   assert.equal(state, '');
   fs.rmSync(home, { recursive: true, force: true });
 });
+
+test('media downloads preserve explicit parent permissions and failed jobs redact provider details', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-media-output-'));
+  const parent = path.join(home, 'shared-output');
+  const output = path.join(parent, 'result.png');
+  fs.mkdirSync(parent, { mode: 0o755 });
+  fs.chmodSync(parent, 0o755);
+  const code = [
+    'import argparse, importlib.util, json, os, sys',
+    'spec = importlib.util.spec_from_file_location("media", sys.argv[1])',
+    'media = importlib.util.module_from_spec(spec)',
+    'spec.loader.exec_module(media)',
+    'class Headers:',
+    '  def get_content_type(self): return "image/png"',
+    '  def get(self, _name): return None',
+    'class Response:',
+    '  headers = Headers()',
+    '  done = False',
+    '  def __enter__(self): return self',
+    '  def __exit__(self, *_args): return False',
+    '  def geturl(self): return "https://results.aliyuncs.com/result.png"',
+    '  def read(self, _size):',
+    '    if self.done: return b""',
+    '    self.done = True',
+    '    return b"image-bytes"',
+    'media.urllib.request.urlopen = lambda *_args, **_kwargs: Response()',
+    'media._download("https://results.aliyuncs.com/result.png", kind="image", output=sys.argv[2])',
+    'media._request_json = lambda *_args, **_kwargs: {"output": {"task_id": "task-1", "task_status": "FAILED", "code": "RAW_CODE", "message": "private provider detail"}, "request_id": "request-1"}',
+    'media._video_status(argparse.Namespace(task_id="task-1", download=False, output=None))',
+  ].join('\n');
+  const result = spawnSync('python3', ['-c', code, SCRIPT, output], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, PYTHONDONTWRITEBYTECODE: '1', ALIBABA_CODE_API_KEY: 'test-only' },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(fs.statSync(parent).mode & 0o777, 0o755);
+  assert.equal(fs.statSync(output).mode & 0o777, 0o600);
+  assert.doesNotMatch(result.stdout, /RAW_CODE|private provider detail/);
+  assert.match(result.stdout, /response details omitted/);
+  fs.rmSync(home, { recursive: true, force: true });
+});

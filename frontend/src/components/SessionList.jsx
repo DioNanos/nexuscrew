@@ -206,10 +206,14 @@ export default function SessionList({ onPick, token, onSettings }) {
     + preferredNodeGroups.reduce((sum, group) => (
       sum + buildRemoteRoster(group).rawItems.filter((item) => item.live).length
     ), 0);
-  const attached = (sessions || []).filter((s) => s.attached).length
+  const attachedRaw = (sessions || []).filter((s) => s.attached).length
     + preferredNodeGroups.reduce(
       (sum, group) => sum + (group.sessions || []).filter((s) => s.attached).length, 0,
     );
+  // Durante la cache status una sessione tmux puo' risultare ancora attached
+  // mentre la cella Fleet e' gia' off. Il sottoconteggio non deve mai superare
+  // l'inventario live normalizzato mostrato nello stesso header.
+  const attached = Math.min(attachedRaw, total);
   const endpointLabel = endpoint.port ? `${endpoint.bind}:${endpoint.port}` : endpoint.bind;
 
   function renderRosterItem(item, group = null, rawItems = localRawItems) {
@@ -256,7 +260,7 @@ export default function SessionList({ onPick, token, onSettings }) {
           </button>
           {canBoot && <button className={`nc-act boot${boot ? ' on' : ''}`} disabled={bootBusy.has(bootKey)}
             onClick={(event) => onBootToggle(event, c, route)} title={bootLabel} aria-label={bootLabel}>
-            <Icon name="refresh" size={16} />
+            <Icon name="boot" size={16} />
           </button>}
           {canPower && <button className={`nc-act power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
             onClick={() => setPowerCell(route.length

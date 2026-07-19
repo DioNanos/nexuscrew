@@ -27,7 +27,7 @@ vi.mock('../hooks/useNodes.js', () => ({ useNodes: () => fixture.nodes }));
 vi.mock('../hooks/useLang.js', () => ({ useLang: () => ['en', vi.fn()] }));
 
 import SessionList from './SessionList.jsx';
-import { fleetBoot, renameNodeLabel, setSessionTechnical } from '../lib/api.js';
+import { fleetBoot, fleetDown, fleetUp, renameNodeLabel, setSessionTechnical } from '../lib/api.js';
 
 function cell(cell, tmuxSession, live, engine = 'claude.native') {
   return { cell, tmuxSession, tmux: live, active: live, engine, key: '', degraded: false };
@@ -74,6 +74,16 @@ describe('mobile roster parity', () => {
     expect(await screen.findByText('tmux fleet · 3 sessions')).toBeTruthy();
   });
 
+  it('never reports more attached sessions than the normalized live inventory during cache convergence', async () => {
+    fixture.sessions = [session('local-live', 20, { attached: true })];
+    fixture.cells = [cell('Live Cell', 'local-live', false)];
+    fixture.nodes = [];
+    renderRoster();
+
+    expect(await screen.findByText('tmux fleet · 0 sessions')).toBeTruthy();
+    expect(document.querySelector('.nc-home-sub').textContent).not.toContain('1 attached');
+  });
+
   it('toggles boot directly without invoking power and supports routed cells', async () => {
     const user = userEvent.setup();
     fixture.cells[0].boot = false;
@@ -83,10 +93,14 @@ describe('mobile roster parity', () => {
 
     await user.click(await screen.findByRole('button', { name: 'enable at boot Live Cell' }));
     expect(fleetBoot).toHaveBeenCalledWith('test-token', { cell: 'Live Cell', enabled: true }, []);
+    expect(fleetUp).not.toHaveBeenCalled();
+    expect(fleetDown).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'disable at boot Live Cell' }).classList.contains('on')).toBe(true);
 
     await user.click(screen.getByRole('button', { name: 'disable at boot Relay Live' }));
     expect(fleetBoot).toHaveBeenCalledWith('test-token', { cell: 'Relay Live', enabled: false }, ['relay']);
+    expect(fleetUp).not.toHaveBeenCalled();
+    expect(fleetDown).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'enable at boot Relay Live' }).classList.contains('on')).toBe(false);
 
     await user.click(screen.getByRole('button', { name: 'power off Relay Live' }));

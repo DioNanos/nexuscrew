@@ -288,11 +288,13 @@ def _download(raw_url: str, *, kind: str, output: str | None) -> Path:
     explicit = _validate_output(output)
     directory = explicit.parent if explicit else _output_directory()
     _reject_symlink_components(directory)
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not explicit:
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     directory = directory.resolve(strict=True)
     if not _inside_home(directory):
         raise UsageError("download directory escaped the current user's home")
-    os.chmod(directory, 0o700)
+    if not explicit:
+        os.chmod(directory, 0o700)
     maximum = MAX_IMAGE_DOWNLOAD if kind == "image" else MAX_VIDEO_DOWNLOAD
     request = urllib.request.Request(
         url,
@@ -467,7 +469,7 @@ def _video_status(args: argparse.Namespace) -> None:
         "request_id": result.get("request_id"),
     }
     if status == "FAILED":
-        response["error"] = {"code": output.get("code"), "message": output.get("message")}
+        response["error"] = "provider reported task failure; response details omitted"
     if status == "SUCCEEDED":
         response["usage"] = result.get("usage")
         if args.download:

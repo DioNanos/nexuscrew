@@ -27,7 +27,8 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 // Collassabile (mini 48px, solo dot) e ridimensionabile (maniglia bordo destro).
 export default function Sidebar({
   sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onBoot, onNodePower, onKill, onVisibility, onNew,
-  onNodeRename, onSettings, localNodeId, width = 240, collapsed = false, onResize, onToggleCollapse,
+  onNodeRename, onSettings, onBootError, localNodeId, fleetCapabilities = [], bootSettlement = null,
+  width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   const {
@@ -93,6 +94,15 @@ export default function Sidebar({
       return changed ? next : current;
     });
   }, [cells, nodeGroups]);
+  // PowerSheet vive nel genitore App: una conferma deve sostituire subito
+  // qualunque override ottimistico precedente per la stessa cella. Il poll
+  // successivo rimuove l'override quando la definizione backend converge.
+  useEffect(() => {
+    if (!bootSettlement?.cell) return;
+    const route = Array.isArray(bootSettlement.route) ? bootSettlement.route : [];
+    const key = bootCellKey(bootSettlement.cell, route);
+    setBootOverrides((current) => ({ ...current, [key]: !!bootSettlement.enabled }));
+  }, [bootSettlement]);
   const bootEnabled = (c, route = []) => {
     const key = bootCellKey(c.cell, route);
     return Object.prototype.hasOwnProperty.call(bootOverrides, key) ? bootOverrides[key] : !!c.boot;
@@ -105,8 +115,9 @@ export default function Sidebar({
     setBootBusy((current) => new Set(current).add(key));
     try {
       await onBoot(c.cell, enabled, route);
-    } catch (_) {
+    } catch (error) {
       setBootOverrides((current) => { const next = { ...current }; delete next[key]; return next; });
+      if (onBootError) onBootError(error);
     } finally {
       setBootBusy((current) => { const next = new Set(current); next.delete(key); return next; });
     }
@@ -117,7 +128,7 @@ export default function Sidebar({
     return (
       <button className={`nc-boot${enabled ? ' on' : ''}`} disabled={bootBusy.has(key)}
         onClick={(event) => toggleBoot(event, c, route)} title={label} aria-label={label}>
-        <Icon name="refresh" size={14} />
+        <Icon name="boot" size={14} />
       </button>
     );
   };
@@ -303,7 +314,7 @@ export default function Sidebar({
                   title={t('pin')}
                   onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}
                 >{pins.includes(item.key) ? '★' : '☆'}</button>
-                {onBoot && bootButton(c)}
+                {onBoot && fleetCapabilities.includes('boot') && bootButton(c)}
                 <button
                   className={`nc-power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
                   onClick={(e) => { e.stopPropagation(); onPower && onPower({ ...c, boot: bootEnabled(c) }); }}
