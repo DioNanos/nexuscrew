@@ -50,6 +50,30 @@ test('packaged Alibaba media skill has the exact public portable surface', () =>
   for (const client of ['Claude Code', 'Codex', 'Codex-VL', 'Pi']) assert.match(source, new RegExp(client));
 });
 
+test('npm packaging excludes Python bytecode after compile-before-pack', () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-media-pack-'));
+  try {
+    fs.cpSync(path.join(ROOT, 'skills'), path.join(fixture, 'skills'), { recursive: true });
+    fs.writeFileSync(path.join(fixture, 'package.json'), JSON.stringify({
+      name: 'nexuscrew-media-pack-test', version: '0.0.0', files: ['skills/'],
+    }));
+    const copiedScript = path.join(fixture, 'skills', 'alibaba-token-media', 'scripts', 'alibaba_token_media.py');
+    const compiled = spawnSync('python3', ['-m', 'py_compile', copiedScript], {
+      cwd: fixture, encoding: 'utf8',
+    });
+    assert.equal(compiled.status, 0, compiled.stderr || compiled.stdout);
+
+    const packed = spawnSync('npm', ['pack', '--dry-run', '--json'], {
+      cwd: fixture, encoding: 'utf8',
+    });
+    assert.equal(packed.status, 0, packed.stderr || packed.stdout);
+    const files = JSON.parse(packed.stdout)[0].files.map((entry) => entry.path);
+    assert.equal(files.some((file) => file.includes('__pycache__') || file.endsWith('.pyc')), false);
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test('media CLI compiles and status exposes configuration without the key value', () => {
   const pycache = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-media-pycache-'));
   const compiled = spawnSync('python3', ['-m', 'py_compile', SCRIPT], {

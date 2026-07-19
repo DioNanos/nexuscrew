@@ -33,12 +33,15 @@ All notable changes to NexusCrew are tracked here.
   are active.
 - Adds a direct per-cell boot toggle to the mobile and desktop rosters. It changes only the next
   reboot preference, never the current power state, and stays synchronized with the same boot
-  setting used by the existing power sheet.
-- Gate: **877 isolated Node tests** (876 pass / 1 platform skip), **39/39 frontend component
+  setting used by the existing power sheet; desktop settlements are acknowledged once so a
+  sidebar remount cannot replay stale state.
+- Keeps Python bytecode outside the npm package even when skill compilation runs before packing,
+  with an isolated compile-before-pack regression test for the exact `files[]` behaviour.
+- Gate: **878 isolated Node tests** (877 pass / 1 platform skip), **39/39 frontend component
   tests**, production PWA build, zero production dependency vulnerabilities, sanitized package
   inspection and an offline install smoke. Provider calls and Token Plan credit consumption are
   intentionally outside the release build gate.
-- Known debt: the minified PWA main chunk is 806.31 kB (231.02 kB gzip), so Vite's 500 kB
+- Known debt: the minified PWA main chunk is 806.50 kB (231.11 kB gzip), so Vite's 500 kB
   advisory remains visible and code splitting stays on the performance backlog.
 
 ## 0.8.24 — 2026-07-18 — "Safe Pairing"

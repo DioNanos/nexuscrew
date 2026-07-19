@@ -257,6 +257,7 @@ export default function App() {
   }, [deckOwners, deckStore.localNodeId]);
   const [powerCell, setPowerCell] = useState(null);
   const [bootSettlement, setBootSettlement] = useState(null);
+  const bootSettlementSeq = useRef(0);
   const [nodePowerBusy, setNodePowerBusy] = useState(false);
   const [sideW, setSideW] = useState(loadSideW);
   // Finestre staccate: nei deck non-main la sidebar e' nascosta di default;
@@ -391,9 +392,12 @@ export default function App() {
     const enabled = payload.action === 'up'
       ? !!payload.boot
       : (payload.boot ? false : !!powerCell.boot);
-    setBootSettlement({ cell, route, enabled });
+    setBootSettlement({ id: ++bootSettlementSeq.current, cell, route, enabled });
     poll();
   };
+  const onBootSettlementApplied = useCallback((id) => {
+    setBootSettlement((current) => (current?.id === id ? null : current));
+  }, []);
   const onNodePower = async (group) => {
     if (!group?.direct || nodePowerBusy) return;
     setNodePowerBusy(true);
@@ -494,6 +498,7 @@ export default function App() {
           nodeGroups={nodeGroups}
           fleetCapabilities={fleetCapabilities}
           bootSettlement={bootSettlement}
+          onBootSettlementApplied={onBootSettlementApplied}
           localNodeId={deckStore.localNodeId}
           onPick={openSingle}
           onAddTile={onAddTile}

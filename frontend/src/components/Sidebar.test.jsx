@@ -12,6 +12,7 @@ beforeEach(() => {
 describe('Sidebar session identity', () => {
   it('toggles boot from local and routed desktop rows without using power', async () => {
     const onBoot = vi.fn(async () => {}); const onPower = vi.fn();
+    const onBootSettlementApplied = vi.fn();
     const props = {
       cells: [{ cell: 'Local Cell', tmuxSession: 'local-cell', tmux: true, active: true, boot: false }],
       sessions: [{ name: 'local-cell' }],
@@ -22,6 +23,7 @@ describe('Sidebar session identity', () => {
       }],
       fleetCapabilities: ['up', 'down', 'boot'],
       onBoot,
+      onBootSettlementApplied,
       onPower,
       onPick: vi.fn(),
       onAddTile: vi.fn(),
@@ -37,8 +39,9 @@ describe('Sidebar session identity', () => {
 
     // PowerSheet conferma il valore opposto prima del poll: l'evento del
     // genitore deve sostituire subito l'override del toggle diretto.
-    rerender(<Sidebar {...props} bootSettlement={{ cell: 'Local Cell', route: [], enabled: false }} />);
+    rerender(<Sidebar {...props} bootSettlement={{ id: 1, cell: 'Local Cell', route: [], enabled: false }} />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'enable at boot Local Cell' })).toBeTruthy());
+    expect(onBootSettlementApplied).toHaveBeenCalledWith(1);
     fireEvent.click(screen.getAllByRole('button', { name: 'power off' })[0]);
     expect(onPower).toHaveBeenLastCalledWith(expect.objectContaining({ cell: 'Local Cell', boot: false }));
 
