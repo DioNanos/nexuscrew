@@ -1,6 +1,6 @@
 {
   "name": "@mmmbuto/nexuscrew",
-  "version": "0.8.24",
+  "version": "0.8.25-alibaba.0",
   "description": "Faithful browser tmux client — attach to live sessions over a real PTY, localhost-only, mobile-easy",
   "main": "lib/server.js",
   "bin": {

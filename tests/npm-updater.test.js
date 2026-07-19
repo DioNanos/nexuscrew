@@ -58,6 +58,24 @@ test('npm updater: latest inferiore non provoca mai downgrade', async () => {
   updater.close();
 });
 
+test('npm updater: latest 0.8.24 non sostituisce current 0.8.25-alibaba.0', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-updater-alibaba-'));
+  let spawned = false;
+  const updater = createNpmUpdater({
+    currentVersion: '0.8.25-alibaba.0', home: dir, statusPath: path.join(dir, 'state.json'),
+    supported: true, enabled: true, lookupLatest: async () => '0.8.24',
+    spawnImpl: () => { spawned = true; },
+  });
+  const status = await updater.check({ autoApply: true });
+  assert.equal(core.compareVersions('0.8.24', '0.8.25-alibaba.0'), -1);
+  assert.equal(status.available, false);
+  assert.equal(status.latest, '0.8.24');
+  assert.equal(status.phase, 'idle');
+  assert.equal(spawned, false);
+  updater.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('npm updater: applica esclusivamente la versione esatta verificata', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-updater-'));
   let call = null; let unref = false;
