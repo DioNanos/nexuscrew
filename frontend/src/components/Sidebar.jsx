@@ -28,6 +28,7 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 export default function Sidebar({
   sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onBoot, onNodePower, onKill, onVisibility, onNew,
   onNodeRename, onSettings, onBootError, localNodeId, fleetCapabilities = [], bootSettlement = null,
+  onBootSettlementApplied,
   width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
@@ -102,7 +103,8 @@ export default function Sidebar({
     const route = Array.isArray(bootSettlement.route) ? bootSettlement.route : [];
     const key = bootCellKey(bootSettlement.cell, route);
     setBootOverrides((current) => ({ ...current, [key]: !!bootSettlement.enabled }));
-  }, [bootSettlement]);
+    if (onBootSettlementApplied) onBootSettlementApplied(bootSettlement.id);
+  }, [bootSettlement, onBootSettlementApplied]);
   const bootEnabled = (c, route = []) => {
     const key = bootCellKey(c.cell, route);
     return Object.prototype.hasOwnProperty.call(bootOverrides, key) ? bootOverrides[key] : !!c.boot;
