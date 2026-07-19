@@ -9,7 +9,10 @@ const catalog = [
   { id: 'claude.native', client: 'claude', clientLabel: 'Claude Code', provider: 'native', label: 'Anthropic', default: true, protocol: 'anthropic_messages', permissionPolicyDefault: 'unsafe', supportsUnsafe: true, rc: true },
   { id: 'claude.openrouter', client: 'claude', clientLabel: 'Claude Code', provider: 'openrouter', label: 'OpenRouter', protocol: 'anthropic_messages', permissionPolicyDefault: 'unsafe', supportsUnsafe: true, requiresModel: true, credentialEnv: 'OPENROUTER_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: ['claude.shared', 'pi.shared'], notice: 'claude-openrouter' },
   { id: 'claude.kimi-code', client: 'claude', clientLabel: 'Claude Code', provider: 'kimi-code', label: 'Kimi Code', protocol: 'anthropic_messages', permissionPolicyDefault: 'unsafe', supportsUnsafe: true, model: 'k3[1m]', models: ['k3[1m]'], credentialEnv: 'KIMI_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'claude-kimi-code' },
+  { id: 'claude.alibaba-token-plan', client: 'claude', clientLabel: 'Claude Code', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'anthropic_messages', permissionPolicyDefault: 'unsafe', supportsUnsafe: true, model: 'qwen3.8-max-preview', models: ['qwen3.8-max-preview', 'qwen3.7-plus', 'qwen3.7-max', 'qwen3.6-flash', 'glm-5.2', 'deepseek-v4-pro'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
   { id: 'codex-vl.openrouter', client: 'codex-vl', clientLabel: 'Codex-VL', provider: 'openrouter', label: 'OpenRouter', protocol: 'openai_responses', permissionPolicyDefault: 'standard', supportsUnsafe: true, requiresModel: true, credentialEnv: 'OPENROUTER_API_KEY', authConfigured: true, credentialSource: 'local', credentialUsedBy: ['codex.shared'], notice: 'codex-openrouter' },
+  { id: 'codex-vl.alibaba-token-plan', client: 'codex-vl', clientLabel: 'Codex-VL', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'openai_responses', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: 'qwen3.8-max-preview', models: ['qwen3.8-max-preview', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-flash'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
+  { id: 'pi.alibaba-token-plan', client: 'pi', clientLabel: 'Pi', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'openai-completions', permissionPolicyDefault: 'standard', supportsUnsafe: false, model: 'qwen3.8-max-preview', models: ['qwen3.8-max-preview', 'qwen3.7-plus', 'qwen3.7-max', 'qwen3.6-flash', 'glm-5.2', 'deepseek-v4-pro'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
 ];
 
 function profileForm(id) {
@@ -74,5 +77,17 @@ describe('EngineEditor KEY section', () => {
     expect(screen.getByPlaceholderText('blank = keep the current source')).toBeTruthy();
     expect(screen.getByText(/beta and stateless/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'save' }).disabled).toBe(false);
+  });
+
+  it('renders all Alibaba profiles with one fixed credential and qwen3.8 default', () => {
+    for (const id of ['claude.alibaba-token-plan', 'codex-vl.alibaba-token-plan', 'pi.alibaba-token-plan']) {
+      const view = render(<Harness initial={profileForm(id)} />);
+      const key = screen.getByRole('region', { name: 'KEY' });
+      expect(within(key).getByDisplayValue('ALIBABA_CODE_API_KEY').readOnly).toBe(true);
+      expect(screen.getByDisplayValue('qwen3.8-max-preview')).toBeTruthy();
+      expect(screen.getByText(/no OpenAI\/PAYG fallback/)).toBeTruthy();
+      expect(view.container.querySelector('datalist option[value="qwen3.8-max-preview"]')).toBeTruthy();
+      view.unmount();
+    }
   });
 });
