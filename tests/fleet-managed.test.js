@@ -47,6 +47,17 @@ test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P',
   ]) assert.equal(ids.has(id), true, `${id} deve essere nel catalogo base`);
   assert.equal(ids.has('claude.zai-a'), false);
   assert.equal(ids.has('claude.zai-p'), false);
+  assert.deepEqual(
+    catalog.filter((p) => p.client === 'claude' && p.provider === 'zai').map((p) => p.id),
+    ['claude.zai'],
+    'la UI espone un solo profilo Claude Z.AI generico',
+  );
+  assert.deepEqual(
+    CATALOG.filter((p) => p.id === 'claude.zai-a' || p.id === 'claude.zai-p')
+      .map((p) => ({ id: p.id, legacy: p.legacy })),
+    [{ id: 'claude.zai-a', legacy: true }, { id: 'claude.zai-p', legacy: true }],
+    'gli alias A/P restano soltanto compatibilita legacy nascosta',
+  );
   assert.equal(ids.has('pi.fireworks'), false, 'provider Pi avanzati restano fuori dalla lista base');
   assert.equal(catalog.find((p) => p.id === 'claude.zai').defaultEnvKey, 'ZAI_API_KEY');
   assert.equal(catalog.find((p) => p.id === 'claude.openrouter').credentialEnv, 'OPENROUTER_API_KEY');

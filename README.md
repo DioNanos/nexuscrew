@@ -140,10 +140,10 @@ The provider catalog is scoped to the selected CLI rather than to a machine-spec
 
 | CLI | Built-in provider choices |
 |---|---|
-| Claude Code | Anthropic, OpenRouter, Kimi Code, Amazon Bedrock, Google Vertex AI, Microsoft Foundry, Ollama Cloud, local Ollama, Z.AI, custom Anthropic-compatible endpoint |
+| Claude Code | Anthropic, Alibaba Token Plan Personal, OpenRouter, Kimi Code, Amazon Bedrock, Google Vertex AI, Microsoft Foundry, Ollama Cloud, local Ollama, Z.AI, custom Anthropic-compatible endpoint |
 | Codex | OpenAI or ChatGPT login, OpenAI API, Ollama Cloud, local Ollama, LM Studio, custom OpenAI Responses endpoint |
-| Codex-VL | OpenAI or ChatGPT login, OpenAI API, OpenRouter, Ollama Cloud, local Ollama, LM Studio, custom OpenAI Responses endpoint |
-| Pi | Native default, Anthropic, OpenAI API, Codex OAuth, Gemini, GitHub Copilot, OpenRouter, Ollama, DeepSeek, Z.AI, custom provider |
+| Codex-VL | OpenAI or ChatGPT login, OpenAI API, Alibaba Token Plan Personal, OpenRouter, Ollama Cloud, local Ollama, LM Studio, custom OpenAI Responses endpoint |
+| Pi | Native default, Anthropic, OpenAI API, Alibaba Token Plan Personal, Codex OAuth, Gemini, GitHub Copilot, OpenRouter, Ollama, DeepSeek, Z.AI, custom provider |
 
 Custom Codex-compatible endpoints use the real Responses wire API; NexusCrew does not silently
 fall back to Chat Completions. Custom argv-based engines are also supported and are launched
@@ -159,6 +159,14 @@ Kimi Code is a separate Claude Code provider for Kimi membership keys. It defaul
 uses `https://api.kimi.com/coding/`, and runs with an isolated Claude configuration so a native
 Anthropic account remains untouched. A Kimi Code membership key is not interchangeable with a
 Moonshot pay-as-you-go API key.
+
+Alibaba Token Plan Personal is a separate managed profile for Claude Code, Codex-VL and Pi. It
+uses only `ALIBABA_CODE_API_KEY`, defaults to `qwen3.8-max-preview`, and has no OpenAI or
+pay-as-you-go fallback. The npm package also includes the portable `alibaba-token-media` skill
+for dry-run-first Wan image/edit and HappyHorse video workflows. Claude Code, Codex, Codex-VL
+and Pi can invoke its dependency-free Python CLI directly; Pi is not assumed to support MCP
+natively. The media skill requires Python 3. Media generation always requires explicit Credit
+consent and never runs during installation, tests, or startup.
 
 Permission handling is explicit per cell and engine:
 
@@ -403,7 +411,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.24** on npm and GitHub.
+The current stable release is **v0.8.25** on npm and GitHub.
 
 ## License
 

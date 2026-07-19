@@ -12,10 +12,11 @@ vi.mock('../lib/api.js', () => ({
       : { sessions: fixture.sessions },
   })),
   seenKey: (session) => `nc_seen_${session}`,
-  fleetStatus: vi.fn(async () => ({ available: true, cells: fixture.cells })),
+  fleetStatus: vi.fn(async () => ({ available: true, capabilities: ['up', 'down', 'boot'], cells: fixture.cells })),
   fleetDefinitions: vi.fn(async () => ({ engines: [] })),
   fleetUp: vi.fn(async () => ({})),
   fleetDown: vi.fn(async () => ({})),
+  fleetBoot: vi.fn(async () => ({})),
   killSession: vi.fn(async () => ({})),
   nodeAction: vi.fn(async () => ({})),
   renameNodeLabel: vi.fn(async () => ({})),
@@ -26,7 +27,7 @@ vi.mock('../hooks/useNodes.js', () => ({ useNodes: () => fixture.nodes }));
 vi.mock('../hooks/useLang.js', () => ({ useLang: () => ['en', vi.fn()] }));
 
 import SessionList from './SessionList.jsx';
-import { renameNodeLabel, setSessionTechnical } from '../lib/api.js';
+import { fleetBoot, renameNodeLabel, setSessionTechnical } from '../lib/api.js';
 
 function cell(cell, tmuxSession, live, engine = 'claude.native') {
   return { cell, tmuxSession, tmux: live, active: live, engine, key: '', degraded: false };
@@ -41,6 +42,7 @@ function renderRoster(onPick = vi.fn()) {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   localStorage.clear();
   localStorage.setItem('nc_lang', 'en');
   fixture.sessions = [session('local-live', 20), session('scratch', 10)];
@@ -57,6 +59,40 @@ beforeEach(() => {
 });
 
 describe('mobile roster parity', () => {
+  it('counts live Fleet cells across local and remote inventory even when tmux session lists are empty', async () => {
+    fixture.sessions = [];
+    fixture.cells = [
+      cell('Local One', 'local-one', true),
+      cell('Local Two', 'local-two', true),
+      cell('Local Off', 'local-off', false),
+    ];
+    fixture.nodes[0].sessions = [];
+    fixture.nodes[0].unmanaged = [];
+    fixture.nodes[0].cells = [cell('Remote One', 'remote-one', true), cell('Remote Off', 'remote-off', false)];
+    renderRoster();
+
+    expect(await screen.findByText('tmux fleet · 3 sessions')).toBeTruthy();
+  });
+
+  it('toggles boot directly without invoking power and supports routed cells', async () => {
+    const user = userEvent.setup();
+    fixture.cells[0].boot = false;
+    fixture.nodes[0].capabilities = ['up', 'down', 'boot'];
+    fixture.nodes[0].cells[0].boot = true;
+    renderRoster();
+
+    await user.click(await screen.findByRole('button', { name: 'enable at boot Live Cell' }));
+    expect(fleetBoot).toHaveBeenCalledWith('test-token', { cell: 'Live Cell', enabled: true }, []);
+    expect(screen.getByRole('button', { name: 'disable at boot Live Cell' }).classList.contains('on')).toBe(true);
+
+    await user.click(screen.getByRole('button', { name: 'disable at boot Relay Live' }));
+    expect(fleetBoot).toHaveBeenCalledWith('test-token', { cell: 'Relay Live', enabled: false }, ['relay']);
+    expect(screen.getByRole('button', { name: 'enable at boot Relay Live' }).classList.contains('on')).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'power off Relay Live' }));
+    expect(screen.getByRole('checkbox', { name: 'also remove from boot' }).checked).toBe(false);
+  });
+
   it('blips working cells and switches the one-line subtitle between work, idle and startup model', async () => {
     const user = userEvent.setup();
     fixture.sessions[0] = session('local-live', 20, {

@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import Sidebar from './Sidebar.jsx';
 
@@ -10,6 +10,34 @@ beforeEach(() => {
 });
 
 describe('Sidebar session identity', () => {
+  it('toggles boot from local and routed desktop rows without using power', async () => {
+    const onBoot = vi.fn(async () => {}); const onPower = vi.fn();
+    render(<Sidebar
+      cells={[{ cell: 'Local Cell', tmuxSession: 'local-cell', tmux: true, active: true, boot: false }]}
+      sessions={[{ name: 'local-cell' }]}
+      nodeGroups={[{
+        name: 'relay', label: 'Relay', route: ['relay'], status: 'up', instanceId: 'd'.repeat(32),
+        sessions: [{ name: 'remote-cell' }], unmanaged: [], capabilities: ['up', 'down', 'boot'], engines: [],
+        cells: [{ cell: 'Remote Cell', tmuxSession: 'remote-cell', tmux: true, active: true, boot: true, key: 'relay:remote-cell' }],
+      }]}
+      onBoot={onBoot} onPower={onPower} onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'enable at boot Local Cell' }));
+    await waitFor(() => expect(onBoot).toHaveBeenCalledWith('Local Cell', true, []));
+    expect(screen.getByRole('button', { name: 'disable at boot Local Cell' }).classList.contains('on')).toBe(true);
+    fireEvent.click(screen.getAllByRole('button', { name: 'power off' })[0]);
+    expect(onPower).toHaveBeenLastCalledWith(expect.objectContaining({ cell: 'Local Cell', boot: true }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'disable at boot Remote Cell' }));
+    await waitFor(() => expect(onBoot).toHaveBeenCalledWith('Remote Cell', false, ['relay']));
+    expect(screen.getByRole('button', { name: 'enable at boot Remote Cell' }).classList.contains('on')).toBe(false);
+    fireEvent.click(screen.getAllByRole('button', { name: 'power off' })[1]);
+    expect(onPower).toHaveBeenLastCalledWith(expect.objectContaining({
+      cell: 'Remote Cell', boot: false, route: ['relay'],
+    }));
+  });
+
   it('opens local and remote rows with ownerId + tmux session coordinates', () => {
     const onPick = vi.fn();
     render(

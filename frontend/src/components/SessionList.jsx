@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  apiFetch, fleetStatus, fleetUp, fleetDown, killSession, nodeAction, renameNodeLabel, setSessionTechnical,
+  apiFetch, fleetStatus, fleetUp, fleetDown, fleetBoot, killSession, nodeAction, renameNodeLabel, setSessionTechnical,
 } from '../lib/api.js';
 import Icon from './Icon.jsx';
 import { sidebarItems, sidebarOrder, sidebarSearchVisible } from '../lib/sidebar-model.js';
@@ -18,6 +18,8 @@ import { OWNER_ID_RE } from '../lib/grid-model.js';
 import { isValidLabel } from '../lib/settings-model.js';
 import './SessionList.css';
 
+const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'local'}:${cell}`;
+
 // Home mobile: lo stesso roster per-posizione della sidebar desktop. Stato di
 // apertura, filtro, pin e ordine hanno quindi un solo contratto condiviso
 // (hook useRosterPreferences + model roster-view-model).
@@ -33,6 +35,9 @@ export default function SessionList({ onPick, token, onSettings }) {
   const [endpoint, setEndpoint] = useState({ bind: '127.0.0.1', port: '' });
   const [localNodeId, setLocalNodeId] = useState('');
   const [cells, setCells] = useState([]);
+  const [fleetCapabilities, setFleetCapabilities] = useState([]);
+  const [bootOverrides, setBootOverrides] = useState({});
+  const [bootBusy, setBootBusy] = useState(new Set());
   const [powerCell, setPowerCell] = useState(null);
   const [nodeBusy, setNodeBusy] = useState(null);
   const {
@@ -42,6 +47,24 @@ export default function SessionList({ onPick, token, onSettings }) {
     groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
   } = useNodePreferences();
   const preferredNodeGroups = preferredGroups(nodeGroups);
+
+  // Converge l'override ottimistico sulla source of truth restituita dai poll
+  // locali/Hydra. PowerSheet e toggle diretto scrivono la stessa proprieta'.
+  useEffect(() => {
+    const actual = new Map();
+    for (const c of cells) actual.set(bootCellKey(c.cell), !!c.boot);
+    for (const g of nodeGroups) {
+      const route = g.route || [g.name];
+      for (const c of g.cells || []) actual.set(bootCellKey(c.cell, route), !!c.boot);
+    }
+    setBootOverrides((current) => {
+      let changed = false; const next = { ...current };
+      for (const [key, value] of Object.entries(current)) {
+        if (actual.has(key) && actual.get(key) === value) { delete next[key]; changed = true; }
+      }
+      return changed ? next : current;
+    });
+  }, [cells, nodeGroups]);
 
   async function refresh() {
     try {
@@ -54,7 +77,8 @@ export default function SessionList({ onPick, token, onSettings }) {
     try {
       const fs = await fleetStatus(token);
       setCells(fs.available ? (fs.cells || []) : []);
-    } catch (_) { setCells([]); }
+      setFleetCapabilities(fs.available ? (fs.capabilities || []) : []);
+    } catch (_) { setCells([]); setFleetCapabilities([]); }
   }
 
   useEffect(() => {
@@ -75,6 +99,35 @@ export default function SessionList({ onPick, token, onSettings }) {
     try { await navigator.clipboard.writeText(url); } catch (_) { /* clipboard non disponibile */ }
   }
 
+  function setBootChoice(cell, route, enabled) {
+    const key = bootCellKey(cell, route);
+    setBootOverrides((current) => ({ ...current, [key]: !!enabled }));
+  }
+
+  function bootEnabled(c, route = []) {
+    const key = bootCellKey(c.cell, route);
+    return Object.prototype.hasOwnProperty.call(bootOverrides, key) ? bootOverrides[key] : !!c.boot;
+  }
+
+  async function onBootToggle(event, c, route = []) {
+    event.stopPropagation();
+    const key = bootCellKey(c.cell, route); const enabled = !bootEnabled(c, route);
+    setBootChoice(c.cell, route, enabled);
+    setBootBusy((current) => new Set(current).add(key));
+    try {
+      // Cambia soltanto la preferenza per il prossimo boot: lifecycle invariato.
+      await fleetBoot(token, { cell: c.cell, enabled }, route);
+      if (!route.length) setCells((current) => current.map((entry) => (
+        entry.cell === c.cell ? { ...entry, boot: enabled } : entry
+      )));
+    } catch (error) {
+      setBootOverrides((current) => { const next = { ...current }; delete next[key]; return next; });
+      setErr(String(error?.message || error));
+    } finally {
+      setBootBusy((current) => { const next = new Set(current); next.delete(key); return next; });
+    }
+  }
+
   async function onFleetConfirm(payload) {
     if (!powerCell) return;
     const { cell } = powerCell;
@@ -86,8 +139,10 @@ export default function SessionList({ onPick, token, onSettings }) {
         ...(payload.model !== undefined ? { model: payload.model } : {}),
         ...(payload.permissionPolicy ? { permissionPolicy: payload.permissionPolicy } : {}),
       }, route);
+      setBootChoice(cell, route, !!payload.boot);
     } else {
       await fleetDown(token, { cell, boot: !!payload.boot }, route);
+      if (payload.boot) setBootChoice(cell, route, false);
     }
     refresh();
   }
@@ -143,8 +198,18 @@ export default function SessionList({ onPick, token, onSettings }) {
   );
   const rosterTotal = sidebarItems(localRawItems, pins, 'all', sidebarOrder(orders, 'local')).length + remoteCount;
 
-  const total = sessions ? sessions.length : 0;
-  const attached = (sessions || []).filter((s) => s.attached).length;
+  // Il vecchio header contava solo /api/sessions locale: con celle Fleet vive
+  // ricavate dall'inventario (o route Hydra) poteva quindi mostrare 0. Conta
+  // l'unione normalizzata celle-live + tmux unmanaged, senza duplicare la
+  // sessione sottostante di una cella.
+  const total = localRawItems.filter((item) => item.live).length
+    + preferredNodeGroups.reduce((sum, group) => (
+      sum + buildRemoteRoster(group).rawItems.filter((item) => item.live).length
+    ), 0);
+  const attached = (sessions || []).filter((s) => s.attached).length
+    + preferredNodeGroups.reduce(
+      (sum, group) => sum + (group.sessions || []).filter((s) => s.attached).length, 0,
+    );
   const endpointLabel = endpoint.port ? `${endpoint.bind}:${endpoint.port}` : endpoint.bind;
 
   function renderRosterItem(item, group = null, rawItems = localRawItems) {
@@ -166,6 +231,11 @@ export default function SessionList({ onPick, token, onSettings }) {
         ? t('cell-degraded')
         : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
       const canPower = route.length === 0 || (group?.capabilities || []).includes(c.active ? 'down' : 'up');
+      const canBoot = route.length === 0
+        ? fleetCapabilities.includes('boot')
+        : (group?.capabilities || []).includes('boot');
+      const boot = bootEnabled(c, route); const bootKey = bootCellKey(c.cell, route);
+      const bootLabel = `${t(boot ? 'boot-disable' : 'boot-enable')} ${c.cell}`;
       return (
         <div key={item.key} className="nc-mcard" data-roster-key={item.key} data-position={position}>
           <RosterHandle position={position} itemKey={item.key} label={c.cell}
@@ -184,8 +254,14 @@ export default function SessionList({ onPick, token, onSettings }) {
             aria-label={`${t('pin')} ${c.cell}`} title={t('pin')} onClick={() => togglePin(item.key)}>
             {pins.includes(item.key) ? '\u2605' : '\u2606'}
           </button>
+          {canBoot && <button className={`nc-act boot${boot ? ' on' : ''}`} disabled={bootBusy.has(bootKey)}
+            onClick={(event) => onBootToggle(event, c, route)} title={bootLabel} aria-label={bootLabel}>
+            <Icon name="refresh" size={16} />
+          </button>}
           {canPower && <button className={`nc-act power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
-            onClick={() => setPowerCell(route.length ? { ...c, route, availableEngines: group?.engines || [] } : c)}
+            onClick={() => setPowerCell(route.length
+              ? { ...c, boot, route, availableEngines: group?.engines || [] }
+              : { ...c, boot })}
             title={c.active ? t('power-off') : t('power-on')} aria-label={`${c.active ? t('power-off') : t('power-on')} ${c.cell}`}>
             <Icon name="power" size={16} />
           </button>}
