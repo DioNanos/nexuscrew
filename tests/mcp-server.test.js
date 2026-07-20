@@ -9,7 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
-const { createMcpServer, resolveSession } = require('../lib/mcp/server.js');
+const { createMcpServer, resolveSession, resolveIdentity } = require('../lib/mcp/server.js');
 
 function tmpdir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'ncmcp-')); }
 
@@ -69,17 +69,18 @@ test('initialize: echo protocolVersion, capabilities.tools, serverInfo', async (
   assert.equal(out.lines.length, 1);
 });
 
-test('tools/list: 8 tool nc_* con readOnlyHint sui read-only', async () => {
+test('tools/list: 9 tool nc_* con readOnlyHint sui read-only', async () => {
   const { srv, out } = makeSrv();
   await srv.handleLine(rpc(2, 'tools/list'));
   const tools = out.lines[0].result.tools;
   assert.deepEqual(tools.map((t) => t.name).sort(),
-    ['nc_ask', 'nc_cells', 'nc_deck', 'nc_inbox', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_status']);
+    ['nc_ask', 'nc_cells', 'nc_deck', 'nc_identity', 'nc_inbox', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_status']);
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   assert.equal(byName.nc_status.annotations.readOnlyHint, true);
   assert.equal(byName.nc_deck.annotations.readOnlyHint, true);
   assert.equal(byName.nc_cells.annotations.readOnlyHint, true);
   assert.equal(byName.nc_inbox.annotations.readOnlyHint, true);
+  assert.equal(byName.nc_identity.annotations.readOnlyHint, true);
   assert.equal(byName.nc_notify.annotations, undefined);
   assert.equal(byName.nc_send_cell.annotations, undefined);
   for (const t of tools) assert.equal(t.inputSchema.type, 'object');
@@ -179,12 +180,137 @@ test('identita cella: con $TMUX la sessione viene da display-message (execFile f
   assert.equal(calls[0].body.session, 'work-build');
 });
 
+// --- nc_identity: diagnostica read-only, nessuna API/token call (P0) ---------
+test('nc_identity: missing (nessun TMUX/NEXUSCREW_MCP_SESSION), NESSUNA chiamata HTTP/token', async () => {
+  const { srv, out, calls } = makeSrv({ env: {} });
+  await srv.handleLine(rpc(31, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const r = out.lines[0];
+  assert.equal(r.result.isError, undefined); // non e' un errore tool
+  const j = JSON.parse(r.result.content[0].text);
+  assert.equal(j.identified, false);
+  assert.equal(j.session, undefined); // session solo se validata
+  assert.equal(j.source, 'missing');
+  assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_MISSING');
+  assert.deepEqual(j.envPresence, { TMUX: false, TMUX_PANE: false, NEXUSCREW_MCP_SESSION: false });
+  assert.deepEqual(j.requiredEnvVars, ['TMUX', 'TMUX_PANE', 'NEXUSCREW_MCP_SESSION']);
+  assert.match(j.remediation, /--env-var/); // suggerimento senza valori
+  assert.equal(calls.length, 0); // NESSUNA API HTTP
+});
+
+test('nc_identity: invalid (NEXUSCREW_MCP_SESSION presente ma non valida) -> code INVALID', async () => {
+  const { srv, out, calls } = makeSrv({ env: { NEXUSCREW_MCP_SESSION: 'sessione non valida!' } });
+  await srv.handleLine(rpc(32, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.identified, false);
+  assert.equal(j.session, undefined);
+  assert.equal(j.source, 'missing');
+  assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_INVALID');
+  assert.deepEqual(j.envPresence, { TMUX: false, TMUX_PANE: false, NEXUSCREW_MCP_SESSION: true });
+  assert.equal(calls.length, 0);
+});
+
+test('nc_identity: fallback valido (no TMUX, NEXUSCREW_MCP_SESSION valido) -> source NEXUSCREW_MCP_SESSION', async () => {
+  const { srv, out, calls } = makeSrv({ env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' } });
+  await srv.handleLine(rpc(33, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.identified, true);
+  assert.equal(j.session, 'cloud-Dev');
+  assert.equal(j.source, 'NEXUSCREW_MCP_SESSION');
+  assert.equal(j.code, 'OK');
+  assert.equal(calls.length, 0);
+});
+
+test('nc_identity: tmux valido (TMUX set, display-message ok) -> source tmux', async () => {
+  const execFileImpl = (bin, args, _opts, cb) => {
+    assert.deepEqual([bin, args], ['tmux', ['display-message', '-p', '#S']]);
+    cb(null, 'work-build\n');
+  };
+  const { srv, out, calls } = makeSrv({
+    env: { TMUX: '/tmp/fake-tmux,1,0', TMUX_PANE: '%5' },
+    execFileImpl,
+  });
+  await srv.handleLine(rpc(34, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.identified, true);
+  assert.equal(j.session, 'work-build');
+  assert.equal(j.source, 'tmux');
+  assert.equal(j.code, 'OK');
+  assert.deepEqual(j.envPresence, { TMUX: true, TMUX_PANE: true, NEXUSCREW_MCP_SESSION: false });
+  assert.equal(calls.length, 0);
+});
+
+test('nc_identity: tmux fallito + fallback valido -> source NEXUSCREW_MCP_SESSION (precedenza preservata)', async () => {
+  const execFileImpl = (_bin, _args, _opts, cb) => cb(new Error('no server')); // tmux fallisce
+  const { srv, out, calls } = makeSrv({
+    env: { TMUX: '/tmp/fake-tmux,1,0', NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    execFileImpl,
+  });
+  await srv.handleLine(rpc(35, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.identified, true);
+  assert.equal(j.session, 'cloud-Dev');
+  assert.equal(j.source, 'NEXUSCREW_MCP_SESSION'); // caduto sul fallback
+  assert.equal(j.code, 'OK');
+  assert.equal(calls.length, 0);
+});
+
+test('nc_identity: risponde anche con token mancante (nessun readToken)', async () => {
+  const dir = tmpdir();
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cell-x' },
+    tokenPath: path.join(dir, 'inesistente'),
+  });
+  await srv.handleLine(rpc(36, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const r = out.lines[0];
+  assert.equal(r.result.isError, undefined); // token mancante NON blocca nc_identity
+  const j = JSON.parse(r.result.content[0].text);
+  assert.equal(j.identified, true);
+  assert.equal(j.session, 'cell-x');
+  assert.equal(j.code, 'OK');
+  assert.equal(calls.length, 0); // NESSUNA chiamata HTTP / nessun readToken
+});
+
+test('resolveIdentity: sorgente/code osservabili senza cambiare resolveSession', async () => {
+  // missing
+  const missing = await resolveIdentity({ env: {}, tmuxBin: 'tmux', execFileImpl: () => { throw new Error('nope'); } });
+  assert.equal(missing.session, null);
+  assert.equal(missing.source, 'missing');
+  assert.equal(missing.code, 'NEXUSCREW_MCP_IDENTITY_MISSING');
+  // invalid (fallback presente ma non valido)
+  const invalid = await resolveIdentity({ env: { NEXUSCREW_MCP_SESSION: ' ' }, tmuxBin: 'tmux', execFileImpl: () => { throw new Error('nope'); } });
+  // ' '.trim() = '' -> fallbackPresent false -> MISSING (stringa vuota dopo trim non e' un segnale)
+  assert.equal(invalid.code, 'NEXUSCREW_MCP_IDENTITY_MISSING');
+  const invalidReal = await resolveIdentity({ env: { NEXUSCREW_MCP_SESSION: 'bad/session' }, tmuxBin: 'tmux', execFileImpl: () => { throw new Error('nope'); } });
+  assert.equal(invalidReal.session, null);
+  assert.equal(invalidReal.source, 'missing');
+  assert.equal(invalidReal.code, 'NEXUSCREW_MCP_IDENTITY_INVALID');
+  // fallback valido
+  const fb = await resolveIdentity({ env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' }, tmuxBin: 'tmux', execFileImpl: () => { throw new Error('nope'); } });
+  assert.equal(fb.session, 'cloud-Dev');
+  assert.equal(fb.source, 'NEXUSCREW_MCP_SESSION');
+  assert.equal(fb.code, 'OK');
+  // resolveSession wrapper resta Promise<string|null>
+  assert.equal(await resolveSession({ env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' }, tmuxBin: 'tmux', execFileImpl: () => {} }), 'cloud-Dev');
+  assert.equal(await resolveSession({ env: {}, tmuxBin: 'tmux', execFileImpl: () => {} }), null);
+});
+
 test('nc_ask senza sessione: errore chiaro, NESSUNA chiamata HTTP', async () => {
   const { srv, out, calls } = makeSrv({ env: {} }); // no TMUX, no NEXUSCREW_MCP_SESSION
   await srv.handleLine(rpc(5, 'tools/call', { name: 'nc_ask', arguments: { question: 'procedo?' } }));
   const r = out.lines[0];
   assert.equal(r.result.isError, true);
   assert.match(r.result.content[0].text, /NEXUSCREW_MCP_SESSION/);
+  // P0: codice stabile di identita nel messaggio umano, isError preservato.
+  assert.match(r.result.content[0].text, /NEXUSCREW_MCP_IDENTITY_MISSING/);
+  assert.equal(calls.length, 0);
+});
+
+test('nc_ask con identita presente ma invalida usa il codice INVALID e non chiama HTTP', async () => {
+  const { srv, out, calls } = makeSrv({ env: { NEXUSCREW_MCP_SESSION: 'bad/session' } });
+  await srv.handleLine(rpc(51, 'tools/call', { name: 'nc_ask', arguments: { question: 'procedo?' } }));
+  const r = out.lines[0];
+  assert.equal(r.result.isError, true);
+  assert.match(r.result.content[0].text, /NEXUSCREW_MCP_IDENTITY_INVALID/);
   assert.equal(calls.length, 0);
 });
 
@@ -353,6 +479,8 @@ test('nc_deck: senza identita tmux fallisce prima di leggere le API', async () =
   await srv.handleLine(rpc(15, 'tools/call', { name: 'nc_deck', arguments: {} }));
   assert.equal(out.lines[0].result.isError, true);
   assert.match(out.lines[0].result.content[0].text, /NEXUSCREW_MCP_SESSION/);
+  // P0: codice stabile di identita nel messaggio umano, isError preservato.
+  assert.match(out.lines[0].result.content[0].text, /NEXUSCREW_MCP_IDENTITY_MISSING/);
   assert.equal(calls.length, 0);
 });
 
@@ -497,7 +625,7 @@ test('subprocess: handshake + tools/call nc_notify contro server HTTP finto', as
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
 
   const list = await call(2, 'tools/list');
-  assert.equal(list.result.tools.length, 8);
+  assert.equal(list.result.tools.length, 9);
 
   const notif = await call(3, 'tools/call', { name: 'nc_notify', arguments: { title: 'e2e ok' } });
   assert.deepEqual(JSON.parse(notif.result.content[0].text), { delivered: { ui: 1, push: 0 } });

@@ -2,6 +2,26 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.26 — 2026-07-20 — "MCP Identity"
+
+- Makes MCP caller resolution directly diagnosable through the read-only `nc_identity` tool.
+  The diagnostic works without a token or resolved session, reports only non-sensitive source
+  and presence metadata, and returns stable missing/invalid identity codes with remediation.
+- Keeps identity-gated tools fail-closed while improving their error contract. A missing or
+  invalid tmux identity can no longer be mistaken for a transport failure, and `nc_notify`
+  continues to degrade safely to an unknown sender.
+- Documents the explicit `env_vars` name allowlist required by clients that clear the MCP stdio
+  environment, including the matching repeatable `codex-vl mcp add --env-var NAME` form. Values
+  remain outside command arguments and configuration files.
+- Extends `nexuscrew doctor` with a non-failing MCP identity check: PWA-only users receive at
+  most an informational warning, while MCP users can see whether `TMUX` or
+  `NEXUSCREW_MCP_SESSION` is observable in the current process.
+- Stabilizes the writable-provider-file security fixture across differing CI umasks without
+  weakening the production permission check.
+- Gate: **888 isolated Node tests** (887 pass / 1 platform skip), **39/39 frontend component
+  tests**, production PWA build and zero production dependency vulnerabilities in both the root
+  and frontend dependency trees.
+
 ## 0.8.25 — 2026-07-19 — "Token Plan"
 
 - Adds Alibaba Token Plan Personal as a first-class managed provider for Claude Code,

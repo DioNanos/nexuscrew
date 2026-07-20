@@ -331,10 +331,17 @@ It is intended for AI sessions running inside managed tmux cells.
 | `nc_deck` | Discover owner-qualified decks containing the calling tmux session |
 | `nc_cells` | List authorized active and inactive Fleet cells across visible nodes |
 | `nc_send_cell` | Submit bounded text to one exact active cell returned by `nc_cells` |
+| `nc_identity` | Read-only identity diagnostics; callable with no session and no token |
 
 Cell delivery uses bracketed paste followed by a separate Enter. A `submitted` receipt confirms
 delivery to the target TUI, not acceptance or completion by its model. There is no silent
 offline queue.
+
+`nc_identity` returns only non-sensitive data: the `source` the caller was resolved from
+(`tmux`, `NEXUSCREW_MCP_SESSION`, or `missing`), boolean presence of the identity env vars,
+a stable `code` (`OK`, `NEXUSCREW_MCP_IDENTITY_MISSING`, `NEXUSCREW_MCP_IDENTITY_INVALID`) and
+a remediation hint. It never calls an HTTP API or reads the token, so it works even when the
+identity is missing — use it to diagnose why the identity-gated tools fail closed.
 
 Register the bridge in Claude Code:
 
@@ -349,16 +356,32 @@ Register the bridge in Claude Code:
 }
 ```
 
-Or in Codex / Codex-VL:
+Or in Codex / Codex-VL (`env_vars` allowlists variable **names** only — no values are copied
+into the CLI or config file):
 
 ```toml
 [mcp_servers.nexuscrew]
 command = "nexuscrew"
 args = ["mcp"]
+env_vars = ["NEXUSCREW_MCP_SESSION", "TMUX", "TMUX_PANE"]
 ```
 
-The caller is resolved from its tmux session. `NEXUSCREW_MCP_SESSION` is available only as an
-explicit fallback for non-tmux contexts.
+The equivalent CLI form on a Codex-VL build that supports `--env-var` (allowlist by name, repeated):
+
+```text
+codex-vl mcp add nexuscrew \
+  --env-var NEXUSCREW_MCP_SESSION \
+  --env-var TMUX \
+  --env-var TMUX_PANE \
+  -- nexuscrew mcp
+```
+
+The caller is resolved, in order, from its tmux session (`tmux display-message -p '#S'`),
+then from the `NEXUSCREW_MCP_SESSION` fallback, then not at all. Codex/Codex-VL launch MCP stdio
+processes with a cleared environment, so those clients must explicitly allowlist the identity
+env vars for the server to observe them; otherwise the identity-gated tools (`nc_ask`, `nc_send_file`,
+`nc_deck`, `nc_send_cell`, `nc_inbox`) stay fail-closed with a stable
+`NEXUSCREW_MCP_IDENTITY_*` code, while `nc_notify` degrades to an unknown sender.
 
 ## Configuration
 
@@ -411,7 +434,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.25** on npm and GitHub.
+The current stable release is **v0.8.26** on npm and GitHub.
 
 ## License
 

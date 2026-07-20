@@ -855,6 +855,56 @@ test('doctor helpers: Termux dichiara il limite Termux:Boot e Linux segnala ling
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test('doctor checkMcpIdentity: NON-FAILING (PWA-only non rompe), WARN se nessuna identity env', () => {
+  const { checkMcpIdentity } = require('../lib/cli/doctor.js');
+  // PWA-only / nessuna identita: ok SEMPRE true, WARN informativo (mai FAIL).
+  const empty = checkMcpIdentity({});
+  assert.equal(empty.ok, true);
+  assert.equal(empty.warn, true);
+  assert.match(empty.detail, /TMUX\/NEXUSCREW_MCP_SESSION assenti/i);
+  assert.match(empty.detail, /PWA-only/i);
+  // Identita osservabile via NEXUSCREW_MCP_SESSION -> OK, nessun warn.
+  const byEnv = checkMcpIdentity({ NEXUSCREW_MCP_SESSION: 'cloud-Dev' });
+  assert.equal(byEnv.ok, true);
+  assert.equal(byEnv.warn, undefined);
+  assert.match(byEnv.detail, /NEXUSCREW_MCP_SESSION/);
+  // Identita osservabile via TMUX -> OK, nessun warn.
+  const byTmux = checkMcpIdentity({ TMUX: '/tmp/tmux,1,0' });
+  assert.equal(byTmux.ok, true);
+  assert.equal(byTmux.warn, undefined);
+  assert.match(byTmux.detail, /TMUX/);
+  // Stringa solo-spazi NON conta come presenza (trim a vuoto).
+  const blank = checkMcpIdentity({ NEXUSCREW_MCP_SESSION: '   ' });
+  assert.equal(blank.ok, true);
+  assert.equal(blank.warn, true);
+});
+
+test('doctor: check MCP incluso ma non fail su PWA-only (env senza identita -> code 0)', () => {
+  const { home } = initHome();
+  const svc = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
+  fs.mkdirSync(path.dirname(svc), { recursive: true });
+  fs.writeFileSync(svc, 'x');
+  const r = doctor({
+    home, platform: 'linux', log: () => {}, installPath: svc, env: {}, // PWA-only: no identity env
+    execImpl: (b, a) => {
+      if (a && a.includes('is-active')) return 'active';
+      if (a && a.includes('is-enabled')) return 'enabled';
+      if (a && a.includes('--property=KillMode')) return 'process';
+      return '';
+    },
+    ptyLoad: () => ({ spawn() {} }),
+    commandExists: () => true,
+  });
+  // Il check MCP e' presente e WARN, ma ok=true quindi NON fail.
+  const mcp = r.checks.find((c) => c.name === 'MCP identity env');
+  assert.ok(mcp);
+  assert.equal(mcp.ok, true);
+  assert.equal(mcp.warn, true);
+  assert.equal(r.code, 0); // PWA-only non va in FAIL
+  assert.ok(r.ok);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 test('update: npm ok -> installa @latest + restart se attivo', () => {
   const calls = [];
   const r = update({

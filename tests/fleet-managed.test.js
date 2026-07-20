@@ -413,6 +413,10 @@ test('provider shell: symlink, owner diverso e file scrivibile da altri sono rif
   try {
     const real = path.join(home, 'real.zsh'); const link = path.join(home, 'providers.zsh');
     fs.writeFileSync(real, 'export ZAI_API_KEY=secret\n', { mode: 0o666 });
+    // writeFile mode is filtered through the process umask. Force the intended
+    // world-writable fixture so this security test behaves identically under
+    // coordinator (typically 0002) and worker/CI (often 0022) environments.
+    fs.chmodSync(real, 0o666);
     fs.symlinkSync(real, link);
     assert.deepEqual(parseProviderShellFile(link), {});
     assert.deepEqual(parseProviderShellFile(real), {});
