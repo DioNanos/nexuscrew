@@ -200,12 +200,12 @@ describe('mobile roster parity', () => {
 
     await user.click(screen.getByText('Live Cell').closest('button'));
     expect(onPick).toHaveBeenLastCalledWith({
-      session: 'local-live', ownerId: 'c'.repeat(32),
+      session: 'local-live', ownerId: 'c'.repeat(32), cellName: 'Live Cell',
     });
 
     await user.click(screen.getByText('Relay Live').closest('button'));
     expect(onPick).toHaveBeenLastCalledWith({
-      session: 'remote-live', node: 'relay', ownerId: 'd'.repeat(32),
+      session: 'remote-live', node: 'relay', ownerId: 'd'.repeat(32), cellName: 'Relay Live',
     });
   });
 

@@ -16,7 +16,13 @@ import './GridTile.css';
 // node (opzionale, B2): il tile porta con se' il nodo remoto — terminale via
 // WS proxy, files/composer via HTTP proxy. Identita' del tile = refKey
 // "node:session" (drag, focus, close), locale = solo nome (retrocompatibile).
-export default function GridTile({ session, node, ownerId, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, available = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck }) {
+// cellName (Tranche D): titolo visibile risolto dal campo Fleet `cell` (es.
+// `Dev`). node/route/tmuxSession restano identita' tecniche e non compaiono
+// nel titolo visibile; solo il tooltip porta un identificativo tecnico.
+export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, available = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck }) {
+  // Titolo visibile = nome logico Fleet (gestita) o nome sessione (unmanaged).
+  // session (tmuxSession reale) resta l'identita' del tile per attach/drag.
+  const visibleName = cellName || session;
   const sendRef = useRef(() => {});
   const composerRef = useRef(() => false);
   const actionRef = useRef(() => {});
@@ -55,10 +61,9 @@ export default function GridTile({ session, node, ownerId, token, readonly = fal
           e.dataTransfer.effectAllowed = 'move';
         }}
       >
-        <button className="nc-tile-name" onClick={() => onFocus && onFocus(tileKey)}>
+        <button className="nc-tile-name" onClick={() => onFocus && onFocus(tileKey)} title={node ? `${visibleName} · ${node}` : visibleName}>
           <span className={alive ? 'nc-dot on' : 'nc-dot'} />
-          <b>{session}</b>
-          {node && <small className="nc-tile-node">@{node}</small>}
+          <b>{visibleName}</b>
         </button>
         <span className="nc-tile-actions">
           {onZoom && <button onClick={() => onZoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={14} /></button>}

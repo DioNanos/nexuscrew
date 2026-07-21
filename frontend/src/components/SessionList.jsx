@@ -220,10 +220,11 @@ export default function SessionList({ onPick, token, onSettings }) {
     const route = Array.isArray(group?.route) ? group.route : [];
     const routeKey = route.join('/'); const position = routeKey || 'local';
     const ownerId = route.length ? group?.instanceId : localNodeId;
-    const pickOwned = (name) => onPick({
+    const pickOwned = (name, cellName) => onPick({
       session: name,
       ...(routeKey ? { node: routeKey } : {}),
       ...(OWNER_ID_RE.test(String(ownerId || '')) ? { ownerId } : {}),
+      ...(typeof cellName === 'string' && cellName ? { cellName } : {}),
     });
     const canMove = canMoveRoster;
     if (item.type === 'cell') {
@@ -247,7 +248,7 @@ export default function SessionList({ onPick, token, onSettings }) {
             onMove={(source, target) => moveRoster(position, source, target, rawItems)}
             onStep={(delta) => stepRoster(position, item.key, delta, rawItems)} />
           <button className="nc-mcard-main"
-            onClick={() => c.tmux && pickOwned(c.tmuxSession)}
+            onClick={() => c.tmux && pickOwned(c.tmuxSession, c.cell)}
             title={stateTitle} aria-label={`${c.cell}, ${stateTitle}`}>
             <span className={`dot ${c.degraded ? 'warn' : c.tmux ? `on${item.working ? ' working' : ''}` : ''}`} />
             <span className="nc-mcard-text"><b>{c.cell}</b><small title={item.subtitle}>{item.subtitle}</small></span>

@@ -21,11 +21,6 @@
   font-size: 12px; font-weight: 600; color: #d8ffe8;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* chip nodo remoto sul tile (B2 multi-node) */
-.nc-tile-node {
-  flex: 0 0 auto; font-size: 10px; color: #7fb89a;
-  border: 1px solid #2c4a3a; border-radius: 4px; padding: 0 4px; line-height: 14px;
-}
 .nc-tile .nc-dot { width: 7px; height: 7px; flex: 0 0 auto; }
 .nc-tile-actions { flex: 0 0 auto; display: inline-flex; gap: 2px; }
 .nc-tile-actions button {
