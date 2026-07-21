@@ -200,3 +200,26 @@ describe('ComposerBar persistence and history', () => {
     expect(textarea().rows).toBe(2);
   });
 });
+
+describe('ComposerBar mobile IME submit', () => {
+  it('submits the live textarea value when the IME has not committed to React state', async () => {
+    // Mobile soft keyboard (SwiftKey etc.): while composing, React 18 defers
+    // onChange until compositionend. The send button suppresses blur (to keep
+    // the keyboard open), so tapping ➤ never fires compositionend either —
+    // the React `text` state is stale (empty) even though the prompt is
+    // visible in the field. submit() must read the live DOM value, not state.
+    const submitText = vi.fn(async () => true);
+    renderComposer({ submitText });
+    const input = textarea();
+
+    fireEvent.compositionStart(input);
+    act(() => { input.value = 'ciao prompt'; });
+    // deliberately NO fireEvent.change: React state stays empty (the bug)
+    expect(input.value).toBe('ciao prompt');
+
+    fireEvent.click(document.querySelector('button.go'));
+
+    await waitFor(() => expect(submitText).toHaveBeenCalledWith('ciao prompt'));
+    await waitFor(() => expect(input.value).toBe(''));
+  });
+});

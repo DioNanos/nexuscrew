@@ -65,7 +65,15 @@ export default function ComposerBar({ submitText, token, session, node, ownerId 
   const micVisible = !!(wsAvailable || serverStt);
 
   async function submit() {
-    const draft = text;
+    // Mobile IME: React 18 defers onChange during composition, and the send
+    // button suppresses blur (onPointerDown preventDefault) to keep the soft
+    // keyboard open — so compositionend may never fire before the tap and the
+    // `text` state can be stale (empty) even though the prompt is visible in
+    // the field. Read the live DOM value and sync it into state so submit and
+    // confirmSubmitted see the real draft. No-op when nothing is composing.
+    const live = textareaRef.current ? textareaRef.current.value : text;
+    if (live !== text) setText(live);
+    const draft = live;
     const value = stripTrailingNewlines(draft);
     if (!value || sending) return;
     setSending(true);
