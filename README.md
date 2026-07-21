@@ -83,6 +83,10 @@ The first run creates the loopback-only runtime, starts it in the background, op
 and presents the setup wizard. Later runs reuse the configured service, print a compact status,
 and exit.
 
+On Android, `nexuscrew doctor` also verifies the Termux execution bridge used by current app
+builds. NexusCrew carries forward only a validated `libtermux-exec` preload from the active
+Termux prefix; arbitrary loader injection remains excluded from Fleet environments.
+
 The preferred port is `41820`. If another process owns it, NexusCrew selects the next free
 loopback port and records the result.
 
@@ -203,7 +207,8 @@ can be changed with pointer drag-and-drop or keyboard controls and is saved auto
 
 On mobile, locations are independently collapsible and filterable by all, pinned, active, off,
 or technical sessions. The same owner-qualified ordering model is used by compact and expanded
-desktop views.
+desktop views. Managed terminals use the logical Fleet cell name as their visible title; tmux
+session and route identifiers remain technical context rather than the primary heading.
 
 <p align="center">
   <img src="docs/img/fleet-mobile.gif" width="420" alt="NexusCrew mobile Fleet view with managed cells and session controls">
@@ -270,6 +275,10 @@ Their human-readable label has one server-backed source: rename from Settings or
 same canonical label appears everywhere without changing the technical route name, node identity,
 credentials, Share state or deck identity.
 
+For routed nodes that the current installation does not own, Settings → Nodes offers a local
+alias instead of a remote rename. The alias is private to the viewing installation, follows the
+stable instance identity and never changes or federates the remote label, route or owner.
+
 Pairing links contain a short-lived one-time invite and routing fields, but no SSH private key,
 provider key or PWA token. Node and deck identities remain owner-qualified across the network,
 and every routed HTTP or WebSocket request rechecks authorization, hop count and cycle rules.
@@ -315,6 +324,17 @@ state and manual controls are available in Settings → System; set
 
 On Linux, generated user services use `KillMode=process` so restarting NexusCrew does not stop
 the shared tmux server. Lifecycle commands fail closed when that protection cannot be verified.
+
+## Structured diagnostics
+
+Settings → Diagnostics shows a bounded in-memory event buffer for the local installation or an
+authorized routed node. Verbose collection is explicit and expires after 5, 15, 30 or 60 minutes;
+operational warnings and errors remain available when verbose mode is off. The view supports
+level/component filtering, pause, autoscroll, copy, JSON export and explicit clear.
+
+Records are structured and redacted before storage. Raw terminal content, prompts, command lines,
+environment values, tokens, credentials and filesystem paths are not accepted as diagnostic
+metadata. The buffer is not a reader for service journals or log files.
 
 ## MCP bridge
 
@@ -434,7 +454,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.26** on npm and GitHub.
+The current stable release is **v0.8.27** on npm and GitHub.
 
 ## License
 

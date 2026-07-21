@@ -2,6 +2,29 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.27 — 2026-07-21 — "Portable Control"
+
+- Restores Fleet and shell launches on current Android/Termux builds by preserving only a
+  validated, owner-safe `libtermux-exec` preload under the active Termux prefix. The related
+  Node-shebang workaround now detects the Termux runtime layout even when Node reports Linux.
+- Surfaces stable, sanitized `ENOENT`/`EACCES` client-spawn diagnostics without exposing command
+  paths, arguments, environment values or credentials, and adds an actionable `nexuscrew doctor`
+  check for the Termux execution bridge.
+- Keeps macOS LaunchAgents rooted at the stable user home rather than the replaceable runtime
+  directory, with a blocking doctor check for stale launchd working directories.
+- Adds viewer-local aliases for routed nodes, keyed by stable instance identity and stored in a
+  private local file. Aliases change display text only; remote labels, routes, owners and topology
+  remain untouched and the mutation is never federated.
+- Adds **Settings → Diagnostics** with bounded, structured, source-redacted records, temporary
+  5/15/30/60-minute verbose windows, filtering, pause, export, clear and routed read access.
+  Warning and error records remain available while verbose mode is off.
+- Uses the logical Fleet cell name as the visible cell title on mobile, desktop overlays and grid
+  tiles, while retaining technical route context only as non-primary metadata.
+- Updates the production lock to `body-parser@1.20.6`.
+- Gate: **931 isolated Node tests** (930 pass / 1 platform skip), **70/70 frontend component
+  tests**, production PWA build and zero production dependency vulnerabilities in both dependency
+  trees.
+
 ## 0.8.26 — 2026-07-20 — "MCP Identity"
 
 - Makes MCP caller resolution directly diagnosable through the read-only `nc_identity` tool.
