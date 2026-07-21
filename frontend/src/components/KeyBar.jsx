@@ -1,14 +1,12 @@
 import { useState } from 'react';
-import { CR } from '../lib/composer-input.js';
 import './KeyBar.css';
 // Layout stile Termux extra-keys. Di default (expanded=false) si mostra una
-// riga ridotta con i tasti essenziali per il caso d'uso mobile: toggle espandi,
-// menu ☰, frecce ↑↓←→ per navigare le scelte multiple dei TUI, e ■Enter per
-// confermarle (send(CR) diretto, affidabile anche quando l'Enter della soft
-// keyboard non viene catturato da xterm). Il toggle espande le due righe
-// complete "com'è ora" (ESC/HOME/END/PGUP/TAB/CTRL/ALT/PGDN…). Le azioni
-// NexusCrew (window/pane/scroll/detach) vivono nel menu ☰. send(seq): byte
-// grezzi nel pty. action(name): comando tmux server-side.
+// riga ridotta: a sinistra toggle espandi + menu ☰; a destra (scorporate dal
+// toggle) le frecce ↑↓←→ per navigare le scelte multiple dei TUI. Il toggle
+// espande le due righe complete "com'è ora" (ESC/HOME/END/PGUP/TAB/CTRL/
+// ALT/PGDN…). Le azioni NexusCrew (window/pane/scroll/detach) vivono nel
+// menu ☰. send(seq): byte grezzi nel pty. action(name): comando tmux
+// server-side.
 const PREFIX = '\x02';   // C-b — solo scroll/detach
 const ESC = '\x1b';
 const NAV = [
@@ -40,13 +38,6 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
   );
   const Ba = (label, name) => (
     <button key={label} onMouseDown={(e) => { e.preventDefault(); blurActive(); action(name); setMenu(false); }}>{label}</button>
-  );
-  // ■Enter: sempre CR puro, ignora ALT sticky — la conferma di una selezione
-  // multipla deve essere prevedibile (niente Meta+Enter inavvertito). Non usa
-  // emit() di proposito. blurActive() chiude la tastiera prima di confermare.
-  const Enter = () => (
-    <button key="enter" className="enter" aria-label="Enter"
-      onMouseDown={(e) => { e.preventDefault(); blurActive(); send(CR); }}>{'■'}</button>
   );
   const Toggle = () => (
     <button key="expand" className={`expand${expanded ? ' armed' : ''}`}
@@ -81,23 +72,25 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
   );
 
   if (!expanded) {
-    // Vista ridotta: toggle + ☰ + frecce ↑↓←→ + ■Enter.
+    // Vista ridotta: a sinistra toggle + ☰; a destra le frecce ↑↓←→
+    // (raggruppate in .nc-keybar-arrows con margin-left:auto).
     return (
       <div className="nc-keybar termux">
         {menuEl}
         <div className="row">
           <Toggle />
           {menuBtn}
-          {Bk('↑', ESC + '[A')}
-          {Bk('↓', ESC + '[B')}
-          {Bk('←', ESC + '[D')}
-          {Bk('→', ESC + '[C')}
-          <Enter />
+          <div className="nc-keybar-arrows">
+            {Bk('↑', ESC + '[A')}
+            {Bk('↓', ESC + '[B')}
+            {Bk('←', ESC + '[D')}
+            {Bk('→', ESC + '[C')}
+          </div>
         </div>
       </div>
     );
   }
-  // Vista espansa: due righe complete "com'è ora" + Toggle in testa + ■Enter in coda alla prima riga.
+  // Vista espansa: due righe complete "com'è ora" + Toggle in testa.
   return (
     <div className="nc-keybar termux">
       {menuEl}
@@ -111,7 +104,6 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
         {Bk('↑', ESC + '[A')}
         {Bk('END', ESC + '[F')}
         {Bk('PGUP', ESC + '[5~')}
-        <Enter />
       </div>
       <div className="row">
         {Bk('⇥', '\t')}

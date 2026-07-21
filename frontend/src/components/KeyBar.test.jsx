@@ -16,25 +16,20 @@ function renderKeyBar(props = {}) {
   return { send, action };
 }
 
-describe('KeyBar reduced view and Enter', () => {
-  it('shows the reduced bar by default: toggle + arrows + ■Enter, no ESC', () => {
+describe('KeyBar reduced view', () => {
+  it('shows the reduced bar by default: toggle + menu on the left, arrows on the right, no ESC', () => {
     renderKeyBar();
-    // essentials present
     expect(document.querySelector('button.expand')).toBeTruthy();
-    expect(document.querySelector('button.enter')).toBeTruthy();
-    expect([...document.querySelectorAll('.nc-keybar .row button')].map((b) => b.textContent))
-      .toEqual(['⊞', '☰', '↑', '↓', '←', '→', '■']);
+    // no dedicated Enter button anymore
+    expect(document.querySelector('button.enter')).toBeNull();
+    // row buttons, left to right: toggle, menu, then the arrow group
+    expect([...document.querySelectorAll('.nc-keybar .row > button')].map((b) => b.textContent))
+      .toEqual(['⊞', '☰']);
+    expect([...document.querySelectorAll('.nc-keybar-arrows button')].map((b) => b.textContent))
+      .toEqual(['↑', '↓', '←', '→']);
     // rare commands hidden
     expect(document.querySelector('.nc-keybar').textContent).not.toContain('ESC');
     expect(document.querySelector('.nc-keybar').textContent).not.toContain('HOME');
-  });
-
-  it('■Enter sends a raw CR (confirms a TUI selection) and ignores ALT sticky', () => {
-    const { send } = renderKeyBar();
-    fireEvent.mouseDown(document.querySelector('button.enter'));
-    expect(send).toHaveBeenCalledWith('\r');
-    // exactly one send (no ALT emission around it)
-    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it('toggle expands to the full two-row layout (shows ESC) and retracts', () => {
@@ -42,8 +37,6 @@ describe('KeyBar reduced view and Enter', () => {
     fireEvent.mouseDown(document.querySelector('button.expand'));
     expect(document.querySelector('.nc-keybar').textContent).toContain('ESC');
     expect(document.querySelectorAll('.nc-keybar .row').length).toBe(2);
-    // ■Enter stays reachable in the expanded view too
-    expect(document.querySelectorAll('button.enter').length).toBe(1);
     fireEvent.mouseDown(document.querySelector('button.expand'));
     expect(document.querySelector('.nc-keybar').textContent).not.toContain('ESC');
     expect(document.querySelectorAll('.nc-keybar .row').length).toBe(1);
