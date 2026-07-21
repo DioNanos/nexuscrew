@@ -25,8 +25,9 @@ describe('KeyBar reduced view', () => {
     // row buttons, left to right: toggle, keyboard, menu, then the arrow group
     expect([...document.querySelectorAll('.nc-keybar .row > button')].map((b) => b.textContent))
       .toEqual(['⊞', '⌨', '☰']);
+    // arrows + page keys (transcript scroll) on the right; no ESC/HOME/END
     expect([...document.querySelectorAll('.nc-keybar-arrows button')].map((b) => b.textContent))
-      .toEqual(['↑', '↓', '←', '→']);
+      .toEqual(['↑', '↓', '←', '→', 'PGUP', 'PGDN']);
     // rare commands hidden
     expect(document.querySelector('.nc-keybar').textContent).not.toContain('ESC');
     expect(document.querySelector('.nc-keybar').textContent).not.toContain('HOME');
@@ -50,6 +51,9 @@ describe('KeyBar reduced view', () => {
     fireEvent.mouseDown(byText('↓')); expect(send).toHaveBeenLastCalledWith('\x1b[B');
     fireEvent.mouseDown(byText('←')); expect(send).toHaveBeenLastCalledWith('\x1b[D');
     fireEvent.mouseDown(byText('→')); expect(send).toHaveBeenLastCalledWith('\x1b[C');
+    // page keys reach the pty so a TUI (e.g. Claude Code) scrolls its transcript
+    fireEvent.mouseDown(byText('PGUP')); expect(send).toHaveBeenLastCalledWith('\x1b[5~');
+    fireEvent.mouseDown(byText('PGDN')); expect(send).toHaveBeenLastCalledWith('\x1b[6~');
   });
 
   it('a send-key blurs the active element so the mobile soft keyboard hides', () => {

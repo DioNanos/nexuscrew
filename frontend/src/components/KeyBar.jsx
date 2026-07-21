@@ -78,8 +78,11 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
   );
 
   if (!expanded) {
-    // Vista ridotta: a sinistra toggle + ☰; a destra le frecce ↑↓←→
-    // (raggruppate in .nc-keybar-arrows con margin-left:auto).
+    // Vista ridotta: a sinistra toggle + ☰; a destra le frecce ↑↓←→ più
+    // PGUP/PGDN (raggruppate in .nc-keybar-arrows con margin-left:auto).
+    // PGUP/PGDN servono su mobile — senza tasto PageUp fisico — per scrollare
+    // il transcript di un TUI (es. Claude Code riceve \x1b[5~ come PageUp).
+    // I comandi rari (ESC/HOME/END/TAB/CTRL/ALT/PGDN-espansa) restano dietro ⊞.
     return (
       <div className="nc-keybar termux">
         {menuEl}
@@ -92,6 +95,8 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
             {Bk('↓', ESC + '[B')}
             {Bk('←', ESC + '[D')}
             {Bk('→', ESC + '[C')}
+            {Bk('PGUP', ESC + '[5~')}
+            {Bk('PGDN', ESC + '[6~')}
           </div>
         </div>
       </div>
