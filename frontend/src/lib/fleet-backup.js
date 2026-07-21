@@ -24,7 +24,10 @@ const CELL_KEYS_LEGACY = new Set(['id', 'cwd', 'engine', 'boot', 'model', 'model
 // Pura, fail-closed: '' == home; niente assoluto, '..', NUL/C0/DEL, backslash,
 // drive letter, leading sep. Normalizza (collassa '.' e vuoti) RIFIUTANDO
 // traversal. Il backend rimane l'autorita' (realpath); qui si valida la forma.
-function normalizeCwdRel(rel) {
+// Esportata perche' la UI di repair (CwdRepairDialog) la riusa per validare la
+// forma della cwdRel prima di inviarla (sola cwdRel) al backend, che ricalcolera'
+// il realpath sul device target.
+export function normalizeCwdRel(rel) {
   if (typeof rel !== 'string') return null;
   if (rel.length > MAX_CWD_REL) return null;
   for (let i = 0; i < rel.length; i += 1) {
