@@ -243,13 +243,17 @@ test('smart-up fallisce chiuso se i file migrano ma service activation fallisce'
   fs.mkdirSync(path.dirname(service), { recursive: true });
   fs.writeFileSync(service, `WorkingDirectory=${home}\n`);
   fs.writeFileSync(companion, `WorkingDirectory=${home}/replaceable-package\n`);
+  const marker = path.join(home, '.nexuscrew', 'migration-test.pending');
+  let initCalls = 0;
   await assert.rejects(
     smartUp({
       home,
       platform: 'linux',
       installPath: service,
       fleetInstallPath: companion,
+      serviceMigrationMarkerPath: marker,
       runInitImpl: () => {
+        initCalls += 1;
         fs.writeFileSync(companion, `WorkingDirectory=${home}\n`);
         return { installFailures: [{ component: 'fleet-companion', phase: 'activation' }] };
       },
@@ -258,6 +262,43 @@ test('smart-up fallisce chiuso se i file migrano ma service activation fallisce'
     }),
     /activation failed verification \(fleet-companion\)/,
   );
+  assert.equal(initCalls, 1);
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'pending\n', 'failure leaves a durable retry marker');
+  assert.equal(fs.statSync(marker).mode & 0o777, 0o600);
+
+  const retried = await smartUp({
+    home,
+    platform: 'linux',
+    installPath: service,
+    fleetInstallPath: companion,
+    serviceMigrationMarkerPath: marker,
+    runInitImpl: () => { initCalls += 1; return { installFailures: [] }; },
+    execImpl: (_bin, args) => (args?.includes('is-enabled') ? 'enabled' : 'active'),
+    probeImpl: async () => true,
+  });
+  assert.equal(retried.running, true);
+  assert.equal(initCalls, 2, 'pending marker retries even after files are already stable');
+  assert.equal(fs.existsSync(marker), false, 'verified retry clears the marker');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('smart-up rifiuta un marker migrazione symlink senza toccarne il target', async () => {
+  const { home } = initHome();
+  const marker = path.join(home, '.nexuscrew', 'migration-test.pending');
+  const target = path.join(home, 'marker-target');
+  fs.writeFileSync(target, 'keep\n');
+  fs.symlinkSync(target, marker);
+  await assert.rejects(
+    smartUp({
+      home,
+      platform: 'linux',
+      serviceMigrationMarkerPath: marker,
+      execImpl: (_bin, args) => (args?.includes('is-enabled') ? 'enabled' : 'active'),
+      probeImpl: async () => true,
+    }),
+    /unsafe service migration marker/,
+  );
+  assert.equal(fs.readFileSync(target, 'utf8'), 'keep\n');
   fs.rmSync(home, { recursive: true, force: true });
 });
 
