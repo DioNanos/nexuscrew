@@ -38,12 +38,12 @@ test('diagnostics: redazione alla sorgente e meta allowlist', () => {
   const diagnostics = createDiagnostics();
   diagnostics.setVerbose(true, 300);
   diagnostics.record('error', 'fleet', 'CELL_SPAWN_FAILED',
-    'Bearer SUPERSECRET /home/alice/private.txt OPENAI_API_KEY=value', {
+    'Bearer SUPERSECRET /home/alice/private.txt /Users/alice/Dev/private.txt OPENAI_API_KEY=value', {
       errno: 'EACCES', client: 'codex.js', cell: 'Dev',
       prompt: 'do not retain', argv: ['--secret'], token: 'SUPERSECRET', path: '/home/alice/private.txt',
     });
   const text = JSON.stringify(diagnostics.logs());
-  for (const forbidden of ['SUPERSECRET', '/home/alice', 'do not retain', '--secret', 'OPENAI_API_KEY=value']) {
+  for (const forbidden of ['SUPERSECRET', '/home/alice', '/Users/alice', 'do not retain', '--secret', 'OPENAI_API_KEY=value']) {
     assert.equal(text.includes(forbidden), false, forbidden);
   }
   const entry = diagnostics.logs().records.at(-1);
