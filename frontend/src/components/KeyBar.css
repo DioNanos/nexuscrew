@@ -10,6 +10,14 @@
 }
 .nc-keybar .row button:active { background: #1d2a1d; }
 .nc-keybar .row button.armed { color: #021; background: #00cc66; }
+/* ■Enter: quadrato verde tema (stesso verde del .go del ComposerBar), simbolo
+   non scritta, per confermare le selezioni multiple dei TUI. Sempre visibile
+   in fondo alla (prima) riga, sia nella vista ridotta che in quella espansa. */
+.nc-keybar .row button.enter { color: #7ee787; font-size: 18px; }
+.nc-keybar .row button.enter:active { background: #1d2a1d; }
+/* Toggle espandi/restringi comandi: stile neutro, .armed quando espanso
+   (riusa la regola button.armed verde sopra). */
+.nc-keybar .row button.expand { color: #9fd; font-size: 16px; }
 /* menu ☰ con le azioni tmux */
 .nc-keymenu {
   position: absolute; bottom: 100%; left: 8px; right: 8px; z-index: 30;

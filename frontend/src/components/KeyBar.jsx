@@ -1,9 +1,14 @@
 import { useState } from 'react';
+import { CR } from '../lib/composer-input.js';
 import './KeyBar.css';
-// Layout stile Termux extra-keys: due righe piatte,
-// tasti uniformi senza bordi. Le azioni NexusCrew (window/pane/scroll/detach)
-// vivono nel menu ☰. send(seq): byte grezzi nel pty. action(name): comando
-// tmux server-side (la nav NON si emula con prefix key client-side).
+// Layout stile Termux extra-keys. Di default (expanded=false) si mostra una
+// riga ridotta con i tasti essenziali per il caso d'uso mobile: toggle espandi,
+// menu ☰, frecce ↑↓←→ per navigare le scelte multiple dei TUI, e ■Enter per
+// confermarle (send(CR) diretto, affidabile anche quando l'Enter della soft
+// keyboard non viene catturato da xterm). Il toggle espande le due righe
+// complete "com'è ora" (ESC/HOME/END/PGUP/TAB/CTRL/ALT/PGDN…). Le azioni
+// NexusCrew (window/pane/scroll/detach) vivono nel menu ☰. send(seq): byte
+// grezzi nel pty. action(name): comando tmux server-side.
 const PREFIX = '\x02';   // C-b — solo scroll/detach
 const ESC = '\x1b';
 const NAV = [
@@ -15,6 +20,7 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
   const [copy, setCopy] = useState(false);
   const [menu, setMenu] = useState(false);
   const [altArmed, setAltArmed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   // ALT sticky: il prossimo tasto della barra esce come ESC+seq (Meta).
   const emit = (seq) => {
@@ -26,6 +32,18 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
   const Ba = (label, name) => (
     <button key={label} onMouseDown={(e) => { e.preventDefault(); action(name); setMenu(false); }}>{label}</button>
   );
+  // ■Enter: sempre CR puro, ignora ALT sticky — la conferma di una selezione
+  // multipla deve essere prevedibile (niente Meta+Enter inavvertito). Non usa
+  // emit() di proposito.
+  const Enter = () => (
+    <button key="enter" className="enter" aria-label="Enter"
+      onMouseDown={(e) => { e.preventDefault(); send(CR); }}>{'■'}</button>
+  );
+  const Toggle = () => (
+    <button key="expand" className={`expand${expanded ? ' armed' : ''}`}
+      aria-label={expanded ? 'restringi comandi' : 'espandi comandi'}
+      onMouseDown={(e) => { e.preventDefault(); setExpanded((v) => !v); }}>{expanded ? '⊟' : '⊞'}</button>
+  );
 
   if (copy) {
     return (
@@ -36,30 +54,55 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
       </div>
     );
   }
+  const menuEl = menu && (
+    <div className="nc-keymenu">
+      {Ba('←WIN', 'prev-window')}
+      {Ba('WIN→', 'next-window')}
+      {Ba('⬅PANE', 'pane-left')}
+      {Ba('PANE➡', 'pane-right')}
+      {Bk('SCROLL', PREFIX + '[', () => { setCopy(true); setMenu(false); })}
+      <button className={selectionMode ? 'armed' : ''} onMouseDown={(e) => { e.preventDefault(); onSelectionMode?.(!selectionMode); setMenu(false); }}>SELECT</button>
+      {Bk('⌃C', '\x03', () => setMenu(false))}
+      {Bk('DETACH', PREFIX + 'd', () => setMenu(false))}
+    </div>
+  );
+  const menuBtn = (
+    <button key="menu" className={menu ? 'armed' : ''}
+      onMouseDown={(e) => { e.preventDefault(); setMenu((v) => !v); }}>☰</button>
+  );
+
+  if (!expanded) {
+    // Vista ridotta: toggle + ☰ + frecce ↑↓←→ + ■Enter.
+    return (
+      <div className="nc-keybar termux">
+        {menuEl}
+        <div className="row">
+          <Toggle />
+          {menuBtn}
+          {Bk('↑', ESC + '[A')}
+          {Bk('↓', ESC + '[B')}
+          {Bk('←', ESC + '[D')}
+          {Bk('→', ESC + '[C')}
+          <Enter />
+        </div>
+      </div>
+    );
+  }
+  // Vista espansa: due righe complete "com'è ora" + Toggle in testa + ■Enter in coda alla prima riga.
   return (
     <div className="nc-keybar termux">
-      {menu && (
-        <div className="nc-keymenu">
-          {Ba('←WIN', 'prev-window')}
-          {Ba('WIN→', 'next-window')}
-          {Ba('⬅PANE', 'pane-left')}
-          {Ba('PANE➡', 'pane-right')}
-          {Bk('SCROLL', PREFIX + '[', () => { setCopy(true); setMenu(false); })}
-          <button className={selectionMode ? 'armed' : ''} onMouseDown={(e) => { e.preventDefault(); onSelectionMode?.(!selectionMode); setMenu(false); }}>SELECT</button>
-          {Bk('⌃C', '\x03', () => setMenu(false))}
-          {Bk('DETACH', PREFIX + 'd', () => setMenu(false))}
-        </div>
-      )}
+      {menuEl}
       <div className="row">
+        <Toggle />
         {Bk('ESC', ESC)}
-        <button key="menu" className={menu ? 'armed' : ''}
-          onMouseDown={(e) => { e.preventDefault(); setMenu((v) => !v); }}>☰</button>
+        {menuBtn}
         {Bk('/', '/')}
         {Bk('—', '-')}
         {Bk('HOME', ESC + '[H')}
         {Bk('↑', ESC + '[A')}
         {Bk('END', ESC + '[F')}
         {Bk('PGUP', ESC + '[5~')}
+        <Enter />
       </div>
       <div className="row">
         {Bk('⇥', '\t')}
