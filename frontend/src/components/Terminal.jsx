@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../lib/ws-client.js';
 import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
+import { scrollPlan } from '../lib/terminal-scroll.js';
 import { wantsLocalSelection, isCopyShortcut, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
 import { t } from '../lib/i18n.js';
 import { filesFromTransfer, hasFilePayload, uploadSessionFiles } from '../lib/attachments.js';
@@ -176,7 +177,15 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     host.addEventListener('dragenter', onDragFiles, true);
     host.addEventListener('dragover', onDragFiles, true);
     host.addEventListener('drop', onDropFiles, true);
-    const STEP = 24; // px per tick di scroll (3 righe tmux)
+    // alt-screen (TUI full-screen tipo Claude Code): lo scrollback tmux e'
+    // vuoto, copy-mode non mostra nulla -> mandiamo PageUp/PageDown al pty e
+    // il TUI scrolla il suo transcript. Logica+test in lib/terminal-scroll.js.
+    const planFor = () => scrollPlan({ bufferType: term.buffer.active.type, readonly });
+    const scrollTerminal = (dir) => {
+      const plan = planFor();
+      const key = dir === 'up' ? plan.up : plan.down;
+      if (plan.kind === 'send') sock.sendInput(key); else sock.action(key);
+    };
     let touchY = null, touchX = null, acc = 0, vertical = null, selectStart = null;
     let longPressTimer = null; let touchSelecting = false;
     const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
@@ -230,16 +239,18 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       if (!vertical) return;
       acc += t.clientY - touchY; touchY = t.clientY;
-      while (acc >= STEP) { sock.action('scroll-up'); acc -= STEP; }
-      while (acc <= -STEP) { sock.action('scroll-down'); acc += STEP; }
+      const step = planFor().step;
+      while (acc >= step) { scrollTerminal('up'); acc -= step; }
+      while (acc <= -step) { scrollTerminal('down'); acc += step; }
     };
     const onTouchEnd = () => { clearLongPress(); touchY = null; touchX = null; selectStart = null; touchSelecting = false; };
     let wheelAcc = 0;
     const onWheel = (e) => {
       e.preventDefault(); e.stopPropagation();
       wheelAcc += e.deltaY;
-      while (wheelAcc <= -STEP) { sock.action('scroll-up'); wheelAcc += STEP; }
-      while (wheelAcc >= STEP) { sock.action('scroll-down'); wheelAcc -= STEP; }
+      const step = planFor().step;
+      while (wheelAcc <= -step) { scrollTerminal('up'); wheelAcc += step; }
+      while (wheelAcc >= step) { scrollTerminal('down'); wheelAcc -= step; }
     };
     host.addEventListener('touchstart', onTouchStart, { passive: false });
     host.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
