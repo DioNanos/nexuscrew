@@ -324,12 +324,15 @@ test('definitions: cella persistita non valida (fuori home) carica ma espone nee
   const tmuxBin = path.join(root, 'fake-tmux.sh');
   fs.writeFileSync(tmuxBin, '#!/bin/sh\nexit 0\n'); fs.chmodSync(tmuxBin, 0o755);
   try {
+    const suggested = path.join(home, path.basename(outside));
+    fs.mkdirSync(suggested);
     const fleet = await createBuiltinFleet({ home, fleetDefsPath: defsPath, tmuxBin });
     assert.equal(fleet.available, true, 'la cella non valida carica comunque (fail-closed leggibile)');
     const before = fs.readFileSync(defsPath, 'utf8');
     const cell = fleet.definitions().cells.find((c) => c.id === 'Orphan');
     assert.equal(cell.needsRepair, true);
     assert.equal(cell.cwdRel, undefined, 'nessun cwdRel derivabile per cella non portabile');
+    assert.equal(cell.cwdSuggestion, path.basename(outside), 'solo basename esistente sotto home, mai path foreign');
     assert.equal(fs.readFileSync(defsPath, 'utf8'), before, 'nessuna riscrittura on-read');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

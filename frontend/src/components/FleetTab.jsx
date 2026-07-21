@@ -19,6 +19,7 @@ import FleetBackupDialog from './fleet/FleetBackupDialog.jsx';
 import EngineEditor from './fleet/EngineEditor.jsx';
 import CellEditor from './fleet/CellEditor.jsx';
 import ImportEditor from './fleet/ImportEditor.jsx';
+import CwdRepairDialog from './fleet/CwdRepairDialog.jsx';
 
 export default function FleetTab({ token, readonly, targets = [], startNewCell = false, initialLocation = '' }) {
   const [defs, setDefs] = useState({ engines: [], cells: [], managedCatalog: [] });
@@ -33,6 +34,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   const [remoteReadonly, setRemoteReadonly] = useState(false);
   const [powerCell, setPowerCell] = useState(null);
   const [importEdit, setImportEdit] = useState(null);
+  const [repairCell, setRepairCell] = useState(null);
   const [backupOpen, setBackupOpen] = useState(false);
   const [credentials, setCredentials] = useState([]);
   const [credentialEdit, setCredentialEdit] = useState(null);
@@ -273,15 +275,22 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
         {defs.cells.map((c) => {
         const isOn = active.has(c.id);
         const caps = status.capabilities || [];
+        // needsRepair: cwd non portabile. La UI NON mostra la cwd assoluta del
+        // device sorgente (c.cwd e' foreign): espone un badge e il solo flusso
+        // repair (che invia cwdRel-only). Una cella needsRepair non e' editabile
+        // finche' la cwd non viene riparata (Edit sostituito da Repair).
+        const needsRepair = c.needsRepair === true;
         return (
-        <div className="nc-fleet-item" key={c.id}><span><b>{c.id}</b><small>{c.engine} · {c.cwd}{isOn ? ` · ${t('service-active')}` : ` · ${t('cell-off')}`}</small></span><span>
+        <div className="nc-fleet-item" key={c.id}><span><b>{c.id}</b><small>{c.engine} · {needsRepair ? <span className="nc-fleet-tag nc-fleet-tag-warn">{t('fleet-cwd-needs-repair')}</span> : c.cwd}{isOn ? ` · ${t('service-active')}` : ` · ${t('cell-off')}`}</small></span><span>
           {isOn && caps.includes('down') && <button className="nc-btn ghost" disabled={locked || busy}
             onClick={() => run(() => fleetDown(token, { cell: c.id }, route))}>{t('stop')}</button>}
           {!isOn && caps.includes('up') && <button className="nc-btn primary" disabled={locked || busy}
             onClick={() => onPower({ cell: c.id, id: c.id, engine: c.engine, model: c.model, models: c.models, permissionPolicies: c.permissionPolicies, active: false, boot: c.boot })}>{t('start')}</button>}
           {isOn && caps.includes('restart') && <button className="nc-btn ghost" disabled={locked || busy}
             onClick={() => run(() => fleetRestart(token, c.id, route))}>{t('restart')}</button>}
-          <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setCellEdit({ mode: 'edit', original: c, form: { ...c } }); }}>{t('edit')}</button>
+          {needsRepair
+            ? <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setRepairCell(c); }}>{t('fleet-cwd-repair')}</button>
+            : <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setCellEdit({ mode: 'edit', original: c, form: { ...c } }); }}>{t('edit')}</button>}
           <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-cell').replace('{id}', c.id))) await fleetRemoveCell(token, c.id, true, route); })}>×</button>
         </span></div>
         );})}
@@ -302,6 +311,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
       </>}
       {engineEdit && <FleetModal onClose={() => setEngineEdit(null)} label={t('fleet-new-engine')} error={err}><EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} /></FleetModal>}
       {cellEdit && <FleetModal onClose={() => setCellEdit(null)} label={t('fleet-new-cell')} error={err}><CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} /></FleetModal>}
+      {repairCell && <FleetModal onClose={() => setRepairCell(null)} label={t('fleet-cwd-repair-title').replace('{id}', repairCell.id)} error=""><CwdRepairDialog token={token} route={route} cell={repairCell} busy={busy} onSaved={async () => { setRepairCell(null); setNote(t('fleet-cwd-repaired')); await refresh(); }} onClose={() => setRepairCell(null)} /></FleetModal>}
       {note && <div className="nc-set-note">{note}</div>}{err && <div className="nc-err">{err}</div>}
       {backupOpen && <FleetModal onClose={() => setBackupOpen(false)} label={t('fleet-backup')} error={err}><FleetBackupDialog cells={defs.cells} engines={defs.engines} busy={busy} canRestore={canRestoreBackup} onRestore={restoreBackup} onClose={() => setBackupOpen(false)} /></FleetModal>}
       {credentialEdit && <FleetModal onClose={() => setCredentialEdit(null)} label={t('fleet-credential-title')} error={err}>
