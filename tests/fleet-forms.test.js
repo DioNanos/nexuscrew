@@ -31,7 +31,7 @@ test('blankEngine/blankCell: stable defaults for a fresh form', async () => {
   assert.equal(e.credentialReveal, false);
   assert.equal(e.allowMissingCredential, false);
   assert.equal(blankCell().engine, '');
-  assert.deepEqual(blankCell('claude.native'), { id: '', cwd: '', engine: 'claude.native', boot: false, model: '', prompt: '' });
+  assert.deepEqual(blankCell('claude.native'), { id: '', cwd: '', engine: 'claude.native', boot: false, model: '', prompt: '', commands: {}, command: '' });
 });
 
 test('defaultPermission: claude is unsafe, everything else standard', async () => {
@@ -96,6 +96,19 @@ test('buildEngine managed (create): catalog label, model and inherited default p
   const catalog = [{ id: 'a', client: 'claude', provider: 'native', label: 'Claude' }];
   const out = buildEngine({ kind: 'managed', id: 'claude.native', client: 'claude', provider: 'native', managedModel: 'sonnet', permissionPolicy: '', label: '', rc: true, envRows: [] }, true, catalog);
   assert.deepEqual(out, { id: 'claude.native', label: 'Claude', rc: true, managed: { client: 'claude', provider: 'native', model: 'sonnet', permissionPolicy: 'unsafe' } });
+});
+
+test('buildEngine Shell removes stale model and unsafe policy', async () => {
+  const { buildEngine } = await mod();
+  const catalog = [{ id: 'shell.local', client: 'shell', provider: 'local', label: 'Shell' }];
+  const out = buildEngine({
+    kind: 'managed', id: 'shell.local', client: 'shell', provider: 'local',
+    managedModel: 'stale', permissionPolicy: 'unsafe', label: '', rc: false, envRows: [],
+  }, true, catalog);
+  assert.deepEqual(out, {
+    id: 'shell.local', label: 'Shell', rc: false,
+    managed: { client: 'shell', provider: 'local', model: '', permissionPolicy: 'standard' },
+  });
 });
 
 test('buildEngine managed: dynamic env names persist, fixed KEY values never enter definitions', async () => {
