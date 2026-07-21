@@ -2,6 +2,24 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.29 — 2026-07-21 — "Stable Fleet Boot"
+
+- Keeps the optional Fleet boot companion rooted at the stable user home on Linux, macOS and
+  Termux. It can no longer create the shared tmux server from a replaceable npm package directory
+  and leave later cells with an orphaned working directory after an update.
+- Makes smart startup inspect and migrate both the main service and the Fleet companion. Startup
+  fails closed unless regeneration, service activation and an explicit runtime restart all succeed,
+  so an already-active unit cannot keep the old working directory. A private durable marker retries
+  interrupted or failed migrations on the next start; a missing optional companion remains a
+  non-blocking doctor warning.
+- Validates imported Fleet working directories before persistence and redacts the active Shell
+  command together with the existing prompt and environment secret values.
+- Extends source-side diagnostic redaction to macOS `/Users/<name>/...` paths in addition to Linux
+  and Android home paths.
+- Gate: **987 isolated Node tests** (986 pass / 1 platform skip), **93/93 frontend component
+  tests**, production PWA build and zero production dependency vulnerabilities in both dependency
+  trees.
+
 ## 0.8.28 — 2026-07-21 — "Portable Workspaces"
 
 - Makes Fleet backups portable across devices. Version 3 archives store a validated home-relative
