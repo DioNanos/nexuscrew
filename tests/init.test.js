@@ -153,6 +153,7 @@ test('runInit: activation fallita -> WARN con diagnosi (M1)', () => {
     log: () => {},
   });
   assert.ok(r.actions.some((a) => /activation fallita/.test(a))); // failure visibile (non ingoiata)
+  assert.ok(r.installFailures.some((failure) => failure.component === 'service' && failure.phase === 'activation'));
   fs.rmSync(home, { recursive: true, force: true });
 });
 

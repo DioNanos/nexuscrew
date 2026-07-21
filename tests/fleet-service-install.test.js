@@ -358,6 +358,7 @@ test('runInit companion: activation fallita -> WARN + file preservato (non blocc
   });
   assert.ok(fs.existsSync(fleetTarget)); // file preservato
   assert.ok(r.actions.some((a) => /WARN.*fleet companion.*activation fallita/.test(a)));
+  assert.ok(r.installFailures.some((failure) => failure.component === 'fleet-companion' && failure.phase === 'activation'));
   // init principale comunque completato (URL stampato)
   assert.ok(r.actions.some((a) => /^URL:/.test(a)));
   fs.rmSync(home, { recursive: true, force: true });
