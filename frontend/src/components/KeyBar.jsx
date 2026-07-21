@@ -44,6 +44,12 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
       aria-label={expanded ? 'restringi comandi' : 'espandi comandi'}
       onMouseDown={(e) => { e.preventDefault(); setExpanded((v) => !v); }}>{expanded ? '⊟' : '⊞'}</button>
   );
+  // ⌨ tastierino: mostra/nasconde il ComposerBar. Sempre visibile nella vista
+  // ridotta (tra toggle e menu). Non fa blur: aprire il composer richiede focus.
+  const Kbd = () => (
+    <button key="kbd" aria-label="tastierino"
+      onMouseDown={(e) => { e.preventDefault(); if (onKeyboard) onKeyboard(); }}>⌨</button>
+  );
 
   if (copy) {
     return (
@@ -79,6 +85,7 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
         {menuEl}
         <div className="row">
           <Toggle />
+          <Kbd />
           {menuBtn}
           <div className="nc-keybar-arrows">
             {Bk('↑', ESC + '[A')}
@@ -107,8 +114,6 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
       </div>
       <div className="row">
         {Bk('⇥', '\t')}
-        <button key="kbd"
-          onMouseDown={(e) => { e.preventDefault(); if (onKeyboard) onKeyboard(); }}>⌨</button>
         <button key="ctrl" className={ctrlArmed ? 'armed' : ''}
           onMouseDown={(e) => { e.preventDefault(); if (onCtrl) onCtrl(); }}>CTRL</button>
         <button key="alt" className={altArmed ? 'armed' : ''}

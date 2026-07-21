@@ -22,9 +22,9 @@ describe('KeyBar reduced view', () => {
     expect(document.querySelector('button.expand')).toBeTruthy();
     // no dedicated Enter button anymore
     expect(document.querySelector('button.enter')).toBeNull();
-    // row buttons, left to right: toggle, menu, then the arrow group
+    // row buttons, left to right: toggle, keyboard, menu, then the arrow group
     expect([...document.querySelectorAll('.nc-keybar .row > button')].map((b) => b.textContent))
-      .toEqual(['⊞', '☰']);
+      .toEqual(['⊞', '⌨', '☰']);
     expect([...document.querySelectorAll('.nc-keybar-arrows button')].map((b) => b.textContent))
       .toEqual(['↑', '↓', '←', '→']);
     // rare commands hidden
