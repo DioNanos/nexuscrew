@@ -52,7 +52,7 @@ test('runInit: crea config + token + NexusFiles (linux, tmux ok)', () => {
   assert.ok(fs.existsSync(path.join(home, '.nexuscrew', 'decks.json')));
   assert.ok(fs.existsSync(path.join(home, 'NexusFiles')));
   const fleet = JSON.parse(fs.readFileSync(path.join(home, '.nexuscrew', 'fleet.json'), 'utf8'));
-  assert.deepEqual(fleet.engines.map((e) => e.id), ['claude.native', 'codex.native', 'codex-vl.native', 'pi.native']);
+  assert.deepEqual(fleet.engines.map((e) => e.id), ['claude.native', 'codex.native', 'codex-vl.native', 'pi.native', 'shell.local']);
   assert.deepEqual(fleet.cells, []);
   assert.ok(fs.existsSync(installTarget)); // service installato
   assert.equal(r.port, 41820);
