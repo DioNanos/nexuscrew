@@ -112,6 +112,21 @@ test('cell models: ultimo modello per engine strict e senza dangling key', () =>
   assert.equal(parseDefinitions(d), null);
 });
 
+test('cell commands: solo engine Shell, stringa opaca bounded e policy standard', () => {
+  const shell = { id: 'shell.local', managed: { client: 'shell', provider: 'local', model: '', permissionPolicy: 'standard' } };
+  const base = {
+    schemaVersion: 1,
+    engines: [shell, validDef().engines[0]],
+    cells: [{ id: 'Ops', cwd: '/home/user/work', engine: 'shell.local', commands: { 'shell.local': "printf '$HOME' | sed s/x/y/" } }],
+  };
+  assert.deepEqual(parseDefinitions(base).cells[0].commands, base.cells[0].commands);
+  assert.equal(parseDefinitions({ ...base, cells: [{ ...base.cells[0], commands: { claude: 'echo no' } }] }), null);
+  assert.equal(parseDefinitions({ ...base, cells: [{ ...base.cells[0], commands: { missing: 'echo no' } }] }), null);
+  assert.equal(parseDefinitions({ ...base, cells: [{ ...base.cells[0], commands: { 'shell.local': 'x\n' } }] }), null);
+  assert.equal(parseDefinitions({ ...base, cells: [{ ...base.cells[0], commands: { 'shell.local': 'x'.repeat(CAPS.MAX_CELL_COMMAND_LEN + 1) } }] }), null);
+  assert.equal(parseDefinitions({ ...base, cells: [{ ...base.cells[0], permissionPolicies: { 'shell.local': 'unsafe' } }] }), null);
+});
+
 test('id duplicati (engine e cell) -> null', () => {
   const d = validDef();
   d.engines.push({ ...d.engines[0] }); // stesso id 'claude'
