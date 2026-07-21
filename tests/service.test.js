@@ -34,7 +34,8 @@ test('generateLinux: struttura systemd --user', () => {
   assert.match(s, /\[Unit\]/);
   assert.match(s, /\[Service\]/);
   assert.match(s, /\[Install\]/);
-  assert.match(s, /WorkingDirectory=\/home\/user\/\.nexuscrew/);
+  assert.match(s, /WorkingDirectory=\/home\/user$/m);
+  assert.doesNotMatch(s, /WorkingDirectory=\/home\/user\/\.nexuscrew/);
   assert.doesNotMatch(s, /NEXUSCREW_PORT/, 'config.json resta la fonte autoritativa della porta');
   assert.match(s, /ExecStart=\/usr\/bin\/node .*\/bin\/nexuscrew\.js serve/);
   assert.match(s, /KillMode=process/, 'restart NexusCrew must never kill the shared tmux server');
@@ -85,12 +86,10 @@ test('ensureLinuxTmuxSurvival: rifiuta un drop-in symlink', () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('generateLinux: escape %% su runtime dir con % (hostile)', () => {
-  const s = generateLinux(ctx({ runtimeDir: '/home/user/100%runtime' }));
-  // WorkingDirectory escape % -> %%
-  assert.match(s, /WorkingDirectory=\/home\/user\/100%%runtime/);
-  // nessun % singolo residuo nel WorkingDirectory
-  assert.ok(!/WorkingDirectory=\/home\/user\/100%runtime/.test(s));
+test('generateLinux: runtime dir sostituibile non diventa cwd; HOME con % e escapata', () => {
+  const s = generateLinux(ctx({ home: '/home/100%user', runtimeDir: '/home/100%user/.nexuscrew-replaced' }));
+  assert.match(s, /WorkingDirectory=\/home\/100%%user/);
+  assert.doesNotMatch(s, /\.nexuscrew-replaced/);
 });
 
 test('generateLinux: ExecStart escape spazi (hostile path con spazio)', () => {
@@ -187,7 +186,8 @@ test('generateTermux: shebang + contesto completo', () => {
   assert.doesNotMatch(s, /NEXUSCREW_PORT/, 'config.json resta la fonte autoritativa della porta');
   assert.match(s, /termux-wake-lock/);
   assert.match(s, /mkdir -p "\$HOME\/\.nexuscrew" "\$TMPDIR" "\$TMUX_TMPDIR"/);
-  assert.match(s, /cd -- "\$HOME\/\.nexuscrew"/);
+  assert.match(s, /cd -- "\$HOME"/);
+  assert.doesNotMatch(s, /cd -- "\$HOME\/\.nexuscrew"/);
   assert.match(s, /export LANG=\$\{LANG:-en_US\.UTF-8\}/);
 });
 
