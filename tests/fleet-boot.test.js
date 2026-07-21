@@ -130,6 +130,8 @@ test('generateFleetService linux: systemd nexuscrew-fleet + ExecStart fleet-boot
   // ExecStart = <node> <entry> fleet-boot (argv separato, no shell)
   assert.match(s, /ExecStart=\/usr\/bin\/node \/home\/user\/nexuscrew\/bin\/nexuscrew\.js fleet-boot/);
   assert.match(s, /Environment=PATH=/); // PATH controllato dal service
+  assert.match(s, /^WorkingDirectory=\/home\/user$/m);
+  assert.doesNotMatch(s, /^WorkingDirectory=\/home\/user\/nexuscrew$/m);
   assert.match(s, /WantedBy=default\.target/);
 });
 
@@ -143,6 +145,8 @@ test('generateFleetService mac: launchd plist com.mmmbuto.nexuscrew-fleet + Prog
   assert.match(s, /<string>fleet-boot<\/string>/); // terzo arg = fleet-boot
   assert.match(s, /<key>RunAtLoad<\/key>\s*<true\/>/);
   assert.match(s, /fleet-boot\.log/);
+  assert.match(s, /<key>WorkingDirectory<\/key>\s*<string>\/home\/user<\/string>/);
+  assert.doesNotMatch(s, /<key>WorkingDirectory<\/key>\s*<string>\/home\/user\/nexuscrew<\/string>/);
   // NESSUN placeholder <home> raw (parita' R2 con service.js)
   assert.ok(!s.includes('<home>'));
 });
@@ -156,6 +160,8 @@ test('generateFleetService termux: boot script + exec fleet-boot + log redirect'
   assert.match(s, /export TMPDIR=\$PREFIX\/tmp/);
   assert.match(s, /export TMUX_TMPDIR=\$PREFIX\/var\/run/);
   assert.match(s, /mkdir -p "\$TMPDIR" "\$TMUX_TMPDIR"/);
+  assert.match(s, /^cd -- "\$HOME"$/m);
+  assert.doesNotMatch(s, /^cd -- .*nexuscrew/m);
   assert.match(s, /exec '\/usr\/bin\/node' '\/home\/user\/nexuscrew\/bin\/nexuscrew\.js' fleet-boot/);
   assert.match(s, />> "\$HOME\/\.nexuscrew\/fleet-boot\.log" 2>&1/);
 });
