@@ -85,6 +85,7 @@ export default function PowerSheet({ cell, token, route = [], onConfirm, onClose
 
   const selected = useMemo(() => engines.find((e) => e.id === engine) || null, [engines, engine]);
   const supportsUnsafe = !!(selected && ['claude', 'codex', 'codex-vl'].includes(selected.client));
+  const isShell = selected?.client === 'shell';
 
   // Cambio engine: ricorda modello e policy dell'engine precedente (lo fa il
   // backend via permissionPolicies/models) e ripristina quelli ricordati per il nuovo.
@@ -150,10 +151,10 @@ export default function PowerSheet({ cell, token, route = [], onConfirm, onClose
                     {engines.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
                   </select>
                 </label>
-                <label className="nc-field">{t('model')}
+                {!isShell && <label className="nc-field">{t('model')}
                   <input value={model} list="nc-launch-models" placeholder={t('model-default')} onChange={(e) => setStateModel(e.target.value)} />
                   <datalist id="nc-launch-models">{(selected?.models || []).map((m) => <option key={m} value={m} />)}</datalist>
-                </label>
+                </label>}
                 {supportsUnsafe ? (
                   <label className="nc-field">{t('permissions')}
                     <select value={policy} onChange={(e) => setPolicy(e.target.value)}>
@@ -165,7 +166,7 @@ export default function PowerSheet({ cell, token, route = [], onConfirm, onClose
                   <small className="nc-note">{t('fleet-standard-permissions')}</small>
                 )}
                 {supportsUnsafe && policy === 'unsafe' && <small className="nc-err">{t('fleet-unsafe-warning')}</small>}
-                <small className="nc-note">{t('launch-engine-help')}</small>
+                <small className="nc-note">{isShell ? t('fleet-shell-launch-help') : t('launch-engine-help')}</small>
               </div>
             ) : (
               <div className="nc-power-config">

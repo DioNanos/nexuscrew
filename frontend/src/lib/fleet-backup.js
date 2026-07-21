@@ -10,12 +10,13 @@ const MAX_CWD = 4096;
 const MAX_CWD_REL = 4096;
 const MAX_MODEL = 256;
 const MAX_PROMPT = 8192;
+const MAX_CELL_COMMAND = 4096;
 const MAX_CELLS = 32;
 const MAX_ENGINES = 24;
 const TOP_KEYS = new Set(['format', 'version', 'exportedAt', 'cells', 'engines']);
 // v3 portatile: la cella ammette cwdRel (home-relative) e VIETA cwd (assoluta,
 // device-specifica). Un backup v3 con cwd -> invalid-cell (fail-closed).
-const CELL_KEYS_V3 = new Set(['id', 'cwdRel', 'engine', 'boot', 'model', 'models', 'permissionPolicies', 'systemPrompt', 'prompt']);
+const CELL_KEYS_V3 = new Set(['id', 'cwdRel', 'engine', 'boot', 'model', 'models', 'permissionPolicies', 'commands', 'systemPrompt', 'prompt']);
 // Legacy v1 (nexuscrew.cells) / v2 (nexuscrew.fleet): cella con cwd assoluta,
 // non portabile, da validare sul target al restore.
 const CELL_KEYS_LEGACY = new Set(['id', 'cwd', 'engine', 'boot', 'model', 'models', 'permissionPolicies', 'systemPrompt', 'prompt']);
@@ -92,11 +93,13 @@ export function cleanBackupCell(raw) {
   if (typeof systemPrompt !== 'string' || systemPrompt.length > MAX_PROMPT) return null;
   const models = cleanMap(raw.models, (v) => typeof v === 'string' && !!v && v.length <= MAX_MODEL);
   const permissionPolicies = cleanMap(raw.permissionPolicies, (v) => POLICY.has(v));
-  if (models === null || permissionPolicies === null) return null;
+  const commands = cleanMap(raw.commands, (v) => printable(v, MAX_CELL_COMMAND) && !looksSecret(v));
+  if (models === null || permissionPolicies === null || commands === null) return null;
   const out = { id: raw.id, cwdRel, engine: raw.engine, boot: raw.boot === true, systemPrompt };
   if (raw.model) out.model = raw.model;
   if (Object.keys(models).length) out.models = models;
   if (Object.keys(permissionPolicies).length) out.permissionPolicies = permissionPolicies;
+  if (Object.keys(commands).length) out.commands = commands;
   return out;
 }
 
@@ -201,6 +204,7 @@ export function createFleetBackup(cells, selectedCellIds, engines = [], selected
       id: cell.id, cwdRel: cell.cwdRel, engine: cell.engine, boot: cell.boot === true,
       ...(cell.model ? { model: cell.model } : {}), ...(cell.models ? { models: cell.models } : {}),
       ...(cell.permissionPolicies ? { permissionPolicies: cell.permissionPolicies } : {}), systemPrompt: cell.prompt || '',
+      ...(cell.commands ? { commands: cell.commands } : {}),
     });
     if (!clean) return { ok: false, error: 'invalid-cell', invalidCellIds: [cell.id] };
     cleanCells.push(clean);
@@ -263,7 +267,9 @@ export function restoreCellDefinition(cell, selectedEngine, availableEngineIds) 
   if (selectedEngine === cell.engine && cell.model) out.model = cell.model;
   else if (cell.models && cell.models[selectedEngine]) out.model = cell.models[selectedEngine];
   const models = filterMap(cell.models); const permissionPolicies = filterMap(cell.permissionPolicies);
+  const commands = filterMap(cell.commands);
   if (Object.keys(models).length) out.models = models;
   if (Object.keys(permissionPolicies).length) out.permissionPolicies = permissionPolicies;
+  if (Object.keys(commands).length) out.commands = commands;
   return out;
 }

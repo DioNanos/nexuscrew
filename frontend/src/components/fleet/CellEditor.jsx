@@ -10,10 +10,21 @@ export default function CellEditor({ token, route, targets = [], location, setLo
   const [pickErr, setPickErr] = useState('');
   const f = state.form; const set = (patch) => setState({ ...state, form: { ...f, ...patch } });
   const selectedEngine = engines.find((engine) => engine.id === f.engine);
+  const isShell = selectedEngine?.managed?.client === 'shell';
   const chooseEngine = (id) => {
     const engine = engines.find((e) => e.id === id);
-    set({ engine: id, model: f.models?.[id] || engine?.managed?.model || engine?.model?.value || '' });
+    const commands = { ...(f.commands || {}) };
+    if (selectedEngine?.managed?.client === 'shell') {
+      if (f.command) commands[f.engine] = f.command; else delete commands[f.engine];
+    }
+    set({ engine: id, model: f.models?.[id] || engine?.managed?.model || engine?.model?.value || '', commands, command: commands[id] || '' });
   };
+  const setCommand = (value) => {
+    const commands = { ...(f.commands || {}) };
+    if (value) commands[f.engine] = value; else delete commands[f.engine];
+    set({ command: value, commands });
+  };
+  const hasShellMetachar = isShell && /[|&;<>()`$*?{}\[\]~]/.test(f.command || '');
   const browse = async (p) => {
     try { const x = await listDirs(token, p, route); setPicker(x); set({ cwd: x.path }); setPickErr(''); }
     catch (e) { setPickErr(String(e.message || e)); }
@@ -40,9 +51,15 @@ export default function CellEditor({ token, route, targets = [], location, setLo
     {pickErr && <div className="nc-err">{pickErr}</div>}
     <select value={f.engine} onChange={(e) => chooseEngine(e.target.value)}>{engines.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}</select>
     <label className="nc-check"><input type="checkbox" checked={!!f.boot} onChange={(e) => set({ boot: e.target.checked })} /> boot</label>
-    <input value={f.model || ''} list="nc-cell-models" placeholder={t('fleet-model-override')} onChange={(e) => set({ model: e.target.value })} />
-    <datalist id="nc-cell-models">{(selectedEngine?.availableModels || []).map((model) => <option key={model} value={model} />)}</datalist>
-    <textarea value={f.prompt || ''} placeholder="prompt" onChange={(e) => set({ prompt: e.target.value })} />
+    {isShell ? <>
+      <input value={f.command || ''} maxLength={4096} placeholder={t('fleet-shell-command-placeholder')} onChange={(e) => setCommand(e.target.value)} />
+      <small>{f.command ? t('fleet-shell-command-help') : t('fleet-shell-interactive')}</small>
+      {hasShellMetachar && <small className="nc-note">{t('fleet-shell-command-metachar')}</small>}
+    </> : <>
+      <input value={f.model || ''} list="nc-cell-models" placeholder={t('fleet-model-override')} onChange={(e) => set({ model: e.target.value })} />
+      <datalist id="nc-cell-models">{(selectedEngine?.availableModels || []).map((model) => <option key={model} value={model} />)}</datalist>
+      <textarea value={f.prompt || ''} placeholder="prompt" onChange={(e) => set({ prompt: e.target.value })} />
+    </>}
     <div className="nc-sheet-actions"><button className="nc-btn ghost" onClick={() => setState(null)}>{t('cancel')}</button><button className="nc-btn primary" disabled={busy || !f.id || !f.cwd || !f.engine} onClick={onSave}>{t('save')}</button></div>
   </div>;
 }
