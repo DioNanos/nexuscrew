@@ -158,6 +158,7 @@ test('smart-up migra una service definition 0.8.0 che pinna NEXUSCREW_PORT', asy
   await smartUp({
     home, platform: 'linux', installPath: servicePath, tmuxOk: true,
     execImpl: (_bin, args) => (args?.includes('is-active') ? 'active' : (args?.includes('is-enabled') ? 'enabled' : '')),
+    restartImpl: () => ({ restarted: true }),
     probeImpl: async () => true,
   });
   assert.doesNotMatch(fs.readFileSync(servicePath, 'utf8'), /NEXUSCREW_PORT/);
@@ -185,6 +186,7 @@ test('smart-up migra cwd Termux:Boot legacy e riavvia una sola volta', async () 
   assert.equal(initCalls, 1);
   assert.equal(restartCalls, 1);
   assert.match(fs.readFileSync(script, 'utf8'), /cd -- "\$HOME"/);
+  assert.equal(fs.existsSync(path.join(home, '.nexuscrew', 'service-cwd-migration.pending')), false);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -196,6 +198,7 @@ test('smart-up migra la cwd legacy del companion Fleet anche con service princip
   fs.writeFileSync(service, `WorkingDirectory=${home}\n`);
   fs.writeFileSync(companion, `WorkingDirectory=${home}/replaceable-package\n`);
   let initCalls = 0;
+  let restartCalls = 0;
   const r = await smartUp({
     home,
     platform: 'linux',
@@ -205,11 +208,13 @@ test('smart-up migra la cwd legacy del companion Fleet anche con service princip
       initCalls += 1;
       fs.writeFileSync(companion, `WorkingDirectory=${home}\n`);
     },
+    restartImpl: () => { restartCalls += 1; return { restarted: true }; },
     execImpl: (_bin, args) => (args?.includes('is-enabled') ? 'enabled' : 'active'),
     probeImpl: async () => true,
   });
   assert.equal(r.running, true);
   assert.equal(initCalls, 1);
+  assert.equal(restartCalls, 1);
   assert.match(fs.readFileSync(companion, 'utf8'), new RegExp(`^WorkingDirectory=${home}$`, 'm'));
   fs.rmSync(home, { recursive: true, force: true });
 });
@@ -273,12 +278,59 @@ test('smart-up fallisce chiuso se i file migrano ma service activation fallisce'
     fleetInstallPath: companion,
     serviceMigrationMarkerPath: marker,
     runInitImpl: () => { initCalls += 1; return { installFailures: [] }; },
+    restartImpl: () => ({ restarted: true }),
     execImpl: (_bin, args) => (args?.includes('is-enabled') ? 'enabled' : 'active'),
     probeImpl: async () => true,
   });
   assert.equal(retried.running, true);
   assert.equal(initCalls, 2, 'pending marker retries even after files are already stable');
   assert.equal(fs.existsSync(marker), false, 'verified retry clears the marker');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('smart-up ritenta una migrazione se il runtime persistente non riparte', async () => {
+  const { home } = initHome();
+  const service = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
+  const companion = path.join(home, '.config', 'systemd', 'user', 'nexuscrew-fleet.service');
+  const marker = path.join(home, '.nexuscrew', 'migration-restart-test.pending');
+  fs.mkdirSync(path.dirname(service), { recursive: true });
+  fs.writeFileSync(service, `WorkingDirectory=${home}\n`);
+  fs.writeFileSync(companion, `WorkingDirectory=${home}/replaceable-package\n`);
+  let initCalls = 0;
+  let restartCalls = 0;
+  const common = {
+    home,
+    platform: 'linux',
+    installPath: service,
+    fleetInstallPath: companion,
+    serviceMigrationMarkerPath: marker,
+    runInitImpl: () => {
+      initCalls += 1;
+      fs.writeFileSync(companion, `WorkingDirectory=${home}\n`);
+      return { installFailures: [] };
+    },
+    execImpl: (_bin, args) => (args?.includes('is-enabled') ? 'enabled' : 'active'),
+    probeImpl: async () => true,
+  };
+  await assert.rejects(
+    smartUp({
+      ...common,
+      restartImpl: () => { restartCalls += 1; return { restarted: false }; },
+    }),
+    /restart failed verification \(linux\)/,
+  );
+  assert.equal(initCalls, 1);
+  assert.equal(restartCalls, 1);
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'pending\n');
+
+  const retried = await smartUp({
+    ...common,
+    restartImpl: () => { restartCalls += 1; return { restarted: true }; },
+  });
+  assert.equal(retried.running, true);
+  assert.equal(initCalls, 2, 'pending marker forces regeneration after a failed runtime restart');
+  assert.equal(restartCalls, 2);
+  assert.equal(fs.existsSync(marker), false);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
