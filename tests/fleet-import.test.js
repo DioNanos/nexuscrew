@@ -45,7 +45,30 @@ test('import-cell: jarvis (tmuxSession non canonica) diventa cella gestita, roun
     assert.ok(cell, 'cella jarvis persistita');
     assert.equal(cell.engine, 'claude.native');
     assert.equal(cell.tmuxSession, 'jarvis', 'tmuxSession non canonica ammessa e round-trip');
+    assert.equal(cell.cwd, fs.realpathSync(dir));
+    assert.equal(cell.cwdRel, '', 'import canonizza la cwd portabile prima della scrittura');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('import-cell: cwd esterna alla home fallisce prima della scrittura', async () => {
+  const dir = tmp();
+  const foreign = tmp();
+  try {
+    const { fleet, defsPath } = await makeBuiltin(dir);
+    await assert.rejects(
+      () => fleet.importCell({ tmuxSession: 'jarvis', engine: 'claude.native', cwd: foreign }),
+      (e) => {
+        assert.equal(e.status, 400);
+        assert.equal(e.data?.code, 'unportable-cwd');
+        assert.deepEqual(e.data?.cells?.map((cell) => cell.id), ['jarvis']);
+        return true;
+      },
+    );
+    assert.equal(loadDefinitions(defsPath).cells.length, 0, 'nessuna cwd foreign persistita');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(foreign, { recursive: true, force: true });
+  }
 });
 
 test('import-cell: idempotente (stessa tmuxSession -> no-op, nessun duplicato)', async () => {

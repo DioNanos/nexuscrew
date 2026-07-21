@@ -803,13 +803,17 @@ test('restart: cella sconosciuta -> 400 (come down/up)', async () => {
 // ---------------------------------------------------------------------------
 // 13. redazione §9h — segreti (env value + prompt) mai nell'errore di up fallito
 // ---------------------------------------------------------------------------
-test('redactSecrets (unit): env values + prompt redatti, chiavi/envKey preservati', () => {
+test('redactSecrets (unit): env values, prompt e comando Shell attivo redatti', () => {
   const engine = { env: { ANTHROPIC_API_KEY: 'sk-x', OTHER: 'tok-9' }, prompt: 'ENG-PROMPT' };
-  const cell = { prompt: 'CELL-PROMPT-9z' };
-  const out = redactSecrets('boom ANTHROPIC_API_KEY=sk-x other=tok-9 eng=ENG-PROMPT cell=[CELL-PROMPT-9z]', engine, cell);
-  assert.ok(!/sk-x|tok-9|ENG-PROMPT|CELL-PROMPT-9z/.test(out), 'nessun segreto in chiaro');
+  const cell = {
+    engine: 'shell.local', prompt: 'CELL-PROMPT-9z',
+    commands: { 'shell.local': 'deploy --token SHELL-SECRET-9z', 'other.shell': 'inactive-command' },
+  };
+  const out = redactSecrets('boom ANTHROPIC_API_KEY=sk-x other=tok-9 eng=ENG-PROMPT cell=[CELL-PROMPT-9z] cmd=deploy --token SHELL-SECRET-9z inactive-command', engine, cell);
+  assert.ok(!/sk-x|tok-9|ENG-PROMPT|CELL-PROMPT-9z|SHELL-SECRET-9z/.test(out), 'nessun segreto attivo in chiaro');
+  assert.match(out, /inactive-command/, 'un comando di un engine inattivo non altera la diagnostica');
   assert.ok(/ANTHROPIC_API_KEY=/.test(out), 'le CHIAVI env restano (redatti solo i values)');
-  assert.equal((out.match(/‹redacted›/g) || []).length, 4, 'un marcatore per segreto');
+  assert.equal((out.match(/‹redacted›/g) || []).length, 5, 'un marcatore per segreto attivo');
   // testo non-string -> pass-through
   assert.equal(redactSecrets(null, engine, cell), null);
   assert.equal(redactSecrets('', engine, cell), '');
