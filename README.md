@@ -129,16 +129,17 @@ later, the boot companion is not automatically rerun.
 ## Fleet: cells, engines and providers
 
 A **cell** is a reusable worker definition: tmux session name, working directory, engine,
-model, permission policy, optional system prompt and boot state. Starting a stopped cell opens
-the same launch sheet on desktop and mobile, so the effective settings can be reviewed before
-the process starts.
+model, permission policy, optional system prompt, optional Shell command and boot state. Starting
+a stopped cell opens the same launch sheet on desktop and mobile, so the effective settings can
+be reviewed before the process starts.
 
-An **engine** describes how a CLI is launched. Clean installations include four base adapters:
+An **engine** describes how a CLI is launched. Clean installations include five base adapters:
 
 - Claude Code
 - Codex
 - Codex-VL
 - Pi
+- Shell
 
 The provider catalog is scoped to the selected CLI rather than to a machine-specific setup:
 
@@ -148,10 +149,17 @@ The provider catalog is scoped to the selected CLI rather than to a machine-spec
 | Codex | OpenAI or ChatGPT login, OpenAI API, Ollama Cloud, local Ollama, LM Studio, custom OpenAI Responses endpoint |
 | Codex-VL | OpenAI or ChatGPT login, OpenAI API, Alibaba Token Plan Personal, OpenRouter, Ollama Cloud, local Ollama, LM Studio, custom OpenAI Responses endpoint |
 | Pi | Native default, Anthropic, OpenAI API, Alibaba Token Plan Personal, Codex OAuth, Gemini, GitHub Copilot, OpenRouter, Ollama, DeepSeek, Z.AI, custom provider |
+| Shell | Device-local interactive shell, with an optional per-cell command |
 
 Custom Codex-compatible endpoints use the real Responses wire API; NexusCrew does not silently
 fall back to Chat Completions. Custom argv-based engines are also supported and are launched
 directly without a shell after trust-boundary validation.
+
+The Shell engine resolves `$SHELL` or a trusted platform shell when the cell starts; executable
+paths are not stored in Fleet definitions or backups. Leaving its command empty opens an
+interactive login shell. A configured command is passed as one opaque argument to that shell's
+`-lc`, runs once without restart supervision, and then leaves the cell stopped. Shell does not
+accept prompts, models or unsafe permission policy.
 
 OpenRouter is first-class for Claude Code and Codex-VL. Claude uses OpenRouter's Anthropic
 Messages compatibility endpoint, while Codex-VL uses the beta, stateless Responses endpoint
@@ -313,8 +321,10 @@ supported deployment model.
 
 Settings → Fleet can export and restore selected cells, system prompts and reusable engine
 definitions. Restore previews conflicts, supports per-item selection and reports active cells
-that need a restart. Archives contain credential variable names, never credential values,
-tokens or live tmux state.
+that need a restart. Current archives store working directories relative to the target user's
+home instead of copying device-specific absolute paths. A legacy or foreign path is shown as an
+explicit repair action and is never silently remapped. Archives contain credential variable
+names, never credential values, tokens or live tmux state.
 
 Global npm installations can follow the stable `latest` tag automatically. NexusCrew serializes
 updates, verifies the new CLI and same-port runtime, and rolls back once to the exact previous
@@ -334,7 +344,9 @@ level/component filtering, pause, autoscroll, copy, JSON export and explicit cle
 
 Records are structured and redacted before storage. Raw terminal content, prompts, command lines,
 environment values, tokens, credentials and filesystem paths are not accepted as diagnostic
-metadata. The buffer is not a reader for service journals or log files.
+metadata. Fleet launch failures include only closed `code` and `phase` values so preflight,
+broker, tmux, readiness and client-spawn failures can be distinguished safely. The buffer is not
+a reader for service journals or log files.
 
 ## MCP bridge
 
@@ -430,7 +442,10 @@ Common environment overrides include `NEXUSCREW_PORT`, `NEXUSCREW_CONFIG_FILE`,
 
 Run `nexuscrew doctor` after installation or when moving a configuration between devices. A
 missing OpenSSH client is a blocking diagnostic; `autossh` is reported separately and remains
-optional because NexusCrew supervises OpenSSH directly.
+optional because NexusCrew supervises OpenSSH directly. The doctor also verifies that the service
+and shared tmux server have a resolvable stable working directory. On Termux it reports whether
+the tmux server inherited a trusted `termux-exec` preload; it never kills a stale server or user
+sessions automatically.
 
 ## Development
 

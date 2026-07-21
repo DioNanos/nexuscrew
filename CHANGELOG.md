@@ -2,6 +2,29 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.28 — 2026-07-21 — "Portable Workspaces"
+
+- Makes Fleet backups portable across devices. Version 3 archives store a validated home-relative
+  `cwdRel` instead of an absolute working directory; legacy v1/v2 archives remain readable, while
+  foreign or missing paths fail closed and can be repaired explicitly from Settings.
+- Adds **Shell** as a standard device-local Fleet engine. NexusCrew resolves the interactive shell
+  at launch time, so no device-specific executable path is persisted. An optional per-cell command
+  runs through the same shell as one opaque `-lc` string, disables restart supervision and returns
+  the cell to the stopped state when complete.
+- Keeps Shell commands bounded and private to cell definitions and portable backups. They are never
+  exposed through status, topology, node inventory or diagnostics; prompt, model and unsafe policy
+  controls do not apply to Shell.
+- Preserves bounded Fleet launch causes as closed `code`/`phase` metadata. Preflight, launch-broker,
+  tmux creation, readiness and spawn failures remain distinguishable without recording raw paths,
+  arguments, environment values, prompts or credentials.
+- Roots generated Linux services and Termux:Boot scripts at the stable user home, matching the
+  macOS fix from 0.8.27. Smart startup repairs legacy service definitions, and `nexuscrew doctor`
+  detects orphaned tmux working directories and stale or untrusted Termux server preloads without
+  killing user sessions automatically.
+- Gate: **980 isolated Node tests** (979 pass / 1 platform skip), **93/93 frontend component
+  tests**, production PWA build and zero production dependency vulnerabilities in both dependency
+  trees.
+
 ## 0.8.27 — 2026-07-21 — "Portable Control"
 
 - Restores Fleet and shell launches on current Android/Termux builds by preserving only a
