@@ -255,14 +255,17 @@ Full frontend suite: **79/79 passing** (`npm --prefix frontend test`).
 
 ## Manual verification
 
-Verified on a real mobile PWA client (loopback via SSH tunnel):
+Verified on a real mobile PWA client (loopback via SSH tunnel), 2026-07-21:
 - arrows move the selection in a TUI multi-choice and the **soft keyboard does
   not open / cover the answers**;
 - `⊞` expands/retracts the full command rows;
 - `⌨` toggles the composer;
 - after the composer fix, typing a prompt with the mobile IME and tapping ➤
   **sends it reliably**, including when send is tapped immediately after typing
-  (the case that previously dropped the prompt).
+  (the case that previously dropped the prompt) — **confirmed by the user**;
+- `PGUP`/`PGDN` on the reduced bar scroll the Claude Code transcript;
+- **swipe-to-scroll over the terminal scrolls the Claude Code transcript up**
+  (alt-screen PageUp path) — **confirmed by the user**.
 
 ## Build / deploy (for reference)
 
