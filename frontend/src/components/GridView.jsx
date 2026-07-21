@@ -4,6 +4,7 @@ import {
   addTile, moveTile, removeTile, sessions, resizeColumn, resizeTile,
   dropForQuadrant, snapFraction, zoomTile, refKey,
 } from '../lib/grid-model.js';
+import { cellDisplayName } from '../lib/cell-display.js';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import './GridView.css';
@@ -29,6 +30,9 @@ function quadrantOf(x, y, r) {
 export default function GridView({
   layout, onLayoutChange, token, readonly = false, sessionsAlive, focusSession, onFocus, onOpenSingle,
   decks = [], currentDeck, onSendToDeck,
+  // Roster Fleet gia' caricato (Tranche D): usato per risolvere il titolo
+  // visibile di ogni tile dal campo `cell`, senza fetch per-tile.
+  cells = [], nodeGroups = [],
 }) {
   useLang();                                         // re-render allo switch lingua
   const [drag, setDrag] = useState(null);            // {col} | {col,row,quadrant}
@@ -156,6 +160,12 @@ export default function GridView({
             {col.tiles.flatMap((tile, ri) => {
               const tnodes = [];
               const key = refKey(tile);
+              // Titolo visibile del tile dal campo Fleet `cell` (es. `Dev`):
+              // route/tmuxSession restano identita' tecniche, non in titolo.
+              const cellName = cellDisplayName({
+                session: tile.session, node: tile.node, ownerId: tile.ownerId,
+                cells, nodeGroups,
+              });
               tnodes.push(
                 <div
                   key={key}
@@ -169,7 +179,7 @@ export default function GridView({
                   }}
                 >
                   <GridTile
-                    session={tile.session} node={tile.node} ownerId={tile.ownerId} token={token} readonly={readonly}
+                    session={tile.session} node={tile.node} ownerId={tile.ownerId} cellName={cellName} token={token} readonly={readonly}
                     focused={focusSession === key}
                     onFocus={onFocus} onClose={closeTile} onOpenSingle={onOpenSingle}
                     available={tile.unavailable !== true}

@@ -17,6 +17,7 @@ import {
 } from './lib/api.js';
 import { isValidLabel } from './lib/settings-model.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
+import { cellDisplayName } from './lib/cell-display.js';
 import {
   MAIN_DECK, deckLocationFromPath, deckUrl, readLayoutRaw,
 } from './lib/deck-model.js';
@@ -109,13 +110,19 @@ function useDesktop() {
 // Vista singola autosufficiente: usata dal flusso mobile e dall'overlay desktop.
 // Comportamento intatto rispetto alla vista singola pre-griglia.
 // node (opzionale, B2): sessione su nodo remoto via proxy /node/<name>.
-function SingleView({ session, node, ownerId, token, readonly = false, onBack }) {
+// cellName (opzionale, Tranche D): titolo logico Fleet gia' risolto dal roster
+// (desktop overlay). Se assente (mobile), la lookup fleetStatus esistente lo
+// risolve al primo ciclo. Il titolo visibile deriva sempre da `cell.cell`.
+export function SingleView({ session, node, ownerId, cellName, token, readonly = false, onBack }) {
   useLang(); // re-render allo switch lingua
   const [showFiles, setShowFiles] = useState(false);
   // Su touch il composer è aperto di default (l'IME Gboard corrompe l'input in xterm).
   const [showComposer, setShowComposer] = useState(() => window.matchMedia('(pointer: coarse)').matches);
   const [filesEvent, setFilesEvent] = useState(null);
   const [fontSize, setFontSize] = useState(initialFontSize);
+  // Titolo visibile (Tranche D): nome logico Fleet o, in fallback, il nome
+  // sessione tmux. Inizializza con cellName (desktop overlay) o session.
+  const [title, setTitle] = useState(cellName || session);
   const [sub, setSub] = useState('');           // sottotitolo stato dell'header
   const zoom = (delta) => setFontSize((v) => {
     const next = Math.max(FONT_MIN, Math.min(FONT_MAX, v + delta));
@@ -129,6 +136,11 @@ function SingleView({ session, node, ownerId, token, readonly = false, onBack })
   const [ctrlArmed, setCtrlArmed] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const toggleCtrl = () => { ctrlRef.current = !ctrlRef.current; setCtrlArmed(ctrlRef.current); };
+
+  // SingleView may be reused at the same React position when the operator
+  // switches cells. Synchronize immediately instead of showing the previous
+  // title until the first fleetStatus poll completes.
+  useEffect(() => { setTitle(cellName || session); }, [cellName, session]);
 
   // Sottotitolo header: "engine·key" se la sessione è una cella, altrimenti
   // "attached · Nm" (o tempo relativo). Dati da /api/sessions + /api/fleet/status
@@ -151,6 +163,13 @@ function SingleView({ session, node, ownerId, token, readonly = false, onBack })
         if (fs.available && Array.isArray(fs.cells)) cell = fs.cells.find((c) => c.tmuxSession === session);
       } catch (_) { /* best-effort: nodo senza capability fleet */ }
       if (!alive) return;
+      // Titolo visibile dal campo Fleet `cell` (gestita) o dal nome sessione
+      // (unmanaged). Riusa la lookup fleetStatus gia' fatta per il sottotitolo:
+      // nessuna fetch aggiuntiva (Tranche D).
+      setTitle(cellDisplayName({
+        session,
+        cell: cell || (cellName ? { cell: cellName } : null),
+      }));
       let txt = '';
       if (cell) txt = `${cell.engine}${cell.key ? `·${cell.key}` : ''}`;
       else if (sess) txt = sess.attached ? `attached · ${rel(sess.activity)}` : (sess.activity ? rel(sess.activity) : '');
@@ -166,7 +185,7 @@ function SingleView({ session, node, ownerId, token, readonly = false, onBack })
       <header className="nc-bar nc-bar-single">
         <button onClick={onBack} title={t('sessions')}><Icon name="chevronLeft" size={18} /><span className="nc-bar-label">{t('sessions')}</span></button>
         <span className="nc-bar-center">
-          <b>{node ? `${node}:${session}` : session}</b>
+          <b title={node ? `${title} · ${node}` : title}>{title}</b>
           {sub && <small className="nc-bar-sub">{sub}</small>}
         </span>
         <span className="nc-bar-right">
@@ -215,7 +234,13 @@ export default function App() {
 
   // mobile single-view session: ref {session, node?} (node = nodo remoto B2)
   const [session, setSession] = useState(null);
-  const pickSession = (ref) => setSession(parseRef(ref));
+  const pickSession = (ref) => {
+    const parsed = parseRef(ref);
+    setSession(parsed ? {
+      ...parsed,
+      ...(typeof ref?.cellName === 'string' && ref.cellName ? { cellName: ref.cellName } : {}),
+    } : null);
+  };
 
   // desktop workspace state
   const [dSessions, setDSessions] = useState([]);
@@ -483,7 +508,7 @@ export default function App() {
         </>
       );
     }
-    return <><SingleView session={session.session} node={session.node} ownerId={session.ownerId} token={token} readonly={roDefault} onBack={() => setSession(null)} />{settingsOverlays}</>;
+    return <><SingleView session={session.session} node={session.node} ownerId={session.ownerId} cellName={session.cellName} token={token} readonly={roDefault} onBack={() => setSession(null)} />{settingsOverlays}</>;
   }
 
   // Workspace desktop: Sidebar + GridView + overlay vista singola + dialoghi.
@@ -539,12 +564,18 @@ export default function App() {
           decks={decks}
           currentDeck={deck}
           onSendToDeck={onSendToDeck}
+          cells={cells}
+          nodeGroups={nodeGroups}
         />
       </div>
 
       {single && (
         <div className="nc-single-overlay">
-          <SingleView session={single.session} node={single.node} ownerId={single.ownerId} token={token} readonly={roDefault} onBack={() => setSingle(null)} />
+          <SingleView
+            session={single.session} node={single.node} ownerId={single.ownerId}
+            cellName={cellDisplayName({ session: single.session, node: single.node, ownerId: single.ownerId, cells, nodeGroups })}
+            token={token} readonly={roDefault} onBack={() => setSingle(null)}
+          />
         </div>
       )}
       {powerCell && (
