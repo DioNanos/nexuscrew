@@ -188,6 +188,32 @@ test('smart-up migra cwd Termux:Boot legacy e riavvia una sola volta', async () 
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test('smart-up migra la cwd legacy del companion Fleet anche con service principale gia stabile', async () => {
+  const { home } = initHome();
+  const service = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
+  const companion = path.join(home, '.config', 'systemd', 'user', 'nexuscrew-fleet.service');
+  fs.mkdirSync(path.dirname(service), { recursive: true });
+  fs.writeFileSync(service, `WorkingDirectory=${home}\n`);
+  fs.writeFileSync(companion, `WorkingDirectory=${home}/replaceable-package\n`);
+  let initCalls = 0;
+  const r = await smartUp({
+    home,
+    platform: 'linux',
+    installPath: service,
+    fleetInstallPath: companion,
+    runInitImpl: () => {
+      initCalls += 1;
+      fs.writeFileSync(companion, `WorkingDirectory=${home}\n`);
+    },
+    execImpl: (_bin, args) => (args?.includes('is-enabled') ? 'enabled' : 'active'),
+    probeImpl: async () => true,
+  });
+  assert.equal(r.running, true);
+  assert.equal(initCalls, 1);
+  assert.match(fs.readFileSync(companion, 'utf8'), new RegExp(`^WorkingDirectory=${home}$`, 'm'));
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 test('show token stampa link autenticato senza aprire il browser', async () => {
   const { home } = initHome(); const logs = []; const opened = [];
   const r = await dispatch(['show', 'token'], { home, platform: 'linux', log: (x) => logs.push(x), probeImpl: async () => true, execImpl: () => '', openImpl: (u) => opened.push(u) });
@@ -879,6 +905,35 @@ test('doctor: cwd stabile copre systemd e Termux:Boot senza seguire symlink', ()
   const unsafe = checkServiceWorkingDirectory('linux', home, link);
   assert.equal(unsafe.ok, false);
   assert.match(unsafe.detail, /non regolare/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('doctor e smart-up coprono anche la cwd del companion Fleet', () => {
+  const {
+    checkFleetServiceWorkingDirectory,
+  } = require('../lib/cli/doctor.js');
+  const {
+    serviceDefinitionNeedsRefresh,
+  } = require('../lib/cli/commands.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-doctor-fleet-cwd-'));
+  const service = path.join(home, 'nexuscrew.service');
+  const companion = path.join(home, 'nexuscrew-fleet.service');
+  fs.writeFileSync(service, `WorkingDirectory=${home}\n`);
+
+  const missing = checkFleetServiceWorkingDirectory('linux', home, companion);
+  assert.equal(missing.ok, true);
+  assert.equal(missing.warn, true);
+  assert.equal(serviceDefinitionNeedsRefresh('linux', home, service, companion), false);
+
+  fs.writeFileSync(companion, `WorkingDirectory=${home}/replaceable-package\n`);
+  const stale = checkFleetServiceWorkingDirectory('linux', home, companion);
+  assert.equal(stale.ok, false);
+  assert.match(stale.detail, /atteso HOME stabile/);
+  assert.equal(serviceDefinitionNeedsRefresh('linux', home, service, companion), true);
+
+  fs.writeFileSync(companion, `WorkingDirectory=${home}\n`);
+  assert.equal(checkFleetServiceWorkingDirectory('linux', home, companion).ok, true);
+  assert.equal(serviceDefinitionNeedsRefresh('linux', home, service, companion), false);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
