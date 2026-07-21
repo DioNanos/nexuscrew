@@ -52,11 +52,11 @@ submit).
 A single row, left to right:
 
 ```
-[⊞ expand] [⌨ keyboard] [☰ menu]   ………   [↑] [↓] [←] [→]
+[⊞ expand] [⌨ keyboard] [☰ menu]   ………   [↑] [↓] [←] [→] [PGUP] [PGDN]
 ```
 
-- `⊞` toggles the full two-row command layout ("as before": ESC/HOME/END/PGUP/
-  TAB/CTRL/ALT/PGDN…). `aria-label` swaps between "espandi comandi" /
+- `⊞` toggles the full two-row command layout ("as before": ESC/HOME/END/
+  TAB/CTRL/ALT…). `aria-label` swaps between "espandi comandi" /
   "restringi comandi"; `armed` (green) when expanded.
 - `⌨` is the existing composer toggle (`onKeyboard` -> `setShowComposer`),
   hoisted here from the expanded view so it's always reachable.
@@ -64,6 +64,13 @@ A single row, left to right:
 - Arrows are grouped on the right in a `.nc-keybar-arrows` element with
   `margin-left:auto` (auto-margin absorbs free space before flex-grow, so the
   group is pushed right and separated from the toggle/menu on the left).
+- `PGUP`/`PGDN` live in the arrow group (not behind `⊞`) because on mobile
+  there is no physical PageUp key and they are how a TUI scrolls its own
+  transcript (e.g. Claude Code receives `\x1b[5~` / `\x1b[6~` as PageUp/Down).
+  The rarely-used command keys (ESC/HOME/END/TAB/CTRL/ALT) stay behind `⊞`;
+  only page keys were promoted back to the reduced bar so one-tap transcript
+  scroll is restored (the first redesign had moved them out of the default
+  view, which regressed scrolling on mobile).
 
 ### Expanded bar (`expanded=true`)
 
@@ -181,10 +188,11 @@ whether those TUIs want `LF` (`\n`) instead of `CR` is left as follow-up.
 `frontend/src/components/KeyBar.test.jsx` (vitest + @testing-library/react),
 4 tests:
 
-1. reduced bar default contents: `[⊞, ⌨, ☰]` left + `[↑, ↓, ←, →]` right; no
-   `ESC`/`HOME`; no `button.enter`.
+1. reduced bar default contents: `[⊞, ⌨, ☰]` left + `[↑, ↓, ←, →, PGUP, PGDN]`
+   right; no `ESC`/`HOME`; no `button.enter`.
 2. toggle expands (shows `ESC`, 2 rows) and retracts (1 row).
-3. arrow keys send the right escape sequences (`\x1b[A/B/D/C`).
+3. arrow + page keys send the right escape sequences (`\x1b[A/B/D/C` and
+   `\x1b[5~` / `\x1b[6~` for PGUP/PGDN).
 4. a send-key blurs the active element (soft-keyboard-hide behaviour).
 
 `frontend/src/components/ComposerBar.test.jsx` adds one case for the IME fix:
@@ -246,6 +254,7 @@ In chronological order, on top of `origin/main` (`0.8.27`, `ec243e9`):
 5. `db69649` refactor(keybar): hoist keyboard button into the reduced bar
 6. `e5ff4f3` docs: technical notes for KeyBar mobile UX PR
 7. `d7ed2ef` fix(composer): submit live DOM value when mobile IME hasn't committed to state
+8. `3fa66bd` fix(keybar): restore PGUP/PGDN to the reduced bar for mobile transcript scroll
 
 ## Suggested PR description
 
@@ -254,8 +263,10 @@ In chronological order, on top of `origin/main` (`0.8.27`, `ec243e9`):
 >
 > KeyBar:
 > - Default reduced bar: expand-toggle + keyboard toggle + hamburger menu on
->   the left, arrow keys grouped on the right. The toggle expands the previous
->   full two-row command layout.
+>   the left, arrow keys + PGUP/PGDN grouped on the right. The toggle expands
+>   the previous full two-row command layout. PGUP/PGDN are kept on the reduced
+>   bar (not behind the toggle) so one-tap transcript scrolling works on mobile
+>   (no physical PageUp key; a TUI like Claude Code receives them as PageUp/Down).
 > - send(seq) keys blur the active element so the mobile soft keyboard hides
 >   while scrolling TUI multi-choice selections (the answers stay visible).
 > - Hoist the composer (keyboard) toggle into the reduced bar so it's always
