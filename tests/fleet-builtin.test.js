@@ -10,7 +10,7 @@ const path = require('node:path');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
 const {
   createBuiltinFleet, composeLaunchArgv, minimalEnv, promptCharsOk, redactSecrets,
-  sanitizeEarlyDiagnostic,
+  sanitizeEarlyDiagnostic, backfillShellEngine,
 } = require('../lib/fleet/builtin.js');
 const { selectProvider } = require('../lib/fleet/provider.js');
 
@@ -113,6 +113,47 @@ function readLog(w) {
   }
   return { lines, nsArgv };
 }
+
+test('Shell backfill e one-shot: idempotente, comando singolo -lc, nessun pane diagnostico', async () => {
+  const w = makeWorld();
+  try {
+    let defs = require('../lib/fleet/definitions.js').loadDefinitions(w.defsPath);
+    const first = backfillShellEngine(w.defsPath, defs);
+    assert.equal(first.engines.filter((engine) => engine.id === 'shell.local').length, 1);
+    const second = backfillShellEngine(w.defsPath, first);
+    assert.equal(second.engines.filter((engine) => engine.id === 'shell.local').length, 1);
+
+    const shell = path.join(w.home, 'bin', 'bash');
+    fs.writeFileSync(shell, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.chmodSync(shell, 0o755);
+    defs = require('../lib/fleet/definitions.js').loadDefinitions(w.defsPath);
+    defs.cells[0].engine = 'shell.local';
+    defs.cells[0].commands = { 'shell.local': "printf '%s' '$HOME' | sed s/x/y/" };
+    atomicWrite(w.defsPath, defs);
+    let issued = null;
+    const launchBroker = {
+      issue: async (payload) => {
+        issued = payload;
+        return { socketPath: path.join(w.home, 'shell.sock'), nonce: 'a'.repeat(64) };
+      },
+      close: async () => {},
+    };
+    const fleet = await createBuiltinFleet({
+      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+      env: { SHELL: shell }, launchBroker,
+    });
+    const result = await fleet.up('Dev');
+    assert.equal(result.ok, true);
+    assert.equal(result.oneShot, true);
+    assert.equal(issued.command, shell);
+    assert.deepEqual(issued.args, ['-lc', defs.cells[0].commands['shell.local']]);
+    assert.equal(issued.supervise.enabled, false);
+    const argv = readLog(w).nsArgv[0];
+    assert.equal(argv.includes(defs.cells[0].commands['shell.local']), false);
+    assert.equal(argv.includes('remain-on-exit'), false);
+    await fleet.close();
+  } finally { w.cleanup(); }
+});
 
 // ---------------------------------------------------------------------------
 // 1. composeLaunchArgv — argv preciso, puro

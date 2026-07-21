@@ -21,15 +21,42 @@ function fakeClient(home, name) {
   return p;
 }
 
-test('app defaults: quattro CLI base, provider separati e policy esplicite', () => {
+test('app defaults: CLI base + Shell locale, provider separati e policy esplicite', () => {
   const d = defaultDefinitions();
-  assert.deepEqual(d.engines.map((e) => e.id), ['claude.native', 'codex.native', 'codex-vl.native', 'pi.native']);
-  assert.deepEqual(d.engines.map((e) => e.label), ['Claude Code', 'Codex', 'Codex-VL', 'Pi']);
+  assert.deepEqual(d.engines.map((e) => e.id), ['claude.native', 'codex.native', 'codex-vl.native', 'pi.native', 'shell.local']);
+  assert.deepEqual(d.engines.map((e) => e.label), ['Claude Code', 'Codex', 'Codex-VL', 'Pi', 'Shell']);
   assert.equal(d.engines.find((e) => e.id === 'claude.native').managed.permissionPolicy, 'unsafe');
   assert.ok(d.engines.filter((e) => e.id !== 'claude.native').every((e) => e.managed.permissionPolicy === 'standard'));
   assert.deepEqual(d.cells, []);
   assert.ok(parseDefinitions(d));
-  assert.equal(CATALOG.filter((p) => p.default).length, 4);
+  assert.equal(CATALOG.filter((p) => p.default).length, 5);
+});
+
+test('Shell locale: path risolto a runtime, comando opaco con -lc e policy standard', () => {
+  const home = tmp();
+  try {
+    const shell = fakeClient(home, 'bash');
+    const engine = { id: 'shell.local', label: 'Shell', managed: { client: 'shell', provider: 'local', model: '', permissionPolicy: 'standard' } };
+    const interactive = resolveManagedEngine(engine, { id: 'Ops', commands: {} }, { home, env: { SHELL: shell } });
+    assert.equal(interactive.ok, true);
+    assert.equal(interactive.engine.command, shell);
+    assert.deepEqual(interactive.engine.args, ['-l']);
+    assert.equal(interactive.engine.shellOneShot, false);
+
+    const raw = "printf '%s\\n' '$HOME' | sed 's/x/y/'";
+    const oneShot = resolveManagedEngine(engine, {
+      id: 'Ops', prompt: 'must-not-be-argv', commands: { 'shell.local': raw },
+      permissionPolicies: { 'shell.local': 'unsafe' },
+    }, { home, env: { SHELL: shell } });
+    assert.equal(oneShot.ok, true);
+    assert.deepEqual(oneShot.engine.args, ['-lc', raw]);
+    assert.equal(oneShot.engine.args.includes('must-not-be-argv'), false);
+    assert.equal(oneShot.engine.info, undefined);
+    assert.equal(oneShot.info.permissionPolicy, 'standard');
+    assert.equal(oneShot.engine.shellOneShot, true);
+    assert.equal(normalizeManagedSpec({ client: 'shell', provider: 'local', model: 'fake' }), null);
+    assert.equal(normalizeManagedSpec({ client: 'shell', provider: 'local', model: '', permissionPolicy: 'unsafe' }), null);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P', () => {
@@ -44,6 +71,7 @@ test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P',
     'codex-vl.openrouter', 'codex-vl.lmstudio', 'codex-vl.ollama-cloud', 'codex-vl.custom',
     'pi.native', 'pi.anthropic', 'pi.openai', 'pi.openai-codex', 'pi.google',
     'pi.github-copilot', 'pi.ollama', 'pi.openrouter', 'pi.deepseek', 'pi.zai', 'pi.custom',
+    'shell.local',
   ]) assert.equal(ids.has(id), true, `${id} deve essere nel catalogo base`);
   assert.equal(ids.has('claude.zai-a'), false);
   assert.equal(ids.has('claude.zai-p'), false);
@@ -63,7 +91,7 @@ test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P',
   assert.equal(catalog.find((p) => p.id === 'claude.openrouter').credentialEnv, 'OPENROUTER_API_KEY');
   assert.equal(catalog.find((p) => p.id === 'codex-vl.openrouter').credentialEnv, 'OPENROUTER_API_KEY');
   assert.equal(catalog.find((p) => p.id === 'claude.kimi-code').credentialEnv, 'KIMI_API_KEY');
-  assert.equal(catalog.filter((p) => p.default).length, 4, 'i nuovi profili core non diventano default');
+  assert.equal(catalog.filter((p) => p.default).length, 5, 'Shell e un engine standard senza cambiare il primo default');
 });
 
 test('OpenRouter richiede un modello; Kimi Code accetta solo gli slug documentati', () => {
