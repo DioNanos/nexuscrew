@@ -4,16 +4,19 @@ const assert = require('node:assert');
 
 const mod = () => import('../frontend/src/lib/fleet-backup.js');
 
-test('fleet backup: export selettivo include prompt ma nessun segreto estraneo', async () => {
-  const { createFleetBackup, parseFleetBackup } = await mod();
+test('fleet backup: export v3 portatile — cwdRel, nessun segreto, nessuna cwd assoluta', async () => {
+  const { createFleetBackup, parseFleetBackup, FLEET_BACKUP_VERSION } = await mod();
   const backup = createFleetBackup([{
-    id: 'Dev', cwd: '/tmp', engine: 'claude', boot: true, prompt: 'senior dev',
+    id: 'Dev', cwd: '/home/other/device/dev', cwdRel: 'dev', engine: 'claude', boot: true, prompt: 'senior dev',
     model: 'fable', models: { claude: 'fable' }, permissionPolicies: { claude: 'unsafe' },
     token: 'NO', env: { API_KEY: 'NO' }, tmuxSession: 'cloud-Dev',
   }], new Set(['Dev']), new Date('2026-07-12T00:00:00Z'));
   const serialized = JSON.stringify(backup);
+  assert.equal(backup.version, FLEET_BACKUP_VERSION);
   assert.equal(serialized.includes('NO'), false);
   assert.equal(serialized.includes('cloud-Dev'), false);
+  assert.equal(serialized.includes('"cwd":'), false, 'nessuna cwd assoluta nel backup v3');
+  assert.equal(backup.cells[0].cwdRel, 'dev');
   assert.equal(backup.cells[0].systemPrompt, 'senior dev');
   assert.equal(parseFleetBackup(serialized).ok, true);
 });
