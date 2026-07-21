@@ -172,6 +172,44 @@ This is intentional — "l'Invio è esplicito (bottone ➤)" — and is the same
 desktop. Making Enter submit is a separate UX decision, deliberately not part
 of this fix.
 
+## Terminal: scroll the TUI transcript (alt-screen)
+
+### Problem
+
+On mobile, swiping vertically over the terminal (and the desktop mouse wheel)
+called `sock.action('scroll-up'/'scroll-down')`, which enters tmux copy-mode
+and scrolls the **tmux scrollback**. In an alternate-screen TUI (Claude Code
+runs in the alternate buffer — `alt=1` on both `claude_sonnet` and
+`claude_glm`) the scrollback is empty, so scrolling up showed nothing and left
+the pane stuck in copy-mode (`pane_in_mode=1`). The user "could not scroll the
+text window up anymore."
+
+The `KeyBar` PGUP/PGDN fix above gives a button way to scroll, but the natural
+mobile gesture (swipe) still has to work.
+
+### Fix
+
+The touch and wheel handlers now consult `scrollPlan({ bufferType, readonly })`
+(`lib/terminal-scroll.js`):
+
+- **alternate screen + writable** → send `PageUp`/`PageDown` (`\x1b[5~` /
+  `\x1b[6~`) to the pty, so the TUI scrolls its own transcript. PageUp scrolls
+  a whole page, so the swipe/wheel threshold is wider (`PAGE_STEP` 80px) to
+  avoid firing many page-jumps on a small gesture.
+- **normal screen (shell)** or **readonly** → unchanged: the server-side
+  `scroll-up`/`scroll-down` tmux copy-mode action (scrollback, with `-e`
+  auto-exit at the bottom).
+
+`term.buffer.active.type` is the alt-screen signal. The decision is a pure
+function (unit-tested); `Terminal.jsx` only dispatches `sock.sendInput` (raw
+bytes) or `sock.action` (tmux) based on it.
+
+### Note
+
+If a given TUI turns out not to bind PageUp/Down to transcript scroll, the
+`kind: 'send'` branch can be switched to mouse-wheel sequences instead — the
+`scrollPlan` seam keeps that a one-place change.
+
 ## What was tried and dropped
 
 A dedicated green-square **Enter** button that sent a raw `CR` (`\r`) via
@@ -204,7 +242,16 @@ whether those TUIs want `LF` (`\n`) instead of `CR` is left as follow-up.
    clears. This test is **red before the fix** (submit no-ops on stale state)
    and **green after**.
 
-Full frontend suite: **75/75 passing** (`npm --prefix frontend test`).
+`frontend/src/lib/terminal-scroll.test.js` (vitest), 4 cases for the
+alt-screen scroll plan:
+
+6. alt-screen + writable → send PageUp/PageDown bytes, page step.
+7. normal-screen → tmux copy-mode action, line step.
+8. readonly alt-screen → falls back to tmux action (never sends input to a
+   readonly pane).
+9. readonly normal-screen → tmux action.
+
+Full frontend suite: **79/79 passing** (`npm --prefix frontend test`).
 
 ## Manual verification
 
@@ -255,6 +302,7 @@ In chronological order, on top of `origin/main` (`0.8.27`, `ec243e9`):
 6. `e5ff4f3` docs: technical notes for KeyBar mobile UX PR
 7. `d7ed2ef` fix(composer): submit live DOM value when mobile IME hasn't committed to state
 8. `3fa66bd` fix(keybar): restore PGUP/PGDN to the reduced bar for mobile transcript scroll
+9. `adf5efe` fix(terminal): swipe/wheel scroll the TUI transcript in alt-screen via PageUp
 
 ## Suggested PR description
 
@@ -280,6 +328,13 @@ In chronological order, on top of `origin/main` (`0.8.27`, `ec243e9`):
 >   the keyboard open). No-op when the DOM value already matches state, so
 >   desktop is unchanged. Enter remains a newline by design.
 >
-> Tests: KeyBar.test.jsx (4) + a new ComposerBar IME-submit case; full suite
-> 75/75. Verified on a real mobile PWA client. Full notes in
-> `docs/keybar-mobile-ux.md`.
+> Terminal:
+> - Swipe-to-scroll (mobile) and the mouse wheel now scroll the TUI's own
+>   transcript in an alternate-screen app (Claude Code), by sending PageUp/
+>   PageDown to the pty instead of entering tmux copy-mode (whose scrollback is
+>   empty for alt-screen apps). Normal-screen (shell) keeps tmux copy-mode
+>   scrollback. Decision logic in lib/terminal-scroll.js (pure, unit-tested).
+>
+> Tests: KeyBar.test.jsx (4) + a new ComposerBar IME-submit case +
+> terminal-scroll.test.js (4); full suite 79/79. Verified on a real mobile PWA
+> client. Full notes in `docs/keybar-mobile-ux.md`.
