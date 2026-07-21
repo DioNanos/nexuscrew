@@ -790,6 +790,28 @@ test('doctor: tmux mancante -> code 1', () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test('doctor: launchd WorkingDirectory sostituibile e un blocker su macOS', () => {
+  const { checkMacServiceWorkingDirectory } = require('../lib/cli/doctor.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-doctor-mac-cwd-'));
+  const plist = path.join(home, 'nexuscrew.plist');
+  const render = (cwd) => `<plist><dict><key>WorkingDirectory</key><string>${cwd}</string></dict></plist>\n`;
+
+  const missing = checkMacServiceWorkingDirectory('mac', home, path.join(home, 'missing.plist'));
+  assert.equal(missing.ok, false);
+  assert.match(missing.detail, /plist non installato/);
+
+  fs.writeFileSync(plist, render(home));
+  assert.equal(checkMacServiceWorkingDirectory('mac', home, plist).ok, true);
+
+  fs.writeFileSync(plist, render(`${home}/.nexuscrew`));
+  const stale = checkMacServiceWorkingDirectory('mac', home, plist);
+  assert.equal(stale.ok, false);
+  assert.match(stale.detail, /atteso HOME stabile/);
+
+  assert.equal(checkMacServiceWorkingDirectory('linux', home, plist).ok, true);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 test('doctor: fleet.json mancante o invalido e un FAIL azionabile', () => {
   const { checkFleetDefinitions } = require('../lib/cli/doctor.js');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-doctor-fleet-'));

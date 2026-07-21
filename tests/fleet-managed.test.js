@@ -474,6 +474,36 @@ test('Termux: native or shell CLI remains direct exec', () => {
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
+test('needsExplicitNode: Termux runtime via PREFIX attiva il workaround anche con platform linux', () => {
+  // A proot/custom Node build may report process.platform === 'linux' while
+  // actually running under Termux. Detection must reuse termuxRuntimePaths
+  // (PREFIX / files-home layout), not process.platform alone.
+  const home = tmp();
+  try {
+    const bin = path.join(home, '.local', 'bin', 'codex-vl');
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.writeFileSync(bin, '#!/usr/bin/env node\nconsole.log("ok")\n', { mode: 0o755 });
+    fs.chmodSync(bin, 0o755);
+    const termuxEnv = { PREFIX: '/data/data/com.termux/files/usr', HOME: '/data/data/com.termux/files/home' };
+    assert.equal(needsExplicitNode(bin, 'linux', termuxEnv), true);
+    // Same binary on a real Linux host (no Termux runtime) stays direct exec.
+    assert.equal(needsExplicitNode(bin, 'linux', { HOME: '/home/tester' }), false);
+    // Public two-argument form is unchanged on a non-Termux host.
+    assert.equal(needsExplicitNode(bin, 'linux'), false);
+    // resolveManagedEngine threads cfg.env: explicit nodeExecPath is honored.
+    const node = path.join(home, 'node');
+    fs.writeFileSync(node, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.chmodSync(node, 0o755);
+    const r = resolveManagedEngine({
+      id: 'codex-vl.native', label: 'Codex-VL',
+      managed: { client: 'codex-vl', provider: 'native', model: '', permissionPolicy: 'standard' },
+    }, { id: 'Dev' }, { home, platform: 'linux', env: termuxEnv, nodeExecPath: node });
+    assert.equal(r.ok, true);
+    assert.equal(r.engine.command, node);
+    assert.deepEqual(r.engine.args, [bin]);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
 test('adapter separati: codex, codex-vl e pi risolvono binari distinti', () => {
   const home = tmp();
   try {

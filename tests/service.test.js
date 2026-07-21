@@ -136,7 +136,14 @@ test('generateMac: struttura plist valida (key/string/array/dict)', () => {
   assert.match(s, /<key>PATH<\/key>\s*<string>\/usr\/bin:\/opt\/homebrew\/bin:\/usr\/local\/bin:\/bin<\/string>/);
   assert.match(s, /<key>LANG<\/key>\s*<string>en_US\.UTF-8<\/string>/);
   assert.match(s, /<key>LC_CTYPE<\/key>\s*<string>UTF-8<\/string>/);
-  assert.match(s, /<key>WorkingDirectory<\/key>\s*<string>\/home\/user\/\.nexuscrew<\/string>/);
+  assert.match(s, /<key>WorkingDirectory<\/key>\s*<string>\/home\/user<\/string>/);
+  assert.doesNotMatch(s, /<key>WorkingDirectory<\/key>\s*<string>\/home\/user\/\.nexuscrew<\/string>/);
+});
+
+test('generateMac: WorkingDirectory resta HOME anche con runtimeDir sostituibile', () => {
+  const s = generateMac(ctx({ runtimeDir: '/home/user/.nexuscrew-replaced' }));
+  assert.match(s, /<key>WorkingDirectory<\/key>\s*<string>\/home\/user<\/string>/);
+  assert.doesNotMatch(s, /\.nexuscrew-replaced/);
 });
 
 test('generateMac: PATH usa dirname Node + Homebrew e bin di sistema', () => {
