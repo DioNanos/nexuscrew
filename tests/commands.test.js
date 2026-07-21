@@ -143,7 +143,7 @@ test('smart-up ripara fleet.json mancante e riavvia un runtime gia vivo', async 
   assert.equal(restarts, 1);
   assert.deepEqual(
     JSON.parse(fs.readFileSync(fleetPath, 'utf8')).engines.map((engine) => engine.id),
-    ['claude.native', 'codex.native', 'codex-vl.native', 'pi.native'],
+    ['claude.native', 'codex.native', 'codex-vl.native', 'pi.native', 'shell.local'],
   );
   fs.rmSync(home, { recursive: true, force: true });
 });
@@ -162,6 +162,29 @@ test('smart-up migra una service definition 0.8.0 che pinna NEXUSCREW_PORT', asy
   });
   assert.doesNotMatch(fs.readFileSync(servicePath, 'utf8'), /NEXUSCREW_PORT/);
   assert.equal(JSON.parse(fs.readFileSync(cp, 'utf8')).port, 41822);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('smart-up migra cwd Termux:Boot legacy e riavvia una sola volta', async () => {
+  const { home } = initHome();
+  const script = path.join(home, '.termux', 'boot', 'nexuscrew.sh');
+  fs.mkdirSync(path.dirname(script), { recursive: true });
+  fs.writeFileSync(script, '#!/bin/sh\ncd -- "$HOME/.nexuscrew"\n');
+  let initCalls = 0;
+  let restartCalls = 0;
+  const r = await smartUp({
+    home, platform: 'termux', installPath: script, noOpen: true,
+    runInitImpl: () => {
+      initCalls += 1;
+      fs.writeFileSync(script, '#!/bin/sh\ncd -- "$HOME"\n');
+    },
+    restartImpl: () => { restartCalls += 1; return { restarted: true }; },
+    probeImpl: async () => true,
+  });
+  assert.equal(r.running, true);
+  assert.equal(initCalls, 1);
+  assert.equal(restartCalls, 1);
+  assert.match(fs.readFileSync(script, 'utf8'), /cd -- "\$HOME"/);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -758,7 +781,7 @@ test('doctor: tutto ok -> code 0', () => {
   const { home } = initHome();
   const svc = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
   fs.mkdirSync(path.dirname(svc), { recursive: true });
-  fs.writeFileSync(svc, 'x');
+  fs.writeFileSync(svc, `WorkingDirectory=${home}\n`);
   const l = [];
   const r = doctor({
     home, platform: 'linux', log: (m) => l.push(m), installPath: svc,
@@ -798,7 +821,7 @@ test('doctor: launchd WorkingDirectory sostituibile e un blocker su macOS', () =
 
   const missing = checkMacServiceWorkingDirectory('mac', home, path.join(home, 'missing.plist'));
   assert.equal(missing.ok, false);
-  assert.match(missing.detail, /plist non installato/);
+  assert.match(missing.detail, /service non installato/);
 
   fs.writeFileSync(plist, render(home));
   assert.equal(checkMacServiceWorkingDirectory('mac', home, plist).ok, true);
@@ -830,11 +853,40 @@ test('doctor: fleet.json mancante o invalido e un FAIL azionabile', () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test('doctor: cwd stabile copre systemd e Termux:Boot senza seguire symlink', () => {
+  const { checkServiceWorkingDirectory } = require('../lib/cli/doctor.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-doctor-service-cwd-'));
+  const unit = path.join(home, 'nexuscrew.service');
+  const boot = path.join(home, 'nexuscrew.sh');
+  fs.writeFileSync(unit, `WorkingDirectory=${home}\n`);
+  assert.equal(checkServiceWorkingDirectory('linux', home, unit).ok, true);
+  fs.writeFileSync(unit, `WorkingDirectory=${home}/.nexuscrew\n`);
+  const staleLinux = checkServiceWorkingDirectory('linux', home, unit);
+  assert.equal(staleLinux.ok, false);
+  assert.match(staleLinux.detail, /atteso HOME stabile/);
+
+  fs.writeFileSync(boot, '#!/bin/sh\ncd -- "$HOME"\n');
+  assert.equal(checkServiceWorkingDirectory('termux', home, boot).ok, true);
+  fs.writeFileSync(boot, '#!/bin/sh\ncd -- "$HOME/.nexuscrew"\n');
+  const staleTermux = checkServiceWorkingDirectory('termux', home, boot);
+  assert.equal(staleTermux.ok, false);
+  assert.match(staleTermux.detail, /atteso HOME stabile/);
+
+  const real = path.join(home, 'real.service');
+  const link = path.join(home, 'link.service');
+  fs.writeFileSync(real, `WorkingDirectory=${home}\n`);
+  fs.symlinkSync(real, link);
+  const unsafe = checkServiceWorkingDirectory('linux', home, link);
+  assert.equal(unsafe.ok, false);
+  assert.match(unsafe.detail, /non regolare/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 test('doctor: controlla anche il companion Fleet e blocca KillMode control-group', () => {
   const { home } = initHome();
   const svc = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
   fs.mkdirSync(path.dirname(svc), { recursive: true });
-  fs.writeFileSync(svc, 'x');
+  fs.writeFileSync(svc, `WorkingDirectory=${home}\n`);
   const r = doctor({
     home, platform: 'linux', installPath: svc, log: () => {},
     execImpl: (_bin, args) => {
@@ -905,7 +957,7 @@ test('doctor: check MCP incluso ma non fail su PWA-only (env senza identita -> c
   const { home } = initHome();
   const svc = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
   fs.mkdirSync(path.dirname(svc), { recursive: true });
-  fs.writeFileSync(svc, 'x');
+  fs.writeFileSync(svc, `WorkingDirectory=${home}\n`);
   const r = doctor({
     home, platform: 'linux', log: () => {}, installPath: svc, env: {}, // PWA-only: no identity env
     execImpl: (b, a) => {

@@ -328,7 +328,7 @@ test('doctor: riporta SSH/autossh usati senza fingere di certificare lo sshd rem
   fs.writeFileSync(path.join(home, '.nexuscrew', 'token'), 'TOK\n', { mode: 0o600 });
   const svc = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
   fs.mkdirSync(path.dirname(svc), { recursive: true });
-  fs.writeFileSync(svc, 'x');
+  fs.writeFileSync(svc, `WorkingDirectory=${home}\n`);
   const common = {
     home, platform: 'linux', installPath: svc, fleetEnabled: false, log: () => {},
     execImpl: (b, a) => { if (a && a.includes('is-active')) return 'active'; if (a && a.includes('is-enabled')) return 'enabled'; if (a && a.includes('--property=KillMode')) return 'process'; return ''; },

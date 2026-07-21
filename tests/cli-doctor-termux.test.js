@@ -8,7 +8,9 @@ const assert = require('node:assert');
 // doctor.js has no external (express/qrcode) deps: it loads the platform/url/
 // auth/path helpers and the runtime env helpers only. Keeping this file
 // dependency-free lets the Tranche A doctor boundary run in isolation.
-const { checkTermuxExec, doctor } = require('../lib/cli/doctor.js');
+const {
+  checkTermuxExec, checkTmuxServerCwd, checkTmuxServerTermuxPreload, doctor,
+} = require('../lib/cli/doctor.js');
 
 // Synthetic Termux prefix under a temp dir whose path contains `com.termux`.
 function makeTermuxPrefix(withLib) {
@@ -85,12 +87,47 @@ test('checkTermuxExec: nessun dettaglio sensibile mai esposto (path completo ok,
   } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
 });
 
+test('tmux server probes: cwd orfana e preload stale sono distinti e bounded', () => {
+  const { tmpRoot, prefix, home, libPath } = makeTermuxPrefix('libtermux-exec.so');
+  try {
+    const env = { PREFIX: prefix, HOME: home };
+    const execHealthy = (_bin, args) => args[0] === 'display-message' ? '123\n' : `LD_PRELOAD=${libPath}\n`;
+    const cwdOk = checkTmuxServerCwd('termux', execHealthy, { procCwdImpl: () => home });
+    assert.equal(cwdOk.ok, true);
+    assert.doesNotMatch(cwdOk.detail, new RegExp(home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    const preloadOk = checkTmuxServerTermuxPreload(env, execHealthy, { platform: 'termux', home });
+    assert.equal(preloadOk.ok, true);
+    assert.doesNotMatch(preloadOk.detail, /libtermux-exec/);
+
+    const cwdBad = checkTmuxServerCwd('termux', execHealthy, { procCwdImpl: () => { throw new Error('ENOENT'); } });
+    assert.equal(cwdBad.ok, false);
+    assert.match(cwdBad.detail, /non risolvibile/);
+
+    const preloadMissing = checkTmuxServerTermuxPreload(env, () => '-LD_PRELOAD\n', { platform: 'termux', home });
+    assert.equal(preloadMissing.ok, false);
+    assert.match(preloadMissing.detail, /server stale o formato non compatibile/);
+    const preloadList = checkTmuxServerTermuxPreload(env, () => `LD_PRELOAD=${libPath}:/foreign.so\n`, { platform: 'termux', home });
+    assert.equal(preloadList.ok, false, 'un preload-list non supera il trust boundary attuale');
+  } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
+});
+
+test('tmux server probes: server assente rinvia senza falso FAIL', () => {
+  const { tmpRoot, prefix, home } = makeTermuxPrefix('libtermux-exec.so');
+  try {
+    const down = () => { throw new Error('no server running'); };
+    const cwd = checkTmuxServerCwd('termux', down);
+    const preload = checkTmuxServerTermuxPreload({ PREFIX: prefix, HOME: home }, down, { platform: 'termux', home });
+    assert.equal(cwd.ok, true); assert.equal(cwd.warn, true);
+    assert.equal(preload.ok, true); assert.equal(preload.warn, true);
+  } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
+});
+
 test('doctor: check termux-exec incluso nella suite e ok su Linux (nessuna regressione)', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-doctor-suite-'));
   try {
     const svc = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
     fs.mkdirSync(path.dirname(svc), { recursive: true });
-    fs.writeFileSync(svc, 'x');
+    fs.writeFileSync(svc, `WorkingDirectory=${home}\n`);
     // Provide a valid 0600 token file so the unrelated token-perms check passes.
     const tokenPath = path.join(home, 'token');
     fs.writeFileSync(tokenPath, 't', { mode: 0o600 });
