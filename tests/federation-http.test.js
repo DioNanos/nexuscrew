@@ -29,6 +29,7 @@ test('scoped federation HTTP reaches sessions, fleet, owner decks and only the h
   store.atomicWriteStore(destNodes, ds);
 
   let sessionHits = 0; let fleetHits = 0; let deckHits = 0; let inviteHits = 0; let forbiddenHits = 0; let deleteHits = 0; let seen = null;
+  let diagnosticHits = 0; let diagnosticQuery = '';
   let cellGetHits = 0; let cellSendHits = 0; let cellVisited = null;
   const local = express();
   local.use((req, res, next) => req.headers.authorization === 'Bearer dest-main' ? next() : res.sendStatus(401));
@@ -50,6 +51,10 @@ test('scoped federation HTTP reaches sessions, fleet, owner decks and only the h
   local.post('/api/decks', express.json(), (req, res) => { deckHits += 1; res.status(201).json({ name: req.body.name, revision: 0, layout: { columns: [] } }); });
   local.put('/api/decks/:name', express.json(), (req, res) => { deckHits += 1; res.json({ name: req.params.name, revision: req.body.expectedRevision + 1, layout: req.body.layout }); });
   local.get('/api/topology', (_req, res) => res.json({ nodes: [] }));
+  local.get('/api/diagnostics/status', (_req, res) => { diagnosticHits += 1; res.json({ verbose: false }); });
+  local.get('/api/diagnostics/logs', (req, res) => { diagnosticHits += 1; diagnosticQuery = req.url; res.json({ records: [], cursor: Number(req.query.after || 0) }); });
+  local.patch('/api/diagnostics/verbose', express.json(), (req, res) => { diagnosticHits += 1; res.json({ verbose: req.body.enabled === true }); });
+  local.delete('/api/diagnostics/logs', (_req, res) => { diagnosticHits += 1; res.json({ cleared: 0 }); });
   local.post('/api/settings/peering/invite', express.json(), (req, res) => {
     inviteHits += 1;
     res.json({ pairingUrl: `http://127.0.0.1:41777/#pair=hub-${req.body.ssh}` });
@@ -122,6 +127,16 @@ test('scoped federation HTTP reaches sessions, fleet, owner decks and only the h
     body: JSON.stringify({ expectedRevision: 0, layout: { columns: [] } }),
   })).status, 200);
   assert.equal((await fetch(`${base}/api/route/mac/_/topology`)).status, 200);
+  assert.equal((await fetch(`${base}/api/route/mac/_/diagnostics/status`)).status, 200);
+  assert.equal((await fetch(`${base}/api/route/mac/_/diagnostics/logs?after=7&limit=20`)).status, 200);
+  assert.equal(diagnosticQuery, '/api/diagnostics/logs?after=7&limit=20');
+  assert.equal((await fetch(`${base}/api/route/mac/_/diagnostics/verbose`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: true, durationSeconds: 900 }),
+  })).status, 200);
+  assert.equal((await fetch(`${base}/api/route/mac/_/diagnostics/logs`, { method: 'DELETE' })).status, 200);
+  assert.equal((await fetch(`${base}/api/route/mac/_/diagnostics/status?raw=1`)).status, 404);
+  assert.equal((await fetch(`${base}/api/route/mac/_/diagnostics/logs?after=1&after=2`)).status, 404);
+  assert.equal(diagnosticHits, 4, 'only exact diagnostics methods and bounded query reach the peer');
   assert.equal(fleetHits, 1);
   assert.equal(cellGetHits, 1);
   assert.equal(cellSendHits, 1);

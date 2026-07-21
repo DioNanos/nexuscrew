@@ -5,7 +5,9 @@ import { useLang } from '../hooks/useLang.js';
 import {
   apiFetch, getSettings, getPeers, saveConfig, rotateToken,
   removeNode, updateNode, nodeAction, setNodeShare, regenService, createPeerInvite, setNodeVisibility,
+  saveNodeAlias, deleteNodeAlias,
   checkNpmUpdate, applyNpmUpdate,
+  getDiagnosticsStatus, getDiagnosticsLogs, setDiagnosticsVerbose, clearDiagnosticsLogs,
 } from '../lib/api.js';
 import { validateNodeForm, tunnelInfo, toSlug, isValidLabel } from '../lib/settings-model.js';
 import PairingCard from './PairingCard.jsx';
@@ -17,9 +19,10 @@ import { COMPOSER_RESET_EVENT, clearAllComposerData } from '../lib/composer-mode
 import './SettingsPanel.css';
 
 // Pannello settings (design §5, B2-UI). Stessa struttura a schede su desktop
-// (overlay nel workspace) e mobile (full-screen via CSS). Tre schede:
+// (overlay nel workspace) e mobile (full-screen via CSS). Quattro schede:
 //   nodi    — peer Hydra + stato tunnel + azioni
 //   fleet   — engine/celle locali o su una route raggiungibile
+//   diagnostica — log strutturati bounded locali/routed
 //   sistema — token rotate, boot/service e info
 // Invarianti UI: token MAI mostrato; ogni failure API mostrata con la causa
 // esplicita (jsonFetch propaga j.error); in READONLY i mutanti sono disabilitati
@@ -49,7 +52,7 @@ function PairingQr({ value }) {
 }
 
 // --- scheda NODI ---------------------------------------------------------------
-function NodesTab({ token, nodes, settings, readonly, refresh }) {
+function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAliases }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);        // `${name}:${action}` in corso
   const [testResult, setTestResult] = useState({}); // name -> {ok, result, detail}
@@ -287,6 +290,44 @@ function NodesTab({ token, nodes, settings, readonly, refresh }) {
         </div>
       ))}
 
+      {(roster || []).some((g) => !g.direct && g.instanceId) && (
+        <div className="nc-set-form">
+          <div className="nc-sheet-label">{t('routed-node-aliases')}</div>
+          <small className="nc-set-hint">{t('routed-node-aliases-help')}</small>
+          {(roster || []).filter((g) => !g.direct && g.instanceId).map((g) => (
+            <div key={g.instanceId} className="nc-set-node">
+              <div className="nc-set-node-head">
+                <span className={`nc-dot ${g.status === 'up' ? 'on' : ''}`} />
+                <b>{g.label || g.name}</b>
+                <small>{(g.route || []).join(' › ')}</small>
+              </div>
+              <div className="nc-set-node-actions">
+                <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
+                  onClick={async () => {
+                    const alias = window.prompt(t('node-local-alias'), g.alias || '');
+                    if (alias == null) return;
+                    if (alias.trim() && !isValidLabel(alias.normalize('NFC'))) { setErr(t('err-label')); return; }
+                    setBusy(`${g.instanceId}:alias`); setErr(null);
+                    try {
+                      if (alias.trim()) await saveNodeAlias(token, g.instanceId, alias);
+                      else await deleteNodeAlias(token, g.instanceId);
+                      refreshAliases();
+                    } catch (e) { setErr(String(e.message || e)); }
+                    setBusy(null);
+                  }}>{t('alias-on-device')}</button>
+                {g.alias && <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
+                  onClick={async () => {
+                    setBusy(`${g.instanceId}:alias-reset`); setErr(null);
+                    try { await deleteNodeAlias(token, g.instanceId); refreshAliases(); }
+                    catch (e) { setErr(String(e.message || e)); }
+                    setBusy(null);
+                  }}>{t('reset-alias')}</button>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {shareHub && (
         <div className="nc-set-form nc-local-share">
           <div className="nc-sheet-label">{t('share-local-heading')}</div>
@@ -430,6 +471,131 @@ function PushRow({ token, readonly }) {
       </div>
       {err && <div className="nc-err">{err}</div>}
     </>
+  );
+}
+
+// --- scheda DIAGNOSTICA -------------------------------------------------------
+export function DiagnosticsTab({ token, roster = [], readonly }) {
+  const targets = [
+    { key: 'local', route: [], label: t('diagnostics-local'), status: 'up' },
+    ...roster.filter((group) => Array.isArray(group.route) && group.route.length)
+      .map((group) => ({ key: group.route.join('/'), route: group.route, label: group.label || group.name, status: group.status })),
+  ];
+  const [targetKey, setTargetKey] = useState('local');
+  const target = targets.find((item) => item.key === targetKey) || targets[0];
+  const [status, setStatus] = useState(null);
+  const [records, setRecords] = useState([]);
+  const [error, setError] = useState('');
+  const [paused, setPaused] = useState(false);
+  const [autoscroll, setAutoscroll] = useState(true);
+  const [duration, setDuration] = useState(900);
+  const [level, setLevel] = useState('all');
+  const [component, setComponent] = useState('');
+  const cursorRef = useRef(0);
+  const logRef = useRef(null);
+
+  const poll = useCallback(async () => {
+    try {
+      const nextStatus = await getDiagnosticsStatus(token, target.route);
+      setStatus(nextStatus); setError('');
+      if (!paused) {
+        const result = await getDiagnosticsLogs(token, { after: cursorRef.current, limit: 200 }, target.route);
+        if (Array.isArray(result.records) && result.records.length) {
+          cursorRef.current = result.cursor;
+          setRecords((current) => [...current, ...result.records].slice(-500));
+        }
+      }
+    } catch (err) {
+      setError(err && err.status === 404 ? t('diagnostics-unsupported') : String(err.message || err));
+    }
+  }, [token, target.key, paused]);
+
+  useEffect(() => {
+    cursorRef.current = 0; setRecords([]); setStatus(null); setError('');
+  }, [target.key]);
+
+  useEffect(() => {
+    let timer = null; let alive = true;
+    const tick = () => {
+      if (!alive || document.visibilityState === 'hidden') return;
+      poll();
+    };
+    const schedule = () => {
+      if (timer) clearInterval(timer);
+      timer = document.visibilityState === 'hidden' ? null : setInterval(tick, 2000);
+      if (document.visibilityState !== 'hidden') tick();
+    };
+    document.addEventListener('visibilitychange', schedule);
+    schedule();
+    return () => { alive = false; if (timer) clearInterval(timer); document.removeEventListener('visibilitychange', schedule); };
+  }, [poll]);
+
+  useEffect(() => {
+    if (autoscroll && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [records, autoscroll]);
+
+  const visible = records.filter((entry) => (level === 'all' || entry.level === level)
+    && (!component || String(entry.component || '').toLowerCase().includes(component.toLowerCase())));
+  const text = visible.map((entry) => `${entry.ts} ${entry.level.toUpperCase()} ${entry.component} ${entry.code} ${entry.message}${Object.keys(entry.meta || {}).length ? ` ${JSON.stringify(entry.meta)}` : ''}`).join('\n');
+  const mutate = async (fn) => {
+    setError('');
+    try { const next = await fn(); setStatus(next); await poll(); }
+    catch (err) { setError(String(err.message || err)); }
+  };
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); }
+    catch (_) { setError(t('copy-manual')); }
+  };
+  const exportLogs = () => {
+    try {
+      const blob = new Blob([`${JSON.stringify(visible, null, 2)}\n`], { type: 'application/json' });
+      const url = URL.createObjectURL(blob); const link = document.createElement('a');
+      link.href = url; link.download = 'nexuscrew-diagnostics.json'; link.click(); URL.revokeObjectURL(url);
+    } catch (_) { setError(t('diagnostics-export-failed')); }
+  };
+
+  return (
+    <div className="nc-set-tab nc-diagnostics">
+      <label className="nc-field">{t('diagnostics-target')}
+        <select value={target.key} onChange={(event) => setTargetKey(event.target.value)}>
+          {targets.map((item) => <option key={item.key} value={item.key}>{item.label}{item.status !== 'up' ? ` · ${item.status}` : ''}</option>)}
+        </select>
+      </label>
+      <div className="nc-set-form nc-diag-controls">
+        <div className="nc-sheet-label">{t('diagnostics-verbose')}</div>
+        <div className="nc-set-row">
+          <select aria-label={t('diagnostics-duration')} value={duration} onChange={(event) => setDuration(Number(event.target.value))} disabled={readonly}>
+            {[300, 900, 1800, 3600].map((seconds) => <option key={seconds} value={seconds}>{seconds / 60} min</option>)}
+          </select>
+          <button type="button" className="nc-btn primary" disabled={readonly || status?.verbose === true}
+            onClick={() => mutate(() => setDiagnosticsVerbose(token, true, duration, target.route))}>{t('enable')}</button>
+          <button type="button" className="nc-btn ghost" disabled={readonly || status?.verbose !== true}
+            onClick={() => mutate(() => setDiagnosticsVerbose(token, false, duration, target.route))}>{t('stop')}</button>
+        </div>
+        <small className="nc-set-hint">{status?.verbose
+          ? t('diagnostics-expires').replace('{time}', new Date(status.expiresAt).toLocaleTimeString())
+          : t('diagnostics-off')}</small>
+      </div>
+      <div className="nc-diag-filters">
+        <select aria-label={t('diagnostics-level')} value={level} onChange={(event) => setLevel(event.target.value)}>
+          <option value="all">{t('diagnostics-all-levels')}</option>
+          {['debug', 'info', 'warn', 'error'].map((value) => <option key={value} value={value}>{value}</option>)}
+        </select>
+        <input aria-label={t('diagnostics-component')} placeholder={t('diagnostics-component')} value={component} onChange={(event) => setComponent(event.target.value)} />
+      </div>
+      <div className="nc-set-row">
+        <label className="nc-check"><input type="checkbox" checked={paused} onChange={(event) => setPaused(event.target.checked)} /> {t('diagnostics-pause')}</label>
+        <label className="nc-check"><input type="checkbox" checked={autoscroll} onChange={(event) => setAutoscroll(event.target.checked)} /> {t('diagnostics-autoscroll')}</label>
+      </div>
+      <pre ref={logRef} className="nc-diag-log" aria-label={t('diagnostics-log')}>{text || t('diagnostics-empty')}</pre>
+      <div className="nc-set-row">
+        <button type="button" className="nc-btn ghost" onClick={copy}>{t('copy')}</button>
+        <button type="button" className="nc-btn ghost" onClick={exportLogs}>{t('diagnostics-export')}</button>
+        <button type="button" className="nc-btn danger" disabled={readonly}
+          onClick={() => { if (window.confirm(t('diagnostics-clear-confirm'))) mutate(async () => { const next = await clearDiagnosticsLogs(token, target.route); cursorRef.current = 0; setRecords([]); return next; }); }}>{t('diagnostics-clear')}</button>
+      </div>
+      {error && <div className="nc-err">{error}</div>}
+    </div>
   );
 }
 
@@ -582,7 +748,8 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   const [nodes, setNodes] = useState([]);
   const [readonly, setReadonly] = useState(false);
   const [loadErr, setLoadErr] = useState(null);
-  const roster = useNodes(token);
+  const [aliasRevision, setAliasRevision] = useState(0);
+  const roster = useNodes(token, true, aliasRevision);
 
   const refresh = useCallback(async () => {
     try {
@@ -626,17 +793,19 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
         {loadErr && <div className="nc-err">{loadErr}</div>}
 
         <div className="nc-set-tabs">
-          {['nodes', 'fleet', 'system'].map((k) => (
+          {['nodes', 'fleet', 'diagnostics', 'system'].map((k) => (
             <button key={k} type="button" className={`nc-set-tabbtn${tab === k ? ' on' : ''}`}
               onClick={() => setTab(k)}>{t(`tab-${k}`)}</button>
           ))}
         </div>
 
         <div className="nc-set-body">
-          {tab === 'nodes' && <NodesTab token={token} nodes={nodes} settings={settings} readonly={readonly} refresh={refresh} />}
+          {tab === 'nodes' && <NodesTab token={token} nodes={nodes} roster={roster} settings={settings} readonly={readonly}
+            refresh={refresh} refreshAliases={() => setAliasRevision((value) => value + 1)} />}
           {tab === 'fleet' && <FleetTab token={token} readonly={readonly}
             startNewCell={startNewCell} initialLocation={initialLocation}
             targets={roster.map((g) => ({ route: g.route, label: g.label || g.name, status: g.status }))} />}
+          {tab === 'diagnostics' && <DiagnosticsTab token={token} roster={roster} readonly={readonly} />}
           {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} refresh={refresh} />}
         </div>
       </div>
