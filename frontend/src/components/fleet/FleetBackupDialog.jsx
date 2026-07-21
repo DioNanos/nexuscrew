@@ -20,7 +20,12 @@ export default function FleetBackupDialog({ cells = [], engines = [], busy, canR
   });
   const exportSelected = () => {
     const backup = createFleetBackup(cells, selectedCellsOut, engines, selectedEnginesOut);
+    // Fail-closed: una cella selezionata priva di cwdRel portatile (needsRepair)
+    // non viene mai omessa silenziosamente -> errore esplicito i18n.
+    if (backup.ok === false) { setError(t(`fleet-backup-${backup.error}`)); return; }
+    const selectedCellCount = cells.filter((cell) => selectedCellsOut.has(cell.id)).length;
     const selectedEngineCount = engines.filter((engine) => selectedEnginesOut.has(engine.id)).length;
+    if (backup.cells.length !== selectedCellCount) { setError(t('fleet-backup-invalid-cell')); return; }
     if (backup.engines.length !== selectedEngineCount) { setError(t('fleet-backup-invalid-engine')); return; }
     if (!backup.cells.length && !backup.engines.length) { setError(t('fleet-backup-select-one')); return; }
     const blob = new Blob([`${JSON.stringify(backup, null, 2)}\n`], { type: 'application/json' });

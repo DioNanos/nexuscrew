@@ -156,9 +156,11 @@ test('builtin: credential API is write-only, local to the selected node and repo
 });
 
 test('builtin: restore-cells usa body cap dedicato e missing engines strutturati', async (t) => {
-  const { base, token } = await bootBuiltin(t);
+  const { base, token, dir } = await bootBuiltin(t);
+  // cwd portabile sotto la home di test (dir): la vecchia forma '/tmp' era non
+  // portabile e ora viene rifiutata fail-closed in scrittura (design §4.3).
   const cells = Array.from({ length: 32 }, (_, index) => ({
-    id: index === 0 ? 'Dev' : `C${index}`, cwd: '/tmp', engine: 'sh', boot: false,
+    id: index === 0 ? 'Dev' : `C${index}`, cwd: dir, engine: 'sh', boot: false,
     prompt: 'x'.repeat(7000),
   }));
   const restored = await fetch(`${base}/api/fleet/restore-cells`, {
@@ -168,7 +170,7 @@ test('builtin: restore-cells usa body cap dedicato e missing engines strutturati
   assert.equal((await restored.json()).count, 32);
 
   const missing = await fetch(`${base}/api/fleet/restore-cells`, {
-    method: 'POST', headers: H(token), body: JSON.stringify({ cells: [{ id: 'X', cwd: '/tmp', engine: 'missing' }] }),
+    method: 'POST', headers: H(token), body: JSON.stringify({ cells: [{ id: 'X', cwd: dir, engine: 'missing' }] }),
   });
   assert.equal(missing.status, 400);
   const detail = await missing.json();
@@ -207,11 +209,11 @@ test('builtin: /define-engine invalido (env PATH) -> 400', async (t) => {
 });
 
 test('builtin: define/edit/remove cell+engine funzionano (copertura nuove route)', async (t) => {
-  const { base, token } = await bootBuiltin(t);
+  const { base, token, dir } = await bootBuiltin(t);
   const post = (route, body) => fetch(`${base}/api/fleet/${route}`, { method: 'POST', headers: H(token), body: JSON.stringify(body) });
 
-  // define-cell referenzia l'engine 'sh' esistente
-  assert.equal((await post('define-cell', { def: { id: 'Trading', cwd: os.homedir(), engine: 'sh' } })).status, 200);
+  // define-cell referenzia l'engine 'sh' esistente; cwd portabile sotto home (dir)
+  assert.equal((await post('define-cell', { def: { id: 'Trading', cwd: dir, engine: 'sh' } })).status, 200);
   // edit-engine: cambio la label di 'sh'
   assert.equal((await post('edit-engine', { id: 'sh', patch: { label: 'Shell++' } })).status, 200);
   // edit-cell: cambio boot della cella Dev
