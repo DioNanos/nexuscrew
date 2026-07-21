@@ -73,6 +73,9 @@ export const createPeerInvite = (t, body, route = []) => jsonFetch(
   `${routeBase(route)}/settings/peering/invite`, t, { method: 'POST', body: body || {} },
 );
 export const renameNodeLabel = (t, name, label) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/label`, t, { method: 'PATCH', body: { label } });
+export const getNodeAliases = (t) => jsonFetch('/api/settings/node-aliases', t);
+export const saveNodeAlias = (t, instanceId, alias) => jsonFetch(`/api/settings/node-aliases/${encodeURIComponent(instanceId)}`, t, { method: 'PATCH', body: { alias } });
+export const deleteNodeAlias = (t, instanceId) => jsonFetch(`/api/settings/node-aliases/${encodeURIComponent(instanceId)}`, t, { method: 'DELETE' });
 export const updateNode = (t, name, patch) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}`, t, { method: 'PATCH', body: patch });
 export const removeNode = (t, name) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
 // action ∈ {test, up, down, restart} — stringhe fisse dal chiamante, mai input utente.
@@ -82,6 +85,16 @@ export const setNodeVisibility = (t, name, visibility, selected = []) => jsonFet
 export const regenService = (t) => jsonFetch('/api/settings/service/regenerate', t, { method: 'POST' });
 export const checkNpmUpdate = (t) => jsonFetch('/api/settings/update/check', t, { method: 'POST' });
 export const applyNpmUpdate = (t) => jsonFetch('/api/settings/update/apply', t, { method: 'POST' });
+
+const diagnosticsPath = (route, resource) => `${routeBase(route)}/diagnostics/${resource}`;
+export const getDiagnosticsStatus = (t, route = []) => jsonFetch(diagnosticsPath(route, 'status'), t);
+export const getDiagnosticsLogs = (t, { after = 0, limit = 200 } = {}, route = []) => jsonFetch(
+  `${diagnosticsPath(route, 'logs')}?after=${encodeURIComponent(after)}&limit=${encodeURIComponent(limit)}`, t,
+);
+export const setDiagnosticsVerbose = (t, enabled, durationSeconds, route = []) => jsonFetch(
+  diagnosticsPath(route, 'verbose'), t, { method: 'PATCH', body: { enabled, durationSeconds } },
+);
+export const clearDiagnosticsLogs = (t, route = []) => jsonFetch(diagnosticsPath(route, 'logs'), t, { method: 'DELETE' });
 
 // MCP bridge: asks aperti + risposta (il POST answer incolla nella sessione
 // della cella; in READONLY il server risponde 403 con causa esplicita).

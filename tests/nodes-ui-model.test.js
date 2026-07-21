@@ -185,6 +185,26 @@ test('buildNodeGroups: topology transitiva resta visibile offline con last-seen 
   assert.equal(live[0].sessions[0].key, 'relay/phone:work');
 });
 
+test('buildNodeGroups: alias viewer-local si applica solo al routed instanceId e non cambia route', async () => {
+  const m = await nodes();
+  const directId = 'a'.repeat(32);
+  const routedId = 'b'.repeat(32);
+  const groups = m.buildNodeGroups({
+    nodes: [{ name: 'hub', label: 'Hub owner', nodeId: directId, tunnel: { status: 'down' } }],
+    topology: [{ instanceId: routedId, name: 'samsung', route: ['hub', 'samsung'], stale: true, lastSeen: 123 }],
+    aliases: { [directId]: 'Must not override owner label', [routedId]: 'Remote Workstation' },
+  });
+  const direct = groups.find((g) => g.direct);
+  const routed = groups.find((g) => !g.direct);
+  assert.equal(direct.label, 'Hub owner');
+  assert.equal(direct.alias, null);
+  assert.equal(routed.label, 'Remote Workstation');
+  assert.equal(routed.alias, 'Remote Workstation');
+  assert.equal(routed.originalLabel, 'hub › samsung');
+  assert.deepEqual(routed.route, ['hub', 'samsung']);
+  assert.equal(routed.instanceId, routedId);
+});
+
 test('trackDown: prima osservazione ricordata, up ripulisce, nodo rimosso sparisce', async () => {
   const m = await nodes();
   let d = m.trackDown({}, [{ name: 'a', tunnel: { status: 'down' } }, { name: 'b', tunnel: { status: 'up' } }], 100);

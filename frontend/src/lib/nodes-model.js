@@ -65,7 +65,7 @@ function enrichCells(f, route, key) {
 // Ogni gruppo up porta: sessions (tutte le tmux, retro-compat), cells (Fleet,
 // con engine/model/active/boot), unmanaged (tmux non-cell), fleetAvailable,
 // capabilities. Zero nodi -> [] (UI identica a oggi).
-export function buildNodeGroups({ nodes, topology, remote, down, fleet } = {}) {
+export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases } = {}) {
   const out = [];
   const directRoutes = new Set();
   const seenIds = new Set();
@@ -76,7 +76,7 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet } = {}) {
     const tunnelStatus = n.tunnel?.status || 'unknown';
     const up = tunnelStatus === 'up';
     const base = {
-      name: n.name, label: n.label || n.name, route, direct: true,
+      name: n.name, label: n.label || n.name, originalLabel: n.label || n.name, alias: null, route, direct: true,
       instanceId: n.nodeId || null, shared: n.shared === true,
       tunnelStatus, sessions: [], cells: [], unmanaged: [],
       fleetAvailable: false, capabilities: [], engines: [], health: n.health || null,
@@ -128,8 +128,10 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet } = {}) {
     const key = n.route.join('/');
     if (directRoutes.has(key) || (n.instanceId && seenIds.has(n.instanceId))) continue;
     if (n.instanceId) seenIds.add(n.instanceId);
+    const originalLabel = n.label || n.route.join(' › ');
+    const alias = n.instanceId && aliases && typeof aliases[n.instanceId] === 'string' ? aliases[n.instanceId] : null;
     const base = {
-      name: n.name, label: n.label || n.route.join(' › '), route: [...n.route], direct: false,
+      name: n.name, label: alias || originalLabel, originalLabel, alias, route: [...n.route], direct: false,
       instanceId: n.instanceId || null, shared: true,
       tunnelStatus: null, sessions: [], cells: [], unmanaged: [], fleetAvailable: false,
       capabilities: [], engines: [], health: n.health || null, lastSeen: n.lastSeen || null,

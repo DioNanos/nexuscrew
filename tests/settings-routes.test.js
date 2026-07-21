@@ -154,6 +154,54 @@ test('GET /settings: firstRun resta true finche\' wizardDone non e\' true', asyn
   assert.equal(s.firstRun, false);
 });
 
+test('node aliases: GET locale, PATCH/DELETE owner-only e READONLY gate', async (t) => {
+  const { base, token, configDir } = await boot(t);
+  const id = 'd'.repeat(32);
+  let response = await fetch(`${base}/api/settings/node-aliases`, { headers: H(token) });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { version: 1, aliasesByInstanceId: {} });
+
+  response = await fetch(`${base}/api/settings/node-aliases/${id}`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ alias: '  Remote Workstation  ' }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).alias, 'Remote Workstation');
+  const aliasPath = path.join(configDir, 'node-aliases.json');
+  assert.equal(fs.lstatSync(aliasPath).isSymbolicLink(), false);
+  assert.equal(fs.statSync(aliasPath).mode & 0o777, 0o600);
+
+  response = await fetch(`${base}/api/settings/node-aliases`, { headers: H(token) });
+  assert.deepEqual((await response.json()).aliasesByInstanceId, { [id]: 'Remote Workstation' });
+  response = await fetch(`${base}/api/settings/node-aliases/${id}`, { method: 'DELETE', headers: H(token) });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).alias, null);
+
+  const ro = await boot(t, { readonlyDefault: true });
+  assert.equal((await fetch(`${ro.base}/api/settings/node-aliases`, { headers: H(ro.token) })).status, 200);
+  assert.equal((await fetch(`${ro.base}/api/settings/node-aliases/${id}`, {
+    method: 'PATCH', headers: H(ro.token), body: JSON.stringify({ alias: 'Blocked' }),
+  })).status, 403);
+  assert.equal((await fetch(`${ro.base}/api/settings/node-aliases/${id}`, { method: 'DELETE', headers: H(ro.token) })).status, 403);
+});
+
+test('node aliases: input fail-closed e symlink target rifiutato', async (t) => {
+  const { base, token, configDir } = await boot(t);
+  const id = 'e'.repeat(32);
+  const patchAlias = (key, alias) => fetch(`${base}/api/settings/node-aliases/${key}`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ alias }),
+  });
+  assert.equal((await patchAlias('not-an-instance-id', 'Phone')).status, 400);
+  assert.equal((await patchAlias(id, 'bad\nlabel')).status, 400);
+  assert.equal((await patchAlias(id, 'x'.repeat(65))).status, 400);
+
+  const aliasPath = path.join(configDir, 'node-aliases.json');
+  const target = path.join(configDir, 'do-not-touch');
+  fs.writeFileSync(target, 'sentinel', { mode: 0o600 });
+  fs.symlinkSync(target, aliasPath);
+  assert.equal((await patchAlias(id, 'Phone')).status, 400);
+  assert.equal(fs.readFileSync(target, 'utf8'), 'sentinel');
+});
+
 // --- POST /settings/config ----------------------------------------------------
 
 test('config: happy path scrive atomico (0600), whitelisted, note sul cambio porta', async (t) => {
