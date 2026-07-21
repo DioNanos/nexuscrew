@@ -125,12 +125,19 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     const creating = cellEdit.mode === 'new';
     const f = cellEdit.form;
     const def = { ...(creating ? { id: f.id } : {}), cwd: f.cwd, engine: f.engine, boot: !!f.boot };
+    const commands = { ...(f.commands || {}) };
+    const selectedEngine = defs.engines.find((engine) => engine.id === f.engine);
+    if (selectedEngine?.managed?.client === 'shell' && typeof f.command === 'string' && f.command.length) commands[f.engine] = f.command;
+    else if (selectedEngine?.managed?.client === 'shell') delete commands[f.engine];
+    if (Object.keys(commands).length || !creating) def.commands = commands;
     if (creating) {
-      if (f.model) def.model = f.model;
-      if (f.prompt) def.prompt = f.prompt;
+      if (selectedEngine?.managed?.client !== 'shell' && f.model) def.model = f.model;
+      if (selectedEngine?.managed?.client !== 'shell' && f.prompt) def.prompt = f.prompt;
     } else {
-      def.model = f.model || null;
-      def.prompt = f.prompt || null;
+      def.model = selectedEngine?.managed?.client === 'shell' ? null : (f.model || null);
+      // Shell ignora il prompt al lancio, ma non cancella un prompt ricordato
+      // se l'operatore cambia temporaneamente engine.
+      if (selectedEngine?.managed?.client !== 'shell') def.prompt = f.prompt || null;
     }
     const result = creating ? await fleetDefineCell(token, def, route) : await fleetEditCell(token, cellEdit.original.id, def, route);
     const id = creating ? f.id : cellEdit.original.id;
@@ -290,7 +297,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
             onClick={() => run(() => fleetRestart(token, c.id, route))}>{t('restart')}</button>}
           {needsRepair
             ? <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setRepairCell(c); }}>{t('fleet-cwd-repair')}</button>
-            : <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setCellEdit({ mode: 'edit', original: c, form: { ...c } }); }}>{t('edit')}</button>}
+            : <button className="nc-btn ghost" disabled={locked || busy} onClick={() => { setErr(''); setCellEdit({ mode: 'edit', original: c, form: { ...c, commands: { ...(c.commands || {}) }, command: c.commands?.[c.engine] || '' } }); }}>{t('edit')}</button>}
           <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-cell').replace('{id}', c.id))) await fleetRemoveCell(token, c.id, true, route); })}>×</button>
         </span></div>
         );})}

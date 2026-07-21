@@ -8,7 +8,7 @@
 // definitions.
 
 export const blankEngine = () => ({ kind: 'managed', id: 'claude.native', label: '', client: 'claude', provider: 'native', credentialProfile: '', managedModel: '', permissionPolicy: 'unsafe', displayName: '', protocol: 'anthropic_messages', baseUrl: '', envKey: '', providerId: 'nexuscrew-custom', command: '', argsText: '', rc: true, promptMode: 'send-keys', promptFlag: '', modelFlag: '', modelValue: '', envRows: [], credentialValue: '', credentialReveal: false, allowMissingCredential: false });
-export const blankCell = (engine = '') => ({ id: '', cwd: '', engine, boot: false, model: '', prompt: '' });
+export const blankCell = (engine = '') => ({ id: '', cwd: '', engine, boot: false, model: '', prompt: '', commands: {}, command: '' });
 export const defaultPermission = (client) => client === 'claude' ? 'unsafe' : 'standard';
 export const catalogEntry = (catalog, form) => catalog.find((p) => p.client === form.client && p.provider === form.provider && (p.credentialProfile || '') === (form.credentialProfile || ''));
 export const managedLabel = (catalog, form) => catalogEntry(catalog, form)?.label || `${form.client} · ${form.provider}`;
@@ -28,7 +28,11 @@ export function engineForm(e) {
 
 export function buildEngine(form, creating, catalog = []) {
   if (form.kind === 'managed') {
-    const managed = { client: form.client, provider: form.provider, model: form.managedModel || '', permissionPolicy: form.permissionPolicy || defaultPermission(form.client) };
+    const managed = {
+      client: form.client, provider: form.provider,
+      model: form.client === 'shell' ? '' : (form.managedModel || ''),
+      permissionPolicy: form.client === 'shell' ? 'standard' : (form.permissionPolicy || defaultPermission(form.client)),
+    };
     if (form.credentialProfile) managed.credentialProfile = form.credentialProfile;
     const profile = catalogEntry(catalog, form);
     if (profile?.credentialEnv === true) managed.envKey = form.envKey;
