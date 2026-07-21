@@ -22,22 +22,31 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
   const [altArmed, setAltArmed] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
+  // Tasti che agiscono sul terminale (send(seq)): chiudono la soft keyboard
+  // facendo blur dell'elemento attivo, così scorrendo le scelte di un TUI con
+  // le frecce la schermata risposte resta visibile e non viene coperta dalla
+  // tastiera del ComposerBar. Il ⌨ (apre il composer), CTRL/ALT (sticky),
+  // toggle e menu sono UI locale e non fanno blur.
+  const blurActive = () => {
+    const el = document.activeElement;
+    if (el && typeof el.blur === 'function' && el !== document.body) el.blur();
+  };
   // ALT sticky: il prossimo tasto della barra esce come ESC+seq (Meta).
   const emit = (seq) => {
     if (altArmed) { send(ESC + seq); setAltArmed(false); } else send(seq);
   };
   const Bk = (label, seq, after) => (
-    <button key={label} onMouseDown={(e) => { e.preventDefault(); emit(seq); if (after) after(); }}>{label}</button>
+    <button key={label} onMouseDown={(e) => { e.preventDefault(); blurActive(); emit(seq); if (after) after(); }}>{label}</button>
   );
   const Ba = (label, name) => (
-    <button key={label} onMouseDown={(e) => { e.preventDefault(); action(name); setMenu(false); }}>{label}</button>
+    <button key={label} onMouseDown={(e) => { e.preventDefault(); blurActive(); action(name); setMenu(false); }}>{label}</button>
   );
   // ■Enter: sempre CR puro, ignora ALT sticky — la conferma di una selezione
   // multipla deve essere prevedibile (niente Meta+Enter inavvertito). Non usa
-  // emit() di proposito.
+  // emit() di proposito. blurActive() chiude la tastiera prima di confermare.
   const Enter = () => (
     <button key="enter" className="enter" aria-label="Enter"
-      onMouseDown={(e) => { e.preventDefault(); send(CR); }}>{'■'}</button>
+      onMouseDown={(e) => { e.preventDefault(); blurActive(); send(CR); }}>{'■'}</button>
   );
   const Toggle = () => (
     <button key="expand" className={`expand${expanded ? ' armed' : ''}`}

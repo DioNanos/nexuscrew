@@ -58,4 +58,16 @@ describe('KeyBar reduced view and Enter', () => {
     fireEvent.mouseDown(byText('←')); expect(send).toHaveBeenLastCalledWith('\x1b[D');
     fireEvent.mouseDown(byText('→')); expect(send).toHaveBeenLastCalledWith('\x1b[C');
   });
+
+  it('a send-key blurs the active element so the mobile soft keyboard hides', () => {
+    renderKeyBar();
+    const ta = document.createElement('textarea');
+    document.body.appendChild(ta);
+    ta.focus();
+    expect(document.activeElement).toBe(ta);
+    const up = [...document.querySelectorAll('.nc-keybar .row button')].find((b) => b.textContent === '↑');
+    fireEvent.mouseDown(up);
+    expect(document.activeElement).not.toBe(ta);
+    ta.remove();
+  });
 });
