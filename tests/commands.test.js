@@ -214,6 +214,28 @@ test('smart-up migra la cwd legacy del companion Fleet anche con service princip
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test('smart-up fallisce chiuso se la migrazione cwd del companion non viene applicata', async () => {
+  const { home } = initHome();
+  const service = path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service');
+  const companion = path.join(home, '.config', 'systemd', 'user', 'nexuscrew-fleet.service');
+  fs.mkdirSync(path.dirname(service), { recursive: true });
+  fs.writeFileSync(service, `WorkingDirectory=${home}\n`);
+  fs.writeFileSync(companion, `WorkingDirectory=${home}/replaceable-package\n`);
+  await assert.rejects(
+    smartUp({
+      home,
+      platform: 'linux',
+      installPath: service,
+      fleetInstallPath: companion,
+      runInitImpl: () => {},
+      execImpl: (_bin, args) => (args?.includes('is-enabled') ? 'enabled' : 'active'),
+      probeImpl: async () => true,
+    }),
+    /cwd migration failed verification/,
+  );
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 test('show token stampa link autenticato senza aprire il browser', async () => {
   const { home } = initHome(); const logs = []; const opened = [];
   const r = await dispatch(['show', 'token'], { home, platform: 'linux', log: (x) => logs.push(x), probeImpl: async () => true, execImpl: () => '', openImpl: (u) => opened.push(u) });
