@@ -1,7 +1,7 @@
-# Mobile UX — technical notes for review (KeyBar + composer submit)
+# Mobile UX — technical notes for review (KeyBar + composer submit + Enter)
 
 This document describes the changes in the `keybar-mobile-ux` branch for the
-mobile (touch) experience of NexusCrew's PWA. It covers two independent
+mobile (touch) experience of NexusCrew's PWA. It covers three independent
 mobile-UX fixes that ride the same branch:
 
 - **KeyBar redesign** — reduced default bar + soft-keyboard handling for TUI
@@ -9,6 +9,10 @@ mobile-UX fixes that ride the same branch:
 - **Composer submit (IME)** — the ➤ send button now reliably delivers the
   typed prompt even when the mobile IME has not committed the text to React
   state.
+- **Composer Enter on mobile** — the soft-keyboard Enter now dismisses the
+  keyboard instead of inserting a newline (which caused shell `>` continuation
+  prompts); submit stays explicit via ➤ and the keyboard stays closed after a
+  send.
 
 Written for whoever (human or AI) reviews the PR.
 
@@ -29,21 +33,29 @@ On mobile (PWA via xterm.js over a PTY) three things were painful:
    mobile IME (SwiftKey etc.) and tapping ➤ often sent nothing — the prompt
    stayed in the field as if the tap had no effect. See the dedicated
    "Composer: mobile submit (IME)" section.
+5. **The soft-keyboard Enter broke the prompt with a `>` prompt**: on mobile,
+   Enter inserted a newline in the composer, so the draft became multi-line.
+   When it was then sent via ➤, the embedded newline reached the shell, which
+   read it as an incomplete command and answered with the `>` PS2 continuation
+   prompt (plus a stranded cursor block) — the prompt looked broken and
+   sometimes never executed. See "Composer: mobile Enter (keyboard dismiss)".
 
 ## What changed (files)
 
 - `frontend/src/components/KeyBar.jsx`
 - `frontend/src/components/KeyBar.css`
 - `frontend/src/components/KeyBar.test.jsx` (new)
-- `frontend/src/components/ComposerBar.jsx` (submit reads live DOM value)
+- `frontend/src/components/ComposerBar.jsx` (submit reads live DOM value;
+  on touch, Enter dismisses the keyboard instead of inserting a newline, and
+  submit blurs instead of re-focusing)
 - `frontend/src/components/ComposerBar.test.jsx` (new "mobile IME submit" case)
 - `frontend/dist/*` (rebuilt; `dist` is tracked in this repo, so it is part of
   the PR)
 
 No backend, `encode`, audio, or timing changes. `KeyBar` copy-mode layout is
-unchanged. `ComposerBar` Enter behaviour is unchanged (Enter is still a
-newline by design — the fix is only about reading the live DOM value on
-submit).
+unchanged. On desktop `ComposerBar` Enter is still a newline by design and
+submit re-focuses the field; on touch (pointer: coarse) Enter now closes the
+keyboard (no newline) and submit leaves it closed — see the dedicated section.
 
 ## Behaviour
 
@@ -165,12 +177,45 @@ async function submit() {
   stays open after a send). `onComposerKeyDown`, `confirmSubmitted`, and
   `composer-input.js` are untouched.
 
-### Out of scope (by design, not changed)
+### Enter on mobile (keyboard dismiss)
 
-The soft-keyboard **Enter** key still inserts a newline (it does not submit).
-This is intentional — "l'Invio è esplicito (bottone ➤)" — and is the same on
-desktop. Making Enter submit is a separate UX decision, deliberately not part
-of this fix.
+On a touch client (`(pointer: coarse)`) the soft-keyboard **Enter** key used
+to insert a newline in the composer. That made the draft multi-line; when it
+was sent via ➤ the embedded newline reached the shell as an incomplete
+command, producing the `>` PS2 continuation prompt and a stranded cursor.
+The principle "l'Invio è esplicito (bottone ➤)" still holds — Enter never
+submits — but on touch it now also does **not** insert a newline:
+
+```js
+function onComposerKeyDown(e) {
+  if (e.isComposing || composingRef.current || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (isTouchKeyboard() && e.key === 'Enter') {
+    e.preventDefault();          // no newline
+    e.currentTarget.blur();     // dismiss the soft keyboard
+    return;
+  }
+  ... // ArrowUp/ArrowDown history recall (unchanged)
+}
+```
+
+`submit()` also no longer re-focuses the textarea on touch — it blurs instead,
+so the keyboard stays closed after a send (the draft is already persisted by
+`flush` on blur, so it survives the close and reappears when the keyboard is
+reopened):
+
+```js
+if (isTouchKeyboard()) {
+  textareaRef.current?.blur();          // mobile: keep keyboard closed
+} else {
+  requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
+}
+```
+
+`isTouchKeyboard()` is `window.matchMedia('(pointer: coarse)').matches` (same
+probe `App.jsx` uses for the composer default). `matchMedia` is undefined in
+jsdom, so the guard is false in tests and the existing suite runs the desktop
+path unchanged. Enter as a newline (and submit re-focus) remain the desktop
+behaviour.
 
 ## Terminal: scroll the TUI transcript (alt-screen)
 
@@ -251,6 +296,12 @@ alt-screen scroll plan:
    readonly pane).
 9. readonly normal-screen → tmux action.
 
+The composer Enter/keyboard-dismiss change adds **no new unit test**: the
+behaviour is guarded by `(pointer: coarse)`, which jsdom does not emulate
+(`matchMedia` is undefined there, so the guard is false and the desktop path
+runs). It is covered by the manual verification above. The suite count is
+unchanged.
+
 Full frontend suite: **79/79 passing** (`npm --prefix frontend test`).
 
 ## Manual verification
@@ -266,6 +317,15 @@ Verified on a real mobile PWA client (loopback via SSH tunnel), 2026-07-21:
 - `PGUP`/`PGDN` on the reduced bar scroll the Claude Code transcript;
 - **swipe-to-scroll over the terminal scrolls the Claude Code transcript up**
   (alt-screen PageUp path) — **confirmed by the user**.
+
+Verified again on a real mobile PWA client, 2026-07-22 (after the composer
+Enter fix):
+- the soft-keyboard **Enter closes the keyboard** (no newline is inserted);
+- **➤ sends** the prompt and the keyboard stays closed after the send;
+- **the prompt is retained** across the keyboard close/reopen (flush-on-blur
+  persists it and it reappears when the keyboard is reopened);
+- no `>` continuation prompt in the terminal (the single-line draft no longer
+  splits into an incomplete command) — **confirmed by the user**.
 
 ## Build / deploy (for reference)
 
@@ -290,8 +350,11 @@ systemctl --user restart nexuscrew
 - The composer submit fix is a **no-op when the live DOM value equals the
   React state** (no IME composition), so desktop behaviour is unchanged. It
   only reads the textarea's current `.value` and syncs state when they diverge.
-- The soft-keyboard Enter key still inserts a newline (by design); this fix
-  does not change Enter handling.
+- On touch, Enter now closes the keyboard (no newline) and submit keeps it
+  closed; on desktop Enter still inserts a newline and submit re-focuses. The
+  guard is `(pointer: coarse)` and is false in jsdom, so desktop tests are
+  unchanged. No new unit test: pointer-coarse is not emulated in jsdom; this
+  path is verified manually on a real mobile PWA.
 
 ## Commits on this branch
 
@@ -306,6 +369,7 @@ In chronological order, on top of `origin/main` (`0.8.27`, `ec243e9`):
 7. `d7ed2ef` fix(composer): submit live DOM value when mobile IME hasn't committed to state
 8. `3fa66bd` fix(keybar): restore PGUP/PGDN to the reduced bar for mobile transcript scroll
 9. `adf5efe` fix(terminal): swipe/wheel scroll the TUI transcript in alt-screen via PageUp
+10. `b1d0336` fix(composer): mobile Enter dismisses the keyboard; keep it closed after send
 
 ## Suggested PR description
 
@@ -329,7 +393,13 @@ In chronological order, on top of `origin/main` (`0.8.27`, `ec243e9`):
 >   the mobile IME has not committed the text to state (React 18 defers
 >   onChange during composition, and the send button suppresses blur to keep
 >   the keyboard open). No-op when the DOM value already matches state, so
->   desktop is unchanged. Enter remains a newline by design.
+>   desktop is unchanged.
+> - On touch (pointer: coarse) the soft-keyboard Enter now closes the keyboard
+>   instead of inserting a newline — the newline used to reach the shell via ➤
+>   as an incomplete command and trigger the `>` PS2 continuation prompt.
+>   Submit stays explicit via ➤ and keeps the keyboard closed after a send (the
+>   draft persists across close/reopen via flush-on-blur). Desktop is unchanged
+>   (Enter is a newline, submit re-focuses).
 >
 > Terminal:
 > - Swipe-to-scroll (mobile) and the mouse wheel now scroll the TUI's own
