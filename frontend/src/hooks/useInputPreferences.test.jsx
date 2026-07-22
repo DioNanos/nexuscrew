@@ -113,3 +113,35 @@ describe('useInputPreferences — synchronization', () => {
     }
   });
 });
+
+describe('useInputPreferences — keybarLayout', () => {
+  it('syncs keybarLayout across the same window on a CustomEvent payload', () => {
+    function LayoutProbe() {
+      const [prefs] = useInputPreferences();
+      return <div data-testid="layout">{prefs.keybarLayout}</div>;
+    }
+    const view = render(<LayoutProbe />);
+    expect(view.getByTestId('layout').textContent).toBe('full');
+    act(() => window.dispatchEvent(new CustomEvent(INPUT_PREFERENCES_EVENT, {
+      detail: { keybarLayout: 'compact' },
+    })));
+    expect(view.getByTestId('layout').textContent).toBe('compact');
+  });
+
+  it('re-reads keybarLayout from storage on a cross-window StorageEvent', () => {
+    function LayoutProbe() {
+      const [prefs] = useInputPreferences();
+      return <div data-testid="layout">{prefs.keybarLayout}</div>;
+    }
+    const view = render(<LayoutProbe />);
+    expect(view.getByTestId('layout').textContent).toBe('full');
+    localStorage.setItem(INPUT_PREFERENCES_KEY, JSON.stringify({
+      ...DEFAULT_INPUT_PREFERENCES, keybarLayout: 'compact',
+    }));
+    act(() => window.dispatchEvent(new StorageEvent('storage', {
+      key: INPUT_PREFERENCES_KEY,
+      newValue: localStorage.getItem(INPUT_PREFERENCES_KEY),
+    })));
+    expect(view.getByTestId('layout').textContent).toBe('compact');
+  });
+});

@@ -18,23 +18,30 @@ describe('Settings Input tab', () => {
     const voice = screen.getByRole('checkbox', { name: /STT microphone: keep the virtual keyboard closed/ });
     const enter = screen.getByRole('checkbox', { name: /Show the tall Enter keypad key/ });
 
+    const layout = screen.getByRole('combobox', { name: 'Keypad layout' });
     expect(gesture.value).toBe('double-tap');
+    expect(layout.value).toBe('full');
     expect(keybar.checked).toBe(true); expect(voice.checked).toBe(true); expect(enter.checked).toBe(true);
     fireEvent.change(gesture, { target: { value: 'never' } });
+    fireEvent.change(layout, { target: { value: 'compact' } });
     fireEvent.click(keybar); fireEvent.click(voice); fireEvent.click(enter);
 
     expect(JSON.parse(localStorage.getItem(INPUT_PREFERENCES_KEY))).toEqual({
       terminalKeyboardGesture: 'never', keybarKeepsKeyboardClosed: false,
-      voiceKeepsKeyboardClosed: false, showKeybarEnter: false,
+      voiceKeepsKeyboardClosed: false, showKeybarEnter: false, keybarLayout: 'compact',
     });
   });
 
-  it('restores the recommended double-tap and IME locks', () => {
+  it('restores the recommended double-tap, IME locks and full KeyBar layout', () => {
     render(<InputTab />);
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'single-tap' } });
+    const gesture = screen.getByRole('combobox', { name: 'Open the virtual keyboard from the terminal' });
+    const layout = screen.getByRole('combobox', { name: 'Keypad layout' });
+    fireEvent.change(gesture, { target: { value: 'single-tap' } });
+    fireEvent.change(layout, { target: { value: 'compact' } });
     fireEvent.click(screen.getByRole('checkbox', { name: /Show the tall Enter keypad key/ }));
     fireEvent.click(screen.getByRole('button', { name: 'restore input defaults' }));
-    expect(screen.getByRole('combobox').value).toBe('double-tap');
+    expect(gesture.value).toBe('double-tap');
+    expect(layout.value).toBe('full');
     expect(screen.getByRole('checkbox', { name: /Show the tall Enter keypad key/ }).checked).toBe(true);
   });
 });

@@ -38,6 +38,8 @@ test('isProtectedSession: cloud-* SEMPRE, anche senza registry (F2)', () => {
 });
 
 test('buildCreateArgs: preset allowlist, niente cmd libero (F1)', () => {
+  assert.equal(buildCreateArgs('worker-glm.1', '/home/x/p', 'shell', {}), null,
+    'nuove sessioni con punto sono rifiutate prima di invocare tmux');
   assert.deepEqual(buildCreateArgs('w1', '/home/x/p', 'shell', {}),
     ['new-session', '-d', '-s', 'w1', '-c', '/home/x/p']);
   assert.deepEqual(buildCreateArgs('w1', '/home/x/p', 'claude', {}),

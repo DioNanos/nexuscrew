@@ -66,7 +66,14 @@ export default function ComposerBar({ submitText, token, session, node, ownerId,
   const micVisible = !!(wsAvailable || serverStt);
 
   async function submit() {
-    const draft = text;
+    // Durante una composizione IME il valore del textarea DOM puo' essere avanti
+    // rispetto allo stato React (il change/compositionend non e' ancora arrivato).
+    // Si legge il valore DOM live, si sincronizza il draft React se diverge e si
+    // invia quello visibile — preservando no-op vuoto, failure-draft, history e STT.
+    const live = (textareaRef.current && typeof textareaRef.current.value === 'string')
+      ? textareaRef.current.value : text;
+    if (live !== text) setText(live);
+    const draft = live;
     const value = stripTrailingNewlines(draft);
     if (!value || sending) return;
     setSending(true);

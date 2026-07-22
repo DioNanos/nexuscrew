@@ -185,6 +185,23 @@ test('buildNodeGroups: topology transitiva resta visibile offline con last-seen 
   assert.equal(live[0].sessions[0].key, 'relay/phone:work');
 });
 
+test('buildNodeGroups: omissione autorevole rimuove owner invece di renderlo offline', async () => {
+  const m = await nodes();
+  const base = {
+    nodes: [{ name: 'relay', nodeId: 'a'.repeat(32), tunnel: { status: 'up' } }],
+    remote: { relay: { sessions: [] }, 'relay/pixel': { sessions: [] } },
+    down: {},
+  };
+  const visible = m.buildNodeGroups({
+    ...base,
+    topology: [{ instanceId: 'b'.repeat(32), name: 'pixel', route: ['relay', 'pixel'], stale: false }],
+  });
+  assert.ok(visible.some((group) => group.name === 'pixel'));
+  const withdrawn = m.buildNodeGroups({ ...base, topology: [] });
+  assert.equal(withdrawn.some((group) => group.name === 'pixel'), false);
+  assert.deepEqual(withdrawn.map((group) => group.name), ['relay']);
+});
+
 test('buildNodeGroups: alias viewer-local si applica solo al routed instanceId e non cambia route', async () => {
   const m = await nodes();
   const directId = 'a'.repeat(32);

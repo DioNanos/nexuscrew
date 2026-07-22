@@ -115,3 +115,19 @@ test('cell-exec stop during backoff disarms relaunch', async () => {
   assert.equal(code, 0);
   assert.equal(launches, 1, 'nessun client rilanciato dopo il segnale di stop');
 });
+
+test('launch broker revoke consuma il ticket senza attendere il TTL (cleanup su respawn fallito)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbroker-rv-')); fs.chmodSync(home, 0o700);
+  const broker = createLaunchBroker({ home, launchTokenTtlMs: 60000 });
+  try {
+    const ticket = await broker.issue({ command: '/bin/x', args: [], env: {} });
+    assert.equal(broker.pendingCount(), 1);
+    broker.revoke(ticket.nonce);
+    assert.equal(broker.pendingCount(), 0, 'revoke consuma subito il ticket');
+    // il payload non e' piu riscattabile (nonce revocato prima di qualunque byte lasci il processo)
+    await assert.rejects(() => receivePayload(ticket.socketPath, ticket.nonce, 200), /closed early|timed out/);
+    // revoke idempotente su nonce gia' revocato o sconosciuto (no-op, non throw)
+    broker.revoke(ticket.nonce);
+    broker.revoke('nonexistent');
+  } finally { await broker.close(); fs.rmSync(home, { recursive: true, force: true }); }
+});

@@ -276,7 +276,9 @@ switch (cmd) {
   case 'new-session':
     if (cfg.duplicate) { er('duplicate session: work-build'); process.exit(1); }
     if (cfg.newSessionError) { er(cfg.newSessionError); process.exit(2); }
-    if (cfg.paneId) out(cfg.paneId + '\\n');
+    // il runtime passa -P -F '#{session_id}\t#{window_id}\t#{pane_id}': 3 ID
+    if (process.argv.includes('-P')) out('$1\\t@1\\t' + (cfg.paneId || '%0') + '\\n');
+    else if (cfg.paneId) out(cfg.paneId + '\\n');
     process.exit(0);
   case 'has-session':
     process.exit(cfg.alive === false ? 1 : 0);

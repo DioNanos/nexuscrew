@@ -115,6 +115,44 @@ test('nc_cells: aggrega celle locali e remote con id owner-qualified', async () 
   assert.deepEqual(j.unavailable, []);
 });
 
+test('revoked owner omitted from topology is absent from nc_cells and nc_deck, not unavailable', async () => {
+  const localId = 'a'.repeat(32); const pixelId = 'b'.repeat(32);
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') return { status: 200, json: { instanceId: localId, nodes: [] } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev', active: true, canReceive: true },
+      ] } };
+      if (p === '/api/decks') return { status: 200, json: { decks: [{
+        name: 'main', revision: 1, layout: { columns: [{ width: 100, tiles: [
+          { session: 'cloud-Dev', height: 50, fontSize: 14 },
+          { session: 'cloud-Worker', ownerId: pixelId, node: 'pixel', height: 50, fontSize: 14 },
+        ] }] },
+      }] } };
+      if (p === '/api/fleet/status') return { status: 200, json: { available: true, cells: [
+        { cell: 'Dev', tmuxSession: 'cloud-Dev' },
+      ] } };
+      return { status: 404, json: { error: p } };
+    },
+  });
+  await srv.handleLine(rpc(201, 'tools/call', { name: 'nc_cells', arguments: {} }));
+  const directory = JSON.parse(out.lines[0].result.content[0].text);
+  assert.deepEqual(directory.cells.map((cell) => cell.id), [`${localId}:Dev`]);
+  assert.deepEqual(directory.unavailable, []);
+
+  await srv.handleLine(rpc(202, 'tools/call', { name: 'nc_deck', arguments: {} }));
+  const deck = JSON.parse(out.lines[1].result.content[0].text);
+  assert.equal(deck.decks.length, 1);
+  assert.deepEqual(deck.decks[0].members, [
+    { cell: 'Dev', tmuxSession: 'cloud-Dev', ownerId: localId, route: 'local', self: true },
+  ]);
+  assert.equal(calls.some((call) => /pixel/.test(new URL(call.url).pathname)), false,
+    'authoritatively withdrawn owners are never probed through a stale route');
+});
+
 test('nc_cell_diagnostics: command locale + ultima causa bounded, senza interrogare la federazione', async () => {
   const localId = 'a'.repeat(32);
   const { srv, out, calls } = makeSrv({

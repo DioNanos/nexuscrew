@@ -30,7 +30,10 @@ function makePairingUrl(dir) {
 // capability-bound e' iniettato separatamente: questi test verificano la state
 // machine della route; la crittografia del probe ha test reali dedicati.
 function scriptedFetch(script) {
-  const calls = { probe: 0, join: 0, confirm: 0, cancel: 0, health: 0, share: 0, spawns: 0, shareBodies: [] };
+  const calls = {
+    probe: 0, join: 0, confirm: 0, cancel: 0, health: 0, share: 0, spawns: 0,
+    shareBodies: [], spawnArgs: [], events: [],
+  };
   const impl = async (url, opts = {}) => {
     const u = String(url);
     if (u.endsWith('/pair/join')) { calls.join += 1; return script.join(calls.join, opts); }
@@ -38,6 +41,7 @@ function scriptedFetch(script) {
     if (u.endsWith('/pair/cancel')) { calls.cancel += 1; return (script.cancel || (() => R(200, { ok: true })))(calls.cancel, opts); }
     if (u.endsWith('/federation/share')) {
       calls.share += 1; calls.shareBodies.push(JSON.parse(opts.body || '{}'));
+      calls.events.push(`hub:${calls.shareBodies.at(-1).shared ? 'on' : 'off'}`);
       return (script.share || (() => R(200, { shared: calls.shareBodies.at(-1).shared })))(calls.share, opts);
     }
     if (u.endsWith('/federation/health')) {
@@ -59,7 +63,14 @@ function boot(t, fetchScript) {
     platform: 'linux',
     uid: 1000,
     execImpl: () => { throw new Error('exec disabled in test'); },
-    spawnImpl: () => { calls.spawns += 1; return { pid: DEAD_PID, unref() {} }; },
+    spawnImpl: (bin, args) => {
+      calls.spawns += 1;
+      calls.spawnArgs.push([...args]);
+      calls.events.push(`spawn:${args.includes('-R') ? 'on' : 'off'}`);
+      return typeof fetchScript.spawn === 'function'
+        ? fetchScript.spawn(calls.spawns, bin, args, calls)
+        : { pid: DEAD_PID, unref() {} };
+    },
     spawnSyncImpl: () => ({ status: 0 }),
     sshVersion: () => ({ major: 9, minor: 6 }),
     fetchImpl: impl,
@@ -342,14 +353,22 @@ test('pair stages: happy path -> paired:true solo dopo health autenticato ok', a
   assert.equal(n.sshPort, 2222);
 });
 
-test('Share PWA: pairing resta -L privato, toggle aggiunge/rimuove pubblicazione in modo esplicito', async (t) => {
-  const { base, token, dir, nodesPath, calls } = await boot(t, {
+test('Share PWA: OFF persiste, revoca sul -L vivo e solo dopo riavvia senza -R', async (t) => {
+  let nodesPathRef = '';
+  let observedOffStore = false;
+  const started = await boot(t, {
     probe: () => R(401, {}),
     join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID }),
     confirm: () => R(200, { ok: true }),
     health: () => R(200, { ok: true, instanceId: PEER_ID }),
-    share: () => R(200, { shared: true }),
+    share: (_attempt, opts) => {
+      const shared = JSON.parse(opts.body || '{}').shared;
+      if (shared === false) observedOffStore = store.getNode(store.loadStore(nodesPathRef), 'peer').shared === false;
+      return R(200, { shared });
+    },
   });
+  const { base, token, dir, nodesPath, calls } = started;
+  nodesPathRef = nodesPath;
   const paired = await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) });
   assert.equal(paired.status, 200);
   assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
@@ -360,13 +379,20 @@ test('Share PWA: pairing resta -L privato, toggle aggiunge/rimuove pubblicazione
   const on = await setShare(true);
   assert.equal(on.status, 200);
   assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, true);
+  const offStart = calls.events.length;
   const off = await setShare(false);
   assert.equal(off.status, 200);
+  const offBody = await off.json();
+  assert.equal(offBody.revoked, true);
   assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
+  assert.equal(observedOffStore, true, 'shared:false e durevole prima della richiesta al hub');
+  assert.deepEqual(calls.events.slice(offStart), ['hub:off', 'spawn:off'],
+    'la revoca precede deterministicamente il restart locale');
+  assert.equal(calls.spawnArgs.at(-1).includes('-R'), false, 'il supervisor sostitutivo non pubblica il reverse');
   assert.deepEqual(calls.shareBodies, [{ shared: true }, { shared: false }]);
 });
 
-test('Share PWA: stato OFF invariato riconcilia comunque il supervisor prima di notificare il hub', async (t) => {
+test('Share PWA: stato OFF invariato revoca prima e poi ripara uno supervisor stale', async (t) => {
   const { base, token, dir, nodesPath, calls } = await boot(t, {
     probe: () => R(401, {}),
     join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID }),
@@ -377,6 +403,7 @@ test('Share PWA: stato OFF invariato riconcilia comunque il supervisor prima di 
   assert.equal((await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) })).status, 200);
   assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
   const before = calls.spawns;
+  const eventStart = calls.events.length;
 
   const response = await fetch(`${base}/api/settings/nodes/peer/share`, {
     method: 'PATCH', headers: H(token), body: JSON.stringify({ shared: false }),
@@ -387,6 +414,7 @@ test('Share PWA: stato OFF invariato riconcilia comunque il supervisor prima di 
   assert.equal(body.reconciled, true);
   assert.equal(calls.spawns, before + 1,
     'same-state OFF deve rientrare nello start spec-aware, non limitarsi alla notifica hub');
+  assert.deepEqual(calls.events.slice(eventStart), ['hub:off', 'spawn:off']);
   assert.deepEqual(calls.shareBodies, [{ shared: false }]);
   assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
 });
@@ -451,10 +479,47 @@ test('Share OFF: stato locale resta false se l ACK hub fallisce e il boot potra 
   assert.equal(off.status, 502);
   const body = await off.json();
   assert.equal(body.shared, false);
+  assert.equal(body.revoked, false);
   assert.equal(body.reconcilePending, true);
   assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false,
     'un ACK perso non deve riattivare il reverse channel');
-  assert.deepEqual(calls.shareBodies, [{ shared: true }, { shared: false }]);
+  assert.deepEqual(calls.shareBodies, [
+    { shared: true }, { shared: false }, { shared: false }, { shared: false },
+  ], 'OFF ha almeno lo stesso budget bounded di ON');
+  assert.equal(calls.events.slice(calls.events.lastIndexOf('hub:on') + 1).includes('spawn:off'), false,
+    'senza ACK hub non avviene alcun restart locale');
+});
+
+test('Share OFF: ACK hub seguito da restart fallito resta revocato senza rollback ON', async (t) => {
+  let failPrivateSpawn = false;
+  const { base, token, dir, nodesPath, calls } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID }),
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+    share: (_n, opts) => R(200, { shared: JSON.parse(opts.body || '{}').shared }),
+    spawn: (_n, _bin, args) => failPrivateSpawn && !args.includes('-R')
+      ? { unref() {} }
+      : { pid: DEAD_PID, unref() {} },
+  });
+  assert.equal((await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) })).status, 200);
+  const setShare = (shared) => fetch(`${base}/api/settings/nodes/peer/share`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ shared }),
+  });
+  assert.equal((await setShare(true)).status, 200);
+  failPrivateSpawn = true;
+  const eventStart = calls.events.length;
+  const response = await setShare(false);
+  assert.equal(response.status, 502);
+  const body = await response.json();
+  assert.deepEqual(calls.shareBodies, [{ shared: true }, { shared: false }],
+    'il hub deve osservare OFF prima del restart locale iniettato come fallito');
+  assert.equal(body.shared, false);
+  assert.equal(body.revoked, true);
+  assert.equal(body.localReconcilePending, true);
+  assert.equal(body.reconcilePending, undefined);
+  assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
+  assert.deepEqual(calls.events.slice(eventStart), ['hub:off', 'spawn:off']);
 });
 
 test('pair stages: i dettagli di errore redigono token/credenziali', async (t) => {

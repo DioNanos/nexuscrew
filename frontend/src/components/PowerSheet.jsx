@@ -84,7 +84,7 @@ export default function PowerSheet({ cell, token, route = [], onConfirm, onClose
   }, [engines.length]);
 
   const selected = useMemo(() => engines.find((e) => e.id === engine) || null, [engines, engine]);
-  const supportsUnsafe = !!(selected && ['claude', 'codex', 'codex-vl'].includes(selected.client));
+  const supportsUnsafe = !!(selected && ['claude', 'codex', 'codex-vl', 'agy'].includes(selected.client));
   const isShell = selected?.client === 'shell';
 
   // Cambio engine: ricorda modello e policy dell'engine precedente (lo fa il

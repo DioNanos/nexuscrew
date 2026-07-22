@@ -13,6 +13,7 @@ const catalog = [
   { id: 'codex-vl.openrouter', client: 'codex-vl', clientLabel: 'Codex-VL', provider: 'openrouter', label: 'OpenRouter', protocol: 'openai_responses', permissionPolicyDefault: 'standard', supportsUnsafe: true, requiresModel: true, credentialEnv: 'OPENROUTER_API_KEY', authConfigured: true, credentialSource: 'local', credentialUsedBy: ['codex.shared'], notice: 'codex-openrouter' },
   { id: 'codex-vl.alibaba-token-plan', client: 'codex-vl', clientLabel: 'Codex-VL', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'openai_responses', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: 'qwen3.8-max-preview', models: ['qwen3.8-max-preview', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-flash'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
   { id: 'pi.alibaba-token-plan', client: 'pi', clientLabel: 'Pi', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'openai-completions', permissionPolicyDefault: 'standard', supportsUnsafe: false, model: 'qwen3.8-max-preview', models: ['qwen3.8-max-preview', 'qwen3.7-plus', 'qwen3.7-max', 'qwen3.6-flash', 'glm-5.2', 'deepseek-v4-pro'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
+  { id: 'agy.native', client: 'agy', clientLabel: 'Agy', provider: 'native', label: 'Agy', protocol: 'agy_native', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: '', models: [], rc: false },
 ];
 
 function profileForm(id) {
@@ -89,5 +90,15 @@ describe('EngineEditor KEY section', () => {
       expect(view.container.querySelector('datalist option[value="qwen3.8-max-preview"]')).toBeTruthy();
       view.unmount();
     }
+  });
+
+  it('renders Agy as a primary client with free-text model and standard/unsafe, without credential fields', () => {
+    const { container } = render(<Harness initial={profileForm('agy.native')} />);
+    const selects = container.querySelectorAll('.nc-fleet-pair select');
+    expect(selects[0].value).toBe('agy');
+    expect(selects[1].value).toBe('agy.native');
+    expect(screen.getByRole('option', { name: 'unsafe · bypass approvals/sandbox' })).toBeTruthy();
+    expect(container.querySelector('input[list="nc-managed-models"]')).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'KEY' })).toBeNull();
   });
 });

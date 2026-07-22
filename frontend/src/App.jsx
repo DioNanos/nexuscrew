@@ -205,7 +205,8 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
       </div>
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
         ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} selectionMode={selectionMode} onSelectionMode={setSelectionMode}
-        keepKeyboardClosed={inputPreferences.keybarKeepsKeyboardClosed} showEnter={inputPreferences.showKeybarEnter} />
+        keepKeyboardClosed={inputPreferences.keybarKeepsKeyboardClosed} showEnter={inputPreferences.showKeybarEnter}
+        keybarLayout={inputPreferences.keybarLayout} />
       {showComposer && (
         <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId}
           keepKeyboardClosedOnVoice={inputPreferences.voiceKeepsKeyboardClosed} />

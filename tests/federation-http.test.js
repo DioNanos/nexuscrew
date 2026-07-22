@@ -21,6 +21,40 @@ const rawRequest = (url, headers = {}) => new Promise((resolve, reject) => {
   req.on('error', reject);
 });
 
+test('hub Share OFF gates topology immediately while the old reverse port still answers', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fed-share-off-'));
+  const reverse = await listen((_req, res) => res.end('still-alive'));
+  const nodesPath = path.join(dir, 'hub-nodes.json');
+  let st = store.emptyStore('a'.repeat(32));
+  st = store.addNode(st, {
+    name: 'pixel', remotePort: 41820, localPort: reverse.address().port,
+    direction: 'inbound', transport: 'inbound', autostart: true,
+    shared: true, visibility: 'network', nodeId: 'b'.repeat(32),
+    token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
+  });
+  store.atomicWriteStore(nodesPath, st);
+  const app = express();
+  app.use('/federation', fed.peerRouter({
+    nodesPath, localPort: 1, localCredential: () => 'hub-main',
+  }));
+  const hub = await listen(app);
+  t.after(async () => { await close(hub); await close(reverse); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  assert.deepEqual((await fed.collectTopology({ nodesPath, ttl: 1 })).nodes.map((node) => node.name), ['pixel']);
+  assert.equal((await rawRequest(`http://127.0.0.1:${reverse.address().port}/`)).status, 200);
+  const response = await fetch(`http://127.0.0.1:${hub.address().port}/federation/share`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer pixel-to-hub', 'content-type': 'application/json' },
+    body: JSON.stringify({ shared: false }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { shared: false });
+  assert.equal(store.getNode(store.loadStoreStrict(nodesPath), 'pixel').shared, false);
+  assert.deepEqual((await fed.collectTopology({ nodesPath, ttl: 1 })).nodes, []);
+  assert.equal((await rawRequest(`http://127.0.0.1:${reverse.address().port}/`)).status, 200,
+    'authorization revocation, not port liveness, is the topology gate');
+});
+
 test('scoped federation HTTP reaches sessions, fleet, owner decks and only the hub invite settings mutation', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fed-http-'));
   const destNodes = path.join(dir, 'dest.json');
