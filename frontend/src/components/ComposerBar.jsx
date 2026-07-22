@@ -8,6 +8,14 @@ import Icon from './Icon.jsx';
 import { uploadSessionFiles } from '../lib/attachments.js';
 import './ComposerBar.css';
 
+// Tastiera soft mobile (SwiftKey etc.): pointer "coarse". In jsdom matchMedia
+// non esiste → false (i test usano la via desktop). Come in App.jsx.
+function isTouchKeyboard() {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(pointer: coarse)').matches;
+}
+
 // Composer: testo multilinea + microfono. Il testo va nel PTY come input
 // literal; l'Invio e' esplicito (bottone ➤). Voice: Web Speech se c'è,
 // altrimenti registra e trascrive server-side (whisper locale, l'audio
@@ -83,11 +91,15 @@ export default function ComposerBar({ submitText, token, session, node, ownerId 
     if (ok) confirmSubmitted(cellKey, draft, value);
     else setErr(t('composer-send-failed'));
     setSending(false);
-    // Il tap sul send non deve trasferire il focus al bottone: su mobile questo
-    // chiuderebbe l'IME dopo ogni invio. Il focus viene riaffermato anche dopo il
-    // render che svuota il testo, mantenendo la tastiera pronta per il messaggio
-    // successivo.
-    requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
+    // Il tap sul send non deve trasferire il focus al bottone. Su desktop il
+    // focus viene riaffermato anche dopo il render che svuota il testo, tenendo
+    // pronto il messaggio successivo. Su mobile la tastiera resta chiusa dopo
+    // l'invio (Enter la chiude; ➤ non la riapre).
+    if (isTouchKeyboard()) {
+      textareaRef.current?.blur();
+    } else {
+      requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
+    }
   }
 
   // --- Allegati ---
@@ -162,6 +174,14 @@ export default function ComposerBar({ submitText, token, session, node, ownerId 
 
   function onComposerKeyDown(e) {
     if (e.isComposing || composingRef.current || e.altKey || e.ctrlKey || e.metaKey) return;
+    // Mobile touch: Enter chiude la tastiera invece di inserire un a capo.
+    // L'invio è esplicito via ➤. Evita draft multi-riga i cui a capo raggiungono
+    // la shell come comandi incompleti (prompt di continuazione ">").
+    if (isTouchKeyboard() && e.key === 'Enter') {
+      e.preventDefault();
+      e.currentTarget.blur();
+      return;
+    }
     if (e.key === 'ArrowUp' && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
       if (recallPrevious()) e.preventDefault();
       return;
