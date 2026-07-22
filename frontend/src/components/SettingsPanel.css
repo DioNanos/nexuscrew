@@ -201,23 +201,26 @@
 .nc-set-panel .nc-dot.on { background: #2e7d32; }
 .nc-set-panel .nc-credits-images { position: relative; display: flex; gap: 16px; justify-content: center; }
 .nc-set-panel .nc-credits-images img { position: relative; z-index: 1; width: 96px; height: auto; image-rendering: pixelated; }
-/* Luminous rainbow vortex behind the sprites: thin hard-stop bands (retro
-   pixel feel) blended with screen so it glows on the dark panel, masked to a
-   ring so the characters sit in the calmer center, rotating clockwise. */
+/* Luminous rainbow rays behind the sprites: thin separate spokes (2deg ray +
+   6deg transparent gap) cycling through the rainbow, blended with screen so
+   they glow on the dark panel, a small center hole keeps the characters in a
+   calmer core, rotating clockwise. */
 .nc-set-panel .nc-credits-portal {
   position: absolute; left: 50%; top: 50%;
-  width: 340px; height: 340px;
+  width: 360px; height: 360px;
   border-radius: 50%;
   transform: translate(-50%, -50%);
-  background:
-    radial-gradient(closest-side, rgba(255,255,255,.95) 0%, rgba(255,255,255,0) 40%),
-    repeating-conic-gradient(from 0deg,
-      #ff2d55 0 9deg, #ff9500 9deg 18deg, #ffd60a 18deg 27deg,
-      #34c759 27deg 36deg, #00c7be 36deg 45deg, #5e5ce6 45deg 54deg);
-  -webkit-mask: radial-gradient(closest-side, transparent 36%, #000 40% 70%, transparent 73%);
-  mask: radial-gradient(closest-side, transparent 36%, #000 40% 70%, transparent 73%);
-  animation: nc-portal-spin 4.5s linear infinite;
-  filter: drop-shadow(0 0 22px rgba(120, 200, 255, .5));
+  background: repeating-conic-gradient(from 0deg,
+    #ff2d55 0 2deg, transparent 2deg 8deg,
+    #ff9500 8deg 10deg, transparent 10deg 16deg,
+    #ffd60a 16deg 18deg, transparent 18deg 24deg,
+    #34c759 24deg 26deg, transparent 26deg 32deg,
+    #00c7be 32deg 34deg, transparent 34deg 40deg,
+    #5e5ce6 40deg 42deg, transparent 42deg 48deg);
+  -webkit-mask: radial-gradient(closest-side, transparent 13%, #000 15% 90%, transparent 96%);
+  mask: radial-gradient(closest-side, transparent 13%, #000 15% 90%, transparent 96%);
+  animation: nc-portal-spin 6s linear infinite;
+  filter: drop-shadow(0 0 18px rgba(120, 200, 255, .5));
   mix-blend-mode: screen;
   z-index: 0;
   opacity: .95;
