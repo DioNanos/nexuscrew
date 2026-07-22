@@ -1,7 +1,7 @@
 # Mobile UX — technical notes for review (KeyBar + composer submit + Enter)
 
 This document describes the changes in the `keybar-mobile-ux` branch for the
-mobile (touch) experience of NexusCrew's PWA. It covers three independent
+mobile (touch) experience of NexusCrew's PWA. It covers four independent
 mobile-UX fixes that ride the same branch:
 
 - **KeyBar redesign** — reduced default bar + soft-keyboard handling for TUI
@@ -13,6 +13,9 @@ mobile-UX fixes that ride the same branch:
   keyboard instead of inserting a newline (which caused shell `>` continuation
   prompts); submit stays explicit via ➤ and the keyboard stays closed after a
   send.
+- **Composer confirm a TUI selection** — with the draft empty, the ➤ green
+  arrow now sends a bare Enter (CR via the same raw path the KeyBar arrows use)
+  so it confirms a highlighted multi-choice option instead of no-op'ing.
 
 Written for whoever (human or AI) reviews the PR.
 
@@ -217,6 +220,33 @@ jsdom, so the guard is false in tests and the existing suite runs the desktop
 path unchanged. Enter as a newline (and submit re-focus) remain the desktop
 behaviour.
 
+## Composer: confirm a TUI selection with the green arrow
+
+### Problem
+
+In a TUI multi-choice (Claude Code `AskUserQuestion`) the user moves the
+highlight with the KeyBar arrows, then taps ➤ to confirm — but the composer
+was empty, so `submit()` hit `if (!value) return` and nothing reached the pty.
+The selection was never confirmed from the bar.
+
+### Fix
+
+An empty submit now sends a bare `CR`:
+
+```js
+// ComposerBar.submit()
+if (sending) return;
+if (!value) { submitText(''); return; }   // green arrow = Enter
+```
+
+`submitText('')` → `createComposerSubmitter`, which on an empty `text` sends
+`CR` via `sock.sendInput` — the same raw path the KeyBar arrows use, so it
+reaches the TUI as Enter and confirms the highlighted option. (The earlier
+dedicated Enter button failed because of how it was wired; the composer's
+`send` seam works.) No history entry is recorded and the field is not cleared
+for an empty submit. Non-empty submits are unchanged: paste the text, then
+`send(CR)`, then record history and clear.
+
 ## Terminal: scroll the TUI transcript (alt-screen)
 
 ### Problem
@@ -261,10 +291,19 @@ A dedicated green-square **Enter** button that sent a raw `CR` (`\r`) via
 `send(CR)` was added and then removed. Reason: in the TUIs tested (Claude Code
 `AskUserQuestion`) it did not confirm the selection — it behaved like the left
 arrow (no effect). The arrows work (the escape sequences reach the pty and move
-the selection), but a plain `CR` did not register as Enter for those TUIs.
-Rather than ship a non-working button, it was removed. Confirming a selection
-on mobile currently relies on the soft keyboard / composer. Investigating
-whether those TUIs want `LF` (`\n`) instead of `CR` is left as follow-up.
+the selection), but a plain `CR` from that button did not register as Enter
+for those TUIs. Rather than ship a non-working button, it was removed.
+
+**Resolved (2026-07-22):** the composer ➤ green arrow now confirms a TUI
+selection. When the draft is empty, `submit()` no longer no-ops; it sends a
+bare `CR` via `createComposerSubmitter` → `sock.sendInput`, i.e. the same raw
+path the KeyBar arrows use (which do reach the TUI), so it lands as Enter and
+confirms the highlighted option. The earlier dedicated button's `CR` failed
+because of how it was wired; routing the empty-submit Enter through the
+composer's `send` seam works. No history entry is recorded for an empty
+submit and the field is not cleared. See the "Composer: confirm a TUI
+selection" section. The earlier "LF instead of CR" follow-up turned out not
+to be needed — CR via `sock.sendInput` is what the TUI accepts.
 
 ## Tests
 
@@ -370,6 +409,7 @@ In chronological order, on top of `origin/main` (`0.8.27`, `ec243e9`):
 8. `3fa66bd` fix(keybar): restore PGUP/PGDN to the reduced bar for mobile transcript scroll
 9. `adf5efe` fix(terminal): swipe/wheel scroll the TUI transcript in alt-screen via PageUp
 10. `b1d0336` fix(composer): mobile Enter dismisses the keyboard; keep it closed after send
+11. `7c1597b` fix(composer): green arrow confirms a TUI selection when the draft is empty
 
 ## Suggested PR description
 
@@ -400,6 +440,9 @@ In chronological order, on top of `origin/main` (`0.8.27`, `ec243e9`):
 >   Submit stays explicit via ➤ and keeps the keyboard closed after a send (the
 >   draft persists across close/reopen via flush-on-blur). Desktop is unchanged
 >   (Enter is a newline, submit re-focuses).
+> - With the draft empty, ➤ now sends a bare Enter (CR via the same raw path the
+>   KeyBar arrows use) so it confirms a TUI multi-choice highlight instead of
+>   no-op'ing. No history entry is recorded and the field is not cleared.
 >
 > Terminal:
 > - Swipe-to-scroll (mobile) and the mouse wheel now scroll the TUI's own
