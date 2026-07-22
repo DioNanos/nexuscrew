@@ -6,6 +6,7 @@ import { useLang } from '../hooks/useLang.js';
 import { useComposerState } from '../hooks/useComposerState.js';
 import Icon from './Icon.jsx';
 import { uploadSessionFiles } from '../lib/attachments.js';
+import { dismissVirtualKeyboard } from '../lib/virtual-keyboard.js';
 import './ComposerBar.css';
 
 // Composer: testo multilinea + microfono. Il testo va nel PTY come input
@@ -14,7 +15,7 @@ import './ComposerBar.css';
 // non lascia la VPS).
 //
 // node (opzionale): sessione remota — upload/voice passano dal proxy /node/<name>.
-export default function ComposerBar({ submitText, token, session, node, ownerId }) {
+export default function ComposerBar({ submitText, token, session, node, ownerId, keepKeyboardClosedOnVoice = true }) {
   useLang();
   const base = node ? `/api/route/${String(node).split('/').map(encodeURIComponent).join('/')}/_` : '/api';
   const {
@@ -236,6 +237,11 @@ export default function ComposerBar({ submitText, token, session, node, ownerId 
     }
   }
 
+  function toggleVoice() {
+    if (keepKeyboardClosedOnVoice) dismissVirtualKeyboard();
+    if (rec) stopVoice(); else startVoice();
+  }
+
   return (
     <div className="nc-composer">
       {err && <div className="nc-composer-err">{err}</div>}
@@ -325,7 +331,11 @@ export default function ComposerBar({ submitText, token, session, node, ownerId 
           onBlur={flush}
         />
         {micVisible && (
-          <button className={rec ? 'mic on' : 'mic'} onClick={rec ? stopVoice : startVoice} title={t('voice')}><Icon name="mic" size={22} /></button>
+          <button type="button" className={rec ? 'mic on' : 'mic'} title={t('voice')} aria-label={t('voice')}
+            onPointerDown={(e) => { e.preventDefault(); toggleVoice(); }}
+            onClick={(e) => { if (e.detail === 0) toggleVoice(); }}>
+            <Icon name="mic" size={22} />
+          </button>
         )}
         <button type="button" className="go" disabled={sending}
           onPointerDown={(e) => e.preventDefault()}

@@ -8,11 +8,14 @@ import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
 import { t } from '../lib/i18n.js';
 import { filesFromTransfer, hasFilePayload, uploadSessionFiles } from '../lib/attachments.js';
+import {
+  setTerminalInputMode, showTerminalVirtualKeyboard, terminalTapDecision,
+} from '../lib/virtual-keyboard.js';
 import './Terminal.css';
 
 // node (opzionale): sessione su nodo remoto — il WS passa dal proxy
 // /node/<name>/ws (B1); tutto il resto del protocollo e' identico.
-export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange }) {
+export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange, keyboardGesture = 'double-tap' }) {
   const hostRef = useRef(null);
   const apiRef = useRef(null);        // {term, fit, sock} per lo zoom senza riconnettere
   const fontSizeRef = useRef(fontSize);
@@ -21,6 +24,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   focusedRef.current = focused;
   const selectionModeRef = useRef(selectionMode);
   selectionModeRef.current = selectionMode;
+  const keyboardGestureRef = useRef(keyboardGesture);
+  keyboardGestureRef.current = keyboardGesture;
   const [selection, setSelection] = useState('');
   const [copyState, setCopyState] = useState('');
   const [uploadState, setUploadState] = useState(null);
@@ -56,6 +61,12 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     api.sock.resize(api.term.cols, api.term.rows);
   }, [fontSize]);
 
+  // Cambiare la preferenza client non deve rimontare xterm né riconnettere il
+  // websocket: aggiorna soltanto la policy della textarea interna già viva.
+  useEffect(() => {
+    apiRef.current?.setKeyboardGesture?.(keyboardGesture);
+  }, [keyboardGesture]);
+
   useEffect(() => {
     const term = new XTerm({
       cursorBlink: true, fontSize: fontSizeRef.current, scrollback: 1000,
@@ -66,6 +77,29 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     term.open(hostRef.current);
     fit.fit();
     const dec = new TextDecoder();
+
+    let keyboardUnlocked = keyboardGestureRef.current === 'single-tap';
+    let lastTerminalTap = null;
+    const lockTerminalKeyboard = () => {
+      keyboardUnlocked = keyboardGestureRef.current === 'single-tap';
+      setTerminalInputMode(term, keyboardGestureRef.current, keyboardUnlocked);
+    };
+    const setKeyboardGesture = (next) => {
+      keyboardGestureRef.current = next;
+      lastTerminalTap = null;
+      lockTerminalKeyboard();
+    };
+    const requestTerminalKeyboard = () => {
+      if (keyboardGestureRef.current === 'never') return false;
+      keyboardUnlocked = true;
+      return showTerminalVirtualKeyboard(term);
+    };
+    lockTerminalKeyboard();
+    const terminalTextarea = term.textarea;
+    const onTerminalTextareaBlur = () => {
+      if (keyboardGestureRef.current === 'double-tap') lockTerminalKeyboard();
+    };
+    terminalTextarea?.addEventListener('blur', onTerminalTextareaBlur);
 
     let sock;
     try {
@@ -79,7 +113,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       term.write(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`);
       return () => term.dispose();
     }
-    apiRef.current = { term, fit, sock };
+    apiRef.current = { term, fit, sock, setKeyboardGesture };
 
     // During a programmatic composer paste, collect the result of xterm's
     // synchronous onData emission. This lets the composer retain its draft if
@@ -177,7 +211,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     host.addEventListener('dragover', onDragFiles, true);
     host.addEventListener('drop', onDropFiles, true);
     const STEP = 24; // px per tick di scroll (3 righe tmux)
-    let touchY = null, touchX = null, acc = 0, vertical = null, selectStart = null;
+    let touchY = null, touchX = null, tapX = null, tapY = null;
+    let touchMoved = false, multiTouchActive = false;
+    let acc = 0, vertical = null, selectStart = null;
     let longPressTimer = null; let touchSelecting = false;
     const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
     const cellXY = (clientX, clientY) => {
@@ -189,16 +225,24 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     };
     const cellAt = (touch) => cellXY(touch.clientX, touch.clientY);
     const onTouchStart = (e) => {
-      clearLongPress(); touchSelecting = false;
-      if (e.touches.length !== 1) { touchY = null; return; }
+      clearLongPress(); touchSelecting = false; touchMoved = false;
+      if (multiTouchActive || e.touches.length !== 1) {
+        // Multi-touch (pinch / due dita): invalida il candidato doppio tap e
+        // sopprimi tutti i touchend finche' ogni dito non e' stato rilasciato.
+        // Altrimenti il secondo rilascio potrebbe diventare un nuovo candidato.
+        multiTouchActive = true; touchMoved = true; lastTerminalTap = null;
+        touchY = null; touchX = null; tapX = null; tapY = null;
+        return;
+      }
       if (selectionModeRef.current) {
         e.preventDefault(); e.stopPropagation();
         selectStart = cellAt(e.touches[0]); term.clearSelection(); return;
       }
-      touchY = e.touches[0].clientY; touchX = e.touches[0].clientX; acc = 0; vertical = null;
+      touchY = e.touches[0].clientY; touchX = e.touches[0].clientX;
+      tapX = touchX; tapY = touchY; acc = 0; vertical = null;
       const start = { x: touchX, y: touchY };
       longPressTimer = setTimeout(() => {
-        longPressTimer = null; touchSelecting = true;
+        longPressTimer = null; touchSelecting = true; touchMoved = true; lastTerminalTap = null;
         selectionModeRef.current = true;
         onSelectionModeChange?.(true);
         selectStart = cellXY(start.x, start.y);
@@ -224,7 +268,10 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       // pan nativo e i preventDefault successivi vengono ignorati.
       e.preventDefault(); e.stopPropagation();
       const t = e.touches[0];
-      if (longPressTimer && movedBeyondLongPress(touchX, touchY, t.clientX, t.clientY)) clearLongPress();
+      if (movedBeyondLongPress(tapX, tapY, t.clientX, t.clientY)) {
+        touchMoved = true; lastTerminalTap = null;
+        if (longPressTimer) clearLongPress();
+      }
       if (vertical === null && (Math.abs(t.clientY - touchY) > 8 || Math.abs(t.clientX - touchX) > 8)) {
         vertical = Math.abs(t.clientY - touchY) > Math.abs(t.clientX - touchX);
       }
@@ -233,7 +280,27 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       while (acc >= STEP) { sock.action('scroll-up'); acc -= STEP; }
       while (acc <= -STEP) { sock.action('scroll-down'); acc += STEP; }
     };
-    const onTouchEnd = () => { clearLongPress(); touchY = null; touchX = null; selectStart = null; touchSelecting = false; };
+    const resetTouch = () => {
+      clearLongPress(); touchY = null; touchX = null; tapX = null; tapY = null;
+      selectStart = null; touchSelecting = false; touchMoved = false; multiTouchActive = false;
+    };
+    const onTouchEnd = (e) => {
+      if (multiTouchActive) {
+        lastTerminalTap = null;
+        clearLongPress();
+        if (!e.touches || e.touches.length === 0) resetTouch();
+        return;
+      }
+      const changed = e.changedTouches && e.changedTouches[0];
+      if (!touchMoved && !touchSelecting && !selectionModeRef.current && changed) {
+        const point = { at: Date.now(), x: changed.clientX, y: changed.clientY };
+        const decision = terminalTapDecision(keyboardGestureRef.current, lastTerminalTap, point);
+        lastTerminalTap = decision.next;
+        if (decision.open) requestTerminalKeyboard();
+      }
+      resetTouch();
+    };
+    const onTouchCancel = () => { lastTerminalTap = null; resetTouch(); };
     let wheelAcc = 0;
     const onWheel = (e) => {
       e.preventDefault(); e.stopPropagation();
@@ -244,7 +311,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     host.addEventListener('touchstart', onTouchStart, { passive: false });
     host.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
     host.addEventListener('touchend', onTouchEnd, { passive: true });
-    host.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    host.addEventListener('touchcancel', onTouchCancel, { passive: true });
+    const onDoubleClick = () => {
+      if (!selectionModeRef.current && keyboardGestureRef.current === 'double-tap') requestTerminalKeyboard();
+    };
+    host.addEventListener('dblclick', onDoubleClick);
     const onContextMenu = (e) => {
       if (selectionModeRef.current || touchSelecting) { e.preventDefault(); e.stopPropagation(); }
     };
@@ -296,7 +367,24 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // the soft keyboard opening/closing changes the visible height without firing
     // window 'resize' on some mobile browsers — track the visualViewport too.
     const vv = window.visualViewport;
-    if (vv) { vv.addEventListener('resize', onResize); vv.addEventListener('scroll', onResize); }
+    let previousViewportHeight = vv && Number(vv.height);
+    const onViewportResize = () => {
+      const nextHeight = vv && Number(vv.height);
+      // Fallback per browser senza geometrychange: quando il viewport torna
+      // alto dopo la chiusura IME, il prossimo tap richiede di nuovo il doppio.
+      if (keyboardUnlocked && keyboardGestureRef.current === 'double-tap'
+        && Number.isFinite(previousViewportHeight) && Number.isFinite(nextHeight)
+        && nextHeight > previousViewportHeight + 80) lockTerminalKeyboard();
+      previousViewportHeight = nextHeight;
+      onResize();
+    };
+    if (vv) { vv.addEventListener('resize', onViewportResize); vv.addEventListener('scroll', onResize); }
+    const virtualKeyboard = typeof navigator !== 'undefined' ? navigator.virtualKeyboard : null;
+    const onKeyboardGeometry = () => {
+      if (keyboardUnlocked && keyboardGestureRef.current === 'double-tap'
+        && Number(virtualKeyboard?.boundingRect?.height || 0) === 0) lockTerminalKeyboard();
+    };
+    virtualKeyboard?.addEventListener?.('geometrychange', onKeyboardGeometry);
     // Il tile può cambiare dimensione senza resize della finestra (altri tile,
     // divisori, preset, sidebar) → osserva l'host e rifitta (rAF debounce per i drag).
     let ro = null, rafId = 0;
@@ -318,7 +406,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       host.removeEventListener('touchstart', onTouchStart);
       host.removeEventListener('touchmove', onTouchMove, { capture: true });
       host.removeEventListener('touchend', onTouchEnd);
-      host.removeEventListener('touchcancel', onTouchEnd);
+      host.removeEventListener('touchcancel', onTouchCancel);
+      host.removeEventListener('dblclick', onDoubleClick);
       host.removeEventListener('contextmenu', onContextMenu, true);
       clearLongPress();
       host.removeEventListener('wheel', onWheel, { capture: true });
@@ -331,7 +420,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       host.removeEventListener('dragover', onDragFiles, true);
       host.removeEventListener('drop', onDropFiles, true);
       window.removeEventListener('resize', onResize);
-      if (vv) { vv.removeEventListener('resize', onResize); vv.removeEventListener('scroll', onResize); }
+      if (vv) { vv.removeEventListener('resize', onViewportResize); vv.removeEventListener('scroll', onResize); }
+      virtualKeyboard?.removeEventListener?.('geometrychange', onKeyboardGeometry);
+      terminalTextarea?.removeEventListener('blur', onTerminalTextareaBlur);
       if (ro) ro.disconnect();
       if (rafId) cancelAnimationFrame(rafId);
       sock.close();

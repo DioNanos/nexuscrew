@@ -48,6 +48,9 @@ function makeWorld(over = {}) {
   const log = path.join(root, 'tmux.log');
   const cap = path.join(root, 'cap'); fs.mkdirSync(cap);
   const alive = path.join(root, 'alive'); fs.writeFileSync(alive, '1');   // vivo di default
+  const pane = path.join(root, 'pane'); fs.writeFileSync(pane, '0');      // 1 -> new-session restituisce %42
+  const exitStatus = path.join(root, 'exit-status'); fs.writeFileSync(exitStatus, '127');
+  const diagnostic = path.join(root, 'diagnostic'); fs.writeFileSync(diagnostic, '');
   const sessions = path.join(root, 'sessions'); fs.writeFileSync(sessions, '');
   // veleno: se non vuoto, new-session cat-ta il contenuto su STDERR ed esce 2
   // (simula un tmux fallito che ecoa i segreti del comando lanciato — test §9h).
@@ -57,6 +60,9 @@ function makeWorld(over = {}) {
 LOG=${shellQ(log)}
 CAP=${shellQ(cap)}
 ALIVE=${shellQ(alive)}
+PANE=${shellQ(pane)}
+STATUS=${shellQ(exitStatus)}
+DIAG=${shellQ(diagnostic)}
 SESS=${shellQ(sessions)}
 POISON=${shellQ(poison)}
 cmd="\${1:-}"; [ $# -gt 0 ] && shift
@@ -73,6 +79,17 @@ case "$cmd" in
     env > "$CAP/launch-env.txt" 2>/dev/null || true
     printf '%s\\t' "new-session" >> "$LOG"; printf '%s\\t' "$@" >> "$LOG"; printf '\\n' >> "$LOG"
     if [ -s "$POISON" ]; then cat "$POISON" >&2; exit 2; fi
+    [ "$(cat "$PANE" 2>/dev/null)" = "1" ] && printf '%%42\n'
+    exit 0 ;;
+  display-message)
+    if [ "$(cat "$ALIVE" 2>/dev/null)" = "0" ]; then
+      printf '1\t%s\t%%42\n' "$(cat "$STATUS" 2>/dev/null)"
+    else
+      printf '0\t\t%%42\n'
+    fi
+    exit 0 ;;
+  capture-pane)
+    [ -f "$DIAG" ] && cat "$DIAG"
     exit 0 ;;
   load-buffer)
     buf=""; file=""
@@ -93,7 +110,7 @@ esac
   fs.writeFileSync(tmuxBin, script); fs.chmodSync(tmuxBin, 0o755);
 
   return {
-    root, home, cwd, command, defsPath, tmuxBin, log, cap, alive, sessions, poison,
+    root, home, cwd, command, defsPath, tmuxBin, log, cap, alive, pane, exitStatus, diagnostic, sessions, poison,
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
 }
@@ -114,7 +131,7 @@ function readLog(w) {
   return { lines, nsArgv };
 }
 
-test('Shell backfill e one-shot: idempotente, comando singolo -lc, nessun pane diagnostico', async () => {
+test('Shell backfill e command: login interattivo -lic, readiness e cella attiva', async () => {
   const w = makeWorld();
   try {
     let defs = require('../lib/fleet/definitions.js').loadDefinitions(w.defsPath);
@@ -145,12 +162,73 @@ test('Shell backfill e one-shot: idempotente, comando singolo -lc, nessun pane d
     const result = await fleet.up('Dev');
     assert.equal(result.ok, true);
     assert.equal(result.oneShot, true);
+    assert.equal(result.active, true);
+    assert.equal(result.completed, false);
     assert.equal(issued.command, shell);
-    assert.deepEqual(issued.args, ['-lc', defs.cells[0].commands['shell.local']]);
+    assert.deepEqual(issued.args, ['-lic', defs.cells[0].commands['shell.local']]);
     assert.equal(issued.supervise.enabled, false);
     const argv = readLog(w).nsArgv[0];
     assert.equal(argv.includes(defs.cells[0].commands['shell.local']), false);
-    assert.equal(argv.includes('remain-on-exit'), false);
+    assert.equal(argv.includes('remain-on-exit'), true);
+    await fleet.close();
+  } finally { w.cleanup(); }
+});
+
+test('Shell command: exit immediato non-zero non e falso successo e conserva causa bounded', async () => {
+  const w = makeWorld();
+  try {
+    const shell = path.join(w.home, 'bin', 'zsh');
+    fs.writeFileSync(shell, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); fs.chmodSync(shell, 0o755);
+    const defs = backfillShellEngine(w.defsPath,
+      require('../lib/fleet/definitions.js').loadDefinitions(w.defsPath));
+    defs.cells[0].engine = 'shell.local';
+    defs.cells[0].commands = { 'shell.local': 'agy' };
+    atomicWrite(w.defsPath, defs);
+    fs.writeFileSync(w.pane, '1');
+    fs.writeFileSync(w.alive, '0');
+    fs.writeFileSync(w.exitStatus, '127');
+    fs.writeFileSync(w.diagnostic, 'zsh: command not found: agy\n');
+    const fleet = await createBuiltinFleet({
+      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+      env: { SHELL: shell }, launchReadyMs: 0,
+    });
+    await assert.rejects(() => fleet.up('Dev'), (error) => {
+      assert.equal(error.status, 500);
+      assert.equal(error.fleetCode, 'SHELL_COMMAND_FAILED');
+      assert.equal(error.fleetPhase, 'readiness');
+      assert.match(error.message, /exit 127/);
+      assert.doesNotMatch(error.message, /agy/);
+      assert.match(error.message, /‹redacted›/);
+      return true;
+    });
+    assert.ok(readLog(w).lines.includes('kill-session'));
+    await fleet.close();
+  } finally { w.cleanup(); }
+});
+
+test('Shell command: exit immediato zero e completamento one-shot riuscito', async () => {
+  const w = makeWorld();
+  try {
+    const shell = path.join(w.home, 'bin', 'bash');
+    fs.writeFileSync(shell, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); fs.chmodSync(shell, 0o755);
+    const defs = backfillShellEngine(w.defsPath,
+      require('../lib/fleet/definitions.js').loadDefinitions(w.defsPath));
+    defs.cells[0].engine = 'shell.local';
+    defs.cells[0].commands = { 'shell.local': 'true' };
+    atomicWrite(w.defsPath, defs);
+    fs.writeFileSync(w.pane, '1');
+    fs.writeFileSync(w.alive, '0');
+    fs.writeFileSync(w.exitStatus, '0');
+    const fleet = await createBuiltinFleet({
+      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+      env: { SHELL: shell }, launchReadyMs: 0,
+    });
+    const result = await fleet.up('Dev');
+    assert.deepEqual(result, {
+      ok: true, cell: 'Dev', session: 'work-build', prompt: null,
+      oneShot: true, active: false, completed: true, exitCode: 0,
+    });
+    assert.ok(readLog(w).lines.includes('kill-session'));
     await fleet.close();
   } finally { w.cleanup(); }
 });

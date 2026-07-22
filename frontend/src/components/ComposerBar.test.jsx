@@ -199,4 +199,41 @@ describe('ComposerBar persistence and history', () => {
     expect(textarea().value).toBe('');
     expect(textarea().rows).toBe(2);
   });
+
+  it('starts STT while explicitly closing the virtual keyboard by default', () => {
+    const start = vi.fn();
+    class Recognition { start() { start(); } stop() {} }
+    const oldSpeech = Object.getOwnPropertyDescriptor(window, 'SpeechRecognition');
+    const oldVk = Object.getOwnPropertyDescriptor(navigator, 'virtualKeyboard');
+    const hide = vi.fn();
+    Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: Recognition });
+    Object.defineProperty(navigator, 'virtualKeyboard', { configurable: true, value: { hide } });
+    try {
+      renderComposer();
+      const input = textarea(); input.focus();
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'voice' }));
+      expect(start).toHaveBeenCalledOnce();
+      expect(hide).toHaveBeenCalledOnce();
+      expect(document.activeElement).not.toBe(input);
+    } finally {
+      if (oldSpeech) Object.defineProperty(window, 'SpeechRecognition', oldSpeech); else delete window.SpeechRecognition;
+      if (oldVk) Object.defineProperty(navigator, 'virtualKeyboard', oldVk); else delete navigator.virtualKeyboard;
+    }
+  });
+
+  it('lets the Settings preference preserve the composer IME during STT', () => {
+    const start = vi.fn();
+    class Recognition { start() { start(); } stop() {} }
+    const oldSpeech = Object.getOwnPropertyDescriptor(window, 'SpeechRecognition');
+    Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: Recognition });
+    try {
+      renderComposer({ keepKeyboardClosedOnVoice: false });
+      const input = textarea(); input.focus();
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'voice' }));
+      expect(start).toHaveBeenCalledOnce();
+      expect(document.activeElement).toBe(input);
+    } finally {
+      if (oldSpeech) Object.defineProperty(window, 'SpeechRecognition', oldSpeech); else delete window.SpeechRecognition;
+    }
+  });
 });

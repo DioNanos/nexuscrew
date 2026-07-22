@@ -6,6 +6,7 @@ import Icon from './Icon.jsx';
 import { t } from '../lib/i18n.js';
 import { TILE_FONT_DEF } from '../lib/grid-model.js';
 import { nextTerminalGeneration } from '../lib/terminal-lifecycle.js';
+import { useInputPreferences } from '../hooks/useInputPreferences.js';
 import './GridTile.css';
 
 // Un tile della griglia. Ogni tile ha i PROPRI ref (audit F6: mai condivisi
@@ -20,6 +21,7 @@ import './GridTile.css';
 // `Dev`). node/route/tmuxSession restano identita' tecniche e non compaiono
 // nel titolo visibile; solo il tooltip porta un identificativo tecnico.
 export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, available = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck }) {
+  const [inputPreferences] = useInputPreferences();
   // Titolo visibile = nome logico Fleet (gestita) o nome sessione (unmanaged).
   // session (tmuxSession reale) resta l'identita' del tile per attach/drag.
   const visibleName = cellName || session;
@@ -96,6 +98,7 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
             session={session} node={node} token={token} readonly={readonly} takeSize={false} focused={focused}
             sendRef={sendRef} composerRef={composerRef} actionRef={actionRef} ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
             onFiles={setFilesEvent} fontSize={fontSize}
+            keyboardGesture={inputPreferences.terminalKeyboardGesture}
           />
         ) : (
           <div className="nc-tile-unavailable">{t('deck-owner-unavailable')}</div>
@@ -109,7 +112,8 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
 
       {available && showComposer && (
         <div className="nc-tile-composer" onMouseDown={(e) => e.stopPropagation()}>
-          <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId} />
+          <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId}
+            keepKeyboardClosedOnVoice={inputPreferences.voiceKeepsKeyboardClosed} />
         </div>
       )}
     </div>

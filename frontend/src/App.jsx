@@ -26,6 +26,7 @@ import {t} from './lib/i18n.js';
 import { useLang } from './hooks/useLang.js';
 import { useNodes } from './hooks/useNodes.js';
 import { useDecks } from './hooks/useDecks.js';
+import { useInputPreferences } from './hooks/useInputPreferences.js';
 import { reportServerVersions } from './lib/sw-update.js';
 import { parseBootstrapHash } from './lib/fragment.js';
 import './App.css';
@@ -115,6 +116,7 @@ function useDesktop() {
 // risolve al primo ciclo. Il titolo visibile deriva sempre da `cell.cell`.
 export function SingleView({ session, node, ownerId, cellName, token, readonly = false, onBack }) {
   useLang(); // re-render allo switch lingua
+  const [inputPreferences] = useInputPreferences();
   const [showFiles, setShowFiles] = useState(false);
   // Su touch il composer è aperto di default (l'IME Gboard corrompe l'input in xterm).
   const [showComposer, setShowComposer] = useState(() => window.matchMedia('(pointer: coarse)').matches);
@@ -198,12 +200,15 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
       <div className="nc-termwrap">
         <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
           ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} onFiles={setFilesEvent} fontSize={fontSize}
-          selectionMode={selectionMode} onSelectionModeChange={setSelectionMode} />
+          selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
+          keyboardGesture={inputPreferences.terminalKeyboardGesture} />
       </div>
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
-        ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} selectionMode={selectionMode} onSelectionMode={setSelectionMode} />
+        ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} selectionMode={selectionMode} onSelectionMode={setSelectionMode}
+        keepKeyboardClosed={inputPreferences.keybarKeepsKeyboardClosed} showEnter={inputPreferences.showKeybarEnter} />
       {showComposer && (
-        <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId} />
+        <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId}
+          keepKeyboardClosedOnVoice={inputPreferences.voiceKeepsKeyboardClosed} />
       )}
       {showFiles && (
         <FilesPanel session={session} node={node} token={token} filesEvent={filesEvent} onClose={() => setShowFiles(false)} />

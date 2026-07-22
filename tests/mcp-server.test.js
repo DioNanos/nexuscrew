@@ -10,6 +10,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
 const { createMcpServer, resolveSession, resolveIdentity } = require('../lib/mcp/server.js');
+const { TOOLS, commandForDiagnostics, failureForDiagnostics } = require('../lib/mcp/tools.js');
 
 function tmpdir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'ncmcp-')); }
 
@@ -69,16 +70,17 @@ test('initialize: echo protocolVersion, capabilities.tools, serverInfo', async (
   assert.equal(out.lines.length, 1);
 });
 
-test('tools/list: 9 tool nc_* con readOnlyHint sui read-only', async () => {
+test('tools/list: 10 tool nc_* con readOnlyHint sui read-only', async () => {
   const { srv, out } = makeSrv();
   await srv.handleLine(rpc(2, 'tools/list'));
   const tools = out.lines[0].result.tools;
   assert.deepEqual(tools.map((t) => t.name).sort(),
-    ['nc_ask', 'nc_cells', 'nc_deck', 'nc_identity', 'nc_inbox', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_status']);
+    ['nc_ask', 'nc_cell_diagnostics', 'nc_cells', 'nc_deck', 'nc_identity', 'nc_inbox', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_status']);
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   assert.equal(byName.nc_status.annotations.readOnlyHint, true);
   assert.equal(byName.nc_deck.annotations.readOnlyHint, true);
   assert.equal(byName.nc_cells.annotations.readOnlyHint, true);
+  assert.equal(byName.nc_cell_diagnostics.annotations.readOnlyHint, true);
   assert.equal(byName.nc_inbox.annotations.readOnlyHint, true);
   assert.equal(byName.nc_identity.annotations.readOnlyHint, true);
   assert.equal(byName.nc_notify.annotations, undefined);
@@ -111,6 +113,138 @@ test('nc_cells: aggrega celle locali e remote con id owner-qualified', async () 
     [`${remoteId}:Worker`, 'pixel', false, false],
   ]);
   assert.deepEqual(j.unavailable, []);
+});
+
+test('nc_cell_diagnostics: command locale + ultima causa bounded, senza interrogare la federazione', async () => {
+  const localId = 'a'.repeat(32);
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-DevBis' },
+    responder: (call) => {
+      const u = new URL(call.url); const p = u.pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'DevBis', tmuxSession: 'cloud-DevBis', engine: 'codex-vl.native', active: true, canReceive: true },
+        { instanceId: localId, cell: 'agy.native', tmuxSession: 'cloud-agy.native', engine: 'shell.local', active: false, canReceive: false },
+      ] } };
+      if (p === '/api/fleet/definitions') return { status: 200, json: { cells: [
+        { id: 'agy.native', tmuxSession: 'cloud-agy.native', engine: 'shell.local', commands: { 'shell.local': 'agy' } },
+      ] } };
+      if (p === '/api/diagnostics/logs') return { status: 200, json: { records: [{
+        seq: 7, ts: '2026-07-22T11:00:00.000Z', component: 'fleet', code: 'FLEET_ACTION_FAILED',
+        message: 'must not escape', meta: {
+          cell: 'agy.native', status: 500, code: 'SHELL_COMMAND_FAILED', phase: 'readiness', command: 'secret',
+        },
+      }], cursor: 7 } };
+      return { status: 404, json: { error: p } };
+    },
+  });
+  await srv.handleLine(rpc(22, 'tools/call', {
+    name: 'nc_cell_diagnostics', arguments: { target: `${localId}:agy.native` },
+  }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.deepEqual(j, {
+    target: `${localId}:agy.native`, cell: 'agy.native', tmuxSession: 'cloud-agy.native',
+    engine: 'shell.local', active: false,
+    command: { configured: true, value: 'agy', redacted: false, truncated: false },
+    lastFailure: {
+      event: 'FLEET_ACTION_FAILED', at: '2026-07-22T11:00:00.000Z', status: 500,
+      code: 'SHELL_COMMAND_FAILED', phase: 'readiness',
+    },
+  });
+  assert.equal(JSON.stringify(j).includes('must not escape'), false);
+  assert.equal(JSON.stringify(j).includes('secret'), false);
+  assert.ok(calls.some((call) => new URL(call.url).pathname === '/api/fleet/definitions'));
+  assert.ok(calls.every((call) => !/\/api\/(?:topology|route\/)/.test(new URL(call.url).pathname)));
+});
+
+test('nc_cell_diagnostics: rifiuta target remoto senza leggere topologia, definitions o logs', async () => {
+  const localId = 'a'.repeat(32); const remoteId = 'b'.repeat(32);
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-DevBis' },
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'DevBis', tmuxSession: 'cloud-DevBis', active: true, canReceive: true },
+      ] } };
+      return { status: 500, json: { error: `unexpected ${p}` } };
+    },
+  });
+  await srv.handleLine(rpc(23, 'tools/call', {
+    name: 'nc_cell_diagnostics', arguments: { target: `${remoteId}:Worker` },
+  }));
+  assert.equal(out.lines[0].result.isError, true);
+  assert.match(out.lines[0].result.content[0].text, /target remoto rifiutato/);
+  assert.equal(calls.some((call) => /topology|\/api\/route\/|fleet\/definitions|diagnostics\/logs/.test(call.url)), false);
+});
+
+test('nc_cell_diagnostics helpers: redigono credential command e coercizzano cause ignote', () => {
+  const command = commandForDiagnostics('deploy --token TOPSECRET OPENAI_API_KEY=plain-secret ZAI_API_KEY=sk_test_123456789');
+  assert.equal(command.configured, true);
+  assert.equal(command.redacted, true);
+  assert.equal(command.value.includes('TOPSECRET'), false);
+  assert.equal(command.value.includes('plain-secret'), false);
+  assert.equal(command.value.includes('sk_test_123456789'), false);
+  const failure = failureForDiagnostics({
+    ts: '2026-07-22T11:00:00Z', component: 'fleet', code: 'FLEET_ACTION_FAILED',
+    meta: { cell: 'Ops', status: 999, code: 'UNBOUNDED', phase: 'raw-path', payload: 'secret' },
+  }, 'Ops');
+  assert.deepEqual(failure, {
+    event: 'FLEET_ACTION_FAILED', at: '2026-07-22T11:00:00Z', status: null,
+    code: 'UNKNOWN', phase: 'UNKNOWN',
+  });
+});
+
+test('commandForDiagnostics redigono le env maiuscole generiche (ZAIKEY/PASSWD/MYPASS)', () => {
+  const command = commandForDiagnostics('run ZAIKEY=abc123456789 PASSWD=hunter2hunter2 MYPASS=hunter2hunter2 deploy');
+  assert.equal(command.configured, true);
+  assert.equal(command.redacted, true);
+  // nessun segreto in chiaro
+  for (const secret of ['abc123456789', 'hunter2hunter2']) {
+    assert.equal(command.value.includes(secret), false, `secret leaked: ${secret}`);
+  }
+  // il nome della variabile e' preservato, il valore redatto (forma $1=[redacted])
+  for (const name of ['ZAIKEY', 'PASSWD', 'MYPASS']) {
+    assert.ok(command.value.includes(`${name}=[redacted]`), `missing redaction for ${name}`);
+  }
+});
+
+test('commandForDiagnostics redigono per intero i valori env quotati (con spazi)', () => {
+  const command = commandForDiagnostics('run DB_URL="postgres://u:secret@host/db space" next');
+  assert.equal(command.redacted, true);
+  assert.equal(command.value.includes('postgres://u:secret@host/db space'), false);
+  assert.equal(command.value.includes('secret'), false);
+  assert.ok(command.value.includes('DB_URL=[redacted]'));
+});
+
+test('commandForDiagnostics: la regola generica env non fa regredire le redazioni specifiche', () => {
+  const command = commandForDiagnostics(
+    'deploy --token TOPSECRET OPENAI_API_KEY=plain-secret Bearer xyz123 sk-test_1234567890abc',
+  );
+  assert.equal(command.redacted, true);
+  for (const secret of ['TOPSECRET', 'plain-secret', 'xyz123', 'sk-test_1234567890abc']) {
+    assert.equal(command.value.includes(secret), false, `regression: ${secret} leaked`);
+  }
+  assert.ok(command.value.includes('OPENAI_API_KEY=[redacted]'));
+});
+
+test('commandForDiagnostics: over-redaction benigno (NODE_ENV), shape e ACL invariate', () => {
+  // comandi del tutto benigni risultano redacted:true: prezzo accettato per la
+  // regola generica, coerente con lib/diagnostics/store.js. Il nome resta leggibile.
+  const benign = commandForDiagnostics('NODE_ENV=production npm start');
+  assert.equal(benign.redacted, true);
+  assert.equal(benign.value.includes('production'), false);
+  assert.ok(benign.value.includes('NODE_ENV=[redacted]'));
+  assert.ok(benign.value.includes('npm start'));
+  // la shape di output e' invariata
+  assert.deepEqual(Object.keys(commandForDiagnostics('TOKEN=xyz')).sort(),
+    ['configured', 'redacted', 'truncated', 'value']);
+  // la redazione non tocca il registry tool: nc_cell_diagnostics resta read-only
+  // e identity-gated (nessuna estensione di ACL/local-only).
+  const diag = TOOLS.find((tool) => tool.name === 'nc_cell_diagnostics');
+  assert.ok(diag, 'nc_cell_diagnostics presente');
+  assert.equal(diag.annotations.readOnlyHint, true);
+  assert.equal(TOOLS.length, 10, 'registry tool invariato (10 tool)');
 });
 
 test('nc_send_cell: risolve sender e target dalla directory e restituisce receipt onesto', async () => {
@@ -625,7 +759,7 @@ test('subprocess: handshake + tools/call nc_notify contro server HTTP finto', as
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
 
   const list = await call(2, 'tools/list');
-  assert.equal(list.result.tools.length, 9);
+  assert.equal(list.result.tools.length, 10);
 
   const notif = await call(3, 'tools/call', { name: 'nc_notify', arguments: { title: 'e2e ok' } });
   assert.deepEqual(JSON.parse(notif.result.content[0].text), { delivered: { ui: 1, push: 0 } });
