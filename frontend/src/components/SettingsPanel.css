@@ -199,26 +199,32 @@
 .nc-set-panel .nc-empty { opacity: .5; font-size: 12px; }
 .nc-set-panel .nc-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; display: inline-block; flex: 0 0 8px; }
 .nc-set-panel .nc-dot.on { background: #2e7d32; }
-.nc-set-panel .nc-credits-images { position: relative; display: flex; gap: 16px; justify-content: center; }
+.nc-set-panel .nc-credits-images {
+  position: relative; display: flex; gap: 16px; justify-content: center;
+  align-items: center; min-height: 360px;
+}
 .nc-set-panel .nc-credits-images img { position: relative; z-index: 1; width: 96px; height: auto; image-rendering: pixelated; }
+/* Nudge the right sprite (knight) right a touch so the pair is symmetric about
+   the spiral's center (flex justify-center keeps the midpoint on the portal). */
+.nc-set-panel .nc-credits-images img:last-child { margin-left: 16px; }
 /* Luminous rainbow rays behind the sprites: thin separate spokes (2deg ray +
-   6deg transparent gap) cycling through the rainbow, blended with screen so
-   they glow on the dark panel, a small center hole keeps the characters in a
-   calmer core, rotating clockwise. */
+   13deg transparent gap, 90deg cycle = 24 rays, no seam) cycling through the
+   rainbow, blended with screen so they glow on the dark panel, a center hole
+   keeps the characters in a calmer core, rotating clockwise. */
 .nc-set-panel .nc-credits-portal {
   position: absolute; left: 50%; top: 50%;
   width: 360px; height: 360px;
   border-radius: 50%;
   transform: translate(-50%, -50%);
   background: repeating-conic-gradient(from 0deg,
-    #ff2d55 0 2deg, transparent 2deg 8deg,
-    #ff9500 8deg 10deg, transparent 10deg 16deg,
-    #ffd60a 16deg 18deg, transparent 18deg 24deg,
-    #34c759 24deg 26deg, transparent 26deg 32deg,
-    #00c7be 32deg 34deg, transparent 34deg 40deg,
-    #5e5ce6 40deg 42deg, transparent 42deg 48deg);
-  -webkit-mask: radial-gradient(closest-side, transparent 13%, #000 15% 90%, transparent 96%);
-  mask: radial-gradient(closest-side, transparent 13%, #000 15% 90%, transparent 96%);
+    #ff2d55 0 2deg, transparent 2deg 15deg,
+    #ff9500 15deg 17deg, transparent 17deg 30deg,
+    #ffd60a 30deg 32deg, transparent 32deg 45deg,
+    #34c759 45deg 47deg, transparent 47deg 60deg,
+    #00c7be 60deg 62deg, transparent 62deg 75deg,
+    #5e5ce6 75deg 77deg, transparent 77deg 90deg);
+  -webkit-mask: radial-gradient(closest-side, transparent 30%, #000 34% 88%, transparent 94%);
+  mask: radial-gradient(closest-side, transparent 30%, #000 34% 88%, transparent 94%);
   animation: nc-portal-spin 6s linear infinite;
   filter: drop-shadow(0 0 18px rgba(120, 200, 255, .5));
   mix-blend-mode: screen;
@@ -248,7 +254,6 @@
   align-items: center;
   text-align: center;
   gap: 18px;
-  padding-top: 6vh;
 }
 .nc-set-panel .nc-credits .nc-set-info {
   font-family: 'Press Start 2P', monospace;
