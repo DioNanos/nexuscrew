@@ -745,6 +745,7 @@ function CreditsTab() {
   return (
     <div className="nc-set-tab nc-credits">
       <div className="nc-credits-images">
+        <div className="nc-credits-portal" aria-hidden="true" />
         <img src="/credits/dwarf.png" alt="dwarf" />
         <img src="/credits/knight.png" alt="knight" />
       </div>

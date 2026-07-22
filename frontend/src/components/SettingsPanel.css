@@ -199,8 +199,34 @@
 .nc-set-panel .nc-empty { opacity: .5; font-size: 12px; }
 .nc-set-panel .nc-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; display: inline-block; flex: 0 0 8px; }
 .nc-set-panel .nc-dot.on { background: #2e7d32; }
-.nc-set-panel .nc-credits-images { display: flex; gap: 16px; justify-content: center; }
-.nc-set-panel .nc-credits-images img { width: 96px; height: auto; image-rendering: pixelated; }
+.nc-set-panel .nc-credits-images { position: relative; display: flex; gap: 16px; justify-content: center; }
+.nc-set-panel .nc-credits-images img { position: relative; z-index: 1; width: 96px; height: auto; image-rendering: pixelated; }
+/* Luminous rainbow vortex behind the sprites: thin hard-stop bands (retro
+   pixel feel) blended with screen so it glows on the dark panel, masked to a
+   ring so the characters sit in the calmer center, rotating clockwise. */
+.nc-set-panel .nc-credits-portal {
+  position: absolute; left: 50%; top: 50%;
+  width: 340px; height: 340px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background:
+    radial-gradient(closest-side, rgba(255,255,255,.95) 0%, rgba(255,255,255,0) 40%),
+    repeating-conic-gradient(from 0deg,
+      #ff2d55 0 9deg, #ff9500 9deg 18deg, #ffd60a 18deg 27deg,
+      #34c759 27deg 36deg, #00c7be 36deg 45deg, #5e5ce6 45deg 54deg);
+  -webkit-mask: radial-gradient(closest-side, transparent 36%, #000 40% 70%, transparent 73%);
+  mask: radial-gradient(closest-side, transparent 36%, #000 40% 70%, transparent 73%);
+  animation: nc-portal-spin 4.5s linear infinite;
+  filter: drop-shadow(0 0 22px rgba(120, 200, 255, .5));
+  mix-blend-mode: screen;
+  z-index: 0;
+  opacity: .95;
+  pointer-events: none;
+}
+@keyframes nc-portal-spin {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to   { transform: translate(-50%, -50%) rotate(360deg); }
+}
 
 /* Credits tab: sprites + text centered, retro pixel font (self-hosted woff2). */
 @font-face {
@@ -219,6 +245,7 @@
   align-items: center;
   text-align: center;
   gap: 18px;
+  padding-top: 6vh;
 }
 .nc-set-panel .nc-credits .nc-set-info {
   font-family: 'Press Start 2P', monospace;
