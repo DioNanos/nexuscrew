@@ -167,7 +167,21 @@ describe('ComposerBar persistence and history', () => {
     fireEvent.click(screen.getByRole('button', { name: 'input history and size' }));
     fireEvent.click(screen.getByRole('menuitem', { name: /reusable prompt/ }));
     await waitFor(() => expect(textarea().value).toBe('reusable prompt'));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(submitText).not.toHaveBeenCalled();
+    expect(document.activeElement).not.toBe(textarea());
+  });
+
+  it('expands the composer from history tools without focusing the textarea', async () => {
+    renderComposer();
+    const input = textarea();
+    expect(document.activeElement).not.toBe(input);
+
+    fireEvent.click(screen.getByRole('button', { name: 'input history and size' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'expand input' }));
+    await waitFor(() => expect(input.rows).toBe(8));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(document.activeElement).not.toBe(input);
   });
 
   it('accepts only a newer cross-tab draft for the same cell', async () => {
@@ -218,6 +232,31 @@ describe('ComposerBar persistence and history', () => {
     } finally {
       if (oldSpeech) Object.defineProperty(window, 'SpeechRecognition', oldSpeech); else delete window.SpeechRecognition;
       if (oldVk) Object.defineProperty(navigator, 'virtualKeyboard', oldVk); else delete navigator.virtualKeyboard;
+    }
+  });
+
+  it('submits dictated text without focusing the textarea or opening the virtual keyboard', async () => {
+    const submitText = vi.fn(async () => true);
+    const hide = vi.fn();
+    const oldVk = Object.getOwnPropertyDescriptor(navigator, 'virtualKeyboard');
+    Object.defineProperty(navigator, 'virtualKeyboard', { configurable: true, value: { hide } });
+    try {
+      renderComposer({ submitText });
+      const input = textarea();
+      fireEvent.change(input, { target: { value: 'dictated text' } });
+      expect(document.activeElement).not.toBe(input);
+
+      const send = document.querySelector('button.go');
+      fireEvent.pointerDown(send);
+      fireEvent.click(send);
+
+      await waitFor(() => expect(submitText).toHaveBeenCalledWith('dictated text'));
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(hide).toHaveBeenCalledOnce();
+      expect(document.activeElement).not.toBe(input);
+    } finally {
+      if (oldVk) Object.defineProperty(navigator, 'virtualKeyboard', oldVk);
+      else delete navigator.virtualKeyboard;
     }
   });
 
