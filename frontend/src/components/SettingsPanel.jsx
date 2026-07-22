@@ -742,12 +742,20 @@ function SystemTab({ token, settings, readonly, refresh }) {
 }
 
 function CreditsTab() {
+  const audioRef = useRef(null);
+  // Autoplay the loop when the tab opens; pause on unmount so leaving the tab
+  // silences it immediately. The <audio loop> handles repetition natively.
+  useEffect(() => {
+    audioRef.current?.play().catch(() => {}); // autoplay may be blocked w/o gesture
+    return () => { audioRef.current?.pause(); };
+  }, []);
   return (
     <div className="nc-set-tab nc-credits">
       <div className="nc-credits-images">
         <img src="/credits/dwarf.png" alt="dwarf" />
         <img src="/credits/knight.png" alt="knight" />
       </div>
+      <audio ref={audioRef} src="/credits/dungeon-loop.mp3" loop />
       <div className="nc-set-info">{t('credits-attribution')}</div>
     </div>
   );
