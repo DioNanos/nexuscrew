@@ -742,20 +742,12 @@ function SystemTab({ token, settings, readonly, refresh }) {
 }
 
 function CreditsTab() {
-  const audioRef = useRef(null);
-  // Autoplay the loop when the tab opens; pause on unmount so leaving the tab
-  // silences it immediately. The <audio loop> handles repetition natively.
-  useEffect(() => {
-    audioRef.current?.play().catch(() => {}); // autoplay may be blocked w/o gesture
-    return () => { audioRef.current?.pause(); };
-  }, []);
   return (
     <div className="nc-set-tab nc-credits">
       <div className="nc-credits-images">
         <img src="/credits/dwarf.png" alt="dwarf" />
         <img src="/credits/knight.png" alt="knight" />
       </div>
-      <audio ref={audioRef} src="/credits/dungeon-loop.mp3" loop />
       <div className="nc-set-info">{t('credits-attribution')}</div>
       <div className="nc-credits-copy">{t('credits-copyright')}</div>
     </div>
@@ -771,6 +763,15 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   const [loadErr, setLoadErr] = useState(null);
   const [aliasRevision, setAliasRevision] = useState(0);
   const roster = useNodes(token, true, aliasRevision);
+  // Credits loop audio lives on the panel (persistent element), started inside
+  // the tab-click gesture so mobile autoplay is allowed; paused when leaving
+  // the tab or closing the panel.
+  const audioRef = useRef(null);
+  const selectTab = (k) => {
+    setTab(k);
+    if (k === 'credits') audioRef.current?.play().catch(() => {});
+    else audioRef.current?.pause();
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -789,6 +790,9 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  // Closing the panel stops the credits loop.
+  useEffect(() => () => audioRef.current?.pause(), []);
 
   // Stato READONLY dal server (config effettiva, env inclusa): mutanti disabilitati.
   useEffect(() => {
@@ -816,7 +820,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
         <div className="nc-set-tabs">
           {['nodes', 'fleet', 'diagnostics', 'system', 'credits'].map((k) => (
             <button key={k} type="button" className={`nc-set-tabbtn${tab === k ? ' on' : ''}`}
-              onClick={() => setTab(k)}>{t(`tab-${k}`)}</button>
+              onClick={() => selectTab(k)}>{t(`tab-${k}`)}</button>
           ))}
         </div>
 
@@ -830,6 +834,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
           {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} refresh={refresh} />}
           {tab === 'credits' && <CreditsTab />}
         </div>
+        <audio ref={audioRef} src="/credits/dungeon-loop.mp3" loop preload="auto" />
       </div>
     </div>
   );

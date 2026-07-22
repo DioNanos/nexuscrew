@@ -210,6 +210,9 @@
   font-display: swap;
   src: url('/fonts/press-start-2p.woff2') format('woff2');
 }
+/* Only the Credits tab centers its content vertically in the body; other tabs
+   keep the top-aligned column flow (:has is scoped, no effect elsewhere). */
+.nc-set-body:has(.nc-credits) { display: flex; flex-direction: column; }
 .nc-set-panel .nc-credits {
   flex: 1;
   justify-content: center;
