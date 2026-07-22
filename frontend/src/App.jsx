@@ -10,6 +10,7 @@ import GridView from './components/GridView.jsx';
 import PowerSheet from './components/PowerSheet.jsx';
 import DeckBar from './components/DeckBar.jsx';
 import SettingsPanel from './components/SettingsPanel.jsx';
+import PowerUp from './components/PowerUp.jsx';
 import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import {
@@ -24,6 +25,7 @@ import {
 import { deckId, refWithOwner, resolveLayoutForViewer } from './lib/deck-federation.js';
 import {t} from './lib/i18n.js';
 import { useLang } from './hooks/useLang.js';
+import { useKobbUI } from './hooks/useKobbUI.js';
 import { useNodes } from './hooks/useNodes.js';
 import { useDecks } from './hooks/useDecks.js';
 import { reportServerVersions } from './lib/sw-update.js';
@@ -115,6 +117,7 @@ function useDesktop() {
 // risolve al primo ciclo. Il titolo visibile deriva sempre da `cell.cell`.
 export function SingleView({ session, node, ownerId, cellName, token, readonly = false, onBack }) {
   useLang(); // re-render allo switch lingua
+  const [kobbUI] = useKobbUI(); // Kobbfiguration: reduced KeyBar when on
   const [showFiles, setShowFiles] = useState(false);
   // Su touch il composer è aperto di default (l'IME Gboard corrompe l'input in xterm).
   const [showComposer, setShowComposer] = useState(() => window.matchMedia('(pointer: coarse)').matches);
@@ -201,7 +204,7 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
           selectionMode={selectionMode} onSelectionModeChange={setSelectionMode} />
       </div>
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
-        ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} selectionMode={selectionMode} onSelectionMode={setSelectionMode} />
+        ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} selectionMode={selectionMode} onSelectionMode={setSelectionMode} kobbUI={kobbUI} />
       {showComposer && (
         <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId} />
       )}
@@ -297,6 +300,15 @@ export default function App() {
   const openSettings = (tab = 'nodes', newCell = false, location = '') => {
     setSettingsTab(tab); setSettingsNewCell(newCell); setSettingsLocation(location); setSettingsOpen(true);
   };
+  // Kobbfiguration (opt-in UI personalizations) + the POWER UP! flourish that
+  // fires once when it flips on.
+  const [kobbUI] = useKobbUI();
+  const [powerUpAt, setPowerUpAt] = useState(0);
+  const prevKobb = useRef(kobbUI);
+  useEffect(() => {
+    if (kobbUI && !prevKobb.current) setPowerUpAt(Date.now());
+    prevKobb.current = kobbUI;
+  }, [kobbUI]);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [pairDefaults, setPairDefaults] = useState({
     deviceDefault: '', localNodeId: '', localNameDefault: '',
@@ -515,6 +527,7 @@ export default function App() {
   const sidebarVisible = isMainDeck || !sideHidden;
   return (
     <div className="nc-workspace">
+      {powerUpAt > 0 && <PowerUp key={powerUpAt} />}
       {sidebarVisible && (
         <Sidebar
           sessions={dSessions}

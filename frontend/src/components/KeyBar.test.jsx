@@ -68,3 +68,23 @@ describe('KeyBar reduced view', () => {
     ta.remove();
   });
 });
+
+describe('KeyBar original layout (kobbUI off)', () => {
+  it('shows the pre-redesign two-row layout: no expand toggle, ESC/HOME/END present, ⌨ in row 2', () => {
+    renderKeyBar({ kobbUI: false });
+    expect(document.querySelector('button.expand')).toBeNull();
+    expect(document.querySelector('.nc-keybar-arrows')).toBeNull();
+    expect(document.querySelectorAll('.nc-keybar .row').length).toBe(2);
+    expect(document.querySelector('.nc-keybar').textContent).toContain('ESC');
+    expect(document.querySelector('.nc-keybar').textContent).toContain('HOME');
+    expect(document.querySelector('.nc-keybar').textContent).toContain('PGDN');
+    // the blur-on-send fix still applies in the original layout
+    const ta = document.createElement('textarea');
+    document.body.appendChild(ta);
+    ta.focus();
+    const up = [...document.querySelectorAll('.nc-keybar .row button')].find((b) => b.textContent === '↑');
+    fireEvent.mouseDown(up);
+    expect(document.activeElement).not.toBe(ta);
+    ta.remove();
+  });
+});

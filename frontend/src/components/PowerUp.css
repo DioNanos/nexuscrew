@@ -1,0 +1,31 @@
+/* "POWER UP!" flourish: fixed overlay, big pixel text with a 3D extrusion,
+   a pop-in then a faint-out ("svenimento": fade + drop + blur) over 3s. */
+.nc-powerup {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+  animation: nc-powerup-faint 3s ease-in forwards;
+}
+.nc-powerup-text {
+  font-family: 'Press Start 2P', monospace;
+  font-size: clamp(34px, 11vw, 72px);
+  letter-spacing: 2px;
+  color: #ffd60a;
+  /* 3D extrusion: stacked dark shadows offset down-right, plus a soft glow. */
+  text-shadow:
+    2px 0 0 #b8860b, 4px 0 0 #8a6500,
+    0 2px 0 #6e4f00, 0 4px 0 #5a4100,
+    3px 3px 0 #6e4f00, 6px 6px 0 #4a3500,
+    0 0 18px rgba(255, 214, 10, .55);
+  animation: nc-powerup-pop 0.35s cubic-bezier(.2,1.4,.4,1) both;
+}
+@keyframes nc-powerup-pop {
+  0%   { transform: scale(.4); opacity: 0; }
+  70%  { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes nc-powerup-faint {
+  0%   { opacity: 1; }
+  60%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(40px); filter: blur(5px); }
+}

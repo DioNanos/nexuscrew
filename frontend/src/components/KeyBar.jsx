@@ -14,7 +14,9 @@ const NAV = [
   { label: 'PGUP', seq: ESC + '[5~' }, { label: 'PGDN', seq: ESC + '[6~' },
 ];
 
-export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyboard, selectionMode = false, onSelectionMode }) {
+export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyboard, selectionMode = false, onSelectionMode, kobbUI = true }) {
+  // kobbUI defaults to true so direct renders/tests keep the redesign; the app
+  // passes the store value (default false = original 2-row UI, opt-in).
   const [copy, setCopy] = useState(false);
   const [menu, setMenu] = useState(false);
   const [altArmed, setAltArmed] = useState(false);
@@ -76,6 +78,41 @@ export default function KeyBar({ send, action, ctrlArmed = false, onCtrl, onKeyb
     <button key="menu" className={menu ? 'armed' : ''}
       onMouseDown={(e) => { e.preventDefault(); setMenu((v) => !v); }}>☰</button>
   );
+
+  if (!kobbUI) {
+    // Original pre-redesign layout: always two full rows, no expand toggle, ⌨
+    // in row 2, no arrow group. The blurActive/emit/Bk/Ba fixes still apply
+    // (they live in the shared helpers), so reverting the layout does NOT
+    // revert the soft-keyboard-hide fix.
+    return (
+      <div className="nc-keybar termux">
+        {menuEl}
+        <div className="row">
+          {Bk('ESC', ESC)}
+          {menuBtn}
+          {Bk('/', '/')}
+          {Bk('—', '-')}
+          {Bk('HOME', ESC + '[H')}
+          {Bk('↑', ESC + '[A')}
+          {Bk('END', ESC + '[F')}
+          {Bk('PGUP', ESC + '[5~')}
+        </div>
+        <div className="row">
+          {Bk('⇥', '\t')}
+          <button key="kbd"
+            onMouseDown={(e) => { e.preventDefault(); if (onKeyboard) onKeyboard(); }}>⌨</button>
+          <button key="ctrl" className={ctrlArmed ? 'armed' : ''}
+            onMouseDown={(e) => { e.preventDefault(); if (onCtrl) onCtrl(); }}>CTRL</button>
+          <button key="alt" className={altArmed ? 'armed' : ''}
+            onMouseDown={(e) => { e.preventDefault(); setAltArmed((v) => !v); }}>ALT</button>
+          {Bk('←', ESC + '[D')}
+          {Bk('↓', ESC + '[B')}
+          {Bk('→', ESC + '[C')}
+          {Bk('PGDN', ESC + '[6~')}
+        </div>
+      </div>
+    );
+  }
 
   if (!expanded) {
     // Vista ridotta: a sinistra toggle + ☰; a destra le frecce ↑↓←→ più

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
+import { useKobbUI } from '../hooks/useKobbUI.js';
 import {
   apiFetch, getSettings, getPeers, saveConfig, rotateToken,
   removeNode, updateNode, nodeAction, setNodeShare, regenService, createPeerInvite, setNodeVisibility,
@@ -599,6 +600,20 @@ export function DiagnosticsTab({ token, roster = [], readonly }) {
   );
 }
 
+// Opt-in for the Kobb UI personalizations (Credits tab + reduced KeyBar).
+// Client-only pref (localStorage); ticking it flips both live, no reload.
+function KobbfigurationRow() {
+  const [kobbUI, setKobbUI] = useKobbUI();
+  return (
+    <div className="nc-set-form">
+      <label className="nc-check">
+        <input type="checkbox" checked={!!kobbUI} onChange={(e) => setKobbUI(e.target.checked)} />
+        <span><b>{t('kobb-ui')}</b><small>{t('kobb-ui-help')}</small></span>
+      </label>
+    </div>
+  );
+}
+
 // --- scheda SISTEMA ------------------------------------------------------------
 function SystemTab({ token, settings, readonly, refresh }) {
   const [err, setErr] = useState(null);
@@ -715,6 +730,8 @@ function SystemTab({ token, settings, readonly, refresh }) {
 
       <PushRow token={token} readonly={readonly} />
 
+      <KobbfigurationRow />
+
       <div className="nc-set-form">
         <div className="nc-sheet-label">{t('composer-clear-data')}</div>
         <small className="nc-set-hint">{t('composer-clear-data-help')}</small>
@@ -764,6 +781,9 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   const [loadErr, setLoadErr] = useState(null);
   const [aliasRevision, setAliasRevision] = useState(0);
   const roster = useNodes(token, true, aliasRevision);
+  // Kobbfiguration (opt-in): the Credits tab + reduced KeyBar are personal UI
+  // additions, off by default. Toggling it live re-renders both via the store.
+  const [kobbUI] = useKobbUI();
   // Credits loop audio lives on the panel (persistent element), started inside
   // the tab-click gesture so mobile autoplay is allowed; paused when leaving
   // the tab or closing the panel.
@@ -773,6 +793,9 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
     if (k === 'credits') audioRef.current?.play().catch(() => {});
     else audioRef.current?.pause();
   };
+  // If Kobbfiguration turns off while Credits is open, drop back to System so
+  // the body isn't blank.
+  useEffect(() => { if (!kobbUI && tab === 'credits') setTab('system'); }, [kobbUI, tab]);
 
   const refresh = useCallback(async () => {
     try {
@@ -819,7 +842,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
         {loadErr && <div className="nc-err">{loadErr}</div>}
 
         <div className="nc-set-tabs">
-          {['nodes', 'fleet', 'diagnostics', 'system', 'credits'].map((k) => (
+          {['nodes', 'fleet', 'diagnostics', 'system', ...(kobbUI ? ['credits'] : [])].map((k) => (
             <button key={k} type="button" className={`nc-set-tabbtn${tab === k ? ' on' : ''}`}
               onClick={() => selectTab(k)}>{t(`tab-${k}`)}</button>
           ))}
@@ -833,9 +856,9 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
             targets={roster.map((g) => ({ route: g.route, label: g.label || g.name, status: g.status }))} />}
           {tab === 'diagnostics' && <DiagnosticsTab token={token} roster={roster} readonly={readonly} />}
           {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} refresh={refresh} />}
-          {tab === 'credits' && <CreditsTab />}
+          {kobbUI && tab === 'credits' && <CreditsTab />}
         </div>
-        <audio ref={audioRef} src="/credits/dungeon-loop.mp3" loop preload="auto" />
+        {kobbUI && <audio ref={audioRef} src="/credits/dungeon-loop.mp3" loop preload="auto" />}
       </div>
     </div>
   );
