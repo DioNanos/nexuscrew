@@ -757,6 +757,7 @@ function CreditsTab() {
       </div>
       <audio ref={audioRef} src="/credits/dungeon-loop.mp3" loop />
       <div className="nc-set-info">{t('credits-attribution')}</div>
+      <div className="nc-credits-copy">{t('credits-copyright')}</div>
     </div>
   );
 }

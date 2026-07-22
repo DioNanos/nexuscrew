@@ -201,3 +201,31 @@
 .nc-set-panel .nc-dot.on { background: #2e7d32; }
 .nc-set-panel .nc-credits-images { display: flex; gap: 16px; justify-content: center; }
 .nc-set-panel .nc-credits-images img { width: 96px; height: auto; image-rendering: pixelated; }
+
+/* Credits tab: sprites + text centered, retro pixel font (self-hosted woff2). */
+@font-face {
+  font-family: 'Press Start 2P';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/press-start-2p.woff2') format('woff2');
+}
+.nc-set-panel .nc-credits {
+  flex: 1;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: 18px;
+}
+.nc-set-panel .nc-credits .nc-set-info {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 14px;
+  line-height: 1.8;
+  opacity: .85;
+}
+.nc-set-panel .nc-credits .nc-credits-copy {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 10px;
+  line-height: 1.6;
+  opacity: .6;
+}
