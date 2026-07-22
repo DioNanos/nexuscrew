@@ -2,6 +2,56 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.31 — 2026-07-22 — "Safe Identity"
+
+- **tmux session naming for dotted cell ids.** tmux silently normalizes `.` to `_`
+  in session names, so a cell whose id contains a dot (e.g. `agy.native`) could no
+  longer be targeted by its nominal `cloud-<id>` name. Dotted ids now map
+  deterministically to a dot-free, collision-free session name (`cloud-v2-…`, 55
+  chars); ids without a dot keep the historical `cloud-<id>` name, so the existing
+  sessions are never renamed. The real `tmuxSession` for any cell is always
+  available from `nc_cells` and the Fleet UI — use that rather than guessing
+  `cloud-<Cell>` for dotted ids. Cell launches are now staged (inert placeholder →
+  window-local `remain-on-exit` on `@N` → `respawn-pane` on `%N`) so setup and
+  early-exit diagnostics use stable tmux object IDs. Any pre-existing legacy
+  session is migrated in place via `rename-session -t $N`
+  (preserving the session id and the operator's attach).
+- **Agy as a managed primary client** on Linux and macOS (non-Termux), with auth
+  delegated to Agy's own local login (no credential store read or copied),
+  `standard`/`unsafe` permission policies (`unsafe` adds
+  `--dangerously-skip-permissions`, consistent with the other clients),
+  free-text model selection, and an optional `--prompt-interactive` prompt passed
+  as the last argument. Termux and Windows keep using Agy through `shell.local`
+  with a per-cell `agy` command. Added to existing installs by an idempotent,
+  non-destructive, platform-aware backfill.
+- **Share revocation now converges as authorization, not availability.** Turning
+  Share off persists private intent, withdraws the node from its hub over the
+  still-live private forward, and only then replaces the local tunnel without
+  its reverse channel. Authorized operational discovery (topology, decks and
+  MCP cell directories) removes the owner after the hub acknowledgement, while
+  a merely unreachable node remains visible as stale/offline. Partial failures
+  remain explicit and are retried with bounded, structured boot diagnostics.
+
+- **Selective mobile-UX PR #1 (UI only).** Three client-only behaviours ported
+  onto the 0.8.31 candidate, no merge of PR #1:
+  - **Optional compact KeyBar.** A new `keybarLayout: "full" | "compact"`
+    preference (default `full`) renders a one-row compact bar with an expand
+    toggle that temporarily reveals the exact full key set without rewriting
+    the stored preference; the tall Enter and `showKeybarEnter=false` (no gap)
+    apply to both layouts. Editable in Settings → Input (IT/EN/ES), reset-safe
+    and synced across windows; a layout change never remounts xterm or
+    reconnects its WebSocket.
+  - **Live-DOM composer submit during IME.** Explicit submit reads
+    `textareaRef.current.value`, syncs the React draft and sends the visible
+    text after newline normalization — preserving the empty no-op, the
+    failed-send draft, history, STT and the focus policy.
+  - **Alternate-screen scroll as PageUp/PageDown.** A pure bounded plan routes
+    writable alternate-screen (vim/less/htop) vertical gestures to raw
+    `ESC[5~`/`ESC[6~` PTY input with a page-sized threshold; normal-screen and
+    any readonly terminal keep the server-side `scroll-up`/`scroll-down`
+    actions. Integrated into both wheel and touch paths without weakening
+    double-tap unlock, long-press selection, multi-touch or VirtualKeyboard.
+
 ## 0.8.30 — 2026-07-22 — "Focused Control"
 
 - Makes every owner/node name in the top deck bar an explicit expand/collapse control. Newly seen

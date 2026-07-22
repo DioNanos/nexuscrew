@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Icon from './Icon.jsx';
 import { dismissVirtualKeyboard } from '../lib/virtual-keyboard.js';
 import './KeyBar.css';
@@ -15,11 +15,22 @@ const NAV = [
 
 export default function KeyBar({
   send, action, ctrlArmed = false, onCtrl, onKeyboard, selectionMode = false,
-  onSelectionMode, keepKeyboardClosed = true, showEnter = true,
+  onSelectionMode, keepKeyboardClosed = true, showEnter = true, keybarLayout = 'full',
 }) {
   const [copy, setCopy] = useState(false);
   const [menu, setMenu] = useState(false);
   const [altArmed, setAltArmed] = useState(false);
+  // expand/retract: espansione TEMPORANEA del layout compact al full. E' uno
+  // stato locale — NON riscrive la preferenza keybarLayout (che resta "compact").
+  const [expanded, setExpanded] = useState(false);
+  const compact = keybarLayout === 'compact' && !expanded;
+
+  // Temporary expansion belongs only to the current compact preference. If
+  // Settings switches to full, discard it so a later return to compact starts
+  // compact instead of unexpectedly reopening the full grid.
+  useEffect(() => {
+    if (keybarLayout !== 'compact') setExpanded(false);
+  }, [keybarLayout]);
 
   // ALT sticky: il prossimo tasto della barra esce come ESC+seq (Meta).
   const emit = (seq) => {
@@ -43,6 +54,27 @@ export default function KeyBar({
     <button type="button" key={label} {...press(() => { action(name); setMenu(false); })}>{label}</button>
   );
 
+  const enterKey = showEnter && (
+    <button type="button" className="nc-enter-key" aria-label="ENTER" title="ENTER"
+      {...press(() => emit('\r'))}>
+      <Icon name="enter" size={24} />
+    </button>
+  );
+
+  const menuPopup = menu && (
+    <div className="nc-keymenu">
+      {Ba('←WIN', 'prev-window')}
+      {Ba('WIN→', 'next-window')}
+      {Ba('⬅PANE', 'pane-left')}
+      {Ba('PANE➡', 'pane-right')}
+      {Bk('SCROLL', PREFIX + '[', () => { setCopy(true); setMenu(false); })}
+      <button type="button" className={selectionMode ? 'armed' : ''}
+        {...press(() => { onSelectionMode?.(!selectionMode); setMenu(false); })}>SELECT</button>
+      {Bk('⌃C', '\x03', () => setMenu(false))}
+      {Bk('DETACH', PREFIX + 'd', () => setMenu(false))}
+    </div>
+  );
+
   if (copy) {
     return (
       <div className="nc-keybar copy">
@@ -52,22 +84,50 @@ export default function KeyBar({
       </div>
     );
   }
-  return (
-    <div className="nc-keybar termux">
-      {menu && (
-        <div className="nc-keymenu">
-          {Ba('←WIN', 'prev-window')}
-          {Ba('WIN→', 'next-window')}
-          {Ba('⬅PANE', 'pane-left')}
-          {Ba('PANE➡', 'pane-right')}
-          {Bk('SCROLL', PREFIX + '[', () => { setCopy(true); setMenu(false); })}
-          <button type="button" className={selectionMode ? 'armed' : ''}
-            {...press(() => { onSelectionMode?.(!selectionMode); setMenu(false); })}>SELECT</button>
-          {Bk('⌃C', '\x03', () => setMenu(false))}
-          {Bk('DETACH', PREFIX + 'd', () => setMenu(false))}
+
+  // Compact mode: una sola riga. Il primo tasto e' l'expand toggle che mostra
+  // temporaneamente il layout full senza toccare la preferenza salvata.
+  if (compact) {
+    return (
+      <div className="nc-keybar termux">
+        {menuPopup}
+        <div className={`nc-keygrid compact${showEnter ? '' : ' no-enter'}`}>
+          <div className="nc-keyrows">
+            <div className="row">
+              <button type="button" key="expand" aria-label="expand keybar" title="expand"
+                {...press(() => setExpanded(true))}><Icon name="chevronUp" size={20} /></button>
+              <button type="button" key="kbd" {...press(() => { if (onKeyboard) onKeyboard(); })}>⌨</button>
+              <button type="button" key="menu" className={menu ? 'armed' : ''}
+                {...press(() => setMenu((v) => !v))}>☰</button>
+              {Bk('↑', ESC + '[A')}
+              {Bk('↓', ESC + '[B')}
+              {Bk('←', ESC + '[D')}
+              {Bk('→', ESC + '[C')}
+              {Bk('PGUP', ESC + '[5~')}
+              {Bk('PGDN', ESC + '[6~')}
+            </div>
+          </div>
+          {enterKey}
         </div>
-      )}
-      <div className={`nc-keygrid${showEnter ? '' : ' no-enter'}`}>
+      </div>
+    );
+  }
+
+  // Full layout: invariato di default. Quando keybarLayout e' "compact" ma si e'
+  // espanso temporaneamente, si rende comunque il layout full ESATTO e si
+  // aggiunge un tasto retract a sinistra (colonna dedicata, non nei tasti) per
+  // tornare alla riga compatta senza riscrivere la preferenza.
+  const isExpandedFromCompact = keybarLayout === 'compact' && expanded;
+  const retractKey = isExpandedFromCompact && (
+    <button type="button" className="nc-retract-key" aria-label="retract keybar" title="retract"
+      {...press(() => setExpanded(false))}><Icon name="chevronDown" size={20} /></button>
+  );
+
+  return (
+    <div className={`nc-keybar termux${isExpandedFromCompact ? ' expanded' : ''}`}>
+      {menuPopup}
+      <div className={`nc-keygrid${showEnter ? '' : ' no-enter'}${isExpandedFromCompact ? ' expanded' : ''}`}>
+        {retractKey}
         <div className="nc-keyrows">
           <div className="row">
             {Bk('ESC', ESC)}
@@ -93,12 +153,7 @@ export default function KeyBar({
             {Bk('PGDN', ESC + '[6~')}
           </div>
         </div>
-        {showEnter && (
-          <button type="button" className="nc-enter-key" aria-label="ENTER" title="ENTER"
-            {...press(() => emit('\r'))}>
-            <Icon name="enter" size={24} />
-          </button>
-        )}
+        {enterKey}
       </div>
     </div>
   );

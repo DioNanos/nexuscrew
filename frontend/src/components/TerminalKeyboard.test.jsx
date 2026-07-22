@@ -2,7 +2,7 @@ import React from 'react';
 import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const fixture = vi.hoisted(() => ({ instances: [], focusCount: 0, closeCount: 0 }));
+const fixture = vi.hoisted(() => ({ instances: [], focusCount: 0, closeCount: 0, actions: [], inputs: [] }));
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
@@ -29,7 +29,9 @@ vi.mock('@xterm/xterm', () => ({
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('../lib/ws-client.js', () => ({
   openTerminalSocket: () => ({
-    sendInput: () => true, action() {}, resize() {}, focus() {}, isReady: () => true,
+    sendInput: (seq) => { fixture.inputs.push(seq); return true; },
+    action: (name) => { fixture.actions.push(name); },
+    resize() {}, focus() {}, isReady: () => true,
     close() { fixture.closeCount += 1; },
   }),
 }));
@@ -57,6 +59,7 @@ function tap(host, x = 30, y = 40) {
 
 beforeEach(() => {
   fixture.instances.length = 0; fixture.focusCount = 0; fixture.closeCount = 0;
+  fixture.actions.length = 0; fixture.inputs.length = 0;
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-07-22T12:00:00Z'));
 });
 
@@ -256,6 +259,101 @@ describe('terminal gesture never remounts xterm nor reconnects the websocket', (
       </div>,
     );
     tap(host); tap(host);
+    expect(fixture.instances).toHaveLength(1);
+    expect(fixture.closeCount).toBe(0);
+  });
+});
+
+describe('terminal scroll plan integration', () => {
+  it('normal screen scroll uses server-side scroll-up/scroll-down actions', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    expect(term.buffer.active.type).toBeUndefined(); // normal screen
+    // touch: finger down (clientY increases) -> older history -> scroll-up
+    fireEvent.touchStart(host, { touches: [{ clientX: 30, clientY: 40 }] });
+    fireEvent.touchMove(host, { touches: [{ clientX: 30, clientY: 64 }] }); // +24 = STEP
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 30, clientY: 64 }] });
+    // wheel: deltaY < 0 (scroll up gesture) -> scroll-up
+    fireEvent.wheel(host, { deltaY: -24 });
+    // wheel: deltaY > 0 (scroll down gesture) -> scroll-down
+    fireEvent.wheel(host, { deltaY: 24 });
+    expect(fixture.actions).toEqual(expect.arrayContaining(['scroll-up', 'scroll-up', 'scroll-down']));
+    expect(fixture.inputs).toEqual([]); // no PTY input on the normal screen
+  });
+
+  it('writable alternate-screen scroll sends raw PageUp/PageDown PTY input', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    term.buffer.active.type = 'alternate'; // vim/less/htop alt buffer
+    // page-sized threshold: stub the host height so one viewport = one page step
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ height: 300, width: 400, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
+    // touch finger down a full page (300px) -> one PageUp
+    fireEvent.touchStart(host, { touches: [{ clientX: 30, clientY: 40 }] });
+    fireEvent.touchMove(host, { touches: [{ clientX: 30, clientY: 340 }] });
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 30, clientY: 340 }] });
+    // wheel down a full page (deltaY +300) -> one PageDown
+    fireEvent.wheel(host, { deltaY: 300 });
+    expect(fixture.inputs).toEqual(['\x1b[5~', '\x1b[6~']);
+    expect(fixture.actions).toEqual([]); // no server-side action in page mode
+  });
+
+  it('does not reinterpret an alternate-screen page remainder as line ticks after a mode change', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    term.buffer.active.type = 'alternate';
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ height: 300, width: 400, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
+    fireEvent.wheel(host, { deltaY: -290 }); // page remainder: +290, no action
+    expect(fixture.inputs).toEqual([]);
+    term.buffer.active.type = 'normal';
+    fireEvent.wheel(host, { deltaY: -1 }); // current line delta only, still below 24px
+    expect(fixture.actions).toEqual([]);
+    expect(fixture.inputs).toEqual([]);
+  });
+
+  it('bounds a huge wheel event to a small fixed action burst', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    fireEvent.wheel(host, { deltaY: -24_000_007 });
+    expect(fixture.actions).toHaveLength(8);
+    fireEvent.wheel(host, { deltaY: -17 }); // 7px remainder + 17px = one new step
+    expect(fixture.actions).toHaveLength(9);
+  });
+
+  it('readonly alternate-screen never sends PTY input and keeps server actions', () => {
+    const view = render(
+      <div style={{ width: 400, height: 300 }}>
+        <Terminal session="cloud-Dev" token="t" readonly keyboardGesture="double-tap" {...stableRefs} />
+      </div>,
+    );
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    term.buffer.active.type = 'alternate';
+    fireEvent.wheel(host, { deltaY: -24 });
+    fireEvent.touchStart(host, { touches: [{ clientX: 30, clientY: 40 }] });
+    fireEvent.touchMove(host, { touches: [{ clientX: 30, clientY: 64 }] });
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 30, clientY: 64 }] });
+    expect(fixture.inputs).toEqual([]); // readonly: never PTY input
+    expect(fixture.actions.filter((name) => name === 'scroll-up').length).toBeGreaterThan(0);
+  });
+
+  it('preserves double-tap unlock, long-press selection and multitouch while scrolling', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    // a scroll gesture (move beyond long-press radius) does not unlock the keyboard
+    fireEvent.touchStart(host, { touches: [{ clientX: 30, clientY: 40 }] });
+    fireEvent.touchMove(host, { touches: [{ clientX: 30, clientY: 90 }] }); // drag > 32px
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 30, clientY: 90 }] });
+    expect(term.textarea.inputMode).toBe('none');
+    expect(fixture.focusCount).toBe(0);
+    // a two-finger touch during scroll cancels without emitting page input
+    term.buffer.active.type = 'alternate';
+    fireEvent.touchStart(host, { touches: [{ clientX: 10, clientY: 10 }, { clientX: 50, clientY: 50 }] });
+    fireEvent.touchEnd(host, { touches: [{ clientX: 50, clientY: 50 }], changedTouches: [{ clientX: 10, clientY: 10 }] });
+    expect(fixture.inputs).toEqual([]);
     expect(fixture.instances).toHaveLength(1);
     expect(fixture.closeCount).toBe(0);
   });

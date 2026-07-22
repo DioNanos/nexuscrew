@@ -79,7 +79,16 @@ case "$cmd" in
     env > "$CAP/launch-env.txt" 2>/dev/null || true
     printf '%s\\t' "new-session" >> "$LOG"; printf '%s\\t' "$@" >> "$LOG"; printf '\\n' >> "$LOG"
     if [ -s "$POISON" ]; then cat "$POISON" >&2; exit 2; fi
-    [ "$(cat "$PANE" 2>/dev/null)" = "1" ] && printf '%%42\n'
+    # il runtime passa sempre -P -F '#{session_id}\t#{window_id}\t#{pane_id}':
+    # stampa i 3 ID quando il flag -P e' presente (come tmux reale).
+    found_P=0; for a in "$@"; do [ "$a" = "-P" ] && found_P=1; done
+    [ "$found_P" = "1" ] && printf '%s\\t%s\\t%s\\n' '$1' '@1' '%42'
+    exit 0 ;;
+  set-option)
+    printf '%s\\t' "set-option" >> "$LOG"; printf '%s\\t' "$@" >> "$LOG"; printf '\\n' >> "$LOG"
+    exit 0 ;;
+  respawn-pane)
+    printf '%s\\t' "respawn-pane" >> "$LOG"; printf '%s\\t' "$@" >> "$LOG"; printf '\\n' >> "$LOG"
     exit 0 ;;
   display-message)
     if [ "$(cat "$ALIVE" 2>/dev/null)" = "0" ]; then
@@ -116,19 +125,23 @@ esac
 }
 function shellQ(p) { return `"${p.replace(/(["$`\\])/g, '\\$1')}"`; }
 
-// Parsa il log tmux: ritorna array di righe; per 'new-session' anche l'argv (token tab-sep).
+// Parsa il log tmux: ritorna array di righe; per 'new-session' anche l'argv
+// (token tab-sep) e una mappa byCmd con l'argv di ogni comando registrato
+// (new-session, set-option, respawn-pane). L'argv e' senza il nome comando.
 function readLog(w) {
   const raw = fs.existsSync(w.log) ? fs.readFileSync(w.log, 'utf8') : '';
   const lines = raw.split('\n').filter(Boolean);
   const nsArgv = [];
+  const byCmd = {};
   for (const line of lines) {
-    if (line.startsWith('new-session\t')) {
-      const toks = line.split('\t').filter((t) => t !== '');
-      // toks[0] === 'new-session'; gli altri sono gli argv reali (1° = 'new-session' word gia')
-      nsArgv.push(toks.slice(1).filter((t) => t !== 'new-session'));
-    }
+    const idx = line.indexOf('\t');
+    if (idx < 0) continue;
+    const cmd = line.slice(0, idx);
+    const argv = line.slice(idx + 1).split('\t').filter((t) => t !== '');
+    if (cmd === 'new-session') nsArgv.push(argv.filter((t) => t !== 'new-session'));
+    (byCmd[cmd] ||= []).push(argv);
   }
-  return { lines, nsArgv };
+  return { lines, nsArgv, byCmd };
 }
 
 test('Shell backfill e command: login interattivo -lic, readiness e cella attiva', async () => {
@@ -167,9 +180,15 @@ test('Shell backfill e command: login interattivo -lic, readiness e cella attiva
     assert.equal(issued.command, shell);
     assert.deepEqual(issued.args, ['-lic', defs.cells[0].commands['shell.local']]);
     assert.equal(issued.supervise.enabled, false);
-    const argv = readLog(w).nsArgv[0];
-    assert.equal(argv.includes(defs.cells[0].commands['shell.local']), false);
-    assert.equal(argv.includes('remain-on-exit'), true);
+    const { nsArgv, byCmd } = readLog(w);
+    // il command Shell reale non appare in nessun argv tmux (va via broker)
+    assert.equal(nsArgv[0].includes(defs.cells[0].commands['shell.local']), false);
+    const respawn = byCmd['respawn-pane'] && byCmd['respawn-pane'][0];
+    assert.ok(respawn, 'respawn-pane lanciato');
+    assert.equal(respawn.includes(defs.cells[0].commands['shell.local']), false, 'command shell assente dal respawn');
+    // remain-on-exit armato window-local da set-option (non piu' nel new-session)
+    const setOpt = (byCmd['set-option'] || []).find((a) => a.includes('remain-on-exit'));
+    assert.ok(setOpt && setOpt.includes('on'), 'remain-on-exit on via set-option');
     await fleet.close();
   } finally { w.cleanup(); }
 });
@@ -292,13 +311,24 @@ test('up flag-mode: tmux starts one-shot helper; no secret argv and no paste', a
     assert.equal(res.ok, true);
     assert.equal(res.prompt, null, 'flag mode non inietta via paste');
 
-    const { lines, nsArgv } = readLog(w);
+    const { lines, nsArgv, byCmd } = readLog(w);
     assert.ok(lines.some((l) => l.startsWith('new-session\t')), 'new-session lanciato');
-    const argv = nsArgv[0];
-    assert.ok(argv.includes(process.execPath) && argv.some((x) => /cell-exec\.js$/.test(x)), 'secure helper launched directly');
-    assert.ok(argv.includes('--socket') && argv.includes('--nonce'), 'one-shot broker coordinates launch');
-    assert.equal(argv.includes('-e'), false, 'tmux session env does not carry provider keys');
-    assert.equal(argv.join(' ').includes('sk-x'), false, 'secret absent from argv');
+    // Avvio staged: new-session crea il pane col placeholder inerte (cell-hold),
+    // NON col child; il command/env/prompt reale resta fuori dall'argv tmux.
+    const nsArgvFirst = nsArgv[0];
+    assert.ok(nsArgvFirst.includes(process.execPath) && nsArgvFirst.some((x) => /cell-hold\.js$/.test(x)), 'placeholder cell-hold nel new-session');
+    assert.equal(nsArgvFirst.includes('-e'), false, 'tmux session env does not carry provider keys');
+    assert.equal(nsArgvFirst.join(' ').includes('sk-x'), false, 'secret absent from new-session argv');
+    // remain-on-exit e' armato window-local da set-option PRIMA del child (su @N)
+    const setOpt = (byCmd['set-option'] || []).find((a) => a.includes('remain-on-exit'));
+    assert.ok(setOpt && setOpt.includes('on') && setOpt.includes('@1'), 'remain-on-exit on window-local @N prima del child');
+    // il vero child (cell-exec via broker) e' lanciato da respawn-pane sul %N esatto
+    const respawn = byCmd['respawn-pane'] && byCmd['respawn-pane'][0];
+    assert.ok(respawn, 'respawn-pane lanciato');
+    assert.ok(respawn.includes(process.execPath) && respawn.some((x) => /cell-exec\.js$/.test(x)), 'cell-exec lanciato via respawn-pane');
+    assert.ok(respawn.includes('--socket') && respawn.includes('--nonce'), 'one-shot broker coordinates launch');
+    assert.ok(respawn.includes('-t') && respawn.includes('%42'), 'respawn-pane sul pane ID %N');
+    assert.equal(respawn.join(' ').includes('sk-x'), false, 'secret absent from respawn argv');
     assert.ok(!lines.some((l) => l.startsWith('paste-buffer')), 'nessun paste in flag mode');
 
     // env minimale: il sentinel del processo NON raggiunge il launcher
@@ -350,7 +380,7 @@ test('early exit: cattura bounded/redacted, exit code e rimuove il pane diagnost
     const script = `#!/bin/sh
 LOG=${shellQ(w.log)}
 case "$1" in
-  new-session) echo '%9'; exit 0 ;;
+  new-session) printf '%s\\t%s\\t%s\\n' '$1' '@1' '%9'; exit 0 ;;
   display-message) printf '1\\t7\\t%%9\\n'; exit 0 ;;
   capture-pane) printf 'failed in ${w.home}/Dev\\nANTHROPIC_API_KEY=sk-x\\nBearer hidden-token\\n'; exit 0 ;;
   kill-session) echo 'kill-session' >> "$LOG"; exit 0 ;;
@@ -551,16 +581,22 @@ test('managed codex-vl.native: launcher interno, login nativo, fake tmux', async
     assert.ok(view.managedCatalog.some((p) => p.id === 'claude.zai'));
     assert.equal(view.managedCatalog.some((p) => p.id === 'claude.zai-a' || p.id === 'claude.zai-p'), false);
     await fleet.up('Dev');
-    const argv = readLog(w).nsArgv[0];
-    assert.ok(argv.some((value) => /cell-exec\.js$/.test(value)), 'tmux vede solo il supervisor');
-    assert.equal(argv.includes(bin), false, 'comando reale resta nel broker in-memory');
+    const { nsArgv, byCmd, lines } = readLog(w);
+    const nsArgvFirst = nsArgv[0];
+    const respawn = byCmd['respawn-pane'][0];
+    const allTmuxArgv = [...nsArgvFirst, ...respawn];
+    // tmux vede solo il placeholder (cell-hold, new-session) e il supervisor
+    // (cell-exec, respawn-pane): MAI il client reale, che resta nel broker in-memory.
+    assert.ok(nsArgvFirst.some((value) => /cell-hold\.js$/.test(value)), 'placeholder cell-hold via new-session');
+    assert.ok(respawn.some((value) => /cell-exec\.js$/.test(value)), 'supervisor cell-exec via respawn-pane');
+    assert.equal(allTmuxArgv.includes(bin), false, 'comando reale resta nel broker in-memory');
     assert.equal(launchPayload.command, bin);
     assert.equal(launchPayload.args.includes('--dangerously-bypass-approvals-and-sandbox'), false, 'standard e il default sicuro');
     assert.ok(launchPayload.args.includes('bootstrap managed'));
     assert.equal(launchPayload.supervise.enabled, true);
     assert.equal(launchPayload.env.NEXUSCREW_MCP_SESSION, 'cloud-Dev');
-    assert.equal(argv.some((x) => /zai|ollama/i.test(x)), false);
-    assert.equal(readLog(w).lines.some((x) => x.startsWith('load-buffer')), false);
+    assert.equal(allTmuxArgv.some((x) => /zai|ollama/i.test(x)), false);
+    assert.equal(lines.some((x) => x.startsWith('load-buffer')), false);
   } finally { w.cleanup(); }
 });
 
@@ -761,6 +797,7 @@ test('capabilities e schema: superficie estesa del built-in', async () => {
     for (const f of ['id', 'cwd', 'engine', 'boot', 'model', 'prompt']) {
       assert.ok(sch.cell[f], `campo cell.${f}`);
     }
+    assert.ok(sch.engine.managed.client.values.includes('agy'), 'schema managed espone Agy');
     assert.ok(sch.engine.env.denylist.includes('PATH'), 'denylist env esposta');
     assert.equal(sch.caps, require('../lib/fleet/definitions.js').CAPS);
   } finally { w.cleanup(); }

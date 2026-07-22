@@ -1,12 +1,14 @@
 export const INPUT_PREFERENCES_KEY = 'nc_input_preferences_v1';
 export const INPUT_PREFERENCES_EVENT = 'nc-input-preferences';
 export const TERMINAL_KEYBOARD_GESTURES = Object.freeze(['double-tap', 'single-tap', 'never']);
+export const KEYBAR_LAYOUTS = Object.freeze(['full', 'compact']);
 
 export const DEFAULT_INPUT_PREFERENCES = Object.freeze({
   terminalKeyboardGesture: 'double-tap',
   keybarKeepsKeyboardClosed: true,
   voiceKeepsKeyboardClosed: true,
   showKeybarEnter: true,
+  keybarLayout: 'full',
 });
 
 export function normalizeInputPreferences(value) {
@@ -20,6 +22,8 @@ export function normalizeInputPreferences(value) {
       ? input.voiceKeepsKeyboardClosed : DEFAULT_INPUT_PREFERENCES.voiceKeepsKeyboardClosed,
     showKeybarEnter: typeof input.showKeybarEnter === 'boolean'
       ? input.showKeybarEnter : DEFAULT_INPUT_PREFERENCES.showKeybarEnter,
+    keybarLayout: KEYBAR_LAYOUTS.includes(input.keybarLayout)
+      ? input.keybarLayout : DEFAULT_INPUT_PREFERENCES.keybarLayout,
   };
 }
 

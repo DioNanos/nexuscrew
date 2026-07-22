@@ -133,12 +133,13 @@ model, permission policy, optional system prompt, optional Shell command and boo
 a stopped cell opens the same launch sheet on desktop and mobile, so the effective settings can
 be reviewed before the process starts.
 
-An **engine** describes how a CLI is launched. Clean installations include five base adapters:
+An **engine** describes how a CLI is launched. Clean installations include these base adapters:
 
 - Claude Code
 - Codex
 - Codex-VL
 - Pi
+- Agy — Linux and macOS only (auth delegated to Agy's local login; `standard`/`unsafe` permission policies). On Android/Termux use the Shell adapter with a per-cell `agy` command.
 - Shell
 
 The provider catalog is scoped to the selected CLI rather than to a machine-specific setup:
@@ -240,8 +241,12 @@ The two-row mobile key bar can also show a full-height Enter key beside Page Up/
 interactive terminal choices can be confirmed without opening the software keyboard. By default,
 key-bar and speech-to-text actions keep that keyboard closed, while a nearby double tap inside the
 terminal explicitly opens it. **Settings → Input** can change the terminal gesture, hide the Enter
-key, or allow key-bar and voice actions to retain the keyboard. These preferences are browser-local
-and are synchronized between open NexusCrew windows for the same origin.
+key, or allow key-bar and voice actions to retain the keyboard. The key bar also has a
+**compact** layout (one row with an expand toggle that temporarily reveals the full key set
+without changing the preference), and alternate-screen TUIs (vim/less/htop) receive vertical
+gestures as raw Page Up/Page Down while normal and readonly terminals keep server-side scroll.
+These preferences are browser-local and are synchronized between open NexusCrew windows for
+the same origin.
 
 The input composer can expand for longer prompts. Each owner-qualified tmux cell keeps its own
 draft, size preference and bounded prompt history in the current browser, including safe
@@ -278,9 +283,19 @@ need direct SSH reachability to one another.
 
 Reverse ports are reserved across active and pending pairings, probed before use and protected
 by a persistent uniqueness check. Share is stored as desired state: failed activation rolls back
-to private, while a failed deactivation remains private and is reconciled after restart. A stale
-same-name peer or a late allocation collision returns an actionable conflict instead of silently
-creating a duplicate record or consuming the invitation.
+to private. Deactivation first saves private intent, then asks the hub to withdraw the node over
+the still-live private forward, and only after that acknowledgement removes the reverse channel.
+If the hub cannot acknowledge the revocation, Settings refreshes to the saved private state and
+shows that hub reconciliation is still pending; bounded boot retries continue without claiming
+that remote removal already completed. A stale same-name peer or a late allocation collision
+returns an actionable conflict instead of silently creating a duplicate record or consuming the
+invitation.
+
+Private pairing is administrative inventory, not operational publication. A paired client can
+remain listed as **private** in Settings so it can be reconnected or shared again, but it is absent
+from routable topology, owner/deck bars and MCP cell/deck discovery. Temporary loss of reachability
+does not revoke consent: an authorized node remains visible as stale/offline until a successful
+authoritative refresh either restores it or confirms its withdrawal.
 
 The Share control reports desired publication separately from verified tunnel reachability. If a
 detached process survives an upgrade with stale `-R` arguments, **Reconnect and reconcile** applies
@@ -490,7 +505,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.30** on npm and GitHub.
+The current stable release is **v0.8.31** on npm and GitHub.
 
 ## License
 

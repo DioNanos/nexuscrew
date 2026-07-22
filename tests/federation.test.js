@@ -150,6 +150,97 @@ test('Share reconciliation waits for authenticated health and republishes desire
   assert.equal(shareAttempts, 2, 'reverse channel race is retried within a bounded budget');
 });
 
+test('Share OFF reconciliation defaults to three bounded notification attempts', async () => {
+  let shareAttempts = 0;
+  const node = peer('hub', 'a'.repeat(32), { localPort: 43009, shared: false });
+  await assert.rejects(() => fed.reconcilePeerShare({
+    node, shared: false, healthAttempts: 1, delay: async () => {},
+    fetchImpl: async (url) => {
+      if (String(url).endsWith('/federation/health')) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, instanceId: node.nodeId }) };
+      }
+      shareAttempts += 1;
+      return { ok: false, status: 503 };
+    },
+  }), /HTTP 503/);
+  assert.equal(shareAttempts, 3);
+});
+
+test('boot Share OFF runner is no-overlap, retries with minimum budgets and records transitions', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-share-revoke-'));
+  const nodesPath = path.join(dir, 'nodes.json');
+  let st = store.emptyStore('b'.repeat(32));
+  const node = peer('hub', 'a'.repeat(32), { localPort: 43009, shared: false });
+  st = store.addNode(st, node); store.atomicWriteStore(nodesPath, st);
+  const runningSet = new Set(); const records = []; const calls = [];
+  const diagnostics = { record: (level, component, code, message, meta) => {
+    records.push({ level, component, code, message, meta });
+  } };
+  let attempt = 0;
+  const first = fed.runShareRevokeBoot({
+    node, nodesPath, runningSet, diagnostics, backoff: [0, 0, 0], delay: async () => {},
+    healthAttempts: 1, notifyAttempts: 1,
+    reconcileImpl: async (input) => {
+      calls.push(input); attempt += 1;
+      if (attempt === 1) throw new Error('Bearer TOPSECRET should not escape');
+      return { shared: false };
+    },
+  });
+  const overlapping = await fed.runShareRevokeBoot({
+    node, nodesPath, runningSet, diagnostics, reconcileImpl: async () => {
+      throw new Error('must not run');
+    },
+  });
+  assert.equal(overlapping.status, 'already-running');
+  const result = await first;
+  assert.deepEqual(result, { status: 'recovered', rounds: 2 });
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((input) => input.shared === false
+    && input.healthAttempts >= 3 && input.notifyAttempts >= 3));
+  assert.deepEqual(records.map((record) => record.code), [
+    'SHARE_REVOKE_PENDING', 'SHARE_REVOKE_RECOVERED',
+  ]);
+  assert.equal(JSON.stringify(records).includes('TOPSECRET'), false);
+  assert.equal(runningSet.size, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('boot Share OFF runner aborts on desired-state change and exhausts exactly three rounds otherwise', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-share-revoke-state-'));
+  const nodesPath = path.join(dir, 'nodes.json');
+  let st = store.emptyStore('b'.repeat(32));
+  const node = peer('hub', 'a'.repeat(32), { localPort: 43009, shared: false });
+  st = store.addNode(st, node); store.atomicWriteStore(nodesPath, st);
+  const abortRecords = []; let abortCalls = 0;
+  const aborted = await fed.runShareRevokeBoot({
+    node, nodesPath, runningSet: new Set(), backoff: [0, 0, 0], delay: async () => {},
+    diagnostics: { record: (_level, _component, code) => abortRecords.push(code) },
+    reconcileImpl: async () => {
+      abortCalls += 1;
+      let current = store.loadStoreStrict(nodesPath);
+      current = store.updateNode(current, 'hub', { shared: true });
+      store.atomicWriteStore(nodesPath, current);
+      throw new Error('first round failed');
+    },
+  });
+  assert.deepEqual(aborted, { status: 'aborted', reason: 'desired-state-changed' });
+  assert.equal(abortCalls, 1);
+  assert.deepEqual(abortRecords, ['SHARE_REVOKE_PENDING']);
+
+  st = store.loadStoreStrict(nodesPath);
+  st = store.updateNode(st, 'hub', { shared: false }); store.atomicWriteStore(nodesPath, st);
+  const exhaustedRecords = []; let exhaustCalls = 0;
+  const exhausted = await fed.runShareRevokeBoot({
+    node, nodesPath, runningSet: new Set(), backoff: [0, 0, 0], delay: async () => {},
+    diagnostics: { record: (_level, _component, code) => exhaustedRecords.push(code) },
+    reconcileImpl: async () => { exhaustCalls += 1; throw new Error('still down'); },
+  });
+  assert.deepEqual(exhausted, { status: 'exhausted', rounds: 3 });
+  assert.equal(exhaustCalls, 3);
+  assert.deepEqual(exhaustedRecords, ['SHARE_REVOKE_PENDING', 'SHARE_REVOKE_EXHAUSTED']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('federated raw WS rejects a server-tracked instance cycle before dialing', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-ws-cycle-')); const p = path.join(dir, 'nodes.json');
   store.atomicWriteStore(p, store.emptyStore('a'.repeat(32)));

@@ -17,7 +17,7 @@ import FleetTab from './FleetTab.jsx';
 import { useNodes } from '../hooks/useNodes.js';
 import { COMPOSER_RESET_EVENT, clearAllComposerData } from '../lib/composer-model.js';
 import { useInputPreferences } from '../hooks/useInputPreferences.js';
-import { DEFAULT_INPUT_PREFERENCES, TERMINAL_KEYBOARD_GESTURES } from '../lib/input-preferences.js';
+import { DEFAULT_INPUT_PREFERENCES, KEYBAR_LAYOUTS, TERMINAL_KEYBOARD_GESTURES } from '../lib/input-preferences.js';
 import './SettingsPanel.css';
 
 // Pannello settings (design §5, B2-UI). Stessa struttura a schede su desktop
@@ -54,7 +54,7 @@ function PairingQr({ value }) {
 }
 
 // --- scheda NODI ---------------------------------------------------------------
-function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAliases }) {
+export function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAliases }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);        // `${name}:${action}` in corso
   const [testResult, setTestResult] = useState({}); // name -> {ok, result, detail}
@@ -132,8 +132,18 @@ function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAl
     setErr(null); setBusy(`${shareHub.name}:share`);
     try { await setNodeShare(token, shareHub.name, shared); await refresh(); }
     catch (e) {
+      const partial = e?.data && e.data.shared === false ? e.data : null;
+      if (partial) {
+        // A 502 can still carry a durable local OFF transition. Refresh the
+        // authoritative Settings inventory, but preserve the pending cause.
+        try { await refresh(); } catch (_) { /* original Share error remains primary */ }
+      }
       const hint = e?.data && typeof e.data.hint === 'string' ? e.data.hint : '';
-      setErr(`${shareHub.name}: ${String(e.message || e)}${hint ? ` — ${hint}` : ''}`);
+      const pending = partial?.revoked === true && partial?.localReconcilePending === true
+        ? t('share-off-local-reconcile-pending')
+        : partial?.revoked === false && partial?.reconcilePending === true
+          ? t('share-off-hub-reconcile-pending') : '';
+      setErr(`${shareHub.name}: ${String(e.message || e)}${hint ? ` — ${hint}` : ''}${pending ? ` — ${pending}` : ''}`);
     }
     setBusy(null);
   };
@@ -494,6 +504,16 @@ export function InputTab() {
             ))}
           </select>
           <small>{t('terminal-keyboard-gesture-help')}</small>
+        </label>
+        <label className="nc-field">{t('keybar-layout')}
+          <select aria-label={t('keybar-layout')}
+            value={preferences.keybarLayout}
+            onChange={(event) => updatePreferences({ keybarLayout: event.target.value })}>
+            {KEYBAR_LAYOUTS.map((value) => (
+              <option key={value} value={value}>{t(`keybar-layout-${value}`)}</option>
+            ))}
+          </select>
+          <small>{t('keybar-layout-help')}</small>
         </label>
       </div>
       <label className="nc-check">

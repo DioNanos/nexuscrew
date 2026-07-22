@@ -11,6 +11,7 @@ import { filesFromTransfer, hasFilePayload, uploadSessionFiles } from '../lib/at
 import {
   setTerminalInputMode, showTerminalVirtualKeyboard, terminalTapDecision,
 } from '../lib/virtual-keyboard.js';
+import { chooseScrollMode, describeScrollActions, planTerminalScroll } from '../lib/terminal-scroll.js';
 import './Terminal.css';
 
 // node (opzionale): sessione su nodo remoto — il WS passa dal proxy
@@ -211,9 +212,27 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     host.addEventListener('dragover', onDragFiles, true);
     host.addEventListener('drop', onDropFiles, true);
     const STEP = 24; // px per tick di scroll (3 righe tmux)
+    const emitScroll = (delta, previous = { mode: null, remainder: 0 }) => {
+      // Writable alternate-screen TUIs (vim/less/htop) own their viewport: a
+      // vertical gesture reaches them as raw PageUp/PageDown PTY input. Normal
+      // screen and any readonly terminal keep the server-side scroll actions.
+      // Convention: accumulated > 0 = scroll up (older), < 0 = scroll down.
+      const host = hostRef.current;
+      const pageThreshold = host ? host.getBoundingClientRect().height : STEP;
+      const mode = chooseScrollMode({ alternateScreen: term.buffer.active.type === 'alternate', readonly });
+      // A page-sized remainder from the alternate buffer must never be
+      // reinterpreted as many 24px line ticks after xterm returns to normal.
+      const accumulated = previous.mode === mode ? previous.remainder + delta : delta;
+      const plan = planTerminalScroll({ mode, accumulated, threshold: mode === 'page' ? pageThreshold : STEP });
+      for (const act of describeScrollActions(plan)) {
+        if (act.kind === 'input') sock.sendInput(act.seq);
+        else sock.action(act.name);
+      }
+      return { mode, remainder: plan.remainder };
+    };
     let touchY = null, touchX = null, tapX = null, tapY = null;
     let touchMoved = false, multiTouchActive = false;
-    let acc = 0, vertical = null, selectStart = null;
+    let touchScroll = { mode: null, remainder: 0 }, vertical = null, selectStart = null;
     let longPressTimer = null; let touchSelecting = false;
     const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
     const cellXY = (clientX, clientY) => {
@@ -239,7 +258,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         selectStart = cellAt(e.touches[0]); term.clearSelection(); return;
       }
       touchY = e.touches[0].clientY; touchX = e.touches[0].clientX;
-      tapX = touchX; tapY = touchY; acc = 0; vertical = null;
+      tapX = touchX; tapY = touchY; touchScroll = { mode: null, remainder: 0 }; vertical = null;
       const start = { x: touchX, y: touchY };
       longPressTimer = setTimeout(() => {
         longPressTimer = null; touchSelecting = true; touchMoved = true; lastTerminalTap = null;
@@ -249,7 +268,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         term.clearSelection();
         term.select(selectStart.col, selectStart.row, 1);
         // Da questo momento il gesto e' selezione, non scroll.
-        touchY = null; touchX = null; vertical = null; acc = 0;
+        touchY = null; touchX = null; vertical = null; touchScroll = { mode: null, remainder: 0 };
       }, LONG_PRESS_MS);
     };
     const onTouchMove = (e) => {
@@ -276,13 +295,14 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         vertical = Math.abs(t.clientY - touchY) > Math.abs(t.clientX - touchX);
       }
       if (!vertical) return;
-      acc += t.clientY - touchY; touchY = t.clientY;
-      while (acc >= STEP) { sock.action('scroll-up'); acc -= STEP; }
-      while (acc <= -STEP) { sock.action('scroll-down'); acc += STEP; }
+      const delta = t.clientY - touchY; touchY = t.clientY;
+      // touch: finger down (acc > 0) = older history = scroll up
+      touchScroll = emitScroll(delta, touchScroll);
     };
     const resetTouch = () => {
       clearLongPress(); touchY = null; touchX = null; tapX = null; tapY = null;
       selectStart = null; touchSelecting = false; touchMoved = false; multiTouchActive = false;
+      touchScroll = { mode: null, remainder: 0 };
     };
     const onTouchEnd = (e) => {
       if (multiTouchActive) {
@@ -301,12 +321,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       resetTouch();
     };
     const onTouchCancel = () => { lastTerminalTap = null; resetTouch(); };
-    let wheelAcc = 0;
+    let wheelScroll = { mode: null, remainder: 0 };
     const onWheel = (e) => {
       e.preventDefault(); e.stopPropagation();
-      wheelAcc += e.deltaY;
-      while (wheelAcc <= -STEP) { sock.action('scroll-up'); wheelAcc += STEP; }
-      while (wheelAcc >= STEP) { sock.action('scroll-down'); wheelAcc -= STEP; }
+      // wheel: deltaY > 0 = scroll down (newer) -> negative in the up-positive convention
+      wheelScroll = emitScroll(-e.deltaY, wheelScroll);
     };
     host.addEventListener('touchstart', onTouchStart, { passive: false });
     host.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });

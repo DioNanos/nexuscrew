@@ -237,3 +237,47 @@ describe('ComposerBar persistence and history', () => {
     }
   });
 });
+
+describe('ComposerBar IME live-DOM submit', () => {
+  it('submits the live DOM value when composition has not committed to React', async () => {
+    const submitText = vi.fn(async () => true);
+    renderComposer({ submitText });
+    const input = textarea();
+    // React state is "stale": the IME draft changed the DOM value without a
+    // change/compositionend event reaching React.
+    fireEvent.change(input, { target: { value: 'stale' } });
+    input.value = 'composed draft'; // DOM live value, no React change fired
+    fireEvent.click(document.querySelector('button.go'));
+    await waitFor(() => expect(submitText).toHaveBeenCalledWith('composed draft'));
+    expect(input.value).toBe(''); // successful send clears the live draft
+    const key = composerCellKey({ ownerId: OWNER_A, session: 'cloud-Dev' });
+    expect(loadComposerCell(key).history.map((item) => item.text)).toEqual(['composed draft']);
+  });
+
+  it('stays a no-op when the live DOM value reduces to empty (only newlines)', () => {
+    const submitText = vi.fn(async () => true);
+    renderComposer({ submitText });
+    const input = textarea();
+    fireEvent.change(input, { target: { value: 'abc' } });
+    // IME committed an empty result: DOM live value is newlines-only -> stripped to empty
+    input.value = '\n\n';
+    fireEvent.click(document.querySelector('button.go'));
+    expect(submitText).not.toHaveBeenCalled();
+    expect(input.value).toBe('\n\n'); // draft preserved (no-op)
+  });
+
+  it('preserves and persists the live DOM draft when submission fails', async () => {
+    const submitText = vi.fn(async () => false);
+    renderComposer({ submitText });
+    const input = textarea();
+    fireEvent.change(input, { target: { value: 'stale React draft' } });
+    input.value = 'live IME draft';
+    fireEvent.click(document.querySelector('button.go'));
+    await waitFor(() => expect(submitText).toHaveBeenCalledWith('live IME draft'));
+    expect(input.value).toBe('live IME draft');
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const key = composerCellKey({ ownerId: OWNER_A, session: 'cloud-Dev' });
+    expect(loadComposerCell(key).draft).toBe('live IME draft');
+    expect(loadComposerCell(key).history).toEqual([]);
+  });
+});

@@ -124,6 +124,7 @@ test('createServer: outbound autostart usa SSH reale dopo listen; -R solo con Sh
     const calls = [];
     const reconciled = [];
     const shareReconciled = [];
+    const revokeBoot = [];
     const made = createServer({
       home: dir, configDir, nodesPath, tokenPath: path.join(configDir, 'token'),
       filesRoot: path.join(dir, 'files'), fleetEnabled: false, tunnelLogFd: null,
@@ -131,6 +132,7 @@ test('createServer: outbound autostart usa SSH reale dopo listen; -R solo con Sh
       tunnelSpawnImpl: (bin, args) => { calls.push([bin, args]); return { pid: shared ? 4193998 : 4193997, unref() {} }; },
       reconcileTunnelSupervisorsImpl: (input) => { reconciled.push(input); return { kept: [], stopped: [], cleaned: [], failed: [] }; },
       reconcilePeerShareImpl: async (input) => { shareReconciled.push(input); return { shared: input.shared }; },
+      runShareRevokeBootImpl: async (input) => { revokeBoot.push(input); return { status: 'recovered', rounds: 1 }; },
     });
     assert.equal(calls.length, 0);
     await new Promise((resolve) => made.server.listen(0, '127.0.0.1', resolve));
@@ -142,8 +144,21 @@ test('createServer: outbound autostart usa SSH reale dopo listen; -R solo con Sh
     assert.equal(calls[0][1][1], 'ssh', 'auto = OpenSSH sotto un solo supervisor');
     assert.ok(calls[0][1].includes('-L'));
     assert.equal(calls[0][1].includes('-R'), shared);
-    assert.equal(shareReconciled.length, 1, 'paired peer republishes desired Share state after boot');
-    assert.equal(shareReconciled[0].shared, shared);
+    if (shared) {
+      assert.equal(shareReconciled.length, 1, 'Share ON is republished after boot');
+      assert.equal(shareReconciled[0].shared, true);
+      assert.ok(shareReconciled[0].healthAttempts >= 3);
+      assert.ok(shareReconciled[0].notifyAttempts >= 3);
+      assert.equal(revokeBoot.length, 0);
+    } else {
+      assert.equal(shareReconciled.length, 0, 'Share OFF uses the durable retry runner');
+      assert.equal(revokeBoot.length, 1);
+      assert.equal(revokeBoot[0].node.shared, false);
+      assert.equal(revokeBoot[0].nodesPath, nodesPath);
+      assert.ok(revokeBoot[0].healthAttempts >= 3);
+      assert.ok(revokeBoot[0].notifyAttempts >= 3);
+      assert.equal(typeof revokeBoot[0].reconcileImpl, 'function');
+    }
     if (shared) assert.ok(calls[0][1].includes(`127.0.0.1:44001:127.0.0.1:${made.server.address().port}`));
     await new Promise((resolve) => made.server.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });
