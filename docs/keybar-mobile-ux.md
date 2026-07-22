@@ -52,6 +52,13 @@ On mobile (PWA via xterm.js over a PTY) three things were painful:
   on touch, Enter dismisses the keyboard instead of inserting a newline, and
   submit blurs instead of re-focusing)
 - `frontend/src/components/ComposerBar.test.jsx` (new "mobile IME submit" case)
+- `frontend/src/components/SettingsPanel.jsx` + `SettingsPanel.css` (new Credits
+  tab: sprites, retro font, copyright, gesture-started looping audio, luminous
+  rainbow vortex)
+- `frontend/src/lib/i18n.js` (`tab-credits`, `credits-attribution`,
+  `credits-copyright` in it/en/es)
+- `frontend/public/credits/dwarf.png`, `knight.png`, `dungeon-loop.mp3`
+- `frontend/public/fonts/press-start-2p.woff2` (self-hosted retro font)
 - `frontend/dist/*` (rebuilt; `dist` is tracked in this repo, so it is part of
   the PR)
 
@@ -375,6 +382,36 @@ cp -a frontend/dist/. <global_pkg>/frontend/dist/
 systemctl --user restart nexuscrew
 ```
 
+## Credits tab (rides this branch)
+
+A new **Settings → Credits** tab was added on this branch (it shares the branch,
+not a separate mobile-UX fix). It is a static attribution screen:
+
+- two pixel-art sprites (`public/credits/dwarf.png`, `knight.png`) centered in
+  the tab;
+- the attribution line `Licenza DioNanos, collab. Kobb` and a copyright line
+  `© 2026 DioNanos · Kobb`, rendered in **Press Start 2P** (self-hosted woff2
+  in `public/fonts/`, matching the pixel-art sprites), centered below;
+- a looping background track (`public/credits/dungeon-loop.mp3`, ~30 s) that
+  **starts when the tab is opened and stops when it is left or the panel is
+  closed**. The `<audio>` lives on the panel and `play()` is called from the
+  tab-click gesture (`selectTab`), not from a `useEffect`, because on mobile
+  programmatic autoplay outside a gesture is blocked (an earlier `useEffect`
+  version "got stuck" and never started). Leaving the tab or closing the panel
+  pauses it;
+- a **luminous rainbow vortex** behind the sprites: a `repeating-conic-gradient`
+  of thin separate rainbow rays (2° ray + 13° gap, 90° cycle = 24 spokes, no
+  seam) blended with `mix-blend-mode: screen` + a drop-shadow glow so it reads
+  as a luminous portal on the dark panel, masked to a center hole so the
+  characters sit in a calmer core, rotating clockwise. The right sprite is
+  nudged right so the pair is symmetric about the portal's center, and the
+  text falls below the spiral (the images container has `min-height` matching
+  the portal).
+
+No backend changes. The tab is static content + an `<audio>` element + CSS
+animation; it is cosmetic only and does not touch the terminal, PTY, or
+composer behaviour.
+
 ## Compatibility / risks
 
 - The reduced bar is the default for **all** clients (not only mobile). On
@@ -405,16 +442,31 @@ In chronological order, on top of `origin/main` (`0.8.27`, `ec243e9`):
 4. `a2b1e57` refactor(keybar): drop dedicated Enter button, group arrows on the right
 5. `db69649` refactor(keybar): hoist keyboard button into the reduced bar
 6. `e5ff4f3` docs: technical notes for KeyBar mobile UX PR
-7. `d7ed2ef` fix(composer): submit live DOM value when mobile IME hasn't committed to state
-8. `3fa66bd` fix(keybar): restore PGUP/PGDN to the reduced bar for mobile transcript scroll
-9. `adf5efe` fix(terminal): swipe/wheel scroll the TUI transcript in alt-screen via PageUp
-10. `b1d0336` fix(composer): mobile Enter dismisses the keyboard; keep it closed after send
-11. `7c1597b` fix(composer): green arrow confirms a TUI selection when the draft is empty
+7. `df33b8d` docs: add composer IME submit fix to mobile UX PR notes
+8. `d7ed2ef` fix(composer): submit live DOM value when mobile IME hasn't committed to state
+9. `3fa66bd` fix(keybar): restore PGUP/PGDN to the reduced bar for mobile transcript scroll
+10. `4a44531` docs: note PGUP/PGDN restoration in mobile UX PR notes
+11. `adf5efe` fix(terminal): swipe/wheel scroll the TUI transcript in alt-screen via PageUp
+12. `911bee7` docs: note alt-screen touch/wheel scroll fix in mobile UX PR notes
+13. `d203e97` docs: mark mobile IME submit + touch scroll fixes user-confirmed
+14. `d3a2d5c` feat(settings): add Credits tab with dwarf/knight asset attribution
+15. `f6e4f79` build: regenerate frontend dist after Credits tab
+16. `b1d0336` fix(composer): mobile Enter dismisses the keyboard; keep it closed after send
+17. `4d8c45b` docs: update mobile UX notes for composer Enter/keyboard-dismiss fix
+18. `2147220` feat(credits): add looping dungeon music to the Credits tab
+19. `397dc93` feat(credits): center sprites + retro font + copyright line
+20. `7c1597b` fix(composer): green arrow confirms a TUI selection when the draft is empty
+21. `1ba4946` fix(credits): center content and start the loop audio on the tab gesture
+22. `cdb5fe8` docs: record composer green-arrow TUI-confirm fix
+23. `addfeda` build: regenerate frontend dist after composer Enter + Credits fixes
+24. `170dab0` feat(credits): luminous rainbow vortex behind the sprites + nudge content down
+25. `bb1cb5b` feat(credits): portal as thin separate rainbow rays instead of a ring
+26. `655c661` feat(credits): halve the rays, symmetrize sprites, text below the spiral
 
 ## Suggested PR description
 
-> Mobile UX: KeyBar reduced view + soft-keyboard handling, and composer IME
-> submit fix.
+> Mobile UX: KeyBar reduced view + soft-keyboard handling, composer IME submit
+> + Enter fixes, and a Credits tab.
 >
 > KeyBar:
 > - Default reduced bar: expand-toggle + keyboard toggle + hamburger menu on
@@ -450,6 +502,13 @@ In chronological order, on top of `origin/main` (`0.8.27`, `ec243e9`):
 >   PageDown to the pty instead of entering tmux copy-mode (whose scrollback is
 >   empty for alt-screen apps). Normal-screen (shell) keeps tmux copy-mode
 >   scrollback. Decision logic in lib/terminal-scroll.js (pure, unit-tested).
+>
+> Credits:
+> - New Settings → Credits tab: two pixel-art sprites + attribution and
+>   copyright in Press Start 2P (self-hosted), a looping background track that
+>   starts on tab open (gesture) and stops on leave/close, and a luminous
+>   rainbow vortex (thin separate rays, clockwise) behind the sprites. Cosmetic
+>   only; no backend/PTY changes.
 >
 > Tests: KeyBar.test.jsx (4) + a new ComposerBar IME-submit case +
 > terminal-scroll.test.js (4); full suite 79/79. Verified on a real mobile PWA
