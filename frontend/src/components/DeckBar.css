@@ -88,3 +88,44 @@
   background: #0a0e0a; border: 1px solid #243; color: #9fd;
   border-radius: 5px; font: inherit; font-size: 11px; padding: 1px 3px; max-width: 92px;
 }
+
+/* Owner toggle: button accessibile che comprime/espande i deck del nodo. */
+.nc-deck-owner-toggle {
+  display: inline-flex; align-items: center; gap: 2px;
+  background: none; border: 0; padding: 0 2px; margin: 0;
+  color: inherit; font: inherit; cursor: pointer; border-radius: 4px;
+  flex: 0 0 auto; max-width: 140px;
+}
+.nc-deck-owner-toggle:hover { background: rgba(0,204,102,.08); }
+.nc-deck-owner-toggle:focus-visible { outline: 2px solid #7aa903; outline-offset: 1px; }
+.nc-deck-owner-toggle .nc-deck-owner { padding: 0 2px; }
+.nc-deck-owner-caret { color: #5a7a68; font-size: 9px; flex: 0 0 auto; }
+.nc-deck-owner-group.collapsed { background: #090d09; }
+.nc-deck-owner-content { display: inline-flex; align-items: center; gap: 4px; }
+.nc-deck-owner-content[hidden] { display: none; }
+.nc-deck-owner-group.collapsed .nc-deck-owner-content { gap: 3px; }
+
+/* Chip compatto del nodo quando il gruppo e' compresso: conteggio deck
+   + indicazione del deck corrente se appartiene al nodo. */
+.nc-deck-summary {
+  display: inline-flex; align-items: center; gap: 3px; padding: 0 3px 0 1px;
+  font-size: 9px; color: #6f8c7c; max-width: 170px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nc-deck-summary-count {
+  background: #15241a; color: #9fd; border-radius: 8px; padding: 0 5px; font-size: 9px;
+  flex: 0 0 auto;
+}
+.nc-deck-summary-current { color: #d9f7c7; }
+
+/* Dot di presenza client-side del deck. working=finestra attiva (bright),
+   on=aperta in background (steady), neutral=non aperta, warn=owner offline. */
+.nc-deck-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  margin: 0 3px 0 4px; flex: 0 0 auto; background: #2a3a2a;
+}
+.nc-deck-dot.working { background: #00cc66; box-shadow: 0 0 5px #00cc66; }
+.nc-deck-dot.on { background: #6a9; }
+.nc-deck-dot.neutral { background: #526652; }
+.nc-deck-dot.warn { background: #d93; }
+.nc-deck-chip.offline .nc-deck-dot { opacity: .7; }

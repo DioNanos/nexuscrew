@@ -2,6 +2,30 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.30 — 2026-07-22 — "Focused Control"
+
+- Makes every owner/node name in the top deck bar an explicit expand/collapse control. Newly seen
+  nodes start collapsed, each deck shows a compact live activity dot, and browser-local choices
+  synchronize across open NexusCrew windows without exposing topology or presence to other nodes.
+- Adds a full-height mobile Enter key beside Page Up/Page Down and a dedicated **Settings → Input**
+  panel. Key-bar and speech-to-text actions keep the software keyboard closed by default, terminal
+  input requires a nearby double tap, and every behavior can be changed or reset per browser.
+- Hardens the mobile gesture state machine for movement, long press, cancel, blur, VirtualKeyboard
+  geometry changes, visual-viewport recovery and sequential two-finger releases. Preference changes
+  do not remount xterm or reconnect the terminal WebSocket.
+- Runs configured Shell commands through an interactive login invocation on known POSIX shells so
+  user PATH entries such as `agy` resolve while retaining the private launch broker. Immediate
+  non-zero exits now surface a bounded `SHELL_COMMAND_FAILED` cause; successful one-shot completion
+  and commands that remain active are reported distinctly.
+- Adds the read-only `nc_cell_diagnostics` MCP tool for one exact local Fleet cell. It returns the
+  configured Shell command with bounded credential redaction and the latest closed spawn/start
+  failure cause, rejects remote targets, and preserves the existing local active-caller ACL.
+- Extends regression coverage for cross-window input preferences, listener cleanup, IME relocking,
+  multi-touch cancellation, redaction of generic uppercase environment assignments and the complete
+  DeckBar/mobile-input/Shell/MCP integration.
+- Gate: **998 isolated Node tests** (997 pass / 1 platform skip), **192/192 frontend tests**,
+  production PWA build and zero production dependency vulnerabilities in both dependency trees.
+
 ## 0.8.29 — 2026-07-21 — "Stable Fleet Boot"
 
 - Keeps the optional Fleet boot companion rooted at the stable user home on Linux, macOS and

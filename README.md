@@ -157,9 +157,11 @@ directly without a shell after trust-boundary validation.
 
 The Shell engine resolves `$SHELL` or a trusted platform shell when the cell starts; executable
 paths are not stored in Fleet definitions or backups. Leaving its command empty opens an
-interactive login shell. A configured command is passed as one opaque argument to that shell's
-`-lc`, runs once without restart supervision, and then leaves the cell stopped. Shell does not
-accept prompts, models or unsafe permission policy.
+interactive login shell. A configured command is passed as one opaque argument through the
+private launch broker, runs once without restart supervision, and then leaves the cell stopped.
+Known POSIX shells use an interactive login invocation (`-lic`) so the user's configured PATH is
+available; custom shells retain the conservative `-lc` contract. Shell does not accept prompts,
+models or unsafe permission policy.
 
 OpenRouter is first-class for Claude Code and Codex-VL. Claude uses OpenRouter's Anthropic
 Messages compatibility endpoint, while Codex-VL uses the beta, stateless Responses endpoint
@@ -213,6 +215,11 @@ Desktop decks place multiple live terminals in a saved tiled layout. Decks remai
 the current PWA by default; `↗` detaches one into another browser window. Session and deck order
 can be changed with pointer drag-and-drop or keyboard controls and is saved automatically.
 
+The top deck bar groups workspaces by owner node. Clicking a node name expands or collapses its
+decks; newly seen nodes start collapsed so connected-but-idle machines remain available without
+occupying the bar. Every deck carries a compact activity dot, and collapse choices are stored in
+the current browser and synchronized across its open NexusCrew windows.
+
 On mobile, locations are independently collapsible and filterable by all, pinned, active, off,
 or technical sessions. The same owner-qualified ordering model is used by compact and expanded
 desktop views. Managed terminals use the logical Fleet cell name as their visible title; tmux
@@ -228,6 +235,13 @@ copy-mode scrolling, window and pane navigation, Escape, Ctrl-C and detach. Long
 multiline prompts use the terminal application's bracketed-paste mode; clipboard images and
 dropped files are stored in the selected session inbox and their paths are inserted without
 submitting Enter.
+
+The two-row mobile key bar can also show a full-height Enter key beside Page Up/Page Down, so
+interactive terminal choices can be confirmed without opening the software keyboard. By default,
+key-bar and speech-to-text actions keep that keyboard closed, while a nearby double tap inside the
+terminal explicitly opens it. **Settings → Input** can change the terminal gesture, hide the Enter
+key, or allow key-bar and voice actions to retain the keyboard. These preferences are browser-local
+and are synchronized between open NexusCrew windows for the same origin.
 
 The input composer can expand for longer prompts. Each owner-qualified tmux cell keeps its own
 draft, size preference and bounded prompt history in the current browser, including safe
@@ -362,6 +376,7 @@ It is intended for AI sessions running inside managed tmux cells.
 | `nc_inbox` | List files received by the caller |
 | `nc_deck` | Discover owner-qualified decks containing the calling tmux session |
 | `nc_cells` | List authorized active and inactive Fleet cells across visible nodes |
+| `nc_cell_diagnostics` | Read the redacted Shell command and latest bounded start/spawn failure for one exact local cell |
 | `nc_send_cell` | Submit bounded text to one exact active cell returned by `nc_cells` |
 | `nc_identity` | Read-only identity diagnostics; callable with no session and no token |
 
@@ -412,8 +427,14 @@ The caller is resolved, in order, from its tmux session (`tmux display-message -
 then from the `NEXUSCREW_MCP_SESSION` fallback, then not at all. Codex/Codex-VL launch MCP stdio
 processes with a cleared environment, so those clients must explicitly allowlist the identity
 env vars for the server to observe them; otherwise the identity-gated tools (`nc_ask`, `nc_send_file`,
-`nc_deck`, `nc_send_cell`, `nc_inbox`) stay fail-closed with a stable
+`nc_deck`, `nc_cell_diagnostics`, `nc_send_cell`, `nc_inbox`) stay fail-closed with a stable
 `NEXUSCREW_MCP_IDENTITY_*` code, while `nc_notify` degrades to an unknown sender.
+
+`nc_cell_diagnostics` accepts an exact owner-qualified ID returned by `nc_cells`, but only when
+that target belongs to the local node and the caller is an active local Fleet cell. It does not
+query remote nodes or add commands to the federated directory. The returned command is bounded
+and credential-redacted; the failure is a closed `{status, code, phase}` cause rather than raw
+stderr, paths, environment values, prompts or tokens.
 
 ## Configuration
 
@@ -469,7 +490,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.29** on npm and GitHub.
+The current stable release is **v0.8.30** on npm and GitHub.
 
 ## License
 

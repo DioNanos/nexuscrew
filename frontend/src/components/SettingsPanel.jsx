@@ -16,6 +16,8 @@ import Icon from './Icon.jsx';
 import FleetTab from './FleetTab.jsx';
 import { useNodes } from '../hooks/useNodes.js';
 import { COMPOSER_RESET_EVENT, clearAllComposerData } from '../lib/composer-model.js';
+import { useInputPreferences } from '../hooks/useInputPreferences.js';
+import { DEFAULT_INPUT_PREFERENCES, TERMINAL_KEYBOARD_GESTURES } from '../lib/input-preferences.js';
 import './SettingsPanel.css';
 
 // Pannello settings (design §5, B2-UI). Stessa struttura a schede su desktop
@@ -474,6 +476,49 @@ function PushRow({ token, readonly }) {
   );
 }
 
+// --- scheda INPUT (solo client/browser) --------------------------------------
+// Queste preferenze non cambiano il nodo e restano editabili anche quando il
+// server e' READONLY: governano soltanto focus, IME, STT e KeyBar locali.
+export function InputTab() {
+  const [preferences, updatePreferences] = useInputPreferences();
+  return (
+    <div className="nc-set-tab nc-input-settings">
+      <div className="nc-set-info">{t('input-settings-local')}</div>
+      <div className="nc-set-form">
+        <label className="nc-field">{t('terminal-keyboard-gesture')}
+          <select aria-label={t('terminal-keyboard-gesture')}
+            value={preferences.terminalKeyboardGesture}
+            onChange={(event) => updatePreferences({ terminalKeyboardGesture: event.target.value })}>
+            {TERMINAL_KEYBOARD_GESTURES.map((value) => (
+              <option key={value} value={value}>{t(`terminal-keyboard-${value}`)}</option>
+            ))}
+          </select>
+          <small>{t('terminal-keyboard-gesture-help')}</small>
+        </label>
+      </div>
+      <label className="nc-check">
+        <input type="checkbox" checked={preferences.keybarKeepsKeyboardClosed}
+          onChange={(event) => updatePreferences({ keybarKeepsKeyboardClosed: event.target.checked })} />
+        <span><b>{t('keybar-ime-lock')}</b><small>{t('keybar-ime-lock-help')}</small></span>
+      </label>
+      <label className="nc-check">
+        <input type="checkbox" checked={preferences.voiceKeepsKeyboardClosed}
+          onChange={(event) => updatePreferences({ voiceKeepsKeyboardClosed: event.target.checked })} />
+        <span><b>{t('voice-ime-lock')}</b><small>{t('voice-ime-lock-help')}</small></span>
+      </label>
+      <label className="nc-check">
+        <input type="checkbox" checked={preferences.showKeybarEnter}
+          onChange={(event) => updatePreferences({ showKeybarEnter: event.target.checked })} />
+        <span><b>{t('keybar-enter-show')}</b><small>{t('keybar-enter-show-help')}</small></span>
+      </label>
+      <div className="nc-set-row">
+        <button type="button" className="nc-btn ghost"
+          onClick={() => updatePreferences(DEFAULT_INPUT_PREFERENCES)}>{t('input-settings-reset')}</button>
+      </div>
+    </div>
+  );
+}
+
 // --- scheda DIAGNOSTICA -------------------------------------------------------
 export function DiagnosticsTab({ token, roster = [], readonly }) {
   const targets = [
@@ -793,7 +838,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
         {loadErr && <div className="nc-err">{loadErr}</div>}
 
         <div className="nc-set-tabs">
-          {['nodes', 'fleet', 'diagnostics', 'system'].map((k) => (
+          {['nodes', 'fleet', 'input', 'diagnostics', 'system'].map((k) => (
             <button key={k} type="button" className={`nc-set-tabbtn${tab === k ? ' on' : ''}`}
               onClick={() => setTab(k)}>{t(`tab-${k}`)}</button>
           ))}
@@ -805,6 +850,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
           {tab === 'fleet' && <FleetTab token={token} readonly={readonly}
             startNewCell={startNewCell} initialLocation={initialLocation}
             targets={roster.map((g) => ({ route: g.route, label: g.label || g.name, status: g.status }))} />}
+          {tab === 'input' && <InputTab />}
           {tab === 'diagnostics' && <DiagnosticsTab token={token} roster={roster} readonly={readonly} />}
           {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} refresh={refresh} />}
         </div>

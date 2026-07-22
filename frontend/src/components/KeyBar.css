@@ -1,14 +1,21 @@
 /* Stile Termux extra-keys: piatto, due righe, niente bordi. */
 .nc-keybar { background: #0a0e0a; border-top: 1px solid #1c241c; position: relative; }
-.nc-keybar.termux { display: flex; flex-direction: column; padding: 2px 0; }
+.nc-keybar.termux { padding: 2px 0; }
+.nc-keygrid { display: grid; grid-template-columns: minmax(0, 8fr) minmax(40px, 1fr); }
+.nc-keygrid.no-enter { grid-template-columns: minmax(0, 1fr); }
+.nc-keyrows { display: flex; flex-direction: column; min-width: 0; }
 .nc-keybar .row { display: flex; }
-.nc-keybar .row button {
+.nc-keybar .row button, .nc-keybar .nc-enter-key {
   flex: 1 1 0; min-width: 0; padding: 10px 2px;
   background: none; border: none; border-radius: 0;
   color: #e6ffe6; font-size: 14px; font-weight: 600; letter-spacing: 0.5px;
   font-family: inherit;
 }
-.nc-keybar .row button:active { background: #1d2a1d; }
+.nc-keybar .nc-enter-key {
+  display: inline-flex; align-items: center; justify-content: center;
+  border-left: 1px solid #1c241c;
+}
+.nc-keybar .row button:active, .nc-keybar .nc-enter-key:active { background: #1d2a1d; }
 .nc-keybar .row button.armed { color: #021; background: #00cc66; }
 /* menu ☰ con le azioni tmux */
 .nc-keymenu {
@@ -29,5 +36,5 @@
 .nc-keybar .tag { flex: 0 0 auto; align-self: center; padding: 0 8px; color: #8e8; font-size: 12px; }
 
 @media (pointer: coarse) {
-  .nc-keybar .row button { padding: 12px 2px; font-size: 15px; }
+  .nc-keybar .row button, .nc-keybar .nc-enter-key { padding: 12px 2px; font-size: 15px; }
 }

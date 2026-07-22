@@ -9,6 +9,7 @@ const {
   CATALOG, OLLAMA_CONTEXT, normalizeManagedSpec, defaultDefinitions, describeManaged,
   resolveManagedEngine, parseEnvFile, parseProviderShellFile, discoverOllamaModels, discoverPiModels, needsExplicitNode,
   publicCatalog, parseProviderKeyFiles, describeCatalogCredential,
+  shellConfiguredCommandArgs,
 } = require('../lib/fleet/managed.js');
 const { parseDefinitions } = require('../lib/fleet/definitions.js');
 
@@ -32,7 +33,7 @@ test('app defaults: CLI base + Shell locale, provider separati e policy esplicit
   assert.equal(CATALOG.filter((p) => p.default).length, 5);
 });
 
-test('Shell locale: path risolto a runtime, comando opaco con -lc e policy standard', () => {
+test('Shell locale: path runtime, command via login interattivo -lic e policy standard', () => {
   const home = tmp();
   try {
     const shell = fakeClient(home, 'bash');
@@ -49,7 +50,7 @@ test('Shell locale: path risolto a runtime, comando opaco con -lc e policy stand
       permissionPolicies: { 'shell.local': 'unsafe' },
     }, { home, env: { SHELL: shell } });
     assert.equal(oneShot.ok, true);
-    assert.deepEqual(oneShot.engine.args, ['-lc', raw]);
+    assert.deepEqual(oneShot.engine.args, ['-lic', raw]);
     assert.equal(oneShot.engine.args.includes('must-not-be-argv'), false);
     assert.equal(oneShot.engine.info, undefined);
     assert.equal(oneShot.info.permissionPolicy, 'standard');
@@ -57,6 +58,13 @@ test('Shell locale: path risolto a runtime, comando opaco con -lc e policy stand
     assert.equal(normalizeManagedSpec({ client: 'shell', provider: 'local', model: 'fake' }), null);
     assert.equal(normalizeManagedSpec({ client: 'shell', provider: 'local', model: '', permissionPolicy: 'unsafe' }), null);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Shell command argv: shell POSIX note usano -lic; shell custom conserva -lc', () => {
+  for (const shell of ['/bin/bash', '/usr/bin/zsh', '/bin/sh', '/usr/bin/dash']) {
+    assert.deepEqual(shellConfiguredCommandArgs(shell, 'agy'), ['-lic', 'agy']);
+  }
+  assert.deepEqual(shellConfiguredCommandArgs('/usr/bin/fish', 'agy'), ['-lc', 'agy']);
 });
 
 test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P', () => {

@@ -46,6 +46,7 @@ test('causes: PHASES/CODES are stable, well-formed, closed enums; UNKNOWN is the
   for (const c of CODES) assert.match(c, /^[A-Z][A-Z0-9_]*$/, `code well-formed: ${c}`);
   // known values pass through verbatim
   assert.equal(codeOf('CLIENT_EARLY_EXIT'), 'CLIENT_EARLY_EXIT');
+  assert.equal(codeOf('SHELL_COMMAND_FAILED'), 'SHELL_COMMAND_FAILED');
   assert.equal(codeOf('LAUNCH_BROKER_UNSAFE'), 'LAUNCH_BROKER_UNSAFE');
   assert.equal(phaseOf('readiness'), 'readiness');
   assert.equal(phaseOf('spawn-client'), 'spawn-client');
@@ -134,6 +135,30 @@ test('route: tagged up() failure -> FLEET_ACTION_FAILED {status,code,phase} boun
   for (const forbidden of ['SECRET', '/home/alice', 'OPENAI_API_KEY=leak', 'Bearer']) {
     assert.equal(text.includes(forbidden), false, `diagnostics leak: ${forbidden}`);
   }
+});
+
+test('route: Shell command failure keeps the dedicated bounded cause', async (t) => {
+  const fleet = {
+    available: true, capabilities: () => ['up'],
+    up: async () => {
+      const e = new Error('command and diagnostic must not enter the event');
+      e.status = 500;
+      e.fleetCode = 'SHELL_COMMAND_FAILED';
+      e.fleetPhase = 'readiness';
+      throw e;
+    },
+  };
+  const { diagnostics, port } = await bootRoutes(t, fleet);
+  const res = await post(port, { cell: 'agy.native' });
+  assert.equal(res.status, 500);
+  const body = await res.json();
+  assert.equal(body.code, 'SHELL_COMMAND_FAILED');
+  assert.equal(body.phase, 'readiness');
+  assert.deepEqual(diagnostics.logs().records[0].meta, {
+    action: 'up', cell: 'agy.native', state: 'failed', status: 500,
+    code: 'SHELL_COMMAND_FAILED', phase: 'readiness',
+  });
+  assert.equal(JSON.stringify(diagnostics.logs().records).includes('diagnostic must not enter'), false);
 });
 
 test('route: untagged/legacy up() failure -> bounded UNKNOWN code/phase; HTTP body keeps historical shape', async (t) => {
