@@ -16,6 +16,9 @@ mobile-UX fixes that ride the same branch:
 - **Composer confirm a TUI selection** — with the draft empty, the ➤ green
   arrow now sends a bare Enter (CR via the same raw path the KeyBar arrows use)
   so it confirms a highlighted multi-choice option instead of no-op'ing.
+- **Kobbfiguration (opt-in toggle)** — the Credits tab and the reduced KeyBar
+  are gated behind a client-only checkbox in Settings → System, default off.
+  With it off the UI is upstream-identical; see the dedicated section below.
 
 Written for whoever (human or AI) reviews the PR.
 
@@ -54,9 +57,13 @@ On mobile (PWA via xterm.js over a PTY) three things were painful:
 - `frontend/src/components/ComposerBar.test.jsx` (new "mobile IME submit" case)
 - `frontend/src/components/SettingsPanel.jsx` + `SettingsPanel.css` (new Credits
   tab: sprites, retro font, copyright, gesture-started looping audio, luminous
-  rainbow vortex)
+  rainbow vortex; a `Kobbfiguration` checkbox in the System tab gates the
+  Credits tab + the reduced KeyBar behind a client-only opt-in, default off,
+  plus the POWER UP overlay/chime on enable)
+- `frontend/src/lib/kobb-ui.js` + `frontend/src/hooks/useKobbUI.js`
+  (`useSyncExternalStore` localStorage toggle, mirrors `useLang`)
 - `frontend/src/lib/i18n.js` (`tab-credits`, `credits-attribution`,
-  `credits-copyright` in it/en/es)
+  `credits-copyright`, `kobb-ui-*` in it/en/es)
 - `frontend/public/credits/dwarf.png`, `knight.png`, `dungeon-loop.mp3`
 - `frontend/public/fonts/press-start-2p.woff2` (self-hosted retro font)
 - `frontend/dist/*` (rebuilt; `dist` is tracked in this repo, so it is part of
@@ -348,7 +355,7 @@ behaviour is guarded by `(pointer: coarse)`, which jsdom does not emulate
 runs). It is covered by the manual verification above. The suite count is
 unchanged.
 
-Full frontend suite: **79/79 passing** (`npm --prefix frontend test`).
+Full frontend suite: **80/80 passing** (`npm --prefix frontend test`).
 
 ## Manual verification
 
@@ -412,10 +419,38 @@ No backend changes. The tab is static content + an `<audio>` element + CSS
 animation; it is cosmetic only and does not touch the terminal, PTY, or
 composer behaviour.
 
+## Kobbfiguration (opt-in toggle)
+
+Both the Credits tab and the reduced KeyBar are gated behind a `Kobbfiguration`
+checkbox in **Settings → System**: a client-only preference (`localStorage`,
+key `nc_kobb_ui`), **default off**. With it off, `SettingsPanel` (4 tabs, no
+Credits) and `KeyBar` (original full two-row layout) render exactly as
+upstream — none of the Kobb personalizations are visible or loaded unless a
+user opts in on that browser.
+
+- Store: `lib/kobb-ui.js` (`useSyncExternalStore`, same shape as `useLang`'s
+  language store) + `hooks/useKobbUI.js`. Toggling is **live**: no reload, no
+  backend round-trip, per-browser (not synced across devices/peers).
+- `KeyBar` takes a `kobbUI` prop; when false it renders the pre-redesign
+  two-row layout (the `blurActive()` soft-keyboard fix still applies either
+  way, since it lives in the shared send helpers, not the redesign).
+- Enabling the checkbox fires a **"POWER UP!" overlay** (large Press Start 2P
+  text, 3D-extruded, ~3s faint-out) plus a synthesized coin chime (Web Audio
+  oscillator, no external asset) — a one-off flourish on the transition, not
+  shown again until toggled off and back on.
+- Existing `KeyBar` tests cover the redesign via the prop defaulting to `true`
+  in the harness; +1 test covers the original layout with `kobbUI={false}`.
+
+This makes the whole mobile-UX personalization reversible per-client without
+touching anyone who doesn't opt in — reviewers/users who prefer the original
+NexusCrew UI see no behavioural change at all.
+
 ## Compatibility / risks
 
-- The reduced bar is the default for **all** clients (not only mobile). On
-  desktop the `⊞` toggle still gives access to the full set, so no capability
+- The reduced KeyBar and the Credits tab are **opt-in** (see "Kobbfiguration"
+  above): default off means the upstream UI is unchanged for anyone who
+  doesn't flip the checkbox. When a user does opt in, the `⊞` toggle inside
+  the reduced bar still gives access to the full command set, so no capability
   is lost — only one extra tap away.
 - `blurActive()` runs on every send-key tap; it's a no-op when the active
   element is `document.body` or a non-focusable element, so desktop is
@@ -462,6 +497,9 @@ In chronological order, on top of `origin/main` (`0.8.27`, `ec243e9`):
 24. `170dab0` feat(credits): luminous rainbow vortex behind the sprites + nudge content down
 25. `bb1cb5b` feat(credits): portal as thin separate rainbow rays instead of a ring
 26. `655c661` feat(credits): halve the rays, symmetrize sprites, text below the spiral
+27. `8c3485c` docs: add Credits tab section, complete commit list and PR description
+28. `04dfa7e` feat(settings): opt-in Kobbfiguration toggle (Credits + KeyBar) with POWER UP flourish
+29. `de689de` feat(settings): note (POWER UP!) in the Kobbfiguration help text
 
 ## Suggested PR description
 
@@ -510,6 +548,14 @@ In chronological order, on top of `origin/main` (`0.8.27`, `ec243e9`):
 >   rainbow vortex (thin separate rays, clockwise) behind the sprites. Cosmetic
 >   only; no backend/PTY changes.
 >
-> Tests: KeyBar.test.jsx (4) + a new ComposerBar IME-submit case +
-> terminal-scroll.test.js (4); full suite 79/79. Verified on a real mobile PWA
-> client. Full notes in `docs/keybar-mobile-ux.md`.
+> Rollout:
+> - Both the reduced KeyBar and the Credits tab are gated behind a
+>   `Kobbfiguration` opt-in checkbox in Settings → System (client-only,
+>   localStorage, default **off**). With it off the UI is upstream-identical
+>   (original two-row KeyBar, 4 settings tabs) — nothing changes for anyone who
+>   doesn't opt in. Turning it on live-switches both instantly (no reload) and
+>   shows a short celebratory overlay + synthesized chime.
+>
+> Tests: KeyBar.test.jsx (5, incl. the opt-out layout) + a new ComposerBar
+> IME-submit case + terminal-scroll.test.js (4); full suite 80/80. Verified on
+> a real mobile PWA client. Full notes in `docs/keybar-mobile-ux.md`.
