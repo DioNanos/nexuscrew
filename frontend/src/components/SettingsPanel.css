@@ -199,3 +199,5 @@
 .nc-set-panel .nc-empty { opacity: .5; font-size: 12px; }
 .nc-set-panel .nc-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; display: inline-block; flex: 0 0 8px; }
 .nc-set-panel .nc-dot.on { background: #2e7d32; }
+.nc-set-panel .nc-credits-images { display: flex; gap: 16px; justify-content: center; }
+.nc-set-panel .nc-credits-images img { width: 96px; height: auto; image-rendering: pixelated; }

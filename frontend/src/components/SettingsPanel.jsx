@@ -741,6 +741,18 @@ function SystemTab({ token, settings, readonly, refresh }) {
   );
 }
 
+function CreditsTab() {
+  return (
+    <div className="nc-set-tab nc-credits">
+      <div className="nc-credits-images">
+        <img src="/credits/dwarf.png" alt="dwarf" />
+        <img src="/credits/knight.png" alt="knight" />
+      </div>
+      <div className="nc-set-info">{t('credits-attribution')}</div>
+    </div>
+  );
+}
+
 export default function SettingsPanel({ token, onClose, initialTab = 'nodes', initialLocation = '', startNewCell = false }) {
   useLang();
   const [tab, setTab] = useState(initialTab);
@@ -793,7 +805,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
         {loadErr && <div className="nc-err">{loadErr}</div>}
 
         <div className="nc-set-tabs">
-          {['nodes', 'fleet', 'diagnostics', 'system'].map((k) => (
+          {['nodes', 'fleet', 'diagnostics', 'system', 'credits'].map((k) => (
             <button key={k} type="button" className={`nc-set-tabbtn${tab === k ? ' on' : ''}`}
               onClick={() => setTab(k)}>{t(`tab-${k}`)}</button>
           ))}
@@ -807,6 +819,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
             targets={roster.map((g) => ({ route: g.route, label: g.label || g.name, status: g.status }))} />}
           {tab === 'diagnostics' && <DiagnosticsTab token={token} roster={roster} readonly={readonly} />}
           {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} refresh={refresh} />}
+          {tab === 'credits' && <CreditsTab />}
         </div>
       </div>
     </div>
