@@ -16,8 +16,12 @@ export function stripTrailingNewlines(value) {
 
 export function createComposerSubmitter({ isReady, paste, send }) {
   return (text) => {
-    if (!text || !isReady()) return false;
+    if (!isReady()) return false;
     try {
+      // Empty submit (green arrow with no draft): act as Enter — confirm a TUI
+      // multi-choice selection or send a blank line. No paste; raw CR via the
+      // same sock.sendInput path the KeyBar arrows use (so it reaches the TUI).
+      if (!text) return send(CR) !== false;
       // paste() is deliberately separate from send(CR): agent TUIs can otherwise
       // absorb Enter into their non-bracketed paste-burst detector.
       if (paste(text) === false || !isReady()) return false;

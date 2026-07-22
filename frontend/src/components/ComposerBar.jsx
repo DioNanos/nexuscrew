@@ -83,7 +83,11 @@ export default function ComposerBar({ submitText, token, session, node, ownerId 
     if (live !== text) setText(live);
     const draft = live;
     const value = stripTrailingNewlines(draft);
-    if (!value || sending) return;
+    if (sending) return;
+    // Empty composer: the green arrow acts as Enter — confirm a TUI selection
+    // (arrows move it, ➤ confirms) or send a blank line. No draft to record or
+    // clear, no sending state; just deliver the Enter via submitText.
+    if (!value) { submitText(''); return; }
     setSending(true);
     setErr('');
     let ok = false;
