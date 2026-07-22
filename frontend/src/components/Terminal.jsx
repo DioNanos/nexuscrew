@@ -212,14 +212,15 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     host.addEventListener('dragover', onDragFiles, true);
     host.addEventListener('drop', onDropFiles, true);
     const STEP = 24; // px per tick di scroll (3 righe tmux)
-    const emitScroll = (delta, previous = { mode: null, remainder: 0 }) => {
-      // Writable alternate-screen TUIs (vim/less/htop) own their viewport: a
-      // vertical gesture reaches them as raw PageUp/PageDown PTY input. Normal
-      // screen and any readonly terminal keep the server-side scroll actions.
+    const emitScroll = (delta, previous = { mode: null, remainder: 0 }, modeOverride = null) => {
+      // Wheel events may belong to a writable alternate-screen TUI and reach
+      // it as raw PageUp/PageDown PTY input. A finger drag is different: on
+      // mobile it is the only practical way to browse the tmux history, so the
+      // touch path explicitly overrides this to server-side copy-mode scroll.
       // Convention: accumulated > 0 = scroll up (older), < 0 = scroll down.
       const host = hostRef.current;
       const pageThreshold = host ? host.getBoundingClientRect().height : STEP;
-      const mode = chooseScrollMode({ alternateScreen: term.buffer.active.type === 'alternate', readonly });
+      const mode = modeOverride || chooseScrollMode({ alternateScreen: term.buffer.active.type === 'alternate', readonly });
       // A page-sized remainder from the alternate buffer must never be
       // reinterpreted as many 24px line ticks after xterm returns to normal.
       const accumulated = previous.mode === mode ? previous.remainder + delta : delta;
@@ -296,8 +297,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       if (!vertical) return;
       const delta = t.clientY - touchY; touchY = t.clientY;
-      // touch: finger down (acc > 0) = older history = scroll up
-      touchScroll = emitScroll(delta, touchScroll);
+      // Touch always browses tmux history, including when Codex/Claude/Agy is
+      // rendering through xterm's alternate buffer. Finger down = older.
+      touchScroll = emitScroll(delta, touchScroll, 'scroll');
     };
     const resetTouch = () => {
       clearLongPress(); touchY = null; touchX = null; tapX = null; tapY = null;

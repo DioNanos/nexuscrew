@@ -282,21 +282,31 @@ describe('terminal scroll plan integration', () => {
     expect(fixture.inputs).toEqual([]); // no PTY input on the normal screen
   });
 
-  it('writable alternate-screen scroll sends raw PageUp/PageDown PTY input', () => {
+  it('mobile drag scrolls tmux history even in a writable alternate-screen TUI', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
     term.buffer.active.type = 'alternate'; // vim/less/htop alt buffer
-    // page-sized threshold: stub the host height so one viewport = one page step
     vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ height: 300, width: 400, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
-    // touch finger down a full page (300px) -> one PageUp
+    // A realistic 120px phone swipe is below the 300px viewport. It must still
+    // emit five 24px tmux scroll ticks instead of being discarded at touchend.
     fireEvent.touchStart(host, { touches: [{ clientX: 30, clientY: 40 }] });
-    fireEvent.touchMove(host, { touches: [{ clientX: 30, clientY: 340 }] });
-    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 30, clientY: 340 }] });
-    // wheel down a full page (deltaY +300) -> one PageDown
+    fireEvent.touchMove(host, { touches: [{ clientX: 30, clientY: 160 }] });
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 30, clientY: 160 }] });
+    expect(fixture.actions).toEqual(Array(5).fill('scroll-up'));
+    expect(fixture.inputs).toEqual([]);
+  });
+
+  it('desktop wheel in a writable alternate-screen TUI sends raw PageUp/PageDown', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    term.buffer.active.type = 'alternate';
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ height: 300, width: 400, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
+    fireEvent.wheel(host, { deltaY: -300 });
     fireEvent.wheel(host, { deltaY: 300 });
     expect(fixture.inputs).toEqual(['\x1b[5~', '\x1b[6~']);
-    expect(fixture.actions).toEqual([]); // no server-side action in page mode
+    expect(fixture.actions).toEqual([]);
   });
 
   it('does not reinterpret an alternate-screen page remainder as line ticks after a mode change', () => {

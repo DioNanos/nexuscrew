@@ -2,6 +2,24 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.32 — 2026-07-22 — "Touch History"
+
+- Restores continuous mobile finger-drag navigation of tmux history in every
+  terminal buffer, including alternate-screen AI clients such as Codex, Claude
+  and Agy. Each 24 px of vertical travel again enters/advances tmux copy-mode by
+  three lines, so a normal phone swipe is no longer discarded at touch end.
+- Keeps desktop-wheel ownership unchanged: writable alternate-screen programs
+  still receive bounded Page Up/Page Down input, while normal and readonly
+  terminals use server-side tmux scrolling. Double tap, long-press selection,
+  multi-touch cancellation, KeyBar and virtual-keyboard controls are unchanged.
+- Stops composer controls from refocusing the textarea after dictated or typed
+  input. Send hides/blurs the virtual keyboard best-effort, while history
+  selection and input-size controls remain unfocused; only a direct textarea
+  tap (or the configured terminal double tap) opens it.
+- Adds a realistic regression using a 120 px swipe inside a 300 px terminal;
+  the test fails on 0.8.31 with zero actions and passes only when five tmux
+  scroll actions are emitted.
+
 ## 0.8.31 — 2026-07-22 — "Safe Identity"
 
 - **tmux session naming for dotted cell ids.** tmux silently normalizes `.` to `_`

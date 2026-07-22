@@ -72,6 +72,11 @@ export default function ComposerBar({ submitText, token, session, node, ownerId,
     // invia quello visibile — preservando no-op vuoto, failure-draft, history e STT.
     const live = (textareaRef.current && typeof textareaRef.current.value === 'string')
       ? textareaRef.current.value : text;
+    // Invio, STT e KeyBar non sono gesti di apertura dell'IME. Catturiamo il
+    // valore DOM prima del blur (anche durante una composizione incompleta),
+    // poi chiudiamo best-effort la tastiera. Soltanto un tap sul textarea può
+    // focalizzarlo di nuovo.
+    dismissVirtualKeyboard();
     if (live !== text) setText(live);
     const draft = live;
     const value = stripTrailingNewlines(draft);
@@ -83,11 +88,6 @@ export default function ComposerBar({ submitText, token, session, node, ownerId,
     if (ok) confirmSubmitted(cellKey, draft, value);
     else setErr(t('composer-send-failed'));
     setSending(false);
-    // Il tap sul send non deve trasferire il focus al bottone: su mobile questo
-    // chiuderebbe l'IME dopo ogni invio. Il focus viene riaffermato anche dopo il
-    // render che svuota il testo, mantenendo la tastiera pronta per il messaggio
-    // successivo.
-    requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
   }
 
   // --- Allegati ---
@@ -288,7 +288,6 @@ export default function ComposerBar({ submitText, token, session, node, ownerId,
               onPointerDown={(e) => e.preventDefault()}
               onClick={() => {
                 toggleExpanded(); closeHistory(false);
-                requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
               }}
             >
               <Icon name={expanded ? 'chevronDown' : 'chevronUp'} size={18} />
@@ -303,7 +302,6 @@ export default function ComposerBar({ submitText, token, session, node, ownerId,
                 onPointerDown={(e) => e.preventDefault()}
                 onClick={() => {
                   selectHistory(item.text); closeHistory(false);
-                  requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
                 }}
               >
                 <span>{item.text.replace(/\s+/g, ' ').slice(0, 180)}</span>

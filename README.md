@@ -240,11 +240,14 @@ submitting Enter.
 The two-row mobile key bar can also show a full-height Enter key beside Page Up/Page Down, so
 interactive terminal choices can be confirmed without opening the software keyboard. By default,
 key-bar and speech-to-text actions keep that keyboard closed, while a nearby double tap inside the
-terminal explicitly opens it. **Settings → Input** can change the terminal gesture, hide the Enter
-key, or allow key-bar and voice actions to retain the keyboard. The key bar also has a
+terminal or a direct tap in the composer textarea explicitly opens it. The composer send button
+and the composer history/size controls work without focusing the textarea. **Settings → Input** can change the
+terminal gesture, hide the Enter key, or allow key-bar and voice actions to retain the keyboard.
+The key bar also has a
 **compact** layout (one row with an expand toggle that temporarily reveals the full key set
-without changing the preference), and alternate-screen TUIs (vim/less/htop) receive vertical
-gestures as raw Page Up/Page Down while normal and readonly terminals keep server-side scroll.
+without changing the preference). Mobile finger drags always browse tmux history, including when
+the attached TUI uses an alternate screen; desktop wheel events in writable alternate-screen TUIs
+remain application-owned Page Up/Page Down, while normal and readonly terminals use tmux scroll.
 These preferences are browser-local and are synchronized between open NexusCrew windows for
 the same origin.
 
@@ -505,7 +508,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.31** on npm and GitHub.
+The current stable release is **v0.8.32** on npm and GitHub.
 
 ## License
 
