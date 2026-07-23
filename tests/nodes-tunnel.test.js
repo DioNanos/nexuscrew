@@ -171,6 +171,43 @@ test('startTunnel: idempotente se gia vivo (no doppio spawn)', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('startTunnel: PID Android riutilizzato da altro UID viene sostituito automaticamente', () => {
+  const dir = tmpDir();
+  const pidPath = tunnel.tunnelPidPath(dir, 'vps');
+  fs.mkdirSync(tunnel.tunnelDir(dir), { recursive: true });
+  pidf.writePidfile(pidPath, 424242, 'node tunnel-supervisor.js ssh -N x');
+  fs.writeFileSync(tunnel.tunnelStatePath(dir, 'vps'), JSON.stringify({
+    status: 'starting', supervisorPid: 424242, runId: 'stale-generation',
+  }));
+  let spawned = 0;
+  const originalKill = process.kill;
+  process.kill = (pid, signal) => {
+    if (pid === 424242 && signal === 0) {
+      const error = new Error('not permitted');
+      error.code = 'EPERM';
+      throw error;
+    }
+    return originalKill(pid, signal);
+  };
+  try {
+    assert.deepEqual(tunnel.readTunnelState(dir, 'vps'), { status: 'down' });
+    const result = tunnel.startTunnel({
+      home: dir,
+      name: 'vps',
+      args: ['-N', 'x'],
+      logFd: null,
+      spawnSyncImpl: sshThere,
+      spawnImpl: () => { spawned += 1; return { pid: 987654, unref() {} }; },
+    });
+    assert.equal(result.started, true);
+    assert.equal(spawned, 1);
+    assert.equal(pidf.readPidfile(pidPath).pid, 987654);
+  } finally {
+    process.kill = originalKill;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('startTunnel: specifica cambiata sostituisce il supervisor vivo verificato', () => {
   const dir = tmpDir();
   fs.mkdirSync(tunnel.tunnelDir(dir), { recursive: true });

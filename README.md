@@ -87,6 +87,12 @@ On Android, `nexuscrew doctor` also verifies the Termux execution bridge used by
 builds. NexusCrew carries forward only a validated `libtermux-exec` preload from the active
 Termux prefix; arbitrary loader injection remains excluded from Fleet environments.
 
+Package upgrades self-repair installed Termux:Boot scripts before the runtime or Fleet can
+create tmux from a replaceable npm directory. NexusCrew also discards a tunnel pidfile when
+Android has reused its PID under another app UID; it never signals that foreign process and
+restarts only the configured OpenSSH supervisor. These repairs preserve the local port, token,
+pairing data and existing boot on/off choice.
+
 The preferred port is `41820`. If another process owns it, NexusCrew selects the next free
 loopback port and records the result.
 
