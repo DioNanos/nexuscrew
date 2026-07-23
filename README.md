@@ -183,6 +183,15 @@ and Pi can invoke its dependency-free Python CLI directly; Pi is not assumed to 
 natively. The media skill requires Python 3. Media generation always requires explicit Credit
 consent and never runs during installation, tests, or startup.
 
+The package also includes the portable [`fill-forms`](skills/fill-forms/SKILL.md) skill for
+inspecting, filling and visually validating local PDF and DOCX forms. It supports named
+AcroForm fields, coordinate overlays, checkboxes, character boxes and explicitly authorised
+signature images. Its scripts never install dependencies automatically, never overwrite the
+blank source and do not send documents anywhere. Canonical instructions are in English while
+user-facing guidance follows the user's language; field values and document wording are not
+translated without an explicit request. Optional Python dependencies are not bundled and remain
+subject to their own licences.
+
 Permission handling is explicit per cell and engine:
 
 - Claude engines can use standard permissions or `--dangerously-skip-permissions`.
@@ -472,6 +481,10 @@ are written in English, while user-facing output follows the user's explicit
 preference or request language; Mail reply drafts follow the email thread by
 default.
 
+`fill-forms` is a separate bundled local document skill, not an MCP companion.
+It is documented in [Fleet: cells, engines and providers](#fleet-cells-engines-and-providers)
+and carries no automatic installation or external-service behaviour.
+
 ## Configuration
 
 Runtime state is local to the current user:
@@ -526,7 +539,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.33** on npm and GitHub.
+The current stable release is **v0.8.34** on npm and GitHub.
 
 ## License
 

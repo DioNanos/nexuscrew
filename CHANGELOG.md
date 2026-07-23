@@ -2,6 +2,22 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.34 — 2026-07-23 — "Local Forms"
+
+- Adds the portable `fill-forms` skill for locally inspecting, filling and
+  visually validating PDF and DOCX forms. It supports named AcroForm fields,
+  coordinate overlays, checkboxes, character boxes, optional user-provided
+  fonts and explicitly authorised signature images.
+- Ships bounded Python helpers for PDF inspection, atomic PDF output, DOCX
+  placeholder replacement and signature-background cleanup. They preserve the
+  blank source, refuse silent field omissions and existing-output replacement,
+  install no dependency automatically and make no network request.
+- Keeps canonical instructions in English while selecting the user-facing
+  language from the explicit preference, current request or reliable locale.
+  Document wording and field values remain unchanged unless translation is
+  explicitly requested. Filling never implies authorisation to sign, send or
+  submit.
+
 ## 0.8.33 — 2026-07-23 — "Cold Boot"
 
 - Restores Fleet on a true cold boot where no tmux server or default socket
