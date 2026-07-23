@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fill Forms"
+  short_description: "Safely fill and verify local PDF and DOCX forms"
+  default_prompt: "Use fill-forms to inspect and safely complete this local form."
