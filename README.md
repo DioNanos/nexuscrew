@@ -545,7 +545,7 @@ See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.34** on npm and GitHub.
+The current stable release is **v0.8.35** on npm and GitHub.
 
 ## License
 

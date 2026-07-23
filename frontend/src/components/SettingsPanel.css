@@ -118,7 +118,13 @@
 @media (max-width: 520px) {
   .nc-fleet-modal { padding: 0; align-items: stretch; }
   .nc-fleet-modal-dialog { width: 100%; max-height: 100dvh; border-radius: 0; }
-  .nc-fleet-item { align-items: flex-start; flex-direction: column; }
+  /* La riga passa a colonna: l'asse trasversale diventa quello orizzontale.
+     Con align-items:flex-start le due span si dimensionano a max-content e la
+     riga sfonda il pannello (il min-width:0 vale solo sull'asse principale),
+     annullando l'ellissi di b/small. stretch le riporta alla larghezza della
+     riga, che e' l'unico modo perche' max-width:100% e text-overflow abbiano
+     un contenitore misurabile. */
+  .nc-fleet-item { align-items: stretch; flex-direction: column; }
   .nc-fleet-item > span:last-child { width: 100%; justify-content: flex-start; }
   .nc-fleet-pair { flex-direction: column; }
 }

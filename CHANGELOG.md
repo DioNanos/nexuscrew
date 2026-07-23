@@ -2,6 +2,13 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.35 — 2026-07-23 — "Contained Fleet"
+
+- Keeps Fleet rows inside the Settings panel on phones and narrow windows.
+  Long cell and node names now truncate with an ellipsis instead of widening
+  the row and clipping its controls; desktop layouts and Fleet dialogs remain
+  unchanged.
+
 ## 0.8.34 — 2026-07-23 — "Local Forms"
 
 - Adds the portable `fill-forms` skill for locally inspecting, filling and
