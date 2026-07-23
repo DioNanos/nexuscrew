@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crew"
+  short_description: "Coordinate bounded AI worker cells"
+  default_prompt: "Use crew to delegate this bounded task and collect a verified result."

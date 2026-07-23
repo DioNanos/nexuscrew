@@ -2,6 +2,30 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.33 — 2026-07-23 — "Cold Boot"
+
+- Restores Fleet on a true cold boot where no tmux server or default socket
+  exists yet. The expected `error connecting to … (No such file or directory)`
+  response is now treated as an empty tmux inventory, allowing the boot
+  companion to create the shared server and start every `boot:true` cell. The
+  migration inventory command uses the POSIX `C` message locale while
+  preserving UTF-8 character handling, so this classification remains
+  deterministic on localized Linux, macOS and Termux hosts.
+- Keeps migration fail-closed for unexpected tmux failures such as permission
+  errors, malformed output, ambiguous legacy sessions and rename collisions.
+  The regression reproduces the exact stderr observed after reboot and verifies
+  both provider availability and safe persistence of dotted cell identities.
+- Adds an optional MCP companion guide and machine-readable catalog for
+  structured Memory, searchable MSA knowledge, bounded Crew delegation and
+  Mail. Agents discover existing tools first, recommend a companion only for a
+  requested missing capability and never install or configure it without
+  consent.
+- Ships generic public `memory`, `vl-msa`, `crew` and `mail-assistant` skills.
+  Their canonical instructions are in English and user-facing output follows
+  the user's explicit preference or request language; Mail reply drafts follow
+  the thread language unless overridden. No account, identity, folder,
+  credential or machine-specific path is bundled.
+
 ## 0.8.32 — 2026-07-22 — "Touch History"
 
 - Restores continuous mobile finger-drag navigation of tmux history in every

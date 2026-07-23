@@ -1,6 +1,6 @@
 {
   "name": "@mmmbuto/nexuscrew",
-  "version": "0.8.32",
+  "version": "0.8.33",
   "description": "Faithful browser tmux client — attach to live sessions over a real PTY, localhost-only, mobile-easy",
   "main": "lib/server.js",
   "bin": {
@@ -13,6 +13,8 @@
     "frontend/dist/",
     "frontend/index.html",
     "CHANGELOG.md",
+    "MCP_COMPANIONS.md",
+    "mcp-companions.json",
     "LICENSE",
     "README.md",
     "NOTICE"

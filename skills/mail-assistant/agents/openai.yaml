@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mail Assistant"
+  short_description: "Safely triage and draft email in context"
+  default_prompt: "Use mail-assistant to review my new mail and prepare a concise action digest."
