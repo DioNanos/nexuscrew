@@ -275,6 +275,18 @@ test('dispatch fleet-boot: disabled -> exit 0', async () => {
   assert.equal(code, 0);
 });
 
+test('dispatch fleet-boot Termux entra in HOME prima di inizializzare Fleet', async () => {
+  let cwd = null;
+  const { code } = await runBootDispatch({
+    platform: 'termux',
+    home: '/stable/termux/home',
+    chdirImpl: (target) => { cwd = target; },
+    selectProvider: async () => ({ mode: 'disabled', fleet: { available: false }, reason: 'test' }),
+  });
+  assert.equal(code, 0);
+  assert.equal(cwd, '/stable/termux/home');
+});
+
 test('runFleetBoot: READONLY emerge come failed 403 -> exit 1 (no short-circuit)', async () => {
   // up lancerebbe 403 in READONLY: lo simuliamo esplicitamente (design §9d).
   const fleet = mockFleet(

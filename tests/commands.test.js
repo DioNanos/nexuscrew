@@ -494,6 +494,50 @@ test('managed stop/restart protect tmux before systemd and restart closes manage
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test('restart Termux ripara gli script legacy senza cambiare config, token o boot opt-in', () => {
+  const { home, token } = initHome();
+  const main = path.join(home, '.termux', 'boot', 'nexuscrew.sh');
+  const fleet = path.join(home, '.termux', 'boot', 'nexuscrew-fleet.sh');
+  fs.mkdirSync(path.dirname(main), { recursive: true });
+  fs.writeFileSync(main, '#!/bin/sh\ncd -- "$HOME/.nexuscrew"\n');
+  fs.writeFileSync(fleet, '#!/bin/sh\ncd -- "/global/npm/package"\n');
+  const configBefore = fs.readFileSync(path.join(home, '.nexuscrew', 'config.json'));
+  let starts = 0;
+  const result = restart({
+    home,
+    platform: 'termux',
+    tmuxOk: true,
+    chdirImpl: (target) => { assert.equal(target, home); },
+    startPortableImpl: () => { starts += 1; return { started: true, pid: 43210 }; },
+    log: () => {},
+  });
+  assert.equal(result.restarted, true);
+  assert.equal(starts, 1);
+  assert.match(fs.readFileSync(main, 'utf8'), /^\s*cd -- "\$HOME"\s*$/m);
+  assert.match(fs.readFileSync(fleet, 'utf8'), /^\s*cd -- "\$HOME"\s*$/m);
+  assert.equal(fs.readFileSync(path.join(home, '.nexuscrew', 'token'), 'utf8').trim(), token);
+  assert.deepEqual(fs.readFileSync(path.join(home, '.nexuscrew', 'config.json')), configBefore);
+  assert.equal(fs.existsSync(path.join(home, '.nexuscrew', 'service-cwd-migration.pending')), false);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('restart Termux non abilita boot se gli script non erano installati', () => {
+  const { home } = initHome();
+  let starts = 0;
+  const result = restart({
+    home,
+    platform: 'termux',
+    chdirImpl: (target) => { assert.equal(target, home); },
+    startPortableImpl: () => { starts += 1; return { started: true, pid: 43211 }; },
+    log: () => {},
+  });
+  assert.equal(result.restarted, true);
+  assert.equal(starts, 1);
+  assert.equal(fs.existsSync(path.join(home, '.termux', 'boot', 'nexuscrew.sh')), false);
+  assert.equal(fs.existsSync(path.join(home, '.termux', 'boot', 'nexuscrew-fleet.sh')), false);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 test('stopManagedTunnels ripulisce anche un supervisor orfano non piu nel node store', () => {
   const { home } = initHome();
   const orphan = path.join(home, '.nexuscrew', 'tunnels', 'orphan.pid');
@@ -572,6 +616,36 @@ test('serve: bootstrap Fleet copre service manager e Termux:Boot', () => {
     serverStart: () => { presentAtStart = fs.existsSync(path.join(home, '.nexuscrew', 'fleet.json')); },
   });
   assert.equal(presentAtStart, true);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('serve Termux ripara automaticamente entrambi gli script boot legacy prima del runtime', () => {
+  const { home, token } = initHome();
+  const main = path.join(home, '.termux', 'boot', 'nexuscrew.sh');
+  const fleet = path.join(home, '.termux', 'boot', 'nexuscrew-fleet.sh');
+  fs.mkdirSync(path.dirname(main), { recursive: true });
+  fs.writeFileSync(main, '#!/bin/sh\ncd -- "$HOME/.nexuscrew"\n');
+  fs.writeFileSync(fleet, '#!/bin/sh\ncd -- "/replaceable/npm/package"\n');
+  const configBefore = fs.readFileSync(path.join(home, '.nexuscrew', 'config.json'));
+  let chdir = null;
+  let started = false;
+  serve({
+    home,
+    platform: 'termux',
+    tmuxOk: true,
+    chdirImpl: (target) => { chdir = target; },
+    lifecycleWarn: () => {},
+    serverStart: () => {
+      started = true;
+      assert.match(fs.readFileSync(main, 'utf8'), /^\s*cd -- "\$HOME"\s*$/m);
+      assert.match(fs.readFileSync(fleet, 'utf8'), /^\s*cd -- "\$HOME"\s*$/m);
+    },
+  });
+  assert.equal(started, true);
+  assert.equal(chdir, home);
+  assert.equal(fs.readFileSync(path.join(home, '.nexuscrew', 'token'), 'utf8').trim(), token);
+  assert.deepEqual(fs.readFileSync(path.join(home, '.nexuscrew', 'config.json')), configBefore);
+  assert.equal(fs.existsSync(path.join(home, '.nexuscrew', 'service-cwd-migration.pending')), false);
   fs.rmSync(home, { recursive: true, force: true });
 });
 

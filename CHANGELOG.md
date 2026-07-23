@@ -17,6 +17,15 @@ All notable changes to NexusCrew are tracked here.
   Document wording and field values remain unchanged unless translation is
   explicitly requested. Filling never implies authorisation to sign, send or
   submit.
+- Self-heals stale tunnel pidfiles after Android reuses a PID under another
+  app UID. An `EPERM` ownership probe is no longer accepted as a live
+  NexusCrew supervisor: the foreign process is never signalled, the stale
+  pidfile is removed and the configured OpenSSH tunnel starts normally.
+- Repairs legacy Termux:Boot definitions automatically on service start and
+  restart. Both the HTTP runtime and Fleet companion enter the stable user
+  home before they can create tmux, then installed scripts are regenerated
+  atomically without changing the configured port, token, pairing state or
+  the user's boot opt-in.
 
 ## 0.8.33 — 2026-07-23 — "Cold Boot"
 

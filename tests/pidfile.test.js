@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  readPidfile, writePidfile, removePidfile, pidExists, isAlive, cleanStale, killPidfile,
+  readPidfile, writePidfile, pidOwnership, pidExists, isAlive, cleanStale, killPidfile,
 } = require('../lib/cli/pidfile.js');
 
 function tmpPid() {
@@ -47,6 +47,18 @@ test('pidExists: processo vivo (self) true, pid morto false', () => {
   assert.equal(pidExists(999999), false);
 });
 
+test('EPERM: PID esistente ma estraneo non e un processo NexusCrew vivo', () => {
+  const foreign = (_pid, signal) => {
+    assert.equal(signal, 0);
+    const error = new Error('not permitted');
+    error.code = 'EPERM';
+    throw error;
+  };
+  assert.equal(pidOwnership(424242, foreign), 'foreign');
+  assert.equal(pidExists(424242, foreign), true, 'il PID esiste genericamente');
+  assert.equal(isAlive({ pid: 424242, cmd: 'node tunnel-supervisor.js' }, { killImpl: foreign }), false);
+});
+
 test('isAlive: self vivo (cmd match conservativo); meta null false', () => {
   // process.pid e' vivo; 'node' e' sicuramente nel cmdline del processo test
   assert.equal(isAlive({ pid: process.pid, cmd: 'node' }), true);
@@ -67,6 +79,19 @@ test('cleanStale: pid vivo -> non rimuove', () => {
   writePidfile(p, process.pid, 'node');
   assert.equal(cleanStale(p), false);
   assert.ok(readPidfile(p)); // ancora presente
+  fs.rmSync(path.dirname(p), { recursive: true, force: true });
+});
+
+test('cleanStale: PID riutilizzato da altro UID viene rimosso automaticamente', () => {
+  const p = tmpPid();
+  writePidfile(p, 424242, 'node tunnel-supervisor.js');
+  const foreign = () => {
+    const error = new Error('not permitted');
+    error.code = 'EPERM';
+    throw error;
+  };
+  assert.equal(cleanStale(p, { killImpl: foreign }), true);
+  assert.equal(readPidfile(p), null);
   fs.rmSync(path.dirname(p), { recursive: true, force: true });
 });
 
@@ -96,5 +121,23 @@ test('killPidfile: PID reuse (cmd mismatch) -> NO kill, remove stale', () => {
   assert.equal(r.killed, false);
   assert.match(r.reason, /pid reuse|cmd mismatch/);
   assert.equal(readPidfile(p), null); // pidfile stale rimosso (no broad kill)
+  fs.rmSync(path.dirname(p), { recursive: true, force: true });
+});
+
+test('killPidfile: EPERM rimuove solo il pidfile e non segnala il processo estraneo', () => {
+  const p = tmpPid();
+  writePidfile(p, 424242, 'node tunnel-supervisor.js');
+  const signals = [];
+  const foreign = (_pid, signal) => {
+    signals.push(signal);
+    const error = new Error('not permitted');
+    error.code = 'EPERM';
+    throw error;
+  };
+  const r = killPidfile(p, 'SIGTERM', { killImpl: foreign });
+  assert.deepEqual(signals, [0], 'solo ownership probe, nessun SIGTERM');
+  assert.equal(r.killed, false);
+  assert.match(r.reason, /not owned/);
+  assert.equal(readPidfile(p), null);
   fs.rmSync(path.dirname(p), { recursive: true, force: true });
 });
