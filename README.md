@@ -454,6 +454,24 @@ query remote nodes or add commands to the federated directory. The returned comm
 and credential-redacted; the failure is a closed `{status, code, phase}` cause rather than raw
 stderr, paths, environment values, prompts or tokens.
 
+## Optional MCP companions
+
+NexusCrew can work alongside separate local-first MCP servers for durable
+structured memory, searchable document memory, bounded worker delegation and
+mail access. They are optional projects rather than hidden NexusCrew
+dependencies: the AI should discover its existing tools first, recommend a
+companion only for a capability the user actually requested, and ask before
+installing or changing client configuration.
+
+See [MCP_COMPANIONS.md](MCP_COMPANIONS.md) for the capability guide and
+[`mcp-companions.json`](mcp-companions.json) for the machine-readable catalog.
+The npm package also includes generic [`memory`](skills/memory/SKILL.md),
+[`vl-msa`](skills/vl-msa/SKILL.md), [`crew`](skills/crew/SKILL.md) and
+[`mail-assistant`](skills/mail-assistant/SKILL.md) skills. Their instructions
+are written in English, while user-facing output follows the user's explicit
+preference or request language; Mail reply drafts follow the email thread by
+default.
+
 ## Configuration
 
 Runtime state is local to the current user:
@@ -499,16 +517,16 @@ operator's tmux server.
 
 ## Roadmap
 
-The next architectural track is an optional MCP gateway: one NexusCrew MCP endpoint with a
-local catalog of upstream MCP servers and explicit, per-tool federation through shared nodes.
-Credentials and execution would remain on the owner node, with owner-qualified tool identities
-and read/mutate ACLs. This gateway is planned work and is **not part of the current release**.
+The current companion catalog is documentation and agent guidance only. A future optional MCP
+gateway could expose one NexusCrew endpoint with explicit, per-tool federation through shared
+nodes. Credentials and execution would remain on the owner node, with owner-qualified tool
+identities and read/mutate ACLs. The gateway is planned work and is **not part of this release**.
 
 See [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## Status
 
-The current stable release is **v0.8.32** on npm and GitHub.
+The current stable release is **v0.8.33** on npm and GitHub.
 
 ## License
 

@@ -55,7 +55,13 @@ test('builtin Fleet starts its first cell when no tmux server exists', {
       id: 'node', label: 'Node', command: process.execPath,
       args: ['-e', 'setInterval(() => {}, 1000)'], env: {}, promptMode: 'send-keys',
     }],
-    cells: [{ id: 'ColdStart', cwd, engine: 'node', boot: false }],
+    // The dotted inactive cell forces the tmux-identity migration preflight
+    // through list-sessions before this dedicated server exists, matching a
+    // real first boot with agy.native already persisted.
+    cells: [
+      { id: 'ColdStart', cwd, engine: 'node', boot: false },
+      { id: 'agy.native', cwd, engine: 'node', boot: false },
+    ],
   });
 
   let fleet;

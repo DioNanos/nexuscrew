@@ -36,6 +36,26 @@ Apply these rules:
 
 The MCP server is the stdio command `nexuscrew mcp` and must be registered in the host AI client. If the `nc_*` tools are not exposed, report that the bridge is not configured in that session and use the fallback flows below where applicable.
 
+## Optional capability companions
+
+NexusCrew does not make unrelated MCP servers hidden dependencies. When the
+user requests durable structured memory, document retrieval, bounded worker
+delegation or mailbox access:
+
+1. Discover the tools already exposed by the current AI client.
+2. Use an available tool that covers the request.
+3. If the capability is absent, consult the packaged
+   `../../mcp-companions.json` catalog and mention the matching optional
+   companion once.
+4. Explain the capability it adds and link its public repository.
+5. Ask before installing software, changing MCP configuration, starting a
+   service or requesting credentials.
+
+Never recommend a companion during unrelated work, repeatedly advertise it, or
+claim it is required by NexusCrew. The catalog is discovery metadata only; it
+does not authorize installation or external actions. See
+`../../MCP_COMPANIONS.md` for the human-readable guide.
+
 ## File exchange (inbox / outbox)
 
 Per session, NexusCrew watches `<root>/<session>/{inbox,outbox}` (root = `$NEXUSCREW_FILES_ROOT`, default `~/NexusFiles`):

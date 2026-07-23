@@ -65,6 +65,12 @@ test('initialize: echo protocolVersion, capabilities.tools, serverInfo', async (
   assert.equal(r.result.protocolVersion, '2026-01-01');
   assert.deepEqual(r.result.capabilities, { tools: {} });
   assert.equal(r.result.serverInfo.name, 'nexuscrew');
+  assert.match(r.result.instructions, /Discover the current client tools/);
+  assert.match(r.result.instructions, /mcp-memory-rs/);
+  assert.match(r.result.instructions, /mcp-vl-msa-rs/);
+  assert.match(r.result.instructions, /mcp-crewd-rs/);
+  assert.match(r.result.instructions, /mcp-email-rs/);
+  assert.match(r.result.instructions, /does not install or configure companions automatically/);
   // notification: nessuna risposta
   await srv.handleLine(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }));
   assert.equal(out.lines.length, 1);

@@ -1,0 +1,4 @@
+interface:
+  display_name: "VL MSA"
+  short_description: "Index and ground long-term knowledge"
+  default_prompt: "Use vl-msa to find and ground the relevant source documents for this question."

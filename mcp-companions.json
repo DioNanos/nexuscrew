@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "kind": "nexuscrew-mcp-companions",
+  "policy": {
+    "optional": true,
+    "discoverToolsFirst": true,
+    "recommendOnlyForRequestedCapability": true,
+    "automaticInstall": false,
+    "automaticConfiguration": false
+  },
+  "companions": [
+    {
+      "id": "memory",
+      "name": "mcp-memory-rs",
+      "repository": "https://github.com/DioNanos/mcp-memory-rs",
+      "installation": "https://github.com/DioNanos/mcp-memory-rs#install",
+      "license": "Apache-2.0",
+      "bundledSkill": "skills/memory/SKILL.md",
+      "capabilities": [
+        "durable structured agent state",
+        "versioned categories",
+        "bounded append-only journals",
+        "full-text memory search"
+      ],
+      "primaryTools": [
+        "memory_read",
+        "memory_write",
+        "memory_append",
+        "memory_search",
+        "memory_status"
+      ]
+    },
+    {
+      "id": "msa",
+      "name": "mcp-vl-msa-rs",
+      "repository": "https://github.com/DioNanos/mcp-vl-msa-rs",
+      "installation": "https://github.com/DioNanos/mcp-vl-msa-rs#install",
+      "license": "Apache-2.0",
+      "bundledSkill": "skills/vl-msa/SKILL.md",
+      "capabilities": [
+        "persistent document collections",
+        "BM25 and optional hybrid retrieval",
+        "full-source grounding",
+        "bounded multi-hop retrieval"
+      ],
+      "primaryTools": [
+        "msa_index",
+        "msa_index_batch",
+        "msa_search",
+        "msa_fetch_doc",
+        "msa_remember",
+        "msa_forget",
+        "msa_interleave_round"
+      ]
+    },
+    {
+      "id": "crew",
+      "name": "mcp-crewd-rs",
+      "repository": "https://github.com/DioNanos/mcp-crewd-rs",
+      "installation": "https://github.com/DioNanos/mcp-crewd-rs#install",
+      "license": "Apache-2.0",
+      "bundledSkill": "skills/crew/SKILL.md",
+      "capabilities": [
+        "bounded AI worker spawning",
+        "task status and structured results",
+        "controlled inter-cell messaging"
+      ],
+      "primaryTools": [
+        "cell_spawn",
+        "cell_send_task",
+        "cell_status",
+        "cell_result",
+        "cell_list",
+        "cell_send",
+        "cell_ask"
+      ]
+    },
+    {
+      "id": "mail",
+      "name": "mcp-email-rs",
+      "repository": "https://github.com/DioNanos/mcp-email-rs",
+      "installation": "https://github.com/DioNanos/mcp-email-rs#install",
+      "license": "Apache-2.0",
+      "bundledSkill": "skills/mail-assistant/SKILL.md",
+      "capabilities": [
+        "IMAP mailbox discovery",
+        "mail search and reading",
+        "attachments and folders",
+        "drafts and optional SMTP sending"
+      ],
+      "primaryTools": [
+        "list_folders",
+        "list_emails",
+        "search_emails",
+        "get_email",
+        "download_attachment",
+        "create_draft",
+        "send_email",
+        "email_doctor"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Memory"
+  short_description: "Use persistent agent memory safely"
+  default_prompt: "Use memory to inspect and update the durable state relevant to this task."
