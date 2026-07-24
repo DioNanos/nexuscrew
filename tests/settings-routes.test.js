@@ -525,6 +525,44 @@ test('service/regenerate: scrive l\'unit ma NON esegue restart (activation skipp
   assert.equal(s.service.installed, true);
 });
 
+test('service/regenerate mac: pianifica bootout/bootstrap senza exec o polling', async (t) => {
+  const execCalls = [];
+  const { base, token, home } = await boot(t, {}, {
+    platform: 'mac',
+    uid: 501,
+    execImpl: (bin, args) => {
+      execCalls.push([bin, args]);
+      throw new Error('activation must remain skipped');
+    },
+  });
+  const bootTarget = path.join(
+    home,
+    'Library',
+    'LaunchAgents',
+    'com.mmmbuto.nexuscrew.plist',
+  );
+  fs.mkdirSync(path.dirname(bootTarget), { recursive: true });
+  fs.writeFileSync(bootTarget, 'boot opt-in placeholder', { mode: 0o644 });
+  const target = path.join(home, 'systemd', 'nexuscrew.service');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, 'boot opt-in placeholder', { mode: 0o644 });
+
+  const r = await fetch(`${base}/api/settings/service/regenerate`, {
+    method: 'POST',
+    headers: H(token),
+  });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.deepEqual(execCalls, []);
+  assert.deepEqual(j.skippedActivation, [
+    'launchctl bootout gui/501/com.mmmbuto.nexuscrew',
+    `launchctl bootstrap gui/501 ${target}`,
+  ]);
+  const plist = fs.readFileSync(target, 'utf8');
+  assert.match(plist, /<key>WorkingDirectory<\/key>/);
+  assert.match(plist, new RegExp(`<string>${home}</string>`));
+});
+
 test('service/regenerate: boot opt-in assente -> 409 e nessuna unit creata', async (t) => {
   const { base, token } = await boot(t);
   const r = await fetch(`${base}/api/settings/service/regenerate`, { method: 'POST', headers: H(token) });
