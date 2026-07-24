@@ -297,16 +297,36 @@ describe('terminal scroll plan integration', () => {
     expect(fixture.inputs).toEqual([]);
   });
 
-  it('desktop wheel in a writable alternate-screen TUI sends raw PageUp/PageDown', () => {
+  it('desktop wheel in a writable alternate-screen TUI browses tmux history like touch', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    term.buffer.active.type = 'alternate'; // Codex/Claude/vim alt buffer
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ height: 300, width: 400, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
+    fireEvent.wheel(host, { deltaY: -24 });
+    fireEvent.wheel(host, { deltaY: 24 });
+    expect(fixture.actions).toEqual(['scroll-up', 'scroll-down']);
+    expect(fixture.inputs).toEqual([]); // the wheel no longer steals the TUI viewport
+  });
+
+  it('Shift+wheel keeps the raw PageUp/PageDown escape hatch for the TUI viewport', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
     term.buffer.active.type = 'alternate';
     vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ height: 300, width: 400, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
-    fireEvent.wheel(host, { deltaY: -300 });
-    fireEvent.wheel(host, { deltaY: 300 });
+    fireEvent.wheel(host, { deltaY: -300, shiftKey: true });
+    fireEvent.wheel(host, { deltaY: 300, shiftKey: true });
     expect(fixture.inputs).toEqual(['\x1b[5~', '\x1b[6~']);
     expect(fixture.actions).toEqual([]);
+  });
+
+  it('Shift+wheel on the normal screen stays server-side', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    fireEvent.wheel(host, { deltaY: -24, shiftKey: true });
+    expect(fixture.actions).toEqual(['scroll-up']);
+    expect(fixture.inputs).toEqual([]);
   });
 
   it('does not reinterpret an alternate-screen page remainder as line ticks after a mode change', () => {
@@ -315,10 +335,9 @@ describe('terminal scroll plan integration', () => {
     const term = fixture.instances[0];
     term.buffer.active.type = 'alternate';
     vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ height: 300, width: 400, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
-    fireEvent.wheel(host, { deltaY: -290 }); // page remainder: +290, no action
+    fireEvent.wheel(host, { deltaY: -290, shiftKey: true }); // page remainder: +290, no action
     expect(fixture.inputs).toEqual([]);
-    term.buffer.active.type = 'normal';
-    fireEvent.wheel(host, { deltaY: -1 }); // current line delta only, still below 24px
+    fireEvent.wheel(host, { deltaY: -1 }); // releasing Shift switches mode: line delta only
     expect(fixture.actions).toEqual([]);
     expect(fixture.inputs).toEqual([]);
   });
@@ -342,6 +361,7 @@ describe('terminal scroll plan integration', () => {
     const term = fixture.instances[0];
     term.buffer.active.type = 'alternate';
     fireEvent.wheel(host, { deltaY: -24 });
+    fireEvent.wheel(host, { deltaY: -24, shiftKey: true }); // Shift never lifts the readonly guard
     fireEvent.touchStart(host, { touches: [{ clientX: 30, clientY: 40 }] });
     fireEvent.touchMove(host, { touches: [{ clientX: 30, clientY: 64 }] });
     fireEvent.touchEnd(host, { changedTouches: [{ clientX: 30, clientY: 64 }] });
