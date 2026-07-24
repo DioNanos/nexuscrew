@@ -271,6 +271,34 @@ draft, size preference and bounded prompt history in the current browser, includ
 ArrowUp/ArrowDown recall at textarea boundaries. This browser-local state is not federated or
 included in Fleet backups and can be cleared from Settings → System.
 
+## Notifications and optional spoken alerts
+
+Live cell notifications appear as in-app toasts and can also use Web Push when that browser and
+operating system support it. Push delivery remains best-effort and requires the browser permission;
+on iOS it also requires an installed PWA. The service worker cannot synthesize speech, so a hidden
+or closed PWA uses only its normal system-notification path.
+
+**Settings → System → Read notifications aloud** adds browser-local speech for new live
+notifications. It is off by default, remains editable when server settings are read-only, uses the
+device's system voice in the current UI language, and sends no notification text to a speech
+service. Enabling it runs an audible test. NexusCrew reports success only after the browser emits
+both speech start and end; if the native engine stays silent or errors, the UI reports that voice
+is unavailable. Credential-shaped values and private home paths are redacted before speech. The
+test must succeed once per page session, including after a reload.
+
+Speech runs only while that document is visible and has operating-system focus. Blur, background,
+opt-out and unmount cancel the current utterance and clear pending work; skipped notifications are
+not replayed when focus returns. Duplicate live frames are suppressed for 60 seconds, at most two
+normal alerts remain pending, and a high-urgency alert interrupts the current queue. A 30-second
+watchdog cancels a stuck browser utterance and advances to the next alert.
+
+Focus provides one speaker among NexusCrew windows on the same device. Two separately opted-in
+devices may both speak when each PWA is visible and focused; this is intentional for a per-device
+preference. Spoken alerts are optional and do not replace the toast's accessibility status, so
+screen-reader users can leave speech disabled if their assistive technology already announces it.
+Depending on the operating system, an enabled Web Push notification may still coexist with the
+visible toast and spoken alert.
+
 ## Connect nodes through SSH
 
 Every installation starts as a local node. A node joins another NexusCrew installation with a
