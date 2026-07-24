@@ -17,17 +17,15 @@ stay yours, and your infrastructure stays under your control.
 
 ## One control plane. Every screen.
 
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <img src="docs/img/session-mobile.png" width="420" alt="NexusCrew mobile terminal with a real tmux session and touch controls">
-    </td>
-  </tr>
-  <tr>
-    <td align="center"><strong>See the whole fleet</strong><br>Nodes, cells and live state at a glance.</td>
-    <td align="center"><strong>Work from the terminal</strong><br>Real PTYs, mobile controls and file handoff.</td>
-  </tr>
-</table>
+The desktop deck keeps the whole fleet visible. Open any cell from a phone and
+NexusCrew gives the same live tmux session a touch-first terminal without
+moving the session away from its host.
+
+<p align="center">
+  <img src="docs/img/session-mobile.png" width="360" alt="NexusCrew mobile terminal connected to a real tmux session with touch controls">
+  <br>
+  <sub><strong>Real tmux on mobile.</strong> Terminal keys, dictation and file handoff stay within reach.</sub>
+</p>
 
 ## Install in 30 seconds
 
