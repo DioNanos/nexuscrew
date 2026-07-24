@@ -242,7 +242,7 @@ desktop views. Managed terminals use the logical Fleet cell name as their visibl
 session and route identifiers remain technical context rather than the primary heading.
 
 <p align="center">
-  <img src="docs/img/fleet-mobile.gif" width="420" alt="NexusCrew mobile Fleet view with managed cells and session controls">
+  <img src="docs/img/fleet-mobile.gif" width="420" alt="NexusCrew mobile Fleet view with multiple connected nodes and live session controls">
 </p>
 
 Terminal attachment uses `tmux attach -f ignore-size` by default. A phone or narrow browser
