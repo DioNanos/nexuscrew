@@ -80,7 +80,10 @@ test('installFleetService mac: scrive plist com.mmmbuto.nexuscrew-fleet + bootst
     repoRoot: path.join(home, 'repo'), home,
   });
   const r = installFleetService('mac', content, { home, uid: 501, installPath: target }, {
-    execImpl: (b, a) => calls.push([b, a]),
+    execImpl: (b, a) => {
+      calls.push([b, a]);
+      if (a[0] === 'print') throw new Error('service not found');
+    },
   });
   assert.equal(r.written, true);
   assert.ok(fs.existsSync(target));
