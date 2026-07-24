@@ -2,6 +2,24 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.37 — 2026-07-25 — "Wheel History"
+
+- Restores desktop mouse-wheel browsing of tmux history inside writable
+  alternate-screen TUIs such as Codex, Claude, vim, less and htop. A normal
+  wheel gesture now enters or advances tmux copy-mode instead of accumulating
+  against a page-sized threshold and appearing inert.
+- Keeps an explicit escape hatch for applications that own their viewport:
+  `Shift` + wheel continues to send raw PageUp/PageDown input. Normal-screen
+  and readonly terminals remain server-side, mode changes discard incompatible
+  remainders, and action bursts stay bounded.
+- Leaves the mobile touch path unchanged. Finger drag continues to browse tmux
+  history with the existing touch-specific scroll override.
+- Replaces the mismatched animated mobile showcase in the public README with
+  one consistently scaled static terminal view and removes the obsolete GIF.
+- Gate: **1,059 isolated Node tests** (1,058 pass / 1 platform skip),
+  **295/295 frontend tests**, production PWA build (168 modules) and zero
+  production dependency vulnerabilities in both dependency trees.
+
 ## 0.8.36 — 2026-07-24 — "Clean Relaunch"
 
 - Makes macOS service and Fleet LaunchAgent reinstalls wait until `launchd`
