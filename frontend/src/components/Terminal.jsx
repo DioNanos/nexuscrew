@@ -327,7 +327,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const onWheel = (e) => {
       e.preventDefault(); e.stopPropagation();
       // wheel: deltaY > 0 = scroll down (newer) -> negative in the up-positive convention
-      wheelScroll = emitScroll(-e.deltaY, wheelScroll);
+      // Like the finger drag, the plain wheel browses the tmux history even in a
+      // writable alternate-screen TUI: a page-sized threshold made it inert there.
+      // Shift keeps the raw PageUp/PageDown escape hatch for vim/less/htop, the
+      // same modifier already used to force desktop-local selection below.
+      wheelScroll = emitScroll(-e.deltaY, wheelScroll, e.shiftKey ? null : 'scroll');
     };
     host.addEventListener('touchstart', onTouchStart, { passive: false });
     host.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
