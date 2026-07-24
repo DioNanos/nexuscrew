@@ -358,6 +358,74 @@ test('installService mac: bootout assente ignorato, bootstrap failure emerge', (
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('installService mac: attende la rimozione launchd prima del bootstrap', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-mac-wait-'));
+  const target = path.join(dir, 'nexuscrew.plist');
+  const calls = [];
+  const sleeps = [];
+  let printCalls = 0;
+  const execImpl = (bin, args) => {
+    calls.push([bin, args]);
+    if (args[0] === 'print') {
+      printCalls += 1;
+      if (printCalls < 3) return 'loaded';
+      throw new Error('service not found');
+    }
+    if (args[0] === 'bootstrap') {
+      assert.equal(printCalls, 3, 'bootstrap must run only after launchd no longer sees the job');
+    }
+    return '';
+  };
+  const r = installService('mac', generateMac(ctx()), { ...ctx(), installPath: target }, {
+    execImpl,
+    sleepImpl: (ms) => sleeps.push(ms),
+    launchdWaitAttempts: 5,
+    launchdWaitMs: 7,
+  });
+  assert.deepEqual(r.failures, []);
+  assert.deepEqual(sleeps, [7, 7]);
+  assert.equal(calls.filter(([, args]) => args[0] === 'bootstrap').length, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('installService mac: timeout unload fallisce chiuso senza bootstrap', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-mac-timeout-'));
+  const target = path.join(dir, 'nexuscrew.plist');
+  const calls = [];
+  const r = installService('mac', generateMac(ctx()), { ...ctx(), installPath: target }, {
+    execImpl: (bin, args) => {
+      calls.push([bin, args]);
+      return '';
+    },
+    sleepImpl: () => {},
+    launchdWaitAttempts: 3,
+    launchdWaitMs: 1,
+  });
+  assert.equal(r.failures.length, 1);
+  assert.match(r.failures[0].cmd, /print gui\/1000\/com\.mmmbuto\.nexuscrew/);
+  assert.match(r.failures[0].error, /still loaded/i);
+  assert.equal(calls.filter(([, args]) => args[0] === 'bootstrap').length, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('installService mac: activate false scrive e pianifica senza exec o polling', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-mac-plan-'));
+  const target = path.join(dir, 'nexuscrew.plist');
+  let execCalls = 0;
+  const r = installService('mac', generateMac(ctx()), { ...ctx(), installPath: target }, {
+    activate: false,
+    execImpl: () => { execCalls += 1; },
+  });
+  assert.equal(r.written, true);
+  assert.equal(execCalls, 0);
+  assert.deepEqual(r.failures, []);
+  assert.deepEqual(r.skippedActivation, [
+    'launchctl bootout gui/1000/com.mmmbuto.nexuscrew',
+    `launchctl bootstrap gui/1000 ${target}`,
+  ]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('installPath + fileMode: per-platform', () => {
   assert.ok(installPath('linux', '/h').endsWith('.config/systemd/user/nexuscrew.service'));
   assert.ok(installPath('mac', '/h').endsWith('Library/LaunchAgents/com.mmmbuto.nexuscrew.plist'));

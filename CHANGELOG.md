@@ -2,6 +2,18 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.36 — 2026-07-24 — "Clean Relaunch"
+
+- Makes macOS service and Fleet LaunchAgent reinstalls wait until `launchd`
+  has actually removed the previous job before bootstrapping the replacement,
+  preventing intermittent unload/bootstrap races during upgrades.
+- Bounds the unload check to five seconds and fails closed instead of leaving a
+  partially applied activation when a successfully stopped job never
+  disappears.
+- Keeps Settings service regeneration non-activating on every platform: the
+  unit is rewritten atomically, but applying it still requires the explicit
+  service restart already shown by the UI.
+
 ## 0.8.35 — 2026-07-23 — "Contained Fleet"
 
 - Keeps Fleet rows inside the Settings panel on phones and narrow windows.
