@@ -20,9 +20,6 @@ stay yours, and your infrastructure stays under your control.
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="docs/img/fleet-mobile.gif" width="420" alt="Animated NexusCrew Fleet view showing Local, Mac, Pixel and Cloud nodes">
-    </td>
-    <td width="50%" align="center">
       <img src="docs/img/session-mobile.png" width="420" alt="NexusCrew mobile terminal with a real tmux session and touch controls">
     </td>
   </tr>
