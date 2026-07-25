@@ -24,7 +24,7 @@ When the client exposes the NexusCrew MCP server, use these tools directly:
 
 Apply these rules:
 
-- Use `nc_notify` for meaningful asynchronous updates, failures requiring attention, and completion. Do not notify for every command or duplicate routine chat commentary.
+- Use `nc_notify` for meaningful asynchronous updates, failures requiring attention, and completion. Pass its optional `lang` field (`it`, `en`, `es` or an equivalent BCP-47 locale) whenever the notification text language is known, so opted-in speech uses the right on-device voice. Do not notify for every command or duplicate routine chat commentary.
 - Never include access tokens, credentials, private keys, push subscriptions, or other secrets in a notification, ask, file caption, or tool result.
 - Treat `nc_ask` as non-blocking: it returns an ask ID immediately. Continue safe independent work or wait normally; the human response arrives in the originating tmux session with a `[human reply · ask#<id>]` prefix by default.
 - Use `nc_status` instead of scraping NexusCrew state files. Use `nc_deck` instead of reading `decks.json`: it returns every local or authorized shared-owner deck containing the caller, preserves visual member order, identifies each deck and member by stable owner ID, includes viewer-valid Hydra routes, and reports `cell: null` when no managed Fleet match is available.

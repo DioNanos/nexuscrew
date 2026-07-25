@@ -5,7 +5,7 @@ import { getAsks, answerAsk } from '../lib/api.js';
 import { connectEvents } from '../lib/events.js';
 import { useNotificationSpeech } from '../hooks/useNotificationSpeech.js';
 import {
-  NOTIFICATION_SPEECH_PREVIEW_EVENT, createNotificationSpeaker,
+  NOTIFICATION_SPEECH_PREVIEW_EVENT, createNotificationSpeaker, notificationSpeechFrameLang,
 } from '../lib/notification-speech.js';
 import Icon from './Icon.jsx';
 import './NotifyCenter.css';
@@ -100,7 +100,7 @@ export default function NotifyCenter({ token }) {
     setTimeout(() => dropToast(key), frame.urgency === 'high' ? TOAST_HIGH_MS : TOAST_MS);
     const speech = speechState.current;
     if (speech.enabled) {
-      try { speaker.current.enqueue(frame, speech.lang); }
+      try { speaker.current.enqueue(frame, notificationSpeechFrameLang(frame, speech.lang)); }
       catch (_) { /* il TTS opzionale non puo' rompere toast o canale SSE */ }
     }
   }, [dropToast]);
@@ -124,7 +124,8 @@ export default function NotifyCenter({ token }) {
       document.removeEventListener('visibilitychange', stopIfInactive);
       window.removeEventListener('blur', stopIfInactive);
       window.removeEventListener(NOTIFICATION_SPEECH_PREVIEW_EVENT, stopForPreview);
-      speaker.current.stop();
+      if (typeof speaker.current.dispose === 'function') speaker.current.dispose();
+      else speaker.current.stop();
     };
   }, []);
 

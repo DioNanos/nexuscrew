@@ -65,6 +65,7 @@ test('create ask: 201 + persistenza 0600 + frame ask e notify high', async (t) =
   assert.equal(askFrame.ask.id, id);
   const ntf = frames.find((f) => f.type === 'notify');
   assert.equal(ntf.urgency, 'high');
+  assert.equal(ntf.lang, 'it');
   assert.match(ntf.title, /cell-a/);
 
   const open = await (await j('/api/asks?open=1')).json();

@@ -30,8 +30,21 @@ Spoken alerts are:
 - stored as a browser-local, per-device preference
 - available even when server settings are read-only
 - synthesized by the device's browser speech engine
-- spoken in the current UI language
+- spoken in the notification's declared content language when available
 - never sent to a remote speech service
+
+`nc_notify` accepts an optional `lang` value for Italian, English or Spanish,
+using either a base code (`it`) or an equivalent BCP-47 locale (`it-IT`). The
+live PWA selects a matching installed voice when the browser exposes one.
+Browsers commonly report an empty voice list during startup, so NexusCrew
+refreshes its cache on `voiceschanged` and lets the browser choose until a
+matching voice is available.
+
+Notifications from older clients have no language field. For compatibility,
+NexusCrew uses a language detected from the body only when the signal is
+strong; short or mixed technical text falls back to the current UI language.
+Unknown languages leave the utterance language empty so the browser uses its
+own default rather than being forced to English.
 
 Enabling speech runs an audible preview. NexusCrew reports success only after
 the browser emits both speech start and speech end. A silent, missing or failed
