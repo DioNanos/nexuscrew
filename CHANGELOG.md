@@ -2,6 +2,22 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.39 — 2026-07-25 — "Honest Peer"
+
+- Fixes `nexuscrew nodes test` and `nexuscrew nodes doctor` falsely reporting a
+  broken pairing for healthy outbound peers. The commands no longer present a
+  per-peer federation credential to `/api/config`, which correctly accepts only
+  the remote browser/UI token and therefore returned a misleading `401`.
+- Probes the authenticated `/federation/health` endpoint instead, matching the
+  live topology health path and binding a successful response to the expected
+  peer instance ID. A real federation `401` remains an actionable `token-ko`;
+  transport, payload and identity failures remain distinct health failures.
+- Keeps the diagnostic read-only, never returns or logs the peer credential,
+  and preserves the existing inbound, tunnel-down and missing-token behavior.
+- Gate: **1,068 isolated Node tests** (1,067 pass / 1 platform skip),
+  **300/300 frontend tests**, production PWA build and zero production
+  dependency vulnerabilities in both dependency trees.
+
 ## 0.8.38 — 2026-07-25 — "Right Voice"
 
 - Adds an optional, validated `lang` field to `nc_notify` and carries it through
