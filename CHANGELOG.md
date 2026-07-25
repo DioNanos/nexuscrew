@@ -2,6 +2,57 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.37 — 2026-07-25 — "Wheel History"
+
+- Restores desktop mouse-wheel browsing of tmux history inside writable
+  alternate-screen TUIs such as Codex, Claude, vim, less and htop. A normal
+  wheel gesture now enters or advances tmux copy-mode instead of accumulating
+  against a page-sized threshold and appearing inert.
+- Keeps an explicit escape hatch for applications that own their viewport:
+  `Shift` + wheel continues to send raw PageUp/PageDown input. Normal-screen
+  and readonly terminals remain server-side, mode changes discard incompatible
+  remainders, and action bursts stay bounded.
+- Leaves the mobile touch path unchanged. Finger drag continues to browse tmux
+  history with the existing touch-specific scroll override.
+- Replaces the mismatched animated mobile showcase in the public README with
+  one consistently scaled static terminal view and removes the obsolete GIF.
+- Gate: **1,059 isolated Node tests** (1,058 pass / 1 platform skip),
+  **295/295 frontend tests**, production PWA build (168 modules) and zero
+  production dependency vulnerabilities in both dependency trees.
+
+## 0.8.36 — 2026-07-24 — "Clean Relaunch"
+
+- Makes macOS service and Fleet LaunchAgent reinstalls wait until `launchd`
+  has actually removed the previous job before bootstrapping the replacement,
+  preventing intermittent unload/bootstrap races during upgrades.
+- Bounds the unload check to five seconds and fails closed instead of leaving a
+  partially applied activation when a successfully stopped job never
+  disappears.
+- Keeps Settings service regeneration non-activating on every platform: the
+  unit is rewritten atomically, but applying it still requires the explicit
+  service restart already shown by the UI.
+- Adds opt-in, browser-local spoken alerts for new live PWA notifications.
+  Enabling the setting runs an honest native delivery test and speech remains
+  gated on a successful test for the current page session; unsupported, silent
+  or failing engines degrade without affecting the visual toast or SSE channel.
+- Speaks only from the visible, focused NexusCrew window and cancels on blur,
+  background, opt-out or unmount. Duplicate reconnect frames are suppressed
+  for 60 seconds, the normal queue keeps at most the two newest pending alerts,
+  high urgency preempts it, and a 30-second watchdog advances past a stuck
+  browser utterance.
+- Leaves Web Push unchanged as the best-effort hidden/closed-app path. Speech
+  uses the device voice and current UI language without a server audio route;
+  credential-shaped values and private home paths are redacted first. The
+  preference is off by default, works under server READONLY and is synchronized
+  across windows for the same browser origin.
+- Documents the one-speaker boundary: focus prevents duplicate speech across
+  windows on one device, while separately opted-in devices can each speak by
+  design. Persisted questions are never replayed; only new live notification
+  frames enter the speech manager.
+- Gate: **1,059 isolated Node tests** (1,058 pass / 1 platform skip),
+  **293/293 frontend tests**, production PWA build (168 modules) and zero
+  production dependency vulnerabilities in both dependency trees.
+
 ## 0.8.35 — 2026-07-23 — "Contained Fleet"
 
 - Keeps Fleet rows inside the Settings panel on phones and narrow windows.

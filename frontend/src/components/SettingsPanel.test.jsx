@@ -10,7 +10,8 @@ vi.mock('../lib/api.js', async (importOriginal) => ({
 }));
 vi.mock('./PairingCard.jsx', () => ({ default: () => null }));
 
-import { NodesTab } from './SettingsPanel.jsx';
+import { NodesTab, NotificationSpeechRow } from './SettingsPanel.jsx';
+import { resetNotificationSpeechPriming } from '../lib/notification-speech.js';
 
 const hub = {
   name: 'hub', label: 'Hub', ssh: 'hub', direction: 'outbound',
@@ -28,6 +29,7 @@ function renderNodes(refresh = vi.fn().mockResolvedValue(undefined)) {
 beforeEach(() => {
   localStorage.clear();
   localStorage.setItem('nc_lang', 'en');
+  resetNotificationSpeechPriming();
   vi.clearAllMocks();
 });
 
@@ -88,5 +90,89 @@ describe('Settings Input KeyBar layout', () => {
   it('stays editable regardless of server READONLY (InputTab is client-only)', () => {
     render(<InputTab />);
     expect(screen.getByLabelText('Keypad layout').disabled).toBe(false);
+  });
+});
+
+describe('Settings notification speech', () => {
+  function installSpeech(result = 'success') {
+    const speak = vi.fn((utterance) => {
+      queueMicrotask(() => {
+        if (result === 'success') {
+          utterance.onstart?.();
+          utterance.onend?.();
+        } else if (result === 'error') {
+          utterance.onerror?.(new Event('error'));
+        }
+      });
+    });
+    const cancel = vi.fn();
+    class Utterance {
+      constructor(text) { this.text = text; this.lang = ''; }
+    }
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true, value: { speak, cancel },
+    });
+    Object.defineProperty(window, 'SpeechSynthesisUtterance', {
+      configurable: true, value: Utterance,
+    });
+    return { speak, cancel };
+  }
+
+  it('is default-off, browser-local and editable independently of server READONLY', async () => {
+    const speech = installSpeech();
+    render(<NotificationSpeechRow />);
+    const checkbox = screen.getByRole('checkbox', { name: 'read notifications aloud' });
+    expect(checkbox.checked).toBe(false);
+    expect(checkbox.disabled).toBe(false);
+
+    fireEvent.click(checkbox);
+    expect(JSON.parse(localStorage.getItem('nc_notification_speech_v1'))).toEqual({ enabled: true });
+    expect(speech.cancel).toHaveBeenCalledTimes(1);
+    expect(speech.speak).toHaveBeenCalledTimes(1);
+    expect(speech.speak.mock.calls[0][0]).toMatchObject({
+      text: 'NexusCrew. Spoken notifications are active.',
+      lang: 'en-US',
+    });
+    expect(await screen.findByText('Voice test completed.')).toBeTruthy();
+
+    fireEvent.click(checkbox);
+    expect(JSON.parse(localStorage.getItem('nc_notification_speech_v1'))).toEqual({ enabled: false });
+    expect(speech.cancel).toHaveBeenCalledTimes(2);
+  });
+
+  it('offers a repeatable voice test after opt-in', async () => {
+    const speech = installSpeech();
+    localStorage.setItem('nc_notification_speech_v1', '{"enabled":true}');
+    render(<NotificationSpeechRow />);
+    fireEvent.click(screen.getByRole('button', { name: 'test voice' }));
+    await waitFor(() => expect(speech.speak).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Voice test completed.')).toBeTruthy();
+  });
+
+  it('reports a failed native delivery instead of claiming preview success', async () => {
+    installSpeech('error');
+    render(<NotificationSpeechRow />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'read notifications aloud' }));
+    expect(await screen.findByText(
+      'The browser did not start the voice test. Interact with the page and try again.',
+    )).toBeTruthy();
+    expect(screen.queryByText('Voice test completed.')).toBeNull();
+  });
+
+  it('cancels and invalidates an in-flight preview when Settings unmounts', () => {
+    const speech = installSpeech('pending');
+    const view = render(<NotificationSpeechRow />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'read notifications aloud' }));
+    expect(speech.cancel).toHaveBeenCalledTimes(1);
+    view.unmount();
+    expect(speech.cancel).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed with an explicit unsupported state', () => {
+    Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: undefined });
+    Object.defineProperty(window, 'SpeechSynthesisUtterance', { configurable: true, value: undefined });
+    render(<NotificationSpeechRow />);
+    expect(screen.getByRole('checkbox', { name: 'read notifications aloud' }).disabled).toBe(true);
+    expect(screen.getByText('Speech synthesis is not supported in this browser.')).toBeTruthy();
   });
 });

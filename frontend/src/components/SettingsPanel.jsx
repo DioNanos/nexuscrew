@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { t } from '../lib/i18n.js';
+import { getLang, t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import {
   apiFetch, getSettings, getPeers, saveConfig, rotateToken,
@@ -18,6 +18,11 @@ import { useNodes } from '../hooks/useNodes.js';
 import { COMPOSER_RESET_EVENT, clearAllComposerData } from '../lib/composer-model.js';
 import { useInputPreferences } from '../hooks/useInputPreferences.js';
 import { DEFAULT_INPUT_PREFERENCES, KEYBAR_LAYOUTS, TERMINAL_KEYBOARD_GESTURES } from '../lib/input-preferences.js';
+import { useNotificationSpeech } from '../hooks/useNotificationSpeech.js';
+import {
+  cancelNotificationSpeech, notificationSpeechPrimed, notificationSpeechSupported,
+  previewNotificationSpeech, resetNotificationSpeechPriming,
+} from '../lib/notification-speech.js';
 import './SettingsPanel.css';
 
 // Pannello settings (design §5, B2-UI). Stessa struttura a schede su desktop
@@ -486,6 +491,100 @@ function PushRow({ token, readonly }) {
   );
 }
 
+// TTS delle notify live: preferenza interamente locale al browser, quindi resta
+// modificabile anche quando il server e' READONLY. Il click di attivazione
+// pronuncia una prova: rende esplicito il consenso e soddisfa i browser che
+// richiedono una user activation prima di speechSynthesis.speak().
+export function NotificationSpeechRow() {
+  const [enabled, setEnabled] = useNotificationSpeech();
+  const [err, setErr] = useState('');
+  const [note, setNote] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [primed, setPrimed] = useState(notificationSpeechPrimed);
+  const previewSeq = useRef(0);
+  const previewActive = useRef(false);
+  const previewAbort = useRef(null);
+  const supported = notificationSpeechSupported();
+
+  useEffect(() => () => {
+    previewSeq.current += 1;
+    if (previewActive.current) {
+      previewAbort.current?.abort();
+      previewAbort.current = null;
+      previewActive.current = false;
+      resetNotificationSpeechPriming();
+    }
+  }, []);
+
+  const preview = async () => {
+    const request = previewSeq.current += 1;
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    setErr('');
+    setNote('');
+    setTesting(true);
+    setPrimed(false);
+    previewActive.current = true;
+    previewAbort.current = controller;
+    const ok = await previewNotificationSpeech(
+      t('notification-speech-preview'), getLang(), undefined,
+      controller ? { signal: controller.signal } : {},
+    );
+    if (request !== previewSeq.current) return ok;
+    previewAbort.current = null;
+    previewActive.current = false;
+    setTesting(false);
+    setPrimed(ok);
+    if (ok) setNote(t('notification-speech-preview-ok'));
+    else setErr(t('notification-speech-preview-failed'));
+    return ok;
+  };
+
+  const toggle = (next) => {
+    setEnabled(next);
+    setErr('');
+    setNote('');
+    if (next) void preview();
+    else {
+      previewSeq.current += 1;
+      const hadPreview = previewActive.current;
+      previewAbort.current?.abort();
+      previewAbort.current = null;
+      previewActive.current = false;
+      setTesting(false);
+      setPrimed(false);
+      resetNotificationSpeechPriming();
+      if (!hadPreview) cancelNotificationSpeech();
+    }
+  };
+
+  return (
+    <div className="nc-set-form">
+      <label className="nc-check">
+        <input type="checkbox" aria-label={t('notification-speech-enable')}
+          checked={enabled} disabled={!supported}
+          onChange={(event) => toggle(event.target.checked)} />
+        <span>
+          <b>{t('notification-speech-enable')}</b>
+          <small>{t('notification-speech-help')}</small>
+        </span>
+      </label>
+      {supported ? (
+        <div className="nc-set-row">
+          <button type="button" className="nc-btn ghost" disabled={!enabled || testing}
+            onClick={() => { void preview(); }}>
+            {t(testing ? 'notification-speech-testing' : 'notification-speech-test')}
+          </button>
+        </div>
+      ) : <div className="nc-set-info">{t('notification-speech-unsupported')}</div>}
+      {enabled && !primed && !testing && !err && (
+        <div className="nc-set-info">{t('notification-speech-needs-test')}</div>
+      )}
+      {note && <div className="nc-set-info" role="status">{note}</div>}
+      {err && <div className="nc-err">{err}</div>}
+    </div>
+  );
+}
+
 // --- scheda INPUT (solo client/browser) --------------------------------------
 // Queste preferenze non cambiano il nodo e restano editabili anche quando il
 // server e' READONLY: governano soltanto focus, IME, STT e KeyBar locali.
@@ -779,6 +878,7 @@ function SystemTab({ token, settings, readonly, refresh }) {
       </div>
 
       <PushRow token={token} readonly={readonly} />
+      <NotificationSpeechRow />
 
       <div className="nc-set-form">
         <div className="nc-sheet-label">{t('composer-clear-data')}</div>
