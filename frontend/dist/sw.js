@@ -2,7 +2,7 @@ self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', () => self.clients.claim());
 self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request)));
 
-// Web Push del MCP bridge: payload JSON {title, body?, url?} dal server.
+// Web Push del MCP bridge: payload JSON {title, body?, lang?, url?} dal server.
 // tag fisso 'nexuscrew': le notifiche si sostituiscono invece di accumularsi.
 self.addEventListener('push', (e) => {
   let data = {};
@@ -10,6 +10,7 @@ self.addEventListener('push', (e) => {
   const title = typeof data.title === 'string' && data.title ? data.title : 'NexusCrew';
   e.waitUntil(self.registration.showNotification(title, {
     body: typeof data.body === 'string' ? data.body : '',
+    ...(typeof data.lang === 'string' && data.lang ? { lang: data.lang } : {}),
     tag: 'nexuscrew',
     data: { url: typeof data.url === 'string' ? data.url : '/' },
   }));

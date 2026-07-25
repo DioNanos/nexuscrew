@@ -2,6 +2,31 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.8.38 — 2026-07-25 — "Right Voice"
+
+- Adds an optional, validated `lang` field to `nc_notify` and carries it through
+  the HTTP API, live event frame and Web Push metadata. Supported Italian,
+  English and Spanish locales accept both base and BCP-47 forms such as
+  `it-IT`; malformed or unsupported values fail closed.
+- Makes spoken alerts prefer the notification's declared content language
+  instead of the interface language. Existing MCP clients that do not yet send
+  `lang` retain a conservative compatibility path: only a sufficiently strong
+  body-language signal can override the UI fallback, while short and mixed
+  technical titles never decide the voice.
+- Normalizes full locale tags, case and whitespace. Unknown language now leaves
+  `SpeechSynthesisUtterance.lang` as the empty browser default instead of
+  silently forcing `en-US` or assigning a stringified `undefined` sentinel.
+- Selects an installed voice that matches the resolved language when available.
+  The cache is populated synchronously, refreshed by `voiceschanged`, never
+  delays or reorders the speech queue, and leaves `utterance.voice` untouched
+  while the browser reports no matching voices.
+- Labels fixed Italian service notifications for questions and delivered files
+  explicitly, preserves the localized preview/priming gate, and keeps all
+  existing queue, focus, privacy, redaction and visual-delivery boundaries.
+- Gate: **1,063 isolated Node tests** (1,062 pass / 1 platform skip),
+  **300/300 frontend tests**, production PWA build and zero production
+  dependency vulnerabilities in both dependency trees.
+
 ## 0.8.37 — 2026-07-25 — "Wheel History"
 
 - Restores desktop mouse-wheel browsing of tmux history inside writable

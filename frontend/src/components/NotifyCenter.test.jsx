@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   eventHandler: null,
   speechEnabled: true,
-  speaker: { enqueue: vi.fn(), stop: vi.fn() },
+  speaker: { enqueue: vi.fn(), stop: vi.fn(), dispose: vi.fn() },
+  resolveLang: vi.fn((frame, uiLang) => frame.lang || uiLang),
   closeEvents: vi.fn(),
 }));
 
@@ -28,6 +29,7 @@ vi.mock('../hooks/useNotificationSpeech.js', () => ({
 vi.mock('../lib/notification-speech.js', () => ({
   NOTIFICATION_SPEECH_PREVIEW_EVENT: 'nc-notification-speech-preview',
   createNotificationSpeaker: () => mocks.speaker,
+  notificationSpeechFrameLang: (frame, uiLang) => mocks.resolveLang(frame, uiLang),
 }));
 
 import NotifyCenter from './NotifyCenter.jsx';
@@ -39,18 +41,23 @@ beforeEach(() => {
   mocks.speechEnabled = true;
   mocks.speaker.enqueue.mockReset();
   mocks.speaker.stop.mockReset();
+  mocks.speaker.dispose.mockReset();
+  mocks.resolveLang.mockClear();
   mocks.closeEvents.mockReset();
 });
 
 describe('NotifyCenter notification speech integration', () => {
-  it('speaks only live notify frames and uses the current UI language', async () => {
+  it('speaks only live notify frames and prefers an explicit content language', async () => {
     render(<NotifyCenter token="token" />);
     await waitFor(() => expect(mocks.eventHandler).toBeTypeOf('function'));
 
-    const notify = { type: 'notify', title: 'Build ready', body: 'All checks passed', urgency: 'normal' };
+    const notify = {
+      type: 'notify', title: 'Build ready', body: 'Correzione completata', urgency: 'normal', lang: 'it',
+    };
     act(() => mocks.eventHandler(notify));
     expect(await screen.findByText('Build ready')).toBeTruthy();
-    expect(mocks.speaker.enqueue).toHaveBeenCalledWith(notify, 'en');
+    expect(mocks.resolveLang).toHaveBeenCalledWith(notify, 'en');
+    expect(mocks.speaker.enqueue).toHaveBeenCalledWith(notify, 'it');
 
     mocks.speaker.enqueue.mockClear();
     act(() => mocks.eventHandler({
@@ -60,6 +67,15 @@ describe('NotifyCenter notification speech integration', () => {
     act(() => screen.getByTitle('questions from the cells').click());
     expect(await screen.findByText('Publish now?')).toBeTruthy();
     expect(mocks.speaker.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('keeps the UI language as the legacy fallback when a frame has no language', async () => {
+    render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(mocks.eventHandler).toBeTypeOf('function'));
+    const notify = { type: 'notify', title: 'Short mixed title', body: 'build ok' };
+    act(() => mocks.eventHandler(notify));
+    expect(mocks.resolveLang).toHaveBeenCalledWith(notify, 'en');
+    expect(mocks.speaker.enqueue).toHaveBeenCalledWith(notify, 'en');
   });
 
   it('keeps visual toasts but does not speak after local opt-out', async () => {
@@ -92,8 +108,9 @@ describe('NotifyCenter notification speech integration', () => {
     expect(mocks.speaker.stop).toHaveBeenCalledTimes(1);
     view.unmount();
     expect(mocks.closeEvents).toHaveBeenCalled();
-    expect(mocks.speaker.stop).toHaveBeenCalledTimes(2);
+    expect(mocks.speaker.dispose).toHaveBeenCalledTimes(1);
+    expect(mocks.speaker.stop).toHaveBeenCalledTimes(1);
     act(() => window.dispatchEvent(new Event('nc-notification-speech-preview')));
-    expect(mocks.speaker.stop).toHaveBeenCalledTimes(2);
+    expect(mocks.speaker.stop).toHaveBeenCalledTimes(1);
   });
 });

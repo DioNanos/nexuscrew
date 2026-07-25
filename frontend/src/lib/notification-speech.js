@@ -15,6 +15,23 @@ const LANG_TAGS = Object.freeze({
   en: 'en-US',
   es: 'es-ES',
 });
+const LANGUAGE_SIGNALS = Object.freeze({
+  it: new Set([
+    'che', 'con', 'correzione', 'della', 'delle', 'difetto', 'il', 'lavoro',
+    'nessun', 'non', 'per', 'pronto', 'pubblicata', 'pubblicato', 'rilascio',
+    'sono', 'stato', 'tutti', 'verificata', 'verificato', 'versione',
+    'completata', 'completato', 'riepilogo',
+  ]),
+  en: new Set([
+    'all', 'and', 'completed', 'fix', 'for', 'issue', 'no', 'published',
+    'ready', 'release', 'summary', 'the', 'verified', 'version', 'with', 'work',
+  ]),
+  es: new Set([
+    'con', 'correccion', 'defecto', 'el', 'esta', 'para', 'publicada',
+    'publicado', 'resumen', 'sin', 'todos', 'trabajo', 'verificada',
+    'verificado', 'version', 'y',
+  ]),
+});
 const primedScopes = new WeakSet();
 
 export function normalizeNotificationSpeech(value) {
@@ -73,7 +90,8 @@ export function resetNotificationSpeechPriming(scope = browserScope()) {
 }
 
 export function notificationSpeechLang(lang) {
-  return LANG_TAGS[lang] || LANG_TAGS.en;
+  const base = String(lang || '').trim().toLowerCase().split('-')[0];
+  return LANG_TAGS[base] || '';
 }
 
 function cleanPart(value) {
@@ -82,6 +100,60 @@ function cleanPart(value) {
     .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// Compatibility path for already-running MCP clients that predate the optional
+// `lang` field. It is intentionally conservative: body only, at least three
+// distinct language signals and a two-signal lead. Short/mixed technical titles
+// never decide the voice.
+export function detectNotificationSpeechLang(body) {
+  const normalized = cleanPart(body).normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase();
+  const tokens = new Set((normalized.match(/\p{L}+/gu) || []));
+  if (tokens.size < 4) return '';
+  const ranked = Object.entries(LANGUAGE_SIGNALS)
+    .map(([lang, signals]) => ({
+      lang,
+      score: [...tokens].reduce((sum, token) => sum + (signals.has(token) ? 1 : 0), 0),
+    }))
+    .sort((a, b) => b.score - a.score);
+  return ranked[0].score >= 3 && ranked[0].score - ranked[1].score >= 2
+    ? ranked[0].lang : '';
+}
+
+export function notificationSpeechFrameLang(frame, uiLang) {
+  const explicit = notificationSpeechLang(frame && frame.lang);
+  if (explicit) return explicit;
+  const detected = notificationSpeechLang(detectNotificationSpeechLang(frame && frame.body));
+  return detected || notificationSpeechLang(uiLang);
+}
+
+function readNotificationSpeechVoices(scope) {
+  try {
+    const getVoices = scope && scope.speechSynthesis && scope.speechSynthesis.getVoices;
+    return typeof getVoices === 'function'
+      ? Array.from(getVoices.call(scope.speechSynthesis) || []).filter(Boolean)
+      : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+export function notificationSpeechVoice(voices, lang) {
+  const target = notificationSpeechLang(lang);
+  if (!target) return null;
+  const list = Array.from(voices || []).filter((voice) => (
+    voice && typeof voice.lang === 'string' && voice.lang.trim()
+  ));
+  const exact = list.filter((voice) => voice.lang.trim().toLowerCase() === target.toLowerCase());
+  const base = target.slice(0, 2).toLowerCase();
+  const related = list.filter((voice) => (
+    voice.lang.trim().toLowerCase().split('-')[0] === base
+  ));
+  return exact.find((voice) => voice.default === true)
+    || exact[0]
+    || related.find((voice) => voice.default === true)
+    || related[0]
+    || null;
 }
 
 function redactSpeechPart(value) {
@@ -164,6 +236,8 @@ export function previewNotificationSpeech(text, lang, scope = browserScope(), op
       scope.speechSynthesis.cancel();
       const utterance = new scope.SpeechSynthesisUtterance(value);
       utterance.lang = notificationSpeechLang(lang);
+      const voice = notificationSpeechVoice(readNotificationSpeechVoices(scope), utterance.lang);
+      if (voice) utterance.voice = voice;
       utterance.onstart = () => { started = true; };
       utterance.onend = () => finish(started);
       utterance.onerror = () => finish(false);
@@ -195,11 +269,31 @@ export function createNotificationSpeaker(opts = {}) {
   const setTimer = opts.setTimer || ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = opts.clearTimer || ((id) => clearTimeout(id));
   const isPrimed = opts.isPrimed || (() => notificationSpeechPrimed(scope));
+  const synth = scope && scope.speechSynthesis;
 
   let active = null;
   let watchdog = null;
   let pending = [];
+  let voices = [];
+  let removeVoiceListener = () => {};
   const recent = new Map();
+
+  const refreshVoices = () => { voices = readNotificationSpeechVoices(scope); };
+  refreshVoices();
+  if (synth && typeof synth.addEventListener === 'function') {
+    synth.addEventListener('voiceschanged', refreshVoices);
+    removeVoiceListener = () => synth.removeEventListener('voiceschanged', refreshVoices);
+  } else if (synth && 'onvoiceschanged' in synth) {
+    const previous = synth.onvoiceschanged;
+    const handler = (...args) => {
+      refreshVoices();
+      if (typeof previous === 'function') previous.apply(synth, args);
+    };
+    synth.onvoiceschanged = handler;
+    removeVoiceListener = () => {
+      if (synth.onvoiceschanged === handler) synth.onvoiceschanged = previous;
+    };
+  }
 
   const duplicateKey = (frame) => {
     if (frame && typeof frame.id === 'string' && frame.id) return `id:${frame.id}`;
@@ -244,6 +338,8 @@ export function createNotificationSpeaker(opts = {}) {
     try {
       utterance = new scope.SpeechSynthesisUtterance(item.text);
       utterance.lang = notificationSpeechLang(item.lang);
+      const voice = notificationSpeechVoice(voices, utterance.lang);
+      if (voice) utterance.voice = voice;
     } catch (_) {
       pending = [];
       return 'error';
@@ -307,5 +403,11 @@ export function createNotificationSpeaker(opts = {}) {
     cancelActive();
   };
 
-  return { enqueue, stop };
+  const dispose = () => {
+    stop();
+    removeVoiceListener();
+    removeVoiceListener = () => {};
+  };
+
+  return { enqueue, stop, dispose };
 }

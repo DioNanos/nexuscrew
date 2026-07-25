@@ -4,25 +4,36 @@ import {
   MAX_NOTIFICATION_SPEECH_CHARS,
   NOTIFICATION_SPEECH_KEY,
   createNotificationSpeaker,
+  detectNotificationSpeechLang,
   loadNotificationSpeech,
+  notificationSpeechFrameLang,
   notificationSpeechLang,
   notificationSpeechPrimed,
   notificationSpeechSupported,
   notificationSpeechText,
+  notificationSpeechVoice,
   previewNotificationSpeech,
   saveNotificationSpeech,
 } from './notification-speech.js';
 
-function speechFixture({ visible = true, focused = true } = {}) {
+function speechFixture({ visible = true, focused = true, voices = [] } = {}) {
   const spoken = [];
+  let currentVoices = voices;
+  const listeners = new Map();
   const synth = {
     cancel: vi.fn(),
     speak: vi.fn((utterance) => { spoken.push(utterance); }),
+    getVoices: vi.fn(() => currentVoices),
+    addEventListener: vi.fn((type, fn) => listeners.set(type, fn)),
+    removeEventListener: vi.fn((type, fn) => {
+      if (listeners.get(type) === fn) listeners.delete(type);
+    }),
   };
   class Utterance {
     constructor(text) {
       this.text = text;
       this.lang = '';
+      this.voice = null;
       this.onstart = null;
       this.onend = null;
       this.onerror = null;
@@ -36,7 +47,11 @@ function speechFixture({ visible = true, focused = true } = {}) {
     visibilityState: visible ? 'visible' : 'hidden',
     hasFocus: () => focused,
   };
-  return { scope, document, synth, spoken };
+  const setVoices = (next) => {
+    currentVoices = next;
+    listeners.get('voiceschanged')?.();
+  };
+  return { scope, document, synth, spoken, setVoices };
 }
 
 function createPrimedSpeaker(fixture, opts = {}) {
@@ -85,21 +100,51 @@ describe('notification speech preferences and formatting', () => {
     expect(text).not.toContain('hidden');
   });
 
-  it('uses stable UI-language tags with an English fallback', () => {
+  it('normalizes supported locale tags and uses an empty browser-default fallback', () => {
     expect(notificationSpeechLang('it')).toBe('it-IT');
+    expect(notificationSpeechLang('it-IT')).toBe('it-IT');
+    expect(notificationSpeechLang(' IT-it ')).toBe('it-IT');
+    expect(notificationSpeechLang('en')).toBe('en-US');
     expect(notificationSpeechLang('es')).toBe('es-ES');
-    expect(notificationSpeechLang('xx')).toBe('en-US');
+    for (const value of ['xx', '', undefined, null]) {
+      expect(notificationSpeechLang(value)).toBe('');
+    }
+  });
+
+  it('uses explicit frame language, then high-confidence body detection, then UI language', () => {
+    expect(notificationSpeechFrameLang({ lang: 'it-IT', body: 'English body is ignored' }, 'en')).toBe('it-IT');
+    expect(notificationSpeechFrameLang({
+      title: 'Build ready',
+      body: 'Correzione completata e verificata con nessun difetto nel rilascio pubblicato.',
+    }, 'en')).toBe('it-IT');
+    expect(notificationSpeechFrameLang({
+      title: 'file da cloud-Dev',
+      body: 'report.txt',
+    }, 'en')).toBe('en-US');
+    expect(detectNotificationSpeechLang('Correzione completata, versione verificata e pubblicata.')).toBe('it');
+    expect(detectNotificationSpeechLang('file da cloud-Dev')).toBe('');
+  });
+
+  it('selects an exact or base-matching voice without falling back to another language', () => {
+    const en = { name: 'English', lang: 'en-US', default: true };
+    const it = { name: 'Federica', lang: 'it-IT' };
+    const itCh = { name: 'Italian Swiss', lang: 'it-CH', default: true };
+    expect(notificationSpeechVoice([en, itCh, it], 'it-IT')).toBe(it);
+    expect(notificationSpeechVoice([en, itCh], 'it-IT')).toBe(itCh);
+    expect(notificationSpeechVoice([en], 'it-IT')).toBeNull();
+    expect(notificationSpeechVoice([it], '')).toBeNull();
   });
 });
 
 describe('notification speech browser adapter', () => {
   it('feature-detects and confirms a preview only after native start and end', async () => {
-    const f = speechFixture();
+    const italian = { name: 'Federica', lang: 'it-IT' };
+    const f = speechFixture({ voices: [italian] });
     expect(notificationSpeechSupported(f.scope)).toBe(true);
-    const result = previewNotificationSpeech('Ready', 'en', f.scope);
+    const result = previewNotificationSpeech('Pronto', 'it-IT', f.scope);
     expect(f.synth.cancel).toHaveBeenCalledTimes(1);
     expect(f.spoken).toHaveLength(1);
-    expect(f.spoken[0]).toMatchObject({ text: 'Ready', lang: 'en-US' });
+    expect(f.spoken[0]).toMatchObject({ text: 'Pronto', lang: 'it-IT', voice: italian });
     expect(notificationSpeechPrimed(f.scope)).toBe(false);
     f.spoken[0].onstart();
     f.spoken[0].onend();
@@ -201,6 +246,32 @@ describe('notification speech browser adapter', () => {
     ]);
     f.spoken[0].onend?.();
     expect(f.spoken).toHaveLength(2);
+  });
+
+  it('refreshes an initially empty voice cache on voiceschanged without delaying the queue', () => {
+    const f = speechFixture();
+    const speaker = createPrimedSpeaker(f);
+    expect(speaker.enqueue({ title: 'first' }, 'it')).toBe('speaking');
+    expect(f.spoken[0]).toMatchObject({ lang: 'it-IT', voice: null });
+    f.spoken[0].onend();
+
+    const italian = { name: 'Federica', lang: 'it-IT', default: true };
+    f.setVoices([italian]);
+    expect(speaker.enqueue({ title: 'second' }, 'it-IT')).toBe('speaking');
+    expect(f.spoken[1]).toMatchObject({ lang: 'it-IT', voice: italian });
+    expect(f.synth.getVoices).toHaveBeenCalledTimes(2);
+
+    speaker.dispose();
+    expect(f.synth.removeEventListener).toHaveBeenCalledWith('voiceschanged', expect.any(Function));
+  });
+
+  it('keeps an unknown language as the empty browser default, never a stringified sentinel', () => {
+    const f = speechFixture();
+    const speaker = createPrimedSpeaker(f);
+    expect(speaker.enqueue({ title: 'unknown' }, 'xx')).toBe('speaking');
+    expect(f.spoken[0].lang).toBe('');
+    expect(f.spoken[0].lang).not.toBe('undefined');
+    expect(f.spoken[0].lang).not.toBe('null');
   });
 
   it('drains after native errors and cancels all work on stop', () => {

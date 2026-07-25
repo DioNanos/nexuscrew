@@ -11,20 +11,44 @@ const store = require('../lib/files/store.js');
 function setup(t, { maxUpload = 1024 * 1024, readonly = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncroutes-'));
   const pasted = [];
+  const notified = [];
   const app = express();
   app.use('/api/files', filesRoutes({
-    cfg: { filesRoot: root, maxUpload },
+    cfg: { filesRoot: root, home: root, maxUpload },
     sessionExists: (s) => s === 'sess1',
     paste: (s, text) => { pasted.push([s, text]); return true; },
+    notifier: {
+      emit: (frame) => {
+        notified.push(frame);
+        return Promise.resolve({ ui: 0, push: 0 });
+      },
+    },
     readonly: () => readonly,
   }));
   return new Promise((res) => {
     const srv = app.listen(0, '127.0.0.1', () => {
       t.after(() => srv.close());
-      res({ root, pasted, base: `http://127.0.0.1:${srv.address().port}/api/files` });
+      res({
+        root, pasted, notified, base: `http://127.0.0.1:${srv.address().port}/api/files`,
+      });
     });
   });
 }
+
+test('outbox bridge labels its fixed Italian service text explicitly', async (t) => {
+  const { root, notified, base } = await setup(t);
+  const src = path.join(root, 'report.txt');
+  fs.writeFileSync(src, 'report');
+  const r = await fetch(`${base}/outbox`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ session: 'sess1', path: src, caption: 'riepilogo' }),
+  });
+  assert.equal(r.status, 200);
+  assert.equal(notified.length, 1);
+  assert.equal(notified[0].lang, 'it');
+  assert.match(notified[0].title, /file da sess1/);
+});
 
 function form(name, content) {
   const fd = new FormData();

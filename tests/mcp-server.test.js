@@ -333,14 +333,37 @@ test('nc_notify: POST /api/notify con Bearer + sessione da NEXUSCREW_MCP_SESSION
     env: { NEXUSCREW_MCP_SESSION: 'cell-a' },
     responder: () => ({ status: 200, json: { delivered: { ui: 2, push: 1 } } }),
   });
-  await srv.handleLine(rpc(3, 'tools/call', { name: 'nc_notify', arguments: { title: 'fatto', urgency: 'high' } }));
+  await srv.handleLine(rpc(3, 'tools/call', {
+    name: 'nc_notify', arguments: { title: 'fatto', urgency: 'high', lang: ' IT-it ' },
+  }));
   const r = out.lines[0];
   assert.equal(r.result.isError, undefined);
   assert.deepEqual(JSON.parse(r.result.content[0].text), { delivered: { ui: 2, push: 1 } });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'http://127.0.0.1:4242/api/notify');
   assert.equal(calls[0].headers.authorization, 'Bearer tok-mcp');
-  assert.deepEqual(calls[0].body, { title: 'fatto', urgency: 'high', session: 'cell-a' });
+  assert.deepEqual(calls[0].body, {
+    title: 'fatto', urgency: 'high', lang: 'it-IT', session: 'cell-a',
+  });
+});
+
+test('nc_notify: lang invalida fallisce localmente senza perdere una chiamata valida successiva', async () => {
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cell-a' },
+    responder: () => ({ status: 200, json: { delivered: { ui: 0, push: 0 } } }),
+  });
+  await srv.handleLine(rpc(301, 'tools/call', {
+    name: 'nc_notify', arguments: { title: 'bad', lang: 'xx' },
+  }));
+  assert.equal(out.lines[0].result.isError, true);
+  assert.match(out.lines[0].result.content[0].text, /lang/);
+  assert.equal(calls.length, 0);
+
+  await srv.handleLine(rpc(302, 'tools/call', {
+    name: 'nc_notify', arguments: { title: 'legacy' },
+  }));
+  assert.equal(out.lines[1].result.isError, undefined);
+  assert.deepEqual(calls[0].body, { title: 'legacy', session: 'cell-a' });
 });
 
 test('identita cella: con $TMUX la sessione viene da display-message (execFile finto)', async () => {
