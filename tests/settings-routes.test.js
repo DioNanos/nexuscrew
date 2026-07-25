@@ -400,13 +400,29 @@ test('nodes remove: happy path, sconosciuto -> 404, name invalido -> 400', async
 test('nodes test: distingue unknown-node/tunnel-down/health-ko/token-missing/token-ko/ok', async (t) => {
   const probes = [];
   let probeMode = 'ok';
-  const httpProbe = async (url, headers) => {
-    probes.push({ url, headers });
-    if (probeMode === 'health-ko') return { ok: false, status: 500 };
-    if (probeMode === 'token-ko' && url.includes('/api/config')) return { ok: false, status: 401 };
-    return { ok: true, status: 200 };
+  const federationProbe = async (opts) => {
+    probes.push(opts);
+    if (probeMode === 'health-ko') {
+      return {
+        transport: 'down', auth: 'unknown', reachability: 'unknown',
+        status: 'down', detail: 'peer non raggiungibile',
+      };
+    }
+    if (probeMode === 'token-ko') {
+      return {
+        transport: 'up', auth: 'failed', reachability: 'ok',
+        status: 'degraded', httpStatus: 401, detail: 'federation 401',
+      };
+    }
+    return {
+      transport: 'up', auth: 'ok', reachability: 'ok',
+      status: 'healthy', httpStatus: 200, detail: 'ok',
+    };
   };
-  const { base, token, home, nodesPath } = await boot(t, {}, { httpProbe });
+  const { base, token, home, nodesPath } = await boot(t, {}, {
+    federationProbe,
+    httpProbe: async () => { throw new Error('/api/config must not be used'); },
+  });
   const doTest = (name) => fetch(`${base}/api/settings/nodes/${name}/test`, { method: 'POST', headers: H(token) });
 
   assert.equal((await doTest('ghost')).status, 404);            // unknown-node
@@ -417,18 +433,18 @@ test('nodes test: distingue unknown-node/tunnel-down/health-ko/token-missing/tok
   assert.deepEqual([j.ok, j.result], [false, 'tunnel-down']);   // nessun pidfile
 
   fakeTunnelUp(home, 'alpha');
-  probeMode = 'health-ko';
-  j = await (await doTest('alpha')).json();
-  assert.deepEqual([j.ok, j.result], [false, 'health-ko']);
-
   probeMode = 'ok';
   j = await (await doTest('alpha')).json();
-  assert.deepEqual([j.ok, j.result], [false, 'token-missing']); // health ok ma token assente
+  assert.deepEqual([j.ok, j.result], [false, 'token-missing']); // senza token la federation non e' probeable
 
   // salva un token remoto noto direttamente nello store (fixture)
   let st = nodesStore.loadStore(nodesPath);
   st = nodesStore.setNodeToken(st, 'alpha', 'REMOTE-SECRET-42');
   nodesStore.atomicWriteStore(nodesPath, st);
+
+  probeMode = 'health-ko';
+  j = await (await doTest('alpha')).json();
+  assert.deepEqual([j.ok, j.result], [false, 'health-ko']);
 
   probeMode = 'token-ko';
   j = await (await doTest('alpha')).json();
@@ -441,8 +457,9 @@ test('nodes test: distingue unknown-node/tunnel-down/health-ko/token-missing/tok
   j = JSON.parse(raw);
   assert.deepEqual([j.ok, j.result], [true, 'ok']);
   // il token remoto viene iniettato SOLO verso il nodo (probe), MAI in risposta
-  const authed = probes.find((p) => p.url.includes('/api/config'));
-  assert.equal(authed.headers.authorization, 'Bearer REMOTE-SECRET-42');
+  const authed = probes.at(-1);
+  assert.equal(authed.token, 'REMOTE-SECRET-42');
+  assert.equal(authed.port, 43001);
   assert.ok(!raw.includes('REMOTE-SECRET-42'), 'token remoto MAI in risposta');
 });
 
@@ -634,7 +651,10 @@ test('F6 READONLY: up/down/restart -> 403 e NESSUNO spawn/kill (contract §4b(6)
 test('redazione: sweep di TUTTI gli endpoint con token noti -> mai in risposta', async (t) => {
   const KNOWN = 'KNOWN-REMOTE-TOKEN-c8f2a1b7d4e5';
   const { base, token, home, nodesPath, tokenPath } = await boot(t, {}, {
-    httpProbe: async () => ({ ok: true, status: 200 }),
+    federationProbe: async () => ({
+      transport: 'up', auth: 'ok', reachability: 'ok',
+      status: 'healthy', httpStatus: 200, detail: 'ok',
+    }),
   });
 
   // fixture: nodo con token remoto NOTO + tunnel finto up (per il ramo test autenticato)
