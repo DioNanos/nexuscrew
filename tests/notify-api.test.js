@@ -73,6 +73,8 @@ test('notify: 401 senza token, validazione strict, delivered', async (t) => {
   assert.equal((await j('/api/notify', { method: 'POST', body: JSON.stringify({}) })).status, 400);
   assert.equal((await j('/api/notify', { method: 'POST', body: JSON.stringify({ title: 'x', nope: 1 }) })).status, 400);
   assert.equal((await j('/api/notify', { method: 'POST', body: JSON.stringify({ title: 'x', urgency: 'urgent' }) })).status, 400);
+  assert.equal((await j('/api/notify', { method: 'POST', body: JSON.stringify({ title: 'x', lang: 'xx' }) })).status, 400);
+  assert.equal((await j('/api/notify', { method: 'POST', body: JSON.stringify({ title: 'x', lang: 7 }) })).status, 400);
   // body JSON rotto -> 400 con causa (mai crash)
   assert.equal((await j('/api/notify', { method: 'POST', body: '{{{' })).status, 400);
   // ok: nessuna UI connessa, nessuna subscription -> delivered 0/0
@@ -192,12 +194,15 @@ test('push send: mock web-push, endpoint 410 rimosso, delivered.push conta i suc
   await j('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: SUB_A }) });
   await j('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: SUB_B }) });
 
-  const r = await j('/api/notify', { method: 'POST', body: JSON.stringify({ title: 'push!', session: 'cell-p' }) });
+  const r = await j('/api/notify', {
+    method: 'POST', body: JSON.stringify({ title: 'push!', session: 'cell-p', lang: 'it-IT' }),
+  });
   const out = await r.json();
   assert.equal(out.delivered.push, 1, 'solo B riceve');
   assert.equal(webpush.sent.length, 1);
   assert.equal(webpush.sent[0].endpoint, SUB_B.endpoint);
   assert.equal(webpush.sent[0].payload.title, 'push!');
+  assert.equal(webpush.sent[0].payload.lang, 'it-IT');
   // la subscription morta (410) e' stata rimossa dallo store
   const left = JSON.parse(fs.readFileSync(path.join(dir, 'push.json'), 'utf8')).subscriptions;
   assert.deepEqual(left.map((s) => s.endpoint), [SUB_B.endpoint]);
@@ -361,11 +366,15 @@ test('SSE /api/events: 401 senza token, frame notify alle UI connesse', async (t
     }
   }
 
-  const r = await j('/api/notify', { method: 'POST', body: JSON.stringify({ title: 'evento', session: 'cell-sse' }) });
+  const r = await j('/api/notify', {
+    method: 'POST',
+    body: JSON.stringify({ title: 'evento', session: 'cell-sse', lang: ' IT-it ' }),
+  });
   assert.deepEqual((await r.json()).delivered, { ui: 1, push: 0 });
   const frame = await nextData();
   assert.equal(frame.type, 'notify');
   assert.equal(frame.title, 'evento');
   assert.equal(frame.session, 'cell-sse');
   assert.equal(frame.urgency, 'normal');
+  assert.equal(frame.lang, 'it-IT');
 });

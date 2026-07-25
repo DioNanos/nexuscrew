@@ -10,7 +10,7 @@ cells.
 
 | Tool | Purpose |
 |---|---|
-| `nc_notify` | Send a PWA notification to the operator |
+| `nc_notify` | Send a PWA notification, optionally declaring its text language |
 | `nc_ask` | Ask a non-blocking question and return the answer to the caller |
 | `nc_send_file` | Place a caller-owned file in the downloadable outbox |
 | `nc_status` | Read live tmux and Fleet status |
@@ -24,6 +24,23 @@ cells.
 Cell delivery uses bracketed paste followed by a separate Enter. A `submitted`
 receipt confirms transport to the target TUI, not acceptance or completion by
 its model. There is no silent offline queue.
+
+### Notification language
+
+`nc_notify` accepts `title`, optional `body`, optional `urgency`, and optional
+`lang`. Use `lang` whenever the text language is known so an opted-in,
+visible/focused PWA can select the correct on-device speech voice:
+
+```json
+{
+  "title": "Release completata",
+  "body": "Correzione verificata e pubblicata con tutti i test verdi.",
+  "lang": "it"
+}
+```
+
+Accepted base languages are `it`, `en` and `es`; equivalent BCP-47 forms such
+as `it-IT` are normalized. Omitting `lang` remains backward compatible.
 
 ## Claude Code
 
