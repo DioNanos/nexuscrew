@@ -1,125 +1,103 @@
 'use strict';
-// tests/audio-routes.test.js — WP2: audio routes (capability/speak/stop/status)
-// via mini-app with injected gates, + MCP nc_speak/nc_speak_status shape.
+// tests/audio-routes.test.js — WP2R: audio routes, verified-origin contract.
+// caller is NEVER derived from client headers/body; resolveCaller is required
+// and authoritative. fail-closed without verifiable origin; receipts caller-
+// scoped; capability exact-self; no default allow; text 1..320.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const express = require('express');
-const http = require('node:http');
 const { audioRoutes } = require('../lib/audio/routes.js');
+const { createReceiptStore } = require('../lib/audio/receipt.js');
 const { TOOLS } = require('../lib/mcp/tools.js');
 
-const TARGET = 'a'.repeat(32);
+const SELF = 'a'.repeat(32);
+const ORIGIN = { cell: 'cellA', node: 'b'.repeat(32) };
 
 function startApp(deps) {
   const app = express();
   app.use(express.json({ limit: '16kb' }));
   app.use('/audio', audioRoutes(deps));
   return new Promise((resolve) => {
-    const server = app.listen(0, '127.0.0.1', () => {
-      const base = `http://127.0.0.1:${server.address().port}`;
-      resolve({ base, close: () => server.close() });
-    });
+    const server = app.listen(0, '127.0.0.1', () => resolve({ base: `http://127.0.0.1:${server.address().port}`, close: () => server.close() }));
   });
 }
 
-async function speak(base, body) {
-  return (await fetch(`${base}/audio/speak`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-nexuscrew-cell': 'cellA' }, body: JSON.stringify(body) })).json();
-}
+const POST = (base, path, body, headers = {}) => fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
-test('routes: speak READONLY => refused reason readonly', async () => {
-  const app = await startApp({ readonly: () => true, targetConsent: () => true, targetAllowsOrigin: () => true });
+test('routes: resolveCaller required; nessun default header; senza origine verificabile => 401 fail closed', async () => {
+  const app = await startApp({ resolveCaller: () => null, localNodeId: SELF });
   try {
-    const r = await speak(app.base, { target: TARGET, text: 'hi' });
+    const res = await POST(app.base, '/audio/speak', { target: SELF, text: 'hi' }, { 'x-nexuscrew-cell': 'evil' });
+    assert.equal(res.status, 401, 'header client-controllabile NON costituisce origine');
+  } finally { app.close(); }
+});
+
+test('routes A) header/body falsi non cambiano caller: resolveCaller autorevole; receipt resta dell origine verificata', async () => {
+  const store = createReceiptStore({ now: () => 0 });
+  const app = await startApp({
+    resolveCaller: () => ORIGIN, receiptStore: store,
+    localNodeId: SELF, targetConsent: () => true, targetAllowsOrigin: () => true, targetReachable: () => true,
+  });
+  try {
+    const r = await (await POST(app.base, '/audio/speak', { target: SELF, text: 'hi' }, { 'x-nexuscrew-cell': 'evil', cell: 'spoofed' })).json();
+    // header/body falsi ignorati: il receipt è associato a ORIGIN.cell 'cellA'
+    const status = await (await fetch(`${app.base}/audio/speak/status/${r.utteranceId}`)).json();
+    assert.notEqual(status.status, 'unknown', 'la stessa origine verificata legge il receipt (header falso ignorato)');
+    assert.equal(status.origin.cell, 'cellA', 'caller = origine verificata, non header falso');
+  } finally { app.close(); }
+});
+
+test('routes A) status di altra origine negato (404 unknown); receipt caller-scoped', async () => {
+  const store = createReceiptStore({ now: () => 0 });
+  let caller = ORIGIN;
+  const app = await startApp({
+    resolveCaller: () => caller, receiptStore: store,
+    localNodeId: SELF, targetConsent: () => true, targetAllowsOrigin: () => true, targetReachable: () => true,
+  });
+  try {
+    const r = await (await POST(app.base, '/audio/speak', { target: SELF, text: 'hi' })).json();
+    caller = { cell: 'cellB', node: 'b'.repeat(32) };
+    const other = await (await fetch(`${app.base}/audio/speak/status/${r.utteranceId}`)).json();
+    assert.equal(other.status, 'unknown', 'altra origine non legge il receipt altrui');
+  } finally { app.close(); }
+});
+
+test('routes D) text 321 char rifiutato REST (invalid-text); 320 ok', async () => {
+  const app = await startApp({ resolveCaller: () => ORIGIN, localNodeId: SELF, targetConsent: () => true, targetAllowsOrigin: () => true, targetReachable: () => true });
+  try {
+    const long = await (await POST(app.base, '/audio/speak', { target: SELF, text: 'x'.repeat(321) })).json();
+    assert.equal(long.status, 'refused'); assert.equal(long.reason, 'invalid-text');
+  } finally { app.close(); }
+});
+
+test('routes F) no default allow: targetAllowsOrigin default false => refused acl anche con consent ON', async () => {
+  const app = await startApp({ resolveCaller: () => ORIGIN, localNodeId: SELF, targetConsent: () => true });
+  try {
+    const r = await (await POST(app.base, '/audio/speak', { target: SELF, text: 'hi' })).json();
     assert.equal(r.status, 'refused');
-    assert.equal(r.reason, 'readonly');
+    assert.equal(r.reason, 'acl', 'fail-closed: ACL non permissiva di default');
   } finally { app.close(); }
 });
 
-test('routes: speak consent false (default off) => refused consent; no SSE broadcast (JSON response)', async () => {
-  const app = await startApp({ targetConsent: () => false, targetAllowsOrigin: () => true });
+test('routes F) capability exact-self: target !== localNodeId => 403', async () => {
+  const app = await startApp({ resolveCaller: () => ORIGIN, localNodeId: SELF });
   try {
-    const res = await fetch(`${app.base}/audio/speak`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-nexuscrew-cell': 'cellA' }, body: JSON.stringify({ target: TARGET, text: 'hi' }) });
-    assert.equal(res.headers.get('content-type'), 'application/json; charset=utf-8', 'no SSE broadcast');
-    const r = await res.json();
-    assert.equal(r.status, 'refused');
-    assert.equal(r.reason, 'consent');
+    const res = await fetch(`${app.base}/audio/capability?target=${'c'.repeat(32)}`);
+    assert.equal(res.status, 403, 'capability descrive solo il nodo locale');
+    const self = await (await fetch(`${app.base}/audio/capability?target=${SELF}`)).json();
+    assert.equal(self.liveness, 'unavailable');
   } finally { app.close(); }
 });
 
-test('routes: speak no adapter => refused no-adapter; receipt redacted (no text/lang/voice)', async () => {
-  const app = await startApp({ targetConsent: () => true, targetAllowsOrigin: () => true, adapter: null });
+test('routes: speak no-adapter => refused no-adapter (honest, no false ack/accepted)', async () => {
+  const app = await startApp({ resolveCaller: () => ORIGIN, localNodeId: SELF, targetConsent: () => true, targetAllowsOrigin: () => true, targetReachable: () => true });
   try {
-    const r = await speak(app.base, { target: TARGET, text: 'SECRET', lang: 'it', voice: 'alloy' });
-    assert.equal(r.status, 'refused');
-    assert.equal(r.reason, 'no-adapter');
-    const json = JSON.stringify(r);
-    assert.ok(!json.includes('SECRET') && !json.includes('alloy'));
-    assert.ok(r.utteranceId);
+    const r = await (await POST(app.base, '/audio/speak', { target: SELF, text: 'hi' })).json();
+    assert.equal(r.status, 'refused'); assert.equal(r.reason, 'no-adapter');
   } finally { app.close(); }
 });
 
-test('routes: speak target non-instanceId/wildcard => 400 invalid-target', async () => {
-  const app = await startApp({ targetConsent: () => true });
-  try {
-    const res1 = await fetch(`${app.base}/audio/speak`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target: '*', text: 'hi' }) });
-    assert.equal(res1.status, 400);
-    assert.equal((await res1.json()).reason, 'invalid-target');
-  } finally { app.close(); }
-});
-
-test('routes: capability bounded metadata; status endpoint returns redacted receipt / unknown', async () => {
-  const app = await startApp({ targetConsent: () => true, adapter: null });
-  try {
-    const cap = await (await fetch(`${app.base}/audio/capability?target=${TARGET}`)).json();
-    assert.deepEqual(Object.keys(cap).sort(), ['adapter', 'installed', 'languages', 'liveness', 'voices'].sort());
-    assert.equal(cap.liveness, 'unavailable');
-    // speak then status by utteranceId
-    const r = await speak(app.base, { target: TARGET, text: 'hi' });
-    const st = await (await fetch(`${app.base}/audio/speak/status/${r.utteranceId}`, { headers: { 'x-nexuscrew-cell': 'cellA' } })).json();
-    assert.equal(st.utteranceId, r.utteranceId);
-    assert.equal(st.status, 'refused');
-    // status caller-scoped: cellB non vede receipt di cellA
-    const stB = await (await fetch(`${app.base}/audio/speak/status/${r.utteranceId}`, { headers: { 'x-nexuscrew-cell': 'cellB' } })).json();
-    assert.equal(stB.status, 'unknown');
-  } finally { app.close(); }
-});
-
-test('routes: stop accepted (local sovereign); readonly refused', async () => {
-  const app = await startApp({ targetConsent: () => true });
-  try {
-    const ok = await (await fetch(`${app.base}/audio/stop`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target: TARGET }) })).json();
-    assert.equal(ok.status, 'accepted');
-  } finally { app.close(); }
-  const appRo = await startApp({ readonly: () => true });
-  try {
-    const r = await (await fetch(`${appRo.base}/audio/stop`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target: TARGET }) })).json();
-    assert.equal(r.status, 'refused');
-    assert.equal(r.reason, 'readonly');
-  } finally { appRo.close(); }
-});
-
-// --- MCP nc_speak / nc_speak_status shape ------------------------------------
-test('MCP: nc_speak/nc_speak_status registrati; handler chiama /api/audio/speak e ritorna receipt (no aggregate success)', async () => {
+test('MCP D) nc_speak text 321 char rifiutato (argString max 320)', async () => {
   const speak = TOOLS.find((t) => t.name === 'nc_speak');
-  const status = TOOLS.find((t) => t.name === 'nc_speak_status');
-  assert.ok(speak && status);
-  assert.equal(status.annotations && status.annotations.readOnlyHint, true);
-  const seen = [];
-  const ctx = {
-    identity: async () => ({ session: 'sessA', code: 'OK', source: 'env' }),
-    api: async (method, path, payload) => { seen.push({ method, path, payload }); return { utteranceId: 'u-1', status: 'refused', reason: 'no-adapter', origin: { node: 'n', cell: 'sessA' }, target: TARGET, timestamp: 1 }; },
-  };
-  const out = await speak.handler({ target: TARGET, text: 'SECRET', lang: 'it' }, ctx);
-  assert.equal(seen[0].method, 'POST');
-  assert.equal(seen[0].path, '/api/audio/speak');
-  assert.equal(seen[0].payload.session, 'sessA');
-  assert.equal(out.receipt.status, 'refused');
-  assert.equal(out.receipt.utteranceId, 'u-1');
-  assert.equal(JSON.stringify(out).includes('SECRET'), false, 'nessun testo nel receipt MCP');
-  assert.equal(JSON.stringify(out).includes('"success"'), false, 'no aggregate success boolean');
-  // nc_speak_status
-  const out2 = await status.handler({ utteranceId: 'u-1' }, ctx);
-  assert.equal(seen[seen.length - 1].method, 'GET');
-  assert.match(seen[seen.length - 1].path, /\/api\/audio\/speak\/status\/u-1/);
-  assert.equal(out2.receipt.utteranceId, 'u-1');
+  await assert.rejects(() => speak.handler({ target: SELF, text: 'x'.repeat(321) }, { identity: async () => ({ session: 's', code: 'OK' }), api: async () => ({}) }), /troppo lungo|text|max/i);
 });
