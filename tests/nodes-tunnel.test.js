@@ -607,13 +607,13 @@ test('F1 supervisor: un ssh che cade viene rilanciato con stato retrying/backoff
   }
 });
 
-test('reverse-forward failure ripetuto apre il circuit breaker e conserva una diagnosi terminale', async () => {
+test('reverse-forward failure ripetuto entra in stato degraded NON terminale e conserva la diagnosi', async () => {
   const dir = tmpDir();
   const attemptsPath = path.join(dir, 'reverse-attempts.log');
   const fakeSsh = path.join(dir, 'fake-reverse-failure.js');
   const statePath = tunnel.tunnelStatePath(dir, 'hub');
   const pidPath = tunnel.tunnelPidPath(dir, 'hub');
-  const runId = 'reverse-terminal-generation';
+  const runId = 'reverse-degraded-generation';
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   fs.writeFileSync(fakeSsh, [
     "'use strict';",
@@ -636,24 +636,29 @@ test('reverse-forward failure ripetuto apre il circuit breaker e conserva una di
       NEXUSCREW_TUNNEL_RUN_ID: runId,
       NEXUSCREW_TUNNEL_STABLE_MS: '30000',
       NEXUSCREW_TUNNEL_REVERSE_FAILURE_MAX: '2',
+      NEXUSCREW_TUNNEL_STEADY_RETRY_MS: '5000',
     },
     stdio: 'ignore',
   });
   pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId });
   try {
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('circuit breaker non terminato')), 6000);
-      child.once('exit', () => { clearTimeout(timer); resolve(); });
-    });
-    const attempts = fs.readFileSync(attemptsPath, 'utf8').trim().split('\n').filter(Boolean).length;
-    assert.equal(attempts, 2, 'retry count is bounded for a persistent reverse-forward failure');
-    const raw = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    assert.equal(raw.status, 'failed');
-    assert.equal(raw.terminal, true);
+    // Superato il budget il supervisor NON esce: resta "degraded" e conservando
+    // la diagnosi reverse-forward. Prima del fix qui si aspettava l'exit terminale.
+    const deadline = Date.now() + 6000;
+    let raw = null;
+    while (Date.now() < deadline) {
+      try { raw = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) {}
+      if (raw && raw.status === 'degraded') break;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    assert.ok(raw, 'sidecar stato supervisor non scritto');
+    assert.equal(raw.status, 'degraded');
+    assert.equal(raw.terminal, false);
     assert.equal(raw.code, 'reverse-forward-failed');
     assert.doesNotMatch(raw.detail, /ha negato/i);
+    assert.equal(child.exitCode, null, 'il supervisor resta VIVO in degraded (auto-recovery, niente OFF/ON)');
     const visible = tunnel.readTunnelState(dir, 'hub');
-    assert.equal(visible.phase, 'failed');
+    assert.equal(visible.phase, 'degraded');
     assert.equal(visible.code, 'reverse-forward-failed');
     assert.equal(tunnel.diagnoseTunnel(dir, { ...NODE, name: 'hub' }, visible).code, 'reverse-forward-failed');
   } finally {
