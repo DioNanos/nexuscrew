@@ -75,6 +75,7 @@ function startSupervisor({ dir, name, fakeSsh, forwardPort, reversePort = 44001,
       NEXUSCREW_TUNNEL_RUN_ID: runId,
       NEXUSCREW_TUNNEL_STABLE_MS: '100',
       NEXUSCREW_TUNNEL_REVERSE_FAILURE_MAX: '3',
+      NEXUSCREW_TUNNEL_TEST_MODE: '1',
       NEXUSCREW_TUNNEL_STEADY_RETRY_MS: '60',
       ...envExtra,
     },
@@ -185,7 +186,7 @@ test('reverse-forward-bind resta degraded con la classe corretta e NON muore', a
     assert.equal(degraded.ok, true, `seen=${degraded.seen && degraded.seen.join(',')}`);
     assert.equal(degraded.state.code, 'reverse-forward-bind');
     assert.equal(degraded.state.reversePort, 44001);
-    assert.equal(degraded.state.ownership, 'self');
+    assert.equal(degraded.state.ownership, 'unknown', 'il listener sul hub non e attribuibile senza privilegi');
     assert.equal(degraded.state.terminal, false);
     // resta vivo a lungo: nessun exit terminale
     await new Promise((resolve) => setTimeout(resolve, 400));
@@ -282,6 +283,31 @@ test('dopo il budget iniziale il retry e fisso: steadyRetryMs costante, backoff 
   }
 });
 
+test('in produzione il retry degraded resta fisso a 60s anche con un env breve', async () => {
+  const dir = tmpDir();
+  const forwardPort = await reservePort();
+  const { fakeSsh } = writeAlwaysFailingFake({
+    dir, attemptsPath: path.join(dir, 'production-cadence.log'),
+    stderrLine: 'remote port forwarding failed for listen port 44001',
+  });
+  const { child, statePath } = startSupervisor({
+    dir, name: 'hub', fakeSsh, forwardPort, reversePort: 44001, runId: 'production-cadence',
+    envExtra: {
+      NEXUSCREW_TUNNEL_REVERSE_FAILURE_MAX: '1',
+      NEXUSCREW_TUNNEL_TEST_MODE: '0',
+      NEXUSCREW_TUNNEL_STEADY_RETRY_MS: '1',
+    },
+  });
+  try {
+    const degraded = await waitForState(statePath, (s) => s.status === 'degraded', 3000);
+    assert.equal(degraded.ok, true, `seen=${degraded.seen && degraded.seen.join(',')}`);
+    assert.equal(degraded.state.steadyRetryMs, 60000, 'runtime non accetta una cadenza breve');
+  } finally {
+    await stopSupervisor(child);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // --- T6: un listener permanentemente occupato non colpisce altri peer -------
 test('un listener permanentemente occupato (bind) resta diagnosticato e non colpisce altri peer', async () => {
   const dir = tmpDir();
@@ -316,14 +342,14 @@ test('un listener permanentemente occupato (bind) resta diagnosticato e non colp
 });
 
 // --- T7: diagnostica bounded (classe, reversePort, ownership) ---------------
-test('readTunnelState/diagnoseTunnel espongono diagnostica bounded: classe, reversePort, ownership self/unknown', () => {
+test('readTunnelState/diagnoseTunnel espongono diagnostica bounded con ownership remoto unknown', () => {
   const dir = tmpDir();
   fs.mkdirSync(tunnel.tunnelDir(dir), { recursive: true });
-  // sidecar degraded di un supervisor vivo e possessore -> ownership self
+  // Il pidfile locale e' vivo ma non puo attribuire il listener remoto.
   pidf.writePidfile(tunnel.tunnelPidPath(dir, 'hub'), process.pid, '', { runId: 'gen7' });
   fs.writeFileSync(tunnel.tunnelStatePath(dir, 'hub'), JSON.stringify({
     status: 'degraded', code: 'reverse-forward-bind', detail: 'bind occupata', hint: 'verifica listener',
-    reversePort: 44001, ownership: 'self', steadyRetryMs: 60000, terminal: false,
+    reversePort: 44001, ownership: 'unknown', steadyRetryMs: 60000, terminal: false,
     supervisorPid: process.pid, runId: 'gen7', attempt: 3, transport: 'ssh',
   }));
   const st = tunnel.readTunnelState(dir, 'hub');
@@ -331,22 +357,11 @@ test('readTunnelState/diagnoseTunnel espongono diagnostica bounded: classe, reve
   assert.equal(st.phase, 'degraded');
   assert.equal(st.code, 'reverse-forward-bind');
   assert.equal(st.reversePort, 44001);
-  assert.equal(st.ownership, 'self');
+  assert.equal(st.ownership, 'unknown');
   assert.equal(st.retryInMs, 60000);
   const diag = tunnel.diagnoseTunnel(dir, { ...NODE, name: 'hub' }, st);
   assert.equal(diag.phase, 'degraded');
   assert.equal(diag.code, 'reverse-forward-bind');
   assert.equal(diag.reversePort, 44001);
-
-  // ownership 'unknown' quando il sidecar non attribuisce il possessore
-  pidf.writePidfile(tunnel.tunnelPidPath(dir, 'hub2'), process.pid, '', { runId: 'gen7b' });
-  fs.writeFileSync(tunnel.tunnelStatePath(dir, 'hub2'), JSON.stringify({
-    status: 'degraded', code: 'reverse-forward-failed', detail: 'x', reversePort: 44002,
-    ownership: 'unknown', steadyRetryMs: 60000, terminal: false,
-    supervisorPid: process.pid, runId: 'gen7b', attempt: 5,
-  }));
-  const st2 = tunnel.readTunnelState(dir, 'hub2');
-  assert.equal(st2.ownership, 'unknown');
-  assert.equal(st2.reversePort, 44002);
   fs.rmSync(dir, { recursive: true, force: true });
 });

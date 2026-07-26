@@ -72,7 +72,7 @@ function mockFetch(expectedInstance) {
   return fn;
 }
 
-async function setupShare(t, sidecarStatus) {
+async function setupShare(t, sidecarStatus, seamOverrides = {}) {
   const stopped = [];
   const started = [];
   const expectedInstance = 'a'.repeat(32);
@@ -81,6 +81,7 @@ async function setupShare(t, sidecarStatus) {
     stopTunnelImpl: (o) => { stopped.push(o); return { stopped: true }; },
     startForwardImpl: (o) => { started.push(o); return { started: false, reason: 'already running', pid: 4242 }; },
     fetchImpl,
+    ...seamOverrides,
   });
   assert.equal((await addNode(ctx.base, ctx.token, 'hub', { ssh: 'user@hub' })).status, 200);
   let st = nodesStore.loadStoreStrict(ctx.nodesPath);
@@ -120,9 +121,25 @@ test('same-state Share ON accelera un supervisor degraded posseduto: restart loc
   assert.equal(body.shared, true, 'Share resta ON (nessun OFF)');
   assert.equal(body.accelerated, true, 'il supervisor degraded viene accelerato');
   assert.equal(stopped.length, 1, 'restart locale: stop del supervisor chiamato (e non start idempotente)');
+  const healthIndex = fetchImpl.calls.findIndex((c) => c.url.endsWith('/federation/health'));
+  const shareIndex = fetchImpl.calls.findIndex((c) => c.url.endsWith('/federation/share'));
+  assert.ok(healthIndex >= 0, 'il restart deve attendere la health autenticata');
+  assert.ok(healthIndex < shareIndex, 'la health autenticata precede la pubblicazione Share');
   const shareCalls = fetchImpl.calls.filter((c) => c.url.endsWith('/federation/share'));
   assert.ok(shareCalls.length >= 1, 'il hub viene (ri)annunciato');
   assert.ok(shareCalls.every((c) => /"shared":true/.test(c.body || '')), 'nessuna revoca: tutte le chiamate share sono shared=true');
+});
+
+test('same-state Share ON degraded fallisce chiuso se il restart locale non parte: nessun annuncio hub', async (t) => {
+  const { base, token, fetchImpl } = await setupShare(t, 'degraded', {
+    startForwardImpl: () => ({ started: false, reason: 'spawn error' }),
+  });
+  const r = await shareOn(base, token, 'hub');
+  const body = await r.json();
+  assert.equal(r.status, 502);
+  assert.match(body.error, /Share non attivato/);
+  const shareCalls = fetchImpl.calls.filter((c) => c.url.endsWith('/federation/share'));
+  assert.equal(shareCalls.length, 0, 'un restart fallito non puo pubblicare Share sul hub');
 });
 
 test('same-state Share ON su tunnel healthy resta idempotente: nessun restart', async (t) => {

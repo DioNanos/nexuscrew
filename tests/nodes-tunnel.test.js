@@ -636,6 +636,7 @@ test('reverse-forward failure ripetuto entra in stato degraded NON terminale e c
       NEXUSCREW_TUNNEL_RUN_ID: runId,
       NEXUSCREW_TUNNEL_STABLE_MS: '30000',
       NEXUSCREW_TUNNEL_REVERSE_FAILURE_MAX: '2',
+      NEXUSCREW_TUNNEL_TEST_MODE: '1',
       NEXUSCREW_TUNNEL_STEADY_RETRY_MS: '5000',
     },
     stdio: 'ignore',
