@@ -5,12 +5,14 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const federation = require('../lib/proxy/federation.js');
 
-test('whitelist: audio capability/speak/stop sono risorse federate proxabili', () => {
+test('whitelist: audio capability/speak/status/stop sono risorse federate proxabili', () => {
   assert.equal(federation.knownResource('/audio/capability'), true);
   assert.equal(federation.knownResource('/audio/speak'), true);
+  assert.equal(federation.knownResource('/audio/speak/status'), true);
   assert.equal(federation.knownResource('/audio/stop'), true);
   assert.equal(federation.allowedResource('/audio/capability', 'GET'), true);
   assert.equal(federation.allowedResource('/audio/speak', 'POST'), true);
+  assert.equal(federation.allowedResource('/audio/speak/status', 'POST'), true);
   assert.equal(federation.allowedResource('/audio/stop', 'POST'), true);
 });
 
@@ -21,7 +23,17 @@ test('whitelist: audio.consent e una mutation LOCAL-ONLY, federated unreachable/
   assert.equal(federation.allowedResource('/audio/consent', 'PUT'), false);
   // method sbagliati su routes audio permesse sono negati
   assert.equal(federation.allowedResource('/audio/speak', 'GET'), false);
+  assert.equal(federation.allowedResource('/audio/speak/status', 'GET'), false);
   assert.equal(federation.allowedResource('/audio/capability', 'POST'), false);
+});
+
+test('READONLY federato: speak resta bloccato, status e Stop restano sicuri', () => {
+  assert.equal(federation.readonlyBlocksFederated('/audio/speak', 'POST'), true);
+  assert.equal(federation.readonlyBlocksFederated('/audio/speak/status', 'POST'), false,
+    'status usa POST solo per l attestazione, non per una mutazione');
+  assert.equal(federation.readonlyBlocksFederated('/audio/stop', 'POST'), false,
+    'uno Stop remoto deve poter zittire una voce anche con READONLY');
+  assert.equal(federation.readonlyBlocksFederated('/files', 'DELETE'), true);
 });
 
 test('probe false-401: acceptToken sbagliato => degraded/auth-failed (mai healthy); token giusto => healthy', async () => {

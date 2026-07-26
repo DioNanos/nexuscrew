@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   setAudioConsent: vi.fn(),
   testLocalAudio: vi.fn(),
   stopLocalAudio: vi.fn(),
+  getAudioGroups: vi.fn(),
+  saveAudioGroup: vi.fn(),
+  deleteAudioGroup: vi.fn(),
 }));
 
 vi.mock('../lib/api.js', async (importOriginal) => ({
@@ -17,6 +20,9 @@ vi.mock('../lib/api.js', async (importOriginal) => ({
   setAudioConsent: mocks.setAudioConsent,
   testLocalAudio: mocks.testLocalAudio,
   stopLocalAudio: mocks.stopLocalAudio,
+  getAudioGroups: mocks.getAudioGroups,
+  saveAudioGroup: mocks.saveAudioGroup,
+  deleteAudioGroup: mocks.deleteAudioGroup,
 }));
 vi.mock('./PairingCard.jsx', () => ({ default: () => null }));
 
@@ -41,6 +47,7 @@ beforeEach(() => {
   localStorage.setItem('nc_lang', 'en');
   resetNotificationSpeechPriming();
   vi.clearAllMocks();
+  mocks.getAudioGroups.mockResolvedValue({ groups: [] });
 });
 
 describe('Settings Share partial OFF convergence', () => {
@@ -228,5 +235,23 @@ describe('Settings native node audio', () => {
     fireEvent.click(stop);
     await waitFor(() => expect(mocks.stopLocalAudio).toHaveBeenCalledWith('token'));
     expect(await screen.findByText('Local audio stopped.')).toBeTruthy();
+  });
+
+  it('edits named local groups with exact node IDs, without turning them into consent', async () => {
+    const local = 'a'.repeat(32); const mac = 'b'.repeat(32);
+    mocks.getAudioSettings.mockResolvedValue(ready);
+    mocks.getAudioGroups.mockResolvedValue({ groups: [] });
+    mocks.saveAudioGroup.mockResolvedValue({ group: { name: 'studio', mode: 'primary-failover', targets: [mac] } });
+    render(<AudioTab token="token" readonly={false} settings={{ nodeId: local }} nodes={[{ nodeId: mac, label: 'Mac' }]} />);
+
+    expect(await screen.findByText('Shared audio groups')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'group name' }), { target: { value: 'Studio' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: new RegExp(`Mac.*${mac}`) }));
+    fireEvent.click(screen.getByRole('button', { name: 'save group' }));
+    await waitFor(() => expect(mocks.saveAudioGroup).toHaveBeenCalledWith('token', 'studio', {
+      targets: [mac], mode: 'primary-failover',
+    }));
+    expect(await screen.findByText('studio')).toBeTruthy();
+    expect(screen.getByText(/A group is a local delivery preference/)).toBeTruthy();
   });
 });

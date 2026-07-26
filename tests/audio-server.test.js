@@ -198,6 +198,34 @@ test('MCP -> server reale: nc_speak firma con lo stesso bridge secret e avvia la
   assert.equal(s.adapter.spoken.at(-1), 'ciao');
 });
 
+test('utteranceId: gruppo e speak singolo non possono riusare lo stesso namespace caller', async (t) => {
+  const s = await boot(t);
+  await s.setConsent(true);
+  const group = await s.plain('PUT', '/api/settings/audio/groups/self', {
+    targets: [s.nodeId], mode: 'primary-failover',
+  });
+  assert.equal(group.status, 200);
+  const direct = await s.signed('POST', '/api/audio/speak', {
+    target: s.nodeId, text: 'prima', utteranceId: 'cross-namespace-0001',
+  });
+  assert.equal(direct.status, 200);
+  const clashGroup = await s.signed('POST', '/api/audio/groups/speak', {
+    group: 'self', text: 'seconda', utteranceId: 'cross-namespace-0001',
+  });
+  assert.equal(clashGroup.status, 422);
+  assert.equal((await clashGroup.json()).reason, 'utterance-collision');
+
+  const startedGroup = await s.signed('POST', '/api/audio/groups/speak', {
+    group: 'self', text: 'terza', utteranceId: 'cross-namespace-0002',
+  });
+  assert.equal(startedGroup.status, 200);
+  const clashDirect = await s.signed('POST', '/api/audio/speak', {
+    target: s.nodeId, text: 'quarta', utteranceId: 'cross-namespace-0002',
+  });
+  assert.equal(clashDirect.status, 422);
+  assert.equal((await clashDirect.json()).reason, 'utterance-collision');
+});
+
 test('consenso: default OFF — un nodo capace di parlare rifiuta comunque', async (t) => {
   const s = await boot(t);
   const res = await s.signed('POST', '/api/audio/speak', { target: s.nodeId, text: 'ciao' });
@@ -214,12 +242,46 @@ test('consenso: mutabile solo localmente, mai raggiungibile via federation', asy
   assert.equal(federation.knownResource('/settings/audio/consent'), false);
   assert.equal(federation.knownResource('/settings/audio/test'), false);
   assert.equal(federation.knownResource('/settings/audio/stop'), false);
+  assert.equal(federation.knownResource('/settings/audio/groups'), false);
+  assert.equal(federation.knownResource('/audio/groups/speak'), false);
   assert.equal(federation.allowedResource('/audio/consent', 'PATCH'), false);
   const before = await (await s.plain('GET', '/api/settings/audio')).json();
   assert.equal(before.consent, false);
   await s.setConsent(true);
   const after = await (await s.plain('GET', '/api/settings/audio')).json();
   assert.equal(after.consent, true);
+});
+
+test('gruppi Settings: schema chiuso e mutazioni local-only', async (t) => {
+  const s = await boot(t);
+  const empty = await s.plain('GET', '/api/settings/audio/groups');
+  assert.deepEqual(await empty.json(), { groups: [] });
+  const bad = await s.plain('PUT', '/api/settings/audio/groups/studio', {
+    targets: [s.nodeId], mode: 'primary-failover', consent: true,
+  });
+  assert.equal(bad.status, 400, 'un gruppo non puo contenere o mutare consenso');
+  const saved = await s.plain('PUT', '/api/settings/audio/groups/studio', {
+    targets: [s.nodeId], mode: 'primary-failover',
+  });
+  assert.equal(saved.status, 200);
+  assert.deepEqual((await saved.json()).group, { name: 'studio', targets: [s.nodeId], mode: 'primary-failover' });
+
+  const ro = await boot(t, { readonlyDefault: true });
+  assert.equal((await ro.plain('PUT', '/api/settings/audio/groups/studio', {
+    targets: [ro.nodeId], mode: 'primary-failover',
+  })).status, 403);
+});
+
+test('audio REST: schema di input chiuso e bounded prima di raggiungere l adapter', async (t) => {
+  const s = await boot(t);
+  await s.setConsent(true);
+  const extra = await s.signed('POST', '/api/audio/speak', { target: s.nodeId, text: 'x', extra: 'no' });
+  assert.equal(extra.status, 400);
+  assert.equal((await extra.json()).reason, 'invalid-request');
+  const urgency = await s.signed('POST', '/api/audio/speak', { target: s.nodeId, text: 'x', urgency: 'urgentissimo' });
+  assert.equal(urgency.status, 400);
+  assert.equal((await urgency.json()).reason, 'invalid-request');
+  assert.equal(s.adapter.spoken.length, 0);
 });
 
 test('Settings audio: capability, test a frase fissa e stop usano l adapter/coda REALI', async (t) => {

@@ -80,12 +80,12 @@ test('initialize: echo protocolVersion, capabilities.tools, serverInfo', async (
   assert.equal(out.lines.length, 1);
 });
 
-test('tools/list: 13 tool nc_* con readOnlyHint sui read-only', async () => {
+test('tools/list: 16 tool nc_* con readOnlyHint sui read-only', async () => {
   const { srv, out } = makeSrv();
   await srv.handleLine(rpc(2, 'tools/list'));
   const tools = out.lines[0].result.tools;
   assert.deepEqual(tools.map((t) => t.name).sort(),
-    ['nc_ask', 'nc_cell_diagnostics', 'nc_cells', 'nc_deck', 'nc_identity', 'nc_inbox', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_speak', 'nc_speak_status', 'nc_speak_stop', 'nc_status']);
+    ['nc_ask', 'nc_cell_diagnostics', 'nc_cells', 'nc_deck', 'nc_identity', 'nc_inbox', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_speak', 'nc_speak_group', 'nc_speak_group_status', 'nc_speak_group_stop', 'nc_speak_status', 'nc_speak_stop', 'nc_status']);
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   assert.equal(byName.nc_status.annotations.readOnlyHint, true);
   assert.equal(byName.nc_deck.annotations.readOnlyHint, true);
@@ -94,10 +94,53 @@ test('tools/list: 13 tool nc_* con readOnlyHint sui read-only', async () => {
   assert.equal(byName.nc_inbox.annotations.readOnlyHint, true);
   assert.equal(byName.nc_identity.annotations.readOnlyHint, true);
   assert.equal(byName.nc_speak_status.annotations.readOnlyHint, true);
+  assert.equal(byName.nc_speak_group_status.annotations.readOnlyHint, true);
   assert.equal(byName.nc_notify.annotations, undefined);
   assert.equal(byName.nc_send_cell.annotations, undefined);
   assert.equal(byName.nc_speak.annotations, undefined, 'nc_speak muta, no readOnlyHint');
+  assert.equal(byName.nc_speak_group.annotations, undefined, 'nc_speak_group muta, no readOnlyHint');
   for (const t of tools) assert.equal(t.inputSchema.type, 'object');
+});
+
+test('nc_speak_group/status/stop: il bridge firma anche l orchestrazione multi-endpoint', async () => {
+  const { srv, calls, dir } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => ({
+      status: 200,
+      json: call.url.includes('/groups/status/')
+        ? { utteranceId: 'group-audio-1234', endpoints: [] }
+        : { utteranceId: 'group-audio-1234', endpoints: [] },
+    }),
+  });
+  await srv.handleLine(rpc(204, 'tools/call', {
+    name: 'nc_speak_group', arguments: { group: 'studio', text: 'ciao', utteranceId: 'group-audio-1234' },
+  }));
+  await srv.handleLine(rpc(205, 'tools/call', {
+    name: 'nc_speak_group_status', arguments: { utteranceId: 'group-audio-1234' },
+  }));
+  await srv.handleLine(rpc(206, 'tools/call', {
+    name: 'nc_speak_group_stop', arguments: { utteranceId: 'group-audio-1234' },
+  }));
+  assert.equal(calls.length, 3);
+  const secret = fs.readFileSync(path.join(dir, 'audio-bridge.key'), 'utf8').trim();
+  const expected = [
+    ['POST', '/api/audio/groups/speak'],
+    ['GET', '/api/audio/groups/status/group-audio-1234'],
+    ['POST', '/api/audio/groups/stop'],
+  ];
+  for (let i = 0; i < calls.length; i += 1) {
+    const call = calls[i]; const [method, apiPath] = expected[i];
+    assert.equal(call.method, method);
+    assert.equal(new URL(call.url).pathname, apiPath);
+    const proof = bridgeAuth.verifyRequest({
+      secret, method, path: apiPath, headers: call.headers,
+      rawBody: call.rawBody === undefined ? '' : call.rawBody,
+      nonceCache: bridgeAuth.createNonceCache(),
+    });
+    assert.deepEqual(proof, { ok: true, session: 'cloud-Dev' });
+  }
+  assert.deepEqual(calls[0].body, { group: 'studio', text: 'ciao', urgency: 'normal', utteranceId: 'group-audio-1234' });
+  assert.deepEqual(calls[2].body, { utteranceId: 'group-audio-1234' });
 });
 
 test('nc_speak/status/stop: il bridge firma l origine, non mette la sessione nel body', async () => {
@@ -341,7 +384,7 @@ test('commandForDiagnostics: over-redaction benigno (NODE_ENV), shape e ACL inva
   const diag = TOOLS.find((tool) => tool.name === 'nc_cell_diagnostics');
   assert.ok(diag, 'nc_cell_diagnostics presente');
   assert.equal(diag.annotations.readOnlyHint, true);
-  assert.equal(TOOLS.length, 13, 'registry tool (13 tool)');
+  assert.equal(TOOLS.length, 16, 'registry tool (16 tool)');
 });
 
 test('nc_send_cell: risolve sender e target dalla directory e restituisce receipt onesto', async () => {
@@ -879,7 +922,7 @@ test('subprocess: handshake + tools/call nc_notify contro server HTTP finto', as
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
 
   const list = await call(2, 'tools/list');
-  assert.equal(list.result.tools.length, 13);
+  assert.equal(list.result.tools.length, 16);
 
   const notif = await call(3, 'tools/call', { name: 'nc_notify', arguments: { title: 'e2e ok' } });
   assert.deepEqual(JSON.parse(notif.result.content[0].text), { delivered: { ui: 1, push: 0 } });

@@ -106,6 +106,18 @@ async function pair(t, opts = {}) {
 
 const setConsent = (node, consent) => node.plain('PATCH', '/api/settings/audio/consent', { consent });
 
+const pause = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
+async function waitForGroup(node, utteranceId, tries = 40) {
+  let latest = null;
+  for (let i = 0; i < tries; i += 1) {
+    const res = await node.signed('GET', `/api/audio/groups/status/${utteranceId}`);
+    latest = await res.json();
+    if (res.status === 200 && latest.endpoints && latest.endpoints.every((endpoint) => endpoint.reason !== 'not-attempted')) return latest;
+    await pause();
+  }
+  throw new Error(`group receipt non aggiornato: ${JSON.stringify(latest)}`);
+}
+
 test('A->B: l origine attraversa la federazione ed e attribuita al nodo giusto', async (t) => {
   const { a, b } = await pair(t);
   await setConsent(b, true);
@@ -190,6 +202,75 @@ test('stop remoto: A puo fermare su B un enunciato proprio', async (t) => {
   const res = await a.signed('POST', '/api/audio/stop', { target: b.nodeId, utteranceId: 'e2e-stop-1' });
   assert.equal(res.status, 200);
   assert.equal((await res.json()).status, 'accepted');
+});
+
+test('status federato: la stessa origine puo leggere il proprio receipt remoto senza una GET non attestata', async (t) => {
+  const { a, b } = await pair(t);
+  await setConsent(b, true);
+  await a.signed('POST', '/api/audio/speak', { target: b.nodeId, text: 'stato', utteranceId: 'e2e-remote-status-1' });
+  const res = await a.plain('POST', '/api/route/peer-b/_/audio/speak/status', {
+    target: b.nodeId, utteranceId: 'e2e-remote-status-1', originCell: a.cell, originNode: a.nodeId,
+  });
+  assert.equal(res.status, 200, 'la route federata porta la prova hop; il body non puo creare un hop da solo');
+  const body = await res.json();
+  assert.equal(body.target, b.nodeId);
+  assert.equal(body.origin.node, a.nodeId);
+  assert.equal(body.origin.attested, true);
+});
+
+test('gruppo: A filtra capability sul percorso federato e B decide consenso prima di parlare', async (t) => {
+  const { a, b } = await pair(t);
+  await setConsent(b, true);
+  const saved = await a.plain('PUT', '/api/settings/audio/groups/studio', {
+    targets: [b.nodeId], mode: 'primary-failover',
+  });
+  assert.equal(saved.status, 200);
+  const start = await a.signed('POST', '/api/audio/groups/speak', {
+    group: 'studio', text: 'solo B deve parlare', utteranceId: 'e2e-group-remote-1',
+  });
+  assert.equal(start.status, 200);
+  const initial = await start.json();
+  assert.equal(initial.endpoints.length, 1);
+  const final = await waitForGroup(a, initial.utteranceId);
+  assert.deepEqual(final.endpoints.map((endpoint) => [endpoint.target, endpoint.status]), [[b.nodeId, 'spoken']]);
+  assert.equal(b.adapter.spoken.at(-1), 'solo B deve parlare');
+  assert.equal(a.adapter.spoken.length, 0);
+  assert.equal(JSON.stringify(final).includes('solo B deve parlare'), false, 'il receipt non conserva il testo');
+});
+
+test('gruppo: un target relay-only non supera la capability e non viene invocato', async (t) => {
+  const { a, b } = await pair(t, { visibility: 'relay-only' });
+  await setConsent(b, true);
+  await a.plain('PUT', '/api/settings/audio/groups/privato', {
+    targets: [b.nodeId], mode: 'primary-failover',
+  });
+  const start = await a.signed('POST', '/api/audio/groups/speak', {
+    group: 'privato', text: 'non parlare', utteranceId: 'e2e-group-acl-0001',
+  });
+  const result = await waitForGroup(a, 'e2e-group-acl-0001');
+  assert.equal(start.status, 200);
+  assert.equal(result.endpoints[0].status, 'refused');
+  assert.equal(b.adapter.spoken.length, 0);
+});
+
+test('gruppo: non aggira il rate limit dell origine con molti receipt asincroni', async (t) => {
+  const { a, b } = await pair(t);
+  await setConsent(b, true);
+  const saved = await a.plain('PUT', '/api/settings/audio/groups/ritmo', {
+    targets: [b.nodeId], mode: 'primary-failover',
+  });
+  assert.equal(saved.status, 200);
+  const ids = Array.from({ length: 7 }, (_, index) => `e2e-group-rate-${index + 1}`);
+  const starts = await Promise.all(ids.map((utteranceId) => a.signed('POST', '/api/audio/groups/speak', {
+    group: 'ritmo', text: 'x', utteranceId,
+  })));
+  for (const start of starts) assert.equal(start.status, 200, 'un receipt iniziale non e ancora un delivery');
+  const receipts = await Promise.all(ids.map((utteranceId) => waitForGroup(a, utteranceId)));
+  const endpoints = receipts.map((receipt) => receipt.endpoints[0]);
+  assert.equal(endpoints.filter((endpoint) => endpoint.status === 'spoken').length, 6);
+  assert.ok(endpoints.some((endpoint) => endpoint.status === 'refused' && endpoint.reason === 'rate-limit'),
+    'un gruppo non deve aprire una corsia oltre il budget nc_speak della cella origine');
+  assert.equal(b.adapter.spoken.length, 6);
 });
 
 test('READONLY sul target: rifiuto esplicito che raggiunge l origine', async (t) => {

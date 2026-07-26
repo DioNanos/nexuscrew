@@ -58,7 +58,7 @@ install-script approval.
 | **Multi-node Fleet** | See and control authorized cells across Linux, macOS and Android nodes. |
 | **AI-ready cells** | Launch Claude Code, Codex, Codex-VL, Pi, Agy or a trusted shell with explicit providers and policies. |
 | **Mobile-native control** | Scroll tmux history, use terminal keys, dictate prompts and move files from a phone. |
-| **Operator alerts** | Receive visual, push and optional on-device spoken notifications. |
+| **Operator alerts** | Receive visual, push, browser speech and opt-in node-native Audio Share TTS. |
 
 The browser is a client, not the session host:
 
@@ -102,6 +102,7 @@ ssh -L 41820:127.0.0.1:41820 user@your-host
 | [Fleet and terminals](docs/FLEET.md) | Cells, engines, providers, decks and mobile input |
 | [Connect nodes](docs/NODES.md) | Pairing, SSH routes, sharing and routed aliases |
 | [Notifications](docs/NOTIFICATIONS.md) | Toasts, Web Push and optional spoken alerts |
+| [Audio Share and native TTS](docs/AUDIO_SHARE.md) | Node-native TTS, consent, groups and MCP controls |
 | [MCP bridge](docs/MCP.md) | Operator tools, cell delivery and client setup |
 | [Configuration](docs/CONFIGURATION.md) | Files, environment overrides and local settings |
 | [Operations](docs/OPERATIONS.md) | CLI, boot, backup, updates and diagnostics |

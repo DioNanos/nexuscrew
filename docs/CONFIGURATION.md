@@ -12,6 +12,9 @@ never synchronized to a hosted control service.
 | `~/.nexuscrew/config.json` | Port, Fleet mode and runtime options |
 | `~/.nexuscrew/token` | Local PWA bearer token |
 | `~/.nexuscrew/credentials.json` | Optional node-local write-only provider store |
+| `~/.nexuscrew/audio.json` | Local Audio Share consent (default off) |
+| `~/.nexuscrew/audio-groups.json` | Local named Audio Share target groups |
+| `~/.nexuscrew/audio-bridge.key` | Local HMAC proof for MCP Audio Share calls |
 | `~/.nexuscrew/tunnels/` | Managed SSH supervisor state and owner-only logs |
 | `~/NexusFiles/<session>/` | Per-session inbox and outbox |
 
@@ -101,5 +104,6 @@ Review the exact target before removing any alternate token file.
 
 - [Fleet and terminals](FLEET.md)
 - [Notifications](NOTIFICATIONS.md)
+- [Audio Share and native TTS](AUDIO_SHARE.md)
 - [Security](SECURITY.md)
 - [Operations](OPERATIONS.md)

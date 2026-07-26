@@ -6,6 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('node:events');
 const a = require('../lib/audio/adapters.js');
+const { createSpeakQueue } = require('../lib/audio/queue.js');
 
 // fs finto: solo i binari elencati esistono e sono eseguibili.
 function fakeFs(available) {
@@ -20,6 +21,7 @@ function fakeSpawn() {
   const calls = [];
   const impl = (bin, args, opts) => {
     const child = new EventEmitter();
+    child.pid = 10_000 + calls.length;
     const stdinChunks = [];
     child.stdin = Object.assign(new EventEmitter(), {
       end: (chunk) => stdinChunks.push(String(chunk)),
@@ -90,6 +92,51 @@ test('speak: uno spawn fallito e un mancato avvio, non un successo silenzioso', 
     { spawnImpl: () => { throw new Error('EACCES'); } },
   );
   assert.deepEqual(adapter.speak({ text: 'x' }), { started: false, reason: 'adapter-spawn-failed' });
+});
+
+test('speak: un errore asincrono di spawn non viene promosso a spoken dalla coda', async () => {
+  let child;
+  const descriptor = a.detectAdapter({ platform: 'darwin', env: { PATH: '/usr/bin' }, fsImpl: fakeFs(['/usr/bin/say']) });
+  const adapter = a.createAdapter(descriptor, {
+    graceMs: 0,
+    spawnImpl: () => {
+      child = new EventEmitter();
+      child.pid = 42;
+      child.stdin = Object.assign(new EventEmitter(), { end: () => {} });
+      child.kill = () => {};
+      return child;
+    },
+  });
+  const transitions = [];
+  const queue = createSpeakQueue({ adapter, onStatus: (id, status, reason) => transitions.push([id, status, reason]) });
+  assert.deepEqual(queue.enqueue({ utteranceId: 'async-spawn-failure', text: 'x' }), { status: 'accepted' });
+  child.emit('error', new Error('ENOENT'));
+  child.emit('close', -2, null);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(transitions, [['async-spawn-failure', 'refused', 'adapter-spawn-failed']]);
+});
+
+test('speak: spoken arriva solo dopo l evento spawn attestato', async () => {
+  let child;
+  const descriptor = a.detectAdapter({ platform: 'darwin', env: { PATH: '/usr/bin' }, fsImpl: fakeFs(['/usr/bin/say']) });
+  const adapter = a.createAdapter(descriptor, {
+    graceMs: 0,
+    spawnImpl: () => {
+      child = new EventEmitter();
+      child.pid = 43;
+      child.stdin = Object.assign(new EventEmitter(), { end: () => {} });
+      child.kill = () => {};
+      return child;
+    },
+  });
+  const transitions = [];
+  const queue = createSpeakQueue({ adapter, onStatus: (id, status, reason) => transitions.push([id, status, reason]) });
+  queue.enqueue({ utteranceId: 'attested-spawn-1', text: 'x' });
+  assert.deepEqual(transitions, [], 'prima dell evento spawn il receipt resta accepted');
+  child.emit('spawn');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(transitions, [['attested-spawn-1', 'spoken', undefined]]);
+  child.emit('close', 0, null);
 });
 
 test('speak: watchdog — un processo che non termina viene ucciso entro il timeout', async () => {
