@@ -11,6 +11,7 @@ const http = require('node:http');
 const { spawn } = require('node:child_process');
 const { createMcpServer, resolveSession, resolveIdentity } = require('../lib/mcp/server.js');
 const { TOOLS, commandForDiagnostics, failureForDiagnostics } = require('../lib/mcp/tools.js');
+const bridgeAuth = require('../lib/audio/bridge-auth.js');
 
 function tmpdir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'ncmcp-')); }
 
@@ -30,7 +31,10 @@ function makeOut() {
 function makeFetch(responder) {
   const calls = [];
   const impl = async (url, opts = {}) => {
-    const call = { url: String(url), method: opts.method || 'GET', headers: opts.headers || {}, body: opts.body ? JSON.parse(opts.body) : undefined };
+    const call = {
+      url: String(url), method: opts.method || 'GET', headers: opts.headers || {},
+      rawBody: opts.body, body: opts.body ? JSON.parse(opts.body) : undefined,
+    };
     calls.push(call);
     const r = responder(call);
     return { ok: r.status < 400, status: r.status, json: async () => r.json };
@@ -94,6 +98,53 @@ test('tools/list: 13 tool nc_* con readOnlyHint sui read-only', async () => {
   assert.equal(byName.nc_send_cell.annotations, undefined);
   assert.equal(byName.nc_speak.annotations, undefined, 'nc_speak muta, no readOnlyHint');
   for (const t of tools) assert.equal(t.inputSchema.type, 'object');
+});
+
+test('nc_speak/status/stop: il bridge firma l origine, non mette la sessione nel body', async () => {
+  const target = 'a'.repeat(32);
+  const { srv, calls, dir } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => ({
+      status: 200,
+      json: {
+        status: call.url.includes('/status/') ? 'spoken' : 'accepted',
+        utteranceId: 'audio-test-1234',
+      },
+    }),
+  });
+  await srv.handleLine(rpc(201, 'tools/call', {
+    name: 'nc_speak', arguments: { target, text: 'ciao', utteranceId: 'audio-test-1234' },
+  }));
+  await srv.handleLine(rpc(202, 'tools/call', {
+    name: 'nc_speak_status', arguments: { utteranceId: 'audio-test-1234' },
+  }));
+  await srv.handleLine(rpc(203, 'tools/call', {
+    name: 'nc_speak_stop', arguments: { target, utteranceId: 'audio-test-1234' },
+  }));
+
+  assert.equal(calls.length, 3);
+  const secret = fs.readFileSync(path.join(dir, 'audio-bridge.key'), 'utf8').trim();
+  const expected = [
+    ['POST', '/api/audio/speak'],
+    ['GET', '/api/audio/speak/status/audio-test-1234'],
+    ['POST', '/api/audio/stop'],
+  ];
+  for (let i = 0; i < calls.length; i += 1) {
+    const call = calls[i];
+    const [method, apiPath] = expected[i];
+    assert.equal(call.method, method);
+    assert.equal(new URL(call.url).pathname, apiPath);
+    assert.equal(call.body && call.body.session, undefined, 'la sessione non e una dichiarazione nel body');
+    const proof = bridgeAuth.verifyRequest({
+      secret, method, path: apiPath, headers: call.headers,
+      rawBody: call.rawBody === undefined ? '' : call.rawBody,
+      nonceCache: bridgeAuth.createNonceCache(),
+    });
+    assert.deepEqual(proof, { ok: true, session: 'cloud-Dev' });
+  }
+  assert.deepEqual(calls[0].body, { target, text: 'ciao', urgency: 'normal', utteranceId: 'audio-test-1234' });
+  assert.equal(calls[1].rawBody, undefined, 'status firma il body vuoto e non invia JSON inutile');
+  assert.deepEqual(calls[2].body, { target, utteranceId: 'audio-test-1234' });
 });
 
 test('nc_cells: aggrega celle locali e remote con id owner-qualified', async () => {

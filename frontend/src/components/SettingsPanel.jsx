@@ -8,6 +8,7 @@ import {
   saveNodeAlias, deleteNodeAlias,
   checkNpmUpdate, applyNpmUpdate,
   getDiagnosticsStatus, getDiagnosticsLogs, setDiagnosticsVerbose, clearDiagnosticsLogs,
+  getAudioSettings, setAudioConsent, testLocalAudio, stopLocalAudio,
 } from '../lib/api.js';
 import { validateNodeForm, tunnelInfo, toSlug, isValidLabel } from '../lib/settings-model.js';
 import PairingCard from './PairingCard.jsx';
@@ -585,6 +586,95 @@ export function NotificationSpeechRow() {
   );
 }
 
+// Audio nativo DEL NODO. E' distinto dalla voce browser delle notifiche sopra:
+// qui si governa il consenso fisico della macchina e il backend seleziona solo
+// primitive locali (Termux/macOS/Linux). La UI non riceve mai il segreto HMAC
+// del bridge MCP e non puo' mandare testo arbitrario: Test usa una frase fissa
+// lato server; Stop e' locale e sovrano anche con READONLY attivo.
+export function AudioTab({ token, readonly }) {
+  const [capability, setCapability] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState('');
+
+  const refresh = useCallback(async () => {
+    try { setCapability(await getAudioSettings(token)); setErr(''); }
+    catch (e) { setErr(String(e.message || e)); }
+  }, [token]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const changeConsent = async (consent) => {
+    setBusy(true); setResult(null); setErr('');
+    try { setCapability(await setAudioConsent(token, consent)); }
+    catch (e) { setErr(String(e.message || e)); }
+    setBusy(false);
+  };
+  const runTest = async () => {
+    setBusy(true); setResult(null); setErr('');
+    try { setResult({ kind: 'test', ...(await testLocalAudio(token)) }); }
+    catch (e) { setErr(String(e.message || e)); }
+    setBusy(false);
+  };
+  const stop = async () => {
+    setBusy(true); setResult(null); setErr('');
+    try { setResult({ kind: 'stop', ...(await stopLocalAudio(token)) }); }
+    catch (e) { setErr(String(e.message || e)); }
+    setBusy(false);
+  };
+
+  const installed = capability?.installed === true;
+  const ready = capability?.liveness === 'ready';
+  const canTest = capability?.consent === true && installed && ready;
+  const resultText = !result ? ''
+    : result.kind === 'stop' ? t(result.stopped ? 'audio-stop-stopped' : 'audio-stop-idle')
+      : result.status === 'accepted' || result.status === 'spoken' ? t('audio-test-accepted')
+        : result.status === 'unknown' ? t('audio-test-unknown')
+          : `${t('audio-test-refused')}${result.reason ? ` (${result.reason})` : ''}`;
+
+  return (
+    <div className="nc-set-tab nc-audio-settings">
+      <div className="nc-set-info">
+        <b>{t('audio-title')}</b><br />
+        {t('audio-help')}
+      </div>
+      {!capability ? <div className="nc-set-info">{t('audio-loading')}</div> : <>
+        <label className="nc-check">
+          <input type="checkbox" aria-label={t('audio-consent')}
+            checked={capability.consent === true} disabled={readonly || busy}
+            onChange={(event) => { void changeConsent(event.target.checked); }} />
+          <span><b>{t('audio-consent')}</b><small>{t('audio-consent-help')}</small></span>
+        </label>
+        <div className="nc-set-form">
+          <div className="nc-sheet-label">{t('audio-capability')}</div>
+          <div className="nc-set-info">
+            {t('audio-adapter')}: {capability.adapter || t('audio-adapter-none')}<br />
+            {t('audio-installed')}: {installed ? t('audio-installed-yes') : t('audio-installed-no')}<br />
+            {t('audio-liveness')}: {ready ? t('audio-liveness-ready') : t('audio-liveness-unavailable')}
+            {Array.isArray(capability.languages) && capability.languages.length > 0 && <><br />
+              {t('audio-languages')}: {capability.languages.join(', ')}</>}
+          </div>
+          {capability.limits && <small className="nc-set-hint">{t('audio-limits')}: {capability.limits}</small>}
+        </div>
+        {!capability.consent && <div className="nc-set-info">{t('audio-test-needs-consent')}</div>}
+        {!installed && <div className="nc-set-info">{t('audio-unavailable')}</div>}
+        <div className="nc-set-row">
+          <button type="button" className="nc-btn primary" disabled={readonly || busy || !canTest}
+            title={readonly ? t('settings-readonly') : ''} onClick={() => { void runTest(); }}>
+            {t(busy ? 'audio-testing' : 'audio-test')}
+          </button>
+          <button type="button" className="nc-btn ghost" disabled={busy}
+            onClick={() => { void stop(); }}>{t(busy ? 'audio-stopping' : 'audio-stop')}</button>
+          <button type="button" className="nc-btn ghost" disabled={busy}
+            onClick={() => { void refresh(); }}>{t('refresh')}</button>
+        </div>
+      </>}
+      {resultText && <div className="nc-set-note" role="status">{resultText}</div>}
+      {err && <div className="nc-err">{err}</div>}
+    </div>
+  );
+}
+
 // --- scheda INPUT (solo client/browser) --------------------------------------
 // Queste preferenze non cambiano il nodo e restano editabili anche quando il
 // server e' READONLY: governano soltanto focus, IME, STT e KeyBar locali.
@@ -958,7 +1048,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
         {loadErr && <div className="nc-err">{loadErr}</div>}
 
         <div className="nc-set-tabs">
-          {['nodes', 'fleet', 'input', 'diagnostics', 'system'].map((k) => (
+          {['nodes', 'fleet', 'audio', 'input', 'diagnostics', 'system'].map((k) => (
             <button key={k} type="button" className={`nc-set-tabbtn${tab === k ? ' on' : ''}`}
               onClick={() => setTab(k)}>{t(`tab-${k}`)}</button>
           ))}
@@ -970,6 +1060,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
           {tab === 'fleet' && <FleetTab token={token} readonly={readonly}
             startNewCell={startNewCell} initialLocation={initialLocation}
             targets={roster.map((g) => ({ route: g.route, label: g.label || g.name, status: g.status }))} />}
+          {tab === 'audio' && <AudioTab token={token} readonly={readonly} />}
           {tab === 'input' && <InputTab />}
           {tab === 'diagnostics' && <DiagnosticsTab token={token} roster={roster} readonly={readonly} />}
           {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} refresh={refresh} />}

@@ -14,6 +14,7 @@ const path = require('node:path');
 const { createServer } = require('../lib/server.js');
 const nodesStore = require('../lib/nodes/store.js');
 const ba = require('../lib/audio/bridge-auth.js');
+const { createMcpServer } = require('../lib/mcp/server.js');
 
 const SESSION = 'cloud-Dev';
 const CELL = 'Dev';
@@ -174,6 +175,29 @@ test('bridge firmato: un segreto diverso non passa (il file 0600 e il confine)',
   assert.equal(res.status, 401);
 });
 
+test('MCP -> server reale: nc_speak firma con lo stesso bridge secret e avvia la coda', async (t) => {
+  const s = await boot(t);
+  await s.setConsent(true);
+  const lines = [];
+  const mcp = createMcpServer({
+    output: { write: (line) => { if (String(line).trim()) lines.push(JSON.parse(line)); } },
+    env: { NEXUSCREW_MCP_SESSION: SESSION },
+    config: {
+      port: Number(new URL(s.base).port), tokenPath: path.join(s.configDir, 'token'), tmuxBin: 'tmux',
+    },
+    errlog: () => {},
+  });
+  await mcp.handleLine(JSON.stringify({
+    jsonrpc: '2.0', id: 91, method: 'tools/call',
+    params: { name: 'nc_speak', arguments: { target: s.nodeId, text: 'ciao', utteranceId: 'mcp-audio-1234' } },
+  }));
+  const reply = JSON.parse(lines[0].result.content[0].text);
+  assert.ok(['accepted', 'spoken'].includes(reply.receipt.status));
+  assert.equal(reply.receipt.origin.node, s.nodeId);
+  assert.equal(reply.receipt.origin.cell, CELL);
+  assert.equal(s.adapter.spoken.at(-1), 'ciao');
+});
+
 test('consenso: default OFF — un nodo capace di parlare rifiuta comunque', async (t) => {
   const s = await boot(t);
   const res = await s.signed('POST', '/api/audio/speak', { target: s.nodeId, text: 'ciao' });
@@ -188,12 +212,61 @@ test('consenso: mutabile solo localmente, mai raggiungibile via federation', asy
   const s = await boot(t);
   const federation = require('../lib/proxy/federation.js');
   assert.equal(federation.knownResource('/settings/audio/consent'), false);
+  assert.equal(federation.knownResource('/settings/audio/test'), false);
+  assert.equal(federation.knownResource('/settings/audio/stop'), false);
   assert.equal(federation.allowedResource('/audio/consent', 'PATCH'), false);
   const before = await (await s.plain('GET', '/api/settings/audio')).json();
   assert.equal(before.consent, false);
   await s.setConsent(true);
   const after = await (await s.plain('GET', '/api/settings/audio')).json();
   assert.equal(after.consent, true);
+});
+
+test('Settings audio: capability, test a frase fissa e stop usano l adapter/coda REALI', async (t) => {
+  const s = await boot(t);
+  const capability = await (await s.plain('GET', '/api/settings/audio')).json();
+  assert.equal(capability.adapter, 'fake', 'Settings non ridetecta un adapter diverso dal server');
+  assert.equal(capability.consent, false);
+
+  const denied = await s.plain('POST', '/api/settings/audio/test', {});
+  assert.equal(denied.status, 200);
+  assert.deepEqual(await denied.json(), { status: 'refused', reason: 'consent' });
+  assert.equal(s.adapter.spoken.length, 0, 'la prova non aggira il consenso');
+
+  await s.setConsent(true);
+  const accepted = await s.plain('POST', '/api/settings/audio/test', {});
+  assert.equal(accepted.status, 200);
+  const result = await accepted.json();
+  assert.equal(result.status, 'accepted');
+  assert.equal(result.text, undefined, 'la risposta non conserva il testo di test');
+  assert.equal(s.adapter.spoken.length, 1, 'la coda e quella del server reale');
+  assert.match(s.adapter.spoken[0], /^NexusCrew audio test\.$/);
+
+  const garbage = await s.plain('POST', '/api/settings/audio/test', { text: 'non ammesso' });
+  assert.equal(garbage.status, 400, 'il browser non puo scegliere testo o target');
+  assert.equal(s.adapter.spoken.length, 1);
+});
+
+test('Settings audio: Stop locale e sovrano anche READONLY', async (t) => {
+  let killed = 0;
+  const pendingAdapter = {
+    id: 'pending', installed: true, limits: 'adapter di test: non produce suono',
+    speak: () => ({ started: true, done: new Promise(() => {}), kill: () => { killed += 1; } }),
+  };
+  const s = await boot(t, { audioAdapterSeam: pendingAdapter });
+  await s.setConsent(true);
+  const started = await s.plain('POST', '/api/settings/audio/test', {});
+  assert.equal(started.status, 200);
+  const stop = await s.plain('POST', '/api/settings/audio/stop', {});
+  assert.equal(stop.status, 200);
+  assert.deepEqual(await stop.json(), { status: 'accepted', stopped: true });
+  assert.equal(killed, 1, 'lo stop agisce sulla coda locale in esecuzione');
+
+  const ro = await boot(t, { readonlyDefault: true, audioAdapterSeam: pendingAdapter });
+  assert.equal((await ro.plain('POST', '/api/settings/audio/test', {})).status, 403,
+    'Test e una mutazione fisica e rispetta READONLY');
+  const roStop = await ro.plain('POST', '/api/settings/audio/stop', {});
+  assert.equal(roStop.status, 200, 'un nodo READONLY deve comunque potersi zittire');
 });
 
 test('READONLY: speak e una mutazione e viene rifiutato; lo stop resta permesso', async (t) => {

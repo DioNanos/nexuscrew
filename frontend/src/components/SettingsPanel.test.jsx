@@ -2,15 +2,25 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-const mocks = vi.hoisted(() => ({ setNodeShare: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  setNodeShare: vi.fn(),
+  getAudioSettings: vi.fn(),
+  setAudioConsent: vi.fn(),
+  testLocalAudio: vi.fn(),
+  stopLocalAudio: vi.fn(),
+}));
 
 vi.mock('../lib/api.js', async (importOriginal) => ({
   ...(await importOriginal()),
   setNodeShare: mocks.setNodeShare,
+  getAudioSettings: mocks.getAudioSettings,
+  setAudioConsent: mocks.setAudioConsent,
+  testLocalAudio: mocks.testLocalAudio,
+  stopLocalAudio: mocks.stopLocalAudio,
 }));
 vi.mock('./PairingCard.jsx', () => ({ default: () => null }));
 
-import { NodesTab, NotificationSpeechRow } from './SettingsPanel.jsx';
+import { AudioTab, NodesTab, NotificationSpeechRow } from './SettingsPanel.jsx';
 import { resetNotificationSpeechPriming } from '../lib/notification-speech.js';
 
 const hub = {
@@ -174,5 +184,49 @@ describe('Settings notification speech', () => {
     render(<NotificationSpeechRow />);
     expect(screen.getByRole('checkbox', { name: 'read notifications aloud' }).disabled).toBe(true);
     expect(screen.getByText('Speech synthesis is not supported in this browser.')).toBeTruthy();
+  });
+});
+
+describe('Settings native node audio', () => {
+  const unavailable = {
+    adapter: 'say', installed: true, consent: false, liveness: 'unavailable',
+    languages: ['it-IT'], limits: 'a real output device is required',
+  };
+  const ready = { ...unavailable, consent: true, liveness: 'ready' };
+
+  it('keeps consent node-local, exposes only redacted capability and runs the fixed local test explicitly', async () => {
+    mocks.getAudioSettings.mockResolvedValue(unavailable);
+    mocks.setAudioConsent.mockResolvedValue(ready);
+    mocks.testLocalAudio.mockResolvedValue({ status: 'accepted' });
+    render(<AudioTab token="token" readonly={false} />);
+
+    const consent = await screen.findByRole('checkbox', { name: 'allow TTS on this node' });
+    expect(screen.getByText('Native node audio')).toBeTruthy();
+    expect(screen.getByText(/adapter: say/)).toBeTruthy();
+    expect(screen.getByText(/a real output device is required/)).toBeTruthy();
+    const testButton = screen.getByRole('button', { name: 'test local audio' });
+    expect(testButton.disabled).toBe(true);
+
+    fireEvent.click(consent);
+    await waitFor(() => expect(mocks.setAudioConsent).toHaveBeenCalledWith('token', true));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'test local audio' }).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'test local audio' }));
+    await waitFor(() => expect(mocks.testLocalAudio).toHaveBeenCalledWith('token'));
+    expect(await screen.findByText('The node accepted the test. It does not prove that anyone heard it.')).toBeTruthy();
+  });
+
+  it('keeps local Stop available in READONLY while consent and Test remain blocked', async () => {
+    mocks.getAudioSettings.mockResolvedValue(ready);
+    mocks.stopLocalAudio.mockResolvedValue({ status: 'accepted', stopped: true });
+    render(<AudioTab token="token" readonly />);
+
+    const consent = await screen.findByRole('checkbox', { name: 'allow TTS on this node' });
+    expect(consent.disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'test local audio' }).disabled).toBe(true);
+    const stop = screen.getByRole('button', { name: 'stop local audio' });
+    expect(stop.disabled).toBe(false);
+    fireEvent.click(stop);
+    await waitFor(() => expect(mocks.stopLocalAudio).toHaveBeenCalledWith('token'));
+    expect(await screen.findByText('Local audio stopped.')).toBeTruthy();
   });
 });
