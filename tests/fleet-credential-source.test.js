@@ -11,6 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const managed = require('../lib/fleet/managed.js');
 const creds = require('../lib/fleet/credentials.js');
+const { parseDefinitions } = require('../lib/fleet/definitions.js');
 
 function world() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncsrc-'));
@@ -175,4 +176,18 @@ test('resolveManagedEngine broker env: auto con runtime+store usa runtime (envir
     const rStore = managed.resolveManagedEngine(engine, cell, { ...cfg, home, env: {} });
     assert.equal(rStore.engine.env.ANTHROPIC_AUTH_TOKEN, c.storeVal, 'senza runtime ricade sullo store');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+// --- definitions round-trip + fail-closed per managed.credentialSourcePolicy ---
+test('parseDefinitions round-trip: managed.credentialSourcePolicy persiste; auto e omesso; bogus -> fail-closed', () => {
+  const fleet = (policy) => ({ schemaVersion: 1, engines: [{ id: 'claude.zai', managed: { client: 'claude', provider: 'zai', credentialSourcePolicy: policy } }], cells: [] });
+  const ok = parseDefinitions(fleet('nexuscrew-store'));
+  assert.ok(ok);
+  assert.equal(ok.engines.find((e) => e.id === 'claude.zai').managed.credentialSourcePolicy, 'nexuscrew-store');
+  const auto = parseDefinitions(fleet('auto'));
+  assert.equal(auto.engines.find((e) => e.id === 'claude.zai').managed.credentialSourcePolicy, undefined, 'auto omesso (no-op)');
+  assert.equal(parseDefinitions(fleet('bogus')), null, 'fail-closed su policy fuori enum');
+  // assente = auto (legacy no-op)
+  const legacy = parseDefinitions({ schemaVersion: 1, engines: [{ id: 'claude.zai', managed: { client: 'claude', provider: 'zai' } }], cells: [] });
+  assert.equal(legacy.engines.find((e) => e.id === 'claude.zai').managed.credentialSourcePolicy, undefined);
 });

@@ -10,6 +10,7 @@ const catalog = [
   { id: 'claude.openrouter', client: 'claude', clientLabel: 'Claude Code', provider: 'openrouter', label: 'OpenRouter', protocol: 'anthropic_messages', permissionPolicyDefault: 'unsafe', supportsUnsafe: true, requiresModel: true, credentialEnv: 'OPENROUTER_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: ['claude.shared', 'pi.shared'], notice: 'claude-openrouter' },
   { id: 'claude.kimi-code', client: 'claude', clientLabel: 'Claude Code', provider: 'kimi-code', label: 'Kimi Code', protocol: 'anthropic_messages', permissionPolicyDefault: 'unsafe', supportsUnsafe: true, model: 'k3[1m]', models: ['k3[1m]'], credentialEnv: 'KIMI_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'claude-kimi-code' },
   { id: 'claude.alibaba-token-plan', client: 'claude', clientLabel: 'Claude Code', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'anthropic_messages', permissionPolicyDefault: 'unsafe', supportsUnsafe: true, model: 'qwen3.8-max-preview', models: ['qwen3.8-max-preview', 'qwen3.7-plus', 'qwen3.7-max', 'qwen3.6-flash', 'glm-5.2', 'deepseek-v4-pro'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
+  { id: 'claude.zai', client: 'claude', clientLabel: 'Claude Code', provider: 'zai', label: 'Z.AI', protocol: 'anthropic_messages', permissionPolicyDefault: 'unsafe', supportsUnsafe: true, credentialEnv: true, defaultEnvKey: 'ZAI_API_KEY', authConfigured: false, credentialSource: 'missing' },
   { id: 'codex-vl.openrouter', client: 'codex-vl', clientLabel: 'Codex-VL', provider: 'openrouter', label: 'OpenRouter', protocol: 'openai_responses', permissionPolicyDefault: 'standard', supportsUnsafe: true, requiresModel: true, credentialEnv: 'OPENROUTER_API_KEY', authConfigured: true, credentialSource: 'local', credentialUsedBy: ['codex.shared'], notice: 'codex-openrouter' },
   { id: 'codex-vl.alibaba-token-plan', client: 'codex-vl', clientLabel: 'Codex-VL', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'openai_responses', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: 'qwen3.8-max-preview', models: ['qwen3.8-max-preview', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-flash'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
   { id: 'pi.alibaba-token-plan', client: 'pi', clientLabel: 'Pi', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'openai-completions', permissionPolicyDefault: 'standard', supportsUnsafe: false, model: 'qwen3.8-max-preview', models: ['qwen3.8-max-preview', 'qwen3.7-plus', 'qwen3.7-max', 'qwen3.6-flash', 'glm-5.2', 'deepseek-v4-pro'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
@@ -25,8 +26,8 @@ function profileForm(id) {
   };
 }
 
-function Harness({ initial, onSave = vi.fn() }) {
-  const [state, setState] = useState({ mode: 'new', form: initial });
+function Harness({ initial, onSave = vi.fn(), mode = 'new' }) {
+  const [state, setState] = useState({ mode, form: initial });
   if (!state) return <div>closed</div>;
   return <EngineEditor state={state} setState={setState} busy={false} onSave={onSave} catalog={catalog} />;
 }
@@ -109,5 +110,27 @@ describe('EngineEditor KEY section', () => {
     expect(select.value).toBe('auto');
     await user.selectOptions(select, 'nexuscrew-store');
     expect(select.value).toBe('nexuscrew-store');
+  });
+
+  it('exposes the policy selector for dynamic Z.AI (credentialEnv true), not only fixed-env providers', async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={profileForm('claude.zai')} />);
+    const select = screen.getByRole('combobox', { name: 'credential source' });
+    expect(select.value).toBe('auto');
+    await user.selectOptions(select, 'nexuscrew-store');
+    expect(select.value).toBe('nexuscrew-store');
+  });
+
+  it('exposes the policy selector when editing a legacy Z.AI A/P engine, without surfacing A/P as creation options', async () => {
+    const user = userEvent.setup();
+    // A/P are NOT in the public catalog; an existing engine carries credentialProfile.
+    const legacyA = { ...blankEngine(), id: 'claude.zai-a', client: 'claude', provider: 'zai', credentialProfile: 'a', managedModel: 'glm-5.2[1m]', permissionPolicy: 'unsafe', credentialSourcePolicy: 'auto' };
+    render(<Harness initial={legacyA} mode="edit" />);
+    const select = screen.getByRole('combobox', { name: 'credential source' });
+    expect(select.value).toBe('auto');
+    await user.selectOptions(select, 'nexuscrew-store');
+    expect(select.value).toBe('nexuscrew-store');
+    // A/P must NOT be selectable as a profile (creation catalog has no A/P)
+    expect(screen.queryByRole('option', { name: 'Z.AI legacy profile' })).toBeNull();
   });
 });

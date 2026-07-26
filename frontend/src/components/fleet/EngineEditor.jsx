@@ -13,6 +13,11 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog })
   const fixedCredentialEnv = typeof selectedProfile?.credentialEnv === 'string' ? selectedProfile.credentialEnv : '';
   const credentialUsedBy = Array.isArray(selectedProfile?.credentialUsedBy) ? selectedProfile.credentialUsedBy : [];
   const credentialSource = selectedProfile?.credentialSource || 'missing';
+  // Policy applies to any profile that owns a credential env key: dynamic Z.AI
+  // (credentialEnv === true), fixed-env providers (string), and legacy Z.AI A/P
+  // profiles edited in place (credentialProfile a/p) even though they are absent
+  // from the public catalog and never offered as NEW-engine choices.
+  const policyApplicable = !!selectedProfile?.credentialEnv || f.credentialProfile === 'a' || f.credentialProfile === 'p';
   const missingCredentialNeedsConfirmation = !!fixedCredentialEnv && state.mode === 'new'
     && selectedProfile?.authConfigured !== true && !f.credentialValue && !f.allowMissingCredential;
   const setManagedProfile = (entry) => {
@@ -35,7 +40,7 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog })
       </>}
       {selectedProfile?.supportsUnsafe ? <select value={f.permissionPolicy} onChange={(e) => set({ permissionPolicy: e.target.value })}><option value="standard">{t('fleet-standard-permissions')}</option><option value="unsafe">{t('fleet-unsafe-permissions')}</option></select> : <small>{t('fleet-standard-permissions')}</small>}
       {selectedProfile?.supportsUnsafe && f.permissionPolicy === 'unsafe' && <small className="nc-err">{t('fleet-unsafe-warning')}</small>}
-      {fixedCredentialEnv && <select aria-label={t('fleet-credential-source-policy')} value={f.credentialSourcePolicy || 'auto'} onChange={(e) => set({ credentialSourcePolicy: e.target.value })}><option value="auto">{t('fleet-credential-source-policy-auto')}</option><option value="nexuscrew-store">{t('fleet-credential-source-policy-nexuscrew-store')}</option><option value="environment">{t('fleet-credential-source-policy-environment')}</option></select>}
+      {policyApplicable && <select aria-label={t('fleet-credential-source-policy')} value={f.credentialSourcePolicy || 'auto'} onChange={(e) => set({ credentialSourcePolicy: e.target.value })}><option value="auto">{t('fleet-credential-source-policy-auto')}</option><option value="nexuscrew-store">{t('fleet-credential-source-policy-nexuscrew-store')}</option><option value="environment">{t('fleet-credential-source-policy-environment')}</option></select>}
       {selectedProfile?.credentialEnv === true && <>
         <input value={f.envKey} placeholder={t('fleet-api-key-env')} onChange={(e) => set({ envKey: e.target.value })} />
         <small>{t('fleet-custom-secret-help')}</small>
