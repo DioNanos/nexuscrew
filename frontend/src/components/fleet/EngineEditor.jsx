@@ -17,7 +17,7 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog })
     && selectedProfile?.authConfigured !== true && !f.credentialValue && !f.allowMissingCredential;
   const setManagedProfile = (entry) => {
     if (!entry) return;
-    set({ client: entry.client, provider: entry.provider, credentialProfile: entry.credentialProfile || '', managedModel: entry.model || '', protocol: entry.protocol || '', permissionPolicy: entry.permissionPolicyDefault || 'standard', rc: !!entry.rc, displayName: entry.custom ? t('fleet-custom-provider-default') : '', baseUrl: entry.custom ? '' : entry.endpoint || '', envKey: entry.defaultEnvKey || '', providerId: 'nexuscrew-custom', credentialValue: '', credentialReveal: false, allowMissingCredential: false, ...(state.mode === 'new' ? { id: entry.id, label: '' } : {}) });
+    set({ client: entry.client, provider: entry.provider, credentialProfile: entry.credentialProfile || '', managedModel: entry.model || '', protocol: entry.protocol || '', permissionPolicy: entry.permissionPolicyDefault || 'standard', credentialSourcePolicy: 'auto', rc: !!entry.rc, displayName: entry.custom ? t('fleet-custom-provider-default') : '', baseUrl: entry.custom ? '' : entry.endpoint || '', envKey: entry.defaultEnvKey || '', providerId: 'nexuscrew-custom', credentialValue: '', credentialReveal: false, allowMissingCredential: false, ...(state.mode === 'new' ? { id: entry.id, label: '' } : {}) });
   };
   return <div className="nc-set-form nc-fleet-form">
     <b>{state.mode === 'new' ? t('fleet-new-engine') : `${t('edit')} ${f.id}`}</b>
@@ -35,6 +35,7 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog })
       </>}
       {selectedProfile?.supportsUnsafe ? <select value={f.permissionPolicy} onChange={(e) => set({ permissionPolicy: e.target.value })}><option value="standard">{t('fleet-standard-permissions')}</option><option value="unsafe">{t('fleet-unsafe-permissions')}</option></select> : <small>{t('fleet-standard-permissions')}</small>}
       {selectedProfile?.supportsUnsafe && f.permissionPolicy === 'unsafe' && <small className="nc-err">{t('fleet-unsafe-warning')}</small>}
+      {fixedCredentialEnv && <select aria-label={t('fleet-credential-source-policy')} value={f.credentialSourcePolicy || 'auto'} onChange={(e) => set({ credentialSourcePolicy: e.target.value })}><option value="auto">{t('fleet-credential-source-policy-auto')}</option><option value="nexuscrew-store">{t('fleet-credential-source-policy-nexuscrew-store')}</option><option value="environment">{t('fleet-credential-source-policy-environment')}</option></select>}
       {selectedProfile?.credentialEnv === true && <>
         <input value={f.envKey} placeholder={t('fleet-api-key-env')} onChange={(e) => set({ envKey: e.target.value })} />
         <small>{t('fleet-custom-secret-help')}</small>

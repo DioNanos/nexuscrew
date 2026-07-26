@@ -101,4 +101,13 @@ describe('EngineEditor KEY section', () => {
     expect(container.querySelector('input[list="nc-managed-models"]')).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'KEY' })).toBeNull();
   });
+
+  it('exposes a credential source policy selector for fixed-credential profiles', async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={profileForm('claude.openrouter')} />);
+    const select = screen.getByRole('combobox', { name: 'credential source' });
+    expect(select.value).toBe('auto');
+    await user.selectOptions(select, 'nexuscrew-store');
+    expect(select.value).toBe('nexuscrew-store');
+  });
 });
