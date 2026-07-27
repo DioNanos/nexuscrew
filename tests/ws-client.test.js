@@ -118,3 +118,41 @@ test('ws client rende osservabile la consegna: false offline, true quando OPEN',
     if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
   }
 });
+
+test('action() invia count solo quando >1 (batch scroll mobile), name sempre', async () => {
+  const oldWs = globalThis.WebSocket;
+  const oldLocation = globalThis.location;
+  try {
+    FakeWebSocket.sockets = [];
+    globalThis.WebSocket = FakeWebSocket;
+    globalThis.location = { hostname: '127.0.0.1', protocol: 'http:', host: '127.0.0.1:41820' };
+    const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?act=${Date.now()}`);
+    const socket = openTerminalSocket({ session: 's', token: 't', cols: 80, rows: 24 });
+    const ws = FakeWebSocket.sockets[0];
+    ws.open();
+
+    socket.action('prev-window');
+    let msg = JSON.parse(ws.sent.at(-1));
+    assert.equal(msg.type, 'action');
+    assert.equal(msg.name, 'prev-window');
+    assert.equal('count' in msg, false, 'nav action senza count');
+
+    socket.action('scroll-up', 4);
+    msg = JSON.parse(ws.sent.at(-1));
+    assert.equal(msg.name, 'scroll-up');
+    assert.equal(msg.count, 4, 'count>1 propagato');
+
+    socket.action('scroll-up', 1);
+    msg = JSON.parse(ws.sent.at(-1));
+    assert.equal('count' in msg, false, 'count=1 omesso (default)');
+
+    socket.action('scroll-down', 2.9);
+    msg = JSON.parse(ws.sent.at(-1));
+    assert.equal(msg.count, 2, 'count frazionario -> floor');
+
+    socket.close();
+  } finally {
+    if (oldWs === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = oldWs;
+    if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
+  }
+});

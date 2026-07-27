@@ -91,6 +91,16 @@ test('action message routes to runAction with attached session', () => {
   assert.deepStrictEqual(seen, [['X', 'prev-window']]);
 });
 
+test('action message inoltra msg.count a runAction (batch scroll mobile)', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory();
+  const seen = [];
+  bindWs(ws, okDeps(openAttach, { runAction: (s, n, c) => seen.push([s, n, c]) }));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  ws.emit('message', JSON.stringify({ type: 'action', name: 'scroll-up', count: 4 }), false);
+  ws.emit('message', JSON.stringify({ type: 'action', name: 'prev-window' }), false);
+  assert.deepStrictEqual(seen, [['X', 'scroll-up', 4], ['X', 'prev-window', undefined]]);
+});
+
 test('attach con takeSize:false resta ok e propaga takeSize (regressione F6)', () => {
   const ws = fakeWs(); const openAttach = fakePtyFactory();
   bindWs(ws, okDeps(openAttach));

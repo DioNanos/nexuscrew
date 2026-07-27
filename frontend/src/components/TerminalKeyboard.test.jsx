@@ -30,7 +30,7 @@ vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('../lib/ws-client.js', () => ({
   openTerminalSocket: () => ({
     sendInput: (seq) => { fixture.inputs.push(seq); return true; },
-    action: (name) => { fixture.actions.push(name); },
+    action: (name, count) => { fixture.actions.push(count && count > 1 ? `${name}#${count}` : name); },
     resize() {}, focus() {}, isReady: () => true,
     close() { fixture.closeCount += 1; },
   }),
@@ -282,18 +282,32 @@ describe('terminal scroll plan integration', () => {
     expect(fixture.inputs).toEqual([]); // no PTY input on the normal screen
   });
 
-  it('mobile drag scrolls tmux history even in a writable alternate-screen TUI', () => {
+  it('mobile drag on a writable alternate-screen TUI sends PageUp (transcript scroll), not copy-mode', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
-    term.buffer.active.type = 'alternate'; // vim/less/htop alt buffer
+    term.buffer.active.type = 'alternate'; // Claude Code/Codex/Agy, vim/less/htop alt buffer
     vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ height: 300, width: 400, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
-    // A realistic 120px phone swipe is below the 300px viewport. It must still
-    // emit five 24px tmux scroll ticks instead of being discarded at touchend.
+    // A 120px phone swipe on an alt-screen TUI must scroll the app transcript:
+    // page mode (chooseScrollMode) with the touch page threshold (100px) emits
+    // one raw PageUp PTY input. The old copy-mode 'scroll' override was a no-op
+    // on the alt buffer (no scrollback) → "non scrolla affatto" on mobile.
     fireEvent.touchStart(host, { touches: [{ clientX: 30, clientY: 40 }] });
-    fireEvent.touchMove(host, { touches: [{ clientX: 30, clientY: 160 }] });
+    fireEvent.touchMove(host, { touches: [{ clientX: 30, clientY: 160 }] }); // +120px
     fireEvent.touchEnd(host, { changedTouches: [{ clientX: 30, clientY: 160 }] });
-    expect(fixture.actions).toEqual(Array(5).fill('scroll-up'));
+    expect(fixture.inputs).toEqual(['\x1b[5~']); // PageUp
+    expect(fixture.actions).toEqual([]);        // no server copy-mode scroll on the alt buffer
+  });
+
+  it('mobile drag on a normal screen uses server-side copy-mode scroll (tmux history)', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    expect(term.buffer.active.type).toBeUndefined(); // normal screen
+    fireEvent.touchStart(host, { touches: [{ clientX: 30, clientY: 40 }] });
+    fireEvent.touchMove(host, { touches: [{ clientX: 30, clientY: 160 }] }); // +120px -> 5 step
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 30, clientY: 160 }] });
+    expect(fixture.actions).toEqual(['scroll-up#5']); // batched copy-mode scroll
     expect(fixture.inputs).toEqual([]);
   });
 
@@ -342,13 +356,15 @@ describe('terminal scroll plan integration', () => {
     expect(fixture.inputs).toEqual([]);
   });
 
-  it('bounds a huge wheel event to a small fixed action burst', () => {
+  it('bounds a huge wheel event to a small fixed action burst (batched)', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     fireEvent.wheel(host, { deltaY: -24_000_007 });
-    expect(fixture.actions).toHaveLength(8);
+    // 24000007/24 -> rawCount huge, capped at MAX_SCROLL_STEPS=8, batched into
+    // one scroll-up#8 action (was 8 separate actions pre-batch).
+    expect(fixture.actions).toEqual(['scroll-up#8']);
     fireEvent.wheel(host, { deltaY: -17 }); // 7px remainder + 17px = one new step
-    expect(fixture.actions).toHaveLength(9);
+    expect(fixture.actions).toEqual(['scroll-up#8', 'scroll-up']); // count=1 -> plain name
   });
 
   it('readonly alternate-screen never sends PTY input and keeps server actions', () => {

@@ -88,9 +88,29 @@ test('scrollArgs: copy-mode -e + send-keys -X, direzioni valide', () => {
   assert.equal(scrollArgs(42, 'up'), null);
 });
 
-test('runAction: scroll-up/down instradati, allowlist intatta', () => {
+test('scrollArgs: count moltiplica le righe in un unico send-keys (-N count*3)', () => {
+  const { scrollArgs } = require('../lib/tmux/actions.js');
+  assert.deepEqual(scrollArgs('sess1', 'up', 4)[1], ['send-keys', '-t', '=sess1:', '-X', '-N', '12', 'scroll-up']);
+  assert.deepEqual(scrollArgs('sess1', 'down', 2)[1], ['send-keys', '-t', '=sess1:', '-X', '-N', '6', 'scroll-down']);
+});
+
+test('scrollArgs: count non fidato -> boundato a MAX_SCROLL_COUNT e invalidi → 1', () => {
+  const { scrollArgs } = require('../lib/tmux/actions.js');
+  const cap = (n) => scrollArgs('sess1', 'up', n)[1][5]; // -N value
+  assert.equal(cap(0), '3');
+  assert.equal(cap(-5), '3');
+  assert.equal(cap(2.9), '6');
+  assert.equal(cap(100), '24');     // >MAX(8) -> 8 -> 24
+  assert.equal(cap(Infinity), '3');
+  assert.equal(cap(NaN), '3');
+  assert.equal(cap('5'), '3');      // stringa (payload malformato) -> rigettata -> 1 -> 3
+  assert.equal(cap(undefined), '3');
+});
+
+test('runAction: scroll-up/down instradati (con count), allowlist intatta', () => {
   const { runAction } = require('../lib/tmux/actions.js');
   assert.equal(runAction('/bin/true', 'sess1', 'scroll-up'), true);
   assert.equal(runAction('/bin/true', 'sess1', 'scroll-down'), true);
+  assert.equal(runAction('/bin/true', 'sess1', 'scroll-up', 4), true);
   assert.equal(runAction('/bin/true', 'sess1', 'kill-session'), false);
 });

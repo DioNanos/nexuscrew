@@ -11,7 +11,7 @@ import { filesFromTransfer, hasFilePayload, uploadSessionFiles } from '../lib/at
 import {
   setTerminalInputMode, showTerminalVirtualKeyboard, terminalTapDecision,
 } from '../lib/virtual-keyboard.js';
-import { chooseScrollMode, describeScrollActions, planTerminalScroll } from '../lib/terminal-scroll.js';
+import { chooseScrollMode, describeScrollActions, planTerminalScroll, PAGE_INPUT_DOWN, PAGE_INPUT_UP, TOUCH_PAGE_THRESHOLD } from '../lib/terminal-scroll.js';
 import './Terminal.css';
 
 // node (opzionale): sessione su nodo remoto — il WS passa dal proxy
@@ -212,22 +212,35 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     host.addEventListener('dragover', onDragFiles, true);
     host.addEventListener('drop', onDropFiles, true);
     const STEP = 24; // px per tick di scroll (3 righe tmux)
-    const emitScroll = (delta, previous = { mode: null, remainder: 0 }, modeOverride = null) => {
-      // Wheel events may belong to a writable alternate-screen TUI and reach
-      // it as raw PageUp/PageDown PTY input. A finger drag is different: on
-      // mobile it is the only practical way to browse the tmux history, so the
-      // touch path explicitly overrides this to server-side copy-mode scroll.
+    // modeOverride forces a mode (used by legacy callers); pageThresholdOverride
+    // lets the touch path use a swipe-sized page threshold (TOUCH_PAGE_THRESHOLD)
+    // instead of the full viewport, so a phone drag actually triggers PageUp on
+    // an alternate-screen TUI rather than sitting below threshold.
+    const emitScroll = (delta, previous = { mode: null, remainder: 0 }, modeOverride = null, pageThresholdOverride = null) => {
+      // Wheel and touch both pick the mode via chooseScrollMode: an alternate-
+      // screen TUI (Claude Code/Codex/Agy, vim/less/htop) owns its viewport, so a
+      // vertical gesture must reach it as raw PageUp/PageDown PTY input — tmux
+      // copy-mode cannot scroll the alternate buffer (it has no scrollback, so
+      // copy-mode scroll-up was a no-op there: "non scrolla affatto" on mobile).
+      // Normal-screen and readonly keep server-side copy-mode scroll.
       // Convention: accumulated > 0 = scroll up (older), < 0 = scroll down.
       const host = hostRef.current;
-      const pageThreshold = host ? host.getBoundingClientRect().height : STEP;
+      const pageThreshold = pageThresholdOverride || (host ? host.getBoundingClientRect().height : STEP);
       const mode = modeOverride || chooseScrollMode({ alternateScreen: term.buffer.active.type === 'alternate', readonly });
       // A page-sized remainder from the alternate buffer must never be
       // reinterpreted as many 24px line ticks after xterm returns to normal.
       const accumulated = previous.mode === mode ? previous.remainder + delta : delta;
       const plan = planTerminalScroll({ mode, accumulated, threshold: mode === 'page' ? pageThreshold : STEP });
-      for (const act of describeScrollActions(plan)) {
-        if (act.kind === 'input') sock.sendInput(act.seq);
-        else sock.action(act.name);
+      // Batch: una sola azione/input per direzione con il count del plan, non
+      // una per step. Su touch mobile un touchmove coalescato faceva N azioni
+      // → N*(copy-mode+send-keys) execFile (fino a 16 spawn tmux); ora 1 input
+      // con N byte PageUp/Down (page) oppure 1 action scroll-up/down#count (scroll).
+      if (plan.mode === 'page') {
+        if (plan.up) sock.sendInput(PAGE_INPUT_UP.repeat(plan.up));
+        if (plan.down) sock.sendInput(PAGE_INPUT_DOWN.repeat(plan.down));
+      } else {
+        if (plan.up) sock.action('scroll-up', plan.up);
+        if (plan.down) sock.action('scroll-down', plan.down);
       }
       return { mode, remainder: plan.remainder };
     };
@@ -297,9 +310,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       if (!vertical) return;
       const delta = t.clientY - touchY; touchY = t.clientY;
-      // Touch always browses tmux history, including when Codex/Claude/Agy is
-      // rendering through xterm's alternate buffer. Finger down = older.
-      touchScroll = emitScroll(delta, touchScroll, 'scroll');
+      // Touch uses chooseScrollMode (like the wheel): on a normal screen it
+      // browses tmux history via server-side copy-mode; on an alternate-screen
+      // TUI (Claude Code/Codex/Agy, vim/less/htop) it sends raw PageUp/PageDown
+      // so the app scrolls its own transcript — copy-mode can't scroll the alt
+      // buffer. TOUCH_PAGE_THRESHOLD makes a phone swipe trigger PageUp instead
+      // of sitting below the full-viewport wheel threshold. Finger down = older.
+      touchScroll = emitScroll(delta, touchScroll, null, TOUCH_PAGE_THRESHOLD);
     };
     const resetTouch = () => {
       clearLongPress(); touchY = null; touchX = null; tapX = null; tapY = null;

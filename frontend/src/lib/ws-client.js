@@ -82,7 +82,15 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
     },
     isReady: () => !!ws && ws.readyState === 1,
     resize: (c, r) => { cols = c; rows = r; if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols: c, rows: r })); },
-    action: (name) => { if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'action', name })); },
+    // count (opzionale) è il moltiplicatore di righe per scroll-up/scroll-down:
+    // un gesto touch coalescato fa 1 solo messaggio invece di N. Il server lo
+    // valida/bounda; per le azioni di nav window/pane si omette (undefined).
+    action: (name, count) => {
+      if (ws?.readyState !== 1) return;
+      const payload = { type: 'action', name };
+      if (Number.isFinite(count) && count > 1) payload.count = Math.floor(count);
+      ws.send(JSON.stringify(payload));
+    },
     // Promuove/demota questo client a size-owner quando prende/perde il focus.
     focus: (on) => { wantFocus = on; if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'focus', on: !!on })); },
     close: () => {

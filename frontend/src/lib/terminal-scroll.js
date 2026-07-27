@@ -16,6 +16,12 @@ export const PAGE_SCROLL_MIN_THRESHOLD = 80; // safe page fallback for hidden/ze
 export const MAX_SCROLL_STEPS = 8;         // bound work and PTY/server bursts per browser event
 export const PAGE_INPUT_UP = '\x1b[5~';     // raw PageUp sent to the PTY
 export const PAGE_INPUT_DOWN = '\x1b[6~';  // raw PageDown sent to the PTY
+// Touch drag page threshold: a finger swipe is much smaller than a viewport,
+// so page mode (PageUp/PageDown) on an alternate-screen TUI must trigger per
+// ~100px of drag, not per full viewport (the desktop wheel threshold). Lets a
+// phone swipe scroll the Claude Code/Codex/Agy transcript instead of being
+// below-threshold and scrolling nothing.
+export const TOUCH_PAGE_THRESHOLD = 100;
 
 // Page mode is only for a writable alternate-screen terminal: readonly must
 // never send PTY input, and normal-screen scroll stays server-side.
