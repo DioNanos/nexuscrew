@@ -2,6 +2,38 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## Unreleased
+
+## 0.8.40 — 2026-07-27 — "Shared Voice"
+
+- Adds opt-in **Audio Share**, a backend-native TTS path for a specific
+  authorized node with an actual speaker. It is distinct from the existing
+  browser-only notification voice, so synthesis no longer depends on a PWA
+  tab remaining focused in the foreground.
+- Supports local native adapters on Android/Termux (`termux-tts-speak`), macOS
+  (`say`), and Linux (`espeak-ng`, with an explicit `spd-say` fallback). The
+  implementation reports adapter start rather than inventing audibility from a
+  successful exit code; physical output remains a device-side check.
+- Adds local Audio settings: consent defaults off, redacted capability,
+  fixed-text explicit test and a sovereign local Stop. Share, visibility and
+  audio consent remain three independent controls; a remote peer cannot grant
+  audio consent through federation.
+- Adds signed MCP commands for exact node speech and caller-scoped receipts:
+  `nc_speak`, `nc_speak_status` and `nc_speak_stop`. The MCP bridge derives a
+  live Fleet origin through a node-local HMAC proof; a UI token, body field or
+  header cannot impersonate a cell.
+- Adds local named target groups (up to eight exact instance IDs): ordered
+  primary/failover or explicit fan-out, per-endpoint receipts, target-side
+  ACL/consent/READONLY/rate checks, group Stop, bounded TTL storage and no
+  aggregate success boolean. `nc_play_audio` is deliberately not introduced.
+- Makes reverse-forward Share failures recoverable: a repeated bind/forward
+  failure enters a diagnosed degraded state and retries at a bounded cadence,
+  instead of requiring the user to toggle Share off and on after a mobile
+  reconnect.
+- Adds explicit Fleet credential-source policy (`auto`, environment or
+  NexusCrew store), preserves legacy cells as no-op `auto`, and removes the
+  conflicting provider environment set when the local store is selected.
+
 ## 0.8.39 — 2026-07-25 — "Honest Peer"
 
 - Fixes `nexuscrew nodes test` and `nexuscrew nodes doctor` falsely reporting a
@@ -254,7 +286,7 @@ All notable changes to NexusCrew are tracked here.
   non-blocking doctor warning.
 - Validates imported Fleet working directories before persistence and redacts the active Shell
   command together with the existing prompt and environment secret values.
-- Extends source-side diagnostic redaction to macOS `/Users/<name>/...` paths in addition to Linux
+- Extends source-side diagnostic redaction to macOS home-directory paths in addition to Linux
   and Android home paths.
 - Gate: **987 isolated Node tests** (986 pass / 1 platform skip), **93/93 frontend component
   tests**, production PWA build and zero production dependency vulnerabilities in both dependency

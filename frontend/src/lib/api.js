@@ -82,6 +82,17 @@ export const removeNode = (t, name) => jsonFetch(`/api/settings/nodes/${encodeUR
 export const nodeAction = (t, name, action) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/${action}`, t, { method: 'POST' });
 export const setNodeShare = (t, name, shared) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/share`, t, { method: 'PATCH', body: { shared } });
 export const setNodeVisibility = (t, name, visibility, selected = []) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/visibility`, t, { method: 'PATCH', body: { visibility, selected } });
+// Audio del nodo LOCALE: consenso/capability e prova a testo fisso restano
+// Settings-only. Il browser non riceve né usa il segreto HMAC del bridge MCP.
+export const getAudioSettings = (t) => jsonFetch('/api/settings/audio', t);
+export const setAudioConsent = (t, consent) => jsonFetch('/api/settings/audio/consent', t, { method: 'PATCH', body: { consent } });
+export const testLocalAudio = (t) => jsonFetch('/api/settings/audio/test', t, { method: 'POST', body: {} });
+export const stopLocalAudio = (t) => jsonFetch('/api/settings/audio/stop', t, { method: 'POST', body: {} });
+// Gruppi Audio Share dell'origine LOCALE. Sono preferenze di consegna nominate,
+// non consenso e non discovery remota: ogni endpoint conserva i propri gate.
+export const getAudioGroups = (t) => jsonFetch('/api/settings/audio/groups', t);
+export const saveAudioGroup = (t, name, group) => jsonFetch(`/api/settings/audio/groups/${encodeURIComponent(name)}`, t, { method: 'PUT', body: group });
+export const deleteAudioGroup = (t, name) => jsonFetch(`/api/settings/audio/groups/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
 export const regenService = (t) => jsonFetch('/api/settings/service/regenerate', t, { method: 'POST' });
 export const checkNpmUpdate = (t) => jsonFetch('/api/settings/update/check', t, { method: 'POST' });
 export const applyNpmUpdate = (t) => jsonFetch('/api/settings/update/apply', t, { method: 'POST' });

@@ -8,6 +8,8 @@ import {
   saveNodeAlias, deleteNodeAlias,
   checkNpmUpdate, applyNpmUpdate,
   getDiagnosticsStatus, getDiagnosticsLogs, setDiagnosticsVerbose, clearDiagnosticsLogs,
+  getAudioSettings, setAudioConsent, testLocalAudio, stopLocalAudio,
+  getAudioGroups, saveAudioGroup, deleteAudioGroup,
 } from '../lib/api.js';
 import { validateNodeForm, tunnelInfo, toSlug, isValidLabel } from '../lib/settings-model.js';
 import PairingCard from './PairingCard.jsx';
@@ -585,6 +587,202 @@ export function NotificationSpeechRow() {
   );
 }
 
+// Audio nativo DEL NODO. E' distinto dalla voce browser delle notifiche sopra:
+// qui si governa il consenso fisico della macchina e il backend seleziona solo
+// primitive locali (Termux/macOS/Linux). La UI non riceve mai il segreto HMAC
+// del bridge MCP e non puo' mandare testo arbitrario: Test usa una frase fissa
+// lato server; Stop e' locale e sovrano anche con READONLY attivo.
+export function AudioTab({ token, readonly, nodes = [], settings = null }) {
+  const [capability, setCapability] = useState(null);
+  const [groups, setGroups] = useState([]);
+  const [groupForm, setGroupForm] = useState({ name: '', mode: 'primary-failover', targets: [] });
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState('');
+
+  const refresh = useCallback(async () => {
+    try {
+      const [nextCapability, payload] = await Promise.all([getAudioSettings(token), getAudioGroups(token)]);
+      setCapability(nextCapability);
+      setGroups(Array.isArray(payload?.groups) ? payload.groups : []);
+      setErr('');
+    }
+    catch (e) { setErr(String(e.message || e)); }
+  }, [token]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const changeConsent = async (consent) => {
+    setBusy(true); setResult(null); setErr('');
+    try { setCapability(await setAudioConsent(token, consent)); }
+    catch (e) { setErr(String(e.message || e)); }
+    setBusy(false);
+  };
+  const runTest = async () => {
+    setBusy(true); setResult(null); setErr('');
+    try { setResult({ kind: 'test', ...(await testLocalAudio(token)) }); }
+    catch (e) { setErr(String(e.message || e)); }
+    setBusy(false);
+  };
+  const stop = async () => {
+    setBusy(true); setResult(null); setErr('');
+    try { setResult({ kind: 'stop', ...(await stopLocalAudio(token)) }); }
+    catch (e) { setErr(String(e.message || e)); }
+    setBusy(false);
+  };
+
+  // Gruppi configurabili SOLO qui, sull'origine locale. Le righe sono
+  // instanceId precisi, non nomi/route: eventuale Share, visibility, consenso,
+  // liveness e READONLY vengono comunque rivalutati dal target alla consegna.
+  const targetChoices = [];
+  const seenTarget = new Set();
+  const addTarget = (nodeId, label) => {
+    const id = typeof nodeId === 'string' ? nodeId.toLowerCase() : '';
+    if (!/^[a-f0-9]{32}$/.test(id) || seenTarget.has(id)) return;
+    seenTarget.add(id); targetChoices.push({ id, label: label || id });
+  };
+  addTarget(settings?.nodeId, t('audio-group-local'));
+  for (const node of nodes || []) addTarget(node?.nodeId || node?.instanceId, node?.label || node?.name || node?.nodeId);
+  // Un gruppo puo' conservare un endpoint momentaneamente non presente nella
+  // topologia live. Mostrarlo evita che un edit lo renda invisibile o lo perda;
+  // al momento dello speak verra' comunque classificato unreachable/unknown,
+  // mai promosso a disponibile dalla sola configurazione locale.
+  for (const nodeId of groupForm.targets) addTarget(nodeId, `${nodeId} (${t('audio-group-unavailable-target')})`);
+
+  const beginGroup = (group = null) => {
+    setErr('');
+    if (group) {
+      setEditingGroup(group.name);
+      setGroupForm({ name: group.name, mode: group.mode, targets: [...(group.targets || [])] });
+    } else {
+      setEditingGroup(null);
+      setGroupForm({ name: '', mode: 'primary-failover', targets: [] });
+    }
+  };
+  const toggleTarget = (target, checked) => setGroupForm((form) => ({
+    ...form,
+    targets: checked ? [...new Set([...form.targets, target])] : form.targets.filter((id) => id !== target),
+  }));
+  const saveGroup = async () => {
+    const name = groupForm.name.trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(name) || groupForm.targets.length < 1) {
+      setErr(t('audio-group-invalid')); return;
+    }
+    setBusy(true); setErr('');
+    try {
+      const saved = await saveAudioGroup(token, name, { targets: groupForm.targets, mode: groupForm.mode });
+      const group = saved?.group;
+      if (!group || !group.name) throw new Error(t('audio-group-save-failed'));
+      setGroups((current) => [...current.filter((item) => item.name !== group.name), group].sort((a, b) => a.name.localeCompare(b.name)));
+      beginGroup(null);
+    } catch (e) { setErr(String(e.message || e)); }
+    setBusy(false);
+  };
+  const removeGroup = async (name) => {
+    setBusy(true); setErr('');
+    try {
+      await deleteAudioGroup(token, name);
+      setGroups((current) => current.filter((group) => group.name !== name));
+      if (editingGroup === name) beginGroup(null);
+    } catch (e) { setErr(String(e.message || e)); }
+    setBusy(false);
+  };
+
+  const installed = capability?.installed === true;
+  const ready = capability?.liveness === 'ready';
+  const canTest = capability?.consent === true && installed && ready;
+  const resultText = !result ? ''
+    : result.kind === 'stop' ? t(result.stopped ? 'audio-stop-stopped' : 'audio-stop-idle')
+      : result.status === 'accepted' || result.status === 'spoken' ? t('audio-test-accepted')
+        : result.status === 'unknown' ? t('audio-test-unknown')
+          : `${t('audio-test-refused')}${result.reason ? ` (${result.reason})` : ''}`;
+
+  return (
+    <div className="nc-set-tab nc-audio-settings">
+      <div className="nc-set-info">
+        <b>{t('audio-title')}</b><br />
+        {t('audio-help')}
+      </div>
+      {!capability ? <div className="nc-set-info">{t('audio-loading')}</div> : <>
+        <label className="nc-check">
+          <input type="checkbox" aria-label={t('audio-consent')}
+            checked={capability.consent === true} disabled={readonly || busy}
+            onChange={(event) => { void changeConsent(event.target.checked); }} />
+          <span><b>{t('audio-consent')}</b><small>{t('audio-consent-help')}</small></span>
+        </label>
+        <div className="nc-set-form">
+          <div className="nc-sheet-label">{t('audio-capability')}</div>
+          <div className="nc-set-info">
+            {t('audio-adapter')}: {capability.adapter || t('audio-adapter-none')}<br />
+            {t('audio-installed')}: {installed ? t('audio-installed-yes') : t('audio-installed-no')}<br />
+            {t('audio-liveness')}: {ready ? t('audio-liveness-ready') : t('audio-liveness-unavailable')}
+            {Array.isArray(capability.languages) && capability.languages.length > 0 && <><br />
+              {t('audio-languages')}: {capability.languages.join(', ')}</>}
+          </div>
+          {capability.limits && <small className="nc-set-hint">{t('audio-limits')}: {capability.limits}</small>}
+        </div>
+        {!capability.consent && <div className="nc-set-info">{t('audio-test-needs-consent')}</div>}
+        {!installed && <div className="nc-set-info">{t('audio-unavailable')}</div>}
+        <div className="nc-set-row">
+          <button type="button" className="nc-btn primary" disabled={readonly || busy || !canTest}
+            title={readonly ? t('settings-readonly') : ''} onClick={() => { void runTest(); }}>
+            {t(busy ? 'audio-testing' : 'audio-test')}
+          </button>
+          <button type="button" className="nc-btn ghost" disabled={busy}
+            onClick={() => { void stop(); }}>{t(busy ? 'audio-stopping' : 'audio-stop')}</button>
+          <button type="button" className="nc-btn ghost" disabled={busy}
+            onClick={() => { void refresh(); }}>{t('refresh')}</button>
+        </div>
+        <div className="nc-set-form">
+          <div className="nc-sheet-label">{t('audio-groups-title')}</div>
+          <small className="nc-set-hint">{t('audio-groups-help')}</small>
+          {groups.length === 0 && <div className="nc-set-info">{t('audio-groups-empty')}</div>}
+          {groups.map((group) => (
+            <div className="nc-set-row" key={group.name}>
+              <span><b>{group.name}</b> <small>· {group.mode === 'fanout' ? t('audio-group-fanout') : t('audio-group-primary')} · {group.targets?.length || 0}</small></span>
+              <button type="button" className="nc-btn ghost" disabled={readonly || busy}
+                onClick={() => beginGroup(group)}>{t('audio-group-edit')}</button>
+              <button type="button" className="nc-btn ghost" disabled={readonly || busy}
+                onClick={() => { void removeGroup(group.name); }}>{t('audio-group-delete')}</button>
+            </div>
+          ))}
+          <div className="nc-set-row">
+            <button type="button" className="nc-btn ghost" disabled={readonly || busy}
+              onClick={() => beginGroup(null)}>{t('audio-group-new')}</button>
+          </div>
+          <label className="nc-field">{t('audio-group-name')}
+            <input aria-label={t('audio-group-name')} value={groupForm.name} maxLength="32" disabled={readonly || busy}
+              onChange={(event) => setGroupForm((form) => ({ ...form, name: event.target.value }))} />
+          </label>
+          <label className="nc-field">{t('audio-group-mode')}
+            <select aria-label={t('audio-group-mode')} value={groupForm.mode} disabled={readonly || busy}
+              onChange={(event) => setGroupForm((form) => ({ ...form, mode: event.target.value }))}>
+              <option value="primary-failover">{t('audio-group-primary')}</option>
+              <option value="fanout">{t('audio-group-fanout')}</option>
+            </select>
+          </label>
+          <div className="nc-set-info">{t('audio-group-targets')}</div>
+          {targetChoices.length === 0 ? <small className="nc-set-hint">{t('audio-group-no-targets')}</small>
+            : targetChoices.map((target) => <label className="nc-check" key={target.id}>
+              <input type="checkbox" checked={groupForm.targets.includes(target.id)} disabled={readonly || busy}
+                onChange={(event) => toggleTarget(target.id, event.target.checked)} />
+              <span>{target.label}<small>{target.id}</small></span>
+            </label>)}
+          <div className="nc-set-row">
+            <button type="button" className="nc-btn primary" disabled={readonly || busy}
+              onClick={() => { void saveGroup(); }}>{t('audio-group-save')}</button>
+            {editingGroup && <button type="button" className="nc-btn ghost" disabled={busy}
+              onClick={() => beginGroup(null)}>{t('audio-group-cancel')}</button>}
+          </div>
+        </div>
+      </>}
+      {resultText && <div className="nc-set-note" role="status">{resultText}</div>}
+      {err && <div className="nc-err">{err}</div>}
+    </div>
+  );
+}
+
 // --- scheda INPUT (solo client/browser) --------------------------------------
 // Queste preferenze non cambiano il nodo e restano editabili anche quando il
 // server e' READONLY: governano soltanto focus, IME, STT e KeyBar locali.
@@ -958,7 +1156,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
         {loadErr && <div className="nc-err">{loadErr}</div>}
 
         <div className="nc-set-tabs">
-          {['nodes', 'fleet', 'input', 'diagnostics', 'system'].map((k) => (
+          {['nodes', 'fleet', 'audio', 'input', 'diagnostics', 'system'].map((k) => (
             <button key={k} type="button" className={`nc-set-tabbtn${tab === k ? ' on' : ''}`}
               onClick={() => setTab(k)}>{t(`tab-${k}`)}</button>
           ))}
@@ -970,6 +1168,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
           {tab === 'fleet' && <FleetTab token={token} readonly={readonly}
             startNewCell={startNewCell} initialLocation={initialLocation}
             targets={roster.map((g) => ({ route: g.route, label: g.label || g.name, status: g.status }))} />}
+          {tab === 'audio' && <AudioTab token={token} readonly={readonly} nodes={nodes} settings={settings} />}
           {tab === 'input' && <InputTab />}
           {tab === 'diagnostics' && <DiagnosticsTab token={token} roster={roster} readonly={readonly} />}
           {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} refresh={refresh} />}
