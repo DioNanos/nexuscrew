@@ -2,7 +2,7 @@
 
 All notable changes to NexusCrew are tracked here.
 
-## Unreleased
+## 0.8.41 — 2026-07-28 — "Open Screen"
 
 - New NexusCrew-created sessions keep tmux `alternate-screen` off by default, scoped only
   to the created session and its later windows. Full-screen TUI output now
