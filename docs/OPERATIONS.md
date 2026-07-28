@@ -71,7 +71,7 @@ It never installs prereleases from `latest` or silently downgrades. Use
 
 ## Diagnostics
 
-**Settings → Diagnostics** shows a bounded in-memory event buffer for the
+**Settings → System → Diagnostics** shows a bounded in-memory event buffer for the
 local installation or an authorized routed node.
 
 Verbose collection is explicit and expires after 5, 15, 30 or 60 minutes.

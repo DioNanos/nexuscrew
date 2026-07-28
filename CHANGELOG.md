@@ -34,6 +34,15 @@ All notable changes to NexusCrew are tracked here.
   NexusCrew store), preserves legacy cells as no-op `auto`, and removes the
   conflicting provider environment set when the local store is selected.
 
+- New Fleet sessions keep tmux `alternate-screen` off by default, scoped only
+  to the created session and its later windows. Full-screen TUI output now
+  remains in tmux history for mobile drag and normal scrolling; set
+  `alternateScreen: true` or `NEXUSCREW_ALTERNATE_SCREEN=1` to opt out. The
+  change is not retroactive, so a `vim`, `less` or `htop` screen remains visible
+  after it exits.
+- `nexuscrew doctor` warns, without changing tmux configuration, when the
+  normal-screen mode is active and `history-limit` is below 10000.
+
 ## 0.8.39 — 2026-07-25 — "Honest Peer"
 
 - Fixes `nexuscrew nodes test` and `nexuscrew nodes doctor` falsely reporting a

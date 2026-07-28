@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Icon from './Icon.jsx';
 import { dismissVirtualKeyboard } from '../lib/virtual-keyboard.js';
+import { t } from '../lib/i18n.js';
 import './KeyBar.css';
 // Layout stile Termux extra-keys: due righe piatte,
 // tasti uniformi senza bordi. Le azioni NexusCrew (window/pane/scroll/detach)
@@ -15,7 +16,8 @@ const NAV = [
 
 export default function KeyBar({
   send, action, ctrlArmed = false, onCtrl, onKeyboard, selectionMode = false,
-  onSelectionMode, keepKeyboardClosed = true, showEnter = true, keybarLayout = 'full',
+  onSelectionMode, onCellSwitcher, cellSwitcherOpen = false,
+  keepKeyboardClosed = true, showEnter = true, keybarLayout = 'full',
 }) {
   const [copy, setCopy] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -52,6 +54,12 @@ export default function KeyBar({
   );
   const Ba = (label, name) => (
     <button type="button" key={label} {...press(() => { action(name); setMenu(false); })}>{label}</button>
+  );
+  const switcherKey = onCellSwitcher ? (
+    <button type="button" key="cells" aria-label={t('fleet-cells')} title={t('fleet-cells')}
+      aria-expanded={cellSwitcherOpen} {...press(onCellSwitcher)}>◫</button>
+  ) : (
+    <button type="button" key="kbd" {...press(() => { if (onKeyboard) onKeyboard(); })}>⌨</button>
   );
 
   const enterKey = showEnter && (
@@ -96,7 +104,7 @@ export default function KeyBar({
             <div className="row">
               <button type="button" key="expand" aria-label="expand keybar" title="expand"
                 {...press(() => setExpanded(true))}><Icon name="chevronUp" size={20} /></button>
-              <button type="button" key="kbd" {...press(() => { if (onKeyboard) onKeyboard(); })}>⌨</button>
+              {switcherKey}
               <button type="button" key="menu" className={menu ? 'armed' : ''}
                 {...press(() => setMenu((v) => !v))}>☰</button>
               {Bk('↑', ESC + '[A')}
@@ -142,7 +150,7 @@ export default function KeyBar({
           </div>
           <div className="row">
             {Bk('⇥', '\t')}
-            <button type="button" key="kbd" {...press(() => { if (onKeyboard) onKeyboard(); })}>⌨</button>
+            {switcherKey}
             <button type="button" key="ctrl" className={ctrlArmed ? 'armed' : ''}
               {...press(() => { if (onCtrl) onCtrl(); })}>CTRL</button>
             <button type="button" key="alt" className={altArmed ? 'armed' : ''}
