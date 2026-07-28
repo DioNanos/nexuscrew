@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch, fleetStatus, getRouteSessions } from '../lib/api.js';
 import { readCellSwitcherSnapshot, writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
-import { cellRuntime } from '../lib/roster-view-model.js';
+import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-view-model.js';
 import { positionKey } from '../lib/nodes-model.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
@@ -58,7 +58,9 @@ function rowsFromSnapshot(snapshot) {
         nodeLabel,
         live: selectable,
         selectable,
-        fresh: fresh === true,
+        // `verified` e' la conferma di questo poll. Non usare `fresh`: nel
+        // roster condiviso significa invece output nuovo e ordina le righe.
+        verified: fresh === true,
         working: runtime.working,
         degraded: !!cell.degraded,
         activity: session.activity || cell.activity || 0,
@@ -74,17 +76,61 @@ function rowsFromSnapshot(snapshot) {
   return rows;
 }
 
+// Il drawer visualizza soltanto celle Fleet, ma quando salva un riordino deve
+// conoscere l'intero roster della posizione. In particolare, le tmux unmanaged
+// restano nella lista principale e non devono mai sparire da nc_sidebar_order.
+function rosterItemsByPosition(snapshot) {
+  const positions = new Map();
+  const localSessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
+  const localCells = Array.isArray(snapshot.cells) ? snapshot.cells : [];
+  const localByName = new Map(localSessions.map((entry) => [entry.name, entry]));
+  const localCellSessions = new Set(localCells.map((cell) => cell.tmuxSession).filter(Boolean));
+  positions.set('local', buildLocalRoster(
+    localCells,
+    localSessions.filter((entry) => !localCellSessions.has(entry.name)),
+    localByName,
+  ));
+  for (const group of snapshot.nodeGroups || []) {
+    const route = Array.isArray(group.route) ? group.route : [];
+    if (!route.length) continue;
+    const cells = Array.isArray(group.cells) ? group.cells : [];
+    const sessions = Array.isArray(group.sessions) ? group.sessions : [];
+    const cellSessions = new Set(cells.map((cell) => cell.tmuxSession).filter(Boolean));
+    positions.set(route.join('/'), buildRemoteRoster({
+      ...group,
+      route,
+      cells,
+      sessions,
+      unmanaged: sessions.filter((entry) => !cellSessions.has(entry.name)),
+    }).rawItems);
+  }
+  return positions;
+}
+
 // La rail resta una superficie compatta, ma mantiene le stesse sezioni logiche
 // della lista principale: Locale prima, poi ciascuna route nell'ordine ricevuto.
 // Entro una posizione applica esattamente nc_pins/nc_sidebar_order_v1.
-function orderRowsByPosition(rows, pins, orders) {
+function orderRowsByPosition(rows, rosterItems, pins, orders) {
   const positions = [...new Set(rows.map((row) => row.node || 'local'))];
-  return positions.flatMap((position) => sidebarItems(
-    rows.filter((row) => (row.node || 'local') === position),
-    pins,
-    'all',
-    sidebarOrder(orders, position),
-  ));
+  return positions.flatMap((position) => {
+    const displayRows = rows.filter((row) => (row.node || 'local') === position);
+    const canonical = new Map((rosterItems.get(position) || []).map((item) => [item.key, item]));
+    const byKey = new Map(displayRows.map((row) => [row.key, row]));
+    // Per il confronto usa gli stessi live/fresh/activity della home, ma
+    // restituisce la riga del drawer per non alterarne stato e affordance.
+    const sortable = displayRows.map((row) => {
+      const item = canonical.get(row.key);
+      return {
+        ...row,
+        label: item?.label || row.label,
+        live: item?.live ?? row.live,
+        fresh: item?.fresh === true,
+        activity: item?.activity ?? row.activity,
+      };
+    });
+    return sidebarItems(sortable, pins, 'all', sidebarOrder(orders, position))
+      .map((item) => byKey.get(item.key));
+  });
 }
 
 export default function CellSwitcher({ token, current, onPick, onClose }) {
@@ -97,8 +143,12 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
   const rows = useMemo(() => rowsFromSnapshot(snapshot), [snapshot]);
+  const rosterItems = useMemo(() => rosterItemsByPosition(snapshot), [snapshot]);
   const { pins, orders, canMoveRoster, moveRoster, stepRoster } = useRosterPreferences();
-  const orderedRows = useMemo(() => orderRowsByPosition(rows, pins, orders), [rows, pins, orders]);
+  const orderedRows = useMemo(
+    () => orderRowsByPosition(rows, rosterItems, pins, orders),
+    [rows, rosterItems, pins, orders],
+  );
   const visibleRows = useMemo(
     () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || row.degraded)),
     [orderedRows, showAll],
@@ -162,7 +212,7 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
 
   const statusFor = (row) => {
     if (row.degraded) return t('cell-degraded');
-    if (!row.fresh) return t('cell-switcher-not-confirmed');
+    if (!row.verified) return t('cell-switcher-not-confirmed');
     if (!row.selectable) return t('cell-off');
     return row.working ? t('cell-working') : t('cell-idle');
   };
@@ -215,7 +265,8 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
             const selected = selectedKey === row.key;
             const status = statusFor(row);
             const position = row.node || 'local';
-            const rawItems = rows.filter((candidate) => (candidate.node || 'local') === position);
+            const rawItems = rosterItems.get(position)
+              || rows.filter((candidate) => (candidate.node || 'local') === position);
             return (
               <div key={row.key} className={`nc-cell-switcher-row${currentRow ? ' current' : ''}${selected ? ' selected' : ''}${row.selectable ? '' : ' off'}`}
                 data-roster-key={row.key} data-position={position}>
