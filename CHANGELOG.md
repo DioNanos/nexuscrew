@@ -2,7 +2,9 @@
 
 All notable changes to NexusCrew are tracked here.
 
-## Unreleased — "Shared Voice"
+## Unreleased
+
+## 0.8.40 — 2026-07-27 — "Shared Voice"
 
 - Adds opt-in **Audio Share**, a backend-native TTS path for a specific
   authorized node with an actual speaker. It is distinct from the existing
@@ -284,7 +286,7 @@ All notable changes to NexusCrew are tracked here.
   non-blocking doctor warning.
 - Validates imported Fleet working directories before persistence and redacts the active Shell
   command together with the existing prompt and environment secret values.
-- Extends source-side diagnostic redaction to macOS `/Users/<name>/...` paths in addition to Linux
+- Extends source-side diagnostic redaction to macOS home-directory paths in addition to Linux
   and Android home paths.
 - Gate: **987 isolated Node tests** (986 pass / 1 platform skip), **93/93 frontend component
   tests**, production PWA build and zero production dependency vulnerabilities in both dependency
