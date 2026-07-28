@@ -11,15 +11,6 @@ NexusCrew turns live tmux sessions, AI CLI workers and connected machines into
 one local-first browser control plane. Your terminals stay real, your tools
 stay yours, and your infrastructure stays under your control.
 
-## New in 0.8.40: Audio Share
-
-Audio Share lets an authorized cell ask one exact, opt-in node with a real
-speaker to speak through its native platform adapter. Android/Termux, macOS and
-Linux use their local TTS primitives; a browser tab is no longer the only route
-to speech. Consent stays off by default, a group never overrides a node's ACL
-or consent, and `spoken` means that the adapter started—not that a person heard
-the output.
-
 <p align="center">
   <img src="docs/img/fleet-deck-desktop.png" width="960" alt="NexusCrew desktop deck with multiple live tmux sessions">
 </p>

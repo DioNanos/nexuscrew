@@ -11,6 +11,12 @@ const mocks = vi.hoisted(() => ({
   getAudioGroups: vi.fn(),
   saveAudioGroup: vi.fn(),
   deleteAudioGroup: vi.fn(),
+  getSettings: vi.fn(),
+  getPeers: vi.fn(),
+  saveConfig: vi.fn(),
+  apiFetch: vi.fn(),
+  getDiagnosticsStatus: vi.fn(),
+  getDiagnosticsLogs: vi.fn(),
 }));
 
 vi.mock('../lib/api.js', async (importOriginal) => ({
@@ -23,10 +29,17 @@ vi.mock('../lib/api.js', async (importOriginal) => ({
   getAudioGroups: mocks.getAudioGroups,
   saveAudioGroup: mocks.saveAudioGroup,
   deleteAudioGroup: mocks.deleteAudioGroup,
+  getSettings: mocks.getSettings,
+  getPeers: mocks.getPeers,
+  saveConfig: mocks.saveConfig,
+  apiFetch: mocks.apiFetch,
+  getDiagnosticsStatus: mocks.getDiagnosticsStatus,
+  getDiagnosticsLogs: mocks.getDiagnosticsLogs,
 }));
 vi.mock('./PairingCard.jsx', () => ({ default: () => null }));
+vi.mock('../hooks/useNodes.js', () => ({ useNodes: () => [] }));
 
-import { AudioTab, NodesTab, NotificationSpeechRow } from './SettingsPanel.jsx';
+import SettingsPanel, { AudioTab, NodesTab, NotificationSpeechRow } from './SettingsPanel.jsx';
 import { resetNotificationSpeechPriming } from '../lib/notification-speech.js';
 
 const hub = {
@@ -48,6 +61,15 @@ beforeEach(() => {
   resetNotificationSpeechPriming();
   vi.clearAllMocks();
   mocks.getAudioGroups.mockResolvedValue({ groups: [] });
+  mocks.getSettings.mockResolvedValue({
+    version: '0.8.40', platform: 'linux', port: 41820,
+    service: { installed: true, active: true, boot: true }, autoUpdate: true, alternateScreen: false,
+  });
+  mocks.getPeers.mockResolvedValue({ peers: [] });
+  mocks.saveConfig.mockResolvedValue({ saved: true });
+  mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ readonlyDefault: false }) });
+  mocks.getDiagnosticsStatus.mockResolvedValue({ verbose: false });
+  mocks.getDiagnosticsLogs.mockResolvedValue({ events: [] });
 });
 
 describe('Settings Share partial OFF convergence', () => {
@@ -107,6 +129,25 @@ describe('Settings Input KeyBar layout', () => {
   it('stays editable regardless of server READONLY (InputTab is client-only)', () => {
     render(<InputTab />);
     expect(screen.getByLabelText('Keypad layout').disabled).toBe(false);
+  });
+});
+
+describe('Settings System diagnostics', () => {
+  it('keeps legacy diagnostics links compatible and saves alternateScreen from the nested section', async () => {
+    const view = render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="diagnostics" />);
+    const topTabs = [...view.container.querySelectorAll('.nc-set-tabs .nc-set-tabbtn')].map((button) => button.textContent.trim());
+    expect(topTabs).toEqual(['nodes', 'fleet', 'audio', 'input', 'system']);
+    expect(screen.getByRole('tab', { name: 'diagnostics' }).getAttribute('aria-selected')).toBe('true');
+    const toggle = await screen.findByRole('checkbox', { name: 'alternate screen' });
+    expect(toggle.checked).toBe(false);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(mocks.saveConfig).toHaveBeenCalledWith('token', { alternateScreen: true }));
+  });
+
+  it('disables the nested terminal toggle in readonly mode', async () => {
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ readonlyDefault: true }) });
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="diagnostics" />);
+    expect((await screen.findByRole('checkbox', { name: 'alternate screen' })).disabled).toBe(true);
   });
 });
 

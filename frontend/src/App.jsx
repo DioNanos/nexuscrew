@@ -12,6 +12,7 @@ import DeckBar from './components/DeckBar.jsx';
 import SettingsPanel from './components/SettingsPanel.jsx';
 import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
+import CellSwitcher from './components/CellSwitcher.jsx';
 import {
   apiFetch, fleetStatus, fleetUp, fleetDown, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
 } from './lib/api.js';
@@ -114,7 +115,7 @@ function useDesktop() {
 // cellName (opzionale, Tranche D): titolo logico Fleet gia' risolto dal roster
 // (desktop overlay). Se assente (mobile), la lookup fleetStatus esistente lo
 // risolve al primo ciclo. Il titolo visibile deriva sempre da `cell.cell`.
-export function SingleView({ session, node, ownerId, cellName, token, readonly = false, onBack }) {
+export function SingleView({ session, node, ownerId, cellName, token, readonly = false, onBack, onCellSwitcher, cellSwitcherOpen = false }) {
   useLang(); // re-render allo switch lingua
   const [inputPreferences] = useInputPreferences();
   const [showFiles, setShowFiles] = useState(false);
@@ -203,7 +204,8 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
           selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
           keyboardGesture={inputPreferences.terminalKeyboardGesture} />
       </div>
-      <KeyBar onKeyboard={() => setShowComposer((v) => !v)} send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
+      <KeyBar onKeyboard={() => setShowComposer((v) => !v)} onCellSwitcher={onCellSwitcher} cellSwitcherOpen={cellSwitcherOpen}
+        send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
         ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} selectionMode={selectionMode} onSelectionMode={setSelectionMode}
         keepKeyboardClosed={inputPreferences.keybarKeepsKeyboardClosed} showEnter={inputPreferences.showKeybarEnter}
         keybarLayout={inputPreferences.keybarLayout} />
@@ -300,6 +302,7 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState('nodes');
   const [settingsNewCell, setSettingsNewCell] = useState(false);
   const [settingsLocation, setSettingsLocation] = useState('');
+  const [cellSwitcherOpen, setCellSwitcherOpen] = useState(false);
   const openSettings = (tab = 'nodes', newCell = false, location = '') => {
     setSettingsTab(tab); setSettingsNewCell(newCell); setSettingsLocation(location); setSettingsOpen(true);
   };
@@ -514,7 +517,13 @@ export default function App() {
         </>
       );
     }
-    return <><SingleView session={session.session} node={session.node} ownerId={session.ownerId} cellName={session.cellName} token={token} readonly={roDefault} onBack={() => setSession(null)} />{settingsOverlays}</>;
+    return <>
+      <SingleView session={session.session} node={session.node} ownerId={session.ownerId} cellName={session.cellName} token={token} readonly={roDefault}
+        onBack={() => setSession(null)} onCellSwitcher={() => setCellSwitcherOpen(true)} cellSwitcherOpen={cellSwitcherOpen} />
+      {cellSwitcherOpen && <CellSwitcher token={token} current={session}
+        onPick={(next) => { pickSession(next); setCellSwitcherOpen(false); }} onClose={() => setCellSwitcherOpen(false)} />}
+      {settingsOverlays}
+    </>;
   }
 
   // Workspace desktop: Sidebar + GridView + overlay vista singola + dialoghi.

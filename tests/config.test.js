@@ -10,6 +10,7 @@ test('defaults bind to loopback only', () => {
   assert.strictEqual(defaults().readonlyDefault, false); // read-write di default
   assert.strictEqual(defaults().replyLabel, 'human');
   assert.strictEqual(defaults().protectSharedTmuxServer, true);
+  assert.strictEqual(defaults().alternateScreen, false);
 });
 
 test('assertLoopback rejects non-loopback bind', () => {
@@ -101,6 +102,18 @@ test('loadConfig: shared tmux protection defaults on and has an explicit env opt
   try {
     assert.equal(loadConfig().protectSharedTmuxServer, false);
   } finally { delete process.env.NEXUSCREW_PROTECT_SHARED_TMUX_SERVER; }
+});
+
+test('loadConfig: alternate screen preserves defaults < config < env < opts precedence', () => {
+  assert.equal(loadConfig().alternateScreen, false);
+  withConfigFile({ alternateScreen: true }, () => {
+    assert.equal(loadConfig().alternateScreen, true);
+    process.env.NEXUSCREW_ALTERNATE_SCREEN = '0';
+    try {
+      assert.equal(loadConfig().alternateScreen, false);
+      assert.equal(loadConfig({ alternateScreen: true }).alternateScreen, true);
+    } finally { delete process.env.NEXUSCREW_ALTERNATE_SCREEN; }
+  });
 });
 
 test('loadConfig: reply label neutra e override env', () => {

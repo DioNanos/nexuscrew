@@ -154,3 +154,15 @@ describe('KeyBar compact layout', () => {
     expect(props.send).toHaveBeenCalledWith('\x1b[6~');
   });
 });
+
+describe('KeyBar cell switcher', () => {
+  it('replaces the redundant keyboard key when a mobile cell switcher is available', () => {
+    const onCellSwitcher = vi.fn();
+    render(<KeyBar send={vi.fn()} action={vi.fn()} onCtrl={vi.fn()} onSelectionMode={vi.fn()}
+      onCellSwitcher={onCellSwitcher} cellSwitcherOpen={false} />);
+    const button = screen.getByRole('button', { name: /celle|cells/i });
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.pointerDown(button);
+    expect(onCellSwitcher).toHaveBeenCalledOnce();
+  });
+});

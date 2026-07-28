@@ -10,7 +10,7 @@ const path = require('node:path');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
 const {
   createBuiltinFleet, composeLaunchArgv, minimalEnv, promptCharsOk, redactSecrets,
-  sanitizeEarlyDiagnostic, backfillShellEngine,
+  sanitizeEarlyDiagnostic, backfillShellEngine, alternateScreenArgs,
 } = require('../lib/fleet/builtin.js');
 const { selectProvider } = require('../lib/fleet/provider.js');
 
@@ -52,6 +52,7 @@ function makeWorld(over = {}) {
   const exitStatus = path.join(root, 'exit-status'); fs.writeFileSync(exitStatus, '127');
   const diagnostic = path.join(root, 'diagnostic'); fs.writeFileSync(diagnostic, '');
   const sessions = path.join(root, 'sessions'); fs.writeFileSync(sessions, '');
+  const alternateScreenFail = path.join(root, 'alternate-screen-fail'); fs.writeFileSync(alternateScreenFail, '');
   // veleno: se non vuoto, new-session cat-ta il contenuto su STDERR ed esce 2
   // (simula un tmux fallito che ecoa i segreti del comando lanciato — test §9h).
   const poison = path.join(root, 'poison'); fs.writeFileSync(poison, '');
@@ -64,6 +65,7 @@ PANE=${shellQ(pane)}
 STATUS=${shellQ(exitStatus)}
 DIAG=${shellQ(diagnostic)}
 SESS=${shellQ(sessions)}
+ALTSCREENFAIL=${shellQ(alternateScreenFail)}
 POISON=${shellQ(poison)}
 cmd="\${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
@@ -84,8 +86,9 @@ case "$cmd" in
     found_P=0; for a in "$@"; do [ "$a" = "-P" ] && found_P=1; done
     [ "$found_P" = "1" ] && printf '%s\\t%s\\t%s\\n' '$1' '@1' '%42'
     exit 0 ;;
-  set-option)
-    printf '%s\\t' "set-option" >> "$LOG"; printf '%s\\t' "$@" >> "$LOG"; printf '\\n' >> "$LOG"
+  set-option|set-hook)
+    printf '%s\\t' "$cmd" >> "$LOG"; printf '%s\\t' "$@" >> "$LOG"; printf '\\n' >> "$LOG"
+    case "$*" in *alternate-screen*) [ -s "$ALTSCREENFAIL" ] && exit 2 ;; esac
     exit 0 ;;
   respawn-pane)
     printf '%s\\t' "respawn-pane" >> "$LOG"; printf '%s\\t' "$@" >> "$LOG"; printf '\\n' >> "$LOG"
@@ -119,7 +122,7 @@ esac
   fs.writeFileSync(tmuxBin, script); fs.chmodSync(tmuxBin, 0o755);
 
   return {
-    root, home, cwd, command, defsPath, tmuxBin, log, cap, alive, pane, exitStatus, diagnostic, sessions, poison,
+    root, home, cwd, command, defsPath, tmuxBin, log, cap, alive, pane, exitStatus, diagnostic, sessions, poison, alternateScreenFail,
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
 }
@@ -298,6 +301,31 @@ test('composeLaunchArgv: model con valore solo engine; senza prompt non aggiunge
   assert.ok(!a2.includes('--ps'), 'send-keys non mette prompt in argv');
 });
 
+test('alternateScreenArgs: solo la sessione valida riceve opzioni per-sessione; opt-out non emette comandi', () => {
+  assert.deepEqual(alternateScreenArgs('cloud-Dev', false), [
+    ['set-option', '-t', '=cloud-Dev:', '-w', 'alternate-screen', 'off'],
+    ['set-hook', '-t', '=cloud-Dev:', 'after-new-window', 'set-option -w alternate-screen off'],
+  ]);
+  assert.deepEqual(alternateScreenArgs('cloud-Dev', true), []);
+  assert.equal(alternateScreenArgs('', false), null);
+  assert.equal(alternateScreenArgs('unsafe name', false), null);
+});
+
+test('up: alternate-screen setup e best-effort e non blocca l avvio della cella', async () => {
+  const w = makeWorld();
+  try {
+    fs.writeFileSync(w.alternateScreenFail, 'fail');
+    const logs = [];
+    const fleet = await createBuiltinFleet({
+      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+      log: (line) => logs.push(line),
+    });
+    const res = await fleet.up('Dev');
+    assert.equal(res.ok, true, 'il fallimento di configurazione non impedisce l avvio');
+    assert.ok(logs.some((line) => /alternate-screen setup failed.*continuing/.test(line)));
+  } finally { w.cleanup(); }
+});
+
 // ---------------------------------------------------------------------------
 // 2. up flag-mode: lancia in tmux, argv diretto, nessuna digitazione prompt
 // ---------------------------------------------------------------------------
@@ -322,6 +350,13 @@ test('up flag-mode: tmux starts one-shot helper; no secret argv and no paste', a
     // remain-on-exit e' armato window-local da set-option PRIMA del child (su @N)
     const setOpt = (byCmd['set-option'] || []).find((a) => a.includes('remain-on-exit'));
     assert.ok(setOpt && setOpt.includes('on') && setOpt.includes('@1'), 'remain-on-exit on window-local @N prima del child');
+    const alternate = (byCmd['set-option'] || []).find((a) => a.includes('alternate-screen'));
+    assert.deepEqual(alternate, ['-t', '=work-build:', '-w', 'alternate-screen', 'off'],
+      'alternate-screen disabilitato solo per la sessione Fleet');
+    const hook = (byCmd['set-hook'] || []).find((a) => a.includes('after-new-window'));
+    assert.deepEqual(hook, ['-t', '=work-build:', 'after-new-window', 'set-option -w alternate-screen off'],
+      'nuove finestre della stessa sessione ereditano alternate-screen off');
+    assert.equal([...alternate, ...hook].includes('-g'), false, 'nessuna opzione tmux globale viene toccata');
     // il vero child (cell-exec via broker) e' lanciato da respawn-pane sul %N esatto
     const respawn = byCmd['respawn-pane'] && byCmd['respawn-pane'][0];
     assert.ok(respawn, 'respawn-pane lanciato');

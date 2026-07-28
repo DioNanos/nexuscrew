@@ -9,7 +9,8 @@ const assert = require('node:assert');
 // auth/path helpers and the runtime env helpers only. Keeping this file
 // dependency-free lets the Tranche A doctor boundary run in isolation.
 const {
-  checkTermuxExec, checkTmuxServerCwd, checkTmuxServerTermuxPreload, doctor,
+  checkTermuxExec, checkTmuxServerCwd, checkTmuxServerTermuxPreload,
+  checkAlternateScreenHistory, doctor,
 } = require('../lib/cli/doctor.js');
 
 // Synthetic Termux prefix under a temp dir whose path contains `com.termux`.
@@ -120,6 +121,25 @@ test('tmux server probes: server assente rinvia senza falso FAIL', () => {
     assert.equal(cwd.ok, true); assert.equal(cwd.warn, true);
     assert.equal(preload.ok, true); assert.equal(preload.warn, true);
   } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
+});
+
+test('alternate screen doctor warning: soglia history-limit e opt-out esplicito', () => {
+  const low = checkAlternateScreenHistory(false, (_bin, args) => {
+    assert.deepEqual(args, ['show-options', '-g', 'history-limit']);
+    return 'history-limit 2000\n';
+  }, 'tmux-test');
+  assert.equal(low.ok, true);
+  assert.equal(low.warn, true);
+  assert.match(low.detail, /<10000/);
+  assert.match(low.detail, /set -g history-limit 100000/);
+
+  const sufficient = checkAlternateScreenHistory(false, () => 'history-limit 10000\n');
+  assert.equal(sufficient.ok, true);
+  assert.equal(sufficient.warn, undefined);
+
+  const standard = checkAlternateScreenHistory(true, () => { throw new Error('non deve interrogare tmux'); });
+  assert.equal(standard.ok, true);
+  assert.equal(standard.warn, undefined);
 });
 
 test('doctor: check termux-exec incluso nella suite e ok su Linux (nessuna regressione)', () => {
