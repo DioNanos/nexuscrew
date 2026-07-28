@@ -151,6 +151,37 @@ describe('Settings System diagnostics', () => {
   });
 });
 
+describe('Settings top tab bar', () => {
+  it('brings the tab selected at open into view, including System', async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest', inline: 'nearest' }));
+    const selectedTab = document.querySelector('.nc-set-tabbtn.on');
+    expect(selectedTab?.textContent).toContain('system');
+    expect(scrollIntoView.mock.contexts).toContain(selectedTab);
+  });
+
+  it('shows only the edge cues that correspond to hidden tabs', async () => {
+    const view = render(<SettingsPanel token="token" onClose={vi.fn()} />);
+    const tabs = view.container.querySelector('.nc-set-tabs');
+    const wrap = view.container.querySelector('.nc-set-tabs-wrap');
+    Object.defineProperties(tabs, {
+      clientWidth: { configurable: true, value: 120 },
+      scrollWidth: { configurable: true, value: 360 },
+      scrollLeft: { configurable: true, writable: true, value: 0 },
+    });
+    fireEvent.scroll(tabs);
+    await waitFor(() => expect(wrap.className).toContain('has-end-overflow'));
+    expect(wrap.className).not.toContain('has-start-overflow');
+
+    tabs.scrollLeft = 120;
+    fireEvent.scroll(tabs);
+    await waitFor(() => expect(wrap.className).toContain('has-start-overflow'));
+    expect(wrap.className).toContain('has-end-overflow');
+  });
+});
+
 describe('Settings notification speech', () => {
   function installSpeech(result = 'success') {
     const speak = vi.fn((utterance) => {

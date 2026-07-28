@@ -30,6 +30,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   const [selection, setSelection] = useState('');
   const [copyState, setCopyState] = useState('');
   const [uploadState, setUploadState] = useState(null);
+  const [touchSelectionCaret, setTouchSelectionCaret] = useState(null);
 
   const doCopy = async () => {
     const value = apiRef.current?.term?.getSelection() || selection;
@@ -234,7 +235,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     let touchY = null, touchX = null, tapX = null, tapY = null;
     let touchMoved = false, multiTouchActive = false;
     let touchScroll = { mode: null, remainder: 0 }, vertical = null, selectStart = null;
-    let longPressTimer = null; let touchSelecting = false;
+    let longPressTimer = null; let touchSelecting = false; let touchSelectionOffsetRows = 0;
     const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
     const cellXY = (clientX, clientY) => {
       const screen = host.querySelector('.xterm-screen') || host;
@@ -244,6 +245,37 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       return { col, row: term.buffer.active.viewportY + visibleRow };
     };
     const cellAt = (touch) => cellXY(touch.clientX, touch.clientY);
+    const TOUCH_SELECTION_OFFSET_ROWS = 2;
+    const touchSelectionOffsetFor = (clientY) => {
+      const screen = host.querySelector('.xterm-screen') || host;
+      const r = screen.getBoundingClientRect();
+      const visibleRow = Math.max(0, Math.min(term.rows - 1,
+        Math.floor(((clientY - r.top) / Math.max(1, r.height)) * term.rows)));
+      return visibleRow < TOUCH_SELECTION_OFFSET_ROWS
+        ? TOUCH_SELECTION_OFFSET_ROWS
+        : -TOUCH_SELECTION_OFFSET_ROWS;
+    };
+    const touchSelectionCellAt = (touch, offsetRows) => {
+      const screen = host.querySelector('.xterm-screen') || host;
+      const r = screen.getBoundingClientRect();
+      const rowHeight = r.height / Math.max(1, term.rows);
+      return cellXY(touch.clientX, touch.clientY + offsetRows * rowHeight);
+    };
+    const showTouchSelectionCaret = (cell) => {
+      const screen = host.querySelector('.xterm-screen') || host;
+      const screenRect = screen.getBoundingClientRect();
+      const hostRect = host.getBoundingClientRect();
+      const cellWidth = screenRect.width / Math.max(1, term.cols);
+      const cellHeight = screenRect.height / Math.max(1, term.rows);
+      const viewportY = Number(term.buffer.active.viewportY) || 0;
+      const visibleRow = Math.max(0, Math.min(term.rows - 1, cell.row - viewportY));
+      setTouchSelectionCaret({
+        left: `${screenRect.left - hostRect.left + cell.col * cellWidth}px`,
+        top: `${screenRect.top - hostRect.top + visibleRow * cellHeight}px`,
+        width: `${cellWidth}px`,
+        height: `${cellHeight}px`,
+      });
+    };
     const onTouchStart = (e) => {
       clearLongPress(); touchSelecting = false; touchMoved = false;
       if (multiTouchActive || e.touches.length !== 1) {
@@ -251,6 +283,10 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         // sopprimi tutti i touchend finche' ogni dito non e' stato rilasciato.
         // Altrimenti il secondo rilascio potrebbe diventare un nuovo candidato.
         multiTouchActive = true; touchMoved = true; lastTerminalTap = null;
+        // Se un secondo dito arriva durante una selezione long-press, il caret
+        // non descrive piu' un punto attivo del gesto: nascondilo subito,
+        // senza alterare la selezione gia' confermata.
+        setTouchSelectionCaret(null); touchSelectionOffsetRows = 0;
         touchY = null; touchX = null; tapX = null; tapY = null;
         return;
       }
@@ -266,14 +302,31 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         selectionModeRef.current = true;
         onSelectionModeChange?.(true);
         selectStart = cellXY(start.x, start.y);
+        touchSelectionOffsetRows = touchSelectionOffsetFor(start.y);
+        const end = touchSelectionCellAt({ clientX: start.x, clientY: start.y }, touchSelectionOffsetRows);
         term.clearSelection();
-        term.select(selectStart.col, selectStart.row, 1);
+        const a = selectStart.row * term.cols + selectStart.col;
+        const b = end.row * term.cols + end.col;
+        const first = a <= b ? selectStart : end;
+        term.select(first.col, first.row, Math.abs(b - a) + 1);
+        showTouchSelectionCaret(end);
+        try { navigator.vibrate?.(10); } catch (_) {}
         // Da questo momento il gesto e' selezione, non scroll.
         touchY = null; touchX = null; vertical = null; touchScroll = { mode: null, remainder: 0 };
       }, LONG_PRESS_MS);
     };
     const onTouchMove = (e) => {
-      if ((selectionModeRef.current || touchSelecting) && selectStart && e.touches.length === 1) {
+      if (touchSelecting && selectStart && e.touches.length === 1) {
+        e.preventDefault(); e.stopPropagation();
+        const end = touchSelectionCellAt(e.touches[0], touchSelectionOffsetRows);
+        const a = selectStart.row * term.cols + selectStart.col;
+        const b = end.row * term.cols + end.col;
+        const first = a <= b ? selectStart : end;
+        term.select(first.col, first.row, Math.abs(b - a) + 1);
+        showTouchSelectionCaret(end);
+        return;
+      }
+      if (selectionModeRef.current && selectStart && e.touches.length === 1) {
         e.preventDefault(); e.stopPropagation();
         const end = cellAt(e.touches[0]);
         const a = selectStart.row * term.cols + selectStart.col;
@@ -304,6 +357,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const resetTouch = () => {
       clearLongPress(); touchY = null; touchX = null; tapX = null; tapY = null;
       selectStart = null; touchSelecting = false; touchMoved = false; multiTouchActive = false;
+      touchSelectionOffsetRows = 0; setTouchSelectionCaret(null);
       touchScroll = { mode: null, remainder: 0 };
     };
     const onTouchEnd = (e) => {
@@ -327,11 +381,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const onWheel = (e) => {
       e.preventDefault(); e.stopPropagation();
       // wheel: deltaY > 0 = scroll down (newer) -> negative in the up-positive convention
-      // Like the finger drag, the plain wheel browses the tmux history even in a
-      // writable alternate-screen TUI: a page-sized threshold made it inert there.
-      // Shift keeps the raw PageUp/PageDown escape hatch for vim/less/htop, the
-      // same modifier already used to force desktop-local selection below.
-      wheelScroll = emitScroll(-e.deltaY, wheelScroll, e.shiftKey ? null : 'scroll');
+      // Like the finger drag, the wheel always browses tmux history, including
+      // in a writable alternate-screen TUI and while Shift is held.
+      wheelScroll = emitScroll(-e.deltaY, wheelScroll, 'scroll');
     };
     host.addEventListener('touchstart', onTouchStart, { passive: false });
     host.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
@@ -457,6 +509,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
 
   return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
     <div className="nc-terminal-host" ref={hostRef} />
+    {touchSelectionCaret && <div className="nc-touch-selection-caret" style={touchSelectionCaret} aria-hidden="true" />}
     {uploadState && <div className={`nc-upload-state${uploadState.error ? ' error' : ''}`} role="status">
       {uploadState.error
         ? uploadState.error
