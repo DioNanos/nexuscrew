@@ -283,6 +283,10 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         // sopprimi tutti i touchend finche' ogni dito non e' stato rilasciato.
         // Altrimenti il secondo rilascio potrebbe diventare un nuovo candidato.
         multiTouchActive = true; touchMoved = true; lastTerminalTap = null;
+        // Se un secondo dito arriva durante una selezione long-press, il caret
+        // non descrive piu' un punto attivo del gesto: nascondilo subito,
+        // senza alterare la selezione gia' confermata.
+        setTouchSelectionCaret(null); touchSelectionOffsetRows = 0;
         touchY = null; touchX = null; tapX = null; tapY = null;
         return;
       }
@@ -377,11 +381,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const onWheel = (e) => {
       e.preventDefault(); e.stopPropagation();
       // wheel: deltaY > 0 = scroll down (newer) -> negative in the up-positive convention
-      // Like the finger drag, the plain wheel browses the tmux history even in a
-      // writable alternate-screen TUI: a page-sized threshold made it inert there.
-      // Shift keeps the raw PageUp/PageDown escape hatch for vim/less/htop, the
-      // same modifier already used to force desktop-local selection below.
-      wheelScroll = emitScroll(-e.deltaY, wheelScroll, e.shiftKey ? null : 'scroll');
+      // Like the finger drag, the wheel always browses tmux history, including
+      // in a writable alternate-screen TUI and while Shift is held.
+      wheelScroll = emitScroll(-e.deltaY, wheelScroll, 'scroll');
     };
     host.addEventListener('touchstart', onTouchStart, { passive: false });
     host.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });

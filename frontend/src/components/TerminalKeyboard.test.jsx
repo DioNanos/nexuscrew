@@ -236,6 +236,20 @@ describe('terminal long-press touch selection', () => {
     expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 161 });
     expect(view.container.querySelector('.nc-touch-selection-caret')).toBeNull();
   });
+
+  it('hides the long-press caret immediately when a second finger joins the gesture', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+
+    const first = { clientX: 50, clientY: 200 };
+    fireEvent.touchStart(host, { touches: [first] });
+    act(() => vi.advanceTimersByTime(450));
+    expect(view.container.querySelector('.nc-touch-selection-caret')).not.toBeNull();
+
+    fireEvent.touchStart(host, { touches: [first, { clientX: 70, clientY: 220 }] });
+    expect(view.container.querySelector('.nc-touch-selection-caret')).toBeNull();
+  });
 });
 
 describe('terminal keyboard relock after unlock', () => {
@@ -372,7 +386,7 @@ describe('terminal scroll plan integration', () => {
     expect(fixture.inputs).toEqual([]); // the wheel no longer steals the TUI viewport
   });
 
-  it('Shift+wheel keeps the raw PageUp/PageDown escape hatch for the TUI viewport', () => {
+  it('Shift+wheel still browses tmux history in a writable alternate-screen TUI', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
@@ -380,8 +394,11 @@ describe('terminal scroll plan integration', () => {
     vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ height: 300, width: 400, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
     fireEvent.wheel(host, { deltaY: -300, shiftKey: true });
     fireEvent.wheel(host, { deltaY: 300, shiftKey: true });
-    expect(fixture.inputs).toEqual(['\x1b[5~', '\x1b[6~']);
-    expect(fixture.actions).toEqual([]);
+    expect(fixture.inputs).toEqual([]);
+    expect(fixture.actions).toEqual([
+      ...Array(8).fill('scroll-up'),
+      ...Array(8).fill('scroll-down'),
+    ]);
   });
 
   it('Shift+wheel on the normal screen stays server-side', () => {
@@ -392,16 +409,17 @@ describe('terminal scroll plan integration', () => {
     expect(fixture.inputs).toEqual([]);
   });
 
-  it('does not reinterpret an alternate-screen page remainder as line ticks after a mode change', () => {
+  it('keeps Shift-wheel in the same tmux history accumulator as an unmodified wheel', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
     term.buffer.active.type = 'alternate';
     vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ height: 300, width: 400, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
-    fireEvent.wheel(host, { deltaY: -290, shiftKey: true }); // page remainder: +290, no action
+    fireEvent.wheel(host, { deltaY: -290, shiftKey: true }); // 8 bounded steps, 2px remainder
     expect(fixture.inputs).toEqual([]);
-    fireEvent.wheel(host, { deltaY: -1 }); // releasing Shift switches mode: line delta only
-    expect(fixture.actions).toEqual([]);
+    expect(fixture.actions).toHaveLength(8);
+    fireEvent.wheel(host, { deltaY: -22 }); // 2px + 22px = one more history step
+    expect(fixture.actions).toHaveLength(9);
     expect(fixture.inputs).toEqual([]);
   });
 
