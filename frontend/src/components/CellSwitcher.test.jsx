@@ -99,14 +99,36 @@ describe('CellSwitcher', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it('shares the main roster order and keeps an off cell in its place when it returns', async () => {
+  it('preserves unmanaged sessions in the shared order and keeps an off cell in place when it returns', async () => {
+    const localSessions = [
+      { name: 'cloud-Dev', activity: 10, working: true },
+      { name: 'my-build-watch', activity: 5, preview: 'watching build' },
+    ];
+    localStorage.setItem('nc_sidebar_order_v1', JSON.stringify({
+      local: ['cloud-Dev', 'my-build-watch', 'cloud-Research'],
+    }));
+    writeCellSwitcherSnapshot({
+      sessions: localSessions,
+      cells: [active('Dev', 'cloud-Dev'), off('Research', 'cloud-Research')],
+      nodeGroups: [],
+    });
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: localSessions }) });
+    mocks.fleetStatus.mockResolvedValue({
+      available: true, cells: [active('Dev', 'cloud-Dev'), off('Research', 'cloud-Research')],
+    });
     const first = render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^Dev / });
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
     const researchHandle = screen.getByRole('button', { name: 'reorder Research' });
-    fireEvent.keyDown(researchHandle, { key: 'ArrowUp' });
+    const devRow = screen.getByRole('button', { name: /^Dev / }).closest('[data-roster-key]');
+    const previous = document.elementFromPoint;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: vi.fn(() => devRow) });
+    fireEvent.pointerDown(researchHandle, { pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 20 });
+    fireEvent.pointerMove(researchHandle, { pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 40 });
+    fireEvent.pointerUp(researchHandle, { pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 40 });
     await waitFor(() => expect(JSON.parse(localStorage.getItem('nc_sidebar_order_v1'))?.local)
-      .toEqual(['cloud-Research', 'cloud-Dev']));
+      .toEqual(['cloud-Research', 'cloud-Dev', 'my-build-watch']));
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: previous });
     expect(researchHandle.getAttribute('aria-keyshortcuts')).toBe('ArrowUp ArrowDown');
 
     first.unmount();
