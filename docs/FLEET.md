@@ -122,7 +122,7 @@ New sessions created by NexusCrew disable the tmux alternate screen by default.
 Full-screen TUI output therefore remains in tmux history, so mobile finger
 drags and normal terminal scrolling can browse it. Set `alternateScreen: true`
 in the local NexusCrew config (or `NEXUSCREW_ALTERNATE_SCREEN=1`) to restore the
-standard tmux behavior for future Fleet sessions. Existing and unmanaged
+standard tmux behavior for future sessions created through Fleet. Existing and unmanaged
 sessions are unchanged.
 
 For an opted-out session that uses the alternate screen, desktop wheel events

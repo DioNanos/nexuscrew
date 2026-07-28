@@ -1,6 +1,7 @@
 #!/bin/sh
 # fake-tmux — logga le chiamate e simula gli esiti che servono ai test route.
-echo "$*" >> "${FAKE_TMUX_LOG:-/dev/null}"
+LOG="${FAKE_TMUX_LOG:-${XDG_STATE_HOME:+$XDG_STATE_HOME/tmux.log}}"
+echo "$*" >> "${LOG:-/dev/null}"
 case "$1" in
   new-session)
     # il runtime passa -P -F '#{session_id}\t#{window_id}\t#{pane_id}': stampa i 3 ID
@@ -29,6 +30,11 @@ case "$1" in
     elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "quoted-working" ]; then
       printf '\n• Working (quoted in transcript)\nclaude-model footer\n'
     fi
+    exit 0 ;;
+  set-option|set-hook)
+    # Il test del best-effort PWA usa una sessione esplicitamente dedicata:
+    # i due comandi falliscono, ma new-session deve comunque restare riuscita.
+    case "$*" in *web-best-effort*) echo "alternate-screen unavailable" >&2; exit 1 ;; esac
     exit 0 ;;
   *) exit 0 ;;
 esac

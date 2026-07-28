@@ -101,7 +101,7 @@ the gesture does nothing. On a phone, where the drag is the only scroll gesture,
 the terminal looks frozen.
 
 NexusCrew applies `alternate-screen off` **per session** when it creates a
-managed Fleet session. No global tmux option or `~/.tmux.conf` edit is needed:
+managed Fleet session or a PWA session. No global tmux option or `~/.tmux.conf` edit is needed:
 tmux then ignores `smcup`/`rmcup` for that session, TUI output stays on the
 normal screen, the transcript flows into tmux history, and drag/wheel scrolling
 work. The setting is also applied to windows created later in that session.

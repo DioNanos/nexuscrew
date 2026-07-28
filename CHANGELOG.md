@@ -34,7 +34,7 @@ All notable changes to NexusCrew are tracked here.
   NexusCrew store), preserves legacy cells as no-op `auto`, and removes the
   conflicting provider environment set when the local store is selected.
 
-- New Fleet sessions keep tmux `alternate-screen` off by default, scoped only
+- New NexusCrew-created sessions keep tmux `alternate-screen` off by default, scoped only
   to the created session and its later windows. Full-screen TUI output now
   remains in tmux history for mobile drag and normal scrolling; set
   `alternateScreen: true` or `NEXUSCREW_ALTERNATE_SCREEN=1` to opt out. The

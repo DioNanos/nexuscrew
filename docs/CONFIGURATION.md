@@ -40,7 +40,7 @@ Common overrides:
 | `NEXUSCREW_FILES_ROOT` | Alternate per-session file root |
 | `NEXUSCREW_TMUX` | tmux executable |
 | `NEXUSCREW_FLEET=0` | Disable Fleet management |
-| `NEXUSCREW_ALTERNATE_SCREEN=1` | Keep tmux's standard alternate-screen behavior for newly created Fleet sessions |
+| `NEXUSCREW_ALTERNATE_SCREEN=1` | Keep tmux's standard alternate-screen behavior for newly created NexusCrew sessions |
 | `NEXUSCREW_READONLY=1` | Disable server-side mutations |
 | `NEXUSCREW_AUTO_UPDATE=0` | Disable the stable update scheduler |
 | `NEXUSCREW_DEBUG=1` | Enable bounded verbose diagnostics |
@@ -50,14 +50,14 @@ Common overrides:
 Use `NEXUSCREW_CONFIG_FILE`, `NEXUSCREW_TOKEN_FILE`, `NEXUSCREW_FILES_ROOT`
 and a separate `HOME`/XDG root when creating an isolated test runtime.
 
-## Fleet settings
+## Session and Fleet settings
 
 | `config.json` key | Default | Effect |
 |---|---:|---|
-| `alternateScreen` | `false` | New Fleet sessions keep full-screen TUI output on the normal screen, where it enters tmux history and remains scrollable. Set `true` to restore the standard tmux alternate screen. |
+| `alternateScreen` | `false` | New sessions created through Fleet or the PWA keep full-screen TUI output on the normal screen, where it enters tmux history and remains scrollable. Set `true` to restore the standard tmux alternate screen. |
 
-The setting applies only when NexusCrew creates a session; active and unmanaged
-sessions are not changed. `NEXUSCREW_ALTERNATE_SCREEN=1` has the usual
+The setting applies only when NexusCrew creates a session through Fleet or the
+PWA; active and unmanaged sessions are not changed. `NEXUSCREW_ALTERNATE_SCREEN=1` has the usual
 environment precedence. For the normal-screen mode, keep the user-owned tmux
 `history-limit` at least 10000 (100000 is a practical value). `nexuscrew doctor`
 warns when it observes a lower value but never changes `~/.tmux.conf`.

@@ -13,12 +13,18 @@ const FAKE_TMUX = path.join(__dirname, 'fixtures', 'fake-tmux.sh');
 function boot(t, over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncsl-'));
   process.env.FAKE_TMUX_LOG = path.join(dir, 'tmux.log');
+  const previousStateHome = process.env.XDG_STATE_HOME;
+  process.env.XDG_STATE_HOME = dir;
   const { server, token, watcher } = createServer({
     tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'),
     tmuxBin: FAKE_TMUX, fleetEnabled: false, ...over,
   });
   return new Promise((res) => server.listen(0, '127.0.0.1', () => {
-    t.after(() => { server.close(); if (watcher) watcher.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+    t.after(() => {
+      server.close(); if (watcher) watcher.close(); fs.rmSync(dir, { recursive: true, force: true });
+      if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = previousStateHome;
+    });
     res({ base: `http://127.0.0.1:${server.address().port}`, token, dir });
   }));
 }
@@ -60,6 +66,36 @@ test('create: 201 con preset shell, 400 nome/preset invalidi', async (t) => {
   assert.equal((await fetch(`${base}/api/sessions`, { method: 'POST', headers: H(token), body: JSON.stringify({ name: '-bad', cwd: home }) })).status, 400);
   assert.equal((await fetch(`${base}/api/sessions`, { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'cloud-Fake', cwd: home, preset: 'shell' }) })).status, 409, 'namespace cloud-* riservato anche in create');
   assert.equal((await fetch(`${base}/api/sessions`, { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'w2', cwd: home, preset: 'rm -rf' }) })).status, 400);
+});
+
+test('create: alternateScreen viene applicato solo alla nuova sessione PWA, con hook per le finestre successive', async (t) => {
+  const { base, token, dir } = await boot(t, { alternateScreen: false });
+  const response = await fetch(`${base}/api/sessions`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ name: 'web-scroll', cwd: os.homedir(), preset: 'shell' }),
+  });
+  assert.equal(response.status, 201);
+  const log = fs.readFileSync(path.join(dir, 'tmux.log'), 'utf8');
+  assert.match(log, /set-option -t =web-scroll: -w alternate-screen off/);
+  assert.match(log, /set-hook -t =web-scroll: after-new-window set-option -w alternate-screen off/);
+  assert.doesNotMatch(log, /set-option -g .*alternate-screen/);
+});
+
+test('create: alternateScreen=true non emette policy PWA e un errore best-effort non blocca 201', async (t) => {
+  const optedOut = await boot(t, { alternateScreen: true });
+  const skipped = await fetch(`${optedOut.base}/api/sessions`, {
+    method: 'POST', headers: H(optedOut.token), body: JSON.stringify({ name: 'web-standard', cwd: os.homedir(), preset: 'shell' }),
+  });
+  assert.equal(skipped.status, 201);
+  assert.doesNotMatch(fs.readFileSync(path.join(optedOut.dir, 'tmux.log'), 'utf8'), /alternate-screen/);
+
+  const warnings = [];
+  const bestEffort = await boot(t, { alternateScreen: false, log: (message) => warnings.push(message) });
+  const created = await fetch(`${bestEffort.base}/api/sessions`, {
+    method: 'POST', headers: H(bestEffort.token), body: JSON.stringify({ name: 'web-best-effort', cwd: os.homedir(), preset: 'shell' }),
+  });
+  assert.equal(created.status, 201);
+  assert.equal(warnings.length, 2);
+  assert.ok(warnings.every((message) => message === 'session alternate-screen setup failed for web-best-effort; continuing'));
 });
 
 test('kill: 409 su cloud-* ANCHE con fleet unavailable (F2), 200 su generica, 404 su assente', async (t) => {
