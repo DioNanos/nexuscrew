@@ -28,6 +28,7 @@ vi.mock('../hooks/useLang.js', () => ({ useLang: () => ['en', vi.fn()] }));
 
 import SessionList from './SessionList.jsx';
 import { fleetBoot, fleetDown, fleetUp, renameNodeLabel, setSessionTechnical } from '../lib/api.js';
+import { readCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 
 function cell(cell, tmuxSession, live, engine = 'claude.native') {
   return { cell, tmuxSession, tmux: live, active: live, engine, key: '', degraded: false };
@@ -59,6 +60,17 @@ beforeEach(() => {
 });
 
 describe('mobile roster parity', () => {
+  it('writes the local and routed inventory to the switcher cache without treating it as fresh drawer data', async () => {
+    renderRoster();
+    await screen.findByText('Relay Live');
+    await waitFor(() => expect(readCellSwitcherSnapshot()).toMatchObject({
+      sessions: fixture.sessions,
+      cells: fixture.cells,
+      nodeGroups: fixture.nodes,
+      localFresh: false,
+    }));
+  });
+
   it('counts live Fleet cells across local and remote inventory even when tmux session lists are empty', async () => {
     fixture.sessions = [];
     fixture.cells = [
