@@ -16,6 +16,14 @@ All notable changes to NexusCrew are tracked here.
   retains degraded cells as warnings, refreshes routed Fleet state while open,
   and keeps an explicit all-cells view for inventory and recovery work.
 
+## 0.8.43 — 2026-07-28 — "Quick Truth"
+
+- The mobile cell switcher is now a bottom-left quick rail that lists only
+  freshly verified live cells by default. It refreshes local and routed Fleet
+  state while open, verifies a target again before switching, retains degraded
+  cells as explicit warnings, and keeps a deliberate **all cells** view for
+  Fleet inventory and recovery work.
+
 ## 0.8.42 — 2026-07-28 — "Steady Hand"
 
 - Touch selection no longer hides its own endpoint under the finger. A long
