@@ -21,6 +21,11 @@ The desktop deck keeps the whole fleet visible. Open any cell from a phone and
 NexusCrew gives the same live tmux session a touch-first terminal without
 moving the session away from its host.
 
+Inside a mobile terminal, the cell control in the key bar opens a bottom-left
+quick rail of freshly verified live cells. It refreshes routed Fleet state while
+open, keeps a degraded cell visible as a warning, and has an explicit all-cells
+view when you need the complete inventory instead of a quick switch.
+
 <p align="center">
   <img src="docs/img/session-mobile.png" width="360" alt="NexusCrew mobile terminal connected to a real tmux session with touch controls">
   <br>

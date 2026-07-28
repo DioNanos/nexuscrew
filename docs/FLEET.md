@@ -99,6 +99,13 @@ pinned, active, off or technical sessions. Managed terminals use the logical
 Fleet cell name as their visible title; tmux session and route identifiers
 remain technical context.
 
+When a mobile terminal is open, the key-bar cell control opens a bottom-left
+quick rail. Its default view contains only cells whose local or routed Fleet
+state and tmux session were freshly verified; it refreshes while open and
+checks the target again before switching. A degraded cell remains visible as a
+warning rather than disappearing. Use the explicit all-cells control for the
+complete inventory, including stopped cells.
+
 ## Terminal behavior
 
 Terminal attachment uses `tmux attach -f ignore-size` by default, so a phone or
