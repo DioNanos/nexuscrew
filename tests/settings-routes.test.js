@@ -116,6 +116,7 @@ test('GET /settings: 401 senza Bearer, vista completa con Bearer (firstRun true)
   assert.equal(s.firstRun, true); // config.json assente
   assert.deepEqual(s.roles, { client: false, node: false });
   assert.equal(s.port, 41999);
+  assert.equal(s.alternateScreen, false);
   assert.equal(s.platform, 'linux');
   assert.deepEqual(s.service, { installed: false, active: false, boot: false });
   assert.equal(typeof s.version, 'string');
@@ -222,6 +223,29 @@ test('config: happy path scrive atomico (0600), whitelisted, note sul cambio por
   assert.equal(fs.statSync(configPath).mode & 0o777, 0o600);
 });
 
+test('config: alternateScreen e visibile nelle settings e si applica alle nuove sessioni senza restart', async (t) => {
+  const { base, token, configPath } = await boot(t);
+  let settings = await (await fetch(`${base}/api/settings`, { headers: H(token) })).json();
+  assert.equal(settings.alternateScreen, false);
+
+  const enabled = await fetch(`${base}/api/settings/config`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ alternateScreen: true }),
+  });
+  assert.equal(enabled.status, 200);
+  assert.equal((await enabled.json()).config.alternateScreen, true);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).alternateScreen, true);
+  settings = await (await fetch(`${base}/api/settings`, { headers: H(token) })).json();
+  assert.equal(settings.alternateScreen, true);
+
+  const disabled = await fetch(`${base}/api/settings/config`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ alternateScreen: false }),
+  });
+  assert.equal(disabled.status, 200);
+  assert.equal((await disabled.json()).config.alternateScreen, false);
+  settings = await (await fetch(`${base}/api/settings`, { headers: H(token) })).json();
+  assert.equal(settings.alternateScreen, false);
+});
+
 test('config: rifiuta il cambio porta quando esistono peer già collegati', async (t) => {
   const { base, token, nodesPath, configPath } = await boot(t);
   let st = nodesStore.emptyStore('a'.repeat(32));
@@ -264,6 +288,7 @@ test('config: garbage -> 400 con causa (fail-closed, mai guess)', async (t) => {
     [{ port: 0 }, /port/],
     [{ port: 70000 }, /port/],
     [{ wizardDone: 'yes' }, /wizardDone/],
+    [{ alternateScreen: 'yes' }, /alternateScreen/],
     [{ roles: { admin: true } }, /roles/],
     [{ roles: { client: 'si' } }, /roles\.client/],
     [{ roles: [] }, /roles/],

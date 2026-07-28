@@ -28,11 +28,11 @@ import {
 import './SettingsPanel.css';
 
 // Pannello settings (design §5, B2-UI). Stessa struttura a schede su desktop
-// (overlay nel workspace) e mobile (full-screen via CSS). Quattro schede:
+// (overlay nel workspace) e mobile (full-screen via CSS). Le schede principali:
 //   nodi    — peer Hydra + stato tunnel + azioni
 //   fleet   — engine/celle locali o su una route raggiungibile
-//   diagnostica — log strutturati bounded locali/routed
-//   sistema — token rotate, boot/service e info
+//   audio   — consenso e gruppi audio locali
+//   sistema — manutenzione e diagnostica locale/routed
 // Invarianti UI: token MAI mostrato; ogni failure API mostrata con la causa
 // esplicita (jsonFetch propaga j.error); in READONLY i mutanti sono disabilitati
 // con motivo visibile (test/up/down/restart restano attivi: non sono gated).
@@ -962,17 +962,19 @@ export function DiagnosticsTab({ token, roster = [], readonly }) {
 }
 
 // --- scheda SISTEMA ------------------------------------------------------------
-function SystemTab({ token, settings, readonly, refresh }) {
+function SystemTab({ token, settings, readonly, refresh, roster, section, setSection }) {
   const [err, setErr] = useState(null);
   const [note, setNote] = useState(null);
   const [confirmRotate, setConfirmRotate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [updateView, setUpdateView] = useState(null);
   const [autoUpdate, setAutoUpdate] = useState(true);
+  const [alternateScreen, setAlternateScreen] = useState(false);
 
   useEffect(() => {
     setUpdateView((settings && settings.update) || null);
     setAutoUpdate(!settings || settings.autoUpdate !== false);
+    setAlternateScreen(!!(settings && settings.alternateScreen));
   }, [settings]);
 
   const doRotate = async () => {
@@ -999,6 +1001,16 @@ function SystemTab({ token, settings, readonly, refresh }) {
     try {
       await saveConfig(token, { autoUpdate: enabled });
       setAutoUpdate(enabled);
+      if (refresh) await refresh();
+    } catch (e) { setErr(String(e.message || e)); }
+    setBusy(false);
+  };
+
+  const toggleAlternateScreen = async (enabled) => {
+    setErr(null); setNote(null); setBusy(true);
+    try {
+      await saveConfig(token, { alternateScreen: enabled });
+      setAlternateScreen(enabled);
       if (refresh) await refresh();
     } catch (e) { setErr(String(e.message || e)); }
     setBusy(false);
@@ -1033,58 +1045,94 @@ function SystemTab({ token, settings, readonly, refresh }) {
   const svc = settings && settings.service;
   return (
     <div className="nc-set-tab">
-      {settings && (
-        <div className="nc-set-info">
-          v{settings.version} · {settings.platform} · :{settings.port}
-          <br />
-          {svc && svc.installed ? t('service-installed') : t('service-missing')}
-          {svc && svc.installed ? ` · ${svc.active ? t('service-active') : t('service-inactive')}` : ''}
-          {svc ? ` · boot ${svc.boot ? 'on' : 'off'}` : ''}
-        </div>
-      )}
-
-      <div className="nc-set-row">
-        <button type="button" className="nc-btn ghost" disabled={readonly || busy}
-          title={readonly ? t('settings-readonly') : ''}
-          onClick={() => { setErr(null); setNote(null); setConfirmRotate(true); }}>{t('token-rotate')}</button>
-        <button type="button" className="nc-btn ghost" disabled={readonly || busy}
-          title={readonly ? t('settings-readonly') : ''} onClick={doRegen}>{t('service-regenerate')}</button>
+      <div className="nc-system-tabs" role="tablist" aria-label={t('tab-system')}>
+        {['general', 'diagnostics'].map((key) => (
+          <button key={key} type="button" role="tab" aria-selected={section === key}
+            className={`nc-set-tabbtn${section === key ? ' on' : ''}`}
+            onClick={() => setSection(key)}>{t(`system-${key}`)}</button>
+        ))}
       </div>
 
-      <div className="nc-set-form nc-update-settings">
-        <label className="nc-check">
-          <input type="checkbox" checked={autoUpdate} disabled={readonly || busy || (updateView && !updateView.supported)}
-            onChange={(e) => toggleAutoUpdate(e.target.checked)} />
-          <span><b>{t('npm-auto-update')}</b><small>{t('npm-auto-update-help')}</small></span>
-        </label>
-        {updateView && (
-          <div className="nc-set-info">
-            {t('npm-update-current')} v{updateView.current}
-            {updateView.latest ? ` · ${t('npm-update-latest')} v${updateView.latest}` : ''}
-            {' · '}{t(`npm-update-${updateView.supported ? updateView.phase : 'unsupported'}`)}
-          </div>
-        )}
-        <div className="nc-set-row">
-          <button type="button" className="nc-btn ghost" disabled={readonly || busy || !updateView || !updateView.supported}
-            onClick={doUpdateCheck}>{t('npm-update-check')}</button>
-          {updateView && updateView.available && (
-            <button type="button" className="nc-btn primary" disabled={readonly || busy || updateView.phase === 'installing'}
-              onClick={doUpdateApply}>{t('npm-update-install')}</button>
+      {section === 'general' && <>
+        <section className="nc-system-group">
+          <h3>{t('system-this-node')}</h3>
+          {settings && (
+            <div className="nc-set-info">
+              v{settings.version} · {settings.platform} · :{settings.port}
+              <br />
+              {svc && svc.installed ? t('service-installed') : t('service-missing')}
+              {svc && svc.installed ? ` · ${svc.active ? t('service-active') : t('service-inactive')}` : ''}
+              {svc ? ` · boot ${svc.boot ? 'on' : 'off'}` : ''}
+            </div>
           )}
-        </div>
-        {updateView && updateView.lastError && <div className="nc-err">{updateView.lastError}</div>}
-      </div>
+          <div className="nc-set-row">
+            <button type="button" className="nc-btn ghost" disabled={readonly || busy}
+              title={readonly ? t('settings-readonly') : ''} onClick={doRegen}>{t('service-regenerate')}</button>
+          </div>
+          <PushRow token={token} readonly={readonly} />
+          <NotificationSpeechRow />
+        </section>
 
-      <PushRow token={token} readonly={readonly} />
-      <NotificationSpeechRow />
+        <section className="nc-system-group">
+          <h3>{t('system-updates')}</h3>
+          <div className="nc-set-form nc-update-settings">
+            <label className="nc-check">
+              <input type="checkbox" checked={autoUpdate} disabled={readonly || busy || (updateView && !updateView.supported)}
+                onChange={(e) => toggleAutoUpdate(e.target.checked)} />
+              <span><b>{t('npm-auto-update')}</b><small>{t('npm-auto-update-help')}</small></span>
+            </label>
+            {updateView && (
+              <div className="nc-set-info">
+                {t('npm-update-current')} v{updateView.current}
+                {updateView.latest ? ` · ${t('npm-update-latest')} v${updateView.latest}` : ''}
+                {' · '}{t(`npm-update-${updateView.supported ? updateView.phase : 'unsupported'}`)}
+              </div>
+            )}
+            <div className="nc-set-row">
+              <button type="button" className="nc-btn ghost" disabled={readonly || busy || !updateView || !updateView.supported}
+                onClick={doUpdateCheck}>{t('npm-update-check')}</button>
+              {updateView && updateView.available && (
+                <button type="button" className="nc-btn primary" disabled={readonly || busy || updateView.phase === 'installing'}
+                  onClick={doUpdateApply}>{t('npm-update-install')}</button>
+              )}
+            </div>
+            {updateView && updateView.lastError && <div className="nc-err">{updateView.lastError}</div>}
+          </div>
+        </section>
 
-      <div className="nc-set-form">
-        <div className="nc-sheet-label">{t('composer-clear-data')}</div>
-        <small className="nc-set-hint">{t('composer-clear-data-help')}</small>
-        <div className="nc-set-row">
-          <button type="button" className="nc-btn ghost" onClick={clearComposerData}>{t('composer-clear-data')}</button>
+        <section className="nc-system-group">
+          <h3>{t('system-security')}</h3>
+          <div className="nc-set-row">
+            <button type="button" className="nc-btn ghost" disabled={readonly || busy}
+              title={readonly ? t('settings-readonly') : ''}
+              onClick={() => { setErr(null); setNote(null); setConfirmRotate(true); }}>{t('token-rotate')}</button>
+          </div>
+        </section>
+
+        <section className="nc-system-group">
+          <h3>{t('system-local-data')}</h3>
+          <div className="nc-set-form">
+            <div className="nc-sheet-label">{t('composer-clear-data')}</div>
+            <small className="nc-set-hint">{t('composer-clear-data-help')}</small>
+            <div className="nc-set-row">
+              <button type="button" className="nc-btn ghost" onClick={clearComposerData}>{t('composer-clear-data')}</button>
+            </div>
+          </div>
+        </section>
+      </>}
+
+      {section === 'diagnostics' && <section className="nc-system-group nc-system-diagnostics">
+        <h3>{t('system-diagnostics')}</h3>
+        <div className="nc-set-form nc-alternate-screen-settings">
+          <div className="nc-sheet-label">{t('system-terminal')}</div>
+          <label className="nc-check">
+            <input type="checkbox" aria-label={t('alternate-screen')} checked={alternateScreen} disabled={readonly || busy}
+              onChange={(event) => toggleAlternateScreen(event.target.checked)} />
+            <span><b>{t('alternate-screen')}</b><small>{t('alternate-screen-help')}</small></span>
+          </label>
         </div>
-      </div>
+        <DiagnosticsTab token={token} roster={roster} readonly={readonly} />
+      </section>}
 
       {confirmRotate && (
         <div className="nc-set-confirm">
@@ -1106,7 +1154,9 @@ function SystemTab({ token, settings, readonly, refresh }) {
 
 export default function SettingsPanel({ token, onClose, initialTab = 'nodes', initialLocation = '', startNewCell = false }) {
   useLang();
-  const [tab, setTab] = useState(initialTab);
+  const initialSystemSection = initialTab === 'diagnostics' ? 'diagnostics' : 'general';
+  const [tab, setTab] = useState(initialTab === 'diagnostics' ? 'system' : initialTab);
+  const [systemSection, setSystemSection] = useState(initialSystemSection);
   const [settings, setSettings] = useState(null);
   const [nodes, setNodes] = useState([]);
   const [readonly, setReadonly] = useState(false);
@@ -1156,7 +1206,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
         {loadErr && <div className="nc-err">{loadErr}</div>}
 
         <div className="nc-set-tabs">
-          {['nodes', 'fleet', 'audio', 'input', 'diagnostics', 'system'].map((k) => (
+          {['nodes', 'fleet', 'audio', 'input', 'system'].map((k) => (
             <button key={k} type="button" className={`nc-set-tabbtn${tab === k ? ' on' : ''}`}
               onClick={() => setTab(k)}>{t(`tab-${k}`)}</button>
           ))}
@@ -1170,8 +1220,8 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
             targets={roster.map((g) => ({ route: g.route, label: g.label || g.name, status: g.status }))} />}
           {tab === 'audio' && <AudioTab token={token} readonly={readonly} nodes={nodes} settings={settings} />}
           {tab === 'input' && <InputTab />}
-          {tab === 'diagnostics' && <DiagnosticsTab token={token} roster={roster} readonly={readonly} />}
-          {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} refresh={refresh} />}
+          {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} refresh={refresh}
+            roster={roster} section={systemSection} setSection={setSystemSection} />}
         </div>
       </div>
     </div>

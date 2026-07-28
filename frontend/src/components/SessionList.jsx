@@ -16,6 +16,7 @@ import {
 } from '../lib/roster-view-model.js';
 import { OWNER_ID_RE } from '../lib/grid-model.js';
 import { isValidLabel } from '../lib/settings-model.js';
+import { writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import './SessionList.css';
 
 const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'local'}:${cell}`;
@@ -47,6 +48,12 @@ export default function SessionList({ onPick, token, onSettings }) {
     groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
   } = useNodePreferences();
   const preferredNodeGroups = preferredGroups(nodeGroups);
+
+  // La vista singola mobile smonta questa lista: conserva solo l'ultimo
+  // snapshot già disponibile per l'apertura immediata del CellSwitcher.
+  useEffect(() => {
+    writeCellSwitcherSnapshot({ sessions: sessions || [], cells, nodeGroups, localNodeId });
+  }, [sessions, cells, nodeGroups, localNodeId]);
 
   // Converge l'override ottimistico sulla source of truth restituita dai poll
   // locali/Hydra. PowerSheet e toggle diretto scrivono la stessa proprieta'.

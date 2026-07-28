@@ -17,3 +17,10 @@ test('i18n: t() fallback su IT e su chiave', async () => {
   assert.equal(t('__missing__'), '__missing__');
   assert.ok(DICTS.it.sessions);
 });
+
+test('i18n: alternateScreen esplicita l effetto del drag web sui TUI a schermo intero', async () => {
+  const { DICTS } = await import('../frontend/src/lib/i18n.js');
+  assert.match(DICTS.it['alternate-screen-help'], /trascinamento.*non scorre.*schermo intero/i);
+  assert.match(DICTS.en['alternate-screen-help'], /dragging.*does not scroll.*full-screen TUI/i);
+  assert.match(DICTS.es['alternate-screen-help'], /arrastrar.*no desplaza.*pantalla completa/i);
+});

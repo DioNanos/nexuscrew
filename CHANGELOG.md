@@ -2,7 +2,21 @@
 
 All notable changes to NexusCrew are tracked here.
 
-## Unreleased
+## 0.8.41 — 2026-07-28 — "Open Screen"
+
+- New NexusCrew-created sessions keep tmux `alternate-screen` off by default, scoped only
+  to the created session and its later windows. Full-screen TUI output now
+  remains in tmux history for mobile drag and normal scrolling; set
+  `alternateScreen: true` or `NEXUSCREW_ALTERNATE_SCREEN=1` to opt out. The
+  change is not retroactive, so a `vim`, `less` or `htop` screen remains visible
+  after it exits.
+- `nexuscrew doctor` warns, without changing tmux configuration, when the
+  normal-screen mode is active and `history-limit` is below 10000.
+- Moves diagnostics under System in settings and groups the System panel; the
+  alternate-screen toggle lives in the diagnostics section.
+- Explains what a shared audio group does before stating what it is not.
+- Adds a mobile cell switcher: a left drawer opens from the key bar for fast
+  switching between cells without returning to the session list.
 
 ## 0.8.40 — 2026-07-27 — "Shared Voice"
 
@@ -33,6 +47,15 @@ All notable changes to NexusCrew are tracked here.
 - Adds explicit Fleet credential-source policy (`auto`, environment or
   NexusCrew store), preserves legacy cells as no-op `auto`, and removes the
   conflicting provider environment set when the local store is selected.
+
+- New NexusCrew-created sessions keep tmux `alternate-screen` off by default, scoped only
+  to the created session and its later windows. Full-screen TUI output now
+  remains in tmux history for mobile drag and normal scrolling; set
+  `alternateScreen: true` or `NEXUSCREW_ALTERNATE_SCREEN=1` to opt out. The
+  change is not retroactive, so a `vim`, `less` or `htop` screen remains visible
+  after it exits.
+- `nexuscrew doctor` warns, without changing tmux configuration, when the
+  normal-screen mode is active and `history-limit` is below 10000.
 
 ## 0.8.39 — 2026-07-25 — "Honest Peer"
 

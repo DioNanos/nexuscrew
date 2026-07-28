@@ -118,10 +118,17 @@ Long text and multiline prompts use bracketed paste. Clipboard images and
 dropped files are stored in the selected session inbox; their paths are
 inserted without submitting Enter.
 
-Mobile finger drags browse tmux history, including alternate-screen TUIs.
-Desktop wheel events in writable alternate-screen TUIs remain
-application-owned Page Up/Page Down; normal and read-only terminals use tmux
-scroll.
+New sessions created by NexusCrew disable the tmux alternate screen by default.
+Full-screen TUI output therefore remains in tmux history, so mobile finger
+drags and normal terminal scrolling can browse it. Set `alternateScreen: true`
+in the local NexusCrew config (or `NEXUSCREW_ALTERNATE_SCREEN=1`) to restore the
+standard tmux behavior for future sessions created through Fleet. Existing and unmanaged
+sessions are unchanged.
+
+For an opted-out session that uses the alternate screen, desktop wheel events
+in writable TUIs remain application-owned Page Up/Page Down; normal and
+read-only terminals use tmux scroll. Keep a user-owned tmux `history-limit` of
+at least 10000; `nexuscrew doctor` diagnoses a lower value without changing it.
 
 Each owner-qualified cell keeps its own browser-local draft, composer size and
 bounded prompt history. That state is not federated or included in Fleet

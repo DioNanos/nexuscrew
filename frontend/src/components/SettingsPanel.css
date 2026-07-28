@@ -36,6 +36,12 @@
   text-transform: uppercase; letter-spacing: .5px;
 }
 .nc-set-tabbtn.on { border-color: #2e7d32; background: #14200f; color: #d8ffe8; }
+.nc-system-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.nc-system-tabs .nc-set-tabbtn { min-width: 0; text-transform: none; }
+.nc-system-group { display: flex; flex-direction: column; gap: 8px; }
+.nc-system-group > h3 { margin: 0; color: #d8ffe8; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.nc-system-diagnostics { gap: 12px; }
+.nc-alternate-screen-settings { border: 1px solid #243; border-radius: 10px; padding: 10px; }
 
 .nc-set-body { overflow-y: auto; flex: 1; min-height: 120px; }
 .nc-set-tab { display: flex; flex-direction: column; gap: 12px; }
@@ -178,8 +184,8 @@
   font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (max-width: 520px) {
-  .nc-set-tabs { overflow-x: auto; }
-  .nc-set-tabbtn { flex: 0 0 auto; padding-inline: 9px; }
+  .nc-set-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
+  .nc-set-tabbtn { min-width: 0; min-height: 40px; padding-inline: 6px; white-space: normal; }
   .nc-diag-filters { grid-template-columns: 1fr; }
   .nc-diag-log { min-height: 35vh; max-height: 48vh; }
 }
