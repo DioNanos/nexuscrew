@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import KeyBar from './KeyBar.jsx';
@@ -152,6 +152,122 @@ describe('KeyBar compact layout', () => {
     fireEvent.click(pgdn, { detail: 1 });
     expect(props.send).toHaveBeenCalledOnce();
     expect(props.send).toHaveBeenCalledWith('\x1b[6~');
+  });
+});
+
+describe('KeyBar navigation repeat', () => {
+  function startRepeat(button) {
+    fireEvent.pointerDown(button);
+    act(() => vi.advanceTimersByTime(350));
+  }
+
+  it('repeats a held navigation key after the initial delay and stops on release', () => {
+    vi.useFakeTimers();
+    try {
+      const { props } = renderKeyBar();
+      const right = screen.getByText('→');
+      fireEvent.pointerDown(right);
+      expect(props.send).toHaveBeenCalledTimes(1);
+      act(() => vi.advanceTimersByTime(349));
+      expect(props.send).toHaveBeenCalledTimes(1);
+      act(() => vi.advanceTimersByTime(1));
+      expect(props.send).toHaveBeenCalledTimes(2);
+      act(() => vi.advanceTimersByTime(110));
+      expect(props.send).toHaveBeenCalledTimes(4);
+      expect(props.send).toHaveBeenLastCalledWith('\x1b[C');
+
+      fireEvent.pointerUp(right);
+      act(() => vi.advanceTimersByTime(500));
+      expect(props.send).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['↑', '\x1b[A'], ['↓', '\x1b[B'], ['←', '\x1b[D'], ['→', '\x1b[C'],
+    ['PGUP', '\x1b[5~'], ['PGDN', '\x1b[6~'],
+  ])('repeats the supported %s key', (label, seq) => {
+    vi.useFakeTimers();
+    try {
+      const { props } = renderKeyBar();
+      const button = screen.getByText(label);
+      startRepeat(button);
+      expect(props.send).toHaveBeenCalledTimes(2);
+      expect(props.send).toHaveBeenNthCalledWith(1, seq);
+      expect(props.send).toHaveBeenNthCalledWith(2, seq);
+      fireEvent.pointerUp(button);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['leaves the button', (button) => fireEvent.pointerLeave(button)],
+    ['is cancelled', (button) => fireEvent.pointerCancel(button)],
+    ['gets a touchcancel', (button) => fireEvent.touchCancel(button)],
+    ['loses window focus', () => window.dispatchEvent(new Event('blur'))],
+  ])('stops a repeat when the gesture %s', (_label, stop) => {
+    vi.useFakeTimers();
+    try {
+      const { props } = renderKeyBar();
+      const pgdn = screen.getByText('PGDN');
+      startRepeat(pgdn);
+      expect(props.send).toHaveBeenCalledTimes(2);
+      stop(pgdn);
+      act(() => vi.advanceTimersByTime(500));
+      expect(props.send).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops a repeat when the page becomes hidden', () => {
+    vi.useFakeTimers();
+    const descriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    try {
+      const { props } = renderKeyBar();
+      const left = screen.getByText('←');
+      startRepeat(left);
+      expect(props.send).toHaveBeenCalledTimes(2);
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      act(() => vi.advanceTimersByTime(500));
+      expect(props.send).toHaveBeenCalledTimes(2);
+    } finally {
+      if (descriptor) Object.defineProperty(document, 'visibilityState', descriptor);
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps Escape, Enter, Ctrl and Alt as one-shot controls', () => {
+    vi.useFakeTimers();
+    try {
+      const { props } = renderKeyBar();
+      const esc = screen.getByText('ESC');
+      fireEvent.pointerDown(esc);
+      act(() => vi.advanceTimersByTime(600));
+      expect(props.send).toHaveBeenCalledTimes(1);
+      expect(props.send).toHaveBeenLastCalledWith('\x1b');
+
+      const enter = screen.getByRole('button', { name: 'ENTER' });
+      fireEvent.pointerDown(enter);
+      act(() => vi.advanceTimersByTime(600));
+      expect(props.send).toHaveBeenCalledTimes(2);
+      expect(props.send).toHaveBeenLastCalledWith('\r');
+
+      const ctrl = screen.getByText('CTRL');
+      fireEvent.pointerDown(ctrl);
+      act(() => vi.advanceTimersByTime(600));
+      expect(props.onCtrl).toHaveBeenCalledOnce();
+
+      const alt = screen.getByText('ALT');
+      fireEvent.pointerDown(alt);
+      act(() => vi.advanceTimersByTime(600));
+      expect(alt.classList.contains('armed')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -48,7 +48,7 @@ test('fill-forms skill is portable, multilingual and consent bounded', () => {
   assert.match(requirements, /^PyMuPDF/m);
   assert.match(requirements, /^python-docx/m);
 
-  assert.doesNotMatch(combined, /\/home\/|DocsHub|ACTIVE_WORK|cloud-Dev|DAG\b/);
+  assert.doesNotMatch(combined, /\/home\/|PROJECT_DOCS|ACTIVE_WORK|cloud-Dev|OPERATOR\b/);
   assert.doesNotMatch(combined, /subprocess\.check_call|pip install|requests\.|urllib\.request/);
   assert.doesNotMatch(combined, /@[a-z0-9.-]+\.[a-z]{2,}/i);
 });

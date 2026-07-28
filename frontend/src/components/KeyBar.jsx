@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
 import { dismissVirtualKeyboard } from '../lib/virtual-keyboard.js';
 import { t } from '../lib/i18n.js';
@@ -13,6 +13,11 @@ const NAV = [
   { label: '↑', seq: ESC + '[A' }, { label: '↓', seq: ESC + '[B' },
   { label: 'PGUP', seq: ESC + '[5~' }, { label: 'PGDN', seq: ESC + '[6~' },
 ];
+const REPEATABLE_SEQUENCES = new Set([
+  ESC + '[A', ESC + '[B', ESC + '[C', ESC + '[D', ESC + '[5~', ESC + '[6~',
+]);
+const REPEAT_INITIAL_DELAY_MS = 350;
+const REPEAT_INTERVAL_MS = 55;
 
 export default function KeyBar({
   send, action, ctrlArmed = false, onCtrl, onKeyboard, selectionMode = false,
@@ -26,6 +31,30 @@ export default function KeyBar({
   // stato locale — NON riscrive la preferenza keybarLayout (che resta "compact").
   const [expanded, setExpanded] = useState(false);
   const compact = keybarLayout === 'compact' && !expanded;
+  const repeatTimersRef = useRef({ delay: null, interval: null });
+  const stopRepeatRef = useRef(() => {});
+
+  const stopRepeat = () => {
+    const timers = repeatTimersRef.current;
+    if (timers.delay !== null) clearTimeout(timers.delay);
+    if (timers.interval !== null) clearInterval(timers.interval);
+    timers.delay = null; timers.interval = null;
+  };
+  stopRepeatRef.current = stopRepeat;
+
+  useEffect(() => {
+    const stopForVisibility = () => {
+      if (document.visibilityState === 'hidden') stopRepeatRef.current();
+    };
+    const stopForBlur = () => stopRepeatRef.current();
+    window.addEventListener('blur', stopForBlur);
+    document.addEventListener('visibilitychange', stopForVisibility);
+    return () => {
+      window.removeEventListener('blur', stopForBlur);
+      document.removeEventListener('visibilitychange', stopForVisibility);
+      stopRepeatRef.current();
+    };
+  }, []);
 
   // Temporary expansion belongs only to the current compact preference. If
   // Settings switches to full, discard it so a later return to compact starts
@@ -49,8 +78,32 @@ export default function KeyBar({
     onPointerDown: (e) => { e.preventDefault(); run(fn); },
     onClick: (e) => { if (e.detail === 0) run(fn); },
   });
+  const repeatPress = (fn) => ({
+    onPointerDown: (e) => {
+      e.preventDefault();
+      stopRepeat();
+      run(fn);
+      // ALT is sticky for exactly one KeyBar key. Do not turn Alt+navigation
+      // into a stream of Meta-prefixed bytes while the button remains held.
+      if (altArmed) return;
+      repeatTimersRef.current.delay = setTimeout(() => {
+        repeatTimersRef.current.delay = null;
+        fn();
+        repeatTimersRef.current.interval = setInterval(fn, REPEAT_INTERVAL_MS);
+      }, REPEAT_INITIAL_DELAY_MS);
+    },
+    onPointerUp: stopRepeat,
+    onPointerLeave: stopRepeat,
+    onPointerCancel: stopRepeat,
+    onLostPointerCapture: stopRepeat,
+    onTouchCancel: stopRepeat,
+    onClick: (e) => { if (e.detail === 0) run(fn); },
+  });
   const Bk = (label, seq, after) => (
-    <button type="button" key={label} {...press(() => { emit(seq); if (after) after(); })}>{label}</button>
+    <button type="button" key={label}
+      {...(REPEATABLE_SEQUENCES.has(seq) && !after
+        ? repeatPress(() => emit(seq))
+        : press(() => { emit(seq); if (after) after(); }))}>{label}</button>
   );
   const Ba = (label, name) => (
     <button type="button" key={label} {...press(() => { action(name); setMenu(false); })}>{label}</button>

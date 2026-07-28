@@ -125,10 +125,10 @@ in the local NexusCrew config (or `NEXUSCREW_ALTERNATE_SCREEN=1`) to restore the
 standard tmux behavior for future sessions created through Fleet. Existing and unmanaged
 sessions are unchanged.
 
-For an opted-out session that uses the alternate screen, desktop wheel events
-in writable TUIs remain application-owned Page Up/Page Down; normal and
-read-only terminals use tmux scroll. Keep a user-owned tmux `history-limit` of
-at least 10000; `nexuscrew doctor` diagnoses a lower value without changing it.
+Desktop wheel events always browse tmux history, including in writable TUIs
+that use the alternate screen and while Shift is held. Keep a user-owned tmux
+`history-limit` of at least 10000; `nexuscrew doctor` diagnoses a lower value
+without changing it.
 
 Each owner-qualified cell keeps its own browser-local draft, composer size and
 bounded prompt history. That state is not federated or included in Fleet

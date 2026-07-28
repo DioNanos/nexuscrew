@@ -10,6 +10,7 @@ vi.mock('@xterm/xterm', () => ({
       this.textarea = document.createElement('textarea');
       this.options = {}; this.cols = 80; this.rows = 24;
       this.buffer = { active: { viewportY: 0 } };
+      this.selectCalls = [];
       fixture.instances.push(this);
     }
     loadAddon() {}
@@ -20,7 +21,7 @@ vi.mock('@xterm/xterm', () => ({
     attachCustomKeyEventHandler() {}
     getSelection() { return ''; }
     clearSelection() {}
-    select() {}
+    select(col, row, length) { this.selectCalls.push({ col, row, length }); }
     write() {}
     paste() {}
     dispose() {}
@@ -43,11 +44,11 @@ const stableRefs = {
   actionRef: { current: null }, ctrlRef: { current: false },
 };
 
-function renderTerminal(keyboardGesture = 'double-tap') {
+function renderTerminal(keyboardGesture = 'double-tap', extraProps = {}) {
   return render(
     <div style={{ width: 400, height: 300 }}>
       <Terminal session="cloud-Dev" token="t" keyboardGesture={keyboardGesture}
-        {...stableRefs} />
+        {...stableRefs} {...extraProps} />
     </div>,
   );
 }
@@ -55,6 +56,12 @@ function renderTerminal(keyboardGesture = 'double-tap') {
 function tap(host, x = 30, y = 40) {
   fireEvent.touchStart(host, { touches: [{ clientX: x, clientY: y }] });
   fireEvent.touchEnd(host, { changedTouches: [{ clientX: x, clientY: y }] });
+}
+
+function terminalBounds(host, width = 800, height = 480) {
+  vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({
+    width, height, top: 0, left: 0, right: width, bottom: height, x: 0, y: 0, toJSON() {},
+  });
 }
 
 beforeEach(() => {
@@ -172,6 +179,76 @@ describe('terminal double-tap cancellation', () => {
     tapNearAfterCancellation(host); // un tap vicino subito dopo non sblocca
     expect(fixture.focusCount).toBe(0);
     expect(textarea.inputMode).toBe('none');
+  });
+});
+
+describe('terminal long-press touch selection', () => {
+  it('keeps the anchor under the long-press while the visible caret tracks two rows above the finger', () => {
+    const onSelectionModeChange = vi.fn();
+    const view = renderTerminal('double-tap', { onSelectionModeChange });
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    terminalBounds(host);
+
+    fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
+    act(() => vi.advanceTimersByTime(450));
+    let caret = view.container.querySelector('.nc-touch-selection-caret');
+    expect(onSelectionModeChange).toHaveBeenCalledWith(true);
+    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 8, length: 161 });
+    expect(caret.style.left).toBe('50px');
+    expect(caret.style.top).toBe('160px');
+
+    fireEvent.touchMove(host, { touches: [{ clientX: 70, clientY: 240 }] });
+    caret = view.container.querySelector('.nc-touch-selection-caret');
+    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 3 });
+    expect(caret.style.left).toBe('70px');
+    expect(caret.style.top).toBe('200px');
+
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 70, clientY: 240 }] });
+    expect(view.container.querySelector('.nc-touch-selection-caret')).toBeNull();
+    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 3 });
+  });
+
+  it('inverts below the top edge and renders the caret even on the last empty cell', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    terminalBounds(host);
+
+    fireEvent.touchStart(host, { touches: [{ clientX: 799, clientY: 10 }] });
+    act(() => vi.advanceTimersByTime(450));
+    const caret = view.container.querySelector('.nc-touch-selection-caret');
+    expect(term.selectCalls.at(-1)).toEqual({ col: 79, row: 0, length: 161 });
+    expect(caret.style.left).toBe('790px');
+    expect(caret.style.top).toBe('40px');
+    expect(caret.style.width).toBe('10px');
+    expect(caret.style.height).toBe('20px');
+  });
+
+  it('leaves the existing selectionMode path absolute and without the touch caret', () => {
+    const view = renderTerminal('double-tap', { selectionMode: true });
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    terminalBounds(host);
+
+    fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
+    fireEvent.touchMove(host, { touches: [{ clientX: 50, clientY: 240 }] });
+    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 161 });
+    expect(view.container.querySelector('.nc-touch-selection-caret')).toBeNull();
+  });
+
+  it('hides the long-press caret immediately when a second finger joins the gesture', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+
+    const first = { clientX: 50, clientY: 200 };
+    fireEvent.touchStart(host, { touches: [first] });
+    act(() => vi.advanceTimersByTime(450));
+    expect(view.container.querySelector('.nc-touch-selection-caret')).not.toBeNull();
+
+    fireEvent.touchStart(host, { touches: [first, { clientX: 70, clientY: 220 }] });
+    expect(view.container.querySelector('.nc-touch-selection-caret')).toBeNull();
   });
 });
 
@@ -309,7 +386,7 @@ describe('terminal scroll plan integration', () => {
     expect(fixture.inputs).toEqual([]); // the wheel no longer steals the TUI viewport
   });
 
-  it('Shift+wheel keeps the raw PageUp/PageDown escape hatch for the TUI viewport', () => {
+  it('Shift+wheel still browses tmux history in a writable alternate-screen TUI', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
@@ -317,8 +394,11 @@ describe('terminal scroll plan integration', () => {
     vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ height: 300, width: 400, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
     fireEvent.wheel(host, { deltaY: -300, shiftKey: true });
     fireEvent.wheel(host, { deltaY: 300, shiftKey: true });
-    expect(fixture.inputs).toEqual(['\x1b[5~', '\x1b[6~']);
-    expect(fixture.actions).toEqual([]);
+    expect(fixture.inputs).toEqual([]);
+    expect(fixture.actions).toEqual([
+      ...Array(8).fill('scroll-up'),
+      ...Array(8).fill('scroll-down'),
+    ]);
   });
 
   it('Shift+wheel on the normal screen stays server-side', () => {
@@ -329,16 +409,17 @@ describe('terminal scroll plan integration', () => {
     expect(fixture.inputs).toEqual([]);
   });
 
-  it('does not reinterpret an alternate-screen page remainder as line ticks after a mode change', () => {
+  it('keeps Shift-wheel in the same tmux history accumulator as an unmodified wheel', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
     term.buffer.active.type = 'alternate';
     vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ height: 300, width: 400, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
-    fireEvent.wheel(host, { deltaY: -290, shiftKey: true }); // page remainder: +290, no action
+    fireEvent.wheel(host, { deltaY: -290, shiftKey: true }); // 8 bounded steps, 2px remainder
     expect(fixture.inputs).toEqual([]);
-    fireEvent.wheel(host, { deltaY: -1 }); // releasing Shift switches mode: line delta only
-    expect(fixture.actions).toEqual([]);
+    expect(fixture.actions).toHaveLength(8);
+    fireEvent.wheel(host, { deltaY: -22 }); // 2px + 22px = one more history step
+    expect(fixture.actions).toHaveLength(9);
     expect(fixture.inputs).toEqual([]);
   });
 
