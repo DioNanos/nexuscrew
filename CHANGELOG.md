@@ -4,6 +4,18 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.44 — 2026-07-28 — "Deliberate Switch"
+
+- The mobile cell quick rail now separates selection from switching: choose a
+  row, then use the explicit open action, which rechecks the target live before
+  changing terminal. A touch on the rail never switches session on its own.
+- Reorder cells with their dedicated drag handle. The saved order is shared by
+  the mobile rail, main roster and desktop sidebar; it retains unmanaged tmux
+  sessions and restores an inactive cell to its earlier place when it returns.
+- The quick rail continues to show freshly verified active cells by default,
+  retains degraded cells as warnings, refreshes routed Fleet state while open,
+  and keeps an explicit all-cells view for inventory and recovery work.
+
 ## 0.8.43 — 2026-07-28 — "Quick Truth"
 
 - The mobile cell switcher is now a bottom-left quick rail that lists only

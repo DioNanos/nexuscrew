@@ -22,9 +22,14 @@ NexusCrew gives the same live tmux session a touch-first terminal without
 moving the session away from its host.
 
 Inside a mobile terminal, the cell control in the key bar opens a bottom-left
-quick rail of freshly verified live cells. It refreshes routed Fleet state while
-open, keeps a degraded cell visible as a warning, and has an explicit all-cells
-view when you need the complete inventory instead of a quick switch.
+quick rail of freshly verified live cells. Choose a cell first, then use the
+separate **Open cell** action to switch after a final live check; a touch on the
+rail never changes session by itself. Drag the dedicated handle to arrange
+cells—the same saved order is used by the main roster and desktop sidebar, and
+an offline cell returns to its place when it reconnects. The rail refreshes
+routed Fleet state while open, keeps a degraded cell visible as a warning, and
+has an explicit all-cells view when you need the complete inventory instead of
+a quick switch.
 
 <p align="center">
   <img src="docs/img/session-mobile.png" width="360" alt="NexusCrew mobile terminal connected to a real tmux session with touch controls">

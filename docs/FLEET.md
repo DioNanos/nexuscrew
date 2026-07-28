@@ -106,6 +106,12 @@ checks the target again before switching. A degraded cell remains visible as a
 warning rather than disappearing. Use the explicit all-cells control for the
 complete inventory, including stopped cells.
 
+Choosing a row only selects it. Use the separate **Open cell** control to make
+the switch, so an exploratory touch cannot replace the terminal under your
+finger. Drag a row by its handle to reorder cells. That order is shared with
+the main roster and desktop sidebar, retains unmanaged tmux sessions, and
+keeps an offline cell's position for when it becomes active again.
+
 ## Terminal behavior
 
 Terminal attachment uses `tmux attach -f ignore-size` by default, so a phone or
