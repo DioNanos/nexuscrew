@@ -2,6 +2,12 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## Unreleased
+
+- Updates the frontend build toolchain (postcss 8.5.23) to clear a path
+  traversal advisory in the source-map loader. Build-only dependency: the
+  published package was never affected.
+
 ## 0.8.41 — 2026-07-28 — "Open Screen"
 
 - New NexusCrew-created sessions keep tmux `alternate-screen` off by default, scoped only
