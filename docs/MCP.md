@@ -20,6 +20,12 @@ cells.
 | `nc_cell_diagnostics` | Read redacted launch state for one exact local cell |
 | `nc_send_cell` | Submit bounded text to one exact active cell |
 | `nc_identity` | Diagnose caller identity without reading a token |
+| `nc_speak` | Speak a bounded utterance on one exact authorized node ID |
+| `nc_speak_status` | Read a caller-scoped exact-target audio receipt |
+| `nc_speak_stop` | Stop a caller-owned exact-target utterance |
+| `nc_speak_group` | Start a local named primary/failover or explicit fan-out group |
+| `nc_speak_group_status` | Read a caller-scoped per-endpoint group receipt |
+| `nc_speak_group_stop` | Stop a group and prevent untried failover candidates |
 
 Cell delivery uses bracketed paste followed by a separate Enter. A `submitted`
 receipt confirms transport to the target TUI, not acceptance or completion by
@@ -102,6 +108,15 @@ It never calls the HTTP API or reads the bearer token.
 active local Fleet cell. Its command and failure information are bounded and
 credential-redacted.
 
+### Audio Share
+
+Audio tools require an active local Fleet cell and an HMAC-signed bridge
+request. The target node independently enforces its own audio consent, ACL,
+`READONLY`, rate limit, and native capability. A successful adapter start is
+reported as `spoken`; it is not proof of physical audibility. See
+[Audio Share and native TTS](AUDIO_SHARE.md) for exact-target and group
+semantics.
+
 ## Optional companions
 
 NexusCrew can work alongside separate local-first MCP servers for:
@@ -122,4 +137,5 @@ See [MCP_COMPANIONS.md](../MCP_COMPANIONS.md) and
 
 - [Fleet and terminals](FLEET.md)
 - [Connect nodes](NODES.md)
+- [Audio Share and native TTS](AUDIO_SHARE.md)
 - [Security](SECURITY.md)

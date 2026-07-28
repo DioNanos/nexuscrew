@@ -33,6 +33,10 @@ Spoken alerts are:
 - spoken in the notification's declared content language when available
 - never sent to a remote speech service
 
+For backend-delivered speech on a shared Mac, Linux host, or Termux device,
+use [Audio Share and native TTS](AUDIO_SHARE.md). It has a separate local
+consent gate and does not depend on the browser remaining foregrounded.
+
 `nc_notify` accepts an optional `lang` value for Italian, English or Spanish,
 using either a base code (`it`) or an equivalent BCP-47 locale (`it-IT`). The
 live PWA selects a matching installed voice when the browser exposes one.
@@ -93,4 +97,5 @@ Browser and operating-system voice availability remains device-dependent.
 ## Related guides
 
 - [Configuration](CONFIGURATION.md)
+- [Audio Share and native TTS](AUDIO_SHARE.md)
 - [Security](SECURITY.md)

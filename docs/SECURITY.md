@@ -89,6 +89,13 @@ Optional spoken notifications use the browser's device-local speech engine.
 Credential-shaped values and private home paths are redacted before speech;
 notification text is not sent to a speech service.
 
+Audio Share is a separate backend path for a node with a real speaker. Its
+local consent defaults to off and is independent of node Share and visibility;
+neither routing control grants permission to make sound. Calls use an
+HMAC-proven active Fleet origin, exact node IDs, target-side ACL and rate
+limits. Audio groups are local delivery preferences, never an authorization.
+See [Audio Share and native TTS](AUDIO_SHARE.md).
+
 ## Updates and process safety
 
 Stable updates verify the new CLI and same-port runtime, and roll back once to
@@ -110,4 +117,5 @@ channel when available.
 - [Connect nodes](NODES.md)
 - [Configuration](CONFIGURATION.md)
 - [Notifications](NOTIFICATIONS.md)
+- [Audio Share and native TTS](AUDIO_SHARE.md)
 - [Operations](OPERATIONS.md)
