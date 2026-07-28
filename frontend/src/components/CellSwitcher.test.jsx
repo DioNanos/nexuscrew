@@ -14,6 +14,7 @@ const active = (cell, tmuxSession) => ({ cell, tmuxSession, active: true, tmux: 
 const off = (cell, tmuxSession) => ({ cell, tmuxSession, active: false, tmux: false, engine: 'agy.native' });
 
 beforeEach(() => {
+  localStorage.clear();
   localStorage.setItem('nc_lang', 'en');
   writeCellSwitcherSnapshot({
     sessions: [{ name: 'cloud-Dev', activity: 10, working: true }],
@@ -50,25 +51,31 @@ beforeEach(() => {
 });
 
 describe('CellSwitcher', () => {
-  it('uses fresh local and route-qualified fleet data, keeps degraded visible and hides off cells by default', async () => {
+  it('uses fresh local and route-qualified fleet data, keeps degraded visible and requires explicit opening', async () => {
     const onPick = vi.fn(); const onClose = vi.fn();
     render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={onPick} onClose={onClose} />);
 
     const dialog = await screen.findByRole('dialog', { name: 'Cells / cloud sessions' });
     expect(dialog.getAttribute('aria-modal')).toBeNull();
-    expect(screen.getByRole('button', { name: /Dev/ }).getAttribute('aria-current')).toBe('true');
-    expect(screen.getByRole('button', { name: /Remote/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Degraded/ }).getAttribute('aria-disabled')).toBe('true');
-    expect(screen.queryByRole('button', { name: /Research/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Stale Cell/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /^Dev / }).getAttribute('aria-current')).toBe('true');
+    const remote = screen.getByRole('button', { name: /^Remote / });
+    expect(remote).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Degraded / }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.queryByRole('button', { name: /^Research / })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Stale Cell / })).toBeNull();
     expect(screen.getByRole('button', { name: 'close cell switcher' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'select a cell' }).disabled).toBe(true);
     await waitFor(() => {
       expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['hub']);
       expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['stale']);
       expect(mocks.getRouteSessions).toHaveBeenCalledWith('token', ['alerts']);
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /Remote/ }));
+    fireEvent.click(remote);
+    expect(remote.getAttribute('aria-pressed')).toBe('true');
+    expect(onPick).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'open cell: Remote' }));
     await waitFor(() => expect(onPick).toHaveBeenCalledWith({ session: 'cloud-Remote', node: 'hub', cellName: 'Remote' }));
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -76,9 +83,9 @@ describe('CellSwitcher', () => {
   it('exposes the full inventory deliberately and refuses an off target with an explicit status', async () => {
     const onPick = vi.fn();
     render(<CellSwitcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: /Dev/ });
+    await screen.findByRole('button', { name: /^Dev / });
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
-    const research = screen.getByRole('button', { name: /Research/ });
+    const research = screen.getByRole('button', { name: /^Research / });
     expect(research.getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(research);
     expect(await screen.findByText('this cell is no longer active')).toBeTruthy();
@@ -90,5 +97,39 @@ describe('CellSwitcher', () => {
     render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} />);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('shares the main roster order and keeps an off cell in its place when it returns', async () => {
+    const first = render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^Dev / });
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    const researchHandle = screen.getByRole('button', { name: 'reorder Research' });
+    fireEvent.keyDown(researchHandle, { key: 'ArrowUp' });
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('nc_sidebar_order_v1'))?.local)
+      .toEqual(['cloud-Research', 'cloud-Dev']));
+    expect(researchHandle.getAttribute('aria-keyshortcuts')).toBe('ArrowUp ArrowDown');
+
+    first.unmount();
+    writeCellSwitcherSnapshot({
+      sessions: [
+        { name: 'cloud-Dev', activity: 10, working: true },
+        { name: 'cloud-Research', activity: 2, working: false },
+      ],
+      cells: [active('Dev', 'cloud-Dev'), active('Research', 'cloud-Research')],
+      nodeGroups: [],
+    });
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
+      sessions: [
+        { name: 'cloud-Dev', activity: 10, working: true },
+        { name: 'cloud-Research', activity: 2, working: false },
+      ],
+    }) });
+    mocks.fleetStatus.mockResolvedValue({
+      available: true, cells: [active('Dev', 'cloud-Dev'), active('Research', 'cloud-Research')],
+    });
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^Research / });
+    expect([...document.querySelectorAll('.nc-cell-switcher-row[data-position="local"]')]
+      .map((row) => row.dataset.rosterKey)).toEqual(['cloud-Research', 'cloud-Dev']);
   });
 });
