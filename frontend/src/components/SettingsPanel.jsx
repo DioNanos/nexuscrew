@@ -1156,6 +1156,9 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   useLang();
   const initialSystemSection = initialTab === 'diagnostics' ? 'diagnostics' : 'general';
   const [tab, setTab] = useState(initialTab === 'diagnostics' ? 'system' : initialTab);
+  const tabsRef = useRef(null);
+  const activeTabRef = useRef(null);
+  const [tabOverflow, setTabOverflow] = useState({ start: false, end: false });
   const [systemSection, setSystemSection] = useState(initialSystemSection);
   const [settings, setSettings] = useState(null);
   const [nodes, setNodes] = useState([]);
@@ -1163,6 +1166,41 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   const [loadErr, setLoadErr] = useState(null);
   const [aliasRevision, setAliasRevision] = useState(0);
   const roster = useNodes(token, true, aliasRevision);
+
+  const updateTabOverflow = useCallback(() => {
+    const tabs = tabsRef.current;
+    if (!tabs) return;
+    const canScroll = tabs.scrollWidth > tabs.clientWidth + 1;
+    const next = {
+      start: canScroll && tabs.scrollLeft > 1,
+      end: canScroll && tabs.scrollLeft + tabs.clientWidth < tabs.scrollWidth - 1,
+    };
+    setTabOverflow((current) => current.start === next.start && current.end === next.end ? current : next);
+  }, []);
+
+  useEffect(() => {
+    const tabs = tabsRef.current;
+    if (!tabs) return undefined;
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(updateTabOverflow) : null;
+    observer?.observe(tabs);
+    window.addEventListener('resize', updateTabOverflow);
+    updateTabOverflow();
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateTabOverflow);
+    };
+  }, [updateTabOverflow]);
+
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    const frame = window.requestAnimationFrame
+      ? window.requestAnimationFrame(updateTabOverflow)
+      : setTimeout(updateTabOverflow, 0);
+    return () => {
+      if (window.cancelAnimationFrame) window.cancelAnimationFrame(frame);
+      else clearTimeout(frame);
+    };
+  }, [tab, updateTabOverflow]);
 
   const refresh = useCallback(async () => {
     try {
@@ -1205,11 +1243,13 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
         {readonly && <div className="nc-set-readonly">{t('settings-readonly')}</div>}
         {loadErr && <div className="nc-err">{loadErr}</div>}
 
-        <div className="nc-set-tabs">
-          {['nodes', 'fleet', 'audio', 'input', 'system'].map((k) => (
-            <button key={k} type="button" className={`nc-set-tabbtn${tab === k ? ' on' : ''}`}
-              onClick={() => setTab(k)}>{t(`tab-${k}`)}</button>
-          ))}
+        <div className={`nc-set-tabs-wrap${tabOverflow.start ? ' has-start-overflow' : ''}${tabOverflow.end ? ' has-end-overflow' : ''}`}>
+          <div className="nc-set-tabs" ref={tabsRef} onScroll={updateTabOverflow}>
+            {['nodes', 'fleet', 'audio', 'input', 'system'].map((k) => (
+              <button key={k} ref={tab === k ? activeTabRef : null} type="button" className={`nc-set-tabbtn${tab === k ? ' on' : ''}`}
+                onClick={() => setTab(k)}>{t(`tab-${k}`)}</button>
+            ))}
+          </div>
         </div>
 
         <div className="nc-set-body">
