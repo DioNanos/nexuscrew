@@ -79,7 +79,7 @@ export default function RosterHandle({
     event.preventDefault(); event.stopPropagation(); event.currentTarget.focus({ preventScroll: true });
     const selector = scope === 'node' ? '[data-node-order-key]' : '[data-roster-key][data-position]';
     const source = event.currentTarget.closest(selector);
-    const container = event.currentTarget.closest('.nc-side-scroll, .nc-home-scroll');
+    const container = event.currentTarget.closest('.nc-side-scroll, .nc-home-scroll, .nc-cell-switcher-list');
     state.current = {
       pointerId: event.pointerId, handle: event.currentTarget, source, container,
       target: null, over: null, x: event.clientX, y: event.clientY,
