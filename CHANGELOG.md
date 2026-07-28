@@ -4,6 +4,19 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.42 — 2026-07-28 — "Steady Hand"
+
+- Touch selection no longer hides its own endpoint under the finger. A long
+  press keeps its anchor and moves an offset caret two rows above the touch
+  point, inverted near the top edge, so the text being selected stays visible.
+- KeyBar arrow and page keys repeat while held, like a physical keyboard: an
+  initial delay, then a steady stream that stops on release, on leaving the key,
+  on cancel, and when the page loses focus or visibility.
+- The Settings tab bar is a single scrollable row with edge cues and auto-scroll
+  to the active tab, instead of a grid that left an empty cell and used a third
+  of a phone screen.
+- The mouse wheel now browses tmux history in every case, matching the finger
+  drag. The Shift modifier no longer switches to application page keys.
 - Updates the frontend build toolchain (postcss 8.5.23) to clear a path
   traversal advisory in the source-map loader. Build-only dependency: the
   published package was never affected.
