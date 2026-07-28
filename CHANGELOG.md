@@ -4,6 +4,8 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.43 — 2026-07-28 — "Quick Truth"
+
 - The mobile cell switcher is now a bottom-left quick rail that lists only
   freshly verified live cells by default. It refreshes local and routed Fleet
   state while open, verifies a target again before switching, retains degraded
