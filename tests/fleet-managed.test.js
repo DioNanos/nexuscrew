@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const {
   CATALOG, OLLAMA_CONTEXT, normalizeManagedSpec, defaultDefinitions, describeManaged,
-  resolveManagedEngine, parseEnvFile, parseProviderShellFile, discoverOllamaModels, discoverPiModels, needsExplicitNode,
+  resolveManagedEngine, parseEnvFile, parseProviderShellFile, discoverOllamaModels, discoverPiModels, EXTERNAL_DISCOVERY_TIMEOUT_MS, needsExplicitNode,
   publicCatalog, parseProviderKeyFiles, describeCatalogCredential,
   shellConfiguredCommandArgs,
 } = require('../lib/fleet/managed.js');
@@ -160,6 +160,23 @@ test('Pi model discovery: usa il comando documentato --list-models e raggruppa p
   });
   assert.deepEqual(calls, [['/trusted/pi', ['--list-models']]]);
   assert.deepEqual(models, { openai: ['gpt-5.4'], ollama: ['deepseek-v4-pro:cloud'] });
+});
+
+test('Pi model discovery: cachea il fallimento del binario e resta sotto il budget MCP', async () => {
+  const calls = [];
+  const execFileImpl = (bin, args, opts, cb) => {
+    calls.push({ bin, args, opts });
+    cb(new Error('hung external discovery'));
+  };
+  const first = await discoverPiModels({ binary: '/trusted/pi-hung', ttlMs: 0, execFileImpl });
+  const second = await discoverPiModels({ binary: '/trusted/pi-hung', ttlMs: 300000, execFileImpl });
+  const third = await discoverPiModels({ binary: '/trusted/pi-hung', ttlMs: 300000, execFileImpl });
+  assert.deepEqual(first, {});
+  assert.deepEqual(second, {});
+  assert.deepEqual(third, {});
+  assert.equal(calls.length, 1, 'un failure esterno viene riusato durante il TTL');
+  assert.equal(calls[0].opts.timeout, EXTERNAL_DISCOVERY_TIMEOUT_MS);
+  assert.ok(calls[0].opts.timeout < 10000, 'la discovery lascia margine al bridge MCP');
 });
 
 test('Ollama Direct: usa ollama.com + OLLAMA_API_KEY, mai localhost', () => {

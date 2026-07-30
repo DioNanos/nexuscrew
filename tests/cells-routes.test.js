@@ -21,7 +21,7 @@ async function boot(t, opts = {}) {
   const submissions = [];
   const app = express();
   app.use('/api/cells', cellsRoutes({
-    fleetP: Promise.resolve({ available: true, status: async () => STATUS }),
+    fleetP: Promise.resolve(opts.fleet || { available: true, status: async () => STATUS }),
     instanceId: () => LOCAL,
     submit: opts.submit || (async (session, text, meta) => { submissions.push({ session, text, meta }); return { submitted: true }; }),
     readonly: () => opts.readonly === true,
@@ -82,6 +82,19 @@ test('GET /cells e POST /cells/send consegnano solo alla cella Fleet attiva esat
   });
   assert.equal(arbitrary.status, 404);
   assert.equal(submissions.length, 1);
+});
+
+test('GET /cells usa lo stato leggero e non blocca sulla discovery del catalogo', async (t) => {
+  let lightCalls = 0;
+  const { base } = await boot(t, { fleet: {
+    available: true,
+    cellStatus: async () => { lightCalls += 1; return STATUS; },
+    status: async () => { throw new Error('la discovery completa non deve servire alla directory'); },
+  } });
+  const response = await fetch(`${base}/api/cells`);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).cells.length, 2);
+  assert.equal(lightCalls, 1);
 });
 
 test('remote sender requires the server-controlled visited route', async (t) => {

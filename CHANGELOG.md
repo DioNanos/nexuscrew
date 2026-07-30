@@ -4,6 +4,16 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.45 — 2026-07-30 — "Resilient Directory"
+
+- Fleet cell-directory reads no longer wait for external model catalog discovery.
+  A stalled optional engine binary therefore cannot make the MCP bridge present
+  a reachable local Fleet as unavailable.
+- External model discovery has a bounded five-second budget and caches failures
+  as well as successful results, preventing repeated hung subprocess calls.
+- The MCP cell directory now marks a local timeout explicitly, so a degraded
+  bridge can be distinguished from an unreachable remote node.
+
 ## 0.8.44 — 2026-07-28 — "Deliberate Switch"
 
 - The mobile cell quick rail now separates selection from switching: choose a
