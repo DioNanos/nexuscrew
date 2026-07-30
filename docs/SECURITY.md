@@ -38,6 +38,8 @@ device.
 - OpenSSH remains the network and identity authority.
 - NexusCrew supervises SSH but does not create keys or edit
   `authorized_keys`.
+- Node and deck identities remain owner-qualified.
+- Routed HTTP and WebSocket requests recheck ACL, hop count and cycle rules.
 
 ### Reverse-port recovery
 
@@ -53,8 +55,6 @@ or unknown listener is quarantined for diagnosis: NexusCrew does not kill SSH
 processes or release ports it cannot prove it owns. Removed pools remain
 retired, preventing an old SSH key from binding a port reassigned to another
 peer.
-- Node and deck identities remain owner-qualified.
-- Routed HTTP and WebSocket requests recheck ACL, hop count and cycle rules.
 
 ## Provider credentials
 
