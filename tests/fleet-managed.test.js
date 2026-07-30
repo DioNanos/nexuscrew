@@ -179,6 +179,25 @@ test('Pi model discovery: cachea il fallimento del binario e resta sotto il budg
   assert.ok(calls[0].opts.timeout < 10000, 'la discovery lascia margine al bridge MCP');
 });
 
+test('Pi model discovery: un refresh noCache fallito non sovrascrive la cache condivisa', async () => {
+  const binary = '/trusted/pi-no-cache';
+  const cached = await discoverPiModels({
+    binary, noCache: true,
+    execFileImpl: (_bin, _args, _opts, cb) => cb(null, 'Provider Model\nopenai gpt-5.4\n'),
+  });
+  const refreshed = await discoverPiModels({
+    binary, noCache: true,
+    execFileImpl: (_bin, _args, _opts, cb) => cb(new Error('refresh fallito')),
+  });
+  const reused = await discoverPiModels({
+    binary, ttlMs: 300000,
+    execFileImpl: () => { throw new Error('la cache valida non deve rieseguire il binario'); },
+  });
+  assert.deepEqual(cached, { openai: ['gpt-5.4'] });
+  assert.deepEqual(refreshed, {});
+  assert.deepEqual(reused, { openai: ['gpt-5.4'] });
+});
+
 test('Ollama Direct: usa ollama.com + OLLAMA_API_KEY, mai localhost', () => {
   const home = tmp();
   try {

@@ -446,6 +446,18 @@ test('status --json: nodes[] con stato tunnel reale, token REDATTI', () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test('status --json: peer inbound privato dichiara Share disabled', () => {
+  const home = nodeHome();
+  seedInbound(home, { shared: false, token: 'T' });
+  const lines = [];
+  status({ home, platform: 'linux', json: true, log: (line) => lines.push(line), execImpl: () => { throw new Error('inactive'); } });
+  const peer = JSON.parse(lines.join('\n')).nodes[0];
+  assert.equal(peer.tunnel.status, 'private-peer');
+  assert.equal(peer.tunnel.share, 'disabled');
+  assert.equal(peer.shared, false);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 test('doctor: riporta SSH/autossh usati senza fingere di certificare lo sshd remoto', () => {
   const home = nodeHome();
   fs.writeFileSync(path.join(home, '.nexuscrew', 'token'), 'TOK\n', { mode: 0o600 });
