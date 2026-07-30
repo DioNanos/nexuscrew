@@ -9,7 +9,8 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
-const { createMcpServer, resolveSession, resolveIdentity } = require('../lib/mcp/server.js');
+const { createMcpServer, resolveSession, resolveIdentity, transportError, HTTP_TIMEOUT_CODE } = require('../lib/mcp/server.js');
+const { unavailableOwner } = require('../lib/mcp/cells.js');
 const { TOOLS, commandForDiagnostics, failureForDiagnostics } = require('../lib/mcp/tools.js');
 const bridgeAuth = require('../lib/audio/bridge-auth.js');
 
@@ -235,6 +236,15 @@ test('nc_cells: identifica esplicitamente il timeout del nodo locale', async () 
   assert.deepEqual(directory.unavailable, [{
     instanceId: localId, owner: 'Local', route: 'local', local: true, failure: 'timeout',
   }]);
+});
+
+test('nc_cells: timeout strutturato non dipende dal testo localizzato della causa', () => {
+  const raw = Object.assign(new Error('operazione lenta'), { name: 'TimeoutError' });
+  const error = transportError('http://127.0.0.1:41820', raw);
+  assert.equal(error.code, HTTP_TIMEOUT_CODE);
+  assert.deepEqual(unavailableOwner({ instanceId: 'a'.repeat(32), label: 'Local', route: [] }, error), {
+    instanceId: 'a'.repeat(32), owner: 'Local', route: 'local', local: true, failure: 'timeout',
+  });
 });
 
 test('revoked owner omitted from topology is absent from nc_cells and nc_deck, not unavailable', async () => {

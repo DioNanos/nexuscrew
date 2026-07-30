@@ -104,6 +104,19 @@ test('nodeHealth: inbound client/legacy non raggiungibile -> passive, non errore
   assert.match(h.detail, /privato|Share/i);
 });
 
+test('nodeHealth: inbound privato che risponde davvero segnala un reverse residuo', async () => {
+  const h = await nodesHealth.nodeHealth({
+    node: { name: 'legacy-reverse', direction: 'inbound', shared: false, localPort: 44004, token: 'peer-token', nodeId: NODE_ID },
+    home: tmpHome(), fetchImpl: mockFetch({ status: 200 }), force: true,
+  });
+  assert.equal(h.transport, 'up');
+  assert.equal(h.auth, 'ok');
+  assert.equal(h.status, 'degraded');
+  assert.equal(h.code, 'private-reverse-listener');
+  assert.equal(h.managed, false);
+  assert.match(h.detail, /Share disattivato/i);
+});
+
 test('nodeHealth: inbound nodo dichiarato non raggiungibile resta down reale', async () => {
   const h = await nodesHealth.nodeHealth({
     node: { name: 'server-down', direction: 'inbound', shared: true, localPort: 44003, token: 'peer-token', nodeId: NODE_ID,

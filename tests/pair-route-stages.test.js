@@ -31,7 +31,7 @@ function makePairingUrl(dir) {
 // machine della route; la crittografia del probe ha test reali dedicati.
 function scriptedFetch(script) {
   const calls = {
-    probe: 0, join: 0, confirm: 0, cancel: 0, health: 0, share: 0, spawns: 0,
+    probe: 0, join: 0, confirm: 0, cancel: 0, health: 0, reverseStatus: 0, share: 0, spawns: 0,
     shareBodies: [], spawnArgs: [], events: [],
   };
   const impl = async (url, opts = {}) => {
@@ -43,6 +43,10 @@ function scriptedFetch(script) {
       calls.share += 1; calls.shareBodies.push(JSON.parse(opts.body || '{}'));
       calls.events.push(`hub:${calls.shareBodies.at(-1).shared ? 'on' : 'off'}`);
       return (script.share || (() => R(200, { shared: calls.shareBodies.at(-1).shared })))(calls.share, opts);
+    }
+    if (u.endsWith('/federation/reverse-status')) {
+      calls.reverseStatus += 1;
+      return (script.reverseStatus || (() => R(404, {})))(calls.reverseStatus, opts);
     }
     if (u.endsWith('/federation/health')) {
       if (opts.headers && opts.headers.authorization) { calls.health += 1; return script.health(calls.health, opts); }
@@ -443,6 +447,29 @@ test('Share PWA: un reverse rifiutato espone la permitlisten esatta senza log gr
   assert.match(body.hint, /permitlisten="127\.0\.0\.1:44001"/);
   assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false,
     'la diagnosi non deve impedire il rollback privato');
+});
+
+test('Share PWA: conflitto reverse gia noto dal hub non riavvia ne modifica il peer', async (t) => {
+  const { base, token, dir, nodesPath, calls } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID }),
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+    reverseStatus: () => R(409, { available: false, code: 'reverse-port-in-use' }),
+  });
+  assert.equal((await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) })).status, 200);
+  const beforeSpawns = calls.spawns;
+  const response = await fetch(`${base}/api/settings/nodes/peer/share`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ shared: true }),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 409);
+  assert.equal(body.code, 'reverse-port-conflict');
+  assert.match(body.error, /porta reverse/i);
+  assert.equal(calls.reverseStatus, 1);
+  assert.equal(calls.spawns, beforeSpawns, 'un preflight conflittuale non interrompe il -L privato');
+  assert.equal(calls.share, 0, 'un canale non aperto non viene pubblicato sul hub');
+  assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
 });
 
 test('Share ON: ACK hub fallito torna deterministicamente a -L privato', async (t) => {
