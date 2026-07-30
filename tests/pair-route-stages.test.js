@@ -472,6 +472,25 @@ test('Share PWA: conflitto reverse gia noto dal hub non riavvia ne modifica il p
   assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, false);
 });
 
+test('Share PWA: reverse gia verificato del peer stesso procede senza falso conflitto', async (t) => {
+  const { base, token, dir, nodesPath, calls } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID }),
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+    reverseStatus: () => R(200, { available: false, ownedByAuthenticatedPeer: true }),
+  });
+  assert.equal((await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) })).status, 200);
+  const response = await fetch(`${base}/api/settings/nodes/peer/share`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ shared: true }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).shared, true);
+  assert.equal(calls.reverseStatus, 1);
+  assert.equal(calls.share, 1);
+  assert.equal(store.getNode(store.loadStore(nodesPath), 'peer').shared, true);
+});
+
 test('Share ON: ACK hub fallito torna deterministicamente a -L privato', async (t) => {
   const { base, token, dir, nodesPath, calls } = await boot(t, {
     probe: () => R(401, {}),

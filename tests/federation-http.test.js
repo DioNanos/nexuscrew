@@ -83,6 +83,35 @@ test('reverse-status controlla solo la porta assegnata al peer autenticato', asy
   assert.deepEqual(await response.json(), { available: true });
 });
 
+test('reverse-status accetta il listener gia verificato del peer autenticato', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fed-reverse-own-'));
+  const peerId = 'b'.repeat(32);
+  const reverse = express();
+  reverse.get('/federation/health', (req, res) => {
+    if (req.headers.authorization !== 'Bearer hub-to-pixel') return res.sendStatus(401);
+    res.json({ ok: true, instanceId: peerId });
+  });
+  const reverseServer = await listen(reverse);
+  const nodesPath = path.join(dir, 'hub-nodes.json');
+  let st = store.emptyStore('a'.repeat(32));
+  st = store.addNode(st, {
+    name: 'pixel', remotePort: 41820, localPort: reverseServer.address().port,
+    direction: 'inbound', transport: 'inbound', autostart: true, shared: false,
+    visibility: 'network', nodeId: peerId, token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
+  });
+  store.atomicWriteStore(nodesPath, st);
+  const app = express();
+  app.use('/federation', fed.peerRouter({ nodesPath, localPort: 1, localCredential: () => 'hub-main' }));
+  const hub = await listen(app);
+  t.after(async () => { await close(hub); await close(reverseServer); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const response = await fetch(`http://127.0.0.1:${hub.address().port}/federation/reverse-status`, {
+    headers: { authorization: 'Bearer pixel-to-hub' },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { available: false, ownedByAuthenticatedPeer: true });
+});
+
 test('scoped federation HTTP reaches sessions, fleet, owner decks and only the hub invite settings mutation', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fed-http-'));
   const destNodes = path.join(dir, 'dest.json');
