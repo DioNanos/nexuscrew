@@ -217,6 +217,26 @@ test('nc_cells: aggrega celle locali e remote con id owner-qualified', async () 
   assert.deepEqual(j.unavailable, []);
 });
 
+test('nc_cells: identifica esplicitamente il timeout del nodo locale', async () => {
+  const localId = 'a'.repeat(32);
+  const { srv, out } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') return { status: 200, json: { nodes: [] } };
+      if (p === '/api/cells') throw Object.assign(new Error('slow'), { name: 'TimeoutError' });
+      return { status: 404, json: { error: p } };
+    },
+  });
+  await srv.handleLine(rpc(21, 'tools/call', { name: 'nc_cells', arguments: {} }));
+  const directory = JSON.parse(out.lines[0].result.content[0].text);
+  assert.deepEqual(directory.cells, []);
+  assert.deepEqual(directory.unavailable, [{
+    instanceId: localId, owner: 'Local', route: 'local', local: true, failure: 'timeout',
+  }]);
+});
+
 test('revoked owner omitted from topology is absent from nc_cells and nc_deck, not unavailable', async () => {
   const localId = 'a'.repeat(32); const pixelId = 'b'.repeat(32);
   const { srv, out, calls } = makeSrv({
