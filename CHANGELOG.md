@@ -13,6 +13,13 @@ All notable changes to NexusCrew are tracked here.
   as well as successful results, preventing repeated hung subprocess calls.
 - The MCP cell directory now marks a local timeout explicitly, so a degraded
   bridge can be distinguished from an unreachable remote node.
+- Share activation now performs an authenticated, non-scanning preflight on
+  the hub-assigned reverse port. A listener owned by the same verified peer is
+  accepted; an unverified occupied port returns an actionable conflict without
+  restarting or publishing the private tunnel.
+- Peer health reports a reverse listener that remains active while Share is
+  disabled, while `nexuscrew status` now states Share enabled or disabled for
+  inbound peers. These diagnostics never terminate a peer tunnel automatically.
 
 ## 0.8.44 — 2026-07-28 — "Deliberate Switch"
 
