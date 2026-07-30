@@ -45,7 +45,8 @@ test('parseStore: schema valido accettato (oggetto e stringa), normalizzato', ()
 test('parseStore: schemaVersion/nodeId invalidi -> null', () => {
   const b = validStore();
   assert.ok(store.parseStore({ ...b, schemaVersion: 2 }));
-  assert.equal(store.parseStore({ ...b, schemaVersion: 3 }), null);
+  assert.ok(store.parseStore({ ...b, schemaVersion: 3 }));
+  assert.equal(store.parseStore({ ...b, schemaVersion: 4 }), null);
   assert.equal(store.parseStore({ ...b, schemaVersion: '1' }), null);
   assert.equal(store.parseStore({ ...b, nodeId: undefined }), null);
   assert.equal(store.parseStore({ ...b, nodeId: 'NOT-HEX!!' }), null);
@@ -122,6 +123,17 @@ test('parseStore: rendezvous opzionale, strict', () => {
   assert.equal(ok.rendezvous.publishedPort, 41821);
   const bad = store.parseStore({ ...validStore(), rendezvous: { ssh: 'nohost', publishedPort: 41821, localPort: 41820, keyPath: '/k' } });
   assert.equal(bad, null);
+});
+
+test('reverse pool v3: anchor strict, stato a tre slot e upgrade esplicito', () => {
+  const anchor = { epoch: 'b'.repeat(32), seq: 0, digest: require('../lib/nodes/reverse-pool.js').genesisDigest('b'.repeat(32)) };
+  const upgraded = store.upgradeToReversePoolSchema(store.parseStore({ ...validStore(), schemaVersion: 2 }), anchor);
+  const withPool = store.setNodeReversePool(upgraded, 'vps', store.reversePoolDefault(44003, { verification: 'verified' }));
+  assert.equal(withPool.schemaVersion, 3);
+  assert.equal(withPool.nodes[0].reversePool.slots[1].port, 44103);
+  assert.equal(store.parseStore({ ...withPool, reversePoolAnchor: { ...anchor, digest: 'x'.repeat(64) } }), null);
+  assert.equal(store.parseStore({ ...withPool, nodes: [{ ...withPool.nodes[0], reversePool: { ...withPool.nodes[0].reversePool, activeSlot: 1 } }] }), null);
+  assert.throws(() => store.setNodeReversePool(store.parseStore({ ...validStore(), schemaVersion: 2 }), 'vps', store.reversePoolDefault(44003)), /schema v3/);
 });
 
 test('deriveNodeHandle: slug stabile da label + nodeId, mai localhost nudo', () => {

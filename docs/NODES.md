@@ -69,9 +69,12 @@ confirms withdrawal.
 
 ## Tunnel behavior
 
-NexusCrew creates one supervised `ssh` process for a hub connection and proves
-the forwarded TCP endpoint before reporting success. It does not use `autossh`
-as a hidden second supervisor.
+NexusCrew creates one supervised private `ssh -L` process for a hub connection
+and proves the forwarded TCP endpoint before reporting success. It does not use
+`autossh` as a hidden second supervisor. A shared peer with a verified
+rotatable pool may additionally run a short-lived, per-slot reverse supervisor;
+each one has a distinct local target so the hub can prove the exact reverse
+slot it reached.
 
 Reverse ports are reserved across active and pending pairings, probed before
 use and protected by a persistent uniqueness check. A stale same-name peer or
@@ -86,6 +89,38 @@ permitlisten="127.0.0.1:44002"
 ```
 
 Use the exact port printed by the tunnel diagnostic.
+
+## Rotatable reverse-port pools
+
+A new shared peer receives a three-port pool with the same base and offsets
+`+100` and `+200`. For example, base `44003` requires these restrictions on the
+**hub** key accepted by the client:
+
+```text
+permitlisten="127.0.0.1:44003",permitlisten="127.0.0.1:44103",permitlisten="127.0.0.1:44203"
+```
+
+Add those options when you install or update the key. NexusCrew never writes,
+widens, removes, or otherwise edits `authorized_keys`. A legacy peer with only
+one `permitlisten` remains usable, but is reported as not rotatable until the
+operator installs its full pool.
+
+Rotation is deliberately narrow:
+
+- The peer proposes a pre-authorized slot over its existing private `-L`; the
+  hub alone assigns the lease and generation.
+- Every slot is proven over a slot-specific local endpoint before automatic
+  rotation is allowed. A generic SSH failure or a missing grant stops the
+  episode after one candidate instead of consuming the pool.
+- A verified collision can switch to one ready slot at most once every ten
+  minutes. The old slot drains briefly; an unproven or unattributable listener
+  is quarantined and reported, never terminated automatically.
+- Pool bases are monotonic. Removing a peer retires its base so a key that
+  still has old `permitlisten` rights cannot claim a later peer's port.
+
+If the pool is exhausted, degraded, unverified, or not configured, NexusCrew
+does not guess a new port or change SSH policy. Correct the displayed
+`permitlisten` line, then retry Share from the device.
 
 ## CLI
 

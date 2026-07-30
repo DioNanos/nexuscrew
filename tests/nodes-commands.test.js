@@ -11,6 +11,7 @@ const store = require('../lib/nodes/store.js');
 const tunnel = require('../lib/nodes/tunnel.js');
 const peering = require('../lib/nodes/peering.js');
 const pidf = require('../lib/cli/pidfile.js');
+const reversePool = require('../lib/nodes/reverse-pool.js');
 const { status, doctor, dispatch } = require('../lib/cli/commands.js');
 
 function nodeHome({ init = true } = {}) {
@@ -129,6 +130,27 @@ test('nodes remove: rimuove; READONLY blocca', () => {
   delete process.env.NEXUSCREW_READONLY;
   assert.equal(cmds.nodesRemove({ home, log: () => {}, name: 'vps' }).code, 0);
   assert.equal(store.loadStore(nodesPathFor(home)).nodes.length, 0);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('nodes remove: un pool inbound passa a retired nel ledger e non torna allocabile', () => {
+  const home = nodeHome();
+  const nodesPath = nodesPathFor(home);
+  const ledgerPath = reversePool.defaultLedgerPath(home);
+  let ledger = reversePool.emptyLedger('e'.repeat(32));
+  let st = store.upgradeToReversePoolSchema(store.emptyStore('a'.repeat(32)), reversePool.ledgerHead(ledger));
+  const pool = store.reversePoolDefault(44003);
+  st = store.addNode(st, {
+    name: 'pixel', remotePort: 41820, localPort: 44003, direction: 'inbound', transport: 'inbound', autostart: true,
+    visibility: 'network', nodeId: 'b'.repeat(32), token: 'hub-to-pixel', acceptToken: 'pixel-to-hub', reversePool: pool,
+  });
+  ledger = reversePool.appendLedger(ledger, { type: 'allocated', base: pool.base, at: 1 });
+  st = { ...st, reversePoolAnchor: reversePool.ledgerHead(ledger) };
+  store.atomicWriteStore(nodesPath, st); reversePool.atomicWriteLedger(ledgerPath, ledger);
+  assert.equal(cmds.nodesRemove({ home, log: () => {}, name: 'pixel' }).code, 0);
+  const after = reversePool.loadLedger(ledgerPath);
+  assert.deepEqual(after.entries.map((entry) => entry.type), ['allocated', 'retired']);
+  assert.notEqual(reversePool.nextReversePool([], after).base, pool.base);
   fs.rmSync(home, { recursive: true, force: true });
 });
 

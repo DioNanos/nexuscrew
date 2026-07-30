@@ -69,6 +69,23 @@ test('buildForwardArgs: Share non ripiega mai sulla porta remota se localAppPort
   assert.doesNotThrow(() => tunnel.buildForwardArgs({ ...NODE, reversePort: 44001, shared: false }));
 });
 
+test('rotatable Share: il -L resta privato e ogni slot usa un supervisor -R dedicato', () => {
+  const reversePool = {
+    base: 44003,
+    slots: [44003, 44103, 44203].map((port, index) => ({ port, state: index === 0 ? 'active' : 'ready', generation: 2 })),
+    activeSlot: 0, activeGeneration: 2, verification: 'verified',
+    rotation: { phase: 'active', generation: 2, slot: 0 },
+  };
+  const node = { ...NODE, reversePort: 44003, reversePool, shared: true, localAppPort: 41777 };
+  assert.equal(tunnel.buildForwardArgs(node).includes('-R'), false, 'il canale di controllo -L non trasporta la -R rotabile');
+  const args = tunnel.buildReverseArgs(node, { remotePort: 44103, targetPort: 45888 });
+  assert.deepEqual(args.at(-3), '-R');
+  assert.ok(args.includes('127.0.0.1:44103:127.0.0.1:45888'));
+  assert.equal(args.includes('-L'), false);
+  assert.equal(tunnel.reverseTunnelName('vps', 44103, 2), 'reverse-vps-44103-2');
+  assert.throws(() => tunnel.buildReverseArgs(node, { remotePort: 44999, targetPort: 45888 }), /non appartiene/);
+});
+
 test('build*Args: spec invalida -> throw (no argv injection)', () => {
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, ssh: 'user@-evil' }), /ssh/);
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, localPort: 0 }), /localPort/);
@@ -457,7 +474,11 @@ test('F2 error async: niente crash (uncaught), cleanup pidfile, closeOwnedFd ide
   let closeOfOpened = 0;
   // Contiamo solo le chiusure della fd di log aperta internamente (writeFileSync
   // chiama closeSync internamente su un'altra fd: filtriamo per non falsare il conteggio).
-  fs.openSync = (p, ...rest) => { const fd = realOpen(p, ...rest); openedFd = fd; return fd; };
+  fs.openSync = (p, ...rest) => {
+    const fd = realOpen(p, ...rest);
+    if (String(p).endsWith('/err.log')) openedFd = fd;
+    return fd;
+  };
   fs.closeSync = (fd) => { if (openedFd !== null && fd === openedFd) closeOfOpened += 1; return realClose(fd); };
   try {
     const { EventEmitter } = require('node:events');

@@ -101,6 +101,12 @@ Remote access is intentionally carried through SSH or a VPN you control:
 ssh -L 41820:127.0.0.1:41820 user@your-host
 ```
 
+Shared mobile peers can use a small, pre-authorized reverse-port pool for
+recovery from a real reverse-forward collision. NexusCrew never edits SSH
+policy: the hub operator keeps `authorized_keys` authoritative, while the
+product verifies a configured pool before it can rotate within it. See
+[Connect nodes](docs/NODES.md#rotatable-reverse-port-pools).
+
 [Security model →](docs/SECURITY.md)
 
 ## Documentation

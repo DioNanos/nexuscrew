@@ -10,6 +10,8 @@ const WebSocket = require('ws');
 const { createServer } = require('../lib/server.js');
 const store = require('../lib/nodes/store.js');
 const fed = require('../lib/proxy/federation.js');
+const poolLedger = require('../lib/nodes/reverse-pool.js');
+const slotProof = require('../lib/nodes/reverse-slot-proof.js');
 
 const listen = (app) => new Promise((resolve) => { const s = http.createServer(app); s.listen(0, '127.0.0.1', () => resolve(s)); });
 const close = (s) => new Promise((resolve) => s.close(resolve));
@@ -19,6 +21,117 @@ const rawRequest = (url, headers = {}) => new Promise((resolve, reject) => {
     res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, json: () => JSON.parse(Buffer.concat(chunks).toString()) }));
   });
   req.on('error', reject);
+});
+
+test('reverse pool: hub assegna lease, prova MAC senza bearer e committa solo la candidate autenticata', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fed-rotation-'));
+  const nodesPath = path.join(dir, 'hub-nodes.json');
+  const ledger = poolLedger.emptyLedger('c'.repeat(32));
+  let st = store.upgradeToReversePoolSchema(store.emptyStore('a'.repeat(32)), poolLedger.ledgerHead(ledger));
+  st = store.addNode(st, {
+    name: 'pixel', remotePort: 41820, localPort: 44003,
+    direction: 'inbound', transport: 'inbound', autostart: true, shared: true,
+    visibility: 'network', nodeId: 'b'.repeat(32), token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
+    reversePool: store.reversePoolDefault(44003, { verification: 'verified', generation: 3 }),
+  });
+  store.atomicWriteStore(nodesPath, st);
+  const requests = [];
+  const app = express();
+  app.use('/federation', fed.peerRouter({
+    nodesPath, localPort: 1, localCredential: () => 'hub-main',
+    fetchImpl: async (url, init = {}) => {
+      requests.push({ url: String(url), headers: init.headers || {} });
+      const tuple = JSON.parse(init.body);
+      return { status: 200, json: async () => ({ ...tuple, mac: slotProof.signSlotProof('hub-to-pixel', tuple) }) };
+    },
+  }));
+  const hub = await listen(app);
+  t.after(async () => { await close(hub); fs.rmSync(dir, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${hub.address().port}/federation/reverse-pool`;
+  const reserve = await fetch(`${base}/reserve`, {
+    method: 'POST', headers: { authorization: 'Bearer pixel-to-hub', 'content-type': 'application/json' }, body: JSON.stringify({ slot: 1 }),
+  });
+  assert.equal(reserve.status, 200);
+  const lease = await reserve.json();
+  assert.equal(lease.generation, 4);
+  const commit = await fetch(`${base}/commit`, {
+    method: 'POST', headers: { authorization: 'Bearer pixel-to-hub', 'content-type': 'application/json' }, body: JSON.stringify({ leaseId: lease.leaseId }),
+  });
+  assert.equal(commit.status, 200);
+  const after = store.getNode(store.loadStoreStrict(nodesPath), 'pixel');
+  assert.equal(after.localPort, 44103);
+  assert.equal(after.reversePool.rotation.phase, 'switched');
+  assert.ok(requests.some((request) => request.url.includes(':44103/reverse-slot-proof')));
+  assert.ok(requests.every((request) => request.headers.authorization === undefined), 'un listener sospetto non riceve il bearer');
+});
+
+test('reverse pool: MAC non valida quarantina una candidate e invalida il pool invece di consumare altre slot', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fed-rotation-bad-'));
+  const nodesPath = path.join(dir, 'hub-nodes.json');
+  const ledger = poolLedger.emptyLedger('d'.repeat(32));
+  let st = store.upgradeToReversePoolSchema(store.emptyStore('a'.repeat(32)), poolLedger.ledgerHead(ledger));
+  st = store.addNode(st, {
+    name: 'pixel', remotePort: 41820, localPort: 44003,
+    direction: 'inbound', transport: 'inbound', autostart: true, shared: true,
+    visibility: 'network', nodeId: 'b'.repeat(32), token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
+    reversePool: store.reversePoolDefault(44003, { verification: 'verified', generation: 3 }),
+  });
+  store.atomicWriteStore(nodesPath, st);
+  const app = express();
+  app.use('/federation', fed.peerRouter({ nodesPath, localPort: 1, localCredential: () => 'hub-main',
+    fetchImpl: async (_url, init = {}) => ({ status: 200, json: async () => ({ ...JSON.parse(init.body), mac: 'wrong' }) }),
+  }));
+  const hub = await listen(app);
+  t.after(async () => { await close(hub); fs.rmSync(dir, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${hub.address().port}/federation/reverse-pool`;
+  const reserve = await fetch(`${base}/reserve`, {
+    method: 'POST', headers: { authorization: 'Bearer pixel-to-hub', 'content-type': 'application/json' }, body: JSON.stringify({ slot: 1 }),
+  });
+  const lease = await reserve.json();
+  const commit = await fetch(`${base}/commit`, {
+    method: 'POST', headers: { authorization: 'Bearer pixel-to-hub', 'content-type': 'application/json' }, body: JSON.stringify({ leaseId: lease.leaseId }),
+  });
+  assert.equal(commit.status, 409);
+  const after = store.getNode(store.loadStoreStrict(nodesPath), 'pixel');
+  assert.equal(after.reversePool.verification, 'invalidated');
+  assert.equal(after.reversePool.slots[1].state, 'quarantined');
+  assert.equal(after.reversePool.rotation.phase, 'abandoned');
+});
+
+test('reverse pool: stato autenticato riconcilia e lease abbandonata torna pronta senza toccare SSH', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fed-rotation-reconcile-'));
+  const nodesPath = path.join(dir, 'hub-nodes.json');
+  const ledger = poolLedger.emptyLedger('e'.repeat(32));
+  let st = store.upgradeToReversePoolSchema(store.emptyStore('a'.repeat(32)), poolLedger.ledgerHead(ledger));
+  st = store.addNode(st, {
+    name: 'pixel', remotePort: 41820, localPort: 44003,
+    direction: 'inbound', transport: 'inbound', autostart: true, shared: true,
+    visibility: 'network', nodeId: 'b'.repeat(32), token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
+    reversePool: store.reversePoolDefault(44003, { verification: 'verified', generation: 3 }),
+  });
+  store.atomicWriteStore(nodesPath, st);
+  const app = express(); app.use('/federation', fed.peerRouter({ nodesPath, localPort: 1, localCredential: () => 'hub-main' }));
+  const hub = await listen(app);
+  t.after(async () => { await close(hub); fs.rmSync(dir, { recursive: true, force: true }); });
+  const node = { localPort: hub.address().port, token: 'pixel-to-hub' };
+  const status = await fed.getHubPoolStatus({ node });
+  assert.equal(status.pool.activeGeneration, 3);
+  assert.equal(JSON.stringify(status), JSON.stringify(status).replace(/hub-to-pixel|pixel-to-hub/g, ''), 'status non espone credenziali');
+
+  const lease = await fed.reserveHubPoolSlot({ node, slot: 1 });
+  assert.equal(lease.generation, 4);
+  assert.deepEqual(await fed.abortHubPoolSlot({ node, leaseId: lease.leaseId }), { aborted: true });
+  const afterAbort = store.getNode(store.loadStoreStrict(nodesPath), 'pixel').reversePool;
+  assert.equal(afterAbort.rotation.phase, 'active');
+  assert.equal(afterAbort.slots[1].state, 'ready');
+
+  const current = store.loadStoreStrict(nodesPath);
+  const prepared = store.getNode(current, 'pixel').reversePool;
+  const stale = { ...prepared, slots: prepared.slots.map((slot, index) => index === 1 ? { ...slot, state: 'reserved', generation: 4 } : slot),
+    rotation: { phase: 'prepared', generation: 4, slot: 1, leaseId: 'f'.repeat(32), expiresAt: 1 } };
+  store.atomicWriteStore(nodesPath, store.setNodeReversePool(current, 'pixel', stale));
+  const recovered = await fed.reserveHubPoolSlot({ node, slot: 1 });
+  assert.equal(recovered.generation, 4, 'una lease scaduta viene solo ripulita e poi riassegnata');
 });
 
 test('hub Share OFF gates topology immediately while the old reverse port still answers', async (t) => {
