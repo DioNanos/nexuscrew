@@ -38,6 +38,21 @@ device.
 - OpenSSH remains the network and identity authority.
 - NexusCrew supervises SSH but does not create keys or edit
   `authorized_keys`.
+
+### Reverse-port recovery
+
+For a shared peer, a reverse-port pool is a fixed SSH policy boundary, not a
+permission NexusCrew can expand. The application never modifies
+`authorized_keys`; a hub operator explicitly grants the three loopback
+`permitlisten` entries for a rotatable peer.
+
+Before accepting a pool slot, the hub sends a fresh HMAC challenge to the
+specific loopback listener and verifies its instance, generation and port. The
+probe never sends the peer bearer credential to an unknown listener. A failed
+or unknown listener is quarantined for diagnosis: NexusCrew does not kill SSH
+processes or release ports it cannot prove it owns. Removed pools remain
+retired, preventing an old SSH key from binding a port reassigned to another
+peer.
 - Node and deck identities remain owner-qualified.
 - Routed HTTP and WebSocket requests recheck ACL, hop count and cycle rules.
 

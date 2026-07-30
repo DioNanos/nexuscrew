@@ -20,6 +20,18 @@ All notable changes to NexusCrew are tracked here.
 - Peer health reports a reverse listener that remains active while Share is
   disabled, while `nexuscrew status` now states Share enabled or disabled for
   inbound peers. These diagnostics never terminate a peer tunnel automatically.
+- Shared peers can use an operator-preauthorized three-port reverse pool. The
+  product never writes `authorized_keys`; legacy or incompletely granted peers
+  remain private/usable and are diagnosed as not rotatable instead of guessing
+  another SSH port.
+- A peer proposes a pool slot over its existing private channel and the hub
+  assigns a bounded lease and generation. Rotation runs only after all slots
+  have been independently verified, tries one candidate per ten-minute window,
+  and quarantines failures rather than killing unknown listeners.
+- Slot ownership now uses a per-slot HMAC proof with a fresh challenge. The
+  hub never sends a peer bearer credential to a listener it is investigating;
+  a relayed proof from a different slot is rejected. Retired pool bases are
+  never reused automatically, protecting against stale `permitlisten` grants.
 
 ## 0.8.44 — 2026-07-28 — "Deliberate Switch"
 
