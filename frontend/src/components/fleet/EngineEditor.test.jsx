@@ -15,6 +15,7 @@ const catalog = [
   { id: 'codex-vl.alibaba-token-plan', client: 'codex-vl', clientLabel: 'Codex-VL', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'openai_responses', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: 'qwen3.8-max-preview', models: ['qwen3.8-max-preview', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-flash'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
   { id: 'pi.alibaba-token-plan', client: 'pi', clientLabel: 'Pi', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'openai-completions', permissionPolicyDefault: 'standard', supportsUnsafe: false, model: 'qwen3.8-max-preview', models: ['qwen3.8-max-preview', 'qwen3.7-plus', 'qwen3.7-max', 'qwen3.6-flash', 'glm-5.2', 'deepseek-v4-pro'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
   { id: 'agy.native', client: 'agy', clientLabel: 'Agy', provider: 'native', label: 'Agy', protocol: 'agy_native', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: '', models: [], rc: false },
+  { id: 'kimi.native', client: 'kimi', clientLabel: 'Kimi Code CLI', provider: 'native', label: 'Kimi account (CLI login)', protocol: 'kimi_native', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: '', models: [], rc: false, notice: 'kimi-native' },
 ];
 
 function profileForm(id) {
@@ -101,6 +102,20 @@ describe('EngineEditor KEY section', () => {
     expect(screen.getByRole('option', { name: 'unsafe · bypass approvals/sandbox' })).toBeTruthy();
     expect(container.querySelector('input[list="nc-managed-models"]')).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'KEY' })).toBeNull();
+  });
+
+  it('renders native Kimi Code CLI as a distinct client with login notice and no credential fields', () => {
+    const { container } = render(<Harness initial={profileForm('kimi.native')} />);
+    const selects = container.querySelectorAll('.nc-fleet-pair select');
+    expect(selects[0].value).toBe('kimi');
+    expect(selects[1].value).toBe('kimi.native');
+    // Il client nativo e' distinto dal provider "Kimi Code" dell'adattatore Claude.
+    expect(screen.getByRole('option', { name: 'Kimi Code CLI' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'KEY' })).toBeNull();
+    expect(screen.getByText(/uses the CLI login \(device code\)/)).toBeTruthy();
+    expect(screen.getByText(/Distinct from the Claude Code "Kimi Code" provider/)).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'unsafe · bypass approvals/sandbox' })).toBeTruthy();
+    expect(container.querySelector('input[list="nc-managed-models"]')).toBeTruthy();
   });
 
   it('exposes a credential source policy selector for fixed-credential profiles', async () => {
