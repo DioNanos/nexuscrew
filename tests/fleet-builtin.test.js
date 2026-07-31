@@ -833,6 +833,7 @@ test('capabilities e schema: superficie estesa del built-in', async () => {
       assert.ok(sch.cell[f], `campo cell.${f}`);
     }
     assert.ok(sch.engine.managed.client.values.includes('agy'), 'schema managed espone Agy');
+    assert.ok(sch.engine.managed.client.values.includes('kimi'), 'schema managed espone Kimi Code CLI');
     assert.ok(sch.engine.env.denylist.includes('PATH'), 'denylist env esposta');
     assert.equal(sch.caps, require('../lib/fleet/definitions.js').CAPS);
   } finally { w.cleanup(); }

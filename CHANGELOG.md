@@ -4,6 +4,28 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.46 — 2026-07-31 — "Native Kimi"
+
+- The Fleet gains a native Kimi Code CLI engine (`kimi.native`) that launches
+  the official `@moonshot-ai/kimi-code` binary directly in the cell's working
+  directory. Authentication and providers stay with the CLI (device-code
+  login, `config.toml`); NexusCrew never reads, stores or injects Kimi
+  credentials, and existing installations receive the engine through an
+  idempotent, collision-safe backfill.
+- The engine defaults to interactive (standard) permissions. The unsafe
+  policy maps to `--yolo`, which auto-approves regular tool calls while the
+  agent may still ask questions; the fully autonomous `--auto` mode is
+  deliberately not exposed.
+- Because the CLI documents no interactive prompt flag (`kimi -p` is
+  non-interactive and skips the TUI), the cell prompt is never placed on the
+  command line: it is delivered with bracketed paste once the session is
+  ready, including on supervised restarts.
+- The Claude Code "Kimi Code" provider (`claude.kimi-code`) is unchanged and
+  remains the managed K3 path with the 1M-context profile. The PWA presents
+  the two paths under distinct names ("Kimi Code CLI" vs "Kimi Code") with an
+  explanatory notice, and login-delegated engines no longer show a misleading
+  credential KEY section.
+
 ## 0.8.45 — 2026-07-30 — "Resilient Directory"
 
 - Fleet cell-directory reads no longer wait for external model catalog discovery.

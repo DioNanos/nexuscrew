@@ -66,7 +66,7 @@ install-script approval.
 | **Live terminals** | Attach to real tmux sessions through a real PTY, WebSocket and xterm.js. |
 | **Persistent workspaces** | Arrange sessions into decks with saved layouts, ordering, pins and per-cell drafts. |
 | **Multi-node Fleet** | See and control authorized cells across Linux, macOS and Android nodes. |
-| **AI-ready cells** | Launch Claude Code, Codex, Codex-VL, Pi, Agy or a trusted shell with explicit providers and policies. |
+| **AI-ready cells** | Launch Claude Code, Codex, Codex-VL, Pi, Agy, Kimi Code CLI or a trusted shell with explicit providers and policies. |
 | **Mobile-native control** | Scroll tmux history, use terminal keys, dictate prompts and move files from a phone. |
 | **Operator alerts** | Receive visual, push, browser speech and opt-in node-native Audio Share TTS. |
 

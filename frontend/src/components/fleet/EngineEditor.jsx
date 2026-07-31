@@ -70,6 +70,7 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog })
         </label>}
         {selectedProfile?.notice && <small className="nc-fleet-provider-notice">{t(`fleet-provider-notice-${selectedProfile.notice}`)}</small>}
       </section>}
+      {selectedProfile?.notice && !fixedCredentialEnv && <small className="nc-fleet-provider-notice">{t(`fleet-provider-notice-${selectedProfile.notice}`)}</small>}
       {f.provider === 'custom' && <>
         <input value={f.displayName} placeholder={t('fleet-provider-display')} onChange={(e) => set({ displayName: e.target.value })} />
         <input value={f.baseUrl} placeholder="https://api.example.com/v1" onChange={(e) => set({ baseUrl: e.target.value })} />
