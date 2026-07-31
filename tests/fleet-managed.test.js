@@ -79,6 +79,7 @@ test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P',
     'codex-vl.openrouter', 'codex-vl.lmstudio', 'codex-vl.ollama-cloud', 'codex-vl.custom',
     'pi.native', 'pi.anthropic', 'pi.openai', 'pi.openai-codex', 'pi.google',
     'pi.github-copilot', 'pi.ollama', 'pi.openrouter', 'pi.deepseek', 'pi.zai', 'pi.custom',
+    'agy.native', 'kimi.native',
     'shell.local',
   ]) assert.equal(ids.has(id), true, `${id} deve essere nel catalogo base`);
   assert.equal(ids.has('claude.zai-a'), false);

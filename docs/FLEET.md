@@ -27,11 +27,21 @@ Clean installations include these base adapters:
 - Codex-VL
 - Pi
 - Agy on Linux and macOS
+- Kimi Code CLI
 - Shell
 
 Agy delegates authentication to its local login and supports standard or
 unsafe permission policies. On Android/Termux, use the Shell adapter with a
 per-cell `agy` command.
+
+Kimi Code CLI (`kimi.native`) runs the official `@moonshot-ai/kimi-code`
+binary directly. Authentication and providers are owned by the CLI itself
+(device-code login, `config.toml`): NexusCrew never reads, stores or injects
+Kimi credentials. The cell prompt is not passed on the command line — the CLI
+has no interactive prompt flag (`kimi -p` is non-interactive and skips the
+TUI) — so it is injected with bracketed paste after the session is ready.
+This engine is distinct from the Claude Code "Kimi Code" provider below,
+which remains the managed K3 path with an isolated Claude configuration.
 
 Custom argv-based engines are launched directly without a shell after
 trust-boundary validation.
@@ -52,6 +62,7 @@ Provider choices are scoped to the selected CLI:
 | Codex | OpenAI/ChatGPT, OpenAI API, Ollama Cloud, local Ollama, LM Studio, custom Responses endpoint |
 | Codex-VL | OpenAI/ChatGPT, OpenAI API, Alibaba Token Plan, OpenRouter, Ollama Cloud, local Ollama, LM Studio, custom Responses endpoint |
 | Pi | Native, Anthropic, OpenAI API, Alibaba Token Plan, Codex OAuth, Gemini, Copilot, OpenRouter, Ollama, DeepSeek, Z.AI, custom |
+| Kimi Code CLI | Native account via CLI login (device code); providers managed by the CLI |
 | Shell | Device-local interactive shell or one trusted per-cell command |
 
 Custom Codex-compatible endpoints use the Responses wire API; NexusCrew does
@@ -59,7 +70,10 @@ not silently fall back to Chat Completions.
 
 OpenRouter is first-class for Claude Code and Codex-VL. Kimi Code is a separate
 Claude Code membership profile and is not interchangeable with a Moonshot
-pay-as-you-go key.
+pay-as-you-go key. It is also distinct from the native Kimi Code CLI engine:
+the provider drives Claude Code against the Kimi endpoint through the managed
+`ANTHROPIC_*` environment (K3 models, including the 1M-context profile), while
+`kimi.native` launches the official CLI with its own login and configuration.
 
 Alibaba Token Plan is available for Claude Code, Codex-VL and Pi through the
 fixed local variable `ALIBABA_CODE_API_KEY`. See
@@ -73,6 +87,10 @@ Permission handling is explicit:
   `--dangerously-skip-permissions`.
 - Codex and Codex-VL use standard permissions or
   `--dangerously-bypass-approvals-and-sandbox`.
+- Kimi Code CLI uses standard (interactive) permissions by default; the unsafe
+  policy maps to `--yolo`, which auto-approves regular tool calls but still
+  lets the agent ask questions. The fully autonomous `--auto` mode is
+  deliberately not exposed.
 - Pi uses its native permission behavior.
 
 Provider keys are resolved on the node that launches the process. Values are
