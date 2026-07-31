@@ -94,10 +94,27 @@ case "$cmd" in
     printf '%s\\t' "respawn-pane" >> "$LOG"; printf '%s\\t' "$@" >> "$LOG"; printf '\\n' >> "$LOG"
     exit 0 ;;
   display-message)
+    # format-aware: '#{session_name}\t#{pane_dead}\t#{pane_id}' (resolveSession-
+    # Pane, parsing esatto 3 campi) vs legacy dead\tstatus\tpane (waitStablePane)
+    last=""
+    for a in "$@"; do last="$a"; done
+    tgt=""
+    prev=""
+    for a in "$@"; do [ "$prev" = "-t" ] && tgt="$a"; prev="$a"; done
     if [ "$(cat "$ALIVE" 2>/dev/null)" = "0" ]; then
-      printf '1\t%s\t%%42\n' "$(cat "$STATUS" 2>/dev/null)"
+      case "$last" in
+        *session_name*)
+          case "$tgt" in =*) sess="\${tgt#=}"; sess="\${sess%%:*}" ;; *) sess="" ;; esac; [ -z "$sess" ] && sess="work-build"
+          printf '%s\t1\t%%42\n' "$sess" ;;
+        *) printf '1\t%s\t%%42\n' "$(cat "$STATUS" 2>/dev/null)" ;;
+      esac
     else
-      printf '0\t\t%%42\n'
+      case "$last" in
+        *session_name*)
+          case "$tgt" in =*) sess="\${tgt#=}"; sess="\${sess%%:*}" ;; *) sess="" ;; esac; [ -z "$sess" ] && sess="work-build"
+          printf '%s\t0\t%%42\n' "$sess" ;;
+        *) printf '0\t\t%%42\n' ;;
+      esac
     fi
     exit 0 ;;
   capture-pane)

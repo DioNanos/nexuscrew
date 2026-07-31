@@ -17,6 +17,7 @@ import {
   apiFetch, fleetStatus, fleetUp, fleetDown, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
 } from './lib/api.js';
 import { isValidLabel } from './lib/settings-model.js';
+import { upActionNotice } from './lib/fleet-action-notice.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
 import { cellDisplayName } from './lib/cell-display.js';
 import {
@@ -414,12 +415,16 @@ export default function App() {
     const { cell } = powerCell;
     const route = Array.isArray(powerCell.route) ? powerCell.route : [];
     if (payload.action === 'up') {
-      await fleetUp(token, {
+      const res = await fleetUp(token, {
         cell, boot: !!payload.boot,
         ...(payload.engine ? { engine: payload.engine } : {}),
         ...(payload.model !== undefined ? { model: payload.model } : {}),
         ...(payload.permissionPolicy ? { permissionPolicy: payload.permissionPolicy } : {}),
       }, route);
+      // 0.8.47: TUI in consenso/auth/onboarding -> sessione viva, prompt saltato,
+      // recovery esplicita per l'operatore (catalogo server, bounded).
+      const notice = upActionNotice(res);
+      if (notice) deckStore.setError(notice.text);
     } else {
       await fleetDown(token, { cell, boot: !!payload.boot }, route);
     }
