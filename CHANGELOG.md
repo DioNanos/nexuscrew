@@ -4,6 +4,30 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.47 — 2026-07-31 — "Kimi First-Run Corrective"
+
+- The Kimi engines (`kimi.native` and the Claude Code "Kimi Code" provider)
+  no longer receive the cell prompt on the process command line. The prompt
+  is delivered to the interactive prompt only, at most once per process
+  generation, after a real readiness classification of the visible terminal.
+- Login screens, the Claude custom-API-key consent dialog and
+  onboarding/trust dialogs are treated as **not ready**: nothing is pasted
+  and no Enter is sent, so a bootstrap prompt can never be lost behind a
+  dialog, and the cell session is left alive for the operator. When the
+  terminal stays not ready past a bounded wait, the up response carries a
+  bounded `actionRequired` code with a constant-catalog recovery hint — for
+  "Kimi Code" the `/config` → "Use custom API key" path (never the Anthropic
+  `/login` flow), for `kimi.native` the CLI's own device-code login.
+- Prompt delivery is a single bracketed paste followed by a separate Enter on
+  the exact pane, with a random per-send buffer and a `0600` temporary file.
+  There is no automatic retry after any paste attempt (a partial composer
+  state can never be doubled); a supervised restart performs at most one new
+  classified delivery for the new generation. Legacy `send-keys` custom
+  engines keep their paste-without-Enter contract on the same safer
+  transport.
+- The PWA surfaces the recovery hint when an up action reports
+  `actionRequired` (App, session list and Fleet tab).
+
 ## 0.8.46 — 2026-07-31 — "Native Kimi"
 
 - The Fleet gains a native Kimi Code CLI engine (`kimi.native`) that launches

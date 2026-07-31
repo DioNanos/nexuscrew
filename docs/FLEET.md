@@ -43,6 +43,34 @@ TUI) — so it is injected with bracketed paste after the session is ready.
 This engine is distinct from the Claude Code "Kimi Code" provider below,
 which remains the managed K3 path with an isolated Claude configuration.
 
+### Bootstrap prompt delivery (Kimi engines)
+
+For `kimi.native` and the Claude Code "Kimi Code" provider the cell prompt is
+never placed on the process command line. It is delivered to the interactive
+prompt only, at most once per process generation:
+
+- Before delivering, NexusCrew classifies the visible terminal. Login,
+  custom-API-key consent and onboarding/trust dialogs are **not ready**: no
+  text is pasted and no Enter is sent, so the prompt can never be lost behind
+  a dialog. The session stays alive and usable.
+- If the terminal is still not ready after a bounded wait, the up response
+  reports a bounded `actionRequired` code with a recovery hint. For the
+  Claude Code "Kimi Code" provider the recovery is to confirm or enable the
+  custom API key in the cell terminal (`/config` → "Use custom API key") and
+  then restart the cell — never the Anthropic `/login` flow. For `kimi.native`
+  it is the CLI's own `/login` (device code) or `/provider`.
+- Delivery itself is a single bracketed paste followed by a separate Enter,
+  targeted at the exact pane, and is owned solely by the cell's supervising
+  launcher for every process generation (the API runtime never pastes for
+  these engines; it only reads the bounded delivery outcome the launcher
+  publishes on the pane). There is no automatic retry after a paste attempt;
+  a supervised restart delivers the prompt at most once again for the new
+  process generation.
+
+MCP servers started by an AI CLI inherit that process's environment according
+to the CLI's own configuration and behavior; that inheritance is owned by the
+CLI, not by NexusCrew.
+
 Custom argv-based engines are launched directly without a shell after
 trust-boundary validation.
 

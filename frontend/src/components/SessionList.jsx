@@ -16,6 +16,7 @@ import {
 } from '../lib/roster-view-model.js';
 import { OWNER_ID_RE } from '../lib/grid-model.js';
 import { isValidLabel } from '../lib/settings-model.js';
+import { upActionNotice } from '../lib/fleet-action-notice.js';
 import { writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import './SessionList.css';
 
@@ -140,12 +141,15 @@ export default function SessionList({ onPick, token, onSettings }) {
     const { cell } = powerCell;
     const route = Array.isArray(powerCell.route) ? powerCell.route : [];
     if (payload.action === 'up') {
-      await fleetUp(token, {
+      const res = await fleetUp(token, {
         cell, boot: !!payload.boot,
         ...(payload.engine ? { engine: payload.engine } : {}),
         ...(payload.model !== undefined ? { model: payload.model } : {}),
         ...(payload.permissionPolicy ? { permissionPolicy: payload.permissionPolicy } : {}),
       }, route);
+      // 0.8.47: TUI in consenso/auth/onboarding -> recovery esplicita (bounded).
+      const notice = upActionNotice(res);
+      if (notice) setErr(notice.text);
       setBootChoice(cell, route, !!payload.boot);
     } else {
       await fleetDown(token, { cell, boot: !!payload.boot }, route);
