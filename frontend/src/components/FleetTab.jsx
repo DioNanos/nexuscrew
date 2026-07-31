@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
+import { upActionNotice } from '../lib/fleet-action-notice.js';
 import {
   fleetStatus, fleetDefinitions, fleetDefineEngine, fleetEditEngine, fleetRemoveEngine,
   fleetDefineCell, fleetEditCell, fleetRemoveCell, fleetRestart, fleetUp, fleetDown,
@@ -172,12 +173,15 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     const id = powerCell.cell || powerCell.id;
     const actionRoute = Array.isArray(powerCell.route) ? powerCell.route : route;
     if (payload.action === 'up') {
-      await fleetUp(token, {
+      const res = await fleetUp(token, {
         cell: id, boot: !!payload.boot,
         ...(payload.engine ? { engine: payload.engine } : {}),
         ...(payload.model !== undefined ? { model: payload.model } : {}),
         ...(payload.permissionPolicy ? { permissionPolicy: payload.permissionPolicy } : {}),
       }, actionRoute);
+      // 0.8.47: TUI in consenso/auth/onboarding -> recovery esplicita (bounded).
+      const notice = upActionNotice(res);
+      if (notice) setNote(notice.text);
     } else {
       await fleetDown(token, { cell: id, boot: !!payload.boot }, actionRoute);
     }
