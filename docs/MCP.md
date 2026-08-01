@@ -19,6 +19,10 @@ cells.
 | `nc_cells` | List authorized Fleet cells across visible nodes |
 | `nc_cell_diagnostics` | Read redacted launch state for one exact local cell |
 | `nc_send_cell` | Submit bounded text to one exact active cell |
+| `nc_vl_nodes` | List authorized owner-qualified VL micro-device nodes |
+| `nc_vl_invite` | Create a one-time invite on one exact owner |
+| `nc_vl_command` | Deliver a bounded command to one online VL node |
+| `nc_vl_revoke` | Explicitly revoke one exact VL pairing |
 | `nc_identity` | Diagnose caller identity without reading a token |
 | `nc_speak` | Speak a bounded utterance on one exact authorized node ID |
 | `nc_speak_status` | Read a caller-scoped exact-target audio receipt |
@@ -108,6 +112,11 @@ It never calls the HTTP API or reads the bearer token.
 active local Fleet cell. Its command and failure information are bounded and
 credential-redacted.
 
+VL mutation tools likewise require an active local Fleet caller. Use
+`nc_vl_nodes` immediately before mutation and the full owner-qualified target.
+`nc_vl_command` receipts are transport-only until `lastAck` carries the same
+ID. See [VL micro-device nodes](VL_MICRO_NODES.md).
+
 ### Audio Share
 
 Audio tools require an active local Fleet cell and an HMAC-signed bridge
@@ -138,4 +147,5 @@ See [MCP_COMPANIONS.md](../MCP_COMPANIONS.md) and
 - [Fleet and terminals](FLEET.md)
 - [Connect nodes](NODES.md)
 - [Audio Share and native TTS](AUDIO_SHARE.md)
+- [VL micro-device nodes](VL_MICRO_NODES.md)
 - [Security](SECURITY.md)

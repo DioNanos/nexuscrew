@@ -57,6 +57,15 @@ test('federation route parser has an explicit capability allowlist and hop cap',
   assert.equal(fed.parseRoute('/vps/_/settings/token/rotate'), null);
   assert.equal(fed.allowedResource('/files/outbox', 'POST'), false);
   assert.equal(fed.allowedResource('/files/upload', 'POST'), true);
+  assert.deepEqual(fed.parseRoute(`/vps/_/vl-nodes/${'a'.repeat(32)}/commands`), {
+    route: ['vps'], resource: `/vl-nodes/${'a'.repeat(32)}/commands`,
+  });
+  assert.equal(fed.allowedResource('/vl-nodes', 'GET'), true);
+  assert.equal(fed.allowedResource('/vl-nodes/invite', 'POST'), true);
+  assert.equal(fed.allowedResource(`/vl-nodes/${'a'.repeat(32)}/commands`, 'POST'), true);
+  assert.equal(fed.allowedResource(`/vl-nodes/${'a'.repeat(32)}`, 'DELETE'), true);
+  assert.equal(fed.allowedResource(`/vl-nodes/${'a'.repeat(32)}/commands`, 'GET'), false);
+  assert.equal(fed.parseRoute('/vps/_/vl-nodes/not-a-node/commands'), null);
 });
 
 test('relay ACL is symmetric and peer credentials identify only their peer', () => {

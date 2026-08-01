@@ -81,16 +81,17 @@ test('initialize: echo protocolVersion, capabilities.tools, serverInfo', async (
   assert.equal(out.lines.length, 1);
 });
 
-test('tools/list: 16 tool nc_* con readOnlyHint sui read-only', async () => {
+test('tools/list: tool nc_* completi con readOnlyHint sui read-only', async () => {
   const { srv, out } = makeSrv();
   await srv.handleLine(rpc(2, 'tools/list'));
   const tools = out.lines[0].result.tools;
   assert.deepEqual(tools.map((t) => t.name).sort(),
-    ['nc_ask', 'nc_cell_diagnostics', 'nc_cells', 'nc_deck', 'nc_identity', 'nc_inbox', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_speak', 'nc_speak_group', 'nc_speak_group_status', 'nc_speak_group_stop', 'nc_speak_status', 'nc_speak_stop', 'nc_status']);
+    ['nc_ask', 'nc_cell_diagnostics', 'nc_cells', 'nc_deck', 'nc_identity', 'nc_inbox', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_speak', 'nc_speak_group', 'nc_speak_group_status', 'nc_speak_group_stop', 'nc_speak_status', 'nc_speak_stop', 'nc_status', 'nc_vl_command', 'nc_vl_invite', 'nc_vl_nodes', 'nc_vl_revoke']);
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   assert.equal(byName.nc_status.annotations.readOnlyHint, true);
   assert.equal(byName.nc_deck.annotations.readOnlyHint, true);
   assert.equal(byName.nc_cells.annotations.readOnlyHint, true);
+  assert.equal(byName.nc_vl_nodes.annotations.readOnlyHint, true);
   assert.equal(byName.nc_cell_diagnostics.annotations.readOnlyHint, true);
   assert.equal(byName.nc_inbox.annotations.readOnlyHint, true);
   assert.equal(byName.nc_identity.annotations.readOnlyHint, true);
@@ -98,9 +99,50 @@ test('tools/list: 16 tool nc_* con readOnlyHint sui read-only', async () => {
   assert.equal(byName.nc_speak_group_status.annotations.readOnlyHint, true);
   assert.equal(byName.nc_notify.annotations, undefined);
   assert.equal(byName.nc_send_cell.annotations, undefined);
+  assert.equal(byName.nc_vl_invite.annotations, undefined);
+  assert.equal(byName.nc_vl_command.annotations, undefined);
+  assert.equal(byName.nc_vl_revoke.annotations, undefined);
   assert.equal(byName.nc_speak.annotations, undefined, 'nc_speak muta, no readOnlyHint');
   assert.equal(byName.nc_speak_group.annotations, undefined, 'nc_speak_group muta, no readOnlyHint');
   for (const t of tools) assert.equal(t.inputSchema.type, 'object');
+});
+
+test('nc_vl_nodes + nc_vl_command: directory owner-qualified e receipt live-only', async () => {
+  const localId = 'a'.repeat(32); const nodeId = 'b'.repeat(32);
+  const target = `${localId}:VL-${nodeId}`;
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') return { status: 200, json: { nodes: [] } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'codex.native', active: true, canReceive: true },
+      ] } };
+      if (p === '/api/vl-nodes' && call.method === 'GET') return { status: 200, json: {
+        instanceId: localId, protocol: 'vl-node/1', nodes: [{
+          id: target, instanceId: localId, nodeId, cell: 'VL-bbbbbbbb', label: 'N900',
+          online: true, canManage: true, generation: 1, capabilities: ['status'],
+        }],
+      } };
+      if (p === `/api/vl-nodes/${nodeId}/commands`) return { status: 202, json: {
+        id: 'c'.repeat(32), status: 'submitted', note: 'completion requires ack',
+      } };
+      return { status: 404, json: { error: p } };
+    },
+  });
+  await srv.handleLine(rpc(207, 'tools/call', { name: 'nc_vl_nodes', arguments: {} }));
+  const directory = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(directory.nodes[0].id, target);
+  assert.equal(directory.nodes[0].online, true);
+  await srv.handleLine(rpc(208, 'tools/call', {
+    name: 'nc_vl_command', arguments: { target, kind: 'status', args: {} },
+  }));
+  const receipt = JSON.parse(out.lines[1].result.content[0].text);
+  assert.equal(receipt.status, 'submitted');
+  assert.equal(receipt.target, target);
+  const commandCall = calls.find((call) => new URL(call.url).pathname.endsWith('/commands'));
+  assert.deepEqual(commandCall.body, { kind: 'status', args: {} });
 });
 
 test('nc_speak_group/status/stop: il bridge firma anche l orchestrazione multi-endpoint', async () => {
@@ -414,7 +456,7 @@ test('commandForDiagnostics: over-redaction benigno (NODE_ENV), shape e ACL inva
   const diag = TOOLS.find((tool) => tool.name === 'nc_cell_diagnostics');
   assert.ok(diag, 'nc_cell_diagnostics presente');
   assert.equal(diag.annotations.readOnlyHint, true);
-  assert.equal(TOOLS.length, 16, 'registry tool (16 tool)');
+  assert.equal(TOOLS.length, 20, 'registry tool (20 tool)');
 });
 
 test('nc_send_cell: risolve sender e target dalla directory e restituisce receipt onesto', async () => {
@@ -952,7 +994,7 @@ test('subprocess: handshake + tools/call nc_notify contro server HTTP finto', as
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
 
   const list = await call(2, 'tools/list');
-  assert.equal(list.result.tools.length, 16);
+  assert.equal(list.result.tools.length, 20);
 
   const notif = await call(3, 'tools/call', { name: 'nc_notify', arguments: { title: 'e2e ok' } });
   assert.deepEqual(JSON.parse(notif.result.content[0].text), { delivered: { ui: 1, push: 0 } });
