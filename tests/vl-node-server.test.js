@@ -48,6 +48,15 @@ test('real HTTP server pairs, delivers live-only, acks, supersedes stale session
   const uiToken = fs.readFileSync(tokenPath, 'utf8').trim();
   const ui = { authorization: `Bearer ${uiToken}`, 'content-type': 'application/json' };
 
+  const malformedPair = await fetch(`${base}/vl-node/v1/pair`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{ nope',
+  });
+  assert.equal(malformedPair.status, 400);
+  assert.match(malformedPair.headers.get('content-type') || '', /^application\/json/);
+  const malformedBody = await malformedPair.text();
+  assert.deepEqual(JSON.parse(malformedBody), { error: 'invalid JSON' });
+  assert.doesNotMatch(malformedBody, /\/home\/|node_modules|SyntaxError|\bat\s+\w/);
+
   const inviteResponse = await fetch(`${base}/api/vl-nodes/invite`, {
     method: 'POST', headers: ui, body: JSON.stringify({ label: 'N900', ttlSeconds: 60 }),
   });
@@ -96,6 +105,43 @@ test('real HTTP server pairs, delivers live-only, acks, supersedes stale session
   const listed = await json(await fetch(`${base}/api/vl-nodes`, { headers: ui }));
   assert.equal(listed.nodes[0].lastAck.id, receipt.id);
   assert.equal(listed.nodes[0].lastAck.status, 'ok');
+
+  const lostResponsePoll = fetch(`${base}/vl-node/v1/poll`, {
+    method: 'POST', headers: { ...node, 'x-vl-wait-ms': '30000' },
+    body: JSON.stringify(heartbeat(nodeId, 'c'.repeat(32), 2)),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const uncertain = await fetch(`${base}/api/vl-nodes/${nodeId}/commands`, {
+    method: 'POST', headers: ui, body: JSON.stringify({ kind: 'restart', args: {} }),
+  });
+  assert.equal(uncertain.status, 202);
+  const uncertainReceipt = await json(uncertain);
+  assert.equal((await json(await lostResponsePoll)).command.id, uncertainReceipt.id);
+
+  const recoveryPoll = fetch(`${base}/vl-node/v1/poll`, {
+    method: 'POST', headers: { ...node, 'x-vl-wait-ms': '30000' },
+    body: JSON.stringify(heartbeat(nodeId, 'c'.repeat(32), 3)),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const recovered = await json(await fetch(`${base}/api/vl-nodes`, { headers: ui }));
+  assert.equal(recovered.nodes[0].inflight, null);
+  assert.equal(recovered.nodes[0].lastAck.id, uncertainReceipt.id);
+  assert.equal(recovered.nodes[0].lastAck.status, 'error');
+  assert.equal(recovered.nodes[0].lastAck.result.code, 'delivery-unknown');
+
+  const afterUnknown = await fetch(`${base}/api/vl-nodes/${nodeId}/commands`, {
+    method: 'POST', headers: ui, body: JSON.stringify({ kind: 'health', args: {} }),
+  });
+  assert.equal(afterUnknown.status, 202);
+  const afterUnknownReceipt = await json(afterUnknown);
+  assert.equal((await json(await recoveryPoll)).command.id, afterUnknownReceipt.id);
+  const recoveryAck = await fetch(`${base}/vl-node/v1/poll`, {
+    method: 'POST', headers: { ...node, 'x-vl-wait-ms': '1' },
+    body: JSON.stringify(heartbeat(nodeId, 'c'.repeat(32), 4, {
+      id: afterUnknownReceipt.id, status: 'ok', result: { brokerReachable: true },
+    })),
+  });
+  assert.equal(recoveryAck.status, 204);
 
   const stalePoll = fetch(`${base}/vl-node/v1/poll`, {
     method: 'POST', headers: { ...node, 'x-vl-wait-ms': '30000' },

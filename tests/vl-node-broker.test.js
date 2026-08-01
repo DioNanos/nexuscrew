@@ -66,6 +66,26 @@ test('new device session supersedes stale poll and clears delivery-unknown comma
   assert.equal((await newPoll).command.kind, 'health');
 });
 
+test('same session repoll without matching ack clears delivery-unknown command', async () => {
+  let now = 20_000;
+  const broker = createBroker({ now: () => now, randomBytes: (n) => Buffer.alloc(n, 5) });
+  const firstPoll = broker.poll(node, heartbeat('5'.repeat(32), 0), { waitMs: 5_000 });
+  const submitted = broker.dispatch(node.nodeId, { kind: 'restart', args: {} });
+  assert.equal((await firstPoll).type, 'command');
+
+  now += 50;
+  const recoveryPoll = broker.poll(node, heartbeat('5'.repeat(32), 1), { waitMs: 5_000 });
+  const recovered = broker.list([node])[0];
+  assert.equal(recovered.inflight, null);
+  assert.equal(recovered.lastAck.id, submitted.id);
+  assert.equal(recovered.lastAck.status, 'error');
+  assert.equal(recovered.lastAck.result.code, 'delivery-unknown');
+
+  const next = broker.dispatch(node.nodeId, { kind: 'health', args: {} });
+  assert.equal(next.ok, true, 'a fresh poll accepts a new bounded command');
+  assert.equal((await recoveryPoll).command.kind, 'health');
+});
+
 test('same-session replayed sequence is rejected fail-closed', async () => {
   const broker = createBroker();
   const first = broker.poll(node, heartbeat('4'.repeat(32), 7), { waitMs: 5_000 });
