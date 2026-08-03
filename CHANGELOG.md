@@ -4,6 +4,16 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+- Federated terminals no longer stay black. A WebSocket upgrade arriving on a
+  reverse slot listener now takes the same routing as the primary listener.
+  Until now those per-slot listeners served the Express app but had no
+  `upgrade` handler, so the upgrade fell through to the SPA catch-all and the
+  peer answered `200` with `index.html` instead of `101 Switching Protocols`:
+  the cell was listed but its terminal never received a byte. Every peer
+  reached through the reverse pool was affected. `attachUpgrade` is now a
+  required dependency of the slot listeners, so a listener that serves the app
+  without upgrade routing cannot be created by omission.
+
 ## 0.8.47 — 2026-07-31 — "Kimi First-Run Corrective"
 
 - The Kimi engines (`kimi.native` and the Claude Code "Kimi Code" provider)
