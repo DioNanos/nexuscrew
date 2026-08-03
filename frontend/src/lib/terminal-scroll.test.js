@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_SCROLL_STEPS, PAGE_INPUT_DOWN, PAGE_INPUT_UP, PAGE_SCROLL_MIN_THRESHOLD, SCROLL_LINE_THRESHOLD,
-  chooseScrollMode, describeScrollActions, planTerminalScroll, resolveThreshold,
+  chooseScrollMode, describeScrollActions, planTerminalScroll, resolveThreshold, sgrWheelSequence,
 } from './terminal-scroll.js';
 
 describe('chooseScrollMode', () => {
@@ -78,6 +78,51 @@ describe('describeScrollActions', () => {
   });
   it('also bounds externally supplied plans', () => {
     expect(describeScrollActions({ mode: 'page', up: Number.MAX_SAFE_INTEGER, down: 0, remainder: 0 }))
+      .toHaveLength(MAX_SCROLL_STEPS);
+  });
+});
+
+// Un'applicazione che abilita il mouse tracking (Claude Code lo fa, Codex no)
+// possiede il proprio scorrimento: sottrarle la rotella per il copy-mode tmux
+// mostra una scrollback che non ha mai scritto come log.
+describe('mouse mode', () => {
+  it('gives the gesture to an application that owns the wheel', () => {
+    expect(chooseScrollMode({ mouseTracking: true, alternateScreen: false, readonly: false })).toBe('mouse');
+  });
+  it('wins over page mode: an alternate-screen app with tracking still owns the wheel', () => {
+    expect(chooseScrollMode({ mouseTracking: true, alternateScreen: true, readonly: false })).toBe('mouse');
+  });
+  it('never reaches a readonly terminal, which must not send PTY input', () => {
+    expect(chooseScrollMode({ mouseTracking: true, alternateScreen: false, readonly: true })).toBe('scroll');
+    expect(chooseScrollMode({ mouseTracking: true, alternateScreen: true, readonly: true })).toBe('scroll');
+  });
+  it('stays on server-side scroll when the application does not track the mouse', () => {
+    expect(chooseScrollMode({ mouseTracking: false, alternateScreen: false, readonly: false })).toBe('scroll');
+  });
+
+  it('encodes SGR wheel reports at the given 1-based viewport cell', () => {
+    expect(sgrWheelSequence('up', 12, 34)).toBe('\x1b[<64;12;34M');
+    expect(sgrWheelSequence('down', 1, 1)).toBe('\x1b[<65;1;1M');
+  });
+  it('clamps out-of-range or malformed coordinates instead of emitting garbage', () => {
+    expect(sgrWheelSequence('up', 0, -5)).toBe('\x1b[<64;1;1M');
+    expect(sgrWheelSequence('up', NaN, undefined)).toBe('\x1b[<64;1;1M');
+    expect(sgrWheelSequence('down', 99999, 99999)).toBe('\x1b[<65;9999;9999M');
+  });
+
+  it('maps mouse steps to PTY input at the pointer position', () => {
+    const plan = { mode: 'mouse', up: 2, down: 0, remainder: 0 };
+    expect(describeScrollActions(plan, { col: 7, row: 3 })).toEqual([
+      { kind: 'input', seq: '\x1b[<64;7;3M' },
+      { kind: 'input', seq: '\x1b[<64;7;3M' },
+    ]);
+  });
+  it('falls back to the first cell when no position is supplied', () => {
+    expect(describeScrollActions({ mode: 'mouse', up: 0, down: 1, remainder: 0 }))
+      .toEqual([{ kind: 'input', seq: '\x1b[<65;1;1M' }]);
+  });
+  it('keeps the per-event step cap in mouse mode', () => {
+    expect(describeScrollActions({ mode: 'mouse', up: Number.MAX_SAFE_INTEGER, down: 0, remainder: 0 }, { col: 1, row: 1 }))
       .toHaveLength(MAX_SCROLL_STEPS);
   });
 });
