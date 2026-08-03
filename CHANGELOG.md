@@ -25,6 +25,15 @@ All notable changes to NexusCrew are tracked here.
   negotiated with a legacy (non-SGR) encoding also keeps the previous
   behaviour rather than sending bytes the application cannot decode.
 
+- Turning Share on right after a pairing no longer fails. The reverse channel
+  is established a moment before it is announced, so the hub could not accept
+  it yet and answered with a bare 409: the peer treated that temporary state
+  as final, rolled the whole transaction back and left Share off until the
+  operator tried again by hand. The hub now marks it with a typed
+  `share-channel-not-ready` code and waits a longer but still bounded window,
+  and the peer retries a bounded number of times before giving up. Any other
+  failure stays final and is not retried.
+
 ## 0.8.47 — 2026-07-31 — "Kimi First-Run Corrective"
 
 - The Kimi engines (`kimi.native` and the Claude Code "Kimi Code" provider)
