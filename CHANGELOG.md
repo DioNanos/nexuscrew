@@ -14,6 +14,17 @@ All notable changes to NexusCrew are tracked here.
   required dependency of the slot listeners, so a listener that serves the app
   without upgrade routing cannot be created by omission.
 
+- Scrolling now reaches the application that owns it. Wheel and finger drag
+  used to always drive tmux copy-mode, so in a cell running an app that
+  enables mouse tracking (Claude Code does, Codex does not) the gesture
+  browsed a scrollback that app never wrote as a log — repaint frames and
+  status bars instead of a transcript. When the application has enabled mouse
+  tracking with SGR encoding, wheel and drag are now delivered to it as SGR
+  wheel reports and it scrolls itself; every other case keeps the previous
+  behaviour, and a readonly terminal still never sends PTY input. Tracking
+  negotiated with a legacy (non-SGR) encoding also keeps the previous
+  behaviour rather than sending bytes the application cannot decode.
+
 ## 0.8.47 — 2026-07-31 — "Kimi First-Run Corrective"
 
 - The Kimi engines (`kimi.native` and the Claude Code "Kimi Code" provider)
