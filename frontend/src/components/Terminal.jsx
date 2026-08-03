@@ -78,6 +78,26 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     term.loadAddon(fit);
     term.open(hostRef.current);
     fit.fit();
+    // xterm espone la modalita' di tracking del mouse ma NON la codifica, e
+    // mandare un report SGR a un'app che ha negoziato la codifica legacy le
+    // consegnerebbe byte che non sa decodificare. La 1006 si osserva quindi
+    // sul filo: l'handler restituisce false, quindi il parser continua a
+    // processare la sequenza normalmente e non le viene sottratto nulla.
+    let sgrMouseEncoding = false;
+    const trackSgrEncoding = (enabled) => (params) => {
+      for (const param of params) {
+        const code = Array.isArray(param) ? param[0] : param;
+        if (code === 1006) sgrMouseEncoding = enabled;
+      }
+      return false;
+    };
+    // Se il parser non fosse disponibile la rilevazione resta spenta e il
+    // gesto continua a navigare la storia tmux: degrado sicuro, mai input PTY
+    // basato su un'ipotesi.
+    term.parser?.registerCsiHandler?.({ prefix: '?', final: 'h' }, trackSgrEncoding(true));
+    term.parser?.registerCsiHandler?.({ prefix: '?', final: 'l' }, trackSgrEncoding(false));
+    const mouseTrackingActive = () => sgrMouseEncoding
+      && ((term.modes && term.modes.mouseTrackingMode) || 'none') !== 'none';
     const dec = new TextDecoder();
 
     let keyboardUnlocked = keyboardGestureRef.current === 'single-tap';
@@ -213,20 +233,43 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     host.addEventListener('dragover', onDragFiles, true);
     host.addEventListener('drop', onDropFiles, true);
     const STEP = 24; // px per tick di scroll (3 righe tmux)
-    const emitScroll = (delta, previous = { mode: null, remainder: 0 }, modeOverride = null) => {
-      // Wheel events may belong to a writable alternate-screen TUI and reach
-      // it as raw PageUp/PageDown PTY input. A finger drag is different: on
-      // mobile it is the only practical way to browse the tmux history, so the
-      // touch path explicitly overrides this to server-side copy-mode scroll.
+    // Coordinata di cella 1-based RELATIVA AL VIEWPORT: e' quella che vuole un
+    // report SGR, diversa da cellXY() che restituisce la riga assoluta nel
+    // buffer (viewportY + riga visibile) per la selezione.
+    const viewportCell = (clientX, clientY) => {
+      const screen = host.querySelector('.xterm-screen') || host;
+      const r = screen.getBoundingClientRect();
+      const col = Math.floor(((clientX - r.left) / Math.max(1, r.width)) * term.cols) + 1;
+      const row = Math.floor(((clientY - r.top) / Math.max(1, r.height)) * term.rows) + 1;
+      return {
+        col: Math.max(1, Math.min(term.cols, col)),
+        row: Math.max(1, Math.min(term.rows, row)),
+      };
+    };
+    const emitScroll = (delta, previous = { mode: null, remainder: 0 }, modeOverride = null, position = null) => {
+      // Tre destinazioni possibili. Se l'applicazione ha abilitato il mouse
+      // tracking con codifica SGR possiede il proprio scorrimento e il gesto
+      // deve arrivare a lei; altrimenti una TUI alternate-screen scrivibile
+      // riceve PageUp/PageDown, e in tutti gli altri casi si naviga la storia
+      // tmux server-side.
       // Convention: accumulated > 0 = scroll up (older), < 0 = scroll down.
       const host = hostRef.current;
       const pageThreshold = host ? host.getBoundingClientRect().height : STEP;
-      const mode = modeOverride || chooseScrollMode({ alternateScreen: term.buffer.active.type === 'alternate', readonly });
+      const base = chooseScrollMode({
+        alternateScreen: term.buffer.active.type === 'alternate',
+        readonly,
+        mouseTracking: mouseTrackingActive(),
+      });
+      // L'override del percorso touch puo' scegliere solo fra le modalita'
+      // server-side: quando l'app possiede la rotella, dito E rotella devono
+      // raggiungerla entrambi, altrimenti il gesto sfoglia una scrollback che
+      // quell'app non ha mai scritto come log (fotogrammi di ridisegno).
+      const mode = base === 'mouse' ? 'mouse' : (modeOverride || base);
       // A page-sized remainder from the alternate buffer must never be
       // reinterpreted as many 24px line ticks after xterm returns to normal.
       const accumulated = previous.mode === mode ? previous.remainder + delta : delta;
       const plan = planTerminalScroll({ mode, accumulated, threshold: mode === 'page' ? pageThreshold : STEP });
-      for (const act of describeScrollActions(plan)) {
+      for (const act of describeScrollActions(plan, position)) {
         if (act.kind === 'input') sock.sendInput(act.seq);
         else sock.action(act.name);
       }
@@ -350,9 +393,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       if (!vertical) return;
       const delta = t.clientY - touchY; touchY = t.clientY;
-      // Touch always browses tmux history, including when Codex/Claude/Agy is
-      // rendering through xterm's alternate buffer. Finger down = older.
-      touchScroll = emitScroll(delta, touchScroll, 'scroll');
+      // Il dito naviga la storia tmux, anche quando l'app rende attraverso il
+      // buffer alternato: dito verso il basso = piu' vecchio. L'unica
+      // eccezione e' un'app che possiede la rotella (mouse tracking SGR): li'
+      // il gesto deve arrivare all'app, che ha il proprio scorrimento.
+      touchScroll = emitScroll(delta, touchScroll, 'scroll', viewportCell(t.clientX, t.clientY));
     };
     const resetTouch = () => {
       clearLongPress(); touchY = null; touchX = null; tapX = null; tapY = null;
@@ -381,9 +426,10 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const onWheel = (e) => {
       e.preventDefault(); e.stopPropagation();
       // wheel: deltaY > 0 = scroll down (newer) -> negative in the up-positive convention
-      // Like the finger drag, the wheel always browses tmux history, including
-      // in a writable alternate-screen TUI and while Shift is held.
-      wheelScroll = emitScroll(-e.deltaY, wheelScroll, 'scroll');
+      // Come il dito, la rotella naviga la storia tmux anche in una TUI
+      // alternate-screen scrivibile e con Shift premuto — salvo quando l'app
+      // ha abilitato il mouse tracking SGR, nel qual caso e' sua.
+      wheelScroll = emitScroll(-e.deltaY, wheelScroll, 'scroll', viewportCell(e.clientX, e.clientY));
     };
     host.addEventListener('touchstart', onTouchStart, { passive: false });
     host.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
