@@ -42,18 +42,22 @@ export function nodeReach(node) {
 
 // Cosa questo nodo puo' raggiungere della rete, secondo i campi che esistono
 // OGGI. Deliberatamente non si chiama "classe" e non produce «admin»/«user».
+//
+// Due chiavi, non una: `key` e' la frase intera del foglio, `shortKey` sta in
+// riga. Sono la stessa cosa tranne per «privato», che nel foglio spiega cosa
+// significa e in riga verrebbe troncato a meta' parola.
 export function nodeExposure(node) {
-  if (!node || typeof node !== 'object') return { key: 'peer-private', shared: false };
-  if (node.shared !== true) return { key: 'peer-private', shared: false };
+  if (!node || typeof node !== 'object') return { key: 'peer-private', shortKey: 'row-private', shared: false };
+  if (node.shared !== true) return { key: 'peer-private', shortKey: 'row-private', shared: false };
   const visibility = node.visibility || 'network';
-  if (visibility === 'relay-only') return { key: 'visibility-relay', shared: true, visibility };
+  if (visibility === 'relay-only') return { key: 'visibility-relay', shortKey: 'visibility-relay', shared: true, visibility };
   if (visibility === 'selected') {
     const count = Array.isArray(node.selected) ? node.selected.length : 0;
     // Zero selezionati e' condiviso ma verso nessuno: e' uno stato reale e
     // silenzioso, e chi legge la riga deve poterlo distinguere da "vede tutti".
-    return { key: 'visibility-selected', shared: true, visibility, count };
+    return { key: 'visibility-selected', shortKey: 'visibility-selected', shared: true, visibility, count };
   }
-  return { key: 'visibility-network', shared: true, visibility };
+  return { key: 'visibility-network', shortKey: 'visibility-network', shared: true, visibility };
 }
 
 // La riga completa: identita' piu' i due riassunti. Nient'altro — ogni campo in
@@ -62,12 +66,18 @@ export function nodeRowSummary(node) {
   if (!node || typeof node !== 'object') return null;
   const name = typeof node.name === 'string' ? node.name : '';
   if (!name) return null;
+  const routed = node.kind === 'transitive';
   return {
     name,
     title: (typeof node.label === 'string' && node.label.trim()) || name,
     subtitle: name,
     reach: nodeReach(node),
     exposure: nodeExposure(node),
-    routed: node.kind === 'transitive',
+    routed,
+    // Di un nodo raggiunto in transito NON possiamo dire l'esposizione: quella
+    // la decide l'hub che lo instrada, non questa macchina. Cio' che sappiamo, e
+    // che serve per distinguerlo da un omonimo dietro un altro hub, e' da dove
+    // passa. La riga mostra quello.
+    routeLabel: routed && Array.isArray(node.route) ? node.route.join(' › ') : null,
   };
 }

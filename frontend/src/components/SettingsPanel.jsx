@@ -4,7 +4,7 @@ import { getLang, t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import {
   apiFetch, getSettings, getPeers, saveConfig, rotateToken,
-  removeNode, updateNode, nodeAction, setNodeShare, regenService, createPeerInvite, setNodeVisibility,
+  setNodeShare, regenService, createPeerInvite,
   saveNodeAlias, deleteNodeAlias,
   checkNpmUpdate, applyNpmUpdate,
   getDiagnosticsStatus, getDiagnosticsLogs, setDiagnosticsVerbose, clearDiagnosticsLogs,
@@ -13,6 +13,8 @@ import {
 } from '../lib/api.js';
 import { validateNodeForm, tunnelInfo, toSlug, isValidLabel } from '../lib/settings-model.js';
 import PairingCard from './PairingCard.jsx';
+import NodeSheet from './NodeSheet.jsx';
+import { nodeRowSummary } from '../lib/node-summary.js';
 import { getPushState, subscribePush, unsubscribePush } from '../lib/push.js';
 import Icon from './Icon.jsx';
 import FleetTab from './FleetTab.jsx';
@@ -64,15 +66,15 @@ function PairingQr({ value }) {
 export function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAliases }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);        // `${name}:${action}` in corso
-  const [testResult, setTestResult] = useState({}); // name -> {ok, result, detail}
   const [invite, setInvite] = useState(null);
   const [inviteForm, setInviteForm] = useState({ ssh: '', sshPort: '', name: '' });
   const [inviteHubName, setInviteHubName] = useState('');
   const [shareHubName, setShareHubName] = useState('');
   const [devName, setDevName] = useState('');
   const [inviteAdvanced, setInviteAdvanced] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [removeConfirm, setRemoveConfirm] = useState(null);
+  // Il foglio aperto e' identificato per CHIAVE, non per oggetto: cosi' a ogni
+  // refresh mostra il nodo aggiornato invece di una copia congelata all'apertura.
+  const [openKey, setOpenKey] = useState(null);
   const now = Date.now();
   const deviceDefault = (settings && settings.deviceName) || '';
   // Un'installazione client invita nella rete a cui è già collegata, non crea
@@ -92,47 +94,12 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
     { key: 'peer-group-routed', rows: (nodes || []).filter((n) => n.kind === 'transitive') },
   ];
 
-  const run = async (name, action) => {
-    setErr(null); setBusy(`${name}:${action}`);
-    try {
-      const j = await nodeAction(token, name, action);
-      if (action === 'test') setTestResult((m) => ({ ...m, [name]: j }));
-      await refresh();
-    } catch (e) { setErr(`${name}: ${String(e.message || e)}`); }
-    setBusy(null);
-  };
-
-  const onRemove = async (name) => {
-    setErr(null); setBusy(`${name}:remove`);
-    try { await removeNode(token, name); setRemoveConfirm(null); await refresh(); }
-    catch (e) { setErr(`${name}: ${String(e.message || e)}`); }
-    setBusy(null);
-  };
-
-  const beginEdit = (node) => setEditing({
-    name: node.name,
-    direction: node.direction,
-    label: node.label || node.name,
-    ssh: node.ssh || '',
-    sshPort: node.sshPort ? String(node.sshPort) : '',
-    autostart: node.autostart === true,
-    visibility: node.visibility || 'network',
-    selected: [...(node.selected || [])],
-  });
-
-  const saveEdit = async () => {
-    if (!editing || !isValidLabel(editing.label)) { setErr(t('err-label')); return; }
-    const patch = editing.direction === 'inbound'
-      ? { label: editing.label, visibility: editing.visibility, selected: editing.visibility === 'selected' ? editing.selected : [] }
-      : {
-        label: editing.label, ssh: editing.ssh, autostart: editing.autostart,
-        ...(editing.sshPort ? { sshPort: Number(editing.sshPort) } : {}),
-      };
-    setErr(null); setBusy(`${editing.name}:edit`);
-    try { await updateNode(token, editing.name, patch); setEditing(null); await refresh(); }
-    catch (e) { setErr(`${editing.name}: ${String(e.message || e)}`); }
-    setBusy(null);
-  };
+  // Il nodo del foglio si rilegge dall'inventario a ogni render: dopo una
+  // rimozione o un refresh la chiave non trova piu' nulla e il foglio sparisce,
+  // invece di mostrare lo stato di un peer che non c'e' piu'.
+  const openNode = openKey
+    ? (nodes || []).find((n) => `${n.kind || 'direct'}:${n.nodeId || n.name}` === openKey) || null
+    : null;
 
   const applyShare = async (shared) => {
     if (!shareHub) return;
@@ -226,118 +193,40 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
       {peerGroups.map((group) => group.rows.length > 0 && (
         <div className="nc-peer-group" key={group.key}>
           <div className="nc-peer-group-title">{t(group.key)} <span>{group.rows.length}</span></div>
+          {/* La riga porta identita' e riassunto, e nient'altro: il dettaglio
+              sta nel foglio che apre. Prima ogni riga conteneva visibilita',
+              spunte di tutti i nodi della rete, editor e conferma di rimozione
+              — su un telefono il nome del nodo finiva fuori schermo. */}
           {group.rows.map((n) => {
-            const routed = n.kind === 'transitive';
-            const ti = routed
-              ? { up: n.stale !== true, label: n.stale === true ? 'peer-routed-stale' : 'peer-routed' }
-              : tunnelInfo(n.tunnel, now);
-            const tr = testResult[n.name];
-            const actions = n.actions || {};
+            const row = nodeRowSummary(n);
+            if (!row) return null;
+            const key = `${n.kind || 'direct'}:${n.nodeId || n.name}`;
+            const ti = row.routed ? { up: row.reach.up, since: null } : tunnelInfo(n.tunnel, now);
             return (
-          <div key={`${n.kind || 'direct'}:${n.nodeId || n.name}`} className={`nc-set-node${routed ? ' routed' : ''}`}>
-            <div className="nc-set-node-head">
-              <span className={`nc-dot ${ti.up ? 'on' : ''}`} />
-              <b>{n.label || n.name}</b>
-              <small>
-                {n.name}
-                {routed ? ` · ${n.route.join(' → ')}` : n.direction === 'outbound' ? ` · SSH ${n.ssh || ''}` : ` · ${t('node-connected-client')}`}
-                {n.tunnel?.transport ? ` · ${n.tunnel.transport} ${t('transport-used')}` : ''}
-              </small>
-              <span className={`nc-set-tunnel${ti.up ? ' up' : ''}`}>
-                {t(ti.label)}{ti.since ? ` · ${ti.since}` : ''}
-              </span>
-            </div>
-            {!routed && n.direction === 'inbound' && (
-              <div className="nc-set-info">{t(n.shared ? 'peer-shared' : 'peer-private')}</div>
-            )}
-            {actions.visibility && n.shared && <>
-              <select value={n.visibility || 'network'} disabled={readonly || !!busy}
-                onChange={async (e) => { setBusy(`${n.name}:visibility`); try { await setNodeVisibility(token, n.name, e.target.value); await refresh(); } catch (x) { setErr(String(x.message || x)); } setBusy(null); }}>
-                <option value="network">{t('visibility-network')}</option>
-                <option value="relay-only">{t('visibility-relay')}</option>
-                <option value="selected">{t('visibility-selected')}</option>
-              </select>
-              {n.visibility === 'selected' && <div className="nc-set-row">
-                {(nodes || []).filter((x) => x.name !== n.name && x.nodeId).map((x) => {
-                  const checked = (n.selected || []).includes(x.nodeId);
-                  return <label className="nc-check" key={x.nodeId}><input type="checkbox" checked={checked} disabled={readonly || !!busy}
-                    onChange={async (e) => { const selected = e.target.checked ? [...(n.selected || []), x.nodeId] : (n.selected || []).filter((id) => id !== x.nodeId); setBusy(`${n.name}:visibility`); try { await setNodeVisibility(token, n.name, 'selected', selected); await refresh(); } catch (z) { setErr(String(z.message || z)); } setBusy(null); }} /> {x.label || x.name}</label>;
-                })}
-              </div>}
-            </>}
-            <div className="nc-set-node-actions">
-              {actions.edit && <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
-                onClick={() => beginEdit(n)}>{t('edit')}</button>}
-              {actions.test && <button type="button" className="nc-btn ghost" disabled={!!busy}
-                onClick={() => run(n.name, 'test')}>{t('node-test')}</button>
-              }
-              {actions.disconnect && ti.up && (
-                <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
-                  onClick={() => run(n.name, 'down')}>{t('tunnel-stop')}</button>
-              )}
-              {actions.connect && !ti.up && (
-                <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
-                  onClick={() => run(n.name, 'up')}>{t('tunnel-start')}</button>
-              )}
-              {actions.restart && <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
-                onClick={() => run(n.name, 'restart')}>{t('tunnel-restart')}</button>
-              }
-              {actions.remove && <button type="button" className="nc-btn danger" disabled={readonly || !!busy}
-                title={readonly ? t('settings-readonly') : t('delete')}
-                onClick={() => setRemoveConfirm(n.name)}><Icon name="trash" size={14} /> {t('delete')}</button>}
-            </div>
-            {editing?.name === n.name && (
-              <div className="nc-set-form nc-node-editor">
-                <label className="nc-field">{t('node-display-label')}
-                  <input value={editing.label} disabled={!!busy}
-                    onChange={(e) => setEditing({ ...editing, label: e.target.value })} />
-                </label>
-                {editing.direction === 'outbound' ? <>
-                  <label className="nc-field">{t('node-ssh-label')}
-                    <input value={editing.ssh} disabled={!!busy}
-                      onChange={(e) => setEditing({ ...editing, ssh: e.target.value })} />
-                  </label>
-                  <label className="nc-field">{t('node-ssh-port-label')}
-                    <input inputMode="numeric" value={editing.sshPort} disabled={!!busy}
-                      onChange={(e) => setEditing({ ...editing, sshPort: e.target.value.replace(/[^0-9]/g, '').slice(0, 5) })} />
-                  </label>
-                  <label className="nc-check"><input type="checkbox" checked={editing.autostart} disabled={!!busy}
-                    onChange={(e) => setEditing({ ...editing, autostart: e.target.checked })} /> {t('boot-persist')}</label>
-                </> : <label className="nc-field">{t('peer-visibility')}
-                  <select value={editing.visibility} disabled={!!busy}
-                    onChange={(e) => setEditing({ ...editing, visibility: e.target.value })}>
-                    <option value="network">{t('visibility-network')}</option>
-                    <option value="relay-only">{t('visibility-relay')}</option>
-                    <option value="selected">{t('visibility-selected')}</option>
-                  </select>
-                </label>}
-                <div className="nc-set-row">
-                  <button type="button" className="nc-btn primary" disabled={!!busy} onClick={saveEdit}>{t('save')}</button>
-                  <button type="button" className="nc-btn ghost" disabled={!!busy} onClick={() => setEditing(null)}>{t('cancel')}</button>
-                </div>
-              </div>
-            )}
-            {removeConfirm === n.name && (
-              <div className="nc-set-confirm">
-                <b>{t('node-remove-confirm').replace('{name}', n.label || n.name)}</b>
-                <small>{t('node-remove-warning')}</small>
-                <div className="nc-set-row">
-                  <button type="button" className="nc-btn danger" disabled={!!busy} onClick={() => onRemove(n.name)}>{t('delete')}</button>
-                  <button type="button" className="nc-btn ghost" disabled={!!busy} onClick={() => setRemoveConfirm(null)}>{t('cancel')}</button>
-                </div>
-              </div>
-            )}
-            {n.health?.detail && <div className={`nc-set-test${n.health.status === 'healthy' ? ' ok' : n.health.status === 'passive' ? '' : ' ko'}`}>{n.health.detail}</div>}
-            {tr && (
-              <div className={`nc-set-test${tr.ok ? ' ok' : ' ko'}`}>
-                {tr.result}{tr.detail ? ` — ${tr.detail}` : ''}
-              </div>
-            )}
-          </div>
+              <button type="button" key={key} className={`nc-set-node nc-node-row${row.routed ? ' routed' : ''}`}
+                aria-label={`${row.title} — ${t('node-detail-open')}`} onClick={() => setOpenKey(key)}>
+                <span className={`nc-dot ${row.reach.up ? 'on' : ''}`} />
+                <span className="nc-node-row-text">
+                  <b>{row.title}</b>
+                  {/* Il percorso finisce col nome del nodo: ripeterlo prima lo
+                      direbbe due volte in una riga che ha spazio per una cosa. */}
+                  <small>{row.routed ? row.routeLabel : `${row.subtitle} · ${t(row.exposure.shortKey)}`}
+                    {!row.routed && row.exposure.shortKey === 'visibility-selected' ? ` (${row.exposure.count})` : ''}</small>
+                </span>
+                <span className={`nc-set-tunnel${row.reach.up ? ' up' : ''}`}>
+                  {t(row.reach.key)}{ti.since ? ` · ${ti.since}` : ''}
+                </span>
+                <span className="nc-node-row-more"><Icon name="chevronDown" size={14} /></span>
+              </button>
             );
           })}
         </div>
       ))}
+
+      {openNode && (
+        <NodeSheet node={openNode} nodes={nodes || []} token={token} readonly={readonly}
+          refresh={refresh} onClose={() => setOpenKey(null)} />
+      )}
 
       {(roster || []).some((g) => !g.direct && g.instanceId) && (
         <div className="nc-set-form">

@@ -175,6 +175,21 @@
 .nc-peer-group-title span { color: #789; font-variant-numeric: tabular-nums; }
 .nc-set-node.routed { border-style: dashed; background: #090d0b; }
 .nc-node-editor { border-top: 1px solid #243; padding-top: 10px; }
+
+/* La riga di un nodo e' un BOTTONE: apre il foglio di dettaglio. Una riga sola,
+   che non va a capo — il nome del nodo deve restare leggibile su un telefono
+   anche quando lo stato e' lungo, quindi e' il sottotitolo a troncare. */
+.nc-node-row {
+  flex-direction: row; align-items: center; gap: 8px; width: 100%;
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+  min-height: 48px;
+}
+.nc-node-row:hover { border-color: #2e7d32; }
+.nc-node-row:focus-visible { outline: 2px solid #2e7d32; outline-offset: 2px; }
+.nc-node-row-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.nc-node-row-text b { color: #d8ffe8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-node-row-text small { opacity: .6; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-node-row-more { flex: none; opacity: .5; display: flex; }
 .nc-set-node-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .nc-set-node-head b { color: #d8ffe8; }
 .nc-set-node-head small { opacity: .6; font-size: 11px; }
