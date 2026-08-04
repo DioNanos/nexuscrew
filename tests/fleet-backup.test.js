@@ -70,3 +70,42 @@ test('fleet backup: custom engine rejects secret-looking argv and invalid env na
   assert.equal(parseFleetBackup(JSON.stringify({ ...base, engines: [{ ...custom, args: ['sk-exampleCredentialValue123'] }] })).ok, false);
   assert.equal(parseFleetBackup(JSON.stringify({ ...base, engines: [{ ...custom, envKeys: ['BAD-NAME'] }] })).ok, false);
 });
+
+// --- NC-D: il nome deve sopravvivere al round-trip COMPLETO della PWA -------
+// Non basta che lo schema accetti `label` in ingresso: il backup lo perde se
+// l'export non lo scrive o se il restore non lo rimette nella definizione. Il
+// giro qui sotto e' quello vero della PWA — export, serializzazione, parse,
+// restore — e fallisce su entrambe quelle omissioni.
+test('fleet backup: il nome di una cella sopravvive a export -> parse -> restore', async () => {
+  const { createFleetBackup, parseFleetBackup, restoreCellDefinition } = await mod();
+  const backup = createFleetBackup([{
+    id: 'Dev', cwd: '/home/other/device/dev', cwdRel: 'dev', engine: 'claude', boot: false,
+    label: 'Cella di sviluppo', prompt: '',
+  }], new Set(['Dev']), new Date('2026-08-04T00:00:00Z'));
+  assert.equal(backup.cells[0].label, 'Cella di sviluppo', "l'export deve contenere il nome");
+
+  const parsed = parseFleetBackup(JSON.stringify(backup));
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.cells[0].label, 'Cella di sviluppo', 'il parse deve conservarlo');
+
+  const restored = restoreCellDefinition(parsed.cells[0], 'claude', ['claude']);
+  assert.equal(restored.label, 'Cella di sviluppo', 'il restore deve rimetterlo nella definizione');
+});
+
+test('fleet backup: una cella senza nome non ne inventa uno vuoto', async () => {
+  const { createFleetBackup, parseFleetBackup, restoreCellDefinition } = await mod();
+  const backup = createFleetBackup([{ id: 'Dev', cwdRel: 'dev', engine: 'claude', boot: false, prompt: '' }],
+    new Set(['Dev']), new Date('2026-08-04T00:00:00Z'));
+  assert.equal(Object.hasOwn(backup.cells[0], 'label'), false);
+  const parsed = parseFleetBackup(JSON.stringify(backup));
+  assert.equal(Object.hasOwn(restoreCellDefinition(parsed.cells[0], 'claude', ['claude']), 'label'), false);
+});
+
+test('fleet backup: un nome non stampabile o troppo lungo invalida il backup', async () => {
+  const { parseFleetBackup } = await mod();
+  const base = { format: 'nexuscrew.fleet', version: 3, exportedAt: '2026-08-04T00:00:00Z', engines: [] };
+  const cell = { id: 'Dev', cwdRel: 'dev', engine: 'claude', boot: false, systemPrompt: '' };
+  assert.equal(parseFleetBackup(JSON.stringify({ ...base, cells: [{ ...cell, label: 'a'.repeat(65) }] })).ok, false);
+  assert.equal(parseFleetBackup(JSON.stringify({ ...base, cells: [{ ...cell, label: '   ' }] })).ok, false);
+  assert.equal(parseFleetBackup(JSON.stringify({ ...base, cells: [{ ...cell, label: 42 }] })).ok, false);
+});
