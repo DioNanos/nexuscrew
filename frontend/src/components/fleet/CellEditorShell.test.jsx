@@ -17,7 +17,7 @@ describe('CellEditor — Shell locale', () => {
     const setState = vi.fn();
     render(<CellEditor
       token="tok" route={[]} targets={[]} location="" setLocation={vi.fn()}
-      state={{ mode: 'edit', form: { id: 'Ops', cwd: '/home/u', engine: 'shell.local', boot: false, model: 'stale', prompt: 'preserve', commands: {}, command: '' } }}
+      state={{ mode: 'edit', form: { id: 'Ops', cwd: '/home/user/work', engine: 'shell.local', boot: false, model: 'stale', prompt: 'preserve', commands: {}, command: '' } }}
       setState={setState} engines={engines} busy={false} onSave={vi.fn()}
     />);
     expect(screen.getByPlaceholderText('fleet-shell-command-placeholder')).toBeTruthy();
@@ -38,7 +38,7 @@ describe('CellEditor — Shell locale', () => {
 // irraggiungibile: la label esisterebbe solo per chi modifica il file a mano.
 describe('CellEditor cell label', () => {
   it('espone un campo per il nome leggibile, distinto dall id', () => {
-    const state = { mode: 'new', form: { id: 'Dev', cwd: '/home/u', engine: 'claude.native', label: '' } };
+    const state = { mode: 'new', form: { id: 'Dev', cwd: '/home/user/work', engine: 'claude.native', label: '' } };
     const setState = vi.fn();
     render(<CellEditor
       token="t" route={null} targets={[]} location={null} setLocation={vi.fn()}
@@ -56,7 +56,7 @@ describe('CellEditor cell label', () => {
   });
 
   it('il campo del nome resta scrivibile anche in modifica, dove l id e' + "' bloccato", () => {
-    const state = { mode: 'edit', form: { id: 'Dev', cwd: '/home/u', engine: 'claude.native', label: 'Vecchio' } };
+    const state = { mode: 'edit', form: { id: 'Dev', cwd: '/home/user/work', engine: 'claude.native', label: 'Vecchio' } };
     render(<CellEditor
       token="t" route={null} targets={[]} location={null} setLocation={vi.fn()}
       state={state} setState={vi.fn()} engines={engines} busy={false} onSave={vi.fn()}
