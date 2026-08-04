@@ -31,7 +31,9 @@ test('blankEngine/blankCell: stable defaults for a fresh form', async () => {
   assert.equal(e.credentialReveal, false);
   assert.equal(e.allowMissingCredential, false);
   assert.equal(blankCell().engine, '');
-  assert.deepEqual(blankCell('claude.native'), { id: '', cwd: '', engine: 'claude.native', boot: false, model: '', prompt: '', commands: {}, command: '' });
+  // `label` nasce vuota: il nome leggibile e' facoltativo e chi legge ricade
+  // sull'id finche' non ne viene dato uno.
+  assert.deepEqual(blankCell('claude.native'), { id: '', cwd: '', engine: 'claude.native', boot: false, label: '', model: '', prompt: '', commands: {}, command: '' });
 });
 
 test('defaultPermission: claude is unsafe, everything else standard', async () => {
