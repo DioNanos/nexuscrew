@@ -4,7 +4,44 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
-## 0.8.51 — 2026-08-04 — "The Trip to the Copy Button"
+## 0.8.51 — 2026-08-04 — "Who May Let Someone In"
+
+- **Minting a pairing invite no longer crosses the federation.** An invite is
+  bound to the hub's instance id: whoever consumes it joins the hub, not the
+  node that asked for it. Exposed through the federated allowlist, any paired
+  node could obtain a live invite from your hub and hand it to a third party,
+  and the hub's operator would neither act nor know — trust became transitive
+  without a decision. A paired node is otherwise trusted as its owner, and that
+  is deliberate; this one is different in kind, because it is the capability
+  that *admits* a further node. Invites are now minted on the installation that
+  will host the new node, and the refusal says so rather than returning a bare
+  404. Present in every published version through 0.8.50.
+
+- **The product now says what pairing grants.** A paired node can create a
+  session — including a shell — attach to it over the federated WebSocket and
+  type into it as the user running NexusCrew, and can define engines and cells.
+  That is owner-equivalent authority, it is a property of the current design,
+  and until now it was written nowhere. README and `docs/SECURITY.md` state it:
+  pair only devices you own. Per-node authority that can be granted, attenuated
+  and revoked is on the roadmap and is not implemented.
+
+- **A node row now opens a sheet instead of holding everything.** Each row
+  carried its own visibility control, a checkbox for every node on the network,
+  an inline editor and a delete confirmation, all expanded at once — with four
+  nodes the node's name was already pushed off a phone screen, and the one
+  destructive action sat inside a list you scroll with a thumb. The row now
+  carries identity and a derived summary; the rest lives in a sheet that rises
+  from the bottom on a narrow screen and opens at the side on a wide one.
+  Selection shows what is *granted* plus a search, never the whole network as
+  checkboxes, and a grant whose node has left the inventory stays visible and
+  says so — it is still live on the server.
+
+- **The interface no longer shows Italian to English readers.** Nineteen
+  strings were hardcoded in one language, so parts of Diagnostics, Fleet and
+  the terminal keyboard stayed Italian whatever the interface language was, and
+  a few stayed English for Italian readers. The scroll help also described
+  behaviour that changed in 0.8.48. All three languages are in step, and a
+  guard now pins what that help must explain rather than how it phrases it.
 
 - A selection now survives the trip to the Copy button. An application that
   enables any-motion tracking — Claude Code does, Codex does not — receives
