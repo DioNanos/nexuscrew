@@ -36,12 +36,12 @@ All notable changes to NexusCrew are tracked here.
   checkboxes, and a grant whose node has left the inventory stays visible and
   says so — it is still live on the server.
 
-- **The interface no longer shows Italian to English readers.** Nineteen
-  strings were hardcoded in one language, so parts of Diagnostics, Fleet and
-  the terminal keyboard stayed Italian whatever the interface language was, and
-  a few stayed English for Italian readers. The scroll help also described
-  behaviour that changed in 0.8.48. All three languages are in step, and a
-  guard now pins what that help must explain rather than how it phrases it.
+- **The interface no longer shows Italian to English readers.** Strings in the
+  file panel, the grid tiles and the key bar were written in one language, so
+  they stayed Italian whatever the interface language was; four new keys now
+  carry them in all three. The scroll help also described behaviour that
+  changed in 0.8.48, and a guard now pins what that help must explain rather
+  than how it phrases it.
 
 - A selection now survives the trip to the Copy button. An application that
   enables any-motion tracking — Claude Code does, Codex does not — receives
