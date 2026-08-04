@@ -60,7 +60,10 @@ export function nodeAuthority(node) {
 // concessione ancora attiva lato server.
 export function selectionGrants(node, nodes) {
   if (!node || node.visibility !== 'selected') return [];
-  const ids = Array.isArray(node.selected) ? node.selected : [];
+  // Lo stesso id due volte e' una concessione sola: l'elenco memorizzato puo'
+  // contenerlo duplicato, e mostrarlo due volte farebbe credere a due
+  // concessioni distinte, una delle quali sembrerebbe non togliersi mai.
+  const ids = [...new Set(Array.isArray(node.selected) ? node.selected : [])];
   const byId = new Map();
   for (const n of Array.isArray(nodes) ? nodes : []) {
     if (n && n.nodeId && !byId.has(n.nodeId)) byId.set(n.nodeId, n);
@@ -78,14 +81,21 @@ export function selectionGrants(node, nodes) {
 // I candidati del picker: chi puo' ancora essere aggiunto. Esclude se' stesso,
 // chi e' gia' concesso e chi non ha un'identita' stabile (`nodeId`) da
 // concedere. `query` filtra su etichetta e nome, senza distinzione di maiuscole.
+//
+// «Se stesso» si riconosce dall'IDENTITA', non dal nome: il nome e' locale e
+// puo' differire fra due viste dello stesso nodo, mentre due nodi distinti
+// possono chiamarsi uguale dietro hub diversi. Confrontare i nomi sbagliava in
+// entrambi i versi — offriva il nodo a se' stesso sotto un altro nome, e
+// nascondeva un omonimo che era un nodo diverso.
 export function selectionCandidates(node, nodes, query = '') {
   if (!node) return [];
   const granted = new Set(Array.isArray(node.selected) ? node.selected : []);
   const needle = String(query || '').trim().toLowerCase();
   const seen = new Set();
   const out = [];
+  const isSelf = (n) => (node.nodeId ? n.nodeId === node.nodeId : n.name === node.name);
   for (const n of Array.isArray(nodes) ? nodes : []) {
-    if (!n || !n.nodeId || n.name === node.name) continue;
+    if (!n || !n.nodeId || isSelf(n)) continue;
     if (granted.has(n.nodeId) || seen.has(n.nodeId)) continue;
     const label = (typeof n.label === 'string' && n.label.trim()) || n.name;
     if (needle && !`${label} ${n.name}`.toLowerCase().includes(needle)) continue;
@@ -129,8 +139,12 @@ export function nodeDetailModel(node, nodes, { readonly = false, busy = false } 
     exposure: nodeExposure(node),
     grants: selectionGrants(node, nodes),
     actions: nodeActions(node, { readonly, busy }),
-    // La visibilita' si modifica solo dove il server la espone e solo se il nodo
-    // e' condiviso: su un nodo privato non c'e' niente da restringere.
-    canEditVisibility: !!(node.actions && node.actions.visibility) && node.shared === true,
+    // La visibilita' si modifica solo dove il server la espone, solo se il nodo
+    // e' condiviso, e mai su un nodo raggiunto in transito: quella scelta
+    // appartiene all'hub che lo instrada, non a noi. Il server la rifiuterebbe
+    // comunque; offrirla e' un comando che non ha effetto o che agisce su una
+    // decisione altrui.
+    canEditVisibility: !!(node.actions && node.actions.visibility)
+      && node.shared === true && node.kind !== 'transitive',
   };
 }
