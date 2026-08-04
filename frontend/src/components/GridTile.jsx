@@ -84,10 +84,10 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
               ))}
             </select>
           )}
-          <button onClick={() => setShowComposer((v) => !v)} title="composer">⌨</button>
-          <button onClick={() => setShowFiles((v) => !v)} title="file">📁</button>
-          {onOpenSingle && <button onClick={() => onOpenSingle({ session, node, ownerId })} title="vista singola">↗</button>}
-          {onClose && <button className="nc-tile-close" onClick={() => onClose(tileKey)} title="chiudi">✕</button>}
+          <button onClick={() => setShowComposer((v) => !v)} title={t('composer')}>⌨</button>
+          <button onClick={() => setShowFiles((v) => !v)} title={t('files')}>📁</button>
+          {onOpenSingle && <button onClick={() => onOpenSingle({ session, node, ownerId })} title={t('single-view')}>↗</button>}
+          {onClose && <button className="nc-tile-close" onClick={() => onClose(tileKey)} title={t('close')}>✕</button>}
         </span>
       </div>
 

@@ -70,7 +70,7 @@ describe('KeyBar compact layout', () => {
     expect(rows).toHaveLength(1);
     const rowButtons = within(rows[0]).getAllByRole('button');
     expect(rowButtons.map(label)).toEqual([
-      'expand keybar', '⌨', '☰', '↑', '↓', '←', '→', 'PGUP', 'PGDN',
+      'expand the key bar', '⌨', '☰', '↑', '↓', '←', '→', 'PGUP', 'PGDN',
     ]);
     const enter = screen.getByRole('button', { name: 'ENTER' });
     expect(enter.classList.contains('nc-enter-key')).toBe(true);
@@ -104,7 +104,7 @@ describe('KeyBar compact layout', () => {
     expect(grid.classList.contains('compact')).toBe(true);
 
     // expand -> temporary full layout (exact 8+8) + retract affordance
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'expand keybar' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'expand the key bar' }));
     const fullGrid = container.querySelector('.nc-keygrid');
     expect(fullGrid.classList.contains('expanded')).toBe(true);
     expect(fullGrid.classList.contains('compact')).toBe(false);
@@ -113,28 +113,28 @@ describe('KeyBar compact layout', () => {
     expect(rows.map((row) => within(row).getAllByRole('button').length)).toEqual([8, 8]);
     expect(within(rows[0]).getAllByRole('button').at(-1).textContent).toBe('PGUP');
     expect(within(rows[1]).getAllByRole('button').at(-1).textContent).toBe('PGDN');
-    expect(screen.getByRole('button', { name: 'retract keybar' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'retract the key bar' })).toBeTruthy();
 
     // retract -> back to the compact row; keybarLayout prop unchanged (local state only)
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'retract keybar' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'retract the key bar' }));
     const backGrid = container.querySelector('.nc-keygrid');
     expect(backGrid.classList.contains('compact')).toBe(true);
     expect(backGrid.classList.contains('expanded')).toBe(false);
     expect(backGrid.querySelectorAll('.nc-keyrows > .row')).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: 'retract keybar' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'retract the key bar' })).toBeNull();
   });
 
   it('drops temporary expansion across a compact -> full -> compact preference cycle', () => {
     const props = { send: vi.fn(), action: vi.fn(), onKeyboard: vi.fn(), onCtrl: vi.fn(), onSelectionMode: vi.fn() };
     const view = render(<KeyBar {...props} keybarLayout="compact" />);
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'expand keybar' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'expand the key bar' }));
     expect(view.container.querySelector('.nc-keygrid').classList.contains('expanded')).toBe(true);
 
     view.rerender(<KeyBar {...props} keybarLayout="full" />);
     expect(view.container.querySelector('.nc-keygrid').classList.contains('expanded')).toBe(false);
     view.rerender(<KeyBar {...props} keybarLayout="compact" />);
     expect(view.container.querySelector('.nc-keygrid').classList.contains('compact')).toBe(true);
-    expect(screen.queryByRole('button', { name: 'retract keybar' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'retract the key bar' })).toBeNull();
   });
 
   it('fires once on a keyboard/screen-reader click with detail 0 (no pointerdown)', () => {
