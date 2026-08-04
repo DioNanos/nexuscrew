@@ -67,6 +67,48 @@ test('node-detail: il picker non offre se stesso, i gia\' concessi o chi non ha 
   assert.deepEqual(out.map((x) => x.id), ['id-buono'], 'uno solo, e senza duplicati per nodeId');
 });
 
+test('node-detail: «se stesso» nel picker si riconosce dall\'identita\', non dal nome', async () => {
+  const { selectionCandidates } = await mod();
+  // Il nome e' locale: la stessa macchina puo' comparire con un nome diverso, e
+  // due macchine diverse possono chiamarsi uguale dietro hub diversi. Filtrare
+  // per nome sbagliava in entrambi i versi.
+  const node = { name: 'portatile', nodeId: 'id-self', visibility: 'selected', selected: [] };
+  const nodes = [
+    { name: 'lo-stesso-con-altro-nome', nodeId: 'id-self', label: 'Io, visto da la\'' },
+    { name: 'portatile', nodeId: 'id-altro', label: 'Omonimo dietro un altro hub' },
+  ];
+  const out = selectionCandidates(node, nodes);
+  assert.deepEqual(out.map((x) => x.id), ['id-altro'], 'niente auto-concessione, e l\'omonimo resta offerto');
+});
+
+test('node-detail: senza identita\' stabile si ricade sul nome, che e\' tutto cio\' che c\'e\'', async () => {
+  const { selectionCandidates } = await mod();
+  const node = { name: 'peer', visibility: 'selected', selected: [] };
+  const out = selectionCandidates(node, [{ name: 'peer', nodeId: 'id-x', label: 'Se stesso' }, { name: 'altro', nodeId: 'id-y', label: 'Altro' }]);
+  assert.deepEqual(out.map((x) => x.id), ['id-y']);
+});
+
+test('node-detail: lo stesso id concesso due volte resta una concessione sola', async () => {
+  const { selectionGrants } = await mod();
+  // Due righe identiche farebbero credere a due concessioni distinte, e una
+  // delle due sembrerebbe non togliersi mai.
+  const grants = selectionGrants({ visibility: 'selected', selected: ['id-a', 'id-a', 'id-b'] }, []);
+  assert.deepEqual(grants.map((g) => g.id), ['id-a', 'id-b']);
+});
+
+test('node-detail: nemmeno il foglio di un nodo outbound porta segreti', async () => {
+  const { nodeDetailModel } = await mod();
+  // Il caso transitivo era gia' provato; questo e' quello che HA un endpoint
+  // legittimo da mostrare, quindi e' il piu' facile da riempire per sbaglio.
+  const model = nodeDetailModel({
+    name: 'fisso', label: 'Fisso', direction: 'outbound', ssh: 'dag@host', sshPort: 22,
+    token: 'segreto', acceptToken: 'segreto2', tunnel: { status: 'up' },
+  }, []);
+  assert.equal(model.identity.ssh, 'dag@host', 'l\'endpoint serve e non e\' un segreto');
+  const serial = JSON.stringify(model);
+  assert.equal(serial.includes('segreto'), false);
+});
+
 test('node-detail: il picker cerca su etichetta e nome, senza maiuscole', async () => {
   const { selectionCandidates } = await mod();
   const nodes = [
