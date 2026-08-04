@@ -1,0 +1,227 @@
+import { useMemo, useState } from 'react';
+import { t } from '../lib/i18n.js';
+import { useLang } from '../hooks/useLang.js';
+import { nodeAction, removeNode, updateNode, setNodeVisibility } from '../lib/api.js';
+import { tunnelInfo, isValidLabel } from '../lib/settings-model.js';
+import { nodeDetailModel, selectionCandidates } from '../lib/node-detail.js';
+import DetailSheet, { SheetSection } from './DetailSheet.jsx';
+import Icon from './Icon.jsx';
+
+// Il dettaglio di UN nodo. Prima viveva dentro la riga: visibilita', spunte di
+// tutti i nodi della rete, editor e conferma di rimozione, tutto aperto insieme
+// in una card che su un telefono non stava in piedi. Qui la riga porta identita'
+// e riassunto, e questo foglio porta il resto.
+//
+// Il foglio non decide niente da solo: il modello sta in lib/node-detail.js,
+// provato senza React. Qui restano le chiamate e la forma.
+export default function NodeSheet({ node, nodes, token, readonly, refresh, onClose }) {
+  useLang();
+  const [busy, setBusy] = useState(null);
+  const [err, setErr] = useState(null);
+  const [test, setTest] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [query, setQuery] = useState('');
+  const [picking, setPicking] = useState(false);
+
+  const model = useMemo(
+    () => nodeDetailModel(node, nodes, { readonly, busy: !!busy }),
+    [node, nodes, readonly, busy],
+  );
+  if (!model) return null;
+  const { identity, reach, authority, exposure, grants, actions, canEditVisibility } = model;
+  const ti = identity.routed ? { up: reach.up, since: null } : tunnelInfo(node.tunnel, Date.now());
+
+  const guard = async (key, fn) => {
+    setErr(null); setBusy(key);
+    try { await fn(); } catch (e) { setErr(String((e && e.message) || e)); }
+    setBusy(null);
+  };
+
+  const runAction = (action) => {
+    if (action === 'edit') {
+      setEditing({
+        label: node.label || node.name,
+        ssh: node.ssh || '',
+        sshPort: node.sshPort ? String(node.sshPort) : '',
+        autostart: node.autostart === true,
+        visibility: node.visibility || 'network',
+      });
+      return;
+    }
+    if (action === 'remove') { setConfirmRemove(true); return; }
+    guard(`${node.name}:${action}`, async () => {
+      const result = await nodeAction(token, node.name, action);
+      if (action === 'test') setTest(result);
+      await refresh();
+    });
+  };
+
+  const saveEdit = () => {
+    if (!isValidLabel(editing.label)) { setErr(t('err-label')); return; }
+    const patch = identity.inbound
+      ? { label: editing.label, visibility: editing.visibility, selected: editing.visibility === 'selected' ? [...(node.selected || [])] : [] }
+      : {
+        label: editing.label, ssh: editing.ssh, autostart: editing.autostart,
+        ...(editing.sshPort ? { sshPort: Number(editing.sshPort) } : {}),
+      };
+    return guard(`${node.name}:edit`, async () => {
+      await updateNode(token, node.name, patch);
+      setEditing(null);
+      await refresh();
+    });
+  };
+
+  const applyVisibility = (visibility, selected) => guard(`${node.name}:visibility`, async () => {
+    await setNodeVisibility(token, node.name, visibility, selected);
+    await refresh();
+  });
+
+  const candidates = canEditVisibility && node.visibility === 'selected'
+    ? selectionCandidates(node, nodes, query) : [];
+
+  const status = (
+    <span className={`nc-set-tunnel${reach.up ? ' up' : ''}`}>
+      {t(reach.key)}{ti.since ? ` · ${ti.since}` : ''}
+    </span>
+  );
+
+  const footer = actions.map((a) => (
+    <button key={a.action} type="button" className={`nc-btn ${a.danger ? 'danger' : 'ghost'}`}
+      disabled={a.disabled} title={a.disabled && readonly ? t('settings-readonly') : undefined}
+      onClick={() => runAction(a.action)}>
+      {a.action === 'remove' ? <><Icon name="trash" size={14} /> {t(a.key)}</> : t(a.key)}
+    </button>
+  ));
+
+  return (
+    <DetailSheet title={identity.title} subtitle={identity.name} status={status} footer={footer} onClose={onClose}>
+      <SheetSection title={t('node-detail-reach')}>
+        <dl className="nc-detail-facts">
+          {identity.route && <><dt>{t('node-detail-route')}</dt><dd>{identity.route.join(' › ')}</dd></>}
+          {identity.ssh && <><dt>{t('node-detail-ssh')}</dt><dd>{identity.ssh}{node.sshPort ? `:${node.sshPort}` : ''}</dd></>}
+          {identity.transport && <><dt>{t('node-detail-transport')}</dt><dd>{identity.transport}</dd></>}
+        </dl>
+        {node.health?.detail && (
+          <div className={`nc-set-test${node.health.status === 'healthy' ? ' ok' : node.health.status === 'passive' ? '' : ' ko'}`}>
+            {node.health.detail}
+          </div>
+        )}
+        {test && <div className={`nc-set-test${test.ok ? ' ok' : ' ko'}`}>{test.result}{test.detail ? ` — ${test.detail}` : ''}</div>}
+      </SheetSection>
+
+      {/* La sezione che potrebbe mentire piu' facilmente di tutte. Oggi non
+          esistono poteri per-nodo: la verita' e' che un nodo accoppiato e'
+          fidato quanto l'operatore, ed e' scritta qui perche' e' qui che si
+          verrebbe a cercarla. La visibilita' NON e' un limite di potere e sta
+          apposta in un'altra sezione. `authority.grants` e' lo slot: quando i
+          grant esisteranno, l'elenco compare qui e la frase qui sopra cambia. */}
+      <SheetSection title={t('node-detail-authority')}>
+        <div className="nc-set-info">{t(authority.key)}</div>
+        {authority.grants.length === 0 && <small className="nc-set-hint">{t('authority-no-grants')}</small>}
+      </SheetSection>
+
+      <SheetSection title={t('node-detail-network-view')}>
+        <div className="nc-set-info">{t(exposure.shared ? 'peer-shared' : 'peer-private')}</div>
+        {canEditVisibility && <>
+          <label className="nc-field">{t('peer-visibility')}
+            <select value={node.visibility || 'network'} disabled={readonly || !!busy}
+              onChange={(e) => applyVisibility(e.target.value)}>
+              <option value="network">{t('visibility-network')}</option>
+              <option value="relay-only">{t('visibility-relay')}</option>
+              <option value="selected">{t('visibility-selected')}</option>
+            </select>
+          </label>
+          {node.visibility === 'selected' && <div className="nc-detail-grants">
+            {grants.length === 0 && <small className="nc-set-hint">{t('node-grant-none')}</small>}
+            {grants.map((g) => (
+              <div key={g.id} className={`nc-detail-grant${g.known ? '' : ' unknown'}`}>
+                <span>{g.label}{g.known ? '' : ` — ${t('node-grant-unknown')}`}</span>
+                <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
+                  onClick={() => applyVisibility('selected', (node.selected || []).filter((id) => id !== g.id))}>
+                  {t('node-grant-remove')}
+                </button>
+              </div>
+            ))}
+            {/* Si aggiunge cercando, non spuntando: con quaranta nodi in rete
+                una lista di caselle e' piu' lunga del foglio e nasconde le
+                concessioni vere in mezzo a quelle mai date. */}
+            {!picking && <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
+              onClick={() => { setPicking(true); setQuery(''); }}>{t('node-grant-add')}</button>}
+            {picking && <div className="nc-detail-picker">
+              <input value={query} placeholder={t('node-grant-search')} disabled={readonly || !!busy}
+                onChange={(e) => setQuery(e.target.value)} />
+              <div className="nc-detail-picker-list">
+                {candidates.length === 0 && <small className="nc-set-hint">{t('node-grant-no-candidates')}</small>}
+                {candidates.map((c) => (
+                  <button key={c.id} type="button" className="nc-btn ghost" disabled={readonly || !!busy}
+                    onClick={async () => {
+                      await applyVisibility('selected', [...(node.selected || []), c.id]);
+                      setPicking(false); setQuery('');
+                    }}>{c.label}</button>
+                ))}
+              </div>
+              <button type="button" className="nc-btn ghost" disabled={!!busy}
+                onClick={() => { setPicking(false); setQuery(''); }}>{t('cancel')}</button>
+            </div>}
+          </div>}
+        </>}
+      </SheetSection>
+
+      {editing && (
+        <SheetSection title={t('edit')}>
+          <label className="nc-field">{t('node-display-label')}
+            <input value={editing.label} disabled={!!busy}
+              onChange={(e) => setEditing({ ...editing, label: e.target.value })} />
+          </label>
+          {identity.inbound ? (
+            <label className="nc-field">{t('peer-visibility')}
+              <select value={editing.visibility} disabled={!!busy}
+                onChange={(e) => setEditing({ ...editing, visibility: e.target.value })}>
+                <option value="network">{t('visibility-network')}</option>
+                <option value="relay-only">{t('visibility-relay')}</option>
+                <option value="selected">{t('visibility-selected')}</option>
+              </select>
+            </label>
+          ) : <>
+            <label className="nc-field">{t('node-ssh-label')}
+              <input value={editing.ssh} disabled={!!busy}
+                onChange={(e) => setEditing({ ...editing, ssh: e.target.value })} />
+            </label>
+            <label className="nc-field">{t('node-ssh-port-label')}
+              <input inputMode="numeric" value={editing.sshPort} disabled={!!busy}
+                onChange={(e) => setEditing({ ...editing, sshPort: e.target.value.replace(/[^0-9]/g, '').slice(0, 5) })} />
+            </label>
+            <label className="nc-check"><input type="checkbox" checked={editing.autostart} disabled={!!busy}
+              onChange={(e) => setEditing({ ...editing, autostart: e.target.checked })} /> {t('boot-persist')}</label>
+          </>}
+          <div className="nc-set-row">
+            <button type="button" className="nc-btn primary" disabled={!!busy} onClick={saveEdit}>{t('save')}</button>
+            <button type="button" className="nc-btn ghost" disabled={!!busy} onClick={() => setEditing(null)}>{t('cancel')}</button>
+          </div>
+        </SheetSection>
+      )}
+
+      {confirmRemove && (
+        <div className="nc-set-confirm">
+          <b>{t('node-remove-confirm').replace('{name}', identity.title)}</b>
+          <small>{t('node-remove-warning')}</small>
+          <div className="nc-set-row">
+            <button type="button" className="nc-btn danger" disabled={!!busy}
+              onClick={() => guard(`${node.name}:remove`, async () => {
+                await removeNode(token, node.name);
+                setConfirmRemove(false);
+                await refresh();
+                // Il nodo non esiste piu': lasciare aperto il suo foglio
+                // mostrerebbe lo stato di un peer rimosso.
+                onClose && onClose();
+              })}>{t('delete')}</button>
+            <button type="button" className="nc-btn ghost" disabled={!!busy} onClick={() => setConfirmRemove(false)}>{t('cancel')}</button>
+          </div>
+        </div>
+      )}
+
+      {err && <div className="nc-err">{err}</div>}
+    </DetailSheet>
+  );
+}

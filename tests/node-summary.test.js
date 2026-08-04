@@ -75,6 +75,35 @@ test('node-summary: la riga porta identita\' e riassunti, e nulla di piu\'', asy
   assert.equal(serial.includes('user@host'), false);
 });
 
+test('node-summary: la riga di un nodo in transito porta il percorso, non un\'esposizione', async () => {
+  const { nodeRowSummary } = await mod();
+  // L'esposizione di un nodo instradato la decide l'hub che lo instrada, non
+  // questa macchina: dirla in riga sarebbe una nostra affermazione su una
+  // decisione altrui. Il percorso invece e' cio' che sappiamo, ed e' l'unica
+  // cosa che distingue due omonimi dietro hub diversi.
+  const row = nodeRowSummary({ name: 'lontano', kind: 'transitive', route: ['hub', 'lontano'], shared: true });
+  assert.equal(row.routed, true);
+  assert.equal(row.routeLabel, 'hub › lontano');
+  const diretto = nodeRowSummary({ name: 'vicino', shared: true, tunnel: { status: 'up' } });
+  assert.equal(diretto.routeLabel, null, 'un nodo diretto non ha percorso da mostrare');
+});
+
+test('node-summary: la riga ha una forma breve di «privato», il foglio quella intera', async () => {
+  const { nodeExposure } = await mod();
+  // Provato nel browser: la frase intera di «privato» entra in riga troncata a
+  // meta' parola. Sono due usi diversi dello stesso stato, quindi due chiavi.
+  const privato = nodeExposure({ shared: false });
+  assert.equal(privato.key, 'peer-private');
+  assert.equal(privato.shortKey, 'row-private');
+  assert.notEqual(privato.key, privato.shortKey);
+  // Le altre sono gia' brevi: due chiavi diverse dove non serve sarebbero due
+  // traduzioni da tenere allineate per niente.
+  for (const node of [{ shared: true }, { shared: true, visibility: 'relay-only' }, { shared: true, visibility: 'selected' }]) {
+    const e = nodeExposure(node);
+    assert.equal(e.shortKey, e.key);
+  }
+});
+
 test('node-summary: la label vuota o di soli spazi ricade sul nome', async () => {
   const { nodeRowSummary } = await mod();
   assert.equal(nodeRowSummary({ name: 'peer-1', label: '   ' }).title, 'peer-1');
