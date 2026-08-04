@@ -137,7 +137,16 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
   const applyShare = async (shared) => {
     if (!shareHub) return;
     setErr(null); setBusy(`${shareHub.name}:share`);
-    try { await setNodeShare(token, shareHub.name, shared); await refresh(); }
+    try {
+      const result = await setNodeShare(token, shareHub.name, shared);
+      await refresh();
+      // Una revoca RIUSCITA puo' comunque lasciare il canale in quarantena
+      // (chiusura non dimostrabile): il 200 non passa dal catch, quindi senza
+      // questo l'operatore leggerebbe soltanto "revocato".
+      if (result && result.reversePoolPending === true) {
+        setErr(`${shareHub.name}: ${t('share-reverse-pool-pending')}`);
+      }
+    }
     catch (e) {
       const partial = e?.data && e.data.shared === false ? e.data : null;
       if (partial) {
