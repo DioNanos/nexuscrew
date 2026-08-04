@@ -352,3 +352,54 @@ test('validateCommandTrust: owner check — proprio utente o root ok, altro owne
     } finally { process.getuid = orig; }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// --- NC-D: la cella ha un nome leggibile distinto dall'id -------------------
+// Senza questa distinzione l'id fa anche da nome: un nodo che battezza la
+// propria cella come il motore la espone cosi' a tutta la rete, e chi la riceve
+// non ha modo di sapere che ruolo occupa.
+
+test('label di cella: accettata, distinta dall id e non usata per indirizzare', () => {
+  const def = validDef();
+  def.cells[0].label = 'SysAdmin del portatile';
+  const parsed = parseDefinitions(def);
+  assert.ok(parsed);
+  assert.equal(parsed.cells[0].label, 'SysAdmin del portatile');
+  // L'id e la sessione tmux NON cambiano: la label e' solo cio' che si legge.
+  assert.equal(parsed.cells[0].id, 'Build');
+  assert.equal(parsed.cells[0].tmuxSession, 'cloud-Build');
+});
+
+test('label di cella: assente resta assente, senza inventare un default', () => {
+  const parsed = parseDefinitions(validDef());
+  assert.ok(parsed);
+  assert.equal(parsed.cells[0].label, undefined,
+    'chi legge decide il fallback sull id, il parser non lo impone');
+});
+
+test('label di cella: spazi ai bordi normalizzati', () => {
+  const def = validDef();
+  def.cells[0].label = '  Ricerca  ';
+  assert.equal(parseDefinitions(def).cells[0].label, 'Ricerca');
+});
+
+test('label di cella: forme non valide rifiutano la definizione', () => {
+  const tooLong = 'x'.repeat(65);
+  const withNewline = ['riga', 'spezzata'].join(String.fromCharCode(10));
+  const withControl = `tab${String.fromCharCode(9)}dentro`;
+  for (const bad of ['', '   ', tooLong, withNewline, withControl, 42, {}]) {
+    const def = validDef();
+    def.cells[0].label = bad;
+    assert.equal(parseDefinitions(def), null, `atteso rifiuto per ${JSON.stringify(bad)}`);
+  }
+});
+
+test('label di cella: sopravvive al round-trip su disco', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'fleet.json');
+  const def = validDef();
+  def.cells[0].label = 'Cella di Ricerca';
+  atomicWrite(file, parseDefinitions(def));
+  const reloaded = loadDefinitions(file);
+  assert.equal(reloaded.cells[0].label, 'Cella di Ricerca');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
