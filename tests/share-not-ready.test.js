@@ -63,8 +63,8 @@ test('hub: un canale share non ancora pronto risponde 409 con un codice tipizzat
   app.use('/federation', fed.peerRouter({
     nodesPath, localPort: 1, localCredential: () => 'hub-main',
     // Canale non ancora salito: la connessione viene rifiutata, che e' il
-    // transport 'down' vero. Un 503 sarebbe un peer che risponde, cioe' un
-    // guasto diverso e NON ritentabile.
+    // transport 'down' vero. (Anche un 503 e' ritentabile, ma per un'altra
+    // ragione: e' un peer che risponde ed e' temporaneamente indisponibile.)
     fetchImpl: async () => { probes += 1; throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }); },
   }));
   const hub = await listen(app);
@@ -440,6 +440,61 @@ test('produzione: lo slot aperto dal server reale onora un upgrade', async (t) =
     authorization: `Bearer ${'k'.repeat(48)}`,
     'x-nexuscrew-visited': instanceId,
   });
-  assert.ok(!/^HTTP\/1\.1 200 /.test(upgraded), 'mai la SPA su un upgrade');
+  // Assert forte: deve completare l'handshake. "Non 200" sarebbe soddisfatto
+  // anche da un handler che distrugge il socket, cioe' da un cablaggio finto.
+  assert.match(upgraded, /^HTTP\/1\.1 101 /, 'lo slot di produzione deve completare l\'upgrade');
   assert.ok(!/<html/i.test(upgraded), 'mai corpo HTML su un upgrade');
+});
+
+// --- terzo giro di audit: casi che restavano scoperti ------------------------
+
+// Durante la grace di una rotazione due entry coesistono. Dichiarare successo
+// perche' UNA e' stata chiusa lascia l'altra viva mentre chi chiama registra il
+// canale come privato.
+test('classifyShareFailure: una prova RIFIUTATA dal listener resta definitiva', () => {
+  // 409 tipizzato: il listener ha valutato la tupla e l'ha respinta.
+  assert.equal(fed.classifyShareFailure({ slotProof: true, code: 'reverse-slot-proof-mismatch' }).code,
+    'share-slot-proof-failed');
+  // Timeout o connessione rifiutata: la prova non e' stata OTTENUTA.
+  assert.equal(fed.classifyShareFailure({ slotProof: true, code: 'reverse-slot-proof-unavailable' }).code,
+    fed.SHARE_NOT_READY_CODE);
+});
+
+test('classifyShareFailure: i 5xx ritentabili sono un elenco, non "tutti"', () => {
+  for (const status of [500, 502, 503, 504]) {
+    assert.equal(fed.classifyShareFailure({ transport: 'up', auth: 'ok', reachability: 'failed', httpStatus: status }).code,
+      fed.SHARE_NOT_READY_CODE, `atteso ritentabile per ${status}`);
+  }
+  for (const status of [501, 505]) {
+    assert.notEqual(fed.classifyShareFailure({ transport: 'up', auth: 'ok', reachability: 'failed', httpStatus: status }).code,
+      fed.SHARE_NOT_READY_CODE, `${status} non e' transitorio`);
+  }
+});
+
+test('prova di slot: un 409 del listener conserva il codice tipizzato', async (t) => {
+  const slotProof = require('../lib/nodes/reverse-slot-proof.js');
+  const app = express();
+  app.use(express.json());
+  // Listener corretto che rifiuta la tupla, esattamente come respondSlotProof.
+  app.post('/reverse-slot-proof', (_req, res) => res.status(409).json({
+    error: 'reverse slot proof non valida', code: 'reverse-slot-proof-mismatch',
+  }));
+  const srv = await listen(app);
+  t.after(async () => { await close(srv); });
+  const probe = await slotProof.probeReverseSlot({
+    port: srv.address().port, secret: 's'.repeat(32),
+    expected: { remotePort: 44001, generation: 1, instanceId: 'a'.repeat(32) },
+  });
+  assert.equal(probe.owned, false);
+  assert.equal(probe.code, 'reverse-slot-proof-mismatch',
+    'un rifiuto motivato non deve diventare "prova non ottenuta"');
+});
+
+test('prova di slot: una porta chiusa resta "non ottenuta"', async () => {
+  const slotProof = require('../lib/nodes/reverse-slot-proof.js');
+  const probe = await slotProof.probeReverseSlot({
+    port: 1, secret: 's'.repeat(32), timeoutMs: 300,
+    expected: { remotePort: 44001, generation: 1, instanceId: 'a'.repeat(32) },
+  });
+  assert.equal(probe.code, 'reverse-slot-proof-unavailable');
 });
