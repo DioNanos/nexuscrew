@@ -15,7 +15,7 @@ All notable changes to NexusCrew are tracked here.
   is deliberate; this one is different in kind, because it is the capability
   that *admits* a further node. Invites are now minted on the installation that
   will host the new node, and the refusal says so rather than returning a bare
-  404. Present in every published version through 0.8.50.
+  404. The route had been federated since 0.8.10.
 
 - **The product now says what pairing grants.** A paired node can create a
   session — including a shell — attach to it over the federated WebSocket and
