@@ -3,23 +3,29 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const net = require('node:net');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const { createReverseSlotListeners } = require('../lib/nodes/reverse-slot-listeners.js');
 const proof = require('../lib/nodes/reverse-slot-proof.js');
+const { createServer } = require('../lib/server.js');
+const store = require('../lib/nodes/store.js');
 
 // attachUpgrade no-op per i test che non esercitano il canale WS.
 const noopUpgrade = () => {};
 
 // Invia un upgrade WS grezzo e restituisce la prima riga di stato piu' il
 // blocco header, senza completare l'handshake.
-function rawUpgrade(port, path) {
+function rawUpgrade(port, target, headers = {}) {
   return new Promise((resolve) => {
     const key = crypto.randomBytes(16).toString('base64');
     const sock = net.connect({ host: '127.0.0.1', port }, () => {
       sock.write([
-        `GET ${path} HTTP/1.1`,
+        `GET ${target} HTTP/1.1`,
         `Host: 127.0.0.1:${port}`,
+        ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`),
         `Sec-WebSocket-Key: ${key}`,
         'Sec-WebSocket-Version: 13',
         'Connection: Upgrade',
@@ -125,4 +131,63 @@ test('reverse slot listeners: un upgrade sullo slot ottiene 101 e mai la SPA', a
 
   wss.close();
   await slots.closeAll();
+});
+
+// Prova col ROUTER REALE, non con un handler fittizio: un wiring no-op
+// soddisferebbe la guardia obbligatoria e il test dello slot, quindi qui si
+// prende l'handler effettivamente registrato dal server sul listener primario
+// e lo si applica a uno slot. E' anche la riproduzione del percorso federato
+// che restava nero: peer -> slot listener -> upgrade -> 101.
+test('reverse slot: il router reale del server porta un upgrade federato a 101', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-slot-real-'));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const nodesPath = path.join(configDir, 'nodes.json');
+  store.initStore(nodesPath);
+  let st = store.loadStoreStrict(nodesPath);
+  st = store.addNode(st, {
+    name: 'peer', remotePort: 41820, localPort: 44003,
+    direction: 'inbound', transport: 'inbound', autostart: true, shared: true,
+    visibility: 'network', nodeId: 'd'.repeat(32),
+    token: 'hub-to-peer', acceptToken: 'peer-to-hub',
+  });
+  store.atomicWriteStore(nodesPath, st);
+
+  const { server, app, watcher } = createServer({
+    home: dir, configDir, nodesPath,
+    configPath: path.join(configDir, 'config.json'),
+    tokenPath: path.join(configDir, 'token'),
+    filesRoot: path.join(dir, 'files'), fleetEnabled: false,
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.close(); if (watcher) watcher.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  // L'handler registrato dal server sul proprio listener: e' esattamente
+  // quello che server.js passa ai listener per-slot.
+  const realRouter = server.listeners('upgrade')[0];
+  assert.equal(typeof realRouter, 'function', 'il server primario registra un router di upgrade');
+
+  const slots = createReverseSlotListeners({ app, attachUpgrade: (srv) => srv.on('upgrade', realRouter) });
+  const slot = await slots.open({
+    nodeName: 'peer', generation: 1, instanceId: 'd'.repeat(32), secret: 's', remotePort: 44003,
+  });
+  t.after(() => slots.closeAll());
+
+  // Un peer autenticato col proprio acceptToken raggiunge lo slot e ottiene un
+  // vero 101: prima del fix qui arrivava la SPA.
+  // La catena `visited` deve terminare con il nodeId del peer autenticato:
+  // e' il vincolo che impedisce a chi possiede un token di spacciarsi per un
+  // altro mittente della rete. E' l'header che il peer aggiunge davvero
+  // quando inoltra l'upgrade.
+  const federated = await rawUpgrade(slot.localPort, '/federation/route/_/ws', {
+    authorization: 'Bearer peer-to-hub',
+    'x-nexuscrew-visited': 'd'.repeat(32),
+  });
+  assert.match(federated, /^HTTP\/1\.1 101 /, 'l\'upgrade federato sullo slot deve completare');
+  assert.ok(!/<html/i.test(federated), 'nessun corpo HTML');
+
+  // Un token di peer sconosciuto non passa, e non degrada nella SPA.
+  const rejected = await rawUpgrade(slot.localPort, '/federation/route/_/ws', { authorization: 'Bearer non-un-peer' });
+  assert.ok(!/^HTTP\/1\.1 (101|200) /.test(rejected), 'credenziale ignota: niente 101 e niente 200');
+  assert.ok(!/<html/i.test(rejected), 'nessuna SPA su credenziale ignota');
 });

@@ -122,3 +122,32 @@ test('READONLY: client puo\' solo aggiungere restrizione su server RW', () => {
   ws2.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't', readonly: false }), false);
   assert.strictEqual(openAttach2.calls[0].opts.readonly, false, 'server RW + client false -> read-write (lecity)');
 });
+
+// L'upgrade viene accettato prima dell'autenticazione: il token arriva nel
+// primo frame. Un socket che non manda mai l'attach resterebbe aperto e non
+// autenticato a tempo indefinito, su ogni listener che serve l'app.
+test('bridge: un socket che non si autentica entro la finestra viene chiuso', async () => {
+  const ws = fakeWs();
+  const fac = fakePtyFactory();
+  bindWs(ws, {
+    openAttach: fac, verifyToken: () => true,
+    defaults: { attachTimeoutMs: 1000 },
+  });
+  assert.equal(ws.closedCode, null, 'nessuna chiusura immediata');
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  assert.equal(ws.closedCode, 4408, 'chiuso per attach mancato');
+  assert.equal(fac.calls.length, 0, 'nessun PTY aperto senza attach');
+});
+
+test('bridge: un attach valido disarma la scadenza e il socket resta vivo', async () => {
+  const ws = fakeWs();
+  const fac = fakePtyFactory();
+  bindWs(ws, {
+    openAttach: fac, verifyToken: () => true, isValidSession: () => true,
+    defaults: { attachTimeoutMs: 1000 },
+  });
+  ws.emit('message', JSON.stringify({ type: 'attach', token: 't', session: 'cloud-Dev' }), false);
+  assert.equal(fac.calls.length, 1);
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  assert.equal(ws.closedCode, null, 'una sessione attaccata non viene chiusa dalla scadenza');
+});
