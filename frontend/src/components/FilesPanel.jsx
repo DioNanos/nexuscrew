@@ -88,7 +88,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
           <li key={f.name}>
             <span className="name" onClick={() => download(f.name)}>{f.name}</span>
             <small>{fmtSize(f.size)}</small>
-            <button onClick={() => del(f.name)} title="elimina"><Icon name="trash" size={18} /></button>
+            <button onClick={() => del(f.name)} title={t('delete')}><Icon name="trash" size={18} /></button>
           </li>
         ))}
         {data[box].length === 0 && <li className="empty">{t('empty-files')}</li>}
