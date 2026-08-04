@@ -687,3 +687,45 @@ describe('terminal selection survives the trip to the Copy button', () => {
     expect(moveOver(host).defaultPrevented).toBe(false);
   });
 });
+
+// Il testo puo' sopravvivere alla propria evidenziazione: xterm la butta a ogni
+// input verso l'applicazione e a ogni resize di righe. Copiare continua a
+// funzionare, ma senza il riquadro giallo l'operatore non sa piu' se ha
+// qualcosa in mano ne' cosa. Va detto, non dedotto.
+describe('terminal tells you when the selection is detached from its highlight', () => {
+  it('says the highlight is gone while the text is still held', () => {
+    const view = renderTerminal();
+    const term = fixture.instances[0];
+    act(() => term.emitSelection('riga scelta'));
+    expect(view.container.querySelector('.nc-selection-held')).toBeNull();
+
+    // xterm la butta per conto suo: input all'app, oppure un resize di righe.
+    act(() => term.emitSelection(''));
+    const held = view.container.querySelector('.nc-selection-held');
+    expect(held).not.toBeNull();
+    expect(held.textContent).toBe('highlight gone, text still held');
+    // e la copia continua a offrire il testo, non il vuoto
+    expect(view.container.querySelector('.nc-selection-tools button')).not.toBeNull();
+  });
+
+  it('stops saying it as soon as a fresh selection exists', () => {
+    const view = renderTerminal();
+    const term = fixture.instances[0];
+    act(() => term.emitSelection('prima'));
+    act(() => term.emitSelection(''));
+    expect(view.container.querySelector('.nc-selection-held')).not.toBeNull();
+    act(() => term.emitSelection('seconda'));
+    expect(view.container.querySelector('.nc-selection-held')).toBeNull();
+  });
+
+  it('forgets the detachment once the operator has copied', async () => {
+    const view = renderTerminal();
+    const term = fixture.instances[0];
+    act(() => term.emitSelection('presa'));
+    act(() => term.emitSelection(''));
+    const copy = view.container.querySelector('.nc-selection-tools button');
+    await act(async () => { fireEvent.click(copy); });
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(view.container.querySelector('.nc-selection-held')).toBeNull();
+  });
+});

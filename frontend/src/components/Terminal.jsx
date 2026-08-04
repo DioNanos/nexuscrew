@@ -31,6 +31,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   const [copyState, setCopyState] = useState('');
   const [uploadState, setUploadState] = useState(null);
   const [touchSelectionCaret, setTouchSelectionCaret] = useState(null);
+  // Lo snapshot puo' sopravvivere alla propria evidenziazione: xterm la butta
+  // a ogni input verso l'applicazione e a ogni resize di righe (sul telefono
+  // basta la tastiera virtuale). In quel caso il testo resta copiabile ma non
+  // e' piu' mostrato, e chi guarda deve saperlo invece di dedurlo.
+  const [selectionDetached, setSelectionDetached] = useState(false);
 
   const doCopy = async () => {
     const value = apiRef.current?.term?.getSelection() || selection;
@@ -40,7 +45,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // Lo snapshot e' persistente per costruzione: solo copia e annulla lo
     // svuotano. Se una copia riuscita non lo facesse, la barra resterebbe su
     // per sempre offrendo di ricopiare un testo gia' preso.
-    if (ok) { apiRef.current?.term?.clearSelection(); setSelection(''); onSelectionModeChange?.(false); }
+    if (ok) { apiRef.current?.term?.clearSelection(); setSelection(''); setSelectionDetached(false); onSelectionModeChange?.(false); }
     setTimeout(() => setCopyState(''), 1800);
   };
   // doCopy cambia ad ogni render (closure su selection/lang): lo si tiene in un
@@ -209,7 +214,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // (e' di xterm, non nostro), il testo da copiare no.
     const onSelection = term.onSelectionChange(() => {
       const next = term.getSelection();
-      if (next) setSelection(next);
+      if (next) { setSelection(next); setSelectionDetached(false); }
+      else setSelectionDetached(true);
     });
     term.attachCustomKeyEventHandler((e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && term.getSelection()) {
@@ -622,7 +628,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     </div>}
     {(selection || selectionMode) && <div className="nc-selection-tools">
       {selection ? <button type="button" onClick={doCopy}>{copyState || t('copy')}</button> : <span>{t('select-drag')}</span>}
-      <button type="button" onClick={() => { apiRef.current?.term?.clearSelection(); setSelection(''); onSelectionModeChange?.(false); }}>{t('cancel')}</button>
+      {selection && selectionDetached && <span className="nc-selection-held">{t('selection-held')}</span>}
+      <button type="button" onClick={() => { apiRef.current?.term?.clearSelection(); setSelection(''); setSelectionDetached(false); onSelectionModeChange?.(false); }}>{t('cancel')}</button>
       {copyState === t('copy-manual') && <textarea readOnly value={selection} onFocus={(e) => e.target.select()} />}
     </div>}
   </div>;
