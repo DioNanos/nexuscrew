@@ -500,7 +500,24 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       term.clearSelection();
     };
     const onMouseMove = (e) => {
-      if (!mouseSelectStart) return;
+      if (!mouseSelectStart) {
+        // Finito il trascinamento smettevamo di proteggere il gesto proprio nel
+        // momento in cui serve muoversi per copiare. Un'applicazione che accende
+        // il tracking di OGNI movimento (Claude Code lo fa: DECSET 1003) riceve
+        // lo spostamento del puntatore come input, e xterm butta la selezione a
+        // ogni input. Risultato: la selezione moriva mentre il puntatore andava
+        // verso il pulsante Copia, e restava copiabile solo senza muovere il
+        // mouse, cioe' solo con la scorciatoia da tastiera.
+        //
+        // Finche' una selezione locale e' viva, il movimento non la raggiunge.
+        // Non e' una modalita' nuova e non serve uscirne a mano: un click senza
+        // Shift passa (onMouseDown esce subito), arriva all'applicazione e la
+        // selezione se ne va da sola, che e' il modo naturale di annullarla.
+        if (term.hasSelection?.() && mouseTrackingActive()) {
+          e.preventDefault(); e.stopPropagation();
+        }
+        return;
+      }
       e.preventDefault(); e.stopPropagation();
       const end = cellXY(e.clientX, e.clientY);
       const a = mouseSelectStart.row * term.cols + mouseSelectStart.col;
