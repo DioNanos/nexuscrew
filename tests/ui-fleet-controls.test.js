@@ -218,7 +218,7 @@ test('node visibility controls appear only where the server exposes them, on a s
   // Questa guardia era scritta come confronto letterale sul sorgente del
   // predicato. Cosi' facendo bloccava anche un INDURIMENTO — aggiungere una
   // condizione lo faceva cadere per differenza di stringa, non di
-  // comportamento. Rilievo di DevWorker, e la seconda volta oggi che pinno la
+  // comportamento. Rilievo di un audit indipendente, e la seconda volta che pinno la
   // forma invece della sostanza. Ora si prova il predicato eseguendolo.
   const { nodeDetailModel } = await import('../frontend/src/lib/node-detail.js');
   const can = (node) => nodeDetailModel({ name: 'peer', ...node }, []).canEditVisibility;

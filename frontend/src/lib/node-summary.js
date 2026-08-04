@@ -1,6 +1,6 @@
 // frontend/src/lib/node-summary.js — cosa viaggia nella RIGA di un nodo.
 //
-// Decisione di design (DevAuditor, 2026-08-04): riga + foglio di dettaglio, e
+// Decisione di design (2026-08-04): riga + foglio di dettaglio, e
 // in riga solo identita' e un **riassunto derivato**. Il dettaglio sta nel
 // foglio, che su mobile e' un bottom sheet e su desktop un pannello laterale:
 // una sola gerarchia di navigazione invece di schede che si espandono e fanno

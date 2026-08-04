@@ -30,7 +30,7 @@ test('i18n: t() fallback su IT e su chiave', async () => {
 // riscrittura che nomina i due casi per NEGARLI: «e' falso che un'app che segue
 // il mouse scorre da se'...» passerebbe. Un test su prosa non puo' fare di
 // meglio senza diventare fragile, e fingere che lo faccia e' peggio che
-// ammetterlo. Rilievo di DevWorker, che ha costruito gli esempi avversari.
+// ammetterlo. Rilievo di un audit indipendente, con esempi avversari a prova.
 test('i18n: alternateScreen distingue chi scorre da se\' da chi naviga la storia tmux', async () => {
   const { DICTS } = await import('../frontend/src/lib/i18n.js');
   const it = DICTS.it['alternate-screen-help'];
