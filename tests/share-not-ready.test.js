@@ -241,3 +241,23 @@ test('peer: il ritentativo e\' limitato e alla fine si arrende', async (t) => {
     `tentativi attesi fra 2 e 5, visti ${fetchImpl.calls.share}`);
   assert.equal(store.getNode(store.loadStoreStrict(ctx.nodesPath), 'hub').shared, false);
 });
+
+// Stesso difetto sul ramo OFF esplicito, dove pero' finisce in una risposta di
+// SUCCESSO: dichiarare "revocato" un canale che e' soltanto in quarantena e'
+// peggio che dirlo in un errore.
+const shareOff = (base, token) => fetch(`${base}/api/settings/nodes/hub/share`, {
+  method: 'PATCH', headers: H(token), body: JSON.stringify({ shared: false }),
+});
+
+test('peer: anche lo spegnimento dichiara un canale che non si e\' spento in modo dimostrabile', async (t) => {
+  const fetchImpl = hubFetch('a'.repeat(32), 0, null); // l'hub accetta la revoca
+  const ctx = await peerWithHub(t, fetchImpl, {
+    shared: true, reversePool: store.reversePoolDefault(44001),
+  });
+  const res = await shareOff(ctx.base, ctx.token);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.revoked, true);
+  assert.equal(body.reversePoolPending, true, 'la quarantena va dichiarata anche in caso di successo');
+  assert.equal(store.getNode(store.loadStoreStrict(ctx.nodesPath), 'hub').shared, false);
+});
