@@ -1,0 +1,94 @@
+/* DetailSheet — riga → dettaglio, una gerarchia sola su due forme.
+   Sotto 600px sale dal basso (bottom sheet), sopra si apre di lato (pannello).
+   La differenza e' tutta qui: il componente e l'albero DOM sono gli stessi.
+   600px e' il punto in cui la colonna del pannello Impostazioni smette di
+   stare comoda accanto a un secondo riquadro.
+
+   z-index 75: dentro Impostazioni (60), allo stesso livello dei modali che
+   quel pannello apre gia' (.nc-fleet-modal). Non coesistono. */
+.nc-detail-overlay {
+  position: fixed; inset: 0; z-index: 75;
+  background: rgba(0, 0, 0, .6);
+  display: flex; align-items: flex-end; justify-content: center;
+  overscroll-behavior: contain;
+}
+.nc-detail-sheet {
+  width: 100%; max-height: 88dvh;
+  display: flex; flex-direction: column; min-height: 0;
+  background: #0e140e; color: #cfe;
+  border: 1px solid #243; border-bottom: none;
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, .55);
+  outline: none;
+}
+/* Il pollice arriva in fondo, non in cima: le azioni stanno sotto, e il corpo
+   scorre da solo senza trascinare la pagina dietro. */
+.nc-detail-head {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 14px 14px 10px; border-bottom: 1px solid #1b2a1b;
+  position: sticky; top: 0; background: #0e140e; z-index: 1;
+}
+.nc-detail-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.nc-detail-title b { font-size: 16px; color: #d8ffe8; overflow-wrap: anywhere; }
+.nc-detail-title small { font-size: 12px; opacity: .65; overflow-wrap: anywhere; }
+.nc-detail-close { padding: 6px 8px; flex: none; }
+
+.nc-detail-body {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 16px;
+}
+/* Un riquadro che si rende da solo (grafico, pagina, vista su misura) prende
+   tutto lo spazio: la spaziatura del foglio lo rimpicciolirebbe soltanto. */
+.nc-detail-body.plain { padding: 0; gap: 0; }
+.nc-detail-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.nc-detail-foot {
+  display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px;
+  border-top: 1px solid #1b2a1b; background: #0b110b;
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+/* Un'azione va a capo tutta intera o non va a capo: provato nel browser,
+   «elimina» spezzava fra la sua icona e la sua parola. */
+.nc-detail-foot .nc-btn {
+  white-space: nowrap; display: inline-flex; align-items: center; gap: 6px;
+}
+
+/* Le righe di fatti del dettaglio: etichetta a sinistra, valore a destra, e il
+   valore va a capo invece di allargare il foglio. */
+.nc-detail-facts {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px;
+  padding: 10px; border: 1px solid #243; border-radius: 8px; background: #0a0e0a;
+  font-size: 13px; min-width: 0; overflow-wrap: anywhere;
+}
+.nc-detail-facts dt { opacity: .65; }
+.nc-detail-facts dd { margin: 0; }
+
+/* Concessioni: si mostra CIO' CHE E' CONCESSO, mai l'universo dei nodi con le
+   spunte. La lista resta corta anche con quaranta nodi in rete. */
+.nc-detail-grants { display: flex; flex-direction: column; gap: 6px; }
+.nc-detail-grant {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border: 1px solid #243; border-radius: 8px; background: #0a0e0a;
+  font-size: 13px; min-width: 0;
+}
+.nc-detail-grant > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.nc-detail-grant.unknown > span { opacity: .6; font-style: italic; }
+.nc-detail-picker { display: flex; flex-direction: column; gap: 6px; }
+/* Il campo di ricerca non sta dentro una .nc-field, quindi lo stile del
+   pannello non lo raggiunge: senza questo resta un input di sistema in mezzo
+   a controlli scuri. */
+.nc-detail-picker input {
+  padding: 9px 10px; font: 14px/1.2 inherit; box-sizing: border-box;
+  background: #0a0e0a; color: #cfe; border: 1px solid #243; border-radius: 8px;
+  width: 100%; min-width: 0;
+}
+.nc-detail-picker input:focus { outline: none; border-color: #2e7d32; }
+.nc-detail-picker-list { display: flex; flex-wrap: wrap; gap: 6px; }
+
+@media (min-width: 600px) {
+  .nc-detail-overlay { align-items: stretch; justify-content: flex-end; }
+  .nc-detail-sheet {
+    width: min(440px, 100%); max-height: none; height: 100%;
+    border: none; border-left: 1px solid #243; border-radius: 0;
+    box-shadow: -12px 0 40px rgba(0, 0, 0, .55);
+  }
+}

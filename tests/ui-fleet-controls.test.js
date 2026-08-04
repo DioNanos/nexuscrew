@@ -194,9 +194,27 @@ test('Share publishes the local device through the selected hub, not the remote 
     'la remediation strutturata della PATCH Share deve essere visibile nella UI');
   assert.doesNotMatch(settings, /!shareTunnel\?\.up && !shareHub\.shared/,
     'il checkbox Share non deve restare bloccato quando il tunnel e giu');
-  const nodeCards = settings.slice(settings.indexOf('peerGroups.map'));
-  assert.doesNotMatch(nodeCards, /setNodeShare\(token, n\.name/);
-  assert.match(nodeCards, /actions\.visibility && n\.shared/);
-  assert.match(nodeCards, /setNodeVisibility\(token, n\.name/,
+  // La riga di un nodo non pubblica il dispositivo locale, e da NC-I non porta
+  // piu' NESSUN controllo: identita' e riassunto, e basta. I controlli ACL non
+  // sono spariti, si sono spostati di un livello — quindi la guardia si sposta
+  // con loro invece di essere tolta, altrimenti il giorno in cui qualcuno
+  // svuota il foglio la suite resta verde.
+  const rows = settings.slice(settings.indexOf('peerGroups.map'));
+  assert.doesNotMatch(rows, /setNodeShare\(token, n\.name/);
+  assert.doesNotMatch(rows, /setNodeVisibility\(/,
+    'la riga non muta piu' + ' nulla: apre il foglio');
+
+  const sheet = read('NodeSheet.jsx');
+  assert.match(sheet, /setNodeVisibility\(token, node\.name, visibility, selected\)/,
     'the hub keeps visibility ACL controls for shared inbound clients');
+  assert.match(sheet, /canEditVisibility && </,
+    'i controlli di visibilita compaiono solo dove il server li espone');
+  assert.doesNotMatch(sheet, /setNodeShare/,
+    'il foglio di un nodo remoto non pubblica il dispositivo locale');
+
+  // E il predicato che li accende resta legato ai due campi veri: la rotta
+  // esposta dal server E la condivisione attiva. Rilassarne uno riaprirebbe i
+  // controlli su un nodo privato.
+  const detail = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'lib', 'node-detail.js'), 'utf8');
+  assert.match(detail, /canEditVisibility: !!\(node\.actions && node\.actions\.visibility\) && node\.shared === true/);
 });
