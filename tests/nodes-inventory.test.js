@@ -33,3 +33,35 @@ test('resolvePeer preferisce identita stabile e rifiuta nomi transitivi ambigui'
   assert.match(inventory.resolvePeer(peers, 'node').error, /ambiguo/);
   assert.equal(inventory.resolvePeer(peers, 'b'.repeat(32)).peer.route[0], 'hub-b');
 });
+
+// --- NC-D: anche il nome di un nodo in TRANSITO deve viaggiare ---------------
+// Senza label un nodo routed arriva come slug scelto da altri: oggi cinque
+// installazioni si presentano tutte come "NexusCrew". Ma la label di un peer e'
+// testo auto-dichiarato, quindi si accetta solo nella forma valida e resta un
+// dato riferito, mai una prova di identita'.
+
+test('inventario: un nodo routed porta la label riferita, marcata come tale', () => {
+  const peer = inventory.routedPeer({
+    instanceId: 'c'.repeat(32), name: 'nexus-crew-d6b8',
+    route: ['hub', 'nexus-crew-d6b8'], label: 'Portatile di casa', lastSeen: 10,
+  });
+  assert.equal(peer.label, 'Portatile di casa');
+  assert.equal(peer.labelReported, true, 'va distinto cio' + "' che sappiamo da cio' che ci e' stato riferito");
+  // L'identita' resta l'instanceId: la label non la sostituisce.
+  assert.equal(peer.instanceId, 'c'.repeat(32));
+  assert.equal(peer.manageable, false);
+});
+
+test('inventario: senza label il nodo routed resta senza nome, non inventato', () => {
+  const peer = inventory.routedPeer({
+    instanceId: 'd'.repeat(32), name: 'nexus-crew-0e88', route: ['nexus-crew-0e88'],
+  });
+  assert.equal(peer.label, '');
+});
+
+test('inventario: una label non stringa non contamina la voce', () => {
+  const peer = inventory.routedPeer({
+    instanceId: 'e'.repeat(32), name: 'peer', route: ['peer'], label: { attacco: true },
+  });
+  assert.equal(peer.label, '');
+});
