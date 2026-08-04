@@ -308,7 +308,10 @@ test('READONLY: builtin blocca mutazioni (403) ma lascia passare letture', async
 // --- NC-D: il nome dev'essere anche RIPRISTINABILE --------------------------
 // Aggiungere un campo alla definizione senza aggiungerlo all'allowlist del
 // restore spezza il round-trip di backup proprio sulle celle a cui e' stato
-// dato un nome: l'export lo contiene, il restore lo rifiuta.
+// dato un nome. Qui si prova SOLO la meta' backend: che l'API accetti la label
+// e la ripresenti. Il giro completo della PWA (export, parse, restore) e'
+// provato in tests/fleet-backup.test.js, e senza quello questa guardia da'
+// l'impressione di coprire un round-trip che non tocca mai.
 test('builtin: una cella con label sopravvive al round-trip di backup', async (t) => {
   const { base, token, dir } = await bootBuiltin(t);
   const restored = await fetch(`${base}/api/fleet/restore-cells`, {
