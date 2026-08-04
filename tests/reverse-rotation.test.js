@@ -31,3 +31,50 @@ test('reverse rotation: pool non verificato, lease scaduto e candidate quarantin
   assert.equal(quarantined.slots[1].state, 'quarantined');
   assert.equal(quarantined.rotation.phase, 'abandoned');
 });
+
+// --- chiusura parziale: la decisione, isolata dai processi ------------------
+// Durante la grace di una rotazione lo slot vecchio e quello nuovo coesistono.
+// Il difetto era dichiarare successo appena UNA entry si chiudeva, lasciando
+// l'altra viva mentre chi chiama registrava il canale come privato. La logica
+// vive ora in una funzione pura, testabile senza tunnel ne' processi.
+test('summarizeStops: una chiusura parziale non e\' una chiusura', () => {
+  const outcome = rotation.summarizeStops([
+    { stopped: true },
+    { stopped: false, reason: 'supervisor non attribuibile' },
+  ]);
+  assert.equal(outcome.stoppedAny, true);
+  assert.equal(outcome.quarantinedAny, true);
+  assert.equal(outcome.allClosed, false, 'una sola entry chiusa non basta');
+});
+
+test('summarizeStops: tutte spente in modo dimostrabile', () => {
+  const outcome = rotation.summarizeStops([
+    { stopped: true },
+    { stopped: false, reason: 'no pidfile' },
+    { stopped: false, reason: 'stale (pid dead)' },
+  ]);
+  assert.equal(outcome.allClosed, true, 'gia\' sparite conta come spente: non resta nulla di vivo');
+  assert.equal(outcome.quarantinedAny, false);
+});
+
+test('summarizeStops: nessuna entry non dimostra nulla', () => {
+  assert.equal(rotation.summarizeStops([]).allClosed, false);
+  assert.equal(rotation.summarizeStops(undefined).allClosed, false);
+});
+
+test('summarizeStops: tutte in quarantena', () => {
+  const outcome = rotation.summarizeStops([
+    { stopped: false, reason: 'permesso negato' },
+    { stopped: false, reason: 'pid di un altro processo' },
+  ]);
+  assert.equal(outcome.stoppedAny, false);
+  assert.equal(outcome.allClosed, false);
+});
+
+test('stopWasDemonstrated: solo stopped o gia\' sparito', () => {
+  assert.equal(rotation.stopWasDemonstrated({ stopped: true }), true);
+  assert.equal(rotation.stopWasDemonstrated({ stopped: false, reason: 'no pidfile' }), true);
+  assert.equal(rotation.stopWasDemonstrated({ stopped: false, reason: 'stale (pid dead)' }), true);
+  assert.equal(rotation.stopWasDemonstrated({ stopped: false, reason: 'altro' }), false);
+  assert.equal(rotation.stopWasDemonstrated(null), false);
+});

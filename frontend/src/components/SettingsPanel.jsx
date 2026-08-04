@@ -137,7 +137,16 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
   const applyShare = async (shared) => {
     if (!shareHub) return;
     setErr(null); setBusy(`${shareHub.name}:share`);
-    try { await setNodeShare(token, shareHub.name, shared); await refresh(); }
+    try {
+      const result = await setNodeShare(token, shareHub.name, shared);
+      await refresh();
+      // Una revoca RIUSCITA puo' comunque lasciare il canale in quarantena
+      // (chiusura non dimostrabile): il 200 non passa dal catch, quindi senza
+      // questo l'operatore leggerebbe soltanto "revocato".
+      if (result && result.reversePoolPending === true) {
+        setErr(`${shareHub.name}: ${t('share-reverse-pool-pending')}`);
+      }
+    }
     catch (e) {
       const partial = e?.data && e.data.shared === false ? e.data : null;
       if (partial) {
@@ -150,7 +159,13 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
         ? t('share-off-local-reconcile-pending')
         : partial?.revoked === false && partial?.reconcilePending === true
           ? t('share-off-hub-reconcile-pending') : '';
-      setErr(`${shareHub.name}: ${String(e.message || e)}${hint ? ` — ${hint}` : ''}${pending ? ` — ${pending}` : ''}`);
+      // Il canale in quarantena va detto anche quando la chiamata FALLISCE, e
+      // indipendentemente da `shared`: il rollback di Share ON lo riporta senza
+      // shared:false, quindi legarlo a `partial` lo renderebbe di nuovo muto
+      // proprio nel caso in cui il pool puo' essere rimasto vivo.
+      const quarantined = e?.data && e.data.reversePoolPending === true
+        ? t('share-reverse-pool-pending') : '';
+      setErr(`${shareHub.name}: ${String(e.message || e)}${hint ? ` — ${hint}` : ''}${pending ? ` — ${pending}` : ''}${quarantined ? ` — ${quarantined}` : ''}`);
     }
     setBusy(null);
   };

@@ -11,7 +11,35 @@ vi.mock('@xterm/xterm', () => ({
       this.options = {}; this.cols = 80; this.rows = 24;
       this.buffer = { active: { viewportY: 0 } };
       this.selectCalls = [];
+      // Modalita' e parser come li espone xterm: `modes` per il tracking del
+      // mouse, `parser` per osservare la codifica SGR (DECSET 1006) sul filo.
+      this.modes = { mouseTrackingMode: 'none' };
+      this.csiHandlers = [];
+      this.escHandlers = [];
+      this.parser = {
+        registerCsiHandler: (id, callback) => {
+          this.csiHandlers.push({ id, callback });
+          return { dispose() {} };
+        },
+        registerEscHandler: (id, callback) => {
+          this.escHandlers.push({ id, callback });
+          return { dispose() {} };
+        },
+      };
       fixture.instances.push(this);
+    }
+    // Simula la negoziazione fatta dall'applicazione: `CSI ? 1006 h` accende
+    // la codifica SGR, `l` la spegne.
+    emitCsi(final, params) {
+      for (const handler of this.csiHandlers) {
+        if (handler.id.final === final && handler.id.prefix === '?') handler.callback(params);
+      }
+    }
+    // RIS (`ESC c`): reset completo del terminale, encoding incluso.
+    emitEsc(final) {
+      for (const handler of this.escHandlers) {
+        if (handler.id.final === final) handler.callback();
+      }
     }
     loadAddon() {}
     open(host) { host.appendChild(this.textarea); }
@@ -384,6 +412,95 @@ describe('terminal scroll plan integration', () => {
     fireEvent.wheel(host, { deltaY: 24 });
     expect(fixture.actions).toEqual(['scroll-up', 'scroll-down']);
     expect(fixture.inputs).toEqual([]); // the wheel no longer steals the TUI viewport
+  });
+
+  // Un'app che abilita il mouse tracking con codifica SGR possiede il proprio
+  // scorrimento: sottrarle il gesto per il copy-mode tmux mostra una
+  // scrollback fatta di fotogrammi di ridisegno invece del transcript.
+  const enableSgrMouse = (term) => {
+    term.emitCsi('h', [1006]);            // DECSET 1006: codifica SGR
+    term.modes.mouseTrackingMode = 'any'; // DECSET 1003: tracking attivo
+  };
+
+  it('gives the wheel to an application that tracks the mouse with SGR', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    terminalBounds(host, 400, 300);
+    enableSgrMouse(term);
+    fireEvent.wheel(host, { deltaY: -24, clientX: 30, clientY: 40 });
+    fireEvent.wheel(host, { deltaY: 24, clientX: 30, clientY: 40 });
+    expect(fixture.inputs).toEqual(['\x1b[<64;7;4M', '\x1b[<65;7;4M']);
+    expect(fixture.actions).toEqual([]); // niente copy-mode: scorre l'app
+  });
+
+  it('gives the finger drag to that application too, which is the mobile case', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    terminalBounds(host, 400, 300);
+    enableSgrMouse(term);
+    fireEvent.touchStart(host, { touches: [{ clientX: 30, clientY: 40 }] });
+    fireEvent.touchMove(host, { touches: [{ clientX: 30, clientY: 64 }] }); // +24 = STEP
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 30, clientY: 64 }] });
+    expect(fixture.inputs).toEqual(['\x1b[<64;7;6M']);
+    expect(fixture.actions).toEqual([]);
+  });
+
+  it('keeps server-side scroll when tracking is on but the encoding is legacy', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    terminalBounds(host, 400, 300);
+    term.modes.mouseTrackingMode = 'vt200'; // nessun DECSET 1006
+    fireEvent.wheel(host, { deltaY: -24, clientX: 30, clientY: 40 });
+    expect(fixture.inputs).toEqual([]); // mai byte che l'app non sa decodificare
+    expect(fixture.actions).toEqual(['scroll-up']);
+  });
+
+  // La nostra copia dello stato dell'encoding puo' desincronizzarsi: dopo un
+  // RIS l'applicazione riparte in codifica legacy, e continuare a mandarle
+  // report SGR significa consegnarle byte che non sa leggere.
+  it('forgets the SGR encoding after a terminal reset, even if tracking stays on', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    terminalBounds(host, 400, 300);
+    enableSgrMouse(term);
+    fireEvent.wheel(host, { deltaY: -24, clientX: 30, clientY: 40 });
+    expect(fixture.inputs).toEqual(['\x1b[<64;7;4M']);
+    fixture.inputs.length = 0;
+    term.emitEsc('c');                    // RIS: reset, encoding compresa
+    expect(term.modes.mouseTrackingMode).toBe('any'); // il tracking resta acceso
+    fireEvent.wheel(host, { deltaY: -24, clientX: 30, clientY: 40 });
+    expect(fixture.inputs).toEqual([]);   // niente SGR su una codifica non piu' negoziata
+    expect(fixture.actions).toEqual(['scroll-up']);
+  });
+
+  it('stays on server-side scroll when coordinates are negotiated in pixels', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    terminalBounds(host, 400, 300);
+    enableSgrMouse(term);
+    term.emitCsi('h', [1016]);            // SGR-Pixels: le coordinate sono pixel
+    fireEvent.wheel(host, { deltaY: -24, clientX: 30, clientY: 40 });
+    expect(fixture.inputs).toEqual([]);   // le nostre coordinate sono celle
+    expect(fixture.actions).toEqual(['scroll-up']);
+    term.emitCsi('l', [1016]);            // tornando a celle si riprende
+    fireEvent.wheel(host, { deltaY: -24, clientX: 30, clientY: 40 });
+    expect(fixture.inputs).toEqual(['\x1b[<64;7;4M']);
+  });
+
+  it('never sends PTY input from a readonly terminal, even with tracking on', () => {
+    const view = renderTerminal('double-tap', { readonly: true });
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    terminalBounds(host, 400, 300);
+    enableSgrMouse(term);
+    fireEvent.wheel(host, { deltaY: -24, clientX: 30, clientY: 40 });
+    expect(fixture.inputs).toEqual([]);
+    expect(fixture.actions).toEqual(['scroll-up']);
   });
 
   it('Shift+wheel still browses tmux history in a writable alternate-screen TUI', () => {

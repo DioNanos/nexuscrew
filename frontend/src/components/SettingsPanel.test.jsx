@@ -93,6 +93,37 @@ describe('Settings Share partial OFF convergence', () => {
     expect(screen.getByText((text) => text.includes('Share partial failure'))).toBeTruthy();
   });
 
+  // Una revoca RIUSCITA puo' lasciare il canale in quarantena: il 200 non passa
+  // dal catch, quindi senza questo l'operatore leggerebbe soltanto "revocato".
+  it('surfaces a quarantined reverse channel even when the call succeeds', async () => {
+    mocks.setNodeShare.mockResolvedValue({ name: 'hub', shared: false, revoked: true, reversePoolPending: true });
+    const { refresh, share } = renderNodes();
+    fireEvent.click(share);
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText((text) => text.includes('quarantined, not closed'))).toBeTruthy();
+  });
+
+  // Il rollback di Share ON riporta reversePoolPending SENZA shared:false: se il
+  // segnale fosse legato a quel campo tornerebbe muto proprio quando il pool
+  // puo' essere rimasto vivo.
+  it('surfaces a quarantined channel on the error path too, without shared:false', async () => {
+    mocks.setNodeShare.mockRejectedValue(Object.assign(new Error('Share non attivato'), {
+      data: { error: 'Share non attivato', reversePoolPending: true },
+    }));
+    const { share } = renderNodes();
+    fireEvent.click(share);
+    expect(await screen.findByText((text) => text.includes('quarantined, not closed'))).toBeTruthy();
+    expect(screen.getByText((text) => text.includes('Share non attivato'))).toBeTruthy();
+  });
+
+  it('stays silent when the channel was demonstrably closed', async () => {
+    mocks.setNodeShare.mockResolvedValue({ name: 'hub', shared: false, revoked: true });
+    const { share } = renderNodes();
+    fireEvent.click(share);
+    await waitFor(() => expect(mocks.setNodeShare).toHaveBeenCalled());
+    expect(screen.queryByText((text) => text.includes('quarantined, not closed'))).toBeNull();
+  });
+
   it('does not refresh a generic failure without the authoritative shared:false body', async () => {
     mocks.setNodeShare.mockRejectedValue(Object.assign(new Error('transport failed'), { data: { error: 'transport failed' } }));
     const { refresh, share } = renderNodes();

@@ -16,11 +16,34 @@ export const PAGE_SCROLL_MIN_THRESHOLD = 80; // safe page fallback for hidden/ze
 export const MAX_SCROLL_STEPS = 8;         // bound work and PTY/server bursts per browser event
 export const PAGE_INPUT_UP = '\x1b[5~';     // raw PageUp sent to the PTY
 export const PAGE_INPUT_DOWN = '\x1b[6~';  // raw PageDown sent to the PTY
+export const MOUSE_WHEEL_UP_BUTTON = 64;   // SGR button code for wheel up
+export const MOUSE_WHEEL_DOWN_BUTTON = 65; // SGR button code for wheel down
 
-// Page mode is only for a writable alternate-screen terminal: readonly must
-// never send PTY input, and normal-screen scroll stays server-side.
-export function chooseScrollMode({ alternateScreen = false, readonly = false } = {}) {
-  return alternateScreen && !readonly ? 'page' : 'scroll';
+// SGR (DECSET 1006) wheel report: `CSI < Cb ; Cx ; Cy M`. Coordinates are
+// 1-based and viewport-relative. The wheel has no release event, so a single
+// press report per notch is the whole contract.
+export function sgrWheelSequence(direction, col, row) {
+  const button = direction === 'up' ? MOUSE_WHEEL_UP_BUTTON : MOUSE_WHEEL_DOWN_BUTTON;
+  const coord = (value) => Math.max(1, Math.min(9999, Number.isFinite(value) ? Math.round(value) : 1));
+  return `\x1b[<${button};${coord(col)};${coord(row)}M`;
+}
+
+// Three-way choice.
+//   mouse mode -> the application enabled mouse tracking with SGR encoding: it
+//                 owns its own scrolling and expects the wheel events itself.
+//                 Stealing them for tmux copy-mode shows a scrollback the app
+//                 never populated as a log (repaint frames, not a transcript).
+//   page mode  -> writable alternate-screen TUI without mouse tracking.
+//   scroll mode-> everything else, and ALWAYS when readonly: a readonly
+//                 terminal must never send PTY input, so it can reach neither
+//                 mouse nor page mode.
+// `mouseTracking` is true only when tracking AND SGR encoding are both active:
+// emitting SGR to an application that negotiated a legacy encoding would send
+// it bytes it cannot decode.
+export function chooseScrollMode({ alternateScreen = false, readonly = false, mouseTracking = false } = {}) {
+  if (readonly) return 'scroll';
+  if (mouseTracking) return 'mouse';
+  return alternateScreen ? 'page' : 'scroll';
 }
 
 // Resolve the active threshold for a mode. Callers pass an explicit threshold
@@ -60,20 +83,24 @@ export function planTerminalScroll({ mode = 'scroll', accumulated = 0, threshold
   };
 }
 
-// Map a plan to the concrete actions for the two integration points.
+// Map a plan to the concrete actions for the three integration points.
+//   mouse mode -> SGR wheel reports as PTY bytes (sendInput), at `position`
 //   page mode  -> raw PageUp/PageDown PTY bytes (sendInput)
 //   scroll mode-> server-side scroll-up/scroll-down (action)
-// Readonly never reaches page mode (chooseScrollMode guards it), so this never
-// emits PTY input for a readonly terminal.
-export function describeScrollActions(plan) {
+// Readonly never reaches mouse or page mode (chooseScrollMode guards it), so
+// this never emits PTY input for a readonly terminal.
+export function describeScrollActions(plan, position = null) {
   const actions = [];
+  const col = position && Number.isFinite(position.col) ? position.col : 1;
+  const row = position && Number.isFinite(position.row) ? position.row : 1;
   const boundedCount = (value) => Math.min(MAX_SCROLL_STEPS,
     Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
-  for (let i = 0; i < boundedCount(plan.up); i += 1) {
-    actions.push(plan.mode === 'page' ? { kind: 'input', seq: PAGE_INPUT_UP } : { kind: 'action', name: 'scroll-up' });
-  }
-  for (let i = 0; i < boundedCount(plan.down); i += 1) {
-    actions.push(plan.mode === 'page' ? { kind: 'input', seq: PAGE_INPUT_DOWN } : { kind: 'action', name: 'scroll-down' });
-  }
+  const step = (direction) => {
+    if (plan.mode === 'mouse') return { kind: 'input', seq: sgrWheelSequence(direction, col, row) };
+    if (plan.mode === 'page') return { kind: 'input', seq: direction === 'up' ? PAGE_INPUT_UP : PAGE_INPUT_DOWN };
+    return { kind: 'action', name: direction === 'up' ? 'scroll-up' : 'scroll-down' };
+  };
+  for (let i = 0; i < boundedCount(plan.up); i += 1) actions.push(step('up'));
+  for (let i = 0; i < boundedCount(plan.down); i += 1) actions.push(step('down'));
   return actions;
 }
