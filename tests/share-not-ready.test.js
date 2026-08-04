@@ -17,6 +17,7 @@ const { createServer } = require('../lib/server.js');
 const store = require('../lib/nodes/store.js');
 const fed = require('../lib/proxy/federation.js');
 const { settingsRoutes } = require('../lib/settings/routes.js');
+const proof = require('../lib/nodes/reverse-slot-proof.js');
 
 const H = (token) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
 const listen = (app) => new Promise((resolve) => {
@@ -444,6 +445,86 @@ test('produzione: lo slot aperto dal server reale onora un upgrade', async (t) =
   // anche da un handler che distrugge il socket, cioe' da un cablaggio finto.
   assert.match(upgraded, /^HTTP\/1\.1 101 /, 'lo slot di produzione deve completare l\'upgrade');
   assert.ok(!/<html/i.test(upgraded), 'mai corpo HTML su un upgrade');
+});
+
+// Lo slot listener prova la PROPRIA identita' a chi lo interroga, e l'altro
+// capo compone la sfida con l'id di QUESTA installazione (probeReverseOwner usa
+// `peer.nodeId`: noi, visti da lui). Registrare invece `node.nodeId` — l'id del
+// nodo REMOTO — faceva firmare due tuple diverse ai due capi: la prova non
+// tornava mai, e il rifiuto e' un 409 tipizzato, quindi DEFINITIVO. Share non
+// poteva accendersi su un canale reverse, e nessun ritentativo poteva salvarlo.
+// Segnalato da una cella su un nodo peer, che la tupla sbagliata la vedeva dal
+// lato che la firma.
+test('produzione: lo slot dichiara l\'identita\' LOCALE, quella che l\'altro capo verifica', async (t) => {
+  const created = [];
+  const remoteInstanceId = 'a'.repeat(32);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-slot-identity-'));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const nodesPath = path.join(configDir, 'nodes.json');
+  store.initStore(nodesPath);
+  const localInstanceId = store.loadStoreStrict(nodesPath).nodeId;
+  assert.ok(localInstanceId && localInstanceId !== remoteInstanceId, 'i due id devono essere distinti');
+
+  const { server, token, watcher } = createServer({
+    home: dir, configDir, nodesPath,
+    configPath: path.join(configDir, 'config.json'),
+    tokenPath: path.join(configDir, 'token'),
+    filesRoot: path.join(dir, 'files'), fleetEnabled: false,
+    tunnelSpawnImpl: () => ({ pid: 4193777, unref() {} }),
+    tunnelSpawnSyncImpl: () => ({ status: 0, stdout: '', stderr: '' }),
+    reverseSlotCreateServerImpl: (app) => { const srv = http.createServer(app); created.push(srv); return srv; },
+    settingsSeams: {
+      platform: 'linux', uid: 1000,
+      execImpl: () => { throw new Error('exec disabled in test'); },
+      spawnImpl: () => ({ pid: 4193999, unref() {} }),
+      sshVersion: () => ({ major: 9, minor: 6 }),
+      stopTunnelImpl: () => ({ stopped: true }),
+      startForwardImpl: () => ({ started: false, reason: 'already running', pid: 4242 }),
+      pairDelay: async () => {},
+      fetchImpl: async (url) => (String(url).endsWith('/federation/health')
+        ? { ok: true, status: 200, json: async () => ({ ok: true, instanceId: remoteInstanceId }) }
+        : { ok: true, status: 200, json: async () => ({ ok: true }) }),
+    },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.close(); if (watcher) watcher.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  await fetch(`${base}/api/settings/nodes`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ name: 'hub', ssh: 'user@hub' }),
+  });
+  let st = store.loadStoreStrict(nodesPath);
+  st = store.updateNode(st, 'hub', {
+    direction: 'outbound', shared: true, localPort: 43001, remotePort: 41820,
+    reversePort: 44001, token: 't'.repeat(48), acceptToken: 'k'.repeat(48), nodeId: remoteInstanceId,
+    reversePool: store.reversePoolDefault(44001),
+  });
+  store.atomicWriteStore(nodesPath, st);
+  await fetch(`${base}/api/settings/nodes/hub/share`, {
+    method: 'PATCH', headers: H(token), body: JSON.stringify({ shared: true }),
+  });
+
+  assert.ok(created.length >= 1, 'il server reale deve aver aperto uno slot listener');
+  const slotPort = created[0].address() && created[0].address().port;
+  assert.ok(slotPort, 'lo slot listener deve essere in ascolto');
+
+  // La sfida come la compone l'altro capo: instanceId = l'id di questa
+  // installazione. E' esattamente cio' che fa probeReverseOwner con peer.nodeId.
+  const asHubWouldAsk = await proof.probeReverseSlot({
+    port: slotPort, secret: 'k'.repeat(48),
+    expected: { remotePort: 44001, generation: 1, instanceId: localInstanceId },
+  });
+  assert.equal(asHubWouldAsk.owned, true,
+    `la prova con l'identita' locale deve tornare (codice: ${asHubWouldAsk.code || 'nessuno'})`);
+
+  // Controprova: l'id del nodo remoto non e' l'identita' di questo listener e
+  // deve essere respinto, altrimenti chiunque potrebbe farsi passare per noi.
+  const asWrongIdentity = await proof.probeReverseSlot({
+    port: slotPort, secret: 'k'.repeat(48),
+    expected: { remotePort: 44001, generation: 1, instanceId: remoteInstanceId },
+  });
+  assert.equal(asWrongIdentity.owned, false, 'un\'identita' + '\' diversa non deve essere provata');
 });
 
 // --- terzo giro di audit: casi che restavano scoperti ------------------------
