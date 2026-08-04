@@ -4,6 +4,37 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.50 — 2026-08-04 — "What You Selected, What You Rely On"
+
+- Selected text no longer disappears before you can copy it. xterm discards a
+  selection on any input sent to the application: a keystroke, and — when the
+  application has enabled mouse tracking, as Claude Code does and Codex does
+  not — a single click, because that click becomes an SGR mouse report. A row
+  resize does the same, so on a phone the virtual keyboard alone is enough. The
+  practical result was selecting with Shift, releasing Shift to reach the Copy
+  button, and finding nothing left to copy before the button was pressed. The
+  selected text is now kept locally until you act on it: copy or cancel. The
+  highlight may still vanish, since it belongs to the terminal emulator, but
+  what you copy does not.
+
+- Touch selection works above your finger everywhere. A long press already
+  lifted the working point two rows and drew a caret, so you could see what you
+  were taking; selection mode — the branch reached through the SELECT key and on
+  every touch after the first — instead used the cell under the fingertip, the
+  one cell you cannot see while choosing it. Both paths now behave the same.
+
+- A reverse pool that cannot be fully verified now says what that costs.
+  Rotation deliberately refuses to move into a pool whose slots are not all
+  proven, and the watcher that would notice a degraded channel is never armed
+  while the pool is unverified — so the reverse channel has no self-healing at
+  all, and nothing said so. On a live link the active slot proves and the
+  standby slots do not, because nothing listens on a reserved port, which makes
+  that the steady state rather than an exception. The verdict and the safety
+  gate are unchanged; the state is now reported for what it is. A verification
+  run also no longer stops at the first slot that fails to prove, so one broken
+  standby can no longer hide a healthy one behind it, and the outcome carries
+  which slots failed and with which code.
+
 ## 0.8.49 — 2026-08-04 — "Whose Identity"
 
 - Share can be enabled over a reverse channel again. A reverse slot listener
