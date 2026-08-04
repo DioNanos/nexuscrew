@@ -76,9 +76,9 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
   const now = Date.now();
   const deviceDefault = (settings && settings.deviceName) || '';
   // Un'installazione client invita nella rete a cui è già collegata, non crea
-  // un peer diretto verso sé stessa. In questo modo Pixel apre un solo forward
-  // verso la porta d'ingresso di VPS3; Mac e gli altri nodi restano route Hydra
-  // interne all'hub. I peer inbound non sono hub selezionabili.
+  // un peer diretto verso sé stessa: apre un solo forward verso la porta
+  // d'ingresso del proprio hub, e gli altri nodi restano route interne
+  // all'hub. I peer inbound non sono hub selezionabili.
   const inviteHubs = (nodes || []).filter((n) => n && n.direction === 'outbound' && n.name && n.ssh);
   const inviteHub = inviteHubs.find((n) => n.name === inviteHubName) || inviteHubs[0] || null;
   const shareHub = inviteHubs.find((n) => n.name === shareHubName) || inviteHubs[0] || null;
