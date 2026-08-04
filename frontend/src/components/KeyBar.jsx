@@ -155,7 +155,7 @@ export default function KeyBar({
         <div className={`nc-keygrid compact${showEnter ? '' : ' no-enter'}`}>
           <div className="nc-keyrows">
             <div className="row">
-              <button type="button" key="expand" aria-label="expand keybar" title="expand"
+              <button type="button" key="expand" aria-label={t('keybar-expand')} title={t('expand')}
                 {...press(() => setExpanded(true))}><Icon name="chevronUp" size={20} /></button>
               {switcherKey}
               <button type="button" key="menu" className={menu ? 'armed' : ''}
@@ -180,7 +180,7 @@ export default function KeyBar({
   // tornare alla riga compatta senza riscrivere la preferenza.
   const isExpandedFromCompact = keybarLayout === 'compact' && expanded;
   const retractKey = isExpandedFromCompact && (
-    <button type="button" className="nc-retract-key" aria-label="retract keybar" title="retract"
+    <button type="button" className="nc-retract-key" aria-label={t('keybar-retract')} title={t('retract')}
       {...press(() => setExpanded(false))}><Icon name="chevronDown" size={20} /></button>
   );
 
