@@ -131,6 +131,11 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     if (selectedEngine?.managed?.client === 'shell' && typeof f.command === 'string' && f.command.length) commands[f.engine] = f.command;
     else if (selectedEngine?.managed?.client === 'shell') delete commands[f.engine];
     if (Object.keys(commands).length || !creating) def.commands = commands;
+    // Il nome leggibile vale per ogni motore, anche Shell: non e' un parametro
+    // di lancio, e' come si chiama la cella. In modifica un valore vuoto la
+    // rimuove, perche' `null` cancella la chiave lato backend.
+    const label = (f.label || '').trim();
+    if (creating) { if (label) def.label = label; } else def.label = label || null;
     if (creating) {
       if (selectedEngine?.managed?.client !== 'shell' && f.model) def.model = f.model;
       if (selectedEngine?.managed?.client !== 'shell' && f.prompt) def.prompt = f.prompt;
@@ -292,7 +297,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
         // finche' la cwd non viene riparata (Edit sostituito da Repair).
         const needsRepair = c.needsRepair === true;
         return (
-        <div className="nc-fleet-item" key={c.id}><span><b>{c.id}</b><small>{c.engine} · {needsRepair ? <span className="nc-fleet-tag nc-fleet-tag-warn">{t('fleet-cwd-needs-repair')}</span> : c.cwd}{isOn ? ` · ${t('service-active')}` : ` · ${t('cell-off')}`}</small></span><span>
+        <div className="nc-fleet-item" key={c.id}><span><b>{c.id}</b>{c.label ? <small className="nc-fleet-label"> {c.label}</small> : null}<small>{c.engine} · {needsRepair ? <span className="nc-fleet-tag nc-fleet-tag-warn">{t('fleet-cwd-needs-repair')}</span> : c.cwd}{isOn ? ` · ${t('service-active')}` : ` · ${t('cell-off')}`}</small></span><span>
           {isOn && caps.includes('down') && <button className="nc-btn ghost" disabled={locked || busy}
             onClick={() => run(() => fleetDown(token, { cell: c.id }, route))}>{t('stop')}</button>}
           {!isOn && caps.includes('up') && <button className="nc-btn primary" disabled={locked || busy}
