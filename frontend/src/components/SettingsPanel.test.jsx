@@ -116,6 +116,38 @@ describe('Settings Share partial OFF convergence', () => {
     expect(screen.getByText((text) => text.includes('Share non attivato'))).toBeTruthy();
   });
 
+  // Il titolo e' identico per cause opposte: un peer irraggiungibile, una
+  // credenziale rifiutata, una prova di slot non ottenuta. Il server manda gia'
+  // `code` e `detail`; finora restavano nella risposta e l'operatore vedeva
+  // soltanto il titolo, quindi non poteva distinguere cio' che si ritenta da
+  // cio' che va riparato.
+  it('shows the typed code and the cause the server already sent', async () => {
+    mocks.setNodeShare.mockRejectedValue(Object.assign(new Error('Share non attivato'), {
+      data: {
+        error: 'Share non attivato',
+        code: 'reverse-slot-proof-unavailable',
+        detail: 'la prova dello slot reverse non e\' stata ottenuta',
+      },
+    }));
+    const { share } = renderNodes();
+    fireEvent.click(share);
+    expect(await screen.findByText((text) => text.includes('reverse-slot-proof-unavailable'))).toBeTruthy();
+    expect(screen.getByText((text) => text.includes("la prova dello slot reverse non e' stata ottenuta"))).toBeTruthy();
+  });
+
+  // Se il dettaglio ripete il titolo non aggiunge nulla: ripeterlo peggiora la
+  // leggibilita' proprio nel momento in cui serve leggere in fretta.
+  it('does not repeat the detail when it only echoes the title', async () => {
+    mocks.setNodeShare.mockRejectedValue(Object.assign(new Error('Share non attivato'), {
+      data: { error: 'Share non attivato', detail: 'Share non attivato' },
+    }));
+    const { share } = renderNodes();
+    fireEvent.click(share);
+    await waitFor(() => expect(mocks.setNodeShare).toHaveBeenCalled());
+    const shown = screen.getByText((text) => text.includes('Share non attivato')).textContent;
+    expect(shown.match(/Share non attivato/g)).toHaveLength(1);
+  });
+
   it('stays silent when the channel was demonstrably closed', async () => {
     mocks.setNodeShare.mockResolvedValue({ name: 'hub', shared: false, revoked: true });
     const { share } = renderNodes();
