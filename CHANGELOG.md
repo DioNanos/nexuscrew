@@ -4,6 +4,24 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.49 — 2026-08-04 — "Whose Identity"
+
+- Share can be enabled over a reverse channel again. A reverse slot listener
+  answers an ownership challenge signed over `(port, generation, instanceId)`,
+  and the far end builds that challenge with the id of *this* installation —
+  us, as seen from there. The listener announced the id of the **remote** node
+  instead, so the two ends signed different tuples and the proof never matched.
+  The refusal arrives as a typed `409`, which is final by design, so no amount
+  of retrying could help and Share stayed off. Present since 0.8.45. The
+  listener now announces its own instance id, and refuses to open at all when
+  that id is unknown rather than opening one nobody can validate.
+
+- A failed Share now says why. The server had already classified the failure
+  and redacted it — `code` and `detail` travelled in the response — but the
+  interface showed only the headline, which is the same four words whether the
+  peer is unreachable, the credential was refused, the hub answered 5xx or a
+  slot proof was refused. Both are now shown.
+
 ## 0.8.48 — 2026-08-04 — "Federated Terminal, Scroll and Names"
 
 - Federated terminals no longer stay black. A WebSocket upgrade arriving on a
