@@ -124,3 +124,52 @@ test('READONLY blocca l invio ma lascia leggibile la directory', async (t) => {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
   })).status, 403);
 });
+
+// --- NC-D: il nome leggibile deve VIAGGIARE, non restare locale -------------
+// La directory e' il modo in cui un nodo si presenta agli altri: se porta solo
+// l'id, chi la riceve legge il nome che quel nodo ha scelto per se' e non ha
+// modo di sapere che ruolo occupa quella cella.
+
+test('directory: la label di cella viaggia accanto all id', async (t) => {
+  const { base } = await boot(t, {
+    fleet: {
+      available: true,
+      status: async () => ({
+        available: true,
+        cells: [{
+          cell: 'Codex-VL', label: 'SysAdmin', tmuxSession: 'cloud-Codex-VL',
+          engine: 'codex-vl.native', active: true, tmux: true,
+        }],
+      }),
+    },
+  });
+  const res = await fetch(`${base}/api/cells`);
+  const body = await res.json();
+  const entry = body.cells.find((c) => c.cell === 'Codex-VL');
+  assert.ok(entry, 'la cella deve comparire');
+  assert.equal(entry.label, 'SysAdmin', 'il nome leggibile viaggia');
+  // L'id resta la chiave di indirizzamento e non viene sostituito dal nome.
+  assert.equal(entry.cell, 'Codex-VL');
+  assert.equal(entry.id, `${LOCAL}:Codex-VL`);
+});
+
+test('directory: senza label il campo resta vuoto, non inventato', async (t) => {
+  const { base } = await boot(t);
+  const body = await (await fetch(`${base}/api/cells`)).json();
+  const entry = body.cells.find((c) => c.cell === 'Dev');
+  assert.equal(entry.label, '', 'nessun default silenzioso: decide chi legge');
+});
+
+test('directory: una label non stringa non contamina la voce', async (t) => {
+  const { base } = await boot(t, {
+    fleet: {
+      available: true,
+      status: async () => ({
+        available: true,
+        cells: [{ cell: 'Dev', label: { attacco: true }, tmuxSession: 'cloud-Dev', engine: 'x', active: true, tmux: true }],
+      }),
+    },
+  });
+  const body = await (await fetch(`${base}/api/cells`)).json();
+  assert.equal(body.cells[0].label, '');
+});
