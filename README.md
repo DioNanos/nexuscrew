@@ -95,6 +95,23 @@ session ownership to tmux.
 - File operations reject traversal and symlink escapes.
 - Updates preserve tmux sessions and roll back when health checks fail.
 
+### Pair only devices you own
+
+**A paired node is trusted as you are.** Pairing today grants a node the same
+authority over this machine that you have: it can create sessions, attach to
+them and type into them as the user running NexusCrew, define engines and cells,
+and read what the fleet exposes. There is no lesser class of peer yet.
+
+Pair your own devices, and only those. Do not accept a pairing invite from
+someone else's installation, and do not hand one out expecting it to grant less
+than everything.
+
+This is a property of the current design, not an oversight: NexusCrew was built
+to put one person's machines on one control plane. Supporting a node that
+belongs to somebody else needs per-node authority that can be granted and
+revoked — a capability model, not a setting. It is on the roadmap and it is not
+here yet.
+
 Remote access is intentionally carried through SSH or a VPN you control:
 
 ```bash
