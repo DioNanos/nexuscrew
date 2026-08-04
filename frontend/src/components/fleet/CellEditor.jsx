@@ -43,6 +43,9 @@ export default function CellEditor({ token, route, targets = [], location, setLo
       </label>
     )}
     <input value={f.id} disabled={state.mode !== 'new'} placeholder="id" onChange={(e) => set({ id: e.target.value })} />
+    {/* Nome leggibile, distinto dall'id: l'id resta immutabile e indirizza,
+        questo e' cio' che si legge — anche dagli altri nodi. */}
+    <input value={f.label || ''} maxLength={64} placeholder={t('fleet-cell-label')} onChange={(e) => set({ label: e.target.value })} />
     <div className="nc-fleet-pair"><input value={f.cwd} placeholder={t('cwd')} onChange={(e) => set({ cwd: e.target.value })} /><button className="nc-btn ghost" onClick={() => picker ? setPicker(null) : browse(f.cwd)}>{t('browse')}</button></div>
     {picker && <div className="nc-fs"><div className="nc-fs-path">{picker.path}</div><div className="nc-fs-list">
       {picker.parent && <button className="nc-fs-item nc-fs-nav" onClick={() => browse(picker.parent)}>↑ {t('fs-parent')}</button>}

@@ -92,6 +92,8 @@
 .nc-fleet-section-head, .nc-fleet-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .nc-fleet-section-head { margin-top: 4px; border-bottom: 1px solid #243; padding-bottom: 6px; }
 .nc-fleet-item { border: 1px solid #1c241c; border-radius: 8px; padding: 8px; }
+/* Nome leggibile accanto all'id: si distingue senza rubargli il posto. */
+.nc-fleet-label { color: #9fb89f; font-style: italic; }
 .nc-fleet-item > span { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .nc-fleet-item > span:first-child { flex-direction: column; align-items: flex-start; min-width: 0; }
 .nc-fleet-item > span:last-child { flex-wrap: wrap; justify-content: flex-end; }
