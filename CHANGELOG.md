@@ -4,6 +4,8 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.48 — 2026-08-04 — "Federated Terminal, Scroll and Names"
+
 - Federated terminals no longer stay black. A WebSocket upgrade arriving on a
   reverse slot listener now takes the same routing as the primary listener.
   Until now those per-slot listeners served the Express app but had no
@@ -51,6 +53,18 @@ All notable changes to NexusCrew are tracked here.
   store could read private while the pool was still alive. Both the off path and
   the rollback now report it as `reversePoolPending`, including when the close
   throws, and the operator sees it in Settings instead of reading "revoked".
+
+- A cell can now carry a readable name, and that name travels. Until now a cell
+  was known only by its id, which is also its tmux session name, so a node
+  reached over the federation showed the remote id rather than what the operator
+  had called the cell. A cell definition accepts an optional `label`, editable
+  from Fleet, kept distinct from the id and from the tmux session; it is
+  reported by fleet status, `/api/cells`, the MCP cell tools, the federated
+  directory and the node topology in transit, and it survives an export/restore
+  round trip and a stale topology cache. A label is self-declared data: it is
+  trimmed, required to be printable and bounded to 64 characters at every
+  boundary it crosses, including the ones a peer can reach, and a routed peer's
+  label is marked as reported rather than verified.
 
 ## 0.8.47 — 2026-07-31 — "Kimi First-Run Corrective"
 
