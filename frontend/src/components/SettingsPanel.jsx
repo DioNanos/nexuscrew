@@ -165,7 +165,16 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
       // proprio nel caso in cui il pool puo' essere rimasto vivo.
       const quarantined = e?.data && e.data.reversePoolPending === true
         ? t('share-reverse-pool-pending') : '';
-      setErr(`${shareHub.name}: ${String(e.message || e)}${hint ? ` — ${hint}` : ''}${pending ? ` — ${pending}` : ''}${quarantined ? ` — ${quarantined}` : ''}`);
+      // Il titolo e' sempre lo stesso — "Share non attivato" — per un peer
+      // irraggiungibile, una credenziale rifiutata, un hub che non risponde e
+      // una prova di slot non ottenuta. La causa vera il server la manda gia',
+      // redatta, in `detail` e `code`: restavano nella risposta senza mai
+      // arrivare a chi guarda, e senza di loro non si distingue cio' che si
+      // ritenta da cio' che va riparato.
+      const code = e?.data && typeof e.data.code === 'string' ? e.data.code : '';
+      const rawDetail = e?.data && typeof e.data.detail === 'string' ? e.data.detail.trim() : '';
+      const detail = rawDetail && rawDetail !== String(e.message || '') ? rawDetail : '';
+      setErr(`${shareHub.name}: ${String(e.message || e)}${code ? ` [${code}]` : ''}${detail ? ` — ${detail}` : ''}${hint ? ` — ${hint}` : ''}${pending ? ` — ${pending}` : ''}${quarantined ? ` — ${quarantined}` : ''}`);
     }
     setBusy(null);
   };
