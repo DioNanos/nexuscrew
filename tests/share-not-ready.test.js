@@ -16,6 +16,7 @@ const express = require('express');
 const { createServer } = require('../lib/server.js');
 const store = require('../lib/nodes/store.js');
 const fed = require('../lib/proxy/federation.js');
+const { settingsRoutes } = require('../lib/settings/routes.js');
 
 const H = (token) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
 const listen = (app) => new Promise((resolve) => {
@@ -260,4 +261,78 @@ test('peer: anche lo spegnimento dichiara un canale che non si e\' spento in mod
   assert.equal(body.revoked, true);
   assert.equal(body.reversePoolPending, true, 'la quarantena va dichiarata anche in caso di successo');
   assert.equal(store.getNode(store.loadStoreStrict(ctx.nodesPath), 'hub').shared, false);
+});
+
+// --- lacune dichiarate al primo audit, ora coperte ---------------------------
+
+// Una chiusura che LANCIA non e' una chiusura riuscita: se fosse l'unico caso
+// silenzioso, l'unica situazione in cui non sappiamo nulla del canale sarebbe
+// anche l'unica che non viene dichiarata.
+test('peer: una chiusura che lancia vale come non dimostrabile', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-share-throw-'));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const nodesPath = path.join(configDir, 'nodes.json');
+  store.initStore(nodesPath);
+  let st = store.loadStoreStrict(nodesPath);
+  st = store.addNode(st, {
+    name: 'hub', ssh: 'user@hub', remotePort: 41820, localPort: 43001, reversePort: 44001,
+    direction: 'outbound', transport: 'auto', autostart: true, shared: true,
+    visibility: 'network', nodeId: 'a'.repeat(32), token: 't'.repeat(48),
+    reversePool: store.reversePoolDefault(44001),
+  });
+  store.atomicWriteStore(nodesPath, st);
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/settings', settingsRoutes({
+    cfg: {
+      home: dir, configDir, nodesPath,
+      configPath: path.join(configDir, 'config.json'),
+      tokenPath: path.join(configDir, 'token'),
+      settingsSeams: {
+        platform: 'linux', uid: 1000,
+        stopTunnelImpl: () => ({ stopped: true }),
+        startForwardImpl: () => ({ started: false, reason: 'already running', pid: 4242 }),
+        // health sana: il fallimento in prova e' SOLO quello della chiusura.
+        fetchImpl: async (url) => (String(url).endsWith('/federation/health')
+          ? { ok: true, status: 200, json: async () => ({ ok: true, instanceId: 'a'.repeat(32) }) }
+          : { ok: true, status: 200, json: async () => ({ ok: true }) }),
+        pairDelay: async () => {},
+      },
+    },
+    nodesPath,
+    reverseSlots: { close: async () => { throw new Error('supervisor non raggiungibile'); } },
+    runtimePort: () => 41777,
+  }));
+  const srv = await listen(app);
+  t.after(async () => { await close(srv); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const res = await fetch(`http://127.0.0.1:${srv.address().port}/api/settings/nodes/hub/share`, {
+    method: 'PATCH', headers: H('irrilevante'), body: JSON.stringify({ shared: false }),
+  });
+  const body = await res.json();
+  assert.equal(body.reversePoolPending, true, 'una close che lancia va dichiarata come le altre');
+});
+
+// La politica di ritentativo non e' solo "quante volte": anche "quanto attende"
+// fa parte del contratto, altrimenti una regressione a raffica passerebbe.
+test('peer: i ritardi fra un tentativo e l\'altro crescono e sono quelli attesi', async (t) => {
+  const waits = [];
+  const fetchImpl = hubFetch('a'.repeat(32), 99, fed.SHARE_NOT_READY_CODE);
+  const ctx = await bootPeer(t, { fetchImpl, pairDelay: async (ms) => { waits.push(ms); } });
+  await fetch(`${ctx.base}/api/settings/nodes`, {
+    method: 'POST', headers: H(ctx.token), body: JSON.stringify({ name: 'hub', ssh: 'user@hub' }),
+  });
+  let st = store.loadStoreStrict(ctx.nodesPath);
+  st = store.updateNode(st, 'hub', {
+    direction: 'outbound', shared: false, localPort: 43001, remotePort: 41820,
+    reversePort: 44001, token: 't'.repeat(48), nodeId: 'a'.repeat(32),
+  });
+  store.atomicWriteStore(ctx.nodesPath, st);
+  await shareOn(ctx.base, ctx.token);
+  // Fra i ritardi ci sono anche quelli della salute locale: qui conta che la
+  // sequenza dei ritentativi verso l'hub sia presente, in ordine crescente.
+  const retryWaits = waits.filter((ms) => [1000, 2000, 3000].includes(ms));
+  assert.deepEqual(retryWaits, [1000, 2000, 3000], `attese viste: ${waits.join(',')}`);
 });
