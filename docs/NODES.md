@@ -8,13 +8,19 @@ edit `authorized_keys`.
 
 ## Pair a node
 
-1. On the reachable installation, open **Settings → Nodes → Invite a node**.
+1. On the installation that will host the new node, open
+   **Settings → Nodes → Invite a node**.
 2. Provide the OpenSSH target the joining device can use, such as `user@host`
    or a local SSH config alias.
 3. On the joining device, paste the complete pairing link in
    **Settings → Nodes** and choose **Test and connect**.
 4. If the portable address cannot select the correct key, open
    **Advanced / edit** and use the SSH alias that already works on that device.
+
+An invite belongs to the installation that will host the node, so it is issued
+there and nowhere else. Minting one is not a federated operation: a node you are
+connected to cannot be asked to admit a further node on your behalf. If you are
+on a client and the interface refuses, open NexusCrew on the hub itself.
 
 The pairing payload is not a browser URL. It contains a short-lived, one-time
 invite and routing fields, but no SSH private key, provider key or PWA token.
@@ -29,6 +35,18 @@ nexuscrew nodes join
 
 Pair/join reads the one-time payload from stdin so it does not need to appear
 in process arguments.
+
+## Where a node's controls live
+
+**Settings → Nodes** lists nodes one per row: name, how it is reached, and what
+it sees of the network. Selecting a row opens that node's sheet — a panel at the
+side on a wide screen, a sheet rising from the bottom on a narrow one — and
+every per-node control lives there: reachability and transport, visibility and
+its grants, edit, test, connect or disconnect, remove.
+
+Nothing in the list itself mutates a node. Publishing *this* device, and
+inviting a new one, stay outside the list because they are not properties of a
+node you are looking at.
 
 ## Labels and routes
 
