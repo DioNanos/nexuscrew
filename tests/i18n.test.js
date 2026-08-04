@@ -21,9 +21,16 @@ test('i18n: t() fallback su IT e su chiave', async () => {
 // Fino alla 0.8.47 questo aiuto diceva che trascinare non fa scorrere i TUI a
 // schermo intero, e il test fissava quella frase. Dalla 0.8.48 non e' piu' vero:
 // un'applicazione che segue il mouse riceve i report della rotella e scorre da
-// se'. Il testo e' stato corretto, e con lui questa guardia — che ora vincola la
-// SOSTANZA (l'aiuto distingue i due casi) invece di una formulazione, cosi' una
-// riscrittura non la rompe ma un testo che smette di spiegare la fa cadere.
+// se'. Il testo e' stato corretto, e con lui questa guardia.
+//
+// LIMITE, dichiarato perche' la prima stesura affermava il contrario: questa
+// guardia vincola il VOCABOLARIO, non la semantica. Protegge dalla deriva e
+// dalla cancellazione — se qualcuno riscrive l'aiuto smettendo di nominare i due
+// casi, o vi rimette l'affermazione vecchia, cade. NON protegge da una
+// riscrittura che nomina i due casi per NEGARLI: «e' falso che un'app che segue
+// il mouse scorre da se'...» passerebbe. Un test su prosa non puo' fare di
+// meglio senza diventare fragile, e fingere che lo faccia e' peggio che
+// ammetterlo. Rilievo di DevWorker, che ha costruito gli esempi avversari.
 test('i18n: alternateScreen distingue chi scorre da se\' da chi naviga la storia tmux', async () => {
   const { DICTS } = await import('../frontend/src/lib/i18n.js');
   const it = DICTS.it['alternate-screen-help'];
