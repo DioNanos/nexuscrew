@@ -39,8 +39,10 @@ test('hub: un canale share non ancora pronto risponde 409 con un codice tipizzat
   const app = express();
   app.use('/federation', fed.peerRouter({
     nodesPath, localPort: 1, localCredential: () => 'hub-main',
-    // Il peer non e' ancora raggiungibile: nessun probe diventa healthy.
-    fetchImpl: async () => { probes += 1; return { ok: false, status: 503, json: async () => ({}) }; },
+    // Canale non ancora salito: la connessione viene rifiutata, che e' il
+    // transport 'down' vero. Un 503 sarebbe un peer che risponde, cioe' un
+    // guasto diverso e NON ritentabile.
+    fetchImpl: async () => { probes += 1; throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }); },
   }));
   const hub = await listen(app);
   t.after(async () => { await close(hub); fs.rmSync(dir, { recursive: true, force: true }); });
@@ -83,6 +85,27 @@ test('notifyHubShare: un corpo non-JSON lascia l\'errore definitivo, che e\' il 
     () => fed.notifyHubShare({ node, shared: true, fetchImpl: noJson }),
     (e) => { assert.equal(e.code, undefined); return true; },
   );
+});
+
+// --- classificazione: ritentabile solo cio' che e' transitorio --------------
+// Appiattire ogni esito non healthy in "non ancora pronto" farebbe ritentare
+// anche una credenziale non valida o un nodo sbagliato in fondo al tunnel:
+// il tempo non li ripara e il ritentativo nasconde la causa vera.
+
+test('classifyShareFailure: solo il canale non ancora salito e\' ritentabile', () => {
+  const cases = [
+    [{ transport: 'down', status: 'down', detail: 'peer non raggiungibile' }, fed.SHARE_NOT_READY_CODE],
+    [{ transport: 'up', auth: 'failed', status: 'degraded' }, 'share-peer-unauthorized'],
+    [{ status: 'degraded', slotProof: true, code: 'slot-mac-mismatch' }, 'share-slot-proof-failed'],
+    [{ transport: 'up', auth: 'ok', reachability: 'failed', status: 'degraded' }, 'share-peer-mismatch'],
+    [{ transport: 'up', auth: 'ok', reachability: 'ok', status: 'degraded' }, 'share-peer-unreachable'],
+  ];
+  for (const [health, expected] of cases) {
+    assert.equal(fed.classifyShareFailure(health).code, expected, JSON.stringify(health));
+  }
+  // Un solo codice e' ritentabile: gli altri devono essere diversi da quello.
+  const retryable = cases.filter(([, code]) => code === fed.SHARE_NOT_READY_CODE);
+  assert.equal(retryable.length, 1);
 });
 
 // --- lato peer: ritentativo limitato invece di rollback immediato ------------
@@ -143,7 +166,7 @@ function hubFetch(instanceId, failures, code) {
   return fn;
 }
 
-async function peerWithHub(t, fetchImpl) {
+async function peerWithHub(t, fetchImpl, extraNode = {}) {
   const instanceId = 'a'.repeat(32);
   const ctx = await bootPeer(t, { fetchImpl });
   await fetch(`${ctx.base}/api/settings/nodes`, {
@@ -154,6 +177,7 @@ async function peerWithHub(t, fetchImpl) {
     direction: 'outbound', shared: false,
     localPort: 43001, remotePort: 41820, reversePort: 44001,
     token: 't'.repeat(48), nodeId: instanceId,
+    ...extraNode,
   });
   store.atomicWriteStore(ctx.nodesPath, st);
   return ctx;
@@ -180,6 +204,31 @@ test('peer: un errore senza quel codice resta definitivo e non viene ritentato',
   assert.notEqual(res.status, 200);
   assert.equal(fetchImpl.calls.share, 1, 'nessun ritentativo su un errore definitivo');
   // Rollback allo stato privato sicuro.
+  assert.equal(store.getNode(store.loadStoreStrict(ctx.nodesPath), 'hub').shared, false);
+});
+
+test('peer: una credenziale non valida non viene mai ritentata', async (t) => {
+  const fetchImpl = hubFetch('a'.repeat(32), 99, 'share-peer-unauthorized');
+  const ctx = await peerWithHub(t, fetchImpl);
+  const res = await shareOn(ctx.base, ctx.token);
+  assert.notEqual(res.status, 200);
+  assert.equal(fetchImpl.calls.share, 1, 'un guasto permanente si riporta subito');
+  assert.equal(store.getNode(store.loadStoreStrict(ctx.nodesPath), 'hub').shared, false);
+});
+
+// Il rollback e' best-effort per costruzione, ma il suo esito non puo' andare
+// perduto: `close` restituisce false quando non riesce a DIMOSTRARE la
+// proprieta' del supervisor, e in quel caso il canale resta in quarantena —
+// vivo — mentre lo store dice privato.
+test('peer: se il canale reverse non si spegne in modo dimostrabile lo dichiara', async (t) => {
+  const fetchImpl = hubFetch('a'.repeat(32), 99, 'share-peer-unauthorized');
+  // reversePool presente ma nessun listener tracciato: la chiusura non puo'
+  // dimostrarsi e restituisce false.
+  const ctx = await peerWithHub(t, fetchImpl, { reversePool: store.reversePoolDefault(44001) });
+  const res = await shareOn(ctx.base, ctx.token);
+  const body = await res.json();
+  assert.notEqual(res.status, 200);
+  assert.equal(body.reversePoolPending, true, 'la quarantena del canale va dichiarata');
   assert.equal(store.getNode(store.loadStoreStrict(ctx.nodesPath), 'hub').shared, false);
 });
 
