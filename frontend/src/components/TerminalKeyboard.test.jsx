@@ -51,6 +51,7 @@ vi.mock('@xterm/xterm', () => ({
     emitSelection(text) { this.selectionText = text; if (this.selectionCb) this.selectionCb(); }
     attachCustomKeyEventHandler() {}
     getSelection() { return this.selectionText || ''; }
+    hasSelection() { return !!this.selectionText; }
     clearSelection() { this.selectionText = ''; }
     select(col, row, length) { this.selectCalls.push({ col, row, length }); }
     write() {}
@@ -634,5 +635,55 @@ describe('terminal selection outlives what xterm discards', () => {
     // Senza questo la barra resterebbe su per sempre, offrendo di ricopiare
     // un testo che l'operatore ha gia' preso.
     expect(view.container.querySelector('.nc-selection-tools')).toBeNull();
+  });
+});
+
+
+// Claude Code accende il tracking di OGNI movimento (DECSET 1003), non solo del
+// trascinamento. Quindi spostare il puntatore e' gia' input per l'applicazione,
+// e xterm butta la selezione a ogni input. Finito il trascinamento smettevamo di
+// proteggere il gesto proprio mentre l'operatore si muove verso il pulsante
+// Copia: la selezione moriva a meta' strada e restava copiabile solo senza
+// muovere il mouse, cioe' solo da tastiera.
+describe('terminal selection survives the trip to the Copy button', () => {
+  function withTracking(view) {
+    const term = fixture.instances[0];
+    term.emitCsi('h', [1006]);              // codifica SGR
+    term.modes.mouseTrackingMode = 'any';   // DECSET 1003
+    return term;
+  }
+  const moveOver = (host) => {
+    const ev = new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: 140, clientY: 90 });
+    host.dispatchEvent(ev);
+    return ev;
+  };
+
+  it('shields the pointer movement while a selection is alive', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = withTracking(view);
+    act(() => term.emitSelection('testo scelto'));
+    expect(moveOver(host).defaultPrevented).toBe(true);
+  });
+
+  it('lets the application see movement again once nothing is selected', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = withTracking(view);
+    act(() => term.emitSelection('testo scelto'));
+    // Un click senza Shift e' il modo naturale di annullare: passa, raggiunge
+    // l'applicazione, e la selezione se ne va da sola.
+    act(() => { term.selectionText = ''; });
+    expect(moveOver(host).defaultPrevented).toBe(false);
+  });
+
+  it('does not shield anything when the application is not tracking the mouse', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    term.emitCsi('h', [1006]);
+    // tracking spento: e' il caso Codex, dove il gesto non e' mai stato rotto
+    act(() => term.emitSelection('testo scelto'));
+    expect(moveOver(host).defaultPrevented).toBe(false);
   });
 });
