@@ -199,7 +199,15 @@ test('Share publishes the local device through the selected hub, not the remote 
   // sono spariti, si sono spostati di un livello — quindi la guardia si sposta
   // con loro invece di essere tolta, altrimenti il giorno in cui qualcuno
   // svuota il foglio la suite resta verde.
-  const rows = settings.slice(settings.indexOf('peerGroups.map'));
+  //
+  // L'ancora si verifica PRIMA di tagliare: `indexOf` che non trova torna -1 e
+  // `slice(-1)` e' l'ultimo carattere del file, contro cui qualunque
+  // `doesNotMatch` passa. Rinominando `peerGroups` e rimettendo una mutazione
+  // in riga la suite restava verde — dimostrato, non temuto.
+  const anchor = settings.indexOf('peerGroups.map');
+  assert.notEqual(anchor, -1, 'ancora della zona righe sparita: le due prove sotto non guarderebbero nulla');
+  const rows = settings.slice(anchor);
+  assert.ok(rows.length > 500, 'la zona righe si e\' svuotata: la guardia non avrebbe piu\' materia');
   assert.doesNotMatch(rows, /setNodeShare\(token, n\.name/);
   assert.doesNotMatch(rows, /setNodeVisibility\(/,
     'la riga non muta piu' + ' nulla: apre il foglio');
