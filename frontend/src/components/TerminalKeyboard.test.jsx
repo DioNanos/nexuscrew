@@ -45,10 +45,13 @@ vi.mock('@xterm/xterm', () => ({
     open(host) { host.appendChild(this.textarea); }
     focus() { fixture.focusCount += 1; this.textarea.focus(); }
     onData() { return { dispose() {} }; }
-    onSelectionChange() { return { dispose() {} }; }
+    onSelectionChange(cb) { this.selectionCb = cb; return { dispose() {} }; }
+    // Simula cio' che fa xterm: la selezione cambia, e puo' anche essere
+    // AZZERATA da lui (onUserInput, resize, click con mouse tracking).
+    emitSelection(text) { this.selectionText = text; if (this.selectionCb) this.selectionCb(); }
     attachCustomKeyEventHandler() {}
-    getSelection() { return ''; }
-    clearSelection() {}
+    getSelection() { return this.selectionText || ''; }
+    clearSelection() { this.selectionText = ''; }
     select(col, row, length) { this.selectCalls.push({ col, row, length }); }
     write() {}
     paste() {}
@@ -64,6 +67,9 @@ vi.mock('../lib/ws-client.js', () => ({
     close() { fixture.closeCount += 1; },
   }),
 }));
+
+const clip = vi.hoisted(() => ({ copied: [] }));
+vi.mock('../lib/clipboard.js', () => ({ copyText: async (value) => { clip.copied.push(value); return true; } }));
 
 import Terminal from './Terminal.jsx';
 
@@ -253,7 +259,13 @@ describe('terminal long-press touch selection', () => {
     expect(caret.style.height).toBe('20px');
   });
 
-  it('leaves the existing selectionMode path absolute and without the touch caret', () => {
+  // Il long-press lavora due righe sopra il dito e mostra un caret, cosi' si
+  // vede cosa si sta prendendo. Il percorso selectionMode — quello del tasto
+  // SELECT e di ogni tocco successivo — usava invece la cella SOTTO il
+  // polpastrello, cioe' l'unica coperta mentre la si sceglie. Erano due
+  // comportamenti diversi per lo stesso gesto, e il secondo era quello che
+  // l'operatore incontrava piu' spesso.
+  it('applies the same lift and caret on the selectionMode path', () => {
     const view = renderTerminal('double-tap', { selectionMode: true });
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
@@ -261,8 +273,10 @@ describe('terminal long-press touch selection', () => {
 
     fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
     fireEvent.touchMove(host, { touches: [{ clientX: 50, clientY: 240 }] });
-    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 161 });
-    expect(view.container.querySelector('.nc-touch-selection-caret')).toBeNull();
+    // Due righe piu' in alto dell'ancora assoluta di prima, su entrambi gli
+    // estremi: la selezione resta della stessa lunghezza ma si vede.
+    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 8, length: 161 });
+    expect(view.container.querySelector('.nc-touch-selection-caret')).not.toBeNull();
   });
 
   it('hides the long-press caret immediately when a second finger joins the gesture', () => {
@@ -584,5 +598,41 @@ describe('terminal scroll plan integration', () => {
     expect(fixture.inputs).toEqual([]);
     expect(fixture.instances).toHaveLength(1);
     expect(fixture.closeCount).toBe(0);
+  });
+});
+
+
+// xterm butta la selezione a ogni input diretto all'applicazione: un tasto,
+// e con il mouse tracking attivo anche un solo click, perche' diventa un
+// report SGR verso la TUI. Un resize di righe fa lo stesso, quindi sul
+// telefono basta la tastiera virtuale. Il risultato era che si selezionava,
+// si andava a premere Copia, e non restava piu' niente da copiare.
+describe('terminal selection outlives what xterm discards', () => {
+  it('keeps the copyable text after the terminal drops the selection', async () => {
+    const view = renderTerminal();
+    const term = fixture.instances[0];
+    act(() => term.emitSelection('testo scelto'));
+    expect(view.container.querySelector('.nc-selection-tools')).not.toBeNull();
+
+    // Qui xterm la cancella per conto suo, senza che l'operatore abbia deciso nulla.
+    act(() => term.emitSelection(''));
+    expect(view.container.querySelector('.nc-selection-tools'))
+      .not.toBeNull();
+
+    const copy = view.container.querySelector('.nc-selection-tools button');
+    await act(async () => { fireEvent.click(copy); });
+    expect(clip.copied.at(-1)).toBe('testo scelto');
+  });
+
+  it('forgets it once the operator has actually copied', async () => {
+    const view = renderTerminal();
+    const term = fixture.instances[0];
+    act(() => term.emitSelection('preso'));
+    const copy = view.container.querySelector('.nc-selection-tools button');
+    await act(async () => { fireEvent.click(copy); });
+    act(() => { vi.advanceTimersByTime(2000); });
+    // Senza questo la barra resterebbe su per sempre, offrendo di ricopiare
+    // un testo che l'operatore ha gia' preso.
+    expect(view.container.querySelector('.nc-selection-tools')).toBeNull();
   });
 });

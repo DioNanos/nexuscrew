@@ -37,7 +37,10 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     if (!value) { setCopyState(t('copy-empty')); setTimeout(() => setCopyState(''), 1500); return; }
     const ok = await copyText(value);
     setCopyState(ok ? t('copied') : t('copy-manual'));
-    if (ok) { apiRef.current?.term?.clearSelection(); onSelectionModeChange?.(false); }
+    // Lo snapshot e' persistente per costruzione: solo copia e annulla lo
+    // svuotano. Se una copia riuscita non lo facesse, la barra resterebbe su
+    // per sempre offrendo di ricopiare un testo gia' preso.
+    if (ok) { apiRef.current?.term?.clearSelection(); setSelection(''); onSelectionModeChange?.(false); }
     setTimeout(() => setCopyState(''), 1800);
   };
   // doCopy cambia ad ogni render (closure su selection/lang): lo si tiene in un
@@ -192,7 +195,22 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         send: (seq) => sock.sendInput(seq),
       });
     }
-    const onSelection = term.onSelectionChange(() => setSelection(term.getSelection()));
+    // xterm butta via la selezione a ogni input diretto all'applicazione
+    // (`onUserInput`): un tasto qualsiasi, e con il mouse tracking attivo anche
+    // un solo click, perche' diventa un report SGR verso la TUI. Sul percorso
+    // desktop questo significa che dopo aver selezionato con Shift basta
+    // rilasciare Shift e cliccare per restare senza nulla da copiare, prima
+    // ancora che il pulsante venga premuto. Anche un resize di righe la
+    // cancella, quindi sul telefono la fa sparire la tastiera virtuale.
+    //
+    // Lo snapshot locale sopravvive a tutto questo: si aggiorna solo quando c'e'
+    // davvero qualcosa di nuovo selezionato, e si svuota soltanto quando
+    // l'operatore agisce — copia o annulla. Il riquadro giallo puo' sparire
+    // (e' di xterm, non nostro), il testo da copiare no.
+    const onSelection = term.onSelectionChange(() => {
+      const next = term.getSelection();
+      if (next) setSelection(next);
+    });
     term.attachCustomKeyEventHandler((e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && term.getSelection()) {
         if (e.type === 'keydown') copyText(term.getSelection());
@@ -348,7 +366,15 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       if (selectionModeRef.current) {
         e.preventDefault(); e.stopPropagation();
-        selectStart = cellAt(e.touches[0]); term.clearSelection(); return;
+        // Stesso trattamento del long-press: il punto di lavoro sta sopra il
+        // dito, non sotto. Finora questo ramo — quello che si percorre col
+        // tasto SELECT e a ogni tocco successivo — usava la cella coperta dal
+        // polpastrello, cioe' l'unica che non si vede mentre la si sceglie.
+        touchSelectionOffsetRows = touchSelectionOffsetFor(e.touches[0].clientY);
+        selectStart = touchSelectionCellAt(e.touches[0], touchSelectionOffsetRows);
+        term.clearSelection();
+        showTouchSelectionCaret(selectStart);
+        return;
       }
       touchY = e.touches[0].clientY; touchX = e.touches[0].clientX;
       tapX = touchX; tapY = touchY; touchScroll = { mode: null, remainder: 0 }; vertical = null;
@@ -384,11 +410,12 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       if (selectionModeRef.current && selectStart && e.touches.length === 1) {
         e.preventDefault(); e.stopPropagation();
-        const end = cellAt(e.touches[0]);
+        const end = touchSelectionCellAt(e.touches[0], touchSelectionOffsetRows);
         const a = selectStart.row * term.cols + selectStart.col;
         const b = end.row * term.cols + end.col;
         const first = a <= b ? selectStart : end;
         term.select(first.col, first.row, Math.abs(b - a) + 1);
+        showTouchSelectionCaret(end);
         return;
       }
       if (touchY === null || e.touches.length !== 1) return;
