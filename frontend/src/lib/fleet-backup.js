@@ -210,6 +210,9 @@ export function createFleetBackup(cells, selectedCellIds, engines = [], selected
     // fleet-backup-invalid-cell. NESSUNA cwd assoluta nel backup v3.
     const clean = cleanBackupCell({
       id: cell.id, cwdRel: cell.cwdRel, engine: cell.engine, boot: cell.boot === true,
+      // Il nome scelto dall'operatore e' parte della cella, non decorazione:
+      // ometterlo qui lo perde nel round-trip anche se lo schema lo accetta.
+      ...(cell.label ? { label: cell.label } : {}),
       ...(cell.model ? { model: cell.model } : {}), ...(cell.models ? { models: cell.models } : {}),
       ...(cell.permissionPolicies ? { permissionPolicies: cell.permissionPolicies } : {}), systemPrompt: cell.prompt || '',
       ...(cell.commands ? { commands: cell.commands } : {}),
@@ -267,6 +270,10 @@ export function restoreCellDefinition(cell, selectedEngine, availableEngineIds) 
   if (!engines.has(selectedEngine)) return null;
   const filterMap = (source) => Object.fromEntries(Object.entries(source || {}).filter(([id]) => engines.has(id)));
   const out = { id: cell.id, engine: selectedEngine, boot: cell.boot === true, prompt: cell.systemPrompt || '' };
+  // La label arriva gia' validata da cleanBackupCell (trim, printable, 64):
+  // qui va soltanto rimessa nella definizione inviata al backend, che la
+  // rivalida per conto proprio.
+  if (typeof cell.label === 'string' && cell.label) out.label = cell.label;
   // v3 portatile: cwdRel (il backend calcola la cwd assoluta target). Legacy
   // v1/v2: cwd assoluta (il backend la rifiuta in modo strutturato se non
   // valida sul target). Mai entrambi.
