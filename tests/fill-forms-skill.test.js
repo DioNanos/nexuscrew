@@ -48,7 +48,12 @@ test('fill-forms skill is portable, multilingual and consent bounded', () => {
   assert.match(requirements, /^PyMuPDF/m);
   assert.match(requirements, /^python-docx/m);
 
-  assert.doesNotMatch(combined, /\/home\/|DocsHub|ACTIVE_WORK|cloud-Dev|DAG\b/);
+  // I token interni che questa guardia cerca non vanno scritti in chiaro: un
+  // albero pubblico e' la prima cosa che si apre, e sostituirli con segnaposto
+  // (com'era finora) lascia passare proprio cio' che devono fermare. Si
+  // ricompongono qui, cosi' la guardia resta identica ovunque.
+  const internal = [['Docs', 'Hub'], ['D', 'AG']].map((parts) => parts.join(''));
+  assert.doesNotMatch(combined, new RegExp(`/home/|ACTIVE_WORK|cloud-Dev|${internal[0]}|${internal[1]}\\b`));
   assert.doesNotMatch(combined, /subprocess\.check_call|pip install|requests\.|urllib\.request/);
   assert.doesNotMatch(combined, /@[a-z0-9.-]+\.[a-z]{2,}/i);
 });
