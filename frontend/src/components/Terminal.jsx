@@ -83,20 +83,33 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // consegnerebbe byte che non sa decodificare. La 1006 si osserva quindi
     // sul filo: l'handler restituisce false, quindi il parser continua a
     // processare la sequenza normalmente e non le viene sottratto nulla.
-    let sgrMouseEncoding = false;
-    const trackSgrEncoding = (enabled) => (params) => {
+    let sgrMouseEncoding = false;   // DECSET 1006: coordinate in celle
+    let sgrPixelEncoding = false;   // DECSET 1016: coordinate in PIXEL
+    const trackEncoding = (enabled) => (params) => {
       for (const param of params) {
         const code = Array.isArray(param) ? param[0] : param;
         if (code === 1006) sgrMouseEncoding = enabled;
+        if (code === 1016) sgrPixelEncoding = enabled;
       }
       return false;
     };
     // Se il parser non fosse disponibile la rilevazione resta spenta e il
     // gesto continua a navigare la storia tmux: degrado sicuro, mai input PTY
     // basato su un'ipotesi.
-    term.parser?.registerCsiHandler?.({ prefix: '?', final: 'h' }, trackSgrEncoding(true));
-    term.parser?.registerCsiHandler?.({ prefix: '?', final: 'l' }, trackSgrEncoding(false));
-    const mouseTrackingActive = () => sgrMouseEncoding
+    term.parser?.registerCsiHandler?.({ prefix: '?', final: 'h' }, trackEncoding(true));
+    term.parser?.registerCsiHandler?.({ prefix: '?', final: 'l' }, trackEncoding(false));
+    // RIS (ESC c) azzera il terminale, encoding incluso. Senza questo la
+    // nostra copia dello stato resterebbe "SGR attivo" dopo un reset e
+    // manderemmo report SGR a un'applicazione tornata alla codifica legacy.
+    // Stessa ragione per 1016: le coordinate diventano pixel, e le nostre
+    // sono celle — in quel caso si torna allo scorrimento server-side invece
+    // di inviare numeri che significano un'altra cosa.
+    term.parser?.registerEscHandler?.({ final: 'c' }, () => {
+      sgrMouseEncoding = false;
+      sgrPixelEncoding = false;
+      return false;
+    });
+    const mouseTrackingActive = () => sgrMouseEncoding && !sgrPixelEncoding
       && ((term.modes && term.modes.mouseTrackingMode) || 'none') !== 'none';
     const dec = new TextDecoder();
 

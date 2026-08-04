@@ -15,9 +15,14 @@ vi.mock('@xterm/xterm', () => ({
       // mouse, `parser` per osservare la codifica SGR (DECSET 1006) sul filo.
       this.modes = { mouseTrackingMode: 'none' };
       this.csiHandlers = [];
+      this.escHandlers = [];
       this.parser = {
         registerCsiHandler: (id, callback) => {
           this.csiHandlers.push({ id, callback });
+          return { dispose() {} };
+        },
+        registerEscHandler: (id, callback) => {
+          this.escHandlers.push({ id, callback });
           return { dispose() {} };
         },
       };
@@ -28,6 +33,12 @@ vi.mock('@xterm/xterm', () => ({
     emitCsi(final, params) {
       for (const handler of this.csiHandlers) {
         if (handler.id.final === final && handler.id.prefix === '?') handler.callback(params);
+      }
+    }
+    // RIS (`ESC c`): reset completo del terminale, encoding incluso.
+    emitEsc(final) {
+      for (const handler of this.escHandlers) {
+        if (handler.id.final === final) handler.callback();
       }
     }
     loadAddon() {}
@@ -445,6 +456,40 @@ describe('terminal scroll plan integration', () => {
     fireEvent.wheel(host, { deltaY: -24, clientX: 30, clientY: 40 });
     expect(fixture.inputs).toEqual([]); // mai byte che l'app non sa decodificare
     expect(fixture.actions).toEqual(['scroll-up']);
+  });
+
+  // La nostra copia dello stato dell'encoding puo' desincronizzarsi: dopo un
+  // RIS l'applicazione riparte in codifica legacy, e continuare a mandarle
+  // report SGR significa consegnarle byte che non sa leggere.
+  it('forgets the SGR encoding after a terminal reset, even if tracking stays on', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    terminalBounds(host, 400, 300);
+    enableSgrMouse(term);
+    fireEvent.wheel(host, { deltaY: -24, clientX: 30, clientY: 40 });
+    expect(fixture.inputs).toEqual(['\x1b[<64;7;4M']);
+    fixture.inputs.length = 0;
+    term.emitEsc('c');                    // RIS: reset, encoding compresa
+    expect(term.modes.mouseTrackingMode).toBe('any'); // il tracking resta acceso
+    fireEvent.wheel(host, { deltaY: -24, clientX: 30, clientY: 40 });
+    expect(fixture.inputs).toEqual([]);   // niente SGR su una codifica non piu' negoziata
+    expect(fixture.actions).toEqual(['scroll-up']);
+  });
+
+  it('stays on server-side scroll when coordinates are negotiated in pixels', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    terminalBounds(host, 400, 300);
+    enableSgrMouse(term);
+    term.emitCsi('h', [1016]);            // SGR-Pixels: le coordinate sono pixel
+    fireEvent.wheel(host, { deltaY: -24, clientX: 30, clientY: 40 });
+    expect(fixture.inputs).toEqual([]);   // le nostre coordinate sono celle
+    expect(fixture.actions).toEqual(['scroll-up']);
+    term.emitCsi('l', [1016]);            // tornando a celle si riprende
+    fireEvent.wheel(host, { deltaY: -24, clientX: 30, clientY: 40 });
+    expect(fixture.inputs).toEqual(['\x1b[<64;7;4M']);
   });
 
   it('never sends PTY input from a readonly terminal, even with tracking on', () => {
