@@ -78,3 +78,54 @@ test('stopWasDemonstrated: solo stopped o gia\' sparito', () => {
   assert.equal(rotation.stopWasDemonstrated({ stopped: false, reason: 'altro' }), false);
   assert.equal(rotation.stopWasDemonstrated(null), false);
 });
+
+// --- verifica del pool: cosa significa davvero "unverifiable" ----------------
+// `verified` richiede TUTTI gli slot, ed e' deliberato: rotateRotatableReverse
+// rifiuta di commutare dentro un pool non interamente provato. La conseguenza
+// pero' e' pesante e finora taceva: senza pool verificato la rotazione
+// automatica non parte e il watcher non viene nemmeno armato. In campo, su un
+// link reale, questo significa autoriparazione spenta senza che nulla lo dica.
+test('summarizePoolVerification: tutti provati -> verificato e rotazione attiva', () => {
+  const out = rotation.summarizePoolVerification(
+    [{ slot: 0, proven: true }, { slot: 1, proven: true }, { slot: 2, proven: true }], 3);
+  assert.deepEqual(out.verifiedSlots, [0, 1, 2]);
+  assert.equal(out.verification, 'verified');
+  assert.equal(out.rotationActive, true);
+  assert.deepEqual(out.failures, []);
+});
+
+test('summarizePoolVerification: uno slot guasto non nasconde i sani che seguono', () => {
+  // Prima ci si fermava al primo fallimento: lo slot 2 sano restava invisibile
+  // e la diagnosi diceva "uno solo provato" invece di "solo il numero 1 e' rotto".
+  const out = rotation.summarizePoolVerification(
+    [{ slot: 0, proven: true }, { slot: 1, proven: false, code: 'reverse-slot-proof-unavailable' }, { slot: 2, proven: true }], 3);
+  assert.deepEqual(out.verifiedSlots, [0, 2], 'lo slot sano dopo il guasto resta contato');
+  assert.deepEqual(out.failures, [{ slot: 1, code: 'reverse-slot-proof-unavailable' }]);
+  assert.equal(out.verification, 'unverifiable', 'restano comunque necessari tutti gli slot');
+  assert.equal(out.rotationActive, false);
+});
+
+test('summarizePoolVerification: il caso di campo — attivo provato, riserve mute', () => {
+  const out = rotation.summarizePoolVerification([
+    { slot: 0, proven: true },
+    { slot: 1, proven: false, code: 'reverse-slot-proof-unavailable' },
+    { slot: 2, proven: false, code: 'reverse-slot-proof-unavailable' },
+  ], 3);
+  assert.deepEqual(out.verifiedSlots, [0]);
+  assert.equal(out.rotationActive, false, 'lo slot attivo provato NON basta ad attivare la rotazione');
+  assert.equal(out.failures.length, 2);
+});
+
+test('summarizePoolVerification: un codice non valido non entra nella diagnosi', () => {
+  const out = rotation.summarizePoolVerification(
+    [{ slot: 0, proven: false, code: 'Bearer segreto-che-non-deve-uscire' }], 1);
+  assert.deepEqual(out.failures, [{ slot: 0, code: 'reverse-slot-verify-failed' }]);
+});
+
+test('summarizePoolVerification: zero slot non e\' "tutto verificato"', () => {
+  // Senza un pool da provare non c'e' nulla da cui ruotare: la verita' vacua
+  // qui armerebbe un watcher su niente.
+  assert.equal(rotation.summarizePoolVerification([], 0).verification, 'unverifiable');
+  assert.equal(rotation.summarizePoolVerification([], 0).rotationActive, false);
+  assert.equal(rotation.summarizePoolVerification(undefined, 3).verification, 'unverifiable');
+});
