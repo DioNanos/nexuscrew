@@ -23,7 +23,15 @@ All notable changes to NexusCrew are tracked here.
   wheel reports and it scrolls itself; every other case keeps the previous
   behaviour, and a readonly terminal still never sends PTY input. Tracking
   negotiated with a legacy (non-SGR) encoding also keeps the previous
-  behaviour rather than sending bytes the application cannot decode.
+  behaviour rather than sending bytes the application cannot decode. A terminal
+  reset clears that negotiation too, and coordinates negotiated in pixels keep
+  the previous behaviour rather than sending cell numbers under a pixel
+  contract.
+
+- A WebSocket that never authenticates is now closed. The upgrade is accepted
+  before authentication because the token travels in the first frame, and
+  nothing bounded the wait for it: a socket that never sent an attach stayed
+  open and unauthenticated indefinitely, on every listener serving the app.
 
 - Turning Share on right after a pairing no longer fails. The reverse channel
   is established a moment before it is announced, so the hub could not accept
@@ -31,8 +39,18 @@ All notable changes to NexusCrew are tracked here.
   as final, rolled the whole transaction back and left Share off until the
   operator tried again by hand. The hub now marks it with a typed
   `share-channel-not-ready` code and waits a longer but still bounded window,
-  and the peer retries a bounded number of times before giving up. Any other
-  failure stays final and is not retried.
+  and the peer retries a bounded number of times before giving up. Only what is
+  demonstrably transient is retried — a channel not up yet, a slot proof that
+  could not be obtained, a peer answering 5xx — while an invalid credential, a
+  mismatched slot proof and the wrong node at the end of the tunnel are final
+  and reported as such.
+
+- Turning Share off no longer claims more than it proved. Closing the reverse
+  channel returns false when ownership cannot be demonstrated, which quarantines
+  the channel rather than tearing it down; that outcome was dropped, so the
+  store could read private while the pool was still alive. Both the off path and
+  the rollback now report it as `reversePoolPending`, including when the close
+  throws, and the operator sees it in Settings instead of reading "revoked".
 
 ## 0.8.47 — 2026-07-31 — "Kimi First-Run Corrective"
 
