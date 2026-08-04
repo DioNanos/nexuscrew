@@ -4,6 +4,23 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.51 — 2026-08-04 — "The Trip to the Copy Button"
+
+- A selection now survives the trip to the Copy button. An application that
+  enables any-motion tracking — Claude Code does, Codex does not — receives
+  every pointer movement as input, and xterm discards a selection on any input.
+  Once a drag ended the gesture was no longer shielded, which is exactly when
+  you start moving toward the button: the selection died halfway there, and the
+  text stayed copyable only if the mouse never moved — that is, only from the
+  keyboard. While a local selection is alive, pointer movement no longer
+  reaches the terminal. There is no new mode and no way out to learn: a click
+  without Shift still passes through and the selection goes away on its own,
+  which is how one cancels a selection anyway.
+
+  0.8.50 kept the selected *text* across this, which is why the keyboard
+  shortcut worked; it did not keep the *highlight*, and the highlight is what
+  tells you what you are about to copy.
+
 ## 0.8.50 — 2026-08-04 — "What You Selected, What You Rely On"
 
 - Selected text no longer disappears before you can copy it. xterm discards a
