@@ -304,3 +304,21 @@ test('READONLY: builtin blocca mutazioni (403) ma lascia passare letture', async
   assert.equal((await post('define-engine', { def })).status, 403);
   assert.equal((await post('up', { cell: 'Dev' })).status, 403);
 });
+
+// --- NC-D: il nome dev'essere anche RIPRISTINABILE --------------------------
+// Aggiungere un campo alla definizione senza aggiungerlo all'allowlist del
+// restore spezza il round-trip di backup proprio sulle celle a cui e' stato
+// dato un nome: l'export lo contiene, il restore lo rifiuta.
+test('builtin: una cella con label sopravvive al round-trip di backup', async (t) => {
+  const { base, token, dir } = await bootBuiltin(t);
+  const restored = await fetch(`${base}/api/fleet/restore-cells`, {
+    method: 'POST', headers: H(token),
+    body: JSON.stringify({ cells: [{ id: 'Dev', cwd: dir, engine: 'sh', boot: false, label: 'Cella di sviluppo' }] }),
+  });
+  assert.equal(restored.status, 200, 'una label non deve essere un campo non ammesso');
+
+  const status = await (await fetch(`${base}/api/fleet/status`, { headers: H(token) })).json();
+  const cell = status.cells.find((c) => c.cell === 'Dev');
+  assert.ok(cell, 'la cella ripristinata deve comparire');
+  assert.equal(cell.label, 'Cella di sviluppo', 'il nome sopravvive al ripristino');
+});
