@@ -159,7 +159,13 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
         ? t('share-off-local-reconcile-pending')
         : partial?.revoked === false && partial?.reconcilePending === true
           ? t('share-off-hub-reconcile-pending') : '';
-      setErr(`${shareHub.name}: ${String(e.message || e)}${hint ? ` — ${hint}` : ''}${pending ? ` — ${pending}` : ''}`);
+      // Il canale in quarantena va detto anche quando la chiamata FALLISCE, e
+      // indipendentemente da `shared`: il rollback di Share ON lo riporta senza
+      // shared:false, quindi legarlo a `partial` lo renderebbe di nuovo muto
+      // proprio nel caso in cui il pool puo' essere rimasto vivo.
+      const quarantined = e?.data && e.data.reversePoolPending === true
+        ? t('share-reverse-pool-pending') : '';
+      setErr(`${shareHub.name}: ${String(e.message || e)}${hint ? ` — ${hint}` : ''}${pending ? ` — ${pending}` : ''}${quarantined ? ` — ${quarantined}` : ''}`);
     }
     setBusy(null);
   };
