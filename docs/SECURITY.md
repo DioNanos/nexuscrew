@@ -86,6 +86,25 @@ their path is inserted into the terminal without automatically pressing Enter.
 
 ## Pairing and sharing
 
+**Pairing grants owner-equivalent authority. Pair only devices you own.**
+
+A paired node can create tmux sessions — including a shell — attach to them over
+the federated WebSocket and write into them as the user running NexusCrew. It
+can define engines and cells, and a custom engine may name an existing
+executable with arguments of its choosing: the trust gate checks the binary's
+ownership, mode and path, not the intent of its arguments. It can ask this hub
+to mint a pairing invite, which admits a further node. There is no lesser class
+of peer: the federated allowlist is the same for every paired node.
+
+This is a deliberate boundary, not a defect list. NexusCrew was designed to put
+one person's machines on one control plane, and it treats a paired node the way
+it treats you. Supporting a node owned by somebody else requires per-node
+authority that can be granted, attenuated and revoked — a capability model with
+proof of possession, which is on the roadmap and is not implemented.
+
+Until then: do not accept a pairing invite from an installation you do not own,
+and do not issue one expecting it to grant less than everything.
+
 Pairing links contain a short-lived one-time invite and routing data, but no
 SSH private key, provider key or PWA token.
 
