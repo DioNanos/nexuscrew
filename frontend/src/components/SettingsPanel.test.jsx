@@ -103,6 +103,19 @@ describe('Settings Share partial OFF convergence', () => {
     expect(await screen.findByText((text) => text.includes('quarantined, not closed'))).toBeTruthy();
   });
 
+  // Il rollback di Share ON riporta reversePoolPending SENZA shared:false: se il
+  // segnale fosse legato a quel campo tornerebbe muto proprio quando il pool
+  // puo' essere rimasto vivo.
+  it('surfaces a quarantined channel on the error path too, without shared:false', async () => {
+    mocks.setNodeShare.mockRejectedValue(Object.assign(new Error('Share non attivato'), {
+      data: { error: 'Share non attivato', reversePoolPending: true },
+    }));
+    const { share } = renderNodes();
+    fireEvent.click(share);
+    expect(await screen.findByText((text) => text.includes('quarantined, not closed'))).toBeTruthy();
+    expect(screen.getByText((text) => text.includes('Share non attivato'))).toBeTruthy();
+  });
+
   it('stays silent when the channel was demonstrably closed', async () => {
     mocks.setNodeShare.mockResolvedValue({ name: 'hub', shared: false, revoked: true });
     const { share } = renderNodes();
