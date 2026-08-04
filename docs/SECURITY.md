@@ -92,9 +92,13 @@ A paired node can create tmux sessions — including a shell — attach to them 
 the federated WebSocket and write into them as the user running NexusCrew. It
 can define engines and cells, and a custom engine may name an existing
 executable with arguments of its choosing: the trust gate checks the binary's
-ownership, mode and path, not the intent of its arguments. It can ask this hub
-to mint a pairing invite, which admits a further node. There is no lesser class
-of peer: the federated allowlist is the same for every paired node.
+ownership, mode and path, not the intent of its arguments.
+
+Admission is the exception. Minting a pairing invite is not federated: an invite
+belongs to the installation that will host the new node, so it is issued there,
+locally. A paired node cannot admit a third party on your behalf. Beyond that
+there is no lesser class of peer: the federated allowlist is the same for every
+paired node.
 
 This is a deliberate boundary, not a defect list. NexusCrew was designed to put
 one person's machines on one control plane, and it treats a paired node the way
