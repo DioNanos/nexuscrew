@@ -173,3 +173,45 @@ test('directory: una label non stringa non contamina la voce', async (t) => {
   const body = await (await fetch(`${base}/api/cells`)).json();
   assert.equal(body.cells[0].label, '');
 });
+
+// --- NC-D: la label e' testo auto-dichiarato anche in USCITA ----------------
+// La definizione locale e' gia' validata dal parser, ma il payload esposto e
+// quello ricevuto da un peer vanno delimitati comunque: senza, una stringa
+// lunga e con a capo attraversa la directory e finisce in ogni consumatore che
+// la renderizza.
+
+test('directory: una label ostile non attraversa la superficie pubblica', async (t) => {
+  const hostile = 'X'.repeat(200) + String.fromCharCode(10) + 'iniettato';
+  const { base } = await boot(t, {
+    fleet: {
+      available: true,
+      status: async () => ({
+        available: true,
+        cells: [{ cell: 'Dev', label: hostile, tmuxSession: 'cloud-Dev', engine: 'x', active: true, tmux: true }],
+      }),
+    },
+  });
+  const body = await (await fetch(`${base}/api/cells`)).json();
+  assert.equal(body.cells[0].label, '', 'oltre i limiti o con caratteri di controllo: nessun nome');
+});
+
+test('directory: la label viene ripulita dei bordi e delimitata a 64', async (t) => {
+  const { base } = await boot(t, {
+    fleet: {
+      available: true,
+      status: async () => ({
+        available: true,
+        cells: [
+          { cell: 'A', label: '  Ricerca  ', tmuxSession: 'cloud-A', engine: 'x', active: true, tmux: true },
+          { cell: 'B', label: 'y'.repeat(64), tmuxSession: 'cloud-B', engine: 'x', active: true, tmux: true },
+          { cell: 'C', label: 'y'.repeat(65), tmuxSession: 'cloud-C', engine: 'x', active: true, tmux: true },
+        ],
+      }),
+    },
+  });
+  const body = await (await fetch(`${base}/api/cells`)).json();
+  const byId = Object.fromEntries(body.cells.map((c) => [c.cell, c.label]));
+  assert.equal(byId.A, 'Ricerca');
+  assert.equal(byId.B, 'y'.repeat(64), 'il limite esatto e' + "' ammesso");
+  assert.equal(byId.C, '', 'un carattere oltre il limite non passa');
+});

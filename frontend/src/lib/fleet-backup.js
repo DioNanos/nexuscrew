@@ -12,11 +12,12 @@ const MAX_MODEL = 256;
 const MAX_PROMPT = 8192;
 const MAX_CELL_COMMAND = 4096;
 const MAX_CELLS = 32;
+const MAX_LABEL = 64;
 const MAX_ENGINES = 24;
 const TOP_KEYS = new Set(['format', 'version', 'exportedAt', 'cells', 'engines']);
 // v3 portatile: la cella ammette cwdRel (home-relative) e VIETA cwd (assoluta,
 // device-specifica). Un backup v3 con cwd -> invalid-cell (fail-closed).
-const CELL_KEYS_V3 = new Set(['id', 'cwdRel', 'engine', 'boot', 'model', 'models', 'permissionPolicies', 'commands', 'systemPrompt', 'prompt']);
+const CELL_KEYS_V3 = new Set(['id', 'cwdRel', 'engine', 'boot', 'model', 'models', 'permissionPolicies', 'commands', 'systemPrompt', 'prompt', 'label']);
 // Legacy v1 (nexuscrew.cells) / v2 (nexuscrew.fleet): cella con cwd assoluta,
 // non portabile, da validare sul target al restore.
 const CELL_KEYS_LEGACY = new Set(['id', 'cwd', 'engine', 'boot', 'model', 'models', 'permissionPolicies', 'systemPrompt', 'prompt']);
@@ -97,6 +98,13 @@ export function cleanBackupCell(raw) {
   if (models === null || permissionPolicies === null || commands === null) return null;
   const out = { id: raw.id, cwdRel, engine: raw.engine, boot: raw.boot === true, systemPrompt };
   if (raw.model) out.model = raw.model;
+  // Il nome leggibile fa parte della definizione: un export che lo lascia
+  // indietro restituisce "ok" e intanto lo cancella, e il ripristino riporta
+  // celle senza nome. Stessa forma accettata dal parser: max 64, stampabile.
+  if (raw.label !== undefined) {
+    if (!printable(raw.label, MAX_LABEL) || !String(raw.label).trim()) return null;
+    out.label = String(raw.label).trim();
+  }
   if (Object.keys(models).length) out.models = models;
   if (Object.keys(permissionPolicies).length) out.permissionPolicies = permissionPolicies;
   if (Object.keys(commands).length) out.commands = commands;
