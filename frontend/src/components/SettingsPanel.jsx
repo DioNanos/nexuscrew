@@ -194,7 +194,13 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
           ssh: checkedHub.value.ssh,
           ...(checkedHub.value.sshPort ? { sshPort: checkedHub.value.sshPort } : {}),
         }, [inviteHub.name]));
-      } catch (e) { setErr(String(e.message || e)); }
+      } catch (e) {
+        // Coniare un invito non attraversa piu' la federazione: e' la capacita'
+        // che AMMETTE un nodo nuovo, e delegarla a ogni peer accoppiato avrebbe
+        // reso la fiducia transitiva. Il rifiuto deve spiegare dove si fa,
+        // altrimenti l'operatore legge "not found" e cerca un guasto.
+        setErr(e && e.status === 404 ? t('invite-hub-only') : String(e.message || e));
+      }
       setBusy(null);
       return;
     }

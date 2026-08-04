@@ -225,7 +225,7 @@ test('reverse-status accetta il listener gia verificato del peer autenticato', a
   assert.deepEqual(await response.json(), { available: false, ownedByAuthenticatedPeer: true });
 });
 
-test('scoped federation HTTP reaches sessions, fleet, owner decks and only the hub invite settings mutation', async (t) => {
+test('scoped federation HTTP reaches sessions, fleet and owner decks, and no settings mutation at all', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fed-http-'));
   const destNodes = path.join(dir, 'dest.json');
   let ds = store.emptyStore('d'.repeat(32));
@@ -296,11 +296,14 @@ test('scoped federation HTTP reaches sessions, fleet, owner decks and only the h
   assert.equal(deleteHits, 3, 'ordinary, capability-like, and underscore session names reach only the selected destination');
   assert.equal((await fetch(`${base}/api/route/mac/_/files/outbox`, { method: 'POST' })).status, 404);
   assert.equal((await fetch(`${base}/api/route/mac/_/settings`)).status, 404);
+  // Un peer non puo' piu' farsi coniare un invito dall'hub: e' la capacita' che
+  // AMMETTE un nodo nuovo, e federata permetteva di far entrare un terzo senza
+  // che l'operatore dell'hub agisse o lo sapesse.
   const invite = await fetch(`${base}/api/route/mac/_/settings/peering/invite`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ssh: 'vps3' }),
   });
-  assert.equal(invite.status, 200);
-  assert.equal((await invite.json()).pairingUrl, 'http://127.0.0.1:41777/#pair=hub-vps3');
+  assert.equal(invite.status, 404, 'coniare un invito non attraversa la federazione');
+  assert.equal(inviteHits, 0, 'la richiesta non deve nemmeno raggiungere il nodo di destinazione');
   assert.equal(await fetch(`${base}/api/route/mac/_/settings/peering/invite`).then((r) => r.status), 404);
   assert.equal((await fetch(`${base}/api/route/mac/_/fleet/status`)).status, 200);
   assert.equal((await fetch(`${base}/api/route/mac/_/cells`)).status, 200);
@@ -345,7 +348,7 @@ test('scoped federation HTTP reaches sessions, fleet, owner decks and only the h
   assert.equal(cellGetHits, 1);
   assert.equal(cellSendHits, 1);
   assert.equal(deckHits, 3);
-  assert.equal(inviteHits, 1);
+  assert.equal(inviteHits, 0, 'nessuna mutazione di settings attraversa la federazione');
   assert.equal(forbiddenHits, 0);
 });
 
