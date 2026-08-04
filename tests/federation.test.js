@@ -48,9 +48,12 @@ test('federation route parser has an explicit capability allowlist and hop cap',
   assert.deepEqual(fed.parseRoute('/vps/_/fleet/restore-engines'), { route: ['vps'], resource: '/fleet/restore-engines' });
   assert.equal(fed.allowedResource('/fleet/define-cell', 'GET'), false);
   assert.equal(fed.allowedResource('/settings', 'GET'), false);
-  assert.deepEqual(fed.parseRoute('/vps/_/settings/peering/invite'), { route: ['vps'], resource: '/settings/peering/invite' });
-  assert.equal(fed.allowedResource('/settings/peering/invite', 'POST'), true);
-  assert.equal(fed.allowedResource('/settings/peering/invite', 'GET'), false);
+  // Coniare un invito NON e' piu' federabile (2026-08-04). L'invito e' legato
+  // all'instanceId dell'hub: chi lo consuma entra nell'hub, non nel nodo che
+  // l'ha chiesto. Federarlo permetteva a un peer accoppiato di far entrare un
+  // terzo senza che l'operatore dell'hub agisse o lo sapesse.
+  assert.equal(fed.parseRoute('/vps/_/settings/peering/invite'), null, 'l\'invito non attraversa la federazione');
+  assert.equal(fed.allowedResource('/settings/peering/invite', 'POST'), false);
   assert.equal(fed.parseRoute('/vps/_/settings/token/rotate'), null);
   assert.equal(fed.allowedResource('/files/outbox', 'POST'), false);
   assert.equal(fed.allowedResource('/files/upload', 'POST'), true);
