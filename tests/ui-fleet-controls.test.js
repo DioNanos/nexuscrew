@@ -212,9 +212,20 @@ test('Share publishes the local device through the selected hub, not the remote 
   assert.doesNotMatch(sheet, /setNodeShare/,
     'il foglio di un nodo remoto non pubblica il dispositivo locale');
 
-  // E il predicato che li accende resta legato ai due campi veri: la rotta
-  // esposta dal server E la condivisione attiva. Rilassarne uno riaprirebbe i
-  // controlli su un nodo privato.
-  const detail = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'lib', 'node-detail.js'), 'utf8');
-  assert.match(detail, /canEditVisibility: !!\(node\.actions && node\.actions\.visibility\) && node\.shared === true/);
+});
+
+test('node visibility controls appear only where the server exposes them, on a shared node we own', async () => {
+  // Questa guardia era scritta come confronto letterale sul sorgente del
+  // predicato. Cosi' facendo bloccava anche un INDURIMENTO — aggiungere una
+  // condizione lo faceva cadere per differenza di stringa, non di
+  // comportamento. Rilievo di un audit indipendente, e la seconda volta che pinno la
+  // forma invece della sostanza. Ora si prova il predicato eseguendolo.
+  const { nodeDetailModel } = await import('../frontend/src/lib/node-detail.js');
+  const can = (node) => nodeDetailModel({ name: 'peer', ...node }, []).canEditVisibility;
+
+  assert.equal(can({ shared: true, actions: { visibility: true } }), true);
+  assert.equal(can({ shared: false, actions: { visibility: true } }), false, 'niente da restringere su un nodo privato');
+  assert.equal(can({ shared: true, actions: {} }), false, 'il server non espone la rotta');
+  assert.equal(can({ shared: true, actions: { visibility: true }, kind: 'transitive' }), false,
+    'la visibilita di un nodo in transito la decide l\'hub che lo instrada');
 });
