@@ -42,8 +42,8 @@ test('resolvePeer preferisce identita stabile e rifiuta nomi transitivi ambigui'
 
 test('inventario: un nodo routed porta la label riferita, marcata come tale', () => {
   const peer = inventory.routedPeer({
-    instanceId: 'c'.repeat(32), name: 'nexus-crew-d6b8',
-    route: ['hub', 'nexus-crew-d6b8'], label: 'Portatile di casa', lastSeen: 10,
+    instanceId: 'c'.repeat(32), name: 'nexus-crew-1a2b',
+    route: ['hub', 'nexus-crew-1a2b'], label: 'Portatile di casa', lastSeen: 10,
   });
   assert.equal(peer.label, 'Portatile di casa');
   assert.equal(peer.labelReported, true, 'va distinto cio' + "' che sappiamo da cio' che ci e' stato riferito");
@@ -54,7 +54,7 @@ test('inventario: un nodo routed porta la label riferita, marcata come tale', ()
 
 test('inventario: senza label il nodo routed resta senza nome, non inventato', () => {
   const peer = inventory.routedPeer({
-    instanceId: 'd'.repeat(32), name: 'nexus-crew-0e88', route: ['nexus-crew-0e88'],
+    instanceId: 'd'.repeat(32), name: 'nexus-crew-3c4d', route: ['nexus-crew-3c4d'],
   });
   assert.equal(peer.label, '');
 });
