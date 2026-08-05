@@ -203,7 +203,7 @@ describe('NC_UI_NODI_VL step 2: comandi VL da capabilities + stato da lastAck', 
   it('shows "submitted" right after sending — not a success that has not happened yet', async () => {
     renderSheet(vlNode(), []);
     fireEvent.click(screen.getByRole('button', { name: 'restart' }));
-    await waitFor(() => expect(mocks.sendVlNodeCommand).toHaveBeenCalledWith('token', 'a'.repeat(32), 'restart'));
+    await waitFor(() => expect(mocks.sendVlNodeCommand).toHaveBeenCalledWith('token', 'a'.repeat(32), 'restart', {}, []));
     expect(await screen.findByText(/sent, awaiting confirmation/)).toBeTruthy();
     expect(screen.queryByText('completed')).toBeNull();
   });
@@ -250,5 +250,68 @@ describe('NC_UI_NODI_VL step 2: comandi VL da capabilities + stato da lastAck', 
     renderSheet(vlNode(), []);
     expect(screen.getByText(/not federated/i)).toBeTruthy();
     expect(screen.queryByText(/private client node/i)).toBeNull();
+  });
+});
+
+// Step 3 (NC_UI_NODI_VL_REMOTI): la federazione di /vl-nodes/* e' stata
+// ripristinata (b0e8bd1) — un nodo VL puo' appartenere a un owner remoto, e
+// un comando DEVE arrivare a quell'owner, non sempre a /api/vl-nodes locale.
+describe('NC_UI_NODI_VL_REMOTI step 3: owner remoti', () => {
+  const vlNode = (overrides = {}) => vlNodeToPeer({
+    nodeId: 'a'.repeat(32), label: 'N900', cell: 'VL-aaaaaaaa',
+    pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
+    health: { state: 'running', detail: 'nominal' },
+    capabilities: ['status', 'restart'],
+    inflight: null, lastAck: null,
+  }, overrides.owner ?? {});
+
+  it('shows the owner in the sheet for a remote node', () => {
+    renderSheet(vlNode({ owner: { instanceId: 'b'.repeat(16), route: ['vps3'], label: 'VPS3' } }), []);
+    expect(screen.getByText('VPS3')).toBeTruthy();
+  });
+
+  // L'invariante piu' delicato del brief: un comando su un nodo REMOTO deve
+  // essere instradato sulla route di QUELL'owner, mai su /api/vl-nodes
+  // locale — sbagliare qui manda il comando al device sbagliato.
+  it('sends the command to the REMOTE owner route, not to the local endpoint', async () => {
+    const remote = vlNode({ owner: { instanceId: 'b'.repeat(16), route: ['vps3'], label: 'VPS3' } });
+    renderSheet(remote, []);
+    fireEvent.click(screen.getByRole('button', { name: 'restart' }));
+    await waitFor(() => expect(mocks.sendVlNodeCommand).toHaveBeenCalledWith(
+      'token', 'a'.repeat(32), 'restart', {}, ['vps3'],
+    ));
+  });
+
+  it('still sends to the local route (empty) for a local node — unchanged from step 2', async () => {
+    const local = vlNode();
+    renderSheet(local, []);
+    fireEvent.click(screen.getByRole('button', { name: 'restart' }));
+    await waitFor(() => expect(mocks.sendVlNodeCommand).toHaveBeenCalledWith(
+      'token', 'a'.repeat(32), 'restart', {}, [],
+    ));
+  });
+
+  it('two same-label nodes on different owners are NOT the same row/sheet target', () => {
+    // nodeId diversi (come nella realta': due device VL non condividono un
+    // id a 32 esadecimali) ma STESSA label — il caso che l'owner deve
+    // distinguere, non un caso limite di nodeId duplicato.
+    const nodeA = vlNodeToPeer(
+      { nodeId: 'a'.repeat(32), label: 'N900', capabilities: [] },
+      { instanceId: 'a'.repeat(16), route: ['vps3'], label: 'VPS3' },
+    );
+    const nodeB = vlNodeToPeer(
+      { nodeId: 'b'.repeat(32), label: 'N900', capabilities: [] },
+      { instanceId: 'b'.repeat(16), route: ['nova'], label: 'NovaLNX' },
+    );
+    const { container } = render(<NodesTab
+      token="token" nodes={[nodeA, nodeB]} roster={[]} settings={{}} readonly={false}
+      refresh={vi.fn().mockResolvedValue(undefined)} refreshAliases={vi.fn()}
+    />);
+    // Stesso label del device ("N900") ma due righe distinte, distinguibili
+    // per owner nel sottotitolo.
+    const rows = container.querySelectorAll('.nc-node-row');
+    expect(rows.length).toBe(2);
+    expect(container.textContent).toContain('VPS3');
+    expect(container.textContent).toContain('NovaLNX');
   });
 });

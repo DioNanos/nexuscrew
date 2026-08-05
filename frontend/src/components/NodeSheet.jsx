@@ -69,7 +69,11 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   // questo click" da un ack di un comando precedente (mai un successo
   // ottimistico prima che il server lo confermi).
   const runVlCommand = (kind) => guard(`${node.nodeId}:${kind}`, async () => {
-    const result = await sendVlNodeCommand(token, node.nodeId, kind);
+    // La route dell'owner (step 3, NC_UI_NODI_VL_REMOTI): un nodo remoto ha
+    // `node.route` non vuota, e il comando DEVE arrivare li', non a
+    // /api/vl-nodes locale — sbagliare instrada il comando al device
+    // sbagliato (invariante 3 del brief).
+    const result = await sendVlNodeCommand(token, node.nodeId, kind, {}, node.route || []);
     setVlPending({ id: result.id, kind, submittedAt: Date.now() });
     await refresh();
   });
@@ -139,6 +143,11 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
           {identity.route && <><dt>{t('node-detail-route')}</dt><dd>{identity.route.join(' › ')}</dd></>}
           {identity.ssh && <><dt>{t('node-detail-ssh')}</dt><dd>{identity.ssh}{node.sshPort ? `:${node.sshPort}` : ''}</dd></>}
           {identity.transport && <><dt>{t('node-detail-transport')}</dt><dd>{identity.transport}</dd></>}
+          {/* Owner del nodo VL (step 3, invariante 2): con piu' owner in
+              rete, due device con la stessa label sono distinguibili solo
+              cosi'. Un nodo locale (`ownerLabel` assente) non mostra questa
+              riga — non c'e' ambiguita' da risolvere. */}
+          {isVl && node.ownerLabel && <><dt>{t('node-detail-owner')}</dt><dd>{node.ownerLabel}</dd></>}
         </dl>
         {node.health?.detail && (
           // Altro punto dove le due forme divergono: la salute Fleet usa

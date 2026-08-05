@@ -80,10 +80,15 @@ export function nodeExposure(node) {
 // sottotitolo (e' il `nodeId`, 32 caratteri esadecimali): mostra la salute
 // dichiarata dal device se c'e' (brief NC_UI_NODI_VL §3, "salute reali nella
 // lista"), altrimenti lo stato del poll — mai un campo vuoto o "undefined".
+// Con owner remoti (step 3, NC_UI_NODI_VL_REMOTI, invariante 2): un owner
+// remoto va anteposto — due device con la stessa label su owner diversi sono
+// distinguibili SOLO cosi'. Un nodo locale (`ownerLabel` assente) non
+// guadagna un prefisso "Locale" ovunque: sarebbe rumore quando non c'e'
+// ambiguita' da risolvere.
 function vlRowSubtitle(node) {
   const detail = node.health && typeof node.health.detail === 'string' && node.health.detail.trim();
-  if (detail) return detail;
-  return t(node.online ? REACH.vlOnline : REACH.vlOffline);
+  const status = detail || t(node.online ? REACH.vlOnline : REACH.vlOffline);
+  return node.ownerLabel ? `${node.ownerLabel} · ${status}` : status;
 }
 
 // La riga completa: identita' piu' i due riassunti. Nient'altro — ogni campo in

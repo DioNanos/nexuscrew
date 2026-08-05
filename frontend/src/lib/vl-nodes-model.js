@@ -16,13 +16,21 @@
 //   azioni       -> `capabilities` passate attraverso (le legge il
 //                   componente, non questo modulo — regola del brief: mai
 //                   una lista fissa lato frontend)
-export function vlNodeToPeer(node) {
+// `owner` — {instanceId, route, label} — identifica DA CHI viene questo
+// nodo (step 3, NC_UI_NODI_VL_REMOTI): il locale di default (route vuota),
+// o un owner federato quando il chiamante lo fonde da piu' owner
+// (`topologyVlOwners`). Portato sul peer perche' due nodi con la stessa
+// label su owner diversi sono distinguibili SOLO cosi' (brief, invariante
+// 2), ed e' anche cio' che decide a quale route va instradato un comando
+// (invariante 3) — sbagliare owner qui manda il comando al device sbagliato.
+export function vlNodeToPeer(node, owner = {}) {
   if (!node || typeof node !== 'object') return null;
   const nodeId = typeof node.nodeId === 'string' ? node.nodeId : '';
   if (!nodeId) return null;
   const label = (typeof node.label === 'string' && node.label.trim())
     || (typeof node.cell === 'string' && node.cell.trim())
     || nodeId;
+  const route = Array.isArray(owner.route) ? [...owner.route] : [];
   return {
     kind: 'vl',
     nodeId,
@@ -39,5 +47,32 @@ export function vlNodeToPeer(node) {
     inflight: node.inflight ?? null,
     lastAck: node.lastAck ?? null,
     canManage: !!node.canManage,
+    route,
+    isLocal: route.length === 0,
+    ownerInstanceId: typeof owner.instanceId === 'string' ? owner.instanceId : null,
+    ownerLabel: typeof owner.label === 'string' && owner.label ? owner.label : null,
   };
+}
+
+// Porta la semantica di `topologyOwners()` (lib/mcp/cells.js, server MCP)
+// nel frontend: dalla stessa `/api/topology` che `useNodes.js` gia' polla,
+// gli owner VIVI (non stale) e diversi dal locale, deduplicati per
+// instanceId (prima occorrenza vince). Un owner stale non e' un bersaglio
+// raggiungibile per un comando, quindi non entra nella lista.
+export function topologyVlOwners(topology, localInstanceId) {
+  const nodes = topology && Array.isArray(topology.nodes) ? topology.nodes : [];
+  const seen = new Set([localInstanceId]);
+  const out = [];
+  for (const node of nodes) {
+    const instanceId = node && typeof node.instanceId === 'string' ? node.instanceId : '';
+    if (!instanceId || seen.has(instanceId)) continue;
+    if (node.stale === true) continue;
+    if (!Array.isArray(node.route) || node.route.length === 0) continue;
+    seen.add(instanceId);
+    const label = (typeof node.label === 'string' && node.label)
+      || (typeof node.name === 'string' && node.name)
+      || node.route.join(' › ');
+    out.push({ instanceId, route: [...node.route], label });
+  }
+  return out;
 }

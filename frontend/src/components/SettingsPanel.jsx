@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import { getLang, t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import {
-  apiFetch, getSettings, getPeers, getVlNodes, saveConfig, rotateToken,
+  apiFetch, getSettings, getPeers, getVlNodes, getTopology, saveConfig, rotateToken,
   setNodeShare, regenService, createPeerInvite,
   saveNodeAlias, deleteNodeAlias,
   checkNpmUpdate, applyNpmUpdate,
@@ -15,7 +15,7 @@ import { validateNodeForm, tunnelInfo, toSlug, isValidLabel } from '../lib/setti
 import PairingCard from './PairingCard.jsx';
 import NodeSheet from './NodeSheet.jsx';
 import { nodeRowSummary } from '../lib/node-summary.js';
-import { vlNodeToPeer } from '../lib/vl-nodes-model.js';
+import { vlNodeToPeer, topologyVlOwners } from '../lib/vl-nodes-model.js';
 import { getPushState, subscribePush, unsubscribePush } from '../lib/push.js';
 import Icon from './Icon.jsx';
 import FleetTab from './FleetTab.jsx';
@@ -64,7 +64,7 @@ function PairingQr({ value }) {
 }
 
 // --- scheda NODI ---------------------------------------------------------------
-export function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAliases }) {
+export function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAliases, vlUnavailable = [] }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);        // `${name}:${action}` in corso
   const [invite, setInvite] = useState(null);
@@ -229,6 +229,17 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
           })}
         </div>
       ))}
+
+      {/* Owner VL federati che non hanno risposto (design NC_UI_NODI_VL_REMOTI,
+          invariante 1): visibile ma NON bloccante — la lista Fleet sopra
+          resta intatta. Un owner muto che sparisce in silenzio si legge come
+          "non ha nodi", che e' un'altra cosa: qui si dice esplicitamente che
+          non ha risposto. */}
+      {vlUnavailable.length > 0 && (
+        <div className="nc-err">
+          {t('vl-owners-unavailable')}: {vlUnavailable.map((o) => o.label || o.route.join('/')).join(', ')}
+        </div>
+      )}
 
       {openNode && (
         <NodeSheet node={openNode} nodes={nodes || []} token={token} readonly={readonly}
@@ -1088,6 +1099,10 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   const [systemSection, setSystemSection] = useState(initialSystemSection);
   const [settings, setSettings] = useState(null);
   const [nodes, setNodes] = useState([]);
+  // Owner VL federati che non hanno risposto all'ultimo refresh — visibili,
+  // non un errore bloccante (design NC_UI_NODI_VL_REMOTI, invariante 1: un
+  // owner muto che sparisce in silenzio si legge come "non ha nodi").
+  const [vlUnavailable, setVlUnavailable] = useState([]);
   const [readonly, setReadonly] = useState(false);
   const [loadErr, setLoadErr] = useState(null);
   const [aliasRevision, setAliasRevision] = useState(0);
@@ -1136,16 +1151,49 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
     try {
       const j = await getPeers(token);
       const peers = j.peers || [];
-      // Unione SOLO lato presentazione (design NC_UI_NODI_VL, 2026-08-05):
-      // /api/vl-nodes resta un endpoint separato, il contratto di /api/peers
-      // non cambia. Un fallimento qui (backend vecchio, feature disattivata)
-      // e' un arricchimento mancato, non un errore di caricamento — i peer
-      // Fleet restano visibili e utilizzabili comunque.
+      // Unione multi-owner SOLO lato presentazione (design NC_UI_NODI_VL_REMOTI,
+      // 2026-08-05): la federazione di /vl-nodes/* e' stata ripristinata
+      // (b0e8bd1) — un nodo VL puo' appartenere a QUALUNQUE owner autorizzato
+      // raggiungibile via /api/topology, non solo al locale. Semantica
+      // portata da `readVlDirectory` (lib/mcp/tools.js): owner locale +
+      // owner federati non-stale, interrogati in parallelo, un fallimento
+      // per-owner non blocca gli altri. Il contratto di /api/peers non
+      // cambia — questo resta un arricchimento lato presentazione.
       let vlPeers = [];
+      let unavailable = [];
       try {
-        const vj = await getVlNodes(token);
-        vlPeers = (vj.nodes || []).map(vlNodeToPeer).filter(Boolean);
-      } catch (_) { /* endpoint VL opzionale: nessun errore bloccante */ }
+        const [config, topology] = await Promise.all([
+          apiFetch('/api/config', token).then((r) => r.json()).catch(() => null),
+          getTopology(token).catch(() => null),
+        ]);
+        const localInstanceId = config && typeof config.instanceId === 'string' ? config.instanceId : '';
+        const owners = [
+          { instanceId: localInstanceId || null, route: [], label: null },
+          ...topologyVlOwners(topology, localInstanceId),
+        ];
+        const results = await Promise.all(owners.map(async (owner) => {
+          try {
+            const payload = await getVlNodes(token, owner.route);
+            const peers = (payload.nodes || []).map((n) => vlNodeToPeer(n, owner)).filter(Boolean);
+            return { ok: true, peers };
+          } catch (error) { return { ok: false, owner, error }; }
+        }));
+        for (const result of results) {
+          if (result.ok) { vlPeers.push(...result.peers); continue; }
+          // Il locale mantiene il degrado silenzioso di step 1/2 (feature
+          // non installata/disattivata non e' un "owner che non risponde").
+          // Solo un owner REMOTO che non risponde entra nell'elenco visibile
+          // (invariante 1): sparire in silenzio si legge come "non ha nodi",
+          // che e' un'altra cosa.
+          if (result.owner.route.length === 0) continue;
+          unavailable.push({
+            instanceId: result.owner.instanceId, label: result.owner.label,
+            route: result.owner.route,
+            failure: /timeout/i.test(String(result.error?.message || result.error)) ? 'timeout' : 'unreachable',
+          });
+        }
+      } catch (_) { /* arricchimento VL opzionale: i peer Fleet restano comunque */ }
+      setVlUnavailable(unavailable);
       setNodes([...peers, ...vlPeers]);
     } catch (e) { setLoadErr(String(e.message || e)); }
   }, [token]);
@@ -1191,6 +1239,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
 
         <div className="nc-set-body">
           {tab === 'nodes' && <NodesTab token={token} nodes={nodes} roster={roster} settings={settings} readonly={readonly}
+            vlUnavailable={vlUnavailable}
             refresh={refresh} refreshAliases={() => setAliasRevision((value) => value + 1)} />}
           {tab === 'fleet' && <FleetTab token={token} readonly={readonly}
             startNewCell={startNewCell} initialLocation={initialLocation}

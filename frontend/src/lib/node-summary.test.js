@@ -59,3 +59,29 @@ describe('nodeRowSummary — a VL node produces a real row, not null', () => {
     expect(row.subtitle).not.toContain('null');
   });
 });
+
+// Step 3 (owner remoti, brief NC_UI_NODI_VL_REMOTI, invariante 2): "due nodi
+// con la stessa label su owner diversi sono distinguibili SOLO cosi'" — la
+// riga deve portare l'owner, non solo lo stato.
+describe('nodeRowSummary — shows the owner for a VL node (step 3, invariant 2)', () => {
+  it('prefixes the subtitle with the owner label for a remote node', () => {
+    const owner = { instanceId: 'b'.repeat(16), route: ['vps3'], label: 'VPS3' };
+    const row = nodeRowSummary(vlNodeToPeer(RAW_ONLINE, owner));
+    expect(row.subtitle.startsWith('VPS3')).toBe(true);
+    expect(row.subtitle).toContain('nominal');
+  });
+
+  it('two nodes with the SAME label on different owners produce different subtitles', () => {
+    const ownerA = { instanceId: 'a'.repeat(16), route: ['vps3'], label: 'VPS3' };
+    const ownerB = { instanceId: 'b'.repeat(16), route: ['nova'], label: 'NovaLNX' };
+    const rowA = nodeRowSummary(vlNodeToPeer(RAW_ONLINE, ownerA));
+    const rowB = nodeRowSummary(vlNodeToPeer(RAW_ONLINE, ownerB));
+    expect(rowA.title).toBe(rowB.title); // stessa label del device
+    expect(rowA.subtitle).not.toBe(rowB.subtitle); // ma distinguibili
+  });
+
+  it('does not prefix a local node with an owner label (no ownerLabel set)', () => {
+    const row = nodeRowSummary(vlNodeToPeer(RAW_ONLINE));
+    expect(row.subtitle.startsWith('nominal')).toBe(true);
+  });
+});
