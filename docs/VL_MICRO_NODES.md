@@ -14,9 +14,9 @@ The protocol is `vl-node/1`, outbound-only and independent from Fleet PTYs.
 - One stable 128-bit device identity can have one pairing. Re-pair requires an
   explicit revoke or authenticated device unpair.
 - Device endpoints accept only the one-time invite or their scoped credential.
-  Operator endpoints require the existing local UI or Hydra peer ACL.
-- `NEXUSCREW_READONLY=1` blocks invites, commands and revokes, including routed
-  requests.
+  Operator endpoints require the existing local UI auth, and are not federated
+  (see Federation).
+- `NEXUSCREW_READONLY=1` blocks invites, commands and revokes.
 - The bridge has no shell command, PTY adapter or persistent command queue.
 
 ## Exact online and completion semantics
@@ -45,7 +45,7 @@ The NexusCrew MCP bridge exposes four specific tools:
 
 | Tool | Purpose |
 |---|---|
-| `nc_vl_nodes` | Aggregate authorized local/routed VL owners and nodes |
+| `nc_vl_nodes` | List the local owner's VL nodes (remote owners are not reachable — see Federation) |
 | `nc_vl_invite` | Create one owner-bound, one-time invite |
 | `nc_vl_command` | Deliver one exact bounded command to an online node |
 | `nc_vl_revoke` | Explicitly revoke one owner-qualified pairing |
@@ -69,12 +69,30 @@ Device-scoped endpoints, mounted before UI bearer auth:
 - `POST /vl-node/v1/poll`
 - `POST /vl-node/v1/unpair`
 
-Operator endpoints, behind UI/federation auth:
+Operator endpoints, behind the local UI auth, **local only**:
 
 - `GET /api/vl-nodes`
 - `POST /api/vl-nodes/invite`
 - `POST /api/vl-nodes/:nodeId/commands`
 - `DELETE /api/vl-nodes/:nodeId`
 
-Hydra exposes only those exact resources and methods. Generic settings,
-session or shell mutation is not implied.
+## Federation
+
+**Hydra exposes none of these.** They were on the federation allowlist while
+this bridge was being written and were removed before it shipped: an operator
+reaches VL nodes on the machine that owns them, never through a peer.
+
+The one that decides is `commands`. Among the commands a node accepts there is
+`update_candidate`, which names the URL the device downloads its own update
+from, and it accepts `http:`. The `sha256` field guarantees nothing there,
+because the sender supplies both the URL and the hash. Federated, that lets a
+paired peer install an arbitrary binary on a device it does not own, while the
+owner neither acts nor knows.
+
+A paired node is otherwise trusted as its owner, and that is deliberate. This
+capability is different in kind — the same reason `/settings/peering/invite`
+left the allowlist on 2026-08-04. Denied by default; it can be federated the
+day the update channel is bound to something the receiving owner controls.
+
+So `nc_vl_nodes` reports remote owners as `policy-denied`, not as unreachable:
+nothing is broken, the route is closed on purpose.

@@ -135,6 +135,7 @@ test('nc_vl_nodes + nc_vl_command: directory owner-qualified e receipt live-only
   const directory = JSON.parse(out.lines[0].result.content[0].text);
   assert.equal(directory.nodes[0].id, target);
   assert.equal(directory.nodes[0].online, true);
+  assert.deepEqual(directory.unavailable, []);
   await srv.handleLine(rpc(208, 'tools/call', {
     name: 'nc_vl_command', arguments: { target, kind: 'status', args: {} },
   }));
@@ -143,6 +144,40 @@ test('nc_vl_nodes + nc_vl_command: directory owner-qualified e receipt live-only
   assert.equal(receipt.target, target);
   const commandCall = calls.find((call) => new URL(call.url).pathname.endsWith('/commands'));
   assert.deepEqual(commandCall.body, { kind: 'status', args: {} });
+});
+
+test('nc_vl_nodes: un owner remoto e\' policy-denied, non unreachable', async () => {
+  // Le route /vl-nodes/* non sono federabili. Chiamarle comunque e raccogliere
+  // il 404 come 'unreachable' descrive un confine chiuso apposta come un guasto
+  // di rete: chi diagnostica va a cercare il tunnel invece di leggere la
+  // policy. La differenza conta proprio quando un nodo remoto non risponde
+  // davvero, che e' il caso in cui si guarda questo campo.
+  const localId = 'a'.repeat(32); const remoteId = 'd'.repeat(32);
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') {
+        return { status: 200, json: { nodes: [{ instanceId: remoteId, route: ['pixel'], label: 'Pixel' }] } };
+      }
+      if (p === '/api/vl-nodes' && call.method === 'GET') {
+        return { status: 200, json: { instanceId: localId, protocol: 'vl-node/1', nodes: [] } };
+      }
+      return { status: 404, json: { error: p } };
+    },
+  });
+  await srv.handleLine(rpc(209, 'tools/call', { name: 'nc_vl_nodes', arguments: {} }));
+  const directory = JSON.parse(out.lines[0].result.content[0].text);
+  assert.deepEqual(directory.unavailable, [{
+    instanceId: remoteId, owner: 'Pixel', route: 'pixel', failure: 'policy-denied',
+  }]);
+  // E non si tenta nemmeno la chiamata: un'etichetta giusta su una richiesta
+  // inutile sarebbe meta' fix.
+  assert.equal(
+    calls.some((call) => /\/api\/route\//.test(new URL(call.url).pathname)), false,
+    'nessuna richiesta instradata verso un owner remoto',
+  );
 });
 
 test('nc_speak_group/status/stop: il bridge firma anche l orchestrazione multi-endpoint', async () => {
