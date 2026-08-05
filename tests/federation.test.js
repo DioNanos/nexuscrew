@@ -57,25 +57,27 @@ test('federation route parser has an explicit capability allowlist and hop cap',
   assert.equal(fed.parseRoute('/vps/_/settings/token/rotate'), null);
   assert.equal(fed.allowedResource('/files/outbox', 'POST'), false);
   assert.equal(fed.allowedResource('/files/upload', 'POST'), true);
-  // I nodi VL NON sono federabili. Fra i comandi che `/vl-nodes/:id/commands`
-  // accetta c'e' `update_candidate`, che puo' indicare un URL `http:` da cui il
-  // dispositivo scarica il proprio aggiornamento; l'`sha256` non protegge,
-  // perche' chi manda il comando fornisce sia l'URL sia l'hash. Federarlo
-  // significherebbe che un peer accoppiato puo' far installare un binario
-  // arbitrario su un dispositivo altrui — la stessa classe di
-  // `/settings/peering/invite`: una capacita' che estende la fiducia oltre il
-  // confine che l'operatore ha scelto. Il default e' negato: si federa il
-  // giorno in cui il canale di update e' vincolato, non prima.
-  assert.equal(
-    fed.parseRoute(`/vps/_/vl-nodes/${'a'.repeat(32)}/commands`), null,
-    'i comandi ai nodi VL non attraversano la federazione',
-  );
-  assert.equal(fed.parseRoute('/vps/_/vl-nodes'), null);
-  assert.equal(fed.parseRoute('/vps/_/vl-nodes/invite'), null);
-  assert.equal(fed.allowedResource('/vl-nodes', 'GET'), false);
-  assert.equal(fed.allowedResource('/vl-nodes/invite', 'POST'), false);
-  assert.equal(fed.allowedResource(`/vl-nodes/${'a'.repeat(32)}/commands`, 'POST'), false);
-  assert.equal(fed.allowedResource(`/vl-nodes/${'a'.repeat(32)}`, 'DELETE'), false);
+  // I nodi VL sono federabili come ogni altra risorsa: dove ti colleghi, vedi
+  // tutto. Un peer accoppiato e' fidato come il suo proprietario (docs/SECURITY),
+  // e la federazione concede GIA' `/fleet/define-engine` + `/fleet/up`, cioe'
+  // definire un comando arbitrario ed eseguirlo sull'host. Negare `/vl-nodes/*`
+  // non toglieva quel potere — bastava definire una cella che chiama l'API
+  // locale — e in cambio rendeva i nodi VL l'unica risorsa non federata,
+  // rompendo l'allineamento fra NexusCrew e VL.
+  //
+  // Il difetto vero di `update_candidate` (accetta `http:`, e l'sha256 non
+  // vincola perche' chi manda il comando fornisce sia URL sia hash) resta, e va
+  // risolto nel comando, dove vive: l'allowlist di federazione non era il posto.
+  assert.deepEqual(fed.parseRoute(`/vps/_/vl-nodes/${'a'.repeat(32)}/commands`), {
+    route: ['vps'], resource: `/vl-nodes/${'a'.repeat(32)}/commands`,
+  });
+  assert.equal(fed.allowedResource('/vl-nodes', 'GET'), true);
+  assert.equal(fed.allowedResource('/vl-nodes/invite', 'POST'), true);
+  assert.equal(fed.allowedResource(`/vl-nodes/${'a'.repeat(32)}/commands`, 'POST'), true);
+  assert.equal(fed.allowedResource(`/vl-nodes/${'a'.repeat(32)}`, 'DELETE'), true);
+  // I metodi restano vincolati: federare la risorsa non federa ogni verbo.
+  assert.equal(fed.allowedResource(`/vl-nodes/${'a'.repeat(32)}/commands`, 'GET'), false);
+  assert.equal(fed.allowedResource('/vl-nodes', 'DELETE'), false);
   assert.equal(fed.parseRoute('/vps/_/vl-nodes/not-a-node/commands'), null);
 });
 

@@ -146,12 +146,11 @@ test('nc_vl_nodes + nc_vl_command: directory owner-qualified e receipt live-only
   assert.deepEqual(commandCall.body, { kind: 'status', args: {} });
 });
 
-test('nc_vl_nodes: un owner remoto e\' policy-denied, non unreachable', async () => {
-  // Le route /vl-nodes/* non sono federabili. Chiamarle comunque e raccogliere
-  // il 404 come 'unreachable' descrive un confine chiuso apposta come un guasto
-  // di rete: chi diagnostica va a cercare il tunnel invece di leggere la
-  // policy. La differenza conta proprio quando un nodo remoto non risponde
-  // davvero, che e' il caso in cui si guarda questo campo.
+test('nc_vl_nodes: un owner remoto irraggiungibile e\' unreachable, non silenzioso', async () => {
+  // I nodi VL SONO federati (vedi la NOTE in lib/proxy/federation.js): un owner
+  // remoto va interrogato davvero. Se non risponde, deve comparire in
+  // `unavailable` con la causa, non sparire dalla directory — un owner che
+  // scompare in silenzio si legge come "non ha nodi", che e' un'altra cosa.
   const localId = 'a'.repeat(32); const remoteId = 'd'.repeat(32);
   const { srv, out, calls } = makeSrv({
     env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
@@ -170,13 +169,13 @@ test('nc_vl_nodes: un owner remoto e\' policy-denied, non unreachable', async ()
   await srv.handleLine(rpc(209, 'tools/call', { name: 'nc_vl_nodes', arguments: {} }));
   const directory = JSON.parse(out.lines[0].result.content[0].text);
   assert.deepEqual(directory.unavailable, [{
-    instanceId: remoteId, owner: 'Pixel', route: 'pixel', failure: 'policy-denied',
+    instanceId: remoteId, owner: 'Pixel', route: 'pixel', failure: 'unreachable',
   }]);
-  // E non si tenta nemmeno la chiamata: un'etichetta giusta su una richiesta
-  // inutile sarebbe meta' fix.
+  // E la richiesta instradata parte davvero: un owner remoto va interrogato,
+  // non dedotto.
   assert.equal(
-    calls.some((call) => /\/api\/route\//.test(new URL(call.url).pathname)), false,
-    'nessuna richiesta instradata verso un owner remoto',
+    calls.some((call) => /\/api\/route\//.test(new URL(call.url).pathname)), true,
+    'l\'owner remoto viene interrogato attraverso la federazione',
   );
 });
 

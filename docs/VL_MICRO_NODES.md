@@ -14,8 +14,7 @@ The protocol is `vl-node/1`, outbound-only and independent from Fleet PTYs.
 - One stable 128-bit device identity can have one pairing. Re-pair requires an
   explicit revoke or authenticated device unpair.
 - Device endpoints accept only the one-time invite or their scoped credential.
-  Operator endpoints require the existing local UI auth, and are not federated
-  (see Federation).
+  Operator endpoints require the local UI auth or the federation ACL.
 - `NEXUSCREW_READONLY=1` blocks invites, commands and revokes.
 - The bridge has no shell command, PTY adapter or persistent command queue.
 
@@ -45,7 +44,7 @@ The NexusCrew MCP bridge exposes four specific tools:
 
 | Tool | Purpose |
 |---|---|
-| `nc_vl_nodes` | List the local owner's VL nodes (remote owners are not reachable — see Federation) |
+| `nc_vl_nodes` | Aggregate authorized local/routed VL owners and nodes |
 | `nc_vl_invite` | Create one owner-bound, one-time invite |
 | `nc_vl_command` | Deliver one exact bounded command to an online node |
 | `nc_vl_revoke` | Explicitly revoke one owner-qualified pairing |
@@ -69,7 +68,7 @@ Device-scoped endpoints, mounted before UI bearer auth:
 - `POST /vl-node/v1/poll`
 - `POST /vl-node/v1/unpair`
 
-Operator endpoints, behind the local UI auth, **local only**:
+Operator endpoints, behind UI/federation auth:
 
 - `GET /api/vl-nodes`
 - `POST /api/vl-nodes/invite`
@@ -78,21 +77,22 @@ Operator endpoints, behind the local UI auth, **local only**:
 
 ## Federation
 
-**Hydra exposes none of these.** They were on the federation allowlist while
-this bridge was being written and were removed before it shipped: an operator
-reaches VL nodes on the machine that owns them, never through a peer.
+**These four are federated, like every other resource.** Where you connect, you
+see everything: that is how NexusCrew works, and VL nodes are its arms. An
+operator reaches a node from any authorized peer, not only from the machine
+that owns it. Hydra still exposes those exact resources and methods — federating
+a resource does not federate every verb.
 
-The one that decides is `commands`. Among the commands a node accepts there is
-`update_candidate`, which names the URL the device downloads its own update
-from, and it accepts `http:`. The `sha256` field guarantees nothing there,
-because the sender supplies both the URL and the hash. Federated, that lets a
-paired peer install an arbitrary binary on a device it does not own, while the
-owner neither acts nor knows.
+They were briefly removed on 2026-08-05 and put back the same day. The removal
+was meant to contain `update_candidate`, which names the URL a device fetches
+its own update from and accepts `http:` — and whose `sha256` binds nothing,
+because the sender supplies both the URL and the hash. It was the wrong place
+for that fix, twice over: a paired node is trusted as its owner
+(`docs/SECURITY.md`), so the exception was incoherent; and `/fleet/define-engine`
+plus `/fleet/up` are federated, so a peer can already define an arbitrary
+command and run it on the host — including one that calls these endpoints
+locally. The restriction cost alignment and bought nothing.
 
-A paired node is otherwise trusted as its owner, and that is deliberate. This
-capability is different in kind — the same reason `/settings/peering/invite`
-left the allowlist on 2026-08-04. Denied by default; it can be federated the
-day the update channel is bound to something the receiving owner controls.
-
-So `nc_vl_nodes` reports remote owners as `policy-denied`, not as unreachable:
-nothing is broken, the route is closed on purpose.
+**`update_candidate` remains a real defect**, and it belongs to the command:
+bind the update channel to something the receiving owner controls. Denying the
+route only hid it.
