@@ -59,11 +59,14 @@ export function nodeReach(node) {
 // significa e in riga verrebbe troncato a meta' parola.
 export function nodeExposure(node) {
   if (!node || typeof node !== 'object') return { key: 'peer-private', shortKey: 'row-private', shared: false };
-  // I nodi VL non si federano (decisione di prodotto, non un dato mancante):
-  // "privato" implicherebbe che POTREBBE essere condiviso, il che sarebbe
-  // falso — non e' uno stato che sceglie l'operatore, non esiste per questo
-  // tipo di nodo (brief NC_UI_NODI_VL §3: "non applicabile").
-  if (node.kind === 'vl') return { key: 'peer-vl-not-federated', shortKey: 'row-vl-not-federated', shared: false };
+  // I nodi VL SONO federati: la federation di /vl-nodes/* e' stata ripristinata
+  // il 2026-08-05 (lib/proxy/federation.js knownResource+allowedResource,
+  // docs/VL_MICRO_NODES.md §Federation) e un nodo VL e' raggiungibile da un
+  // peer autorizzato come ogni altra risorsa. L'esposizione e' "federato", non
+  // "non federabile" (la bugia precedente) e nemmeno "privato" (che implicherebbe
+  // una condivisione via grant Fleet, che per i VL non esiste: l'esposizione si
+  // deriva dal `kind`, non da `shared`/`visibility`).
+  if (node.kind === 'vl') return { key: 'peer-vl-federated', shortKey: 'row-vl-federated', shared: true };
   if (node.shared !== true) return { key: 'peer-private', shortKey: 'row-private', shared: false };
   const visibility = node.visibility || 'network';
   if (visibility === 'relay-only') return { key: 'visibility-relay', shortKey: 'visibility-relay', shared: true, visibility };

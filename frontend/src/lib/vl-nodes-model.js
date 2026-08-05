@@ -11,8 +11,10 @@
 //   salute       -> `health`, stessa forma, passata attraverso invariata
 //   collegamento -> non c'e' un tunnel: `online`/`lastSeen` (stato del poll)
 //   avvio auto   -> non esposto oggi dal backend: OMESSO, mai inventato
-//   condivisione -> non applicabile (i nodi VL non si federano): nessun
-//                   campo `shared`/`visibility` viene scritto
+//   condivisione -> federato: i nodi VL sono federati come ogni altra risorsa
+//                   (2026-08-05); nessun campo `shared`/`visibility` viene
+//                   scritto qui perche' l'esposizione si deriva in
+//                   node-summary.js dal `kind`, non dai grant Fleet
 //   azioni       -> `capabilities` passate attraverso (le legge il
 //                   componente, non questo modulo — regola del brief: mai
 //                   una lista fissa lato frontend)

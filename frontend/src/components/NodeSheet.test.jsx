@@ -246,10 +246,13 @@ describe('NC_UI_NODI_VL step 2: comandi VL da capabilities + stato da lastAck', 
     expect(box.className).not.toContain(' ko');
   });
 
-  it('shows "not federated", never "private", for the network-view section', () => {
+  // /vl-nodes/* e' federato (2026-08-05): il foglio deve dire "federated",
+  // mai "not federated" (la bugia precedente) ne' "private client node".
+  it('shows the VL node as federated, never "not federated" nor "private"', () => {
     renderSheet(vlNode(), []);
-    expect(screen.getByText(/not federated/i)).toBeTruthy();
+    expect(screen.queryByText(/not federated/i)).toBeNull();
     expect(screen.queryByText(/private client node/i)).toBeNull();
+    expect(screen.getByText(/federated/i)).toBeTruthy();
   });
 });
 

@@ -123,6 +123,7 @@ export const clearDiagnosticsLogs = (t, route = []) => jsonFetch(diagnosticsPath
 // della cella; in READONLY il server risponde 403 con causa esplicita).
 export const getAsks = (t, open = true) => jsonFetch(`/api/asks${open ? '?open=1' : ''}`, t);
 export const answerAsk = (t, id, text) => jsonFetch(`/api/asks/${encodeURIComponent(id)}/answer`, t, { method: 'POST', body: { text } });
+export const dismissAsk = (t, id) => jsonFetch(`/api/asks/${encodeURIComponent(id)}`, t, { method: 'DELETE' });
 
 export const getDecks = (t, route = []) => jsonFetch(`${routeBase(route)}/decks`, t);
 export const createDeck = (t, name, route = []) => jsonFetch(`${routeBase(route)}/decks`, t, { method: 'POST', body: { name } });
