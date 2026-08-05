@@ -253,3 +253,107 @@ test('persistenza: un ask aperto sopravvive al "restart" dello store', async (t)
   assert.equal(open[0].id, id);
   assert.equal(open[0].question, 'resto?');
 });
+
+// DELETE /asks/:id — scarta una domanda (dismiss). NON cancella la riga (lo
+// storico serve): la marca `dismissed`. Dietro lo stesso mutGate degli altri
+// mutanti (F3). Idempotente. 404 se ignoto, 409 se answering (claim attivo).
+// Emette il frame per le UI aperte come fa POST /asks con emitRaw.
+test('dismiss: marca dismissed (non cancella la riga), emette frame ask-dismissed, sparisce dagli open', async (t) => {
+  const { j, dir, frames } = await setup(t);
+  const { id } = await (await j('/api/asks', {
+    method: 'POST', body: JSON.stringify({ question: 'scartami', session: 'cell-a' }),
+  })).json();
+
+  const r = await j(`/api/asks/${id}`, { method: 'DELETE' });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { dismissed: true, id });
+
+  // La riga NON e' cancellata: sopravvive con dismissed:true (lo storico serve).
+  const file = path.join(dir, 'asks.json');
+  const row = JSON.parse(fs.readFileSync(file, 'utf8')).asks.find((a) => a.id === id);
+  assert.ok(row, 'la riga sopravvive al dismiss (storico)');
+  assert.equal(row.dismissed, true);
+  assert.ok(row.dismissedTs, 'manca dismissedTs');
+
+  // Frame per le UI aperte (card che sparisce senza aspettare il poll).
+  assert.ok(frames.some((f) => f.type === 'ask-dismissed' && f.id === id), 'manca il frame ask-dismissed');
+
+  // Sparito dagli open…
+  const open = await (await j('/api/asks?open=1')).json();
+  assert.equal(open.asks.length, 0);
+  // …ma resta nello storico (GET senza ?open).
+  const all = await (await j('/api/asks')).json();
+  assert.ok(all.asks.some((a) => a.id === id), 'il ask dismissato deve restare nello storico');
+});
+
+test('dismiss: idempotente — scartare due volte non e\' un errore', async (t) => {
+  const { j } = await setup(t);
+  const { id } = await (await j('/api/asks', {
+    method: 'POST', body: JSON.stringify({ question: 'q', session: 'cell-a' }),
+  })).json();
+  assert.equal((await j(`/api/asks/${id}`, { method: 'DELETE' })).status, 200);
+  const second = await j(`/api/asks/${id}`, { method: 'DELETE' });
+  assert.equal(second.status, 200);
+  assert.equal((await second.json()).dismissed, true);
+});
+
+test('dismiss: 404 per id inesistente (un id esistente invece 200)', async (t) => {
+  const { j } = await setup(t);
+  const { id } = await (await j('/api/asks', {
+    method: 'POST', body: JSON.stringify({ question: 'q', session: 'cell-a' }),
+  })).json();
+  assert.equal((await j(`/api/asks/${id}`, { method: 'DELETE' })).status, 200);
+  assert.equal((await j('/api/asks/deadbeef', { method: 'DELETE' })).status, 404);
+});
+
+test('dismiss: 409 se l\'ask e\' in stato answering (claim attivo)', async (t) => {
+  const { j, asks } = await setup(t);
+  const { id } = await (await j('/api/asks', {
+    method: 'POST', body: JSON.stringify({ question: 'q', session: 'cell-a' }),
+  })).json();
+  // Claim deterministico diretto sullo store: simula una answer in corso
+  // (paste pending). Il dismiss non compete con una risposta in corso.
+  const claim = asks.claim(id);
+  assert.equal(claim.ok, true);
+  const del = await j(`/api/asks/${id}`, { method: 'DELETE' });
+  assert.equal(del.status, 409);
+});
+
+test('dismiss READONLY F3: gated 403 (mutazione durevole, niente stato)', async (t) => {
+  const { j, asks, frames } = await setup(t, { readonly: true });
+  // ask preesistente creato fuori banda
+  const pre = asks.create({ question: 'pre', session: 'cell-a' });
+  const r = await j(`/api/asks/${pre.ask.id}`, { method: 'DELETE' });
+  assert.equal(r.status, 403);
+  assert.ok(!frames.some((f) => f.type === 'ask-dismissed'), 'nessun frame in READONLY');
+});
+
+// F-02: un ask dismissato NON e' piu' claimable. Senza questa guardia in claim()
+// la sequenza dismiss -> claim -> commit lascia l'ask nello stato ibrido
+// `dismissed && answered`. Il verso opposto (dismiss mentre answering -> 409)
+// regge gia'; questo e' il buco che manca.
+test('F-02: un ask dismissato non e\' piu\' claimable (niente dismissed && answered)', async (t) => {
+  const { j, asks } = await setup(t);
+  const { id } = await (await j('/api/asks', {
+    method: 'POST', body: JSON.stringify({ question: 'q', session: 'cell-a' }),
+  })).json();
+  assert.equal(asks.dismiss(id).ok, true);
+  const claim = asks.claim(id);
+  assert.equal(claim.ok, false, 'claim su un ask dismissato deve fallire');
+  assert.equal(claim.reason, 'dismissed');
+});
+
+test('F-02: answer su un ask dismissato -> 409, nessun paste, resta solo dismissed', async (t) => {
+  const { j, asks, pasted } = await setup(t);
+  const { id } = await (await j('/api/asks', {
+    method: 'POST', body: JSON.stringify({ question: 'q', session: 'cell-a' }),
+  })).json();
+  asks.dismiss(id);
+  const r = await j(`/api/asks/${id}/answer`, { method: 'POST', body: JSON.stringify({ text: 'x' }) });
+  assert.equal(r.status, 409);
+  assert.equal(pasted.length, 0, 'nessun paste su un ask dismissato');
+  // Stato coerente: dismissed SI, answered MAI true (niente ibrido).
+  const row = asks.get(id);
+  assert.equal(row.dismissed, true);
+  assert.equal(row.answered, false);
+});

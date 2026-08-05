@@ -29,13 +29,25 @@ describe('nodeReach — VL nodes (poll status, not a tunnel — brief §3)', () 
   });
 });
 
-describe('nodeExposure — VL nodes are not federable (brief §3)', () => {
-  it('never reports "private" (which implies it COULD be shared) — a distinct not-applicable state', () => {
+// La federazione di /vl-nodes/* e' stata ripristinata (2026-08-05): le quattro
+// route VL sono federate come ogni altra risorsa (lib/proxy/federation.js,
+// knownResource + allowedResource; docs/VL_MICRO_NODES.md §Federation). Un nodo
+// VL e' dunque raggiungibile da un peer autorizzato, NON "non federabile".
+describe('nodeExposure — VL nodes are federated (brief §3, federation restored 2026-08-05)', () => {
+  it('reports the node as federated and reachable by an authorized peer', () => {
     const peer = vlNodeToPeer(RAW_ONLINE);
     const exposure = nodeExposure(peer);
-    expect(exposure.shared).toBe(false);
+    expect(exposure.shared).toBe(true);
+    expect(exposure.key).toBe('peer-vl-federated');
+    expect(exposure.shortKey).toBe('row-vl-federated');
+  });
+
+  it('never reports "private" or "not federated" for a VL node', () => {
+    const exposure = nodeExposure(vlNodeToPeer(RAW_ONLINE));
     expect(exposure.key).not.toBe('peer-private');
     expect(exposure.shortKey).not.toBe('row-private');
+    expect(exposure.key).not.toBe('peer-vl-not-federated');
+    expect(exposure.shortKey).not.toBe('row-vl-not-federated');
   });
 });
 

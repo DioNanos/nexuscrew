@@ -198,12 +198,11 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
       </SheetSection>
 
       <SheetSection title={t('node-detail-network-view')}>
-        {/* Bug preesistente scoperto qui: questa riga sceglieva fra due sole
-            chiavi fisse su `exposure.shared`, ignorando `exposure.key` — per
-            un nodo VL (`shared` sempre false) avrebbe mostrato "privato",
-            che implica poter essere condiviso: falso, i nodi VL non si
-            federano. Il ramo non-VL resta l'espressione originale,
-            invariata: nessun cambio di comportamento per i nodi Fleet. */}
+        {/* Per un nodo VL si rende direttamente `exposure.key` (oggi
+            "federated": i nodi VL sono federati come ogni altra risorsa,
+            federation di /vl-nodes/* ripristinata 2026-08-05). Il ramo non-VL
+            resta l'espressione originale su `exposure.shared`: nessun cambio
+            di comportamento per i nodi Fleet. */}
         <div className="nc-set-info">{t(isVl ? exposure.key : (exposure.shared ? 'peer-shared' : 'peer-private'))}</div>
         {canEditVisibility && <>
           <label className="nc-field">{t('peer-visibility')}
