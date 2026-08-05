@@ -87,11 +87,20 @@ They were briefly removed on 2026-08-05 and put back the same day. The removal
 was meant to contain `update_candidate`, which names the URL a device fetches
 its own update from and accepts `http:` — and whose `sha256` binds nothing,
 because the sender supplies both the URL and the hash. It was the wrong place
-for that fix, twice over: a paired node is trusted as its owner
-(`docs/SECURITY.md`), so the exception was incoherent; and `/fleet/define-engine`
-plus `/fleet/up` are federated, so a peer can already define an arbitrary
-command and run it on the host — including one that calls these endpoints
-locally. The restriction cost alignment and bought nothing.
+for that fix, on two counts that do not carry equal weight.
+
+**Incoherent, always.** A paired node is trusted as its owner
+(`docs/SECURITY.md`); singling out VL nodes made them the only unfederated
+resource inside their own control plane.
+
+**Ineffective, but only where fleet is available.** `/fleet/define-engine`,
+`/fleet/define-cell` and `/fleet/up` are federated, and a managed shell engine
+carrying a raw `commands[shell]` resolves to `bash -lic "<raw>"`: a peer can
+already run anything on the host, including a local call to these endpoints. But
+VL is orthogonal to fleet — on an owner with VL enabled and `/fleet/*`
+unavailable, that path does not exist and federating these four **does** add
+capability. It stays inside the trust model, so it is not a violation; it is
+simply not free. Do not restate "it grants nothing" without that condition.
 
 **`update_candidate` remains a real defect**, and it belongs to the command:
 bind the update channel to something the receiving owner controls. Denying the
