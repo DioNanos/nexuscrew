@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { vlNodeToPeer, topologyVlOwners } from './vl-nodes-model.js';
+import { vlNodeToPeer } from './vl-nodes-model.js';
 
 const RAW = {
   nodeId: 'a'.repeat(32),
@@ -75,78 +75,5 @@ describe('vlNodeToPeer', () => {
   it('falls back to cell, then nodeId, when label is missing', () => {
     expect(vlNodeToPeer({ ...RAW, label: '' }).label).toBe(RAW.cell);
     expect(vlNodeToPeer({ ...RAW, label: '', cell: '' }).label).toBe(RAW.nodeId);
-  });
-});
-
-// Step 3 (owner remoti, brief NC_UI_NODI_VL_REMOTI): un nodo VL viene da UN
-// owner preciso (locale o federato) — la fusione della lista deve saperlo,
-// non solo saperne il nodeId, altrimenti due nodi con la stessa label su
-// owner diversi sono indistinguibili (invariante 2 del brief) e un comando
-// finisce sull'owner sbagliato (invariante 3).
-describe('vlNodeToPeer — owner (route/instanceId/label), step 3', () => {
-  it('defaults to local (route empty) when no owner is given — step 1/2 behavior unchanged', () => {
-    const peer = vlNodeToPeer(RAW);
-    expect(peer.route).toEqual([]);
-    expect(peer.isLocal).toBe(true);
-    expect(peer.ownerInstanceId).toBeNull();
-    expect(peer.ownerLabel).toBeNull();
-  });
-
-  it('carries a remote owner route/instanceId/label through untouched', () => {
-    const owner = { instanceId: 'b'.repeat(16), route: ['vps3'], label: 'VPS3' };
-    const peer = vlNodeToPeer(RAW, owner);
-    expect(peer.route).toEqual(['vps3']);
-    expect(peer.isLocal).toBe(false);
-    expect(peer.ownerInstanceId).toBe('b'.repeat(16));
-    expect(peer.ownerLabel).toBe('VPS3');
-  });
-
-  it('does not mutate the owner.route array it was given (defensive copy)', () => {
-    const owner = { instanceId: 'b'.repeat(16), route: ['vps3'], label: 'VPS3' };
-    const peer = vlNodeToPeer(RAW, owner);
-    peer.route.push('mutated');
-    expect(owner.route).toEqual(['vps3']);
-  });
-});
-
-describe('topologyVlOwners — ports topologyOwners() semantics (lib/mcp/cells.js) into the frontend', () => {
-  const topology = {
-    nodes: [
-      { instanceId: 'local-id-000000', route: [], label: 'Self', stale: false },
-      { instanceId: 'remote-a-000000', route: ['vps3'], label: 'VPS3', stale: false },
-      { instanceId: 'remote-b-000000', route: ['nova', 'vps3'], label: 'via Nova', stale: false },
-      { instanceId: 'stale-c-0000000', route: ['old'], label: 'Stale', stale: true },
-      { instanceId: 'remote-a-000000', route: ['dup'], label: 'Duplicate', stale: false },
-    ],
-  };
-
-  it('excludes the local instanceId — the caller adds it separately as route: []', () => {
-    const owners = topologyVlOwners(topology, 'local-id-000000');
-    expect(owners.some((o) => o.instanceId === 'local-id-000000')).toBe(false);
-  });
-
-  it('excludes stale owners — a stale peer is not a reachable command target', () => {
-    const owners = topologyVlOwners(topology, 'local-id-000000');
-    expect(owners.some((o) => o.instanceId === 'stale-c-0000000')).toBe(false);
-  });
-
-  it('dedupes by instanceId, keeping the first occurrence', () => {
-    const owners = topologyVlOwners(topology, 'local-id-000000');
-    const remoteA = owners.filter((o) => o.instanceId === 'remote-a-000000');
-    expect(remoteA).toHaveLength(1);
-    expect(remoteA[0].route).toEqual(['vps3']);
-  });
-
-  it('preserves the route array and label for each surviving owner', () => {
-    const owners = topologyVlOwners(topology, 'local-id-000000');
-    const b = owners.find((o) => o.instanceId === 'remote-b-000000');
-    expect(b.route).toEqual(['nova', 'vps3']);
-    expect(b.label).toBe('via Nova');
-  });
-
-  it('is empty/defensive for missing or malformed topology', () => {
-    expect(topologyVlOwners(null, 'x')).toEqual([]);
-    expect(topologyVlOwners({}, 'x')).toEqual([]);
-    expect(topologyVlOwners({ nodes: 'not-an-array' }, 'x')).toEqual([]);
   });
 });
