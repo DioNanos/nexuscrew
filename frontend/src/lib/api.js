@@ -66,6 +66,12 @@ export const sendVlNodeCommand = (t, nodeId, kind, args = {}, route = []) => (
   jsonFetch(`${routeBase(route)}/vl-nodes/${encodeURIComponent(nodeId)}/commands`, t, { method: 'POST', body: { kind, args } })
 );
 export const removeVlNode = (t, nodeId, route = []) => jsonFetch(`${routeBase(route)}/vl-nodes/${encodeURIComponent(nodeId)}`, t, { method: 'DELETE' });
+// Eventi di sessione del nodo (passo 2): lettura pura del ring in memoria
+// dell'owner. `after` e' il cursore, cosi' la UI chiede solo il nuovo. Cio' che
+// e' uscito dal ring non torna: la copia durevole e' il journal sul device.
+export const getVlNodeEvents = (t, nodeId, after = 0, route = []) => jsonFetch(
+  `${routeBase(route)}/vl-nodes/${encodeURIComponent(nodeId)}/events${after ? `?after=${encodeURIComponent(after)}` : ''}`, t,
+);
 export const getTopology = (t) => jsonFetch('/api/topology', t);
 export const getRouteSessions = (t, route) => jsonFetch(`${routeBase(route)}/sessions`, t);
 export const getRouteConfig = (t, route) => jsonFetch(`${routeBase(route)}/config`, t);
