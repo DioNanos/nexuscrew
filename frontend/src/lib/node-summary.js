@@ -17,6 +17,8 @@
 // inesistenti, e quando i grant arrivassero quell'etichetta diventerebbe vera
 // senza che nessuno l'abbia concessa.
 
+import { t } from './i18n.js';
+
 // Chiavi i18n, non testo: chi rende decide la lingua.
 export const REACH = {
   routed: 'peer-routed',
@@ -24,12 +26,21 @@ export const REACH = {
   up: 'tunnel-up',
   down: 'tunnel-down',
   passive: 'node-connected-client',
+  // Un nodo VL non ha un tunnel: e' un poll verso il broker (design
+  // NC_UI_NODI_VL, 2026-08-05). Chiavi distinte apposta — "tunnel giu'" per
+  // un nodo che non ha mai avuto un tunnel sarebbe un campo vuoto travestito
+  // da stato, esattamente cio' che il brief chiede di evitare.
+  vlOnline: 'vl-poll-online',
+  vlOffline: 'vl-poll-offline',
 };
 
 // Un nodo raggiunto in transito non ha un tunnel proprio: la sua
 // raggiungibilita' e' quella della catena, e va detta come tale.
 export function nodeReach(node) {
   if (!node || typeof node !== 'object') return { key: REACH.down, up: false };
+  if (node.kind === 'vl') {
+    return node.online ? { key: REACH.vlOnline, up: true } : { key: REACH.vlOffline, up: false };
+  }
   if (node.kind === 'transitive') {
     const stale = node.stale === true;
     return { key: stale ? REACH.routedStale : REACH.routed, up: !stale, routed: true };
@@ -48,6 +59,11 @@ export function nodeReach(node) {
 // significa e in riga verrebbe troncato a meta' parola.
 export function nodeExposure(node) {
   if (!node || typeof node !== 'object') return { key: 'peer-private', shortKey: 'row-private', shared: false };
+  // I nodi VL non si federano (decisione di prodotto, non un dato mancante):
+  // "privato" implicherebbe che POTREBBE essere condiviso, il che sarebbe
+  // falso — non e' uno stato che sceglie l'operatore, non esiste per questo
+  // tipo di nodo (brief NC_UI_NODI_VL §3: "non applicabile").
+  if (node.kind === 'vl') return { key: 'peer-vl-not-federated', shortKey: 'row-vl-not-federated', shared: false };
   if (node.shared !== true) return { key: 'peer-private', shortKey: 'row-private', shared: false };
   const visibility = node.visibility || 'network';
   if (visibility === 'relay-only') return { key: 'visibility-relay', shortKey: 'visibility-relay', shared: true, visibility };
@@ -60,6 +76,16 @@ export function nodeExposure(node) {
   return { key: 'visibility-network', shortKey: 'visibility-network', shared: true, visibility };
 }
 
+// Per un nodo VL la riga non ha un `name` leggibile da mostrare come
+// sottotitolo (e' il `nodeId`, 32 caratteri esadecimali): mostra la salute
+// dichiarata dal device se c'e' (brief NC_UI_NODI_VL §3, "salute reali nella
+// lista"), altrimenti lo stato del poll — mai un campo vuoto o "undefined".
+function vlRowSubtitle(node) {
+  const detail = node.health && typeof node.health.detail === 'string' && node.health.detail.trim();
+  if (detail) return detail;
+  return t(node.online ? REACH.vlOnline : REACH.vlOffline);
+}
+
 // La riga completa: identita' piu' i due riassunti. Nient'altro — ogni campo in
 // piu' qui e' un campo che su un telefono spinge fuori il nome del nodo.
 export function nodeRowSummary(node) {
@@ -70,7 +96,7 @@ export function nodeRowSummary(node) {
   return {
     name,
     title: (typeof node.label === 'string' && node.label.trim()) || name,
-    subtitle: name,
+    subtitle: node.kind === 'vl' ? vlRowSubtitle(node) : name,
     reach: nodeReach(node),
     exposure: nodeExposure(node),
     routed,

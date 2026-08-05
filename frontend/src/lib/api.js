@@ -54,6 +54,14 @@ export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs$
 export const getSettings = (t) => jsonFetch('/api/settings', t);
 export const getNodes = (t) => jsonFetch('/api/nodes', t);
 export const getPeers = (t) => jsonFetch('/api/peers', t);
+// Nodi VL (device N900): endpoint separato, non federato — fuso con i peer
+// SOLO lato presentazione (vl-nodes-model.js), mai dentro /api/nodes o
+// /api/peers (design NC_UI_NODI_VL, 2026-08-05: non cambiare quel contratto).
+export const getVlNodes = (t) => jsonFetch('/api/vl-nodes', t);
+export const sendVlNodeCommand = (t, nodeId, kind, args = {}) => (
+  jsonFetch(`/api/vl-nodes/${encodeURIComponent(nodeId)}/commands`, t, { method: 'POST', body: { kind, args } })
+);
+export const removeVlNode = (t, nodeId) => jsonFetch(`/api/vl-nodes/${encodeURIComponent(nodeId)}`, t, { method: 'DELETE' });
 export const getTopology = (t) => jsonFetch('/api/topology', t);
 export const getRouteSessions = (t, route) => jsonFetch(`${routeBase(route)}/sessions`, t);
 export const getRouteConfig = (t, route) => jsonFetch(`${routeBase(route)}/config`, t);

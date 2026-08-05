@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import { getLang, t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import {
-  apiFetch, getSettings, getPeers, saveConfig, rotateToken,
+  apiFetch, getSettings, getPeers, getVlNodes, saveConfig, rotateToken,
   setNodeShare, regenService, createPeerInvite,
   saveNodeAlias, deleteNodeAlias,
   checkNpmUpdate, applyNpmUpdate,
@@ -15,6 +15,7 @@ import { validateNodeForm, tunnelInfo, toSlug, isValidLabel } from '../lib/setti
 import PairingCard from './PairingCard.jsx';
 import NodeSheet from './NodeSheet.jsx';
 import { nodeRowSummary } from '../lib/node-summary.js';
+import { vlNodeToPeer } from '../lib/vl-nodes-model.js';
 import { getPushState, subscribePush, unsubscribePush } from '../lib/push.js';
 import Icon from './Icon.jsx';
 import FleetTab from './FleetTab.jsx';
@@ -88,10 +89,16 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
   const shareStatusKey = shareHub?.shared
     ? (shareTunnel?.up ? 'share-local-active' : 'share-local-pending')
     : (shareTunnel?.up ? 'share-local-private' : 'share-local-private-down');
+  // Stessa lista, stesso meccanismo di riga/gruppo/foglio dei peer Fleet
+  // (indicazione di DAG: "come fosse un nodo nexuscrew, non una sezione
+  // nuova") — un gruppo in piu', non un componente diverso. Un nodo VL non
+  // e' un hub invitabile (non ha ssh/direction), quindi va escluso dal primo
+  // gruppo esplicitamente, non solo aggiunto in coda.
   const peerGroups = [
-    { key: 'peer-group-hubs', rows: (nodes || []).filter((n) => n.kind !== 'transitive' && n.relation !== 'client') },
-    { key: 'peer-group-clients', rows: (nodes || []).filter((n) => n.kind !== 'transitive' && n.relation === 'client') },
+    { key: 'peer-group-hubs', rows: (nodes || []).filter((n) => n.kind !== 'transitive' && n.kind !== 'vl' && n.relation !== 'client') },
+    { key: 'peer-group-clients', rows: (nodes || []).filter((n) => n.kind !== 'transitive' && n.kind !== 'vl' && n.relation === 'client') },
     { key: 'peer-group-routed', rows: (nodes || []).filter((n) => n.kind === 'transitive') },
+    { key: 'peer-group-vl', rows: (nodes || []).filter((n) => n.kind === 'vl') },
   ];
 
   // Il nodo del foglio si rilegge dall'inventario a ogni render: dopo una
@@ -1128,7 +1135,18 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
     } catch (e) { setLoadErr(String(e.message || e)); }
     try {
       const j = await getPeers(token);
-      setNodes(j.peers || []);
+      const peers = j.peers || [];
+      // Unione SOLO lato presentazione (design NC_UI_NODI_VL, 2026-08-05):
+      // /api/vl-nodes resta un endpoint separato, il contratto di /api/peers
+      // non cambia. Un fallimento qui (backend vecchio, feature disattivata)
+      // e' un arricchimento mancato, non un errore di caricamento — i peer
+      // Fleet restano visibili e utilizzabili comunque.
+      let vlPeers = [];
+      try {
+        const vj = await getVlNodes(token);
+        vlPeers = (vj.nodes || []).map(vlNodeToPeer).filter(Boolean);
+      } catch (_) { /* endpoint VL opzionale: nessun errore bloccante */ }
+      setNodes([...peers, ...vlPeers]);
     } catch (e) { setLoadErr(String(e.message || e)); }
   }, [token]);
 
