@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   removeNode: vi.fn(),
   updateNode: vi.fn(),
   setNodeVisibility: vi.fn(),
+  sendVlNodeCommand: vi.fn(),
 }));
 
 vi.mock('../lib/api.js', async (importOriginal) => ({
@@ -15,12 +16,14 @@ vi.mock('../lib/api.js', async (importOriginal) => ({
   removeNode: mocks.removeNode,
   updateNode: mocks.updateNode,
   setNodeVisibility: mocks.setNodeVisibility,
+  sendVlNodeCommand: mocks.sendVlNodeCommand,
 }));
 vi.mock('./PairingCard.jsx', () => ({ default: () => null }));
 vi.mock('../hooks/useNodes.js', () => ({ useNodes: () => [] }));
 
 import { NodesTab } from './SettingsPanel.jsx';
 import NodeSheet from './NodeSheet.jsx';
+import { vlNodeToPeer } from '../lib/vl-nodes-model.js';
 
 const peer = {
   name: 'portatile', label: 'Portatile', direction: 'inbound', kind: 'direct',
@@ -54,6 +57,7 @@ beforeEach(() => {
   mocks.removeNode.mockReset().mockResolvedValue({});
   mocks.updateNode.mockReset().mockResolvedValue({});
   mocks.setNodeVisibility.mockReset().mockResolvedValue({});
+  mocks.sendVlNodeCommand.mockReset().mockResolvedValue({ id: 'cmd-1', status: 'submitted' });
 });
 
 describe('NC-I: riga → foglio', () => {
@@ -174,5 +178,77 @@ describe('NC-I: azioni', () => {
     renderSheet(peer, [peer], { readonly: true });
     expect(screen.getByRole('button', { name: /test/i }).disabled).toBe(false);
     expect(screen.getByRole('button', { name: /delete/i }).disabled).toBe(true);
+  });
+});
+
+describe('NC_UI_NODI_VL step 2: comandi VL da capabilities + stato da lastAck', () => {
+  const vlNode = (overrides = {}) => vlNodeToPeer({
+    nodeId: 'a'.repeat(32), label: 'N900', cell: 'VL-aaaaaaaa',
+    pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
+    health: { state: 'running', detail: 'nominal' },
+    capabilities: ['status', 'restart', 'unpair'],
+    inflight: null, lastAck: null,
+    ...overrides,
+  });
+
+  it('shows a button only for capabilities the node declares, and never update_candidate', () => {
+    renderSheet(vlNode({ capabilities: ['status', 'update_candidate'] }), []);
+    expect(screen.getByRole('button', { name: 'status' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /update.candidate/i })).toBeNull();
+    // "restart" is a real device command in general, but THIS node did not
+    // declare it — the brief's discriminating test.
+    expect(screen.queryByRole('button', { name: 'restart' })).toBeNull();
+  });
+
+  it('shows "submitted" right after sending — not a success that has not happened yet', async () => {
+    renderSheet(vlNode(), []);
+    fireEvent.click(screen.getByRole('button', { name: 'restart' }));
+    await waitFor(() => expect(mocks.sendVlNodeCommand).toHaveBeenCalledWith('token', 'a'.repeat(32), 'restart'));
+    expect(await screen.findByText(/sent, awaiting confirmation/)).toBeTruthy();
+    expect(screen.queryByText('completed')).toBeNull();
+  });
+
+  it('shows "in progress" once the node reports the command inflight', async () => {
+    const { refresh } = renderSheet(vlNode(), []);
+    fireEvent.click(screen.getByRole('button', { name: 'restart' }));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    // Il refresh() reale ricaricherebbe /api/vl-nodes; nel test lo simuliamo
+    // ri-renderizzando lo stesso NodeSheet con il nodo aggiornato che il
+    // prossimo poll avrebbe restituito.
+    const inflightNode = vlNode({ inflight: { id: 'cmd-1', kind: 'restart', status: 'sent' } });
+    const view = render(<NodeSheet node={inflightNode} nodes={[]} token="token" readonly={false}
+      refresh={vi.fn().mockResolvedValue(undefined)} onClose={vi.fn()} />);
+    expect(view.getByText(/in progress/)).toBeTruthy();
+  });
+
+  it('shows the real result only once lastAck matches the submitted command — never optimistic', () => {
+    const acked = vlNode({ lastAck: { id: 'cmd-1', status: 'ok', result: { detail: 'restarted cleanly' }, at: 2000 } });
+    // Nessun comando sottomesso in QUESTA sessione (foglio riaperto piu'
+    // tardi): mostra comunque l'ultimo esito noto, mai un campo vuoto.
+    render(<NodeSheet node={acked} nodes={[]} token="token" readonly={false}
+      refresh={vi.fn().mockResolvedValue(undefined)} onClose={vi.fn()} />);
+    expect(screen.getByText(/completed/)).toBeTruthy();
+    expect(screen.getByText(/restarted cleanly/)).toBeTruthy();
+  });
+
+  it('reports a failed command honestly instead of a silent/optimistic success', () => {
+    const failed = vlNode({ lastAck: { id: 'cmd-1', status: 'error', result: { detail: 'device offline' }, at: 2000 } });
+    render(<NodeSheet node={failed} nodes={[]} token="token" readonly={false}
+      refresh={vi.fn().mockResolvedValue(undefined)} onClose={vi.fn()} />);
+    expect(screen.getByText(/failed/)).toBeTruthy();
+    expect(screen.queryByText('completed')).toBeNull();
+  });
+
+  it('does not treat health.state as Fleet health.status — a running VL node is not shown as broken', () => {
+    renderSheet(vlNode({ health: { state: 'running', detail: 'all good' } }), []);
+    const box = screen.getByText('all good').closest('.nc-set-test');
+    expect(box.className).toContain(' ok');
+    expect(box.className).not.toContain(' ko');
+  });
+
+  it('shows "not federated", never "private", for the network-view section', () => {
+    renderSheet(vlNode(), []);
+    expect(screen.getByText(/not federated/i)).toBeTruthy();
+    expect(screen.queryByText(/private client node/i)).toBeNull();
   });
 });

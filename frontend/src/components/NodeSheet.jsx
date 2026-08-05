@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
-import { nodeAction, removeNode, updateNode, setNodeVisibility } from '../lib/api.js';
+import { nodeAction, removeNode, updateNode, setNodeVisibility, sendVlNodeCommand } from '../lib/api.js';
 import { tunnelInfo, isValidLabel } from '../lib/settings-model.js';
 import { nodeDetailModel, selectionCandidates } from '../lib/node-detail.js';
+import { vlNodeActions, vlCommandStatus } from '../lib/vl-node-detail.js';
 import DetailSheet, { SheetSection } from './DetailSheet.jsx';
 import Icon from './Icon.jsx';
 
@@ -23,6 +24,11 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [query, setQuery] = useState('');
   const [picking, setPicking] = useState(false);
+  // L'ultimo comando VL che QUESTA sessione ha sottomesso — {id, kind,
+  // submittedAt} | null. Serve a distinguere "inviato da me, in attesa
+  // dell'ack" da un lastAck del nodo che appartiene a un comando precedente
+  // (design NC_UI_NODI_VL step 2: "inviato" non e' "fatto").
+  const [vlPending, setVlPending] = useState(null);
 
   const model = useMemo(
     () => nodeDetailModel(node, nodes, { readonly, busy: !!busy }),
@@ -57,6 +63,17 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
     });
   };
 
+  // Un comando VL: il POST risponde SOLO {id, status:'submitted'} — l'esito
+  // vero arriva dopo, in node.lastAck, al prossimo refresh(). Tracciare l'id
+  // qui e' cio' che permette a vlCommandStatus di distinguere "inviato da
+  // questo click" da un ack di un comando precedente (mai un successo
+  // ottimistico prima che il server lo confermi).
+  const runVlCommand = (kind) => guard(`${node.nodeId}:${kind}`, async () => {
+    const result = await sendVlNodeCommand(token, node.nodeId, kind);
+    setVlPending({ id: result.id, kind, submittedAt: Date.now() });
+    await refresh();
+  });
+
   const saveEdit = () => {
     if (!isValidLabel(editing.label)) { setErr(t('err-label')); return; }
     const patch = identity.inbound
@@ -86,13 +103,34 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
     </span>
   );
 
-  const footer = actions.map((a) => (
-    <button key={a.action} type="button" className={`nc-btn ${a.danger ? 'danger' : 'ghost'}`}
-      disabled={a.disabled} title={a.disabled && readonly ? t('settings-readonly') : undefined}
-      onClick={() => runAction(a.action)}>
-      {a.action === 'remove' ? <><Icon name="trash" size={14} /> {t(a.key)}</> : t(a.key)}
-    </button>
-  ));
+  // I comandi VL vengono da `node.capabilities` (dichiarate dal device), non
+  // da una lista fissa qui — un comando non dichiarato non ha un bottone.
+  const isVl = node.kind === 'vl';
+  const vlActions = isVl ? vlNodeActions(node) : [];
+  const vlStatus = isVl ? vlCommandStatus(node, vlPending) : null;
+  const vlCommandLabel = (kind) => {
+    const key = `vl-cmd-${kind}`;
+    const label = t(key);
+    // Un comando dichiarato ma senza traduzione (device futuro, capability
+    // nuova) mostra il nome grezzo invece di sparire o mostrare la chiave.
+    return label === key ? kind : label;
+  };
+
+  const footer = isVl
+    ? vlActions.map((kind) => (
+      <button key={kind} type="button" className="nc-btn ghost"
+        disabled={!!busy || readonly} title={readonly ? t('settings-readonly') : undefined}
+        onClick={() => runVlCommand(kind)}>
+        {vlCommandLabel(kind)}
+      </button>
+    ))
+    : actions.map((a) => (
+      <button key={a.action} type="button" className={`nc-btn ${a.danger ? 'danger' : 'ghost'}`}
+        disabled={a.disabled} title={a.disabled && readonly ? t('settings-readonly') : undefined}
+        onClick={() => runAction(a.action)}>
+        {a.action === 'remove' ? <><Icon name="trash" size={14} /> {t(a.key)}</> : t(a.key)}
+      </button>
+    ));
 
   return (
     <DetailSheet title={identity.title} subtitle={identity.name} status={status} footer={footer} onClose={onClose}>
@@ -103,12 +141,41 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
           {identity.transport && <><dt>{t('node-detail-transport')}</dt><dd>{identity.transport}</dd></>}
         </dl>
         {node.health?.detail && (
-          <div className={`nc-set-test${node.health.status === 'healthy' ? ' ok' : node.health.status === 'passive' ? '' : ' ko'}`}>
+          // Altro punto dove le due forme divergono: la salute Fleet usa
+          // `health.status` ('healthy'/'passive'/...), quella VL usa
+          // `health.state` ('starting'|'running'|'stopped'|'degraded'|
+          // 'error', lib/vl-nodes/broker.js) — leggere il campo sbagliato
+          // avrebbe mostrato un nodo VL sano dentro un riquadro rosso
+          // "guasto" per ogni stato, dato che `.status` e' sempre undefined.
+          <div className={`nc-set-test${
+            isVl
+              ? (node.health.state === 'running' ? ' ok' : node.health.state === 'starting' ? '' : ' ko')
+              : (node.health.status === 'healthy' ? ' ok' : node.health.status === 'passive' ? '' : ' ko')
+          }`}>
             {node.health.detail}
           </div>
         )}
         {test && <div className={`nc-set-test${test.ok ? ' ok' : ' ko'}`}>{test.result}{test.detail ? ` — ${test.detail}` : ''}</div>}
       </SheetSection>
+
+      {/* Comandi VL: "inviato" non e' "fatto" (design NC_UI_NODI_VL step 2).
+          I bottoni sono nel footer (letti da capabilities); qui va solo lo
+          STATO dell'ultimo comando — mai un successo prima che il server lo
+          confermi in lastAck. */}
+      {isVl && (
+        <SheetSection title={t('node-detail-command')}>
+          {vlActions.length === 0 && <small className="nc-set-hint">{t('vl-no-commands')}</small>}
+          {vlStatus && (
+            <div className={`nc-set-test${vlStatus.phase === 'done' ? (vlStatus.status === 'ok' ? ' ok' : ' ko') : ''}`}>
+              {vlStatus.kind && `${vlCommandLabel(vlStatus.kind)}: `}
+              {vlStatus.phase === 'submitted' && t('vl-cmd-phase-submitted')}
+              {vlStatus.phase === 'inflight' && t('vl-cmd-phase-inflight')}
+              {vlStatus.phase === 'done' && t(vlStatus.status === 'ok' ? 'vl-cmd-phase-done-ok' : 'vl-cmd-phase-done-error')}
+              {vlStatus.phase === 'done' && vlStatus.result?.detail ? ` — ${vlStatus.result.detail}` : ''}
+            </div>
+          )}
+        </SheetSection>
+      )}
 
       {/* La sezione che potrebbe mentire piu' facilmente di tutte. Oggi non
           esistono poteri per-nodo: la verita' e' che un nodo accoppiato e'
@@ -122,7 +189,13 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
       </SheetSection>
 
       <SheetSection title={t('node-detail-network-view')}>
-        <div className="nc-set-info">{t(exposure.shared ? 'peer-shared' : 'peer-private')}</div>
+        {/* Bug preesistente scoperto qui: questa riga sceglieva fra due sole
+            chiavi fisse su `exposure.shared`, ignorando `exposure.key` — per
+            un nodo VL (`shared` sempre false) avrebbe mostrato "privato",
+            che implica poter essere condiviso: falso, i nodi VL non si
+            federano. Il ramo non-VL resta l'espressione originale,
+            invariata: nessun cambio di comportamento per i nodi Fleet. */}
+        <div className="nc-set-info">{t(isVl ? exposure.key : (exposure.shared ? 'peer-shared' : 'peer-private'))}</div>
         {canEditVisibility && <>
           <label className="nc-field">{t('peer-visibility')}
             <select value={node.visibility || 'network'} disabled={readonly || !!busy}
