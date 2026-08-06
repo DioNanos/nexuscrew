@@ -35,9 +35,14 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       // stessa semantica multi-owner di SettingsPanel (readVlDirectory).
       // Best-effort per-owner: un owner che non risponde non blocca gli
       // altri e non blocca i gruppi Fleet.
+      // topologyVlOwners legge la RISPOSTA di /api/topology ({nodes:[...]});
+      // qui `topology` è già l'array spacchettato — va riavvolto, o gli owner
+      // federati risultano SEMPRE vuoti e i nodi VL restano visibili solo a
+      // chi è collegato all'owner che li ospita (trovato con il test
+      // federato: nodo su un owner, UI su un altro).
       const vlOwners = [
         { instanceId: localInstanceId || null, route: [], label: null },
-        ...topologyVlOwners(topology, localInstanceId),
+        ...topologyVlOwners({ nodes: topology }, localInstanceId),
       ];
       const vlPeers = [];
       await Promise.all(vlOwners.map(async (owner) => {
