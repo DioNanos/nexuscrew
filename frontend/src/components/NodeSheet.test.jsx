@@ -376,3 +376,39 @@ describe('VL prompt: un campo, non un grilletto', () => {
     ));
   });
 });
+
+// Il difetto mobile: a ogni giro di polling NodesTab ricrea le prop (node
+// nuovo, onClose nuovo) e l'effetto di DetailSheet — armato su [onClose] —
+// rifaceva sheet.focus(): il fuoco moriva sotto le dita e la tastiera si
+// chiudeva. Il test fa QUELLO che succede dal telefono: digita, arriva il
+// polling, e testo E fuoco devono sopravvivere. Senza far scattare il
+// "polling" (rerender con identita' nuove) questo test non proverebbe niente.
+describe('VL prompt: digitare sopravvive al polling', () => {
+  const vlNode = (overrides = {}) => vlNodeToPeer({
+    nodeId: 'a'.repeat(32), label: 'N900', cell: 'VL-aaaaaaaa',
+    pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
+    health: { state: 'running', detail: 'nominal' },
+    capabilities: ['status', 'prompt'],
+    inflight: null, lastAck: null,
+    ...overrides,
+  });
+
+  it('testo e focus restano sul campo quando il genitore ripassa prop nuove', () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const view = render(<NodeSheet node={vlNode()} nodes={[]} token="token"
+      readonly={false} refresh={refresh} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'prompt' }));
+    const field = screen.getByPlaceholderText('write the prompt for the device session…');
+    field.focus();
+    fireEvent.change(field, { target: { value: 'c' } });
+    expect(document.activeElement).toBe(field);
+
+    // il giro di polling: node RICOSTRUITO e onClose con identita' NUOVA,
+    // esattamente come NodesTab a ogni load().
+    view.rerender(<NodeSheet node={vlNode()} nodes={[]} token="token"
+      readonly={false} refresh={refresh} onClose={() => {}} />);
+
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe('c');
+  });
+});

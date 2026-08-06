@@ -30,19 +30,29 @@ export default function DetailSheet({ title, subtitle, status, footer, onClose, 
     // Chi aveva il fuoco prima dell'apertura lo riprende alla chiusura: senza,
     // chiudere il foglio da tastiera rimanda il fuoco all'inizio del pannello e
     // si perde il posto nella lista.
+    //
+    // SOLO AL MONTAGGIO, deliberatamente: questo effetto era armato su
+    // [onClose], e i genitori ricreano onClose a ogni giro di polling — il
+    // foglio si RUBAVA il fuoco ogni pochi secondi, e su mobile la tastiera
+    // si chiudeva sotto le dita mentre si scriveva nel campo prompt. Il fuoco
+    // iniziale e il ripristino appartengono all'apertura/chiusura del foglio,
+    // non all'identita' di una callback.
     restoreRef.current = document.activeElement;
     if (sheetRef.current) sheetRef.current.focus();
+    return () => {
+      const previous = restoreRef.current;
+      if (previous && typeof previous.focus === 'function' && document.contains(previous)) previous.focus();
+    };
+  }, []);
+
+  useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
       e.stopPropagation();
       onClose && onClose();
     };
     document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('keydown', onKey, true);
-      const previous = restoreRef.current;
-      if (previous && typeof previous.focus === 'function' && document.contains(previous)) previous.focus();
-    };
+    return () => document.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 
   return (
