@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { vlNodeToPeer, topologyVlOwners } from './vl-nodes-model.js';
+import { vlNodeToPeer, topologyVlOwners, vlSidebarGroups } from './vl-nodes-model.js';
 
 const RAW = {
   nodeId: 'a'.repeat(32),
@@ -148,5 +148,65 @@ describe('topologyVlOwners — ports topologyOwners() semantics (lib/mcp/cells.j
     expect(topologyVlOwners(null, 'x')).toEqual([]);
     expect(topologyVlOwners({}, 'x')).toEqual([]);
     expect(topologyVlOwners({ nodes: 'not-an-array' }, 'x')).toEqual([]);
+  });
+});
+
+// --- session dichiarata + gruppi sidebar ------------------------------------
+// La forma di RAW+session e' quella VERA di GET /api/vl-nodes dopo il commit
+// hub a3801bd (broker.list -> session sanitizzata {attached, profile} | null),
+// a sua volta dalla forma vera del filo del device (test Rust
+// heartbeat_declares_the_session_...). Non un mondo costruito ad arte.
+
+describe('vlNodeToPeer — session', () => {
+  it('carries the declared session through untouched', () => {
+    const peer = vlNodeToPeer({ ...RAW, session: { attached: true, profile: 'ollama' } });
+    expect(peer.session).toEqual({ attached: true, profile: 'ollama' });
+  });
+
+  it('an absent or null session stays null — old hub or old binary', () => {
+    expect(vlNodeToPeer(RAW).session).toBeNull();
+    expect(vlNodeToPeer({ ...RAW, session: null }).session).toBeNull();
+  });
+});
+
+describe('vlSidebarGroups', () => {
+  const peerAttached = vlNodeToPeer({ ...RAW, session: { attached: true, profile: 'ollama' } });
+  const peerDetached = vlNodeToPeer({ ...RAW, session: { attached: false, profile: 'ollama' } });
+  const peerSilent = vlNodeToPeer(RAW);
+  const peerOffline = vlNodeToPeer({ ...RAW, online: false, session: { attached: true, profile: 'ollama' } });
+
+  it('an attached node is one honest session', () => {
+    const [g] = vlSidebarGroups([peerAttached]);
+    expect(g.kind).toBe('vl');
+    expect(g.label).toBe('N900');
+    expect(g.status).toBe('up');
+    expect(g.sessions).toHaveLength(1);
+    expect(g.sessions[0].name).toBe('ollama');
+    expect(g.sessions[0].key).toContain(RAW.nodeId);
+  });
+
+  it('detached or silent declarations are zero sessions — never "1 in attesa"', () => {
+    expect(vlSidebarGroups([peerDetached])[0].sessions).toHaveLength(0);
+    expect(vlSidebarGroups([peerSilent])[0].sessions).toHaveLength(0);
+  });
+
+  it('an offline node shows what other offline nodes show, no invented state', () => {
+    const [g] = vlSidebarGroups([peerOffline]);
+    expect(g.status).toBe('offline');
+    expect(g.sessions).toHaveLength(0, 'offline: la sessione non e\' raggiungibile, non si conta');
+    expect(g.downSince).toBe(RAW.lastSeen);
+  });
+
+  it('groups keep the sidebar contract: no cells, no unmanaged, no deck owner', () => {
+    const [g] = vlSidebarGroups([peerAttached]);
+    expect(g.cells).toEqual([]);
+    expect(g.unmanaged).toEqual([]);
+    expect(g.instanceId).toBeNull();
+    expect(g.peer).toBe(peerAttached);
+  });
+
+  it('garbage in, nothing out', () => {
+    expect(vlSidebarGroups(null)).toEqual([]);
+    expect(vlSidebarGroups([null, {}, { kind: 'cell' }])).toEqual([]);
   });
 });

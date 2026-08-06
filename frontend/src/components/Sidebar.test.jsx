@@ -157,3 +157,79 @@ describe('Sidebar session identity', () => {
     prompt.mockRestore(); alert.mockRestore();
   });
 });
+
+// --- nodi VL nella sidebar (VL_NODES_IN_SIDEBAR, 2026-08-06) ----------------
+// I gruppi NON sono costruiti a mano: partono dalla forma VERA di
+// GET /api/vl-nodes (broker.list + arricchimento routes) e passano dallo
+// stesso modello della produzione (vlNodeToPeer -> vlSidebarGroups). La
+// lezione del profile_mismatch: un test che si costruisce il mondo non prova
+// che il codice regga in quello reale.
+import { vlNodeToPeer, vlSidebarGroups } from '../lib/vl-nodes-model.js';
+
+const VL_API_NODE = {
+  nodeId: 'f'.repeat(32),
+  label: 'N900',
+  pairedAt: 1700000000000,
+  online: true,
+  lastSeen: 1700000100000,
+  generation: 1,
+  version: '0.1.0',
+  capabilities: ['status', 'health', 'prompt'],
+  health: { state: 'running', uptimeSec: 10, rssBytes: 2_000_000, processCount: 2, brokerReachable: true },
+  session: { attached: true, profile: 'ollama' },
+  inflight: null,
+  lastAck: null,
+  id: `${'a'.repeat(32)}:VL-${'f'.repeat(32)}`,
+  instanceId: 'a'.repeat(32),
+  cell: `VL-${'ffffffff'}`,
+  canReceive: false,
+  canManage: true,
+};
+
+describe('Sidebar — nodi VL', () => {
+  it('an attached N900 is a node group with one honest session that opens the events view', () => {
+    const peer = vlNodeToPeer(VL_API_NODE);
+    const onOpenVlSession = vi.fn();
+    render(<Sidebar
+      nodeGroups={vlSidebarGroups([peer])}
+      onOpenVlSession={onOpenVlSession}
+      onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
+    />);
+    expect(screen.getByText('N900')).toBeTruthy();
+    expect(screen.getByText(/1 sessions?/)).toBeTruthy();
+    const row = screen.getByText('ollama').closest('.nc-vl-session-row');
+    expect(row).toBeTruthy();
+    fireEvent.click(row);
+    expect(onOpenVlSession).toHaveBeenCalledWith(peer);
+    // niente semantiche tmux sulla riga VL: non draggabile, niente kill.
+    expect(row.getAttribute('draggable')).not.toBe('true');
+    expect(within(row).queryByTitle('terminate')).toBeNull();
+  });
+
+  it('a node that declares no attach counts zero sessions — never "1 in attesa"', () => {
+    const peer = vlNodeToPeer({ ...VL_API_NODE, session: null });
+    render(<Sidebar
+      nodeGroups={vlSidebarGroups([peer])}
+      onOpenVlSession={vi.fn()}
+      onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
+    />);
+    const header = screen.getByText('N900').closest('.nc-node-title');
+    expect(within(header).getByText(/0 sessions?/)).toBeTruthy();
+    expect(screen.queryByText('ollama')).toBeNull();
+  });
+
+  it('an offline VL node shows what other offline nodes show', () => {
+    const peer = vlNodeToPeer({ ...VL_API_NODE, online: false });
+    render(<Sidebar
+      nodeGroups={vlSidebarGroups([peer])}
+      onOpenVlSession={vi.fn()}
+      onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
+    />);
+    expect(screen.getByText('N900')).toBeTruthy();
+    // stessa etichetta degli altri nodi offline (nodeStateLabel), mai un
+    // conteggio: una sessione che non si puo' vedere non si conta.
+    expect(screen.queryByText(/1 sessions?/)).toBeNull();
+    expect(screen.queryByText('ollama')).toBeNull();
+    expect(screen.getByText(/offline/i)).toBeTruthy();
+  });
+});

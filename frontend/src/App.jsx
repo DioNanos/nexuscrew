@@ -13,6 +13,7 @@ import SettingsPanel from './components/SettingsPanel.jsx';
 import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
+import VlSessionView from './components/VlSessionView.jsx';
 import {
   apiFetch, fleetStatus, fleetUp, fleetDown, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
 } from './lib/api.js';
@@ -259,6 +260,9 @@ export default function App() {
   const [gridFocus, setGridFocus] = useState(null);   // refKey del tile focato
   const [single, setSingle] = useState(null);     // overlay vista singola desktop: ref {session, node?}
   const openSingle = (ref) => setSingle(parseRef(ref));
+  // Sessione di un nodo VL nella vista larga (VL_NODES_IN_SIDEBAR): il peer
+  // arriva dalla sidebar (vlNodeToPeer), la vista riusa VlNodeEvents.
+  const [vlSession, setVlSession] = useState(null);
   // Gruppi per-nodo remoto (B2, design §5): polling separato, best-effort;
   // zero nodi configurati -> [] e workspace identico a oggi.
   const nodeGroups = useNodes(token, isDesktop);
@@ -514,10 +518,23 @@ export default function App() {
 
   // Flusso mobile INTATTO (aggiunta B2: voce settings nell'header della home).
   if (!isDesktop) {
+    if (vlSession) {
+      // La sessione del nodo VL a schermo pieno anche su mobile: stessa
+      // vista (VlSessionView) e stesso overlay del desktop — mai dentro una
+      // scheda stretta.
+      return (
+        <>
+          <div className="nc-single-overlay">
+            <VlSessionView peer={vlSession} token={token} onBack={() => setVlSession(null)} />
+          </div>
+          {settingsOverlays}
+        </>
+      );
+    }
     if (!session) {
       return (
         <>
-          <SessionList onPick={pickSession} token={token} onSettings={openSettings} />
+          <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession} />
           {settingsOverlays}
         </>
       );
@@ -556,6 +573,7 @@ export default function App() {
           onVisibility={onVisibility}
           onNew={() => openSettings('fleet', true)}
           onSettings={openSettings}
+          onOpenVlSession={setVlSession}
           width={sideW}
           collapsed={sideMin}
           onResize={setSideW}
@@ -589,6 +607,11 @@ export default function App() {
         />
       </div>
 
+      {vlSession && (
+        <div className="nc-single-overlay">
+          <VlSessionView peer={vlSession} token={token} onBack={() => setVlSession(null)} />
+        </div>
+      )}
       {single && (
         <div className="nc-single-overlay">
           <SingleView

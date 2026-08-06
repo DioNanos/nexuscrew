@@ -4,8 +4,11 @@
 // (design §7, niente spinner infinito); zero nodi configurati -> groups = []
 // e la UI resta identica a oggi.
 import { useEffect, useRef, useState } from 'react';
-import { getNodes, getTopology, getNodeAliases, getRouteSessions, fleetStatus } from '../lib/api.js';
+import {
+  apiFetch, getNodes, getTopology, getNodeAliases, getRouteSessions, fleetStatus, getVlNodes,
+} from '../lib/api.js';
 import { buildNodeGroups, trackDown } from '../lib/nodes-model.js';
+import { vlNodeToPeer, topologyVlOwners, vlSidebarGroups } from '../lib/vl-nodes-model.js';
 
 const POLL_MS = 4000;
 
@@ -18,12 +21,34 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
     let alive = true;
 
     async function poll() {
-      let nodes = []; let topology = []; let aliases = {};
+      let nodes = []; let topology = []; let aliases = {}; let localInstanceId = '';
       await Promise.all([
         getNodes(token).then((j) => { nodes = Array.isArray(j.nodes) ? j.nodes : []; }).catch(() => {}),
         getTopology(token).then((j) => { topology = Array.isArray(j.nodes) ? j.nodes : []; }).catch(() => {}),
         getNodeAliases(token).then((j) => { aliases = j && typeof j.aliasesByInstanceId === 'object' ? j.aliasesByInstanceId : {}; }).catch(() => {}),
+        apiFetch('/api/config', token).then((r) => r.json())
+          .then((j) => { localInstanceId = j && typeof j.instanceId === 'string' ? j.instanceId : ''; }).catch(() => {}),
       ]);
+      if (!alive) return;
+      // Nodi VL nella stessa lista della sidebar (VL_NODES_IN_SIDEBAR):
+      // owner locale + owner federati vivi dalla topology gia' pollata —
+      // stessa semantica multi-owner di SettingsPanel (readVlDirectory).
+      // Best-effort per-owner: un owner che non risponde non blocca gli
+      // altri e non blocca i gruppi Fleet.
+      const vlOwners = [
+        { instanceId: localInstanceId || null, route: [], label: null },
+        ...topologyVlOwners(topology, localInstanceId),
+      ];
+      const vlPeers = [];
+      await Promise.all(vlOwners.map(async (owner) => {
+        try {
+          const payload = await getVlNodes(token, owner.route);
+          for (const raw of payload.nodes || []) {
+            const peer = vlNodeToPeer(raw, owner);
+            if (peer) vlPeers.push(peer);
+          }
+        } catch (_) { /* owner senza vl-nodes o irraggiungibile: zero righe, mai un blocco */ }
+      }));
       if (!alive) return;
       const remote = {};
       const fleet = {};
@@ -55,7 +80,10 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       if (!alive) return;
       const first = buildNodeGroups({ nodes, topology, remote, fleet, aliases, down: downRef.current });
       downRef.current = trackDown(downRef.current, first, Math.floor(Date.now() / 1000));
-      setGroups(buildNodeGroups({ nodes, topology, remote, fleet, aliases, down: downRef.current }));
+      setGroups([
+        ...buildNodeGroups({ nodes, topology, remote, fleet, aliases, down: downRef.current }),
+        ...vlSidebarGroups(vlPeers),
+      ]);
     }
 
     poll();

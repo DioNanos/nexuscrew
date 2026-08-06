@@ -45,6 +45,11 @@ export function vlNodeToPeer(node, owner = {}) {
     generation: node.generation ?? null,
     version: node.version ?? null,
     health: node.health ?? null,
+    // La sessione DICHIARATA dal device nell'heartbeat ({attached, profile},
+    // gia' sanitizzata dal broker) — e' il dato con cui la sidebar scrive
+    // «N900 · 1 sessione». Assente (hub o binario piu' vecchio) -> null,
+    // mai una sessione inventata.
+    session: node.session ?? null,
     capabilities: Array.isArray(node.capabilities) ? node.capabilities : [],
     inflight: node.inflight ?? null,
     lastAck: node.lastAck ?? null,
@@ -54,6 +59,49 @@ export function vlNodeToPeer(node, owner = {}) {
     ownerInstanceId: typeof owner.instanceId === 'string' ? owner.instanceId : null,
     ownerLabel: typeof owner.label === 'string' && owner.label ? owner.label : null,
   };
+}
+
+// Gruppi sidebar per i nodi VL: la stessa lista dei nodi («N900 · 1
+// sessione»), costruita DAI peer di vlNodeToPeer — non un secondo modello.
+// Conteggio onesto: 1 sessione se il nodo la DICHIARA attaccata
+// (session.attached === true nell'heartbeat), 0 altrimenti; un nodo offline
+// mostra cio' che mostrano gli altri nodi offline (status 'offline' +
+// downSince), nessuno stato speciale, e non conta sessioni che non puo'
+// vedere. Il contratto del gruppo e' quello di buildNodeGroups (status/
+// sessions/cells/unmanaged) cosi' la Sidebar ordina e collassa questi gruppi
+// con le stesse preferenze degli altri; `instanceId` resta null perche' i
+// deck owner sono celle Fleet, non nodi VL.
+export function vlSidebarGroups(peers) {
+  const out = [];
+  for (const peer of Array.isArray(peers) ? peers : []) {
+    if (!peer || peer.kind !== 'vl' || !peer.nodeId) continue;
+    const online = peer.online === true;
+    const attached = online && peer.session?.attached === true;
+    const ownerKey = peer.ownerInstanceId || 'local';
+    out.push({
+      kind: 'vl',
+      name: `vl-${peer.nodeId.slice(0, 8)}`,
+      label: peer.label,
+      route: Array.isArray(peer.route) ? [...peer.route] : [],
+      instanceId: null,
+      direct: false,
+      status: online ? 'up' : 'offline',
+      downSince: online ? null : (peer.lastSeen ?? null),
+      sessions: attached ? [{
+        key: `vl:${ownerKey}:${peer.nodeId}`,
+        name: peer.session.profile,
+        attached: true,
+      }] : [],
+      cells: [],
+      unmanaged: [],
+      fleetAvailable: false,
+      capabilities: [],
+      engines: [],
+      health: peer.health ?? null,
+      peer,
+    });
+  }
+  return out;
 }
 
 // Porta la semantica di `topologyOwners()` (lib/mcp/cells.js, server MCP)
