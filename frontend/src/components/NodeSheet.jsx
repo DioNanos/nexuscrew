@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { nodeAction, removeNode, updateNode, setNodeVisibility, sendVlNodeCommand, fleetDefinitions } from '../lib/api.js';
@@ -153,6 +153,18 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
     }
   };
 
+  // Su un nodo GIA' ristretto l'elenco serve subito, non al primo click: senza,
+  // una cella concessa che non esiste piu' resta indistinguibile da una viva
+  // finche' qualcuno non apre il picker — e chi apre il foglio per controllare
+  // i permessi e' proprio chi ha bisogno di saperlo. Una sola richiesta, e solo
+  // per i nodi che hanno un elenco da verificare.
+  useEffect(() => {
+    if (canEditCellScope && cellScope === 'selected' && localCells === null) ensureCells();
+    // `ensureCells` e' stabile nei fatti (guardia su localCells) e includerla
+    // rifarebbe il giro a ogni render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canEditCellScope, cellScope, localCells]);
+
   const cellGrants = cellScopeGrants(node, localCells);
   const cellCandidates = cellScope === 'selected'
     ? cellScopeCandidates(node, localCells, cellQuery) : [];
@@ -282,7 +294,16 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
           grant esisteranno, l'elenco compare qui e la frase qui sopra cambia. */}
       <SheetSection title={t('node-detail-authority')}>
         <div className="nc-set-info">{t(authority.key)}</div>
-        {authority.grants.length === 0 && <small className="nc-set-hint">{t('authority-no-grants')}</small>}
+        {/* La frase diceva che i poteri per-nodo «non esistono ancora»: con lo
+            scope celle non e' piu' vero, ed era scritta DUE sezioni sopra il
+            controllo che li concede. Due varianti perche' «qui sotto» e' una
+            promessa: su un nodo in transito quella sezione non c'e', e
+            mandarci l'operatore sarebbe peggio del silenzio. */}
+        {authority.grants.length === 0 && (
+          <small className="nc-set-hint">
+            {t(canEditCellScope ? 'authority-no-grants' : 'authority-no-grants-elsewhere')}
+          </small>
+        )}
       </SheetSection>
 
       <SheetSection title={t('node-detail-network-view')}>

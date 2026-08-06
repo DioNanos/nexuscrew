@@ -103,12 +103,21 @@ describe('scope celle', () => {
     expect(patch).toEqual({ cellVisibility: 'selected', cells: ['Research'] });
   });
 
-  it('le concessioni non risultano "sparite" prima che l\'elenco arrivi', () => {
-    // Il foglio si apre senza aver chiesto le celle: marcare subito ogni
-    // concessione come inesistente sarebbe un falso allarme a ogni apertura.
-    renderSheet(scoped({ cellVisibility: 'selected', cells: ['Dev'] }));
+  it('su un nodo gia\' ristretto l\'elenco si chiede subito', async () => {
+    // Trovato guardando la UI vera: senza, una cella concessa che non esiste
+    // piu' resta indistinguibile da una viva finche' qualcuno non apre il
+    // picker — e chi apre il foglio per controllare i permessi e' proprio chi
+    // ha bisogno di saperlo.
+    renderSheet(scoped({ cellVisibility: 'selected', cells: ['Dev', 'Sparita'] }));
+    await waitFor(() => expect(mocks.fleetDefinitions).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(document.querySelectorAll('.nc-detail-grant.unknown')).toHaveLength(1));
+  });
+
+  it('nel primo istante, prima della risposta, nessuna concessione e\' marcata', () => {
+    // «Non lo so» non deve leggersi come «e' morta»: il render iniziale non
+    // deve mostrare un falso allarme per il tempo di una richiesta di rete.
+    renderSheet(scoped({ cellVisibility: 'selected', cells: ['Dev', 'Sparita'] }));
     expect(document.querySelectorAll('.nc-detail-grant.unknown')).toHaveLength(0);
-    expect(mocks.fleetDefinitions).not.toHaveBeenCalled();
   });
 
   it('avverte che cambiando modo l\'elenco scelto viene perso', () => {
@@ -127,9 +136,15 @@ describe('scope celle', () => {
     expect(screen.queryByText(/Switching mode clears the list/i)).toBeNull();
   });
 
-  it('l\'elenco delle celle si chiede solo a chi lo apre davvero', async () => {
-    renderSheet(scoped({ cellVisibility: 'selected', cells: [] }));
+  it('un nodo senza restrizione non paga nessuna richiesta in piu\'', () => {
+    // Un foglio aperto per riavviare un tunnel non deve chiedere le celle.
+    renderSheet(scoped({ cellVisibility: 'all' }));
     expect(mocks.fleetDefinitions).not.toHaveBeenCalled();
+  });
+
+  it('l\'elenco si chiede una volta sola, non a ogni apertura del picker', async () => {
+    renderSheet(scoped({ cellVisibility: 'selected', cells: [] }));
+    await waitFor(() => expect(mocks.fleetDefinitions).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByText(/Add a cell/i));
     await waitFor(() => expect(mocks.fleetDefinitions).toHaveBeenCalledTimes(1));
     // Una seconda apertura non ripaga la richiesta.
@@ -192,7 +207,13 @@ describe('NC-I: cosa dice il foglio', () => {
     // facilmente: senza questa frase resterebbe solo la visibilita', che dice
     // cosa il nodo VEDE e si leggerebbe come un limite di potere.
     expect(screen.getByText(/authority equal to yours/i)).toBeTruthy();
-    expect(screen.getByText(/per-node powers do not exist yet/i)).toBeTruthy();
+    // La frase diceva che i poteri per-nodo «non esistono ancora». Con lo scope
+    // celle non e' piu' vero — e restava scritta due sezioni sopra il controllo
+    // che li concede. L'intento del test non cambia: questa sezione deve
+    // continuare a dire che dentro cio' che vede l'autorita' e' PIENA, perche'
+    // un limite di visibilita' si legge facilmente come un limite di potere.
+    expect(screen.getByText(/the authority stays full/i)).toBeTruthy();
+    expect(screen.queryByText(/do not exist yet/i)).toBeNull();
   });
 
   it('non attribuisce a un nodo in transito un\'autorita\' su questa macchina', () => {
