@@ -165,6 +165,32 @@ test('un target sconosciuto non diventa una consegna riuscita', async (t) => {
   assert.notEqual(out.status, 'delivered', JSON.stringify(out));
 });
 
+// G1 (rilievo DevAuditor su rc.14): l'invariante "un peer rumoroso non affama
+// le celle di casa" era dichiarata nel commit e nel codice, ma NON protetta.
+// Il budget federato e quello locale sono due limiter distinti; se un domani
+// qualcuno li riunisce, il codice resta plausibile e il danno e' invisibile
+// finche' non succede in produzione.
+test('il budget federato e\' separato: saturarlo non zittisce le celle locali', async (t) => {
+  const { a, b } = await pair(t);
+  // target-global vale 12/60s. Si satura da qui, poi la 13a deve cadere.
+  let refused = 0;
+  for (let i = 0; i < 13; i += 1) {
+    const res = await a.plain('POST', '/api/notify', {
+      title: `raffica ${i}`, session: a.session, target: b.nodeId,
+    });
+    const out = await res.json();
+    if (out.status !== 'delivered') refused += 1;
+  }
+  assert.ok(refused >= 1, 'il budget federato deve chiudersi: nessun rifiuto dopo 13 invii');
+
+  // Ora la prova che conta: una cella DI CASA sul target deve poter ancora
+  // parlare. Se i due budget fossero lo stesso, questa sarebbe 429.
+  const local = await b.plain('POST', '/api/notify', { title: 'casa mia', session: b.session });
+  const body = await local.json();
+  assert.equal(local.status, 200, `una notifica locale non deve pagare la raffica federata: ${JSON.stringify(body)}`);
+  assert.ok(body.delivered, JSON.stringify(body));
+});
+
 // Il confine va DICHIARATO, non dedotto dall'assenza. Senza questo test, un
 // domani qualcuno federa /events o /asks e nessuna guardia se ne accorge.
 test('solo /notify attraversa: events, asks e push restano locali', () => {
