@@ -92,3 +92,11 @@
     box-shadow: -12px 0 40px rgba(0, 0, 0, .55);
   }
 }
+
+/* Campo prompt del nodo VL: il verbo con argomenti ha la sua interfaccia. */
+.nc-vl-prompt { display: flex; gap: 8px; align-items: flex-end; }
+.nc-vl-prompt textarea {
+  flex: 1 1 auto; min-height: 64px; resize: vertical;
+  background: #101810; color: #d8ffe8; border: 1px solid #2d4634;
+  border-radius: 4px; padding: 6px 8px; font: inherit;
+}

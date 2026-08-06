@@ -9,17 +9,38 @@
 // decisione a se' se e quando esporla.
 const NEVER_EXPOSED = new Set(['update_candidate']);
 
+// Verbi che RICHIEDONO argomenti: non possono essere bottoni "spara e via".
+// `prompt` esige args.text — inviato con args {} il device lo rifiuta
+// (correttamente) con `invalid bounded command`: il contratto reggeva, la UI
+// no. Chi richiede un input ha la sua interfaccia (vlHasPrompt + campo);
+// chi ha un default sensato lo dichiara qui, esplicito, mai un {} implicito.
+export const VL_PROMPT_MAX = 4096;
+const INPUT_VERBS = new Set(['prompt']);
+const DEFAULT_ARGS = { logs: { limit: 50 } };
+
 export function vlNodeActions(node) {
   if (!node || node.kind !== 'vl') return [];
   const caps = Array.isArray(node.capabilities) ? node.capabilities : [];
   const seen = new Set();
   const out = [];
   for (const cap of caps) {
-    if (typeof cap !== 'string' || !cap || NEVER_EXPOSED.has(cap) || seen.has(cap)) continue;
+    if (typeof cap !== 'string' || !cap || NEVER_EXPOSED.has(cap) || INPUT_VERBS.has(cap) || seen.has(cap)) continue;
     seen.add(cap);
     out.push(cap);
   }
   return out;
+}
+
+// Il device dichiara `prompt`? (la UI mostra il campo solo se dichiarato:
+// stessa regola dei bottoni — un verbo non dichiarato non esiste).
+export function vlHasPrompt(node) {
+  return !!(node && node.kind === 'vl' && Array.isArray(node.capabilities)
+    && node.capabilities.includes('prompt'));
+}
+
+// Argomenti di default di un verbo senza input dedicato. Copia difensiva.
+export function vlDefaultArgs(kind) {
+  return DEFAULT_ARGS[kind] ? { ...DEFAULT_ARGS[kind] } : {};
 }
 
 // Lo stato di un comando NON torna nel POST (risponde solo {id,
