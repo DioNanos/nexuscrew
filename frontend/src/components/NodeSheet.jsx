@@ -4,7 +4,7 @@ import { useLang } from '../hooks/useLang.js';
 import { nodeAction, removeNode, updateNode, setNodeVisibility, sendVlNodeCommand } from '../lib/api.js';
 import { tunnelInfo, isValidLabel } from '../lib/settings-model.js';
 import { nodeDetailModel, selectionCandidates } from '../lib/node-detail.js';
-import { vlNodeActions, vlCommandStatus } from '../lib/vl-node-detail.js';
+import { vlNodeActions, vlCommandStatus, vlHasPrompt, vlDefaultArgs, VL_PROMPT_MAX } from '../lib/vl-node-detail.js';
 import DetailSheet, { SheetSection } from './DetailSheet.jsx';
 import Icon from './Icon.jsx';
 
@@ -29,6 +29,10 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   // dell'ack" da un lastAck del nodo che appartiene a un comando precedente
   // (design NC_UI_NODI_VL step 2: "inviato" non e' "fatto").
   const [vlPending, setVlPending] = useState(null);
+  // Campo prompt (verbo con argomenti): il click sul verbo APRE il campo, non
+  // spara. Il testo resta nel campo se l'invio fallisce (ritentabile).
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [promptText, setPromptText] = useState('');
 
   const model = useMemo(
     () => nodeDetailModel(node, nodes, { readonly, busy: !!busy }),
@@ -68,15 +72,30 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   // qui e' cio' che permette a vlCommandStatus di distinguere "inviato da
   // questo click" da un ack di un comando precedente (mai un successo
   // ottimistico prima che il server lo confermi).
-  const runVlCommand = (kind) => guard(`${node.nodeId}:${kind}`, async () => {
+  const runVlCommand = (kind, args = vlDefaultArgs(kind)) => guard(`${node.nodeId}:${kind}`, async () => {
     // La route dell'owner (step 3, NC_UI_NODI_VL_REMOTI): un nodo remoto ha
     // `node.route` non vuota, e il comando DEVE arrivare li', non a
     // /api/vl-nodes locale — sbagliare instrada il comando al device
     // sbagliato (invariante 3 del brief).
-    const result = await sendVlNodeCommand(token, node.nodeId, kind, {}, node.route || []);
+    const result = await sendVlNodeCommand(token, node.nodeId, kind, args, node.route || []);
     setVlPending({ id: result.id, kind, submittedAt: Date.now() });
     await refresh();
   });
+
+  // Invio del prompt: trim + bound come il resto della catena (4 KiB sul
+  // device); il vuoto non parte proprio. Il campo si svuota SOLO a invio
+  // riuscito — su errore il testo resta li', pronto al retry.
+  const sendPrompt = () => {
+    const text = promptText.trim().slice(0, VL_PROMPT_MAX);
+    if (!text) return;
+    guard(`${node.nodeId}:prompt`, async () => {
+      const result = await sendVlNodeCommand(token, node.nodeId, 'prompt', { text }, node.route || []);
+      setVlPending({ id: result.id, kind: 'prompt', submittedAt: Date.now() });
+      setPromptText('');
+      setPromptOpen(false);
+      await refresh();
+    });
+  };
 
   const saveEdit = () => {
     if (!isValidLabel(editing.label)) { setErr(t('err-label')); return; }
@@ -121,13 +140,23 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   };
 
   const footer = isVl
-    ? vlActions.map((kind) => (
-      <button key={kind} type="button" className="nc-btn ghost"
-        disabled={!!busy || readonly} title={readonly ? t('settings-readonly') : undefined}
-        onClick={() => runVlCommand(kind)}>
-        {vlCommandLabel(kind)}
-      </button>
-    ))
+    ? [
+      ...vlActions.map((kind) => (
+        <button key={kind} type="button" className="nc-btn ghost"
+          disabled={!!busy || readonly} title={readonly ? t('settings-readonly') : undefined}
+          onClick={() => runVlCommand(kind)}>
+          {vlCommandLabel(kind)}
+        </button>
+      )),
+      // `prompt` non e' un bottone che spara: apre il campo (verbo con args).
+      ...(vlHasPrompt(node) ? [(
+        <button key="prompt" type="button" className={`nc-btn ghost${promptOpen ? ' on' : ''}`}
+          disabled={!!busy || readonly} title={readonly ? t('settings-readonly') : undefined}
+          onClick={() => setPromptOpen((v) => !v)}>
+          {vlCommandLabel('prompt')}
+        </button>
+      )] : []),
+    ]
     : actions.map((a) => (
       <button key={a.action} type="button" className={`nc-btn ${a.danger ? 'danger' : 'ghost'}`}
         disabled={a.disabled} title={a.disabled && readonly ? t('settings-readonly') : undefined}
@@ -173,7 +202,24 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
           confermi in lastAck. */}
       {isVl && (
         <SheetSection title={t('node-detail-command')}>
-          {vlActions.length === 0 && <small className="nc-set-hint">{t('vl-no-commands')}</small>}
+          {vlActions.length === 0 && !vlHasPrompt(node) && <small className="nc-set-hint">{t('vl-no-commands')}</small>}
+          {promptOpen && (
+            <div className="nc-vl-prompt">
+              <textarea
+                value={promptText}
+                maxLength={VL_PROMPT_MAX}
+                placeholder={t('vl-prompt-placeholder')}
+                aria-label={t('vl-prompt-placeholder')}
+                disabled={!!busy || readonly}
+                onChange={(e) => setPromptText(e.target.value)}
+              />
+              <button type="button" className="nc-btn primary"
+                disabled={!!busy || readonly || !promptText.trim()}
+                onClick={sendPrompt}>
+                {t('vl-prompt-send')}
+              </button>
+            </div>
+          )}
           {vlStatus && (
             <div className={`nc-set-test${vlStatus.phase === 'done' ? (vlStatus.status === 'ok' ? ' ok' : ' ko') : ''}`}>
               {vlStatus.kind && `${vlCommandLabel(vlStatus.kind)}: `}

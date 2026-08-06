@@ -318,3 +318,61 @@ describe('NC_UI_NODI_VL_REMOTI step 3: owner remoti', () => {
     expect(container.textContent).toContain('NovaLNX');
   });
 });
+
+// Il verbo `prompt` richiede args.text: come bottone "spara e via" produceva
+// {kind:'prompt', args:{}} e il device lo rifiutava — correttamente — con
+// `invalid bounded command`. Il contratto funzionava, la UI no: mancava il
+// campo dove scrivere. Da qui: prompt apre un input, il vuoto non parte, il
+// testo viaggia come args.text; e nessun verbo con argomenti resta nella
+// lista dei bottoni senza argomenti.
+describe('VL prompt: un campo, non un grilletto', () => {
+  const vlNode = (overrides = {}) => vlNodeToPeer({
+    nodeId: 'a'.repeat(32), label: 'N900', cell: 'VL-aaaaaaaa',
+    pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
+    health: { state: 'running', detail: 'nominal' },
+    capabilities: ['status', 'prompt'],
+    inflight: null, lastAck: null,
+    ...overrides,
+  });
+
+  function renderVl(node) {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    render(<NodeSheet node={node} nodes={[]} token="token" readonly={false} refresh={refresh} onClose={vi.fn()} />);
+    return { refresh };
+  }
+
+  it('click su prompt apre il campo e NON invia nulla; il vuoto non parte mai', () => {
+    renderVl(vlNode());
+    fireEvent.click(screen.getByRole('button', { name: 'prompt' }));
+    expect(mocks.sendVlNodeCommand).not.toHaveBeenCalled();
+    const send = screen.getByRole('button', { name: 'send prompt' });
+    expect(send.disabled).toBe(true);
+    fireEvent.change(screen.getByPlaceholderText('write the prompt for the device session…'), {
+      target: { value: '   ' },
+    });
+    expect(screen.getByRole('button', { name: 'send prompt' }).disabled).toBe(true);
+    expect(mocks.sendVlNodeCommand).not.toHaveBeenCalled();
+  });
+
+  it('il testo viaggia come args.text (trim) e l\'esito resta "inviato", mai un successo anticipato', async () => {
+    renderVl(vlNode());
+    fireEvent.click(screen.getByRole('button', { name: 'prompt' }));
+    fireEvent.change(screen.getByPlaceholderText('write the prompt for the device session…'), {
+      target: { value: '  controlla lo stato della sessione  ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'send prompt' }));
+    await waitFor(() => expect(mocks.sendVlNodeCommand).toHaveBeenCalledWith(
+      'token', 'a'.repeat(32), 'prompt', { text: 'controlla lo stato della sessione' }, [],
+    ));
+    expect(await screen.findByText(/sent, awaiting confirmation/)).toBeTruthy();
+    expect(screen.queryByText('completed')).toBeNull();
+  });
+
+  it('logs viaggia con il default esplicito: la stessa trappola non morde due volte', async () => {
+    renderVl(vlNode({ capabilities: ['logs'] }));
+    fireEvent.click(screen.getByRole('button', { name: 'logs' }));
+    await waitFor(() => expect(mocks.sendVlNodeCommand).toHaveBeenCalledWith(
+      'token', 'a'.repeat(32), 'logs', { limit: 50 }, [],
+    ));
+  });
+});
