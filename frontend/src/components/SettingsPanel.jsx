@@ -69,7 +69,6 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
   const [busy, setBusy] = useState(null);        // `${name}:${action}` in corso
   const [invite, setInvite] = useState(null);
   const [inviteForm, setInviteForm] = useState({ ssh: '', sshPort: '', name: '' });
-  const [inviteHubName, setInviteHubName] = useState('');
   const [shareHubName, setShareHubName] = useState('');
   const [devName, setDevName] = useState('');
   const [inviteAdvanced, setInviteAdvanced] = useState(false);
@@ -78,13 +77,14 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
   const [openKey, setOpenKey] = useState(null);
   const now = Date.now();
   const deviceDefault = (settings && settings.deviceName) || '';
-  // Un'installazione client invita nella rete a cui è già collegata, non crea
-  // un peer diretto verso sé stessa: apre un solo forward verso la porta
-  // d'ingresso del proprio hub, e gli altri nodi restano route interne
-  // all'hub. I peer inbound non sono hub selezionabili.
-  const inviteHubs = (nodes || []).filter((n) => n && n.direction === 'outbound' && n.name && n.ssh);
-  const inviteHub = inviteHubs.find((n) => n.name === inviteHubName) || inviteHubs[0] || null;
-  const shareHub = inviteHubs.find((n) => n.name === shareHubName) || inviteHubs[0] || null;
+  // Gli hub verso cui questa installazione ha un forward aperto. Servono a
+  // Share e al rinvio dell'invito; NON decidono dove si conia un invito.
+  // Un invito conia sempre per l'installazione che lo emette: coniarlo per
+  // l'hub richiede il suo token locale, e la via federata e' chiusa dal
+  // 2026-08-04 perche' ammettere un nodo nuovo e' la capacita' che rende la
+  // fiducia transitiva. I peer inbound non sono hub.
+  const outboundHubs = (nodes || []).filter((n) => n && n.direction === 'outbound' && n.name && n.ssh);
+  const shareHub = outboundHubs.find((n) => n.name === shareHubName) || outboundHubs[0] || null;
   const shareTunnel = shareHub ? tunnelInfo(shareHub.tunnel, now) : null;
   const shareStatusKey = shareHub?.shared
     ? (shareTunnel?.up ? 'share-local-active' : 'share-local-pending')
@@ -155,29 +155,12 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
 
   const onCreateInvite = async () => {
     setErr(null);
-    if (inviteHub) {
-      const checkedHub = validateNodeForm({
-        name: inviteHub.name, ssh: inviteHub.ssh, sshPort: inviteHub.sshPort || '',
-      });
-      if (!checkedHub.ok) { setErr(t(checkedHub.error)); return; }
-      setBusy('invite');
-      try {
-        // Il POST è eseguito sul nodo hub selezionato. Non inoltriamo label/name
-        // locali: l'invito deve identificare l'hub, non questo client.
-        setInvite(await createPeerInvite(token, {
-          ssh: checkedHub.value.ssh,
-          ...(checkedHub.value.sshPort ? { sshPort: checkedHub.value.sshPort } : {}),
-        }, [inviteHub.name]));
-      } catch (e) {
-        // Coniare un invito non attraversa piu' la federazione: e' la capacita'
-        // che AMMETTE un nodo nuovo, e delegarla a ogni peer accoppiato avrebbe
-        // reso la fiducia transitiva. Il rifiuto deve spiegare dove si fa,
-        // altrimenti l'operatore legge "not found" e cerca un guasto.
-        setErr(e && e.status === 404 ? t('invite-hub-only') : String(e.message || e));
-      }
-      setBusy(null);
-      return;
-    }
+    // Sempre locale, mai delegato. Il ramo che inoltrava all'hub outbound e'
+    // stato rimosso: dal 2026-08-04 la via federata risponde 404, quindi su
+    // ogni installazione accoppiata a un hub il bottone non poteva piu'
+    // riuscire — il percorso era diventato un messaggio d'errore invece di
+    // una funzione. Chi vuole ammettere un nodo nell'hub lo fa dall'hub
+    // (rinvio in `invite-hub-only`, mostrato prima del tentativo).
     const name = toSlug(inviteForm.name || devName || deviceDefault || 'NexusCrew');
     const checked = validateNodeForm({ name, ssh: inviteForm.ssh, sshPort: inviteForm.sshPort });
     if (!checked.ok) { setErr(t(checked.error)); return; }
@@ -287,11 +270,11 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
       {shareHub && (
         <div className="nc-set-form nc-local-share">
           <div className="nc-sheet-label">{t('share-local-heading')}</div>
-          {inviteHubs.length > 1 && (
+          {outboundHubs.length > 1 && (
             <label className="nc-field">{t('share-local-hub')}
               <select value={shareHub.name} disabled={readonly || !!busy}
                 onChange={(e) => setShareHubName(e.target.value)}>
-                {inviteHubs.map((hub) => <option key={hub.name} value={hub.name}>{hub.label || hub.name}</option>)}
+                {outboundHubs.map((hub) => <option key={hub.name} value={hub.name}>{hub.label || hub.name}</option>)}
               </select>
             </label>
           )}
@@ -323,31 +306,25 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
 
       <div className="nc-set-form">
         <div className="nc-sheet-label">{t('invite-node')}</div>
-        <small className="nc-set-hint">{inviteHub ? t('invite-network-hint') : t('invite-v2-hint')}</small>
-        {inviteHub ? (
-          <>
-            {inviteHubs.length > 1 && (
-              <label className="nc-field">{t('invite-network-label')}
-                <select value={inviteHub.name} disabled={readonly || !!busy}
-                  onChange={(e) => { setInviteHubName(e.target.value); setInvite(null); }}>
-                  {inviteHubs.map((hub) => <option key={hub.name} value={hub.name}>{hub.label || hub.name}</option>)}
-                </select>
-              </label>
-            )}
-            <div className="nc-set-info nc-invite-endpoint">
-              {t('invite-network-via')}: <b>{inviteHub.label || inviteHub.name}</b>
-              {' · '}{inviteHub.ssh}{inviteHub.sshPort ? `:${inviteHub.sshPort}` : ''}
-            </div>
-            <small className="nc-set-hint">{t('invite-network-route')}</small>
-          </>
-        ) : (
-          <label className="nc-field">{t('invite-endpoint-label')}
-            <input placeholder="user@host" value={inviteForm.ssh} disabled={readonly}
-              onChange={(e) => setInviteForm({ ...inviteForm, ssh: e.target.value })} />
-            <small className="nc-set-hint">{t('invite-endpoint-needed')}</small>
-          </label>
+        <small className="nc-set-hint">{t('invite-v2-hint')}</small>
+        {/* La destinazione va DETTA: un invito fa entrare il device in QUESTA
+            installazione, non nella rete a cui e' collegata. Prima non era
+            scritto da nessuna parte, ed e' meta' del motivo per cui la
+            delega all'hub sembrava plausibile. */}
+        <div className="nc-set-info nc-invite-endpoint">
+          {t('invite-target-local')}: <b>{deviceDefault || t('invite-target-this')}</b>
+        </div>
+        <label className="nc-field">{t('invite-endpoint-label')}
+          <input placeholder="user@host" value={inviteForm.ssh} disabled={readonly}
+            onChange={(e) => setInviteForm({ ...inviteForm, ssh: e.target.value })} />
+          <small className="nc-set-hint">{t('invite-endpoint-needed')}</small>
+        </label>
+        {/* Rinvio, non errore: chi cerca "invita nell'hub" deve trovare dove si
+            fa, invece di scoprirlo fallendo. */}
+        {outboundHubs.length > 0 && (
+          <small className="nc-set-hint nc-invite-hub-hint">{t('invite-hub-only')}</small>
         )}
-        {!inviteHub && inviteAdvanced && (
+        {inviteAdvanced && (
           <div className="nc-invite-advanced">
             <label className="nc-field">{t('node-ssh-port-label')}
               <input inputMode="numeric" placeholder="22" value={inviteForm.sshPort} disabled={readonly}
@@ -365,12 +342,12 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
           </div>
         )}
         <div className="nc-set-row nc-invite-actions">
-          <button type="button" className="nc-btn primary" disabled={readonly || !!busy || (!inviteHub && !inviteForm.ssh.trim())}
+          <button type="button" className="nc-btn primary" disabled={readonly || !!busy || !inviteForm.ssh.trim()}
             onClick={onCreateInvite}>{t('create-pairing-link')}</button>
-          {!inviteHub && <button type="button" className="nc-btn ghost" disabled={!!busy}
+          <button type="button" className="nc-btn ghost" disabled={!!busy}
             onClick={() => setInviteAdvanced((value) => !value)}>
             {inviteAdvanced ? '▾' : '▸'} {t('pair-advanced')}
-          </button>}
+          </button>
         </div>
         {invite && <>
           <PairingQr value={invite.pairingUrl} />
