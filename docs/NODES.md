@@ -133,17 +133,35 @@ Use the exact port printed by the tunnel diagnostic.
 ## Rotatable reverse-port pools
 
 A new shared peer receives a three-port pool with the same base and offsets
-`+100` and `+200`. For example, base `44003` requires these restrictions on the
-**hub** key accepted by the client:
+`+100` and `+200`. Read the base this installation actually assigned — do not
+copy the one below, it is a placeholder — and grant exactly those three ports
+on the **hub** key accepted by the client:
 
 ```text
-permitlisten="127.0.0.1:44003",permitlisten="127.0.0.1:44103",permitlisten="127.0.0.1:44203"
+permitlisten="127.0.0.1:<BASE>",permitlisten="127.0.0.1:<BASE+100>",permitlisten="127.0.0.1:<BASE+200>"
 ```
 
 Add those options when you install or update the key. NexusCrew never writes,
 widens, removes, or otherwise edits `authorized_keys`. A legacy peer with only
 one `permitlisten` remains usable, but is reported as not rotatable until the
 operator installs its full pool.
+
+**Re-pairing a device changes its base.** Pool bases are monotonic and a
+removed peer retires its own, so a device paired again is assigned a new one
+while its key still carries the previous grant. Nothing warns you: the pairing
+succeeds, the private `-L` works, the device looks connected — and Share alone
+fails, because it is the only operation that needs the reverse channel. The
+symptom is `share-channel-not-ready` with HTTP 409, and no amount of re-pairing
+fixes it, because pairing is not what is broken. Confirm it on the hub with
+`journalctl -u ssh` or `auth.log`:
+
+```text
+Received request ... to remote forward to host 127.0.0.1 port <BASE>, but the request was denied
+```
+
+That line names the exact port SSH policy is refusing. Grant that port on that
+key, and remove any grant pointing at a base that now belongs to another peer:
+one key must never hold a listen right on another peer's pool.
 
 Rotation is deliberately narrow:
 
