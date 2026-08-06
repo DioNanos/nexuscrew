@@ -152,7 +152,11 @@ while its key still carries the previous grant. Nothing warns you: the pairing
 succeeds, the private `-L` works, the device looks connected — and Share alone
 fails, because it is the only operation that needs the reverse channel. The
 symptom is `share-channel-not-ready` with HTTP 409, and no amount of re-pairing
-fixes it, because pairing is not what is broken. Confirm it on the hub with
+fixes it, because pairing is not what is broken.
+
+The hub records every refusal it issues as a `SHARE_CHANNEL_REFUSED`
+diagnostic, naming the peer, the typed failure code and **the port it probed**.
+Read it in the Diagnostics view of the PWA. Confirm the cause on the hub with
 `journalctl -u ssh` or `auth.log`:
 
 ```text
