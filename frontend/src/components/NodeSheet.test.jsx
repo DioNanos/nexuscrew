@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   updateNode: vi.fn(),
   setNodeVisibility: vi.fn(),
   sendVlNodeCommand: vi.fn(),
+  fleetDefinitions: vi.fn(),
 }));
 
 vi.mock('../lib/api.js', async (importOriginal) => ({
@@ -17,6 +18,7 @@ vi.mock('../lib/api.js', async (importOriginal) => ({
   updateNode: mocks.updateNode,
   setNodeVisibility: mocks.setNodeVisibility,
   sendVlNodeCommand: mocks.sendVlNodeCommand,
+  fleetDefinitions: mocks.fleetDefinitions,
 }));
 vi.mock('./PairingCard.jsx', () => ({ default: () => null }));
 vi.mock('../hooks/useNodes.js', () => ({ useNodes: () => [] }));
@@ -58,6 +60,67 @@ beforeEach(() => {
   mocks.updateNode.mockReset().mockResolvedValue({});
   mocks.setNodeVisibility.mockReset().mockResolvedValue({});
   mocks.sendVlNodeCommand.mockReset().mockResolvedValue({ id: 'cmd-1', status: 'submitted' });
+  mocks.fleetDefinitions.mockReset().mockResolvedValue({ cells: [{ cell: 'Dev' }, { cell: 'Research' }] });
+});
+
+// --- scope celle (NC-E in UI) --------------------------------------------
+// Il permesso per-cella esisteva gia' lato server ed era impostabile SOLO da
+// riga di comando: chi amministra dalla PWA non poteva restringere un nodo, che
+// e' il caso d'uso per cui il permesso e' nato.
+describe('scope celle', () => {
+  const scoped = (extra = {}) => ({ ...peer, ...extra });
+
+  it('un peer diretto NON condiviso resta restringibile', async () => {
+    // Differenza deliberata dalla visibilita' di transito: un nodo privato e'
+    // proprio quello che si vuole restringere per primo.
+    renderSheet(scoped({ shared: false }));
+    expect(screen.getByText(/Cells this node can see/i)).toBeTruthy();
+  });
+
+  it('un nodo raggiunto in transito non offre il controllo', () => {
+    renderSheet(scoped({ kind: 'transitive', route: ['hub', 'altro'], actions: { inspect: true } }));
+    expect(screen.queryByText(/Cells this node can see/i)).toBeNull();
+  });
+
+  it('passando a "nessuna cella" non si manda un elenco che il server ignora', async () => {
+    const { container } = renderSheet(scoped({ cellVisibility: 'selected', cells: ['Dev'] }));
+    const select = [...container.querySelectorAll('select')]
+      .find((el) => [...el.options].some((o) => o.value === 'none'));
+    fireEvent.change(select, { target: { value: 'none' } });
+    await waitFor(() => expect(mocks.updateNode).toHaveBeenCalled());
+    const [, , patch] = mocks.updateNode.mock.calls[0];
+    expect(patch).toEqual({ cellVisibility: 'none' });
+    expect(patch.cells).toBeUndefined();
+  });
+
+  it('togliere una cella manda l\'elenco senza quella, non un elenco vuoto', async () => {
+    renderSheet(scoped({ cellVisibility: 'selected', cells: ['Dev', 'Research'] }));
+    const rows = [...document.querySelectorAll('.nc-detail-grant')];
+    const devRow = rows.find((r) => r.textContent.includes('Dev'));
+    fireEvent.click(devRow.querySelector('button'));
+    await waitFor(() => expect(mocks.updateNode).toHaveBeenCalled());
+    const [, , patch] = mocks.updateNode.mock.calls[0];
+    expect(patch).toEqual({ cellVisibility: 'selected', cells: ['Research'] });
+  });
+
+  it('le concessioni non risultano "sparite" prima che l\'elenco arrivi', () => {
+    // Il foglio si apre senza aver chiesto le celle: marcare subito ogni
+    // concessione come inesistente sarebbe un falso allarme a ogni apertura.
+    renderSheet(scoped({ cellVisibility: 'selected', cells: ['Dev'] }));
+    expect(document.querySelectorAll('.nc-detail-grant.unknown')).toHaveLength(0);
+    expect(mocks.fleetDefinitions).not.toHaveBeenCalled();
+  });
+
+  it('l\'elenco delle celle si chiede solo a chi lo apre davvero', async () => {
+    renderSheet(scoped({ cellVisibility: 'selected', cells: [] }));
+    expect(mocks.fleetDefinitions).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText(/Add a cell/i));
+    await waitFor(() => expect(mocks.fleetDefinitions).toHaveBeenCalledTimes(1));
+    // Una seconda apertura non ripaga la richiesta.
+    fireEvent.click(screen.getByText(/Cancel|Annulla/i));
+    fireEvent.click(screen.getByText(/Add a cell/i));
+    await waitFor(() => expect(mocks.fleetDefinitions).toHaveBeenCalledTimes(1));
+  });
 });
 
 describe('NC-I: riga → foglio', () => {

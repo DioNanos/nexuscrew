@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
-import { nodeAction, removeNode, updateNode, setNodeVisibility, sendVlNodeCommand } from '../lib/api.js';
+import { nodeAction, removeNode, updateNode, setNodeVisibility, sendVlNodeCommand, fleetDefinitions } from '../lib/api.js';
 import { tunnelInfo, isValidLabel } from '../lib/settings-model.js';
-import { nodeDetailModel, selectionCandidates } from '../lib/node-detail.js';
+import { nodeDetailModel, selectionCandidates, cellScopeGrants, cellScopeCandidates } from '../lib/node-detail.js';
 import { vlNodeActions, vlCommandStatus, vlHasPrompt, vlDefaultArgs, VL_PROMPT_MAX } from '../lib/vl-node-detail.js';
 import DetailSheet, { SheetSection } from './DetailSheet.jsx';
 import Icon from './Icon.jsx';
@@ -24,6 +24,12 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [query, setQuery] = useState('');
   const [picking, setPicking] = useState(false);
+  // Le celle di QUESTA installazione, per lo scope NC-E. `null` = non ancora
+  // chieste: il modello lo distingue da «elenco vuoto» e non marca le
+  // concessioni come sconosciute mentre la risposta arriva.
+  const [localCells, setLocalCells] = useState(null);
+  const [cellQuery, setCellQuery] = useState('');
+  const [cellPicking, setCellPicking] = useState(false);
   // L'ultimo comando VL che QUESTA sessione ha sottomesso — {id, kind,
   // submittedAt} | null. Serve a distinguere "inviato da me, in attesa
   // dell'ack" da un lastAck del nodo che appartiene a un comando precedente
@@ -39,7 +45,7 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
     [node, nodes, readonly, busy],
   );
   if (!model) return null;
-  const { identity, reach, authority, exposure, grants, actions, canEditVisibility } = model;
+  const { identity, reach, authority, exposure, grants, actions, canEditVisibility, canEditCellScope, cellScope } = model;
   const ti = identity.routed ? { up: reach.up, since: null } : tunnelInfo(node.tunnel, Date.now());
 
   const guard = async (key, fn) => {
@@ -119,6 +125,37 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
 
   const candidates = canEditVisibility && node.visibility === 'selected'
     ? selectionCandidates(node, nodes, query) : [];
+
+  // Lo scope celle si applica con la stessa route di edit usata dalla CLI, che
+  // normalizza da sola: passando a un modo diverso da `selected` l'elenco
+  // concesso viene CANCELLATO lato server, non conservato. Qui quindi non si
+  // manda `cells` quando non ha significato — mandarlo direbbe una cosa che il
+  // server poi ignora, e il primo a confondersi sarebbe chi legge questo file.
+  const applyCellScope = (cellVisibility, cells) => guard(`${node.name}:cell-scope`, async () => {
+    await updateNode(token, node.name, cellVisibility === 'selected'
+      ? { cellVisibility, cells: Array.isArray(cells) ? cells : (node.cells || []) }
+      : { cellVisibility });
+    await refresh();
+  });
+
+  // Le celle si chiedono una volta sola, e solo a chi apre davvero questa
+  // sezione: un foglio nodo aperto per riavviare un tunnel non deve pagare una
+  // richiesta in piu'.
+  const ensureCells = async () => {
+    if (localCells !== null) return;
+    try {
+      const res = await fleetDefinitions(token);
+      setLocalCells(Array.isArray(res && res.cells) ? res.cells : []);
+    } catch (_) {
+      // Un errore qui non deve rompere il foglio: senza elenco il picker resta
+      // vuoto e le concessioni restano leggibili (nessuna marcata "sparita").
+      setLocalCells([]);
+    }
+  };
+
+  const cellGrants = cellScopeGrants(node, localCells);
+  const cellCandidates = cellScope === 'selected'
+    ? cellScopeCandidates(node, localCells, cellQuery) : [];
 
   const status = (
     <span className={`nc-set-tunnel${reach.up ? ' up' : ''}`}>
@@ -299,6 +336,56 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
           </div>}
         </>}
       </SheetSection>
+
+      {/* Scope celle (NC-E). Sezione a se' e non dentro "vista di rete": la
+          visibilita' governa il TRANSITO (attraverso chi passa il traffico),
+          questo governa l'ACCESSO (cosa quel nodo vede e puo' toccare qui).
+          Metterli insieme fa credere che uno implichi l'altro. */}
+      {canEditCellScope && (
+        <SheetSection title={t('cell-scope')}>
+          <small className="nc-set-hint">{t('cell-scope-help')}</small>
+          <label className="nc-field">
+            <select value={cellScope} disabled={readonly || !!busy}
+              onChange={(e) => { if (e.target.value === 'selected') ensureCells(); applyCellScope(e.target.value); }}>
+              <option value="all">{t('cell-scope-all')}</option>
+              <option value="none">{t('cell-scope-none')}</option>
+              <option value="selected">{t('cell-scope-selected')}</option>
+            </select>
+          </label>
+          {cellScope === 'selected' && <div className="nc-detail-grants">
+            {cellGrants.length === 0 && <small className="nc-set-hint">{t('cell-scope-none-granted')}</small>}
+            {cellGrants.map((g) => (
+              <div key={g.id} className={`nc-detail-grant${g.known ? '' : ' unknown'}`}>
+                <span>{g.label}{g.known ? '' : ` \u2014 ${t('cell-scope-unknown')}`}</span>
+                <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
+                  onClick={() => applyCellScope('selected', (node.cells || []).filter((c) => c !== g.id))}>
+                  {t('node-grant-remove')}
+                </button>
+              </div>
+            ))}
+            {!cellPicking && <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
+              onClick={async () => { await ensureCells(); setCellPicking(true); setCellQuery(''); }}>
+              {t('cell-scope-add')}
+            </button>}
+            {cellPicking && <div className="nc-detail-picker">
+              <input value={cellQuery} placeholder={t('cell-scope-search')} disabled={readonly || !!busy}
+                onChange={(e) => setCellQuery(e.target.value)} />
+              <div className="nc-detail-picker-list">
+                {cellCandidates.length === 0 && <small className="nc-set-hint">{t('cell-scope-no-candidates')}</small>}
+                {cellCandidates.map((c) => (
+                  <button key={c.id} type="button" className="nc-btn ghost" disabled={readonly || !!busy}
+                    onClick={async () => {
+                      await applyCellScope('selected', [...(node.cells || []), c.id]);
+                      setCellPicking(false); setCellQuery('');
+                    }}>{c.label}</button>
+                ))}
+              </div>
+              <button type="button" className="nc-btn ghost" disabled={!!busy}
+                onClick={() => { setCellPicking(false); setCellQuery(''); }}>{t('cancel')}</button>
+            </div>}
+          </div>}
+        </SheetSection>
+      )}
 
       {editing && (
         <SheetSection title={t('edit')}>
