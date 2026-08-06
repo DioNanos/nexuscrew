@@ -190,6 +190,7 @@ does not guess a new port or change SSH policy. Correct the displayed
 nexuscrew nodes list [--json]
 nexuscrew nodes inspect <name|nodeId>
 nexuscrew nodes edit <name|nodeId> ...
+nexuscrew nodes test                    # every peer, plus what is only claimed
 nexuscrew nodes up|down|connect|disconnect <name|nodeId>
 nexuscrew nodes restart|reconnect <name|nodeId>
 nexuscrew nodes share <name|nodeId> on|off
