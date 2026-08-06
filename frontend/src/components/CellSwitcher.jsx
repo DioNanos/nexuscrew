@@ -63,6 +63,7 @@ function rowsFromSnapshot(snapshot) {
         verified: fresh === true,
         working: runtime.working,
         degraded: !!cell.degraded,
+        active: cell.active === true,
         activity: session.activity || cell.activity || 0,
         subtitle: runtime.subtitle,
       });
@@ -70,8 +71,13 @@ function rowsFromSnapshot(snapshot) {
   };
   addCells(snapshot.cells, [...localSessions.values()], snapshot.localFresh === true);
   for (const group of snapshot.nodeGroups || []) {
+    const route = Array.isArray(group.route) ? group.route : [];
+    // Un gruppo con route vuota non e' una posizione fleet: e' un device VL
+    // (o un gruppo locale riflesso) e non deve mai aggiungere celle alla
+    // posizione 'local' — stesso criterio di rosterItemsByPosition.
+    if (!route.length) continue;
     addCells(group.cells, group.sessions, group.switcherFresh === true,
-      Array.isArray(group.route) ? group.route : [], group.label || group.name || '');
+      route, group.label || group.name || '');
   }
   return rows;
 }
@@ -150,7 +156,7 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
     [rows, rosterItems, pins, orders],
   );
   const visibleRows = useMemo(
-    () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || row.degraded)),
+    () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || (row.degraded && row.active))),
     [orderedRows, showAll],
   );
   const selectedRow = useMemo(() => rows.find((row) => row.key === selectedKey && row.selectable), [rows, selectedKey]);

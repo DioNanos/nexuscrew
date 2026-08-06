@@ -92,6 +92,62 @@ describe('CellSwitcher', () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 
+  it('keeps deactivated cells out of active mode even when marked degraded', async () => {
+    writeCellSwitcherSnapshot({
+      sessions: [{ name: 'cloud-Dev', activity: 10, working: true }],
+      cells: [active('Dev', 'cloud-Dev')],
+      nodeGroups: [
+        {
+          route: ['hub'], label: 'Hub', sessions: [],
+          cells: [{ cell: 'Ghost Off', tmuxSession: 'cloud-GhostOff', active: false, tmux: false, degraded: true, engine: 'shell.local' }],
+        },
+      ],
+    });
+    mocks.fleetStatus.mockImplementation(async (_token, route = []) => {
+      if (!route.length) return { available: true, cells: [active('Dev', 'cloud-Dev')] };
+      return {
+        available: true,
+        cells: [{ cell: 'Ghost Off', tmuxSession: 'cloud-GhostOff', active: false, tmux: false, degraded: true, engine: 'shell.local' }],
+      };
+    });
+    mocks.getRouteSessions.mockResolvedValue({ sessions: [] });
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^Dev / });
+    await waitFor(() => expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['hub']));
+    expect(screen.queryByRole('button', { name: /^Ghost Off / })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    expect(screen.getByRole('button', { name: /^Ghost Off / }).getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('renders each distinct local cell exactly once (no client-side doubling)', async () => {
+    const localCells = [
+      active('Dev', 'cloud-Dev'), active('DevAuditor', 'cloud-DevAuditor'),
+      off('Fork', 'cloud-Fork'), off('ForkAuditor', 'cloud-ForkAuditor'),
+      active('Personal', 'cloud-Personal'), active('Research', 'cloud-Research'),
+      off('Trading', 'cloud-Trading'), off('GameDev', 'cloud-GameDev'),
+      off('GameAuditor', 'cloud-GameAuditor'), active('SysAdmin', 'cloud-SysAdmin'),
+      off('DesignCreator', 'cloud-DesignCreator'), off('WarMaster', 'cloud-WarMaster'),
+      active('DevWorker', 'cloud-DevWorker'), active('Shell', 'cloud-Shell'),
+    ];
+    writeCellSwitcherSnapshot({
+      sessions: localCells.filter((c) => c.active).map((c) => ({ name: c.tmuxSession, activity: 1 })),
+      cells: localCells,
+      nodeGroups: [],
+    });
+    mocks.fleetStatus.mockResolvedValue({ available: true, cells: localCells });
+    mocks.apiFetch.mockResolvedValue({
+      json: vi.fn().mockResolvedValue({
+        sessions: localCells.filter((c) => c.active).map((c) => ({ name: c.tmuxSession, activity: 1 })),
+      }),
+    });
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^Dev / });
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    for (const cell of localCells) {
+      expect(screen.getAllByRole('button', { name: new RegExp(`^${cell.cell} `) })).toHaveLength(1);
+    }
+  });
+
   it('closes on Escape without trapping focus', () => {
     const onClose = vi.fn();
     render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} />);

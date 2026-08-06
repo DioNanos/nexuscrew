@@ -58,8 +58,15 @@ vi.mock('../lib/api.js', () => ({
 }));
 
 import { useNodes } from './useNodes.js';
+import { fleetStatus, getRouteSessions, getTopology, getVlNodes } from '../lib/api.js';
 
-beforeEach(() => { calls.vlRoutes.length = 0; });
+beforeEach(() => {
+  calls.vlRoutes.length = 0;
+  vi.mocked(fleetStatus).mockClear();
+  vi.mocked(getRouteSessions).mockClear();
+  vi.mocked(getTopology).mockClear();
+  vi.mocked(getVlNodes).mockClear();
+});
 
 describe('useNodes — aggregazione federata dei nodi VL', () => {
   it('interroga /api/vl-nodes sugli owner federati, non solo sul locale', async () => {
@@ -89,5 +96,43 @@ describe('useNodes — aggregazione federata dei nodi VL', () => {
     expect(group.peer.route).toEqual(['cloud-alpacalibre-com']);
     expect(group.peer.ownerInstanceId).toBe(VPS_INSTANCE);
     expect(group.peer.isLocal).toBe(false);
+  });
+});
+
+describe('useNodes — VL locale con route vuota', () => {
+  it('un VL node locale (route [], session.attached) non fa interrogare il fleet locale', async () => {
+    // Il VL node dell'owner locale ha route=[]: non e' una posizione fleet,
+    // e la sua route vuota non deve mai finire nella lista `routes` che
+    // useNodes interroga con fleetStatus/getRouteSessions (rifletterebbe il
+    // fleet locale sotto l'etichetta del device VL). La topology include il
+    // local owner con route=[] (come un VL owner locale).
+    const localVl = {
+      nodeId: N900_ID, label: 'N900', pairedAt: 1785601321838, online: true,
+      lastSeen: 1785982674769, generation: 1, version: '0.1.0',
+      capabilities: ['status', 'health', 'prompt'],
+      health: { state: 'running', uptimeSec: 371554, rssBytes: 2097152, processCount: 2, brokerReachable: true },
+      session: { attached: true, profile: 'ollama' },
+      inflight: null, lastAck: null,
+    };
+    vi.mocked(getTopology).mockResolvedValue({
+      nodes: [{ instanceId: PHONE_INSTANCE, name: 'local', route: [], stale: false, label: 'Local' }],
+    });
+    vi.mocked(getVlNodes).mockImplementation(async (_token, route = []) => (
+      Array.isArray(route) && route.length === 0 ? { nodes: [localVl] } : { nodes: [] }
+    ));
+    const { result } = renderHook(() => useNodes('token', true));
+    await waitFor(() => {
+      const vl = (result.current || []).filter((g) => g.kind === 'vl');
+      expect(vl).toHaveLength(1);
+    });
+    // La route vuota del VL locale non e' una posizione fleet: nessuna
+    // interrogazione fleetStatus/getRouteSessions con route=[].
+    expect(fleetStatus).not.toHaveBeenCalledWith('token', []);
+    expect(getRouteSessions).not.toHaveBeenCalledWith('token', []);
+    // Il gruppo VL resta display-only: sessione dichiarata, zero celle fleet.
+    const group = result.current.find((g) => g.kind === 'vl');
+    expect(group.label).toBe('N900');
+    expect(group.sessions.map((s) => s.name)).toEqual(['ollama']);
+    expect(group.cells).toEqual([]);
   });
 });

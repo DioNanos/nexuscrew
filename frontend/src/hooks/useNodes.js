@@ -64,7 +64,12 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
           && (n.direction !== 'inbound' || n.shared === true)) routes.push([n.name]);
       }
       for (const n of topology) {
-        if (!n.stale && Array.isArray(n.route) && !(n.route.length === 1 && direct.has(n.route[0]))) routes.push(n.route);
+        // Una route vuota non e' una posizione fleet: e' il VL owner locale
+        // (o un gruppo locale riflesso) e interrogarla con fleetStatus/
+        // getRouteSessions rifletterebbe il fleet locale sotto un'altra
+        // etichetta. Stesso criterio di rosterItemsByPosition/CellSwitcher.
+        if (!n.stale && Array.isArray(n.route) && n.route.length > 0
+          && !(n.route.length === 1 && direct.has(n.route[0]))) routes.push(n.route);
       }
       // Per ogni posizione remota up: sessions (tmux) E fleet (celle attive/inattive
       // + capability). Cosi' il client remoto non perde piu' le celle Fleet di un
