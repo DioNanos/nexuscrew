@@ -1,9 +1,9 @@
 {
   "models": [
     {
-      "slug": "qwen3.8-max-preview",
-      "display_name": "qwen3.8-max-preview",
-      "description": "Alibaba Token Plan Personal: qwen3.8-max-preview",
+      "slug": "qwen3.8-max",
+      "display_name": "qwen3.8-max",
+      "description": "Alibaba Token Plan Personal: qwen3.8-max",
       "default_reasoning_level": "xhigh",
       "supported_reasoning_levels": [
         {

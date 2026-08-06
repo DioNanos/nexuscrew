@@ -44,7 +44,7 @@ test('Alibaba Token Plan profiles are first-class, exact and fail closed on mode
   const pi = catalog.find((entry) => entry.id === 'pi.alibaba-token-plan');
   assert.ok(claude && codex && pi);
   for (const profile of [claude, codex, pi]) {
-    assert.equal(profile.model, 'qwen3.8-max-preview');
+    assert.equal(profile.model, 'qwen3.8-max');
     assert.equal(profile.credentialEnv, 'ALIBABA_CODE_API_KEY');
   }
   assert.equal(claude.endpoint, ANTHROPIC_ENDPOINT);
@@ -90,23 +90,23 @@ test('Claude profile uses isolated config, official aliases and exact xhigh effo
   try {
     const result = resolveManagedEngine({
       id: 'claude.alibaba-token-plan', label: 'Alibaba Token Plan',
-      managed: { client: 'claude', provider: 'alibaba-token-plan', model: 'qwen3.8-max-preview' },
+      managed: { client: 'claude', provider: 'alibaba-token-plan', model: 'qwen3.8-max' },
     }, { id: 'Dev' }, { home, env: { ALIBABA_CODE_API_KEY: value } });
     assert.equal(result.ok, true);
     assert.equal(result.engine.env.ANTHROPIC_BASE_URL, ANTHROPIC_ENDPOINT);
     assert.equal(result.engine.env.ANTHROPIC_AUTH_TOKEN, value);
     assert.equal(result.engine.env.ANTHROPIC_API_KEY, '');
-    assert.equal(result.engine.env.ANTHROPIC_MODEL, 'qwen3.8-max-preview');
-    assert.equal(result.engine.env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'qwen3.8-max-preview');
-    assert.equal(result.engine.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'qwen3.8-max-preview');
-    assert.equal(result.engine.env.ANTHROPIC_DEFAULT_FABLE_MODEL, 'qwen3.8-max-preview');
+    assert.equal(result.engine.env.ANTHROPIC_MODEL, 'qwen3.8-max');
+    assert.equal(result.engine.env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'qwen3.8-max');
+    assert.equal(result.engine.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'qwen3.8-max');
+    assert.equal(result.engine.env.ANTHROPIC_DEFAULT_FABLE_MODEL, 'qwen3.8-max');
     assert.equal(result.engine.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'qwen3.6-flash');
     assert.equal(result.engine.env.CLAUDE_CODE_SUBAGENT_MODEL, 'qwen3.7-max');
     assert.equal(result.engine.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, String(ALIBABA_TOKEN_PLAN_CONTEXT));
     assert.equal(Object.prototype.hasOwnProperty.call(result.engine.env, 'CLAUDE_CODE_AUTO_COMPACT_WINDOW'), false);
     assert.equal(result.engine.env.CLAUDE_CODE_EFFORT_LEVEL, 'xhigh');
     assert.equal(result.engine.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT, '1');
-    assert.deepEqual(result.engine.args.slice(-2), ['--model', 'qwen3.8-max-preview']);
+    assert.deepEqual(result.engine.args.slice(-2), ['--model', 'qwen3.8-max']);
     assert.equal(result.engine.args.join('\n').includes(value), false);
     assert.equal(JSON.stringify(result.info).includes(value), false);
     const configDir = path.join(home, '.nexuscrew', 'claude-profiles', 'alibaba-token-plan');
@@ -123,7 +123,7 @@ test('Claude non-default selections keep argv and every alias coherent without q
   const home = world();
   const value = credentialValue();
   try {
-    for (const model of ALIBABA_TOKEN_PLAN_MODELS.filter((entry) => entry !== 'qwen3.8-max-preview')) {
+    for (const model of ALIBABA_TOKEN_PLAN_MODELS.filter((entry) => entry !== 'qwen3.8-max')) {
       const result = resolveManagedEngine({
         id: 'claude.alibaba-token-plan', label: 'Alibaba Token Plan',
         managed: { client: 'claude', provider: 'alibaba-token-plan', model },
@@ -147,7 +147,7 @@ test('Codex-VL 0.144.7 profile is Responses-only and its catalog loads in the re
   try {
     const result = resolveManagedEngine({
       id: 'codex-vl.alibaba-token-plan', label: 'Alibaba Token Plan',
-      managed: { client: 'codex-vl', provider: 'alibaba-token-plan', model: 'qwen3.8-max-preview' },
+      managed: { client: 'codex-vl', provider: 'alibaba-token-plan', model: 'qwen3.8-max' },
     }, { id: 'Dev' }, { home, env: { ALIBABA_CODE_API_KEY: value, OPENAI_API_KEY: 'must-not-propagate' } });
     assert.equal(result.ok, true);
     assert.deepEqual(result.engine.env, { ALIBABA_CODE_API_KEY: value });
@@ -159,11 +159,11 @@ test('Codex-VL 0.144.7 profile is Responses-only and its catalog loads in the re
     assert.match(argv, /model_context_window=983616/);
     assert.doesNotMatch(argv, /OPENAI_API_KEY|must-not-propagate/);
     assert.equal(argv.includes(value), false);
-    assert.deepEqual(result.engine.args.slice(-2), ['-m', 'qwen3.8-max-preview']);
+    assert.deepEqual(result.engine.args.slice(-2), ['-m', 'qwen3.8-max']);
     const catalogArg = result.engine.args.find((arg) => arg.startsWith('model_catalog_json='));
     const catalogPath = JSON.parse(catalogArg.slice('model_catalog_json='.length));
     const model = JSON.parse(fs.readFileSync(catalogPath, 'utf8')).models[0];
-    assert.equal(model.slug, 'qwen3.8-max-preview');
+    assert.equal(model.slug, 'qwen3.8-max');
     assert.equal(model.context_window, ALIBABA_TOKEN_PLAN_CONTEXT);
     assert.equal(Object.prototype.hasOwnProperty.call(model, 'max_context_window'), false);
     assert.equal(model.effective_context_window_percent, 95);
@@ -208,12 +208,12 @@ test('Pi 0.80.10 extension is secret-free, mixed-wire and pins qwen3.8 to xhigh'
   try {
     const result = resolveManagedEngine({
       id: 'pi.alibaba-token-plan', label: 'Alibaba Token Plan',
-      managed: { client: 'pi', provider: 'alibaba-token-plan', model: 'qwen3.8-max-preview', permissionPolicy: 'standard' },
+      managed: { client: 'pi', provider: 'alibaba-token-plan', model: 'qwen3.8-max', permissionPolicy: 'standard' },
     }, { id: 'Dev' }, { home, env: { ALIBABA_CODE_API_KEY: value } });
     assert.equal(result.ok, true);
     assert.deepEqual(result.engine.env, { ALIBABA_CODE_API_KEY: value });
     assert.deepEqual(result.engine.args.slice(2), [
-      '--provider', 'alibaba-token-plan', '--model', 'qwen3.8-max-preview', '--thinking', 'xhigh',
+      '--provider', 'alibaba-token-plan', '--model', 'qwen3.8-max', '--thinking', 'xhigh',
     ]);
     const extension = result.engine.args[1];
     assert.equal(fs.statSync(extension).mode & 0o777, 0o600);
@@ -234,7 +234,7 @@ test('Pi 0.80.10 extension is secret-free, mixed-wire and pins qwen3.8 to xhigh'
       assert.equal(model.api, 'openai-completions');
       assert.equal(model.compat.requiresReasoningContentOnAssistantMessages, true);
     }
-    const qwen = definition.models.find((model) => model.id === 'qwen3.8-max-preview');
+    const qwen = definition.models.find((model) => model.id === 'qwen3.8-max');
     assert.equal(qwen.reasoning, true);
     assert.deepEqual(qwen.thinkingLevelMap, { low: 'low', high: 'high', xhigh: 'xhigh' });
     assert.deepEqual(qwen.input, ['text', 'image']);
