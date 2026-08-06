@@ -12,6 +12,28 @@ test('VL command schema is an exact fail-closed allowlist', () => {
   assert.equal(commandOf({ kind: 'logs', args: { limit: 1000 } }), null);
 });
 
+test('prompt is bounded and fail-closed, exactly like every other verb', () => {
+  // Il prompt e' l'unico comando che porta testo dell'utente fino alla sessione
+  // del device: il tetto e' lo stesso dichiarato dal nodo (4 KiB), cosi' l'hub
+  // non consegna mai qualcosa che il device rifiutera'.
+  assert.deepEqual(
+    commandOf({ kind: 'prompt', args: { text: 'ciao N900' } }),
+    { kind: 'prompt', args: { text: 'ciao N900' } },
+  );
+  assert.equal(commandOf({ kind: 'prompt', args: { text: '' } }), null, 'vuoto rifiutato');
+  assert.equal(commandOf({ kind: 'prompt', args: {} }), null, 'senza testo rifiutato');
+  assert.equal(commandOf({ kind: 'prompt' }), null, 'senza args rifiutato');
+  assert.equal(
+    commandOf({ kind: 'prompt', args: { text: 'x'.repeat(4097) } }), null,
+    'oltre il bound rifiutato QUI, non dal device',
+  );
+  assert.equal(
+    commandOf({ kind: 'prompt', args: { text: 'ok', extra: 1 } }), null,
+    'chiavi in piu rifiutate: fail-closed come gli altri verbi',
+  );
+  assert.equal(commandOf({ kind: 'prompt', args: { text: 42 } }), null, 'testo non stringa');
+});
+
 test('update candidate accepts only bounded credential-free HTTP metadata', () => {
   const valid = {
     kind: 'update_candidate',
