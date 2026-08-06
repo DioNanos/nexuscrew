@@ -145,8 +145,14 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   // Le celle si chiedono una volta sola, e solo a chi apre davvero questa
   // sezione: un foglio nodo aperto per riavviare un tunnel non deve pagare una
   // richiesta in piu'.
-  const ensureCells = async () => {
-    if (localCells !== null || cellsFailed) return;
+  // `retry` esiste per un caso solo: il click su «aggiungi una cella» dopo un
+  // fallimento. Senza, il flag faceva uscire subito la funzione e il picker si
+  // apriva VUOTO con "nessuna cella corrisponde" — un messaggio che dice la
+  // cosa sbagliata, perche' il problema non e' che non ci sono celle, e' che
+  // non si e' riusciti a chiederle. Rilievo dell'audit.
+  const ensureCells = async ({ retry = false } = {}) => {
+    if (retry && cellsFailed) setCellsFailed(false);
+    else if (localCells !== null || cellsFailed) return;
     try {
       const res = await fleetDefinitions(token);
       setLocalCells(Array.isArray(res && res.cells) ? res.cells : []);
@@ -372,7 +378,7 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
         <SheetSection title={t('cell-scope')}>
           <small className="nc-set-hint">{t('cell-scope-help')}</small>
           <label className="nc-field">
-            <select value={cellScope} disabled={readonly || !!busy}
+            <select value={cellScope} aria-label={t('cell-scope')} disabled={readonly || !!busy}
               onChange={(e) => { if (e.target.value === 'selected') ensureCells(); applyCellScope(e.target.value); }}>
               <option value="all">{t('cell-scope-all')}</option>
               <option value="none">{t('cell-scope-none')}</option>
@@ -401,7 +407,7 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
               </div>
             ))}
             {!cellPicking && <button type="button" className="nc-btn ghost" disabled={readonly || !!busy}
-              onClick={async () => { await ensureCells(); setCellPicking(true); setCellQuery(''); }}>
+              onClick={async () => { await ensureCells({ retry: true }); setCellPicking(true); setCellQuery(''); }}>
               {t('cell-scope-add')}
             </button>}
             {cellPicking && <div className="nc-detail-picker">

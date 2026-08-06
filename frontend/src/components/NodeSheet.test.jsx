@@ -165,6 +165,29 @@ describe('scope celle', () => {
     expect(document.querySelectorAll('.nc-detail-grant.unknown')).toHaveLength(0);
   });
 
+  it('dopo un fallimento, "aggiungi una cella" RIPROVA invece di aprire un picker muto', async () => {
+    // Rilievo dell'audit: col flag alzato, il click apriva il picker senza
+    // richiedere nulla e mostrava "nessuna cella corrisponde" — che dice la
+    // cosa sbagliata: non e' che le celle non ci sono, e' che non si e'
+    // riusciti a chiederle.
+    mocks.fleetDefinitions.mockRejectedValueOnce(new Error('rete giu\''));
+    renderSheet(scoped({ cellVisibility: 'selected', cells: ['Dev'] }));
+    await waitFor(() => expect(screen.getByText(/Cell list unavailable/i)).toBeTruthy());
+    mocks.fleetDefinitions.mockResolvedValue({ cells: [{ cell: 'Research' }] });
+    fireEvent.click(screen.getByText(/Add a cell/i));
+    await waitFor(() => expect(mocks.fleetDefinitions).toHaveBeenCalledTimes(2));
+    // Riuscito il secondo tentativo, l'avviso sparisce e il candidato compare.
+    await waitFor(() => expect(screen.queryByText(/Cell list unavailable/i)).toBeNull());
+    await waitFor(() => expect(screen.getByText('Research')).toBeTruthy());
+  });
+
+  it('la select dello scope ha un nome accessibile', () => {
+    // Sta dentro una <label> senza testo: senza aria-label uno screen reader
+    // legge un controllo anonimo che decide dei permessi.
+    renderSheet(scoped({ cellVisibility: 'all' }));
+    expect(screen.getByLabelText(/Cells this node can see/i)).toBeTruthy();
+  });
+
   it('un nodo senza restrizione non paga nessuna richiesta in piu\'', () => {
     // Un foglio aperto per riavviare un tunnel non deve chiedere le celle.
     renderSheet(scoped({ cellVisibility: 'all' }));
