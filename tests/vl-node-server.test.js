@@ -166,3 +166,60 @@ test('real HTTP server pairs, delivers live-only, acks, supersedes stale session
   });
   assert.equal(rejected.status, 401);
 });
+
+// La dichiarazione di sessione fluisce heartbeat -> broker -> API nodi: e' il
+// dato con cui la sidebar scrive «N900 · 1 sessione». La forma del filo e'
+// quella VERA del device (test Rust heartbeat_declares_the_session_...):
+// "session":{"attached":true,"profile":"ollama"} — e la sua assenza (binario
+// piu' vecchio) resta un onesto null, mai una sessione inventata.
+test('the declared VL session flows from heartbeat to the nodes API', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-vl-sess-'));
+  const configDir = path.join(home, '.nexuscrew');
+  const ownerId = 'a'.repeat(32);
+  nodesStore.atomicWriteStore(path.join(configDir, 'nodes.json'), nodesStore.emptyStore(ownerId));
+  const made = createServer({
+    home, configDir,
+    nodesPath: path.join(configDir, 'nodes.json'),
+    vlNodesPath: path.join(configDir, 'vl-nodes.json'),
+    tokenPath: path.join(configDir, 'token'),
+    filesRoot: path.join(home, 'files'), fleetEnabled: false, autoUpdate: false,
+    bind: '127.0.0.1', port: 0, log: () => {},
+  });
+  await new Promise((resolve) => made.server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise((resolve) => made.server.close(resolve));
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${made.server.address().port}`;
+  const uiToken = fs.readFileSync(path.join(configDir, 'token'), 'utf8').trim();
+  const ui = { authorization: `Bearer ${uiToken}`, 'content-type': 'application/json' };
+
+  const invite = await json(await fetch(`${base}/api/vl-nodes/invite`, {
+    method: 'POST', headers: ui, body: JSON.stringify({ label: 'N900', ttlSeconds: 60 }),
+  }));
+  const nodeId = 'd'.repeat(32);
+  const paired = await json(await fetch(`${base}/vl-node/v1/pair`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-vl-invite': invite.invite },
+    body: JSON.stringify({ protocol: 'vl-node/1', nodeId, label: 'N900' }),
+  }));
+  const node = { authorization: `Bearer ${paired.token}`, 'content-type': 'application/json' };
+
+  await fetch(`${base}/vl-node/v1/poll`, {
+    method: 'POST', headers: { ...node, 'x-vl-wait-ms': '1' },
+    body: JSON.stringify({
+      ...heartbeat(nodeId, 'e'.repeat(32), 0),
+      session: { attached: true, profile: 'ollama' },
+    }),
+  });
+  let listed = await json(await fetch(`${base}/api/vl-nodes`, { headers: ui }));
+  assert.deepEqual(listed.nodes[0].session, { attached: true, profile: 'ollama' },
+    'la dichiarazione arriva intatta alla API dei nodi');
+
+  await fetch(`${base}/vl-node/v1/poll`, {
+    method: 'POST', headers: { ...node, 'x-vl-wait-ms': '1' },
+    body: JSON.stringify(heartbeat(nodeId, 'e'.repeat(32), 1)),
+  });
+  listed = await json(await fetch(`${base}/api/vl-nodes`, { headers: ui }));
+  assert.equal(listed.nodes[0].session, null,
+    'heartbeat senza session (binario vecchio) -> nessuna sessione dichiarata');
+});

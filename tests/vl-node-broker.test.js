@@ -94,3 +94,60 @@ test('same-session replayed sequence is rejected fail-closed', async () => {
   broker.forget(node.nodeId);
   assert.equal((await first).type, 'revoked');
 });
+
+// --- sessione dichiarata nell'heartbeat (sidebar dei nodi) ------------------
+// La forma del filo e' quella VERA che il device serializza (pinnata dal test
+// Rust `heartbeat_declares_the_session_and_omits_it_without_a_profile_label`):
+//   "session":{"attached":true,"profile":"ollama"}
+// camelCase, nessun altro campo. Se quel test cambia, questo deve cambiare.
+
+test('a declared session is preserved and exposed by list', async () => {
+  const broker = createBroker();
+  broker.poll(node, heartbeat('6'.repeat(32), 0, {
+    session: { attached: true, profile: 'ollama' },
+  }), { waitMs: 1 });
+  const listed = broker.list([node])[0];
+  assert.deepEqual(listed.session, { attached: true, profile: 'ollama' });
+});
+
+test('a heartbeat without session declares none — old binaries stay honest', async () => {
+  const broker = createBroker();
+  broker.poll(node, heartbeat('7'.repeat(32), 0), { waitMs: 1 });
+  const listed = broker.list([node])[0];
+  assert.equal(listed.session, null, 'assente sul filo -> nessuna sessione dichiarata');
+});
+
+test('a detached declaration stays a declaration with zero sessions', async () => {
+  const broker = createBroker();
+  broker.poll(node, heartbeat('8'.repeat(32), 0, {
+    session: { attached: false, profile: 'ollama' },
+  }), { waitMs: 1 });
+  const listed = broker.list([node])[0];
+  assert.deepEqual(listed.session, { attached: false, profile: 'ollama' });
+});
+
+test('session declarations are sanitized fail-closed', async () => {
+  const broker = createBroker();
+  // attached non-booleano, profile vuoto, campi extra, tipi sbagliati:
+  // tutto cade a null o viene potato — mai un passthrough.
+  for (const [i, bad] of [
+    { attached: 'yes', profile: 'ollama' },
+    { attached: true, profile: '' },
+    { attached: true },
+    'ollama',
+    42,
+    [],
+  ].entries()) {
+    const b = createBroker();
+    b.poll(node, heartbeat(String(i).repeat(32), 0, { session: bad }), { waitMs: 1 });
+    assert.equal(b.list([node])[0].session, null, `invalido -> null: ${JSON.stringify(bad)}`);
+  }
+  // campi extra potati, profile bounded: resta solo {attached, profile}.
+  broker.poll(node, heartbeat('9'.repeat(32), 0, {
+    session: { attached: true, profile: 'x'.repeat(200), lastAttachError: 'leak', text: 'leak' },
+  }), { waitMs: 1 });
+  const listed = broker.list([node])[0];
+  assert.equal(listed.session.attached, true);
+  assert.equal(listed.session.profile, 'x'.repeat(64), 'profile bounded a 64');
+  assert.deepEqual(Object.keys(listed.session).sort(), ['attached', 'profile'], 'solo attach+label');
+});
