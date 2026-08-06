@@ -28,6 +28,10 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   // chieste: il modello lo distingue da «elenco vuoto» e non marca le
   // concessioni come sconosciute mentre la risposta arriva.
   const [localCells, setLocalCells] = useState(null);
+  // Distinto da `localCells`: un elenco che non e' arrivato NON e' un elenco
+  // vuoto. Confonderli fa leggere un errore di rete come «le celle concesse non
+  // esistono piu'», cioe' come una revoca che nessuno ha fatto.
+  const [cellsFailed, setCellsFailed] = useState(false);
   const [cellQuery, setCellQuery] = useState('');
   const [cellPicking, setCellPicking] = useState(false);
   // L'ultimo comando VL che QUESTA sessione ha sottomesso — {id, kind,
@@ -142,14 +146,16 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   // sezione: un foglio nodo aperto per riavviare un tunnel non deve pagare una
   // richiesta in piu'.
   const ensureCells = async () => {
-    if (localCells !== null) return;
+    if (localCells !== null || cellsFailed) return;
     try {
       const res = await fleetDefinitions(token);
       setLocalCells(Array.isArray(res && res.cells) ? res.cells : []);
     } catch (_) {
-      // Un errore qui non deve rompere il foglio: senza elenco il picker resta
-      // vuoto e le concessioni restano leggibili (nessuna marcata "sparita").
-      setLocalCells([]);
+      // `localCells` resta null di proposito: e' il valore che il modello legge
+      // come «non lo so», e nessuna concessione viene marcata inesistente. Il
+      // flag ferma il ritentativo — un errore di rete non deve trasformare
+      // l'apertura del foglio in un ciclo di richieste — e accende l'avviso.
+      setCellsFailed(true);
     }
   };
 
@@ -382,6 +388,7 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
           {cellScope === 'selected' && cellGrants.length > 0 && (
             <small className="nc-set-hint">{t('cell-scope-reset-warning')}</small>
           )}
+          {cellsFailed && <small className="nc-set-hint">{t('cell-scope-list-unavailable')}</small>}
           {cellScope === 'selected' && <div className="nc-detail-grants">
             {cellGrants.length === 0 && <small className="nc-set-hint">{t('cell-scope-none-granted')}</small>}
             {cellGrants.map((g) => (

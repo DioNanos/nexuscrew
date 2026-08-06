@@ -136,6 +136,35 @@ describe('scope celle', () => {
     expect(screen.queryByText(/Switching mode clears the list/i)).toBeNull();
   });
 
+  it('se l\'elenco non arriva, le concessioni NON diventano "sparite"', async () => {
+    // Un errore di rete non deve leggersi come una revoca: prima il catch
+    // metteva una lista vuota, e ogni cella concessa risultava inesistente —
+    // cioe' il foglio annunciava una perdita di permessi che non era avvenuta.
+    mocks.fleetDefinitions.mockRejectedValue(new Error('rete giu\''));
+    renderSheet(scoped({ cellVisibility: 'selected', cells: ['Dev', 'Research'] }));
+    await waitFor(() => expect(mocks.fleetDefinitions).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText(/Cell list unavailable/i)).toBeTruthy());
+    expect(document.querySelectorAll('.nc-detail-grant.unknown')).toHaveLength(0);
+    expect(document.querySelectorAll('.nc-detail-grant')).toHaveLength(2);
+  });
+
+  it('dopo un errore non ritenta a ogni render', async () => {
+    // Senza il flag, la guardia su `localCells === null` resterebbe vera e
+    // l'apertura del foglio diventerebbe un ciclo di richieste.
+    mocks.fleetDefinitions.mockRejectedValue(new Error('rete giu\''));
+    const { rerender } = renderSheet(scoped({ cellVisibility: 'selected', cells: ['Dev'] }));
+    await waitFor(() => expect(mocks.fleetDefinitions).toHaveBeenCalledTimes(1));
+    rerender(<NodeSheet node={scoped({ cellVisibility: 'selected', cells: ['Dev'] })} nodes={[peer]}
+      token="token" readonly={false} refresh={vi.fn()} onClose={vi.fn()} />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mocks.fleetDefinitions).toHaveBeenCalledTimes(1);
+    // Legato al comportamento, non solo al conteggio: con la vecchia versione
+    // il ritentativo era fermato da una lista VUOTA, che pero' marcava ogni
+    // concessione come inesistente. Fermare il ciclo non basta: bisogna
+    // fermarlo senza mentire.
+    expect(document.querySelectorAll('.nc-detail-grant.unknown')).toHaveLength(0);
+  });
+
   it('un nodo senza restrizione non paga nessuna richiesta in piu\'', () => {
     // Un foglio aperto per riavviare un tunnel non deve chiedere le celle.
     renderSheet(scoped({ cellVisibility: 'all' }));
