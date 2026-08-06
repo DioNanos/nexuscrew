@@ -6,7 +6,6 @@ import { tunnelInfo, isValidLabel } from '../lib/settings-model.js';
 import { nodeDetailModel, selectionCandidates } from '../lib/node-detail.js';
 import { vlNodeActions, vlCommandStatus } from '../lib/vl-node-detail.js';
 import DetailSheet, { SheetSection } from './DetailSheet.jsx';
-import VlNodeEvents from './VlNodeEvents.jsx';
 import Icon from './Icon.jsx';
 
 // Il dettaglio di UN nodo. Prima viveva dentro la riga: visibilita', spunte di
@@ -187,16 +186,10 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
         </SheetSection>
       )}
 
-      {/* La sessione del nodo, in sola lettura (passo 2). Il ring vive nella
-          memoria dell'owner e si perde al restart: qui non c'e' storia, c'e'
-          quello che sta succedendo — ed e' per questo che il vuoto viene
-          dichiarato invece di essere lasciato ambiguo. Questo canale non manda
-          nulla al device: i comandi restano quelli dichiarati in capabilities. */}
-      {isVl && (
-        <SheetSection title={t('vl-events-title')}>
-          <VlNodeEvents token={token} nodeId={node.nodeId} route={node.route || []} />
-        </SheetSection>
-      )}
+      {/* La conversazione NON vive piu' qui (VL_NODES_IN_SIDEBAR, 2026-08-06):
+          questa scheda serve ad accoppiare e comandare, e una colonna da ~30
+          caratteri spezza il testo a meta' parola. La sessione si apre dalla
+          sidebar, nella vista larga (VlSessionView), che e' la sua sede. */}
 
       {/* La sezione che potrebbe mentire piu' facilmente di tutte. Oggi non
           esistono poteri per-nodo: la verita' e' che un nodo accoppiato e'

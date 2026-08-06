@@ -1,0 +1,33 @@
+/* Vista larga della sessione VL: layout di lettura, non un renderer.
+   La misura è limitata (70ch) perché righe a tutta larghezza su un monitor
+   grande sono illeggibili quanto le righe da 30 caratteri nel foglio. */
+.nc-vl-session-view {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+  background: #0a0e0a; color: #cfe;
+}
+.nc-vl-session-body {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 32px;
+}
+.nc-vl-session-body .nc-vl-events {
+  max-width: 70ch; margin: 0 auto;
+}
+.nc-vl-session-body .nc-vl-events-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.nc-vl-session-body .nc-vl-ev {
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  font-size: 13px; line-height: 1.45;
+}
+.nc-vl-session-body .nc-vl-ev-thinking { color: #7fa88f; font-style: italic; }
+.nc-vl-session-body .nc-vl-ev-tool_start,
+.nc-vl-session-body .nc-vl-ev-tool_end,
+.nc-vl-session-body .nc-vl-ev-usage,
+.nc-vl-session-body .nc-vl-ev-writer_epoch { color: #6f8f7a; font-size: 12px; }
+.nc-vl-session-body .nc-vl-ev-turn_end,
+.nc-vl-session-body .nc-vl-ev-done { color: #8fd0a8; }
+.nc-vl-session-body .nc-vl-ev.error { color: #e08a8a; }
+.nc-vl-session-body .nc-vl-ev.gap { color: #c9b46a; font-size: 12px; }
