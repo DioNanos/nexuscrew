@@ -60,6 +60,25 @@ test('un nodo condiviso il cui canale non risponde finisce nel riepilogo', async
   assert.deepEqual(declaredNotProven, ['nova']);
   assert.match(out, /nova/);
   assert.match(out, /stato desiderato, non una verifica/);
+  // Il consiglio deve mandare l'operatore DA QUESTA PARTE: il dispositivo
+  // CHIEDE il bind inverso, ma e' lo sshd dell'hub a concederlo o negarlo, in
+  // base alla riga `permitlisten=` che porta la chiave di quel dispositivo
+  // nell'`authorized_keys` DELL'HUB. Indicare il dispositivo manderebbe a
+  // cercare dove non c'e' nulla — ed e' il modo in cui il difetto e' rimasto
+  // aperto per giorni.
+  //
+  // Si asserisce l'ASSOCIAZIONE, non la presenza delle tre parole: una riga
+  // che dicesse "l'hub riceve; sul dispositivo, in ~/.ssh/authorized_keys..."
+  // le conterrebbe tutte e sarebbe invertita. Cosi' cade chi sposta il file,
+  // non solo chi cambia il vocabolario.
+  // La distanza si misura in caratteri e non "fino al punto": il percorso
+  // stesso ne contiene uno (`~/.ssh/…`), e una classe `[^.]*` si fermerebbe li'
+  // facendo cadere il test sulla riga GIUSTA.
+  assert.match(out, /su\s+questo\s+hub[\s\S]{0,120}authorized_keys/i,
+    'authorized_keys deve risultare SULL\'hub, non altrove');
+  assert.ok(!/(sul|nel)\s+dispositivo[\s\S]{0,80}authorized_keys/i.test(out),
+    'il file non va mai localizzato sul dispositivo');
+  assert.match(out, /permitlisten/, 'e la parola da cercare deve esserci');
 });
 
 test('quando tutti i condivisi rispondono, nessun riepilogo di incoerenza', async (t) => {

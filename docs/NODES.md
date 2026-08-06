@@ -135,7 +135,8 @@ Use the exact port printed by the tunnel diagnostic.
 A new shared peer receives a three-port pool with the same base and offsets
 `+100` and `+200`. Read the base this installation actually assigned — do not
 copy the one below, it is a placeholder — and grant exactly those three ports
-on the **hub** key accepted by the client:
+**on the hub**, in the `~/.ssh/authorized_keys` entry that the hub accepts from
+that device:
 
 ```text
 permitlisten="127.0.0.1:<BASE>",permitlisten="127.0.0.1:<BASE+100>",permitlisten="127.0.0.1:<BASE+200>"
@@ -145,6 +146,11 @@ Add those options when you install or update the key. NexusCrew never writes,
 widens, removes, or otherwise edits `authorized_keys`. A legacy peer with only
 one `permitlisten` remains usable, but is reported as not rotatable until the
 operator installs its full pool.
+
+The direction is worth stating plainly, because getting it backwards sends you
+looking where nothing is wrong: **the device asks for the reverse bind, the
+hub's sshd grants or refuses it.** Nothing needs changing on the device — the
+grant lives on the hub, in the entry carrying that device's key.
 
 **Re-pairing a device changes its base.** Pool bases are monotonic and a
 removed peer retires its own, so a device paired again is assigned a new one
