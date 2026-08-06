@@ -33,29 +33,41 @@ export default function VlNodeEvents({ token, nodeId, route = [] }) {
   const [events, setEvents] = useState([]);
   const [failed, setFailed] = useState(false);
   const cursor = useRef(0);
+  const busy = useRef(false);
 
   useEffect(() => {
     let alive = true;
     cursor.current = 0;
+    busy.current = false;
     setEvents([]);
 
     const tick = async () => {
+      // Un solo poll in volo: su un collegamento lento il periodo scade prima
+      // della risposta, e un secondo poll partirebbe col cursore VECCHIO —
+      // due risposte identiche, lista duplicata.
+      if (busy.current) return;
+      busy.current = true;
       try {
         const out = await getVlNodeEvents(token, nodeId, cursor.current, route);
         if (!alive) return;
         setFailed(false);
         const incoming = Array.isArray(out?.events) ? out.events : [];
-        if (incoming.length) {
+        // Idempotente per seq: il filtro `after` del server e' un'ottimizzazione,
+        // non una garanzia — una consegna ripetuta non deve appendersi due volte.
+        const fresh = incoming.filter((e) => Number.isSafeInteger(e?.seq) && e.seq > cursor.current);
+        if (fresh.length) {
           // Append, mai sostituzione: un giro a vuoto non deve cancellare
           // quello che l'operatore sta leggendo.
-          setEvents((prev) => prev.concat(incoming).slice(-500));
-          cursor.current = incoming[incoming.length - 1].seq;
+          setEvents((prev) => prev.concat(fresh).slice(-500));
+          cursor.current = fresh[fresh.length - 1].seq;
         }
         if (Number.isSafeInteger(out?.cursor) && out.cursor > cursor.current) cursor.current = out.cursor;
       } catch (_) {
         // Rete giu' o owner irraggiungibile: si segnala, NON si svuota. Un
         // riquadro che si azzera da solo racconta una bugia sullo stato.
         if (alive) setFailed(true);
+      } finally {
+        busy.current = false;
       }
     };
 

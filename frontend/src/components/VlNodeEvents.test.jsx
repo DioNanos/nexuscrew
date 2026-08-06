@@ -66,6 +66,38 @@ describe('VlNodeEvents — la conversazione del nodo, in sola lettura', () => {
     }, { timeout: 4000 });
   });
 
+  it('un evento gia visto non si appende due volte (consegna duplicata)', async () => {
+    // Il difetto visto sul campo: su un collegamento lento due poll partono con
+    // lo stesso cursore e ricevono gli stessi eventi — o un server rimanda
+    // indietro cio' che il client ha gia'. La lista deve restare idempotente
+    // per seq: il filtro del server e' un'ottimizzazione, non una garanzia.
+    vi.mocked(getVlNodeEvents).mockResolvedValue({
+      events: [{ seq: 1, kind: 'text', text: 'solo una volta' }], cursor: 1,
+    });
+    mount();
+    await waitFor(() => expect(screen.getByText(/solo una volta/)).toBeTruthy());
+    await waitFor(() => expect(vi.mocked(getVlNodeEvents).mock.calls.length).toBeGreaterThan(1), { timeout: 4000 });
+    expect(screen.getAllByText(/solo una volta/)).toHaveLength(1);
+  });
+
+  it('non accavalla i poll: mai due richieste in volo insieme', async () => {
+    // Su mobile la latenza supera il periodo di poll: senza guardia il tick
+    // successivo parte col cursore VECCHIO mentre il primo e' ancora in volo,
+    // e le due risposte identiche si appendono entrambe.
+    let inFlight = 0;
+    let maxInFlight = 0;
+    vi.mocked(getVlNodeEvents).mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      inFlight -= 1;
+      return { events: [], cursor: 0 };
+    });
+    mount();
+    await waitFor(() => expect(vi.mocked(getVlNodeEvents).mock.calls.length).toBeGreaterThan(1), { timeout: 9000 });
+    expect(maxInFlight).toBe(1);
+  }, 12000);
+
   it('un giro senza novita non svuota quello che si e gia letto', async () => {
     // La garanzia: la lista si APPENDE, non si sostituisce. Un riquadro che si
     // azzera da solo racconterebbe una bugia sullo stato della sessione.
