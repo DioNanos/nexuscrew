@@ -16,6 +16,25 @@ const { createServer } = require('../lib/server.js');
 
 const NODE_ID = 'a'.repeat(32);
 
+// Una porta su cui NESSUNO ascolta. Serve ai test che verificano il caso
+// "peer inbound offline": con una porta fissa il probe trova il reverse tunnel
+// VERO di questa macchina e risponde `degraded` invece di `passive`, cosi' il
+// test fallisce a seconda di quanti nodi sono accoppiati sull'host che lo
+// esegue. (Osservato il 2026-08-06: 44001-44003 occupate da sshd dopo un giro
+// di pairing.) Il sistema assegna la porta, noi la liberiamo subito e la
+// usiamo come indirizzo sicuramente chiuso.
+async function closedPort() {
+  const net = require('node:net');
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
 // fetch mock: response e' {status, body?} | 'throw' | 'timeout'.
 function mockFetch(response) {
   return async (url, opts) => {
@@ -219,7 +238,7 @@ test('route /api/nodes: ogni nodo porta {health, tunnel}; token MAI esposto', as
   const { port, token, nodesPath } = await boot(t);
   let st = store.loadStoreStrict(nodesPath);
   st = store.addNode(st, { name: 'out', ssh: 'u@h', remotePort: 41820, localPort: 43999, direction: 'outbound', transport: 'auto', autostart: false, visibility: 'network', token: 'SECRET-OUTBOUND' });
-  st = store.addNode(st, { name: 'inb', remotePort: 41820, localPort: 44002, direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', nodeId: 'c'.repeat(32), token: 'PEER', acceptToken: 'ACC' });
+  st = store.addNode(st, { name: 'inb', remotePort: 41820, localPort: await closedPort(), direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', nodeId: 'c'.repeat(32), token: 'PEER', acceptToken: 'ACC' });
   store.atomicWriteStore(nodesPath, st);
   nodesHealth.clearHealthCache();
   const r = await get(port, '/api/nodes', { authorization: `Bearer ${token}` });
