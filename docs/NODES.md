@@ -85,6 +85,28 @@ Temporary loss of reachability does not revoke consent. An authorized node
 remains visible as stale/offline until an authoritative refresh restores it or
 confirms withdrawal.
 
+## Which cells a node may see
+
+Sharing decides whether a node is reachable. A **cell scope** decides how much
+of this installation it reaches once it is:
+
+```bash
+nexuscrew nodes cells <name|nodeId> all            # default
+nexuscrew nodes cells <name|nodeId> none
+nexuscrew nodes cells <name|nodeId> Research,Dev
+```
+
+The scope is set here, on the installation that owns the cells — never by the
+node being scoped, and never over the federation. It applies to what that node
+lists (cells, fleet status, sessions) and to what it can act on, including the
+terminal attach; a session belonging to no cell is outside every scope.
+Switching away from the explicit list clears it, so a cell revoked today does
+not come back the next time a list is set.
+
+Within its scope a node keeps full authority. Read the cell scope section of
+[Security model](SECURITY.md) before using it as a boundary against anything
+you do not trust.
+
 ## Tunnel behavior
 
 NexusCrew creates one supervised private `ssh -L` process for a hub connection
@@ -149,6 +171,7 @@ nexuscrew nodes edit <name|nodeId> ...
 nexuscrew nodes up|down|connect|disconnect <name|nodeId>
 nexuscrew nodes restart|reconnect <name|nodeId>
 nexuscrew nodes share <name|nodeId> on|off
+nexuscrew nodes cells <name|nodeId> all|none|Cell1,Cell2
 nexuscrew nodes remove <name|nodeId> --yes
 ```
 
