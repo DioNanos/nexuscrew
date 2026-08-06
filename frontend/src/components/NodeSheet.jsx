@@ -352,6 +352,15 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
               <option value="selected">{t('cell-scope-selected')}</option>
             </select>
           </label>
+          {/* Il server AZZERA l'elenco quando si lascia `selected` — ed e'
+              giusto cosi': un residuo tornerebbe buono al ritorno, concedendo
+              in silenzio cio' che si credeva tolto. Ma senza avviso l'operatore
+              perde le celle scelte per aver guardato un altro modo un istante.
+              Si informa, non si blocca: una conferma su ogni cambio sarebbe
+              rumore su tre scelte innocue su quattro. */}
+          {cellScope === 'selected' && cellGrants.length > 0 && (
+            <small className="nc-set-hint">{t('cell-scope-reset-warning')}</small>
+          )}
           {cellScope === 'selected' && <div className="nc-detail-grants">
             {cellGrants.length === 0 && <small className="nc-set-hint">{t('cell-scope-none-granted')}</small>}
             {cellGrants.map((g) => (

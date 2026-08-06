@@ -111,6 +111,22 @@ describe('scope celle', () => {
     expect(mocks.fleetDefinitions).not.toHaveBeenCalled();
   });
 
+  it('avverte che cambiando modo l\'elenco scelto viene perso', () => {
+    // Il server azzera l'elenco quando si lascia `selected`, ed e' giusto: un
+    // residuo tornerebbe buono al ritorno, concedendo in silenzio cio' che si
+    // credeva tolto. Ma perdere una scelta senza saperlo e' un'altra cosa.
+    renderSheet(scoped({ cellVisibility: 'selected', cells: ['Dev'] }));
+    expect(screen.getByText(/Switching mode clears the list/i)).toBeTruthy();
+  });
+
+  it('non avverte quando non c\'e\' ancora nulla da perdere', () => {
+    // Un avviso che compare sempre smette di essere letto.
+    renderSheet(scoped({ cellVisibility: 'selected', cells: [] }));
+    expect(screen.queryByText(/Switching mode clears the list/i)).toBeNull();
+    renderSheet(scoped({ cellVisibility: 'all' }));
+    expect(screen.queryByText(/Switching mode clears the list/i)).toBeNull();
+  });
+
   it('l\'elenco delle celle si chiede solo a chi lo apre davvero', async () => {
     renderSheet(scoped({ cellVisibility: 'selected', cells: [] }));
     expect(mocks.fleetDefinitions).not.toHaveBeenCalled();
