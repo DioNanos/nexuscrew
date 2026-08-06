@@ -148,6 +148,47 @@ describe('CellSwitcher', () => {
     }
   });
 
+  // Forma REALE misurata il 2026-08-06 su un client federato (Pixel): il nodo
+  // VL vive su VPS3, quindi `vlNodeToPeer` gli assegna la route dell'OWNER —
+  // la stessa route del gruppo Fleet di VPS3. Due gruppi, una sola posizione.
+  // Il test precedente ('no client-side doubling') usa nodeGroups: [] e non
+  // puo' vedere questo caso: il difetto vive esattamente nei gruppi.
+  it('never doubles a fleet position when a VL node shares its route', async () => {
+    const route = ['cloud-alpacalibre-com'];
+    const vpsCells = [
+      active('Dev', 'cloud-Dev'), active('Personal', 'cloud-Personal'),
+      active('Research', 'cloud-Research'), active('SysAdmin', 'cloud-SysAdmin'),
+    ];
+    const vpsSessions = vpsCells.map((c) => ({ name: c.tmuxSession, activity: 1 }));
+    writeCellSwitcherSnapshot({
+      // Il Pixel non ha celle proprie attive: tutto cio' che si vede arriva
+      // dalla posizione remota.
+      sessions: [],
+      cells: [],
+      nodeGroups: [
+        { route, label: 'VPS_Cloud', sessions: vpsSessions, cells: vpsCells },
+        // Come lo produce vlSidebarGroups: cells vuote, e concatenato DOPO i
+        // gruppi Fleet (useNodes.js) — per questo, a chiave uguale, vince lui.
+        { kind: 'vl', name: 'vl-82dffb30', route, label: 'N900', sessions: [], cells: [] },
+      ],
+    });
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: [] }) });
+    mocks.getRouteSessions.mockResolvedValue({ sessions: vpsSessions });
+    mocks.fleetStatus.mockImplementation(async (_token, r = []) => (r.length
+      ? { available: true, cells: vpsCells }
+      : { available: true, cells: [] }));
+
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^Dev / });
+    for (const cell of vpsCells) {
+      expect(screen.getAllByRole('button', { name: new RegExp(`^${cell.cell} `) })).toHaveLength(1);
+    }
+    // Un nodo VL non e' una posizione Fleet: non deve prestare la sua etichetta
+    // alle celle di VPS3. Se questa riga passa mentre quella sopra fallisce, la
+    // duplicazione e' solo mascherata.
+    expect(screen.queryByText(/N900/)).toBeNull();
+  });
+
   it('closes on Escape without trapping focus', () => {
     const onClose = vi.fn();
     render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} />);
