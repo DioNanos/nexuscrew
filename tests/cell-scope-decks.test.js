@@ -214,3 +214,86 @@ test('il locale non passa dalla rete di sicurezza', async (t) => {
   t.after(() => srv.close());
   assert.equal(await post(srv, { cellId: 'Dev' }, null), 200);
 });
+
+// --- regressione: la provenienza non e' un bersaglio ----------------------
+// rc.17 ha rotto /notify e /audio/speak federati per ogni peer ristretto: il
+// loro corpo porta `originCell`, che il SERVER scrive come provenienza
+// attestata, e il criterio di forma lo scambiava per il bersaglio di una route
+// dimenticata. Due funzioni sane bloccate da una rete di sicurezza.
+//
+// Trovato dalla riverifica dell'audit, misurato. Da qui in poi la regressione
+// e' coperta: le due route sono dichiarate, e una chiave di provenienza non
+// fa scattare la rete nemmeno su una route sconosciuta.
+
+const { filterRecords } = require('../lib/cells/scope-guard.js');
+
+function appWithSideRoutes(store) {
+  const app = express();
+  app.use(express.json());
+  app.use(createCellScopeGuard({
+    nodesPath: '/finto',
+    loadStoreImpl: () => store,
+    cellForSession,
+    resolveOrigin: (req) => (req.headers['x-test-visited']
+      ? { ok: true, trust: 'federated', visited: String(req.headers['x-test-visited']).split(',') }
+      : { ok: true, trust: 'local-bridge' }),
+  }));
+  app.post('/notify', (_req, res) => res.json({ ok: true }));
+  app.post('/audio/speak', (_req, res) => res.json({ ok: true }));
+  app.post('/route-nuova', (_req, res) => res.json({ ok: true }));
+  app.get('/diagnostics/logs', (_req, res) => res.json({
+    records: [
+      { seq: 1, code: 'A', meta: { cell: 'Dev' } },
+      { seq: 2, code: 'B', meta: { cell: 'Research' } },
+      { seq: 3, code: 'C', meta: {} },
+    ],
+  }));
+  return app;
+}
+
+const send = async (srv, path, body, visited) => {
+  const r = await fetch(`http://127.0.0.1:${srv.address().port}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(visited ? { 'x-test-visited': visited.join(',') } : {}) },
+    body: JSON.stringify(body),
+  });
+  return r.status;
+};
+
+test('/notify federata passa anche a un peer ristretto: la notifica non ha un bersaglio cella', async (t) => {
+  const srv = await listen(appWithSideRoutes(RESTRICTED()));
+  t.after(() => srv.close());
+  assert.equal(await send(srv, '/notify', { title: 'x', originCell: 'Dev' }, [PEER, LOCAL]), 200);
+});
+
+test('/audio/speak federata passa: il suo permesso e\' l\'ACL per-nodo, non lo scope celle', async (t) => {
+  const srv = await listen(appWithSideRoutes(RESTRICTED()));
+  t.after(() => srv.close());
+  assert.equal(await send(srv, '/audio/speak', { text: 'x', originCell: 'Dev' }, [PEER, LOCAL]), 200);
+});
+
+test('una chiave di provenienza non fa scattare la rete nemmeno su una route sconosciuta', async (t) => {
+  const srv = await listen(appWithSideRoutes(RESTRICTED()));
+  t.after(() => srv.close());
+  assert.equal(await send(srv, '/route-nuova', { originCell: 'Dev' }, [PEER, LOCAL]), 200);
+  assert.equal(await send(srv, '/route-nuova', { fromCell: 'Dev' }, [PEER, LOCAL]), 200);
+  // ...ma un BERSAGLIO su quella stessa route resta negato.
+  assert.equal(await send(srv, '/route-nuova', { cellId: 'Dev' }, [PEER, LOCAL]), 403);
+});
+
+test('/diagnostics/logs: i record di celle non concesse non escono', async (t) => {
+  const srv = await listen(appWithSideRoutes(RESTRICTED()));
+  t.after(() => srv.close());
+  const r = await fetch(`http://127.0.0.1:${srv.address().port}/diagnostics/logs`, {
+    headers: { 'x-test-visited': [PEER, LOCAL].join(',') },
+  });
+  const payload = await r.json();
+  assert.deepEqual(payload.records.map((x) => x.seq), [2, 3], 'resta Research e il record senza cella');
+  assert.ok(!JSON.stringify(payload).includes('Dev'));
+});
+
+test('un record senza cella passa: lo scope governa le celle, non i diagnostici di sistema', () => {
+  const scope = scopeFor(RESTRICTED());
+  const out = filterRecords([{ seq: 1, meta: {} }, { seq: 2 }, { seq: 3, meta: { cell: 'Dev' } }], scope);
+  assert.deepEqual(out.map((x) => x.seq), [1, 2]);
+});
