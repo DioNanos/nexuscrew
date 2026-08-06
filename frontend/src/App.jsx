@@ -518,10 +518,23 @@ export default function App() {
 
   // Flusso mobile INTATTO (aggiunta B2: voce settings nell'header della home).
   if (!isDesktop) {
+    if (vlSession) {
+      // La sessione del nodo VL a schermo pieno anche su mobile: stessa
+      // vista (VlSessionView) e stesso overlay del desktop — mai dentro una
+      // scheda stretta.
+      return (
+        <>
+          <div className="nc-single-overlay">
+            <VlSessionView peer={vlSession} token={token} onBack={() => setVlSession(null)} />
+          </div>
+          {settingsOverlays}
+        </>
+      );
+    }
     if (!session) {
       return (
         <>
-          <SessionList onPick={pickSession} token={token} onSettings={openSettings} />
+          <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession} />
           {settingsOverlays}
         </>
       );
