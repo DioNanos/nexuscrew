@@ -94,3 +94,50 @@ test('runAction: scroll-up/down instradati, allowlist intatta', () => {
   assert.equal(runAction('/bin/true', 'sess1', 'scroll-down'), true);
   assert.equal(runAction('/bin/true', 'sess1', 'kill-session'), false);
 });
+
+// NC-Q — un messaggio lungo veniva incollato e MAI inviato: l'attesa fra paste
+// ed Enter era una costante, mentre il tempo che un TUI impiega a ingerire un
+// bracketed paste cresce col payload. Oltre la soglia l'Enter arriva mentre il
+// client sta ancora digerendo e viene mangiato; il testo resta nel composer, la
+// cella non si muove, e chi ha mandato riceve `submitted`. Perdita silenziosa.
+//
+// Misurato il 2026-08-07 sullo stesso bersaglio a 11 minuti di distanza: ~2900
+// caratteri mai elaborati per nove ore, ~60 caratteri in lavorazione dopo
+// dodici secondi.
+test('submitToSession: l\'attesa prima dell\'Enter cresce col testo', async (t) => {
+  const { submitToSession } = require('../lib/tmux/actions.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-attesa-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const execFileImpl = (_bin, args, _opts, cb) => {
+    if (args[0] === 'display-message' && args.at(-1) === '#{pane_id}') return cb(null, '%7\n', '');
+    if (args[0] === 'display-message') return cb(null, 'sess1\t0\t%7\n', '');
+    return cb(null, '', '');
+  };
+  const attese = async (testo, engine) => {
+    const visti = [];
+    await submitToSession('tmux', 'sess1', testo, {
+      execFileImpl, tmpdir: dir, nonce: 'abcdef1234567890', engine,
+      delay: async (ms) => { visti.push(ms); },
+    });
+    return visti[0];
+  };
+
+  const corto = await attese('ciao', 'claude.native');
+  const lungo = await attese('x'.repeat(2900), 'claude.native');
+  assert.equal(corto, 150, 'un messaggio corto non deve rallentare: era gia\' affidabile');
+  assert.ok(lungo > corto, `un messaggio lungo deve attendere di piu': ${lungo} vs ${corto}`);
+  assert.ok(lungo >= 900, `2900 caratteri hanno fallito a 400 ms: ${lungo} non basta`);
+
+  // L'attesa e' limitata per COSTRUZIONE, non da un tetto: il testo non puo'
+  // superare MAX_SUBMIT. Un messaggio piu' lungo non viene nemmeno accettato,
+  // quindi non esiste un caso in cui l'attesa esploda.
+  const { MAX_SUBMIT } = require('../lib/tmux/actions.js');
+  const massima = await attese('x'.repeat(MAX_SUBMIT), 'codex-vl.native');
+  assert.ok(massima <= 3000, `al massimo consentito l'attesa resta ragionevole: ${massima}`);
+  assert.equal(await attese('x'.repeat(MAX_SUBMIT + 1), 'claude.native'), undefined,
+    'oltre il limite il messaggio e' + '\' rifiutato prima di qualunque attesa');
+
+  // Codex parte piu' alto — aveva gia' la sua costante — e scala uguale.
+  assert.ok(await attese('x'.repeat(2900), 'codex-vl.native')
+    > await attese('x'.repeat(2900), 'claude.native'), 'la base di Codex resta piu\' alta');
+});

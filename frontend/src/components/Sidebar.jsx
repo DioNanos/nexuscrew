@@ -28,7 +28,7 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 export default function Sidebar({
   sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onBoot, onNodePower, onKill, onVisibility, onNew,
   onNodeRename, onSettings, onBootError, localNodeId, fleetCapabilities = [], bootSettlement = null,
-  onBootSettlementApplied,
+  onBootSettlementApplied, onOpenVlSession,
   width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
@@ -56,8 +56,12 @@ export default function Sidebar({
   const localItems = sidebarItems(localRawItems, pins, viewFor('local').filter, sidebarOrder(orders, 'local'));
   const preferredNodeGroups = preferredGroups(nodeGroups || []);
   const remoteRosters = preferredNodeGroups.map((g) => {
-    const nodeRoute = (g.route || [g.name]).join('/');
+    // Un gruppo VL non è un roster tmux: la sua unica riga è la sessione
+    // dichiarata dal device (sola lettura, si apre nella vista larga). Le
+    // righe roster hanno semantiche kill/drag/tile che qui non esistono.
+    const nodeRoute = (g.route && g.route.length ? g.route : [g.name]).join('/');
     const groupView = viewFor(nodeRoute);
+    if (g.kind === 'vl') return { g, nodeRoute, groupView, rawItems: [], items: [] };
     const { rawItems } = buildRemoteRoster(g);
     const items = sidebarItems(rawItems, pins, groupView.filter, sidebarOrder(orders, nodeRoute));
     return { g, nodeRoute, groupView, rawItems, items };
@@ -214,7 +218,28 @@ export default function Sidebar({
           ); })())}
           {/* Sessioni dei nodi remoti (B2): iniziali col tooltip "nodo:sessione";
               nodo degradato = dot warn statico (mai spinner, design §7). */}
-          {remoteRosters.flatMap(({ g, nodeRoute, groupView, items }) => (g.status === 'up'
+          {remoteRosters.flatMap(({ g, nodeRoute, groupView, items }) => (g.kind === 'vl'
+            ? (g.status === 'up' && g.sessions.length
+              ? g.sessions.map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  className="nc-mini-init"
+                  onMouseEnter={(e) => showTip(e, `${g.label || nodeRoute}: ${s.name}`)}
+                  onMouseLeave={hideTip}
+                  onClick={() => onOpenVlSession && onOpenVlSession(g.peer)}
+                >{initial(s.name)}</button>
+              ))
+              : [(
+                <button
+                  key={`nodo-vl-${nodeRoute}-${g.name}`}
+                  type="button"
+                  className="nc-mini-dot"
+                  onMouseEnter={(e) => showTip(e, `${g.label || g.name}: ${g.status === 'up' ? t('no-sessions-short') : nodeStateLabel(g)}`)}
+                  onMouseLeave={hideTip}
+                ><span className={`nc-dot${g.status === 'up' ? ' on' : ' warn'}`} /></button>
+              )])
+            : g.status === 'up'
             ? (groupView.open ? items.map((item) => item.type === 'cell' ? (() => {
               const c = item.value; const live = !!c.tmux;
               return (
@@ -363,6 +388,47 @@ export default function Sidebar({
       {remoteRosters.map(({ g, nodeRoute, groupView, rawItems, items: remoteItems }) => {
         const hd = healthDot(g.health);
         const dotClass = hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
+        // Gruppo nodo VL (VL_NODES_IN_SIDEBAR): stesso posto degli altri nodi,
+        // conteggio onesto (1 se il device dichiara l'attach, 0 altrimenti);
+        // offline mostra cio' che mostrano gli altri nodi offline. La riga
+        // sessione apre la vista eventi nella vista larga (la sua sede), non
+        // un terminale: niente drag, niente kill, niente pin.
+        if (g.kind === 'vl') {
+          return (
+            <div key={`nodo-vl-${nodeRoute}-${g.name}`} className="nc-node-order-wrap"
+              data-node-order-key={nodeKey(g)}>
+              <div className="nc-side-group-title nc-node-title" role="button" tabIndex={0}
+                onClick={() => updateView(nodeRoute, { open: !groupView.open })}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); updateView(nodeRoute, { open: !groupView.open }); } }}>
+                <RosterHandle scope="node" position="nodes" itemKey={nodeKey(g)} label={g.label || g.name}
+                  onMove={(source, target) => moveNode(source, target, nodeGroups || [])}
+                  onStep={(delta) => stepNode(nodeKey(g), delta, nodeGroups || [])} />
+                <span className="nc-node-chevron">{groupView.open ? '⌄' : '›'}</span>
+                <span className={`nc-dot ${dotClass}`} title={g.health ? healthTitle(g.health) : ''} />
+                <b>{g.label || g.name}</b>
+                <small>
+                  {' · '}
+                  {g.status === 'up'
+                    ? t('node-sessions').replace('{n}', String(g.sessions.length))
+                    : nodeStateLabel(g)}
+                </small>
+              </div>
+              {g.status === 'up' && groupView.open && (
+                <div className="nc-side-group">
+                  {g.sessions.map((s) => (
+                    <div key={s.key} className="nc-side-card nc-vl-session-row" role="button" tabIndex={0}
+                      onClick={() => onOpenVlSession && onOpenVlSession(g.peer)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenVlSession && onOpenVlSession(g.peer); } }}>
+                      <span className="nc-dot on" />
+                      <span className="nc-card-main"><b>{s.name}</b><small>{t('vl-events-title')}</small></span>
+                    </div>
+                  ))}
+                  {g.sessions.length === 0 && <div className="nc-empty">{t('no-sessions-short')}</div>}
+                </div>
+              )}
+            </div>
+          );
+        }
         return (
         <div key={`nodo-${(g.route || [g.name]).join('/')}`} className="nc-node-order-wrap"
           data-node-order-key={nodeKey(g)}>

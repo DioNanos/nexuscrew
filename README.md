@@ -137,6 +137,7 @@ product verifies a configured pool before it can rotate within it. See
 | [Notifications](docs/NOTIFICATIONS.md) | Toasts, Web Push and optional spoken alerts |
 | [Audio Share and native TTS](docs/AUDIO_SHARE.md) | Node-native TTS, consent, groups and MCP controls |
 | [MCP bridge](docs/MCP.md) | Operator tools, cell delivery and client setup |
+| [VL micro-device nodes](docs/VL_MICRO_NODES.md) | Outbound pairing and bounded management for constrained native VL nodes |
 | [Configuration](docs/CONFIGURATION.md) | Files, environment overrides and local settings |
 | [Operations](docs/OPERATIONS.md) | CLI, boot, backup, updates and diagnostics |
 | [Security](docs/SECURITY.md) | Trust boundaries, tokens and credential handling |

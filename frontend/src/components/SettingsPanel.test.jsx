@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   deleteAudioGroup: vi.fn(),
   getSettings: vi.fn(),
   getPeers: vi.fn(),
+  getVlNodes: vi.fn(),
+  getTopology: vi.fn(),
   saveConfig: vi.fn(),
   apiFetch: vi.fn(),
   getDiagnosticsStatus: vi.fn(),
@@ -31,6 +33,8 @@ vi.mock('../lib/api.js', async (importOriginal) => ({
   deleteAudioGroup: mocks.deleteAudioGroup,
   getSettings: mocks.getSettings,
   getPeers: mocks.getPeers,
+  getVlNodes: mocks.getVlNodes,
+  getTopology: mocks.getTopology,
   saveConfig: mocks.saveConfig,
   apiFetch: mocks.apiFetch,
   getDiagnosticsStatus: mocks.getDiagnosticsStatus,
@@ -41,6 +45,7 @@ vi.mock('../hooks/useNodes.js', () => ({ useNodes: () => [] }));
 
 import SettingsPanel, { AudioTab, NodesTab, NotificationSpeechRow } from './SettingsPanel.jsx';
 import { resetNotificationSpeechPriming } from '../lib/notification-speech.js';
+import { vlNodeToPeer } from '../lib/vl-nodes-model.js';
 
 const hub = {
   name: 'hub', label: 'Hub', ssh: 'hub', direction: 'outbound',
@@ -66,8 +71,12 @@ beforeEach(() => {
     service: { installed: true, active: true, boot: true }, autoUpdate: true, alternateScreen: false,
   });
   mocks.getPeers.mockResolvedValue({ peers: [] });
+  mocks.getVlNodes.mockResolvedValue({ nodes: [] });
+  mocks.getTopology.mockResolvedValue({ nodes: [] });
   mocks.saveConfig.mockResolvedValue({ saved: true });
-  mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ readonlyDefault: false }) });
+  mocks.apiFetch.mockResolvedValue({
+    json: vi.fn().mockResolvedValue({ readonlyDefault: false, instanceId: 'local-id-0000000' }),
+  });
   mocks.getDiagnosticsStatus.mockResolvedValue({ verbose: false });
   mocks.getDiagnosticsLogs.mockResolvedValue({ events: [] });
 });
@@ -388,6 +397,156 @@ describe('Settings native node audio', () => {
     }));
     expect(await screen.findByText('studio')).toBeTruthy();
     expect(screen.getByText(/A group is a local delivery preference/)).toBeTruthy();
+  });
+});
+
+describe('Settings Nodes tab — VL nodes appear in the same list (NC_UI_NODI_VL)', () => {
+  const vlPeer = vlNodeToPeer({
+    nodeId: 'a'.repeat(32), label: 'N900', cell: 'VL-aaaaaaaa',
+    pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
+    health: { state: 'ok', uptimeSec: 3600, rssBytes: 12345, detail: 'nominal' },
+    capabilities: ['status', 'health'],
+  });
+
+  it('renders a VL node row in NodesTab, in its own group, with real name + online status', () => {
+    const view = render(<NodesTab
+      token="token" nodes={[hub, vlPeer]} roster={[]} settings={{ deviceName: 'Phone' }}
+      readonly={false} refresh={vi.fn().mockResolvedValue(undefined)} refreshAliases={vi.fn()}
+    />);
+    // Same row markup as any other node — DAG's "come fosse un nodo
+    // nexuscrew, non una sezione nuova": one button, same class, opens the
+    // same sheet — just grouped under its own label like hubs/clients/routed
+    // already are.
+    const row = screen.getByRole('button', { name: /N900/ });
+    expect(row.className).toContain('nc-node-row');
+    expect(row.querySelector('.nc-dot').className).toContain('on'); // online
+    expect(view.container.textContent).toContain('nominal'); // real health, not a placeholder
+  });
+
+  it('does NOT fall into the hubs group — a VL leaf device is not an invite hub', () => {
+    render(<NodesTab
+      token="token" nodes={[vlPeer]} roster={[]} settings={{}} readonly={false}
+      refresh={vi.fn().mockResolvedValue(undefined)} refreshAliases={vi.fn()}
+    />);
+    const hubsGroup = screen.queryByText('Direct hubs')?.closest('.nc-peer-group');
+    expect(hubsGroup).toBeFalsy();
+    expect(screen.getByText('VL nodes')).toBeTruthy();
+  });
+
+  it('shows the offline poll state distinctly, not a Fleet "tunnel down"', () => {
+    const offline = { ...vlPeer, online: false, health: null };
+    render(<NodesTab
+      token="token" nodes={[offline]} roster={[]} settings={{}} readonly={false}
+      refresh={vi.fn().mockResolvedValue(undefined)} refreshAliases={vi.fn()}
+    />);
+    expect(screen.queryByText('tunnel down')).toBeNull();
+    expect(screen.getByText('not responding')).toBeTruthy();
+  });
+
+  it('SettingsPanel merges /api/vl-nodes into the same nodes list it renders — presentation-only union', async () => {
+    mocks.getPeers.mockResolvedValue({ peers: [hub] });
+    mocks.getVlNodes.mockResolvedValue({
+      instanceId: 'x', protocol: 'vl-node/1',
+      nodes: [{
+        nodeId: 'b'.repeat(32), label: 'N900', cell: 'VL-bbbbbbbb',
+        pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
+        health: { state: 'ok', uptimeSec: 60, rssBytes: 1, detail: 'ok' },
+        capabilities: [],
+      }],
+    });
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
+    expect(await screen.findByRole('button', { name: /N900/ })).toBeTruthy();
+    // The Fleet hub is STILL there — union, not replacement.
+    expect(screen.getByRole('button', { name: /Hub/ })).toBeTruthy();
+  });
+
+  it('does not break the Fleet-only list when /api/vl-nodes fails (older backend, feature off)', async () => {
+    mocks.getPeers.mockResolvedValue({ peers: [hub] });
+    mocks.getVlNodes.mockRejectedValue(new Error('not found'));
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
+    expect(await screen.findByRole('button', { name: /Hub/ })).toBeTruthy();
+    // A VL-only failure must not surface as a blocking, scary load error —
+    // it is an enrichment, not a requirement.
+    expect(screen.queryByText('not found')).toBeNull();
+  });
+
+  it('opens the detail sheet on click without crashing (full actions are step 2)', () => {
+    render(<NodesTab
+      token="token" nodes={[vlPeer]} roster={[]} settings={{}} readonly={false}
+      refresh={vi.fn().mockResolvedValue(undefined)} refreshAliases={vi.fn()}
+    />);
+    fireEvent.click(screen.getByRole('button', { name: /N900/ }));
+    expect(screen.getAllByText('N900').length).toBeGreaterThan(1); // riga + foglio
+  });
+});
+
+// Step 3 (NC_UI_NODI_VL_REMOTI): la federazione di /vl-nodes/* e' stata
+// ripristinata (b0e8bd1) — la UI deve aggregare i nodi VL di TUTTI gli owner
+// autorizzati (locale + topologia non-stale), non solo il locale. Pattern
+// portato da `readVlDirectory` (lib/mcp/tools.js).
+describe('Settings Nodes tab — VL nodes across REMOTE owners (NC_UI_NODI_VL_REMOTI)', () => {
+  const remoteOwnerTopology = {
+    nodes: [{ instanceId: 'remote-vps3-000', route: ['vps3'], label: 'VPS3', stale: false }],
+  };
+  const remoteVlNode = {
+    nodeId: 'c'.repeat(32), label: 'N900', cell: 'VL-cccccccc',
+    pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
+    health: { state: 'running', detail: 'nominal' }, capabilities: ['status'],
+  };
+
+  it('aggregates VL nodes from a REMOTE owner found in /api/topology, not just local', async () => {
+    mocks.getTopology.mockResolvedValue(remoteOwnerTopology);
+    // Locale: nessun nodo. Remoto (vps3): un N900.
+    mocks.getVlNodes.mockImplementation((token, route = []) => (
+      route.length ? Promise.resolve({ instanceId: 'remote-vps3-000', nodes: [remoteVlNode] })
+        : Promise.resolve({ nodes: [] })
+    ));
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
+    expect(await screen.findByRole('button', { name: /N900/ })).toBeTruthy();
+    // Il fetch remoto e' realmente avvenuto sulla route dell'owner, non solo
+    // su quella locale.
+    await waitFor(() => expect(mocks.getVlNodes).toHaveBeenCalledWith('token', ['vps3']));
+  });
+
+  it('a REMOTE owner that does not respond does NOT hide the rest of the list (invariant 1)', async () => {
+    mocks.getPeers.mockResolvedValue({ peers: [hub] });
+    mocks.getTopology.mockResolvedValue(remoteOwnerTopology);
+    mocks.getVlNodes.mockImplementation((token, route = []) => (
+      route.length ? Promise.reject(new Error('timeout')) : Promise.resolve({ nodes: [] })
+    ));
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
+    // La lista Fleet resta visibile e usabile...
+    expect(await screen.findByRole('button', { name: /Hub/ })).toBeTruthy();
+  });
+
+  it('...and the unresponsive owner is visible, not silently absent (invariant 1)', async () => {
+    mocks.getTopology.mockResolvedValue(remoteOwnerTopology);
+    mocks.getVlNodes.mockImplementation((token, route = []) => (
+      route.length ? Promise.reject(new Error('timeout')) : Promise.resolve({ nodes: [] })
+    ));
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
+    // Un owner muto che sparisce in silenzio si legge come "non ha nodi" —
+    // deve invece essere leggibile che NON ha risposto.
+    expect(await screen.findByText(/VPS3/)).toBeTruthy();
+  });
+
+  it('a LOCAL VL failure keeps the step-1/2 silent-degrade behavior (not flagged as an unresponsive owner)', async () => {
+    mocks.getPeers.mockResolvedValue({ peers: [hub] });
+    mocks.getTopology.mockResolvedValue({ nodes: [] });
+    mocks.getVlNodes.mockRejectedValue(new Error('not found'));
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
+    expect(await screen.findByRole('button', { name: /Hub/ })).toBeTruthy();
+    expect(screen.queryByText('not found')).toBeNull();
+    expect(screen.queryByText(/unreachable/i)).toBeNull();
+  });
+
+  it('excludes a STALE topology owner — a stale peer is not a fetch target', async () => {
+    mocks.getTopology.mockResolvedValue({
+      nodes: [{ instanceId: 'stale-000', route: ['old'], label: 'Stale', stale: true }],
+    });
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
+    await waitFor(() => expect(mocks.getVlNodes).toHaveBeenCalled());
+    expect(mocks.getVlNodes).not.toHaveBeenCalledWith('token', ['old']);
   });
 });
 

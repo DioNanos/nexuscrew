@@ -128,6 +128,54 @@ export function nodeActions(node, { readonly = false, busy = false } = {}) {
   return out;
 }
 
+// --- scope celle (NC-E) ---------------------------------------------------
+// Gemello di selectionGrants/selectionCandidates, e deliberatamente con le
+// stesse regole: chi ha imparato una lista ha imparato l'altra. Cambia il
+// dominio — li' i NODI verso cui questo nodo e' esposto, qui le CELLE di questa
+// installazione che quel nodo puo' vedere — e cambia l'identita': una cella e'
+// identificata dal suo nome, che qui e' la chiave del permesso.
+//
+// `all` non elenca nulla di proposito, come nel resolver lato server: una lista
+// che significa "tutte" invecchierebbe a ogni cella nuova.
+export function cellScopeMode(node) {
+  const mode = node && typeof node.cellVisibility === 'string' ? node.cellVisibility : 'all';
+  return ['all', 'none', 'selected'].includes(mode) ? mode : 'all';
+}
+
+// Le celle concesse. Un nome concesso che non corrisponde piu' a una cella viva
+// RESTA nell'elenco: sparire in silenzio nasconderebbe un permesso ancora
+// attivo lato server — stessa scelta di selectionGrants.
+export function cellScopeGrants(node, cells) {
+  if (cellScopeMode(node) !== 'selected') return [];
+  const names = [...new Set(Array.isArray(node.cells) ? node.cells : [])];
+  // Finche' l'elenco delle celle non e' stato caricato NON si sa nulla, e
+  // «non lo so» non deve leggersi come «non esiste piu'»: marcare tutte le
+  // concessioni come sconosciute mentre la lista arriva sarebbe un falso
+  // allarme su ogni apertura del foglio. Solo un elenco vero (anche vuoto)
+  // autorizza il giudizio.
+  if (!Array.isArray(cells)) return names.map((name) => ({ id: name, label: name, known: true }));
+  const known = new Set(cells
+    .map((c) => (typeof c === 'string' ? c : c && (c.cell || c.id)))
+    .filter(Boolean));
+  return names.map((name) => ({ id: name, label: name, known: known.has(name) }));
+}
+
+// I candidati: le celle di questa installazione non ancora concesse.
+export function cellScopeCandidates(node, cells, query = '') {
+  const granted = new Set(Array.isArray(node && node.cells) ? node.cells : []);
+  const needle = String(query || '').trim().toLowerCase();
+  const seen = new Set();
+  const out = [];
+  for (const entry of Array.isArray(cells) ? cells : []) {
+    const name = typeof entry === 'string' ? entry : entry && (entry.cell || entry.id);
+    if (!name || granted.has(name) || seen.has(name)) continue;
+    if (needle && !name.toLowerCase().includes(needle)) continue;
+    seen.add(name);
+    out.push({ id: name, label: name });
+  }
+  return out.sort((a, b) => a.label.localeCompare(b.label));
+}
+
 // Il foglio intero, in un colpo solo. Il componente non ricalcola nulla: rende.
 export function nodeDetailModel(node, nodes, { readonly = false, busy = false } = {}) {
   const identity = nodeIdentity(node);
@@ -138,6 +186,7 @@ export function nodeDetailModel(node, nodes, { readonly = false, busy = false } 
     authority: nodeAuthority(node),
     exposure: nodeExposure(node),
     grants: selectionGrants(node, nodes),
+    cellScope: cellScopeMode(node),
     actions: nodeActions(node, { readonly, busy }),
     // La visibilita' si modifica solo dove il server la espone, solo se il nodo
     // e' condiviso, e mai su un nodo raggiunto in transito: quella scelta
@@ -146,5 +195,11 @@ export function nodeDetailModel(node, nodes, { readonly = false, busy = false } 
     // decisione altrui.
     canEditVisibility: !!(node.actions && node.actions.visibility)
       && node.shared === true && node.kind !== 'transitive',
+    // Lo scope celle si imposta su un peer DIRETTO, anche quando non e'
+    // condiviso: e' un permesso di lettura sulle NOSTRE celle, indipendente dal
+    // fatto che quel nodo sia pubblicato in rete. Legarlo a `shared` come la
+    // visibilita' avrebbe reso impossibile restringere un nodo privato — che e'
+    // esattamente il caso in cui lo si vuole fare per primo.
+    canEditCellScope: !!(node.actions && node.actions.edit) && node.kind !== 'transitive',
   };
 }

@@ -452,17 +452,104 @@ test('dispatch: unknown command -> code 1', () => {
   assert.ok(logs.join('\n').includes('not a public CLI command'));
 });
 
-test('dispatch: status, stop and restart are public lifecycle commands', () => {
+test('dispatch: status, stop and restart are public lifecycle commands', async () => {
   const { home } = initHome();
   const logs = [];
   const execImpl = (_bin, args) => args.includes('is-active') ? 'active' : '';
   assert.equal(dispatch(['status'], { home, platform: 'linux', execImpl, log: (x) => logs.push(x) }).code, 0);
   const lifecycle = { home, platform: 'linux', execImpl, ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }), log: (x) => logs.push(x) };
   assert.equal(dispatch(['stop'], lifecycle).code, 0);
-  assert.equal(dispatch(['restart'], lifecycle).code, 0);
+  // `restart` ora attende la salute del servizio, quindi restituisce una
+  // promessa: il seam evita di dipendere da un runtime vivo nel test.
+  assert.equal((await dispatch(['restart'], { ...lifecycle, waitForRuntimeImpl: async () => true })).code, 0);
   assert.match(logs.join('\n'), /running:/);
   assert.match(logs.join('\n'), /systemctl --user stop nexuscrew/);
   assert.match(logs.join('\n'), /systemctl --user restart nexuscrew/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// Il difetto che questo test fissa e' costato oltre quattro ore il 2026-08-07:
+// `nexuscrew restart` su Termux ha restituito 0 con il servizio MORTO, e da
+// fuori si vedeva solo un KO generico. Il comando confermava che il RIAVVIO era
+// partito, non che il servizio rispondesse — due cose diverse, e a chi guarda
+// l'esito sembrano la stessa. Con l'auto-update acceso quel riavvio avviene da
+// solo su ogni nodo della flotta, quindi un esito non verificato si moltiplica.
+test('dispatch restart: un servizio che NON torna su e\' un fallimento, non un successo', async () => {
+  const { home } = initHome();
+  const logs = [];
+  const opts = {
+    home, platform: 'linux',
+    execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
+    log: (x) => logs.push(x),
+    restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
+    probeStatusImpl: async () => null, // nessuna risposta: non e' il caso 401
+    waitForRuntimeImpl: async () => false, // il comando parte, il processo non risponde
+    // Porta ancora occupata: qualcosa la tiene senza servire, quindi non c'e'
+    // niente da ritentare e il rimedio non e' riavviare.
+    portAvailableImpl: async () => false,
+    startPortableImpl: () => { throw new Error('non deve riavviare a porta occupata'); },
+  };
+  const out = await dispatch(['restart'], opts);
+
+  assert.equal(out.code, 1, 'un riavvio non verificato non deve uscire 0');
+  const detto = logs.join('\n');
+  assert.match(detto, /NON risponde/);
+  assert.match(detto, /porta e' ancora occupata|porta e’ ancora occupata/);
+  assert.match(detto, /log del servizio/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// LA CAUSA, e il rimedio che ne discende. Sul percorso portatile — quello di
+// Termux, dove nessun gestore di servizi rialza il processo — `restart` avvia
+// il nuovo SUBITO dopo aver fermato il vecchio, senza aspettare che muoia ne'
+// che la porta si liberi. Il nuovo non riesce ad ascoltare, esce, e nessuno se
+// ne accorge. Il percorso dell'auto-update aspetta gia' fino a sei secondi: le
+// due strade erano divergenti, e quella digitata a mano era la meno prudente.
+test('dispatch restart: porta libera e servizio assente -> riprova UNA volta', async () => {
+  const { home } = initHome();
+  const logs = [];
+  const avvii = [];
+  let giro = 0;
+  const out = await dispatch(['restart'], {
+    home, platform: 'linux',
+    execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
+    log: (x) => logs.push(x),
+    // Primo controllo: assente. Secondo, dopo il riavvio: presente.
+    restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
+    probeStatusImpl: async () => null, // nessuna risposta: non e' il caso 401
+    waitForRuntimeImpl: async () => { giro += 1; return giro > 1; },
+    portAvailableImpl: async () => true, // il processo e' uscito davvero
+    startPortableImpl: () => { avvii.push('start'); return { started: true }; },
+  });
+
+  assert.equal(out.code, 0, 'il recupero riuscito e\' un successo');
+  assert.equal(avvii.length, 1, 'una volta sola: ripetere trasformerebbe un guasto in un ciclo');
+  assert.match(logs.join('\n'), /Riprovo una volta/);
+  assert.match(logs.join('\n'), /secondo tentativo/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('dispatch restart: se non resta su nemmeno al secondo avvio, e\' un fallimento', async () => {
+  const { home } = initHome();
+  const logs = [];
+  const avvii = [];
+  const out = await dispatch(['restart'], {
+    home, platform: 'linux',
+    execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
+    log: (x) => logs.push(x),
+    restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
+    probeStatusImpl: async () => null, // nessuna risposta: non e' il caso 401
+    waitForRuntimeImpl: async () => false,
+    portAvailableImpl: async () => true,
+    startPortableImpl: () => { avvii.push('start'); return { started: true }; },
+  });
+
+  assert.equal(out.code, 1);
+  assert.equal(avvii.length, 1, 'un solo ritentativo, non un ciclo');
+  assert.match(logs.join('\n'), /nemmeno dopo un secondo avvio/);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -1322,4 +1409,152 @@ test('token rotate: runtime portable vivo viene riavviato e invalida il vecchio 
   assert.equal(portableStarts, 1);
   assert.ok(l.join('\n').includes('servizio riavviato'));
   await childExit(child);
+});
+
+// `autoupdate` esiste nel CLI perche' il momento in cui serve spegnerlo e'
+// quello in cui la PWA non si apre — il nodo si e' aggiornato, il servizio non
+// e' tornato su, e la riga di comando e' l'unica superficie rimasta.
+test('autoupdate: a servizio acceso passa dall\'API, non scrive il file', async () => {
+  const { home } = initHome();
+  const logs = [];
+  const chiamate = [];
+  const out = await dispatch(['autoupdate', 'off'], {
+    home, platform: 'linux', log: (x) => logs.push(x),
+    isServiceRunningImpl: () => true,
+    fetchImpl: async (url, init) => {
+      chiamate.push({ url: String(url), body: init && init.body });
+      return { ok: true, status: 200, json: async () => ({}) };
+    },
+  });
+
+  assert.equal(out.code, 0);
+  assert.equal(chiamate.length, 1);
+  assert.match(chiamate[0].url, /\/api\/settings\/config$/);
+  assert.deepEqual(JSON.parse(chiamate[0].body), { autoUpdate: false });
+  assert.match(logs.join('\n'), /applicato subito/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('autoupdate: se il servizio e\' acceso e non risponde, NON scrive il file', async () => {
+  // Scriverlo lascerebbe un valore che il processo vivo non conosce: la
+  // configurazione direbbe «spento» e gli aggiornamenti continuerebbero
+  // all'ora prevista. Un interruttore che risulta spento e non spegne e'
+  // peggio di un interruttore che manca.
+  const { home } = initHome();
+  const logs = [];
+  const { configPath } = require('../lib/cli/url.js').resolvePaths({ home });
+  const prima = fs.readFileSync(configPath, 'utf8');
+  const out = await dispatch(['autoupdate', 'off'], {
+    home, platform: 'linux', log: (x) => logs.push(x),
+    isServiceRunningImpl: () => true,
+    fetchImpl: async () => { throw new Error('connessione rifiutata'); },
+  });
+
+  assert.equal(out.code, 1, 'un flag non applicato non e\' un successo');
+  assert.equal(fs.readFileSync(configPath, 'utf8'), prima, 'il file non va toccato');
+  assert.match(logs.join('\n'), /non applicato/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('autoupdate: a servizio spento scrive il file e DICE quando varra\'', async () => {
+  const { home } = initHome();
+  const logs = [];
+  const { configPath } = require('../lib/cli/url.js').resolvePaths({ home });
+  const out = await dispatch(['autoupdate', 'off'], {
+    home, platform: 'linux', log: (x) => logs.push(x),
+    isServiceRunningImpl: () => false,
+    fetchImpl: async () => { throw new Error('non deve essere chiamata'); },
+  });
+
+  assert.equal(out.code, 0);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).autoUpdate, false);
+  assert.match(logs.join('\n'), /prossimo avvio/,
+    'tacerlo lascerebbe credere che abbia gia\' effetto');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// SU UN RUNTIME GESTITO NON SI AVVIA NIENTE ACCANTO.
+//
+// Difetto mio, trovato rileggendo prima dell'audit: il ritentativo chiamava
+// `startPortable` in ogni caso. Su una macchina con systemd significherebbe
+// mettere in piedi un processo che il gestore non conosce, mentre il gestore
+// puo' rialzare la propria unita' — due processi sulla stessa porta, e il
+// nostro sopravvivrebbe allo stop del servizio.
+//
+// I tre test scritti prima non lo avevano visto perche' dichiaravano
+// `platform: 'linux'` con systemd attivo: esercitavano il ramo GESTITO
+// credendo di provare quello portatile, e asseriscono come corretto proprio
+// cio' che qui e' vietato. Un test che sceglie il ramo per caso prova per caso.
+test('dispatch restart: su runtime GESTITO non avvia un processo accanto', async () => {
+  const { home } = initHome();
+  const logs = [];
+  const out = await dispatch(['restart'], {
+    home, platform: 'linux',
+    execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
+    log: (x) => logs.push(x),
+    restartImpl: () => ({ restarted: true, runtimeOwner: 'managed' }),
+    probeStatusImpl: async () => null,
+    waitForRuntimeImpl: async () => false,
+    portAvailableImpl: async () => { throw new Error('non deve nemmeno guardare la porta'); },
+    startPortableImpl: () => { throw new Error('MAI avviare un portatile accanto a un servizio gestito'); },
+  });
+
+  assert.equal(out.code, 1);
+  const detto = logs.join('\n');
+  assert.match(detto, /gestito dal servizio di sistema/);
+  assert.match(detto, /unita' di sistema|unita’ di sistema/,
+    'e deve mandare dove il rimedio esiste davvero');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('dispatch restart: senza token non incolpa la porta, dice che non puo\' verificare', async () => {
+  // La sonda di salute fallirebbe per AUTENTICAZIONE, e il messaggio avrebbe
+  // dato la colpa alla porta o al processo — mandando a cercare dove il
+  // problema non e'. Il riavvio pero' e' partito davvero: non e' un
+  // fallimento, e' una verifica che non si e' potuta fare. Rilievo dell'audit.
+  const { home } = initHome();
+  const logs = [];
+  const { tokenPath } = require('../lib/cli/url.js').resolvePaths({ home });
+  fs.rmSync(tokenPath, { force: true });
+
+  const out = await dispatch(['restart'], {
+    home, platform: 'linux',
+    execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
+    log: (x) => logs.push(x),
+    restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
+    probeStatusImpl: async () => null, // nessuna risposta: non e' il caso 401
+    waitForRuntimeImpl: async () => { throw new Error('non deve nemmeno sondare'); },
+    startPortableImpl: () => { throw new Error('non deve riavviare'); },
+  });
+
+  assert.equal(out.code, 0, 'il riavvio e\' partito: non e\' un fallimento');
+  assert.match(logs.join('\n'), /NON e' verificabile|NON e’ verificabile/);
+  assert.doesNotMatch(logs.join('\n'), /porta/, 'e non deve incolpare la porta');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('dispatch restart: un 401 dice che il servizio C\'E\', non che e\' morto', async () => {
+  // `probeNexusCrew` collassa ogni non-200 su false, quindi un token invalido
+  // era indistinguibile da «nessun servizio»: si sarebbe dichiarato fallito un
+  // riavvio RIUSCITO, mandando a cercare un processo morto che e' vivo.
+  // Rilievo dell'audit: il caso token-ASSENTE era gia' coperto, questo no.
+  const { home } = initHome();
+  const logs = [];
+  const out = await dispatch(['restart'], {
+    home, platform: 'linux',
+    execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
+    log: (x) => logs.push(x),
+    restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
+    waitForRuntimeImpl: async () => false,
+    probeStatusImpl: async () => 401,
+    portAvailableImpl: async () => { throw new Error('non deve guardare la porta'); },
+    startPortableImpl: () => { throw new Error('non deve riavviare un servizio vivo'); },
+  });
+
+  assert.equal(out.code, 1, 'la credenziale non funziona: non e\' un successo');
+  const detto = logs.join('\n');
+  assert.match(detto, /RISPONDE/);
+  assert.match(detto, /riavvio e' riuscito|riavvio e’ riuscito/);
+  assert.doesNotMatch(detto, /porta/, 'non deve incolpare la porta');
+  fs.rmSync(home, { recursive: true, force: true });
 });

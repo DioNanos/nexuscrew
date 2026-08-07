@@ -16,6 +16,25 @@ const { createServer } = require('../lib/server.js');
 
 const NODE_ID = 'a'.repeat(32);
 
+// Una porta su cui NESSUNO ascolta. Serve ai test che verificano il caso
+// "peer inbound offline": con una porta fissa il probe trova il reverse tunnel
+// VERO di questa macchina e risponde `degraded` invece di `passive`, cosi' il
+// test fallisce a seconda di quanti nodi sono accoppiati sull'host che lo
+// esegue. (Osservato il 2026-08-06: 44001-44003 occupate da sshd dopo un giro
+// di pairing.) Il sistema assegna la porta, noi la liberiamo subito e la
+// usiamo come indirizzo sicuramente chiuso.
+async function closedPort() {
+  const net = require('node:net');
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
 // fetch mock: response e' {status, body?} | 'throw' | 'timeout'.
 function mockFetch(response) {
   return async (url, opts) => {
@@ -62,7 +81,11 @@ test('probeHealth: network refused -> transport down (non verde)', async () => {
   const h = await probeHealth({ port: 1234, token: 't', fetchImpl: mockFetch('throw') });
   assert.equal(h.transport, 'down');
   assert.equal(h.status, 'down');
-  assert.match(h.detail, /tcp|raggiungibile/);
+  // Questo test pinnava la FORMULAZIONE (`/tcp|raggiungibile/`), che e'
+  // cambiata di proposito quando i due strati sono stati distinti. Cio' che gli
+  // interessa e' che un rifiuto non risulti verde e che il motivo sia detto:
+  // il testo esatto lo fissano i test dedicati sotto, dove e' il soggetto.
+  assert.ok(h.detail, 'un guasto senza motivo non aiuta nessuno');
 });
 
 test('probeHealth: timeout -> transport down con detail timeout', async () => {
@@ -219,7 +242,7 @@ test('route /api/nodes: ogni nodo porta {health, tunnel}; token MAI esposto', as
   const { port, token, nodesPath } = await boot(t);
   let st = store.loadStoreStrict(nodesPath);
   st = store.addNode(st, { name: 'out', ssh: 'u@h', remotePort: 41820, localPort: 43999, direction: 'outbound', transport: 'auto', autostart: false, visibility: 'network', token: 'SECRET-OUTBOUND' });
-  st = store.addNode(st, { name: 'inb', remotePort: 41820, localPort: 44002, direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', nodeId: 'c'.repeat(32), token: 'PEER', acceptToken: 'ACC' });
+  st = store.addNode(st, { name: 'inb', remotePort: 41820, localPort: await closedPort(), direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', nodeId: 'c'.repeat(32), token: 'PEER', acceptToken: 'ACC' });
   store.atomicWriteStore(nodesPath, st);
   nodesHealth.clearHealthCache();
   const r = await get(port, '/api/nodes', { authorization: `Bearer ${token}` });
@@ -235,4 +258,59 @@ test('route /api/nodes: ogni nodo porta {health, tunnel}; token MAI esposto', as
   assert.ok(['down', 'degraded', 'up', 'unknown'].includes(out.tunnel.status));
   // token mai esposto
   assert.ok(!r.body.includes('SECRET-OUTBOUND'));
+});
+
+// I DUE STRATI SI DISTINGUONO, e prima avevano lo stesso messaggio.
+//
+// Con un canale inverso SSH il listener sull'hub e' sshd: se il dispositivo non
+// e' connesso non c'e' nessun listener e la connessione viene RIFIUTATA; se il
+// tunnel regge ma NexusCrew sul dispositivo e' morto, sshd accetta, inoltra, e
+// l'altro capo AZZERA la connessione.
+//
+// I codici non sono dedotti: misurati il 2026-08-07 sui tre casi reali
+// contemporaneamente presenti sull'hub — ECONNRESET col servizio giu' e il
+// tunnel su, ECONNREFUSED senza listener, HTTP con tutto su.
+//
+// Perche' vale la pena: «peer non raggiungibile» ha mandato l'indagine nella
+// federazione e nel pairing per quattro ore, mentre il difetto era un servizio
+// non ripartito sul dispositivo. Due guasti, due rimedi, due posti dove andare.
+const conCodice = (code) => async () => {
+  const e = new TypeError('fetch failed'); e.code = code; throw e;
+};
+
+test('probeHealth: connessione RIFIUTATA -> e\' il tunnel, non il servizio', async () => {
+  const h = await probeHealth({ port: 44001, token: 't', fetchImpl: conCodice('ECONNREFUSED') });
+  assert.equal(h.transport, 'down');
+  assert.equal(h.layer, 'tunnel');
+  assert.match(h.detail, /canale inverso non attivo/);
+  assert.match(h.detail, /44001/, 'la porta va detta: senza, non si sa dove guardare');
+  assert.match(h.detail, /non e' connesso/);
+});
+
+test('probeHealth: connessione AZZERATA -> il tunnel regge, il servizio no', async () => {
+  const h = await probeHealth({ port: 44001, token: 't', fetchImpl: conCodice('ECONNRESET') });
+  assert.equal(h.transport, 'down');
+  assert.equal(h.layer, 'service');
+  assert.match(h.detail, /canale inverso attivo/);
+  assert.match(h.detail, /non risponde sul dispositivo/,
+    'e deve mandare sul DISPOSITIVO, non nella federazione');
+});
+
+test('probeHealth: i due messaggi sono DIVERSI fra loro', async () => {
+  // Il controllo che conta davvero: se un domani i due rami tornassero a dire
+  // la stessa cosa, i due test sopra resterebbero verdi uno per volta e la
+  // distinzione sarebbe persa.
+  const rifiutata = await probeHealth({ port: 44001, token: 't', fetchImpl: conCodice('ECONNREFUSED') });
+  const azzerata = await probeHealth({ port: 44001, token: 't', fetchImpl: conCodice('ECONNRESET') });
+  assert.notEqual(rifiutata.detail, azzerata.detail);
+  assert.notEqual(rifiutata.layer, azzerata.layer);
+});
+
+test('probeHealth: un errore che non riconosco NON viene attribuito a uno strato', async () => {
+  // Inventare uno strato su un codice sconosciuto sarebbe peggio del messaggio
+  // generico: manderebbe con sicurezza nel posto sbagliato.
+  const h = await probeHealth({ port: 44001, token: 't', fetchImpl: conCodice('EHOSTUNREACH') });
+  assert.equal(h.transport, 'down');
+  assert.equal(h.layer, undefined);
+  assert.match(h.detail, /tcp refused\/down/);
 });

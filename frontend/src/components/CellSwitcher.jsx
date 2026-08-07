@@ -63,6 +63,7 @@ function rowsFromSnapshot(snapshot) {
         verified: fresh === true,
         working: runtime.working,
         degraded: !!cell.degraded,
+        active: cell.active === true,
         activity: session.activity || cell.activity || 0,
         subtitle: runtime.subtitle,
       });
@@ -70,8 +71,17 @@ function rowsFromSnapshot(snapshot) {
   };
   addCells(snapshot.cells, [...localSessions.values()], snapshot.localFresh === true);
   for (const group of snapshot.nodeGroups || []) {
+    const route = Array.isArray(group.route) ? group.route : [];
+    // Un device VL non e' una posizione fleet e non ospita celle: la route
+    // che porta e' quella del suo OWNER, quindi coincide con la posizione
+    // fleet di quell'owner. Discriminare sulla route vuota funzionava solo
+    // finche' il nodo VL era locale; da un client federato la sua route non
+    // e' vuota e le celle dell'owner verrebbero contate due volte, la
+    // seconda sotto l'etichetta del device. Il criterio e' il tipo del
+    // gruppo — lo stesso che usano Sidebar e SessionList.
+    if (group.kind === 'vl' || !route.length) continue;
     addCells(group.cells, group.sessions, group.switcherFresh === true,
-      Array.isArray(group.route) ? group.route : [], group.label || group.name || '');
+      route, group.label || group.name || '');
   }
   return rows;
 }
@@ -92,7 +102,9 @@ function rosterItemsByPosition(snapshot) {
   ));
   for (const group of snapshot.nodeGroups || []) {
     const route = Array.isArray(group.route) ? group.route : [];
-    if (!route.length) continue;
+    // Stesso criterio di rowsFromSnapshot: un device VL condivide la route
+    // del suo owner, e sovrascriverebbe il roster di quella posizione.
+    if (group.kind === 'vl' || !route.length) continue;
     const cells = Array.isArray(group.cells) ? group.cells : [];
     const sessions = Array.isArray(group.sessions) ? group.sessions : [];
     const cellSessions = new Set(cells.map((cell) => cell.tmuxSession).filter(Boolean));
@@ -150,7 +162,7 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
     [rows, rosterItems, pins, orders],
   );
   const visibleRows = useMemo(
-    () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || row.degraded)),
+    () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || (row.degraded && row.active))),
     [orderedRows, showAll],
   );
   const selectedRow = useMemo(() => rows.find((row) => row.key === selectedKey && row.selectable), [rows, selectedKey]);
@@ -175,15 +187,22 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
       const base = readCellSwitcherSnapshot();
       const groups = Array.isArray(base.nodeGroups) ? base.nodeGroups : [];
       const localRequest = readPosition(token);
-      const remote = await Promise.all(groups.map(async (group) => {
-        const route = Array.isArray(group.route) ? group.route : [];
-        if (!route.length) return { group, result: { fresh: false, sessions: null, cells: null } };
-        return { group, result: await readPosition(token, route) };
-      }));
+      // Un device VL non e' una posizione fleet: la route che porta e' quella
+      // del suo OWNER, quindi coincide con la posizione di quell'owner.
+      // Interrogarlo farebbe rispondere l'owner, e il gruppo si riempirebbe
+      // delle celle altrui. Deve restare FUORI dalla mappa per route: e'
+      // chiavata sulla route e l'ultimo scrittore vince, quindi anche un
+      // risultato vuoto qui cancellerebbe quello buono dell'owner.
+      const isFleetPosition = (group) => group.kind !== 'vl'
+        && Array.isArray(group.route) && group.route.length > 0;
+      const remote = await Promise.all(groups.filter(isFleetPosition).map(async (group) => (
+        { group, result: await readPosition(token, group.route) }
+      )));
       const local = await localRequest;
       if (!alive) return;
       const byRoute = new Map(remote.map(({ group, result }) => [JSON.stringify(group.route || []), result]));
       const nodeGroups = groups.map((group) => {
+        if (!isFleetPosition(group)) return { ...group, switcherFresh: false };
         const result = byRoute.get(JSON.stringify(group.route || []));
         if (!result) return { ...group, switcherFresh: false };
         return {

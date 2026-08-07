@@ -11,7 +11,7 @@ The credential value is resolved by the NexusCrew credential layer and is
 passed only in the selected child process environment. Engine definitions,
 generated extensions, argv, status responses and logs contain only the
 environment-variable name, never its value. The default model is
-`qwen3.8-max-preview` for all three profiles.
+`qwen3.8-max` for all three profiles.
 
 ## Claude Code
 
@@ -20,7 +20,7 @@ environment-variable name, never its value. The default model is
   (Claude appends `/v1/messages`; the configured base must not include it).
 - Authentication: `ANTHROPIC_AUTH_TOKEN` receives the locally resolved value;
   `ANTHROPIC_API_KEY` is deliberately empty.
-- Aliases: MODEL/SONNET/OPUS/FABLE = `qwen3.8-max-preview`, HAIKU =
+- Aliases: MODEL/SONNET/OPUS/FABLE = `qwen3.8-max`, HAIKU =
   `qwen3.6-flash`, SUBAGENT = `qwen3.7-max`.
 - Context: `983616`; effort: `xhigh`. Qwen Cloud documents qwen3.8 thinking
   as always enabled and not user-disableable.
@@ -36,7 +36,7 @@ environment-variable name, never its value. The default model is
 - Provider wire API: `responses`; provider `env_key`:
   `ALIBABA_CODE_API_KEY`. `OPENAI_API_KEY` is neither read nor forwarded by
   this profile, and there is no OpenAI/PAYG fallback.
-- Latest-Codex allowlist: `qwen3.8-max-preview`, `qwen3.7-max`,
+- Latest-Codex allowlist: `qwen3.8-max`, `qwen3.7-max`,
   `qwen3.7-plus`, `qwen3.6-flash`. GLM and DeepSeek are intentionally absent.
 - The bundled qwen3.8 catalog pins context `983616`, effective context `95%`,
   reasoning levels `low/high/xhigh` with `xhigh` default, parallel tools off,
@@ -51,7 +51,7 @@ environment-variable name, never its value. The default model is
 - Qwen response-capable models use Pi's `openai-responses` adapter. `glm-5.2`
   and `deepseek-v4-pro` use Pi's `openai-completions` adapter, whose compatibility
   path preserves `reasoning_content` in replayed assistant/tool turns.
-- `qwen3.8-max-preview` is reasoning-enabled, accepts text+image, uses context
+- `qwen3.8-max` is reasoning-enabled, accepts text+image, uses context
   `983616`, and launches with `--thinking xhigh`.
 - Offline compatibility target: `pi 0.80.10`.
 

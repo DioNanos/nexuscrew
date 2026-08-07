@@ -17,6 +17,8 @@
 // inesistenti, e quando i grant arrivassero quell'etichetta diventerebbe vera
 // senza che nessuno l'abbia concessa.
 
+import { t } from './i18n.js';
+
 // Chiavi i18n, non testo: chi rende decide la lingua.
 export const REACH = {
   routed: 'peer-routed',
@@ -24,12 +26,21 @@ export const REACH = {
   up: 'tunnel-up',
   down: 'tunnel-down',
   passive: 'node-connected-client',
+  // Un nodo VL non ha un tunnel: e' un poll verso il broker (design
+  // NC_UI_NODI_VL, 2026-08-05). Chiavi distinte apposta — "tunnel giu'" per
+  // un nodo che non ha mai avuto un tunnel sarebbe un campo vuoto travestito
+  // da stato, esattamente cio' che il brief chiede di evitare.
+  vlOnline: 'vl-poll-online',
+  vlOffline: 'vl-poll-offline',
 };
 
 // Un nodo raggiunto in transito non ha un tunnel proprio: la sua
 // raggiungibilita' e' quella della catena, e va detta come tale.
 export function nodeReach(node) {
   if (!node || typeof node !== 'object') return { key: REACH.down, up: false };
+  if (node.kind === 'vl') {
+    return node.online ? { key: REACH.vlOnline, up: true } : { key: REACH.vlOffline, up: false };
+  }
   if (node.kind === 'transitive') {
     const stale = node.stale === true;
     return { key: stale ? REACH.routedStale : REACH.routed, up: !stale, routed: true };
@@ -48,6 +59,14 @@ export function nodeReach(node) {
 // significa e in riga verrebbe troncato a meta' parola.
 export function nodeExposure(node) {
   if (!node || typeof node !== 'object') return { key: 'peer-private', shortKey: 'row-private', shared: false };
+  // I nodi VL SONO federati: la federation di /vl-nodes/* e' stata ripristinata
+  // il 2026-08-05 (lib/proxy/federation.js knownResource+allowedResource,
+  // docs/VL_MICRO_NODES.md §Federation) e un nodo VL e' raggiungibile da un
+  // peer autorizzato come ogni altra risorsa. L'esposizione e' "federato", non
+  // "non federabile" (la bugia precedente) e nemmeno "privato" (che implicherebbe
+  // una condivisione via grant Fleet, che per i VL non esiste: l'esposizione si
+  // deriva dal `kind`, non da `shared`/`visibility`).
+  if (node.kind === 'vl') return { key: 'peer-vl-federated', shortKey: 'row-vl-federated', shared: true };
   if (node.shared !== true) return { key: 'peer-private', shortKey: 'row-private', shared: false };
   const visibility = node.visibility || 'network';
   if (visibility === 'relay-only') return { key: 'visibility-relay', shortKey: 'visibility-relay', shared: true, visibility };
@@ -60,6 +79,21 @@ export function nodeExposure(node) {
   return { key: 'visibility-network', shortKey: 'visibility-network', shared: true, visibility };
 }
 
+// Per un nodo VL la riga non ha un `name` leggibile da mostrare come
+// sottotitolo (e' il `nodeId`, 32 caratteri esadecimali): mostra la salute
+// dichiarata dal device se c'e' (brief NC_UI_NODI_VL §3, "salute reali nella
+// lista"), altrimenti lo stato del poll — mai un campo vuoto o "undefined".
+// Con owner remoti (step 3, NC_UI_NODI_VL_REMOTI, invariante 2): un owner
+// remoto va anteposto — due device con la stessa label su owner diversi sono
+// distinguibili SOLO cosi'. Un nodo locale (`ownerLabel` assente) non
+// guadagna un prefisso "Locale" ovunque: sarebbe rumore quando non c'e'
+// ambiguita' da risolvere.
+function vlRowSubtitle(node) {
+  const detail = node.health && typeof node.health.detail === 'string' && node.health.detail.trim();
+  const status = detail || t(node.online ? REACH.vlOnline : REACH.vlOffline);
+  return node.ownerLabel ? `${node.ownerLabel} · ${status}` : status;
+}
+
 // La riga completa: identita' piu' i due riassunti. Nient'altro — ogni campo in
 // piu' qui e' un campo che su un telefono spinge fuori il nome del nodo.
 export function nodeRowSummary(node) {
@@ -70,7 +104,7 @@ export function nodeRowSummary(node) {
   return {
     name,
     title: (typeof node.label === 'string' && node.label.trim()) || name,
-    subtitle: name,
+    subtitle: node.kind === 'vl' ? vlRowSubtitle(node) : name,
     reach: nodeReach(node),
     exposure: nodeExposure(node),
     routed,

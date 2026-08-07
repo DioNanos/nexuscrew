@@ -81,16 +81,17 @@ test('initialize: echo protocolVersion, capabilities.tools, serverInfo', async (
   assert.equal(out.lines.length, 1);
 });
 
-test('tools/list: 16 tool nc_* con readOnlyHint sui read-only', async () => {
+test('tools/list: tool nc_* completi con readOnlyHint sui read-only', async () => {
   const { srv, out } = makeSrv();
   await srv.handleLine(rpc(2, 'tools/list'));
   const tools = out.lines[0].result.tools;
   assert.deepEqual(tools.map((t) => t.name).sort(),
-    ['nc_ask', 'nc_cell_diagnostics', 'nc_cells', 'nc_deck', 'nc_identity', 'nc_inbox', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_speak', 'nc_speak_group', 'nc_speak_group_status', 'nc_speak_group_stop', 'nc_speak_status', 'nc_speak_stop', 'nc_status']);
+    ['nc_ask', 'nc_cell_diagnostics', 'nc_cells', 'nc_deck', 'nc_identity', 'nc_inbox', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_speak', 'nc_speak_group', 'nc_speak_group_status', 'nc_speak_group_stop', 'nc_speak_status', 'nc_speak_stop', 'nc_status', 'nc_vl_command', 'nc_vl_invite', 'nc_vl_nodes', 'nc_vl_revoke']);
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   assert.equal(byName.nc_status.annotations.readOnlyHint, true);
   assert.equal(byName.nc_deck.annotations.readOnlyHint, true);
   assert.equal(byName.nc_cells.annotations.readOnlyHint, true);
+  assert.equal(byName.nc_vl_nodes.annotations.readOnlyHint, true);
   assert.equal(byName.nc_cell_diagnostics.annotations.readOnlyHint, true);
   assert.equal(byName.nc_inbox.annotations.readOnlyHint, true);
   assert.equal(byName.nc_identity.annotations.readOnlyHint, true);
@@ -98,9 +99,124 @@ test('tools/list: 16 tool nc_* con readOnlyHint sui read-only', async () => {
   assert.equal(byName.nc_speak_group_status.annotations.readOnlyHint, true);
   assert.equal(byName.nc_notify.annotations, undefined);
   assert.equal(byName.nc_send_cell.annotations, undefined);
+  assert.equal(byName.nc_vl_invite.annotations, undefined);
+  assert.equal(byName.nc_vl_command.annotations, undefined);
+  assert.equal(byName.nc_vl_revoke.annotations, undefined);
   assert.equal(byName.nc_speak.annotations, undefined, 'nc_speak muta, no readOnlyHint');
   assert.equal(byName.nc_speak_group.annotations, undefined, 'nc_speak_group muta, no readOnlyHint');
   for (const t of tools) assert.equal(t.inputSchema.type, 'object');
+});
+
+test('nc_vl_nodes + nc_vl_command: directory owner-qualified e receipt live-only', async () => {
+  const localId = 'a'.repeat(32); const nodeId = 'b'.repeat(32);
+  const target = `${localId}:VL-${nodeId}`;
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') return { status: 200, json: { nodes: [] } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'codex.native', active: true, canReceive: true },
+      ] } };
+      if (p === '/api/vl-nodes' && call.method === 'GET') return { status: 200, json: {
+        instanceId: localId, protocol: 'vl-node/1', nodes: [{
+          id: target, instanceId: localId, nodeId, cell: 'VL-bbbbbbbb', label: 'N900',
+          online: true, canManage: true, generation: 1, capabilities: ['status'],
+        }],
+      } };
+      if (p === `/api/vl-nodes/${nodeId}/commands`) return { status: 202, json: {
+        id: 'c'.repeat(32), status: 'submitted', note: 'completion requires ack',
+      } };
+      return { status: 404, json: { error: p } };
+    },
+  });
+  await srv.handleLine(rpc(207, 'tools/call', { name: 'nc_vl_nodes', arguments: {} }));
+  const directory = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(directory.nodes[0].id, target);
+  assert.equal(directory.nodes[0].online, true);
+  assert.deepEqual(directory.unavailable, []);
+  await srv.handleLine(rpc(208, 'tools/call', {
+    name: 'nc_vl_command', arguments: { target, kind: 'status', args: {} },
+  }));
+  const receipt = JSON.parse(out.lines[1].result.content[0].text);
+  assert.equal(receipt.status, 'submitted');
+  assert.equal(receipt.target, target);
+  const commandCall = calls.find((call) => new URL(call.url).pathname.endsWith('/commands'));
+  assert.deepEqual(commandCall.body, { kind: 'status', args: {} });
+});
+
+test('nc_vl_command: un owner inesistente accusa l\'OWNER, non il micro-device', async () => {
+  // Stessa forma del difetto trovato su nc_send_cell: VL_TARGET_RE accetta
+  // 16-64 esadecimali per l'owner, quindi un id ribattuto e troncato arriva
+  // fino alla ricerca — e il messaggio unico mandava a cercare il device.
+  const localId = 'a'.repeat(32); const nodeId = 'b'.repeat(32);
+  const { srv, out } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') return { status: 200, json: { nodes: [] } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev', active: true, canReceive: true },
+      ] } };
+      if (p === '/api/vl-nodes' && call.method === 'GET') return { status: 200, json: {
+        instanceId: localId, protocol: 'vl-node/1', nodes: [{
+          id: `${localId}:VL-${nodeId}`, instanceId: localId, nodeId, cell: 'VL-bbbbbbbb',
+          label: 'N900', online: true, canManage: true, generation: 1, capabilities: ['status'],
+        }],
+      } };
+      return { status: 404, json: { error: p } };
+    },
+  });
+  const troncato = localId.slice(0, 31);
+  await srv.handleLine(rpc(220, 'tools/call', {
+    name: 'nc_vl_command', arguments: { target: `${troncato}:VL-${nodeId}`, kind: 'status', args: {} },
+  }));
+  const testo = out.lines[0].result.content[0].text;
+  assert.equal(out.lines[0].result.isError, true);
+  assert.match(testo, /nessun owner con instanceId/);
+  assert.match(testo, /copia l'id esatto da nc_vl_nodes/);
+  assert.doesNotMatch(testo, /rete autorizzata/);
+
+  // Owner giusto, device inesistente: qui il soggetto e' davvero il device.
+  await srv.handleLine(rpc(221, 'tools/call', {
+    name: 'nc_vl_command', arguments: { target: `${localId}:VL-${'e'.repeat(32)}`, kind: 'status', args: {} },
+  }));
+  assert.match(out.lines[1].result.content[0].text, /micro-device VL-e+ non trovato sull'owner/);
+});
+
+test('nc_vl_nodes: un owner remoto irraggiungibile e\' unreachable, non silenzioso', async () => {
+  // I nodi VL SONO federati (vedi la NOTE in lib/proxy/federation.js): un owner
+  // remoto va interrogato davvero. Se non risponde, deve comparire in
+  // `unavailable` con la causa, non sparire dalla directory — un owner che
+  // scompare in silenzio si legge come "non ha nodi", che e' un'altra cosa.
+  const localId = 'a'.repeat(32); const remoteId = 'd'.repeat(32);
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') {
+        return { status: 200, json: { nodes: [{ instanceId: remoteId, route: ['pixel'], label: 'Pixel' }] } };
+      }
+      if (p === '/api/vl-nodes' && call.method === 'GET') {
+        return { status: 200, json: { instanceId: localId, protocol: 'vl-node/1', nodes: [] } };
+      }
+      return { status: 404, json: { error: p } };
+    },
+  });
+  await srv.handleLine(rpc(209, 'tools/call', { name: 'nc_vl_nodes', arguments: {} }));
+  const directory = JSON.parse(out.lines[0].result.content[0].text);
+  assert.deepEqual(directory.unavailable, [{
+    instanceId: remoteId, owner: 'Pixel', route: 'pixel', failure: 'unreachable',
+  }]);
+  // E la richiesta instradata parte davvero: un owner remoto va interrogato,
+  // non dedotto.
+  assert.equal(
+    calls.some((call) => /\/api\/route\//.test(new URL(call.url).pathname)), true,
+    'l\'owner remoto viene interrogato attraverso la federazione',
+  );
 });
 
 test('nc_speak_group/status/stop: il bridge firma anche l orchestrazione multi-endpoint', async () => {
@@ -414,7 +530,7 @@ test('commandForDiagnostics: over-redaction benigno (NODE_ENV), shape e ACL inva
   const diag = TOOLS.find((tool) => tool.name === 'nc_cell_diagnostics');
   assert.ok(diag, 'nc_cell_diagnostics presente');
   assert.equal(diag.annotations.readOnlyHint, true);
-  assert.equal(TOOLS.length, 16, 'registry tool (16 tool)');
+  assert.equal(TOOLS.length, 20, 'registry tool (20 tool)');
 });
 
 test('nc_send_cell: risolve sender e target dalla directory e restituisce receipt onesto', async () => {
@@ -452,6 +568,95 @@ test('nc_send_cell: risolve sender e target dalla directory e restituisce receip
   assert.equal(new URL(post.url).pathname, '/api/route/pixel/_/cells/send');
   assert.deepEqual(post.body.from, { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev' });
   assert.deepEqual(post.body.to, { instanceId: remoteId, cell: 'Worker', tmuxSession: 'cloud-Worker' });
+});
+
+// Una ricerca fallita deve dire QUALE delle tre cose e' andata storta, perche'
+// portano a tre azioni diverse. Il messaggio unico ha gia' fatto il suo danno:
+// un id ribattuto invece che copiato ha prodotto «non trovata nella rete
+// autorizzata», e l'indagine e' finita sul canale di trasporto — che
+// funzionava.
+function srvPerRicerca({ cellePixel = true } = {}) {
+  const localId = 'a'.repeat(32); const remoteId = 'b'.repeat(32);
+  return makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    idFactory: () => '12345678-1234-1234-1234-123456789abc',
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/cells/send') return { status: 200, json: {
+        id: '12345678-1234-1234-1234-123456789abc', status: 'submitted', at: 7,
+        to: { instanceId: localId, cell: 'Fork', tmuxSession: 'cloud-Fork' },
+      } };
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') return { status: 200, json: { nodes: [{ instanceId: remoteId, route: ['pixel'], label: 'Pixel' }] } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev', active: true, canReceive: true },
+        { instanceId: localId, cell: 'Fork', tmuxSession: 'cloud-Fork', active: true, canReceive: true },
+      ] } };
+      if (p === '/api/route/pixel/_/cells') {
+        return cellePixel
+          ? { status: 200, json: { instanceId: remoteId, cells: [
+            { instanceId: remoteId, cell: 'Worker', tmuxSession: 'cloud-Worker', active: true, canReceive: true },
+          ] } }
+          // Il nodo e' autorizzato e in topologia, ma adesso non risponde.
+          : { status: 502, json: { error: 'peer down' } };
+      }
+      return { status: 404, json: { error: p } };
+    },
+  });
+}
+
+async function erroreSend(srv, out, target) {
+  await srv.handleLine(rpc(77, 'tools/call', { name: 'nc_send_cell', arguments: { target, message: 'x' } }));
+  const r = out.lines[0];
+  assert.equal(r.result.isError, true, 'deve essere un errore');
+  return r.result.content[0].text;
+}
+
+test('nc_send_cell: un instanceId inesistente accusa il NODO, non la cella ne\' l\'autorizzazione', async () => {
+  // Riproduce l'incidente: l'id del nodo locale con UN carattere in meno.
+  // Passa `NODE_ID_RE` (16-64 esadecimali), quindi arriva fino alla ricerca.
+  const localId = 'a'.repeat(32);
+  const troncato = localId.slice(0, 31);
+  assert.equal(troncato.length, 31);
+  assert.ok(/^[a-f0-9]{16,64}$/.test(troncato), 'un id troncato supera ancora la validazione');
+  const { srv, out } = srvPerRicerca();
+  const testo = await erroreSend(srv, out, `${troncato}:Fork`);
+  assert.match(testo, /nessun nodo con instanceId/);
+  assert.match(testo, /copia l'id esatto da nc_cells/, 'deve dire cosa fare, non solo cosa manca');
+  // Le due parole che hanno sviato l'indagine non devono comparire.
+  assert.doesNotMatch(testo, /rete autorizzata/);
+});
+
+test('nc_send_cell: su un nodo NOTO l\'errore nomina la cella e il nodo', async () => {
+  const localId = 'a'.repeat(32);
+  const { srv, out } = srvPerRicerca();
+  const testo = await erroreSend(srv, out, `${localId}:Inesistente`);
+  assert.match(testo, /cella "Inesistente" non trovata sul nodo/);
+  assert.match(testo, new RegExp(localId));
+});
+
+test('nc_send_cell: un nodo irraggiungibile si dichiara tale, non «non trovato»', async () => {
+  // Distinguerlo conta: qui non c'e' niente da correggere nella
+  // configurazione, c'e' un dispositivo da accendere.
+  const remoteId = 'b'.repeat(32);
+  const { srv, out } = srvPerRicerca({ cellePixel: false });
+  const testo = await erroreSend(srv, out, `${remoteId}:Worker`);
+  assert.match(testo, /non raggiungibile \(unreachable\)/);
+  assert.match(testo, new RegExp(remoteId));
+});
+
+test('nc_send_cell: l\'id CORRETTO continua a risolvere una cella locale', async () => {
+  // La guardia che impedisce di far passare i tre messaggi nuovi per una
+  // regressione del percorso felice.
+  const localId = 'a'.repeat(32);
+  const { srv, out, calls } = srvPerRicerca();
+  await srv.handleLine(rpc(78, 'tools/call', {
+    name: 'nc_send_cell', arguments: { target: `${localId}:Fork`, message: 'ciao' },
+  }));
+  assert.equal(out.lines[0].result.isError, undefined, out.lines[0].result.content[0].text);
+  const post = calls.find((call) => call.method === 'POST');
+  assert.equal(new URL(post.url).pathname, '/api/cells/send');
+  assert.deepEqual(post.body.to, { instanceId: localId, cell: 'Fork', tmuxSession: 'cloud-Fork' });
 });
 
 test('nc_notify: POST /api/notify con Bearer + sessione da NEXUSCREW_MCP_SESSION', async () => {
@@ -952,7 +1157,7 @@ test('subprocess: handshake + tools/call nc_notify contro server HTTP finto', as
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
 
   const list = await call(2, 'tools/list');
-  assert.equal(list.result.tools.length, 16);
+  assert.equal(list.result.tools.length, 20);
 
   const notif = await call(3, 'tools/call', { name: 'nc_notify', arguments: { title: 'e2e ok' } });
   assert.deepEqual(JSON.parse(notif.result.content[0].text), { delivered: { ui: 1, push: 0 } });
@@ -1017,4 +1222,54 @@ test('subprocess: EOF immediato non tronca una tools/call asincrona', async (t) 
   assert.equal(messages.find((m) => m.id === 1)?.result?.serverInfo?.name, 'nexuscrew');
   const toolReply = messages.find((m) => m.id === 2);
   assert.deepEqual(JSON.parse(toolReply.result.content[0].text), { delivered: { ui: 1, push: 0 } });
+});
+
+// NC-R — aggiornare NexusCrew non aggiorna il bridge MCP di una cella gia' in
+// piedi. Il sintomo e' crudele: si installa una correzione, si riprova, e si
+// riceve l'errore VECCHIO. Chi lo subisce conclude che la correzione non
+// funziona. E' successo il 2026-08-07 su rc.26, e ci e' voluto un giro intero
+// per capirlo. Da qui in poi lo dice l'errore stesso.
+test('un errore dice se il bridge e\' di una versione diversa dall\'hub', async () => {
+  const nostra = require('../package.json').version;
+  const { srv, out } = makeSrv({
+    responder: (call) => (call.url.endsWith('/api/config')
+      ? { status: 200, json: { version: '9.9.9' } }
+      : { status: 500, json: { error: 'qualcosa e\' andato storto' } }),
+  });
+  await srv.handleLine(rpc(1, 'tools/call', { name: 'nc_status', arguments: {} }));
+  const testo = JSON.stringify(out.lines[0]);
+
+  assert.match(testo, /qualcosa e/, 'l\'errore originale resta il messaggio principale');
+  assert.match(testo, /9\.9\.9/, 'deve nominare la versione dell\'hub');
+  assert.match(testo, new RegExp(nostra.replace(/\./g, '\\.')), 'e la propria');
+  assert.match(testo, /riavvia questa cella/, 'e dire cosa fare');
+});
+
+test('nessuna nota quando le due versioni coincidono', async () => {
+  const nostra = require('../package.json').version;
+  const { srv, out } = makeSrv({
+    responder: (call) => (call.url.endsWith('/api/config')
+      ? { status: 200, json: { version: nostra } }
+      : { status: 500, json: { error: 'errore semplice' } }),
+  });
+  await srv.handleLine(rpc(1, 'tools/call', { name: 'nc_status', arguments: {} }));
+  const testo = JSON.stringify(out.lines[0]);
+  assert.match(testo, /errore semplice/);
+  assert.doesNotMatch(testo, /riavvia questa cella/,
+    'un avviso che compare sempre smette di essere letto');
+});
+
+test('se la verifica di versione fallisce, l\'errore originale esce intatto', async () => {
+  // La nota e' un di piu': non deve MAI sostituire ne' mascherare la diagnosi
+  // vera. Qui /api/config risponde 500 — come farebbe un hub piu' vecchio che
+  // non espone quel campo, o un hub che sta ripartendo.
+  const { srv, out } = makeSrv({
+    responder: (call) => (call.url.endsWith('/api/config')
+      ? { status: 500, json: {} }
+      : { status: 403, json: { error: 'permesso negato' } }),
+  });
+  await srv.handleLine(rpc(1, 'tools/call', { name: 'nc_status', arguments: {} }));
+  const testo = JSON.stringify(out.lines[0]);
+  assert.match(testo, /permesso negato/);
+  assert.doesNotMatch(testo, /riavvia questa cella/);
 });

@@ -26,7 +26,7 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 // apertura, filtro, pin e ordine hanno quindi un solo contratto condiviso
 // (hook useRosterPreferences + model roster-view-model).
 
-export default function SessionList({ onPick, token, onSettings }) {
+export default function SessionList({ onPick, token, onSettings, onOpenVlSession }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   // Gruppi per-nodo remoto (B2): zero nodi configurati -> [] e home identica.
   const nodeGroups = useNodes(token);
@@ -358,9 +358,38 @@ export default function SessionList({ onPick, token, onSettings }) {
         const hd = healthDot(g.health, { passive: 'warn' });
         const dotClass = hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
         const dotTitle = g.health ? healthTitle(g.health) : (g.status === 'up' ? '' : nodeStateLabel(g));
-        const route = g.route || [g.name];
+        const route = g.route && g.route.length ? g.route : [g.name];
         const routeKey = route.join('/');
         const groupView = viewFor(routeKey);
+        // Gruppo nodo VL (VL_NODES_IN_SIDEBAR): conteggio onesto dalla
+        // sessione DICHIARATA (1 se attached, 0 altrimenti) — items.length
+        // qui direbbe sempre 0 e mentirebbe. La riga apre la vista sessione,
+        // non un terminale: niente pin/power/kill.
+        if (g.kind === 'vl') {
+          return (
+            <section key={`nodo-vl-${routeKey}-${g.name}`} className="nc-group nc-node-order-wrap" data-position={routeKey}
+              data-node-order-key={nodeKey(g)}>
+              <MobilePositionHeader label={g.label || g.name} count={g.sessions.length} state={groupView}
+                dotClass={dotClass} dotTitle={dotTitle}
+                detail={g.status === 'up' ? '' : nodeStateLabel(g)}
+                onToggle={() => updateView(routeKey, { open: !groupView.open })}
+                onFilter={(filter) => updateView(routeKey, { filter })} />
+              {g.status === 'up' && groupView.open && g.sessions.map((vs) => (
+                <div key={vs.key} className="nc-mcard nc-vl-session-row">
+                  <button className="nc-mcard-main"
+                    onClick={() => onOpenVlSession && onOpenVlSession(g.peer)}
+                    aria-label={`${g.label || g.name}: ${vs.name}`}>
+                    <span className="dot on" />
+                    <span className="nc-mcard-text"><b>{vs.name}</b><small>{t('vl-events-title')}</small></span>
+                  </button>
+                </div>
+              ))}
+              {g.status === 'up' && groupView.open && g.sessions.length === 0 && (
+                <div className="nc-empty">{t('no-sessions-short')}</div>
+              )}
+            </section>
+          );
+        }
         const { rawItems } = buildRemoteRoster(g);
         const items = sidebarItems(rawItems, pins, groupView.filter, sidebarOrder(orders, routeKey))
           .filter((item) => sidebarSearchVisible(item, q));

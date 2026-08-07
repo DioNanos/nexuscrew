@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import { getLang, t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import {
-  apiFetch, getSettings, getPeers, saveConfig, rotateToken,
+  apiFetch, getSettings, getPeers, getVlNodes, getTopology, saveConfig, rotateToken,
   setNodeShare, regenService, createPeerInvite,
   saveNodeAlias, deleteNodeAlias,
   checkNpmUpdate, applyNpmUpdate,
@@ -15,6 +15,7 @@ import { validateNodeForm, tunnelInfo, toSlug, isValidLabel } from '../lib/setti
 import PairingCard from './PairingCard.jsx';
 import NodeSheet from './NodeSheet.jsx';
 import { nodeRowSummary } from '../lib/node-summary.js';
+import { vlNodeToPeer, topologyVlOwners } from '../lib/vl-nodes-model.js';
 import { getPushState, subscribePush, unsubscribePush } from '../lib/push.js';
 import Icon from './Icon.jsx';
 import FleetTab from './FleetTab.jsx';
@@ -63,12 +64,11 @@ function PairingQr({ value }) {
 }
 
 // --- scheda NODI ---------------------------------------------------------------
-export function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAliases }) {
+export function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAliases, vlUnavailable = [] }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);        // `${name}:${action}` in corso
   const [invite, setInvite] = useState(null);
   const [inviteForm, setInviteForm] = useState({ ssh: '', sshPort: '', name: '' });
-  const [inviteHubName, setInviteHubName] = useState('');
   const [shareHubName, setShareHubName] = useState('');
   const [devName, setDevName] = useState('');
   const [inviteAdvanced, setInviteAdvanced] = useState(false);
@@ -77,21 +77,28 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
   const [openKey, setOpenKey] = useState(null);
   const now = Date.now();
   const deviceDefault = (settings && settings.deviceName) || '';
-  // Un'installazione client invita nella rete a cui è già collegata, non crea
-  // un peer diretto verso sé stessa: apre un solo forward verso la porta
-  // d'ingresso del proprio hub, e gli altri nodi restano route interne
-  // all'hub. I peer inbound non sono hub selezionabili.
-  const inviteHubs = (nodes || []).filter((n) => n && n.direction === 'outbound' && n.name && n.ssh);
-  const inviteHub = inviteHubs.find((n) => n.name === inviteHubName) || inviteHubs[0] || null;
-  const shareHub = inviteHubs.find((n) => n.name === shareHubName) || inviteHubs[0] || null;
+  // Gli hub verso cui questa installazione ha un forward aperto. Servono a
+  // Share e al rinvio dell'invito; NON decidono dove si conia un invito.
+  // Un invito conia sempre per l'installazione che lo emette: coniarlo per
+  // l'hub richiede il suo token locale, e la via federata e' chiusa dal
+  // 2026-08-04 perche' ammettere un nodo nuovo e' la capacita' che rende la
+  // fiducia transitiva. I peer inbound non sono hub.
+  const outboundHubs = (nodes || []).filter((n) => n && n.direction === 'outbound' && n.name && n.ssh);
+  const shareHub = outboundHubs.find((n) => n.name === shareHubName) || outboundHubs[0] || null;
   const shareTunnel = shareHub ? tunnelInfo(shareHub.tunnel, now) : null;
   const shareStatusKey = shareHub?.shared
     ? (shareTunnel?.up ? 'share-local-active' : 'share-local-pending')
     : (shareTunnel?.up ? 'share-local-private' : 'share-local-private-down');
+  // Stessa lista, stesso meccanismo di riga/gruppo/foglio dei peer Fleet
+  // (indicazione di DAG: "come fosse un nodo nexuscrew, non una sezione
+  // nuova") — un gruppo in piu', non un componente diverso. Un nodo VL non
+  // e' un hub invitabile (non ha ssh/direction), quindi va escluso dal primo
+  // gruppo esplicitamente, non solo aggiunto in coda.
   const peerGroups = [
-    { key: 'peer-group-hubs', rows: (nodes || []).filter((n) => n.kind !== 'transitive' && n.relation !== 'client') },
-    { key: 'peer-group-clients', rows: (nodes || []).filter((n) => n.kind !== 'transitive' && n.relation === 'client') },
+    { key: 'peer-group-hubs', rows: (nodes || []).filter((n) => n.kind !== 'transitive' && n.kind !== 'vl' && n.relation !== 'client') },
+    { key: 'peer-group-clients', rows: (nodes || []).filter((n) => n.kind !== 'transitive' && n.kind !== 'vl' && n.relation === 'client') },
     { key: 'peer-group-routed', rows: (nodes || []).filter((n) => n.kind === 'transitive') },
+    { key: 'peer-group-vl', rows: (nodes || []).filter((n) => n.kind === 'vl') },
   ];
 
   // Il nodo del foglio si rilegge dall'inventario a ogni render: dopo una
@@ -148,29 +155,12 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
 
   const onCreateInvite = async () => {
     setErr(null);
-    if (inviteHub) {
-      const checkedHub = validateNodeForm({
-        name: inviteHub.name, ssh: inviteHub.ssh, sshPort: inviteHub.sshPort || '',
-      });
-      if (!checkedHub.ok) { setErr(t(checkedHub.error)); return; }
-      setBusy('invite');
-      try {
-        // Il POST è eseguito sul nodo hub selezionato. Non inoltriamo label/name
-        // locali: l'invito deve identificare l'hub, non questo client.
-        setInvite(await createPeerInvite(token, {
-          ssh: checkedHub.value.ssh,
-          ...(checkedHub.value.sshPort ? { sshPort: checkedHub.value.sshPort } : {}),
-        }, [inviteHub.name]));
-      } catch (e) {
-        // Coniare un invito non attraversa piu' la federazione: e' la capacita'
-        // che AMMETTE un nodo nuovo, e delegarla a ogni peer accoppiato avrebbe
-        // reso la fiducia transitiva. Il rifiuto deve spiegare dove si fa,
-        // altrimenti l'operatore legge "not found" e cerca un guasto.
-        setErr(e && e.status === 404 ? t('invite-hub-only') : String(e.message || e));
-      }
-      setBusy(null);
-      return;
-    }
+    // Sempre locale, mai delegato. Il ramo che inoltrava all'hub outbound e'
+    // stato rimosso: dal 2026-08-04 la via federata risponde 404, quindi su
+    // ogni installazione accoppiata a un hub il bottone non poteva piu'
+    // riuscire — il percorso era diventato un messaggio d'errore invece di
+    // una funzione. Chi vuole ammettere un nodo nell'hub lo fa dall'hub
+    // (rinvio in `invite-hub-only`, mostrato prima del tentativo).
     const name = toSlug(inviteForm.name || devName || deviceDefault || 'NexusCrew');
     const checked = validateNodeForm({ name, ssh: inviteForm.ssh, sshPort: inviteForm.sshPort });
     if (!checked.ok) { setErr(t(checked.error)); return; }
@@ -223,6 +213,17 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
         </div>
       ))}
 
+      {/* Owner VL federati che non hanno risposto (design NC_UI_NODI_VL_REMOTI,
+          invariante 1): visibile ma NON bloccante — la lista Fleet sopra
+          resta intatta. Un owner muto che sparisce in silenzio si legge come
+          "non ha nodi", che e' un'altra cosa: qui si dice esplicitamente che
+          non ha risposto. */}
+      {vlUnavailable.length > 0 && (
+        <div className="nc-err">
+          {t('vl-owners-unavailable')}: {vlUnavailable.map((o) => o.label || o.route.join('/')).join(', ')}
+        </div>
+      )}
+
       {openNode && (
         <NodeSheet node={openNode} nodes={nodes || []} token={token} readonly={readonly}
           refresh={refresh} onClose={() => setOpenKey(null)} />
@@ -269,11 +270,11 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
       {shareHub && (
         <div className="nc-set-form nc-local-share">
           <div className="nc-sheet-label">{t('share-local-heading')}</div>
-          {inviteHubs.length > 1 && (
+          {outboundHubs.length > 1 && (
             <label className="nc-field">{t('share-local-hub')}
               <select value={shareHub.name} disabled={readonly || !!busy}
                 onChange={(e) => setShareHubName(e.target.value)}>
-                {inviteHubs.map((hub) => <option key={hub.name} value={hub.name}>{hub.label || hub.name}</option>)}
+                {outboundHubs.map((hub) => <option key={hub.name} value={hub.name}>{hub.label || hub.name}</option>)}
               </select>
             </label>
           )}
@@ -305,31 +306,25 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
 
       <div className="nc-set-form">
         <div className="nc-sheet-label">{t('invite-node')}</div>
-        <small className="nc-set-hint">{inviteHub ? t('invite-network-hint') : t('invite-v2-hint')}</small>
-        {inviteHub ? (
-          <>
-            {inviteHubs.length > 1 && (
-              <label className="nc-field">{t('invite-network-label')}
-                <select value={inviteHub.name} disabled={readonly || !!busy}
-                  onChange={(e) => { setInviteHubName(e.target.value); setInvite(null); }}>
-                  {inviteHubs.map((hub) => <option key={hub.name} value={hub.name}>{hub.label || hub.name}</option>)}
-                </select>
-              </label>
-            )}
-            <div className="nc-set-info nc-invite-endpoint">
-              {t('invite-network-via')}: <b>{inviteHub.label || inviteHub.name}</b>
-              {' · '}{inviteHub.ssh}{inviteHub.sshPort ? `:${inviteHub.sshPort}` : ''}
-            </div>
-            <small className="nc-set-hint">{t('invite-network-route')}</small>
-          </>
-        ) : (
-          <label className="nc-field">{t('invite-endpoint-label')}
-            <input placeholder="user@host" value={inviteForm.ssh} disabled={readonly}
-              onChange={(e) => setInviteForm({ ...inviteForm, ssh: e.target.value })} />
-            <small className="nc-set-hint">{t('invite-endpoint-needed')}</small>
-          </label>
+        <small className="nc-set-hint">{t('invite-v2-hint')}</small>
+        {/* La destinazione va DETTA: un invito fa entrare il device in QUESTA
+            installazione, non nella rete a cui e' collegata. Prima non era
+            scritto da nessuna parte, ed e' meta' del motivo per cui la
+            delega all'hub sembrava plausibile. */}
+        <div className="nc-set-info nc-invite-endpoint">
+          {t('invite-target-local')}: <b>{deviceDefault || t('invite-target-this')}</b>
+        </div>
+        <label className="nc-field">{t('invite-endpoint-label')}
+          <input placeholder="user@host" value={inviteForm.ssh} disabled={readonly}
+            onChange={(e) => setInviteForm({ ...inviteForm, ssh: e.target.value })} />
+          <small className="nc-set-hint">{t('invite-endpoint-needed')}</small>
+        </label>
+        {/* Rinvio, non errore: chi cerca "invita nell'hub" deve trovare dove si
+            fa, invece di scoprirlo fallendo. */}
+        {outboundHubs.length > 0 && (
+          <small className="nc-set-hint nc-invite-hub-hint">{t('invite-hub-only')}</small>
         )}
-        {!inviteHub && inviteAdvanced && (
+        {inviteAdvanced && (
           <div className="nc-invite-advanced">
             <label className="nc-field">{t('node-ssh-port-label')}
               <input inputMode="numeric" placeholder="22" value={inviteForm.sshPort} disabled={readonly}
@@ -347,12 +342,12 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
           </div>
         )}
         <div className="nc-set-row nc-invite-actions">
-          <button type="button" className="nc-btn primary" disabled={readonly || !!busy || (!inviteHub && !inviteForm.ssh.trim())}
+          <button type="button" className="nc-btn primary" disabled={readonly || !!busy || !inviteForm.ssh.trim()}
             onClick={onCreateInvite}>{t('create-pairing-link')}</button>
-          {!inviteHub && <button type="button" className="nc-btn ghost" disabled={!!busy}
+          <button type="button" className="nc-btn ghost" disabled={!!busy}
             onClick={() => setInviteAdvanced((value) => !value)}>
             {inviteAdvanced ? '▾' : '▸'} {t('pair-advanced')}
-          </button>}
+          </button>
         </div>
         {invite && <>
           <PairingQr value={invite.pairingUrl} />
@@ -1081,6 +1076,10 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   const [systemSection, setSystemSection] = useState(initialSystemSection);
   const [settings, setSettings] = useState(null);
   const [nodes, setNodes] = useState([]);
+  // Owner VL federati che non hanno risposto all'ultimo refresh — visibili,
+  // non un errore bloccante (design NC_UI_NODI_VL_REMOTI, invariante 1: un
+  // owner muto che sparisce in silenzio si legge come "non ha nodi").
+  const [vlUnavailable, setVlUnavailable] = useState([]);
   const [readonly, setReadonly] = useState(false);
   const [loadErr, setLoadErr] = useState(null);
   const [aliasRevision, setAliasRevision] = useState(0);
@@ -1128,7 +1127,51 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
     } catch (e) { setLoadErr(String(e.message || e)); }
     try {
       const j = await getPeers(token);
-      setNodes(j.peers || []);
+      const peers = j.peers || [];
+      // Unione multi-owner SOLO lato presentazione (design NC_UI_NODI_VL_REMOTI,
+      // 2026-08-05): la federazione di /vl-nodes/* e' stata ripristinata
+      // (b0e8bd1) — un nodo VL puo' appartenere a QUALUNQUE owner autorizzato
+      // raggiungibile via /api/topology, non solo al locale. Semantica
+      // portata da `readVlDirectory` (lib/mcp/tools.js): owner locale +
+      // owner federati non-stale, interrogati in parallelo, un fallimento
+      // per-owner non blocca gli altri. Il contratto di /api/peers non
+      // cambia — questo resta un arricchimento lato presentazione.
+      let vlPeers = [];
+      let unavailable = [];
+      try {
+        const [config, topology] = await Promise.all([
+          apiFetch('/api/config', token).then((r) => r.json()).catch(() => null),
+          getTopology(token).catch(() => null),
+        ]);
+        const localInstanceId = config && typeof config.instanceId === 'string' ? config.instanceId : '';
+        const owners = [
+          { instanceId: localInstanceId || null, route: [], label: null },
+          ...topologyVlOwners(topology, localInstanceId),
+        ];
+        const results = await Promise.all(owners.map(async (owner) => {
+          try {
+            const payload = await getVlNodes(token, owner.route);
+            const peers = (payload.nodes || []).map((n) => vlNodeToPeer(n, owner)).filter(Boolean);
+            return { ok: true, peers };
+          } catch (error) { return { ok: false, owner, error }; }
+        }));
+        for (const result of results) {
+          if (result.ok) { vlPeers.push(...result.peers); continue; }
+          // Il locale mantiene il degrado silenzioso di step 1/2 (feature
+          // non installata/disattivata non e' un "owner che non risponde").
+          // Solo un owner REMOTO che non risponde entra nell'elenco visibile
+          // (invariante 1): sparire in silenzio si legge come "non ha nodi",
+          // che e' un'altra cosa.
+          if (result.owner.route.length === 0) continue;
+          unavailable.push({
+            instanceId: result.owner.instanceId, label: result.owner.label,
+            route: result.owner.route,
+            failure: /timeout/i.test(String(result.error?.message || result.error)) ? 'timeout' : 'unreachable',
+          });
+        }
+      } catch (_) { /* arricchimento VL opzionale: i peer Fleet restano comunque */ }
+      setVlUnavailable(unavailable);
+      setNodes([...peers, ...vlPeers]);
     } catch (e) { setLoadErr(String(e.message || e)); }
   }, [token]);
 
@@ -1173,6 +1216,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
 
         <div className="nc-set-body">
           {tab === 'nodes' && <NodesTab token={token} nodes={nodes} roster={roster} settings={settings} readonly={readonly}
+            vlUnavailable={vlUnavailable}
             refresh={refresh} refreshAliases={() => setAliasRevision((value) => value + 1)} />}
           {tab === 'fleet' && <FleetTab token={token} readonly={readonly}
             startNewCell={startNewCell} initialLocation={initialLocation}

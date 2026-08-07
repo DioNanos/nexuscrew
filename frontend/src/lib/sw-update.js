@@ -48,13 +48,63 @@ function setNeedRefresh(v) {
   dispatch();
 }
 
-export function reportServerVersions(serverVersion, uiVersion, browserVersion) {
+// Marcatore di un tentativo gia' fatto, per versione. Vive in sessionStorage:
+// muore con la scheda, che e' esattamente la vita del ciclo che deve impedire.
+const AUTO_KEY = 'nc-auto-reload';
+
+function memoriaDiSessione() {
+  try { return typeof sessionStorage !== 'undefined' ? sessionStorage : null; }
+  catch (_) { return null; } // storage negato (private mode, iframe): si degrada a banner
+}
+
+export function reportServerVersions(serverVersion, uiVersion, browserVersion, opts = {}) {
   let next = null;
   if (serverVersion && uiVersion && serverVersion !== uiVersion) next = { kind: 'install', version: serverVersion };
   else if (uiVersion && browserVersion && uiVersion !== browserVersion) next = { kind: 'reload', version: uiVersion };
   const same = JSON.stringify(next) === JSON.stringify(serverIssue);
   serverIssue = next; rebuildSnapshot();
   if (!same) dispatch();
+
+  const store = opts.storage === undefined ? memoriaDiSessione() : opts.storage;
+  if (!next) {
+    // Versioni allineate: si dimentica il tentativo, cosi' il prossimo
+    // disallineamento potra' di nuovo risolversi da solo.
+    try { store && store.removeItem(AUTO_KEY); } catch (_) { /* best-effort */ }
+    return;
+  }
+  // SI RICARICA DA SOLI, e solo per `reload`.
+  //
+  // `reload` significa: il server serve un bundle piu' nuovo di quello che
+  // questo browser sta eseguendo. E' esattamente lo stato in cui resta una PWA
+  // aperta dopo che il nodo si e' aggiornato da solo — e finora l'unica uscita
+  // era chiudere e riaprire l'app, perche' il banner andava premuto e per un
+  // difetto del service worker (0.8.52) non funzionava nemmeno.
+  //
+  // `install` NON si tocca: li' il pacchetto sul server e' piu' nuovo della UI
+  // che serve, e nessun ricaricamento lo cambia. Ricaricare in quel caso
+  // girerebbe a vuoto.
+  //
+  // IL TESTO NON SI PERDE: la bozza del composer e' gia' persistita in
+  // localStorage e ricaricata al mount. Verificato prima di rendere il
+  // ricaricamento automatico — senza quella persistenza questa scelta avrebbe
+  // portato via cio' che l'operatore stava scrivendo.
+  //
+  // LA GUARDIA CONTRO IL CICLO e' la parte che rende la cosa accettabile: se
+  // dopo il ricaricamento il disallineamento resta identico, NON si riprova.
+  // Un ciclo di ricaricamenti rende l'app inutilizzabile, che e' molto peggio
+  // di un banner da premere: il ripiego e' proprio il banner di prima.
+  if (next.kind !== 'reload') return;
+  // Senza memoria di sessione (modalita' privata, iframe, storage negato) non
+  // si puo' ricordare il tentativo, quindi non si puo' impedire il ciclo — e
+  // senza quella garanzia l'automatismo non si fa. Si degrada al banner, che e'
+  // il comportamento di prima e resta corretto.
+  if (!store) return;
+  const marcatore = `${uiVersion}|${browserVersion}`;
+  try {
+    if (store.getItem(AUTO_KEY) === marcatore) return; // gia' provato: resta il banner
+    store.setItem(AUTO_KEY, marcatore);
+  } catch (_) { return; }
+  (opts.applyImpl || applyUpdate)();
 }
 
 function watchInstallingWorker(worker) {

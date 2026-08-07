@@ -5,8 +5,12 @@ import { createFleetBackup, parseFleetBackup } from '../../lib/fleet-backup.js';
 // Dialog di backup/restore: export selettivo (engine + cell, prompt si, segreti
 // mai) e import da file con conferme di sovrascrittura. Estratto invariato da
 // FleetTab.jsx; la normalizzazione/portabilità vive in lib/fleet-backup.js.
-export default function FleetBackupDialog({ cells = [], engines = [], busy, canRestore = false, onRestore, onClose }) {
+export default function FleetBackupDialog({ cells = [], engines = [], models = [], busy, canRestore = false, onRestore, onClose }) {
   const [tab, setTab] = useState('export');
+  // I modelli letti dal file: servono al ripristino, che li scrive prima degli
+  // engine. Restano qui e non in una variabile locale della lettura, che al
+  // momento del click non esiste piu'.
+  const [importedModels, setImportedModels] = useState([]);
   const [selectedCellsOut, setSelectedCellsOut] = useState(() => new Set(cells.map((cell) => cell.id)));
   const [selectedEnginesOut, setSelectedEnginesOut] = useState(() => new Set(engines.map((engine) => engine.id)));
   const [cellRows, setCellRows] = useState([]);
@@ -19,7 +23,7 @@ export default function FleetBackupDialog({ cells = [], engines = [], busy, canR
     const next = new Set(before); if (next.has(id)) next.delete(id); else next.add(id); return next;
   });
   const exportSelected = () => {
-    const backup = createFleetBackup(cells, selectedCellsOut, engines, selectedEnginesOut);
+    const backup = createFleetBackup(cells, selectedCellsOut, engines, selectedEnginesOut, new Date(), models);
     // Fail-closed: una cella selezionata priva di cwdRel portatile (needsRepair)
     // non viene mai omessa silenziosamente -> errore esplicito i18n.
     if (backup.ok === false) { setError(t(`fleet-backup-${backup.error}`)); return; }
@@ -42,6 +46,7 @@ export default function FleetBackupDialog({ cells = [], engines = [], busy, canR
     try {
       const parsed = parseFleetBackup(await file.text());
       if (!parsed.ok) { setError(t(`fleet-backup-${parsed.error}`)); return; }
+      setImportedModels(Array.isArray(parsed.models) ? parsed.models : []);
       const importedIds = new Set(parsed.engines.map((engine) => engine.id));
       setEngineRows(parsed.engines.map((engine) => ({
         engine, exists: existingEngineIds.has(engine.id), selected: !existingEngineIds.has(engine.id),
@@ -122,7 +127,7 @@ export default function FleetBackupDialog({ cells = [], engines = [], busy, canR
             </select>
           </div>)}
         </div>
-        <div className="nc-sheet-actions"><button type="button" className="nc-btn ghost" onClick={onClose}>{t('cancel')}</button><button type="button" className="nc-btn primary" disabled={busy || (!selectedCellRows.length && !selectedEngineRows.length)} onClick={() => onRestore({ engineRows, cellRows })}>{t('fleet-backup-restore')}</button></div>
+        <div className="nc-sheet-actions"><button type="button" className="nc-btn ghost" onClick={onClose}>{t('cancel')}</button><button type="button" className="nc-btn primary" disabled={busy || (!selectedCellRows.length && !selectedEngineRows.length)} onClick={() => onRestore({ engineRows, cellRows, models: importedModels })}>{t('fleet-backup-restore')}</button></div>
       </>}
       {error && <div className="nc-err">{error}</div>}
     </div>
