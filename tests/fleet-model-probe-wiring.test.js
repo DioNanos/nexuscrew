@@ -78,6 +78,15 @@ test('senza credenziale configurata: `auth`, e nessuna chiamata parte', async (t
   // Il mondo di prova non ha chiavi. Dirlo subito evita una richiesta che
   // sarebbe rifiutata comunque, e distingue «manca la chiave» da «il modello
   // non esiste» — che e' tutto il punto di questa prova.
+  //
+  // La chiave va TOLTA dall'ambiente esplicitamente: questo test passava da me
+  // e falliva nella shell dell'auditor, che aveva ALIBABA_CODE_API_KEY
+  // esportata — la credenziale veniva trovata davvero e l'esito cambiava. Un
+  // test che dipende da cosa c'e' nella shell di chi lo esegue non prova
+  // niente: prova l'ambiente.
+  const salvata = process.env.ALIBABA_CODE_API_KEY;
+  delete process.env.ALIBABA_CODE_API_KEY;
+  t.after(() => { if (salvata !== undefined) process.env.ALIBABA_CODE_API_KEY = salvata; });
   const fleet = await fleetDi(mondo(t));
   let chiamato = false;
   const out = await fleet.testModel(PROFILO, 'qwen3.8-max', {
