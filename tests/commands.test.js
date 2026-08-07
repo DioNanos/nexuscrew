@@ -452,17 +452,47 @@ test('dispatch: unknown command -> code 1', () => {
   assert.ok(logs.join('\n').includes('not a public CLI command'));
 });
 
-test('dispatch: status, stop and restart are public lifecycle commands', () => {
+test('dispatch: status, stop and restart are public lifecycle commands', async () => {
   const { home } = initHome();
   const logs = [];
   const execImpl = (_bin, args) => args.includes('is-active') ? 'active' : '';
   assert.equal(dispatch(['status'], { home, platform: 'linux', execImpl, log: (x) => logs.push(x) }).code, 0);
   const lifecycle = { home, platform: 'linux', execImpl, ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }), log: (x) => logs.push(x) };
   assert.equal(dispatch(['stop'], lifecycle).code, 0);
-  assert.equal(dispatch(['restart'], lifecycle).code, 0);
+  // `restart` ora attende la salute del servizio, quindi restituisce una
+  // promessa: il seam evita di dipendere da un runtime vivo nel test.
+  assert.equal((await dispatch(['restart'], { ...lifecycle, waitForRuntimeImpl: async () => true })).code, 0);
   assert.match(logs.join('\n'), /running:/);
   assert.match(logs.join('\n'), /systemctl --user stop nexuscrew/);
   assert.match(logs.join('\n'), /systemctl --user restart nexuscrew/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// Il difetto che questo test fissa e' costato oltre quattro ore il 2026-08-07:
+// `nexuscrew restart` su Termux ha restituito 0 con il servizio MORTO, e da
+// fuori si vedeva solo un KO generico. Il comando confermava che il RIAVVIO era
+// partito, non che il servizio rispondesse — due cose diverse, e a chi guarda
+// l'esito sembrano la stessa. Con l'auto-update acceso quel riavvio avviene da
+// solo su ogni nodo della flotta, quindi un esito non verificato si moltiplica.
+test('dispatch restart: un servizio che NON torna su e\' un fallimento, non un successo', async () => {
+  const { home } = initHome();
+  const logs = [];
+  const opts = {
+    home, platform: 'linux',
+    execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
+    log: (x) => logs.push(x),
+    waitForRuntimeImpl: async () => false, // il comando parte, il processo non risponde
+  };
+  const out = await dispatch(['restart'], opts);
+
+  assert.equal(out.code, 1, 'un riavvio non verificato non deve uscire 0');
+  const detto = logs.join('\n');
+  assert.match(detto, /NON risponde/);
+  // E deve dire DOVE guardare: «riavvio fallito» da solo manda a cercare nella
+  // federazione o nel pairing, cioe' dove il difetto non e'.
+  assert.match(detto, /riavvio e' partito|riavvio e’ partito/);
+  assert.match(detto, /log del servizio/);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
