@@ -1,6 +1,6 @@
 ---
 name: nexuscrew-agent
-description: Use when an AI agent connected to NexusCrew must notify or ask the human, inspect runtime or deck context, manage exact authorized VL micro-device nodes, list authorized Fleet cells, message an exact active cell, read its inbox, deliver a file, recover from local tmux messages that remain unsubmitted or garbled, or when a drag in the web terminal does not scroll a full-screen TUI. Prefer nc_notify, nc_ask, nc_status, nc_deck, nc_cells, nc_vl_nodes, nc_vl_command, nc_send_cell, nc_inbox, and nc_send_file; use bundled tmux/file helpers only as a declared compatibility fallback.
+description: Use when an AI agent connected to NexusCrew must notify or ask the human, inspect runtime, identity or deck context, diagnose a Fleet cell that will not start, manage exact authorized VL micro-device nodes, list authorized Fleet cells, message an exact active cell, speak on a target node or audio group, read its inbox, deliver a file, recover from local tmux messages that remain unsubmitted or garbled, or when a drag in the web terminal does not scroll a full-screen TUI. Prefer nc_notify, nc_ask, nc_status, nc_identity, nc_deck, nc_cells, nc_cell_diagnostics, nc_vl_nodes, nc_vl_command, nc_send_cell, nc_speak, nc_speak_group, nc_inbox, and nc_send_file; use bundled tmux/file helpers only as a declared compatibility fallback.
 ---
 
 # NexusCrew Agent I/O
@@ -25,6 +25,12 @@ When the client exposes the NexusCrew MCP server, use these tools directly:
 | Revoke an exact VL pairing | `nc_vl_revoke` |
 | List files received for the current session | `nc_inbox` |
 | Deliver an absolute file path under the user's home | `nc_send_file` |
+| Speak an utterance on an exact target node | `nc_speak` |
+| Speak to a named local audio group | `nc_speak_group` |
+| Check or stop an utterance you started | `nc_speak_status`, `nc_speak_stop` |
+| Check or stop a group utterance you started | `nc_speak_group_status`, `nc_speak_group_stop` |
+| Read who the caller is, without a session or token | `nc_identity` |
+| Read why a local Fleet cell failed to start | `nc_cell_diagnostics` |
 
 Apply these rules:
 
@@ -37,6 +43,11 @@ Apply these rules:
 - Use `nc_vl_nodes` immediately before VL mutation. Mutation tools require an active local Fleet caller and the full owner-qualified VL ID. `nc_vl_command` `submitted` means live-poll delivery only; require the same ID in `lastAck`. No offline queue exists.
 - Use `nc_inbox` instead of guessing an inbox path when the tool is available.
 - Pass `nc_send_file` an existing absolute regular-file path below the user's home. Let NexusCrew choose and sanitize the outbox name.
+- Speak only when audio is the point. `nc_speak` needs an exact target instance id and returns a caller-scoped receipt with a per-endpoint status (`refused`, `unreachable`, `accepted`) — accepted means the node took the utterance, not that a human heard it. Keep the text short: a spoken line that runs long is worse than no line, and the detail belongs in a file or a notification. A status or stop call only ever reaches an utterance you started; you cannot inspect or silence someone else's.
+- `nc_speak_group` expands a named local group into exact instance ids. `primary-failover` tries one endpoint at a time; `fanout` is explicit. Neither receipt reports text, language or voice back to you — that is deliberate, and it means the receipt cannot be used to read what another caller said.
+- Consent to use a room's speaker is granted locally on the node that owns it and never across the federation. Speaking and stopping travel; granting does not.
+- `nc_identity` answers "who am I to this bridge" with non-sensitive data only, and works without a tmux session or a token. Use it when a tool refuses you and you are not sure which caller the server sees, instead of guessing from the environment.
+- `nc_cell_diagnostics` returns the redacted shell command and the last bounded spawn or start failure for one local Fleet cell. Use it when a cell will not come up, before reading state files.
 - Do not treat an MCP notification as a substitute for the final response required by the active client.
 
 The MCP server is the stdio command `nexuscrew mcp` and must be registered in the host AI client. If the `nc_*` tools are not exposed, report that the bridge is not configured in that session and use the fallback flows below where applicable.
@@ -134,6 +145,10 @@ work. The setting is also applied to windows created later in that session.
 | Discover authorized cells across nodes | `nc_cells` |
 | Submit to an exact active Fleet cell | `nc_send_cell` |
 | Discover/manage a paired VL micro-device | `nc_vl_nodes`, then `nc_vl_command` |
+| Say something out loud on a node or group | `nc_speak`, `nc_speak_group` (short text) |
+| Stop something you are saying | `nc_speak_stop`, `nc_speak_group_stop` |
+| Find out which caller the bridge sees | `nc_identity` |
+| Find out why a local cell will not start | `nc_cell_diagnostics` |
 | Give the human a file | `nc_send_file` or fallback `nc-deliver <file>...` |
 | Read a file the human sent | `nc_inbox` or fallback to the path in the prompt |
 | Send a prompt/command to a session | `nc-send <session> "text"` |
@@ -150,4 +165,7 @@ work. The setting is also applied to windows created later in that session.
 - **Delivering to a guessed session name** → file lands in an orphan folder with no badge. Use `nc-deliver` (it reads the real session).
 - **Sending to an ambiguous cell name** → call `nc_cells` and use the full owner-qualified ID.
 - **Calling `submitted` a completed task** → it is only a transport receipt; require an explicit result callback.
+- **Concluding a cell is stuck because it looks idle** → a terminal interface queues an incoming message while it is busy, which is healthy; text sitting in the composer of a cell that is *not* working is the defect. To tell them apart, read CPU time from the **child** of the pane process: the pane's own pid is often a wrapper that never burns CPU, so measuring it reports "idle" for a cell working at full tilt.
+- **Assuming a node listens on the port you know** → NexusCrew selects a free port per installation, and a peer's remote port is not the port that node listens on locally. Read it from `nexuscrew status` on that node; a health check aimed at the wrong port reports a dead service that is perfectly alive.
+- **Writing a reply into a local inbox directory** → the inbox is per-installation and is not synchronised between nodes. Answering a remote caller by dropping a file in your own inbox reaches nobody; reply through the tool that addressed you.
 - **Treating a dead scroll gesture as a web-terminal bug** → the pane is in the alternate buffer. Check whether it predates the NexusCrew setting or opted out with `alternateScreen:true`; never send raw page keys to a TUI to work around it.
