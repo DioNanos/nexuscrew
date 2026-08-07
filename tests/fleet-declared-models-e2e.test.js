@@ -105,3 +105,32 @@ test('il modello per-cella non e\' una scorciatoia al catalogo', async (t) => {
   const cella = (await fleet.definitions()).cells.find((c) => c.id === 'Dev');
   assert.equal(cella.model, ID_NUOVO);
 });
+
+test('lo schema DESCRIVE il modello, e la descrizione e\' quella vera', async (t) => {
+  // `define-model` e' federato: un client che amministra un nodo remoto ricava
+  // da `schema()` la forma da compilare. Uno schema che tace, o che dichiara un
+  // vincolo diverso da quello applicato, manda quel client a sbattere contro un
+  // rifiuto che non sapeva prevedere.
+  //
+  // Per questo il test non si limita a leggere lo schema: prova il parser AI
+  // CONFINI che lo schema dichiara. E' l'unico modo perche' i due non divergano
+  // in silenzio.
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  const forma = fleet.schema().model;
+  assert.ok(forma, 'lo schema deve descrivere il modello dichiarato');
+  assert.deepEqual(Object.keys(forma).sort(),
+    ['contextWindow', 'engine', 'id', 'label', 'maxTokens', 'reasoning'],
+    'i campi descritti sono esattamente quelli che il parser accetta');
+  assert.equal(forma.id.required, true);
+  assert.equal(forma.engine.required, true);
+
+  // I confini dichiarati sono quelli applicati, provati da entrambi i lati.
+  const con = (patch) => fleet.defineModel({ id: `m-${Object.values(patch)[0]}`, engine: PROFILO, ...patch });
+  await assert.rejects(() => con({ contextWindow: forma.contextWindow.min - 1 }));
+  await con({ contextWindow: forma.contextWindow.min });
+  await assert.rejects(() => con({ maxTokens: forma.maxTokens.max + 1 }));
+  await con({ maxTokens: forma.maxTokens.max });
+  // Un campo NON descritto non entra: lo schema e' chiuso da entrambe le parti.
+  await assert.rejects(() => fleet.defineModel({ id: 'm-extra', engine: PROFILO, prezzo: 3 }));
+});

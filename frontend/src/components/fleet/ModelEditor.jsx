@@ -12,7 +12,7 @@ import { t } from '../../lib/i18n.js';
 // arriva fin qui, e «non verificato» non si colora come un successo — una
 // prova non ottenuta non autorizza a credere che il modello funzioni.
 export default function ModelEditor({
-  state, setState, busy, onSave, onTest, profiles = [],
+  state, setState, busy, onSave, onTest, profiles = [], canTest = true,
 }) {
   const [test, setTest] = useState(null);
   const [testing, setTesting] = useState(false);
@@ -57,9 +57,11 @@ export default function ModelEditor({
       </label>
 
       <div className="nc-set-row">
-        <button type="button" className="nc-btn ghost" disabled={busy || testing || !pronto} onClick={prova}>
+        {/* Su un nodo che non espone la capability la prova non esiste: si
+            toglie il bottone invece di offrirne uno che torna 501. */}
+        {canTest && <button type="button" className="nc-btn ghost" disabled={busy || testing || !pronto} onClick={prova}>
           {testing ? t('model-test-running') : t('model-test')}
-        </button>
+        </button>}
         {test && (
           <span className={`nc-model-test ${test.outcome}`}>
             {t(`model-test-${test.outcome}`)}

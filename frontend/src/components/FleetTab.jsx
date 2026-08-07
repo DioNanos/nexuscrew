@@ -85,7 +85,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   };
 
   const provaModello = async (engine, model) => {
-    const out = await fleetModelTest(token, engine, model);
+    const out = await fleetModelTest(token, engine, model, route);
     setModelTests((prev) => ({ ...prev, [`${engine}::${model}`]: out }));
     return out;
   };
@@ -180,6 +180,11 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   });
 
   const locked = readonly || remoteReadonly;
+  const caps = status.capabilities || [];
+  // La prova e' una diagnosi e in locale resta possibile anche a sola lettura.
+  // Su un nodo REMOTO la federazione la rifiuta sotto READONLY: il bottone si
+  // spegne invece di offrire un'azione che tornerebbe 403.
+  const provaBloccata = route.length > 0 && locked;
   const credentialFor = (engine) => credentials.find((entry) => entry.engines?.includes(engine.id)) || null;
   const saveCredential = () => run(async () => {
     const result = await fleetSetCredential(token, credentialEdit.envKey, credentialEdit.value, route);
@@ -321,7 +326,6 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
         </span></div>
         {defs.cells.map((c) => {
         const isOn = active.has(c.id);
-        const caps = status.capabilities || [];
         // needsRepair: cwd non portabile. La UI NON mostra la cwd assoluta del
         // device sorgente (c.cwd e' foreign): espone un badge e il solo flusso
         // repair (che invia cwdRel-only). Una cella needsRepair non e' editabile
@@ -371,8 +375,8 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
             {esito && <small className={`nc-model-test ${esito.outcome}`}>{t(`model-test-${esito.outcome}`)}
               {esito.outcome === 'ok' && Number.isInteger(esito.latencyMs) ? ` · ${esito.latencyMs}ms` : ''}</small>}
           </span><span>
-            <button className="nc-btn ghost" disabled={busy}
-              onClick={() => run(() => provaModello(m.engine, m.id))}>{t('model-test')}</button>
+            {caps.includes('model-test') && <button className="nc-btn ghost" disabled={busy || provaBloccata}
+              onClick={() => run(() => provaModello(m.engine, m.id))}>{t('model-test')}</button>}
             <button className="nc-btn danger" disabled={locked || busy}
               onClick={() => run(() => fleetRemoveModel(token, m.id, m.engine, route))}>×</button>
           </span></div>
@@ -380,7 +384,8 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
       </>}
       {modelEdit && <FleetModal onClose={() => setModelEdit(null)} label={t('fleet-models')} error={err}>
         <ModelEditor state={modelEdit} setState={setModelEdit} busy={busy} onSave={saveModel}
-          onTest={provaModello} profiles={defs.managedCatalog || []} /></FleetModal>}
+          onTest={provaModello} profiles={defs.managedCatalog || []}
+          canTest={caps.includes('model-test') && !provaBloccata} /></FleetModal>}
       {engineEdit && <FleetModal onClose={() => setEngineEdit(null)} label={t('fleet-new-engine')} error={err}><EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} /></FleetModal>}
       {cellEdit && <FleetModal onClose={() => setCellEdit(null)} label={t('fleet-new-cell')} error={err}><CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} /></FleetModal>}
       {repairCell && <FleetModal onClose={() => setRepairCell(null)} label={t('fleet-cwd-repair-title').replace('{id}', repairCell.id)} error=""><CwdRepairDialog token={token} route={route} cell={repairCell} busy={busy} onSaved={async () => { setRepairCell(null); setNote(t('fleet-cwd-repaired')); await refresh(); }} onClose={() => setRepairCell(null)} /></FleetModal>}

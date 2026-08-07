@@ -47,6 +47,21 @@ test('federation route parser has an explicit capability allowlist and hop cap',
   assert.equal(fed.allowedResource('/fleet/credentials/set', 'POST'), true);
   assert.deepEqual(fed.parseRoute('/vps/_/fleet/restore-engines'), { route: ['vps'], resource: '/fleet/restore-engines' });
   assert.equal(fed.allowedResource('/fleet/define-cell', 'GET'), false);
+  // I modelli dichiarati vanno dove vanno gli engine. Tenerli locali rendeva la
+  // modifica remota monca: si poteva creare a distanza un engine gestito e non
+  // si poteva dichiarare il modello che lo rende avviabile.
+  assert.equal(fed.allowedResource('/fleet/define-model', 'POST'), true);
+  assert.equal(fed.allowedResource('/fleet/remove-model', 'POST'), true);
+  assert.equal(fed.allowedResource('/fleet/model-test', 'POST'), true);
+  assert.deepEqual(fed.parseRoute('/vps/_/fleet/model-test'), { route: ['vps'], resource: '/fleet/model-test' });
+  assert.equal(fed.allowedResource('/fleet/define-model', 'GET'), false);
+  assert.equal(fed.allowedResource('/fleet/model-test', 'GET'), false);
+  // READONLY resta il confine: la prova non muta nulla, ma fa partire una
+  // richiesta autenticata DA quel nodo su comando di un peer, ed e' esattamente
+  // cio' che «sola lettura» toglie. Le due eccezioni audio restano le uniche.
+  assert.equal(fed.readonlyBlocksFederated('/fleet/model-test', 'POST'), true);
+  assert.equal(fed.readonlyBlocksFederated('/fleet/define-model', 'POST'), true);
+  assert.equal(fed.readonlyBlocksFederated('/fleet/remove-model', 'POST'), true);
   assert.equal(fed.allowedResource('/settings', 'GET'), false);
   // Coniare un invito NON e' piu' federabile (2026-08-04). L'invito e' legato
   // all'instanceId dell'hub: chi lo consuma entra nell'hub, non nel nodo che

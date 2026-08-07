@@ -41,9 +41,10 @@ export const fleetRemoveEngine = (t, id, route) => jsonFetch(fleetPath(route, 'r
 // Modelli dichiarati: vivono accanto agli engine e si esportano con loro.
 export const fleetDefineModel = (t, def, route) => jsonFetch(fleetPath(route, 'define-model'), t, { method: 'POST', body: { def } });
 export const fleetRemoveModel = (t, id, engine, route) => jsonFetch(fleetPath(route, 'remove-model'), t, { method: 'POST', body: { id, engine } });
-// La prova NON e' federata: consuma la credenziale dell'installazione che la
-// esegue, quindi ha senso solo verso il proprio fleet.
-export const fleetModelTest = (t, engine, model) => jsonFetch('/api/fleet/model-test', t, { method: 'POST', body: { engine, model } });
+// La prova segue la route come tutto il resto: si prova il modello sul nodo che
+// si sta guardando, con la credenziale di QUEL nodo — provarlo sul proprio non
+// risponderebbe alla domanda che ci si sta facendo.
+export const fleetModelTest = (t, engine, model, route) => jsonFetch(fleetPath(route, 'model-test'), t, { method: 'POST', body: { engine, model } });
 export const fleetDefineCell = (t, def, route) => jsonFetch(fleetPath(route, 'define-cell'), t, { method: 'POST', body: { def } });
 export const fleetEditCell = (t, id, patch, route) => jsonFetch(fleetPath(route, 'edit-cell'), t, { method: 'POST', body: { id, patch } });
 export const fleetRemoveCell = (t, id, stop = false, route) => jsonFetch(fleetPath(route, 'remove-cell'), t, { method: 'POST', body: { id, stop } });
