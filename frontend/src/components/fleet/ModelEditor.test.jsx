@@ -93,3 +93,25 @@ describe('ModelEditor', () => {
     for (const p of PROFILI) expect(screen.getByRole('option', { name: new RegExp(p.id) })).toBeTruthy();
   });
 });
+
+// Ogni finestra deve avere un'uscita che non sia «salva». Questa non ce l'aveva:
+// la modale si chiude con Escape o cliccando lo sfondo, ma su un telefono non
+// c'e' Escape e lo sfondo puo' non essere raggiungibile — quindi l'unico modo di
+// uscire era salvare un modello che magari non si voleva. Segnalato da chi la
+// usava, non trovato da un test.
+describe('ModelEditor — si puo\' uscire senza salvare', () => {
+  it('offre annulla accanto a salva, e annullare chiude senza salvare', () => {
+    const setState = vi.fn();
+    const onSave = vi.fn();
+    render(<ModelEditor
+      state={{ mode: 'new', form: { id: 'qwen9', engine: 'claude.native' } }}
+      setState={setState} busy={false} onSave={onSave} onTest={vi.fn()}
+      profiles={[{ id: 'claude.native', label: 'N' }]}
+    />);
+    const annulla = screen.getByRole('button', { name: 'cancel' });
+    expect(annulla).toBeTruthy();
+    fireEvent.click(annulla);
+    expect(setState).toHaveBeenCalledWith(null);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+});

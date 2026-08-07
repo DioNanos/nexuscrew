@@ -74,7 +74,14 @@ export default function ModelEditor({
       {test && test.detail && <small className="nc-set-hint">{test.detail}</small>}
       {test && test.outcome === 'unverified' && <small className="nc-set-hint">{t('model-test-unverified-help')}</small>}
 
-      <div className="nc-set-row">
+      {/* Annulla PRIMA di salva, come negli altri due editor. Senza, l'unica
+          uscita da questa finestra era salvare: la modale si chiude con Escape
+          o cliccando lo sfondo, ma su un telefono non c'e' Escape e lo sfondo
+          puo' non essere raggiungibile. Segnalato da chi la usava. */}
+      <div className="nc-sheet-actions">
+        <button type="button" className="nc-btn ghost" onClick={() => setState(null)}>
+          {t('cancel')}
+        </button>
         <button type="button" className="nc-btn primary" disabled={busy || !pronto} onClick={() => onSave(form)}>
           {t('save')}
         </button>
