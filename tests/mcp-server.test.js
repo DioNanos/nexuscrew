@@ -1223,3 +1223,53 @@ test('subprocess: EOF immediato non tronca una tools/call asincrona', async (t) 
   const toolReply = messages.find((m) => m.id === 2);
   assert.deepEqual(JSON.parse(toolReply.result.content[0].text), { delivered: { ui: 1, push: 0 } });
 });
+
+// NC-R — aggiornare NexusCrew non aggiorna il bridge MCP di una cella gia' in
+// piedi. Il sintomo e' crudele: si installa una correzione, si riprova, e si
+// riceve l'errore VECCHIO. Chi lo subisce conclude che la correzione non
+// funziona. E' successo il 2026-08-07 su rc.26, e ci e' voluto un giro intero
+// per capirlo. Da qui in poi lo dice l'errore stesso.
+test('un errore dice se il bridge e\' di una versione diversa dall\'hub', async () => {
+  const nostra = require('../package.json').version;
+  const { srv, out } = makeSrv({
+    responder: (call) => (call.url.endsWith('/api/config')
+      ? { status: 200, json: { version: '9.9.9' } }
+      : { status: 500, json: { error: 'qualcosa e\' andato storto' } }),
+  });
+  await srv.handleLine(rpc(1, 'tools/call', { name: 'nc_status', arguments: {} }));
+  const testo = JSON.stringify(out.lines[0]);
+
+  assert.match(testo, /qualcosa e/, 'l\'errore originale resta il messaggio principale');
+  assert.match(testo, /9\.9\.9/, 'deve nominare la versione dell\'hub');
+  assert.match(testo, new RegExp(nostra.replace(/\./g, '\\.')), 'e la propria');
+  assert.match(testo, /riavvia questa cella/, 'e dire cosa fare');
+});
+
+test('nessuna nota quando le due versioni coincidono', async () => {
+  const nostra = require('../package.json').version;
+  const { srv, out } = makeSrv({
+    responder: (call) => (call.url.endsWith('/api/config')
+      ? { status: 200, json: { version: nostra } }
+      : { status: 500, json: { error: 'errore semplice' } }),
+  });
+  await srv.handleLine(rpc(1, 'tools/call', { name: 'nc_status', arguments: {} }));
+  const testo = JSON.stringify(out.lines[0]);
+  assert.match(testo, /errore semplice/);
+  assert.doesNotMatch(testo, /riavvia questa cella/,
+    'un avviso che compare sempre smette di essere letto');
+});
+
+test('se la verifica di versione fallisce, l\'errore originale esce intatto', async () => {
+  // La nota e' un di piu': non deve MAI sostituire ne' mascherare la diagnosi
+  // vera. Qui /api/config risponde 500 — come farebbe un hub piu' vecchio che
+  // non espone quel campo, o un hub che sta ripartendo.
+  const { srv, out } = makeSrv({
+    responder: (call) => (call.url.endsWith('/api/config')
+      ? { status: 500, json: {} }
+      : { status: 403, json: { error: 'permesso negato' } }),
+  });
+  await srv.handleLine(rpc(1, 'tools/call', { name: 'nc_status', arguments: {} }));
+  const testo = JSON.stringify(out.lines[0]);
+  assert.match(testo, /permesso negato/);
+  assert.doesNotMatch(testo, /riavvia questa cella/);
+});
