@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
+const { resolveManagedEngine, extraModelsFrom } = require('../lib/fleet/managed.js');
 
 const PROFILO = 'claude.alibaba-token-plan';
 const ID_NUOVO = 'qwen-uscito-stamattina';
@@ -36,6 +37,12 @@ function mondo(t) {
     engines: [{ id: 'e1', label: 'E1', rc: true, command, args: [], env: {}, promptMode: 'flag', promptFlag: '--sp' }],
     cells: [{ id: 'Dev', tmuxSession: 'work-x', cwd, engine: 'e1', boot: true }],
   }));
+  // Il resolver del boot cerca il binario del client sotto la home: senza,
+  // non si arriva mai a sapere se il modello dichiarato passa il gate.
+  fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
+  const claudeBin = path.join(home, '.local', 'bin', 'claude');
+  fs.writeFileSync(claudeBin, '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(claudeBin, 0o755);
   const tmuxBin = path.join(home, 'bin', 'tmux-finto');
   fs.writeFileSync(tmuxBin, '#!/bin/sh\nexit 0\n');
   fs.chmodSync(tmuxBin, 0o755);
@@ -45,8 +52,21 @@ function mondo(t) {
 
 const fleetDi = (w) => createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
 
-test('dichiaro → lo VEDO nella vista → l\'engine si CONFIGURA', async (t) => {
-  const fleet = await fleetDi(mondo(t));
+// La chiamata che fa il PRODOTTO all'avvio di una cella (lib/fleet/runtime.js):
+// stesso resolver, stesso `extraModels` ricavato dalle definizioni. Passare di
+// qui e' l'unico modo di sapere se la cella parte davvero — la vista
+// (`describeManaged`) risponde a una domanda diversa, e per due giri ho creduto
+// che fossero la stessa.
+function bootDi(w, defs, engine, cell = { id: 'Dev' }) {
+  return resolveManagedEngine(engine, cell, {
+    home: w.home, platform: 'linux', env: { ALIBABA_CODE_API_KEY: 'chiave-finta-per-il-test' },
+    extraModels: extraModelsFrom(defs),
+  });
+}
+
+test('dichiaro → lo VEDO nella vista → la cella PARTE', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
 
   // 1. dichiaro
   await fleet.defineModel({ id: ID_NUOVO, engine: PROFILO, contextWindow: 500000 });
@@ -66,8 +86,39 @@ test('dichiaro → lo VEDO nella vista → l\'engine si CONFIGURA', async (t) =>
   const engine = dopo.engines.find((e) => e.id === 'nuovo');
   assert.ok(engine, 'l\'engine deve essere stato salvato');
   assert.ok(engine.managedInfo, 'la vista deve descrivere l\'engine gestito');
-  assert.notEqual(engine.managedInfo.reason, 'invalid managed profile',
-    'il modello dichiarato deve superare il gate anche qui: era il difetto D1');
+  assert.notEqual(engine.managedInfo.reason, 'invalid managed profile');
+
+  // 4. IL BOOT. Questo passo mancava, ed e' il motivo per cui il gate restava
+  //    verde mentre la cella non partiva: il resolver dell'avvio normalizzava
+  //    lo spec SENZA le dichiarazioni, quindi un modello legittimo diventava
+  //    «invalid managed profile». Il passo 3 non poteva accorgersene: guarda
+  //    la vista, e la vista le dichiarazioni le riceveva.
+  const boot = bootDi(w, dopo, engine);
+  assert.equal(boot.ok, true, `la cella deve partire: ${boot.reason}`);
+  assert.equal(boot.engine.args[boot.engine.args.indexOf('--model') + 1], ID_NUOVO);
+});
+
+test('l\'override PER-CELLA di un nome legacy arriva al boot CANONICALIZZATO', async (t) => {
+  // `normalizeManagedSpec` applica l'alias a `spec.model`, ma `cell.model` lo
+  // scavalca dopo e senza passare di li'. Senza canonicalizzarlo la cella parte
+  // — sembra a posto — e gira col nome vecchio in argv e in env, mentre i rami
+  // di trattamento confrontano il nome nuovo e non scattano. Un difetto che si
+  // vede solo nei parametri, mai in un errore.
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineEngine({
+    id: 'ali', label: 'Ali',
+    managed: { client: 'claude', provider: 'alibaba-token-plan', model: 'qwen3.8-max', permissionPolicy: 'unsafe' },
+  });
+  const defs = await fleet.definitions();
+  const engine = defs.engines.find((e) => e.id === 'ali');
+  const boot = bootDi(w, defs, engine, { id: 'Dev', model: 'qwen3.8-max-preview' });
+  assert.equal(boot.ok, true, boot.reason);
+  assert.equal(boot.engine.args[boot.engine.args.indexOf('--model') + 1], 'qwen3.8-max');
+  assert.equal(boot.engine.env.ANTHROPIC_MODEL, 'qwen3.8-max');
+  // E il trattamento specifico di qwen3.8 scatta, che e' la meta' silenziosa
+  // del difetto: senza, la cella gira con effort e finestra di default.
+  assert.equal(boot.engine.env.CLAUDE_CODE_EFFORT_LEVEL, 'xhigh');
 });
 
 test('un modello NON dichiarato resta rifiutato in ogni punto del giro', async (t) => {
