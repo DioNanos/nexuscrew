@@ -164,6 +164,11 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     // rimuove, perche' `null` cancella la chiave lato backend.
     const label = (f.label || '').trim();
     if (creating) { if (label) def.label = label; } else def.label = label || null;
+    // Stessa asimmetria della label, per la stessa ragione: in creazione il
+    // campo assente significa «tutti», e `parseCell` rifiuta un `mcp: null`; in
+    // modifica serve `null`, perche' e' cosi' che il backend CANCELLA la chiave.
+    if (creating) { if (Array.isArray(f.mcp)) def.mcp = f.mcp; }
+    else def.mcp = Array.isArray(f.mcp) ? f.mcp : null;
     if (creating) {
       if (selectedEngine?.managed?.client !== 'shell' && f.model) def.model = f.model;
       if (selectedEngine?.managed?.client !== 'shell' && f.prompt) def.prompt = f.prompt;
@@ -387,7 +392,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
           onTest={provaModello} profiles={defs.managedCatalog || []}
           canTest={caps.includes('model-test') && !provaBloccata} /></FleetModal>}
       {engineEdit && <FleetModal onClose={() => setEngineEdit(null)} label={t('fleet-new-engine')} error={err}><EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} /></FleetModal>}
-      {cellEdit && <FleetModal onClose={() => setCellEdit(null)} label={t('fleet-new-cell')} error={err}><CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} /></FleetModal>}
+      {cellEdit && <FleetModal onClose={() => setCellEdit(null)} label={t('fleet-new-cell')} error={err}><CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} mcpServers={defs.mcpServers || []} busy={busy} onSave={saveCell} /></FleetModal>}
       {repairCell && <FleetModal onClose={() => setRepairCell(null)} label={t('fleet-cwd-repair-title').replace('{id}', repairCell.id)} error=""><CwdRepairDialog token={token} route={route} cell={repairCell} busy={busy} onSaved={async () => { setRepairCell(null); setNote(t('fleet-cwd-repaired')); await refresh(); }} onClose={() => setRepairCell(null)} /></FleetModal>}
       {note && <div className="nc-set-note">{note}</div>}{err && <div className="nc-err">{err}</div>}
       {backupOpen && <FleetModal onClose={() => setBackupOpen(false)} label={t('fleet-backup')} error={err}><FleetBackupDialog cells={defs.cells} engines={defs.engines} models={defs.models || []} busy={busy} canRestore={canRestoreBackup} onRestore={restoreBackup} onClose={() => setBackupOpen(false)} /></FleetModal>}

@@ -5,7 +5,7 @@ import { listDirs } from '../../lib/api.js';
 // Editor di una cella. State-less rispetto alle API: la posizione di creazione
 // è un campo obbligatorio DENTRO il form e riceve/solleva stato al parent.
 // Estratto invariato da FleetTab.jsx.
-export default function CellEditor({ token, route, targets = [], location, setLocation, state, setState, engines, busy, onSave }) {
+export default function CellEditor({ token, route, targets = [], location, setLocation, state, setState, engines, mcpServers = [], busy, onSave }) {
   const [picker, setPicker] = useState(null);
   const [pickErr, setPickErr] = useState('');
   const f = state.form; const set = (patch) => setState({ ...state, form: { ...f, ...patch } });
@@ -25,6 +25,21 @@ export default function CellEditor({ token, route, targets = [], location, setLo
     set({ command: value, commands });
   };
   const hasShellMetachar = isShell && /[|&;<>()`$*?{}\[\]~]/.test(f.command || '');
+  // Tre stati, non due: ASSENTE non e' come VUOTO. Assente = la cella eredita
+  // tutti gli strumenti, che e' il comportamento di sempre; `[]` = nessuno.
+  // Confonderli significherebbe che aprire e salvare una cella senza toccare
+  // nulla le cambia i poteri.
+  const mcpNoti = [...new Set([...(mcpServers || []), ...(Array.isArray(f.mcp) ? f.mcp : [])])].sort();
+  const mcpModo = Array.isArray(f.mcp) ? (f.mcp.length ? 'some' : 'none') : 'all';
+  // Passando a «scelti» si parte da TUTTI selezionati: cosi' il primo click non
+  // toglie niente per sbaglio, e togliere e' un gesto deliberato.
+  const setMcpModo = (modo) => set({
+    mcp: modo === 'all' ? undefined : (modo === 'none' ? [] : (f.mcp?.length ? f.mcp : [...mcpNoti])),
+  });
+  const toggleMcp = (nome) => {
+    const cur = Array.isArray(f.mcp) ? f.mcp : [];
+    set({ mcp: cur.includes(nome) ? cur.filter((x) => x !== nome) : [...cur, nome].sort() });
+  };
   const browse = async (p) => {
     try { const x = await listDirs(token, p, route); setPicker(x); set({ cwd: x.path }); setPickErr(''); }
     catch (e) { setPickErr(String(e.message || e)); }
@@ -67,6 +82,19 @@ export default function CellEditor({ token, route, targets = [], location, setLo
           volta si'. */}
       <textarea value={f.prompt || ''} placeholder={t('cell-prompt')} onChange={(e) => set({ prompt: e.target.value })} />
       <small>{t('cell-prompt-help')}</small>
+      <label className="nc-field">{t('cell-mcp')}
+        <select value={mcpModo} onChange={(e) => setMcpModo(e.target.value)}>
+          <option value="all">{t('cell-mcp-all')}</option>
+          <option value="none">{t('cell-mcp-none')}</option>
+          <option value="some">{t('cell-mcp-some')}</option>
+        </select>
+      </label>
+      {mcpModo === 'some' && <div className="nc-fleet-mcp-list">
+        {mcpNoti.map((nome) => <label className="nc-check" key={nome}>
+          <input type="checkbox" checked={(f.mcp || []).includes(nome)} onChange={() => toggleMcp(nome)} /> {nome}
+        </label>)}
+      </div>}
+      <small>{t('cell-mcp-help')}</small>
     </>}
     <div className="nc-sheet-actions"><button className="nc-btn ghost" onClick={() => setState(null)}>{t('cancel')}</button><button className="nc-btn primary" disabled={busy || !f.id || !f.cwd || !f.engine} onClick={onSave}>{t('save')}</button></div>
   </div>;
