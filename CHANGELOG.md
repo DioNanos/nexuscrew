@@ -6,6 +6,33 @@ All notable changes to NexusCrew are tracked here.
 
 ## 0.8.52 — 2026-08-07 — "What a Peer May See, and What a Cell May Reach"
 
+- **Each node now has a cryptographic identity, and it changes nothing yet.**
+  Every installation generates an Ed25519 key pair; the private half stays in
+  its own file, readable only by its owner, and never leaves the device. Public
+  halves are exchanged during pairing — inside the act that consumes the
+  one-time invite, which is the only moment at which the operator has decided,
+  *on both machines*, that these two nodes know each other. Binding a key
+  anywhere else would bind it to a channel the peer controls alone.
+
+  Nothing is gated on it. A node running an older version sends no key and
+  pairs exactly as before; a malformed key is ignored rather than refused,
+  because a fault here must never be able to stop you from pairing a device.
+  This is the first step of a per-node authority model, and it is deliberately
+  the step with no effect: what it buys is *time*. A key bound today has a
+  history in six months; one bound when permissions start depending on it has
+  none.
+
+  The one rule that gives it value: **a bound key is never silently replaced.**
+  A different key arriving later is recorded as a conflict and shown, not
+  written over the first — otherwise anyone able to answer a probe could become
+  the peer. Re-pairing is the exception, and resolves the conflict: it needs a
+  fresh one-time invite consumed on both machines, so it is an act of the
+  operator rather than of whoever spoke last.
+
+  **What this does not do yet**: peers paired before this version have no key
+  and will not have one until they are paired again, so on an existing
+  installation the directory starts out empty.
+
 - **A paired node can now be restricted to a subset of your cells.** Pairing
   was all or nothing: a peer saw every cell on the hub and could act on all of
   them. The permission lives in the node store of the hub that owns the cells,
