@@ -7,6 +7,7 @@ import {
   fleetImportCell,
   fleetRestoreCells, fleetRestoreEngines,
   fleetCredentialStatus, fleetSetCredential, fleetRemoveCredential,
+  fleetDefineModel, fleetRemoveModel, fleetModelTest,
   getRouteConfig,
 } from '../lib/api.js';
 import PowerSheet from './PowerSheet.jsx';
@@ -18,6 +19,7 @@ import FleetModal from './fleet/FleetModal.jsx';
 import FleetInventory from './fleet/FleetInventory.jsx';
 import FleetBackupDialog from './fleet/FleetBackupDialog.jsx';
 import EngineEditor from './fleet/EngineEditor.jsx';
+import ModelEditor from './fleet/ModelEditor.jsx';
 import CellEditor from './fleet/CellEditor.jsx';
 import ImportEditor from './fleet/ImportEditor.jsx';
 import CwdRepairDialog from './fleet/CwdRepairDialog.jsx';
@@ -27,6 +29,11 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   const [status, setStatus] = useState({ available: false, capabilities: [] });
   const [loaded, setLoaded] = useState(false);
   const [engineEdit, setEngineEdit] = useState(null);
+  const [modelEdit, setModelEdit] = useState(null);
+  // Esiti delle prove, per riga: `{[engine::id]: {outcome, latencyMs}}`. Non
+  // si conservano fra un'apertura e l'altra — una prova vecchia dice quanto
+  // nessuna prova, e mostrarla come attuale sarebbe peggio.
+  const [modelTests, setModelTests] = useState({});
   const [cellEdit, setCellEdit] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -76,6 +83,27 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     try { await fn(); await refresh(); } catch (e) { setErr(String(e.message || e)); }
     setBusy(false);
   };
+
+  const provaModello = async (engine, model) => {
+    const out = await fleetModelTest(token, engine, model);
+    setModelTests((prev) => ({ ...prev, [`${engine}::${model}`]: out }));
+    return out;
+  };
+
+  const saveModel = (form) => run(async () => {
+    const def = { id: String(form.id || '').trim(), engine: String(form.engine || '').trim() };
+    // I campi numerici arrivano dal form come stringhe: si convertono qui, e
+    // si OMETTONO quando vuoti — il parser rifiuta un campo presente e non
+    // valido, ed e' giusto cosi'.
+    for (const key of ['contextWindow', 'maxTokens']) {
+      const value = String(form[key] || '').trim();
+      if (value) def[key] = Number(value);
+    }
+    if (form.reasoning === true) def.reasoning = true;
+    await fleetDefineModel(token, def, route);
+    setModelEdit(null);
+    await refresh();
+  });
 
   const saveEngine = () => run(async () => {
     const creating = engineEdit.mode === 'new';
@@ -324,7 +352,32 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
             <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-engine').replace('{id}', e.id))) await fleetRemoveEngine(token, e.id, route); })}>×</button>
           </span></div>
         );})}
+        {/* Modelli dichiarati: sezione a se', sotto gli engine, perche' e' li'
+            che si va a cercarli — un modello esiste per un profilo, e il
+            profilo e' una proprieta' dell'engine. */}
+        <div className="nc-fleet-section-head"><b>{t('fleet-models')}</b><button className="nc-btn primary" disabled={locked || busy}
+          onClick={() => { setErr(''); setModelEdit({ mode: 'new', form: { id: '', engine: '' } }); }}>+ {t('add')}</button></div>
+        {!(defs.models || []).length && <small className="nc-set-hint">{t('fleet-no-models')}</small>}
+        {(defs.models || []).map((m) => {
+          const key = `${m.engine}::${m.id}`;
+          const esito = modelTests[key];
+          const usato = (defs.engines || []).some((e) => e.managed && e.managed.model === m.id);
+          return (
+          <div className="nc-fleet-item" key={key}><span><b>{m.id}</b><small>{m.engine}
+            {m.contextWindow ? ` · ${m.contextWindow}` : ''}{usato ? ` · ${t('model-in-use')}` : ''}</small>
+            {esito && <small className={`nc-model-test ${esito.outcome}`}>{t(`model-test-${esito.outcome}`)}
+              {esito.outcome === 'ok' && Number.isInteger(esito.latencyMs) ? ` · ${esito.latencyMs}ms` : ''}</small>}
+          </span><span>
+            <button className="nc-btn ghost" disabled={busy}
+              onClick={() => run(() => provaModello(m.engine, m.id))}>{t('model-test')}</button>
+            <button className="nc-btn danger" disabled={locked || busy}
+              onClick={() => run(() => fleetRemoveModel(token, m.id, m.engine, route))}>×</button>
+          </span></div>
+        );})}
       </>}
+      {modelEdit && <FleetModal onClose={() => setModelEdit(null)} label={t('fleet-models')} error={err}>
+        <ModelEditor state={modelEdit} setState={setModelEdit} busy={busy} onSave={saveModel}
+          onTest={provaModello} profiles={defs.managedCatalog || []} /></FleetModal>}
       {engineEdit && <FleetModal onClose={() => setEngineEdit(null)} label={t('fleet-new-engine')} error={err}><EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} /></FleetModal>}
       {cellEdit && <FleetModal onClose={() => setCellEdit(null)} label={t('fleet-new-cell')} error={err}><CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} /></FleetModal>}
       {repairCell && <FleetModal onClose={() => setRepairCell(null)} label={t('fleet-cwd-repair-title').replace('{id}', repairCell.id)} error=""><CwdRepairDialog token={token} route={route} cell={repairCell} busy={busy} onSaved={async () => { setRepairCell(null); setNote(t('fleet-cwd-repaired')); await refresh(); }} onClose={() => setRepairCell(null)} /></FleetModal>}

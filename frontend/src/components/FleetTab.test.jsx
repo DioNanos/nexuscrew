@@ -47,8 +47,13 @@ describe('FleetTab engine + KEY save ordering', () => {
       .mockResolvedValueOnce({ credentials: [] });
     render(<FleetTab token="token" readonly={false} />);
     await screen.findByText('Engines');
-    const addButtons = screen.getAllByRole('button', { name: '+ add' });
-    await user.click(addButtons[addButtons.length - 1]);
+    // Il bottone si sceglie dalla SUA sezione, non per posizione nell'elenco:
+    // prendere «l'ultimo + add» ha smesso di funzionare appena e' comparsa una
+    // sezione sotto quella degli engine, e il test si e' rotto per una ragione
+    // che non c'entrava con cio' che prova.
+    const engineHead = [...document.querySelectorAll('.nc-fleet-section-head')]
+      .find((head) => /Engines/.test(head.textContent || ''));
+    await user.click(engineHead.querySelector('button'));
     const dialog = screen.getByRole('dialog');
     const providerSelect = dialog.querySelectorAll('.nc-fleet-pair select')[1];
     fireEvent.change(providerSelect, { target: { value: 'claude.openrouter' } });
