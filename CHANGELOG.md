@@ -4,6 +4,49 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.54 — 2026-08-07 — "Why the Tunnel Was Left Behind"
+
+- **An automatic update no longer leaves the reverse channel behind.** 0.8.53
+  said the reason a node stayed down after a restart was not established. It is
+  now, and it was not the platform: a manual restart has always stopped the
+  tunnel supervisors first, and the automatic update — on the runtime where no
+  service manager owns the process — did not. The new service then found a
+  supervisor still alive that it could not attribute to itself, so it neither
+  stopped it nor started its own, and the reverse channel stayed attached to an
+  orphan nobody reconciled. The peer read as down until someone intervened by
+  hand. What isolated it was a count, not a theory: on one device, restarts run
+  by hand left the peer up twice out of twice, and restarts run by the updater
+  left it down twice out of twice. The difference between those two paths was
+  this one step.
+
+  Failing to stop the tunnels does not block the update — that is the main job —
+  but it is now reported rather than swallowed, because a silent failure here is
+  what made this take a day to find.
+
+- **The tool bridge documents all of its tools.** The skill shipped alongside
+  NexusCrew described twelve of the twenty tools the bridge exposes; the audio
+  surface, the caller-identity probe and the per-cell start diagnostics were
+  missing entirely. An agent that cannot read what a tool does uses it by
+  guessing. It now covers all of them, along with the mistakes that have
+  actually been paid for: a receipt means the text was pasted and submitted, not
+  that anything was accepted; a terminal that queues an incoming message while
+  it works is healthy, and telling that apart from a stuck one means reading CPU
+  time from the right process; a node does not listen on the port you happen to
+  know, since each installation picks a free one; and answering a remote caller
+  by writing into your own inbox reaches nobody, because that directory is
+  per-installation.
+
+- **The published package is checked by a test, not by a checklist.** The sweep
+  before publishing was done by hand, from a list rebuilt from memory each time.
+  On 2026-08-07 that list covered paths, hostnames and AI attribution but not
+  the names of internal working sessions, and 0.8.53 shipped a comment naming
+  one. Nothing secret — and nothing that can be taken back, since a version is
+  never republished. The check now runs with the rest of the suite, reads the
+  published directories from the package manifest rather than repeating them,
+  and states a reason for every pattern so that no entry can be quietly dropped
+  to make the suite pass. A second test proves the patterns still bite, so an
+  emptied list fails instead of turning green.
+
 ## 0.8.53 — 2026-08-07 — "Coming Back Up, and Saying So"
 
 Automatic updates are on by default and check every six hours, so a node
