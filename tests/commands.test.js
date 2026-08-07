@@ -483,6 +483,7 @@ test('dispatch restart: un servizio che NON torna su e\' un fallimento, non un s
     ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
     log: (x) => logs.push(x),
     restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
+    probeStatusImpl: async () => null, // nessuna risposta: non e' il caso 401
     waitForRuntimeImpl: async () => false, // il comando parte, il processo non risponde
     // Porta ancora occupata: qualcosa la tiene senza servire, quindi non c'e'
     // niente da ritentare e il rimedio non e' riavviare.
@@ -517,6 +518,7 @@ test('dispatch restart: porta libera e servizio assente -> riprova UNA volta', a
     log: (x) => logs.push(x),
     // Primo controllo: assente. Secondo, dopo il riavvio: presente.
     restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
+    probeStatusImpl: async () => null, // nessuna risposta: non e' il caso 401
     waitForRuntimeImpl: async () => { giro += 1; return giro > 1; },
     portAvailableImpl: async () => true, // il processo e' uscito davvero
     startPortableImpl: () => { avvii.push('start'); return { started: true }; },
@@ -539,6 +541,7 @@ test('dispatch restart: se non resta su nemmeno al secondo avvio, e\' un fallime
     ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
     log: (x) => logs.push(x),
     restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
+    probeStatusImpl: async () => null, // nessuna risposta: non e' il caso 401
     waitForRuntimeImpl: async () => false,
     portAvailableImpl: async () => true,
     startPortableImpl: () => { avvii.push('start'); return { started: true }; },
@@ -1490,6 +1493,7 @@ test('dispatch restart: su runtime GESTITO non avvia un processo accanto', async
     execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
     log: (x) => logs.push(x),
     restartImpl: () => ({ restarted: true, runtimeOwner: 'managed' }),
+    probeStatusImpl: async () => null,
     waitForRuntimeImpl: async () => false,
     portAvailableImpl: async () => { throw new Error('non deve nemmeno guardare la porta'); },
     startPortableImpl: () => { throw new Error('MAI avviare un portatile accanto a un servizio gestito'); },
@@ -1518,6 +1522,7 @@ test('dispatch restart: senza token non incolpa la porta, dice che non puo\' ver
     execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
     log: (x) => logs.push(x),
     restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
+    probeStatusImpl: async () => null, // nessuna risposta: non e' il caso 401
     waitForRuntimeImpl: async () => { throw new Error('non deve nemmeno sondare'); },
     startPortableImpl: () => { throw new Error('non deve riavviare'); },
   });
@@ -1525,5 +1530,31 @@ test('dispatch restart: senza token non incolpa la porta, dice che non puo\' ver
   assert.equal(out.code, 0, 'il riavvio e\' partito: non e\' un fallimento');
   assert.match(logs.join('\n'), /NON e' verificabile|NON e’ verificabile/);
   assert.doesNotMatch(logs.join('\n'), /porta/, 'e non deve incolpare la porta');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('dispatch restart: un 401 dice che il servizio C\'E\', non che e\' morto', async () => {
+  // `probeNexusCrew` collassa ogni non-200 su false, quindi un token invalido
+  // era indistinguibile da «nessun servizio»: si sarebbe dichiarato fallito un
+  // riavvio RIUSCITO, mandando a cercare un processo morto che e' vivo.
+  // Rilievo dell'audit: il caso token-ASSENTE era gia' coperto, questo no.
+  const { home } = initHome();
+  const logs = [];
+  const out = await dispatch(['restart'], {
+    home, platform: 'linux',
+    execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
+    log: (x) => logs.push(x),
+    restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
+    waitForRuntimeImpl: async () => false,
+    probeStatusImpl: async () => 401,
+    portAvailableImpl: async () => { throw new Error('non deve guardare la porta'); },
+    startPortableImpl: () => { throw new Error('non deve riavviare un servizio vivo'); },
+  });
+
+  assert.equal(out.code, 1, 'la credenziale non funziona: non e\' un successo');
+  const detto = logs.join('\n');
+  assert.match(detto, /RISPONDE/);
+  assert.match(detto, /riavvio e' riuscito|riavvio e’ riuscito/);
+  assert.doesNotMatch(detto, /porta/, 'non deve incolpare la porta');
   fs.rmSync(home, { recursive: true, force: true });
 });
