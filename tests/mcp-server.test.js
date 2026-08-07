@@ -146,6 +146,46 @@ test('nc_vl_nodes + nc_vl_command: directory owner-qualified e receipt live-only
   assert.deepEqual(commandCall.body, { kind: 'status', args: {} });
 });
 
+test('nc_vl_command: un owner inesistente accusa l\'OWNER, non il micro-device', async () => {
+  // Stessa forma del difetto trovato su nc_send_cell: VL_TARGET_RE accetta
+  // 16-64 esadecimali per l'owner, quindi un id ribattuto e troncato arriva
+  // fino alla ricerca — e il messaggio unico mandava a cercare il device.
+  const localId = 'a'.repeat(32); const nodeId = 'b'.repeat(32);
+  const { srv, out } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') return { status: 200, json: { nodes: [] } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev', active: true, canReceive: true },
+      ] } };
+      if (p === '/api/vl-nodes' && call.method === 'GET') return { status: 200, json: {
+        instanceId: localId, protocol: 'vl-node/1', nodes: [{
+          id: `${localId}:VL-${nodeId}`, instanceId: localId, nodeId, cell: 'VL-bbbbbbbb',
+          label: 'N900', online: true, canManage: true, generation: 1, capabilities: ['status'],
+        }],
+      } };
+      return { status: 404, json: { error: p } };
+    },
+  });
+  const troncato = localId.slice(0, 31);
+  await srv.handleLine(rpc(220, 'tools/call', {
+    name: 'nc_vl_command', arguments: { target: `${troncato}:VL-${nodeId}`, kind: 'status', args: {} },
+  }));
+  const testo = out.lines[0].result.content[0].text;
+  assert.equal(out.lines[0].result.isError, true);
+  assert.match(testo, /nessun owner con instanceId/);
+  assert.match(testo, /copia l'id esatto da nc_vl_nodes/);
+  assert.doesNotMatch(testo, /rete autorizzata/);
+
+  // Owner giusto, device inesistente: qui il soggetto e' davvero il device.
+  await srv.handleLine(rpc(221, 'tools/call', {
+    name: 'nc_vl_command', arguments: { target: `${localId}:VL-${'e'.repeat(32)}`, kind: 'status', args: {} },
+  }));
+  assert.match(out.lines[1].result.content[0].text, /micro-device VL-e+ non trovato sull'owner/);
+});
+
 test('nc_vl_nodes: un owner remoto irraggiungibile e\' unreachable, non silenzioso', async () => {
   // I nodi VL SONO federati (vedi la NOTE in lib/proxy/federation.js): un owner
   // remoto va interrogato davvero. Se non risponde, deve comparire in
