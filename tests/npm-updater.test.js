@@ -216,3 +216,58 @@ test('update errors redact registry credentials and local home paths', () => {
   assert.equal(message.includes('/home/dag'), false);
   assert.equal(message.includes('Z'.repeat(44)), false);
 });
+
+// NC-S — l'aggiornamento automatico lasciava vivi i supervisori dei tunnel.
+//
+// Il riavvio MANUALE li ferma da sempre (`commands.restart` chiama
+// `stopManagedTunnels`), quindi il ramo gestito era coperto. Il ramo
+// PORTATILE — un dispositivo senza gestore di servizi — uccideva il servizio e
+// basta: al riavvio il servizio nuovo trovava un supervisore ancora vivo che
+// non riusciva ad attribuirsi, e allora NON lo fermava e NON ne avviava uno
+// suo. Il canale inverso restava appeso a un orfano e il peer risultava giu'.
+//
+// La correlazione che lo ha isolato, misurata su un dispositivo reale il
+// 2026-08-07: riavvii via `nexuscrew restart` -> peer su, 2 su 2; riavvii per
+// aggiornamento automatico -> peer giu', 2 su 2.
+test('npm update runner: il riavvio PORTATILE ferma i tunnel, come quello manuale', async () => {
+  const fermati = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-update-tunnels-'));
+  await restartRuntime({
+    home: dir, platform: 'termux', port: 41820, token: 't',
+    commands: {
+      isServiceRunning: () => false, // ramo portatile
+      startPortable: () => ({ started: true }),
+      portAvailable: async () => true,
+    },
+    stopTunnelsImpl: (o) => { fermati.push(o); },
+    pidfile: { defaultPidfilePath: () => path.join(dir, 'x.pid'), readPidfile: () => null },
+    waitForRuntimeImpl: async () => true,
+  });
+
+  assert.equal(fermati.length, 1, 'i tunnel vanno fermati prima di riavviare');
+  assert.equal(fermati[0].home, dir, 'e sulla home giusta');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('npm update runner: se fermare i tunnel fallisce, l\'aggiornamento prosegue', async () => {
+  // Il compito principale e' aggiornare. Un errore qui non deve bloccarlo —
+  // ma non deve nemmeno sparire: viene detto.
+  const detto = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-update-tunnels-ko-'));
+  const mode = await restartRuntime({
+    home: dir, platform: 'termux', port: 41820, token: 't',
+    commands: {
+      isServiceRunning: () => false,
+      startPortable: () => ({ started: true }),
+      portAvailable: async () => true,
+    },
+    stopTunnelsImpl: () => { throw new Error('ssh non raggiungibile'); },
+    log: (m) => detto.push(m),
+    pidfile: { defaultPidfilePath: () => path.join(dir, 'x.pid'), readPidfile: () => null },
+    waitForRuntimeImpl: async () => true,
+  });
+
+  assert.ok(mode, 'l\'aggiornamento non si ferma per questo');
+  assert.match(detto.join('\n'), /stop tunnel non riuscito/, 'ma non tace');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
