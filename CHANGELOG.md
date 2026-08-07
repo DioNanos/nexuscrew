@@ -22,16 +22,17 @@ All notable changes to NexusCrew are tracked here.
   history in six months; one bound when permissions start depending on it has
   none.
 
-  The one rule that gives it value: **a bound key is never silently replaced.**
-  A different key arriving later is recorded as a conflict and shown, not
-  written over the first — otherwise anyone able to answer a probe could become
-  the peer. Re-pairing is the exception, and resolves the conflict: it needs a
-  fresh one-time invite consumed on both machines, so it is an act of the
-  operator rather than of whoever spoke last.
+  Pairing is the only thing that writes a key: no other path sets one, so no
+  key can be replaced by anything a peer merely asserts. That is the property
+  worth having, and it is currently guaranteed by there being no second writer
+  rather than by a check — the check belongs with the first path that learns a
+  key outside pairing, and arrives with it.
 
   **What this does not do yet**: peers paired before this version have no key
   and will not have one until they are paired again, so on an existing
-  installation the directory starts out empty.
+  installation the directory starts out empty. Keys are learned only during
+  pairing, and replacing one on a peer that already has it means removing that
+  peer and pairing it again.
 
 - **A paired node can now be restricted to a subset of your cells.** Pairing
   was all or nothing: a peer saw every cell on the hub and could act on all of
