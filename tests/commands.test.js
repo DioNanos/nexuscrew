@@ -483,16 +483,67 @@ test('dispatch restart: un servizio che NON torna su e\' un fallimento, non un s
     ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
     log: (x) => logs.push(x),
     waitForRuntimeImpl: async () => false, // il comando parte, il processo non risponde
+    // Porta ancora occupata: qualcosa la tiene senza servire, quindi non c'e'
+    // niente da ritentare e il rimedio non e' riavviare.
+    portAvailableImpl: async () => false,
+    startPortableImpl: () => { throw new Error('non deve riavviare a porta occupata'); },
   };
   const out = await dispatch(['restart'], opts);
 
   assert.equal(out.code, 1, 'un riavvio non verificato non deve uscire 0');
   const detto = logs.join('\n');
   assert.match(detto, /NON risponde/);
-  // E deve dire DOVE guardare: «riavvio fallito» da solo manda a cercare nella
-  // federazione o nel pairing, cioe' dove il difetto non e'.
-  assert.match(detto, /riavvio e' partito|riavvio e’ partito/);
+  assert.match(detto, /porta e' ancora occupata|porta e’ ancora occupata/);
   assert.match(detto, /log del servizio/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// LA CAUSA, e il rimedio che ne discende. Sul percorso portatile — quello di
+// Termux, dove nessun gestore di servizi rialza il processo — `restart` avvia
+// il nuovo SUBITO dopo aver fermato il vecchio, senza aspettare che muoia ne'
+// che la porta si liberi. Il nuovo non riesce ad ascoltare, esce, e nessuno se
+// ne accorge. Il percorso dell'auto-update aspetta gia' fino a sei secondi: le
+// due strade erano divergenti, e quella digitata a mano era la meno prudente.
+test('dispatch restart: porta libera e servizio assente -> riprova UNA volta', async () => {
+  const { home } = initHome();
+  const logs = [];
+  const avvii = [];
+  let giro = 0;
+  const out = await dispatch(['restart'], {
+    home, platform: 'linux',
+    execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
+    log: (x) => logs.push(x),
+    // Primo controllo: assente. Secondo, dopo il riavvio: presente.
+    waitForRuntimeImpl: async () => { giro += 1; return giro > 1; },
+    portAvailableImpl: async () => true, // il processo e' uscito davvero
+    startPortableImpl: () => { avvii.push('start'); return { started: true }; },
+  });
+
+  assert.equal(out.code, 0, 'il recupero riuscito e\' un successo');
+  assert.equal(avvii.length, 1, 'una volta sola: ripetere trasformerebbe un guasto in un ciclo');
+  assert.match(logs.join('\n'), /Riprovo una volta/);
+  assert.match(logs.join('\n'), /secondo tentativo/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('dispatch restart: se non resta su nemmeno al secondo avvio, e\' un fallimento', async () => {
+  const { home } = initHome();
+  const logs = [];
+  const avvii = [];
+  const out = await dispatch(['restart'], {
+    home, platform: 'linux',
+    execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
+    log: (x) => logs.push(x),
+    waitForRuntimeImpl: async () => false,
+    portAvailableImpl: async () => true,
+    startPortableImpl: () => { avvii.push('start'); return { started: true }; },
+  });
+
+  assert.equal(out.code, 1);
+  assert.equal(avvii.length, 1, 'un solo ritentativo, non un ciclo');
+  assert.match(logs.join('\n'), /nemmeno dopo un secondo avvio/);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
