@@ -113,6 +113,58 @@ test('UNA CHIAVE DIVERSA NON SOSTITUISCE QUELLA LEGATA — e\' l\'invariante del
     { seen: altra, at: '2026-08-07T11:00:00.000Z', source: 'peer-assertion' });
 });
 
+// La coppia di test qui sotto e' la ragione per cui esistono DUE funzioni
+// invece di una con un flag. Se un domani venissero unificate, cade una delle
+// due — ed e' il punto: un'asserzione costa zero a un attaccante, un pairing
+// richiede un invito monouso consumato su entrambe le macchine.
+test('il PAIRING puo\' rilegare: e\' un atto dell\'operatore, non un\'asserzione', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-peer-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const vecchia = identity.ensureNodeKey({ keyPath: path.join(dir, 'a.json') }).publicKey;
+  const nuova = identity.ensureNodeKey({ keyPath: path.join(dir, 'b.json') }).publicKey;
+
+  const legato = { name: 'pixel', publicKey: vecchia, keySource: 'pairing' };
+  const { node, outcome } = identity.bindPeerKeyAtPairing(legato,
+    { publicKey: nuova, now: Date.parse('2026-08-07T12:00:00Z') });
+
+  assert.equal(outcome, 'rebound');
+  assert.equal(node.publicKey, nuova, 'chi riaccoppia ha deciso di rifidarsi');
+  assert.equal(node.keyBoundAt, '2026-08-07T12:00:00.000Z');
+
+  // E la stessa chiamata su un peer nuovo dice 'bound', non 'rebound': i due
+  // casi vanno distinti da chi legge un registro, non confusi.
+  assert.equal(identity.bindPeerKeyAtPairing({ name: 'nuovo' }, { publicKey: nuova }).outcome, 'bound');
+});
+
+test('riaccoppiare RISOLVE un conflitto pendente, ed e\' l\'unico modo', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-peer-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const vecchia = identity.ensureNodeKey({ keyPath: path.join(dir, 'a.json') }).publicKey;
+  const contesa = identity.ensureNodeKey({ keyPath: path.join(dir, 'b.json') }).publicKey;
+
+  // Un'asserzione ha sollevato il conflitto...
+  const conConflitto = identity.observePeerKey(
+    { name: 'pixel', publicKey: vecchia, keySource: 'pairing' },
+    { publicKey: contesa }).node;
+  assert.ok(conConflitto.keyConflict, 'precondizione: il conflitto c\'e\'');
+
+  // ...e solo il riaccoppiamento lo spegne. Un allarme che nessuna azione puo'
+  // spegnere smette di essere letto.
+  const { node } = identity.bindPeerKeyAtPairing(conConflitto, { publicKey: contesa });
+  assert.equal(node.publicKey, contesa);
+  assert.equal(node.keyConflict, undefined, 'il conflitto va risolto, non accumulato');
+});
+
+test('al pairing una chiave assente o rotta non rompe il pairing ne\' tocca il nodo', () => {
+  const legato = { name: 'pixel', publicKey: 'A'.repeat(43), keySource: 'pairing' };
+  for (const cattiva of [undefined, null, '', 'corta', 42]) {
+    const { node, outcome } = identity.bindPeerKeyAtPairing(legato, { publicKey: cattiva });
+    assert.equal(outcome, 'invalid', `deve ignorare ${JSON.stringify(cattiva)}`);
+    assert.equal(node, legato,
+      'un peer di una versione precedente deve poter accoppiarsi come sempre');
+  }
+});
+
 test('una chiave malformata non lega niente e non sporca il nodo', () => {
   const legato = { name: 'pixel' };
   for (const cattiva of ['', 'troppo-corta', 'A'.repeat(44), 'con spazio', null, 42, undefined]) {
