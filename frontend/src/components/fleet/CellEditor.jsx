@@ -61,7 +61,12 @@ export default function CellEditor({ token, route, targets = [], location, setLo
     </> : <>
       <input value={f.model || ''} list="nc-cell-models" placeholder={t('fleet-model-override')} onChange={(e) => set({ model: e.target.value })} />
       <datalist id="nc-cell-models">{(selectedEngine?.availableModels || []).map((model) => <option key={model} value={model} />)}</datalist>
-      <textarea value={f.prompt || ''} placeholder="prompt" onChange={(e) => set({ prompt: e.target.value })} />
+      {/* Era l'unico campo dell'editor a non passare da t(): in inglese e in
+          spagnolo mostrava «prompt» cosi' com'era, e non diceva quando quel
+          testo viene usato. Chi lo conosce gia' non ne aveva bisogno; chi
+          apre l'editor per la prima volta si'. */}
+      <textarea value={f.prompt || ''} placeholder={t('cell-prompt')} onChange={(e) => set({ prompt: e.target.value })} />
+      <small>{t('cell-prompt-help')}</small>
     </>}
     <div className="nc-sheet-actions"><button className="nc-btn ghost" onClick={() => setState(null)}>{t('cancel')}</button><button className="nc-btn primary" disabled={busy || !f.id || !f.cwd || !f.engine} onClick={onSave}>{t('save')}</button></div>
   </div>;
