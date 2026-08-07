@@ -1353,3 +1353,65 @@ test('token rotate: runtime portable vivo viene riavviato e invalida il vecchio 
   assert.ok(l.join('\n').includes('servizio riavviato'));
   await childExit(child);
 });
+
+// `autoupdate` esiste nel CLI perche' il momento in cui serve spegnerlo e'
+// quello in cui la PWA non si apre — il nodo si e' aggiornato, il servizio non
+// e' tornato su, e la riga di comando e' l'unica superficie rimasta.
+test('autoupdate: a servizio acceso passa dall\'API, non scrive il file', async () => {
+  const { home } = initHome();
+  const logs = [];
+  const chiamate = [];
+  const out = await dispatch(['autoupdate', 'off'], {
+    home, platform: 'linux', log: (x) => logs.push(x),
+    isServiceRunningImpl: () => true,
+    fetchImpl: async (url, init) => {
+      chiamate.push({ url: String(url), body: init && init.body });
+      return { ok: true, status: 200, json: async () => ({}) };
+    },
+  });
+
+  assert.equal(out.code, 0);
+  assert.equal(chiamate.length, 1);
+  assert.match(chiamate[0].url, /\/api\/settings\/config$/);
+  assert.deepEqual(JSON.parse(chiamate[0].body), { autoUpdate: false });
+  assert.match(logs.join('\n'), /applicato subito/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('autoupdate: se il servizio e\' acceso e non risponde, NON scrive il file', async () => {
+  // Scriverlo lascerebbe un valore che il processo vivo non conosce: la
+  // configurazione direbbe «spento» e gli aggiornamenti continuerebbero
+  // all'ora prevista. Un interruttore che risulta spento e non spegne e'
+  // peggio di un interruttore che manca.
+  const { home } = initHome();
+  const logs = [];
+  const { configPath } = require('../lib/cli/url.js').resolvePaths({ home });
+  const prima = fs.readFileSync(configPath, 'utf8');
+  const out = await dispatch(['autoupdate', 'off'], {
+    home, platform: 'linux', log: (x) => logs.push(x),
+    isServiceRunningImpl: () => true,
+    fetchImpl: async () => { throw new Error('connessione rifiutata'); },
+  });
+
+  assert.equal(out.code, 1, 'un flag non applicato non e\' un successo');
+  assert.equal(fs.readFileSync(configPath, 'utf8'), prima, 'il file non va toccato');
+  assert.match(logs.join('\n'), /non applicato/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('autoupdate: a servizio spento scrive il file e DICE quando varra\'', async () => {
+  const { home } = initHome();
+  const logs = [];
+  const { configPath } = require('../lib/cli/url.js').resolvePaths({ home });
+  const out = await dispatch(['autoupdate', 'off'], {
+    home, platform: 'linux', log: (x) => logs.push(x),
+    isServiceRunningImpl: () => false,
+    fetchImpl: async () => { throw new Error('non deve essere chiamata'); },
+  });
+
+  assert.equal(out.code, 0);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).autoUpdate, false);
+  assert.match(logs.join('\n'), /prossimo avvio/,
+    'tacerlo lascerebbe credere che abbia gia\' effetto');
+  fs.rmSync(home, { recursive: true, force: true });
+});
