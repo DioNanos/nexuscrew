@@ -482,6 +482,7 @@ test('dispatch restart: un servizio che NON torna su e\' un fallimento, non un s
     execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
     ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
     log: (x) => logs.push(x),
+    restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
     waitForRuntimeImpl: async () => false, // il comando parte, il processo non risponde
     // Porta ancora occupata: qualcosa la tiene senza servire, quindi non c'e'
     // niente da ritentare e il rimedio non e' riavviare.
@@ -515,6 +516,7 @@ test('dispatch restart: porta libera e servizio assente -> riprova UNA volta', a
     ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
     log: (x) => logs.push(x),
     // Primo controllo: assente. Secondo, dopo il riavvio: presente.
+    restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
     waitForRuntimeImpl: async () => { giro += 1; return giro > 1; },
     portAvailableImpl: async () => true, // il processo e' uscito davvero
     startPortableImpl: () => { avvii.push('start'); return { started: true }; },
@@ -536,6 +538,7 @@ test('dispatch restart: se non resta su nemmeno al secondo avvio, e\' un fallime
     execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
     ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
     log: (x) => logs.push(x),
+    restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
     waitForRuntimeImpl: async () => false,
     portAvailableImpl: async () => true,
     startPortableImpl: () => { avvii.push('start'); return { started: true }; },
@@ -1464,5 +1467,63 @@ test('autoupdate: a servizio spento scrive il file e DICE quando varra\'', async
   assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).autoUpdate, false);
   assert.match(logs.join('\n'), /prossimo avvio/,
     'tacerlo lascerebbe credere che abbia gia\' effetto');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+// SU UN RUNTIME GESTITO NON SI AVVIA NIENTE ACCANTO.
+//
+// Difetto mio, trovato rileggendo prima dell'audit: il ritentativo chiamava
+// `startPortable` in ogni caso. Su una macchina con systemd significherebbe
+// mettere in piedi un processo che il gestore non conosce, mentre il gestore
+// puo' rialzare la propria unita' — due processi sulla stessa porta, e il
+// nostro sopravvivrebbe allo stop del servizio.
+//
+// I tre test scritti prima non lo avevano visto perche' dichiaravano
+// `platform: 'linux'` con systemd attivo: esercitavano il ramo GESTITO
+// credendo di provare quello portatile, e asseriscono come corretto proprio
+// cio' che qui e' vietato. Un test che sceglie il ramo per caso prova per caso.
+test('dispatch restart: su runtime GESTITO non avvia un processo accanto', async () => {
+  const { home } = initHome();
+  const logs = [];
+  const out = await dispatch(['restart'], {
+    home, platform: 'linux',
+    execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
+    log: (x) => logs.push(x),
+    restartImpl: () => ({ restarted: true, runtimeOwner: 'managed' }),
+    waitForRuntimeImpl: async () => false,
+    portAvailableImpl: async () => { throw new Error('non deve nemmeno guardare la porta'); },
+    startPortableImpl: () => { throw new Error('MAI avviare un portatile accanto a un servizio gestito'); },
+  });
+
+  assert.equal(out.code, 1);
+  const detto = logs.join('\n');
+  assert.match(detto, /gestito dal servizio di sistema/);
+  assert.match(detto, /unita' di sistema|unita’ di sistema/,
+    'e deve mandare dove il rimedio esiste davvero');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('dispatch restart: senza token non incolpa la porta, dice che non puo\' verificare', async () => {
+  // La sonda di salute fallirebbe per AUTENTICAZIONE, e il messaggio avrebbe
+  // dato la colpa alla porta o al processo — mandando a cercare dove il
+  // problema non e'. Il riavvio pero' e' partito davvero: non e' un
+  // fallimento, e' una verifica che non si e' potuta fare. Rilievo dell'audit.
+  const { home } = initHome();
+  const logs = [];
+  const { tokenPath } = require('../lib/cli/url.js').resolvePaths({ home });
+  fs.rmSync(tokenPath, { force: true });
+
+  const out = await dispatch(['restart'], {
+    home, platform: 'linux',
+    execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
+    log: (x) => logs.push(x),
+    restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
+    waitForRuntimeImpl: async () => { throw new Error('non deve nemmeno sondare'); },
+    startPortableImpl: () => { throw new Error('non deve riavviare'); },
+  });
+
+  assert.equal(out.code, 0, 'il riavvio e\' partito: non e\' un fallimento');
+  assert.match(logs.join('\n'), /NON e' verificabile|NON e’ verificabile/);
+  assert.doesNotMatch(logs.join('\n'), /porta/, 'e non deve incolpare la porta');
   fs.rmSync(home, { recursive: true, force: true });
 });

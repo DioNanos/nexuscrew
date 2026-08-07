@@ -22,18 +22,23 @@ nothing anywhere said so.
   verified restart is needed". It was missing precisely on the command a person
   types by hand — the one where no other code is checking on your behalf.
 
-- **A service that exited after a restart is brought back, once.** On the
-  portable path — which is what a phone uses, where no service manager will
-  raise the process again — the restart started the new process immediately
-  after stopping the old one, without waiting for it to die or for the port to
-  be released. The new one could not bind, exited, and nobody noticed: service
-  down, tunnel up (it is a separate SSH process), no recovery. The auto-updater
-  already waited for exactly this, up to six seconds; two copies of the same
-  logic had drifted apart, and the one people type was the less careful of the
-  two. Now, if the service does not answer, the port decides what happens: free
-  means the process exited and it is started again *once*; still busy means
-  something is holding it without serving, and retrying would only hide that.
-  Once and no more — repeating turns a fault into a loop.
+- **A service that exited after a restart is brought back, once.** On a phone
+  there is no service manager to raise the process again: if it goes, it stays
+  gone. That was measured — a node stayed down for over twenty minutes after a
+  restart, with its reverse tunnel still up, and nothing brought it back. Now,
+  when the service does not answer, the port decides what happens: free means
+  the process is gone and it is started again *once*; still busy means something
+  is holding it without serving, and retrying would only hide that. Once and no
+  more — repeating turns a fault into a loop. On a machine where a service
+  manager owns the runtime nothing is started alongside it: that is the
+  manager's job, and a process it does not know about would race its own unit
+  for the port and outlive a stop.
+
+  **Why the process exited is not established.** A plausible story — that the
+  restart did not wait for the old process before starting the new one — turned
+  out to be wrong on inspection: it does wait, and has since 0.8.17. So this is
+  a recovery for a failure whose cause is still open, not a fix for a known one,
+  and it is worth knowing which of the two you are relying on.
 
 - **"Peer unreachable" no longer covers two different failures.** With a reverse
   SSH channel, a device that is not connected leaves no listener and the
@@ -56,7 +61,11 @@ nothing anywhere said so.
   alone. If the mismatch survives the reload it is not retried — a reload loop
   makes the app unusable, which is far worse than a banner, so the banner
   remains as the fallback. What you were typing is not lost: the composer draft
-  was already kept across reloads, which is what made this acceptable.
+  was already kept across reloads, which is what made this acceptable. The
+  version check now also repeats about once a minute rather than running only
+  when the app starts — an app left open in front of someone is precisely the
+  case this exists for, and checking only at startup would have made it work
+  solely for people who had already closed and reopened it.
 
 - **`nexuscrew autoupdate on|off|status`.** The switch already existed — a
   persisted setting, on by default, with a checkbox in Settings. It was missing

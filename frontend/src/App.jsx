@@ -372,13 +372,28 @@ export default function App() {
   }, [isDesktop, poll]);
 
   // Coerenza versione UI/server (tutte le viste).
+  //
+  // PERIODICO, non solo al mount. Il controllo girava una volta sola
+  // all'avvio: un'app LASCIATA APERTA non se ne accorgeva mai, e quella e'
+  // esattamente la situazione da coprire — il nodo si aggiorna da solo e si
+  // riavvia mentre l'app e' aperta davanti a qualcuno. Con un solo controllo
+  // iniziale il ricaricamento automatico valeva soltanto riaprendo l'app, cioe'
+  // il gesto che doveva togliere di mezzo. Rilievo dell'audit indipendente.
+  //
+  // Un minuto: e' una GET piccola verso il proprio hub, e il ritardo massimo
+  // fra «il nodo e' ripartito nuovo» e «l'interfaccia se ne accorge» diventa
+  // quello invece di essere indefinito.
   useEffect(() => {
     let cancelled = false;
-    apiFetch('/api/config', token).then((r) => r.json()).then((j) => {
-      if (!cancelled && typeof __NC_BUILD_VERSION__ !== 'undefined')
-        reportServerVersions(j.version, j.uiVersion, __NC_BUILD_VERSION__);
-    }).catch(() => {});
-    return () => { cancelled = true; };
+    const controlla = () => {
+      apiFetch('/api/config', token).then((r) => r.json()).then((j) => {
+        if (!cancelled && typeof __NC_BUILD_VERSION__ !== 'undefined')
+          reportServerVersions(j.version, j.uiVersion, __NC_BUILD_VERSION__);
+      }).catch(() => {});
+    };
+    controlla();
+    const timer = setInterval(controlla, 60000);
+    return () => { cancelled = true; clearInterval(timer); };
   }, [token]);
 
   // Vivacita' per refKey: nomi locali + chiavi "nodo:sessione" dei nodi su.
