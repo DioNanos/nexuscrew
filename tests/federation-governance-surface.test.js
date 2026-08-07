@@ -1,6 +1,17 @@
 'use strict';
-// tests/federation-governance-surface.test.js — il governo di un nodo non
-// attraversa la federazione, e questo file lo dice per NOME.
+// tests/federation-governance-surface.test.js — le vie di governo sotto
+// `/settings/` non attraversano la federazione, e questo file le dice per NOME.
+//
+// LA PRETESA E' DELIBERATAMENTE STRETTA. La prima stesura diceva «la superficie
+// di governo», che prometteva piu' di quanto copre: l'audit ha trovato una via
+// di AMMISSIONE federata fuori da `/settings/` — `/vl-nodes/invite`, che conia
+// un invito legato all'owner di QUESTO hub, lo stesso shape di
+// `/settings/peering/invite` che fu tolto il 2026-08-04. E' preesistente e
+// deliberata (i nodi VL sono federati per disegno, vedi la NOTE in
+// federation.js), e la direzione del rischio e' diversa: un micro-device VL e'
+// un bersaglio di comandi, non un peer che agisce come proprietario. Ma un test
+// che si chiama «superficie di governo» ed e' verde farebbe credere coperto
+// anche quello. Un verde non deve promettere piu' di cio' che guarda.
 //
 // PERCHE' ESISTE. Oggi le vie di governo sono irraggiungibili da remoto per una
 // ragione implicita: non compaiono nell'allowlist. Va bene finche' nessuno
@@ -78,6 +89,16 @@ test('il rifiuto vale per OGNI verbo, non solo per quello previsto', () => {
       assert.equal(fed.allowedResource(resource, method), false, `${method} ${resource}`);
     }
   }
+});
+
+test('il confine e\' dichiarato: l\'ammissione VL E\' federata, e questo test non la copre', () => {
+  // Non e' un difetto trovato qui, e non lo chiudo io: e' una scelta di disegno
+  // preesistente. Ma se un giorno cambiasse — in un verso o nell'altro — deve
+  // cambiare con qualcuno che se ne accorge, non in silenzio.
+  assert.equal(fed.allowedResource('/vl-nodes/invite', 'POST'), true,
+    'oggi e\' federata di proposito; se diventasse locale, aggiornare qui e nel modello di autorita\'');
+  assert.equal(fed.allowedResource('/settings/peering/invite', 'POST'), false,
+    'l\'invito PEER resta locale: e\' la capacita\' che ammette un proprietario');
 });
 
 test('la lista qui sopra non e\' un elenco morto: le vie NON di governo passano', () => {

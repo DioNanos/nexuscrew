@@ -93,6 +93,23 @@ test('anche i server di PROGETTO entrano nel complemento', (t) => {
     ['mcp__crew', 'mcp__nextcloud', 'mcp__webfetch']);
 });
 
+test('il LOCAL SCOPE entra nel complemento: stesso file, ramo diverso', (t) => {
+  // Trovato dall'audit, ed era reale: su questa installazione nove progetti
+  // hanno server dichiarati in `projects[<cwd>].mcpServers` dentro la stessa
+  // configurazione utente. Non enumerarli significava che «solo nexuscrew»
+  // lasciava passare server che la sessione carica davvero — e l'operatore
+  // credeva di averli esclusi.
+  const w = mondo(t);
+  const file = path.join(w.home, '.claude.json');
+  const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+  j.projects = { [w.cwd]: { mcpServers: { memory: { command: 'memory' } } }, '/altrove': { mcpServers: { spia: {} } } };
+  fs.writeFileSync(file, JSON.stringify(j));
+  const deny = settingsDi(w, { mcp: ['nexuscrew'] }).deny;
+  assert.ok(deny.includes('mcp__memory'), `il local scope della cwd deve entrare: ${JSON.stringify(deny)}`);
+  // E quello di UN'ALTRA directory no: e' indicizzato sul percorso, non globale.
+  assert.ok(!deny.includes('mcp__spia'), 'il local scope di un altro progetto non riguarda questa cella');
+});
+
 test('UN SOLO token con l\'uguale, e niente lo segue che possa essere inghiottito', (t) => {
   // Stessa trappola di `--mcp-config`: nella forma spaziata il client consuma i
   // posizionali successivi, e il prompt della cella e' accodato in fondo.
