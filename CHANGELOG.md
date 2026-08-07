@@ -4,6 +4,94 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.53 — 2026-08-07 — "Coming Back Up, and Saying So"
+
+Automatic updates are on by default and check every six hours, so a node
+installs a new release and restarts itself without anyone watching. That makes
+the restart path the most consequential code in the product, and this release
+is about what happens when it doesn't work: today a node was measured staying
+down for over twenty minutes after a restart, with its tunnel still up, while
+nothing anywhere said so.
+
+- **A restart now confirms the service came back.** `nexuscrew restart` used to
+  report success as soon as the restart *command* returned — which says the
+  command ran, not that anything is answering. The two look identical to whoever
+  reads the exit code. The check already existed and was already used by two
+  other paths: the auto-updater waits for health and fails if it doesn't come,
+  and the Fleet bootstrap does the same, with a comment that literally says "a
+  verified restart is needed". It was missing precisely on the command a person
+  types by hand — the one where no other code is checking on your behalf.
+
+- **A service that exited after a restart is brought back, once.** On the
+  portable path — which is what a phone uses, where no service manager will
+  raise the process again — the restart started the new process immediately
+  after stopping the old one, without waiting for it to die or for the port to
+  be released. The new one could not bind, exited, and nobody noticed: service
+  down, tunnel up (it is a separate SSH process), no recovery. The auto-updater
+  already waited for exactly this, up to six seconds; two copies of the same
+  logic had drifted apart, and the one people type was the less careful of the
+  two. Now, if the service does not answer, the port decides what happens: free
+  means the process exited and it is started again *once*; still busy means
+  something is holding it without serving, and retrying would only hide that.
+  Once and no more — repeating turns a fault into a loop.
+
+- **"Peer unreachable" no longer covers two different failures.** With a reverse
+  SSH channel, a device that is not connected leaves no listener and the
+  connection is *refused*; a device that is connected but whose NexusCrew has
+  died accepts the connection and then *resets* it. Those need opposite
+  remedies — one is fixed on the network, the other by going to the device —
+  and one message sent the investigation to the wrong place half the time. It
+  did: four hours were spent in federation and pairing while the defect was a
+  service that had not come back on a phone. The two are now named, with the
+  port, and an error nobody recognises is still reported as before rather than
+  guessed into a layer.
+
+- **The interface reloads itself after the node updates.** With automatic
+  updates on, a node updates and restarts while an open app keeps running the
+  old bundle. The only way out was closing and reopening it — the banner had to
+  be tapped, and because of a service-worker defect fixed in 0.8.52, tapping it
+  did not work either. The app now applies the new bundle by itself. Only for
+  the case a reload can fix: when the package on the server is newer than the
+  interface it serves, no amount of reloading changes that, and it is left
+  alone. If the mismatch survives the reload it is not retried — a reload loop
+  makes the app unusable, which is far worse than a banner, so the banner
+  remains as the fallback. What you were typing is not lost: the composer draft
+  was already kept across reloads, which is what made this acceptable.
+
+- **`nexuscrew autoupdate on|off|status`.** The switch already existed — a
+  persisted setting, on by default, with a checkbox in Settings. It was missing
+  from the command line, which is where you need it: when a node has updated
+  itself and the service did not come back, the interface is the thing you
+  cannot open. With the service running the command goes through the API rather
+  than writing the file, because writing the file would leave the running
+  process with the old value — the setting would read "off" while updates kept
+  happening on schedule, and a switch that reads off without switching anything
+  off is worse than no switch. If the service is up but not answering, nothing
+  is written at all.
+
+- **An error now says when the tool bridge is older than the hub.** Updating
+  NexusCrew does not update the MCP bridge of an already running session: that
+  process started with the previous code and keeps it until the session is
+  restarted. The symptom is cruel — you install a fix, try again, and get the
+  *old* error, so you conclude the fix does not work and go looking where the
+  defect is not. The check runs only on the error path, which costs nothing in
+  normal use and is the only moment it helps; it cannot be cached at startup
+  either, since the version that changes is the hub's, and it changes while the
+  bridge is running.
+
+- **A long message sent to a cell is no longer pasted and left unsent.** The
+  wait between the bracketed paste and the Enter was a constant, while the time
+  a terminal interface needs to swallow a paste grows with its size — above a
+  certain length the client collapses it, the Enter lands while it is still
+  being processed, and it is swallowed. The message then sat in the composer
+  while the sender got a delivery receipt. Measured on the same target eleven
+  minutes apart: 2900 characters were never processed for nine hours, sixty
+  characters were being worked on in twelve seconds. The wait now grows with the
+  text, and below 500 characters nothing changes — those were already reliable,
+  and slowing them would be a cost paid by everyone for a defect that is not
+  theirs. This narrows the window rather than closing it: a receipt still means
+  paste and Enter, not acceptance.
+
 ## 0.8.52 — 2026-08-07 — "What a Peer May See, and What a Cell May Reach"
 
 - **Each node now has a cryptographic identity, and it changes nothing yet.**
