@@ -53,7 +53,7 @@ export default function CellEditor({ token, route, targets = [], location, setLo
     </div></div>}
     {pickErr && <div className="nc-err">{pickErr}</div>}
     <select value={f.engine} onChange={(e) => chooseEngine(e.target.value)}>{engines.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}</select>
-    <label className="nc-check"><input type="checkbox" checked={!!f.boot} onChange={(e) => set({ boot: e.target.checked })} /> boot</label>
+    <label className="nc-check"><input type="checkbox" checked={!!f.boot} onChange={(e) => set({ boot: e.target.checked })} /> {t('fleet-boot')}</label>
     {isShell ? <>
       <input value={f.command || ''} maxLength={4096} placeholder={t('fleet-shell-command-placeholder')} onChange={(e) => setCommand(e.target.value)} />
       <small>{f.command ? t('fleet-shell-command-help') : t('fleet-shell-interactive')}</small>
@@ -61,10 +61,10 @@ export default function CellEditor({ token, route, targets = [], location, setLo
     </> : <>
       <input value={f.model || ''} list="nc-cell-models" placeholder={t('fleet-model-override')} onChange={(e) => set({ model: e.target.value })} />
       <datalist id="nc-cell-models">{(selectedEngine?.availableModels || []).map((model) => <option key={model} value={model} />)}</datalist>
-      {/* Era l'unico campo dell'editor a non passare da t(): in inglese e in
-          spagnolo mostrava «prompt» cosi' com'era, e non diceva quando quel
-          testo viene usato. Chi lo conosce gia' non ne aveva bisogno; chi
-          apre l'editor per la prima volta si'. */}
+      {/* Non passava da t(): in inglese e in spagnolo mostrava «prompt» cosi'
+          com'era. E soprattutto non diceva QUANDO quel testo viene usato — chi
+          lo conosce gia' non ne aveva bisogno, chi apre l'editor per la prima
+          volta si'. */}
       <textarea value={f.prompt || ''} placeholder={t('cell-prompt')} onChange={(e) => set({ prompt: e.target.value })} />
       <small>{t('cell-prompt-help')}</small>
     </>}
