@@ -1,0 +1,219 @@
+'use strict';
+// tests/nodes-identity.test.js — passo 1 del modello di autorita': la chiave del
+// nodo e la directory delle pubbliche.
+//
+// COSA QUESTO FILE PROVA, E COSA NO. Il passo 1 non cambia nessun permesso, per
+// disegno, quindi non c'e' un comportamento di autorizzazione da esercitare.
+// Cio' che si puo' provare — e che e' tutto il valore del passo — e' che
+// l'identita' regga: che la privata non finisca dove non deve, e che una chiave
+// legata non cambi in silenzio. Se una di queste due cade, i grant dei passi
+// 3-5 poggeranno su un nome che chiunque puo' prendersi.
+const { test } = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const identity = require('../lib/nodes/identity.js');
+const store = require('../lib/nodes/store.js');
+
+function casa(t) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-identity-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  return home;
+}
+
+test('la chiave si genera una volta sola e non cambia fra due avvii', (t) => {
+  const home = casa(t);
+  const primo = identity.ensureNodeKey({ home });
+  assert.equal(primo.created, true);
+  assert.ok(identity.isPublicKey(primo.publicKey), `pubblica malformata: ${primo.publicKey}`);
+
+  const secondo = identity.ensureNodeKey({ home });
+  assert.equal(secondo.created, false, 'la seconda chiamata non deve rigenerare');
+  assert.equal(secondo.publicKey, primo.publicKey,
+    'una chiave che cambia a ogni avvio non e\' un\'identita\'');
+});
+
+test('la privata sta in un file suo, a 0600, e non dentro nodes.json', (t) => {
+  const home = casa(t);
+  const { path: p } = identity.ensureNodeKey({ home });
+
+  assert.notEqual(path.basename(p), 'nodes.json',
+    'nodes.json e\' letto da redazione, backup e viste condivise: la privata non ci va');
+  assert.equal(fs.statSync(p).mode & 0o777, 0o600);
+
+  // E il contenuto e' davvero una privata: se il file fosse vuoto o pubblico il
+  // test sopra sarebbe verde per la ragione sbagliata.
+  assert.match(fs.readFileSync(p, 'utf8'), /PRIVATE KEY/);
+});
+
+test('un file di chiave leggibile da altri viene RIFIUTATO, non riparato', (t) => {
+  const home = casa(t);
+  const { path: p } = identity.ensureNodeKey({ home });
+  fs.chmodSync(p, 0o644);
+
+  assert.throws(() => identity.ensureNodeKey({ home }), /permessi 644/,
+    'una privata gia\' leggibile da altri va rigenerata a mano, non usata');
+
+  // Perche' non ripararla da soli: un chmod nostro cancellerebbe l'unica
+  // traccia che qualcuno ha potuto leggerla. Il file resta come sta.
+  assert.equal(fs.statSync(p).mode & 0o777, 0o644, 'non deve toccare i permessi');
+});
+
+test('un symlink al posto del file di chiave viene rifiutato', (t) => {
+  const home = casa(t);
+  const altrove = path.join(home, 'altrove.json');
+  fs.writeFileSync(altrove, '{}', { mode: 0o600 });
+  const p = identity.keyPathFor(home);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.symlinkSync(altrove, p);
+
+  assert.throws(() => identity.ensureNodeKey({ home }), /symlink/);
+});
+
+test('la prima osservazione LEGA, e registra come e quando', () => {
+  const chiave = identity.ensureNodeKey({ keyPath: path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'nc-peer-')), 'k.json') }).publicKey;
+
+  const { node, outcome } = identity.observePeerKey(
+    { name: 'pixel' }, { publicKey: chiave, source: 'pairing', now: Date.parse('2026-08-07T10:00:00Z') });
+
+  assert.equal(outcome, 'bound');
+  assert.equal(node.publicKey, chiave);
+  assert.equal(node.keySource, 'pairing');
+  assert.equal(node.keyBoundAt, '2026-08-07T10:00:00.000Z');
+});
+
+test('rivedere la STESSA chiave non cambia la provenienza del legame', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-peer-'));
+  const chiave = identity.ensureNodeKey({ keyPath: path.join(dir, 'k.json') }).publicKey;
+  const legato = { name: 'pixel', publicKey: chiave, keySource: 'pairing', keyBoundAt: '2026-08-07T10:00:00.000Z' };
+
+  const { node, outcome } = identity.observePeerKey(legato, { publicKey: chiave, source: 'peer-assertion' });
+
+  assert.equal(outcome, 'unchanged');
+  assert.equal(node.keySource, 'pairing',
+    'la provenienza e\' del LEGAME, non dell\'ultima volta che abbiamo rivisto la chiave');
+});
+
+test('UNA CHIAVE DIVERSA NON SOSTITUISCE QUELLA LEGATA — e\' l\'invariante del passo', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-peer-'));
+  const vera = identity.ensureNodeKey({ keyPath: path.join(dir, 'a.json') }).publicKey;
+  const altra = identity.ensureNodeKey({ keyPath: path.join(dir, 'b.json') }).publicKey;
+  assert.notEqual(vera, altra);
+
+  const legato = { name: 'pixel', publicKey: vera, keySource: 'pairing' };
+  const { node, outcome } = identity.observePeerKey(legato,
+    { publicKey: altra, source: 'peer-assertion', now: Date.parse('2026-08-07T11:00:00Z') });
+
+  assert.equal(outcome, 'conflict');
+  assert.equal(node.publicKey, vera,
+    'sovrascrivere renderebbe il peer chiunque sappia rispondere a un probe');
+  assert.deepEqual(node.keyConflict,
+    { seen: altra, at: '2026-08-07T11:00:00.000Z', source: 'peer-assertion' });
+});
+
+test('una chiave malformata non lega niente e non sporca il nodo', () => {
+  const legato = { name: 'pixel' };
+  for (const cattiva of ['', 'troppo-corta', 'A'.repeat(44), 'con spazio', null, 42, undefined]) {
+    const { node, outcome } = identity.observePeerKey(legato, { publicKey: cattiva });
+    assert.equal(outcome, 'invalid', `deve rifiutare ${JSON.stringify(cattiva)}`);
+    assert.equal(node, legato, 'il nodo non va toccato');
+  }
+});
+
+test('lo schema del nodo e\' chiuso anche sui campi di identita\'', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-peer-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const chiave = identity.ensureNodeKey({ keyPath: path.join(dir, 'k.json') }).publicKey;
+  const base = { name: 'pixel', ssh: 'utente@esempio', remotePort: 41777, localPort: 44001 };
+
+  assert.ok(store.parseNode({ ...base, publicKey: chiave, keySource: 'pairing' }));
+
+  const cattivi = [
+    { publicKey: 'non-una-chiave' },
+    // provenienza o data senza la chiave: un record incoerente che piu' tardi
+    // qualcuno leggerebbe come «legata al pairing» senza che nulla sia legato.
+    { keySource: 'pairing' },
+    { keyBoundAt: '2026-08-07T10:00:00.000Z' },
+    // una terza provenienza inventata passerebbe i confronti senza significare
+    // niente al passo 3.
+    { publicKey: chiave, keySource: 'fidati' },
+    { publicKey: chiave, keyBoundAt: 'domani' },
+    { publicKey: chiave, keyConflict: { seen: 'corta', at: '2026-08-07T10:00:00.000Z', source: 'pairing' } },
+    { publicKey: chiave, keyConflict: { seen: chiave, at: '2026-08-07T10:00:00.000Z', source: 'boh' } },
+    { publicKey: chiave, keyConflict: { seen: chiave, at: '2026-08-07T10:00:00.000Z', source: 'pairing', extra: 1 } },
+    { keyConflict: { seen: chiave, at: '2026-08-07T10:00:00.000Z', source: 'pairing' } },
+  ];
+  for (const patch of cattivi) {
+    assert.equal(store.parseNode({ ...base, ...patch }), null,
+      `deve rifiutare ${JSON.stringify(patch)}`);
+  }
+});
+
+test('i campi di identita\' sopravvivono al giro completo su disco', (t) => {
+  const home = casa(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-peer-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const chiave = identity.ensureNodeKey({ keyPath: path.join(dir, 'k.json') }).publicKey;
+  const nodesPath = path.join(home, '.nexuscrew', 'nodes.json');
+
+  const iniziale = store.initStore(nodesPath);
+  const conNodo = {
+    ...iniziale,
+    nodes: [{
+      name: 'pixel', ssh: 'utente@esempio', remotePort: 41777, localPort: 44001,
+      publicKey: chiave, keySource: 'pairing', keyBoundAt: '2026-08-07T10:00:00.000Z',
+    }],
+  };
+  store.atomicWriteStore(nodesPath, conNodo);
+
+  const riletto = store.loadStore(nodesPath);
+  assert.equal(riletto.nodes[0].publicKey, chiave, 'una chiave che non sopravvive al riavvio non lega niente');
+  assert.equal(riletto.nodes[0].keySource, 'pairing');
+
+  // E il file dei nodi non contiene la privata, ne' per errore ne' per comodita'.
+  assert.doesNotMatch(fs.readFileSync(nodesPath, 'utf8'), /PRIVATE KEY/);
+});
+
+test('la directory mostra le pubbliche e i conflitti, e nessun segreto', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-peer-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const a = identity.ensureNodeKey({ keyPath: path.join(dir, 'a.json') }).publicKey;
+  const b = identity.ensureNodeKey({ keyPath: path.join(dir, 'b.json') }).publicKey;
+
+  const elenco = identity.publicKeyDirectory({ nodes: [
+    { name: 'pixel', nodeId: 'a'.repeat(32), publicKey: a, keySource: 'pairing', keyBoundAt: '2026-08-07T10:00:00.000Z',
+      token: 'segreto-non-deve-uscire', acceptToken: 'nemmeno-questo' },
+    { name: 'asus', nodeId: 'b'.repeat(32), publicKey: b, keySource: 'peer-assertion',
+      keyConflict: { seen: a, at: '2026-08-07T11:00:00.000Z', source: 'peer-assertion' } },
+    { name: 'muto', nodeId: 'c'.repeat(32) },
+  ] });
+
+  assert.equal(elenco[0].publicKey, a);
+  assert.equal(elenco[0].source, 'pairing');
+  assert.equal(elenco[1].conflict.seen, a, 'un conflitto invisibile e\' un conflitto che nessuno risolve');
+  assert.equal(elenco[2].publicKey, null, 'un peer senza chiave si dichiara tale, non si omette');
+
+  const serializzato = JSON.stringify(elenco);
+  assert.ok(!serializzato.includes('segreto-non-deve-uscire'), 'nessun token nella directory');
+  assert.ok(!serializzato.includes('nemmeno-questo'));
+});
+
+test('la vista redatta porta la chiave del peer e il conflitto, mai i token', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-peer-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const a = identity.ensureNodeKey({ keyPath: path.join(dir, 'a.json') }).publicKey;
+  const b = identity.ensureNodeKey({ keyPath: path.join(dir, 'b.json') }).publicKey;
+
+  const redatto = store.redactNode(store.parseNode({
+    name: 'pixel', ssh: 'utente@esempio', remotePort: 41777, localPort: 44001,
+    token: 'x'.repeat(64), publicKey: a, keySource: 'pairing',
+    keyConflict: { seen: b, at: '2026-08-07T11:00:00.000Z', source: 'peer-assertion' },
+  }));
+
+  assert.equal(redatto.publicKey, a);
+  assert.equal(redatto.keyConflict.seen, b);
+  assert.equal(redatto.hasToken, true);
+  assert.equal(redatto.token, undefined, 'la redazione resta quella di prima sui segreti');
+});
