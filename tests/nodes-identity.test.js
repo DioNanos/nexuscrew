@@ -34,6 +34,44 @@ test('la chiave si genera una volta sola e non cambia fra due avvii', (t) => {
     'una chiave che cambia a ogni avvio non e\' un\'identita\'');
 });
 
+test('due creazioni in corsa convergono sulla chiave che sta sul disco', (t) => {
+  // LA CORSA, ricostruita invece che simulata a parole: due processi che
+  // partono insieme vedono entrambi il file assente e generano due chiavi
+  // diverse; i due rename si sovrascrivono. Chi PERDE non deve restituire in
+  // memoria una chiave che sul disco non c'e' piu': se la mandasse a un peer
+  // dentro un pairing, quel peer legherebbe un'identita' che non potremo mai
+  // dimostrare, e da li' in poi ogni nostra chiave gli risulterebbe un
+  // conflitto. Per sempre.
+  // LA PRIMA STESURA DI QUESTO TEST ERA VERDE E NON PROVAVA NULLA: creava la
+  // chiave, poi ne sovrascriveva il file, poi richiamava ensureNodeKey — che a
+  // quel punto trovava il file ESISTENTE e prendeva il ramo di lettura. Il
+  // percorso di CREAZIONE, l'unico in cui la corsa esiste, non veniva mai
+  // eseguito. L'ho scoperto perche' il controllo negativo non falliva.
+  // Serve un seam: la corsa va fatta accadere DENTRO la creazione.
+  const home = casa(t);
+  const altroDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-corsa-'));
+  t.after(() => fs.rmSync(altroDir, { recursive: true, force: true }));
+  const vincitore = identity.ensureNodeKey({ keyPath: path.join(altroDir, 'k.json') });
+
+  // L'altro processo vince il rename fra la nostra scrittura e il nostro
+  // ritorno: e' esattamente la finestra della corsa.
+  const perdente = identity.ensureNodeKey({
+    home,
+    afterWriteSeam: (p) => fs.copyFileSync(vincitore.path, p),
+  });
+
+  assert.equal(perdente.publicKey, vincitore.publicKey,
+    'chi perde la corsa deve restituire la chiave che sta sul disco, non la propria: '
+    + 'una pubblica mandata a un peer e poi persa lo lega a un\'identita\' che non potremo dimostrare');
+
+  // E la pubblica restituita deve corrispondere alla privata restituita:
+  // altrimenti si firmerebbe con una e si farebbe verificare con l'altra.
+  assert.equal(identity.publicKeyFromPrivate(perdente.privateKey), perdente.publicKey);
+
+  // Il giro successivo vede il vincitore, come ogni avvio da qui in poi.
+  assert.equal(identity.ensureNodeKey({ home }).publicKey, vincitore.publicKey);
+});
+
 test('la privata sta in un file suo, a 0600, e non dentro nodes.json', (t) => {
   const home = casa(t);
   const { path: p } = identity.ensureNodeKey({ home });
