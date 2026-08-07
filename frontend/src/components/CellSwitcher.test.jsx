@@ -121,13 +121,13 @@ describe('CellSwitcher', () => {
 
   it('renders each distinct local cell exactly once (no client-side doubling)', async () => {
     const localCells = [
-      active('Dev', 'cloud-Dev'), active('DevAuditor', 'cloud-DevAuditor'),
-      off('Fork', 'cloud-Fork'), off('ForkAuditor', 'cloud-ForkAuditor'),
+      active('Dev', 'cloud-Dev'), active('Alpha', 'cloud-Alpha'),
+      off('Fork', 'cloud-Fork'), off('Gamma', 'cloud-Gamma'),
       active('Personal', 'cloud-Personal'), active('Research', 'cloud-Research'),
       off('Trading', 'cloud-Trading'), off('GameDev', 'cloud-GameDev'),
       off('GameAuditor', 'cloud-GameAuditor'), active('SysAdmin', 'cloud-SysAdmin'),
       off('DesignCreator', 'cloud-DesignCreator'), off('WarMaster', 'cloud-WarMaster'),
-      active('DevWorker', 'cloud-DevWorker'), active('Shell', 'cloud-Shell'),
+      active('Beta', 'cloud-Beta'), active('Shell', 'cloud-Shell'),
     ];
     writeCellSwitcherSnapshot({
       sessions: localCells.filter((c) => c.active).map((c) => ({ name: c.tmuxSession, activity: 1 })),

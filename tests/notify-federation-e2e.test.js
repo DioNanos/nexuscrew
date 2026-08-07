@@ -165,7 +165,7 @@ test('un target sconosciuto non diventa una consegna riuscita', async (t) => {
   assert.notEqual(out.status, 'delivered', JSON.stringify(out));
 });
 
-// G1 (rilievo DevAuditor su rc.14): l'invariante "un peer rumoroso non affama
+// G1 (rilievo di un audit indipendente su rc.14): l'invariante "un peer rumoroso non affama
 // le celle di casa" era dichiarata nel commit e nel codice, ma NON protetta.
 // Il budget federato e quello locale sono due limiter distinti; se un domani
 // qualcuno li riunisce, il codice resta plausibile e il danno e' invisibile

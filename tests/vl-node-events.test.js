@@ -2,7 +2,7 @@
 
 // Passo 2, lato hub: gli eventi di sessione arrivano dentro il long poll che il
 // device gia' fa. Contratto:
-// DocsHub/projects/vl/2026-08-05_CONTRATTO_passo2_eventi_nodo_broker.md
+// Contratto del passo 2 (eventi nodo -> broker), documentato a parte.
 //
 // Le due garanzie che questi test devono davvero provare, perche' sono quelle
 // che un'implementazione plausibile ma sbagliata romperebbe in silenzio:
