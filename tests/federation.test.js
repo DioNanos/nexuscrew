@@ -47,6 +47,21 @@ test('federation route parser has an explicit capability allowlist and hop cap',
   assert.equal(fed.allowedResource('/fleet/credentials/set', 'POST'), true);
   assert.deepEqual(fed.parseRoute('/vps/_/fleet/restore-engines'), { route: ['vps'], resource: '/fleet/restore-engines' });
   assert.equal(fed.allowedResource('/fleet/define-cell', 'GET'), false);
+  // I modelli dichiarati vanno dove vanno gli engine. Tenerli locali rendeva la
+  // modifica remota monca: si poteva creare a distanza un engine gestito e non
+  // si poteva dichiarare il modello che lo rende avviabile.
+  assert.equal(fed.allowedResource('/fleet/define-model', 'POST'), true);
+  assert.equal(fed.allowedResource('/fleet/remove-model', 'POST'), true);
+  assert.equal(fed.allowedResource('/fleet/model-test', 'POST'), true);
+  assert.deepEqual(fed.parseRoute('/vps/_/fleet/model-test'), { route: ['vps'], resource: '/fleet/model-test' });
+  assert.equal(fed.allowedResource('/fleet/define-model', 'GET'), false);
+  assert.equal(fed.allowedResource('/fleet/model-test', 'GET'), false);
+  // READONLY resta il confine: la prova non muta nulla, ma fa partire una
+  // richiesta autenticata DA quel nodo su comando di un peer, ed e' esattamente
+  // cio' che «sola lettura» toglie. Le due eccezioni audio restano le uniche.
+  assert.equal(fed.readonlyBlocksFederated('/fleet/model-test', 'POST'), true);
+  assert.equal(fed.readonlyBlocksFederated('/fleet/define-model', 'POST'), true);
+  assert.equal(fed.readonlyBlocksFederated('/fleet/remove-model', 'POST'), true);
   assert.equal(fed.allowedResource('/settings', 'GET'), false);
   // Coniare un invito NON e' piu' federabile (2026-08-04). L'invito e' legato
   // all'instanceId dell'hub: chi lo consuma entra nell'hub, non nel nodo che
@@ -57,6 +72,28 @@ test('federation route parser has an explicit capability allowlist and hop cap',
   assert.equal(fed.parseRoute('/vps/_/settings/token/rotate'), null);
   assert.equal(fed.allowedResource('/files/outbox', 'POST'), false);
   assert.equal(fed.allowedResource('/files/upload', 'POST'), true);
+  // I nodi VL sono federabili come ogni altra risorsa: dove ti colleghi, vedi
+  // tutto. Un peer accoppiato e' fidato come il suo proprietario (docs/SECURITY),
+  // e la federazione concede GIA' `/fleet/define-engine` + `/fleet/up`, cioe'
+  // definire un comando arbitrario ed eseguirlo sull'host. Negare `/vl-nodes/*`
+  // non toglieva quel potere — bastava definire una cella che chiama l'API
+  // locale — e in cambio rendeva i nodi VL l'unica risorsa non federata,
+  // rompendo l'allineamento fra NexusCrew e VL.
+  //
+  // Il difetto vero di `update_candidate` (accetta `http:`, e l'sha256 non
+  // vincola perche' chi manda il comando fornisce sia URL sia hash) resta, e va
+  // risolto nel comando, dove vive: l'allowlist di federazione non era il posto.
+  assert.deepEqual(fed.parseRoute(`/vps/_/vl-nodes/${'a'.repeat(32)}/commands`), {
+    route: ['vps'], resource: `/vl-nodes/${'a'.repeat(32)}/commands`,
+  });
+  assert.equal(fed.allowedResource('/vl-nodes', 'GET'), true);
+  assert.equal(fed.allowedResource('/vl-nodes/invite', 'POST'), true);
+  assert.equal(fed.allowedResource(`/vl-nodes/${'a'.repeat(32)}/commands`, 'POST'), true);
+  assert.equal(fed.allowedResource(`/vl-nodes/${'a'.repeat(32)}`, 'DELETE'), true);
+  // I metodi restano vincolati: federare la risorsa non federa ogni verbo.
+  assert.equal(fed.allowedResource(`/vl-nodes/${'a'.repeat(32)}/commands`, 'GET'), false);
+  assert.equal(fed.allowedResource('/vl-nodes', 'DELETE'), false);
+  assert.equal(fed.parseRoute('/vps/_/vl-nodes/not-a-node/commands'), null);
 });
 
 test('relay ACL is symmetric and peer credentials identify only their peer', () => {

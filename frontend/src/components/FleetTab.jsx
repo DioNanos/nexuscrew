@@ -7,6 +7,7 @@ import {
   fleetImportCell,
   fleetRestoreCells, fleetRestoreEngines,
   fleetCredentialStatus, fleetSetCredential, fleetRemoveCredential,
+  fleetDefineModel, fleetRemoveModel, fleetModelTest,
   getRouteConfig,
 } from '../lib/api.js';
 import PowerSheet from './PowerSheet.jsx';
@@ -18,6 +19,7 @@ import FleetModal from './fleet/FleetModal.jsx';
 import FleetInventory from './fleet/FleetInventory.jsx';
 import FleetBackupDialog from './fleet/FleetBackupDialog.jsx';
 import EngineEditor from './fleet/EngineEditor.jsx';
+import ModelEditor from './fleet/ModelEditor.jsx';
 import CellEditor from './fleet/CellEditor.jsx';
 import ImportEditor from './fleet/ImportEditor.jsx';
 import CwdRepairDialog from './fleet/CwdRepairDialog.jsx';
@@ -27,6 +29,11 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   const [status, setStatus] = useState({ available: false, capabilities: [] });
   const [loaded, setLoaded] = useState(false);
   const [engineEdit, setEngineEdit] = useState(null);
+  const [modelEdit, setModelEdit] = useState(null);
+  // Esiti delle prove, per riga: `{[engine::id]: {outcome, latencyMs}}`. Non
+  // si conservano fra un'apertura e l'altra — una prova vecchia dice quanto
+  // nessuna prova, e mostrarla come attuale sarebbe peggio.
+  const [modelTests, setModelTests] = useState({});
   const [cellEdit, setCellEdit] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -76,6 +83,27 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     try { await fn(); await refresh(); } catch (e) { setErr(String(e.message || e)); }
     setBusy(false);
   };
+
+  const provaModello = async (engine, model) => {
+    const out = await fleetModelTest(token, engine, model, route);
+    setModelTests((prev) => ({ ...prev, [`${engine}::${model}`]: out }));
+    return out;
+  };
+
+  const saveModel = (form) => run(async () => {
+    const def = { id: String(form.id || '').trim(), engine: String(form.engine || '').trim() };
+    // I campi numerici arrivano dal form come stringhe: si convertono qui, e
+    // si OMETTONO quando vuoti — il parser rifiuta un campo presente e non
+    // valido, ed e' giusto cosi'.
+    for (const key of ['contextWindow', 'maxTokens']) {
+      const value = String(form[key] || '').trim();
+      if (value) def[key] = Number(value);
+    }
+    if (form.reasoning === true) def.reasoning = true;
+    await fleetDefineModel(token, def, route);
+    setModelEdit(null);
+    await refresh();
+  });
 
   const saveEngine = () => run(async () => {
     const creating = engineEdit.mode === 'new';
@@ -136,6 +164,11 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     // rimuove, perche' `null` cancella la chiave lato backend.
     const label = (f.label || '').trim();
     if (creating) { if (label) def.label = label; } else def.label = label || null;
+    // Stessa asimmetria della label, per la stessa ragione: in creazione il
+    // campo assente significa «tutti», e `parseCell` rifiuta un `mcp: null`; in
+    // modifica serve `null`, perche' e' cosi' che il backend CANCELLA la chiave.
+    if (creating) { if (Array.isArray(f.mcp)) def.mcp = f.mcp; }
+    else def.mcp = Array.isArray(f.mcp) ? f.mcp : null;
     if (creating) {
       if (selectedEngine?.managed?.client !== 'shell' && f.model) def.model = f.model;
       if (selectedEngine?.managed?.client !== 'shell' && f.prompt) def.prompt = f.prompt;
@@ -152,6 +185,11 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   });
 
   const locked = readonly || remoteReadonly;
+  const caps = status.capabilities || [];
+  // La prova e' una diagnosi e in locale resta possibile anche a sola lettura.
+  // Su un nodo REMOTO la federazione la rifiuta sotto READONLY: il bottone si
+  // spegne invece di offrire un'azione che tornerebbe 403.
+  const provaBloccata = route.length > 0 && locked;
   const credentialFor = (engine) => credentials.find((entry) => entry.engines?.includes(engine.id)) || null;
   const saveCredential = () => run(async () => {
     const result = await fleetSetCredential(token, credentialEdit.envKey, credentialEdit.value, route);
@@ -216,7 +254,10 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     setImportEdit(null);
     setNote(t('fleet-saved'));
   });
-  const restoreBackup = ({ engineRows = [], cellRows = [] }) => run(async () => {
+  // `models` arriva dal backup letto: si scrivono insieme agli engine, e prima
+  // di loro, perche' un engine che usa un modello dichiarato viene rifiutato
+  // finche' la dichiarazione non c'e'.
+  const restoreBackup = ({ engineRows = [], cellRows = [], models: restoreModels = [] }) => run(async () => {
     const selectedEngines = engineRows.filter((row) => row.selected);
     const engineDefs = selectedEngines.map((row) => portableEngineDefinition(row.engine));
     if (engineDefs.some((engine) => !engine)) throw new Error(t('fleet-backup-invalid-engine'));
@@ -235,7 +276,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     // must exist before cells can reference them, so the two authenticated
     // restores remain ordered but a cancelled dialog leaves no partial change.
     const engineResult = engineDefs.length
-      ? await fleetRestoreEngines(token, engineDefs, engineOverwrites.length > 0, route)
+      ? await fleetRestoreEngines(token, engineDefs, engineOverwrites.length > 0, route, restoreModels)
       : { needsRestart: [] };
     const cellResult = restored.length ? await fleetRestoreCells(token, restored, route) : { needsRestart: [] };
     const restart = [...new Set([...(engineResult.needsRestart || []), ...(cellResult.needsRestart || [])])];
@@ -290,7 +331,6 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
         </span></div>
         {defs.cells.map((c) => {
         const isOn = active.has(c.id);
-        const caps = status.capabilities || [];
         // needsRepair: cwd non portabile. La UI NON mostra la cwd assoluta del
         // device sorgente (c.cwd e' foreign): espone un badge e il solo flusso
         // repair (che invia cwdRel-only). Una cella needsRepair non e' editabile
@@ -324,12 +364,38 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
             <button className="nc-btn danger" disabled={locked || busy} onClick={() => run(async () => { if (window.confirm(t('fleet-remove-engine').replace('{id}', e.id))) await fleetRemoveEngine(token, e.id, route); })}>×</button>
           </span></div>
         );})}
+        {/* Modelli dichiarati: sezione a se', sotto gli engine, perche' e' li'
+            che si va a cercarli — un modello esiste per un profilo, e il
+            profilo e' una proprieta' dell'engine. */}
+        <div className="nc-fleet-section-head"><b>{t('fleet-models')}</b><button className="nc-btn primary" disabled={locked || busy}
+          onClick={() => { setErr(''); setModelEdit({ mode: 'new', form: { id: '', engine: '' } }); }}>+ {t('add')}</button></div>
+        {!(defs.models || []).length && <small className="nc-set-hint">{t('fleet-no-models')}</small>}
+        {(defs.models || []).map((m) => {
+          const key = `${m.engine}::${m.id}`;
+          const esito = modelTests[key];
+          const usato = (defs.engines || []).some((e) => e.managed && e.managed.model === m.id);
+          return (
+          <div className="nc-fleet-item" key={key}><span><b>{m.id}</b><small>{m.engine}
+            {m.contextWindow ? ` · ${m.contextWindow}` : ''}{usato ? ` · ${t('model-in-use')}` : ''}</small>
+            {esito && <small className={`nc-model-test ${esito.outcome}`}>{t(`model-test-${esito.outcome}`)}
+              {esito.outcome === 'ok' && Number.isInteger(esito.latencyMs) ? ` · ${esito.latencyMs}ms` : ''}</small>}
+          </span><span>
+            {caps.includes('model-test') && <button className="nc-btn ghost" disabled={busy || provaBloccata}
+              onClick={() => run(() => provaModello(m.engine, m.id))}>{t('model-test')}</button>}
+            <button className="nc-btn danger" disabled={locked || busy}
+              onClick={() => run(() => fleetRemoveModel(token, m.id, m.engine, route))}>×</button>
+          </span></div>
+        );})}
       </>}
+      {modelEdit && <FleetModal onClose={() => setModelEdit(null)} label={t('fleet-models')} error={err}>
+        <ModelEditor state={modelEdit} setState={setModelEdit} busy={busy} onSave={saveModel}
+          onTest={provaModello} profiles={defs.managedCatalog || []}
+          canTest={caps.includes('model-test') && !provaBloccata} /></FleetModal>}
       {engineEdit && <FleetModal onClose={() => setEngineEdit(null)} label={t('fleet-new-engine')} error={err}><EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} /></FleetModal>}
-      {cellEdit && <FleetModal onClose={() => setCellEdit(null)} label={t('fleet-new-cell')} error={err}><CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} /></FleetModal>}
+      {cellEdit && <FleetModal onClose={() => setCellEdit(null)} label={t('fleet-new-cell')} error={err}><CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} mcpServers={defs.mcpServers || []} busy={busy} onSave={saveCell} /></FleetModal>}
       {repairCell && <FleetModal onClose={() => setRepairCell(null)} label={t('fleet-cwd-repair-title').replace('{id}', repairCell.id)} error=""><CwdRepairDialog token={token} route={route} cell={repairCell} busy={busy} onSaved={async () => { setRepairCell(null); setNote(t('fleet-cwd-repaired')); await refresh(); }} onClose={() => setRepairCell(null)} /></FleetModal>}
       {note && <div className="nc-set-note">{note}</div>}{err && <div className="nc-err">{err}</div>}
-      {backupOpen && <FleetModal onClose={() => setBackupOpen(false)} label={t('fleet-backup')} error={err}><FleetBackupDialog cells={defs.cells} engines={defs.engines} busy={busy} canRestore={canRestoreBackup} onRestore={restoreBackup} onClose={() => setBackupOpen(false)} /></FleetModal>}
+      {backupOpen && <FleetModal onClose={() => setBackupOpen(false)} label={t('fleet-backup')} error={err}><FleetBackupDialog cells={defs.cells} engines={defs.engines} models={defs.models || []} busy={busy} canRestore={canRestoreBackup} onRestore={restoreBackup} onClose={() => setBackupOpen(false)} /></FleetModal>}
       {credentialEdit && <FleetModal onClose={() => setCredentialEdit(null)} label={t('fleet-credential-title')} error={err}>
         <div className="nc-fleet-form nc-credential-form">
           <b>{t('fleet-credential-title')}</b>

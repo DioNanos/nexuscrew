@@ -1,6 +1,6 @@
 ---
 name: nexuscrew-agent
-description: Use when an AI agent connected to NexusCrew must notify or ask the human, inspect runtime or deck context, list authorized Fleet cells, message an exact active cell, read its inbox, deliver a file, recover from local tmux messages that remain unsubmitted or garbled, or when a drag in the web terminal does not scroll a full-screen TUI. Prefer nc_notify, nc_ask, nc_status, nc_deck, nc_cells, nc_send_cell, nc_inbox, and nc_send_file; use bundled tmux/file helpers only as a declared compatibility fallback.
+description: Use when an AI agent connected to NexusCrew must notify or ask the human, inspect runtime or deck context, manage exact authorized VL micro-device nodes, list authorized Fleet cells, message an exact active cell, read its inbox, deliver a file, recover from local tmux messages that remain unsubmitted or garbled, or when a drag in the web terminal does not scroll a full-screen TUI. Prefer nc_notify, nc_ask, nc_status, nc_deck, nc_cells, nc_vl_nodes, nc_vl_command, nc_send_cell, nc_inbox, and nc_send_file; use bundled tmux/file helpers only as a declared compatibility fallback.
 ---
 
 # NexusCrew Agent I/O
@@ -19,6 +19,10 @@ When the client exposes the NexusCrew MCP server, use these tools directly:
 | Read the caller's deck name(s) and member cells/tmux sessions | `nc_deck` |
 | List every authorized owner-qualified Fleet cell | `nc_cells` |
 | Submit a bounded message to an exact active Fleet cell | `nc_send_cell` |
+| List authorized VL micro-device owners/nodes | `nc_vl_nodes` |
+| Create a one-time VL pairing invite | `nc_vl_invite` |
+| Deliver a bounded VL command | `nc_vl_command` |
+| Revoke an exact VL pairing | `nc_vl_revoke` |
 | List files received for the current session | `nc_inbox` |
 | Deliver an absolute file path under the user's home | `nc_send_file` |
 
@@ -30,6 +34,7 @@ Apply these rules:
 - Use `nc_status` instead of scraping NexusCrew state files. Use `nc_deck` instead of reading `decks.json`: it returns every local or authorized shared-owner deck containing the caller, preserves visual member order, identifies each deck and member by stable owner ID, includes viewer-valid Hydra routes, and reports `cell: null` when no managed Fleet match is available.
 - Use `nc_cells` immediately before cross-cell delivery. Select its exact owner-qualified `id`; require `canReceive: true`; never guess a duplicate name or stale route.
 - Use `nc_send_cell {target, message}` for actual Fleet-cell delivery. `submitted` confirms bracketed paste plus Enter only, never task acceptance or completion. Inactive targets are not queued.
+- Use `nc_vl_nodes` immediately before VL mutation. Mutation tools require an active local Fleet caller and the full owner-qualified VL ID. `nc_vl_command` `submitted` means live-poll delivery only; require the same ID in `lastAck`. No offline queue exists.
 - Use `nc_inbox` instead of guessing an inbox path when the tool is available.
 - Pass `nc_send_file` an existing absolute regular-file path below the user's home. Let NexusCrew choose and sanitize the outbox name.
 - Do not treat an MCP notification as a substitute for the final response required by the active client.
@@ -128,6 +133,7 @@ work. The setting is also applied to windows created later in that session.
 | Discover this session's deck neighbours | `nc_deck` |
 | Discover authorized cells across nodes | `nc_cells` |
 | Submit to an exact active Fleet cell | `nc_send_cell` |
+| Discover/manage a paired VL micro-device | `nc_vl_nodes`, then `nc_vl_command` |
 | Give the human a file | `nc_send_file` or fallback `nc-deliver <file>...` |
 | Read a file the human sent | `nc_inbox` or fallback to the path in the prompt |
 | Send a prompt/command to a session | `nc-send <session> "text"` |

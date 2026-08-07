@@ -2,6 +2,17 @@ self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', () => self.clients.claim());
 self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request)));
 
+// applyUpdate() (lib/sw-update.js) manda questo messaggio a un worker in
+// waiting e aspetta il `controllerchange`. Senza un listener il messaggio
+// cadeva nel vuoto: scattava il reload di fallback, il worker restava in
+// waiting, e al ricaricamento `reg.waiting` faceva ricomparire il banner —
+// "nuova versione disponibile" per sempre, e il bottone non poteva spegnerlo.
+// Un worker installato da una versione precedente di questo file resta in
+// waiting fino a che non lo si attiva: e' quello il caso che si incastrava.
+self.addEventListener('message', (e) => {
+  if (e && e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
 // Web Push del MCP bridge: payload JSON {title, body?, lang?, url?} dal server.
 // tag fisso 'nexuscrew': le notifiche si sostituiscono invece di accumularsi.
 self.addEventListener('push', (e) => {

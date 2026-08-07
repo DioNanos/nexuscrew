@@ -289,3 +289,37 @@ describe('mobile roster parity', () => {
     prompt.mockRestore(); alert.mockRestore();
   });
 });
+
+// --- nodi VL nella lista mobile (VL_NODES_IN_SIDEBAR) -----------------------
+// Gruppi dalla stessa strada della produzione: forma vera di /api/vl-nodes ->
+// vlNodeToPeer -> vlSidebarGroups. Il conteggio dell'header DEVE venire dalla
+// sessione dichiarata (items.length direbbe sempre 0 e mentirebbe).
+import { vlNodeToPeer, vlSidebarGroups } from '../lib/vl-nodes-model.js';
+
+describe('SessionList — nodi VL', () => {
+  const vlApiNode = {
+    nodeId: 'f'.repeat(32), label: 'N900', pairedAt: 1700000000000,
+    online: true, lastSeen: 1700000100000, version: '0.1.0',
+    capabilities: ['status', 'prompt'],
+    health: { state: 'running', uptimeSec: 10, rssBytes: 2_000_000, processCount: 2, brokerReachable: true },
+    session: { attached: true, profile: 'ollama' },
+    inflight: null, lastAck: null, canManage: true,
+  };
+
+  it('an attached VL node counts one honest session and opens the session view', () => {
+    const peer = vlNodeToPeer(vlApiNode);
+    fixture.nodes = vlSidebarGroups([peer]);
+    const onOpenVlSession = vi.fn();
+    render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()} onOpenVlSession={onOpenVlSession} />);
+    expect(screen.getByRole('button', { name: /N900 · 1 sessions/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'N900: ollama' }));
+    expect(onOpenVlSession).toHaveBeenCalledWith(peer);
+  });
+
+  it('no declared attach means zero sessions in the header', () => {
+    fixture.nodes = vlSidebarGroups([vlNodeToPeer({ ...vlApiNode, session: null })]);
+    render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()} onOpenVlSession={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /N900 · 0 sessions/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'N900: ollama' })).toBeNull();
+  });
+});

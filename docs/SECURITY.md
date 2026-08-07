@@ -96,18 +96,44 @@ ownership, mode and path, not the intent of its arguments.
 
 Admission is the exception. Minting a pairing invite is not federated: an invite
 belongs to the installation that will host the new node, so it is issued there,
-locally. A paired node cannot admit a third party on your behalf. Beyond that
-there is no lesser class of peer: the federated allowlist is the same for every
-paired node.
+locally. A paired node cannot admit a third party on your behalf.
 
 This is a deliberate boundary, not a defect list. NexusCrew was designed to put
 one person's machines on one control plane, and it treats a paired node the way
-it treats you. Supporting a node owned by somebody else requires per-node
-authority that can be granted, attenuated and revoked — a capability model with
-proof of possession, which is on the roadmap and is not implemented.
+it treats you.
 
-Until then: do not accept a pairing invite from an installation you do not own,
-and do not issue one expecting it to grant less than everything.
+### Cell scope
+
+A per-node cell scope narrows what one paired node sees and can act on. It is
+set locally, on the installation that owns the cells:
+
+```bash
+nexuscrew nodes cells <node> all            # default: every cell
+nexuscrew nodes cells <node> none           # no cell at all
+nexuscrew nodes cells <node> Research,Dev   # exactly these
+```
+
+The scope is enforced on the federated request, in one place in front of the
+API router, so a listing and an action pass the same predicate. Route targets
+are declared in an explicit table rather than inferred, and a federated request
+that names a cell or a session on a route missing from that table is refused
+rather than allowed — a route added later starts closed, not open. Defining,
+editing or importing a cell is refused outright for a scoped node: it must not
+be able to create the cell it was not granted. The terminal attach is gated
+with the same predicate, and a tmux session that maps to no cell is outside
+every scope.
+
+What the scope does **not** change: the pairing itself is still
+owner-equivalent for everything it governs, and the granted cells are granted
+fully — inside its scope a node still creates sessions, attaches to them and
+writes into them as the user running NexusCrew. It attenuates reach, not the
+authority held within that reach. A capability model with proof of possession —
+authority granted, attenuated and revoked as a token rather than as
+configuration — remains on the roadmap and is not implemented.
+
+So: do not accept a pairing invite from an installation you do not own, and do
+not treat a cell scope as a sandbox for code you do not trust. It is a
+reduction of surface between machines that are already yours.
 
 Pairing links contain a short-lived one-time invite and routing data, but no
 SSH private key, provider key or PWA token.

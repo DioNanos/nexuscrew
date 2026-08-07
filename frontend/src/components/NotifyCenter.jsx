@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
-import { getAsks, answerAsk } from '../lib/api.js';
+import { getAsks, answerAsk, dismissAsk } from '../lib/api.js';
 import { connectEvents } from '../lib/events.js';
 import { useNotificationSpeech } from '../hooks/useNotificationSpeech.js';
 import {
@@ -34,10 +34,11 @@ function Toast({ n, onClose }) {
   );
 }
 
-function AskCard({ ask, token, onAnswered }) {
+function AskCard({ ask, token, onAnswered, onDismiss }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [dismissing, setDismissing] = useState(false);
 
   const send = async (value) => {
     const answer = String(value || '').trim();
@@ -50,11 +51,26 @@ function AskCard({ ask, token, onAnswered }) {
     setBusy(false);
   };
 
+  // Scarta la domanda: DELETE (marca dismissed lato server, lo storico resta).
+  // Lo scarto fallito NON rimuove la card: un errore di rete non deve far
+  // sparire una domanda ancora aperta.
+  const dismiss = async () => {
+    if (dismissing) return;
+    setDismissing(true);
+    try {
+      await dismissAsk(token, ask.id);
+      onDismiss(ask.id);
+    } catch (_) { setDismissing(false); }
+  };
+
   return (
     <div className="nc-ask-card">
       <div className="nc-ask-head">
         <span className="nc-ntf-from">{ask.session}</span>
         <code className="nc-ask-id">#{ask.id}</code>
+        <button type="button" className="nc-ask-dismiss" title={t('ask-dismiss')} aria-label={t('ask-dismiss')} disabled={dismissing} onClick={dismiss}>
+          <Icon name="x" size={14} />
+        </button>
       </div>
       <div className="nc-ask-q">{ask.question}</div>
       {Array.isArray(ask.options) && ask.options.length > 0 && (
@@ -141,12 +157,16 @@ export default function NotifyCenter({ token }) {
         setAsks((cur) => (cur.some((a) => a.id === frame.ask.id) ? cur : [...cur, frame.ask]));
       } else if (frame.type === 'ask-answered' && frame.id) {
         setAsks((cur) => cur.filter((a) => a.id !== frame.id));
+      } else if (frame.type === 'ask-dismissed' && frame.id) {
+        // Un'altra UI ha scartato la domanda: la card sparisce qui senza DELETE.
+        setAsks((cur) => cur.filter((a) => a.id !== frame.id));
       }
     });
     return () => { cancelled = true; close(); };
   }, [token, pushToast]);
 
   const onAnswered = (id) => setAsks((cur) => cur.filter((a) => a.id !== id));
+  const onDismiss = (id) => setAsks((cur) => cur.filter((a) => a.id !== id));
 
   return (
     <>
@@ -171,7 +191,7 @@ export default function NotifyCenter({ token }) {
             </button>
           </div>
           <div className="nc-ask-panel-body">
-            {asks.map((a) => <AskCard key={a.id} ask={a} token={token} onAnswered={onAnswered} />)}
+            {asks.map((a) => <AskCard key={a.id} ask={a} token={token} onAnswered={onAnswered} onDismiss={onDismiss} />)}
           </div>
         </div>
       )}

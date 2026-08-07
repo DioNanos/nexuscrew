@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../lib/api.js', () => ({
   getAsks: vi.fn(() => Promise.resolve({ asks: [] })),
   answerAsk: vi.fn(() => Promise.resolve({})),
+  dismissAsk: vi.fn(() => Promise.resolve({})),
 }));
 
 vi.mock('../lib/events.js', () => ({
@@ -32,6 +33,7 @@ vi.mock('../lib/notification-speech.js', () => ({
   notificationSpeechFrameLang: (frame, uiLang) => mocks.resolveLang(frame, uiLang),
 }));
 
+import { getAsks, dismissAsk } from '../lib/api.js';
 import NotifyCenter from './NotifyCenter.jsx';
 
 beforeEach(() => {
@@ -112,5 +114,41 @@ describe('NotifyCenter notification speech integration', () => {
     expect(mocks.speaker.stop).toHaveBeenCalledTimes(1);
     act(() => window.dispatchEvent(new Event('nc-notification-speech-preview')));
     expect(mocks.speaker.stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('NotifyCenter ask dismiss', () => {
+  beforeEach(() => {
+    vi.mocked(dismissAsk).mockReset();
+    vi.mocked(dismissAsk).mockResolvedValue({});
+  });
+
+  it('dismisses an ask from its card: DELETE called and the card disappears', async () => {
+    vi.mocked(getAsks).mockResolvedValueOnce({
+      asks: [{ id: 'a1', session: 'cloud-Dev', question: 'Skip me?', options: [] }],
+    });
+    render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(mocks.eventHandler).toBeTypeOf('function'));
+    act(() => screen.getByTitle('questions from the cells').click());
+    expect(await screen.findByText('Skip me?')).toBeTruthy();
+
+    act(() => screen.getByTitle('Dismiss question').click());
+    await waitFor(() => expect(dismissAsk).toHaveBeenCalledWith('token', 'a1'));
+    await waitFor(() => expect(screen.queryByText('Skip me?')).toBeNull());
+  });
+
+  it('removes the card when another UI dismisses the ask (ask-dismissed frame)', async () => {
+    vi.mocked(getAsks).mockResolvedValueOnce({
+      asks: [{ id: 'a2', session: 'cloud-Dev', question: 'From a peer?', options: [] }],
+    });
+    render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(mocks.eventHandler).toBeTypeOf('function'));
+    act(() => screen.getByTitle('questions from the cells').click());
+    expect(await screen.findByText('From a peer?')).toBeTruthy();
+
+    act(() => mocks.eventHandler({ type: 'ask-dismissed', id: 'a2' }));
+    await waitFor(() => expect(screen.queryByText('From a peer?')).toBeNull());
+    // non e' stata chiamata la DELETE: lo scarto viene dal frame, non da qui
+    expect(dismissAsk).not.toHaveBeenCalled();
   });
 });

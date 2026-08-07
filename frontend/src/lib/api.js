@@ -38,12 +38,22 @@ export const fleetRemoveCredential = (t, envKey, route) => jsonFetch(fleetPath(r
 export const fleetDefineEngine = (t, def, route) => jsonFetch(fleetPath(route, 'define-engine'), t, { method: 'POST', body: { def } });
 export const fleetEditEngine = (t, id, patch, envChanges, route) => jsonFetch(fleetPath(route, 'edit-engine'), t, { method: 'POST', body: { id, patch, envChanges } });
 export const fleetRemoveEngine = (t, id, route) => jsonFetch(fleetPath(route, 'remove-engine'), t, { method: 'POST', body: { id } });
+// Modelli dichiarati: vivono accanto agli engine e si esportano con loro.
+export const fleetDefineModel = (t, def, route) => jsonFetch(fleetPath(route, 'define-model'), t, { method: 'POST', body: { def } });
+export const fleetRemoveModel = (t, id, engine, route) => jsonFetch(fleetPath(route, 'remove-model'), t, { method: 'POST', body: { id, engine } });
+// La prova segue la route come tutto il resto: si prova il modello sul nodo che
+// si sta guardando, con la credenziale di QUEL nodo — provarlo sul proprio non
+// risponderebbe alla domanda che ci si sta facendo.
+export const fleetModelTest = (t, engine, model, route) => jsonFetch(fleetPath(route, 'model-test'), t, { method: 'POST', body: { engine, model } });
 export const fleetDefineCell = (t, def, route) => jsonFetch(fleetPath(route, 'define-cell'), t, { method: 'POST', body: { def } });
 export const fleetEditCell = (t, id, patch, route) => jsonFetch(fleetPath(route, 'edit-cell'), t, { method: 'POST', body: { id, patch } });
 export const fleetRemoveCell = (t, id, stop = false, route) => jsonFetch(fleetPath(route, 'remove-cell'), t, { method: 'POST', body: { id, stop } });
 export const fleetImportCell = (t, b, route) => jsonFetch(fleetPath(route, 'import-cell'), t, { method: 'POST', body: b });
 export const fleetRestoreCells = (t, cells, route) => jsonFetch(fleetPath(route, 'restore-cells'), t, { method: 'POST', body: { cells } });
-export const fleetRestoreEngines = (t, engines, overwrite, route) => jsonFetch(fleetPath(route, 'restore-engines'), t, { method: 'POST', body: { engines, overwrite: !!overwrite } });
+// `models` va in CODA, non in mezzo: inserire un parametro fra quelli
+// esistenti rompe in silenzio ogni chiamante che non viene aggiornato, e il
+// difetto si manifesta come un booleano interpretato per una lista.
+export const fleetRestoreEngines = (t, engines, overwrite, route, models) => jsonFetch(fleetPath(route, 'restore-engines'), t, { method: 'POST', body: { engines, overwrite: !!overwrite, ...(Array.isArray(models) && models.length ? { models } : {}) } });
 export const createSession = (t, b, route) => jsonFetch(`${routeBase(route)}/sessions`, t, { method: 'POST', body: b });
 export const killSession = (t, name, route) => jsonFetch(`${routeBase(route)}/sessions/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
 export const setSessionTechnical = (t, name, technical, route) => jsonFetch(`${routeBase(route)}/sessions/${encodeURIComponent(name)}/visibility`, t, { method: 'PATCH', body: { technical: !!technical } });
@@ -54,6 +64,24 @@ export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs$
 export const getSettings = (t) => jsonFetch('/api/settings', t);
 export const getNodes = (t) => jsonFetch('/api/nodes', t);
 export const getPeers = (t) => jsonFetch('/api/peers', t);
+// Nodi VL (device N900): endpoint separato, non federato — fuso con i peer
+// SOLO lato presentazione (vl-nodes-model.js), mai dentro /api/nodes o
+// /api/peers (design NC_UI_NODI_VL, 2026-08-05: non cambiare quel contratto).
+// `route` (default locale, `[]`) instrada verso l'owner giusto — federazione
+// ripristinata per /vl-nodes/* (commit b0e8bd1): con più owner un comando
+// deve arrivare al device che lo dichiara, non sempre a quello locale
+// (design NC_UI_NODI_VL_REMOTI, 2026-08-05, invariante 3).
+export const getVlNodes = (t, route = []) => jsonFetch(`${routeBase(route)}/vl-nodes`, t);
+export const sendVlNodeCommand = (t, nodeId, kind, args = {}, route = []) => (
+  jsonFetch(`${routeBase(route)}/vl-nodes/${encodeURIComponent(nodeId)}/commands`, t, { method: 'POST', body: { kind, args } })
+);
+export const removeVlNode = (t, nodeId, route = []) => jsonFetch(`${routeBase(route)}/vl-nodes/${encodeURIComponent(nodeId)}`, t, { method: 'DELETE' });
+// Eventi di sessione del nodo (passo 2): lettura pura del ring in memoria
+// dell'owner. `after` e' il cursore, cosi' la UI chiede solo il nuovo. Cio' che
+// e' uscito dal ring non torna: la copia durevole e' il journal sul device.
+export const getVlNodeEvents = (t, nodeId, after = 0, route = []) => jsonFetch(
+  `${routeBase(route)}/vl-nodes/${encodeURIComponent(nodeId)}/events${after ? `?after=${encodeURIComponent(after)}` : ''}`, t,
+);
 export const getTopology = (t) => jsonFetch('/api/topology', t);
 export const getRouteSessions = (t, route) => jsonFetch(`${routeBase(route)}/sessions`, t);
 export const getRouteConfig = (t, route) => jsonFetch(`${routeBase(route)}/config`, t);
@@ -111,6 +139,7 @@ export const clearDiagnosticsLogs = (t, route = []) => jsonFetch(diagnosticsPath
 // della cella; in READONLY il server risponde 403 con causa esplicita).
 export const getAsks = (t, open = true) => jsonFetch(`/api/asks${open ? '?open=1' : ''}`, t);
 export const answerAsk = (t, id, text) => jsonFetch(`/api/asks/${encodeURIComponent(id)}/answer`, t, { method: 'POST', body: { text } });
+export const dismissAsk = (t, id) => jsonFetch(`/api/asks/${encodeURIComponent(id)}`, t, { method: 'DELETE' });
 
 export const getDecks = (t, route = []) => jsonFetch(`${routeBase(route)}/decks`, t);
 export const createDeck = (t, name, route = []) => jsonFetch(`${routeBase(route)}/decks`, t, { method: 'POST', body: { name } });

@@ -117,8 +117,19 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       sgrPixelEncoding = false;
       return false;
     });
-    const mouseTrackingActive = () => sgrMouseEncoding && !sgrPixelEncoding
-      && ((term.modes && term.modes.mouseTrackingMode) || 'none') !== 'none';
+    // La precondizione di tutta la protezione della selezione, resa OSSERVABILE.
+    // Vive nell'istanza xterm e dal DOM non si vede: senza questo, una prova nel
+    // browser non puo' distinguere «la selezione e' sopravvissuta perche' la
+    // proteggiamo» da «e' sopravvissuta perche' non c'era niente da cui
+    // proteggerla» — cioe' un verde per la ragione sbagliata. Non e' uno stato
+    // sensibile: e' una modalita' del terminale.
+    const mouseTrackingActive = () => {
+      const attivo = sgrMouseEncoding && !sgrPixelEncoding
+        && ((term.modes && term.modes.mouseTrackingMode) || 'none') !== 'none';
+      const host = hostRef.current;
+      if (host) host.dataset.mouseTracking = attivo ? 'on' : 'off';
+      return attivo;
+    };
     const dec = new TextDecoder();
 
     let keyboardUnlocked = keyboardGestureRef.current === 'single-tap';

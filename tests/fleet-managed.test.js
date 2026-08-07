@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const {
-  CATALOG, OLLAMA_CONTEXT, normalizeManagedSpec, defaultDefinitions, describeManaged,
+  CATALOG, OLLAMA_CONTEXT, OLLAMA_CLOUD_MODELS, normalizeManagedSpec, defaultDefinitions, describeManaged,
   resolveManagedEngine, parseEnvFile, parseProviderShellFile, discoverOllamaModels, discoverPiModels, EXTERNAL_DISCOVERY_TIMEOUT_MS, needsExplicitNode,
   publicCatalog, parseProviderKeyFiles, describeCatalogCredential,
   shellConfiguredCommandArgs,
@@ -763,4 +763,52 @@ test('parseDefinitions: permissionPolicies round-trip; valore non ammesso -> nul
     engines: [{ id: 'c', managed: { client: 'claude', provider: 'native', model: '' } }],
     cells: [{ id: 'D', cwd: '/h', engine: 'c', permissionPolicies: { c: 'yolo' } }],
   }), null);
+});
+
+test('ogni modello Ollama Cloud riceve la sua finestra, anche quando porta un tag', () => {
+  // Un modello si scrive con o senza tag: 'deepseek-v4-flash' e
+  // 'deepseek-v4-flash:0731' sono lo stesso modello. Il lookup diretto sulla
+  // mappa manca la variante non elencata e cade sul fallback generico, che
+  // Codex poi clampa: la cella si ritrova con 180k invece di 1M senza che
+  // nulla lo segnali. Vale per entrambi i versi, perche' nella mappa ci sono
+  // gia' chiavi che il tag ce l'hanno per davvero ('qwen3.5:397b').
+  const home = tmp();
+  try {
+    fakeClient(home, 'codex-vl');
+    fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
+    const catalog = path.join(home, '.codex', 'ollama_cloud_model_catalog.json');
+    fs.writeFileSync(catalog, '{"models":[{"slug":"glm-5.2"}]}\n');
+    const secrets = path.join(home, 'providers.env');
+    fs.writeFileSync(secrets, 'OLLAMA_API_KEY=ollama-secret\n', { mode: 0o600 });
+
+    const contextOf = (model) => {
+      const managed = { client: 'codex-vl', provider: 'ollama-cloud', model };
+      const r = resolveManagedEngine(
+        { id: 'codex-vl.ollama-cloud', label: 'Ollama', managed },
+        { id: 'Dev' },
+        { home, providerSecretsPath: secrets, env: {} },
+      );
+      assert.equal(r.ok, true, `resolve fallito per ${model}`);
+      const arg = r.engine.args.find((a) => String(a).startsWith('model_context_window='));
+      assert.ok(arg, `nessuna finestra dichiarata per ${model}`);
+      return Number(String(arg).split('=')[1]);
+    };
+
+    // Ogni voce della lista dichiarata deve avere la sua finestra esplicita.
+    for (const model of OLLAMA_CLOUD_MODELS) {
+      assert.equal(contextOf(model), OLLAMA_CONTEXT[model], `finestra sbagliata per ${model}`);
+    }
+
+    // La variante con tag e' lo stesso modello e deve avere la stessa finestra.
+    assert.equal(
+      contextOf('deepseek-v4-flash:0731'),
+      OLLAMA_CONTEXT['deepseek-v4-flash'],
+      'una variante con tag non deve cadere sul fallback generico',
+    );
+
+    // Il controllo che tiene onesta la normalizzazione: una chiave il cui tag
+    // fa parte del nome non deve essere troncata.
+    assert.equal(contextOf('qwen3.5:397b'), OLLAMA_CONTEXT['qwen3.5:397b']);
+    assert.equal(contextOf('mistral-large-3:675b'), OLLAMA_CONTEXT['mistral-large-3:675b']);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

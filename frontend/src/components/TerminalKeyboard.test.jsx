@@ -658,6 +658,28 @@ describe('terminal selection survives the trip to the Copy button', () => {
     return ev;
   };
 
+  // La precondizione della protezione dev'essere LEGGIBILE dal DOM, o una prova
+  // nel browser non puo' distinguere «protetta» da «non c'era niente da cui
+  // proteggerla». Trovato provando NC-L con Playwright: il gesto reggeva, ma non
+  // potevo dimostrare che il ramo protettivo si fosse acceso.
+  it('says whether the app owns the mouse, both ways', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    terminalBounds(host, 400, 300);
+    term.emitCsi('h', [1006]);
+    term.modes.mouseTrackingMode = 'any';
+    act(() => term.emitSelection('scelto'));
+    moveOver(host);
+    expect(host.dataset.mouseTracking).toBe('on');
+
+    // Spento il tracking, l'attributo deve dirlo: se restasse 'on' una prova nel
+    // browser leggerebbe una precondizione che non c'e' piu'.
+    term.modes.mouseTrackingMode = 'none';
+    moveOver(host);
+    expect(host.dataset.mouseTracking).toBe('off');
+  });
+
   it('shields the pointer movement while a selection is alive', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');

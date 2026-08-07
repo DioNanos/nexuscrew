@@ -13,6 +13,7 @@ guides. Start with installation, then open only the area you need.
 | [Notifications](NOTIFICATIONS.md) | In-app toasts, Web Push and on-device spoken alerts |
 | [Audio Share and native TTS](AUDIO_SHARE.md) | Node-native TTS, consent, exact targets, groups and MCP commands |
 | [MCP bridge](MCP.md) | Operator tools, client configuration and cell-to-cell delivery |
+| [VL micro-device nodes](VL_MICRO_NODES.md) | Pairing, exact health, bounded management and ACK semantics |
 | [Configuration](CONFIGURATION.md) | Local paths, environment overrides and browser-local settings |
 | [Operations](OPERATIONS.md) | CLI, boot, backups, updates, diagnostics and development |
 | [Security](SECURITY.md) | Network, token, credential, file and federation boundaries |

@@ -92,6 +92,103 @@ describe('CellSwitcher', () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 
+  it('keeps deactivated cells out of active mode even when marked degraded', async () => {
+    writeCellSwitcherSnapshot({
+      sessions: [{ name: 'cloud-Dev', activity: 10, working: true }],
+      cells: [active('Dev', 'cloud-Dev')],
+      nodeGroups: [
+        {
+          route: ['hub'], label: 'Hub', sessions: [],
+          cells: [{ cell: 'Ghost Off', tmuxSession: 'cloud-GhostOff', active: false, tmux: false, degraded: true, engine: 'shell.local' }],
+        },
+      ],
+    });
+    mocks.fleetStatus.mockImplementation(async (_token, route = []) => {
+      if (!route.length) return { available: true, cells: [active('Dev', 'cloud-Dev')] };
+      return {
+        available: true,
+        cells: [{ cell: 'Ghost Off', tmuxSession: 'cloud-GhostOff', active: false, tmux: false, degraded: true, engine: 'shell.local' }],
+      };
+    });
+    mocks.getRouteSessions.mockResolvedValue({ sessions: [] });
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^Dev / });
+    await waitFor(() => expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['hub']));
+    expect(screen.queryByRole('button', { name: /^Ghost Off / })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    expect(screen.getByRole('button', { name: /^Ghost Off / }).getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('renders each distinct local cell exactly once (no client-side doubling)', async () => {
+    const localCells = [
+      active('Dev', 'cloud-Dev'), active('DevAuditor', 'cloud-DevAuditor'),
+      off('Fork', 'cloud-Fork'), off('ForkAuditor', 'cloud-ForkAuditor'),
+      active('Personal', 'cloud-Personal'), active('Research', 'cloud-Research'),
+      off('Trading', 'cloud-Trading'), off('GameDev', 'cloud-GameDev'),
+      off('GameAuditor', 'cloud-GameAuditor'), active('SysAdmin', 'cloud-SysAdmin'),
+      off('DesignCreator', 'cloud-DesignCreator'), off('WarMaster', 'cloud-WarMaster'),
+      active('DevWorker', 'cloud-DevWorker'), active('Shell', 'cloud-Shell'),
+    ];
+    writeCellSwitcherSnapshot({
+      sessions: localCells.filter((c) => c.active).map((c) => ({ name: c.tmuxSession, activity: 1 })),
+      cells: localCells,
+      nodeGroups: [],
+    });
+    mocks.fleetStatus.mockResolvedValue({ available: true, cells: localCells });
+    mocks.apiFetch.mockResolvedValue({
+      json: vi.fn().mockResolvedValue({
+        sessions: localCells.filter((c) => c.active).map((c) => ({ name: c.tmuxSession, activity: 1 })),
+      }),
+    });
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^Dev / });
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    for (const cell of localCells) {
+      expect(screen.getAllByRole('button', { name: new RegExp(`^${cell.cell} `) })).toHaveLength(1);
+    }
+  });
+
+  // Forma REALE misurata il 2026-08-06 su un client federato (Pixel): il nodo
+  // VL vive su VPS3, quindi `vlNodeToPeer` gli assegna la route dell'OWNER —
+  // la stessa route del gruppo Fleet di VPS3. Due gruppi, una sola posizione.
+  // Il test precedente ('no client-side doubling') usa nodeGroups: [] e non
+  // puo' vedere questo caso: il difetto vive esattamente nei gruppi.
+  it('never doubles a fleet position when a VL node shares its route', async () => {
+    const route = ['cloud-example-com'];
+    const vpsCells = [
+      active('Dev', 'cloud-Dev'), active('Personal', 'cloud-Personal'),
+      active('Research', 'cloud-Research'), active('SysAdmin', 'cloud-SysAdmin'),
+    ];
+    const vpsSessions = vpsCells.map((c) => ({ name: c.tmuxSession, activity: 1 }));
+    writeCellSwitcherSnapshot({
+      // Il Pixel non ha celle proprie attive: tutto cio' che si vede arriva
+      // dalla posizione remota.
+      sessions: [],
+      cells: [],
+      nodeGroups: [
+        { route, label: 'VPS_Cloud', sessions: vpsSessions, cells: vpsCells },
+        // Come lo produce vlSidebarGroups: cells vuote, e concatenato DOPO i
+        // gruppi Fleet (useNodes.js) — per questo, a chiave uguale, vince lui.
+        { kind: 'vl', name: 'vl-82dffb30', route, label: 'N900', sessions: [], cells: [] },
+      ],
+    });
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: [] }) });
+    mocks.getRouteSessions.mockResolvedValue({ sessions: vpsSessions });
+    mocks.fleetStatus.mockImplementation(async (_token, r = []) => (r.length
+      ? { available: true, cells: vpsCells }
+      : { available: true, cells: [] }));
+
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^Dev / });
+    for (const cell of vpsCells) {
+      expect(screen.getAllByRole('button', { name: new RegExp(`^${cell.cell} `) })).toHaveLength(1);
+    }
+    // Un nodo VL non e' una posizione Fleet: non deve prestare la sua etichetta
+    // alle celle di VPS3. Se questa riga passa mentre quella sopra fallisce, la
+    // duplicazione e' solo mascherata.
+    expect(screen.queryByText(/N900/)).toBeNull();
+  });
+
   it('closes on Escape without trapping focus', () => {
     const onClose = vi.fn();
     render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} />);

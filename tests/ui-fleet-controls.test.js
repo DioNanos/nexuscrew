@@ -164,21 +164,27 @@ test('standalone hub invitations require one explicit reachable SSH endpoint', (
   const settings = read('SettingsPanel.jsx');
   assert.match(settings, /const name = toSlug\(inviteForm\.name \|\| devName \|\| deviceDefault/);
   assert.match(settings, /validateNodeForm\(\{ name, ssh: inviteForm\.ssh, sshPort: inviteForm\.sshPort \}\)/);
-  assert.match(settings, /disabled=\{readonly \|\| !!busy \|\| \(!inviteHub && !inviteForm\.ssh\.trim\(\)\)\}/);
+  // L'indirizzo e' sempre richiesto: non piu' "solo quando non c'e' un hub".
+  // Che il bottone sia davvero disabilitato lo prova
+  // SettingsPanel.invite.test.jsx; qui resta l'ancora sulla forma.
+  assert.match(settings, /disabled=\{readonly \|\| !!busy \|\| !inviteForm\.ssh\.trim\(\)\}/);
   assert.match(settings, /ssh: checked\.value\.ssh/);
   assert.doesNotMatch(settings, /settings\?\.rendezvous/, 'legacy rendezvous state cannot invent a connection route');
   assert.doesNotMatch(settings, /publishedPort[^\n]*sshPort|sshPort[^\n]*publishedPort/);
 });
 
-test('a connected client delegates new invitations to its outbound hub', () => {
+// NC-N. Questa guardia leggeva il sorgente con una regex e per costruzione non
+// poteva accorgersi che il ramo che fissava era MORTO: la delega federata
+// risponde 404 dal 2026-08-04, quindi su un'installazione accoppiata a un hub
+// il bottone non poteva mai riuscire. Il comportamento e' ora verificato in
+// frontend/src/components/SettingsPanel.invite.test.jsx, che monta il pannello
+// con un peer outbound e guarda COSA VIENE CHIAMATO. Qui resta solo cio' che
+// un test testuale puo' onestamente affermare: che il percorso delegato non
+// esiste piu' nel sorgente.
+test('the invite is never delegated to another hub', () => {
   const settings = read('SettingsPanel.jsx');
-  const api = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'lib', 'api.js'), 'utf8');
-  assert.match(settings, /direction === 'outbound'/);
-  assert.match(settings, /createPeerInvite\(token,[\s\S]*?\[inviteHub\.name\]\)/);
-  assert.match(settings, /invite-network-route/);
-  assert.match(api, /routeBase\(route\).*settings\/peering\/invite/s);
-  assert.doesNotMatch(settings, /createPeerInvite\(token,[\s\S]{0,260}label:[\s\S]{0,260}\[inviteHub\.name\]/,
-    'delegated invite must identify the hub, never the current client');
+  assert.doesNotMatch(settings, /createPeerInvite\([^)]*\[[^\]]*\.name\]/,
+    'coniare un invito non attraversa la federazione: nessuna route va passata a createPeerInvite');
 });
 
 test('Share publishes the local device through the selected hub, not the remote target card', () => {

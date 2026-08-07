@@ -4,6 +4,346 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.53 — 2026-08-07 — "Coming Back Up, and Saying So"
+
+Automatic updates are on by default and check every six hours, so a node
+installs a new release and restarts itself without anyone watching. That makes
+the restart path the most consequential code in the product, and this release
+is about what happens when it doesn't work: today a node was measured staying
+down for over twenty minutes after a restart, with its tunnel still up, while
+nothing anywhere said so.
+
+- **A restart now confirms the service came back.** `nexuscrew restart` used to
+  report success as soon as the restart *command* returned — which says the
+  command ran, not that anything is answering. The two look identical to whoever
+  reads the exit code. The check already existed and was already used by two
+  other paths: the auto-updater waits for health and fails if it doesn't come,
+  and the Fleet bootstrap does the same, with a comment that literally says "a
+  verified restart is needed". It was missing precisely on the command a person
+  types by hand — the one where no other code is checking on your behalf.
+
+- **A service that exited after a restart is brought back, once.** On a phone
+  there is no service manager to raise the process again: if it goes, it stays
+  gone. That was measured — a node stayed down for over twenty minutes after a
+  restart, with its reverse tunnel still up, and nothing brought it back. Now,
+  when the service does not answer, the port decides what happens: free means
+  the process is gone and it is started again *once*; still busy means something
+  is holding it without serving, and retrying would only hide that. Once and no
+  more — repeating turns a fault into a loop. On a machine where a service
+  manager owns the runtime nothing is started alongside it: that is the
+  manager's job, and a process it does not know about would race its own unit
+  for the port and outlive a stop.
+
+  **Why the process exited is not established.** A plausible story — that the
+  restart did not wait for the old process before starting the new one — turned
+  out to be wrong on inspection: it does wait, and has since 0.8.17. So this is
+  a recovery for a failure whose cause is still open, not a fix for a known one,
+  and it is worth knowing which of the two you are relying on.
+
+- **"Peer unreachable" no longer covers two different failures.** With a reverse
+  SSH channel, a device that is not connected leaves no listener and the
+  connection is *refused*; a device that is connected but whose NexusCrew has
+  died accepts the connection and then *resets* it. Those need opposite
+  remedies — one is fixed on the network, the other by going to the device —
+  and one message sent the investigation to the wrong place half the time. It
+  did: four hours were spent in federation and pairing while the defect was a
+  service that had not come back on a phone. The two are now named, with the
+  port, and an error nobody recognises is still reported as before rather than
+  guessed into a layer.
+
+- **The interface reloads itself after the node updates.** With automatic
+  updates on, a node updates and restarts while an open app keeps running the
+  old bundle. The only way out was closing and reopening it — the banner had to
+  be tapped, and because of a service-worker defect fixed in 0.8.52, tapping it
+  did not work either. The app now applies the new bundle by itself. Only for
+  the case a reload can fix: when the package on the server is newer than the
+  interface it serves, no amount of reloading changes that, and it is left
+  alone. If the mismatch survives the reload it is not retried — a reload loop
+  makes the app unusable, which is far worse than a banner, so the banner
+  remains as the fallback. What you were typing is not lost: the composer draft
+  was already kept across reloads, which is what made this acceptable. The
+  version check now also repeats about once a minute rather than running only
+  when the app starts — an app left open in front of someone is precisely the
+  case this exists for, and checking only at startup would have made it work
+  solely for people who had already closed and reopened it.
+
+- **`nexuscrew autoupdate on|off|status`.** The switch already existed — a
+  persisted setting, on by default, with a checkbox in Settings. It was missing
+  from the command line, which is where you need it: when a node has updated
+  itself and the service did not come back, the interface is the thing you
+  cannot open. With the service running the command goes through the API rather
+  than writing the file, because writing the file would leave the running
+  process with the old value — the setting would read "off" while updates kept
+  happening on schedule, and a switch that reads off without switching anything
+  off is worse than no switch. If the service is up but not answering, nothing
+  is written at all.
+
+- **An error now says when the tool bridge is older than the hub.** Updating
+  NexusCrew does not update the MCP bridge of an already running session: that
+  process started with the previous code and keeps it until the session is
+  restarted. The symptom is cruel — you install a fix, try again, and get the
+  *old* error, so you conclude the fix does not work and go looking where the
+  defect is not. The check runs only on the error path, which costs nothing in
+  normal use and is the only moment it helps; it cannot be cached at startup
+  either, since the version that changes is the hub's, and it changes while the
+  bridge is running.
+
+- **A long message sent to a cell is no longer pasted and left unsent.** The
+  wait between the bracketed paste and the Enter was a constant, while the time
+  a terminal interface needs to swallow a paste grows with its size — above a
+  certain length the client collapses it, the Enter lands while it is still
+  being processed, and it is swallowed. The message then sat in the composer
+  while the sender got a delivery receipt. Measured on the same target eleven
+  minutes apart: 2900 characters were never processed for nine hours, sixty
+  characters were being worked on in twelve seconds. The wait now grows with the
+  text, and below 500 characters nothing changes — those were already reliable,
+  and slowing them would be a cost paid by everyone for a defect that is not
+  theirs. This narrows the window rather than closing it: a receipt still means
+  paste and Enter, not acceptance.
+
+## 0.8.52 — 2026-08-07 — "What a Peer May See, and What a Cell May Reach"
+
+- **Each node now has a cryptographic identity, and it changes nothing yet.**
+  Every installation generates an Ed25519 key pair; the private half stays in
+  its own file, readable only by its owner, and never leaves the device. Public
+  halves are exchanged during pairing — inside the act that consumes the
+  one-time invite, which is the only moment at which the operator has decided,
+  *on both machines*, that these two nodes know each other. Binding a key
+  anywhere else would bind it to a channel the peer controls alone.
+
+  Nothing is gated on it. A node running an older version sends no key and
+  pairs exactly as before; a malformed key is ignored rather than refused,
+  because a fault here must never be able to stop you from pairing a device.
+  This is the first step of a per-node authority model, and it is deliberately
+  the step with no effect: what it buys is *time*. A key bound today has a
+  history in six months; one bound when permissions start depending on it has
+  none.
+
+  Pairing is the only thing that writes a key: no other path sets one, so no
+  key can be replaced by anything a peer merely asserts. That is the property
+  worth having, and it is currently guaranteed by there being no second writer
+  rather than by a check — the check belongs with the first path that learns a
+  key outside pairing, and arrives with it.
+
+  **What this does not do yet**: peers paired before this version have no key
+  and will not have one until they are paired again, so on an existing
+  installation the directory starts out empty. Keys are learned only during
+  pairing, and replacing one on a peer that already has it means removing that
+  peer and pairing it again.
+
+- **A paired node can now be restricted to a subset of your cells.** Pairing
+  was all or nothing: a peer saw every cell on the hub and could act on all of
+  them. The permission lives in the node store of the hub that owns the cells,
+  never in the body of a request, and it is keyed on the cell id — which is
+  unique and immutable — rather than the tmux session, which is derived and
+  accepts non-canonical overrides. A missing field means `all`: a fail-closed
+  default would have silenced an entire fleet on the first upgrade without
+  anyone deciding anything, so narrowing stays an explicit act. `selected` with
+  an empty list means *no cells*, and it is a different thing from an absent
+  field — which is exactly why the mode is its own field instead of being
+  inferred from the array.
+
+  The guard sits at the head of the `/api` router rather than on each route,
+  because the channels a cell name leaks through are many and growing: reads
+  (`/cells`, `/fleet/status` — the list the remote PWA actually uses,
+  `/fleet/definitions`, `/sessions` including the terminal `preview`, `/decks`,
+  and the `records` of `/diagnostics/logs`) and actions (fleet up, down,
+  restart, engine, boot; `cells/send`; creating and deleting sessions; files)
+  pass through the same predicate. Every route declares its target in a table
+  instead of having one guessed, and an undeclared route that names a cell is
+  refused — a 403 on something legitimate is noticed and fixed, a channel
+  nobody sees is not. Defining cells is denied to a restricted peer, or it
+  would create the cell it is missing and act on that.
+
+  The WebSocket attach honours it too, and without that the rest would be
+  decoration: `/ws` attaches a PTY *by session name*, so a peer whose cell we
+  had hidden from every list could still attach by guessing `cloud-Dev`. An
+  out-of-scope session is treated as nonexistent — the same code as one that
+  really is not there, because answering "it exists but you may not" reveals
+  precisely what the scope hides. The scope is set from the node's sheet in the
+  interface and with `nexuscrew nodes cells <node> all|none|Cell1,Cell2`.
+
+  **This is not the admin/user class.** Within what it can see, a node in scope
+  is still trusted as its owner. Scope answers *which cells*, not *what
+  authority* — the second is a layer that does not exist yet.
+
+- **A peer that is not yours does not inherit a restriction of yours.** Two
+  peers of the same hub, which do not know each other, stopped seeing each
+  other's cells. On the node that answers, the chain is [A, B, C]: the delivering
+  peer B is in its store, the origin A is not — and has no reason to be, since a
+  transitive peer arrives through a hub that was authorized to route it.
+  Treating the unknown as `none` looked like prudence and was a door shut in the
+  face of legitimate traffic. The delivering peer's restriction still applies in
+  full, and an origin that *is* in the store still carries its own across
+  multiple hops; an unknown *deliverer* stays fail-closed, because that one
+  spoke to us and authenticated.
+
+- **VL micro-devices are nodes inside NexusCrew.** A bounded bridge carries a
+  micro-device's cells to the hub: the node appears in the Settings list and in
+  the sidebar, its session is readable in full width, and its commands come from
+  the capabilities the device declares rather than from a hardcoded list. The
+  hub accepts the `prompt` verb with the same 4 KiB ceiling as the device — two
+  different numbers would mean handing the node commands it will refuse while
+  returning a `submitted` that reads as "it left". Nodes are aggregated across
+  *all* authorized owners, not just the local one: an owner that does not answer
+  shows as unavailable instead of silently reading as "no nodes", every node is
+  tagged with the owner it came from, and a command is routed to the node's
+  actual owner rather than quietly to the local endpoint.
+
+  What does **not** cross the boundary: the arguments and results of tools.
+  They are at once the largest and the most dangerous — files, command output,
+  possible secrets — and they do not leave even truncated. On the hub the events
+  stay in memory and nothing more, one ring per node, lost on restart: the
+  durable copy is the journal on the device, and persisting here would extend
+  in time a visibility that today is only live. A gap is always reported with
+  its count, because a silent absence reads as "nothing happened".
+
+- **Models can be declared in the configuration, without waiting for a
+  release.** The model catalogue lived in the package, so a provider publishing
+  a new id made it unusable until the next version — four managed profiles have
+  `strictModels`, and there an out-of-catalogue id is not a warning, it is a
+  cell that does not start. `fleet.json` now accepts `models` alongside
+  `engines`, persisted with them: id, the managed profile it applies to, and the
+  fields the client expects. The built-in catalogue remains the list of *known*
+  models and becomes a default rather than a wall.
+
+  Before declaring one you can ask whether it works, from the models window:
+  the check queries the provider's model list — which costs no tokens and
+  answers exactly the question asked — and replies with a closed set of
+  outcomes. A provider that does not expose the list gives `unverified`, never
+  `unknown-model`: "I don't know" must not read as "it does not exist", or the
+  right model would be declared nonexistent. And `unverified` is not `ok`: a
+  proof that was not obtained does not authorize saying it works.
+
+  Declared models travel with the backup — a round trip used to lose them, and
+  the engine that used them was then refused on restore — and they are written
+  *before* the engines, in the same mutation, because that order is what makes
+  the restore succeed. They also follow the engines across the federation:
+  `define-engine` was federated and `define-model` was not, so administering a
+  paired node stopped halfway, and the models window now acts on the node you
+  are *looking at* — testing a remote node's model against your own fleet
+  answers a different question than the one asked.
+
+- **`qwen3.8-max-preview` became `qwen3.8-max` without stopping the cells that
+  used the old name.** The preview was promoted and the id changed; with
+  `strictModels` that is not a warning but a cell that will not start, and two
+  cells in the live configuration used the old name. The rename goes through an
+  alias declared in one place and applied *before* the gate, so the old name
+  resolves — and resolves to the new one, which means the configuration
+  converges by itself at the first rewrite instead of lagging behind a silent
+  compatibility. The alias covers declared renames, not arbitrary ids.
+
+- **The same model with and without a tag now gets the same context window.**
+  `deepseek-v4-flash:0731` found itself with 180k instead of 1M after upgrading
+  to 0.8.51: the context map is keyed without the tag, the direct lookup missed
+  it, and the generic 200000 fallback took over — the cell started, worked, and
+  had a fifth of the context it should have. The fix is not to truncate at the
+  first colon, because some keys have a tag that is part of the model's identity
+  (`qwen3.5:397b`, `mistral-large-3:675b`) and a blind normalization would break
+  those two to fix this one. The exact key is tried first, the base name only
+  after.
+
+- **A cell can be given a named subset of MCP servers.** Cells share one
+  configuration, so every cell reached every tool the operator had installed,
+  and there was no way to say otherwise. A cell may now declare
+  `mcp` with the names it is allowed, and an absent field is not an empty one —
+  without it nothing changes, which is what every existing cell gets. Only
+  *names* travel, in the process arguments:
+  the obvious design would generate one file per cell containing the server
+  *definitions*, and on a real installation some of those carry credentials in
+  their environment, so the secrets would have been duplicated once per cell.
+  Granting is done by denying the complement, because a broader deny beats a
+  narrower allow in the client; `mcp: []` uses the wildcard and is therefore the
+  exact case. The complement is enumerated from the three sources a session
+  really loads — the user configuration, the local scope of the cell's working
+  directory, and a project `.mcp.json` — and the window says so, since a server
+  from a source nobody enumerates would pass while the operator believed it
+  excluded.
+
+- **A cell isolated by credential no longer loses its tools.** NexusCrew gives
+  the Claude client a private configuration directory on certain credential
+  profiles, which is right — it separates the keys. But the client keeps the MCP
+  list in that same file, and in a private profile that list is empty: measured,
+  0 servers against the 8 of the main configuration. A cell there ran with no
+  memory, no notifications and no web access, and from outside it just looked
+  like a cell that does not use its tools. The private profile now points at the
+  main configuration for the server list, so the isolation stays on the keys
+  where it belongs.
+
+- **A failed cell lookup now says which of the three things went wrong.** One
+  message covered every failure — cell absent, node unreachable, id unknown to
+  this hub — and it named the cell, so a mistyped node id was read as a missing
+  cell and the investigation went where the defect was not. The three cases are
+  now distinguished, and the third suggests copying the id from the directory
+  rather than retyping it. The same diagnosis was applied to the VL tools.
+
+- **An alert to the operator now crosses the federation.** The notification
+  channel was born as cell → operator *on the same host*, with three local
+  anchors: the bridge speaks only to loopback, the event hub is a set in that
+  process's memory, and the push keys are files of that installation. Anyone
+  working from another node received nothing, while the reply reported success
+  because those counters count *attempts*, not deliveries. A notification now
+  accepts an exact target instance; with a remote one the request travels the
+  existing federated route and the node that owns the screen delivers with its
+  own subscriptions and its own keys — so a real web push, with the app closed.
+
+- **A refusal the hub writes down nowhere does not exist.** A node could not
+  enable Share and the hub refused it thirty times, leaving no trace: the error
+  lived only in the toast on the device, which is the one place the hub's
+  administrator cannot look. The cause — a reverse-port grant that named another
+  peer's port — surfaced only by reading sshd's log as root. The hub now records
+  what it refused and why, with the port it attempted, because "channel not
+  ready" does not say where to look. The record lives in the diagnostic buffer
+  in memory, so it is readable while the service runs and is lost on restart —
+  which is enough for the case it was written for, a refusal repeating now, and
+  is not a durable audit trail. Related: `nodes test` with no argument now
+  tests every direct peer in parallel and ends with the line that existed
+  nowhere — which nodes report themselves as shared while their reverse channel
+  does not answer.
+
+- **Minting a pairing invite works again on a paired installation.** After
+  0.8.51 moved minting to the local installation, the button could not succeed
+  on a hub-paired node: the interface still implicitly picked the first outbound
+  peer and delegated the minting to it — a path that now answers 404 — and the
+  local form disappeared entirely whenever a hub existed, so no route was left.
+  An invite is now always minted for the installation that issues it, and the
+  panel says which one, which was half the reason the previous behaviour went
+  unnoticed.
+
+- **The "new version" banner can be dismissed.** The update button messaged a
+  waiting service worker and waited for it to take over, but the worker
+  registered no message listener: the message fell into nothing, the fallback
+  reload fired, the worker stayed waiting, and on reload the banner came back.
+  Permanent by construction, with a button that could not turn it off. Anyone
+  with a stuck worker needs to do nothing — the new one activates itself.
+
+- **Mobile fixes.** The keyboard closed on every letter typed into a node's
+  prompt field: the sheet's focus effect was armed on a callback the parents
+  recreate on each poll, so every polling round stole the focus back from under
+  your thumb. `prompt` is now a field rather than a trigger — the interface
+  built its buttons from the declared capabilities and sent every verb with no
+  arguments, which the device correctly refused. The models window can be left
+  without saving: it had only a save button, and while it also closes with
+  Escape or a click outside, a phone has no Escape and the backdrop may be out
+  of reach. VL cells no longer appear twice in the switcher, and the VL event
+  list is idempotent by sequence number — on a slow link the poll period expired
+  before the answer, the next tick started from the old cursor, and identical
+  rows piled up.
+
+- **Interface language.** Three labels stayed in English whatever the language;
+  the cell prompt now explains what it does outside Italian too; two help texts
+  promised things about credentials that had stopped being true, and one
+  described a backup content that had changed. The end-of-turn label said
+  "session ended" on every reply — host, node, cell and pump were all measurably
+  alive.
+
+- **The governance surface is pinned by name.** The routes that change who may
+  do what on a node are unreachable from the federation for an implicit reason:
+  they are not in the allowlist. That holds until someone adds a line, and on
+  2026-08-04 the opposite had happened. A test now enumerates them and fixes
+  them — and declares what it does *not* cover: `/vl-nodes/invite` is federated
+  by design, and if that ever changes it should change with someone noticing.
+
 ## 0.8.51 — 2026-08-04 — "Who May Let Someone In"
 
 - **Minting a pairing invite no longer crosses the federation.** An invite is

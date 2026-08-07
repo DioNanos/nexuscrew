@@ -254,3 +254,16 @@
 .nc-set-panel .nc-empty { opacity: .5; font-size: 12px; }
 .nc-set-panel .nc-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; display: inline-block; flex: 0 0 8px; }
 .nc-set-panel .nc-dot.on { background: #2e7d32; }
+
+/* Esito della prova di un modello. I colori NON sono decorazione: `unverified`
+   deve leggersi come diverso da `ok` a colpo d'occhio, altrimenti «non lo so»
+   e «funziona» si confondono in una lista di righe uguali. Chi non distingue i
+   colori ha comunque l'etichetta testuale, che resta la fonte primaria. */
+.nc-model-test { font-weight: 600; }
+.nc-model-test.ok { color: var(--success); }
+.nc-model-test.unknown-model { color: var(--error); }
+.nc-model-test.auth { color: var(--warning); }
+.nc-model-test.unreachable { color: var(--warning); }
+/* Volutamente neutro: un esito non ottenuto non deve somigliare ne' a un
+   successo ne' a un fallimento. */
+.nc-model-test.unverified { color: var(--text-secondary); font-style: italic; }

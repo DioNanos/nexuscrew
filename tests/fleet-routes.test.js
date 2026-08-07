@@ -131,6 +131,13 @@ test('builtin: /definitions espone campi editabili ma non env values', async (t)
 });
 
 test('builtin: credential API is write-only, local to the selected node and reports affected cells', async (t) => {
+  // La chiave del provider va tolta dall'ambiente: il test verifica lo STATO
+  // della credenziale, e una chiave esportata nella shell di chi esegue lo
+  // cambia. Passava qui e falliva nella shell dell'auditor — un test che
+  // dipende dall'ambiente prova l'ambiente, non il codice.
+  const salvata = process.env.OLLAMA_API_KEY;
+  delete process.env.OLLAMA_API_KEY;
+  t.after(() => { if (salvata !== undefined) process.env.OLLAMA_API_KEY = salvata; });
   const { base, token, dir } = await bootBuiltin(t);
   const binDir = path.join(dir, '.local', 'bin'); fs.mkdirSync(binDir, { recursive: true });
   const binary = path.join(binDir, 'codex-vl'); fs.writeFileSync(binary, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); fs.chmodSync(binary, 0o755);

@@ -93,7 +93,7 @@ test('classifier: stati bounded e copertura dei pattern live-verificati', () => 
   assert.equal(classifyPane(`${CLAUDE_READY}\n${CLAUDE_CONSENT}`, 'claude'), 'not-ready-consent');
   // kimi: input box da sola non basta (presente anche logged-out)
   assert.equal(classifyPane(' ╭───╮\n │ > │\n ╰───╯\n /tmp/x /goal for multi-step work\n', 'kimi'), 'unknown');
-  // kimi: modello configurato senza box input non basta
+  // kimi: modello configurato senza box input non basta (G2)
   assert.equal(classifyPane('Model:     K3\ncontext: 0% (0/1M)\n', 'kimi'), 'unknown');
   // vuoto / client ignoto / busy
   assert.equal(classifyPane('', 'claude'), 'unknown');
@@ -143,7 +143,7 @@ test('delivery: ready -> submitted con UN paste e UN Enter; tmp 0600 wx', async 
   });
   assert.equal(r.delivered, true);
   assert.equal(r.state, 'submitted');
-  assert.equal(r.reason, 'submitted', 'reason = state (closed enum)');
+  assert.equal(r.reason, 'submitted', 'reason = state (closed enum, G5)');
   assert.equal(r.attempts, 1);
   assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 1, 'un solo paste');
   assert.equal(calls.filter((c) => c.startsWith('send-keys -t %42 Enter')).length, 1, 'un solo Enter sul %N');
@@ -208,7 +208,7 @@ test('delivery: fallimento certo PRE-paste (load) -> UN retry, poi submitted', a
   assert.equal(r.state, 'submitted');
   assert.equal(r.attempts, 2);
   assert.equal(calls.filter((c) => c.startsWith('load-buffer')).length, 2);
-  assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 1, 'un solo paste');
+  assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 1, 'un solo paste (G1)');
   assert.equal(calls.filter((c) => c.startsWith('send-keys')).length, 1, 'un solo Enter');
 });
 
@@ -223,7 +223,7 @@ test('delivery: load sempre fallito -> failed-pre-paste dopo 1 retry, zero paste
   assert.equal(calls.filter((c) => c.startsWith('send-keys')).length, 0);
 });
 
-test('delivery: paste-buffer fallito -> delivery-unknown, MAI retry post-paste', async () => {
+test('delivery: paste-buffer fallito -> delivery-unknown, MAI retry post-paste (G1)', async () => {
   const { calls, exec } = fakeTmux({ pasteFails: true });
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
@@ -262,7 +262,7 @@ test('delivery: pane cambiato dopo il paste -> delivery-unknown prima di Enter',
   assert.equal(calls.filter((c) => c.startsWith('send-keys')).length + 1, 1, 'mai Enter su pane diverso');
 });
 
-test('delivery binding: resolveSessionPane rifiuta sessione diversa o output malformato', async () => {
+test('delivery R5: resolveSessionPane rifiuta sessione diversa o output malformato', async () => {
   const { resolveSessionPane } = require('../lib/fleet/launch.js');
   const mk = (stdout, err = null) => async () => ({ err, stdout, stderr: '', code: err ? 1 : 0 });
   // sessione diversa: mai paste
@@ -279,7 +279,7 @@ test('delivery binding: resolveSessionPane rifiuta sessione diversa o output mal
   assert.equal(await resolveSessionPane('tmux', 'cloud-T', { exec: mk('cloud-T\t0\t%42\n') }), '%42');
 });
 
-test('delivery throw: throw durante paste-buffer -> delivery-unknown, MAI retry (un solo paste)', async () => {
+test('delivery R4: throw durante paste-buffer -> delivery-unknown, MAI retry (un solo paste)', async () => {
   const calls = [];
   const exec = async (bin, args) => {
     calls.push(args.join(' '));
@@ -296,7 +296,7 @@ test('delivery throw: throw durante paste-buffer -> delivery-unknown, MAI retry 
   assert.equal(calls.filter((c) => c.startsWith('send-keys')).length, 0);
 });
 
-test('delivery cancel: cancel durante il polling -> cancelled, zero paste/Enter', async () => {
+test('delivery R3: cancel durante il polling -> cancelled, zero paste/Enter', async () => {
   let cancelled = false;
   const { calls, exec } = fakeTmux();
   const r = await deliverBootstrapPrompt({
@@ -311,7 +311,7 @@ test('delivery cancel: cancel durante il polling -> cancelled, zero paste/Enter'
   assert.equal(calls.filter((c) => c.startsWith('send-keys')).length, 0);
 });
 
-test('delivery cancel: cancel dopo il paste -> delivery-unknown, MAI Enter, MAI secondo paste', async () => {
+test('delivery R3: cancel dopo il paste -> delivery-unknown, MAI Enter, MAI secondo paste', async () => {
   let cancelled = false;
   const calls = [];
   const exec = async (bin, args) => {
@@ -328,7 +328,7 @@ test('delivery cancel: cancel dopo il paste -> delivery-unknown, MAI Enter, MAI 
   assert.equal(calls.filter((c) => c.startsWith('send-keys')).length, 0, 'mai Enter dopo cancel');
 });
 
-test('classifier anchor: "Not logged in" nel corpo conversazione NON classifica auth', () => {
+test('classifier R7: "Not logged in" nel corpo conversazione NON classifica auth', () => {
   const conversation = [
     'user: come mai vedo Not logged in nel log?',
     'assistant: il token nella status bar indica...',
@@ -354,10 +354,10 @@ test('delivery: prompt con byte di controllo -> prompt-rejected, zero I/O', asyn
 // ===========================================================================
 // 3. actionRequired: bounded, recovery da catalogo, MAI /login per kimi-code
 // ===========================================================================
-test('actionRequired: mapping bounded consent/auth per kimi-code e kimi.native (solo code+slug bounded)', () => {
+test('actionRequired: mapping bounded consent/auth per kimi-code e kimi.native (R10: solo code+slug)', () => {
   for (const c of ACTION_CODES) assert.match(c, /^[A-Z][A-Z0-9_]*$/);
   const consent = actionRequiredFor('claude', 'kimi-code', { delivered: false, state: 'skipped-not-ready', notReady: 'not-ready-consent' });
-  assert.deepEqual(Object.keys(consent).sort(), ['code', 'recovery'], 'API bounded, nessun testo server');
+  assert.deepEqual(Object.keys(consent).sort(), ['code', 'recovery'], 'R10: API bounded, nessun testo server');
   assert.equal(consent.code, 'KIMI_AUTH_ACTION_REQUIRED');
   assert.equal(consent.recovery, 'kimi-code-consent-yes');
   assert.equal(consent.recoveryText, undefined);
@@ -385,7 +385,7 @@ test('actionRequired: mapping bounded consent/auth per kimi-code e kimi.native (
 
 // ===========================================================================
 // 4. Integrazione runtime up(): managed kimi.native + claude.kimi-code
-//    (il runtime NON paste-a mai — legge solo @nc_delivery dal supervisore)
+//    (R2: il runtime NON paste-a mai — legge solo @nc_delivery dal supervisore)
 // ===========================================================================
 function writeFakeTmux(dir, cfg) {
   const p = path.join(dir, 'fake-tmux.cjs');
@@ -502,7 +502,7 @@ test('up kimi.native report logged-out: NOT_READY bounded, sessione VIVA, recove
     assert.equal(res.actionRequired.recovery, 'kimi-cli-login');
     const lines = w.log();
     assert.equal(lines.filter((l) => l.startsWith('paste-buffer')).length, 0);
-    assert.equal(lines.filter((l) => l.startsWith('kill-session')).length, 0, 'sessione mai uccisa');
+    assert.equal(lines.filter((l) => l.startsWith('kill-session')).length, 0, 'sessione mai uccisa (G3)');
     const body = JSON.stringify(res);
     assert.ok(!body.includes('bootstrap segreto'), 'nessun prompt nella risposta');
   } finally { w.cleanup(); }
@@ -520,7 +520,7 @@ test('up claude.kimi-code report consenso pendente: recovery consenso (mai /logi
     assert.equal(res.prompt.state, 'skipped-not-ready');
     assert.equal(res.actionRequired.code, 'KIMI_AUTH_ACTION_REQUIRED');
     assert.equal(res.actionRequired.recovery, 'kimi-code-consent-yes');
-    assert.deepEqual(Object.keys(res.actionRequired).sort(), ['code', 'recovery'], 'solo slug bounded in API');
+    assert.deepEqual(Object.keys(res.actionRequired).sort(), ['code', 'recovery'], 'R10: solo slug bounded in API');
     const lines = w.log();
     assert.equal(lines.filter((l) => l.startsWith('paste-buffer')).length, 0);
     assert.equal(lines.filter((l) => l.startsWith('kill-session')).length, 0);
@@ -537,7 +537,7 @@ test('up claude.kimi-code report Not logged in: recovery /config; env child name
     assert.equal(res.prompt.state, 'skipped-not-ready');
     assert.equal(res.actionRequired.code, 'KIMI_AUTH_ACTION_REQUIRED');
     assert.equal(res.actionRequired.recovery, 'kimi-code-config-custom-api-key');
-    assert.deepEqual(Object.keys(res.actionRequired).sort(), ['code', 'recovery'], 'solo slug bounded in API');
+    assert.deepEqual(Object.keys(res.actionRequired).sort(), ['code', 'recovery'], 'R10: solo slug bounded in API');
     const t = w.ticket();
     // Asse D names-only: i NOMI env del child sono l'allowlist minimal +
     // il set del provider kimi-code; la chiave serve al child Claude (auth),
@@ -586,7 +586,7 @@ test('waitDeliveryReport: valore non bounded -> null; parse state:notReady', asy
 });
 
 // ===========================================================================
-// 5. Restart supervisionato (cross-generation/cancel): cell-exec = UNICO owner per i kimi
+// 5. Restart supervisionato (R2/R3): cell-exec = UNICO owner per i kimi
 //    (gen0 compresa), cancel+settled prima dello spawn successivo, marker
 //    @nc_delivery; legacy per custom invariato; failure injection non uccide
 //    il keepalive
@@ -628,13 +628,13 @@ test('cell-exec kimi: delivery owner per OGNI generazione + marker @nc_delivery 
   assert.equal(launches, 2);
   assert.equal(deliveries.length, 2, 'gen0 E gen1: una delivery per generazione, owner unico');
   assert.equal(deliveries[0].client, 'kimi');
-  assert.equal(typeof deliveries[0].isCancelled, 'function', 'isCancelled passato');
+  assert.equal(typeof deliveries[0].isCancelled, 'function', 'isCancelled passato (R3)');
   assert.equal(deliveries[0].session, 'cloud-T');
   const setMarks = marks.filter((m) => m.startsWith('set-option -p') && m.includes('@nc_delivery submitted'));
   assert.equal(setMarks.length, 2, 'esito bounded marcato per generazione');
 });
 
-test('cell-exec cross-generation: gen0 exit durante attesa -> delivery gen0 CANCELLATA, gen1 esattamente una', async () => {
+test('cell-exec R2: gen0 exit durante attesa -> delivery gen0 CANCELLATA, gen1 esattamente una', async () => {
   const deliveries = []; const marks = [];
   const proc = new EventEmitter();
   let cancelObserved = 0;
@@ -687,14 +687,14 @@ test('cell-exec cross-generation: gen0 exit durante attesa -> delivery gen0 CANC
   assert.equal(code, 0, 'stop pulito via SIGTERM');
   assert.equal(generation, 1, 'due generazioni');
   assert.equal(deliveries.length, 2, 'una delivery avviata per generazione');
-  assert.equal(cancelObserved, 1, 'delivery gen0 cancellata durante il polling');
+  assert.equal(cancelObserved, 1, 'delivery gen0 cancellata durante il polling (R3)');
   const submittedMarks = marks.filter((m) => m.includes('@nc_delivery submitted'));
   assert.equal(submittedMarks.length, 1, 'gen1: esattamente un esito submitted');
   assert.equal(marks.filter((m) => m.includes('@nc_delivery cancelled')).length, 0,
     'la generazione cancellata non marca mai il pane');
 });
 
-test('delivery cancel: cancel dopo Enter in volo -> delivery-unknown, mai submitted', async () => {
+test('delivery R3: cancel dopo Enter in volo -> delivery-unknown (R9), mai submitted', async () => {
   let cancelled = false;
   const calls = [];
   const exec = async (bin, args) => {
@@ -711,13 +711,13 @@ test('delivery cancel: cancel dopo Enter in volo -> delivery-unknown, mai submit
   assert.equal(calls.filter((c) => c.startsWith('send-keys')).length, 1);
 });
 
-test('cell-exec cancel-before-timer: cancel PRIMA dello scatto del timer -> settled risolve subito, mai hang', async () => {
+test('cell-exec R8/R11: cancel PRIMA dello scatto del timer -> settled risolve subito, mai hang', async () => {
   const ctl = startGenerationPrompt(
     { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 60000, client: 'kimi', readyWaitMs: 1000 },
     0, { exited: false },
     { deliverBootstrapPrompt: async () => { throw new Error('non deve partire'); }, tmuxExec: async () => ({ err: null, stdout: '', stderr: '', code: 0 }) },
   );
-  ctl.cancel();   // timer ancora pendente: DEVE risolvere settled
+  ctl.cancel();   // timer ancora pendente: DEVE risolvere settled (R8)
   const winner = await Promise.race([
     ctl.settled.then((v) => ({ kind: 'settled', value: v })),
     new Promise((r) => setTimeout(() => r({ kind: 'timeout' }), 200)),
@@ -726,7 +726,7 @@ test('cell-exec cancel-before-timer: cancel PRIMA dello scatto del timer -> sett
   assert.equal(winner.value, null, 'nessun paste tentato: esito pulito');
 });
 
-test('cell-exec early-exit: child early-exit prima di readyMs -> main termina, nessun hang, nessuna delivery', async () => {
+test('cell-exec R8: child early-exit prima di readyMs -> main termina, nessun hang, nessuna delivery', async () => {
   let launches = 0; let deliverCalls = 0;
   const proc = new EventEmitter();
   const payload = {
@@ -757,13 +757,13 @@ test('cell-exec early-exit: child early-exit prima di readyMs -> main termina, n
     }),
     new Promise((r) => setTimeout(() => r('HANG'), 3000)),
   ]);
-  assert.notEqual(code, 'HANG', 'main non resta appeso');
+  assert.notEqual(code, 'HANG', 'main non resta appeso (R8)');
   assert.equal(code, 1, 'gen0 early-exit -> errore bounded');
   assert.equal(launches, 1);
   assert.equal(deliverCalls, 0, 'timer mai scattato: nessuna delivery');
 });
 
-test('cell-exec uncertain-stop: exit durante paste (delivery-unknown) -> STOP bounded, nessuna gen1, un solo paste', async () => {
+test('cell-exec R9: exit durante paste (delivery-unknown) -> STOP bounded, nessuna gen1, un solo paste', async () => {
   let launches = 0; const errs = [];
   const proc = new EventEmitter();
   const payload = {
@@ -798,11 +798,11 @@ test('cell-exec uncertain-stop: exit durante paste (delivery-unknown) -> STOP bo
     writeError: (m) => { errs.push(m); },
   });
   assert.equal(code, 1, 'supervisor fermo con errore bounded');
-  assert.equal(launches, 1, 'NESSUN auto-restart dopo post-paste incerto');
+  assert.equal(launches, 1, 'NESSUN auto-restart dopo post-paste incerto (R9)');
   assert.ok(errs.some((m) => /uncertain prompt delivery/.test(m)), 'messaggio bounded operatore');
 });
 
-test('cell-exec uncertain-stop: exit durante Enter (staged-not-submitted) -> STOP bounded, nessuna gen1', async () => {  let launches = 0; const errs = [];
+test('cell-exec R9: exit durante Enter (staged-not-submitted) -> STOP bounded, nessuna gen1', async () => {  let launches = 0; const errs = [];
   const proc = new EventEmitter();
   const payload = {
     command: '/bin/fake', args: [], env: {},
@@ -840,7 +840,7 @@ test('cell-exec uncertain-stop: exit durante Enter (staged-not-submitted) -> STO
   assert.ok(errs.some((m) => /uncertain prompt delivery/.test(m)));
 });
 
-test('cell-exec pre-exit-uncertain: esito incerto chiuso PRIMA dell\'exit -> stop al primo exit, mai dimenticato (entrambi gli stati)', async () => {
+test('cell-exec R12: esito incerto chiuso PRIMA dell\'exit -> stop al primo exit, mai dimenticato (entrambi gli stati)', async () => {
   for (const uncertain of ['staged-not-submitted', 'delivery-unknown']) {
     let launches = 0; const errs = []; const marks = [];
     const proc = new EventEmitter();
@@ -856,7 +856,7 @@ test('cell-exec pre-exit-uncertain: esito incerto chiuso PRIMA dell\'exit -> sto
       },
     };
     // deliver si chiude SUBITO con esito incerto mentre il child resta vivo;
-    // l'exit arriva 30ms dopo: il supervisor deve fermarsi SENZA gen1 (pre-exit).
+    // l'exit arriva 30ms dopo: il supervisor deve fermarsi SENZA gen1 (R12).
     const code = await cellExecMain(['--socket', '/tmp/x', '--nonce', 'a1b2c3d4'.repeat(8)], {
       receivePayload: async () => payload,
       process: proc,
@@ -879,7 +879,7 @@ test('cell-exec pre-exit-uncertain: esito incerto chiuso PRIMA dell\'exit -> sto
   }
 });
 
-test('cell-exec restart: senza client -> legacy injectPrompt; failure delivery non uccide il keepalive', async () => {
+test('cell-exec restart: senza client -> legacy injectPrompt (G4); failure delivery non uccide il keepalive', async () => {
   let clock = 0; let launches = 0; const legacy = [];
   const proc = new EventEmitter();
   const payload = {
@@ -909,7 +909,7 @@ test('cell-exec restart: senza client -> legacy injectPrompt; failure delivery n
   });
   assert.equal(code, 1);
   assert.equal(launches, 2, 'restart avvenuto nonostante delivery failure');
-  assert.deepEqual(legacy, [['cloud-T', 'resume']], 'legacy: solo gen>0, gen0 resta al runtime');
+  assert.deepEqual(legacy, [['cloud-T', 'resume']], 'legacy: solo gen>0, gen0 resta al runtime (G4)');
 });
 
 test('cell-exec validRestartPrompt: client/readyWaitMs bounded, chiavi estranee rifiutate', async () => {
@@ -932,7 +932,7 @@ test('cell-exec validRestartPrompt: client/readyWaitMs bounded, chiavi estranee 
 });
 
 // ===========================================================================
-// 6. Regression: argv degli altri managed INVARIATO (prompt su argv)
+// 6. Regression (G5 audit): argv degli altri managed INVARIATO (prompt su argv)
 // ===========================================================================
 test('regression: claude.native/codex/pi/agy conservano prompt su argv; solo kimi + kimi-code via delivery', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncpdreg-'));

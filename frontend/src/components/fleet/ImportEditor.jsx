@@ -38,7 +38,7 @@ export default function ImportEditor({ token, route = [], state, setState, busy,
       <option value="">{t('import-engine-required')}</option>
       {engines.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
     </select>
-    <label className="nc-check"><input type="checkbox" checked={!!f.boot} onChange={(e) => set({ boot: e.target.checked })} /> boot</label>
+    <label className="nc-check"><input type="checkbox" checked={!!f.boot} onChange={(e) => set({ boot: e.target.checked })} /> {t('fleet-boot')}</label>
     {(state.err || loadErr) && <div className="nc-err">{state.err || loadErr}</div>}
     <div className="nc-sheet-actions"><button className="nc-btn ghost" onClick={() => setState(null)}>{t('cancel')}</button><button className="nc-btn primary" disabled={busy || !f.tmuxSession || !f.engine || !engines.length} onClick={onSave}>{idSuggestion ? t('import-as-cell') : t('save')}</button></div>
   </div>;
