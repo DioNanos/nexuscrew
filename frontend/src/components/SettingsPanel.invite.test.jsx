@@ -21,7 +21,7 @@ import { NodesTab } from './SettingsPanel.jsx';
 
 // Un peer outbound: e' esattamente la condizione in cui il bottone era rotto.
 const outboundHub = {
-  name: 'cloud-alpacalibre-com', label: 'VPS_Cloud', direction: 'outbound',
+  name: 'cloud-example-com', label: 'VPS_Cloud', direction: 'outbound',
   ssh: 'dag@cloud.example', nodeId: 'aaaa1111', kind: 'direct', tunnel: { status: 'up' },
 };
 

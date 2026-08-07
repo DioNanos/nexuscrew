@@ -154,7 +154,7 @@ describe('CellSwitcher', () => {
   // Il test precedente ('no client-side doubling') usa nodeGroups: [] e non
   // puo' vedere questo caso: il difetto vive esattamente nei gruppi.
   it('never doubles a fleet position when a VL node shares its route', async () => {
-    const route = ['cloud-alpacalibre-com'];
+    const route = ['cloud-example-com'];
     const vpsCells = [
       active('Dev', 'cloud-Dev'), active('Personal', 'cloud-Personal'),
       active('Research', 'cloud-Research'), active('SysAdmin', 'cloud-SysAdmin'),

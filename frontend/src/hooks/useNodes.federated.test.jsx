@@ -8,17 +8,17 @@ import { renderHook, waitFor } from '@testing-library/react';
 //
 // I dati NON sono inventati: topology e /api/vl-nodes riproducono le
 // risposte REALI misurate sull'infrastruttura viva il 2026-08-06 via proxy
-// federato (topology del telefono: owner cloud-alpacalibre-com a un hop,
+// federato (topology del telefono: owner cloud-example-com a un hop,
 // non stale; vl-nodes di VPS3: N900 online con session dichiarata).
 
 const PHONE_INSTANCE = '5c588d7441c73b414f0912b30305f269';
-const VPS_INSTANCE = '36b876f26ed141bae485dd75437704ca';
+const VPS_INSTANCE = '1f2e3d4c5b6a79880123456789abcdef';
 const N900_ID = '82dffb30040048879162878d75306bbe';
 
 const PHONE_TOPOLOGY = {
   nodes: [
-    { name: 'cloud-alpacalibre-com', instanceId: VPS_INSTANCE, route: ['cloud-alpacalibre-com'], stale: false, label: 'VPS_Cloud' },
-    { name: 'nexus-crew-0e88', instanceId: '0e88cdc9cd977e5db29ffcdba839e924', route: ['cloud-alpacalibre-com', 'nexus-crew-0e88'], stale: false },
+    { name: 'cloud-example-com', instanceId: VPS_INSTANCE, route: ['cloud-example-com'], stale: false, label: 'VPS_Cloud' },
+    { name: 'nexus-crew-0e88', instanceId: '0e88cdc9cd977e5db29ffcdba839e924', route: ['cloud-example-com', 'nexus-crew-0e88'], stale: false },
   ],
 };
 
@@ -52,7 +52,7 @@ vi.mock('../lib/api.js', () => ({
   fleetStatus: vi.fn(async () => ({ available: false })),
   getVlNodes: vi.fn(async (_token, route = []) => {
     calls.vlRoutes.push(Array.isArray(route) ? [...route] : route);
-    if (Array.isArray(route) && route.join('/') === 'cloud-alpacalibre-com') return VPS_VL_NODES;
+    if (Array.isArray(route) && route.join('/') === 'cloud-example-com') return VPS_VL_NODES;
     return { nodes: [] };
   }),
 }));
@@ -73,7 +73,7 @@ describe('useNodes — aggregazione federata dei nodi VL', () => {
     renderHook(() => useNodes('token', true));
     await waitFor(() => {
       expect(calls.vlRoutes).toContainEqual([]);
-      expect(calls.vlRoutes).toContainEqual(['cloud-alpacalibre-com']);
+      expect(calls.vlRoutes).toContainEqual(['cloud-example-com']);
     });
     // gli owner a più hop non sono interrogati due volte per instanceId, e
     // il locale resta uno solo: niente tempesta di richieste per giro.
@@ -93,7 +93,7 @@ describe('useNodes — aggregazione federata dei nodi VL', () => {
     expect(group.sessions[0].name).toBe('ollama');
     // la route dell'owner è ciò che instrada eventi e comandi: perderla
     // significa interrogare l'owner sbagliato dalla vista sessione.
-    expect(group.peer.route).toEqual(['cloud-alpacalibre-com']);
+    expect(group.peer.route).toEqual(['cloud-example-com']);
     expect(group.peer.ownerInstanceId).toBe(VPS_INSTANCE);
     expect(group.peer.isLocal).toBe(false);
   });
