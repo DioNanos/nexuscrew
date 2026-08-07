@@ -49,7 +49,10 @@ export const fleetEditCell = (t, id, patch, route) => jsonFetch(fleetPath(route,
 export const fleetRemoveCell = (t, id, stop = false, route) => jsonFetch(fleetPath(route, 'remove-cell'), t, { method: 'POST', body: { id, stop } });
 export const fleetImportCell = (t, b, route) => jsonFetch(fleetPath(route, 'import-cell'), t, { method: 'POST', body: b });
 export const fleetRestoreCells = (t, cells, route) => jsonFetch(fleetPath(route, 'restore-cells'), t, { method: 'POST', body: { cells } });
-export const fleetRestoreEngines = (t, engines, overwrite, route) => jsonFetch(fleetPath(route, 'restore-engines'), t, { method: 'POST', body: { engines, overwrite: !!overwrite } });
+// `models` va in CODA, non in mezzo: inserire un parametro fra quelli
+// esistenti rompe in silenzio ogni chiamante che non viene aggiornato, e il
+// difetto si manifesta come un booleano interpretato per una lista.
+export const fleetRestoreEngines = (t, engines, overwrite, route, models) => jsonFetch(fleetPath(route, 'restore-engines'), t, { method: 'POST', body: { engines, overwrite: !!overwrite, ...(Array.isArray(models) && models.length ? { models } : {}) } });
 export const createSession = (t, b, route) => jsonFetch(`${routeBase(route)}/sessions`, t, { method: 'POST', body: b });
 export const killSession = (t, name, route) => jsonFetch(`${routeBase(route)}/sessions/${encodeURIComponent(name)}`, t, { method: 'DELETE' });
 export const setSessionTechnical = (t, name, technical, route) => jsonFetch(`${routeBase(route)}/sessions/${encodeURIComponent(name)}/visibility`, t, { method: 'PATCH', body: { technical: !!technical } });

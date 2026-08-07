@@ -14,7 +14,7 @@ const MAX_CELL_COMMAND = 4096;
 const MAX_CELLS = 32;
 const MAX_LABEL = 64;
 const MAX_ENGINES = 24;
-const TOP_KEYS = new Set(['format', 'version', 'exportedAt', 'cells', 'engines']);
+const TOP_KEYS = new Set(['format', 'version', 'exportedAt', 'cells', 'engines', 'models']);
 // v3 portatile: la cella ammette cwdRel (home-relative) e VIETA cwd (assoluta,
 // device-specifica). Un backup v3 con cwd -> invalid-cell (fail-closed).
 const CELL_KEYS_V3 = new Set(['id', 'cwdRel', 'engine', 'boot', 'model', 'models', 'permissionPolicies', 'commands', 'systemPrompt', 'prompt', 'label']);
@@ -196,7 +196,23 @@ export function portableEngineDefinition(engine) {
   return clean;
 }
 
-export function createFleetBackup(cells, selectedCellIds, engines = [], selectedEngineIds = [], now = new Date()) {
+// I modelli DICHIARATI viaggiano con gli engine che li rendono usabili: senza,
+// un round-trip di backup li perde e al ripristino l'engine che li usa viene
+// rifiutato — fail-closed, ma con i dati persi e nessuna spiegazione.
+// Si esportano quelli del PROFILO di ogni engine selezionato: cosi' il backup e'
+// autosufficiente, e non porta con se' dichiarazioni di profili che non c'entrano.
+function declaredModelsFor(models, engines, selectedEngines) {
+  const profili = new Set();
+  for (const engine of Array.isArray(engines) ? engines : []) {
+    if (!selectedEngines.has(engine.id) || !engine.managed) continue;
+    const { client, provider, credentialProfile } = engine.managed;
+    profili.add(credentialProfile ? `${client}.${provider}-${credentialProfile}` : `${client}.${provider}`);
+    profili.add(`${client}.${provider}`);
+  }
+  return (Array.isArray(models) ? models : []).filter((m) => m && profili.has(m.engine));
+}
+
+export function createFleetBackup(cells, selectedCellIds, engines = [], selectedEngineIds = [], now = new Date(), models = []) {
   // Backward-compatible call used by old tests/callers: third argument was Date.
   if (engines instanceof Date) { now = engines; engines = []; selectedEngineIds = []; }
   const selectedCells = selectedCellIds instanceof Set ? selectedCellIds : new Set(selectedCellIds || []);
@@ -226,7 +242,14 @@ export function createFleetBackup(cells, selectedCellIds, engines = [], selected
     const clean = portableEngineDefinition(engine);
     if (clean) cleanEngines.push(clean);
   }
-  return { format: FLEET_BACKUP_FORMAT, version: FLEET_BACKUP_VERSION, exportedAt: now.toISOString(), cells: cleanCells, engines: cleanEngines };
+  const cleanModels = declaredModelsFor(models, engines, selectedEngines);
+  return {
+    format: FLEET_BACKUP_FORMAT, version: FLEET_BACKUP_VERSION, exportedAt: now.toISOString(),
+    cells: cleanCells, engines: cleanEngines,
+    // Assente quando non ce ne sono: un backup di un'installazione che non usa
+    // modelli dichiarati resta identico a prima.
+    ...(cleanModels.length ? { models: cleanModels } : {}),
+  };
 }
 
 export function parseFleetBackup(text) {
@@ -262,7 +285,32 @@ export function parseFleetBackup(text) {
     if (engineSeen.has(engine.id)) return { ok: false, error: 'duplicate-engine', cells: [], engines: [] };
     engineSeen.add(engine.id); engines.push(engine);
   }
-  return { ok: true, cells, engines, legacy: legacyCwd, exportedAt: typeof value.exportedAt === 'string' ? value.exportedAt : '' };
+  // I modelli dichiarati si rileggono con lo stesso rigore del resto: schema
+  // chiuso, niente campi inattesi. Un backup senza modelli resta valido —
+  // l'assenza e' il caso normale per chi non li usa.
+  const models = [];
+  if (value.models !== undefined) {
+    if (!Array.isArray(value.models) || value.models.length > 64) {
+      return { ok: false, error: 'invalid-model', cells: [], engines: [] };
+    }
+    const visti = new Set();
+    for (const raw of value.models) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'invalid-model', cells: [], engines: [] };
+      const ammessi = new Set(['id', 'engine', 'label', 'contextWindow', 'maxTokens', 'reasoning']);
+      if (Object.keys(raw).some((k) => !ammessi.has(k))) return { ok: false, error: 'invalid-model', cells: [], engines: [] };
+      const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+      const engine = typeof raw.engine === 'string' ? raw.engine.trim() : '';
+      if (!id || !engine) return { ok: false, error: 'invalid-model', cells: [], engines: [] };
+      const key = `${engine}::${id}`;
+      if (visti.has(key)) return { ok: false, error: 'duplicate-model', cells: [], engines: [] };
+      visti.add(key);
+      models.push({ ...raw, id, engine });
+    }
+  }
+  return {
+    ok: true, cells, engines, models,
+    legacy: legacyCwd, exportedAt: typeof value.exportedAt === 'string' ? value.exportedAt : '',
+  };
 }
 
 export function restoreCellDefinition(cell, selectedEngine, availableEngineIds) {

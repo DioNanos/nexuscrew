@@ -244,7 +244,10 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     setImportEdit(null);
     setNote(t('fleet-saved'));
   });
-  const restoreBackup = ({ engineRows = [], cellRows = [] }) => run(async () => {
+  // `models` arriva dal backup letto: si scrivono insieme agli engine, e prima
+  // di loro, perche' un engine che usa un modello dichiarato viene rifiutato
+  // finche' la dichiarazione non c'e'.
+  const restoreBackup = ({ engineRows = [], cellRows = [], models: restoreModels = [] }) => run(async () => {
     const selectedEngines = engineRows.filter((row) => row.selected);
     const engineDefs = selectedEngines.map((row) => portableEngineDefinition(row.engine));
     if (engineDefs.some((engine) => !engine)) throw new Error(t('fleet-backup-invalid-engine'));
@@ -263,7 +266,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     // must exist before cells can reference them, so the two authenticated
     // restores remain ordered but a cancelled dialog leaves no partial change.
     const engineResult = engineDefs.length
-      ? await fleetRestoreEngines(token, engineDefs, engineOverwrites.length > 0, route)
+      ? await fleetRestoreEngines(token, engineDefs, engineOverwrites.length > 0, route, restoreModels)
       : { needsRestart: [] };
     const cellResult = restored.length ? await fleetRestoreCells(token, restored, route) : { needsRestart: [] };
     const restart = [...new Set([...(engineResult.needsRestart || []), ...(cellResult.needsRestart || [])])];
@@ -382,7 +385,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
       {cellEdit && <FleetModal onClose={() => setCellEdit(null)} label={t('fleet-new-cell')} error={err}><CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} busy={busy} onSave={saveCell} /></FleetModal>}
       {repairCell && <FleetModal onClose={() => setRepairCell(null)} label={t('fleet-cwd-repair-title').replace('{id}', repairCell.id)} error=""><CwdRepairDialog token={token} route={route} cell={repairCell} busy={busy} onSaved={async () => { setRepairCell(null); setNote(t('fleet-cwd-repaired')); await refresh(); }} onClose={() => setRepairCell(null)} /></FleetModal>}
       {note && <div className="nc-set-note">{note}</div>}{err && <div className="nc-err">{err}</div>}
-      {backupOpen && <FleetModal onClose={() => setBackupOpen(false)} label={t('fleet-backup')} error={err}><FleetBackupDialog cells={defs.cells} engines={defs.engines} busy={busy} canRestore={canRestoreBackup} onRestore={restoreBackup} onClose={() => setBackupOpen(false)} /></FleetModal>}
+      {backupOpen && <FleetModal onClose={() => setBackupOpen(false)} label={t('fleet-backup')} error={err}><FleetBackupDialog cells={defs.cells} engines={defs.engines} models={defs.models || []} busy={busy} canRestore={canRestoreBackup} onRestore={restoreBackup} onClose={() => setBackupOpen(false)} /></FleetModal>}
       {credentialEdit && <FleetModal onClose={() => setCredentialEdit(null)} label={t('fleet-credential-title')} error={err}>
         <div className="nc-fleet-form nc-credential-form">
           <b>{t('fleet-credential-title')}</b>
