@@ -168,7 +168,10 @@ All notable changes to NexusCrew are tracked here.
   administrator cannot look. The cause — a reverse-port grant that named another
   peer's port — surfaced only by reading sshd's log as root. The hub now records
   what it refused and why, with the port it attempted, because "channel not
-  ready" does not say where to look. Related: `nodes test` with no argument now
+  ready" does not say where to look. The record lives in the diagnostic buffer
+  in memory, so it is readable while the service runs and is lost on restart —
+  which is enough for the case it was written for, a refusal repeating now, and
+  is not a durable audit trail. Related: `nodes test` with no argument now
   tests every direct peer in parallel and ends with the line that existed
   nowhere — which nodes report themselves as shared while their reverse channel
   does not answer.
