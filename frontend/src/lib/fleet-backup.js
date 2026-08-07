@@ -17,7 +17,7 @@ const MAX_ENGINES = 24;
 const TOP_KEYS = new Set(['format', 'version', 'exportedAt', 'cells', 'engines', 'models']);
 // v3 portatile: la cella ammette cwdRel (home-relative) e VIETA cwd (assoluta,
 // device-specifica). Un backup v3 con cwd -> invalid-cell (fail-closed).
-const CELL_KEYS_V3 = new Set(['id', 'cwdRel', 'engine', 'boot', 'model', 'models', 'permissionPolicies', 'commands', 'systemPrompt', 'prompt', 'label']);
+const CELL_KEYS_V3 = new Set(['id', 'cwdRel', 'engine', 'boot', 'model', 'models', 'permissionPolicies', 'commands', 'systemPrompt', 'prompt', 'label', 'mcp']);
 // Legacy v1 (nexuscrew.cells) / v2 (nexuscrew.fleet): cella con cwd assoluta,
 // non portabile, da validare sul target al restore.
 const CELL_KEYS_LEGACY = new Set(['id', 'cwd', 'engine', 'boot', 'model', 'models', 'permissionPolicies', 'systemPrompt', 'prompt']);
