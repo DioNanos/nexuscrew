@@ -530,6 +530,95 @@ test('nc_send_cell: risolve sender e target dalla directory e restituisce receip
   assert.deepEqual(post.body.to, { instanceId: remoteId, cell: 'Worker', tmuxSession: 'cloud-Worker' });
 });
 
+// Una ricerca fallita deve dire QUALE delle tre cose e' andata storta, perche'
+// portano a tre azioni diverse. Il messaggio unico ha gia' fatto il suo danno:
+// un id ribattuto invece che copiato ha prodotto «non trovata nella rete
+// autorizzata», e l'indagine e' finita sul canale di trasporto — che
+// funzionava.
+function srvPerRicerca({ cellePixel = true } = {}) {
+  const localId = 'a'.repeat(32); const remoteId = 'b'.repeat(32);
+  return makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    idFactory: () => '12345678-1234-1234-1234-123456789abc',
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/cells/send') return { status: 200, json: {
+        id: '12345678-1234-1234-1234-123456789abc', status: 'submitted', at: 7,
+        to: { instanceId: localId, cell: 'Fork', tmuxSession: 'cloud-Fork' },
+      } };
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') return { status: 200, json: { nodes: [{ instanceId: remoteId, route: ['pixel'], label: 'Pixel' }] } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev', active: true, canReceive: true },
+        { instanceId: localId, cell: 'Fork', tmuxSession: 'cloud-Fork', active: true, canReceive: true },
+      ] } };
+      if (p === '/api/route/pixel/_/cells') {
+        return cellePixel
+          ? { status: 200, json: { instanceId: remoteId, cells: [
+            { instanceId: remoteId, cell: 'Worker', tmuxSession: 'cloud-Worker', active: true, canReceive: true },
+          ] } }
+          // Il nodo e' autorizzato e in topologia, ma adesso non risponde.
+          : { status: 502, json: { error: 'peer down' } };
+      }
+      return { status: 404, json: { error: p } };
+    },
+  });
+}
+
+async function erroreSend(srv, out, target) {
+  await srv.handleLine(rpc(77, 'tools/call', { name: 'nc_send_cell', arguments: { target, message: 'x' } }));
+  const r = out.lines[0];
+  assert.equal(r.result.isError, true, 'deve essere un errore');
+  return r.result.content[0].text;
+}
+
+test('nc_send_cell: un instanceId inesistente accusa il NODO, non la cella ne\' l\'autorizzazione', async () => {
+  // Riproduce l'incidente: l'id del nodo locale con UN carattere in meno.
+  // Passa `NODE_ID_RE` (16-64 esadecimali), quindi arriva fino alla ricerca.
+  const localId = 'a'.repeat(32);
+  const troncato = localId.slice(0, 31);
+  assert.equal(troncato.length, 31);
+  assert.ok(/^[a-f0-9]{16,64}$/.test(troncato), 'un id troncato supera ancora la validazione');
+  const { srv, out } = srvPerRicerca();
+  const testo = await erroreSend(srv, out, `${troncato}:Fork`);
+  assert.match(testo, /nessun nodo con instanceId/);
+  assert.match(testo, /copia l'id esatto da nc_cells/, 'deve dire cosa fare, non solo cosa manca');
+  // Le due parole che hanno sviato l'indagine non devono comparire.
+  assert.doesNotMatch(testo, /rete autorizzata/);
+});
+
+test('nc_send_cell: su un nodo NOTO l\'errore nomina la cella e il nodo', async () => {
+  const localId = 'a'.repeat(32);
+  const { srv, out } = srvPerRicerca();
+  const testo = await erroreSend(srv, out, `${localId}:Inesistente`);
+  assert.match(testo, /cella "Inesistente" non trovata sul nodo/);
+  assert.match(testo, new RegExp(localId));
+});
+
+test('nc_send_cell: un nodo irraggiungibile si dichiara tale, non «non trovato»', async () => {
+  // Distinguerlo conta: qui non c'e' niente da correggere nella
+  // configurazione, c'e' un dispositivo da accendere.
+  const remoteId = 'b'.repeat(32);
+  const { srv, out } = srvPerRicerca({ cellePixel: false });
+  const testo = await erroreSend(srv, out, `${remoteId}:Worker`);
+  assert.match(testo, /non raggiungibile \(unreachable\)/);
+  assert.match(testo, new RegExp(remoteId));
+});
+
+test('nc_send_cell: l\'id CORRETTO continua a risolvere una cella locale', async () => {
+  // La guardia che impedisce di far passare i tre messaggi nuovi per una
+  // regressione del percorso felice.
+  const localId = 'a'.repeat(32);
+  const { srv, out, calls } = srvPerRicerca();
+  await srv.handleLine(rpc(78, 'tools/call', {
+    name: 'nc_send_cell', arguments: { target: `${localId}:Fork`, message: 'ciao' },
+  }));
+  assert.equal(out.lines[0].result.isError, undefined, out.lines[0].result.content[0].text);
+  const post = calls.find((call) => call.method === 'POST');
+  assert.equal(new URL(post.url).pathname, '/api/cells/send');
+  assert.deepEqual(post.body.to, { instanceId: localId, cell: 'Fork', tmuxSession: 'cloud-Fork' });
+});
+
 test('nc_notify: POST /api/notify con Bearer + sessione da NEXUSCREW_MCP_SESSION', async () => {
   const { srv, out, calls } = makeSrv({
     env: { NEXUSCREW_MCP_SESSION: 'cell-a' },
