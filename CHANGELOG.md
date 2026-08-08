@@ -4,6 +4,18 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.55 — 2026-08-08 — "The Mirror Needs No Hands"
+
+- **Building the public tree is now a pure export.** Five test fixtures existed
+  in a sanitized form only on the public branch: every release rebuilt that
+  sanitization by hand, and the comparison between the two branches could never
+  reveal a miss, because they matched exactly on the unsanitized side. On
+  2026-08-07 the step was in fact missed, and the sweep — not the process —
+  caught it. Those files are now sanitized at the root, so the public line is
+  the working tree minus a fixed list of internal paths, with nothing left to
+  redo by hand. The package-cleanliness test introduced in 0.8.54 guards the
+  npm side; this closes the same gap on the mirror side.
+
 ## 0.8.54 — 2026-08-07 — "Why the Tunnel Was Left Behind"
 
 - **An automatic update no longer leaves the reverse channel behind.** 0.8.53
