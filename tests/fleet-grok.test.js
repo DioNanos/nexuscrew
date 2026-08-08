@@ -124,3 +124,27 @@ test('grok backfill: idempotente, platform-aware, non distruttivo su collisione 
     assert.equal(g4.engines[0].command, '/bin/x', 'collisione: custom grok.native preservato, mai sovrascritto');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+// Path PER-CELL: l'override permissionPolicies e' l'unico modo in cui grok
+// riceve 'unsafe' dentro resolveManagedEngine (lo spec engine di default e'
+// standard). grok NON e' clampato (non in lista pi|shell|vl): unsafe deve
+// mettere --always-approve; standard non deve. Ancora il NON-clamp di grok.
+test('grok policy per-cell: override unsafe mette --always-approve (NON clampato); standard -> assente', () => {
+  const home = homeWithGrok();
+  try {
+    const engine = (pp) => ({ id: 'grok.native', managed: { client: 'grok', provider: 'native', model: '', permissionPolicy: pp } });
+    // default engine standard -> nessun flag
+    const def = resolveManagedEngine(engine('standard'), { id: 'Dev' }, { home, platform: 'linux', env: {} });
+    assert.equal(def.info.permissionPolicy, 'standard');
+    assert.equal(def.engine.args.includes('--always-approve'), false);
+    // override PER-CELL unsafe -> grok NON clampato, --always-approve presente, policy effettiva unsafe
+    const uns = resolveManagedEngine(engine('standard'), { id: 'Dev', permissionPolicies: { 'grok.native': 'unsafe' } }, { home, platform: 'linux', env: {} });
+    assert.equal(uns.ok, true);
+    assert.equal(uns.info.permissionPolicy, 'unsafe', 'grok: override PER-CELL unsafe non clampato (NON in lista pi|shell|vl)');
+    assert.equal(uns.engine.args.includes('--always-approve'), true, 'override unsafe -> --always-approve in argv');
+    // override PER-CELL standard su engine default unsafe -> flag assente
+    const std = resolveManagedEngine(engine('unsafe'), { id: 'Dev', permissionPolicies: { 'grok.native': 'standard' } }, { home, platform: 'linux', env: {} });
+    assert.equal(std.info.permissionPolicy, 'standard');
+    assert.equal(std.engine.args.includes('--always-approve'), false);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});

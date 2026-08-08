@@ -104,3 +104,21 @@ test('vl backfill: idempotente, NESSUN platform gate, non distruttivo su collisi
     assert.equal(v4.engines[0].command, '/bin/x', 'collisione: custom vl.native preservato, mai sovrascritto');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+// Il clamp standard-only di vl vive in DUE copie: normalizeManagedSpec (sopra,
+// unsafe->null) e resolveManagedEngine (override PER-CELL -> standard). Questa
+// e' la copia resolveManagedEngine: l'unico modo in cui 'unsafe' raggiunge
+// resolve e' via cell.permissionPolicies, e quel path va ancorato ai test.
+test('vl policy per-cell: override unsafe viene clampato a standard (nessun flag, NESSUN bypass)', () => {
+  const home = homeWithVl();
+  try {
+    const engine = { id: 'vl.native', managed: { client: 'vl', provider: 'native', model: '', permissionPolicy: 'standard' } };
+    // override PER-CELL unsafe -> vl e' standard-only, clamp a standard, nessun flag
+    const r = resolveManagedEngine(engine, { id: 'Dev', permissionPolicies: { 'vl.native': 'unsafe' } }, { home, platform: 'linux', env: {} });
+    assert.equal(r.ok, true);
+    assert.equal(r.info.permissionPolicy, 'standard', "vl: l'override PER-CELL unsafe e' clampato a standard");
+    assert.equal(r.engine.args.includes('--always-approve'), false, 'nessun --always-approve');
+    assert.equal(r.engine.args.includes('--dangerously-skip-permissions'), false);
+    assert.equal(r.engine.args.includes('--yolo'), false);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
