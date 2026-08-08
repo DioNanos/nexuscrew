@@ -120,11 +120,11 @@ test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P',
 // ogni client) e il menu provider dentro un client (ordine dell'array). Quindi
 // l'ordine e' semantica contrattuale, non estetica.
 
-test('Fetta A: client in ordine di prima apparizione (claude, codex-vl, codex, pi, agy, kimi, shell)', () => {
+test('CATALOG: client in ordine di prima apparizione', () => {
   const clients = [];
   for (const p of publicCatalog()) if (!clients.includes(p.client)) clients.push(p.client);
-  // grok e vl non sono ancora presenti in questa fetta.
-  assert.deepEqual(clients, ['claude', 'codex-vl', 'codex', 'pi', 'agy', 'kimi', 'shell']);
+  // vl arriva nella Fetta C.
+  assert.deepEqual(clients, ['claude', 'codex-vl', 'codex', 'grok', 'pi', 'agy', 'kimi', 'shell']);
 });
 
 test('Fetta A: native primo e custom ultimo dentro ogni client', () => {
