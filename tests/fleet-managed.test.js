@@ -22,10 +22,21 @@ function fakeClient(home, name) {
   return p;
 }
 
-test('app defaults: CLI base + Shell locale, provider separati e policy esplicite', () => {
+// Fetta A: il seed cambia ORDINE (non insieme) rispetto a 0.8.55 perche' il
+// dropdown client e il seed derivano entrambi dall'ordine dell'array CATALOG
+// (publicCatalog preserva la prima apparizione; defaultDefinitions filtra
+// `default:true` in ordine di array). Invariante vero: (1) stesso insieme dei
+// 5 default, (2) claude.native primo (preselezione), (3) shell.local ultimo,
+// (4) codex-vl prima di codex.
+test('app defaults: seed invariato come INTENTO (claude primo, shell ultimo, codex-vl prima di codex)', () => {
   const d = defaultDefinitions();
-  assert.deepEqual(d.engines.map((e) => e.id), ['claude.native', 'codex.native', 'codex-vl.native', 'pi.native', 'shell.local']);
-  assert.deepEqual(d.engines.map((e) => e.label), ['Claude Code', 'Codex', 'Codex-VL', 'Pi', 'Shell']);
+  const ids = d.engines.map((e) => e.id);
+  assert.equal(ids.length, 5);
+  assert.equal(ids[0], 'claude.native', 'claude.native e la preselezione (primo default)');
+  assert.equal(ids[ids.length - 1], 'shell.local', 'shell.local resta ultimo default');
+  assert.deepEqual([...ids].sort(), ['claude.native', 'codex-vl.native', 'codex.native', 'pi.native', 'shell.local'], 'insieme dei 5 default invariato');
+  assert.ok(ids.indexOf('codex-vl.native') < ids.indexOf('codex.native'), 'codex-vl precede codex nel seed');
+  assert.deepEqual(d.engines.map((e) => e.label), ['Claude Code', 'Codex-VL', 'Codex', 'Pi', 'Shell']);
   assert.equal(d.engines.find((e) => e.id === 'claude.native').managed.permissionPolicy, 'unsafe');
   assert.ok(d.engines.filter((e) => e.id !== 'claude.native').every((e) => e.managed.permissionPolicy === 'standard'));
   assert.deepEqual(d.cells, []);
@@ -101,6 +112,71 @@ test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P',
   assert.equal(catalog.find((p) => p.id === 'codex-vl.openrouter').credentialEnv, 'OPENROUTER_API_KEY');
   assert.equal(catalog.find((p) => p.id === 'claude.kimi-code').credentialEnv, 'KIMI_API_KEY');
   assert.equal(catalog.filter((p) => p.default).length, 5, 'Shell e un engine standard senza cambiare il primo default');
+});
+
+// --- Fetta A: ordine semantico del CATALOG -----------------------------------
+// L'ordine dell'array CATALOG guida due menu, entrambi via publicCatalog (che
+// preserva l'ordine di prima apparizione): il menu client (prima apparizione di
+// ogni client) e il menu provider dentro un client (ordine dell'array). Quindi
+// l'ordine e' semantica contrattuale, non estetica.
+
+test('Fetta A: client in ordine di prima apparizione (claude, codex-vl, codex, pi, agy, kimi, shell)', () => {
+  const clients = [];
+  for (const p of publicCatalog()) if (!clients.includes(p.client)) clients.push(p.client);
+  // grok e vl non sono ancora presenti in questa fetta.
+  assert.deepEqual(clients, ['claude', 'codex-vl', 'codex', 'pi', 'agy', 'kimi', 'shell']);
+});
+
+test('Fetta A: native primo e custom ultimo dentro ogni client', () => {
+  const byClient = new Map();
+  for (const p of publicCatalog()) {
+    if (!byClient.has(p.client)) byClient.set(p.client, []);
+    byClient.get(p.client).push(p.provider);
+  }
+  for (const [client, providers] of byClient) {
+    if (providers.includes('native')) assert.equal(providers[0], 'native', `${client}: native deve essere il primo provider`);
+    if (providers.includes('custom')) assert.equal(providers[providers.length - 1], 'custom', `${client}: custom deve essere l'ultimo provider`);
+  }
+});
+
+test('Fetta A: provider raggruppati per categoria (subscription prima di cloud prima di local)', () => {
+  const SUBSCRIPTION = new Set(['alibaba-token-plan', 'kimi-code', 'zai']);
+  const LOCAL = new Set(['ollama', 'lmstudio']);
+  const category = (provider) => {
+    if (provider === 'native') return 0;
+    if (SUBSCRIPTION.has(provider)) return 1;
+    if (LOCAL.has(provider)) return 3;
+    if (provider === 'custom') return 4;
+    return 2; // cloud: openrouter, ollama-cloud, bedrock, vertex, foundry, openai-api, provider esterni Pi
+  };
+  for (const client of ['claude', 'codex-vl', 'codex', 'pi']) {
+    const cats = publicCatalog().filter((p) => p.client === client).map((p) => category(p.provider));
+    assert.deepEqual(cats, [...cats].sort((a, b) => a - b), `${client}: categorie provider non monotone (native > subscription > cloud > local > custom)`);
+  }
+});
+
+test('Fetta A: ordine provider claude esplicito (native, alibaba, kimi-code, zai, openrouter, ollama-cloud, bedrock, vertex, foundry, ollama, custom)', () => {
+  const providers = publicCatalog().filter((p) => p.client === 'claude').map((p) => p.provider);
+  assert.deepEqual(providers, ['native', 'alibaba-token-plan', 'kimi-code', 'zai', 'openrouter', 'ollama-cloud', 'bedrock', 'vertex', 'foundry', 'ollama', 'custom']);
+});
+
+test('Fetta A: niente prefisso "Pi · " nelle label; 6 provider Pi restano non-core', () => {
+  for (const p of CATALOG) {
+    assert.ok(!String(p.label || '').startsWith('Pi · '), `label "${p.label}" non deve iniziare con "Pi · "`);
+  }
+  for (const provider of ['fireworks', 'huggingface', 'minimax', 'kimi-coding', 'mistral', 'together']) {
+    const entry = CATALOG.find((p) => p.client === 'pi' && p.provider === provider);
+    assert.ok(entry, `pi.${provider} deve restare nel CATALOG`);
+    assert.notEqual(entry.core, true, `pi.${provider} resta non-core (nascosto dalla UI)`);
+  }
+});
+
+test('Fetta A: legacy claude.zai-a/p in coda al CATALOG, sezione separata', () => {
+  const legacy = CATALOG.filter((p) => p.legacy);
+  assert.deepEqual(legacy.map((p) => p.id), ['claude.zai-a', 'claude.zai-p']);
+  const lastNonLegacy = Math.max(...CATALOG.map((p, i) => (p.legacy ? -1 : i)));
+  const firstLegacy = CATALOG.findIndex((p) => p.legacy);
+  assert.ok(firstLegacy > lastNonLegacy, 'le voci legacy devono chiudere l\'array, dopo ogni engine non-legacy');
 });
 
 test('OpenRouter richiede un modello; Kimi Code accetta solo gli slug documentati', () => {

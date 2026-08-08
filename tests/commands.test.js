@@ -141,10 +141,13 @@ test('smart-up ripara fleet.json mancante e riavvia un runtime gia vivo', async 
   });
   assert.equal(r.running, true);
   assert.equal(restarts, 1);
-  assert.deepEqual(
-    JSON.parse(fs.readFileSync(fleetPath, 'utf8')).engines.map((engine) => engine.id),
-    ['claude.native', 'codex.native', 'codex-vl.native', 'pi.native', 'shell.local'],
-  );
+  // Fetta A: il seed cambia ordine (non insieme) vs 0.8.55: codex-vl ora prima
+  // di codex. Intent assertions: claude primo, shell ultimo, insieme invariato.
+  const engineIds = JSON.parse(fs.readFileSync(fleetPath, 'utf8')).engines.map((engine) => engine.id);
+  assert.equal(engineIds[0], 'claude.native');
+  assert.equal(engineIds[engineIds.length - 1], 'shell.local');
+  assert.deepEqual([...engineIds].sort(), ['claude.native', 'codex-vl.native', 'codex.native', 'pi.native', 'shell.local']);
+  assert.ok(engineIds.indexOf('codex-vl.native') < engineIds.indexOf('codex.native'));
   fs.rmSync(home, { recursive: true, force: true });
 });
 
