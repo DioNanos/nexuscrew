@@ -123,8 +123,7 @@ test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P',
 test('CATALOG: client in ordine di prima apparizione', () => {
   const clients = [];
   for (const p of publicCatalog()) if (!clients.includes(p.client)) clients.push(p.client);
-  // vl arriva nella Fetta C.
-  assert.deepEqual(clients, ['claude', 'codex-vl', 'codex', 'grok', 'pi', 'agy', 'kimi', 'shell']);
+  assert.deepEqual(clients, ['claude', 'codex-vl', 'codex', 'grok', 'vl', 'pi', 'agy', 'kimi', 'shell']);
 });
 
 test('Fetta A: native primo e custom ultimo dentro ogni client', () => {
