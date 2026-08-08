@@ -4,6 +4,39 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.56 — 2026-08-08 — "The Catalog Learns Its Order"
+
+- **Grok Build is a managed client (`grok.native`).** xAI's `grok` TUI joins
+  the engine catalog with authentication fully delegated to the CLI's own
+  login (browser, API key or device-code): NexusCrew reads no credential,
+  copies no token, and puts nothing secret on argv. The binary is resolved
+  from its non-standard install path (`~/.grok/bin`) before the usual
+  locations. Like Agy it is backfilled platform-aware on Linux and macOS
+  outside Termux — the official aarch64 binary is statically linked and looks
+  promising there, but stays out until it is actually proven on a device. A
+  cell set to `unsafe` maps to `grok --always-approve`, the flag the CLI
+  really has.
+
+- **VL is a managed client (`vl.native`).** The Vivling runtime's inline TUI
+  joins the catalog as a local client: authentication belongs to the runtime
+  itself, so NexusCrew passes no credential at all. The CLI has no approval
+  flags, so the client is standard-only — an `unsafe` request has no argv
+  counterpart and is refused fail-closed, including through the per-cell
+  override path, and both directions are now pinned by tests. A cell prompt
+  cannot be delivered to `vl` (the CLI has no prompt surface); the limitation
+  is declared in code and tracked for a UI hint.
+
+- **The catalog's order is now a contract, not an accident.** The array that
+  feeds the client menu, the provider menu and the fresh-install seed is
+  reordered deliberately and documented as contractual: clients by first
+  appearance (Claude, Codex-VL before Codex, Grok, VL, Pi, Agy, Kimi, Shell
+  last), providers inside each client by category (native, subscription,
+  cloud, local, custom last), legacy entries in a separate closing section.
+  Labels drop the redundant `Pi · ` prefix. The seed keeps the same five
+  defaults with `claude.native` first — what changes is their order, never
+  their set. Six Pi providers stay deliberately out of the UI catalog,
+  declared as such in place.
+
 ## 0.8.55 — 2026-08-08 — "The Mirror Needs No Hands"
 
 - **Building the public tree is now a pure export.** Five test fixtures existed
