@@ -4,6 +4,55 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.57 — 2026-08-11 — "Three Wires, One Subscription"
+
+- **OpenCode Go is a managed provider on Claude Code, Codex-VL and Pi.** One
+  subscription, one environment variable (`OPENCODE_API_KEY`), three profiles —
+  because the gateway is not one uniform API but three: Anthropic Messages,
+  OpenAI Responses and Chat Completions. Each client gets the wire it actually
+  speaks, with `deepseek-v4-flash` as the default model on all three.
+
+- **The model lists were measured, not copied from the docs.** The published
+  endpoint table assigns each model a single wire, but the gateway translates
+  between them, so the table understates what works and overstates it in
+  places. Every one of the 25 advertised model IDs was tried on all three
+  wires, and a second pass re-tried the failures with sane parameters to tell a
+  wire refusal apart from a request the gateway forwarded empty. What went into
+  the catalog is that matrix: 12 models on Messages, 6 on Responses, 21 on
+  Chat. Three IDs the live catalog still advertises are dead upstream — two
+  deprecated, one unavailable — and are in none of the lists.
+
+- **The Claude profile sends the key as `x-api-key`, not as a bearer token.**
+  This gateway's Messages endpoint answers `401 Missing API key` to
+  `Authorization: Bearer`, which is the shape every other gateway in the
+  catalog uses. Copying the neighbouring profile would have produced a cell
+  that fails at first use with an authentication error and no obvious cause.
+  A test breaks on exactly that substitution.
+
+- **The URL roots differ by client and both are easy to get wrong.** Claude
+  receives the root without `/v1`, because the client appends `/v1/messages`;
+  Codex-VL receives the base *with* `/v1` and appends `/responses`. A doubled
+  `/v1` is a 404.
+
+- **The Pi profile requires the key instead of delegating it.** Auth delegation
+  belongs to the providers Pi resolves from its own login store. This one
+  exists only as a generated extension whose API key is an environment
+  reference, so delegating would have reported a cell as configured while no
+  key existed anywhere — a failure deferred to first use. It now fails closed
+  before launch, like the other extension-based provider.
+
+- **No context window is declared for these models.** Their real limits on this
+  provider have not been measured, and an invented number would quietly become
+  the threshold at which cells compact.
+
+- **What is not verified yet.** These profiles are proven at the protocol
+  level: every advertised pair was exercised against the live API. They have
+  not been exercised inside a running cell, so streaming, tool calls,
+  interleaved reasoning and resume remain unverified. The provider also does
+  not expose `/v1/messages/count_tokens`, which Claude Code uses for context
+  accounting; whether the client degrades quietly or reports an error is not
+  yet known.
+
 ## 0.8.56 — 2026-08-08 — "The Catalog Learns Its Order"
 
 - **Grok Build is a managed client (`grok.native`).** xAI's `grok` TUI joins
