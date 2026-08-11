@@ -133,10 +133,10 @@ test('Claude manda la chiave come x-api-key, non come token: e la differenza fra
       'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_FABLE_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL',
       'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL',
     ]) assert.equal(result.engine.env[key], 'deepseek-v4-flash', `${key} segue il modello`);
-    // Nessun context window inventato: non e' misurato su questo provider.
-    for (const key of ['CLAUDE_CODE_MAX_CONTEXT_TOKENS', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW']) {
-      assert.equal(Object.prototype.hasOwnProperty.call(result.engine.env, key), false, `${key} assente`);
-    }
+    // Il contesto viene dalla tabella dei limiti dichiarati, non da una
+    // costante: deepseek-v4-flash e' 1M.
+    assert.equal(result.engine.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1000000');
+    assert.equal(result.engine.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1000000');
     // `--model` non e' in testa: la policy Claude di default e' unsafe e
     // antepone --dangerously-skip-permissions. Si asserisce la coppia, non
     // la posizione.
@@ -162,6 +162,65 @@ test('Claude segue il modello scelto su tutti gli alias', () => {
       assert.equal(result.engine.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, model);
       assert.equal(result.engine.env.CLAUDE_CODE_SUBAGENT_MODEL, model);
     }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('il contesto segue il modello, e un id fuori tabella non eredita il numero di un altro', () => {
+  const home = world();
+  const value = credentialValue();
+  try {
+    // Ogni modello della wire Messages riceve il proprio limite dichiarato,
+    // non quello del default: glm-5.1 non deve prendere il milione di flash.
+    const atteso = { 'deepseek-v4-flash': '1000000', 'glm-5.1': '202752', 'minimax-m2.7': '204800', 'qwen3.5-plus': '262144' };
+    for (const [model, context] of Object.entries(atteso)) {
+      const result = resolveManagedEngine({
+        id: 'claude.opencode-go', label: 'OpenCode Go',
+        managed: { client: 'claude', provider: 'opencode-go', model },
+      }, { id: 'Dev' }, { home, env: { OPENCODE_API_KEY: value } });
+      assert.equal(result.ok, true, model);
+      assert.equal(result.engine.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, context, `${model} riceve il proprio contesto`);
+    }
+    // Controllo negativo: un id ammesso perche' DICHIARATO per quell'engine ma
+    // assente dalla tabella dei limiti non deve ricevere alcun contesto — se
+    // lo ricevesse, sarebbe il numero di un altro modello.
+    const declared = new Map([['claude.opencode-go', new Set(['kimi-k3-preview-inesistente'])]]);
+    const fuori = resolveManagedEngine({
+      id: 'claude.opencode-go', label: 'OpenCode Go',
+      managed: { client: 'claude', provider: 'opencode-go', model: 'kimi-k3-preview-inesistente' },
+    }, { id: 'Dev' }, { home, env: { OPENCODE_API_KEY: value }, extraModels: declared });
+    assert.equal(fuori.ok, true, 'un id dichiarato resta avviabile');
+    for (const key of ['CLAUDE_CODE_MAX_CONTEXT_TOKENS', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW']) {
+      assert.equal(Object.prototype.hasOwnProperty.call(fuori.engine.env, key), false, `${key} assente fuori tabella`);
+    }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Codex-VL riceve il catalogo modelli, senza il quale non ha i metadati di contesto', () => {
+  const home = world();
+  const value = credentialValue();
+  try {
+    const result = resolveManagedEngine({
+      id: 'codex-vl.opencode-go', label: 'OpenCode Go',
+      managed: { client: 'codex-vl', provider: 'opencode-go', model: 'gpt-5.6-luna' },
+    }, { id: 'Dev' }, { home, env: { OPENCODE_API_KEY: value } });
+    assert.equal(result.ok, true);
+    const argv = result.engine.args.join('\n');
+    assert.match(argv, /model_context_window=1050000/, 'il contesto e quello di luna, non del default');
+    const catalogArg = result.engine.args.find((arg) => arg.startsWith('model_catalog_json='));
+    assert.ok(catalogArg, 'argv porta il catalogo');
+    const catalogPath = JSON.parse(catalogArg.slice('model_catalog_json='.length));
+    const models = JSON.parse(fs.readFileSync(catalogPath, 'utf8')).models;
+    // Il catalogo copre esattamente le coppie misurate sulla wire Responses.
+    assert.deepEqual(models.map((m) => m.slug).sort(), [...OPENCODE_GO_RESPONSES_MODELS].sort());
+    const luna = models.find((m) => m.slug === 'gpt-5.6-luna');
+    assert.equal(luna.context_window, 1050000);
+    assert.deepEqual(luna.truncation_policy, { mode: 'tokens', limit: 1050000 });
+    // I campi che il consumatore reale pretende espliciti.
+    for (const key of [
+      'shell_type', 'visibility', 'supported_in_api', 'priority', 'availability_nux', 'upgrade',
+      'supports_reasoning_summaries', 'support_verbosity', 'default_verbosity', 'apply_patch_tool_type',
+      'truncation_policy', 'experimental_supported_tools',
+    ]) assert.equal(Object.prototype.hasOwnProperty.call(luna, key), true, `campo ModelInfo ${key} esplicito`);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -203,6 +262,12 @@ test('Pi riceve una estensione che referenzia la variabile, mai il valore', () =
     const definition = JSON.parse(source.match(/pi\.registerProvider\("opencode-go",\s*([\s\S]+)\);\n}\n$/)[1]);
     assert.equal(definition.baseUrl, OPENCODE_GO_API_BASE);
     assert.equal(definition.api, 'openai-completions');
+    // I descrittori portano i limiti dichiarati: senza, l'estensione ricadeva
+    // sul default conservativo di 128k anche per un modello da 1M.
+    assert.deepEqual(definition.models.map((m) => m.id).sort(), [...OPENCODE_GO_CHAT_MODELS].sort());
+    const kimi = definition.models.find((m) => m.id === 'kimi-k3');
+    assert.equal(kimi.contextWindow, 1048576);
+    assert.equal(kimi.maxTokens, 131072);
     assert.equal(fs.statSync(extensionArg).mode & 0o777, 0o600);
     assert.deepEqual(result.engine.args.slice(-2), ['--model', 'kimi-k3']);
     assert.ok(result.engine.args.includes('opencode-go'), 'argv seleziona il provider Pi');
