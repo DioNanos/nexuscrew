@@ -4,6 +4,33 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.8.58 — 2026-08-11 — "The Numbers Behind the Wire"
+
+- **OpenCode Go models now declare their context.** 0.8.57 shipped the provider
+  without a single context window, on the grounds that the preflight measured
+  which wire/model pairs answer, not how much context they hold. That was the
+  wrong silence: a Codex client with no catalog has no model metadata at all
+  and falls back to a default of its own, Claude compacts at a threshold
+  unrelated to the model in use, and the generated Pi extension was declaring
+  128k for models that hold a million. The limits come from the `models.dev`
+  catalogue for this provider — the source the project already treats as
+  authoritative for context and output — transcribed for the 22 models in use.
+  They remain *declared* numbers rather than ones we measured: a model behaving
+  as though it had less should be suspected here before the client.
+
+- **The context follows the model, and only the model.** `glm-5.1` gets its
+  202752, not the million belonging to `deepseek-v4-flash`. An id that is
+  admitted because it was declared for the engine, but absent from the limits
+  table, receives no context at all — inheriting another model's number would
+  be worse than having none, and a test breaks on exactly that case.
+
+- **Codex gets a real catalogue.** `opencode-go.json` covers the six pairs
+  measured on the Responses wire, with context and truncation policy per model.
+  It was loaded into the actual client before being wired in, and each of the
+  three reasoning levels it offers was exercised against every one of those six
+  models on the live API — eighteen combinations, all accepted — so the menu it
+  presents contains no option that fails on use.
+
 ## 0.8.57 — 2026-08-11 — "Three Wires, One Subscription"
 
 - **OpenCode Go is a managed provider on Claude Code, Codex-VL and Pi.** One
