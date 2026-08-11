@@ -154,9 +154,11 @@ test('Fetta A: provider raggruppati per categoria (subscription prima di cloud p
   }
 });
 
-test('Fetta A: ordine provider claude esplicito (native, alibaba, kimi-code, zai, openrouter, ollama-cloud, bedrock, vertex, foundry, ollama, custom)', () => {
+// opencode-go entra nel blocco subscription (dopo zai, prima del blocco cloud
+// che apre con openrouter): e' un abbonamento, non un provider a consumo.
+test('Fetta A: ordine provider claude esplicito (native, alibaba, kimi-code, zai, opencode-go, openrouter, ollama-cloud, bedrock, vertex, foundry, ollama, custom)', () => {
   const providers = publicCatalog().filter((p) => p.client === 'claude').map((p) => p.provider);
-  assert.deepEqual(providers, ['native', 'alibaba-token-plan', 'kimi-code', 'zai', 'openrouter', 'ollama-cloud', 'bedrock', 'vertex', 'foundry', 'ollama', 'custom']);
+  assert.deepEqual(providers, ['native', 'alibaba-token-plan', 'kimi-code', 'zai', 'opencode-go', 'openrouter', 'ollama-cloud', 'bedrock', 'vertex', 'foundry', 'ollama', 'custom']);
 });
 
 test('Fetta A: niente prefisso "Pi · " nelle label; 6 provider Pi restano non-core', () => {
