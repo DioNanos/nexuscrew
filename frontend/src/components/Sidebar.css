@@ -175,6 +175,7 @@
 }
 .nc-pin:hover { filter: brightness(1.25); }
 .nc-pin.on { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.08); }
+.nc-pin.live { color: #ff5a5a; border-color: rgba(255,90,90,0.6); background: rgba(255,90,90,0.12); }
 .nc-technical {
   flex: 0 0 auto; width: 28px; height: 28px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { t, LANGUAGES } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { pinRank, cmpRank } from '../lib/pins.js';
+import { hostRenderState, hostNextAction } from '../lib/host-designation.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
@@ -28,6 +29,7 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 export default function Sidebar({
   sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onBoot, onNodePower, onKill, onVisibility, onNew,
   onNodeRename, onSettings, onBootError, localNodeId, fleetCapabilities = [], bootSettlement = null,
+  hostCell = null, onDesignateCell, onClearHostCell,
   onBootSettlementApplied, onOpenVlSession,
   width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
@@ -38,6 +40,19 @@ export default function Sidebar({
   const {
     groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
   } = useNodePreferences();
+  // Ciclo stellina cella locale: none -> favorite (pin) -> live (designate) ->
+  // none (clear server + remove pin). API-first: il pin si rimuove SOLO a clear
+  // riuscito, mai prima della risposta del server (nessun ottimismo locale). Le
+  // celle remote e le sessioni restano su togglePin (non sono mai host del nodo).
+  function handleLocalStar(item, c, state) {
+    const action = hostNextAction(state);
+    if (action === 'addPin') { togglePin(item.key); return; }
+    if (action === 'designate') { if (onDesignateCell) onDesignateCell(c.cell); return; }
+    if (action === 'clearAndUnpin') {
+      if (!onClearHostCell) return;
+      Promise.resolve(onClearHostCell()).then((ok) => { if (ok) togglePin(item.key); });
+    }
+  }
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
   const byName = new Map((sessions || []).map((s) => [s.name, s]));
   // Ordinamento: pinnate in cima (ordine di pin), poi attivita' recente,
@@ -307,6 +322,7 @@ export default function Sidebar({
         <div className="nc-side-group">
           {localItems.map((item) => item.type === 'cell' ? (() => {
             const c = item.value;
+            const starState = hostRenderState({ hostCell, pins, item });
             const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
             const title = c.degraded
               ? t('cell-degraded')
@@ -337,10 +353,10 @@ export default function Sidebar({
                   <small title={item.subtitle}>{item.subtitle}</small>
                 </span>
                 <button
-                  className={`nc-pin${pins.includes(item.key) ? ' on' : ''}`}
-                  title={t('pin')}
-                  onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}
-                >{pins.includes(item.key) ? '★' : '☆'}</button>
+                  className={`nc-pin${starState === 'live' ? ' live' : starState === 'favorite' ? ' on' : ''}`}
+                  title={starState === 'live' ? 'live host' : t('pin')}
+                  onClick={(e) => { e.stopPropagation(); handleLocalStar(item, c, starState); }}
+                >{starState === 'none' ? '☆' : '★'}</button>
                 {onBoot && fleetCapabilities.includes('boot') && bootButton(c)}
                 <button
                   className={`nc-power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
