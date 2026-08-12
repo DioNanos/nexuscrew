@@ -3,6 +3,7 @@ import { t, LANGUAGES } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { pinRank, cmpRank } from '../lib/pins.js';
 import { hostRenderState, hostNextAction } from '../lib/host-designation.js';
+import PinPersistBanner from './PinPersistBanner.jsx';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
@@ -35,7 +36,7 @@ export default function Sidebar({
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   const {
-    pins, orders, togglePin, removePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
+    pins, orders, togglePin, removePin, pinError, retryPinPersist, clearPinError, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
   const {
     groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
@@ -54,11 +55,9 @@ export default function Sidebar({
       // locale, un toggle aggiungerebbe il pin producendo "favorite". removePin
       // ritorna l'esito della persistenza: se fallisce lo segnaliamo (ritentabile);
       // lo stato UI e' gia' "none" perche' hostCell e' stato chiarito dal server.
-      Promise.resolve(onClearHostCell()).then((ok) => {
-        if (!ok) return;
-        const err = removePin(item.key);
-        if (err) console.warn('live host clear: persistenza pin fallita (ritentabile)', err.message || err);
-      });
+      // removePin legge localStorage al momento dell'applicazione (no lost update)
+      // e segnala un fallimento di persistenza nello stato (banner ritentabile).
+      Promise.resolve(onClearHostCell()).then((ok) => { if (ok) removePin(item.key); });
     }
   }
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
@@ -317,6 +316,8 @@ export default function Sidebar({
       <button className="nc-side-gear" onClick={() => onSettings && onSettings('nodes', false)} title={t('settings')}>
         <Icon name="gear" size={15} /> {t('settings')}
       </button>
+
+      <PinPersistBanner pinError={pinError} onRetry={retryPinPersist} onDismiss={clearPinError} />
 
       <div className="nc-side-scroll">
       <PositionHeader

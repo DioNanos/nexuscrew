@@ -12,6 +12,7 @@ import RosterHandle from './RosterHandle.jsx';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
 import { hostRenderState, hostNextAction } from '../lib/host-designation.js';
+import PinPersistBanner from './PinPersistBanner.jsx';
 import {
   rel, nodeStateLabel, healthDot, healthTitle, buildLocalRoster, buildRemoteRoster,
 } from '../lib/roster-view-model.js';
@@ -44,7 +45,7 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
   const [powerCell, setPowerCell] = useState(null);
   const [nodeBusy, setNodeBusy] = useState(null);
   const {
-    pins, orders, togglePin, removePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
+    pins, orders, togglePin, removePin, pinError, retryPinPersist, clearPinError, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
   // Ciclo stellina (parita' desktop): none -> favorite -> live -> none. Solo le
   // celle LOCALI possono essere host del nodo; remote/sessioni restano su togglePin.
@@ -55,11 +56,9 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
     if (action === 'designate') { if (onDesignateCell) onDesignateCell(c.cell); return; }
     if (action === 'clearAndUnpin') {
       if (!onClearHostCell) return;
-      Promise.resolve(onClearHostCell()).then((ok) => {
-        if (!ok) return;
-        const err = removePin(item.key);
-        if (err) console.warn('live host clear: persistenza pin fallita (ritentabile)', err.message || err);
-      });
+      // removePin legge localStorage al momento dell'applicazione (no lost update)
+      // e segnala un fallimento di persistenza nello stato (banner ritentabile).
+      Promise.resolve(onClearHostCell()).then((ok) => { if (ok) removePin(item.key); });
     }
   }
   const {
@@ -351,6 +350,7 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
       </header>
 
       <main className="nc-home-scroll">
+      <PinPersistBanner pinError={pinError} onRetry={retryPinPersist} onDismiss={clearPinError} />
       {rosterTotal > 8 && (
         <input
           className="nc-filter" type="search" placeholder={t('filter-placeholder')} aria-label={t('filter-placeholder')}
