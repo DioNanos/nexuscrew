@@ -1,83 +1,96 @@
-import { describe, it, expect } from 'vitest';
-import {
-  hostRenderState, hostNextAction, localCellId,
-  HOST_NONE, HOST_FAVORITE, HOST_LIVE,
-} from './host-designation.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { hostRenderState, hostNextAction, HOST_NONE, HOST_FAVORITE, HOST_LIVE } from './host-designation.js';
+import { buildLocalRoster } from './roster-view-model.js';
 
-const item = (key) => ({ key });
+// FIX 1 (vincolo non negoziabile): la fixture e' l'OUTPUT VERO di buildLocalRoster,
+// non un letterale scritto a mano. E' la fixture inventata che ha nascosto il
+// difetto (item.key non ha forma "local:..."). Questo test attraversa il confine
+// reale tra il modello del roster e la logica del ciclo.
+const CELLS = [
+  { cell: 'cloud-Dev', tmuxSession: 'cloud-Dev', tmux: true },
+  { cell: 'cloud-Off', tmuxSession: 'cloud-Off', tmux: false },
+];
 
-describe('localCellId — solo le celle locali hanno un host designabile', () => {
-  it("estrae il cellId dalla chiave 'local:<cell>'", () => {
-    expect(localCellId(item('local:cloud-Dev'))).toBe('cloud-Dev');
-  });
-  it('ritorna null per celle remote (relay:...)', () => {
-    expect(localCellId(item('relay:remote-shell'))).toBeNull();
-  });
-  it('ritorna null per sessioni tmux locali non-cella o chiavi senza prefisso', () => {
-    expect(localCellId(item('local:'))).toBeNull();
-    expect(localCellId(item('session-x'))).toBeNull();
-    expect(localCellId(null)).toBeNull();
-  });
-});
+function localItems() {
+  // byName vuoto: basta per ottenere item con value/label/key reali.
+  return buildLocalRoster(CELLS, [], new Map());
+}
 
-describe('hostRenderState — precedenza live > favorite > none', () => {
-  it('none quando non e\' host e non e\' pinnata', () => {
-    expect(hostRenderState({ hostCell: null, pins: [], item: item('local:cloud-Dev') })).toBe(HOST_NONE);
+describe('hostRenderState — identita\' da item.value.cell (non da item.key)', () => {
+  it('la chiave reale e\' il tmuxSession nudo, NON la forma "local:" (regression del difetto)', () => {
+    const items = localItems();
+    const dev = items.find((i) => i.value.cell === 'cloud-Dev');
+    expect(dev).toBeTruthy();
+    expect(dev.key).toBe('cloud-Dev'); // positionKey([], tmuxSession) = id nudo
+    expect(dev.key.startsWith('local:')).toBe(false); // la forma morta non c'e'
   });
-  it('favorite quando e\' nel pin locale e non e\' host', () => {
-    expect(hostRenderState({ hostCell: 'cloud-Sys', pins: ['local:cloud-Dev'], item: item('local:cloud-Dev') })).toBe(HOST_FAVORITE);
+
+  it('live quando hostCell === item.value.cell (anche senza pin locale)', () => {
+    const dev = localItems().find((i) => i.value.cell === 'cloud-Dev');
+    expect(hostRenderState({ hostCell: 'cloud-Dev', pins: [], item: dev })).toBe(HOST_LIVE);
   });
-  it('live quando hostCell === cellId (rossa ANCHE senza pin locale)', () => {
-    expect(hostRenderState({ hostCell: 'cloud-Dev', pins: [], item: item('local:cloud-Dev') })).toBe(HOST_LIVE);
+
+  it('favorite quando nel pin locale (item.key = tmuxSession) e non host', () => {
+    const dev = localItems().find((i) => i.value.cell === 'cloud-Dev');
+    expect(hostRenderState({ hostCell: 'cloud-Sys', pins: ['cloud-Dev'], item: dev })).toBe(HOST_FAVORITE);
   });
+
   it('live vince su favorite se entrambi veri', () => {
-    expect(hostRenderState({ hostCell: 'cloud-Dev', pins: ['local:cloud-Dev'], item: item('local:cloud-Dev') })).toBe(HOST_LIVE);
+    const dev = localItems().find((i) => i.value.cell === 'cloud-Dev');
+    expect(hostRenderState({ hostCell: 'cloud-Dev', pins: ['cloud-Dev'], item: dev })).toBe(HOST_LIVE);
   });
-  it('una cella remota non e\' mai live (federazione default-deny)', () => {
-    expect(hostRenderState({ hostCell: 'remote-shell', pins: ['relay:remote-shell'], item: item('relay:remote-shell') })).toBe(HOST_FAVORITE);
-    expect(hostRenderState({ hostCell: 'remote-shell', pins: [], item: item('relay:remote-shell') })).toBe(HOST_NONE);
+
+  it('none quando non host e non pinnata', () => {
+    const dev = localItems().find((i) => i.value.cell === 'cloud-Dev');
+    expect(hostRenderState({ hostCell: null, pins: [], item: dev })).toBe(HOST_NONE);
+  });
+
+  it('una sessione tmux (niente value.cell) non e\' mai host', () => {
+    const session = buildLocalRoster([], [{ name: 'misc', activity: 0 }], new Map())
+      .find((i) => i.type === 'session');
+    expect(hostRenderState({ hostCell: 'misc', pins: [], item: session })).toBe(HOST_NONE);
   });
 });
 
 describe('hostNextAction — ciclo a 3 stati, nessun quarto', () => {
-  it('none -> addPin (locale, diventa favorite)', () => {
+  it('none -> addPin, favorite -> designate, live -> clearAndUnpin', () => {
     expect(hostNextAction(HOST_NONE)).toBe('addPin');
-  });
-  it('favorite -> designate (API, diventa live)', () => {
     expect(hostNextAction(HOST_FAVORITE)).toBe('designate');
-  });
-  it('live -> clearAndUnpin (API clear + remove pin, torna none)', () => {
     expect(hostNextAction(HOST_LIVE)).toBe('clearAndUnpin');
   });
 });
 
-describe('ciclo end-to-end tramite renderState + nextAction', () => {
-  // Simula i 3 clic partendo da none, riflesso della risposta server (API-first):
-  // nessuno stato viene assunto prima della transazione server.
-  it('none -> favorite -> live -> none (3 clic, poi ricomincia)', () => {
-    const key = item('local:cloud-Dev');
-    // Clic 1: addPin -> la UI diventa favorite (pin locale aggiunto).
-    let pins = [];
-    let hostCell = null;
-    expect(hostNextAction(hostRenderState({ hostCell, pins, item: key }))).toBe('addPin');
-    pins = ['local:cloud-Dev'];
-    // Clic 2: favorite -> designate. La UI NON assume live prima della response:
-    // hostCell resta null finche\' il server non risponde. Qui simuliamo la
-    // response OK che riflette hostCell='cloud-Dev'.
-    expect(hostNextAction(hostRenderState({ hostCell, pins, item: key }))).toBe('designate');
-    hostCell = 'cloud-Dev'; // riflesso della risposta server (non ottimismo)
-    expect(hostRenderState({ hostCell, pins, item: key })).toBe(HOST_LIVE);
-    // Clic 3: live -> clearAndUnpin.
-    expect(hostNextAction(hostRenderState({ hostCell, pins, item: key }))).toBe('clearAndUnpin');
-    hostCell = null; pins = []; // clear server OK + remove pin
-    expect(hostRenderState({ hostCell, pins, item: key })).toBe(HOST_NONE);
+describe('ciclo end-to-end su item reale (desktop e mobile usano lo stesso modello)', () => {
+  it('3 clic: none -> favorite -> live -> none, riflesso della risposta server', () => {
+    const dev = localItems().find((i) => i.value.cell === 'cloud-Dev');
+    let pins = []; let hostCell = null;
+
+    // clic 1: addPin -> favorite
+    expect(hostNextAction(hostRenderState({ hostCell, pins, item: dev }))).toBe('addPin');
+    pins = [dev.key];
+    expect(hostRenderState({ hostCell, pins, item: dev })).toBe(HOST_FAVORITE);
+
+    // clic 2: designate; hostCell cambia solo con la risposta server (no ottimismo)
+    expect(hostNextAction(hostRenderState({ hostCell, pins, item: dev }))).toBe('designate');
+    hostCell = dev.value.cell; // riflesso della risposta
+    expect(hostRenderState({ hostCell, pins, item: dev })).toBe(HOST_LIVE);
+
+    // clic 3: clearAndUnpin
+    expect(hostNextAction(hostRenderState({ hostCell, pins, item: dev }))).toBe('clearAndUnpin');
+    hostCell = null; pins = [];
+    expect(hostRenderState({ hostCell, pins, item: dev })).toBe(HOST_NONE);
   });
 
-  it('rollback: se designate fallisce, hostCell resta null (nessun ottimismo pre-response)', () => {
-    const key = item('local:cloud-Dev');
-    const pins = ['local:cloud-Dev'];
-    // favorite -> designate; la transazione server FALLISCE: hostCell non cambia.
-    expect(hostNextAction(hostRenderState({ hostCell: null, pins, item: key }))).toBe('designate');
-    expect(hostRenderState({ hostCell: null, pins, item: key })).toBe(HOST_FAVORITE); // resta favorite
+  it('rollback: designate fallisce -> hostCell resta null, la cella resta favorite', () => {
+    const dev = localItems().find((i) => i.value.cell === 'cloud-Dev');
+    const pins = [dev.key];
+    expect(hostNextAction(hostRenderState({ hostCell: null, pins, item: dev }))).toBe('designate');
+    expect(hostRenderState({ hostCell: null, pins, item: dev })).toBe(HOST_FAVORITE);
+  });
+
+  it('regression auditor: clic 2 accende davvero il rosso (non resta favorite)', () => {
+    // era il difetto misurato: hostCell registrato ma stellina non aggiornata.
+    const dev = localItems().find((i) => i.value.cell === 'cloud-Dev');
+    expect(hostRenderState({ hostCell: 'cloud-Dev', pins: [dev.key], item: dev })).toBe(HOST_LIVE);
   });
 });

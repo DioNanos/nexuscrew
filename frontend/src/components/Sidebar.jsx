@@ -35,7 +35,7 @@ export default function Sidebar({
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   const {
-    pins, orders, togglePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
+    pins, orders, togglePin, removePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
   const {
     groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
@@ -50,7 +50,15 @@ export default function Sidebar({
     if (action === 'designate') { if (onDesignateCell) onDesignateCell(c.cell); return; }
     if (action === 'clearAndUnpin') {
       if (!onClearHostCell) return;
-      Promise.resolve(onClearHostCell()).then((ok) => { if (ok) togglePin(item.key); });
+      // Rimozione idempotente (NON toggle): su uno stato server-owned senza pin
+      // locale, un toggle aggiungerebbe il pin producendo "favorite". removePin
+      // ritorna l'esito della persistenza: se fallisce lo segnaliamo (ritentabile);
+      // lo stato UI e' gia' "none" perche' hostCell e' stato chiarito dal server.
+      Promise.resolve(onClearHostCell()).then((ok) => {
+        if (!ok) return;
+        const err = removePin(item.key);
+        if (err) console.warn('live host clear: persistenza pin fallita (ritentabile)', err.message || err);
+      });
     }
   }
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));

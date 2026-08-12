@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { loadPins, movePinIn, togglePinIn } from '../lib/pins.js';
+import { loadPins, movePinIn, togglePinIn, removePinIn } from '../lib/pins.js';
 import {
   loadSidebarOrders, loadSidebarViews, moveSidebarItem, saveSidebarOrders,
   saveSidebarViews, sidebarItems, sidebarOrder, sidebarView,
@@ -20,7 +20,16 @@ export function useRosterPreferences() {
   const [views, setViews] = useState(loadSidebarViews);
   const [orders, setOrders] = useState(loadSidebarOrders);
 
-  const togglePin = (key) => setPins((p) => togglePinIn(p, key));
+  const togglePin = (key) => setPins((p) => togglePinIn(p, key).next);
+  // removePin e' idempotente (non e' un toggle): rimuove solo se presente.
+  // Ritorna l'esito della persistenza (null=ok, Error=fallita) cosi' il
+  // chiamante puo' segnalarlo e ritentarlo: un localStorage fallito dopo un
+  // clear server riuscito non deve essere silenzioso.
+  const removePin = (key) => {
+    const r = removePinIn(pins, key);
+    setPins(r.next);
+    return r.error;
+  };
   const viewFor = (key) => sidebarView(views, key);
   const updateView = (key, patch) => setViews((before) => {
     const next = { ...before, [key]: { ...sidebarView(before, key), ...patch } };
@@ -55,5 +64,5 @@ export function useRosterPreferences() {
     if (at >= 0 && target) moveRoster(position, source, target, rawItems);
   }
 
-  return { pins, views, orders, togglePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster };
+  return { pins, views, orders, togglePin, removePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster };
 }

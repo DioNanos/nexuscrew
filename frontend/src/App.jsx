@@ -365,13 +365,22 @@ export default function App() {
       setCells(fs.available ? (fs.cells || []) : []);
       setFleetCapabilities(fs.available ? (fs.capabilities || []) : []);
     } catch (_) { setCells([]); setFleetCapabilities([]); }
-    // hostCell e' server-owned: best-effort, nessun retry (inerzia Noop). Un server
-    // senza la route (versione vecchia) o down lascia intatto lo stato precedente.
-    try {
-      const h = await getLiveHost(token);
-      setHostCell(h && typeof h.hostCell === 'string' ? h.hostCell : null);
-      setHostRevision(Number.isInteger(h && h.revision) ? h.revision : 0);
-    } catch (_) { /* best-effort */ }
+  }, [token]);
+  // hostCell e' server-owned e vale per DESKTOP e MOBILE: polling separato dal
+  // poll sessions/fleet (desktop-only), best-effort, nessun retry (inerzia).
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const h = await getLiveHost(token);
+        if (cancelled) return;
+        setHostCell(h && typeof h.hostCell === 'string' ? h.hostCell : null);
+        setHostRevision(Number.isInteger(h && h.revision) ? h.revision : 0);
+      } catch (_) { /* best-effort: resta lo stato precedente */ }
+    };
+    load();
+    const id = setInterval(load, 4000);
+    return () => { cancelled = true; clearInterval(id); };
   }, [token]);
 
   // Polling sessions + flotta (solo desktop: su mobile pensa SessionList).
@@ -578,7 +587,8 @@ export default function App() {
     if (!session) {
       return (
         <>
-          <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession} />
+          <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession}
+            hostCell={hostCell} onDesignateCell={designateCellHost} onClearHostCell={clearCellHost} />
           {settingsOverlays}
         </>
       );
