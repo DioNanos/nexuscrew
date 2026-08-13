@@ -895,3 +895,86 @@ test('P1-3: onLease con attachInitial=true NON chiude la socket (lease vivo, hap
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
+
+// P1-4 (reaudit dd38c83): forma ≠ semantica. loadPersisted accettava qualunque
+// string come launchEpoch/capability e qualunque intero come graceDeadline. Il
+// runtime produce solo hex di lunghezza fissa (16/64 char) e bound entro now+GRACE_MS.
+// Fix: loadPersisted valida il formato (regex hex) e la plausibilita' del bound.
+// Fail-closed: entry con valori non producibili = saltata (nessun endpoint, nessun lease).
+
+// Helper: scrive un cell-leases.json a mano
+function writeLeaseStore(home, obj) {
+  const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(stateFile, JSON.stringify(obj), { mode: 0o600 });
+  return stateFile;
+}
+
+test('P1-4: identity di un byte (launchEpoch="x") rifiutata — entry saltata, nessun endpoint', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1_4id-'));
+  const clock = { t: 10_000 };
+  let mgr = null;
+  try {
+    writeLeaseStore(home, { Dev: { launchEpoch: 'x', capability: 'x', graceDeadline: 10_000 + L.GRACE_MS } });
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    await mgr.boot();
+    // La entry con identity di 1 byte NON deve essere caricata: nessun endpoint aperto
+    const stablePath = path.join(home, '.nexuscrew', 'run', 'cell-Dev.sock');
+    assert.equal(fs.existsSync(stablePath), false, 'P1-4: identity di 1 byte -> entry saltata, endpoint NON aperto');
+  } finally {
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('P1-4: graceDeadline = MAX_SAFE_INTEGER rifiutata (bound assurdo -> scaduto -> deny)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1_4gd-'));
+  const clock = { t: 10_000 };
+  let mgr = null; let rc = null;
+  try {
+    const crypto = require('node:crypto');
+    const ep = crypto.randomBytes(8).toString('hex');
+    const cap = crypto.randomBytes(32).toString('hex');
+    writeLeaseStore(home, { Dev: { launchEpoch: ep, capability: cap, graceDeadline: Number.MAX_SAFE_INTEGER } });
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    await mgr.boot();
+    // MAX_SAFE_INTEGER non e' producibile da now()+GRACE_MS: trattato come scaduto (0)
+    const stablePath = path.join(home, '.nexuscrew', 'run', 'cell-Dev.sock');
+    rc = net.createConnection(stablePath, () => {
+      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: ep, generation: 0, capability: cap })}\n`);
+    });
+    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(reply.type, 'deny', 'P1-4: graceDeadline assurdo -> deny (no lease illimitato)');
+    rc.destroy();
+  } finally {
+    try { if (rc) rc.destroy(); } catch (_) {}
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('P1-4: identity con formato valido (hex 16/64) accettata normalmente', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1_4ok-'));
+  const clock = { t: 10_000 };
+  let mgr = null; let rc = null;
+  try {
+    const crypto = require('node:crypto');
+    const ep = crypto.randomBytes(8).toString('hex');
+    const cap = crypto.randomBytes(32).toString('hex');
+    writeLeaseStore(home, { Dev: { launchEpoch: ep, capability: cap, graceDeadline: 10_000 + L.GRACE_MS } });
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    await mgr.boot();
+    const stablePath = path.join(home, '.nexuscrew', 'run', 'cell-Dev.sock');
+    assert.equal(fs.existsSync(stablePath), true, 'identity valida -> endpoint aperto');
+    rc = net.createConnection(stablePath, () => {
+      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: ep, generation: 0, capability: cap })}\n`);
+    });
+    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(reply.type, 'lease', 'identity valida entro bound -> lease (recovery normale)');
+    rc.destroy();
+  } finally {
+    try { if (rc) rc.destroy(); } catch (_) {}
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
