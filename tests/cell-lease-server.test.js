@@ -635,3 +635,40 @@ test('P1-3 fixture normativa, negativo: bound corroto (non-intero) partito dalla
     rc.destroy();
   } finally { f.cleanup(); }
 });
+
+// P1-1b (audit 2a05db2): la guardia era a livello I/O; il difetto e' riemerso a livello
+// FORMA DEL DATO. Una root JSON valida ma non-oggetto ([], null, numero, stringa) non e'
+// uno store celle: readPersisted deve trattarla come illeggibile (propaga), non come vuoto.
+test('P1-1b schema: root JSON valida ma non-oggetto -> refresh NESSUN ACK e store non riscritto', async () => {
+  const badRoots = ['[]', 'null', '42', '"oops"'];
+  for (const badRoot of badRoots) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1-schema-'));
+    const clock = { t: 10_000 };
+    const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
+    let mgr = null; let cD = null; let cR = null;
+    try {
+      mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+      await mgr.track('Dev'); await mgr.track('Research');
+      const D = await pair(); const R = await pair();
+      cD = D.client; cR = R.client;
+      mgr.attachInitial('Dev', D.serverSide, { generation: 0 });
+      mgr.attachInitial('Research', R.serverSide, { generation: 0 });
+      // sovrascrivi lo store con una root valida-JSON ma non-oggetto
+      fs.writeFileSync(stateFile, badRoot, { mode: 0o600 });
+      clock.t = 30_000;
+      cD.write(`${JSON.stringify({ type: 'refresh' })}\n`);
+      const probe = await Promise.race([
+        recv(cD, (m) => m.type === 'ack', 250).then(() => 'ack').catch(() => 'noack'),
+        new Promise((r) => setTimeout(() => r('noack'), 300)),
+      ]);
+      const after = fs.readFileSync(stateFile, 'utf8');
+      assert.equal(probe, 'noack', `P1-1b: root '${badRoot}' non e' uno store -> nessun ACK`);
+      assert.equal(after, badRoot, `P1-1b: root '${badRoot}' store non riscritto (nessun finto successo)`);
+    } finally {
+      try { if (cD) cD.destroy(); } catch (_) {}
+      try { if (cR) cR.destroy(); } catch (_) {}
+      try { if (mgr) mgr.close(); } catch (_) {}
+      try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+    }
+  }
+});
