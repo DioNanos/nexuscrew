@@ -449,3 +449,56 @@ test('B3/GC1.6: graceDeadline illeggibile/non-intero su disco = grace gia scadut
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
+
+test('B3/GC1.2: refresh rinfresca il bound durevole su disco (now+GRACE_MS)', async () => {
+  // GC1.1/GC1.2: il refresh rinfresca il bound (oggi cell-lease-server.js refresh non
+  // tocca il disco) e lo persiste PRIMA dell'ACK. Su c438a55 il refresh non persiste ->
+  // bound non cambia (rossa); con GC1.2 -> bound = now+GRACE_MS.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-refresh-'));
+  const clock = { t: 10_000 };
+  let mgr = null; let client = null;
+  try {
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    await mgr.track('Dev');
+    const { serverSide, client: c } = await pair();
+    client = c;
+    mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
+    const boundBefore = JSON.parse(fs.readFileSync(stateFile, 'utf8')).Dev.graceDeadline;
+    clock.t = 30_000;
+    client.write(`${JSON.stringify({ type: 'refresh' })}\n`);
+    const ack = await recv(client, (m) => m.type === 'ack');
+    assert.equal(ack.type, 'ack');
+    const boundAfter = JSON.parse(fs.readFileSync(stateFile, 'utf8')).Dev.graceDeadline;
+    assert.equal(boundAfter, 30_000 + L.GRACE_MS, 'GC1.2: refresh rinfresca il bound a now+GRACE_MS');
+    assert.notEqual(boundAfter, boundBefore, 'il bound e cambiato dopo il refresh');
+  } finally {
+    try { if (client) client.destroy(); } catch (_) {}
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('B3/GC1.2: persistenza fallita nel refresh = nessun ACK (errore non ingoiato)', async () => {
+  // GC1.2: se writePersisted non committa, il refresh NON e' un successo: nessun ACK,
+  // nessun proof (proof = 2b). seam fs con writeFileSync che throwa. Su c438a55 il
+  // refresh emette ack comunque (oggi writePersisted ingoia) -> rossa; con GC1.2 no ACK.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-noack-'));
+  const clock = { t: 10_000 };
+  const fakeFs = { ...fs, writeFileSync: () => { throw new Error('disk full'); } };
+  let mgr = null; let client = null;
+  try {
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t, fs: fakeFs });
+    await mgr.track('Dev');
+    const { serverSide, client: c } = await pair();
+    client = c;
+    mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    clock.t = 30_000;
+    client.write(`${JSON.stringify({ type: 'refresh' })}\n`);
+    await assert.rejects(() => recv(client, (m) => m.type === 'ack', 250), /recv timeout/, 'GC1.2: nessun ACK quando la persistenza del bound fallisce');
+  } finally {
+    try { if (client) client.destroy(); } catch (_) {}
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
