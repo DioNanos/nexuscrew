@@ -9,6 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
+const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const {
   createBuiltinFleet, composeLaunchArgv, minimalEnv, promptCharsOk, redactSecrets,
   sanitizeEarlyDiagnostic, backfillShellEngine, alternateScreenArgs,
@@ -1089,6 +1090,52 @@ test('B4: createBuiltinFleet con fleet.json invalido non lascia endpoint lease v
     // B4: un reconnect verso l endpoint NON deve ottenere lease con Fleet unavailable.
     const leaseMsg = await tryLeaseReconnect(stablePath, launchEpoch, capability);
     assert.equal(leaseMsg, null, 'nessun lease ottenuto con Fleet unavailable (reconnect deny/refused)');
+  } finally {
+    if (typeof fleet.close === 'function') { try { await fleet.close(); } catch (_) {} }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('P1-2: gate availability post-validazione (migrazione tmux fallita) NON lascia endpoint lease vivo', async () => {
+  // P1-2 (audit 3405df0): il gate B4 copriva solo loadDefinitions. Con fleet.json
+  // VALIDO ma migrazione tmux fallita DOPO leaseManager.boot(), createBuiltinFleet
+  // ritornava off ma l'endpoint restava vivo e close() era no-op -> reconnect otteneva
+  // lease. La sonda ATTRAVERSA createBuiltinFleet: cella id 'Dev.Work' (candidato
+  // legacy per il '.') + tmux list-sessions che fallisce -> migrazione throw
+  // TMUX_MIGRATION_LIST_FAILED. Identity prodotta dal percorso (track), non a mano.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbi-p1b4-'));
+  const home = path.join(root, 'home'); fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  const cwd = path.join(home, 'Dev'); fs.mkdirSync(cwd);
+  fs.mkdirSync(path.join(home, 'bin'));
+  const command = path.join(home, 'bin', 'claude'); fs.writeFileSync(command, '#!/bin/sh\necho hi\n'); fs.chmodSync(command, 0o755);
+  const defsPath = path.join(root, 'fleet.json');
+  atomicWrite(defsPath, {
+    schemaVersion: 1,
+    engines: [{ id: 'claude', label: 'Claude', rc: true, command, args: ['--x'], env: {}, promptMode: 'flag', promptFlag: '--p' }],
+    cells: [{ id: 'Dev.Work', tmuxSession: 'workbuild', cwd, engine: 'claude', boot: true, prompt: 'you are dev' }],
+  });
+  // tmux che fallisce list-sessions (TMUX_MIGRATION_LIST_FAILED, NON "no server").
+  const tmuxBin = path.join(root, 'fake-tmux-fail.sh');
+  fs.writeFileSync(tmuxBin, '#!/bin/sh\ncmd="${1:-}"; [ $# -gt 0 ] && shift\ncase "$cmd" in\n  list-sessions) echo "permission denied (tmux-socket)" >&2; exit 1 ;;\n  *) exit 0 ;;\nesac\n');
+  fs.chmodSync(tmuxBin, 0o755);
+  // Identity dal PERCORSO (track), non scritta a mano.
+  const runDir = path.join(home, '.nexuscrew', 'run');
+  fs.mkdirSync(path.join(home, '.nexuscrew'), { recursive: true, mode: 0o700 }); fs.chmodSync(path.join(home, '.nexuscrew'), 0o700);
+  fs.mkdirSync(runDir, { recursive: true, mode: 0o700 }); fs.chmodSync(runDir, 0o700);
+  const setup = createLeaseManager({ home, log: () => {} });
+  await setup.track('Dev.Work'); setup.close();
+  const stablePath = path.join(runDir, 'cell-Dev.Work.sock');
+  const leases = JSON.parse(fs.readFileSync(path.join(runDir, 'cell-leases.json'), 'utf8'));
+  const launchEpoch = leases['Dev.Work'] && leases['Dev.Work'].launchEpoch;
+  const capability = leases['Dev.Work'] && leases['Dev.Work'].capability;
+
+  const fleet = await createBuiltinFleet({ home, fleetDefsPath: defsPath, tmuxBin, cellLeaseEnabled: true });
+  try {
+    assert.equal(fleet.available, false, 'migrazione fallita -> Fleet unavailable (blocked)');
+    assert.equal(fs.existsSync(stablePath), false, 'P1-2: endpoint cell-Dev.Work.sock NON vivo con Fleet unavailable da gate post-validazione');
+    assert.equal(typeof fleet.close, 'function', 'close() esposto');
+    const leaseMsg = await tryLeaseReconnect(stablePath, launchEpoch, capability);
+    assert.equal(leaseMsg, null, 'P1-2: nessun lease ottenuto (migrazione fallita, endpoint mai aperto)');
   } finally {
     if (typeof fleet.close === 'function') { try { await fleet.close(); } catch (_) {} }
     fs.rmSync(root, { recursive: true, force: true });
