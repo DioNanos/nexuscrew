@@ -502,3 +502,50 @@ test('B3/GC1.2: persistenza fallita nel refresh = nessun ACK (errore non ingoiat
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
+
+test('P1-1: errore di lettura dello store al refresh NON cancella le altre celle (e non ACK)', async () => {
+  // P1-1 (audit 3405df0): readPersisted ingoia qualunque errore in {} -> persistEntry
+  // RMW riscrive lo store con solo la cella corrente, cancellando le altre. Qui due
+  // celle (Dev+Research) gia' persistite; un EIO sintetico sulla read al refresh di Dev.
+  // Su 3405df0: Research sparisce + ACK. Dopo fix: Research resta + nessun ACK.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1-readfail-'));
+  const clock = { t: 10_000 };
+  const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
+  let readFail = false;
+  const fakeFs = {
+    ...fs,
+    readFileSync(p, ...rest) {
+      if (readFail && p === stateFile) { const e = new Error('EIO'); e.code = 'EIO'; throw e; }
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  let mgr = null; let cD = null; let cR = null;
+  try {
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t, fs: fakeFs });
+    await mgr.track('Dev'); await mgr.track('Research');
+    const D = await pair(); const R = await pair();
+    cD = D.client; cR = R.client;
+    mgr.attachInitial('Dev', D.serverSide, { generation: 0 });
+    mgr.attachInitial('Research', R.serverSide, { generation: 0 });
+    const before = Object.keys(JSON.parse(fs.readFileSync(stateFile, 'utf8'))).sort();
+    assert.deepEqual(before, ['Dev', 'Research'], 'setup: entrambe le celle persistite');
+    // ora la lettura dello store fallisce (EIO)
+    readFail = true;
+    clock.t = 30_000;
+    cD.write(`${JSON.stringify({ type: 'refresh' })}\n`);
+    const probe = await Promise.race([
+      recv(cD, (m) => m.type === 'ack', 250).then(() => 'ack').catch(() => 'noack'),
+      new Promise((r) => setTimeout(() => r('noack'), 300)),
+    ]);
+    readFail = false;
+    const after = Object.keys(JSON.parse(fs.readFileSync(stateFile, 'utf8'))).sort();
+    assert.deepEqual(after, ['Dev', 'Research'], 'P1-1: Research NON cancellata da un errore di lettura dello store');
+    assert.equal(probe, 'noack', 'P1-1: nessun ACK quando la lettura dello store fallisce');
+  } finally {
+    readFail = false;
+    try { if (cD) cD.destroy(); } catch (_) {}
+    try { if (cR) cR.destroy(); } catch (_) {}
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
