@@ -139,7 +139,7 @@ test('reconnect entro grace -> lease NUOVO (leaseId diverso), stessa identita, l
   } finally { mgr.close(); }
 });
 
-test('R3.3.4: reconnect con generation all indietro (stale) -> deny; generation non-decreasing', async () => {
+test('R3.3.4: reconnect accetta SOLO la transizione legittima (generation === current o current+1); salto avanti arbitrario o all indietro -> deny', async () => {
   const { clock, mgr } = setup();
   try {
     const info = await mgr.track('Dev');
@@ -148,23 +148,57 @@ test('R3.3.4: reconnect con generation all indietro (stale) -> deny; generation 
     clock.t = 5_000;
     client.end();
     await new Promise((r) => setTimeout(r, 30));
-    // primo reconnect che AVANZA la generation a 5: accettato (lease nuovo, gen 5)
+    // reconnect che AVANZA la generation di ESATTAMENTE 1 (un restart del
+    // supervisore, cell-exec.js:384 `generation += 1`): transizione legittima -> lease.
     clock.t = 30_000;
     const r1 = net.createConnection(info.stablePath, () => {
-      r1.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 5, capability: info.capability })}\n`);
+      r1.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 1, capability: info.capability })}\n`);
     });
     const a1 = await recv(r1, (m) => m.type === 'lease' || m.type === 'deny');
-    assert.equal(a1.type, 'lease', 'avanzamento generation 0->5 accettato');
+    assert.equal(a1.type, 'lease', 'avanzamento legittimo 0->1 (un restart del supervisore) accettato');
     r1.destroy();
-    await new Promise((r) => setTimeout(r, 30)); // EOF -> grace sul lease gen 5
-    // secondo reconnect con generation 2 (all indietro): stale -> deny
+    await new Promise((r) => setTimeout(r, 30)); // EOF -> grace sul lease gen 1
+    // reconnect con generation 99 (salto AVANTI arbitrario, non +1): deny. Il
+    // supervisore onesto non presenterebbe mai 99 partendo da 1 (avanza di 1).
     clock.t = 31_000;
     const r2 = net.createConnection(info.stablePath, () => {
-      r2.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 2, capability: info.capability })}\n`);
+      r2.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 99, capability: info.capability })}\n`);
     });
     const a2 = await recv(r2, (m) => m.type === 'lease' || m.type === 'deny');
-    assert.equal(a2.type, 'deny', 'R3.3.4: generation all indietro (5->2) rifiutata (stale)');
+    assert.equal(a2.type, 'deny', 'R3.3.4: salto avanti arbitrario (1->99) rifiutato (non transizione attesa)');
     r2.destroy();
+    // reconnect con generation 0 (all indietro, stale): deny.
+    clock.t = 32_000;
+    const r3 = net.createConnection(info.stablePath, () => {
+      r3.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
+    });
+    const a3 = await recv(r3, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(a3.type, 'deny', 'R3.3.4: generation all indietro (1->0) rifiutata (stale)');
+    r3.destroy();
+  } finally { mgr.close(); }
+});
+
+test('R3.3.4 regressione auditor: generation 0->99 (salto arbitrario) su lease vivo -> deny', async () => {
+  // Sonda diretta del difetto dell audit (requested=0->99, server_state=live).
+  // Il guard precedente (`incoming >= current`) accettava qualunque salto avanti;
+  // il server deve esigere una transizione verificabile, non solo non-decreasing.
+  const { clock, mgr } = setup();
+  try {
+    const info = await mgr.track('Dev');
+    const { serverSide, client } = await pair();
+    mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    assert.equal(mgr.status('Dev').state, 'live');
+    clock.t = 5_000;
+    client.end();
+    await new Promise((r) => setTimeout(r, 30));
+    // lease in grace (vivo), reconnect con generation 99 (salto arbitrario da 0): deny.
+    clock.t = 30_000;
+    const rc = net.createConnection(info.stablePath, () => {
+      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 99, capability: info.capability })}\n`);
+    });
+    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(reply.type, 'deny', '0->99 e un salto arbitrario, non la transizione attesa -> deny');
+    rc.destroy();
   } finally { mgr.close(); }
 });
 
@@ -240,6 +274,45 @@ test('R3.3.5 post-restart: reconnect oltre la grace rifiutato anche con lease nu
     });
     const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
     assert.equal(reply.type, 'deny', 'R3.3.5: reconnect oltre la grace rifiutato anche post-restart (lease null)');
+    rc.destroy();
+  } finally {
+    try { if (rc) rc.destroy(); } catch (_) {}
+    try { if (pairClient) pairClient.destroy(); } catch (_) {}
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('R3.3.5 post-restart: reconnect ESATTAMENTE alla graceDeadline rifiutato (bound >= , non >)', async () => {
+  // Off-by-one: con entry.lease===null il guard post-restart usava `now > graceDeadline`,
+  // aprendo un lease alla deadline esatta. La transizione pura (cell-lease.js:76) usa `>=`:
+  // alla deadline la grace e' gia scaduta.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-deadline-'));
+  const clock = { t: 10_000 };
+  let mgr = null; let rc = null; let pairClient = null;
+  try {
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    const info = await mgr.track('Dev');
+    const { serverSide, client } = await pair();
+    pairClient = client;
+    mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    // EOF arma la grace: deadline = 5_000 + 60_000 = 65_000, persistita come bound.
+    clock.t = 5_000;
+    client.end();
+    await new Promise((r) => setTimeout(r, 30));
+    pairClient = null;
+    // restart: lease null, bound di grace persistito.
+    mgr.close(); mgr = null;
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    await mgr.boot();
+    assert.equal(mgr.status('Dev').state, 'none', 'lease null post-restart (fail-closed)');
+    // reconnect ESATTAMENTE alla deadline (now === graceDeadline): grace scaduta -> deny.
+    clock.t = 65_000;
+    rc = net.createConnection(info.stablePath, () => {
+      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
+    });
+    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(reply.type, 'deny', 'alla deadline esatta (now === graceDeadline) la grace e gia scaduta -> deny');
     rc.destroy();
   } finally {
     try { if (rc) rc.destroy(); } catch (_) {}
