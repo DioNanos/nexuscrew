@@ -735,3 +735,100 @@ test('P1-2b: reconnect con bound non durevole (persist fallita) -> deny, nessun 
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
+
+// P1-1 (reaudit dd38c83): __proto__ come cellId produce un finto successo: track
+// restituisce identity+endpoint ma obj['__proto__'] invoca il setter del prototype
+// invece di creare una proprieta' propria → JSON.stringify produce {} → nessun record
+// durevole → niente recovery al restart. Fix: Object.create(null) in persistEntry.
+test('P1-1: __proto__ come cellId crea record durevole proprio (non {} su disco)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-proto1-'));
+  const clock = { t: 10_000 };
+  let mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+  try {
+    const info = await mgr.track('__proto__');
+    assert.ok(info.launchEpoch, 'track restituisce identity');
+    const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
+    const raw = fs.readFileSync(stateFile, 'utf8');
+    const persisted = JSON.parse(raw);
+    assert.ok(raw.includes('"__proto__"'), 'il file JSON contiene la chiave __proto__ serializzata');
+    assert.ok(Object.prototype.hasOwnProperty.call(persisted, '__proto__'), 'proprieta\' propria __proto__');
+    assert.equal(persisted['__proto__'].launchEpoch, info.launchEpoch, 'launchEpoch durevole');
+  } finally { try { mgr.close(); } catch (_) {} try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {} }
+});
+
+test('P1-1: __proto__ record durevole sopravvive al restart (boot recovery)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-proto2-'));
+  const clock = { t: 10_000 };
+  let mgr = null; let rc = null; let pairClient = null;
+  try {
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    const info = await mgr.track('__proto__');
+    const { serverSide, client } = await pair();
+    pairClient = client;
+    mgr.attachInitial('__proto__', serverSide, { generation: 0 });
+    assert.equal(mgr.status('__proto__').state, 'live');
+    try { client.destroy(); pairClient = null; } catch (_) {}
+    mgr.close(); mgr = null;
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    await mgr.boot();
+    assert.notEqual(mgr.status('__proto__').state, undefined, 'cella __proto__ caricata dopo restart');
+    clock.t = 12_000;
+    rc = net.createConnection(info.stablePath, () => {
+      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
+    });
+    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(reply.type, 'lease', 'P1-1: __proto__ recovery funziona dopo restart (record durevole)');
+    rc.destroy();
+  } finally {
+    try { if (rc) rc.destroy(); } catch (_) {}
+    try { if (pairClient) pairClient.destroy(); } catch (_) {}
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('P1-1: __proto__ non inquina altre celle (null-prototype non propaga)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-proto3-'));
+  const clock = { t: 10_000 };
+  let mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+  try {
+    await mgr.track('Dev');
+    await mgr.track('__proto__');
+    const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
+    const persisted = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    assert.ok(Object.prototype.hasOwnProperty.call(persisted, 'Dev'), 'Dev presente');
+    assert.ok(Object.prototype.hasOwnProperty.call(persisted, '__proto__'), '__proto__ presente');
+  } finally { try { mgr.close(); } catch (_) {} try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {} }
+});
+
+// P1-2 (reaudit dd38c83): un secondo track() che non persiste cancella una lease
+// gia' viva e orfana la socket del supervisore. Fix: il cleanup ripristina l'entry
+// preesistente invece di cancellarla.
+test('P1-2: secondo track() con persist fallita NON cancella lease viva esistente', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1_2-'));
+  const clock = { t: 10_000 };
+  let writeFail = false;
+  const fakeFs = {
+    ...fs,
+    writeFileSync(...args) { if (writeFail) throw new Error('disk full'); return fs.writeFileSync(...args); },
+  };
+  let mgr = null; let client = null;
+  try {
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t, fs: fakeFs });
+    const info = await mgr.track('Dev');
+    const { serverSide, client: c } = await pair();
+    client = c;
+    mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    assert.equal(mgr.status('Dev').state, 'live', 'cella viva dopo primo track');
+    writeFail = true;
+    try { await mgr.track('Dev'); } catch (e) { /* track propaga l'errore */ }
+    writeFail = false;
+    const st = mgr.status('Dev');
+    assert.equal(st.state, 'live', 'P1-2: cella ancora viva dopo secondo track fallito (non cancellata)');
+  } finally {
+    writeFail = false;
+    try { if (client) client.destroy(); } catch (_) {}
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
