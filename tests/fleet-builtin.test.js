@@ -7,6 +7,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const net = require('node:net');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
 const {
   createBuiltinFleet, composeLaunchArgv, minimalEnv, promptCharsOk, redactSecrets,
@@ -1027,4 +1028,69 @@ test('up non dichiara successo quando il client esce subito, anche senza prompt 
       return true;
     });
   } finally { w.cleanup(); }
+});
+
+// --- B4: createBuiltinFleet non deve aprire endpoint lease prima del gate fail-closed ---
+// Difetto (auditor 2a fix6): leaseManager.boot() veniva eseguito PRIMA di validare
+// fleet.json. Con fleet.json invalido la funzione ritornava l'oggetto `off`
+// (unavailable) MA gli endpoint lease riaperti da boot() restavano vivi, e `off`
+// non esponeva close(). Un reconnect valido otteneva un lease con Fleet non
+// disponibile. La recovery non deve precedere il gate fail-closed.
+// Il test ATTRAVERSA createBuiltinFleet (non invoca leaseManager.boot() direttamente).
+function tryLeaseReconnect(stablePath, launchEpoch, capability, timeoutMs = 400) {
+  return new Promise((resolve) => {
+    let done = false; let sock = null;
+    const to = setTimeout(() => finish(null), timeoutMs);
+    const finish = (v) => { if (done) return; done = true; clearTimeout(to); try { sock && sock.destroy(); } catch (_) {} resolve(v); };
+    try {
+      sock = net.createConnection(stablePath, () => {
+        try { sock.write(`${JSON.stringify({ type: 'reconnect', launchEpoch, generation: 0, capability })}\n`); } catch (_) { finish(null); }
+      });
+    } catch (_) { clearTimeout(to); return resolve(null); }
+    sock.setEncoding('utf8');
+    let buf = '';
+    sock.on('data', (c) => {
+      buf += c;
+      const nl = buf.indexOf('\n');
+      if (nl === -1) return;
+      let msg; try { msg = JSON.parse(buf.slice(0, nl)); } catch (_) { return finish(null); }
+      return finish(msg && msg.type === 'lease' ? msg : null);
+    });
+    sock.once('error', () => finish(null));
+  });
+}
+
+test('B4: createBuiltinFleet con fleet.json invalido non lascia endpoint lease vivo (gate fail-closed prima di boot)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbi-b4-'));
+  const home = path.join(root, 'home'); fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  // runtime dir SICURA (0o700 a ogni livello): ensureRuntimeDir rifiuta dir group/other
+  // scrivibili, e senza questo boot() non aprirebbe l endpoint (false negative del test).
+  const nxDir = path.join(home, '.nexuscrew');
+  fs.mkdirSync(nxDir, { recursive: true, mode: 0o700 }); fs.chmodSync(nxDir, 0o700);
+  const runDir = path.join(nxDir, 'run');
+  fs.mkdirSync(runDir, { recursive: true, mode: 0o700 }); fs.chmodSync(runDir, 0o700);
+  // identity persistita: la cella Dev e' nota al leaseManager (sarebbe caricata da boot())
+  const launchEpoch = 'aabbccddeeff0011';
+  const capability = '11'.repeat(32); // 64 hex
+  fs.writeFileSync(path.join(runDir, 'cell-leases.json'),
+    JSON.stringify({ Dev: { launchEpoch, capability, graceDeadline: null } }), { mode: 0o600 });
+  // fleet.json INVALIDO -> loadDefinitions ritorna null -> createBuiltinFleet deve return off
+  const defsPath = path.join(root, 'fleet.json');
+  fs.writeFileSync(defsPath, 'GARBAGE NOT JSON {{{');
+  const stablePath = path.join(runDir, 'cell-Dev.sock');
+
+  const fleet = await createBuiltinFleet({ home, fleetDefsPath: defsPath, cellLeaseEnabled: true });
+  try {
+    assert.equal(fleet.available, false, 'fleet.json invalido -> Fleet unavailable (off)');
+    // B4: la recovery lease non deve precedere il gate: nessun endpoint vivo con Fleet unavailable.
+    assert.equal(fs.existsSync(stablePath), false, 'endpoint lease cell-Dev.sock NON vivo con Fleet unavailable');
+    // B4: l oggetto restituito espone close(): sicuro da chiamare in ogni path di uscita.
+    assert.equal(typeof fleet.close, 'function', 'off espone close() (defensive su ogni early return)');
+    // B4: un reconnect verso l endpoint NON deve ottenere lease con Fleet unavailable.
+    const leaseMsg = await tryLeaseReconnect(stablePath, launchEpoch, capability);
+    assert.equal(leaseMsg, null, 'nessun lease ottenuto con Fleet unavailable (reconnect deny/refused)');
+  } finally {
+    if (typeof fleet.close === 'function') { try { await fleet.close(); } catch (_) {} }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
