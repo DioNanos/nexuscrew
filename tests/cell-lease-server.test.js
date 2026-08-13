@@ -480,12 +480,13 @@ test('B3/GC1.2: refresh rinfresca il bound durevole su disco (now+GRACE_MS)', as
 });
 
 test('B3/GC1.2: persistenza fallita nel refresh = nessun ACK (errore non ingoiato)', async () => {
-  // GC1.2: se writePersisted non committa, il refresh NON e' un successo: nessun ACK,
-  // nessun proof (proof = 2b). seam fs con writeFileSync che throwa. Su c438a55 il
-  // refresh emette ack comunque (oggi writePersisted ingoia) -> rossa; con GC1.2 no ACK.
+  // GC1.2: se writePersisted non committa al refresh, nessun ACK. seam writeFileSync
+  // condizionato (fail DOPO il setup): track/attachInitial persistono OK, poi il refresh
+  // fallisce a scrivere. (P1-2b: track non tollera piu' persist fallita -> seam condizionato.)
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-noack-'));
   const clock = { t: 10_000 };
-  const fakeFs = { ...fs, writeFileSync: () => { throw new Error('disk full'); } };
+  let writeFail = false;
+  const fakeFs = { ...fs, writeFileSync(...args) { if (writeFail) throw new Error('disk full'); return fs.writeFileSync(...args); } };
   let mgr = null; let client = null;
   try {
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t, fs: fakeFs });
@@ -493,10 +494,12 @@ test('B3/GC1.2: persistenza fallita nel refresh = nessun ACK (errore non ingoiat
     const { serverSide, client: c } = await pair();
     client = c;
     mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    writeFail = true; // da qui writePersisted fallisce
     clock.t = 30_000;
     client.write(`${JSON.stringify({ type: 'refresh' })}\n`);
     await assert.rejects(() => recv(client, (m) => m.type === 'ack', 250), /recv timeout/, 'GC1.2: nessun ACK quando la persistenza del bound fallisce');
   } finally {
+    writeFail = false;
     try { if (client) client.destroy(); } catch (_) {}
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
@@ -670,5 +673,65 @@ test('P1-1b schema: root JSON valida ma non-oggetto -> refresh NESSUN ACK e stor
       try { if (mgr) mgr.close(); } catch (_) {}
       try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
     }
+  }
+});
+
+test('P1-2b: track con store illeggibile NON restituisce identity senza record durevole (propaga)', async () => {
+  // P1-2b: track ignorava persistEntry=false e tornava identity+endpoint anche senza
+  // record durevole -> al restart niente recovery. Il record durevole (identity) e'
+  // essenziale in track: se non committa, track fallisce (non promette recovery).
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1-track-'));
+  const clock = { t: 10_000 };
+  const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
+  const fakeFs = {
+    ...fs,
+    readFileSync(p, ...rest) {
+      if (p === stateFile) { const e = new Error('EIO'); e.code = 'EIO'; throw e; }
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  let mgr = null;
+  try {
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t, fs: fakeFs });
+    await assert.rejects(() => mgr.track('Dev'), /non persistito|store|EIO/i, 'P1-2b: track propaga il fallimento del record durevole');
+  } finally {
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('P1-2b: reconnect con bound non durevole (persist fallita) -> deny, nessun lease', async () => {
+  // P1-2b: handleReconnect mandava lease anche quando il nuovo bound non committava.
+  // Qui Dev e' caricato in memoria (boot con store OK), poi si corrompe lo store:
+  // il reattach non persiste il bound -> bindLiveSocket false -> deny (no lease).
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1-reconnect-'));
+  const clock = { t: 10_000 };
+  const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
+  let mgr1 = null; let mgr2 = null; let rc = null; let pairClient = null;
+  try {
+    mgr1 = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    const info = await mgr1.track('Dev');
+    const { serverSide, client } = await pair();
+    pairClient = client;
+    mgr1.attachInitial('Dev', serverSide, { generation: 0 });
+    try { client.destroy(); pairClient = null; } catch (_) {}
+    mgr1.close(); mgr1 = null;
+    mgr2 = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    await mgr2.boot(); // carica Dev dal store OK (identity in memoria)
+    // ORA corrompi lo store (root []): il reattach non potra' persistere il bound.
+    fs.writeFileSync(stateFile, '[]', { mode: 0o600 });
+    clock.t = 12_000;
+    rc = net.createConnection(info.stablePath, () => {
+      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
+    });
+    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(reply.type, 'deny', 'P1-2b: reconnect con bound non durevole -> deny (no lease finto)');
+    rc.destroy();
+  } finally {
+    try { if (rc) rc.destroy(); } catch (_) {}
+    try { if (pairClient) pairClient.destroy(); } catch (_) {}
+    try { if (mgr2) mgr2.close(); } catch (_) {}
+    try { if (mgr1) mgr1.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
