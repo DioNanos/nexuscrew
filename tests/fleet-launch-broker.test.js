@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const net = require('node:net');
 const { EventEmitter } = require('node:events');
 const { createLaunchBroker } = require('../lib/fleet/launch-broker.js');
 const { receivePayload, validPayload, main } = require('../lib/fleet/cell-exec.js');
@@ -114,6 +115,48 @@ test('cell-exec stop during backoff disarms relaunch', async () => {
   });
   assert.equal(code, 0);
   assert.equal(launches, 1, 'nessun client rilanciato dopo il segnale di stop');
+});
+
+test('R3.1.1 lease: la connessione resta APERTA dopo il payload e sopravvive a un refresh (no destroy)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbroker-lease-')); fs.chmodSync(home, 0o700);
+  let leasedSocket = null;
+  let onLeaseFired;
+  const onLeasePromise = new Promise((resolve) => { onLeaseFired = resolve; });
+  const broker = createLaunchBroker({
+    home, launchTokenTtlMs: 60000,
+    onLease: (socket, lease) => {
+      leasedSocket = socket;
+      // Il server lease registra il proprio data listener sulla connessione APERTA
+      // e risponde con un ack a ogni messaggio: dimostra che vive dopo il payload.
+      socket.setEncoding('utf8');
+      socket.on('data', () => { try { socket.write('{"type":"ack"}\n'); } catch (_) {} });
+      onLeaseFired(lease);
+    },
+  });
+  try {
+    const ticket = await broker.issue({ command: '/bin/x', args: [], env: {}, lease: { cellId: 'Dev' } });
+    const sock = net.createConnection(ticket.socketPath);
+    await new Promise((resolve, reject) => { sock.once('connect', resolve); sock.once('error', reject); });
+    // Data listener registrato PRIMA del nonce: il frame payload viene drainato e si
+    // rileva l'ack del server lease sul messaggio successivo.
+    let gotAck = false;
+    sock.on('data', (chunk) => { if (chunk.toString('utf8').includes('ack')) gotAck = true; });
+    // Invia il nonce one-shot
+    sock.write(`${JSON.stringify({ nonce: ticket.nonce })}\n`);
+    // Attendi che il server sia entrato nel path lease (ha scritto il payload).
+    const lease = await Promise.race([
+      onLeasePromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('onLease timeout')), 1000)),
+    ]);
+    assert.equal(lease && lease.cellId, 'Dev', 'onLease riceve il lease');
+    assert.ok(leasedSocket && !leasedSocket.destroyed, 'socket lease APERTA dopo il payload');
+    // Un messaggio successivo (refresh) NON deve distruggere la connessione lease.
+    sock.write('{"type":"refresh"}\n');
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(leasedSocket.destroyed, false, 'R3.1.1: la socket lease non e stata distrutta dal refresh');
+    assert.equal(gotAck, true, 'R3.1.1: la connessione persiste (ack ricevuto dal server lease)');
+    sock.destroy();
+  } finally { await broker.close(); fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test('launch broker revoke consuma il ticket senza attendere il TTL (cleanup su respawn fallito)', async () => {
