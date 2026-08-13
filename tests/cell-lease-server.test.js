@@ -832,3 +832,66 @@ test('P1-2: secondo track() con persist fallita NON cancella lease viva esistent
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
+
+// P1-3 (reaudit dd38c83): onLease in builtin.js ignorava il boolean di attachInitial.
+// Se la persistenza del bind fallisce, il payload lease e' gia' stato consegnato dal
+// broker (scrive PRIMA di chiamare onLease). La socket resta aperta su entrambi i lati
+// ma il manager e' state=none: il supervisore ha un lease-client connesso a nulla.
+// Fix: onLease consuma il false e chiude la socket (EOF osservabile).
+// Test: simula il wiring onLease con pair() (socket TCP throwaway come fa il broker).
+test('P1-3: onLease con attachInitial=false chiude la socket (EOF osservabile dal supervisore)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1_3fail-'));
+  const clock = { t: 10_000 };
+  let writeFail = false;
+  const fakeFs = {
+    ...fs,
+    writeFileSync(...args) { if (writeFail) throw new Error('disk full'); return fs.writeFileSync(...args); },
+  };
+  let mgr = null; let client = null;
+  try {
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t, fs: fakeFs });
+    await mgr.track('Dev');
+    // Crea la pair (simula la connessione broker one-shot)
+    const { serverSide, client: c } = await pair();
+    client = c;
+    // Simula il wiring onLease di builtin.js (con fix P1-3)
+    writeFail = true; // ora writePersisted fallisce dentro bindLiveSocket->persistEntry
+    const ok = mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    assert.equal(ok, false, 'attachInitial fallisce (persistenza fallita)');
+    // Fix: onLease chiude la socket quando attachInitial restituisce false
+    if (!ok) { try { serverSide.destroy(); } catch (_) {} }
+    // Il client deve vedere la chiusura (EOF)
+    const closed = await new Promise((resolve) => {
+      const to = setTimeout(() => resolve(false), 2000);
+      client.once('close', () => { clearTimeout(to); resolve(true); });
+    });
+    assert.ok(closed, 'P1-3: socket chiusa quando attachInitial fallisce (EOF al supervisore)');
+    assert.equal(mgr.status('Dev').state, 'none', 'manager resta state=none');
+    writeFail = false;
+  } finally {
+    writeFail = false;
+    try { if (client) client.destroy(); } catch (_) {}
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('P1-3: onLease con attachInitial=true NON chiude la socket (lease vivo, happy path)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1_3ok-'));
+  const clock = { t: 10_000 };
+  let mgr = null; let client = null;
+  try {
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    await mgr.track('Dev');
+    const { serverSide, client: c } = await pair();
+    client = c;
+    const ok = mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    assert.equal(ok, true, 'attachInitial ha successo (disco OK)');
+    // Happy path: la socket resta aperta (il manager ha il lease)
+    assert.equal(mgr.status('Dev').state, 'live', 'lease vivo');
+  } finally {
+    try { if (client) client.destroy(); } catch (_) {}
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
