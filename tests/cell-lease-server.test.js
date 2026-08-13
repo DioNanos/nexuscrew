@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
+const L = require('../lib/fleet/cell-lease.js');
 
 // Coppia server/client su un server TCP throwaway: lato "server" passato al
 // manager come connessione broker one-shot, lato "client" per scrivere/EOF.
@@ -364,6 +365,83 @@ test('restart server fail-closed: boot() recovery ripristina identity + endpoint
     const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
     assert.equal(reply.type, 'lease', 'reconnect post-restart ricostruisce il lease (identity persistita via boot)');
     assert.equal(mgr.status('Dev').state, 'live');
+  } finally {
+    try { if (rc) rc.destroy(); } catch (_) {}
+    try { if (pairClient) pairClient.destroy(); } catch (_) {}
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('B3/GC1: post-restart con cella LIVE il reconnect oltre il bound live (now+GRACE_MS) e negato (no fail-open null)', async () => {
+  // GC1.1: graceDeadline sempre valorizzato (cella live = now+GRACE_MS), mai null.
+  // Su HEAD il bound live persistito e' null -> post-restart un reconnect oltre e' lease (fail-open).
+  // Con GC1 il bound e' now+GRACE_MS -> oltre quel bound, deny.
+  // Fixture dal percorso di produzione (track + attachInitial -> bindLiveSocket). Nessun EOF.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-livebound-'));
+  const clock = { t: 10_000 };
+  let mgr = null; let rc = null; let pairClient = null;
+  try {
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    const info = await mgr.track('Dev');
+    const { serverSide, client } = await pair();
+    pairClient = client;
+    mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    assert.equal(mgr.status('Dev').state, 'live');
+    // Chiusura del manager SENZA processare l'EOF (detachSocket rimuove i listener
+    // close/end prima del destroy): il bound persistito resta quello live.
+    mgr.close(); mgr = null;
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    await mgr.boot();
+    assert.equal(mgr.status('Dev').state, 'none', 'fail-closed: lease null post-restart');
+    // reconnect OLTRE il bound live (10_000 + GRACE_MS). Su HEAD: lease; con GC1: deny.
+    clock.t = 10_000 + L.GRACE_MS + 1;
+    rc = net.createConnection(info.stablePath, () => {
+      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
+    });
+    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(reply.type, 'deny', 'B3: reconnect oltre il bound live valorizzato -> deny (no piu fail-open null)');
+    rc.destroy();
+  } finally {
+    try { if (rc) rc.destroy(); } catch (_) {}
+    try { if (pairClient) pairClient.destroy(); } catch (_) {}
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('B3/GC1.6: graceDeadline illeggibile/non-intero su disco = grace gia scaduta = deny', async () => {
+  // GC1.6: assente/illeggibile/non-intero -> grace scaduta -> deny.
+  // Fixture prodotta dal percorso (track + attachInitial + EOF), poi bound corroto.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-corrupt-'));
+  const clock = { t: 10_000 };
+  let mgr = null; let rc = null; let pairClient = null;
+  try {
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    const info = await mgr.track('Dev');
+    const { serverSide, client } = await pair();
+    pairClient = client;
+    mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    clock.t = 5_000;
+    client.end();
+    await new Promise((r) => setTimeout(r, 30)); // EOF -> bound armGrace persistito
+    try { pairClient.destroy(); pairClient = null; } catch (_) {}
+    mgr.close(); mgr = null;
+    // Corrompi il bound su disco: valore non-intero.
+    const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
+    const raw = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    raw.Dev.graceDeadline = 'NOT-AN-INTEGER';
+    fs.writeFileSync(stateFile, JSON.stringify(raw), { mode: 0o600 });
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    await mgr.boot();
+    // qualunque now: bound non-intero -> scaduto -> deny
+    clock.t = 5_000 + 1;
+    rc = net.createConnection(info.stablePath, () => {
+      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
+    });
+    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(reply.type, 'deny', 'GC1.6: graceDeadline non-intero -> grace scaduta -> deny');
+    rc.destroy();
   } finally {
     try { if (rc) rc.destroy(); } catch (_) {}
     try { if (pairClient) pairClient.destroy(); } catch (_) {}
