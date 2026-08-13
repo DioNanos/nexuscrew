@@ -1062,34 +1062,22 @@ function tryLeaseReconnect(stablePath, launchEpoch, capability, timeoutMs = 400)
 }
 
 test('B4: createBuiltinFleet con fleet.json invalido non lascia endpoint lease vivo (gate fail-closed prima di boot)', async () => {
+  // P1-3 (audit 3405df0): NESSUNA identity scritta a mano. Con fleet.json invalido
+  // loadDefinitions ritorna null PRIMA di creare leaseManager/boot (P1-2) -> nessun
+  // endpoint. La fixture non costruisce uno stato che in produzione non esisterebbe.
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbi-b4-'));
   const home = path.join(root, 'home'); fs.mkdirSync(home, { recursive: true, mode: 0o700 });
-  // runtime dir SICURA (0o700 a ogni livello): ensureRuntimeDir rifiuta dir group/other
-  // scrivibili, e senza questo boot() non aprirebbe l endpoint (false negative del test).
-  const nxDir = path.join(home, '.nexuscrew');
-  fs.mkdirSync(nxDir, { recursive: true, mode: 0o700 }); fs.chmodSync(nxDir, 0o700);
-  const runDir = path.join(nxDir, 'run');
-  fs.mkdirSync(runDir, { recursive: true, mode: 0o700 }); fs.chmodSync(runDir, 0o700);
-  // identity persistita: la cella Dev e' nota al leaseManager (sarebbe caricata da boot())
-  const launchEpoch = 'aabbccddeeff0011';
-  const capability = '11'.repeat(32); // 64 hex
-  fs.writeFileSync(path.join(runDir, 'cell-leases.json'),
-    JSON.stringify({ Dev: { launchEpoch, capability, graceDeadline: null } }), { mode: 0o600 });
-  // fleet.json INVALIDO -> loadDefinitions ritorna null -> createBuiltinFleet deve return off
+  const stablePath = path.join(home, '.nexuscrew', 'run', 'cell-Dev.sock');
   const defsPath = path.join(root, 'fleet.json');
   fs.writeFileSync(defsPath, 'GARBAGE NOT JSON {{{');
-  const stablePath = path.join(runDir, 'cell-Dev.sock');
 
   const fleet = await createBuiltinFleet({ home, fleetDefsPath: defsPath, cellLeaseEnabled: true });
   try {
     assert.equal(fleet.available, false, 'fleet.json invalido -> Fleet unavailable (off)');
-    // B4: la recovery lease non deve precedere il gate: nessun endpoint vivo con Fleet unavailable.
     assert.equal(fs.existsSync(stablePath), false, 'endpoint lease cell-Dev.sock NON vivo con Fleet unavailable');
-    // B4: l oggetto restituito espone close(): sicuro da chiamare in ogni path di uscita.
-    assert.equal(typeof fleet.close, 'function', 'off espone close() (defensive su ogni early return)');
-    // B4: un reconnect verso l endpoint NON deve ottenere lease con Fleet unavailable.
-    const leaseMsg = await tryLeaseReconnect(stablePath, launchEpoch, capability);
-    assert.equal(leaseMsg, null, 'nessun lease ottenuto con Fleet unavailable (reconnect deny/refused)');
+    assert.equal(typeof fleet.close, 'function', 'off espone close()');
+    const leaseMsg = await tryLeaseReconnect(stablePath, 'aabbccddeeff0011', '11'.repeat(32));
+    assert.equal(leaseMsg, null, 'nessun lease ottenuto con Fleet unavailable (reconnect refuse)');
   } finally {
     if (typeof fleet.close === 'function') { try { await fleet.close(); } catch (_) {} }
     fs.rmSync(root, { recursive: true, force: true });

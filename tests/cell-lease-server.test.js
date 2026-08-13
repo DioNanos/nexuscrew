@@ -549,3 +549,89 @@ test('P1-1: errore di lettura dello store al refresh NON cancella le altre celle
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
+
+// Fixture normativa (FC1 rev26 / P1-3 audit 3405df0): produce lo stato della cella
+// DAL PERCORSO DI PRODUZIONE — track + attachInitial (bindLiveSocket) + almeno un
+// refresh con ACK — verifica che il bound rinfrescato sia un intero rilettro da disco,
+// poi restart via boot(). I casi di reconnect (entro/alla deadline/oltre) e la
+// corruzione negativa poggiano su questa fixture, MAI su un cell-leases.json scritto
+// a mano: il formato riletto dopo restart deve essere quello emesso dal refresh.
+async function liveBoundFixture() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-fixture-'));
+  const clock = { t: 10_000 };
+  const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
+  let mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+  const info = await mgr.track('Dev');
+  const { serverSide, client } = await pair();
+  mgr.attachInitial('Dev', serverSide, { generation: 0 });
+  // almeno un refresh con ACK: rinfresca il bound a now+GRACE_MS e lo persiste (GC1).
+  clock.t = 30_000;
+  client.write(`${JSON.stringify({ type: 'refresh' })}\n`);
+  const ack = await recv(client, (m) => m.type === 'ack');
+  if (!ack || ack.type !== 'ack') { try { client.destroy(); mgr.close(); } catch (_) {} throw new Error('fixture: refresh non ACKato'); }
+  // verifica: il bound riletto da disco e' l'intero atteso (now+GRACE_MS), non null.
+  const onDisk = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  const bound = onDisk.Dev && onDisk.Dev.graceDeadline;
+  try { client.destroy(); } catch (_) {}
+  if (!Number.isInteger(bound) || bound !== 30_000 + L.GRACE_MS) { try { mgr.close(); } catch (_) {} throw new Error(`fixture: bound atteso ${30_000 + L.GRACE_MS}, got ${bound}`); }
+  // restart via boot(): nessun lease sopravvive (fail-closed); il bound persistito resta.
+  mgr.close(); mgr = null;
+  mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+  await mgr.boot();
+  const f = { home, clock, mgr, info, stateFile, bound };
+  f.cleanup = () => { try { f.mgr.close(); } catch (_) {} try { fs.rmSync(f.home, { recursive: true, force: true }); } catch (_) {} };
+  return f;
+}
+
+test('P1-3 fixture normativa: bind + refresh(ACK) + restart/boot; reconnect entro il bound -> lease', async () => {
+  const f = await liveBoundFixture();
+  try {
+    assert.equal(f.mgr.status('Dev').state, 'none', 'fail-closed: lease null post-restart');
+    assert.equal(f.bound, 30_000 + L.GRACE_MS, 'bound intero rinfrescato dal refresh, rilettro da disco');
+    f.clock.t = f.bound - 1;
+    const rc = net.createConnection(f.info.stablePath, () => { rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: f.info.launchEpoch, generation: 0, capability: f.info.capability })}\n`); });
+    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(reply.type, 'lease', 'entro il bound rinfrescato -> lease (recovery)');
+    rc.destroy();
+  } finally { f.cleanup(); }
+});
+
+test('P1-3 fixture normativa: reconnect ALLA deadline (bound rinfrescato) -> deny', async () => {
+  const f = await liveBoundFixture();
+  try {
+    f.clock.t = f.bound;
+    const rc = net.createConnection(f.info.stablePath, () => { rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: f.info.launchEpoch, generation: 0, capability: f.info.capability })}\n`); });
+    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(reply.type, 'deny', 'alla deadline (bound rinfrescato dal refresh) -> deny');
+    rc.destroy();
+  } finally { f.cleanup(); }
+});
+
+test('P1-3 fixture normativa: reconnect OLTRE il bound (rinfrescato) -> deny', async () => {
+  const f = await liveBoundFixture();
+  try {
+    f.clock.t = f.bound + 1;
+    const rc = net.createConnection(f.info.stablePath, () => { rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: f.info.launchEpoch, generation: 0, capability: f.info.capability })}\n`); });
+    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(reply.type, 'deny', 'oltre il bound (rinfrescato dal refresh) -> deny');
+    rc.destroy();
+  } finally { f.cleanup(); }
+});
+
+test('P1-3 fixture normativa, negativo: bound corroto (non-intero) partito dalla fixture reale -> deny', async () => {
+  const f = await liveBoundFixture();
+  try {
+    // corrompe solo il bound, partendo dalla fixture reale (non riscrive l'intera entry).
+    const raw = JSON.parse(fs.readFileSync(f.stateFile, 'utf8'));
+    raw.Dev.graceDeadline = 'CORRUPT';
+    fs.writeFileSync(f.stateFile, JSON.stringify(raw), { mode: 0o600 });
+    f.mgr.close();
+    f.mgr = createLeaseManager({ home: f.home, log: () => {} }, { now: () => f.clock.t });
+    await f.mgr.boot();
+    f.clock.t = 30_001;
+    const rc = net.createConnection(f.info.stablePath, () => { rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: f.info.launchEpoch, generation: 0, capability: f.info.capability })}\n`); });
+    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    assert.equal(reply.type, 'deny', 'bound corroto (non-intero) partito dalla fixture reale -> deny');
+    rc.destroy();
+  } finally { f.cleanup(); }
+});
