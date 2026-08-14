@@ -403,3 +403,71 @@ test('label di cella: sopravvive al round-trip su disco', () => {
   assert.equal(reloaded.cells[0].label, 'Cella di Ricerca');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// --- panelUrl (D8 backend) ---------------------------------------------------
+// Opt-in per-cella/per-engine: http(s) + solo host loopback (127.0.0.1,
+// localhost, ::1) + cap di lunghezza. Un valore malformato fa fallire l'INTERA
+// definizione (return null), MAI un collasso silenzioso "cella valida senza
+// pannello": sono due esiti opposti che si assomigliano.
+
+test('panelUrl assente: cella si comporta esattamente come oggi (pin percorso PTY)', () => {
+  const def = validDef();
+  const parsed = parseDefinitions(def);
+  assert.ok(parsed, 'definizione senza panelUrl resta valida');
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed.cells[0], 'panelUrl'), false,
+    'nessun campo panelUrl inventato quando assente');
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed.engines[0], 'panelUrl'), false,
+    'nessun campo panelUrl inventato sull\'engine quando assente');
+});
+
+test('panelUrl valido (loopback): accettato su cella ed engine, valore preservato', () => {
+  for (const url of ['https://127.0.0.1:6901', 'https://localhost:6901', 'https://[::1]:6901']) {
+    const def = validDef();
+    def.cells[0].panelUrl = url;
+    const parsed = parseDefinitions(def);
+    assert.ok(parsed, `atteso accettato per ${url}`);
+    assert.equal(parsed.cells[0].panelUrl, url);
+  }
+  const def = { schemaVersion: 1, engines: [{ id: 'sh', command: '/bin/sh', promptMode: 'send-keys', panelUrl: 'https://127.0.0.1:6901' }], cells: [] };
+  const parsed = parseDefinitions(def);
+  assert.ok(parsed, 'engine con panelUrl valido accettato');
+  assert.equal(parsed.engines[0].panelUrl, 'https://127.0.0.1:6901');
+});
+
+test('panelUrl non-loopback: rifiutato, e il rifiuto e\' distinguibile dall\'assenza', () => {
+  for (const url of ['https://example.com:6901', 'http://192.168.1.5:6901']) {
+    const def = validDef();
+    def.cells[0].panelUrl = url;
+    assert.equal(parseDefinitions(def), null, `atteso rifiuto per host non-loopback ${url}`);
+  }
+  // il rifiuto e' della definizione INTERA, non un collasso silenzioso a "assente":
+  // una definizione altrimenti valida con panelUrl malformato non produce una
+  // cella valida priva di pannello, produce null.
+  const bad = validDef();
+  bad.cells[0].panelUrl = 'https://evil.example/panel';
+  assert.equal(parseDefinitions(bad), null);
+  const absent = validDef();
+  assert.ok(parseDefinitions(absent), 'assenza resta valida: i due esiti sono distinti');
+});
+
+test('panelUrl con scheme non ammesso: rifiutato', () => {
+  for (const url of ['ftp://127.0.0.1:6901', 'javascript:alert(1)', 'file:///etc/passwd']) {
+    const def = validDef();
+    def.cells[0].panelUrl = url;
+    assert.equal(parseDefinitions(def), null, `atteso rifiuto per scheme in ${url}`);
+  }
+});
+
+test('panelUrl oltre il cap di lunghezza: rifiutato', () => {
+  const def = validDef();
+  def.cells[0].panelUrl = `https://127.0.0.1/${'x'.repeat(CAPS.MAX_PANELURL_LEN)}`;
+  assert.equal(parseDefinitions(def), null, 'oltre il cap rifiutato');
+});
+
+test('panelUrl: forme non-stringa o vuote rifiutate', () => {
+  for (const bad of ['', 42, {}, ['https://127.0.0.1:6901'], null]) {
+    const def = validDef();
+    def.cells[0].panelUrl = bad;
+    assert.equal(parseDefinitions(def), null, `atteso rifiuto per ${JSON.stringify(bad)}`);
+  }
+});
