@@ -152,3 +152,26 @@ user deliberately chooses `--allow-unused`.
    name.
 5. Show the final preview or document to the user before calling it ready.
 6. State clearly which fields remain empty, uncertain, unsigned or unsubmitted.
+
+## Dependencies
+
+**Bundled (installed with the package):** the five scripts
+(`inspect_pdf.py`, `fill_pdf.py`, `fill_docx.py`, `dump_docx.py`,
+`prepare_signature.py`) and `requirements.txt` ship inside this skill
+directory.
+
+**External (you must provide):**
+
+| Need | Install | Probe / failure mode |
+|---|---|---|
+| Python 3 | Debian/Ubuntu `apt install python3 python3-pip`, Fedora `dnf install python3 pip`, macOS `brew install python`, Termux `pkg install python` | `python3 --version` fails → nothing in this skill runs |
+| PyMuPDF, Pillow, numpy, python-docx (exact pins in the bundled `requirements.txt`) | run from this skill directory: `python3 -m pip install -r requirements.txt` | probe with `python3 -c "import fitz, PIL, numpy, docx"` — a missing module fails by naming itself (`ModuleNotFoundError: No module named 'fitz'`); install that package, not "dependencies" in the abstract |
+
+Termux note: Termux has no systemd and no Docker assumptions here, but the
+native wheels for PyMuPDF/numpy on Termux are **not verified**: if `pip`
+cannot build them, this skill is not usable on that device — report that
+plainly instead of switching to an unverified PDF writer.
+
+Every script keeps the blank source untouched and writes a new output file;
+if a dependency is missing mid-flow, the scripts refuse rather than emit a
+half-filled form.

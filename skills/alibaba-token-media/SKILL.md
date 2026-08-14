@@ -131,3 +131,22 @@ overwrite. An explicit `--output` must remain under the current user's home.
 
 Read [references/api-contract.md](references/api-contract.md) before changing
 payloads, limits, endpoints, or model handling.
+
+## Dependencies
+
+**Bundled (installed with the package):** the CLI
+`scripts/alibaba_token_media.py` ships with this skill and is
+dependency-free — Python 3 standard library only (verified against the
+script's imports; it needs a Unix-like environment because it uses `fcntl`,
+so Windows is out of scope).
+
+**External (you must provide):**
+
+| Need | Install | Probe / failure mode |
+|---|---|---|
+| Python 3 | Debian/Ubuntu `apt install python3`, Fedora `dnf install python3`, macOS `brew install python`, Termux `pkg install python` | `python3 --version` fails → nothing in this skill runs |
+| An Alibaba Cloud **Token Plan Personal** subscription that includes the media models | activate on the Alibaba Cloud console — no local install | API calls fail with an authorization error from the service |
+| API key in the environment | `export ALIBABA_CODE_API_KEY=<your key>` in the shell/service that runs the script | the script refuses with `ALIBABA_CODE_API_KEY is not set in this process environment` — the failure names the exact variable; no network call is made without it |
+
+The key is read only from the environment: never paste it into a prompt, a
+script argument, or a file.
