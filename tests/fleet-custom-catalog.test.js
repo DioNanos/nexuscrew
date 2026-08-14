@@ -25,7 +25,7 @@ const { parseDefinitions } = require('../lib/fleet/definitions.js');
 const {
   extraModelsFrom, declaredModelsFor, resolveManagedEngine, customCatalogFor, describeManaged,
 } = require('../lib/fleet/managed.js');
-const { resolvePiComposer, loadPiExtensionFile } = require('./helpers/pi-real-consumer.js');
+const { requirePiComposer, loadPiExtensionFile } = require('./helpers/pi-real-consumer.js');
 
 // Insiemi ammessi dallo schema codex-vl (stessi di fleet-catalog-schema).
 const APPLY_PATCH = new Set([null, 'freeform']);
@@ -109,8 +109,11 @@ test('D2 end-to-end: parseDefinitions -> extraModelsFrom -> resolveManagedEngine
 // macchina, non una copia), e verifica sul modello che Pi produce la stessa
 // operazione che il suo consumatore (read.js) esegue davvero.
 test('D2 end-to-end: Pi custom — Pi VERO carica l\'estensione e il modello supera il consumo reale (read.js)', async (t) => {
-  const composer = await resolvePiComposer();
-  if (!composer) { t.skip('Pi (@earendil-works/pi-coding-agent) non installato su questa macchina: impossibile verificare il contratto reale'); return; }
+  // requirePiComposer distingue "Pi non installato" (skip legittimo, motivato)
+  // da "Pi c'e' ma la guardia non riesce a caricarlo" (throw: il test FALLISCE,
+  // mai un pass/skip silenzioso su una guardia rotta).
+  const composer = await requirePiComposer(t);
+  if (!composer) return; // skip legittimo gia' registrato da requirePiComposer
   const defs = parseDefinitions({
     schemaVersion: 1,
     models: [{ id: 'deepseek-v4-pro', engine: 'pi.custom', contextWindow: 500000, maxTokens: 100000, reasoning: false }],
