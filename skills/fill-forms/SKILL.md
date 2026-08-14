@@ -165,7 +165,7 @@ directory.
 | Need | Install | Probe / failure mode |
 |---|---|---|
 | Python 3 | Debian/Ubuntu `apt install python3 python3-pip`, Fedora `dnf install python3 pip`, macOS `brew install python`, Termux `pkg install python` | `python3 --version` fails → nothing in this skill runs |
-| PyMuPDF, Pillow, numpy, python-docx (exact pins in the bundled `requirements.txt`) | run from this skill directory: `python3 -m pip install -r requirements.txt` | probe with `python3 -c "import fitz, PIL, numpy, docx"` — a missing module fails by naming itself (`ModuleNotFoundError: No module named 'fitz'`); install that package, not "dependencies" in the abstract |
+| PyMuPDF, Pillow, numpy, python-docx (exact pins in the bundled `requirements.txt`) | add those four packages to the Python environment that runs the scripts, taking the versions from the bundled `requirements.txt`; this skill deliberately does not spell out the command, because it must ask before touching an environment | probe with `python3 -c "import fitz, PIL, numpy, docx"` — a missing module fails by naming itself (`ModuleNotFoundError: No module named 'fitz'`); add that package, not "dependencies" in the abstract |
 
 Termux note: Termux has no systemd and no Docker assumptions here, but the
 native wheels for PyMuPDF/numpy on Termux are **not verified**: if `pip`
