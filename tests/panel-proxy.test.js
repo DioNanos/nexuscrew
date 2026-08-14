@@ -91,7 +91,11 @@ test('panel-proxy: il token di NexusCrew NON prosegue verso il pannello', async 
   assert.ok(!headerNames.includes('authorization'), 'nessuna Authorization verso il pannello');
   assert.ok(!/segreto-locale/.test(sent.path), 'nessun token locale nella query inoltrata');
   assert.match(sent.path, /scale=1/, 'gli altri parametri restano');
-  assert.ok(headerNames.includes('cookie'), 'i cookie del pannello proseguono: sono suoi');
+  // Avevo scritto il contrario, con la motivazione «i cookie sono del pannello»:
+  // e' falsa. Dietro questo proxy l'origine e' la nostra, quindi quei cookie
+  // sono i NOSTRI, e inoltrarli consegnerebbe al container la sessione del
+  // control plane. Il test pinnava il difetto invece di impedirlo.
+  assert.ok(!headerNames.includes('cookie'), 'nessun cookie del nostro dominio verso il pannello');
   assert.equal(sent.host, '127.0.0.1');
   assert.equal(String(sent.port), '6901');
 });
@@ -256,4 +260,56 @@ test('federazione: anche l\'upgrade WebSocket ha il suo gate, non solo l\'HTTP',
     ingress: { name: 'peer', panelAccess: false },
   });
   assert.doesNotMatch(ws.scritto, /40[34]/, '/ws non e\' soggetto al gate del pannello');
+});
+
+test('panel-proxy: gli header che un client puo\' fingere non proseguono', async () => {
+  const seen = [];
+  const proxy = createPanelProxy({ resolveCellPanel: async () => PANEL, requestImpl: captureRequest(seen) });
+  await proxy(fakeReq('/Dev', {
+    'x-forwarded-for': '10.0.0.9',
+    'x-forwarded-proto': 'https',
+    forwarded: 'for=10.0.0.9',
+    'proxy-authorization': 'Basic abc',
+    'user-agent': 'browser-vero',
+  }), fakeRes());
+  const names = Object.keys(seen[0].headers).map((h) => h.toLowerCase());
+  for (const vietato of ['x-forwarded-for', 'x-forwarded-proto', 'forwarded', 'proxy-authorization']) {
+    assert.ok(!names.includes(vietato), `${vietato} non prosegue: un pannello potrebbe crederci`);
+  }
+  assert.ok(names.includes('user-agent'), 'cio\' che non impersona nessuno resta');
+});
+
+test('panel-proxy: un segmento .. si ferma qui, non lo normalizza il pannello', async () => {
+  let interrogato = false;
+  const proxy = createPanelProxy({
+    resolveCellPanel: async () => { interrogato = true; return PANEL; },
+    requestImpl: captureRequest([]),
+  });
+  const res = fakeRes();
+  await proxy(fakeReq('/Dev/app/../../etc/segreto'), res);
+  assert.equal(res.statusCode, 404);
+  assert.equal(interrogato, false);
+
+  const res2 = fakeRes();
+  await proxy(fakeReq('/Dev/app/%2e%2e/altro'), res2);
+  assert.equal(res2.statusCode, 404, 'anche codificato');
+});
+
+// IL BYPASS, trovato da un audit indipendente ed e' il rilievo migliore della
+// nottata: l'origine di una richiesta veniva dedotta dal PATH. `/api/route` e'
+// il canale del proprietario e non applica gate per-peer — ma un peer poteva
+// fare arrivare quella forma attraverso il pass-through generico, e il nodo di
+// destinazione la vedeva come locale. Gate saltato senza toccarlo.
+test('panel-proxy: un peer non puo\' rientrare dal canale del proprietario', () => {
+  const { createNodeProxy } = require('../lib/proxy/node-proxy.js');
+  const proxy = createNodeProxy({ resolveNode: () => ({ localPort: 1, token: 't' }) });
+  for (const url of [
+    '/pixel/api/route/_/panel/Dev/vnc.html',
+    '/pixel/federation/route/_/panel/Dev/vnc.html',
+  ]) {
+    const res = fakeRes();
+    proxy({ url, method: 'GET', headers: {}, on: () => {}, pipe: () => {} }, res);
+    assert.equal(res.statusCode, 403, `${url}: la catena ha un canale suo, non passa da qui`);
+    assert.match(res.body.error, /local-only/);
+  }
 });
