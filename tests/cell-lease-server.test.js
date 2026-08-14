@@ -85,17 +85,36 @@ test('R3.3.2: il fallimento del chmod sull endpoint stabile NON viene ingoiato (
   } finally { mgr.close(); fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('R3.3.2: endpoint stabile nasce 0o600 atomicamente (neutro rispetto a umask 0)', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-umask-'));
+// F-C (audit 2a @ 142e272): il contratto del mode e' cambiato PER DECISIONE
+// approvata. Prima: la socket NASCEVA 0o600 via umask(0o177) al bind — atomica
+// rispetto a un umask di processo permissivo, ma process.umask e' GLOBALE e la
+// coppia set/restore non e' atomica sotto openEndpoint concorrenti (40/40 drift,
+// sonda). A CHE COSA SI RINUNCIA: l'atomicita' del mode di nascita. Ora la
+// socket PUO' nascere permissiva quanto l'umask di processo; la protezione e'
+// (1) la directory owner-only verificata a OGNI bind (ensureRuntimeDir, sul
+// percorso stesso, subito prima del listen) e (2) il chmod 0o600 FORZATO subito
+// dopo, che NON ingoia il fallimento (test sopra: chmod denied -> track reject).
+// Questo test pinna il nuovo contratto per intero, umask(0) incluso.
+test('F-C: socket puo\' nascere permissiva; chmod 0o600 forzato la chiude; dir 0o700 copre la finestra; umask mai toccato', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-mode-'));
   const prevUmask = process.umask(0o000);
-  // chmod no-op: l atomicita' deve venire dalla modo con cui la socket NASCE, non dal chmod.
-  const fakeFs = { ...fs, chmodSync: () => {} };
-  const mgr = createLeaseManager({ home, log: () => {} }, { now: () => 10_000, fs: fakeFs });
   try {
-    const info = await mgr.track('Dev');
-    const st = fs.statSync(info.stablePath);
-    assert.equal(st.mode & 0o077, 0, 'endpoint atomicamente 0o600 anche con umask(0) e chmod no-op');
-  } finally { process.umask(prevUmask); mgr.close(); fs.rmSync(home, { recursive: true, force: true }); }
+    const mgr = createLeaseManager({ home, log: () => {} }, { now: () => 10_000 });
+    try {
+      const info = await mgr.track('Dev');
+      // umask(0) di processo: senza l'umask al bind la socket nascerebbe 0o777;
+      // il chmod 0o600 forzato (reale, non no-op) porta il mode finale a 0o600.
+      const st = fs.statSync(info.stablePath);
+      assert.equal(st.mode & 0o077, 0, 'umask(0): il chmod forzato chiude il mode a 0o600');
+      // La finestra listen->chmod e' coperta dalla DIRECTORY owner-only, non dal
+      // mode di nascita: nessun altro utente puo' attraversarla.
+      const run = fs.statSync(path.dirname(info.stablePath));
+      assert.equal(run.mode & 0o077, 0, 'la dir runtime e\' 0o700 (owner-only)');
+      // E il manager non muta MAI process.umask: il drift e' impossibile per
+      // costruzione, non per contenimento.
+      assert.equal(process.umask(), 0o000, 'process.umask resta quello del processo (nessun drift)');
+    } finally { mgr.close(); }
+  } finally { process.umask(prevUmask); fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test('attachInitial -> live; EOF -> grace con deadline = EOF+60s NON estendibile', async () => {
