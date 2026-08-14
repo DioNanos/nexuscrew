@@ -26,14 +26,69 @@ function fakeT() {
   return { t: { skip: (msg) => calls.skip.push(msg) }, calls };
 }
 
-test('resolvePiComposer: which non trova nulla (throw, come il binario reale quando assente) -> not-installed', async () => {
-  const r = await resolvePiComposer({ which: () => { throw new Error('which: no pi in PATH'); } });
+test('resolvePiComposer: which PARTE e risponde "non trovato" (exit 1, come execFileSync reale) -> not-installed', async () => {
+  const r = await resolvePiComposer({ which: () => { const e = new Error('Command failed: which pi'); e.status = 1; throw e; } });
   assert.equal(r.status, 'not-installed');
 });
 
 test('resolvePiComposer: which restituisce stringa vuota -> not-installed', async () => {
   const r = await resolvePiComposer({ which: () => '' });
   assert.equal(r.status, 'not-installed');
+});
+
+// --- Correzione 2 (caso adiacente segnalato dall'audit) --------------------
+// «which esce non-zero» (lo strumento ha risposto: non trovato) e «which non
+// riesce a partire» (ENOENT/EACCES sullo spawn: lo strumento e' rotto) erano
+// collassati nello stesso catch -> 'not-installed'. Con Pi REALMENTE
+// installato, se `which` stesso non e' eseguibile, la suite usciva verde
+// (16 pass, 1 skip) senza aver verificato nulla — lo strumento di rilevamento
+// rotto letto come "Pi assente".
+
+test('DRIFT 4: which stesso non parte (ENOENT sullo spawn) -> broken, mai not-installed', async () => {
+  const r = await resolvePiComposer({ which: () => { const e = new Error('spawn which ENOENT'); e.code = 'ENOENT'; e.status = null; throw e; } });
+  assert.equal(r.status, 'broken', 'lo strumento di rilevamento rotto deve far fallire, non skippare');
+  assert.match(r.reason, /ENOENT/);
+  assert.match(r.reason, /rilevamento|which/i);
+});
+
+test('DRIFT 5: which non eseguibile per permessi (EACCES) -> broken, mai not-installed', async () => {
+  const r = await resolvePiComposer({ which: () => { const e = new Error('permission denied'); e.code = 'EACCES'; e.status = null; throw e; } });
+  assert.equal(r.status, 'broken');
+  assert.match(r.reason, /EACCES/);
+});
+
+test('DRIFT 6: un package.json lungo il percorso e\' CORROTTO (JSON invalido) -> la reason lo NOMINA, non dice genericamente "nessuno trovato"', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-pi-drift6-'));
+  try {
+    const badPkgPath = path.join(root, 'package.json');
+    fs.writeFileSync(badPkgPath, '{ questo non e" JSON valido');
+    const fakeBin = path.join(root, 'bin', 'pi');
+    fs.mkdirSync(path.dirname(fakeBin), { recursive: true });
+    fs.writeFileSync(fakeBin, '#!/bin/sh\n');
+    const r = await resolvePiComposer({ which: () => fakeBin });
+    assert.equal(r.status, 'broken');
+    // La reason deve NOMINARE il file corrotto, non limitarsi a "nessuno trovato".
+    assert.match(r.reason, new RegExp(badPkgPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      'la reason deve citare il percorso del package.json illeggibile, non tacere che uno e\' stato trovato');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('DRIFT 7: un package.json lungo il percorso non e\' leggibile (EACCES) -> la reason lo NOMINA', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-pi-drift7-'));
+  try {
+    const badPkgPath = path.join(root, 'package.json');
+    fs.writeFileSync(badPkgPath, JSON.stringify({ name: 'qualcosa-altro' }));
+    fs.chmodSync(badPkgPath, 0o000);
+    const fakeBin = path.join(root, 'bin', 'pi');
+    fs.mkdirSync(path.dirname(fakeBin), { recursive: true });
+    fs.writeFileSync(fakeBin, '#!/bin/sh\n');
+    const r = await resolvePiComposer({ which: () => fakeBin });
+    // Se il processo gira come root, chmod 000 non blocca la lettura: in quel
+    // caso non c'e' EACCES da testare qui (l'ambiente lo rende impossibile).
+    if (process.getuid && process.getuid() === 0) { fs.chmodSync(badPkgPath, 0o644); return; }
+    assert.equal(r.status, 'broken');
+    assert.match(r.reason, new RegExp(badPkgPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  } finally { fs.chmodSync(path.join(root, 'package.json'), 0o644); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 // --- CONTROLLO NEGATIVO: il drift che oggi produceva un verde -------------

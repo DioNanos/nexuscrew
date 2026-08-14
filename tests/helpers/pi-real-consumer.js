@@ -26,24 +26,48 @@
 // (symlink rotto, package.json non e' quello atteso, la dist e' cambiata,
 // l'import fallisce, l'export atteso manca), quella e' la guardia che si e'
 // rotta mentre Pi era presente — un fallimento, non un'assenza.
+//
+// Correzione 2 (caso adiacente, stesso giorno): «which esce non-zero perche'
+// pi non e' nel PATH» e «which stesso non riesce a partire» sono due errori
+// diversi, ed erano collassati nello STESSO catch -> 'not-installed'. Misurato:
+// se `which` (il binario di sistema) non e' eseguibile, con Pi REALMENTE
+// installato la suite usciva verde con 16 pass e 1 skip — lo strumento di
+// rilevamento rotto veniva letto come "Pi assente". Distinzione (verificata
+// empiricamente): quando `which` PARTE e risponde (target non trovato), l'
+// errore di execFileSync porta `e.status` numerico (il codice di uscita del
+// processo, es. 1) e NESSUN `e.code`; quando `which` stesso non parte (ENOENT/
+// EACCES sullo spawn), l'errore porta `e.code` stringa e `e.status === null`.
+// Solo il primo caso e' una risposta legittima.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
+// Ritorna { root, problems }. `root` e' la directory del pacchetto Pi, o null
+// se non trovata risalendo. `problems` elenca ogni package.json incontrato
+// lungo la risalita che NON era leggibile/valido per un motivo DIVERSO da
+// "non esiste qui" (ENOENT e' l'unico caso legittimo di "continua a
+// risalire" — un altro package.json lungo il percorso, di una dipendenza
+// intermedia, e' normale). Un file che esiste ma e' illeggibile (EACCES) o
+// corrotto (JSON invalido) e' un segnale reale: la reason del chiamante deve
+// nominarlo, non dire genericamente "nessuno trovato" quando in realta' uno
+// e' stato trovato e non ha potuto essere letto.
 function findPackageRoot(fromFile) {
   let dir = path.dirname(fromFile);
+  const problems = [];
   for (let i = 0; i < 12; i += 1) {
     const pkgPath = path.join(dir, 'package.json');
     try {
       const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-      if (pkg.name === '@earendil-works/pi-coding-agent') return dir;
-    } catch (_) { /* non qui, risali */ }
+      if (pkg.name === '@earendil-works/pi-coding-agent') return { root: dir, problems };
+    } catch (e) {
+      if (e.code !== 'ENOENT') problems.push(`"${pkgPath}": ${e.code || e.constructor.name} — ${e.message}`);
+    }
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return null;
+  return { root: null, problems };
 }
 
 // seams.which: sostituisce la risoluzione reale di `which pi` (per il
@@ -54,9 +78,17 @@ async function resolvePiComposer(seams = {}) {
   let which;
   try {
     which = whichImpl();
-  } catch (_) {
-    // `which` esce non-zero quando il binario non e' nel PATH: assenza legittima.
-    return { status: 'not-installed' };
+  } catch (e) {
+    // Il discriminante e' CHI ha fallito, non "c'e' stata un'eccezione".
+    // which PARTE e risponde "non trovato": execFileSync porta e.status
+    // numerico (l'exit code del processo `which`), nessun e.code. which NON
+    // parte (ENOENT/EACCES sullo spawn del comando `which` stesso — binario
+    // assente, permessi, PATH corrotto): e.code e' una stringa, e.status e'
+    // null. Solo il primo e' una risposta legittima di assenza; il secondo e'
+    // lo strumento di rilevamento rotto — con Pi magari REALMENTE installato,
+    // misurato: 16 pass e 1 skip senza aver verificato nulla.
+    if (typeof e.status === 'number' && !e.code) return { status: 'not-installed' };
+    return { status: 'broken', reason: `lo strumento di rilevamento (which) non e' riuscito a rispondere: ${e.code || e.constructor.name} — ${e.message}` };
   }
   if (!which) return { status: 'not-installed' };
   // Da QUI in poi il binario e' stato trovato: ogni fallimento successivo e'
@@ -67,9 +99,12 @@ async function resolvePiComposer(seams = {}) {
   } catch (e) {
     return { status: 'broken', reason: `which ha trovato "${which}" ma fs.realpathSync fallisce: ${e.message}` };
   }
-  const root = findPackageRoot(real);
+  const { root, problems } = findPackageRoot(real);
   if (!root) {
-    return { status: 'broken', reason: `binario pi risolto a "${real}", ma nessun package.json di @earendil-works/pi-coding-agent trovato risalendo le directory` };
+    const detail = problems.length
+      ? ` — trovati package.json non leggibili lungo il percorso: ${problems.join('; ')}`
+      : '';
+    return { status: 'broken', reason: `binario pi risolto a "${real}", ma nessun package.json di @earendil-works/pi-coding-agent trovato risalendo le directory${detail}` };
   }
   const composerPath = path.join(root, 'dist', 'core', 'provider-composer.js');
   if (!fs.existsSync(composerPath)) {
