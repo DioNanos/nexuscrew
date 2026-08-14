@@ -26,6 +26,58 @@ test('launch broker delivers a payload once over a private Unix socket and leave
   } finally { await broker.close(); fs.rmSync(home, { recursive: true, force: true }); }
 });
 
+// Audit: il chmod 0600 sul socket era INGOIATO (try/catch/ignora), a
+// differenza della directory 15 righe sopra in ensureRuntimeDir, che
+// verifica il mode REALE dopo il proprio chmod e fallisce chiuso se non
+// conforme. MISURA (chmod fatto fallire DAVVERO — si intercetta la vera
+// fs.chmodSync del modulo condiviso, non si mocka il broker): con la dir
+// 0700 la garanzia end-to-end regge comunque per il vettore "altro utente"
+// (attraversare una directory richiede il bit x su OGNI componente del
+// path — il mode del file terminale non conta per chi non puo' nemmeno
+// raggiungerlo), ma il fallimento restava silenzioso e la sicurezza restava
+// appesa a UNA sola garanzia indipendente invece di due.
+
+async function withChmodFailingOnSockets(fn) {
+  const originalChmodSync = fs.chmodSync;
+  fs.chmodSync = function (p, mode) {
+    if (String(p).endsWith('.sock')) {
+      const e = new Error('simulated: chmod fallisce sul socket (fs.chmodSync reale intercettata)');
+      e.code = 'EIO';
+      throw e;
+    }
+    return originalChmodSync.call(fs, p, mode);
+  };
+  // fn() e' async: il monkeypatch deve restare attivo fino a quando il
+  // callback di server.listen (asincrono, futuro nell'event loop) non ha
+  // gia' chiamato la fs.chmodSync intercettata — un finally non-awaited
+  // ripristinerebbe l'originale PRIMA che quel callback si esegua.
+  try { return await fn(); } finally { fs.chmodSync = originalChmodSync; }
+}
+
+test('MISURA + FIX: chmod 0600 sul socket fallito -> il broker fallisce chiuso, non lascia un socket con mode largo abbandonato', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbroker-chmodfail-'));
+  fs.chmodSync(home, 0o700);
+  const originalUmask = process.umask(0o022);
+  const broker = createLaunchBroker({ home, launchTokenTtlMs: 2000 });
+  try {
+    await withChmodFailingOnSockets(async () => {
+      await assert.rejects(
+        () => broker.issue({ command: '/bin/echo', args: ['ok'], env: {} }),
+        /unsafe launch broker socket/,
+        'un chmod fallito non deve risolversi come successo silenzioso',
+      );
+    });
+    // Nessun socket con mode largo lasciato sul disco: il fallimento pulisce.
+    const runDir = path.join(home, '.nexuscrew', 'run');
+    const leftover = fs.existsSync(runDir) ? fs.readdirSync(runDir).filter((n) => n.endsWith('.sock')) : [];
+    assert.deepEqual(leftover, [], 'nessun socket abbandonato con permessi non verificati');
+  } finally {
+    process.umask(originalUmask);
+    await broker.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('cell-exec payload validation rejects shell-shaped or malformed launch data', () => {
   assert.equal(validPayload({ command: '/bin/x', args: ['; rm -rf /'], env: { SAFE: 'value' } }), true,
     'argv is data and is never shell-evaluated');
