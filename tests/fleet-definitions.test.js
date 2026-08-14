@@ -471,3 +471,100 @@ test('panelUrl: forme non-stringa o vuote rifiutate', () => {
     assert.equal(parseDefinitions(def), null, `atteso rifiuto per ${JSON.stringify(bad)}`);
   }
 });
+
+// --- panelUrl su engine MANAGED (rilievo 1 dell'audit D8) -------------------
+// Il validatore è UNO: anche il ramo managed valida e conserva panelUrl con
+// lo stesso validPanelUrl del ramo custom. Prima del fix il ramo managed
+// tornava PRIMA della validazione: un valore valido spariva in silenzio e uno
+// invalido veniva accettato (fail-open) — due percorsi divergenti sullo
+// stesso campo, quello che l'audit ha bloccato.
+
+test('panelUrl su engine managed valido: validato e CONSERVATO, non scartato', () => {
+  const def = {
+    schemaVersion: 1,
+    engines: [{
+      id: 'x.managed', label: 'X', rc: true,
+      managed: { client: 'claude', provider: 'native', permissionPolicy: 'unsafe' },
+      panelUrl: 'https://127.0.0.1:6901',
+    }],
+    cells: [],
+  };
+  const parsed = parseDefinitions(def);
+  assert.ok(parsed, 'engine managed con panelUrl valido accettato');
+  assert.equal(parsed.engines[0].panelUrl, 'https://127.0.0.1:6901',
+    'il campo sopravvive al parse, come nel ramo custom');
+});
+
+test('panelUrl su engine managed INVALIDO: definizione rifiutata (fail-closed, come custom)', () => {
+  // Riproduce il caso dell'auditor: "not a url" sul managed veniva ACCETTATO
+  // col campo scartato in silenzio; sul custom dava null. Ora uguali.
+  for (const url of ['not a url', 'https://example.com:6901', 'ftp://127.0.0.1:6901', '']) {
+    const def = {
+      schemaVersion: 1,
+      engines: [{
+        id: 'x.managed', rc: true,
+        managed: { client: 'claude', provider: 'native', permissionPolicy: 'unsafe' },
+        panelUrl: url,
+      }],
+      cells: [],
+    };
+    assert.equal(parseDefinitions(def), null, `atteso rifiuto per ${JSON.stringify(url)}`);
+  }
+  // e un managed SENZA panelUrl resta valido: il campo è opzionale su entrambi i rami
+  const clean = {
+    schemaVersion: 1,
+    engines: [{ id: 'x.managed', rc: true, managed: { client: 'claude', provider: 'native', permissionPolicy: 'unsafe' } }],
+    cells: [],
+  };
+  const parsed = parseDefinitions(clean);
+  assert.ok(parsed, 'managed senza panelUrl resta valido');
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed.engines[0], 'panelUrl'), false);
+});
+
+test('validatore unico presidiato: backend (validPanelUrl) e backup (validBackupPanelUrl) stesso verdetto', async () => {
+  const { validPanelUrl } = require('../lib/fleet/definitions.js');
+  const backup = await import('../frontend/src/lib/fleet-backup.js');
+  const cases = [
+    'https://127.0.0.1:6901', 'https://localhost:6901', 'https://[::1]:6901', 'http://127.0.0.1:1',
+    'not a url', '', 'https://example.com:6901', 'http://192.168.1.5:6901', 'ftp://127.0.0.1:6901',
+    'javascript:alert(1)', 'file:///etc/passwd', 'https://127.0.0.1:6901/panel?x=1',
+    'https://127.0.0.1.:6901', 'https://user@127.0.0.1:6901', 'https://127.0.0.1:6901/a b',
+    42, null, {}, ['https://127.0.0.1:6901'],
+  ];
+  for (const c of cases) {
+    assert.equal(backup.validBackupPanelUrl(c), validPanelUrl(c),
+      `divergenza fra validatore backend e backup su ${JSON.stringify(c)}`);
+  }
+});
+
+test('cellStatus: panelUrl dell\'engine MANAGED raggiunge la cella (fallback engine->cella vale per entrambi)', async () => {
+  const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
+  const dir = tmpDir();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d8-home-'));
+  const defsPath = path.join(dir, 'fleet.json');
+  atomicWrite(defsPath, {
+    schemaVersion: 1,
+    engines: [{
+      id: 'x.managed', label: 'X', rc: true,
+      managed: { client: 'claude', provider: 'native', permissionPolicy: 'unsafe' },
+      panelUrl: 'https://127.0.0.1:6901',
+    }],
+    cells: [{ id: 'A', cwd: home, engine: 'x.managed', boot: false }],
+  });
+  try {
+    // tmuxBin che fallisce: refreshSessions torna un set vuoto (nessuna cella
+    // attiva) — per il fallback panelUrl non serve alcuna sessione viva.
+    const runtime = createBuiltinRuntime({
+      cfg: {}, home, defsPath, tmuxBin: '/bin/false',
+      readonly: () => false, launchBroker: null, boot: loadDefinitions(defsPath),
+    });
+    const st = await runtime.cellStatus();
+    const cellA = st.cells.find((c) => c.cell === 'A');
+    assert.ok(cellA, 'cella nello status');
+    assert.equal(cellA.panelUrl, 'https://127.0.0.1:6901',
+      'il panelUrl precompilato dall\'engine MANAGED arriva alla cella via fallback');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

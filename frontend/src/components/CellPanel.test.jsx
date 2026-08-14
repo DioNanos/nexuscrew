@@ -98,4 +98,53 @@ describe('CellPanel (D8: pannello per-cella da panelUrl)', () => {
     });
     expect(calls).toBe(2);
   });
+
+  // --- timeout: causa DETERMINISTICA distinta (rilievo 2 audit D8) ----------
+  // La probe che non risponde entro il limite viene chiusa dal NOSTRO timer
+  // (AbortController): AbortError è riconoscibile e vale uno stato PROPRIO.
+  // L'azione di chi legge è RIPROVARE, non andare a cercare un certificato:
+  // mostrarlo come unreachable indirizzerebbe l'operatore dalla parte sbagliata.
+  // La fetch qui sotto non risponde mai ma onora l'AbortSignal: è l'abort del
+  // timer a chiudere la partita, in modo deterministico.
+  it('timeout — la probe scade: stato proprio panel-timeout, NON unreachable', async () => {
+    vi.stubGlobal('fetch', vi.fn((_url, opts) => new Promise((_resolve, reject) => {
+      opts.signal.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')));
+    })));
+    render(<CellPanel url="https://127.0.0.1:6901" title="Dev" probeTimeoutMs={30} />);
+    // waitFor sul CONTENUTO: il primo render è 'checking' (role=status esiste
+    // subito), la scadenza arriva col timer.
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain('panel-timeout');
+    }, { timeout: 2000 });
+    const status = screen.getByRole('status');
+    expect(status.textContent).not.toContain('panel-unreachable');
+    expect(status.textContent).not.toContain('Pannello non raggiungibile');
+    // nel dubbio: l'azione del timeout è solo Riprova, niente "apri in una
+    // scheda" (quella cura il certificato, che qui non c'entra).
+    expect(screen.queryByTitle('panel-open')).toBeNull();
+    expect(screen.getByTitle('panel-retry')).toBeTruthy();
+    expect(document.querySelector('iframe')).toBeNull();
+  });
+
+  it('timeout — Riprova dopo la scadenza riesegue la probe e può arrivare verde', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn((_url, opts) => {
+      calls += 1;
+      if (calls === 1) {
+        return new Promise((_resolve, reject) => {
+          opts.signal.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')));
+        });
+      }
+      return Promise.resolve({});
+    }));
+    const { container } = render(<CellPanel url="https://127.0.0.1:6901" title="Dev" probeTimeoutMs={30} />);
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain('panel-timeout');
+    }, { timeout: 2000 });
+    fireEvent.click(screen.getByTitle('panel-retry'));
+    await waitFor(() => {
+      expect(container.querySelector('iframe')).toBeTruthy();
+    });
+    expect(calls).toBe(2);
+  });
 });
