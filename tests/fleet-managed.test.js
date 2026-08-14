@@ -931,7 +931,7 @@ test('findBinary: un candidato non VERIFICABILE (symlink circolare) -> stesso nu
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('describeManaged: candidato binario non verificabile (ELOOP) -> stesso fail, ma reason dice "non verificabile", mai "not found"', () => {
+test('describeManaged: candidato binario non verificabile (ELOOP) -> stesso fail, ma reason dice "not confirmed", mai "not found"', () => {
   const home = tmp();
   try {
     const binDir = path.join(home, '.local', 'bin'); fs.mkdirSync(binDir, { recursive: true });
@@ -941,7 +941,10 @@ test('describeManaged: candidato binario non verificabile (ELOOP) -> stesso fail
     // binario (null), isolando la superficie del collasso dal percorso credenziali.
     const info = describeManaged({ client: 'vl', provider: 'native', model: '' }, { home, env: {} });
     assert.equal(info.configured, false, 'verdetto invariato: niente binario confermato -> non configurato');
-    assert.match(info.reason, /non verificabile/i, 'il messaggio dice "non verificabile"');
+    // I messaggi di questo file sono in inglese (convenzione per-file: doctor.js
+    // parla italiano, describeManaged no). L'asserzione vincola il SIGNIFICATO —
+    // "non ho potuto verificare" — non una frase in particolare.
+    assert.match(info.reason, /could not be verified/i, 'il messaggio dice che non ha potuto verificare');
     assert.doesNotMatch(info.reason, /not found/i, 'non deve dire "not found" quando in realta\' non ha potuto guardare');
     assert.match(info.reason, /ELOOP/);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -968,7 +971,7 @@ test('parseEnvFile: credenziale presente ma ILLEGGIBILE (EACCES) -> stesso {}, m
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('describeManaged: credenziale presente ma illeggibile -> stesso fail (authConfigured false), ma reason dice "non verificabile", mai "missing — set it"', () => {
+test('describeManaged: credenziale presente ma illeggibile -> stesso fail (authConfigured false), ma reason dice "not verifiable", mai "missing — set it"', () => {
   const home = tmp();
   try {
     fakeClient(home, 'claude'); // binario valido: il reason e' deciso dalla credenziale
@@ -982,7 +985,7 @@ test('describeManaged: credenziale presente ma illeggibile -> stesso fail (authC
       assert.equal(info.configured, false, 'verdetto invariato: non possiamo confermare la credenziale');
       assert.equal(info.authConfigured, false);
       assert.equal(info.credentialSource, 'unreadable', 'la fonte e" "unreadable", non "missing"');
-      assert.match(info.reason, /non verificabile/i, 'il messaggio dice "non verificabile"');
+      assert.match(info.reason, /not verifiable/i, 'il messaggio dice che non e\' verificabile');
       assert.doesNotMatch(info.reason, /set it on this device/i, 'non deve dire "missing — set it" quando il file c\'e ma e\' illeggibile');
       assert.match(info.reason, /EACCES/);
     } finally { fs.chmodSync(dir, 0o700); }

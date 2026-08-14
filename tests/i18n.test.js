@@ -12,6 +12,31 @@ test('i18n: parità chiavi it/en/es, nessuna stringa vuota', async () => {
   }
 });
 
+// La guardia sopra confronta le tre lingue FRA LORO: se una chiave manca in
+// tutte e tre, la parita' e' perfetta e il test resta verde. E' esattamente
+// cosi' che 'unreadable' (valore nuovo di credentialSource, 14/08) e
+// 'nexuscrew-store' (preesistente) sono arrivati fino alla UI senza stringa —
+// e t() su chiave assente restituisce LA CHIAVE, quindi l'utente leggeva
+// `fleet-credential-source-unreadable` a schermo.
+//
+// Questa guardia lega invece i due lati: i valori che il BACKEND puo' produrre
+// devono avere la stringa. L'ancora e' la costante esportata da managed.js, non
+// una lista riscritta qui: una lista copiata a mano diverge dal codice e
+// tornerebbe verde proprio quando il codice cambia.
+test('i18n: ogni valore di credentialSource prodotto dal backend ha la sua stringa', async () => {
+  const { DICTS } = await import('../frontend/src/lib/i18n.js');
+  const { CREDENTIAL_SOURCE_VALUES } = require('../lib/fleet/managed.js');
+  assert.ok(CREDENTIAL_SOURCE_VALUES.length >= 6, 'elenco valori popolato');
+  const missing = [];
+  for (const value of CREDENTIAL_SOURCE_VALUES) {
+    for (const lang of ['it', 'en', 'es']) {
+      const key = `fleet-credential-source-${value}`;
+      if (!Object.prototype.hasOwnProperty.call(DICTS[lang], key)) missing.push(`${lang}.${key}`);
+    }
+  }
+  assert.deepEqual(missing, [], `valori senza stringa: ${missing.join(', ')}`);
+});
+
 test('i18n: t() fallback su IT e su chiave', async () => {
   const { t, DICTS } = await import('../frontend/src/lib/i18n.js');
   assert.equal(t('__missing__'), '__missing__');
