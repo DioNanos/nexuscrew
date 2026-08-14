@@ -249,6 +249,112 @@ test('F-B: lease persa per tutta la grace -> onLost avvisa il supervisore (nient
   }
 });
 
+// --- Correzione (riconsegna NEEDS_CHANGES): F-B — un solo SIGTERM non basta -
+
+// Il test sopra (F-B: lease persa) dichiarava di attraversare cell-exec ma
+// osservava solo la callback onLost — si fermava prima del punto in cui il
+// difetto vive davvero: un figlio gia' nato che IGNORA SIGTERM. Misurato sul
+// percorso reale: {spawned:1, kills:['SIGTERM'], state:'pending'}. Questo test
+// attraversa cellExecMain PER INTERO, con un vero processo figlio (child_process
+// reale, non un fake) che ignora deliberatamente SIGTERM — l'unico modo di
+// dimostrare che l'escalation a SIGKILL avviene davvero, non solo che la
+// funzione onLost e' stata chiamata.
+test('F-B (correzione): un figlio che IGNORA SIGTERM viene comunque terminato (escalation a SIGKILL)', async () => {
+  const { LEASE_LOST_KILL_ESCALATION_MS, main: cellExecMain } = require('../lib/fleet/cell-exec.js');
+  const { EventEmitter: EE } = require('node:events');
+  const realSpawn = require('node:child_process').spawn;
+  const clock = { t: 100_000 };
+  const timers = [];
+  const fakeSetTimeout = (fn, ms) => { const h = { fn, ms }; timers.push(h); return h; };
+  const fakeClearTimeout = (h) => { const i = timers.indexOf(h); if (i >= 0) timers.splice(i, 1); };
+
+  const leaseSocket = new EE();
+  leaseSocket.destroyed = false;
+  leaseSocket.destroy = () => { leaseSocket.destroyed = true; leaseSocket.emit('close'); };
+  leaseSocket.write = () => true;
+  leaseSocket.setEncoding = () => {};
+
+  // Un VERO processo Node che ignora deliberatamente SIGTERM e resta vivo
+  // finche' non riceve SIGKILL (che il sistema operativo non fa ignorare).
+  const ignoreScript = "process.on('SIGTERM', () => {}); setInterval(() => {}, 100);";
+  let realChild = null;
+  const spawnImpl = (command, args, opts) => {
+    realChild = realSpawn(command, args, opts);
+    return realChild;
+  };
+
+  const payload = {
+    command: process.execPath, args: ['-e', ignoreScript], env: {},
+    supervise: { enabled: false },
+    lease: { stablePath: '/tmp/nonexistent-cell.sock', launchEpoch: 'a'.repeat(16), capability: 'b'.repeat(64) },
+  };
+
+  // Nessuna vera I/O di rete nel path di reconnect: senza questo, il primo
+  // tentativo (armato da onEOF PRIMA che il clock sia avanzato) userebbe il
+  // vero modulo `net` verso uno stablePath inesistente — un fallimento
+  // ASINCRONO reale, fuori sincronia col loop di timer fittizi qui sotto, che
+  // ha reso il test appeso alla prima stesura.
+  const fakeNet = { createConnection: () => { const s = new EE(); s.destroyed = false; s.destroy = () => { s.destroyed = true; s.emit('close'); }; s.setEncoding = () => {}; s.write = () => true; return s; } };
+
+  const mainPromise = cellExecMain(['--socket', '/tmp/x', '--nonce', 'a'.repeat(64)], {
+    spawn: spawnImpl,
+    receivePayload: async () => ({ payload, socket: leaseSocket }),
+    now: () => clock.t,
+    setTimeout: fakeSetTimeout,
+    clearTimeout: fakeClearTimeout,
+    net: fakeNet,
+    writeError: () => {},
+  });
+
+  try {
+    // Aspetta che il vero processo sia partito. L'oggetto ChildProcess esiste
+    // sincrono al ritorno di spawn(): nessun bisogno (e nessun rischio di
+    // perdere l'evento 'spawn' per race) di aspettare altro oltre a questo.
+    for (let i = 0; i < 100 && !realChild; i += 1) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(realChild, 'il processo reale e\' partito');
+    // Margine reale perche' il runtime Node del FIGLIO finisca di avviarsi ed
+    // esegua `process.on('SIGTERM', ...)`: mandare il segnale prima che quella
+    // riga sia stata eseguita lo farebbe morire di default — un falso rosso
+    // che non ha nulla a che fare con l'escalation.
+    await new Promise((r) => setTimeout(r, 300));
+
+    // EOF sulla lease -> grace armata; fai scadere la grace -> onLost scatta,
+    // manda SIGTERM (che il figlio ignora) e arma l'escalation.
+    leaseSocket.emit('close');
+    clock.t += require('../lib/fleet/cell-lease.js').GRACE_MS + 1;
+    for (let guard = 0; guard < 20; guard += 1) {
+      const pending = timers.filter((h) => h.ms !== LEASE_LOST_KILL_ESCALATION_MS);
+      if (!pending.length) break;
+      for (const h of [...pending]) { fakeClearTimeout(h); try { h.fn(); } catch (_) {} }
+    }
+    const escalationTimer = timers.find((h) => h.ms === LEASE_LOST_KILL_ESCALATION_MS);
+    assert.ok(escalationTimer, 'l\'escalation e\' armata con il limite ESPLICITO LEASE_LOST_KILL_ESCALATION_MS');
+
+    // Il figlio ignora SIGTERM: verifica che sia ANCORA vivo poco dopo (il
+    // segnale e' stato consegnato — un breve margine reale basta a escluderlo).
+    await new Promise((r) => setTimeout(r, 80));
+    assert.equal(realChild.exitCode, null, 'SIGTERM da solo non termina un figlio che lo ignora');
+    assert.equal(realChild.signalCode, null);
+
+    // Fai scattare l'escalation: SIGKILL, che il figlio NON PUO\' ignorare.
+    escalationTimer.fn();
+    const result = await Promise.race([
+      new Promise((resolve) => realChild.once('exit', (code, signal) => resolve({ code, signal }))),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('il figlio non e\' morto entro il timeout del test')), 3000)),
+    ]);
+    assert.equal(result.signal, 'SIGKILL', 'il figlio muore per SIGKILL, non da solo');
+
+    const finalCode = await mainPromise;
+    assert.equal(finalCode, 0, 'il supervisore termina con la lease persa');
+  } finally {
+    // Pulizia di sicurezza: se qualcosa nel test e' fallito prima del SIGKILL,
+    // il processo reale non deve restare orfano dopo la suite.
+    if (realChild && realChild.exitCode === null && realChild.signalCode === null) {
+      try { realChild.kill('SIGKILL'); } catch (_) {}
+    }
+  }
+});
+
 // --- Correzione (audit 2a, precisata da Dev): handler 'error' sui socket -----
 //
 // La segnalazione originale ("grep vuoto su .on('error')") era imprecisa: gli
