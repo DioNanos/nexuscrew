@@ -992,6 +992,33 @@ test('describeManaged: credenziale presente ma illeggibile -> stesso fail (authC
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
+// Il tracciamento segue la FONTE, non la lettura. Il file legacy viene letto
+// sempre, ma vale come fonte solo per i profili con legacySecrets: per gli altri
+// la sua illeggibilita' non dice nulla sulla chiave cercata, e dichiararla
+// "non verificabile" manda l'operatore a sistemare un permesso irrilevante
+// mentre la chiave e' davvero assente. Rilievo di un audit indipendente, con il
+// caso ricostruito.
+test('describeManaged: un file legacy illeggibile non rende "unreadable" un profilo che non lo usa come fonte', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'claude');
+    const dir = path.join(home, 'secrets'); fs.mkdirSync(dir, { recursive: true });
+    const secrets = path.join(dir, 'providers.env');
+    fs.writeFileSync(secrets, 'OLLAMA_API_KEY=irrilevante-per-questo-profilo\n', { mode: 0o600 });
+    fs.chmodSync(dir, 0o600); // EACCES sul file legacy
+    try {
+      // openrouter non ha legacySecrets: providers.env non e' una sua fonte.
+      const info = describeManaged({ client: 'claude', provider: 'openrouter', model: 'x' },
+        { home, providerSecretsPath: secrets, env: {} });
+      assert.equal(info.authConfigured, false, 'verdetto invariato: la chiave non c\'e');
+      assert.equal(info.credentialSource, 'missing',
+        'la chiave e davvero assente: un file che non e sua fonte non la rende "non verificabile"');
+      assert.match(info.reason, /missing/i);
+      assert.doesNotMatch(info.reason, /not verifiable/i, 'non deve nominare un file irrilevante per questa chiave');
+    } finally { fs.chmodSync(dir, 0o700); }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
 // Controllo negativo: una credenziale davvero ASSENTE (ENOENT) resta "missing" e
 // "set it on this device" — il discriminante e' CHI ha fallito, non il fatto che
 // ci sia stata un'eccezione. Questo fissa che la correzione non ha spostato il
