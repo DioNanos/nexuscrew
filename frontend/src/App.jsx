@@ -14,6 +14,7 @@ import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
 import VlSessionView from './components/VlSessionView.jsx';
+import CellPanel from './components/CellPanel.jsx';
 import {
   apiFetch, fleetStatus, fleetUp, fleetDown, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
   getLiveHost, designateHostCell, clearHostCell,
@@ -130,6 +131,12 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
   // sessione tmux. Inizializza con cellName (desktop overlay) o session.
   const [title, setTitle] = useState(cellName || session);
   const [sub, setSub] = useState('');           // sottotitolo stato dell'header
+  // D8: pannello grafico per-cella. `panelUrl` arriva dal fleetStatus (contratto
+  // col backend: stringa per-cella, opzionale, già validata a monte http/https
+  // loopback — qui si consuma, non si ri-valida). Opt-in totale: senza campo
+  // né il bottone né il pannello esistono.
+  const [panelUrl, setPanelUrl] = useState('');
+  const [showPanel, setShowPanel] = useState(false);
   const zoom = (delta) => setFontSize((v) => {
     const next = Math.max(FONT_MIN, Math.min(FONT_MAX, v + delta));
     localStorage.setItem('nc_fontsize', String(next));
@@ -146,7 +153,7 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
   // SingleView may be reused at the same React position when the operator
   // switches cells. Synchronize immediately instead of showing the previous
   // title until the first fleetStatus poll completes.
-  useEffect(() => { setTitle(cellName || session); }, [cellName, session]);
+  useEffect(() => { setTitle(cellName || session); setShowPanel(false); }, [cellName, session]);
 
   // Sottotitolo header: "engine·key" se la sessione è una cella, altrimenti
   // "attached · Nm" (o tempo relativo). Dati da /api/sessions + /api/fleet/status
@@ -176,6 +183,10 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
         session,
         cell: cell || (cellName ? { cell: cellName } : null),
       }));
+      // D8: campo opzionale; assente o vuoto (anche solo spazi) → nessun
+      // pannello. Non è una ri-validazione: è la resa dello stato "nessun
+      // pannello configurato".
+      setPanelUrl(typeof cell?.panelUrl === 'string' ? cell.panelUrl.trim() : '');
       let txt = '';
       if (cell) txt = `${cell.engine}${cell.key ? `·${cell.key}` : ''}`;
       else if (sess) txt = sess.attached ? `attached · ${rel(sess.activity)}` : (sess.activity ? rel(sess.activity) : '');
@@ -199,6 +210,9 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
           <button onClick={() => zoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
           <button onClick={() => setShowComposer((v) => !v)} title={t('composer')}><Icon name="keyboard" size={20} /></button>
           <button onClick={() => setShowFiles((v) => !v)} title={t('files')}><Icon name="folder" size={20} /></button>
+          {panelUrl && (
+            <button onClick={() => setShowPanel((v) => !v)} title={t('panel')} aria-pressed={showPanel}><Icon name="monitor" size={20} /></button>
+          )}
         </span>
       </header>
       <div className="nc-termwrap">
@@ -206,6 +220,11 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
           ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} onFiles={setFilesEvent} fontSize={fontSize}
           selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
           keyboardGesture={inputPreferences.terminalKeyboardGesture} />
+        {/* D8: pannello in alternativa al terminale, overlay assoluto — il
+            terminale resta montato (PTY vivo, nessun reflow al toggle). */}
+        {showPanel && panelUrl && (
+          <CellPanel url={panelUrl} title={title} />
+        )}
       </div>
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} onCellSwitcher={onCellSwitcher} cellSwitcherOpen={cellSwitcherOpen}
         send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
