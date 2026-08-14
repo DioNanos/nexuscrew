@@ -78,6 +78,52 @@ test('MISURA + FIX: chmod 0600 sul socket fallito -> il broker fallisce chiuso, 
   }
 });
 
+// Riconsegna: la guardia sopra verificava SOLO il mode (chmod, poi
+// statSync().mode) — il PERMESSO, non l'IDENTITA'. MISURA (sostituzione
+// REALE del file, non simulata: si intercetta la vera fs.chmodSync, si
+// lascia che faccia il suo lavoro sul vero socket, e SUBITO DOPO si
+// rimpiazza il path con un file regolare mode 0600 — stesso trust boundary
+// di un attaccante con accesso alla dir 0700): con la guardia precedente
+// issue() si risolveva comunque, perche' il mode del file regolare
+// combaciava. La guardia dichiarava di verificare "questo socket ha i
+// permessi giusti" ma in realta' non garantiva che fosse ancora un socket.
+async function withSocketSwappedForRegularFileAfterChmod(fn) {
+  const originalChmodSync = fs.chmodSync;
+  let swapped = false;
+  fs.chmodSync = function (p, mode) {
+    const r = originalChmodSync.call(fs, p, mode);
+    if (String(p).endsWith('.sock') && !swapped) {
+      swapped = true;
+      fs.unlinkSync(p);
+      fs.writeFileSync(p, 'non e un socket');
+      originalChmodSync.call(fs, p, 0o600);
+    }
+    return r;
+  };
+  try { return await fn(); } finally { fs.chmodSync = originalChmodSync; }
+}
+
+test('MISURA + FIX: il socket sostituito con un file regolare (stesso mode 0600) dopo il chmod -> il broker se ne accorge, non verifica solo il permesso', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbroker-toctou-'));
+  fs.chmodSync(home, 0o700);
+  const broker = createLaunchBroker({ home, launchTokenTtlMs: 2000 });
+  try {
+    await withSocketSwappedForRegularFileAfterChmod(async () => {
+      await assert.rejects(
+        () => broker.issue({ command: '/bin/echo', args: ['ok'], env: {} }),
+        /unsafe launch broker socket/,
+        'un permesso corretto su un oggetto che non e\' piu\' un socket non deve passare',
+      );
+    });
+    const runDir = path.join(home, '.nexuscrew', 'run');
+    const leftover = fs.existsSync(runDir) ? fs.readdirSync(runDir).filter((n) => n.endsWith('.sock')) : [];
+    assert.deepEqual(leftover, [], 'nessun residuo (socket o file sostituito) abbandonato sul disco');
+  } finally {
+    await broker.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('cell-exec payload validation rejects shell-shaped or malformed launch data', () => {
   assert.equal(validPayload({ command: '/bin/x', args: ['; rm -rf /'], env: { SAFE: 'value' } }), true,
     'argv is data and is never shell-evaluated');
