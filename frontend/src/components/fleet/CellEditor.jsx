@@ -5,12 +5,19 @@ import { listDirs } from '../../lib/api.js';
 // Editor di una cella. State-less rispetto alle API: la posizione di creazione
 // è un campo obbligatorio DENTRO il form e riceve/solleva stato al parent.
 // Estratto invariato da FleetTab.jsx.
-export default function CellEditor({ token, route, targets = [], location, setLocation, state, setState, engines, mcpServers = [], busy, onSave }) {
+export default function CellEditor({ token, route, targets = [], location, setLocation, state, setState, engines, mcpServers = [], managedCatalog = [], busy, onSave }) {
   const [picker, setPicker] = useState(null);
   const [pickErr, setPickErr] = useState('');
   const f = state.form; const set = (patch) => setState({ ...state, form: { ...f, ...patch } });
   const selectedEngine = engines.find((engine) => engine.id === f.engine);
   const isShell = selectedEngine?.managed?.client === 'shell';
+  const mcpClient = selectedEngine?.managed?.client || '';
+  // DEC2: cell.mcp ha effetto solo per i client che NexusCrew gestisce (claude,
+  // mcpManaged nel catalogo). Per gli altri (codex, vl, kimi, pi, agy, grok) i
+  // server MCP li registra il client nel proprio config nativo, non NexusCrew:
+  // la selezione qui e' inerte. La vista lo dice invece di confermare un no-op
+  // silenzioso — l'operatore sceglie, la UI avverte qui, nel punto della scelta.
+  const mcpEffective = managedCatalog.find((p) => p.client === mcpClient)?.mcpManaged !== false;
   const chooseEngine = (id) => {
     const engine = engines.find((e) => e.id === id);
     const commands = { ...(f.commands || {}) };
@@ -89,6 +96,7 @@ export default function CellEditor({ token, route, targets = [], location, setLo
           <option value="some">{t('cell-mcp-some')}</option>
         </select>
       </label>
+      {!mcpEffective && <small className="nc-note">{t('cell-mcp-inert')}</small>}
       {mcpModo === 'some' && <div className="nc-fleet-mcp-list">
         {mcpNoti.map((nome) => <label className="nc-check" key={nome}>
           <input type="checkbox" checked={(f.mcp || []).includes(nome)} onChange={() => toggleMcp(nome)} /> {nome}

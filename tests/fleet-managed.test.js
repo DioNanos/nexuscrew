@@ -161,6 +161,21 @@ test('Fetta A: ordine provider claude esplicito (native, alibaba, kimi-code, zai
   assert.deepEqual(providers, ['native', 'alibaba-token-plan', 'kimi-code', 'zai', 'opencode-go', 'openrouter', 'ollama-cloud', 'bedrock', 'vertex', 'foundry', 'ollama', 'custom']);
 });
 
+// DEC2: mcpManaged dice se NexusCrew gestisce i server MCP del client (solo
+// claude, che riceve cellMcpArgs/sharedMcpArgs nel ramo claude di
+// resolveManagedEngine). Per ogni altro client cell.mcp e' INERTE: la cella lo
+// accetta ma non ha effetto, perche' i server li registra il client nel proprio
+// config nativo. La vista lo espone cosi' l'editor avverte nel punto di scelta.
+test('DEC2: mcpManaged true SOLO per claude (unico client con MCP gestito da NexusCrew)', () => {
+  const cat = publicCatalog();
+  assert.ok(cat.some((p) => p.client === 'claude'), 'claude presente');
+  assert.ok(cat.some((p) => p.client !== 'claude'), 'ci sono client non-claude');
+  for (const p of cat) {
+    assert.equal(p.mcpManaged, p.client === 'claude',
+      `${p.id}: mcpManaged deve essere true solo per claude (client=${p.client})`);
+  }
+});
+
 test('Fetta A: niente prefisso "Pi · " nelle label; 6 provider Pi restano non-core', () => {
   for (const p of CATALOG) {
     assert.ok(!String(p.label || '').startsWith('Pi · '), `label "${p.label}" non deve iniziare con "Pi · "`);
