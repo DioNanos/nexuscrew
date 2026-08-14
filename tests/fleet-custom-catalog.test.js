@@ -25,6 +25,7 @@ const { parseDefinitions } = require('../lib/fleet/definitions.js');
 const {
   extraModelsFrom, declaredModelsFor, resolveManagedEngine, customCatalogFor, describeManaged,
 } = require('../lib/fleet/managed.js');
+const { resolvePiComposer, loadPiExtensionFile } = require('./helpers/pi-real-consumer.js');
 
 // Insiemi ammessi dallo schema codex-vl (stessi di fleet-catalog-schema).
 const APPLY_PATCH = new Set([null, 'freeform']);
@@ -95,7 +96,21 @@ test('D2 end-to-end: parseDefinitions -> extraModelsFrom -> resolveManagedEngine
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('D2 end-to-end: Pi custom — stesso ponte, stesso percorso reale, il descrittore arriva nell\'estensione generata', () => {
+// D2 (correzione dopo NEEDS_CHANGES): il consumatore vero di questo file non
+// e' il test — e' Pi. Il test precedente leggeva solo il file .ts generato e
+// restava verde su un'estensione che Pi 0.80.10 rifiuta a runtime, perche' i
+// descrittori grezzi (id/engine/contextWindow/maxTokens/reasoning) non hanno
+// i campi che il contratto di Pi richiede (name/input/cost — misurato:
+// `model.input.includes("image")` in core/tools/read.js lancia TypeError su
+// input undefined). Questo test attraversa OGNI stadio reale: genera la
+// definizione, produce il file .ts, lo ESEGUE con Node (import dinamico nativo
+// di file .ts), cattura la config con cui Pi chiamerebbe registerProvider,
+// la passa a composeModelProvider REALE (il pacchetto Pi installato sulla
+// macchina, non una copia), e verifica sul modello che Pi produce la stessa
+// operazione che il suo consumatore (read.js) esegue davvero.
+test('D2 end-to-end: Pi custom — Pi VERO carica l\'estensione e il modello supera il consumo reale (read.js)', async (t) => {
+  const composer = await resolvePiComposer();
+  if (!composer) { t.skip('Pi (@earendil-works/pi-coding-agent) non installato su questa macchina: impossibile verificare il contratto reale'); return; }
   const defs = parseDefinitions({
     schemaVersion: 1,
     models: [{ id: 'deepseek-v4-pro', engine: 'pi.custom', contextWindow: 500000, maxTokens: 100000, reasoning: false }],
@@ -117,8 +132,31 @@ test('D2 end-to-end: Pi custom — stesso ponte, stesso percorso reale, il descr
     assert.equal(r.ok, true, r.ok ? '' : r.reason);
     const extIdx = r.engine.args.indexOf('--extension');
     assert.ok(extIdx >= 0, '--extension negli argv');
-    const source = fs.readFileSync(r.engine.args[extIdx + 1], 'utf8');
-    assert.match(source, /"contextWindow":\s*500000/, 'il descrittore dichiarato arriva nell\'estensione Pi, non il fallback 128000');
+    const tsPath = r.engine.args[extIdx + 1];
+    // Stadio 1: il file .ts generato viene ESEGUITO (non solo letto) — cattura
+    // la config con cui NexusCrew chiamerebbe pi.registerProvider davvero.
+    const registered = await loadPiExtensionFile(tsPath);
+    assert.ok(registered, 'il file .ts esegue e chiama registerProvider');
+    assert.equal(registered.id, 'deepseek');
+    // Stadio 2: quella config viene composta da Pi REALE (composeModelProvider,
+    // la stessa funzione che il runtime di Pi chiama quando avvia il provider).
+    const provider = composer.composeModelProvider('deepseek', undefined, { getProvider: () => undefined }, registered.config);
+    const models = provider.getModels(); // getModels() e' gia' EAGER-validated da Pi stesso
+    const model = models.find((m) => m.id === 'deepseek-v4-pro');
+    assert.ok(model, 'il modello dichiarato e\' nel catalogo che Pi produce');
+    assert.equal(model.contextWindow, 500000, 'il descrittore dichiarato arriva, non il fallback 128000');
+    // Stadio 3: il consumo REALE che core/tools/read.js fa sul modello
+    // selezionato (getNonVisionImageNote: `model.input.includes("image")`).
+    // Senza il fix questa riga lancia TypeError — qui non deve.
+    assert.doesNotThrow(() => model.input.includes('image'),
+      'il consumo reale di Pi (read.js) non deve piu\' lanciare su input mancante');
+    assert.equal(model.input.includes('image'), false);
+    // Il resto del contratto documentato (ProviderModelConfig), tutto presente.
+    assert.equal(typeof model.name, 'string');
+    assert.ok(model.name.length > 0);
+    assert.equal(typeof model.reasoning, 'boolean');
+    assert.equal(typeof model.cost, 'object');
+    for (const k of ['input', 'output', 'cacheRead', 'cacheWrite']) assert.equal(typeof model.cost[k], 'number');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
