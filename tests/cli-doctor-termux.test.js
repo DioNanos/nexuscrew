@@ -75,6 +75,31 @@ test('checkTermuxExec: libreria assente su Termux -> FAIL (Play build non puo es
   } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
 });
 
+// Stessa forma gia' corretta in cinque altri punti oggi (which, resolveBin,
+// resolveCommand, checkTmux, openPwa): PREFIX/lib ASSENTE (ENOENT, legittimo)
+// e PREFIX/lib ILLEGGIBILE (EACCES/ELOOP, non ho potuto verificare)
+// collassavano nello stesso `catch (_) { /* absent/unreadable */ }` — il
+// commento stesso lo ammetteva. MISURA (permessi tolti DAVVERO alla
+// directory, non simulati): readdirSync su una dir 0o000 fallisce con
+// EACCES, non ENOENT — la libreria puo' essere davvero li' dentro, solo
+// irraggiungibile.
+test('checkTermuxExec: PREFIX/lib non VERIFICABILE (permessi) -> stesso FAIL, ma il messaggio dice "non ho potuto verificare", mai "non trovata"', () => {
+  if (process.getuid && process.getuid() === 0) return; // root bypassa i permessi sulla dir
+  const { tmpRoot, prefix, home } = makeTermuxPrefix('libtermux-exec.so');
+  const libDir = path.join(prefix, 'lib');
+  fs.chmodSync(libDir, 0o000);
+  try {
+    const r = checkTermuxExec({ PREFIX: prefix, HOME: home }, { platform: 'android' });
+    assert.equal(r.ok, false, 'non possiamo confermare la libreria: il verdetto resta fail, come per assente');
+    assert.match(r.detail, /non ho potuto verificare/i);
+    assert.doesNotMatch(r.detail, /non trovata/i, 'non deve dire "non trovata" quando in realta\' non ha potuto guardare');
+    assert.match(r.detail, /EACCES/);
+  } finally {
+    fs.chmodSync(libDir, 0o755);
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test('checkTermuxExec: nessun dettaglio sensibile mai esposto (path completo ok, ma niente token/env)', () => {
   const { tmpRoot, prefix, home, libPath } = makeTermuxPrefix('libtermux-exec.so');
   try {

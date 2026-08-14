@@ -1137,6 +1137,15 @@ test('doctor: tmux mancante -> code 1', () => {
     execImpl: (b, a) => { if (a && a.includes('is-active')) return 'active'; return ''; },
     ptyLoad: () => ({}),
     commandExists: (bin) => bin !== 'tmux',
+    // Senza questo seam, checkTmux userebbe la resolveCommand REALE (legge
+    // il PATH vero del processo di test) per arricchire il messaggio —
+    // stessa famiglia di haveTmux che ignorava opts.env e openPwa che
+    // ignorava opts.resolveCommand: un test che dichiara di isolarsi col
+    // seam ma per una parte del comportamento legge l'ambiente vero. Qui
+    // dichiara esplicitamente "assente, nessun blocco" per restare isolato
+    // e deterministico, indipendente da cosa c'e' davvero sul PATH di chi
+    // esegue il test.
+    resolveCommand: () => ({ found: false, path: null, blocked: [] }),
   });
   assert.equal(r.code, 1);
   assert.ok(r.checks.some((c) => c.name.includes('tmux') && !c.ok));
