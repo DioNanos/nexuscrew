@@ -100,6 +100,26 @@ test('checkTermuxExec: PREFIX/lib non VERIFICABILE (permessi) -> stesso FAIL, ma
   }
 });
 
+// Riconsegna: il fix sopra chiudeva readdirSync sulla DIRECTORY, ma il
+// difetto era tornato un passo piu' avanti nella STESSA funzione —
+// statSync(candidate) nel loop successivo ricollassava EACCES/ELOOP in
+// "prossimo candidato", indistinguibile da "questo nome non e' valido".
+// MISURA (symlink circolare reale, non simulato): un candidato che punta a
+// se stesso fa fallire statSync con ELOOP, non ENOENT.
+test('checkTermuxExec: un CANDIDATO non VERIFICABILE (symlink circolare) -> stesso FAIL, ma il messaggio dice "non ho potuto verificare", mai "non trovata"', () => {
+  const { tmpRoot, prefix, home } = makeTermuxPrefix(null);
+  const libDir = path.join(prefix, 'lib');
+  const candidate = path.join(libDir, 'libtermux-exec.so');
+  fs.symlinkSync(candidate, candidate); // punta a se stesso: ELOOP su statSync
+  try {
+    const r = checkTermuxExec({ PREFIX: prefix, HOME: home }, { platform: 'android' });
+    assert.equal(r.ok, false, 'non possiamo confermare la libreria: il verdetto resta fail, come per assente');
+    assert.match(r.detail, /non ho potuto verificare/i);
+    assert.doesNotMatch(r.detail, /non trovata/i, 'non deve dire "non trovata" quando in realta\' non ha potuto guardare');
+    assert.match(r.detail, /ELOOP/);
+  } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
+});
+
 test('checkTermuxExec: nessun dettaglio sensibile mai esposto (path completo ok, ma niente token/env)', () => {
   const { tmpRoot, prefix, home, libPath } = makeTermuxPrefix('libtermux-exec.so');
   try {
