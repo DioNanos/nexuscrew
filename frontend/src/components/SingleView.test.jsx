@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const fixture = vi.hoisted(() => ({ sessions: [], cells: [] }));
 
@@ -24,6 +24,7 @@ vi.mock('./DeckBar.jsx', () => ({ default: () => null }));
 vi.mock('./SettingsPanel.jsx', () => ({ default: () => null }));
 vi.mock('./Wizard.jsx', () => ({ default: () => null }));
 vi.mock('./NotifyCenter.jsx', () => ({ default: () => null }));
+vi.mock('./CellPanel.jsx', () => ({ default: ({ url, title }) => <div data-testid="cellpanel" data-url={url} data-title={title} /> }));
 vi.mock('../lib/i18n.js', () => ({ t: (k) => k }));
 vi.mock('../hooks/useLang.js', () => ({ useLang: () => ['en', vi.fn()] }));
 
@@ -111,5 +112,49 @@ describe('SingleView title (Tranche D)', () => {
     expect(b.closest('.nc-bar-center')).toBeTruthy();
     expect(b.closest('.nc-bar-single')).toBeTruthy();
     await screen.findByText('claude.native·A');
+  });
+});
+
+describe('SingleView — pannello per-cella (D8, panelUrl)', () => {
+  it('opt-in totale: cella senza panelUrl → nessun bottone, nessun pannello', async () => {
+    // fixture.cells (beforeEach) non ha panelUrl.
+    render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
+    await screen.findByText('claude.native·A'); // fleetStatus già consumato
+    expect(screen.queryByTitle('panel')).toBeNull();
+    expect(screen.queryByTestId('cellpanel')).toBeNull();
+  });
+
+  it('opt-in totale: panelUrl stringa vuota → nessuna traccia', async () => {
+    fixture.cells = [{ cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'claude.native', key: 'A', panelUrl: '' }];
+    render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
+    await screen.findByText('claude.native·A');
+    expect(screen.queryByTitle('panel')).toBeNull();
+    expect(screen.queryByTestId('cellpanel')).toBeNull();
+  });
+
+  it('cella con panelUrl: bottone presente, pannello chiuso finché non aperto, poi URL esatto', async () => {
+    fixture.cells = [{ cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'claude.native', key: 'A', panelUrl: 'https://127.0.0.1:6901' }];
+    render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
+    const btn = await screen.findByTitle('panel');
+    // Chiuso prima del click: nessun pannello (comportamento terminale intatto).
+    expect(screen.queryByTestId('cellpanel')).toBeNull();
+    fireEvent.click(btn);
+    const panel = screen.getByTestId('cellpanel');
+    expect(panel.getAttribute('data-url')).toBe('https://127.0.0.1:6901');
+    // Il bottone dichiara lo stato (aria-pressed) e il pannello si chiude di nuovo.
+    expect(btn.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(btn);
+    expect(screen.queryByTestId('cellpanel')).toBeNull();
+  });
+
+  it('cambio sessione resetta il pannello (nessun leakage fra celle)', async () => {
+    const { rerender } = render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
+    fixture.cells = [{ cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'claude.native', key: 'A', panelUrl: 'https://127.0.0.1:6901' }];
+    await screen.findByTitle('panel');
+    fireEvent.click(screen.getByTitle('panel'));
+    expect(screen.getByTestId('cellpanel')).toBeTruthy();
+    // Switch di cella nella stessa posizione React: il pannello si richiude.
+    rerender(<SingleView session="cloud-Fork" token="t" onBack={vi.fn()} />);
+    expect(screen.queryByTestId('cellpanel')).toBeNull();
   });
 });

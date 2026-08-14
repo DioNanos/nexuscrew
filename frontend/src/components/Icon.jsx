@@ -47,6 +47,13 @@ const PATHS = {
     </>
   ),
   x: <path d="M6 6l12 12M18 6 6 18" />,
+  // D8: pannello grafico per-cella (monitor con base).
+  monitor: (
+    <>
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M8 20h8M12 16v4" />
+    </>
+  ),
   refresh: (
     <>
       <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" />
