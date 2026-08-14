@@ -23,14 +23,16 @@ import './CellPanel.css';
 //    mai scattato. L'unico segnale utilizzabile e' la probe fetch.
 // 2. La probe che risolve prova raggiungibilita' + certificato accettato
 //    (un 401 autonomico del servizio risolve comunque: l'auth resta al
-//    contenuto, dentro il frame). La probe che fallisce copre DUE cause
-//    distinte — servizio non raggiungibile e certificato non ancora
-//    accettato — che dal codice della pagina sono INDISTINGUIBILI (stesso
-//    TypeError opaco; la console del browser le distingue, ma la pagina non
-//    puo' leggere i network error cross-origin). Il pannello non indovina:
-//    rende un unico stato che nomina entrambe le cause e offre l'azione che
-//    risolve l'una (accettare il certificato in una scheda) e diagnostica
-//    l'altra.
+//    contenuto, dentro il frame). La probe che fallisce copre cause distinte:
+//    il TIMEOUT e' una causa DETERMINISTICA che il codice riconosce
+//    (l'AbortController e' solo del timer: AbortError = tempo scaduto) e ha
+//    stato e messaggio propri — l'azione e' riprovare. Servizio non
+//    raggiungibile e certificato non ancora accettato restano invece
+//    INDISTINGUIBILI fra loro (stesso TypeError opaco; la console del browser
+//    le distingue, ma la pagina non puo' leggere i network error
+//    cross-origin): il pannello non indovina, rende un unico stato che nomina
+//    entrambe e offre l'azione che risolve l'una (accettare il certificato in
+//    una scheda) e diagnostica l'altra.
 // 3. Una probe verde NON prova che l'origine sia embeddabile (X-Frame-Options
 //    / CSP frame-ancestors non sono osservabili da una risposta opaque):
 //    l'iframe puo' restare bianco con probe verde. Non e' risolvibile dalla
@@ -53,9 +55,14 @@ export default function CellPanel({ url, title, probeTimeoutMs = 4000 }) {
       await fetch(url, { mode: 'no-cors', signal: ctl.signal, cache: 'no-store' });
       clearTimeout(timer);
       if (seq === probeSeq.current) setState('ready');
-    } catch (_) {
+    } catch (err) {
       if (timer) clearTimeout(timer);
-      if (seq === probeSeq.current) setState('unreachable');
+      if (seq !== probeSeq.current) return;
+      // AbortError = il NOSTRO timer ha chiuso la partita (l'AbortController
+      // non e' usato per altro): causa deterministica, stato proprio. Chi
+      // legge deve riprovare, non andare a cercare un certificato.
+      if (err && err.name === 'AbortError') setState('timeout');
+      else setState('unreachable');
     }
   }, [url, probeTimeoutMs]);
 
@@ -82,6 +89,18 @@ export default function CellPanel({ url, title, probeTimeoutMs = 4000 }) {
     return (
       <div className="nc-cellpanel nc-cellpanel-msg" role="status">
         <span>{t('panel-checking')}</span>
+      </div>
+    );
+  }
+  if (state === 'timeout') {
+    // Causa deterministica distinta da 'unreachable': l'azione e' riprovare
+    // (servizio lento a partire), non accettare un certificato.
+    return (
+      <div className="nc-cellpanel nc-cellpanel-msg" role="status">
+        <span>{t('panel-timeout')}</span>
+        <span className="nc-cellpanel-actions">
+          <button type="button" title={t('panel-retry')} onClick={() => probe()}>{t('panel-retry')}</button>
+        </span>
       </div>
     );
   }

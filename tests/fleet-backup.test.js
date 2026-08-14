@@ -71,6 +71,41 @@ test('fleet backup: custom engine rejects secret-looking argv and invalid env na
   assert.equal(parseFleetBackup(JSON.stringify({ ...base, engines: [{ ...custom, envKeys: ['BAD-NAME'] }] })).ok, false);
 });
 
+// --- panelUrl nel backup (rilievo 1 audit D8) -------------------------------
+// Prima dell'allowlist il campo spariva in silenzio nel round-trip per ENTRRAMBI
+// i rami (managed e custom): export pulito, restore senza pannello, nessun
+// errore. Ora viaggia, e un valore invalido rifiuta l'engine (fail-closed).
+test('fleet backup: panelUrl di engine managed E custom sopravvive a export -> parse', async () => {
+  const { createFleetBackup, parseFleetBackup, portableEngineDefinition } = await mod();
+  const engines = [
+    { id: 'x.managed', label: 'X', rc: true, envKeys: [], managedInfo: { configured: true, reason: 'runtime-only' },
+      managed: { client: 'claude', provider: 'zai', credentialProfile: 'a', model: 'glm-5', permissionPolicy: 'unsafe' },
+      panelUrl: 'https://127.0.0.1:6901' },
+    { id: 'custom', label: 'Custom', rc: false, command: '/usr/bin/custom', args: ['--safe'],
+      envKeys: ['API_TOKEN'], promptMode: 'send-keys', panelUrl: 'https://localhost:6901' },
+  ];
+  const backup = createFleetBackup([], new Set(), engines, new Set(engines.map((e) => e.id)), new Date('2026-08-15T00:00:00Z'));
+  const parsed = parseFleetBackup(JSON.stringify(backup));
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.engines[0].panelUrl, 'https://127.0.0.1:6901', 'panelUrl managed nel backup');
+  assert.equal(parsed.engines[1].panelUrl, 'https://localhost:6901', 'panelUrl custom nel backup');
+  // la definizione portable che il restore consegna conserva il campo
+  assert.equal(portableEngineDefinition(parsed.engines[0]).panelUrl, 'https://127.0.0.1:6901');
+  assert.equal(portableEngineDefinition(parsed.engines[1]).panelUrl, 'https://localhost:6901');
+});
+
+test('fleet backup: panelUrl engine INVALIDO rifiuta l\'engine, non viene scartato in silenzio', async () => {
+  const { parseFleetBackup } = await mod();
+  const base = { format: 'nexuscrew.fleet', version: 3, cells: [], engines: [] };
+  const managed = { id: 'x.managed', label: 'X', rc: false,
+    managed: { client: 'claude', provider: 'zai', model: 'glm-5', permissionPolicy: 'unsafe' } };
+  const custom = { id: 'custom', label: 'Custom', rc: false, command: '/usr/bin/custom', args: [], promptMode: 'send-keys' };
+  assert.equal(parseFleetBackup(JSON.stringify({ ...base, engines: [{ ...managed, panelUrl: 'not a url' }] })).ok, false,
+    'managed con panelUrl invalido: backup rifiutato');
+  assert.equal(parseFleetBackup(JSON.stringify({ ...base, engines: [{ ...custom, panelUrl: 'not a url' }] })).ok, false,
+    'custom con panelUrl invalido: backup rifiutato');
+});
+
 // --- NC-D: il nome deve sopravvivere al round-trip COMPLETO della PWA -------
 // Non basta che lo schema accetti `label` in ingresso: il backup lo perde se
 // l'export non lo scrive o se il restore non lo rimette nella definizione. Il
