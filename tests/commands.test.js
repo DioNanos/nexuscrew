@@ -1653,3 +1653,62 @@ test('openPwa: opts.commandExists (seam booleano esplicito) -> comportamento sto
   assert.equal(spawned[0], 'gio');
   assert.equal(logs.length, 0);
 });
+
+// ===========================================================================
+// Punto 3 — checkService / checkBoot collassavano "non installato", "non
+// verificabile", "systemctl assente" e "dbus down" in "non attivo"/"non enabled".
+// Il pattern corretto e' checkTmuxSurvival (stesso file): il discriminante e' CHI
+// ha fallito. Verdetto (ok/warn) invariato; il messaggio distingue.
+// ===========================================================================
+
+test('checkService: linux systemctl assente (ENOENT) -> installato, stato NON VERIFICABILE, mai "installato ma non attivo"', () => {
+  const { checkService } = require('../lib/cli/doctor.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-svc-blocked-'));
+  const target = path.join(home, 'nexuscrew.service');
+  fs.writeFileSync(target, '[Unit]\n'); // installato (fs.existsSync true)
+  try {
+    const r = checkService('linux', home, () => { const e = new Error('spawn systemctl ENOENT'); e.code = 'ENOENT'; throw e; }, 1000, target);
+    assert.equal(r.ok, true, 'verdetto ok invariato (installato)');
+    assert.equal(r.warn, true, 'warn invariato (active resta false)');
+    assert.match(r.detail, /non verificabile/i, 'il messaggio dice "non verificabile"');
+    assert.doesNotMatch(r.detail, /installato ma non attivo/i, 'non deve dire "non attivo" quando non ha potuto guardare');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('checkService: linux systemctl risponde "inactive" -> "installato ma non attivo" (caso legittimo VERIFICATO, invariato)', () => {
+  const { checkService } = require('../lib/cli/doctor.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-svc-legit-'));
+  const target = path.join(home, 'nexuscrew.service');
+  fs.writeFileSync(target, '[Unit]\n');
+  try {
+    const r = checkService('linux', home, () => { throw new Error('inactive'); }, 1000, target);
+    assert.equal(r.ok, true);
+    assert.equal(r.warn, true);
+    assert.match(r.detail, /installato ma non attivo/i, 'systemctl ha girato e ha risposto: legittimo "non attivo"');
+    assert.doesNotMatch(r.detail, /non verificabile/i);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('checkBoot: linux dbus down -> "non verificabile", mai "non enabled"', () => {
+  const { checkBoot } = require('../lib/cli/doctor.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-boot-blocked-'));
+  try {
+    const r = checkBoot('linux', home, () => { throw new Error('Failed to connect to bus: No such file or directory'); });
+    assert.equal(r.ok, true, 'verdetto ok invariato');
+    assert.equal(r.warn, true, 'warn invariato');
+    assert.match(r.detail, /non verificabile/i);
+    assert.doesNotMatch(r.detail, /non enabled/i, 'non deve dire "non enabled" quando non ha potuto guardare');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('checkBoot: linux systemctl risponde "disabled" -> "non enabled (non parte al boot)" (caso legittimo VERIFICATO, invariato)', () => {
+  const { checkBoot } = require('../lib/cli/doctor.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-boot-legit-'));
+  try {
+    const r = checkBoot('linux', home, () => { throw new Error('disabled'); });
+    assert.equal(r.ok, true);
+    assert.equal(r.warn, true);
+    assert.match(r.detail, /non enabled/i, 'systemctl ha girato e ha risposto: legittimo "non enabled"');
+    assert.doesNotMatch(r.detail, /non verificabile/i);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});

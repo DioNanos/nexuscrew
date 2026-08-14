@@ -1,6 +1,16 @@
 export const FLEET_BACKUP_FORMAT = 'nexuscrew.fleet';
 export const FLEET_BACKUP_VERSION = 3;
 export const LEGACY_BACKUP_FORMAT = 'nexuscrew.cells';
+// I codici di errore che parseFleetBackup/createFleetBackup possono restituire.
+// La UI li rende con `fleet-backup-<codice>`, e t() su chiave assente
+// restituisce LA CHIAVE: un codice senza stringa si vede a schermo. Questa
+// costante e' l'ancora della guardia in tests/i18n.test.js, che la confronta
+// con i letterali presenti in questo file: la lista non puo' divergere dal
+// codice senza che il gate se ne accorga.
+export const BACKUP_ERROR_CODES = Object.freeze([
+  'invalid-json', 'invalid-format', 'invalid-cell', 'duplicate-cell',
+  'invalid-engine', 'duplicate-engine', 'invalid-model', 'duplicate-model',
+]);
 
 const CELL_ID_RE = /^[A-Za-z0-9._-]{1,32}$/;
 const ENGINE_ID_RE = /^[a-z0-9._-]{1,32}$/;

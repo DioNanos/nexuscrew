@@ -403,3 +403,70 @@ test('label di cella: sopravvive al round-trip su disco', () => {
   assert.equal(reloaded.cells[0].label, 'Cella di Ricerca');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ===========================================================================
+// Punto 4 — loadDefinitions: lstat con ENOENT o EACCES -> null -> "fleet
+// unavailable" senza dire perché. Il discriminante e' CHI ha fallito: ENOENT e'
+// legittimo "missing"; EACCES/ELOOP e' "non ho potuto guardare". Verdetto (null
+// -> fail-closed) invariato; out.lstatBlocked porta il perché.
+// ===========================================================================
+
+test('loadDefinitions: fleet.json presente ma illeggibile (EACCES sul lstat) -> stesso null, ma out.lstatBlocked traccia EACCES, non "missing"', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-ld-blocked-'));
+  try {
+    const defs = path.join(dir, 'fleet.json');
+    fs.writeFileSync(defs, JSON.stringify({ schemaVersion: 1, engines: [], cells: [] }), { mode: 0o600 });
+    fs.chmodSync(dir, 0o600); // directory senza execute: lstatSync(defs) -> EACCES
+    try {
+      const out = {};
+      const r = loadDefinitions(defs, out);
+      assert.equal(r, null, 'verdetto invariato: fail-closed, nessuna definizione caricata');
+      assert.ok(out.lstatBlocked && /EACCES/.test(out.lstatBlocked),
+        'il file presente ma illeggibile va tracciato, non collassato in "missing"');
+    } finally { fs.chmodSync(dir, 0o700); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('loadDefinitions: fleet.json ASSENTE (ENOENT) -> null, out.lstatBlocked vuoto (caso legittimo invariato)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-ld-legit-'));
+  try {
+    const out = {};
+    const r = loadDefinitions(path.join(dir, 'nope.json'), out);
+    assert.equal(r, null);
+    assert.equal(out.lstatBlocked, undefined, 'ENOENT e" legittimo "missing", non "non ho potuto guardare"');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ===========================================================================
+// Punto 5 (pezzo di valore) — resolveCwd: catch (_) -> null collassava ENOENT
+// (cwd non esiste, legittimo 'invalid-cwd') con EACCES/ELOOP (cwd esiste ma non
+// verificabile). resolveCellCwd riportava 'invalid-cwd' e unportableCwdError
+// "non esiste sotto la home" anche per una cwd presente ma illeggibile. Stesso
+// verdetto (cwd rifiutata, fail-closed di sicurezza); il messaggio distingue.
+// ===========================================================================
+
+test('resolveCwd: cwd presente ma padre illeggibile (EACCES) -> stesso null, ma out.unverifiable traccia EACCES, non "non esiste"', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cwd-blocked-'));
+  try {
+    const locked = path.join(home, 'locked'); fs.mkdirSync(locked);
+    const cwd = path.join(locked, 'Dev'); fs.mkdirSync(cwd);
+    fs.chmodSync(locked, 0o600); // padre senza execute: realpathSync(cwd) -> EACCES
+    try {
+      const out = {};
+      const r = resolveCwd(cwd, home, out);
+      assert.equal(r, null, 'verdetto invariato: non possiamo confermare la cwd');
+      assert.ok(out.unverifiable && /EACCES/.test(out.unverifiable),
+        'la cwd esiste ma non verificabile va tracciata (EACCES), non collassata in "non esiste"');
+    } finally { fs.chmodSync(locked, 0o700); }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('resolveCwd: cwd davvero ASSENTE (ENOENT) -> null, out.unverifiable vuoto (caso legittimo invariato)', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cwd-legit-'));
+  try {
+    const out = {};
+    const r = resolveCwd(path.join(home, 'nope'), home, out);
+    assert.equal(r, null);
+    assert.equal(out.unverifiable, undefined, 'ENOENT e" legittimo "non c\'e", non "non ho potuto guardare"');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
