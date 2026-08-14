@@ -7,6 +7,9 @@ const assert = require('node:assert');
 const { EventEmitter } = require('node:events');
 const a = require('../lib/audio/adapters.js');
 const { createSpeakQueue } = require('../lib/audio/queue.js');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 // fs finto: solo i binari elencati esistono e sono eseguibili.
 function fakeFs(available) {
@@ -56,6 +59,57 @@ test('detect: nessun binario disponibile => nessun adapter (non un finto adapter
   assert.equal(a.detectAdapter({ platform: 'linux', env: { PATH: '/usr/bin' }, fsImpl: fakeFs([]) }), null);
   assert.equal(a.detectAdapter({ platform: 'win32', env: { PATH: '/usr/bin' }, fsImpl: fakeFs(['/usr/bin/say']) }), null,
     'una piattaforma senza adapter dichiarato non ne eredita uno di un altra');
+});
+
+// Caso adiacente (stessa forma del difetto gia' corretto altrove in questa
+// stessa consegna, qui in un QUARTO posto non nominato): isExecutable
+// collassava ENOENT ed EACCES/ELOOP allo stesso `false`. Su Linux
+// espeak-ng (stdin:true) e' preferito a spd-say (stdin:false, testo IN ARGV
+// visibile a `ps`, dichiarato "preferito solo se espeak-ng manca"). Se
+// espeak-ng e' REALMENTE presente ma in una directory PATH non
+// attraversabile (permessi), detectAdapter lo trattava come assente e
+// sceglieva spd-say in SILENZIO — esponendo il testo dell'enunciato in argv
+// nonostante il binario a stdin fosse davvero li'.
+function withBlockedBin(binName, fn) {
+  if (process.getuid && process.getuid() === 0) return; // root bypassa i permessi sulla dir
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-audio-blocked-'));
+  const blockedDir = path.join(root, 'blocked');
+  fs.mkdirSync(blockedDir);
+  const bin = path.join(blockedDir, binName);
+  fs.writeFileSync(bin, '#!/bin/sh\n');
+  fs.chmodSync(bin, 0o755);
+  fs.chmodSync(blockedDir, 0o600); // niente bit x: dir non attraversabile
+  try {
+    return fn({ root, blockedDir, bin });
+  } finally {
+    fs.chmodSync(blockedDir, 0o755);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('MISURA + FIX: espeak-ng in una dir PATH bloccata -> detectAdapter sceglie spd-say ma DICE che espeak-ng era bloccato, non assente', () => {
+  withBlockedBin('espeak-ng', ({ blockedDir }) => {
+    const spdDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-audio-spd-'));
+    const spdBin = path.join(spdDir, 'spd-say');
+    fs.writeFileSync(spdBin, '#!/bin/sh\n');
+    fs.chmodSync(spdBin, 0o755);
+    try {
+      const PATH = [blockedDir, spdDir].join(path.delimiter);
+      const d = a.detectAdapter({ platform: 'linux', env: { PATH } });
+      assert.ok(d, 'un adapter va comunque scelto: best-effort, non blocchiamo la sintesi per questo');
+      assert.equal(d.id, 'spd-say', 'il fallback resta il comportamento atteso: espeak-ng non e\' verificabile qui');
+      assert.ok(Array.isArray(d.precededByBlocked) && d.precededByBlocked.length === 1,
+        'ma deve essere dichiarato che espeak-ng (stdin, testo mai in argv) era presente e bloccato, non assente');
+      assert.equal(d.precededByBlocked[0].id, 'espeak-ng');
+      assert.equal(d.precededByBlocked[0].blocked[0].code, 'EACCES');
+    } finally { fs.rmSync(spdDir, { recursive: true, force: true }); }
+  });
+});
+
+test('detect: nessun candidato bloccato (assenza genuina) -> nessun precededByBlocked (comportamento invariato)', () => {
+  const d = a.detectAdapter({ platform: 'linux', env: { PATH: '/usr/bin' }, fsImpl: fakeFs(['/usr/bin/spd-say']) });
+  assert.equal(d.id, 'spd-say');
+  assert.equal(d.precededByBlocked, undefined, 'un\'assenza genuina di espeak-ng non e\' un caso da segnalare');
 });
 
 test('speak: il testo passa da STDIN, non da argv (argv e leggibile con ps)', () => {
