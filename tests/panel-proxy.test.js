@@ -167,3 +167,93 @@ test('panel-proxy: /api/panel non attraversa il pass-through generico verso i pe
   assert.equal(res.statusCode, 403, 'un peer non apre il pannello di questo nodo dal pass-through');
   assert.match(res.body.error, /local-only/);
 });
+
+// --- Gate federato -----------------------------------------------------------
+// Il permesso non si eredita dal pairing: `panelAccess` e' per-peer e default
+// negato. Due percorsi separati da coprire — HTTP e upgrade WebSocket — perche'
+// il secondo non passa dal primo.
+const federation = require('../lib/proxy/federation.js');
+
+test('federazione: un peer senza panelAccess riceve un rifiuto che lo nomina', () => {
+  const handler = federation.routeHandler({
+    nodesPath: '/percorso/che/non/esiste.json',
+    localPort: 1, localCredential: () => 't',
+    ingress: { name: 'peer', panelAccess: false },
+  });
+  const res = fakeRes();
+  handler({ url: '/_/panel/Dev/vnc.html', method: 'GET', headers: {} }, res);
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.reason, 'panel-not-granted');
+});
+
+test('federazione: con il permesso concesso il pannello prosegue oltre il gate', () => {
+  const handler = federation.routeHandler({
+    nodesPath: '/percorso/che/non/esiste.json',
+    localPort: 1, localCredential: () => 't',
+    ingress: { name: 'peer', panelAccess: true },
+  });
+  const res = fakeRes();
+  handler({ url: '/_/panel/Dev/vnc.html', method: 'GET', headers: {} }, res);
+  // Oltre il gate si ferma piu' avanti (store assente): cio' che conta e' che
+  // NON sia il 403 del permesso.
+  assert.notEqual(res.statusCode, 403);
+  assert.equal(res.statusCode, 503);
+});
+
+test('federazione: il proprietario non e\' soggetto al gate (ingress nullo)', () => {
+  const handler = federation.routeHandler({
+    nodesPath: '/percorso/che/non/esiste.json',
+    localPort: 1, localCredential: () => 't',
+  });
+  const res = fakeRes();
+  handler({ url: '/_/panel/Dev/vnc.html', method: 'GET', headers: {} }, res);
+  assert.notEqual(res.statusCode, 403);
+});
+
+test('federazione: anche l\'upgrade WebSocket ha il suo gate, non solo l\'HTTP', () => {
+  // `reject` chiude scrivendo una risposta HTTP con socket.end(): la prova e'
+  // quel codice, non un destroy che qui non arriva mai.
+  function fakeSocket() {
+    const sock = new EventEmitter();
+    sock.scritto = '';
+    sock.end = (chunk) => { sock.scritto += String(chunk || ''); sock.chiuso = true; };
+    sock.write = (chunk) => { sock.scritto += String(chunk || ''); return true; };
+    sock.destroy = () => { sock.chiuso = true; };
+    return sock;
+  }
+  const negato = fakeSocket();
+  federation.forwardUpgrade({
+    req: { url: '/federation/route/_/panel/Dev/websockify', headers: {}, method: 'GET' },
+    socket: negato, head: Buffer.alloc(0),
+    nodesPath: '/percorso/che/non/esiste.json',
+    localPort: 1, localCredential: () => 't',
+    ingress: { name: 'peer', panelAccess: false },
+  });
+  assert.match(negato.scritto, /403/, 'senza permesso: rifiutato');
+
+  // Con il permesso supera il gate e si ferma piu' avanti (store assente): la
+  // differenza prova che a decidere e' stato il gate, non un errore qualsiasi
+  // che assolveva per caso.
+  const concesso = fakeSocket();
+  federation.forwardUpgrade({
+    req: { url: '/federation/route/_/panel/Dev/websockify', headers: {}, method: 'GET' },
+    socket: concesso, head: Buffer.alloc(0),
+    nodesPath: '/percorso/che/non/esiste.json',
+    localPort: 1, localCredential: () => 't',
+    ingress: { name: 'peer', panelAccess: true },
+  });
+  assert.match(concesso.scritto, /503/, 'oltre il gate: si ferma sullo store assente, non sul permesso');
+  assert.doesNotMatch(concesso.scritto, /403/);
+
+  // E la risorsa storica non deve essere stata toccata: /ws continua a passare
+  // il primo controllo come prima.
+  const ws = fakeSocket();
+  federation.forwardUpgrade({
+    req: { url: '/federation/route/_/ws', headers: {}, method: 'GET' },
+    socket: ws, head: Buffer.alloc(0),
+    nodesPath: '/percorso/che/non/esiste.json',
+    localPort: 1, localCredential: () => 't',
+    ingress: { name: 'peer', panelAccess: false },
+  });
+  assert.doesNotMatch(ws.scritto, /40[34]/, '/ws non e\' soggetto al gate del pannello');
+});
