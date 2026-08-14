@@ -1129,3 +1129,26 @@ test('P1-2: gate availability post-validazione (migrazione tmux fallita) NON las
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Punto 4 (builtin surface): fleet.json presente ma illeggibile (EACCES sul
+// lstat) -> stessa Fleet unavailable (available:false, fail-closed), ma ora
+// con un reason che dice "non verificabile (EACCES)", distinto da "assente" /
+// "invalido". Il discriminante e' CHI ha fallito. Verdetto invariato.
+test('createBuiltinFleet: fleet.json presente ma illeggibile (EACCES) -> same unavailable (available:false), ma reason dice "non verificabile (EACCES)"', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbi-eacces-'));
+  const home = path.join(root, 'home'); fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  const defsDir = path.join(root, 'd'); fs.mkdirSync(defsDir, { recursive: true });
+  const defsPath = path.join(defsDir, 'fleet.json');
+  fs.writeFileSync(defsPath, JSON.stringify({ schemaVersion: 1, engines: [], cells: [] }), { mode: 0o600 });
+  fs.chmodSync(defsDir, 0o600); // directory senza execute: lstatSync(defsPath) -> EACCES
+  try {
+    const fleet = await createBuiltinFleet({ home, fleetDefsPath: defsPath });
+    try {
+      assert.equal(fleet.available, false, 'verdetto invariato: unavailable (fail-closed)');
+      assert.ok(fleet.reason, 'la Fleet unavailable ora dice il perche\' (prima era muta)');
+      assert.match(fleet.reason, /non verificabile/i);
+      assert.match(fleet.reason, /EACCES/);
+      assert.equal(typeof fleet.close, 'function', 'off espone close() (invariato)');
+    } finally { if (typeof fleet.close === 'function') { try { await fleet.close(); } catch (_) {} } }
+  } finally { fs.chmodSync(defsDir, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
+});

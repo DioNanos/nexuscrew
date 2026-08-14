@@ -478,3 +478,47 @@ test('backup export: mista portabile + non portabile -> fail-closed sull\'invali
   assert.equal(backup.error, 'invalid-cell');
   assert.equal(backup.invalidCellIds[0], 'Broken');
 });
+
+// ===========================================================================
+// Punto 5 (pezzo di valore) — resolveCellCwd / unportableCwdError: una cwd
+// presente ma il cui padre e' illeggibile (EACCES) veniva collassata in
+// "invalid-cwd" / "non esiste sotto la home". Il discriminante e' CHI ha
+// fallito: ENOENT e' legittimo "non c'e'"; EACCES e' "non ho potuto guardare".
+// Verdetto (ok:false, 400 unportable-cwd) invariato; il messaggio distingue.
+// ===========================================================================
+
+test('resolveCellCwd: cwd presente ma padre illeggibile (EACCES) -> stesso fail invalid-cwd, ma fail.unverifiable traccia EACCES, non "non esiste"', () => {
+  const home = tmpRoot();
+  try {
+    const locked = path.join(home, 'locked'); fs.mkdirSync(locked);
+    const cwd = path.join(locked, 'Dev'); fs.mkdirSync(cwd);
+    fs.chmodSync(locked, 0o600); // padre senza execute: realpathSync(cwd) -> EACCES
+    try {
+      const r = resolveCellCwd({ cwd }, home);
+      assert.equal(r.ok, false, 'verdetto invariato: cwd rifiutata (fail-closed di sicurezza)');
+      assert.equal(r.fail.reason, 'invalid-cwd', 'la reason resta invalid-cwd (verdetto invariato)');
+      assert.ok(r.fail.unverifiable && /EACCES/.test(r.fail.unverifiable),
+        'ma fail.unverifiable dice "non ho potuto guardare" (EACCES), distinto da "non esiste"');
+    } finally { fs.chmodSync(locked, 0o700); }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('defineCell: cwd presente ma illeggibile (EACCES) -> 400 unportable-cwd, ma il messaggio dice "non verificabile", mai "non esiste sotto la home"', async () => {
+  const w = makeWorld();
+  try {
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const locked = path.join(w.home, 'locked'); fs.mkdirSync(locked);
+    const badCwd = path.join(locked, 'Nope'); fs.mkdirSync(badCwd);
+    fs.chmodSync(locked, 0o600); // EACCES: la cwd c'e' ma non la possiamo verificare
+    try {
+      await assert.rejects(() => fleet.defineCell({ id: 'X', cwd: badCwd, engine: 'claude' }), (e) => {
+        assert.equal(e.status, 400, 'verdetto invariato: 400 unportable-cwd');
+        assert.equal(e.data?.code, 'unportable-cwd');
+        assert.match(String(e.message), /non verificabile/i, 'il messaggio dice "non verificabile"');
+        assert.doesNotMatch(String(e.message), /non esiste sotto la home/i,
+          'non deve dire "non esiste sotto la home" quando in realta\' non ha potuto guardare');
+        return true;
+      });
+    } finally { fs.chmodSync(locked, 0o700); }
+  } finally { w.cleanup(); }
+});

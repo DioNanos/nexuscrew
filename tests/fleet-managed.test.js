@@ -8,7 +8,7 @@ const { spawnSync } = require('node:child_process');
 const {
   CATALOG, OLLAMA_CONTEXT, OLLAMA_CLOUD_MODELS, normalizeManagedSpec, defaultDefinitions, describeManaged,
   resolveManagedEngine, parseEnvFile, parseProviderShellFile, discoverOllamaModels, discoverPiModels, EXTERNAL_DISCOVERY_TIMEOUT_MS, needsExplicitNode,
-  publicCatalog, parseProviderKeyFiles, describeCatalogCredential,
+  publicCatalog, parseProviderKeyFiles, describeCatalogCredential, findBinary,
   shellConfiguredCommandArgs,
 } = require('../lib/fleet/managed.js');
 const { parseDefinitions } = require('../lib/fleet/definitions.js');
@@ -902,5 +902,106 @@ test('ogni modello Ollama Cloud riceve la sua finestra, anche quando porta un ta
     // fa parte del nome non deve essere troncata.
     assert.equal(contextOf('qwen3.5:397b'), OLLAMA_CONTEXT['qwen3.5:397b']);
     assert.equal(contextOf('mistral-large-3:675b'), OLLAMA_CONTEXT['mistral-large-3:675b']);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+// ===========================================================================
+// Collassi managed: il discriminante e' CHI ha fallito (ENOENT legittimo vs
+// EACCES/ELOOP "non ho potuto guardare"). Verdetto invariato, messaggio distinto.
+// Stesso principio gia' chiuso in checkTermuxExec (3134d2f).
+// ===========================================================================
+
+// Punto 1 — findBinary / resolveInteractiveShell: il loop sui candidati
+// collassava ENOENT/EACCES/ELOOP in "prossimo", e il null finale veniva riportato
+// come "client X not found". Misura (symlink circolare reale): un candidato che
+// punta a se stesso fa fallire realpathSync con ELOOP, non ENOENT.
+test('findBinary: un candidato non VERIFICABILE (symlink circolare) -> stesso null, ma out.blocked traccia ELOOP, non "prossimo"', () => {
+  const home = tmp();
+  try {
+    const binDir = path.join(home, '.local', 'bin'); fs.mkdirSync(binDir, { recursive: true });
+    const candidate = path.join(binDir, 'vl');
+    fs.symlinkSync(candidate, candidate); // punta a se stesso: ELOOP su realpathSync
+    const blocked = [];
+    const bin = findBinary('vl', home, { blocked });
+    assert.equal(bin, null, 'verdetto invariato: non possiamo confermare il binario');
+    assert.ok(blocked.some((b) => b.path === candidate && /ELOOP/.test(b.code)),
+      'il candidato esiste ma non verificabile va tracciato (ELOOP), non collassato in "prossimo"');
+    // ENOENT resta legittimo "prossimo": un candidato assente NON finisce in blocked
+    assert.ok(!blocked.some((b) => /ENOENT/.test(b.code)), 'ENOENT e" legittimo "non c\'e", non "non ho potuto guardare"');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('describeManaged: candidato binario non verificabile (ELOOP) -> stesso fail, ma reason dice "non verificabile", mai "not found"', () => {
+  const home = tmp();
+  try {
+    const binDir = path.join(home, '.local', 'bin'); fs.mkdirSync(binDir, { recursive: true });
+    const candidate = path.join(binDir, 'vl');
+    fs.symlinkSync(candidate, candidate); // ELOOP: il client c'e' ma non raggiungibile cosi'
+    // vl.native ha auth 'none' -> authConfigured true: il reason e' deciso SOLO dal
+    // binario (null), isolando la superficie del collasso dal percorso credenziali.
+    const info = describeManaged({ client: 'vl', provider: 'native', model: '' }, { home, env: {} });
+    assert.equal(info.configured, false, 'verdetto invariato: niente binario confermato -> non configurato');
+    assert.match(info.reason, /non verificabile/i, 'il messaggio dice "non verificabile"');
+    assert.doesNotMatch(info.reason, /not found/i, 'non deve dire "not found" quando in realta\' non ha potuto guardare');
+    assert.match(info.reason, /ELOOP/);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+// Punto 2 — parseEnvFile / parseProviderShellFile: catch (_) -> {} ingoiava
+// EACCES/ELOOP insieme ai rifiuti deliberati. Una credenziale presente ma
+// illeggibile veniva riportata come mancante. Misura: il file c'e', ma la sua
+// directory padre e' 0o600 (senza execute) -> lstatSync EACCES.
+test('parseEnvFile: credenziale presente ma ILLEGGIBILE (EACCES) -> stesso {}, ma out.blocked traccia EACCES, non "missing"', () => {
+  const home = tmp();
+  try {
+    const dir = path.join(home, 'secrets'); fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'ai.env');
+    fs.writeFileSync(file, 'ZAI_API_KEY_A=super-secret\n', { mode: 0o600 });
+    fs.chmodSync(dir, 0o600); // directory senza execute: lstatSync del figlio -> EACCES
+    try {
+      const blocked = [];
+      const out = parseEnvFile(file, {}, { blocked });
+      assert.deepEqual(out, {}, 'verdetto invariato: niente valori estratti (come per assente)');
+      assert.ok(blocked.some((b) => b.path === file && /EACCES/.test(b.code)),
+        'il file presente ma illeggibile va tracciato (EACCES), non collassato in "assente"');
+    } finally { fs.chmodSync(dir, 0o700); } // ripristino per permettere la pulizia
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('describeManaged: credenziale presente ma illeggibile -> stesso fail (authConfigured false), ma reason dice "non verificabile", mai "missing — set it"', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'claude'); // binario valido: il reason e' deciso dalla credenziale
+    const dir = path.join(home, 'secrets'); fs.mkdirSync(dir, { recursive: true });
+    const secrets = path.join(dir, 'providers.env');
+    fs.writeFileSync(secrets, 'ZAI_API_KEY_A=super-secret\n', { mode: 0o600 });
+    fs.chmodSync(dir, 0o600); // EACCES: la credenziale c'e' ma non la possiamo leggere
+    try {
+      const info = describeManaged({ client: 'claude', provider: 'zai-a', model: 'glm-5.2[1m]' },
+        { home, providerSecretsPath: secrets, env: {} });
+      assert.equal(info.configured, false, 'verdetto invariato: non possiamo confermare la credenziale');
+      assert.equal(info.authConfigured, false);
+      assert.equal(info.credentialSource, 'unreadable', 'la fonte e" "unreadable", non "missing"');
+      assert.match(info.reason, /non verificabile/i, 'il messaggio dice "non verificabile"');
+      assert.doesNotMatch(info.reason, /set it on this device/i, 'non deve dire "missing — set it" quando il file c\'e ma e\' illeggibile');
+      assert.match(info.reason, /EACCES/);
+    } finally { fs.chmodSync(dir, 0o700); }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+// Controllo negativo: una credenziale davvero ASSENTE (ENOENT) resta "missing" e
+// "set it on this device" — il discriminante e' CHI ha fallito, non il fatto che
+// ci sia stata un'eccezione. Questo fissa che la correzione non ha spostato il
+// verdetto del caso legittimo.
+test('describeManaged: credenziale ASSENTE (ENOENT) -> "missing" + "set it on this device" (il caso legittimo resta invariato)', () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'claude');
+    const info = describeManaged({ client: 'claude', provider: 'zai-a', model: 'glm-5.2[1m]' },
+      { home, providerSecretsPath: path.join(home, 'non-esiste.env'), env: {} });
+    assert.equal(info.configured, false);
+    assert.equal(info.credentialSource, 'missing');
+    assert.match(info.reason, /set it on this device/);
+    assert.doesNotMatch(info.reason, /non verificabile/i);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
