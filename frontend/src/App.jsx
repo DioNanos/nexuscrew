@@ -16,6 +16,7 @@ import CellSwitcher from './components/CellSwitcher.jsx';
 import VlSessionView from './components/VlSessionView.jsx';
 import {
   apiFetch, fleetStatus, fleetUp, fleetDown, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
+  getLiveHost, designateHostCell, clearHostCell,
 } from './lib/api.js';
 import { isValidLabel } from './lib/settings-model.js';
 import { upActionNotice } from './lib/fleet-action-notice.js';
@@ -350,6 +351,9 @@ export default function App() {
     return () => { cancelled = true; };
   }, [token, pairPending]);
 
+  // Cella ospite Live: stato server-owned letto nel poll (best-effort, inerzia).
+  const [hostCell, setHostCell] = useState(null);
+  const [hostRevision, setHostRevision] = useState(0);
   const poll = useCallback(async () => {
     try {
       const r = await apiFetch('/api/sessions', token);
@@ -362,6 +366,22 @@ export default function App() {
       setFleetCapabilities(fs.available ? (fs.capabilities || []) : []);
     } catch (_) { setCells([]); setFleetCapabilities([]); }
   }, [token]);
+  // hostCell e' server-owned e vale per DESKTOP e MOBILE: polling separato dal
+  // poll sessions/fleet (desktop-only), best-effort, nessun retry (inerzia).
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const h = await getLiveHost(token);
+        if (cancelled) return;
+        setHostCell(h && typeof h.hostCell === 'string' ? h.hostCell : null);
+        setHostRevision(Number.isInteger(h && h.revision) ? h.revision : 0);
+      } catch (_) { /* best-effort: resta lo stato precedente */ }
+    };
+    load();
+    const id = setInterval(load, 4000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [token]);
 
   // Polling sessions + flotta (solo desktop: su mobile pensa SessionList).
   useEffect(() => {
@@ -370,6 +390,24 @@ export default function App() {
     const id = setInterval(poll, 4000);
     return () => clearInterval(id);
   }, [isDesktop, poll]);
+  // Designazione cella ospite: API-first. designate imposta hostCell riflettendo
+  // la risposta del server (mai ottimismo pre-response); clear ritorna un boolean
+  // cosi' la Sidebar rimuove il pin locale solo a riuscita del clear.
+  const designateCellHost = useCallback(async (cellId) => {
+    try {
+      const r = await designateHostCell(token, cellId, hostRevision);
+      setHostCell(r.hostCell || null);
+      setHostRevision(Number.isInteger(r.revision) ? r.revision : hostRevision);
+    } catch (_) { /* resta lo stato precedente */ }
+  }, [token, hostRevision]);
+  const clearCellHost = useCallback(async () => {
+    try {
+      const r = await clearHostCell(token, hostRevision);
+      setHostCell(r.hostCell || null);
+      setHostRevision(Number.isInteger(r.revision) ? r.revision : hostRevision);
+      return true;
+    } catch (_) { return false; }
+  }, [token, hostRevision]);
 
   // Coerenza versione UI/server (tutte le viste).
   //
@@ -549,7 +587,8 @@ export default function App() {
     if (!session) {
       return (
         <>
-          <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession} />
+          <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession}
+            hostCell={hostCell} onDesignateCell={designateCellHost} onClearHostCell={clearCellHost} />
           {settingsOverlays}
         </>
       );
@@ -577,6 +616,9 @@ export default function App() {
           bootSettlement={bootSettlement}
           onBootSettlementApplied={onBootSettlementApplied}
           localNodeId={deckStore.localNodeId}
+          hostCell={hostCell}
+          onDesignateCell={designateCellHost}
+          onClearHostCell={clearCellHost}
           onPick={openSingle}
           onAddTile={onAddTile}
           onPower={setPowerCell}

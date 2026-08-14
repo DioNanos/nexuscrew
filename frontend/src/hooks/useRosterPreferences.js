@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { loadPins, movePinIn, togglePinIn } from '../lib/pins.js';
+import { loadPins, movePinIn, togglePinIn, removePinIn } from '../lib/pins.js';
 import {
   loadSidebarOrders, loadSidebarViews, moveSidebarItem, saveSidebarOrders,
   saveSidebarViews, sidebarItems, sidebarOrder, sidebarView,
@@ -9,18 +9,39 @@ import {
 // ordine manuale) per la Sidebar desktop e la home mobile SessionList. Un solo
 // contratto: collapse, filter, pin e ordine vivono negli stessi key localStorage
 // (nc_pins / nc_sidebar_views_v1 / nc_sidebar_order_v1) cosicche' le due shell
-// restano sincronizzate. Le mosse (drag handle / frecce) rispettano il confine
-// pin/non-pinned e il filtro technical, come facevano le copie inline.
-//
-// Nessuna markup qui: ogni shell renderizza la propria. Il hook espone solo lo
-// stato e le mutazioni. sidebarItems/sidebarOrder restano chiamate della shell
-// (sono pure, in sidebar-model): il hook possiede solo lo stato persistente.
+// restano sincronizzate. Nessuna markup qui: ogni shell renderizza la propria.
 export function useRosterPreferences() {
   const [pins, setPins] = useState(loadPins);
   const [views, setViews] = useState(loadSidebarViews);
   const [orders, setOrders] = useState(loadSidebarOrders);
+  // Errore di persistenza dell'ultima rimozione (contratto rev6 §2.1: deve essere
+  // SEGNALATO e RITENTABILE, non solo loggato in console). null = tutto ok.
+  const [pinError, setPinError] = useState(null);
 
-  const togglePin = (key) => setPins((p) => togglePinIn(p, key));
+  const togglePin = (key) => setPins((p) => togglePinIn(p, key).next);
+
+  // removePin legge dalla FONTE DI VERITA' (localStorage) al momento
+  // dell'applicazione, NON dallo stato React della closure: viene chiamato dopo
+  // l'await del clear server, e in quella finestra un pin aggiunto altrove
+  // (desktop o mobile) aggiornerebbe solo localStorage, non lo stato catturato.
+  // Calcolando sui `pins` di closure quello verrebbe perso (lost update: lo
+  // storage finiva vuoto). loadPins() legge il corrente.
+  const removePin = (key) => {
+    const r = removePinIn(loadPins(), key);
+    setPins(r.next);
+    setPinError(r.error ? { key, message: r.error.message || String(r.error) } : null);
+    return r.error;
+  };
+
+  // Ritenta l'ultima rimozione fallita; a riuscita pulisce l'errore.
+  const retryPinPersist = () => {
+    if (!pinError) return;
+    const r = removePinIn(loadPins(), pinError.key);
+    setPins(r.next);
+    setPinError(r.error ? { ...pinError, message: r.error.message || String(r.error) } : null);
+  };
+  const clearPinError = () => setPinError(null);
+
   const viewFor = (key) => sidebarView(views, key);
   const updateView = (key, patch) => setViews((before) => {
     const next = { ...before, [key]: { ...sidebarView(before, key), ...patch } };
@@ -29,10 +50,6 @@ export function useRosterPreferences() {
 
   const canMoveRoster = (source, target) => pins.includes(source) === pins.includes(target);
 
-  // Sposta source verso target. Pinnati si riordinano solo tra pinnati (pin
-  // order); i non-pinnati usano l'ordine manuale per-posizione. Mai mescolare i
-  // due confini. Il filtro "technical" determina l'insieme disponibile quando si
-  // riordina una sessione tecnica ( resta nel suo blocco).
   function moveRoster(position, source, target, rawItems) {
     const sourcePinned = pins.includes(source); const targetPinned = pins.includes(target);
     if (sourcePinned !== targetPinned) return;
@@ -44,8 +61,6 @@ export function useRosterPreferences() {
     });
   }
 
-  // Step da tastiera (ArrowUp/Down): stesso insieme disponibile di moveRoster,
-  // ma ristretto al blocco pin/non-pinned del source, poi commit via moveRoster.
   function stepRoster(position, source, delta, rawItems) {
     const sourceTechnical = rawItems.find((item) => item.key === source)?.technical === true;
     const sourcePinned = pins.includes(source);
@@ -55,5 +70,9 @@ export function useRosterPreferences() {
     if (at >= 0 && target) moveRoster(position, source, target, rawItems);
   }
 
-  return { pins, views, orders, togglePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster };
+  return {
+    pins, views, orders, togglePin, removePin,
+    pinError, retryPinPersist, clearPinError,
+    viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
+  };
 }
