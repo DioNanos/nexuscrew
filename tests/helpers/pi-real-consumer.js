@@ -38,6 +38,22 @@
 // processo, es. 1) e NESSUN `e.code`; quando `which` stesso non parte (ENOENT/
 // EACCES sullo spawn), l'errore porta `e.code` stringa e `e.status === null`.
 // Solo il primo caso e' una risposta legittima.
+//
+// Correzione 3 (caso adiacente trovato NON ripetendo il giro precedente, ma
+// cercando dove la STESSA decisione e' presa in una forma DIVERSA): le
+// correzioni 1 e 2 avevano ispezionato ogni `catch` — il difetto precedente
+// viveva li'. Ma "Pi c'e' o non c'e'" viene deciso anche fuori da un catch,
+// nel ramo diretto subito dopo: `which` che ESCE SENZA ECCEZIONE (successo)
+// ma con output vuoto dopo il trim. Prima di questa correzione quel ramo
+// tornava 'not-installed' — un `which` che dichiara successo senza stampare
+// alcun percorso e' una risposta CONTRADDITTORIA dello strumento, non un "non
+// trovato" legittimo (which, per convenzione, se esce 0 stampa sempre un
+// percorso). E, simmetricamente, nel catch: non ogni `e.status` numerico
+// senza `e.code` significa "non trovato" — solo l'exit code CONVENZIONALE per
+// quell'esito (1, in GNU/BSD/busybox which). Un altro codice (es. 2, che in
+// GNU which segnala un'opzione non valida o un problema di invocazione) non
+// e' un "non trovato" inequivocabile: e' lo strumento che segnala un
+// problema proprio, non un verdetto su Pi.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -87,10 +103,27 @@ async function resolvePiComposer(seams = {}) {
     // null. Solo il primo e' una risposta legittima di assenza; il secondo e'
     // lo strumento di rilevamento rotto — con Pi magari REALMENTE installato,
     // misurato: 16 pass e 1 skip senza aver verificato nulla.
-    if (typeof e.status === 'number' && !e.code) return { status: 'not-installed' };
+    if (typeof e.status === 'number' && !e.code) {
+      // Solo l'exit code CONVENZIONALE per "non trovato" (1, in GNU/BSD/
+      // busybox which) e' una risposta inequivocabile di assenza. Un altro
+      // codice numerico (es. 2 — in GNU which segnala tipicamente
+      // un'opzione non valida o un problema di invocazione) non significa
+      // "Pi non c'e'": significa che lo strumento ha segnalato un problema
+      // proprio, non un verdetto su Pi.
+      if (e.status === 1) return { status: 'not-installed' };
+      return { status: 'broken', reason: `lo strumento di rilevamento (which) e' uscito con codice ${e.status}, che non significa inequivocabilmente "non trovato" (convenzione: exit 1) — potrebbe segnalare un problema di invocazione dello strumento, non l'assenza di Pi: ${e.message}` };
+    }
     return { status: 'broken', reason: `lo strumento di rilevamento (which) non e' riuscito a rispondere: ${e.code || e.constructor.name} — ${e.message}` };
   }
-  if (!which) return { status: 'not-installed' };
+  if (!which) {
+    // Stessa decisione ("Pi c'e' o non c'e'"), presa qui in una forma
+    // DIVERSA dal catch sopra: nessuna eccezione, `which` e' uscito con
+    // successo (nessun errore) ma senza stampare alcun percorso. Un `which`
+    // che dichiara successo dovrebbe SEMPRE indicare un percorso: uscire 0
+    // con output vuoto e' una risposta ambigua/contraddittoria dello
+    // strumento, non un "non trovato" legittimo.
+    return { status: 'broken', reason: 'lo strumento di rilevamento (which) e\' uscito senza errore (successo) ma senza indicare alcun percorso: una risposta ambigua, non un "non trovato" legittimo' };
+  }
   // Da QUI in poi il binario e' stato trovato: ogni fallimento successivo e'
   // la guardia che si rompe con Pi presente, mai piu' "non installato".
   let real;

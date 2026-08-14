@@ -13,6 +13,13 @@
 // Questi test verificano l'helper stesso (tests/helpers/pi-real-consumer.js):
 // i tre stati (not-installed / broken / ready) e che requirePiComposer
 // traduca 'broken' in un FALLIMENTO (throw), mai in uno skip.
+//
+// Correzione 3 (caso adiacente, stessa decisione presa in una forma diversa
+// da quella gia' corretta): i casi precedenti vivevano dentro un `catch`. La
+// stessa domanda ("Pi c'e' o non c'e'?") viene decisa anche SENZA eccezione —
+// `which` che esce con successo ma senza indicare un percorso, o con un exit
+// code che non significa inequivocabilmente "non trovato". Vedi DRIFT 8/9 e
+// i due CONTROLLO NEGATIVO che attraversano un `which` vero nel PATH.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -31,9 +38,24 @@ test('resolvePiComposer: which PARTE e risponde "non trovato" (exit 1, come exec
   assert.equal(r.status, 'not-installed');
 });
 
-test('resolvePiComposer: which restituisce stringa vuota -> not-installed', async () => {
+// --- Correzione 3 (caso adiacente: stessa decisione, forma diversa) -------
+// Le correzioni precedenti avevano ispezionato ogni `catch` — il difetto
+// viveva li'. Questo caso vive nel ramo DIRETTO (nessuna eccezione): which
+// che "risponde" senza indicare un percorso, o con un exit code che non
+// significa inequivocabilmente "non trovato". Il test sotto consacrava
+// esattamente il comportamento vecchio (stringa vuota -> not-installed) ed
+// e' per questo CORRETTO, non affiancato da un nuovo caso separato.
+
+test('DRIFT 8: which esce senza errore (successo) ma senza indicare un percorso (output vuoto) -> broken, mai not-installed', async () => {
   const r = await resolvePiComposer({ which: () => '' });
-  assert.equal(r.status, 'not-installed');
+  assert.equal(r.status, 'broken', 'un successo senza percorso e\' una risposta ambigua, non "non trovato"');
+  assert.match(r.reason, /ambigua|percorso/i);
+});
+
+test('DRIFT 9: which esce con un codice che non significa inequivocabilmente "non trovato" (es. 2) -> broken, mai not-installed', async () => {
+  const r = await resolvePiComposer({ which: () => { const e = new Error('which: illegal option'); e.status = 2; throw e; } });
+  assert.equal(r.status, 'broken', 'un exit code non convenzionale non e\' un "non trovato" legittimo');
+  assert.match(r.reason, /codice 2|exit 1|convenzione/i);
 });
 
 // --- Correzione 2 (caso adiacente segnalato dall'audit) --------------------
@@ -137,11 +159,55 @@ test('DRIFT 3: la dist esiste ma non esporta composeModelProvider (API rinominat
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+// --- CONTROLLO NEGATIVO integrato: which VERO nel PATH, nessun seam -------
+// I due DRIFT sopra usano seams.which per isolare la logica. Questi due test
+// invece attraversano il percorso REALE (execFileSync('which', ['pi'])) con
+// un binario `which` fittizio anteposto al PATH — la stessa forma che
+// produceva il difetto misurato da Dev, non una ricostruzione del rimedio
+// dentro il test. Un `which` fittizio maschera quello di sistema a
+// prescindere da cosa sia realmente installato: verifica che la guardia si
+// accorga del problema anche se Pi fosse davvero presente sulla macchina.
+
+test('CONTROLLO NEGATIVO: which reale nel PATH esce 0 senza stampare nulla -> broken (nessun seam)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-pi-fakewhich-empty-'));
+  const fakeWhich = path.join(dir, 'which');
+  fs.writeFileSync(fakeWhich, '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(fakeWhich, 0o755);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${dir}:${originalPath}`;
+  try {
+    const r = await resolvePiComposer();
+    assert.equal(r.status, 'broken', 'which reale, exit 0 senza output, deve rompere la guardia, non skippare');
+  } finally {
+    process.env.PATH = originalPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CONTROLLO NEGATIVO: which reale nel PATH esce con codice 2 -> broken (nessun seam)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-pi-fakewhich-exit2-'));
+  const fakeWhich = path.join(dir, 'which');
+  fs.writeFileSync(fakeWhich, '#!/bin/sh\nexit 2\n');
+  fs.chmodSync(fakeWhich, 0o755);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${dir}:${originalPath}`;
+  try {
+    const r = await resolvePiComposer();
+    assert.equal(r.status, 'broken', 'which reale, exit 2, non e\' un "non trovato" inequivocabile');
+  } finally {
+    process.env.PATH = originalPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // --- requirePiComposer: skip SOLO per not-installed, throw per broken -----
 
 test('requirePiComposer: not-installed -> skip motivato (dice COSA non e\' stato verificato), ritorna null', async () => {
   const { t, calls } = fakeT();
-  const r = await requirePiComposer(t, { which: () => '' });
+  // Stringa vuota NON e' piu' un seam valido per "non installato" (DRIFT 8:
+  // e' una risposta ambigua, ora 'broken'). L'assenza legittima e' l'exit
+  // code convenzionale di which per "non trovato" (1).
+  const r = await requirePiComposer(t, { which: () => { const e = new Error('Command failed: which pi'); e.status = 1; throw e; } });
   assert.equal(r, null);
   assert.equal(calls.skip.length, 1);
   // Il messaggio deve dire cosa non e' stato verificato, non solo "saltato".
