@@ -168,8 +168,8 @@ async function boot({
 }
 
 const CELLS_NATIVE = (cwd) => ([
-  { cell: 'cloud-DevAuditor', active: true, tmux: true, tmuxSession: 'cloud-DevAuditor', engine: 'codex-vl.native', cwd },
-  { cell: 'cloud-Research', active: true, tmux: true, tmuxSession: 'cloud-Research', engine: 'claude.native', cwd },
+  { cell: 'cloud-Alfa', active: true, tmux: true, tmuxSession: 'cloud-Alfa', engine: 'codex-vl.native', cwd },
+  { cell: 'cloud-Beta', active: true, tmux: true, tmuxSession: 'cloud-Beta', engine: 'claude.native', cwd },
   { cell: 'cloud-Off', active: false, tmux: false, tmuxSession: 'cloud-Off', engine: 'codex-vl.native', cwd },
 ]);
 
@@ -227,10 +227,10 @@ test('engine non codex-vl: modalita\' tmux, nessuna thread ponte (JC2)', async (
   const cwd = path.join(os.tmpdir(), 'research-home');
   const ctx = await boot({ cells: CELLS_NATIVE(cwd) });
   try {
-    await ctx.designate('cloud-Research');
+    await ctx.designate('cloud-Beta');
     const b = await j(await ctx.bridgeCall());
     assert.equal(b.mode, 'tmux');
-    assert.equal(b.cell, 'cloud-Research');
+    assert.equal(b.cell, 'cloud-Beta');
     assert.equal(b.engine, 'claude.native');
     assert.equal(b.cwd, cwd);
     assert.deepEqual(b.prompt, { applied: false, reason: 'tmux-mode' });
@@ -244,15 +244,15 @@ test('NATIVA con cella OCCUPATA: thread NUOVA del ponte, cwd e prompt per-cella 
   const ctx = await boot({ cells: CELLS_NATIVE(cwd) });
   try {
     // Prompt per-cella scritto nel path VERO da cui il ponte lo legge.
-    const promptDir = path.join(ctx.root, 'cloud-DevAuditor');
+    const promptDir = path.join(ctx.root, 'cloud-Alfa');
     fs.mkdirSync(promptDir, { recursive: true });
-    fs.writeFileSync(path.join(promptDir, 'LIVE_PROMPT.md'), 'Regole Live della cella DevAuditor: opera nel perimetro della cella.\n');
+    fs.writeFileSync(path.join(promptDir, 'LIVE_PROMPT.md'), 'Regole Live della cella Alfa: opera nel perimetro della cella.\n');
 
-    await ctx.designate('cloud-DevAuditor');
+    await ctx.designate('cloud-Alfa');
     const b = await j(await ctx.bridgeCall());
 
     assert.equal(b.mode, 'native');
-    assert.equal(b.cell, 'cloud-DevAuditor');
+    assert.equal(b.cell, 'cloud-Alfa');
     // Thread PONTE, non quella della TUI occupata (MC3.1 + requisito a meta' lavoro).
     assert.equal(b.threadId, 'bridge-thread-0001');
     assert.notEqual(b.threadId, ctx.daemon.existingThread);
@@ -268,7 +268,7 @@ test('NATIVA con cella OCCUPATA: thread NUOVA del ponte, cwd e prompt per-cella 
     assert.equal(ctx.daemon.seen.threadStarts.length, 1);
     const params = ctx.daemon.seen.threadStarts[0];
     assert.equal(params.cwd, cwd);
-    assert.equal(params.developerInstructions, 'Regole Live della cella DevAuditor: opera nel perimetro della cella.');
+    assert.equal(params.developerInstructions, 'Regole Live della cella Alfa: opera nel perimetro della cella.');
 
     // Prompt dichiarato applicato, e il testo NON viaggia in risposta (KC3-audit:
     // il contenuto del prompt resta lato nodo).
@@ -280,7 +280,7 @@ test('prompt per-cella ASSENTE (ENOENT): si procede senza, e senza developerInst
   const cwd = path.join(os.tmpdir(), 'cell-no-prompt');
   const ctx = await boot({ cells: CELLS_NATIVE(cwd) });
   try {
-    await ctx.designate('cloud-DevAuditor');
+    await ctx.designate('cloud-Alfa');
     const b = await j(await ctx.bridgeCall());
     assert.equal(b.mode, 'native');
     assert.deepEqual(b.prompt, { applied: false, reason: 'missing' });
@@ -296,9 +296,9 @@ test('prompt ILEGGIBILE (c\'è ma non si può leggere): reason unreadable, DISTI
   try {
     // LIVE_PROMPT.md come DIRECTORY: readFileSync fallisce con EISDIR — errore
     // NON-ENOENT affidabile indipendente dall'uid (chmod 000 non lo è su root).
-    const promptDir = path.join(ctx.root, 'cloud-DevAuditor');
+    const promptDir = path.join(ctx.root, 'cloud-Alfa');
     fs.mkdirSync(path.join(promptDir, 'LIVE_PROMPT.md'), { recursive: true });
-    await ctx.designate('cloud-DevAuditor');
+    await ctx.designate('cloud-Alfa');
     const b = await j(await ctx.bridgeCall());
     assert.equal(b.mode, 'native');
     assert.equal(b.prompt.applied, false);
@@ -311,10 +311,10 @@ test('prompt VUOTO: reason empty (presente ma non dice nulla), nessuna iniezione
   const cwd = path.join(os.tmpdir(), 'cell-empty-prompt');
   const ctx = await boot({ cells: CELLS_NATIVE(cwd) });
   try {
-    const promptDir = path.join(ctx.root, 'cloud-DevAuditor');
+    const promptDir = path.join(ctx.root, 'cloud-Alfa');
     fs.mkdirSync(promptDir, { recursive: true });
     fs.writeFileSync(path.join(promptDir, 'LIVE_PROMPT.md'), '   \n');
-    await ctx.designate('cloud-DevAuditor');
+    await ctx.designate('cloud-Alfa');
     const b = await j(await ctx.bridgeCall());
     assert.deepEqual(b.prompt, { applied: false, reason: 'empty' });
   } finally { await ctx.close(); }
@@ -324,12 +324,12 @@ test('socket di controllo irraggiungibile: none/bridge-socket-failed con cella e
   const cwd = path.join(os.tmpdir(), 'cell-no-daemon');
   const ctx = await boot({ cells: CELLS_NATIVE(cwd) });
   try {
-    await ctx.designate('cloud-DevAuditor');
+    await ctx.designate('cloud-Alfa');
     await ctx.daemon.close(); // il daemon sparisce: la superficie upstream è rotta (MC0)
     const b = await j(await ctx.bridgeCall());
     assert.equal(b.mode, 'none');
     assert.equal(b.reason, 'bridge-socket-failed');
-    assert.equal(b.cell, 'cloud-DevAuditor');
+    assert.equal(b.cell, 'cloud-Alfa');
     assert.ok(typeof b.detail === 'string' && b.detail.length > 0, 'il fallimento è diagnosticabile');
   } finally { await ctx.close(); }
 });
@@ -337,7 +337,7 @@ test('socket di controllo irraggiungibile: none/bridge-socket-failed con cella e
 test('thread/start rifiutato dal daemon (error JSON-RPC): none/bridge-socket-failed', async () => {
   const ctx = await boot({ cells: CELLS_NATIVE('/tmp'), daemonOpts: { failThreadStart: true } });
   try {
-    await ctx.designate('cloud-DevAuditor');
+    await ctx.designate('cloud-Alfa');
     const b = await j(await ctx.bridgeCall());
     assert.equal(b.mode, 'none');
     assert.equal(b.reason, 'bridge-socket-failed');
@@ -349,7 +349,7 @@ test('socket LENTO oltre il limite: none/bridge-timeout senza allungare l\'attes
   const cwd = path.join(os.tmpdir(), 'cell-slow-daemon');
   const ctx = await boot({ cells: CELLS_NATIVE(cwd), timeoutMs: 150, daemonOpts: { delayMs: 900 } });
   try {
-    await ctx.designate('cloud-DevAuditor');
+    await ctx.designate('cloud-Alfa');
     const t0 = Date.now();
     const b = await j(await ctx.bridgeCall());
     const elapsed = Date.now() - t0;
@@ -362,7 +362,7 @@ test('socket LENTO oltre il limite: none/bridge-timeout senza allungare l\'attes
 test('hub LENTO oltre il limite: none/live-host-timeout (la GET non aspetta)', async () => {
   const ctx = await boot({ cells: CELLS_NATIVE('/tmp'), timeoutMs: 150, slowHubMs: 900 });
   try {
-    await ctx.designate('cloud-DevAuditor');
+    await ctx.designate('cloud-Alfa');
     const t0 = Date.now();
     const b = await j(await ctx.bridgeCall());
     const elapsed = Date.now() - t0;
@@ -406,7 +406,7 @@ test('hub IRAGGIUNGIBILE (porta senza nessuno in ascolto): none/live-host-unreac
 test('readonly: none/readonly, nessuna connessione (il ponte crea thread: è una mutazione)', async () => {
   const ctx = await boot({ cells: CELLS_NATIVE('/tmp') });
   try {
-    await ctx.designate('cloud-DevAuditor'); // readonly ancora OFF
+    await ctx.designate('cloud-Alfa'); // readonly ancora OFF
     ctx.setReadonly(true);
     const b = await j(await ctx.bridgeCall());
     assert.equal(b.mode, 'none');
@@ -419,7 +419,7 @@ test('body con parametri: 400 — la risoluzione non è parametrizzabile (MC3.4)
   const ctx = await boot({ cells: CELLS_NATIVE('/tmp') });
   try {
     const r = await fetch(`${ctx.base}/api/live-host/bridge`, {
-      method: 'POST', headers: H(), body: JSON.stringify({ cell: 'cloud-Research' }),
+      method: 'POST', headers: H(), body: JSON.stringify({ cell: 'cloud-Beta' }),
     });
     assert.equal(r.status, 400);
     assert.equal(ctx.daemon.seen.connections, 0);
