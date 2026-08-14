@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { normalizeManagedSpec, describeManaged, resolveManagedEngine, publicCatalog, findBinary } = require('../lib/fleet/managed.js');
-const { classifyPane } = require('../lib/fleet/prompt-delivery.js');
+const { classifyPane, vlPaneReadiness } = require('../lib/fleet/prompt-delivery.js');
 const { backfillVlEngine } = require('../lib/fleet/builtin.js');
 const { loadDefinitions, atomicWrite } = require('../lib/fleet/definitions.js');
 
@@ -173,4 +173,42 @@ test('D4-4a classifyPane vl: client non-vl sullo stesso testo resta unknown (no 
   assert.equal(classifyPane(VL_READY_ZAI, 'kimi'), 'unknown');
   assert.equal(classifyPane(VL_READY_ZAI, 'claude'), 'unknown');
   assert.equal(classifyPane(VL_READY_ZAI, 'unknown-client'), 'unknown');
+});
+
+// --- DEC1: vlPaneReadiness (content-readiness vl con degrado) -----------------
+// Punto di innesto della readiness vl: capture-pane + classifyPane('vl'). MAI
+// fail-closed: a timeout degrada a {ready:true, degraded:true}. Il controllo
+// negativo di Dev: una riga di stato non riconosciuta NON deve bloccare l'avvio.
+function clockTick() {
+  let t = 0;
+  return { now: () => t, sleep: async (ms) => { t += ms; } };
+}
+
+test('DEC1 vlPaneReadiness: marcatore [o] entro il timeout -> ready, non degradato', async () => {
+  let calls = 0;
+  const capture = async () => { calls += 1; return calls >= 2 ? VL_READY_ZAI : '>'; };
+  const clk = clockTick();
+  const r = await vlPaneReadiness('tmux', '%1', { captureImpl: capture, sleepImpl: clk.sleep, nowImpl: clk.now });
+  assert.equal(r.ready, true);
+  assert.equal(r.degraded, false, 'marcatore comparso: nessun degrado');
+});
+
+test('DEC1 CONTROLLO NEGATIVO: riga di stato NON riconosciuta NON blocca l\'avvio (degrada a ready)', async () => {
+  // Capture che non produce MAI il marcatore vl (backend che cambia la status bar,
+  // TUI non ancora stabile). Senza degrado resterebbe appesa: si prova che ritorna
+  // {ready:true} e NON {ready:false}, con degraded:true. Una cella che parte oggi
+  // deve partire anche domani: il peggio ammesso e' tornare a com'era, mai bloccare.
+  const capture = async () => 'testo di un pane senza il marcatore vivling [o]';
+  const clk = clockTick();
+  const r = await vlPaneReadiness('tmux', '%1', { captureImpl: capture, timeoutMs: 1000, pollMs: 100, sleepImpl: clk.sleep, nowImpl: clk.now });
+  assert.equal(r.ready, true, 'NON blocca: degrada a ready, mai fail-closed');
+  assert.equal(r.degraded, true, 'segnala il degrado');
+});
+
+test('DEC1 vlPaneReadiness: capture null/irraggiungibile -> degrada a ready', async () => {
+  const capture = async () => null;
+  const clk = clockTick();
+  const r = await vlPaneReadiness('tmux', '%1', { captureImpl: capture, timeoutMs: 500, pollMs: 50, sleepImpl: clk.sleep, nowImpl: clk.now });
+  assert.equal(r.ready, true);
+  assert.equal(r.degraded, true);
 });
