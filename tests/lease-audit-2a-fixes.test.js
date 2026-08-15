@@ -21,10 +21,13 @@ function tempHome(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-function writeStore(home, obj) {
-  const file = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, JSON.stringify(obj), { mode: 0o600 });
+// 2b: storage per-cell. La entry e' {launchEpoch, graceDeadline} — la capability
+// non esiste piu' (revocata, A2).
+function writeEntry(home, cellId, entry) {
+  const dir = path.join(home, '.nexuscrew', 'run', 'cell-leases');
+  const file = path.join(dir, `${cellId}.json`);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, JSON.stringify(entry), { mode: 0o600 });
   return file;
 }
 
@@ -32,9 +35,7 @@ function writeStore(home, obj) {
 
 test('F-A: track() NON resuscita l\'identity malformata che il boot ha rifiutato', async () => {
   const home = tempHome('fix-fa-');
-  const stateFile = writeStore(home, {
-    Dev: { launchEpoch: 'x', capability: 'a'.repeat(64), graceDeadline: 70_000 },
-  });
+  const stateFile = writeEntry(home, 'Dev', { launchEpoch: 'x', graceDeadline: 70_000 });
   const logs = [];
   const manager = createLeaseManager({ home, log: (line) => logs.push(line) }, { now: () => 10_000 });
   try {
@@ -43,9 +44,9 @@ test('F-A: track() NON resuscita l\'identity malformata che il boot ha rifiutato
     // Il secondo ingresso: prima resuscitava 'x' dal disco senza validazione.
     const returned = await manager.track('Dev');
     assert.match(returned.launchEpoch, /^[a-f0-9]{16}$/, 'track genera una NUOVA epoch valida (formato runtime), non resuscita');
-    assert.match(returned.capability, /^[a-f0-9]{64}$/, 'capability valida (formato runtime)');
+    assert.equal('capability' in returned, false, '2b: nessuna capability dal track (revocata, A2)');
     assert.notEqual(returned.launchEpoch, 'x', 'l\'epoch malformata NON torna indietro');
-    const persisted = JSON.parse(fs.readFileSync(stateFile, 'utf8')).Dev;
+    const persisted = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     assert.equal(persisted.launchEpoch, returned.launchEpoch, 'la entry corrotta e\' RIPARATA sul disco: identity nuova persistita');
     // E la identity riparata e' USABILE: l\'endpoint e' aperto e coerente con essa.
     assert.equal(fs.existsSync(returned.stablePath), true, 'endpoint aperto per la nuova identity');
@@ -73,7 +74,7 @@ test('F-C: due track() simultanei sulla stessa cella -> UNA identity, zero rifiu
       if (ok.length < 2) rejected += 1;
       if (ok.length === 2
         && (ok[0].value.launchEpoch !== ok[1].value.launchEpoch
-          || ok[0].value.capability !== ok[1].value.capability)) divergent += 1;
+          || ok[0].value.stablePath !== ok[1].value.stablePath)) divergent += 1;
       assert.equal(process.umask(), originalUmask, `iter ${i}: process.umask mai toccato`);
     } finally {
       process.umask(originalUmask);
@@ -93,15 +94,16 @@ test('F-C: due track() simultanei sulla stessa cella -> UNA identity, zero rifiu
 // REALE durante il persist del bind (bindLiveSocket -> persistEntry -> read).
 function brokerScenario({ failAttach }) {
   const home = tempHome('fix-fb-');
-  const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
-  let readFail = false;
+  let writeFail = false;
   const fakeFs = {
     ...fs,
-    readFileSync(file, ...args) {
-      if (readFail && file === stateFile) {
-        const error = new Error('synthetic EIO'); error.code = 'EIO'; throw error;
+    // 2b per-cell: il persist del bind SCRIVE (non rilegge lo store condiviso):
+    // il fallimento si inietta sulla write, altrimenti l'attach non fallisce.
+    writeFileSync(file, ...args) {
+      if (writeFail && String(file).includes(path.join('.nexuscrew', 'run', 'cell-leases'))) {
+        throw new Error('synthetic ENOSPC');
       }
-      return fs.readFileSync(file, ...args);
+      return fs.writeFileSync(file, ...args);
     },
   };
   const manager = createLeaseManager({ home, log: () => {} }, { fs: fakeFs });
@@ -117,7 +119,7 @@ function brokerScenario({ failAttach }) {
       return ok;
     },
   });
-  return { home, manager, broker, get readFail() { return readFail; }, set readFail(v) { readFail = v; }, get attachOutcome() { return attachOutcome; } };
+  return { home, manager, broker, get readFail() { return writeFail; }, set readFail(v) { writeFail = v; }, get attachOutcome() { return attachOutcome; } };
 }
 
 test('F-B: attach fallito -> il payload NON raggiunge il main, il child non nasce MAI', async () => {
@@ -129,9 +131,9 @@ test('F-B: attach fallito -> il payload NON raggiunge il main, il child non nasc
       const identity = await manager.track('Dev');
       const ticket = await broker.issue({
         command: '/bin/true', args: [], env: {}, supervise: { enabled: false },
-        lease: { cellId: 'Dev', launchEpoch: identity.launchEpoch, capability: identity.capability, stablePath: identity.stablePath },
+        lease: { cellId: 'Dev', launchEpoch: identity.launchEpoch, stablePath: identity.stablePath },
       });
-      scenario.readFail = true; // EIO: il persist del bind fallisce -> attachInitial false
+      scenario.readFail = true; // write fallita: il persist del bind non committa -> attachInitial false
       let spawns = 0;
       const fakeProcess = new EventEmitter();
       const spawn = () => {
@@ -165,7 +167,7 @@ test('F-B (positivo): attach riuscito -> il payload e\' consegnato DOPO, il chil
     const identity = await manager.track('Dev');
     const ticket = await broker.issue({
       command: '/bin/true', args: [], env: {}, supervise: { enabled: false },
-      lease: { cellId: 'Dev', launchEpoch: identity.launchEpoch, capability: identity.capability, stablePath: identity.stablePath },
+      lease: { cellId: 'Dev', launchEpoch: identity.launchEpoch, stablePath: identity.stablePath },
     });
     // niente readFail: attachInitial committa e onLease ritorna true.
     let spawns = 0;
@@ -222,7 +224,6 @@ test('F-B: lease persa per tutta la grace -> onLost avvisa il supervisore (nient
   const ctl = startLeaseClient(initialSocket, {
     stablePath: '/tmp/nonexistent-cell.sock',
     launchEpoch: 'a'.repeat(16),
-    capability: 'b'.repeat(64),
     generation: 0,
     onLost: () => { lost = true; },
   }, {
@@ -286,7 +287,7 @@ test('F-B (correzione): un figlio che IGNORA SIGTERM viene comunque terminato (e
   const payload = {
     command: process.execPath, args: ['-e', ignoreScript], env: {},
     supervise: { enabled: false },
-    lease: { stablePath: '/tmp/nonexistent-cell.sock', launchEpoch: 'a'.repeat(16), capability: 'b'.repeat(64) },
+    lease: { stablePath: '/tmp/nonexistent-cell.sock', launchEpoch: 'a'.repeat(16) },
   };
 
   // Nessuna vera I/O di rete nel path di reconnect: senza questo, il primo

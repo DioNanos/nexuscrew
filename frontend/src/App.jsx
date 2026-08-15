@@ -385,6 +385,11 @@ export default function App() {
 
   // Cella ospite Live: stato server-owned letto nel poll (best-effort, inerzia).
   const [hostCell, setHostCell] = useState(null);
+  // Stato del lease dell'host designato (seam 2026-08-15). Distinto da hostCell:
+  // quello dice CHI e' designato, questo se la designazione ha ancora una
+  // supervisione viva dietro. Null quando il server non lo espone — mai un
+  // valore inventato per riempire lo spazio.
+  const [hostLease, setHostLease] = useState(null);
   const [hostRevision, setHostRevision] = useState(0);
   const poll = useCallback(async () => {
     try {
@@ -407,6 +412,7 @@ export default function App() {
         const h = await getLiveHost(token);
         if (cancelled) return;
         setHostCell(h && typeof h.hostCell === 'string' ? h.hostCell : null);
+        setHostLease(h && h.host && typeof h.host.lease === 'string' ? h.host.lease : null);
         setHostRevision(Number.isInteger(h && h.revision) ? h.revision : 0);
       } catch (_) { /* best-effort: resta lo stato precedente */ }
     };
@@ -620,7 +626,7 @@ export default function App() {
       return (
         <>
           <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession}
-            hostCell={hostCell} onDesignateCell={designateCellHost} onClearHostCell={clearCellHost} />
+            hostCell={hostCell} hostLease={hostLease} onDesignateCell={designateCellHost} onClearHostCell={clearCellHost} />
           {settingsOverlays}
         </>
       );
@@ -649,6 +655,7 @@ export default function App() {
           onBootSettlementApplied={onBootSettlementApplied}
           localNodeId={deckStore.localNodeId}
           hostCell={hostCell}
+          hostLease={hostLease}
           onDesignateCell={designateCellHost}
           onClearHostCell={clearCellHost}
           onPick={openSingle}
