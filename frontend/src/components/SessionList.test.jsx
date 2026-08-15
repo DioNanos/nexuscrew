@@ -323,3 +323,34 @@ describe('SessionList — nodi VL', () => {
     expect(screen.queryByRole('button', { name: 'N900: ollama' })).toBeNull();
   });
 });
+
+// --- Live per nodo (0.9.1 seconda meta', mobile) ----------------------------
+// Stessa guardia di Sidebar.test.jsx, forma mobile: prima del fix onStarClick
+// bypassava tutto cio' che non e' 'local' su un togglePin semplice — la stella
+// di una cella remota non designava mai nulla, solo pinnava.
+describe('SessionList — cella ospite Live per nodo', () => {
+  it('la stella su una cella FAVORITE remota designa con la route DI QUEL NODO (spia sulla chiamata)', async () => {
+    localStorage.setItem('nc_pins', JSON.stringify(['relay:remote-live']));
+    const onDesignateCell = vi.fn();
+    render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()} onDesignateCell={onDesignateCell} />);
+    await screen.findByText('Relay Live');
+    fireEvent.click(screen.getByRole('button', { name: 'pin to top Relay Live' }));
+    expect(onDesignateCell).toHaveBeenCalledWith('Relay Live', ['relay']);
+    expect(onDesignateCell).not.toHaveBeenCalledWith('Relay Live');
+    expect(onDesignateCell).not.toHaveBeenCalledWith('Relay Live', []);
+  });
+
+  it('la stellina remota e\' "live" SOLO quando hostByRoute[quella route] lo dice', async () => {
+    render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()}
+      hostByRoute={{ local: { hostCell: null }, relay: { hostCell: 'Relay Live' } }} />);
+    await screen.findByText('Relay Live');
+    expect(screen.getByRole('button', { name: 'live host Relay Live' })).toBeTruthy();
+  });
+
+  it('NEGATIVA: un hostCell locale con lo stesso nome non accende la stella di un nodo diverso', async () => {
+    render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()}
+      hostByRoute={{ local: { hostCell: 'Relay Live' } }} />);
+    await screen.findByText('Relay Live');
+    expect(screen.queryByRole('button', { name: 'live host Relay Live' })).toBeNull();
+  });
+});

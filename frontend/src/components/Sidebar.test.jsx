@@ -158,6 +158,66 @@ describe('Sidebar session identity', () => {
   });
 });
 
+// --- Live per nodo (0.9.1 seconda meta'): la stella deve comandare il nodo
+// GIUSTO — spia sulla chiamata, non solo "la funzione non esplode". Prima del
+// fix la sezione remota non aveva affatto la stellina live (solo togglePin);
+// il difetto e' quindi doppio: nessuna azione E nessuna lettura per route.
+describe('Sidebar — cella ospite Live per nodo', () => {
+  const remoteCellGroup = (extra = {}) => ({
+    name: 'relay', label: 'Relay', route: ['relay'], instanceId: 'd'.repeat(32), status: 'up',
+    sessions: [], unmanaged: [], capabilities: [], engines: [],
+    cells: [{ cell: 'Remote Cell', tmuxSession: 'remote-cell', tmux: true, active: true }],
+    ...extra,
+  });
+
+  it('la stella su una cella FAVORITE remota designa con la route DI QUEL NODO (spia sulla chiamata)', () => {
+    localStorage.setItem('nc_pins', JSON.stringify(['relay:remote-cell']));
+    const onDesignateCell = vi.fn();
+    render(<Sidebar
+      nodeGroups={[remoteCellGroup()]}
+      onDesignateCell={onDesignateCell}
+      onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
+    />);
+    fireEvent.click(screen.getByTitle('pin to top'));
+    expect(onDesignateCell).toHaveBeenCalledWith('Remote Cell', ['relay']);
+    // controllo negativo: col difetto originale la designazione parte SENZA
+    // route (o con route vuota) e colpisce il nodo locale, non quello guardato.
+    expect(onDesignateCell).not.toHaveBeenCalledWith('Remote Cell');
+    expect(onDesignateCell).not.toHaveBeenCalledWith('Remote Cell', []);
+  });
+
+  it('la stellina remota e\' "live" SOLO quando hostByRoute[quella route] lo dice', () => {
+    render(<Sidebar
+      nodeGroups={[remoteCellGroup()]}
+      hostByRoute={{ local: { hostCell: null }, relay: { hostCell: 'Remote Cell', hostRevision: 3 } }}
+      onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
+    />);
+    expect(screen.getByTitle('live host')).toBeTruthy();
+  });
+
+  it('NEGATIVA: un hostCell locale con lo stesso nome non accende la stella di un nodo diverso', () => {
+    render(<Sidebar
+      nodeGroups={[remoteCellGroup()]}
+      hostByRoute={{ local: { hostCell: 'Remote Cell' } }} // solo locale, MAI 'relay'
+      onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
+    />);
+    expect(screen.queryByTitle('live host')).toBeNull();
+  });
+
+  it('con permesso: clear su una cella live remota passa la route del nodo, non locale', () => {
+    localStorage.setItem('nc_pins', JSON.stringify(['relay:remote-cell']));
+    const onClearHostCell = vi.fn(async () => true);
+    render(<Sidebar
+      nodeGroups={[remoteCellGroup()]}
+      hostByRoute={{ relay: { hostCell: 'Remote Cell', hostRevision: 5 } }}
+      onClearHostCell={onClearHostCell}
+      onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
+    />);
+    fireEvent.click(screen.getByTitle('live host'));
+    expect(onClearHostCell).toHaveBeenCalledWith(['relay']);
+  });
+});
+
 // --- nodi VL nella sidebar (VL_NODES_IN_SIDEBAR, 2026-08-06) ----------------
 // I gruppi NON sono costruiti a mano: partono dalla forma VERA di
 // GET /api/vl-nodes (broker.list + arricchimento routes) e passano dallo
