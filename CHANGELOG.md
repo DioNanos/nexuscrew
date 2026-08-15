@@ -321,7 +321,7 @@ nothing anywhere said so.
 
   The WebSocket attach honours it too, and without that the rest would be
   decoration: `/ws` attaches a PTY *by session name*, so a peer whose cell we
-  had hidden from every list could still attach by guessing `cloud-writer`. An
+  had hidden from every list could still attach by guessing `cloud-X`. An
   out-of-scope session is treated as nonexistent — the same code as one that
   really is not there, because answering "it exists but you may not" reveals
   precisely what the scope hides. The scope is set from the node's sheet in the
