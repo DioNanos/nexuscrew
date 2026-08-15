@@ -17,7 +17,8 @@ All notable changes to NexusCrew are tracked here.
   and nothing else does. The node token never reaches the browser, a log or a
   Referer. No credential of any kind is forwarded to the panel origin: the
   ticket is stripped from the forwarded query, and `referer` joins the
-  stripped headers. Comparisons are constant-time. The WebSocket upgrade
+  stripped headers. Tickets and cookies are not compared at all: they are
+  256-bit random secrets looked up by key. The WebSocket upgrade
   accepts the cookie — the panel's sockets start from inside the frame and
   cannot carry headers — while bearer and `?token=` keep working as before.
 
