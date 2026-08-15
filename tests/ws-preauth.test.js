@@ -26,7 +26,19 @@ async function bootServer(t, { nodesPath, ...over } = {}) {
     ...over,
   });
   await new Promise((res) => server.listen(0, '127.0.0.1', res));
-  t.after(() => { server.close(); if (watcher) watcher.close(); });
+  // Il difetto del gate appeso (tests/README-flake.md, famiglia cell-lease-
+  // proof @ 79f5844): server.close() SMETTE di ascoltare ma non libera l'handle
+  // finche' ci sono connessioni aperte — i peer ws e i socket keep-alive del
+  // proxy sopravvivevano ai test e il processo del file NON USCIVA (senza
+  // colore: non e' un rosso, e' un'attesa infinita). closeAllConnections chiude
+  // proprio quelle; wss.close() chiude il WebSocketServer montato sul server.
+  t.after(async () => {
+    try { wss.close(); } catch (_) {}
+    server.close();
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+    if (watcher) watcher.close();
+  });
   return { server, token, dir, port: server.address().port, wss };
 }
 
