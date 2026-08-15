@@ -97,7 +97,15 @@ export default function CellPanel({
       </div>
     );
   }
-  if (state === 'not-granted') return msg('panel-not-granted');
+  // Retry SOLO dove riprovare può cambiare l'esito. `not-granted` è l'unico
+  // stato in cui non può: la decisione è di un ALTRO nodo, e il messaggio dice
+  // esso stesso «non riprovando qui» — offrire il gesto che il testo esclude
+  // manda l'utente a premere un bottone che non può funzionare.
+  // Gli altri restano con Riprova, e non è una svista: `denied`/`unauthorized`
+  // significano biglietto scaduto, e Riprova ne chiede uno NUOVO (è la strada
+  // di recupero, coperta da test); `timeout`/`unreachable` dipendono da una
+  // condizione che può essere già cambiata.
+  if (state === 'not-granted') return msg('panel-not-granted', false);
   if (state === 'denied' || state === 'unauthorized') return msg('panel-denied');
   if (state === 'timeout') return msg('panel-timeout');
   if (state === 'unreachable') return msg('panel-unreachable');

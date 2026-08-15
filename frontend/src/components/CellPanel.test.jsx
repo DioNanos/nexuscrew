@@ -67,6 +67,11 @@ describe('CellPanel (D8: ingresso al pannello via ticket)', () => {
     await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('non concede il pannello'); });
     expect(screen.getByRole('status').textContent).toContain('nodo che possiede la cella');
     expect(container.querySelector('iframe')).toBeNull();
+    // E NESSUN Riprova: il testo dice «non riprovando qui», offrire quel gesto
+    // contraddirebbe la causa appena nominata. È l'unico stato in cui il
+    // pulsante manca — negli altri (biglietto scaduto, timeout, rete) riprovare
+    // è la strada di recupero, e restano con il loro Riprova.
+    expect(screen.queryByTitle('panel-retry')).toBeNull();
   });
 
   it('denied (biglietto rifiutato): messaggio proprio, e Riprova chiede un biglietto NUOVO', async () => {
