@@ -20,6 +20,18 @@ async function pannelloFinto() {
       res.end('<html>pannello</html>');
       return;
     }
+    // Un pannello che prova a posare un cookie sulla NOSTRA origine. Non e'
+    // una cattiveria teorica: qualunque applicazione web lo fa per la propria
+    // sessione, e servita sotto la nostra origine finirebbe li'.
+    if (req.url.startsWith('/mette-cookie')) {
+      res.writeHead(200, {
+        'content-type': 'text/plain',
+        'set-cookie': ['npanel=forgiato; Path=/api/panel/Dev', 'altro=x; Path=/'],
+        'x-innocuo': 'passa',
+      });
+      res.end('ok');
+      return;
+    }
     res.writeHead(404); res.end();
   });
   const wss = new WebSocketServer({ server, path: '/websockify' });
@@ -152,4 +164,31 @@ test('dal vivo: panelUrl CON path — il pathname non si raddoppia', async (t) =
   assert.match(page.acc, /lite/);
   const sub = await get('/api/panel/Dev/vnc/app.js');
   assert.equal(sub.status, 200, 'la sotto-risorsa arriva col suo path assoluto (il browser l\'ha gia risolta)');
+});
+
+// Il pannello e' servito sotto la NOSTRA origine: un suo `Set-Cookie` atterra
+// li'. Non gli aprirebbe il pannello di un'altra cella — il cookie di visione
+// non e' autoportante, `verifyCookie` cerca il valore in una mappa del server
+// e un valore inventato non c'e' — ma puo' sovrascrivere quello legittimo e
+// rompere il pannello dell'utente dal di dentro.
+//
+// Il filtro riguarda SOLO `set-cookie`: gli altri header devono passare, o si
+// romperebbero i pannelli veri. Percio' il test guarda i due versi.
+test('dal vivo: il Set-Cookie del pannello NON raggiunge la nostra origine, gli altri header si', async (t) => {
+  const { server: panel, wss } = await pannelloFinto();
+  const { server: nostro } = await proxyVero(panel.address().port);
+  t.after(() => { for (const c of wss.clients) c.terminate(); wss.close(); panel.close(); nostro.close(); });
+
+  const risposta = await new Promise((resolve, reject) => {
+    http.get(`http://127.0.0.1:${nostro.address().port}/api/panel/Dev/mette-cookie`, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers }));
+    }).on('error', reject);
+  });
+
+  assert.equal(risposta.status, 200, 'la richiesta arriva al pannello: il filtro non deve rompere il transito');
+  assert.equal(risposta.headers['set-cookie'], undefined,
+    'set-cookie del pannello filtrato: non deve poter posare cookie sulla nostra origine');
+  assert.equal(risposta.headers['x-innocuo'], 'passa',
+    'gli altri header passano: filtrare tutto romperebbe i pannelli veri');
 });
