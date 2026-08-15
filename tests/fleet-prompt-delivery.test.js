@@ -747,7 +747,14 @@ test('cell-exec R8: child early-exit prima di readyMs -> main termina, nessun ha
       spawn: () => {
         launches += 1;
         const child = new EventEmitter(); child.kill = () => {};
-        setTimeout(() => child.emit('exit', 1, null), 10);   // early exit prima di readyMs
+        // Early exit prima della ready gate: consegna l'exit al microtask
+        // successivo, non a un timer. La soglia da battere e' runtimeMs <
+        // initialReadyMs (50ms), misurata col cronometro dentro il supervisor
+        // (cell-exec.js:401): un setTimeout(10) contro 50ms e' una corsa di
+        // scheduling che un event loop saturo perdeva nel gate. Il microtask
+        // parte DOPO la registrazione sincrona dei listener di waitChild e
+        // PRIMA di qualunque timer: runtimeMs ~ 0 per costruzione, ogni load.
+        queueMicrotask(() => child.emit('exit', 1, null));
         return child;
       },
       deliverBootstrapPrompt: async () => { deliverCalls += 1; return { delivered: false, state: 'cancelled', notReady: '' }; },

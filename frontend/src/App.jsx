@@ -14,8 +14,10 @@ import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
 import VlSessionView from './components/VlSessionView.jsx';
+import CellPanel from './components/CellPanel.jsx';
 import {
   apiFetch, fleetStatus, fleetUp, fleetDown, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
+  getLiveHost, designateHostCell, clearHostCell,
 } from './lib/api.js';
 import { isValidLabel } from './lib/settings-model.js';
 import { upActionNotice } from './lib/fleet-action-notice.js';
@@ -129,6 +131,15 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
   // sessione tmux. Inizializza con cellName (desktop overlay) o session.
   const [title, setTitle] = useState(cellName || session);
   const [sub, setSub] = useState('');           // sottotitolo stato dell'header
+  // D8: pannello grafico per-cella. `panelUrl` arriva dal fleetStatus (contratto
+  // col backend: stringa per-cella, opzionale, già validata a monte http/https
+  // loopback — qui si consuma, non si ri-valida). Opt-in totale: senza campo
+  // né il bottone né il pannello esistono. L'iframe NON punta al panelUrl
+  // grezzo (loopback della macchina remota): punta alla NOSTRA route con un
+  // ticket di visione — via locale o federata a seconda del nodo della cella.
+  const [panelUrl, setPanelUrl] = useState('');
+  const [panelCellId, setPanelCellId] = useState('');
+  const [showPanel, setShowPanel] = useState(false);
   const zoom = (delta) => setFontSize((v) => {
     const next = Math.max(FONT_MIN, Math.min(FONT_MAX, v + delta));
     localStorage.setItem('nc_fontsize', String(next));
@@ -145,7 +156,7 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
   // SingleView may be reused at the same React position when the operator
   // switches cells. Synchronize immediately instead of showing the previous
   // title until the first fleetStatus poll completes.
-  useEffect(() => { setTitle(cellName || session); }, [cellName, session]);
+  useEffect(() => { setTitle(cellName || session); setShowPanel(false); }, [cellName, session]);
 
   // Sottotitolo header: "engine·key" se la sessione è una cella, altrimenti
   // "attached · Nm" (o tempo relativo). Dati da /api/sessions + /api/fleet/status
@@ -175,6 +186,12 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
         session,
         cell: cell || (cellName ? { cell: cellName } : null),
       }));
+      // D8: campo opzionale; assente o vuoto (anche solo spazi) → nessun
+      // pannello. Non è una ri-validazione: è la resa dello stato "nessun
+      // pannello configurato". Serve anche l'ID della cella: è la chiave con
+      // cui si chiede il ticket di visione sul nodo che la possiede.
+      setPanelUrl(typeof cell?.panelUrl === 'string' ? cell.panelUrl.trim() : '');
+      setPanelCellId(typeof cell?.cell === 'string' ? cell.cell : '');
       let txt = '';
       if (cell) txt = `${cell.engine}${cell.key ? `·${cell.key}` : ''}`;
       else if (sess) txt = sess.attached ? `attached · ${rel(sess.activity)}` : (sess.activity ? rel(sess.activity) : '');
@@ -198,6 +215,9 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
           <button onClick={() => zoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
           <button onClick={() => setShowComposer((v) => !v)} title={t('composer')}><Icon name="keyboard" size={20} /></button>
           <button onClick={() => setShowFiles((v) => !v)} title={t('files')}><Icon name="folder" size={20} /></button>
+          {panelUrl && (
+            <button onClick={() => setShowPanel((v) => !v)} title={t('panel')} aria-pressed={showPanel}><Icon name="monitor" size={20} /></button>
+          )}
         </span>
       </header>
       <div className="nc-termwrap">
@@ -205,6 +225,19 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
           ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} onFiles={setFilesEvent} fontSize={fontSize}
           selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
           keyboardGesture={inputPreferences.terminalKeyboardGesture} />
+        {/* D8: pannello in alternativa al terminale, overlay assoluto — il
+            terminale resta montato (PTY vivo, nessun reflow al toggle).
+            L'ingresso passa dal ticket: la PWA lo chiede e l'iframe punta
+            alla nostra route (locale o federata), mai al panelUrl grezzo. */}
+        {showPanel && panelUrl && panelCellId && (
+          <CellPanel
+            cellId={panelCellId}
+            panelUrl={panelUrl}
+            route={node ? node.split('/') : []}
+            token={token}
+            title={title}
+          />
+        )}
       </div>
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} onCellSwitcher={onCellSwitcher} cellSwitcherOpen={cellSwitcherOpen}
         send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
@@ -350,6 +383,14 @@ export default function App() {
     return () => { cancelled = true; };
   }, [token, pairPending]);
 
+  // Cella ospite Live: stato server-owned letto nel poll (best-effort, inerzia).
+  const [hostCell, setHostCell] = useState(null);
+  // Stato del lease dell'host designato (seam 2026-08-15). Distinto da hostCell:
+  // quello dice CHI e' designato, questo se la designazione ha ancora una
+  // supervisione viva dietro. Null quando il server non lo espone — mai un
+  // valore inventato per riempire lo spazio.
+  const [hostLease, setHostLease] = useState(null);
+  const [hostRevision, setHostRevision] = useState(0);
   const poll = useCallback(async () => {
     try {
       const r = await apiFetch('/api/sessions', token);
@@ -362,6 +403,23 @@ export default function App() {
       setFleetCapabilities(fs.available ? (fs.capabilities || []) : []);
     } catch (_) { setCells([]); setFleetCapabilities([]); }
   }, [token]);
+  // hostCell e' server-owned e vale per DESKTOP e MOBILE: polling separato dal
+  // poll sessions/fleet (desktop-only), best-effort, nessun retry (inerzia).
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const h = await getLiveHost(token);
+        if (cancelled) return;
+        setHostCell(h && typeof h.hostCell === 'string' ? h.hostCell : null);
+        setHostLease(h && h.host && typeof h.host.lease === 'string' ? h.host.lease : null);
+        setHostRevision(Number.isInteger(h && h.revision) ? h.revision : 0);
+      } catch (_) { /* best-effort: resta lo stato precedente */ }
+    };
+    load();
+    const id = setInterval(load, 4000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [token]);
 
   // Polling sessions + flotta (solo desktop: su mobile pensa SessionList).
   useEffect(() => {
@@ -370,6 +428,24 @@ export default function App() {
     const id = setInterval(poll, 4000);
     return () => clearInterval(id);
   }, [isDesktop, poll]);
+  // Designazione cella ospite: API-first. designate imposta hostCell riflettendo
+  // la risposta del server (mai ottimismo pre-response); clear ritorna un boolean
+  // cosi' la Sidebar rimuove il pin locale solo a riuscita del clear.
+  const designateCellHost = useCallback(async (cellId) => {
+    try {
+      const r = await designateHostCell(token, cellId, hostRevision);
+      setHostCell(r.hostCell || null);
+      setHostRevision(Number.isInteger(r.revision) ? r.revision : hostRevision);
+    } catch (_) { /* resta lo stato precedente */ }
+  }, [token, hostRevision]);
+  const clearCellHost = useCallback(async () => {
+    try {
+      const r = await clearHostCell(token, hostRevision);
+      setHostCell(r.hostCell || null);
+      setHostRevision(Number.isInteger(r.revision) ? r.revision : hostRevision);
+      return true;
+    } catch (_) { return false; }
+  }, [token, hostRevision]);
 
   // Coerenza versione UI/server (tutte le viste).
   //
@@ -549,7 +625,8 @@ export default function App() {
     if (!session) {
       return (
         <>
-          <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession} />
+          <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession}
+            hostCell={hostCell} hostLease={hostLease} onDesignateCell={designateCellHost} onClearHostCell={clearCellHost} />
           {settingsOverlays}
         </>
       );
@@ -577,6 +654,10 @@ export default function App() {
           bootSettlement={bootSettlement}
           onBootSettlementApplied={onBootSettlementApplied}
           localNodeId={deckStore.localNodeId}
+          hostCell={hostCell}
+          hostLease={hostLease}
+          onDesignateCell={designateCellHost}
+          onClearHostCell={clearCellHost}
           onPick={openSingle}
           onAddTile={onAddTile}
           onPower={setPowerCell}

@@ -21,10 +21,39 @@ const ctx = (over = {}) => ({
   ...over,
 });
 
+// Stessa forma del difetto gia' corretto in lib/cli/path.js: un accessSync
+// che fallisce per ENOENT ("non c'e' qui", legittimo) e uno che fallisce per
+// EACCES/ELOOP/altro ("non sono riuscito a verificare") finivano nello
+// stesso `false`. Qui il gate skippava con "(se disponibile)" in entrambi i
+// casi, senza dire QUALE dei due fosse successo — a differenza di
+// requirePiComposer, che distingue esplicitamente not-installed da broken.
+function probe(bin) {
+  const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  const blocked = [];
+  for (const dir of dirs) {
+    try {
+      fs.accessSync(path.join(dir, bin), fs.constants.X_OK);
+      return { found: true, blocked };
+    } catch (e) {
+      if (e.code !== 'ENOENT') blocked.push({ dir, code: e.code || e.constructor.name });
+    }
+  }
+  return { found: false, blocked };
+}
+
 function have(bin) {
-  return String(process.env.PATH || '').split(path.delimiter).some((dir) => {
-    try { fs.accessSync(path.join(dir, bin), fs.constants.X_OK); return true; } catch (_) { return false; }
-  });
+  return probe(bin).found;
+}
+
+// Reason per `test(name, { skip }, fn)`: node:test skippa su qualunque
+// stringa non vuota e la mostra come motivo. `false` = non skippare.
+function haveSkipReason(bin) {
+  const r = probe(bin);
+  if (r.found) return false;
+  if (r.blocked.length) {
+    return `"${bin}" non verificabile su PATH, non "non installato" (${r.blocked.map((b) => `${b.dir} (${b.code})`).join('; ')})`;
+  }
+  return `"${bin}" non installato su questa macchina`;
 }
 
 // --- Linux systemd ---
@@ -98,7 +127,7 @@ test('generateLinux: ExecStart escape spazi (hostile path con spazio)', () => {
   assert.match(s, /ExecStart=\/usr\/bin\/node .*my\\ repo.*serve/);
 });
 
-test('generateLinux: systemd-analyze verify passa con path reali (se disponibile)', { skip: !have('systemd-analyze') }, () => {
+test('generateLinux: systemd-analyze verify passa con path reali (se disponibile)', { skip: haveSkipReason('systemd-analyze') }, () => {
   const { repoRoot } = require('../lib/cli/platform.js');
   const s = generateLinux({ repoRoot: repoRoot(), nodeBin: process.execPath, port: 41820, home: os.homedir(), uid: 1000 });
   const tmp = path.join(os.tmpdir(), 'nc-svc-verify.service');
@@ -165,7 +194,7 @@ test('generateMac: XML-escape home con & < > " (R2 hostile, log paths)', () => {
   assert.ok(!/&(?!amp;|lt;|gt;|quot;|#)/.test(s), 'trovato & raw non-escaped');
 });
 
-test('generateMac: xmllint --noout (se disponibile)', { skip: !have('xmllint') }, () => {
+test('generateMac: xmllint --noout (se disponibile)', { skip: haveSkipReason('xmllint') }, () => {
   const s = generateMac(ctx());
   const tmp = path.join(os.tmpdir(), 'nc-svc.plist');
   fs.writeFileSync(tmp, s);

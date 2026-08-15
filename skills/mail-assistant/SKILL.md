@@ -69,3 +69,18 @@ client-native scheduler or loop mechanism instead of manual polling, avoid
 duplicate jobs, respect quiet hours, and remain silent on unchanged ticks when
 the host workflow supports silent monitoring. A recurring authorization does
 not automatically authorize sending or permanent deletion.
+
+## Dependencies
+
+**Bundled:** nothing — this skill is documentation only.
+
+**External (you must provide):**
+
+| Need | Install | Probe / failure mode |
+|---|---|---|
+| A mail MCP connector already exposed by the current client (any Gmail/IMAP-capable MCP server; e.g. the optional companion `mcp-email-rs` <https://github.com/DioNanos/mcp-email-rs> — its Install section is authoritative, **not verified here**) | register the connector in the AI client's MCP config, following that connector's own instructions | if no mail tools are exposed, mailbox discovery returns nothing to call — ask the client for its tool list; do not assume provider folders or account layout |
+| Mailbox credentials | provided by the connector's own auth flow | auth failures surface from the connector, not from this skill |
+
+This skill never sends or deletes mail on its own initiative; a missing
+connector means the task cannot start, which must be reported, not worked
+around with direct IMAP scripting.

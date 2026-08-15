@@ -90,7 +90,7 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
     ? (shareTunnel?.up ? 'share-local-active' : 'share-local-pending')
     : (shareTunnel?.up ? 'share-local-private' : 'share-local-private-down');
   // Stessa lista, stesso meccanismo di riga/gruppo/foglio dei peer Fleet
-  // (indicazione di DAG: "come fosse un nodo nexuscrew, non una sezione
+  // (indicazione del product owner: "come fosse un nodo nexuscrew, non una sezione
   // nuova") — un gruppo in piu', non un componente diverso. Un nodo VL non
   // e' un hub invitabile (non ha ssh/direction), quindi va escluso dal primo
   // gruppo esplicitamente, non solo aggiunto in coda.

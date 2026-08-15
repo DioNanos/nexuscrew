@@ -24,6 +24,22 @@ async function jsonFetch(path, token, opts = {}) {
 export const routeBase = (route) => Array.isArray(route) && route.length
   ? `/api/route/${route.map(encodeURIComponent).join('/')}/_` : '/api';
 const fleetPath = (route, action) => `${routeBase(route)}/fleet/${action}`;
+
+// D8 ingresso pannello: chiede un ticket di visione per UNA cella, sulla via
+// locale o federata a seconda di `route`. Il ticket non è il token del nodo:
+// opaco, monouso, pochi secondi di vita. Gli esiti negativi sono CAUSE con
+// nome — non dettagli HTTP — perché CellPanel le rende come stati distinti
+// e ogni stato suggerisce un'azione diversa a chi legge.
+export async function requestPanelTicket(t, route, cellId, { signal } = {}) {
+  const r = await apiFetch(`${routeBase(route)}/panel/${encodeURIComponent(cellId)}/ticket`, t, { method: 'POST', signal });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 200 && j && typeof j.ticket === 'string') return { ok: true, ticket: j.ticket };
+  if (r.status === 403 && j && j.reason === 'panel-not-granted') return { ok: false, cause: 'not-granted' };
+  if (r.status === 404) return { ok: false, cause: 'no-panel' };
+  if (r.status === 401) return { ok: false, cause: 'unauthorized' };
+  return { ok: false, cause: 'denied' };
+}
+
 export const fleetStatus = (t, route) => jsonFetch(fleetPath(route, 'status'), t);
 export const fleetUp = (t, b, route) => jsonFetch(fleetPath(route, 'up'), t, { method: 'POST', body: b });
 export const fleetDown = (t, b, route) => jsonFetch(fleetPath(route, 'down'), t, { method: 'POST', body: b });
@@ -146,3 +162,11 @@ export const createDeck = (t, name, route = []) => jsonFetch(`${routeBase(route)
 export const saveDeck = (t, name, layout, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PUT', body: { layout, expectedRevision } });
 export const renameDeck = (t, name, next, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PATCH', body: { name: next, expectedRevision } });
 export const deleteDeck = (t, name, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'DELETE', body: { expectedRevision } });
+
+// Cella ospite Live (contratto rev6 §2): hostCell unico per nodo con CAS. Sempre
+// LOCALE: non ha `route` — la designazione non e' instradabile via federazione
+// (il proxy nega /api/live-host via /node). jsonFetch propaga l'errore su !ok, cosi'
+// il caller API-first resta sullo stato precedente senza toccare hostCell.
+export const getLiveHost = (t) => jsonFetch('/api/live-host', t);
+export const designateHostCell = (t, cellId, expectedRevision) => jsonFetch('/api/live-host/designate', t, { method: 'POST', body: { cellId, expectedRevision } });
+export const clearHostCell = (t, expectedRevision) => jsonFetch('/api/live-host/clear', t, { method: 'POST', body: { expectedRevision } });

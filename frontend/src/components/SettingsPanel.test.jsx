@@ -413,7 +413,7 @@ describe('Settings Nodes tab — VL nodes appear in the same list (NC_UI_NODI_VL
       token="token" nodes={[hub, vlPeer]} roster={[]} settings={{ deviceName: 'Phone' }}
       readonly={false} refresh={vi.fn().mockResolvedValue(undefined)} refreshAliases={vi.fn()}
     />);
-    // Same row markup as any other node — DAG's "come fosse un nodo
+    // Same row markup as any other node — the product owner's "come fosse un nodo
     // nexuscrew, non una sezione nuova": one button, same class, opens the
     // same sheet — just grouped under its own label like hubs/clients/routed
     // already are.

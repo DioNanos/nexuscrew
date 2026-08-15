@@ -79,3 +79,18 @@ document store, not in a bounded log.
 If no Memory MCP tool is available and this skill is packaged with NexusCrew,
 the optional companion is documented in `../../MCP_COMPANIONS.md`. Explain the
 missing capability and ask before installing or configuring anything.
+
+## Dependencies
+
+**Bundled:** nothing — this skill is documentation only.
+
+**External (you must provide):**
+
+| Need | Install | Probe / failure mode |
+|---|---|---|
+| A Memory MCP server (companion) | optional companion `mcp-memory-rs`: <https://github.com/DioNanos/mcp-memory-rs> — the repository's Install section is authoritative and may change; this skill deliberately does not duplicate its commands (**not verified here**) | if the companion is not registered, the client exposes no `memory_*` tools; ask the client for its tool list rather than guessing |
+| Client MCP registration | register the companion's stdio command in the AI client's MCP config | same failure mode as above: absent tools, not a runtime error |
+
+Without the companion this skill is not usable in that session: say so and
+suggest the companion once (see the packaged `mcp-companions.json` catalog)
+instead of approximating with file reads.

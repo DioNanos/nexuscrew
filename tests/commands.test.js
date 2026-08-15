@@ -1137,9 +1137,40 @@ test('doctor: tmux mancante -> code 1', () => {
     execImpl: (b, a) => { if (a && a.includes('is-active')) return 'active'; return ''; },
     ptyLoad: () => ({}),
     commandExists: (bin) => bin !== 'tmux',
+    // Senza questo seam, checkTmux userebbe la resolveCommand REALE (legge
+    // il PATH vero del processo di test) per arricchire il messaggio —
+    // stessa famiglia di haveTmux che ignorava opts.env e openPwa che
+    // ignorava opts.resolveCommand: un test che dichiara di isolarsi col
+    // seam ma per una parte del comportamento legge l'ambiente vero. Qui
+    // dichiara esplicitamente "assente, nessun blocco" per restare isolato
+    // e deterministico, indipendente da cosa c'e' davvero sul PATH di chi
+    // esegue il test.
+    resolveCommand: () => ({ found: false, path: null, blocked: [] }),
   });
   assert.equal(r.code, 1);
   assert.ok(r.checks.some((c) => c.name.includes('tmux') && !c.ok));
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('doctor: tmux non VERIFICABILE (PATH bloccato da permessi) -> stesso fail, ma il messaggio dice "non verificabile", mai "non trovato"', () => {
+  const { home } = initHome();
+  const r = doctor({
+    home, platform: 'linux', log: () => {},
+    execImpl: (b, a) => { if (a && a.includes('is-active')) return 'active'; return ''; },
+    ptyLoad: () => ({}),
+    commandExists: (bin) => bin !== 'tmux',
+    // resolveCommand arricchisce SOLO il messaggio: qui simula una directory
+    // PATH non attraversabile che conteneva tmux — non genuinamente assente.
+    resolveCommand: (bin) => (bin === 'tmux'
+      ? { found: false, path: null, blocked: [{ path: '/opt/blocked/tmux', code: 'EACCES', message: 'permission denied' }] }
+      : { found: true, path: `/usr/bin/${bin}`, blocked: [] }),
+  });
+  assert.equal(r.code, 1, 'il fail resta: non abbiamo potuto verificare, non e\' un pass');
+  const tmuxCheck = r.checks.find((c) => c.name.includes('tmux') && !c.ok);
+  assert.ok(tmuxCheck);
+  assert.match(tmuxCheck.detail, /non verificabile/i);
+  assert.doesNotMatch(tmuxCheck.detail, /non trovato/i, 'non deve dire "non trovato" quando in realta\' non ha potuto guardare');
+  assert.match(tmuxCheck.detail, /EACCES/);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -1560,4 +1591,124 @@ test('dispatch restart: un 401 dice che il servizio C\'E\', non che e\' morto', 
   assert.match(detto, /riavvio e' riuscito|riavvio e’ riuscito/);
   assert.doesNotMatch(detto, /porta/, 'non deve incolpare la porta');
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+// --- openPwa: candidates.find() sceglieva SILENZIOSAMENTE il candidato ----
+// successivo quando uno precedente non era verificabile (stessa forma del
+// difetto in lib/cli/path.js: "assente" e "bloccato" collassavano allo
+// stesso esito negativo). Misura: su piattaforma non-mac/non-termux i
+// candidati sono ['xdg-open', 'gio'] — se 'xdg-open' e' bloccato (non
+// assente) e 'gio' e' trovato, prima di questa correzione veniva eseguito
+// 'gio' senza dire che 'xdg-open' non era stato genuinamente escluso.
+
+test('openPwa: candidato preferito BLOCCATO (non assente) -> esegue comunque il fallback ma AVVISA, non tace', () => {
+  const spawned = [];
+  const logs = [];
+  const r = openPwa('http://127.0.0.1:41820/#TOK', {
+    platform: 'linux',
+    resolveCommand: (bin) => (bin === 'xdg-open'
+      ? { found: false, path: null, blocked: [{ path: '/opt/blocked/xdg-open', code: 'EACCES', message: 'permission denied' }] }
+      : { found: true, path: '/usr/bin/gio', blocked: [] }),
+    log: (m) => logs.push(m),
+    spawnImpl: (bin, args) => { spawned.push({ bin, args }); return { on() {}, unref() {} }; },
+  });
+  assert.equal(r, true);
+  assert.equal(spawned.length, 1);
+  assert.equal(spawned[0].bin, 'gio', 'il fallback resta best-effort: non blocchiamo l\'apertura per questo');
+  assert.ok(logs.some((m) => /WARN/.test(m) && /xdg-open/.test(m) && /EACCES/.test(m)), 'ma il candidato bloccato deve comparire nel log, non sparire in silenzio');
+});
+
+test('openPwa: nessun candidato bloccato, semplice assenza -> nessun WARN (comportamento invariato)', () => {
+  const logs = [];
+  const spawned = [];
+  openPwa('http://127.0.0.1:41820/#TOK', {
+    platform: 'linux',
+    resolveCommand: (bin) => (bin === 'xdg-open'
+      ? { found: false, path: null, blocked: [] } // genuinamente assente
+      : { found: true, path: '/usr/bin/gio', blocked: [] }),
+    log: (m) => logs.push(m),
+    spawnImpl: (bin) => { spawned.push(bin); return { on() {}, unref() {} }; },
+  });
+  assert.equal(spawned[0], 'gio');
+  assert.equal(logs.length, 0, 'un\'assenza genuina non e\' un caso da segnalare: il fallback e\' il comportamento atteso');
+});
+
+test('openPwa: nessun candidato trovato (tutti bloccati) -> throw invariato', () => {
+  assert.throws(() => openPwa('http://127.0.0.1:41820/#TOK', {
+    platform: 'linux',
+    resolveCommand: () => ({ found: false, path: null, blocked: [{ path: '/opt/x', code: 'EACCES', message: 'nope' }] }),
+    log: () => {},
+  }), /no URL opener found/);
+});
+
+test('openPwa: opts.commandExists (seam booleano esplicito) -> comportamento storico, nessun WARN possibile (nessuna informazione su blocked)', () => {
+  const logs = [];
+  const spawned = [];
+  openPwa('http://127.0.0.1:41820/#TOK', {
+    platform: 'linux',
+    commandExists: (bin) => bin === 'gio',
+    log: (m) => logs.push(m),
+    spawnImpl: (bin) => { spawned.push(bin); return { on() {}, unref() {} }; },
+  });
+  assert.equal(spawned[0], 'gio');
+  assert.equal(logs.length, 0);
+});
+
+// ===========================================================================
+// Punto 3 — checkService / checkBoot collassavano "non installato", "non
+// verificabile", "systemctl assente" e "dbus down" in "non attivo"/"non enabled".
+// Il pattern corretto e' checkTmuxSurvival (stesso file): il discriminante e' CHI
+// ha fallito. Verdetto (ok/warn) invariato; il messaggio distingue.
+// ===========================================================================
+
+test('checkService: linux systemctl assente (ENOENT) -> installato, stato NON VERIFICABILE, mai "installato ma non attivo"', () => {
+  const { checkService } = require('../lib/cli/doctor.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-svc-blocked-'));
+  const target = path.join(home, 'nexuscrew.service');
+  fs.writeFileSync(target, '[Unit]\n'); // installato (fs.existsSync true)
+  try {
+    const r = checkService('linux', home, () => { const e = new Error('spawn systemctl ENOENT'); e.code = 'ENOENT'; throw e; }, 1000, target);
+    assert.equal(r.ok, true, 'verdetto ok invariato (installato)');
+    assert.equal(r.warn, true, 'warn invariato (active resta false)');
+    assert.match(r.detail, /non verificabile/i, 'il messaggio dice "non verificabile"');
+    assert.doesNotMatch(r.detail, /installato ma non attivo/i, 'non deve dire "non attivo" quando non ha potuto guardare');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('checkService: linux systemctl risponde "inactive" -> "installato ma non attivo" (caso legittimo VERIFICATO, invariato)', () => {
+  const { checkService } = require('../lib/cli/doctor.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-svc-legit-'));
+  const target = path.join(home, 'nexuscrew.service');
+  fs.writeFileSync(target, '[Unit]\n');
+  try {
+    const r = checkService('linux', home, () => { throw new Error('inactive'); }, 1000, target);
+    assert.equal(r.ok, true);
+    assert.equal(r.warn, true);
+    assert.match(r.detail, /installato ma non attivo/i, 'systemctl ha girato e ha risposto: legittimo "non attivo"');
+    assert.doesNotMatch(r.detail, /non verificabile/i);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('checkBoot: linux dbus down -> "non verificabile", mai "non enabled"', () => {
+  const { checkBoot } = require('../lib/cli/doctor.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-boot-blocked-'));
+  try {
+    const r = checkBoot('linux', home, () => { throw new Error('Failed to connect to bus: No such file or directory'); });
+    assert.equal(r.ok, true, 'verdetto ok invariato');
+    assert.equal(r.warn, true, 'warn invariato');
+    assert.match(r.detail, /non verificabile/i);
+    assert.doesNotMatch(r.detail, /non enabled/i, 'non deve dire "non enabled" quando non ha potuto guardare');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('checkBoot: linux systemctl risponde "disabled" -> "non enabled (non parte al boot)" (caso legittimo VERIFICATO, invariato)', () => {
+  const { checkBoot } = require('../lib/cli/doctor.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-boot-legit-'));
+  try {
+    const r = checkBoot('linux', home, () => { throw new Error('disabled'); });
+    assert.equal(r.ok, true);
+    assert.equal(r.warn, true);
+    assert.match(r.detail, /non enabled/i, 'systemctl ha girato e ha risposto: legittimo "non enabled"');
+    assert.doesNotMatch(r.detail, /non verificabile/i);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

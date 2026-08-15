@@ -2,7 +2,142 @@
 
 All notable changes to NexusCrew are tracked here.
 
-## Unreleased
+## 0.9.0 — 2026-08-15 — "The Star Keeps Its Promise"
+
+- **A cell panel finally opens — through our own route, not the raw URL.** An
+  `<iframe src>` is a browser navigation and carries no headers, so the
+  bearer-only gate was locking out the one consumer it existed for; and a token
+  in the query string would not have saved it, because the page's
+  sub-resources have relative URLs and no query — a white frame. The panel is
+  now served from a first-party path. The authenticated app requests a
+  one-use ticket (opaque, 30 s, bound to one cell); the frame's first request
+  consumes it — truly one-use: it is torn even if the check fails — and the
+  answer sets a viewing cookie: HttpOnly, SameSite=Strict, one hour, and
+  `Path` scoped to that cell's panel subtree, so relative sub-resources pass
+  and nothing else does. The node token never reaches the browser, a log or a
+  Referer. No credential of any kind is forwarded to the panel origin: the
+  ticket is stripped from the forwarded query, and `referer` joins the
+  stripped headers. Tickets and cookies are not compared at all: they are
+  256-bit random secrets looked up by key. The WebSocket upgrade
+  accepts the cookie — the panel's sockets start from inside the frame and
+  cannot carry headers — while bearer and `?token=` keep working as before.
+
+- **A panel is reachable from another machine, but only toward peers that
+  were granted it.** In the pairing model a federated peer is treated as the
+  operator itself, which is a coherent choice for everything else — but not
+  for panels: behind a panel sits a browser with sessions already
+  authenticated, and that kind of access is not revoked by rotating a key.
+  `panelAccess` is therefore a per-peer permission, denied by default and
+  never inherited: a record written before the field existed does not earn
+  the permission by seniority. It is granted one node at a time with
+  `nodes panel <node> on|off`, and the redacted view shows it, because it is
+  an operator decision, not a secret. The gate is enforced on **two** paths —
+  the HTTP route and the WebSocket `forwardUpgrade`, which does not go
+  through the route handler and shares none of its checks: a gate written on
+  one side only would be a closed door next to an open one, and for a panel
+  the open one is the door that matters. A test breaks on exactly that
+  removal. The check runs before the allowlist, so a peer without the
+  permission cannot even learn whether that cell has a panel.
+
+- **On the federated path the node's own token no longer opens a panel — and
+  the viewing cookie finally arrives.** A local process of the hub node could
+  reach the federated panel route with no hub token at all: the iframe bypass
+  forwarded the request, the last hop re-entered the owner node's API with
+  the bearer the proxy had injected for itself, and the owner's panel gate
+  accepted it as if it were the local app. The panel *content* of every
+  granted peer walked out — not just the status codes. Provenance is now
+  decided by a per-process hop proof, signed over method, path and chain and
+  verified with a secret no local client can compute: with a verified hop,
+  the node bearer no longer earns the content — only a ticket or a cookie
+  issued by the owner node does; with no hop, local traffic works as it
+  always did; with a hop that fails verification, the request is refused
+  rather than guessed at. The same boundary is written twice, on the HTTP
+  path and on the WebSocket upgrade, for the reason above. Closing it
+  uncovered a second defect that had been hiding behind the first: the
+  sanitizer stripped the entire `cookie` header on federation hops, so the
+  viewing cookie never reached the owner node and a remote panel served the
+  page and nothing else — a frame that looks loaded and stays empty. Now the
+  one panel cookie — opaque, per-cell, short-lived, recognizable only by the
+  node that issued it — crosses the federation on panel resources, and every
+  other browser cookie stays home.
+
+- **A Live gets a designated host cell, a bridge to it, and an eligibility
+  that tells the truth.** One cell per node can be designated as the Live
+  host — the sidebar star cycles through favorite, host, none — with a
+  compare-and-set on a persisted revision: two concurrent designations
+  cannot leave two cells marked, and a caller that omits the expected
+  revision is refused rather than guessed about. A stopped cell *preserves*
+  its designation: eligibility is derived from the roster at read time and
+  never persisted. Federation cannot designate someone else's cell — the
+  refusal is a distinct 403, not the anti-transitive 404. At startup the
+  Live bridges to the designated cell: on native engines it opens its own
+  conversation with the cell's working directory and the per-cell prompt;
+  the connection is on-demand and never permanent, so a busy cell is not
+  disturbed. Every `none` outcome is distinct and declared — disabled, no
+  designation, host ineligible, unknown cwd, timeouts, read-only — and past
+  the bridge timeout the Live simply starts unpointed, which is the standard
+  behavior. Eligibility now looks at the supervisor lease, not just at a
+  living session: during grace it is `false` — a supervisor that is dying is
+  not a host — and when the lease provider is absent the status says
+  `unavailable` instead of quietly promising a guarantee nobody confirmed.
+
+- **Supervisor leases: a host that promised to be alive can prove it.** The
+  supervisor of a Live host cell now holds a lease from the server: a stable
+  permissioned endpoint, a periodic refresh, an EOF that arms a grace with a
+  deadline that cannot be extended, and a reconnect — within the grace, with
+  a verifiable transition — that reconstructs the lease after a supervisor
+  restart. A server restart is fail-closed: no lease survives it, and the
+  recovery needs no shared secret, because the proof is signed with a
+  per-installation key. The durable bound is always valued — a missing bound
+  used to read as "no limit" and fail open; the refresh renews the bound on
+  disk *before* the acknowledgment, so a failed write means no ack and no
+  proof; persisted entries are validated for shape and plausibility at boot
+  instead of being trusted; and the generation transition accepted at
+  reconnect is exactly `+1`, not "anything not older". The supervisor's
+  capability never crosses into the child environment.
+
+- **A hung gate is now a red, not a wait.** A test file that leaves handles
+  open — servers not fully closed, sockets alive, timers without `unref` —
+  produced no failure: every test passed and the process simply never
+  exited. The gate hung, and hung looks like slow instead of broken, which
+  is the worst way to fail: nobody goes looking for a defect in something
+  that still appears to be working. The runner now arms an exit grace once
+  the summary is printed, and — because the real occurrences hung *before*
+  any summary, on a file whose child process stayed alive — a stall watchdog
+  that looks at progress, not at a stopwatch: no reporter output for N
+  minutes means hung, and it fails naming the cause. A slow gate is never
+  touched: if it works, it prints. The watchdog reads a second TAP reporter
+  written to a throwaway file, so watching costs nothing on stdout — the
+  first version piped the output and its backpressure sat exactly on the
+  tests that measure time. Test concurrency is capped, with the reason
+  measured: on a saturated box, timing-sensitive tests fell at random, and a
+  gate that teaches you to ignore reds is not a gate. Along the way, the
+  temporal thresholds inside the tests were reworked one by one to
+  event-driven waits: a test that measures a time without asserting anything
+  about the time is not protected by a tight threshold — it is exposed by it.
+
+- **GLM-5.3 in the Z.AI catalog, top effort by default.** The provider
+  switched its Coding Plan to GLM-5.3 and answers 5.3 even when 5.2 is asked
+  — verified on the wire — so the catalog now says the truth about what
+  runs. Only the three Z.AI entries moved: the other sources still serve
+  5.2, and aligning them would have been copying a name, not updating a
+  configuration. `glm-5.2[1m]` remains selectable: rollback must not require
+  a code change. The `[1m]` suffix stays for a reason — it is the CLI's
+  window flag, stripped before the HTTP request; the literal string does not
+  exist on the wire. Maximum reasoning effort is now the default, extended
+  from the previous model: the provider's own measurement has accuracy up
+  and tokens-per-task down at the top level, which on a time-window plan
+  pays for itself.
+
+- **`removePidfile` verifies the subject.** It was a bare `unlink`: any
+  process could delete *another* process's pidfile — the very proof that
+  process is alive — leaving whoever governs it believing it dead, or
+  adopting an occupied slot. Removal is now legitimate in exactly three
+  cases, checked inside the function: the file is ours, the pid is stale, or
+  the file is not a readable pidfile at all. `allowLive` is the caller's
+  attestation after a verified kill, not a bypass. A test keeps the bad case
+  red: another live process's pidfile survives a removal attempt and becomes
+  removable again only when that process dies.
 
 ## 0.8.58 — 2026-08-11 — "The Numbers Behind the Wire"
 
@@ -321,7 +456,7 @@ nothing anywhere said so.
 
   The WebSocket attach honours it too, and without that the rest would be
   decoration: `/ws` attaches a PTY *by session name*, so a peer whose cell we
-  had hidden from every list could still attach by guessing `cloud-Dev`. An
+  had hidden from every list could still attach by guessing `cloud-X`. An
   out-of-scope session is treated as nonexistent — the same code as one that
   really is not there, because answering "it exists but you may not" reveals
   precisely what the scope hides. The scope is set from the node's sheet in the

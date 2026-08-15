@@ -11,6 +11,8 @@ import { useNodes } from '../hooks/useNodes.js';
 import RosterHandle from './RosterHandle.jsx';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
+import { hostRenderState, hostNextAction, hostLeaseTitleKey } from '../lib/host-designation.js';
+import PinPersistBanner from './PinPersistBanner.jsx';
 import {
   rel, nodeStateLabel, healthDot, healthTitle, buildLocalRoster, buildRemoteRoster,
 } from '../lib/roster-view-model.js';
@@ -26,7 +28,7 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 // apertura, filtro, pin e ordine hanno quindi un solo contratto condiviso
 // (hook useRosterPreferences + model roster-view-model).
 
-export default function SessionList({ onPick, token, onSettings, onOpenVlSession }) {
+export default function SessionList({ onPick, token, onSettings, onOpenVlSession, hostCell = null, hostLease = null, onDesignateCell, onClearHostCell }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   // Gruppi per-nodo remoto (B2): zero nodi configurati -> [] e home identica.
   const nodeGroups = useNodes(token);
@@ -43,8 +45,22 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
   const [powerCell, setPowerCell] = useState(null);
   const [nodeBusy, setNodeBusy] = useState(null);
   const {
-    pins, orders, togglePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
+    pins, orders, togglePin, removePin, pinError, retryPinPersist, clearPinError, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
+  // Ciclo stellina (parita' desktop): none -> favorite -> live -> none. Solo le
+  // celle LOCALI possono essere host del nodo; remote/sessioni restano su togglePin.
+  function onStarClick(item, c, state, position) {
+    if (position !== 'local') { togglePin(item.key); return; }
+    const action = hostNextAction(state);
+    if (action === 'addPin') { togglePin(item.key); return; }
+    if (action === 'designate') { if (onDesignateCell) onDesignateCell(c.cell); return; }
+    if (action === 'clearAndUnpin') {
+      if (!onClearHostCell) return;
+      // removePin legge localStorage al momento dell'applicazione (no lost update)
+      // e segnala un fallimento di persistenza nello stato (banner ritentabile).
+      Promise.resolve(onClearHostCell()).then((ok) => { if (ok) removePin(item.key); });
+    }
+  }
   const {
     groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
   } = useNodePreferences();
@@ -240,12 +256,20 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
     const canMove = canMoveRoster;
     if (item.type === 'cell') {
       const c = item.value;
+      const starState = position === 'local'
+        ? hostRenderState({ hostCell, pins, item })
+        : (pins.includes(item.key) ? 'favorite' : 'none');
       const session = route.length
         ? (group?.sessions || []).find((candidate) => candidate.name === c.tmuxSession)
         : byName.get(c.tmuxSession);
-      const stateTitle = c.degraded
+      // Come in Sidebar: sull'host designato il titolo porta anche lo stato del
+      // lease. Solo per le celle LOCALI — `hostLease` descrive la designazione di
+      // questo nodo, e appiccicarlo a una cella federata direbbe una cosa falsa.
+      const leaseKey = position === 'local' ? hostLeaseTitleKey(starState, hostLease) : null;
+      const baseStateTitle = c.degraded
         ? t('cell-degraded')
         : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
+      const stateTitle = leaseKey ? `${baseStateTitle} · ${t(leaseKey)}` : baseStateTitle;
       const canPower = route.length === 0 || (group?.capabilities || []).includes(c.active ? 'down' : 'up');
       const canBoot = route.length === 0
         ? fleetCapabilities.includes('boot')
@@ -266,9 +290,11 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
           </button>
           {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
           {item.fresh && session?.outbox?.count > 0 && <span className="nc-badge" title={t('new-files-outbox')}>{session.outbox.count}</span>}
-          <button className={`nc-act pin${pins.includes(item.key) ? ' on' : ''}`}
-            aria-label={`${t('pin')} ${c.cell}`} title={t('pin')} onClick={() => togglePin(item.key)}>
-            {pins.includes(item.key) ? '\u2605' : '\u2606'}
+          <button className={`nc-act pin${starState === 'live' ? ' live' : starState === 'favorite' ? ' on' : ''}`}
+            aria-label={`${starState === 'live' ? 'live host' : t('pin')} ${c.cell}`}
+            title={starState === 'live' ? 'live host' : t('pin')}
+            onClick={() => onStarClick(item, c, starState, position)}>
+            {starState === 'none' ? '\u2606' : '\u2605'}
           </button>
           {canBoot && <button className={`nc-act boot${boot ? ' on' : ''}`} disabled={bootBusy.has(bootKey)}
             onClick={(event) => onBootToggle(event, c, route)} title={bootLabel} aria-label={bootLabel}>
@@ -329,6 +355,7 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
       </header>
 
       <main className="nc-home-scroll">
+      <PinPersistBanner pinError={pinError} onRetry={retryPinPersist} onDismiss={clearPinError} />
       {rosterTotal > 8 && (
         <input
           className="nc-filter" type="search" placeholder={t('filter-placeholder')} aria-label={t('filter-placeholder')}

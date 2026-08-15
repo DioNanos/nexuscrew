@@ -2,7 +2,8 @@
 
 // Profili OpenCode Go. Gli elenchi modello di questi test non sono una copia
 // della documentazione: sono la matrice misurata il 2026-08-11 (25 ID live x 3
-// wire). Il valore dei test sta nei controlli negativi — una coppia
+// wire), con deepseek-v4-pro refreshato al 2026-08-13 (DeepSeek ha aggiunto la
+// Responses API il 13/08: ora 200 su tutti e tre i wire). Il valore dei test sta nei controlli negativi — una coppia
 // wire/modello che il gateway rifiuta deve fallire QUI, non al primo avvio.
 
 const { test } = require('node:test');
@@ -66,8 +67,12 @@ test('ogni modello misurato passa e ogni coppia wire/modello rifiutata dal gatew
     assert.ok(normalizeManagedSpec({ client: 'pi', provider: 'opencode-go', model }), `chat/${model}`);
   }
   // Controlli negativi presi uno per uno dalla matrice misurata.
-  // kimi-k3 e deepseek-v4-pro: 200 su Chat, 400 payload vuoto sulle altre due.
-  for (const model of ['kimi-k3', 'deepseek-v4-pro', 'mimo-v2.5', 'hy3']) {
+  // deepseek-v4-pro: refresh 2026-08-13 (DeepSeek ha aggiunto la Responses API
+  // il 13/08) -> ora 200 su tutti e tre i wire; entra in MESSAGES e RESPONSES.
+  assert.ok(normalizeManagedSpec({ client: 'claude', provider: 'opencode-go', model: 'deepseek-v4-pro' }), 'deepseek-v4-pro passa su messages (refresh 13/08)');
+  assert.ok(normalizeManagedSpec({ client: 'codex-vl', provider: 'opencode-go', model: 'deepseek-v4-pro' }), 'deepseek-v4-pro passa su responses (refresh 13/08)');
+  // kimi-k3, mimo-v2.5, hy3: 200 su Chat, 400 payload vuoto sulle altre due.
+  for (const model of ['kimi-k3', 'mimo-v2.5', 'hy3']) {
     assert.equal(normalizeManagedSpec({ client: 'claude', provider: 'opencode-go', model }), null, `messages rifiuta ${model}`);
     assert.equal(normalizeManagedSpec({ client: 'codex-vl', provider: 'opencode-go', model }), null, `responses rifiuta ${model}`);
   }
