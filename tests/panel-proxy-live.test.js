@@ -115,3 +115,41 @@ test('dal vivo: una cella senza pannello non apre nulla, e non e\' un errore gen
   assert.equal(res.status, 404);
   assert.match(res.acc, /cell-unknown/, 'il motivo e\' nella risposta, non solo nei log');
 });
+
+test('dal vivo: panelUrl CON path — il pathname non si raddoppia', async (t) => {
+  // Contratto D8 (CellPanel.jsx): il frame carica /api/panel/<cella> + il
+  // pathname del panelUrl, e il browser risolve le sotto-risorse relative
+  // rispetto a quell'origine: al proxy arrivano SEMPRE path assoluti del
+  // pannello. Se il proxy ricompone basePath + rest, la pagina stessa diventa
+  // /vnc/lite.html/vnc/lite.html: il pannello risponde 404 e il frame resta
+  // su «not found». Provato nel browser vero (harness d8, cella sottovia):
+  // il difetto c'e', ed e' questo.
+  const panel = http.createServer((req, res) => {
+    const u = req.url.split('?')[0];
+    if (u === '/vnc/lite.html') { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<html>lite</html>'); return; }
+    if (u === '/vnc/app.js') { res.writeHead(200, { 'content-type': 'application/javascript' }); res.end('ok'); return; }
+    res.writeHead(404); res.end('not found');
+  });
+  await new Promise((r) => panel.listen(0, '127.0.0.1', r));
+  const proxy = createPanelProxy({
+    resolveCellPanel: async (cellId) => (cellId === 'Dev' ? `http://127.0.0.1:${panel.address().port}/vnc/lite.html` : undefined),
+  });
+  const srv = http.createServer((req, res) => {
+    if (!req.url.startsWith('/api/panel/')) { res.writeHead(404); res.end(); return; }
+    req.url = req.url.slice('/api/panel'.length);
+    proxy(req, res);
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => { panel.close(); srv.close(); });
+
+  const get = (p) => new Promise((resolve, reject) => {
+    http.get(`http://127.0.0.1:${srv.address().port}${p}`, (res) => {
+      let acc = ''; res.on('data', (c) => { acc += c; }); res.on('end', () => resolve({ status: res.statusCode, acc }));
+    }).on('error', reject);
+  });
+  const page = await get('/api/panel/Dev/vnc/lite.html');
+  assert.equal(page.status, 200, 'la pagina arriva: rest e gia il path del pannello, non si ricompone col basePath');
+  assert.match(page.acc, /lite/);
+  const sub = await get('/api/panel/Dev/vnc/app.js');
+  assert.equal(sub.status, 200, 'la sotto-risorsa arriva col suo path assoluto (il browser l\'ha gia risolta)');
+});
