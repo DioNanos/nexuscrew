@@ -9,6 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const pidf = require('../lib/cli/pidfile.js');
+const { sorvegliaUscita } = require('./exit-watchdog.js');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-tests-'));
 const tmuxRoot = path.join(root, 'tmux');
@@ -77,11 +78,18 @@ async function main() {
   const child = spawn(process.execPath, ['--require', bootstrap, '--test', `--test-concurrency=${concurrency}`, ...process.argv.slice(2), ...testFiles], {
     cwd: path.join(__dirname, '..'),
     env: childEnv,
-    stdio: 'inherit',
+    // stdout in PIPE per il guard qui sotto; stdin e stderr restano ereditati.
+    // Il prezzo e' che il reporter non vede piu' un TTY e rinuncia ai colori:
+    // dichiarato, perche' e' il solo modo di sapere QUANDO i test sono finiti.
+    stdio: ['inherit', 'pipe', 'inherit'],
   });
-  const code = await new Promise((resolve) => {
-    child.once('error', () => resolve(1));
-    child.once('exit', (value) => resolve(Number.isInteger(value) ? value : 1));
+  // Il guard che da' colore a un handle non chiuso: senza, un file che lascia
+  // un server vivo NON produce un rosso — tiene il gate appeso, e appeso somiglia
+  // a lento invece che a rotto. Motivazione, misure e casi cattivi in
+  // tests/exit-watchdog.js e nel suo test.
+  const code = await sorvegliaUscita({
+    child,
+    graceMs: Number(process.env.NEXUSCREW_TEST_EXIT_GRACE_MS || 60_000),
   });
 
   const leaked = [];
