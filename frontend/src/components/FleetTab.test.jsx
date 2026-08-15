@@ -2,6 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { t } from '../lib/i18n.js';
 
 const api = vi.hoisted(() => ({
   fleetStatus: vi.fn(), fleetDefinitions: vi.fn(), fleetDefineEngine: vi.fn(), fleetEditEngine: vi.fn(),
@@ -102,5 +103,51 @@ describe('FleetTab engine + KEY save ordering', () => {
     await screen.findByText(/fleet\.json missing or invalid/);
     expect(screen.getByText(/The Fleet editor is unavailable at this location/)).toBeTruthy();
     expect(screen.queryByText('Unable to load the Fleet editor.')).toBeNull();
+  });
+});
+
+// --- panelUrl: la guardia che conta (0.9.1 punto 3) -------------------------
+// Non "il campo esiste": scrivendo un panelUrl valido nel form, la cella lo
+// RICEVE davvero — misurato sulla chiamata alla API di salvataggio, non
+// dedotto dal fatto che il form non esplode.
+describe('FleetTab panelUrl reaches the save call', () => {
+  beforeEach(() => {
+    localStorage.setItem('nc_lang', 'en');
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    for (const mock of Object.values(api)) mock.mockReset();
+    api.fleetStatus.mockResolvedValue({ provider: 'builtin', capabilities: ['definitions', 'edit', 'credentials', 'restore'], engines: [], cells: [] });
+    api.fleetDefinitions.mockImplementation(async () => definitions());
+    api.fleetCredentialStatus.mockResolvedValue({ credentials: [] });
+    api.getRouteConfig.mockResolvedValue({ readonlyDefault: false });
+    api.fleetDefineCell.mockResolvedValue({ ok: true, id: 'Panel' });
+  });
+
+  it('creating a cell with a valid loopback panelUrl sends it to fleetDefineCell', async () => {
+    render(<FleetTab token="token" readonly={false} />);
+    await screen.findByText('Engines');
+    const cellsHead = [...document.querySelectorAll('.nc-fleet-section-head')]
+      .find((head) => /Cells/.test(head.textContent || ''));
+    fireEvent.click(cellsHead.querySelector('button'));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByPlaceholderText('id'), { target: { value: 'Panel' } });
+    fireEvent.change(within(dialog).getByPlaceholderText(t('cwd')), { target: { value: '/home/user/work' } });
+    fireEvent.change(within(dialog).getByPlaceholderText(t('fleet-panel-url')), { target: { value: 'https://127.0.0.1:6901' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'save' }));
+    await waitFor(() => expect(api.fleetDefineCell).toHaveBeenCalledTimes(1));
+    expect(api.fleetDefineCell.mock.calls[0][1]).toMatchObject({ panelUrl: 'https://127.0.0.1:6901' });
+  });
+
+  it('creating a cell with panelUrl left blank never sends the field (no invented intent)', async () => {
+    render(<FleetTab token="token" readonly={false} />);
+    await screen.findByText('Engines');
+    const cellsHead = [...document.querySelectorAll('.nc-fleet-section-head')]
+      .find((head) => /Cells/.test(head.textContent || ''));
+    fireEvent.click(cellsHead.querySelector('button'));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByPlaceholderText('id'), { target: { value: 'Panel' } });
+    fireEvent.change(within(dialog).getByPlaceholderText(t('cwd')), { target: { value: '/home/user/work' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'save' }));
+    await waitFor(() => expect(api.fleetDefineCell).toHaveBeenCalledTimes(1));
+    expect(api.fleetDefineCell.mock.calls[0][1]).not.toHaveProperty('panelUrl');
   });
 });
