@@ -86,7 +86,7 @@ test('tools/list: tool nc_* completi con readOnlyHint sui read-only', async () =
   await srv.handleLine(rpc(2, 'tools/list'));
   const tools = out.lines[0].result.tools;
   assert.deepEqual(tools.map((t) => t.name).sort(),
-    ['nc_ask', 'nc_cell_diagnostics', 'nc_cells', 'nc_deck', 'nc_identity', 'nc_inbox', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_speak', 'nc_speak_group', 'nc_speak_group_status', 'nc_speak_group_stop', 'nc_speak_status', 'nc_speak_stop', 'nc_status', 'nc_vl_command', 'nc_vl_invite', 'nc_vl_nodes', 'nc_vl_revoke']);
+    ['nc_ask', 'nc_cell_diagnostics', 'nc_cells', 'nc_deck', 'nc_identity', 'nc_inbox', 'nc_lease_recovery', 'nc_lease_refresh', 'nc_lease_register', 'nc_notify', 'nc_send_cell', 'nc_send_file', 'nc_speak', 'nc_speak_group', 'nc_speak_group_status', 'nc_speak_group_stop', 'nc_speak_status', 'nc_speak_stop', 'nc_status', 'nc_vl_command', 'nc_vl_invite', 'nc_vl_nodes', 'nc_vl_revoke']);
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   assert.equal(byName.nc_status.annotations.readOnlyHint, true);
   assert.equal(byName.nc_deck.annotations.readOnlyHint, true);

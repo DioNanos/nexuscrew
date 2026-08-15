@@ -62,15 +62,17 @@ const runDir = (home) => path.join(home, '.nexuscrew', 'run');
 const cellStateFile = (home, cellId) => path.join(runDir(home), 'cell-leases', `${cellId}.json`);
 
 // 2b: apre il lease dal percorso di produzione e cattura il primo proof che il
-// server consegna all'attach (il detentore legittimo e' il supervisore, qui
-// simulato dal lato client della pair). E' l'equivalente 2b del vecchio
+// server consegna — con l'ACK del refresh immediato del supervisore
+// (attachInitial NON scrive sul canale: durante la consegna del payload il
+// canale appartiene al protocollo del broker). E' l'equivalente 2b del vecchio
 // `info.capability`: il proof sostituisce la capability statica revocata (A2).
 async function attachWithProof(mgr, cellId, clock, { generation = 0 } = {}) {
   const info = await mgr.track(cellId);
   const { serverSide, client } = await pair();
   assert.equal(mgr.attachInitial(cellId, serverSide, { generation }), true);
-  const first = await recv(client, (m) => m.type === 'lease' && m.proof);
-  return { info, client, proof: first.proof, leaseId: first.leaseId };
+  client.write(`${JSON.stringify({ type: 'refresh' })}\n`);
+  const ack = await recv(client, (m) => m.type === 'ack' && m.proof);
+  return { info, client, proof: ack.proof, leaseId: mgr.status(cellId).leaseId };
 }
 
 // 2b: firma un proof con la chiave per-installazione della dir di test — la

@@ -72,15 +72,17 @@ function setup() {
 const leasesDir = (home) => path.join(home, '.nexuscrew', 'run', 'cell-leases');
 const verifierKeyPath = (home) => path.join(home, '.nexuscrew', 'run', 'lease-verifier.key');
 
-// Flusso completo: track + attachInitial (broker) → il supervisore riceve il
-// primo proof gia' sul canale iniziale.
+// Flusso completo: track + attachInitial (broker, che NON scrive sul canale:
+// durante la consegna del payload il canale e' del protocollo broker) + primo
+// refresh del supervisore -> il proof arriva con l'ACK.
 async function openLease(mgr, clock, cellId = 'Research', generation = 0) {
   const info = await mgr.track(cellId);
   const { serverSide, client } = await pair();
   const ok = mgr.attachInitial(cellId, serverSide, { generation });
   assert.equal(ok, true);
-  const first = await recv(client, (m) => m.type === 'lease' && m.proof);
-  return { info, client, first };
+  client.write(`${JSON.stringify({ type: 'refresh' })}\n`);
+  const ack = await recv(client, (m) => m.type === 'ack' && m.proof);
+  return { info, client, proof: ack.proof, leaseId: mgr.status(cellId).leaseId };
 }
 
 test('track non emette piu capability statica; lo stato durevole e per-cella senza segreti', async () => {
@@ -117,13 +119,13 @@ test('D1/E3: il refresh di una cella non legge né riscrive il file delle altre'
   mgr.close();
 });
 
-test('attachInitial consegna lease + proof firmato kind lease con leaseId del lease aperto', async () => {
+test('il primo refresh dopo l attach consegna ack+proof kind lease col leaseId del lease aperto', async () => {
   const { home, clock, mgr } = setup();
-  const { first } = await openLease(mgr, clock, 'Research');
-  assert.equal(first.proof.kind, 'lease');
-  assert.equal(first.proof.cellId, 'Research');
-  assert.equal(first.proof.leaseId, first.leaseId);
-  assert.equal(first.proof.launchEpoch.length, 16);
+  const { info, proof, leaseId } = await openLease(mgr, clock, 'Research');
+  assert.equal(proof.kind, 'lease');
+  assert.equal(proof.cellId, 'Research');
+  assert.equal(proof.leaseId, leaseId, 'il proof porta il leaseId del lease vivo (B6)');
+  assert.equal(proof.launchEpoch, info.launchEpoch);
   mgr.close();
 });
 
@@ -148,8 +150,7 @@ test('refresh: nessun proof senza commit del bound (norma GC1.2 estesa al proof)
 
 test('reconnect con proof valido riapre il lease; il proof e consumato una volta in-process (A3)', async () => {
   const { home, clock, mgr } = setup();
-  const { info, client, first } = await openLease(mgr, clock, 'Research');
-  const proof1 = first.proof;
+  const { info, client, proof: proof1 } = await openLease(mgr, clock, 'Research');
   client.destroy(); // EOF
   await new Promise((r) => setTimeout(r, 10));
   // Riconnessione all'endpoint stabile col proof detenuto.
@@ -161,7 +162,7 @@ test('reconnect con proof valido riapre il lease; il proof e consumato una volta
     recv(c2, (m) => m.type === 'lease' || m.type === 'deny').then(resolve);
   });
   assert.equal(leaseAgain.type, 'lease', JSON.stringify(leaseAgain));
-  assert.notEqual(leaseAgain.leaseId, first.leaseId); // lease NUOVO, stessa identita'
+  assert.notEqual(leaseAgain.leaseId, proof1.leaseId); // lease NUOVO, stessa identita'
   assert.ok(leaseAgain.proof.proof, 'il reconnect vittorioso consegna il proof del lease nuovo');
   c2.destroy();
   await new Promise((r) => setTimeout(r, 10));
@@ -180,7 +181,7 @@ test('reconnect con proof valido riapre il lease; il proof e consumato una volta
 
 test('reconnect col vecchio modello 2a (capability statica) e negato: norma revocata (A2)', async () => {
   const { home, clock, mgr } = setup();
-  const { info, client, first } = await openLease(mgr, clock, 'Research');
+  const { info, client } = await openLease(mgr, clock, 'Research');
   client.destroy();
   await new Promise((r) => setTimeout(r, 10));
   const c2 = net.createConnection(info.stablePath);
@@ -197,8 +198,7 @@ test('reconnect col vecchio modello 2a (capability statica) e negato: norma revo
 
 test('reconnect con proof scaduto, contraffatto o di kind sbagliato: deny (C4 fail-closed)', async () => {
   const { home, clock, mgr } = setup();
-  const { info, client, first } = await openLease(mgr, clock, 'Research');
-  const good = first.proof;
+  const { info, client, proof: good } = await openLease(mgr, clock, 'Research');
   client.destroy();
   await new Promise((r) => setTimeout(r, 10));
   const attempt = async (proof) => {
@@ -223,8 +223,7 @@ test('reconnect con proof scaduto, contraffatto o di kind sbagliato: deny (C4 fa
 
 test('post-restart: il proof emesso prima resta valido (verifier per-installazione) e il bound grace per-cell rifiuta oltre (R3.3.5)', async () => {
   const { home, clock, mgr } = setup();
-  const { info, client, first } = await openLease(mgr, clock, 'Research');
-  const proof = first.proof;
+  const { info, client, proof } = await openLease(mgr, clock, 'Research');
   client.destroy();
   mgr.close(); // restart del processo server: la map muore, il verifier resta su disco
   const clock2 = { t: clock.t + 5_000 };
@@ -269,13 +268,13 @@ test('E3: boot con un file per-cella corrotto carica le altre (join non rotto da
 
 test('il proof supervisore verifica con la chiave per-installazione letta da disco', async () => {
   const { home, clock, mgr } = setup();
-  const { info, client, first } = await openLease(mgr, clock, 'Research');
+  const { info, client, proof } = await openLease(mgr, clock, 'Research');
   // Proprieta' del modello: chi ha la chiave verifier (il server, anche dopo
   // restart) verifica il proof SENZA stato di sessione condiviso.
   const v = loadOrCreateVerifier({ dir: path.dirname(verifierKeyPath(home)) });
-  const out = verifyProof([v], first.proof, {
+  const out = verifyProof([v], proof, {
     now: () => clock.t + 100,
-    expect: { kind: 'lease', cellId: 'Research', launchEpoch: info.launchEpoch, leaseId: first.leaseId },
+    expect: { kind: 'lease', cellId: 'Research', launchEpoch: info.launchEpoch, leaseId: proof.leaseId },
   });
   assert.equal(out.ok, true, JSON.stringify(out));
   client.destroy();
