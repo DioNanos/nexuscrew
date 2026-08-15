@@ -61,7 +61,20 @@ async function main() {
   // Never let a test client inherit the operator's live tmux socket.
   delete childEnv.TMUX;
   delete childEnv.TMUX_PANE;
-  const child = spawn(process.execPath, ['--require', bootstrap, '--test', ...process.argv.slice(2), ...testFiles], {
+  // CONCORRENZA LIMITATA, e la ragione e' misurata. `node --test` senza questo
+  // flag parallelizza sul numero di core: sei file per volta, ognuno dei quali
+  // puo' avviare processi figli, socket e finti supervisori. Su questa macchina
+  // (sei core, load di base gia' sopra sei) i test che misurano TEMPI cadevano a
+  // caso — quattro volte in una notte, su file diversi, sempre verdi in tre giri
+  // isolati. Un gate che produce un rosso casuale a ogni giro non e' un gate:
+  // insegna a ignorare i rossi, e rende ogni «zero fail» una questione di
+  // fortuna.
+  //
+  // Il prezzo e' un gate piu' lento; il prezzo dell'alternativa e' non sapere se
+  // un rosso e' tuo. Chi ha una macchina piu' larga puo' alzarlo con
+  // NEXUSCREW_TEST_CONCURRENCY.
+  const concurrency = process.env.NEXUSCREW_TEST_CONCURRENCY || '2';
+  const child = spawn(process.execPath, ['--require', bootstrap, '--test', `--test-concurrency=${concurrency}`, ...process.argv.slice(2), ...testFiles], {
     cwd: path.join(__dirname, '..'),
     env: childEnv,
     stdio: 'inherit',
