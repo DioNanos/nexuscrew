@@ -59,6 +59,21 @@ function setup() {
 }
 
 const runDir = (home) => path.join(home, '.nexuscrew', 'run');
+
+// L'EOF arma la grace in modo asincrono (il FIN attraversa il pair): un'attesa
+// fissa e' una race sotto carico — nel runner completo il FIN non arrivava
+// sempre entro 30ms e il test falsava «live». La proprieta' da provare e'
+// «EOF arma la grace (una volta, con quella deadline)», non «entro 30ms».
+async function untilNotLive(mgr, cellId, timeoutMs = 2000) {
+  const t0 = Date.now();
+  for (;;) {
+    const st = mgr.status(cellId);
+    if (st.state !== 'live') return st;
+    if (Date.now() - t0 > timeoutMs) return st;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 const cellStateFile = (home, cellId) => path.join(runDir(home), 'cell-leases', `${cellId}.json`);
 
 // 2b: apre il lease dal percorso di produzione e cattura il primo proof che il
@@ -172,9 +187,9 @@ test('attachInitial -> live; EOF -> grace con deadline = EOF+60s NON estendibile
     // EOF dal client
     clock.t = 20_000;
     client.end();
-    await new Promise((r) => setTimeout(r, 30));
-    assert.equal(mgr.status('Dev').state, 'grace');
-    assert.equal(mgr.status('Dev').graceDeadline, 20_000 + 60_000, 'deadline = EOF + grace');
+    const g = await untilNotLive(mgr, 'Dev');
+    assert.equal(g.state, 'grace');
+    assert.equal(g.graceDeadline, 20_000 + 60_000, 'deadline = EOF + grace');
     client.destroy();
   } finally { mgr.close(); }
 });
@@ -186,7 +201,7 @@ test('reconnect con proof entro grace -> lease NUOVO (leaseId diverso), stessa i
     const firstLeaseId = mgr.status('Dev').leaseId;
     clock.t = 5_000;
     client.end();
-    await new Promise((r) => setTimeout(r, 30));
+    await untilNotLive(mgr, 'Dev');
     assert.equal(mgr.status('Dev').state, 'grace');
     // reconnect entro grace col proof detenuto (2b: niente capability)
     clock.t = 30_000;
@@ -236,7 +251,7 @@ test('R3.3.4 regressione auditor: generation 0->99 (salto arbitrario) su lease i
     assert.equal(mgr.status('Dev').state, 'live');
     clock.t = 5_000;
     client.end();
-    await new Promise((r) => setTimeout(r, 30));
+    await untilNotLive(mgr, 'Dev');
     // lease in grace (vivo), reconnect con generation 99 (salto arbitrario da 0): deny.
     clock.t = 30_000;
     const reply = await reconnect(info.stablePath, { type: 'reconnect', generation: 99, proof });
@@ -249,7 +264,7 @@ test('reconnect con proof di un altra cella, contraffatto o di kind sbagliato ->
   try {
     const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     client.end();
-    await new Promise((r) => setTimeout(r, 30));
+    await untilNotLive(mgr, 'Dev');
     // proof di un altra cella (claims firmati per Beta): la firma e' valida ma
     // i claims attesi (cellId=Dev) non combaciano -> deny.
     const betaProof = forgeProof(home, clock, { kind: 'lease', cellId: 'Beta', launchEpoch: proof.launchEpoch, leaseId: proof.leaseId, generation: '0', jti: 'a'.repeat(16) });
@@ -271,7 +286,7 @@ test('reconnect oltre grace -> deny (R3.3.5) — proof fresco: il deny e della g
     const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     clock.t = 5_000;
     client.end();
-    await new Promise((r) => setTimeout(r, 30));
+    await untilNotLive(mgr, 'Dev');
     // ora oltre la deadline (grace scaduta). Il proof detenuto e' scaduto pure:
     // per isolare la CAUSA firmino un proof fresco (il server ne emetterebbe uno
     // legittimo fino all'ultimo refresh) — resta solo il bound di grace a negare.
@@ -293,7 +308,7 @@ test('R3.3.5 post-restart: reconnect oltre la grace rifiutato anche con lease nu
     // EOF arma la grace: deadline = 5_000 + 60_000 = 65_000, persistita come bound per-cell.
     clock.t = 5_000;
     client.end();
-    await new Promise((r) => setTimeout(r, 30));
+    await untilNotLive(mgr, 'Dev');
     pairClient = null;
     // restart del server: nessun lease sopravvive, ma il bound di grace resta persistito.
     mgr.close(); mgr = null;
@@ -325,7 +340,7 @@ test('R3.3.5 post-restart: reconnect ESATTAMENTE alla graceDeadline rifiutato (b
     pairClient = client;
     clock.t = 5_000;
     client.end();
-    await new Promise((r) => setTimeout(r, 30));
+    await untilNotLive(mgr, 'Dev');
     pairClient = null;
     // restart: lease null, bound di grace persistito.
     mgr.close(); mgr = null;
@@ -433,7 +448,7 @@ test('B3/GC1.6: graceDeadline illeggibile/non-intero su disco = grace gia scadut
     pairClient = client;
     clock.t = 5_000;
     client.end();
-    await new Promise((r) => setTimeout(r, 30)); // EOF -> bound armGrace persistito
+    await untilNotLive(mgr, 'Dev'); // EOF -> bound armGrace persistito
     try { pairClient.destroy(); pairClient = null; } catch (_) {}
     mgr.close(); mgr = null;
     // Corrompi il bound su disco (file per-cell): valore non-intero.
