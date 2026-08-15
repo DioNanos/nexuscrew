@@ -9,7 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const pidf = require('../lib/cli/pidfile.js');
-const { sorvegliaUscita } = require('./exit-watchdog.js');
+const { sorvegliaStallo } = require('./stall-watchdog.js');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-tests-'));
 const tmuxRoot = path.join(root, 'tmux');
@@ -75,21 +75,30 @@ async function main() {
   // un rosso e' tuo. Chi ha una macchina piu' larga puo' alzarlo con
   // NEXUSCREW_TEST_CONCURRENCY.
   const concurrency = process.env.NEXUSCREW_TEST_CONCURRENCY || '2';
-  const child = spawn(process.execPath, ['--require', bootstrap, '--test', `--test-concurrency=${concurrency}`, ...process.argv.slice(2), ...testFiles], {
+  // Un SECONDO reporter, su un file che nessuno legge: e' il battito che dice se
+  // il gate sta avanzando. Costa niente e lascia stdout ereditato — prenderlo in
+  // pipe per osservarlo obbligherebbe a rilanciare ogni riga, con contropressione
+  // proprio sui test che misurano tempi. Il file sta nella dir temporanea della
+  // suite e sparisce con lei.
+  const battito = path.join(root, 'progress.tap');
+  const child = spawn(process.execPath, [
+    '--require', bootstrap, '--test', `--test-concurrency=${concurrency}`,
+    '--test-reporter=spec', '--test-reporter-destination=stdout',
+    '--test-reporter=tap', `--test-reporter-destination=${battito}`,
+    ...process.argv.slice(2), ...testFiles,
+  ], {
     cwd: path.join(__dirname, '..'),
     env: childEnv,
-    // stdout in PIPE per il guard qui sotto; stdin e stderr restano ereditati.
-    // Il prezzo e' che il reporter non vede piu' un TTY e rinuncia ai colori:
-    // dichiarato, perche' e' il solo modo di sapere QUANDO i test sono finiti.
-    stdio: ['inherit', 'pipe', 'inherit'],
+    stdio: 'inherit',
   });
-  // Il guard che da' colore a un handle non chiuso: senza, un file che lascia
-  // un server vivo NON produce un rosso — tiene il gate appeso, e appeso somiglia
-  // a lento invece che a rotto. Motivazione, misure e casi cattivi in
-  // tests/exit-watchdog.js e nel suo test.
-  const code = await sorvegliaUscita({
+  // Il gate non deve MAI restare appeso in silenzio: un file che lascia handle
+  // aperti non esce, il runner lo aspetta per sempre, e appeso somiglia a lento
+  // invece che a rotto. Motivazione, misure e casi cattivi in
+  // tests/stall-watchdog.js e nel suo test.
+  const code = await sorvegliaStallo({
     child,
-    graceMs: Number(process.env.NEXUSCREW_TEST_EXIT_GRACE_MS || 60_000),
+    segnale: () => { try { return fs.statSync(battito).size; } catch (_) { return -1; } },
+    stallMs: Number(process.env.NEXUSCREW_TEST_STALL_MS || 5 * 60_000),
   });
 
   const leaked = [];
