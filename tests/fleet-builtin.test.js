@@ -1152,3 +1152,24 @@ test('createBuiltinFleet: fleet.json presente ma illeggibile (EACCES) -> same un
     } finally { if (typeof fleet.close === 'function') { try { await fleet.close(); } catch (_) {} } }
   } finally { fs.chmodSync(defsDir, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+// La cwd reale e' un path assoluto della macchina, e questa vista alimenta anche
+// `GET /fleet/status`, che e' nella allowlist federata con inoltro trasparente:
+// senza il default negato, la directory di ogni cella uscirebbe verso ogni peer.
+// Il backup vieta gia' le cwd assolute per la stessa ragione. Rilievo di un
+// audit indipendente sulla fetta 3.
+test('status: la cwd reale NON e\' nella vista pubblica, e c\'e\' solo su richiesta esplicita', async () => {
+  const w = makeWorld();
+  try {
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const pubblica = await fleet.status();
+    const cella = pubblica.cells.find((c) => c.cell === 'Dev');
+    assert.ok(cella, 'la cella c\'e');
+    assert.equal(Object.prototype.hasOwnProperty.call(cella, 'cwd'), false,
+      'nessuna cwd nella vista che attraversa la federazione');
+
+    const interna = await fleet.status({ includeCwd: true });
+    const conCwd = interna.cells.find((c) => c.cell === 'Dev');
+    assert.equal(conCwd.cwd, w.cwd, 'chi la chiede esplicitamente la riceve, risolta');
+  } finally { w.cleanup?.(); }
+});
