@@ -250,6 +250,31 @@ test('F-B: lease persa per tutta la grace -> onLost avvisa il supervisore (nient
   }
 });
 
+
+// Attende che il figlio REALE dichiari su stdout di aver installato l'handler:
+// l'attesa dell'avvio e' guidata dall'EVENTO, non da un cronometro. Prima erano
+// 300ms fissi «perche' il runtime Node del figlio finisca di avviarsi»: sotto
+// carico (flotta attiva, sei core, load >7) non bastavano, il SIGTERM arrivava
+// prima di process.on('SIGTERM') e il figlio moriva di default — un falso rosso
+// che non c'entra con l'escalation. Il figlio scrive READY quando l'handler c'e';
+// se non lo scrive mai, il test fallisce COME PRIMA: l'asserzione non si e'
+// indebolita. (spawnImpl qui sotto usa stdio pipe apposta per leggere quella
+// riga: il processo di produzione passerebbe inherit.)
+async function waitForLine(child, needle, timeoutMs = 20000) {
+  await new Promise((resolve, reject) => {
+    let buf = '';
+    const to = setTimeout(() => {
+      child.stdout.removeListener('data', on);
+      reject(new Error(`attesa "${needle}" su stdout del figlio scaduta`));
+    }, timeoutMs);
+    const on = (chunk) => {
+      buf += chunk.toString();
+      if (buf.includes(needle)) { clearTimeout(to); child.stdout.removeListener('data', on); resolve(); }
+    };
+    child.stdout.on('data', on);
+  });
+}
+
 // --- Correzione dopo revisione: F-B — un solo SIGTERM non basta ------------
 
 // Il test sopra (F-B: lease persa) dichiarava di attraversare cell-exec ma
@@ -277,10 +302,12 @@ test('F-B (correzione): un figlio che IGNORA SIGTERM viene comunque terminato (e
 
   // Un VERO processo Node che ignora deliberatamente SIGTERM e resta vivo
   // finche' non riceve SIGKILL (che il sistema operativo non fa ignorare).
-  const ignoreScript = "process.on('SIGTERM', () => {}); setInterval(() => {}, 100);";
+  const ignoreScript = "process.on('SIGTERM', () => {}); setInterval(() => {}, 100); process.stdout.write('READY\\n');";
   let realChild = null;
   const spawnImpl = (command, args, opts) => {
-    realChild = realSpawn(command, args, opts);
+    // stdio pipe (non l'inherit di produzione): il test deve leggere READY dal
+    // stdout del figlio per attendere l'EVENTO, non un tempo.
+    realChild = realSpawn(command, args, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] });
     return realChild;
   };
 
@@ -313,11 +340,10 @@ test('F-B (correzione): un figlio che IGNORA SIGTERM viene comunque terminato (e
     // perdere l'evento 'spawn' per race) di aspettare altro oltre a questo.
     for (let i = 0; i < 100 && !realChild; i += 1) await new Promise((r) => setTimeout(r, 5));
     assert.ok(realChild, 'il processo reale e\' partito');
-    // Margine reale perche' il runtime Node del FIGLIO finisca di avviarsi ed
-    // esegua `process.on('SIGTERM', ...)`: mandare il segnale prima che quella
-    // riga sia stata eseguita lo farebbe morire di default — un falso rosso
-    // che non ha nulla a che fare con l'escalation.
-    await new Promise((r) => setTimeout(r, 300));
+    // L'attesa e' guidata dall'EVENTO: il figlio scrive READY quando ha davvero
+    // installato process.on('SIGTERM'). I 300ms fissi di prima erano un
+    // cronometro che sotto carico perdeva la gara col segnale (falso rosso).
+    await waitForLine(realChild, 'READY');
 
     // EOF sulla lease -> grace armata; fai scadere la grace -> onLost scatta,
     // manda SIGTERM (che il figlio ignora) e arma l'escalation.
@@ -341,7 +367,7 @@ test('F-B (correzione): un figlio che IGNORA SIGTERM viene comunque terminato (e
     escalationTimer.fn();
     const result = await Promise.race([
       new Promise((resolve) => realChild.once('exit', (code, signal) => resolve({ code, signal }))),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('il figlio non e\' morto entro il timeout del test')), 3000)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('il figlio non e\' morto entro il timeout del test')), 20000)),
     ]);
     assert.equal(result.signal, 'SIGKILL', 'il figlio muore per SIGKILL, non da solo');
 

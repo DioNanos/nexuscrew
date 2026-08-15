@@ -365,7 +365,7 @@ test('thread/start rifiutato dal daemon (error JSON-RPC): none/bridge-socket-fai
 
 test('socket LENTO oltre il limite: none/bridge-timeout senza allungare l\'attesa (MC1.5)', async () => {
   const cwd = path.join(os.tmpdir(), 'cell-slow-daemon');
-  const ctx = await boot({ cells: CELLS_NATIVE(cwd), timeoutMs: 150, daemonOpts: { delayMs: 900 } });
+  const ctx = await boot({ cells: CELLS_NATIVE(cwd), timeoutMs: 150, daemonOpts: { delayMs: 3000 } });
   try {
     await ctx.designate('cloud-Alfa');
     const t0 = Date.now();
@@ -373,12 +373,20 @@ test('socket LENTO oltre il limite: none/bridge-timeout senza allungare l\'attes
     const elapsed = Date.now() - t0;
     assert.equal(b.mode, 'none');
     assert.equal(b.reason, 'bridge-timeout');
-    assert.ok(elapsed < 800, `la risoluzione non resta appesa (elapsed=${elapsed}ms)`);
+    assert.ok(elapsed < 2000, `la risoluzione non resta appesa (elapsed=${elapsed}ms)`);
   } finally { await ctx.close(); }
 });
 
+// Le soglie `elapsed` misurano una bounded-ness: la risoluzione NON aspetta il
+// veleno (delayMs/slowHubMs), torna al proprio budget (timeoutMs 150). Con
+// veleno 900ms e soglia 800ms il margine era 100ms: sotto carico (flotta
+// attiva, load >18 misurato) lo scheduling da solo lo consumava, con reason
+// CORRETTO — falso rosso, flake del gate documentato in tests/README-flake.md.
+// Ricalibrati INSIEME (veleno 900->3000, soglia 800->2000): la proprieta'
+// provata e' la stessa, il margine assoluto sale a 1s. timeoutMs di produzione
+// non toccato.
 test('hub LENTO oltre il limite: none/live-host-timeout (la GET non aspetta)', async () => {
-  const ctx = await boot({ cells: CELLS_NATIVE('/tmp'), timeoutMs: 150, slowHubMs: 900 });
+  const ctx = await boot({ cells: CELLS_NATIVE('/tmp'), timeoutMs: 150, slowHubMs: 3000 });
   try {
     await ctx.designate('cloud-Alfa');
     const t0 = Date.now();
@@ -386,7 +394,7 @@ test('hub LENTO oltre il limite: none/live-host-timeout (la GET non aspetta)', a
     const elapsed = Date.now() - t0;
     assert.equal(b.mode, 'none');
     assert.equal(b.reason, 'live-host-timeout');
-    assert.ok(elapsed < 800, `la GET non allunga l'avvio (elapsed=${elapsed}ms)`);
+    assert.ok(elapsed < 2000, `la GET non allunga l'avvio (elapsed=${elapsed}ms)`);
   } finally { await ctx.close(); }
 });
 

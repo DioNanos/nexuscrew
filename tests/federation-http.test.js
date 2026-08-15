@@ -418,7 +418,12 @@ test('federated WebSocket uses scoped hop auth and reaches destination PTY gate'
 
   const code = await new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${rootPort}/api/route/mac/_/ws?token=${encodeURIComponent(root.token)}`);
-    const timer = setTimeout(() => reject(new Error('federation ws timeout')), 4000);
+    // Limite solo per non appendersi: NESSUNA asserzione dipende da QUANTO IN
+    // FRETTA la ws federata si apre/chiude, solo dal CODICE con cui risponde
+    // (4404). 4s tarati su macchina scarica: con la flotta attiva (sei core,
+    // load >7) producevano rossi casuali nel gate. Attesa gia guidata
+    // dall'evento (ws 'close') — ricalibrata al modello di c15faea.
+    const timer = setTimeout(() => reject(new Error('federation ws timeout')), 20000);
     ws.on('open', () => ws.send(JSON.stringify({ type: 'attach', session: 'does-not-exist', token: root.token, cols: 80, rows: 24 })));
     ws.on('close', (c) => { clearTimeout(timer); resolve(c); });
     ws.on('error', reject);
@@ -443,7 +448,9 @@ test('main-token rotation closes an active federated raw WebSocket', async (t) =
   const ws = new WebSocket(`ws://127.0.0.1:${port}/api/route/peer/_/ws?token=${encodeURIComponent(root.token)}`);
   await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
   const closed = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('federated WS stayed open after rotation')), 2000);
+    // Come sopra: si attende l'EVENTO close dopo la rotazione del token;
+    // l'asserzione e' il codice 1006, non la velocita'. Limite ricalibrato.
+    const timer = setTimeout(() => reject(new Error('federated WS stayed open after rotation')), 20000);
     ws.once('close', (code) => { clearTimeout(timer); resolve(code); });
   });
   const rotated = await fetch(`http://127.0.0.1:${port}/api/settings/token/rotate`, { method: 'POST', headers: { authorization: `Bearer ${root.token}` } });
