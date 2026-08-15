@@ -1,8 +1,7 @@
 'use strict';
 // tests/panel-origin.test.js — P0 sicurezza (2026-08-16): il pannello vive su
 // una PORTA SUA, non sulla stessa origin del control plane. La proprieta' che
-// conta (v. DocsHub/projects/nexuscrew/2026-08-15_SECURITY_pannello_stessa_origin.md):
-// un documento montato nel frame non deve poter leggere ne' scrivere le
+// conta: un documento montato nel frame non deve poter leggere ne' scrivere le
 // credenziali del control plane. Con porte diverse questo e' garantito dal
 // browser (Same-Origin Policy: la porta fa parte dell'origin) — cio' che qui
 // si verifica e' la CONDIZIONE strutturale che rende vera quella garanzia:
