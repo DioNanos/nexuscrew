@@ -107,6 +107,7 @@ async function boot({
   cells = [],
   enabled = true,
   timeoutMs = 1500,
+  hubSnapshot = null,
   daemonOpts = {},
   slowHubMs = 0,
 } = {}) {
@@ -141,6 +142,15 @@ async function boot({
     if (req.method === 'GET' && req.path === '/') { hubRequests.gets += 1; hubRequests.lastAuth = req.headers.authorization || null; }
     next();
   });
+  // Hub che dichiara eleggibile una cella che il roster non conferma: e' il solo
+  // modo di raggiungere i rami che distinguono «non c'e' piu'» da «c'e' ma e'
+  // spenta». Nel flusso normale l'hub li anticipa entrambi con eligible:false.
+  if (hubSnapshot) {
+    app.use('/api/live-host', (req, res, next) => {
+      if (req.method === 'GET' && req.path === '/') { res.json(hubSnapshot); return; }
+      next();
+    });
+  }
   if (slowHubMs > 0) {
     app.use('/api/live-host', (req, res, next) => {
       if (req.method === 'GET' && req.path === '/') {
@@ -490,4 +500,30 @@ test('thread ORFANA: se la risposta arriva dopo il timeout, il ponte chiude comu
     assert.deepEqual(ctx.daemon.seen.threadStops, ['bridge-thread-0001'],
       'la thread nata dopo il timeout viene chiusa, non lasciata orfana');
   } finally { await ctx.close(); }
+});
+
+// Tre condizioni diverse meritano tre nomi: un nome solo mandava a guardare
+// l'hub anche quando il problema era una sessione chiusa. Rilievo di audit.
+test('hub e roster in disaccordo: tre condizioni, tre nomi distinti', async () => {
+  // (a) l'hub dichiara eleggibile una cella che il roster NON ha piu'.
+  const via = await boot({
+    cells: CELLS_NATIVE(os.tmpdir()),
+    hubSnapshot: { hostCell: 'cloud-Sparita', revision: 3, eligible: true, at: 0 },
+  });
+  try {
+    const b = await j(await via.bridgeCall());
+    assert.equal(b.reason, 'host-cell-unknown',
+      'la cella non e piu nel roster: chi legge deve cercare la cella, non l\'idoneita');
+  } finally { await via.close(); }
+
+  // (b) l'hub la dichiara eleggibile, ma nel roster e' spenta.
+  const spenta = await boot({
+    cells: CELLS_NATIVE(os.tmpdir()),
+    hubSnapshot: { hostCell: 'cloud-Off', revision: 3, eligible: true, at: 0 },
+  });
+  try {
+    const b = await j(await spenta.bridgeCall());
+    assert.equal(b.reason, 'host-cell-inactive',
+      'la cella c\'e ma e spenta: si guarda la sessione, non l\'idoneita');
+  } finally { await spenta.close(); }
 });
