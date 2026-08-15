@@ -182,7 +182,72 @@ const PERCORSI_VIETATI_NEL_MIRROR = [
   { re: /^docs\/superpowers\//, perche: 'documentazione interna di pianificazione, esclusa per regola dal mirror' },
   { re: /^test-report\//, perche: 'report di test interno, escluso per regola dal mirror' },
   { re: /^docs\/CURRENT_STATE\.md$/, perche: 'stato interno del progetto, escluso per regola dal mirror' },
+  // Il NOME di un file e' leggibile dall'indice di GitHub senza aprire nulla:
+  // due dei file rimossi il 2026-08-15 portavano il nome di una macchina
+  // proprio li'. I pattern sul CONTENUTO non li avrebbero fermati se il testo
+  // fosse stato pulito, e i tre prefissi sopra li prendono solo finche' il file
+  // sta in quelle cartelle.
+  //
+  // I CONFINI QUI SONO `[a-z0-9]`, NON `[\w-]` come nei pattern sul contenuto.
+  // Nei percorsi il separatore normale e' proprio `-` o `_`: con `[\w-]` il
+  // lookbehind escluderebbe «nexuscrew-vps3.md», cioe' esattamente il caso da
+  // prendere. Provato: la prima versione di questa guardia non mordeva NULLA e
+  // restava verde.
+  //
+  // Il nome della macchina che costruisce si ricava — ma solo se e' specifico:
+  // qui la prima etichetta puo' essere una parola comune («cloud»), e vietarla
+  // farebbe fallire il gate su un futuro docs/cloud-setup.md. Si usa il nome
+  // pieno e il dominio senza TLD, che generici non sono.
+  ...(() => {
+    const host = require('node:os').hostname();
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parti = host.split('.');
+    const nomi = parti.length > 2 ? [host, parti.slice(1, -1).join('.')] : (parti.length > 1 ? [host] : []);
+    return nomi.filter((n) => n.length > 4).map((n) => ({
+      re: new RegExp(`(?<![a-z0-9])${esc(n)}(?![a-z0-9])`, 'i'),
+      perche: 'nome della macchina che costruisce, nel percorso',
+    }));
+  })(),
+  // Gli ALTRI nostri nomi non sono ricavabili da qui, quindi questo e' un
+  // elenco — e un elenco non e' una garanzia: un nome nuovo, non previsto,
+  // passerebbe. La difesa che regge resta il divieto per prefisso; questa e'
+  // la rete sotto, per il caso «file interno finito fuori dalle sue cartelle».
+  { re: /(?<![a-z0-9])(vps\d+|mac[_-]?air|pixel\d*pro|novalnx|asusrp\d*|notpg)(?![a-z0-9])/i,
+    perche: 'nome di una nostra macchina nel percorso (elenco noto, non esaustivo)' },
 ];
+
+// Il test qui sotto e' verde anche se i pattern non mordono NULLA: guarda un
+// albero pulito e non trova niente, che e' esattamente cio' che si vede quando
+// una guardia e' rotta. Provato sul campo: la prima versione dei pattern sui
+// nomi usava `[\w-]` come confine, quindi escludeva il trattino — cioe' il
+// separatore normale dei nomi di file — e non prendeva «...-vps3.md», il caso
+// per cui era stata scritta. Restava verde.
+//
+// Quindi i pattern vanno esercitati per conto loro, sui due versi: mordono cio'
+// che devono, e lasciano stare cio' che e' legittimo. Il secondo verso conta
+// quanto il primo: un pattern sul nome generico della macchina («cloud»)
+// farebbe fallire il gate su un futuro docs/cloud-setup.md.
+test('i divieti sui percorsi mordono i casi giusti e solo quelli', () => {
+  const morde = (rel) => PERCORSI_VIETATI_NEL_MIRROR.some(({ re }) => re.test(rel));
+  const casi = [
+    ['docs/superpowers/piano.md', true, 'prefisso interno'],
+    ['test-report/audit.md', true, 'prefisso interno'],
+    ['docs/CURRENT_STATE.md', true, 'percorso esatto'],
+    ['docs/2026-07-06-nexuscrew-vps3.md', true, 'nome macchina dopo un trattino'],
+    ['docs/setup-VPS1-notes.md', true, 'nome macchina, altro caso'],
+    ['docs/mac_air-build.md', true, 'nome macchina con underscore'],
+    ['docs/guide.md', false, 'documento legittimo'],
+    ['docs/cloud-setup.md', false, 'parola comune: NON deve mordere'],
+    ['docs/CONFIGURATION.md', false, 'documento legittimo'],
+    ['lib/proxy/panel-proxy.js', false, 'codice'],
+    ['frontend/src/lib/api.js', false, 'codice'],
+  ];
+  const sbagliati = casi
+    .filter(([rel, atteso]) => morde(rel) !== atteso)
+    .map(([rel, atteso, perche]) => `${rel}: atteso ${atteso ? 'MORSO' : 'passante'} (${perche})`);
+  assert.deepEqual(sbagliati, [],
+    `i divieti non si comportano come dichiarato:\n  ${sbagliati.join('\n  ')}`);
+});
 
 test('IL MIRROR REALE (github/main) non contiene i percorsi interni vietati', () => {
   const colpevoli = [];
