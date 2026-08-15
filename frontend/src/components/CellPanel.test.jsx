@@ -121,10 +121,13 @@ describe('CellPanel (D8: ingresso al pannello via ticket)', () => {
 
 // --- P0 sicurezza (2026-08-16): origin separata per il pannello -------------
 // La guardia che conta non e' "il campo panelPort esiste": e' che, quando la
-// cella e' LOCALE (route=[]) e la porta pannello e' nota, il browser riceva un
-// frameUrl ASSOLUTO verso una PORTA DIVERSA — e' quello che rende l'origin
-// diversa, non un dettaglio di path. Senza panelPort (0, prima che /api/config
-// risponda) resta la via storica: mai un frame verso porta 0.
+// porta pannello PER QUESTA CELLA e' nota, il browser riceva un frameUrl
+// ASSOLUTO verso una PORTA DIVERSA — e' quello che rende l'origin diversa, non
+// un dettaglio di path. La prop e' per-cella: la porta del nodo LOCALE per le
+// celle locali, la porta INOLTRATA del nodo remoto (negoziata nel pairing,
+// mappata da /api/config) per le celle remote. Senza panelPort (0: config non
+// ancora arrivata, o nodo vecchio senza porta negoziata) resta la via storica:
+// mai un frame verso porta 0.
 describe('CellPanel — origin separata (panelPort)', () => {
   it('locale + panelPort noto: frameUrl e\' ASSOLUTO verso quella porta, non un path relativo', async () => {
     ticketOk('TK-ORIGIN');
@@ -147,13 +150,34 @@ describe('CellPanel — origin separata (panelPort)', () => {
     expect(src.includes(':0')).toBe(false, 'mai un frame verso una porta 0');
   });
 
-  it('remoto (route non vuota): resta sulla via federata storica anche con panelPort noto — limite dichiarato', async () => {
-    ticketOk('TK-REMOTE2');
+  it('REMOTO con porta pannello negoziata: frameUrl ASSOLUTO verso la porta inoltrata del nodo', async () => {
+    // La meta' remota del P0: il tunnel porta la porta pannello del peer sul
+    // NOSTRO loopback, e il frame ci punta sopra. Il ticket viene comunque
+    // chiesto per la route federata: lo emette il processo del nodo remoto,
+    // lo consuma la sua porta pannello — stesso processo, biglietto valido.
+    ticketOk('TK-REMOTE-ORIGIN');
     const { container } = render(
-      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={['Pixel']} panelPort={41821} token="t" title="A" />,
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={['Pixel']} panelPort={43101} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    expect(requestPanelTicket).toHaveBeenCalledWith('t', ['Pixel'], 'A', expect.anything());
+    const src = container.querySelector('iframe').getAttribute('src');
+    expect(src.startsWith('http://127.0.0.1:43101/panel/A/?ticket=TK-REMOTE-ORIGIN')).toBe(true,
+      'origin separata anche per la cella remota: e\' il P0 che si chiude per DAG');
+    expect(src.startsWith('/api/route/')).toBe(false, 'niente via federata same-origin quando la porta c\'e\'');
+  });
+
+  it('REMOTO senza porta negoziata (nodo vecchio): via federata storica, nessun errore', async () => {
+    // Il punto 4 visto dal frame: un peer che non ha annunciato la porta
+    // pannello non deve diventare un pannello rotto — il frame prende la via
+    // di sempre, stessa origin del control plane, come oggi.
+    ticketOk('TK-REMOTE-VECCHIO');
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={['Pixel']} panelPort={0} token="t" title="A" />,
     );
     await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
     const src = container.querySelector('iframe').getAttribute('src');
-    expect(src.startsWith('/api/route/Pixel/_/panel/A/?ticket=TK-REMOTE2')).toBe(true);
+    expect(src.startsWith('/api/route/Pixel/_/panel/A/?ticket=TK-REMOTE-VECCHIO')).toBe(true);
+    expect(src.includes(':0')).toBe(false);
   });
 });

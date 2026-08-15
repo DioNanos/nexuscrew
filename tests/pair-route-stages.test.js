@@ -357,6 +357,63 @@ test('pair stages: happy path -> paired:true solo dopo health autenticato ok', a
   assert.equal(n.sshPort, 2222);
 });
 
+// P0 sicurezza, meta' remota. Un peer che ANNUNCIA la sua porta pannello nel
+// join (0.9.1+) fa ottenere al nodo una coppia panelLocalPort/panelRemotePort,
+// e il supervisor finale inoltra ENTRAMBE le destinazioni. Lo spawn provvisorio
+// resta a un solo -L: prima del join la porta pannello del peer non si conosce.
+test('pair panel: il peer che annuncia panelPort nel join ottiene il secondo -L', async (t) => {
+  const { base, token, dir, nodesPath, calls } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID, panelPort: 41821 }),
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+  });
+  const r = await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).paired, true);
+
+  const n = store.getNode(store.loadStore(nodesPath), 'peer');
+  assert.equal(n.panelRemotePort, 41821, 'la porta pannello annunciata dal peer finisce nel record');
+  assert.ok(store.isPort(n.panelLocalPort) && n.panelLocalPort !== n.localPort,
+    'la controparte locale e una porta vera, diversa da quella di controllo');
+
+  // Due supervisor: provvisorio (pre-join, un -L) e finale (negoziato, due -L).
+  assert.equal(calls.spawnArgs.length, 2, 'spawn provvisorio + spawn finale');
+  const [provvisorio, finale] = calls.spawnArgs;
+  const fwProvvisorio = provvisorio.filter((a, i) => provvisorio[i - 1] === '-L');
+  assert.deepEqual(fwProvvisorio.map((x) => x.endsWith(':41820')), [true],
+    'prima del join si inoltra solo il control plane: la porta pannello non si conosce ancora');
+  const fwFinale = finale.filter((a, i) => finale[i - 1] === '-L');
+  assert.equal(fwFinale.length, 2, 'il supervisor finale porta controllo E pannello');
+  assert.ok(fwFinale.some((x) => x === `127.0.0.1:${n.panelLocalPort}:127.0.0.1:41821`),
+    'il -L pannello usa la coppia negoziata');
+  assert.ok(fwFinale.some((x) => x === '127.0.0.1:43001:127.0.0.1:41820'),
+    'il -L di controllo resta al suo posto');
+});
+
+// Il punto 4 dal lato pairing: un peer di versione precedente non manda
+// panelPort, e il pairing deve riuscire ESATTAMENTE come prima — nessun campo
+// nel record, un solo -L, stessa risposta.
+test('pair panel: il peer che NON annuncia panelPort si accoppia come sempre, senza secondo -L', async (t) => {
+  const { base, token, dir, nodesPath, calls } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID }),
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+  });
+  const r = await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) });
+  assert.equal(r.status, 200, 'nessun effetto del pannello sul pairing con un peer vecchio');
+  assert.equal((await r.json()).paired, true);
+
+  const n = store.getNode(store.loadStore(nodesPath), 'peer');
+  assert.equal(n.panelLocalPort, undefined, 'nessun campo inventato');
+  assert.equal(n.panelRemotePort, undefined);
+  for (const args of calls.spawnArgs) {
+    const fw = args.filter((a, i) => args[i - 1] === '-L');
+    assert.equal(fw.length, 1, 'un solo -L: il tunnel e quello di sempre');
+  }
+});
+
 test('Share PWA: OFF persiste, revoca sul -L vivo e solo dopo riavvia senza -R', async (t) => {
   let nodesPathRef = '';
   let observedOffStore = false;
