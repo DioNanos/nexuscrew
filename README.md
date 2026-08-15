@@ -133,6 +133,7 @@ product verifies a configured pool before it can rotate within it. See
 | [Documentation index](docs/README.md) | Start here for every guide |
 | [Installation](docs/INSTALLATION.md) | Linux, macOS, Termux, first run and upgrades |
 | [Fleet and terminals](docs/FLEET.md) | Cells, engines, providers, decks and mobile input |
+| [The cell panel](docs/CELL_PANEL.md) | Giving a cell its own web interface, and why it is loopback-only |
 | [Connect nodes](docs/NODES.md) | Pairing, SSH routes, sharing and routed aliases |
 | [Notifications](docs/NOTIFICATIONS.md) | Toasts, Web Push and optional spoken alerts |
 | [Audio Share and native TTS](docs/AUDIO_SHARE.md) | Node-native TTS, consent, groups and MCP controls |
