@@ -1,5 +1,8 @@
 import { t } from '../../lib/i18n.js';
 import { catalogEntry } from '../../lib/fleet-forms.js';
+// Anticipazione lato UI: stesso validatore del round-trip di backup (gia'
+// sorvegliato contro il validatore autorevole del backend), v. CellEditor.jsx.
+import { validBackupPanelUrl } from '../../lib/fleet-backup.js';
 
 // Editor di un engine (managed o custom). State-less rispetto alle API: riceve
 // lo stato del form e lo risolleva al parent (FleetTab), che è l'unico a
@@ -90,6 +93,11 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog })
       {rows.map((r, i) => <div className="nc-fleet-env" key={`${r.key}-${i}`}><input value={r.key} disabled={r.configured} placeholder="ENV_KEY" onChange={(e) => { const n = rows.slice(); n[i] = { ...r, key: e.target.value }; set({ envRows: n }); }} /><input type="password" value={r.value} placeholder={r.configured ? '•••••• (unchanged)' : 'value'} onChange={(e) => { const n = rows.slice(); n[i] = { ...r, value: e.target.value }; set({ envRows: n }); }} /><button className="nc-btn danger" onClick={() => set({ envRows: rows.filter((_, x) => x !== i) })}>×</button></div>)}
       <button className="nc-btn ghost" onClick={() => set({ envRows: [...rows, { key: '', value: '', configured: false }] })}>+ env</button>
     </>}
+    {/* panelUrl: comune a managed e custom, fa da default per le celle che lo
+        usano (v. lib/fleet/definitions.js — fallback engine->cella). */}
+    <input value={f.panelUrl || ''} maxLength={512} placeholder={t('fleet-panel-url')} onChange={(e) => set({ panelUrl: e.target.value })} />
+    <small>{t('fleet-panel-url-help')}</small>
+    {f.panelUrl && !validBackupPanelUrl(f.panelUrl) && <small className="nc-err">{t('fleet-panel-url-invalid')}</small>}
     <div className="nc-sheet-actions"><button className="nc-btn ghost" onClick={() => setState(null)}>{t('cancel')}</button><button className="nc-btn primary" disabled={busy || !f.id || missingCredentialNeedsConfirmation || (f.kind === 'custom' && !f.command) || (f.kind === 'managed' && selectedProfile?.requiresModel && !f.managedModel) || (f.kind === 'managed' && selectedProfile?.credentialEnv === true && !f.envKey) || (f.kind === 'managed' && f.provider === 'custom' && (!f.displayName || !f.baseUrl || !f.envKey || !f.providerId))} onClick={onSave}>{t('save')}</button></div>
   </div>;
 }

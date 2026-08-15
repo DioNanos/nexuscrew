@@ -7,8 +7,8 @@
 // place. Behaviour must stay byte-for-byte identical to the original inline
 // definitions.
 
-export const blankEngine = () => ({ kind: 'managed', id: 'claude.native', label: '', client: 'claude', provider: 'native', credentialProfile: '', managedModel: '', permissionPolicy: 'unsafe', credentialSourcePolicy: 'auto', displayName: '', protocol: 'anthropic_messages', baseUrl: '', envKey: '', providerId: 'nexuscrew-custom', command: '', argsText: '', rc: true, promptMode: 'send-keys', promptFlag: '', modelFlag: '', modelValue: '', envRows: [], credentialValue: '', credentialReveal: false, allowMissingCredential: false });
-export const blankCell = (engine = '') => ({ id: '', cwd: '', engine, boot: false, label: '', model: '', prompt: '', commands: {}, command: '' });
+export const blankEngine = () => ({ kind: 'managed', id: 'claude.native', label: '', client: 'claude', provider: 'native', credentialProfile: '', managedModel: '', permissionPolicy: 'unsafe', credentialSourcePolicy: 'auto', displayName: '', protocol: 'anthropic_messages', baseUrl: '', envKey: '', providerId: 'nexuscrew-custom', command: '', argsText: '', rc: true, promptMode: 'send-keys', promptFlag: '', modelFlag: '', modelValue: '', envRows: [], credentialValue: '', credentialReveal: false, allowMissingCredential: false, panelUrl: '' });
+export const blankCell = (engine = '') => ({ id: '', cwd: '', engine, boot: false, label: '', model: '', prompt: '', commands: {}, command: '', panelUrl: '' });
 export const defaultPermission = (client) => client === 'claude' ? 'unsafe' : 'standard';
 export const catalogEntry = (catalog, form) => catalog.find((p) => p.client === form.client && p.provider === form.provider && (p.credentialProfile || '') === (form.credentialProfile || ''));
 export const managedLabel = (catalog, form) => catalogEntry(catalog, form)?.label || `${form.client} · ${form.provider}`;
@@ -23,7 +23,23 @@ export function engineForm(e) {
     modelFlag: e.model?.flag || '', modelValue: e.model?.value || '',
     envRows: (e.envKeys || []).map((key) => ({ key, value: '', configured: true, remove: false })),
     credentialValue: '', credentialReveal: false, allowMissingCredential: false,
+    // panelUrl vive a livello ROOT dell'engine, mai dentro managed (v.
+    // lib/fleet/definitions.js parseEngine): stessa forma per managed e custom.
+    panelUrl: e.panelUrl || '',
   };
+}
+
+// panelUrl: stessa asimmetria gia' in uso per label/prompt/mcp (v. saveCell in
+// FleetTab.jsx). In creazione un campo vuoto e' un'INTENZIONE assente ->
+// OMESSO dal payload. In modifica un campo svuotato e' un'intenzione esplicita
+// -> `null`, che editEngine (lib/fleet/builtin.js) legge come "cancella la
+// chiave". Confonderli manderebbe un `null` sulla prima creazione (rifiutato
+// dal parser) o, peggio, lascerebbe un panelUrl vuoto indistinguibile da
+// "non toccare" quando l'operatore lo svuota davvero.
+function withPanelUrl(out, form, creating) {
+  const panelUrl = (form.panelUrl || '').trim();
+  if (creating) { if (panelUrl) out.panelUrl = panelUrl; } else out.panelUrl = panelUrl || null;
+  return out;
 }
 
 export function buildEngine(form, creating, catalog = []) {
@@ -40,10 +56,10 @@ export function buildEngine(form, creating, catalog = []) {
     const profile = catalogEntry(catalog, form);
     if (profile?.credentialEnv === true) managed.envKey = form.envKey;
     if (form.provider === 'custom') Object.assign(managed, { displayName: form.displayName, protocol: form.protocol, baseUrl: form.baseUrl, envKey: form.envKey, providerId: form.providerId });
-    return {
+    return withPanelUrl({
       ...(creating ? { id: form.id } : {}), label: form.label || managedLabel(catalog, form), rc: !!form.rc,
       managed,
-    };
+    }, form, creating);
   }
   const out = {
     ...(creating ? { id: form.id } : {}), label: form.label || form.id, rc: !!form.rc,
@@ -52,5 +68,5 @@ export function buildEngine(form, creating, catalog = []) {
   if (form.modelFlag) out.model = { flag: form.modelFlag, value: form.modelValue || '' };
   if (form.promptMode === 'flag') out.promptFlag = form.promptFlag;
   if (creating) out.env = Object.fromEntries(form.envRows.filter((r) => !r.remove && r.key).map((r) => [r.key, r.value]));
-  return out;
+  return withPanelUrl(out, form, creating);
 }

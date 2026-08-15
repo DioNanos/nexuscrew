@@ -4,6 +4,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import EngineEditor from './EngineEditor.jsx';
 import { blankEngine } from '../../lib/fleet-forms.js';
+import { t } from '../../lib/i18n.js';
 
 const catalog = [
   { id: 'claude.native', client: 'claude', clientLabel: 'Claude Code', provider: 'native', label: 'Anthropic', default: true, protocol: 'anthropic_messages', permissionPolicyDefault: 'unsafe', supportsUnsafe: true, rc: true },
@@ -147,5 +148,31 @@ describe('EngineEditor KEY section', () => {
     expect(select.value).toBe('nexuscrew-store');
     // A/P must NOT be selectable as a profile (creation catalog has no A/P)
     expect(screen.queryByRole('option', { name: 'Z.AI legacy profile' })).toBeNull();
+  });
+});
+
+// --- panelUrl: fa da default per le celle che lo usano (0.9.1 punto 3) -----
+describe('EngineEditor panelUrl', () => {
+  it('espone un campo scrivibile per panelUrl, che finisce nel form (managed)', () => {
+    const setState = vi.fn();
+    const state = { mode: 'edit', form: profileForm('claude.native') };
+    render(<EngineEditor state={state} setState={setState} busy={false} onSave={vi.fn()} catalog={catalog} />);
+    const field = screen.getByPlaceholderText(t('fleet-panel-url'));
+    fireEvent.change(field, { target: { value: 'https://127.0.0.1:6901' } });
+    const patched = setState.mock.calls.at(-1)[0];
+    const form = typeof patched === 'function' ? patched(state).form : patched.form;
+    expect(form.panelUrl).toBe('https://127.0.0.1:6901');
+  });
+
+  it('un panelUrl NON-loopback mostra il messaggio che spiega perche', () => {
+    const state = { mode: 'edit', form: { ...profileForm('claude.native'), panelUrl: 'http://172.17.0.2:6901' } };
+    render(<EngineEditor state={state} setState={vi.fn()} busy={false} onSave={vi.fn()} catalog={catalog} />);
+    expect(screen.getByText(t('fleet-panel-url-invalid'))).toBeTruthy();
+  });
+
+  it('un panelUrl loopback valido non mostra alcun errore', () => {
+    const state = { mode: 'edit', form: { ...profileForm('claude.native'), panelUrl: 'https://127.0.0.1:6901' } };
+    render(<EngineEditor state={state} setState={vi.fn()} busy={false} onSave={vi.fn()} catalog={catalog} />);
+    expect(screen.queryByText(t('fleet-panel-url-invalid'))).toBeNull();
   });
 });
