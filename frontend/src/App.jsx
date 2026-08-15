@@ -120,7 +120,9 @@ function useDesktop() {
 // cellName (opzionale, Tranche D): titolo logico Fleet gia' risolto dal roster
 // (desktop overlay). Se assente (mobile), la lookup fleetStatus esistente lo
 // risolve al primo ciclo. Il titolo visibile deriva sempre da `cell.cell`.
-export function SingleView({ session, node, ownerId, cellName, token, readonly = false, onBack, onCellSwitcher, cellSwitcherOpen = false }) {
+export function SingleView({
+  session, node, ownerId, cellName, token, readonly = false, panelPort = 0, onBack, onCellSwitcher, cellSwitcherOpen = false,
+}) {
   useLang(); // re-render allo switch lingua
   const [inputPreferences] = useInputPreferences();
   const [showFiles, setShowFiles] = useState(false);
@@ -235,6 +237,7 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
             cellId={panelCellId}
             panelUrl={panelUrl}
             route={node ? node.split('/') : []}
+            panelPort={panelPort}
             token={token}
             title={title}
           />
@@ -353,6 +356,11 @@ export default function App() {
   // read-only quando il server lo e' (coerenza col gate server §4b(6) + il
   // banner settings che lo dichiara). Default false finche' non arriva la config.
   const [roDefault, setRoDefault] = useState(false);
+  // Porta pannello (P0 sicurezza 2026-08-16, da /api/config): origin DIVERSA
+  // dal control plane, solo per il caso locale — v. CellPanel.jsx. 0 finche'
+  // la config non e' ancora arrivata: CellPanel tratta 0 come "non disponibile
+  // ancora" e resta sulla via storica, mai un frame verso porta 0.
+  const [panelPort, setPanelPort] = useState(0);
 
   useEffect(() => {
     try { localStorage.setItem(SIDE_W_KEY, String(sideW)); } catch (_) {}
@@ -378,6 +386,7 @@ export default function App() {
         localNameDefault: s.localName || '',
       });
       setRoDefault(!!c.readonlyDefault);
+      setPanelPort(Number.isInteger(c.panelPort) ? c.panelPort : 0);
       if (s.firstRun === true && !c.readonlyDefault) setWizardOpen(true);
       else if (pairPending) setWizardOpen(true); // deep-link #pair: apri wizard sul pairing
     }).catch(() => { /* wizard best-effort: la UI resta usabile */ });
@@ -676,6 +685,7 @@ export default function App() {
     }
     return <>
       <SingleView session={session.session} node={session.node} ownerId={session.ownerId} cellName={session.cellName} token={token} readonly={roDefault}
+        panelPort={panelPort}
         onBack={() => setSession(null)} onCellSwitcher={() => setCellSwitcherOpen(true)} cellSwitcherOpen={cellSwitcherOpen} />
       {cellSwitcherOpen && <CellSwitcher token={token} current={session}
         onPick={(next) => { pickSession(next); setCellSwitcherOpen(false); }} onClose={() => setCellSwitcherOpen(false)} />}
@@ -755,7 +765,7 @@ export default function App() {
           <SingleView
             session={single.session} node={single.node} ownerId={single.ownerId}
             cellName={cellDisplayName({ session: single.session, node: single.node, ownerId: single.ownerId, cells, nodeGroups })}
-            token={token} readonly={roDefault} onBack={() => setSingle(null)}
+            token={token} readonly={roDefault} panelPort={panelPort} onBack={() => setSingle(null)}
           />
         </div>
       )}

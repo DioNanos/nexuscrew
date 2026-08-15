@@ -113,3 +113,42 @@ describe('CellPanel (D8: ingresso al pannello via ticket)', () => {
     expect(screen.getByTitle('panel-retry')).toBeTruthy();
   });
 });
+
+// --- P0 sicurezza (2026-08-16): origin separata per il pannello -------------
+// La guardia che conta non e' "il campo panelPort esiste": e' che, quando la
+// cella e' LOCALE (route=[]) e la porta pannello e' nota, il browser riceva un
+// frameUrl ASSOLUTO verso una PORTA DIVERSA — e' quello che rende l'origin
+// diversa, non un dettaglio di path. Senza panelPort (0, prima che /api/config
+// risponda) resta la via storica: mai un frame verso porta 0.
+describe('CellPanel — origin separata (panelPort)', () => {
+  it('locale + panelPort noto: frameUrl e\' ASSOLUTO verso quella porta, non un path relativo', async () => {
+    ticketOk('TK-ORIGIN');
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/vnc.html" route={[]} panelPort={41821} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    const src = container.querySelector('iframe').getAttribute('src');
+    expect(src.startsWith('http://127.0.0.1:41821/panel/A/vnc.html?ticket=TK-ORIGIN')).toBe(true);
+  });
+
+  it('senza panelPort (0, config non ancora arrivata): resta la via storica relativa, MAI porta 0', async () => {
+    ticketOk('TK-FALLBACK');
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/vnc.html" route={[]} panelPort={0} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    const src = container.querySelector('iframe').getAttribute('src');
+    expect(src).toBe('/panel/A/vnc.html?ticket=TK-FALLBACK');
+    expect(src.includes(':0')).toBe(false, 'mai un frame verso una porta 0');
+  });
+
+  it('remoto (route non vuota): resta sulla via federata storica anche con panelPort noto — limite dichiarato', async () => {
+    ticketOk('TK-REMOTE2');
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={['Pixel']} panelPort={41821} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    const src = container.querySelector('iframe').getAttribute('src');
+    expect(src.startsWith('/api/route/Pixel/_/panel/A/?ticket=TK-REMOTE2')).toBe(true);
+  });
+});
