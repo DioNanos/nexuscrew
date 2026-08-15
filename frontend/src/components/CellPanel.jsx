@@ -1,124 +1,110 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
+import { requestPanelTicket, routeBase } from '../lib/api.js';
 import './CellPanel.css';
 
-// D8 — pannello per-cella: renderizza `panelUrl` (contratto col backend: stringa
-// per-cella, opzionale, gia' validata a monte come http/https su loopback).
-// Questo componente CONSUMA il campo senza ri-validarlo; un valore assente o
-// vuoto e' uno stato da rendere, non un caso da ignorare.
+// D8 — pannello per-cella, L'INGRESSO. Il vecchio flusso metteva il `panelUrl`
+// grezzo nell'iframe: quell'URL è il loopback della macchina che ospita la
+// cella, che il browser di chi guarda risolve sul PROPRIO — frame che non
+// arriva, e il certificato self-signed del container come problema di chi
+// guarda. Il flusso nuovo passa dalla NOSTRA origine:
 //
-// MATRICE MISURATA il 2026-08-14 da dentro la PWA (secure context loopback),
-// contro il servizio reale — non dedotta:
+//   1. la PWA (autenticata) chiede un TICKET per quella cella, sulla via
+//      locale o federata a seconda del nodo che possiede la cella;
+//   2. l'iframe punta a /panel/<cella><percorso>?ticket=…: la prima risposta
+//      consuma il ticket e porta il cookie di visione, e da lì le sotto-risorse
+//      passano col cookie. L'origine è la nostra: il certificato del container
+//      smette di essere un problema del frame.
 //
-//   origine                             | fetch no-cors      | iframe `load`
-//   ------------------------------------+--------------------+--------------
-//   https://127.0.0.1:6901 (401, cert   | reject TypeError   | scatta
-//   self-signed NON accettato)          |                    |
-//   porta loopback chiusa               | reject TypeError   | scatte
-//   http://127.0.0.1:41777 (vivo)       | resolve (5 ms)     | scatta
+// Gli STATI sono cause con nome, perché l'azione di chi legge è diversa:
+//   none          — nessun pannello configurato per la cella
+//   requesting    — ticket in corso
+//   ready         — iframe montato col ticket
+//   not-granted   — il nodo NON concede il pannello a chi chiede (panelAccess):
+//                   l'azione è concedere l'accesso sul nodo, non riprovare qui
+//   denied        — ticket rifiutato (scaduto, già usato, non nostro): si
+//                   riparte chiedendo un ticket NUOVO
+//   no-panel      — la cella non ha più pannello (corsa col fleetStatus)
+//   timeout       — il ticket non arriva entro il limite: causa deterministica
+//                   (l'AbortController è solo del nostro timer)
+//   unreachable   — la richiesta non arriva nemmeno all'origine nostra
 //
-// Limiti dichiarati (misurati, non ipotizzati):
-// 1. `load` NON distingue nulla: scatta anche su porta chiusa (il browser
-//    carica la propria pagina d'errore nel frame). L'evento `error` non e'
-//    mai scattato. L'unico segnale utilizzabile e' la probe fetch.
-// 2. La probe che risolve prova raggiungibilita' + certificato accettato
-//    (un 401 autonomico del servizio risolve comunque: l'auth resta al
-//    contenuto, dentro il frame). La probe che fallisce copre cause distinte:
-//    il TIMEOUT e' una causa DETERMINISTICA che il codice riconosce
-//    (l'AbortController e' solo del timer: AbortError = tempo scaduto) e ha
-//    stato e messaggio propri — l'azione e' riprovare. Servizio non
-//    raggiungibile e certificato non ancora accettato restano invece
-//    INDISTINGUIBILI fra loro (stesso TypeError opaco; la console del browser
-//    le distingue, ma la pagina non puo' leggere i network error
-//    cross-origin): il pannello non indovina, rende un unico stato che nomina
-//    entrambe e offre l'azione che risolve l'una (accettare il certificato in
-//    una scheda) e diagnostica l'altra.
-// 3. Una probe verde NON prova che l'origine sia embeddabile (X-Frame-Options
-//    / CSP frame-ancestors non sono osservabili da una risposta opaque):
-//    l'iframe puo' restare bianco con probe verde. Non e' risolvibile dalla
-//    PWA; dichiarato qui.
+// Limiti dichiarati (aggiornati al flusso nuovo):
+// 1. Il ticket riuscito NON prova che il container serva: se il pannello muore
+//    dopo l'ingresso, l'iframe mostra quello che il proxy risponde (502). Non
+//    è osservabile da qui senza consumare un secondo biglietto; dichiarato.
+// 2. La causa CERTIFICATO non esiste più per il frame: l'origine è la nostra e
+//    verso il container parla il proxy. Per questo è sparito anche il bottone
+//    «apri in una scheda» e l'auto-riprova al ritorno sulla scheda: curavano
+//    un problema che questo flusso non ha.
 
-export default function CellPanel({ url, title, probeTimeoutMs = 4000 }) {
-  const [state, setState] = useState(url ? 'checking' : 'none');
-  // Contatore di probe: identifica l'ultima partita, cosi' una risposta tardiva
-  // di una probe vecchia (dopo cambio url o retry) non sovrascrive uno stato piu' fresco.
-  const probeSeq = useRef(0);
+export default function CellPanel({
+  cellId, panelUrl, route = [], token, title, requestTimeoutMs = 4000,
+}) {
+  const [state, setState] = useState(cellId && token ? 'requesting' : 'none');
+  const [frameUrl, setFrameUrl] = useState('');
+  // Partita corrente: una risposta tardiva di una richiesta vecchia (cambio
+  // cella o retry) non sovrascrive uno stato più fresco.
+  const seq = useRef(0);
 
-  const probe = useCallback(async () => {
-    if (!url) { setState('none'); return; }
-    const seq = (probeSeq.current += 1);
-    setState('checking');
-    let timer = null;
+  const apri = useCallback(async () => {
+    if (!cellId || !token || !panelUrl) { setState('none'); return; }
+    const mio = (seq.current += 1);
+    setState('requesting');
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), requestTimeoutMs);
     try {
-      const ctl = new AbortController();
-      timer = setTimeout(() => ctl.abort(), probeTimeoutMs);
-      await fetch(url, { mode: 'no-cors', signal: ctl.signal, cache: 'no-store' });
+      const esito = await requestPanelTicket(token, route, cellId, { signal: ctl.signal });
       clearTimeout(timer);
-      if (seq === probeSeq.current) setState('ready');
+      if (mio !== seq.current) return;
+      if (esito.ok) {
+        // Il percorso della pagina è quello del panelUrl (es. /vnc.html): il
+        // proxy lo risolve sulla destinazione della cella.
+        let page = '/';
+        try { page = new URL(panelUrl).pathname || '/'; } catch (_) { /* panelUrl già validato a monte */ }
+        setFrameUrl(`${routeBase(route)}/panel/${encodeURIComponent(cellId)}${page}?ticket=${encodeURIComponent(esito.ticket)}`);
+        setState('ready');
+      } else {
+        // not-granted | no-panel | unauthorized | denied: cause con nome.
+        setState(esito.cause);
+      }
     } catch (err) {
-      if (timer) clearTimeout(timer);
-      if (seq !== probeSeq.current) return;
-      // AbortError = il NOSTRO timer ha chiuso la partita (l'AbortController
-      // non e' usato per altro): causa deterministica, stato proprio. Chi
-      // legge deve riprovare, non andare a cercare un certificato.
-      if (err && err.name === 'AbortError') setState('timeout');
-      else setState('unreachable');
+      clearTimeout(timer);
+      if (mio !== seq.current) return;
+      // AbortError = il NOSTRO timer ha chiuso la partita: deterministico.
+      setState(err && err.name === 'AbortError' ? 'timeout' : 'unreachable');
     }
-  }, [url, probeTimeoutMs]);
+  }, [cellId, panelUrl, route, token, requestTimeoutMs]);
 
-  useEffect(() => { probe(); }, [probe]);
+  useEffect(() => { apri(); }, [apri]);
 
-  // Auto-riproba al ritorno sulla scheda: e' il flusso reale del caso
-  // certificato (l'operatore apre l'URL in una scheda, accetta, torna).
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') probe();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [probe]);
+  const msg = (key, azioni = true) => (
+    <div className="nc-cellpanel nc-cellpanel-msg" role="status">
+      <span>{t(key)}</span>
+      {azioni && (
+        <span className="nc-cellpanel-actions">
+          <button type="button" title={t('panel-retry')} onClick={() => apri()}>{t('panel-retry')}</button>
+        </span>
+      )}
+    </div>
+  );
 
-  if (state === 'none') {
-    return (
-      <div className="nc-cellpanel nc-cellpanel-msg" role="status">
-        <span>{t('panel-none')}</span>
-      </div>
-    );
-  }
-  if (state === 'checking') {
+  if (state === 'none' || state === 'no-panel') return msg('panel-none', false);
+  if (state === 'requesting') {
     return (
       <div className="nc-cellpanel nc-cellpanel-msg" role="status">
         <span>{t('panel-checking')}</span>
       </div>
     );
   }
-  if (state === 'timeout') {
-    // Causa deterministica distinta da 'unreachable': l'azione e' riprovare
-    // (servizio lento a partire), non accettare un certificato.
-    return (
-      <div className="nc-cellpanel nc-cellpanel-msg" role="status">
-        <span>{t('panel-timeout')}</span>
-        <span className="nc-cellpanel-actions">
-          <button type="button" title={t('panel-retry')} onClick={() => probe()}>{t('panel-retry')}</button>
-        </span>
-      </div>
-    );
-  }
-  if (state === 'unreachable') {
-    return (
-      <div className="nc-cellpanel nc-cellpanel-msg" role="status">
-        <span>{t('panel-unreachable')}</span>
-        <span className="nc-cellpanel-actions">
-          <button type="button" title={t('panel-open')} onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}>{t('panel-open')}</button>
-          <button type="button" title={t('panel-retry')} onClick={() => probe()}>{t('panel-retry')}</button>
-        </span>
-      </div>
-    );
-  }
+  if (state === 'not-granted') return msg('panel-not-granted');
+  if (state === 'denied' || state === 'unauthorized') return msg('panel-denied');
+  if (state === 'timeout') return msg('panel-timeout');
+  if (state === 'unreachable') return msg('panel-unreachable');
   return (
     <iframe
       className="nc-cellpanel nc-cellpanel-frame"
-      src={url}
+      src={frameUrl}
       title={title || t('panel')}
       allowFullScreen
     />

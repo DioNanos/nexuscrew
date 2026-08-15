@@ -14,9 +14,16 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const express = require('express');
 const { WebSocketServer, WebSocket } = require('ws');
 const { createPanelProxy, handlePanelUpgrade } = require('../lib/proxy/panel-proxy.js');
 const { createPanelAuth } = require('../lib/proxy/panel-auth.js');
+const federation = require('../lib/proxy/federation.js');
+const nodesStore = require('../lib/nodes/store.js');
+const { requireToken } = require('../lib/auth/middleware.js');
 
 const TOKEN = 'buono';
 
@@ -268,4 +275,120 @@ test('dal vivo: il ticket NON si usa sull\'upgrade WebSocket — serve il cookie
   // ...ma resta valido per la prima richiesta HTTP, che e' il flusso dell'iframe.
   const page = await richiedi(`${lato.base}/api/panel/A/page.html?ticket=${tk.body.ticket}`);
   assert.equal(page.status, 200, 'il ticket non consumato dall\'upgrade serve ancora all\'iframe');
+});
+
+// —— Il caso REMOTO: due nodi veri, la via federata allowlistata ————————
+// HUB: /api/route dietro requireToken (la PWA) + routeHandler federato vero.
+// REMOTO: peerRouter federato vero + server API vero (requireToken + panelAuth
+// + proxy). Il pannello è quello finto di sempre. Questa è la prova che il
+// cookie di visione sopravvive all'attraversamento: il nodo che lo emette lo
+// scrive per il SUO path, il browser sta usando il path federato — senza la
+// riscrittura del Set-Cookie le sotto-risorse remore resterebbero senza cookie
+// e il frame sarebbe bianco con l'aria di funzionare.
+const listen = (srv) => new Promise((r) => srv.listen(0, '127.0.0.1', r));
+
+async function federazioneDiProva(panelPort, { panelAccess } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-panel-fed-'));
+  const REMOTE_TOKEN = 'remoto-buono';
+  // Token federativi nella forma richiesta dallo store (lunghi), e nodeId hex.
+  const HUB_TOKEN = 'f'.repeat(40);      // hub -> remoto (presentato al peerRouter)
+  const REMOTE_ACCEPT = HUB_TOKEN;       // il remoto riconosce l'hub da questo
+  const REMOTE_TOKEN_OUT = 'e'.repeat(40); // remoto -> hub (non usato qui)
+  const HUB_NODE_ID = 'a'.repeat(32);
+  const REMOTE_NODE_ID = 'b'.repeat(32);
+
+  // REMOTO: API vera + listener federato vero.
+  const resolveCellPanel = async (cellId) => (cellId === 'A' ? `http://127.0.0.1:${panelPort}` : undefined);
+  const auth = createPanelAuth({ verifyToken: (t2) => t2 === REMOTE_TOKEN, resolveCellPanel });
+  const proxy = createPanelProxy({ resolveCellPanel });
+  const remoteApi = express();
+  remoteApi.use('/api', requireToken({ get: () => REMOTE_TOKEN }));
+  remoteApi.use('/api/panel', auth.panelAuthMiddleware, proxy);
+  const remoteApiSrv = http.createServer(remoteApi);
+  await listen(remoteApiSrv);
+
+  const remoteNodesPath = path.join(dir, 'remote-nodes.json');
+  const rst = nodesStore.addNode(nodesStore.emptyStore(REMOTE_NODE_ID), {
+    name: 'HUB', remotePort: 41820, localPort: 41820, direction: 'inbound', transport: 'inbound',
+    autostart: true, shared: true, visibility: 'network', nodeId: HUB_NODE_ID,
+    token: REMOTE_TOKEN_OUT, acceptToken: REMOTE_ACCEPT,
+    ...(panelAccess !== undefined ? { panelAccess } : {}),
+  });
+  nodesStore.atomicWriteStore(remoteNodesPath, rst);
+  const remoteFed = express();
+  remoteFed.use('/federation', federation.peerRouter({
+    nodesPath: remoteNodesPath, localPort: remoteApiSrv.address().port,
+    localCredential: () => REMOTE_TOKEN, hopSecret: 'hopsegreto',
+  }));
+  const remoteFedSrv = http.createServer(remoteFed);
+  await listen(remoteFedSrv);
+
+  // HUB: la PWA entra con il Bearer, la risorsa viaggia sulla via federata.
+  const hubNodesPath = path.join(dir, 'hub-nodes.json');
+  const hst = nodesStore.addNode(nodesStore.emptyStore(HUB_NODE_ID), {
+    name: 'Remoto', remotePort: 41820, localPort: remoteFedSrv.address().port,
+    direction: 'inbound', transport: 'inbound', autostart: true, shared: true,
+    visibility: 'network', nodeId: REMOTE_NODE_ID, token: HUB_TOKEN, acceptToken: 'd'.repeat(40),
+  });
+  nodesStore.atomicWriteStore(hubNodesPath, hst);
+  const hubApp = express();
+  hubApp.use('/api/route', requireToken({ get: () => TOKEN }), federation.routeHandler({
+    nodesPath: hubNodesPath, localPort: 1, localCredential: () => 'hub', ingress: null, hopSecret: 'hopsegreto',
+  }));
+  const hubSrv = http.createServer(hubApp);
+  await listen(hubSrv);
+
+  return {
+    base: `http://127.0.0.1:${hubSrv.address().port}`,
+    close: async () => {
+      for (const srv of [hubSrv, remoteFedSrv, remoteApiSrv]) await new Promise((r) => srv.close(r));
+      fs.rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+test('dal vivo FEDERATO: ticket, cookie riscritto col prefisso della route, sotto-risorsa servita', async (t) => {
+  const panel = await pannelloFinto();
+  const fed = await federazioneDiProva(panel.port, { panelAccess: true });
+  t.after(() => { panel.wss.close(); panel.server.close(); void fed.close(); });
+
+  // 1. La PWA chiede il ticket per la cella A del nodo Remoto, via federata.
+  const tk = await fetch(`${fed.base}/api/route/Remoto/_/panel/A/ticket`, {
+    method: 'POST', headers: { authorization: `Bearer ${TOKEN}` },
+  });
+  assert.equal(tk.status, 200, 'emissione federata del ticket');
+  const { ticket } = await tk.json();
+  assert.ok(ticket, 'ticket in mano');
+
+  // 2. L'iframe remoto: prima richiesta col ticket. Sotto, l'hop federato ha
+  //    iniettato il Bearer del NODO — e il ticket ha precedenza, altrimenti
+  //    verrebbe inghiottito dal Bearer e il cookie non nascerebbe mai.
+  const page = await richiedi(`${fed.base}/api/route/Remoto/_/panel/A/page.html?ticket=${ticket}`);
+  assert.equal(page.status, 200);
+  assert.match(page.body, /pannello/);
+  const sc = page.setCookie || '';
+  assert.match(
+    sc,
+    /Path=\/api\/route\/Remoto\/_\/panel\/A;/,
+    'cookie riscritto col prefisso federato: è QUESTO path che il browser usa per le sotto-risorse',
+  );
+
+  // 3. La sotto-risorsa remota passa col cookie: il giro completo, non un frame bianco.
+  const cookie = sc.split(';')[0];
+  const asset = await richiedi(`${fed.base}/api/route/Remoto/_/panel/A/app.js`, { headers: { cookie } });
+  assert.equal(asset.status, 200, 'la sotto-risorsa remota è servita col cookie di visione');
+  assert.match(asset.body, /panel/);
+});
+
+test('dal vivo FEDERATO: nodo che NON concede panelAccess → 403 panel-not-granted al browser, non un frame bianco', async (t) => {
+  const panel = await pannelloFinto();
+  const fed = await federazioneDiProva(panel.port, { panelAccess: false });
+  t.after(() => { panel.wss.close(); panel.server.close(); void fed.close(); });
+
+  // Il gate sta sul nodo che possiede il pannello: il rifiuto attraversa la
+  // federazione e arriva al browser COME CAUSA con nome — è lo stato
+  // 'not-granted' del CellPanel, con la sua azione (concedere sul nodo).
+  const r = await richiedi(`${fed.base}/api/route/Remoto/_/panel/A/page.html?ticket=quello-che-vuoi`);
+  assert.equal(r.status, 403);
+  assert.match(r.body, /panel-not-granted/, 'la causa è nominata, non collassata');
 });
