@@ -9,6 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const pidf = require('../lib/cli/pidfile.js');
+const { sorvegliaStallo } = require('./stall-watchdog.js');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-tests-'));
 const tmuxRoot = path.join(root, 'tmux');
@@ -61,14 +62,43 @@ async function main() {
   // Never let a test client inherit the operator's live tmux socket.
   delete childEnv.TMUX;
   delete childEnv.TMUX_PANE;
-  const child = spawn(process.execPath, ['--require', bootstrap, '--test', ...process.argv.slice(2), ...testFiles], {
+  // CONCORRENZA LIMITATA, e la ragione e' misurata. `node --test` senza questo
+  // flag parallelizza sul numero di core: sei file per volta, ognuno dei quali
+  // puo' avviare processi figli, socket e finti supervisori. Su questa macchina
+  // (sei core, load di base gia' sopra sei) i test che misurano TEMPI cadevano a
+  // caso — quattro volte in una notte, su file diversi, sempre verdi in tre giri
+  // isolati. Un gate che produce un rosso casuale a ogni giro non e' un gate:
+  // insegna a ignorare i rossi, e rende ogni «zero fail» una questione di
+  // fortuna.
+  //
+  // Il prezzo e' un gate piu' lento; il prezzo dell'alternativa e' non sapere se
+  // un rosso e' tuo. Chi ha una macchina piu' larga puo' alzarlo con
+  // NEXUSCREW_TEST_CONCURRENCY.
+  const concurrency = process.env.NEXUSCREW_TEST_CONCURRENCY || '2';
+  // Un SECONDO reporter, su un file che nessuno legge: e' il battito che dice se
+  // il gate sta avanzando. Costa niente e lascia stdout ereditato — prenderlo in
+  // pipe per osservarlo obbligherebbe a rilanciare ogni riga, con contropressione
+  // proprio sui test che misurano tempi. Il file sta nella dir temporanea della
+  // suite e sparisce con lei.
+  const battito = path.join(root, 'progress.tap');
+  const child = spawn(process.execPath, [
+    '--require', bootstrap, '--test', `--test-concurrency=${concurrency}`,
+    '--test-reporter=spec', '--test-reporter-destination=stdout',
+    '--test-reporter=tap', `--test-reporter-destination=${battito}`,
+    ...process.argv.slice(2), ...testFiles,
+  ], {
     cwd: path.join(__dirname, '..'),
     env: childEnv,
     stdio: 'inherit',
   });
-  const code = await new Promise((resolve) => {
-    child.once('error', () => resolve(1));
-    child.once('exit', (value) => resolve(Number.isInteger(value) ? value : 1));
+  // Il gate non deve MAI restare appeso in silenzio: un file che lascia handle
+  // aperti non esce, il runner lo aspetta per sempre, e appeso somiglia a lento
+  // invece che a rotto. Motivazione, misure e casi cattivi in
+  // tests/stall-watchdog.js e nel suo test.
+  const code = await sorvegliaStallo({
+    child,
+    segnale: () => { try { return fs.statSync(battito).size; } catch (_) { return -1; } },
+    stallMs: Number(process.env.NEXUSCREW_TEST_STALL_MS || 5 * 60_000),
   });
 
   const leaked = [];

@@ -134,6 +134,39 @@ test('runInit: tmux mancante -> service NON installato, config/token creati (M8)
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+// Stessa forma del difetto: `tmuxOk: false` sopra e' un seam ESPLICITO che
+// non porta l'informazione "assente vs bloccato" — il messaggio storico
+// resta corretto li'. Qui invece NESSUN tmuxOk e' imposto: runInit calcola
+// tmux da solo tramite haveTmux/resolveCommand sul PATH reale (iniettato via
+// opts.env) — il caso dove il messaggio puo' e deve distinguere.
+test('runInit: tmux non VERIFICABILE (PATH con directory bloccata da permessi) -> il messaggio dice "non verificabile", mai "non trovato"', () => {
+  if (process.getuid && process.getuid() === 0) return; // root bypassa i permessi sulla dir
+  const home = tmpHome();
+  const installTarget = path.join(home, 'svc.service');
+  const blockedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-init-blocked-'));
+  const fakeTmux = path.join(blockedDir, 'tmux');
+  fs.writeFileSync(fakeTmux, '#!/bin/sh\n');
+  fs.chmodSync(fakeTmux, 0o755);
+  fs.chmodSync(blockedDir, 0o600); // niente bit x: dir non attraversabile
+  try {
+    const r = runInit({
+      platform: 'linux', home, installPath: installTarget,
+      env: { PATH: blockedDir },
+      execImpl: () => { throw new Error('non deve chiamare'); }, log: () => {},
+    });
+    assert.equal(r.tmuxOk, false, 'la dir bloccata non deve far passare il check: non e\' una verifica riuscita');
+    assert.ok(!fs.existsSync(installTarget));
+    assert.ok(r.actions.some((a) => /non verificabile/.test(a) && /EACCES/.test(a)),
+      'il messaggio deve dire "non verificabile" e nominare EACCES, non implicare che tmux non sia installato');
+    assert.ok(!r.actions.some((a) => /tmux non trovato/.test(a)),
+      'non deve dire "non trovato" quando in realta\' non ha potuto guardare');
+  } finally {
+    fs.chmodSync(blockedDir, 0o755);
+    fs.rmSync(blockedDir, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('runInit termux: disclaimer Termux:boot best-effort (R4)', () => {
   const home = tmpHome();
   const r = runInit({ platform: 'termux', home, tmuxOk: true, installPath: path.join(home, 'boot.sh'), execImpl: () => {}, log: () => {} });

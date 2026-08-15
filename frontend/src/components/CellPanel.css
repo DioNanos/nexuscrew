@@ -1,0 +1,48 @@
+/* D8 — pannello per-cella. In alternativa al terminale, come overlay assoluto
+   dentro .nc-termwrap (gia' position:relative): il terminale resta montato
+   sotto (PTY vivo, nessun reflow, nessun fit() spurio al toggle). */
+.nc-cellpanel {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: var(--nc-bg, #0b1014);
+}
+
+.nc-cellpanel-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.nc-cellpanel-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--nc-fg, #cfe3ee);
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.nc-cellpanel-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.nc-cellpanel-actions button {
+  padding: 8px 14px;
+  background: #122;
+  border: 1px solid #243;
+  color: #9fd;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.nc-cellpanel-actions button:hover {
+  background: #1a2a33;
+}

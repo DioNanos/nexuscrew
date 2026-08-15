@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { normalizeManagedSpec, describeManaged, resolveManagedEngine, publicCatalog, findBinary } = require('../lib/fleet/managed.js');
+const { classifyPane, vlPaneReadiness } = require('../lib/fleet/prompt-delivery.js');
 const { backfillVlEngine } = require('../lib/fleet/builtin.js');
 const { loadDefinitions, atomicWrite } = require('../lib/fleet/definitions.js');
 
@@ -121,4 +122,93 @@ test('vl policy per-cell: override unsafe viene clampato a standard (nessun flag
     assert.equal(r.engine.args.includes('--dangerously-skip-permissions'), false);
     assert.equal(r.engine.args.includes('--yolo'), false);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+// D4-4a: classifyPane riconosce una cella vl PRONTA dalla riga di stato.
+// Fatti misurati 2026-08-14 (documento di riferimento interno stato_cella_vl):
+// il marcatore stabile di pronta e' il prefisso `vivling` + stato `[o]` insieme
+// alla coda `esc quit · ^y yield`, a prescindere dal backend, dal writer-id
+// (e<numero>) e dal contatore (↑<numero>). Tre trappole pagate sul campo:
+//  (1) vl.bin NON contiene "tmux" -> nessuno spinner braille nel titolo ->
+//      WORKING_TITLE_PREFIX (lib/tmux/list.js) NON scatta: il ready viene dalla
+//      riga di stato del CONTENUTO, mai dal titolo.
+//  (2) il contenuto del pane NON dice se vl lavora: su alcuni backend il
+//      ragionamento non e' renderizzato e il pane resta identico mentre la cella
+//      calcola. classifyPane vl dice solo "pronta" ([o]) o "non pronta"; MAI
+//      'busy' dal contenuto (il busy si rileva con la sonda esterna).
+//  (3) il `›` e' il composer vuoto, non un marcatore di pronta.
+
+// Campioni misurati su due backend diversi (zai-a-coding, opencode-go).
+const VL_READY_ZAI = '›\nvivling [o] writer e42 · zai-a-coding · ↑267     esc quit · ^y yield';
+const VL_READY_OPENCODE = '›\nvivling [o] writer e186 · opencode-go · ↑267     esc quit · ^y yield';
+
+test('D4-4a classifyPane vl: PRONTA riconosciuta dal marcatore stabile (entrambi i backend)', () => {
+  assert.equal(classifyPane(VL_READY_ZAI, 'vl'), 'ready', 'zai-a-coding: pronta');
+  assert.equal(classifyPane(VL_READY_OPENCODE, 'vl'), 'ready', 'opencode-go: marcatore stabile cross-backend');
+});
+
+test('D4-4a classifyPane vl: MAI busy dal contenuto (stati [?] e [<] sono unknown, non busy)', () => {
+  // Trappola 2: il pane e' IDENTICO mentre vl lavora; gli stati [?] e [<]
+  // esistono ma il busy non e' affidabile dal contenuto. classifyPane NON dice
+  // 'busy': dice 'unknown' (non pronta), e il busy resta alla sonda esterna.
+  const busyQ = VL_READY_ZAI.replace('[o]', '[?]');
+  const busyLt = VL_READY_ZAI.replace('[o]', '[<]');
+  assert.equal(classifyPane(busyQ, 'vl'), 'unknown', 'stato [?] -> unknown, NON busy');
+  assert.equal(classifyPane(busyLt, 'vl'), 'unknown', 'stato [<] -> unknown, NON busy');
+});
+
+test('D4-4a classifyPane vl: composer solo / pane vuoto / marcatore parziale -> unknown', () => {
+  assert.equal(classifyPane('›', 'vl'), 'unknown', 'solo composer `>` non e pronta');
+  assert.equal(classifyPane('', 'vl'), 'unknown', 'pane vuoto');
+  assert.equal(classifyPane('   \n  ', 'vl'), 'unknown', 'solo whitespace');
+  // Marcatore parziale: manca la coda `esc quit · ^y yield` -> non basta.
+  assert.equal(classifyPane('›\nvivling [o] writer e42 · zai-a-coding · ↑267', 'vl'), 'unknown', 'senza coda esc quit non basta');
+  // Marcatore parziale: coda presente ma manca il prefisso `vivling [o]` -> non basta.
+  assert.equal(classifyPane('›\nwriter e42 · zai-a-coding · ↑267     esc quit · ^y yield', 'vl'), 'unknown', 'senza prefisso vivling [o] non basta');
+});
+
+test('D4-4a classifyPane vl: client non-vl sullo stesso testo resta unknown (no cross-talk)', () => {
+  // Il campione vl NON deve far scattare il branch kimi/claude: il marcatore vl
+  // e' specifico. E vl non matcha i marker not-ready di claude/kimi.
+  assert.equal(classifyPane(VL_READY_ZAI, 'kimi'), 'unknown');
+  assert.equal(classifyPane(VL_READY_ZAI, 'claude'), 'unknown');
+  assert.equal(classifyPane(VL_READY_ZAI, 'unknown-client'), 'unknown');
+});
+
+// --- DEC1: vlPaneReadiness (content-readiness vl con degrado) -----------------
+// Punto di innesto della readiness vl: capture-pane + classifyPane('vl'). MAI
+// fail-closed: a timeout degrada a {ready:true, degraded:true}. Il controllo
+// negativo di Dev: una riga di stato non riconosciuta NON deve bloccare l'avvio.
+function clockTick() {
+  let t = 0;
+  return { now: () => t, sleep: async (ms) => { t += ms; } };
+}
+
+test('DEC1 vlPaneReadiness: marcatore [o] entro il timeout -> ready, non degradato', async () => {
+  let calls = 0;
+  const capture = async () => { calls += 1; return calls >= 2 ? VL_READY_ZAI : '>'; };
+  const clk = clockTick();
+  const r = await vlPaneReadiness('tmux', '%1', { captureImpl: capture, sleepImpl: clk.sleep, nowImpl: clk.now });
+  assert.equal(r.ready, true);
+  assert.equal(r.degraded, false, 'marcatore comparso: nessun degrado');
+});
+
+test('DEC1 CONTROLLO NEGATIVO: riga di stato NON riconosciuta NON blocca l\'avvio (degrada a ready)', async () => {
+  // Capture che non produce MAI il marcatore vl (backend che cambia la status bar,
+  // TUI non ancora stabile). Senza degrado resterebbe appesa: si prova che ritorna
+  // {ready:true} e NON {ready:false}, con degraded:true. Una cella che parte oggi
+  // deve partire anche domani: il peggio ammesso e' tornare a com'era, mai bloccare.
+  const capture = async () => 'testo di un pane senza il marcatore vivling [o]';
+  const clk = clockTick();
+  const r = await vlPaneReadiness('tmux', '%1', { captureImpl: capture, timeoutMs: 1000, pollMs: 100, sleepImpl: clk.sleep, nowImpl: clk.now });
+  assert.equal(r.ready, true, 'NON blocca: degrada a ready, mai fail-closed');
+  assert.equal(r.degraded, true, 'segnala il degrado');
+});
+
+test('DEC1 vlPaneReadiness: capture null/irraggiungibile -> degrada a ready', async () => {
+  const capture = async () => null;
+  const clk = clockTick();
+  const r = await vlPaneReadiness('tmux', '%1', { captureImpl: capture, timeoutMs: 500, pollMs: 50, sleepImpl: clk.sleep, nowImpl: clk.now });
+  assert.equal(r.ready, true);
+  assert.equal(r.degraded, true);
 });

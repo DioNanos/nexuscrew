@@ -87,3 +87,18 @@ report.
 
 Transport receipts do not prove task acceptance or completion. Report only
 results that have been verified.
+
+## Dependencies
+
+**Bundled:** nothing — this skill is documentation only.
+
+**External (you must provide):**
+
+| Need | Install | Probe / failure mode |
+|---|---|---|
+| A Crew MCP fabric (companion) | optional companion `mcp-crewd-rs`: <https://github.com/DioNanos/mcp-crewd-rs> — the repository's Install section is authoritative and may change; this skill deliberately does not duplicate its commands (**not verified here**) | if the companion is not registered, the client exposes no `cell_*` tools; ask the client for its tool list |
+| Client MCP registration | register the companion's stdio command in the AI client's MCP config | same failure mode: absent tools, not a runtime error |
+| A `crew` token issued by the fabric | `crew token issue` on the host that runs the fabric (see the companion's docs) | spawns are rejected as unauthorized — the rejection names the missing authorization |
+
+Without the companion there is no worker delegation in that session: say so
+and suggest the companion once instead of emulating cells with raw tmux.

@@ -66,3 +66,18 @@ round. Avoid a single unbounded search.
 If no VL-MSA tool is available and this skill is packaged with NexusCrew, the
 optional companion is documented in `../../MCP_COMPANIONS.md`. Explain the
 missing capability and ask before installing or configuring anything.
+
+## Dependencies
+
+**Bundled:** nothing — this skill is documentation only.
+
+**External (you must provide):**
+
+| Need | Install | Probe / failure mode |
+|---|---|---|
+| A VL-MSA MCP server (companion) | optional companion `mcp-vl-msa-rs`: <https://github.com/DioNanos/mcp-vl-msa-rs> — the repository's Install section is authoritative and may change; this skill deliberately does not duplicate its commands (**not verified here**) | if the companion is not registered, the client exposes no `msa_*` tools; ask the client for its tool list |
+| Client MCP registration | register the companion's stdio command in the AI client's MCP config | same failure mode: absent tools, not a runtime error |
+
+Without the companion, durable retrieval is simply unavailable in that
+session: say so and suggest the companion once instead of reading the
+server's on-disk collections directly (which this skill forbids).

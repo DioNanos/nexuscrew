@@ -1,6 +1,16 @@
 export const FLEET_BACKUP_FORMAT = 'nexuscrew.fleet';
 export const FLEET_BACKUP_VERSION = 3;
 export const LEGACY_BACKUP_FORMAT = 'nexuscrew.cells';
+// I codici di errore che parseFleetBackup/createFleetBackup possono restituire.
+// La UI li rende con `fleet-backup-<codice>`, e t() su chiave assente
+// restituisce LA CHIAVE: un codice senza stringa si vede a schermo. Questa
+// costante e' l'ancora della guardia in tests/i18n.test.js, che la confronta
+// con i letterali presenti in questo file: la lista non puo' divergere dal
+// codice senza che il gate se ne accorga.
+export const BACKUP_ERROR_CODES = Object.freeze([
+  'invalid-json', 'invalid-format', 'invalid-cell', 'duplicate-cell',
+  'invalid-engine', 'duplicate-engine', 'invalid-model', 'duplicate-model',
+]);
 
 const CELL_ID_RE = /^[A-Za-z0-9._-]{1,32}$/;
 const ENGINE_ID_RE = /^[a-z0-9._-]{1,32}$/;
@@ -47,8 +57,24 @@ export function normalizeCwdRel(rel) {
   }
   return out.join('/');
 }
-const ENGINE_KEYS = new Set(['id', 'label', 'rc', 'managed', 'command', 'args', 'envKeys', 'model', 'promptMode', 'promptFlag']);
+const ENGINE_KEYS = new Set(['id', 'label', 'rc', 'managed', 'command', 'args', 'envKeys', 'model', 'promptMode', 'promptFlag', 'panelUrl']);
 const MANAGED_KEYS = new Set(['client', 'provider', 'credentialProfile', 'model', 'permissionPolicy', 'displayName', 'protocol', 'baseUrl', 'envKey', 'providerId']);
+
+// panelUrl nel backup: stessa regola del validatore canonico del backend
+// (validPanelUrl in lib/fleet/definitions.js — http/https, solo host
+// loopback, cap 512). Questo modulo gira anche nel bundle frontend e non può
+// importarlo: la copia è vigilata da un test di coerenza incrociata
+// (tests/fleet-definitions.test.js) che fallisce se i due verdetti divergono.
+const PANELURL_LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
+export function validBackupPanelUrl(value) {
+  if (typeof value !== 'string' || !value || value.length > 512) return false;
+  if (/[\x00-\x1f\x7f]|\s/.test(value)) return false;
+  let parsed;
+  try { parsed = new URL(value); } catch (_) { return false; }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  if (!PANELURL_LOOPBACK_HOSTS.has(parsed.hostname)) return false;
+  return true;
+}
 
 function printable(value, max) {
   return typeof value === 'string' && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
@@ -153,7 +179,12 @@ export function cleanBackupEngine(raw) {
     || Object.keys(raw).some((key) => !ENGINE_KEYS.has(key))) return null;
   if (!ENGINE_ID_RE.test(String(raw.id || '')) || !printable(raw.label || raw.id, 64)) return null;
   if (raw.rc !== undefined && typeof raw.rc !== 'boolean') return null;
+  // panelUrl (opzionale, entrambi i rami): fail-closed — invalido rifiuta
+  // l'engine, valido viene conservato. Prima era assente dall'allowlist e il
+  // campo spariva in silenzio nel round-trip del backup (rilievo 1 D8).
+  if (raw.panelUrl !== undefined && !validBackupPanelUrl(raw.panelUrl)) return null;
   const out = { id: raw.id, label: raw.label || raw.id, rc: raw.rc === true };
+  if (raw.panelUrl !== undefined) out.panelUrl = raw.panelUrl;
   if (raw.managed !== undefined) {
     const managed = cleanManaged(raw.managed);
     if (!managed || ['command', 'args', 'envKeys', 'model', 'promptMode', 'promptFlag'].some((key) => raw[key] !== undefined)) return null;
@@ -186,10 +217,12 @@ export function portableEngineDefinition(engine) {
   // explicitly instead of silently dropping every managed engine export.
   const candidate = engine.managed ? {
     id: engine.id, label: engine.label, rc: engine.rc, managed: engine.managed,
+    ...(engine.panelUrl !== undefined ? { panelUrl: engine.panelUrl } : {}),
   } : {
     id: engine.id, label: engine.label, rc: engine.rc, command: engine.command,
     args: engine.args, envKeys: engine.envKeys, model: engine.model,
     promptMode: engine.promptMode, promptFlag: engine.promptFlag,
+    ...(engine.panelUrl !== undefined ? { panelUrl: engine.panelUrl } : {}),
   };
   const clean = cleanBackupEngine(candidate);
   if (!clean) return null;

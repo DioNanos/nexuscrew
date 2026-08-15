@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { t, LANGUAGES } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { pinRank, cmpRank } from '../lib/pins.js';
+import { hostRenderState, hostNextAction, hostLeaseTitleKey } from '../lib/host-designation.js';
+import PinPersistBanner from './PinPersistBanner.jsx';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
@@ -28,16 +30,36 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 export default function Sidebar({
   sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onBoot, onNodePower, onKill, onVisibility, onNew,
   onNodeRename, onSettings, onBootError, localNodeId, fleetCapabilities = [], bootSettlement = null,
+  hostCell = null, hostLease = null, onDesignateCell, onClearHostCell,
   onBootSettlementApplied, onOpenVlSession,
   width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   const {
-    pins, orders, togglePin, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
+    pins, orders, togglePin, removePin, pinError, retryPinPersist, clearPinError, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
   const {
     groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
   } = useNodePreferences();
+  // Ciclo stellina cella locale: none -> favorite (pin) -> live (designate) ->
+  // none (clear server + remove pin). API-first: il pin si rimuove SOLO a clear
+  // riuscito, mai prima della risposta del server (nessun ottimismo locale). Le
+  // celle remote e le sessioni restano su togglePin (non sono mai host del nodo).
+  function handleLocalStar(item, c, state) {
+    const action = hostNextAction(state);
+    if (action === 'addPin') { togglePin(item.key); return; }
+    if (action === 'designate') { if (onDesignateCell) onDesignateCell(c.cell); return; }
+    if (action === 'clearAndUnpin') {
+      if (!onClearHostCell) return;
+      // Rimozione idempotente (NON toggle): su uno stato server-owned senza pin
+      // locale, un toggle aggiungerebbe il pin producendo "favorite". removePin
+      // ritorna l'esito della persistenza: se fallisce lo segnaliamo (ritentabile);
+      // lo stato UI e' gia' "none" perche' hostCell e' stato chiarito dal server.
+      // removePin legge localStorage al momento dell'applicazione (no lost update)
+      // e segnala un fallimento di persistenza nello stato (banner ritentabile).
+      Promise.resolve(onClearHostCell()).then((ok) => { if (ok) removePin(item.key); });
+    }
+  }
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
   const byName = new Map((sessions || []).map((s) => [s.name, s]));
   // Ordinamento: pinnate in cima (ordine di pin), poi attivita' recente,
@@ -295,6 +317,8 @@ export default function Sidebar({
         <Icon name="gear" size={15} /> {t('settings')}
       </button>
 
+      <PinPersistBanner pinError={pinError} onRetry={retryPinPersist} onDismiss={clearPinError} />
+
       <div className="nc-side-scroll">
       <PositionHeader
         label={t('position-local')}
@@ -307,10 +331,17 @@ export default function Sidebar({
         <div className="nc-side-group">
           {localItems.map((item) => item.type === 'cell' ? (() => {
             const c = item.value;
+            const starState = hostRenderState({ hostCell, pins, item });
             const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
-            const title = c.degraded
+            // Sull'host designato il titolo porta anche lo stato del lease: dice
+            // se dietro la designazione c'e' ancora una supervisione viva. Senza
+            // stato (server che non lo espone) non si aggiunge nulla — mai una
+            // bugia per riempire lo spazio.
+            const leaseKey = hostLeaseTitleKey(starState, hostLease);
+            const baseTitle = c.degraded
               ? t('cell-degraded')
               : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
+            const title = leaseKey ? `${baseTitle} · ${t(leaseKey)}` : baseTitle;
             // Cella con tmux vivo = sessione a tutti gli effetti: draggabile
             // nella griglia, click = tile, doppio click = vista singola.
             const live = !!c.tmux;
@@ -337,10 +368,10 @@ export default function Sidebar({
                   <small title={item.subtitle}>{item.subtitle}</small>
                 </span>
                 <button
-                  className={`nc-pin${pins.includes(item.key) ? ' on' : ''}`}
-                  title={t('pin')}
-                  onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}
-                >{pins.includes(item.key) ? '★' : '☆'}</button>
+                  className={`nc-pin${starState === 'live' ? ' live' : starState === 'favorite' ? ' on' : ''}`}
+                  title={starState === 'live' ? 'live host' : t('pin')}
+                  onClick={(e) => { e.stopPropagation(); handleLocalStar(item, c, starState); }}
+                >{starState === 'none' ? '☆' : '★'}</button>
                 {onBoot && fleetCapabilities.includes('boot') && bootButton(c)}
                 <button
                   className={`nc-power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}

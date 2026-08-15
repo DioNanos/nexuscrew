@@ -4,8 +4,9 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const cp = require('node:child_process');
 const {
-  readPidfile, writePidfile, pidOwnership, pidExists, isAlive, cleanStale, killPidfile,
+  readPidfile, writePidfile, pidOwnership, pidExists, isAlive, cleanStale, killPidfile, removePidfile,
 } = require('../lib/cli/pidfile.js');
 
 function tmpPid() {
@@ -139,5 +140,94 @@ test('killPidfile: EPERM rimuove solo il pidfile e non segnala il processo estra
   assert.equal(r.killed, false);
   assert.match(r.reason, /not owned/);
   assert.equal(readPidfile(p), null);
+  fs.rmSync(path.dirname(p), { recursive: true, force: true });
+});
+
+// --- removePidfile: la rimozione verifica il SOGGETTO (rilievo di audit) ----
+// Un pidfile non è un file qualunque: è la prova che un processo è vivo.
+// Toglierlo quando appartiene a un vivo che non siamo noi cancella quella
+// prova — chi lo governa lo crederebbe morto. I casi legittimi (self, stale,
+// garbage, e la garanzia del chiamante che ha appena killato) devono continuare
+// a funzionare: chiudere il difetto non deve creare un blocco.
+const aspettaExit = (child) => new Promise((resolve) => {
+  if (child.exitCode !== null || child.signalCode !== null) return resolve();
+  child.once('exit', resolve);
+  setTimeout(resolve, 3000); // il test non resta appeso per un figlio ostinato
+});
+
+test('removePidfile: il pidfile di un ALTRO processo vivo SOPRAVVIVE al tentativo', async () => {
+  // Il caso cattivo: il pidfile è di un processo vivo che non è chi chiama.
+  // Qui il "altro processo" è un figlio vero del test (vivo, cmd reale).
+  const child = cp.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
+  await new Promise((r) => setTimeout(r, 150)); // il figlio parte
+  const p = tmpPid();
+  try {
+    writePidfile(p, child.pid, `${process.execPath} -e`);
+    assert.ok(isAlive(readPidfile(p)), 'precondizione: il pid del file è vivo');
+    assert.notEqual(child.pid, process.pid, 'precondizione: non è il nostro pid');
+    // Il tentativo di rimozione naked: rifiutato, e il file resta.
+    assert.equal(removePidfile(p), false, 'rifiutato: vivo che non siamo noi');
+    assert.ok(fs.existsSync(p), 'il pidfile sopravvive: la prova di vita non si cancella');
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+  }
+  // Il caso legittimo accanto: MORTO il processo, la pulizia torna a funzionare
+  // (non abbiamo chiuso il difetto creando un blocco).
+  assert.equal(removePidfile(p), true, 'stale dopo la morte: si rimuove');
+  assert.ok(!fs.existsSync(p));
+  fs.rmSync(path.dirname(p), { recursive: true, force: true });
+});
+
+test('removePidfile: il NOSTRO pidfile si rimuove (self-cleanup del serve)', () => {
+  const p = tmpPid();
+  writePidfile(p, process.pid, 'node nexuscrew serve');
+  assert.equal(removePidfile(p), true, 'meta.pid === process.pid: è nostro');
+  assert.ok(!fs.existsSync(p));
+  fs.rmSync(path.dirname(p), { recursive: true, force: true });
+});
+
+test('removePidfile: file garbage (non un pidfile) si rimuove — non è il pidfile di nessuno', () => {
+  const p = tmpPid();
+  fs.writeFileSync(p, 'not json at all\n');
+  assert.equal(removePidfile(p), true);
+  assert.ok(!fs.existsSync(p));
+  fs.rmSync(path.dirname(p), { recursive: true, force: true });
+});
+
+test('removePidfile: allowLive è la garanzia del chiamante — il vivo si rimuove SOLO con essa', async () => {
+  const child = cp.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
+  await new Promise((r) => setTimeout(r, 150));
+  const p = tmpPid();
+  try {
+    writePidfile(p, child.pid, `${process.execPath} -e`);
+    assert.equal(removePidfile(p, { allowLive: true }), true, 'con la garanzia: rimozione');
+    assert.ok(!fs.existsSync(p));
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+  }
+  fs.rmSync(path.dirname(p), { recursive: true, force:true });
+});
+
+test('killPidfile: lo stop da CLI NON si rompe — post-kill il pidfile si toglie anche se /proc ritarda', () => {
+  // Simulazione fedele: il pidfile è di un "server" vivo (mock killImpl non
+  // uccide davvero), il cmd matcha, il segnale parte. La rimozione post-kill
+  // usa la garanzia allowLive: senza, un /proc lento bloccherebbe lo stop.
+  const p = tmpPid();
+  writePidfile(p, 424243, 'node nexuscrew serve');
+  const segnali = [];
+  const killImpl = (pid, signal) => {
+    segnali.push(signal);
+    if (signal !== 0) return; // segnale partito, il "processo" resta visibile
+    return; // ownership probe: ok (owned)
+  };
+  const r = killPidfile(p, 'SIGTERM', {
+    killImpl,
+    readCmdlineImpl: () => 'node nexuscrew serve', // cmd matcha: nessun pid-reuse
+  });
+  assert.deepEqual(segnali, [0, 'SIGTERM'], 'probe + segnale, in ordine');
+  assert.equal(r.killed, true);
+  assert.equal(readPidfile(p), null, 'post-kill: il pidfile è rimosso');
   fs.rmSync(path.dirname(p), { recursive: true, force: true });
 });
