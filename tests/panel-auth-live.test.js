@@ -309,7 +309,7 @@ async function federazioneDiProva(panelPort, { panelAccess } = {}) {
 
   const remoteNodesPath = path.join(dir, 'remote-nodes.json');
   const rst = nodesStore.addNode(nodesStore.emptyStore(REMOTE_NODE_ID), {
-    name: 'HUB', remotePort: 41820, localPort: 41820, direction: 'inbound', transport: 'inbound',
+    name: 'hub', remotePort: 41820, localPort: 41820, direction: 'inbound', transport: 'inbound',
     autostart: true, shared: true, visibility: 'network', nodeId: HUB_NODE_ID,
     token: REMOTE_TOKEN_OUT, acceptToken: REMOTE_ACCEPT,
     ...(panelAccess !== undefined ? { panelAccess } : {}),
@@ -326,20 +326,38 @@ async function federazioneDiProva(panelPort, { panelAccess } = {}) {
   // HUB: la PWA entra con il Bearer, la risorsa viaggia sulla via federata.
   const hubNodesPath = path.join(dir, 'hub-nodes.json');
   const hst = nodesStore.addNode(nodesStore.emptyStore(HUB_NODE_ID), {
-    name: 'Remoto', remotePort: 41820, localPort: remoteFedSrv.address().port,
+    name: 'remoto', remotePort: 41820, localPort: remoteFedSrv.address().port,
     direction: 'inbound', transport: 'inbound', autostart: true, shared: true,
     visibility: 'network', nodeId: REMOTE_NODE_ID, token: HUB_TOKEN, acceptToken: 'd'.repeat(40),
   });
   nodesStore.atomicWriteStore(hubNodesPath, hst);
   const hubApp = express();
-  hubApp.use('/api/route', requireToken({ get: () => TOKEN }), federation.routeHandler({
+  // Come in server.js: le panel-resource federate NON-ticket transitano PRIMA
+  // del requireToken (l'iframe non porta header; il ticket lo valida il nodo
+  // proprietario). L'emissione del ticket resta dietro Bearer.
+  const hubRouter = federation.routeHandler({
     nodesPath: hubNodesPath, localPort: 1, localCredential: () => 'hub', ingress: null, hopSecret: 'hopsegreto',
-  }));
+  });
+  hubApp.use('/api/route', (req, res, next) => {
+    const i = req.url.indexOf('/_/');
+    if (i !== -1) {
+      const resource = req.url.slice(i + 2);
+      if (/^\/panel\/[A-Za-z0-9._-]{1,32}(?:\/.*)?$/.test(resource)
+        && !(req.method === 'POST' && /^\/panel\/[A-Za-z0-9._-]{1,32}\/ticket\/?$/.test(resource))) {
+        return hubRouter(req, res, next);
+      }
+    }
+    return requireToken({ get: () => TOKEN })(req, res, next);
+  });
+  hubApp.use('/api/route', requireToken({ get: () => TOKEN }), hubRouter);
   const hubSrv = http.createServer(hubApp);
   await listen(hubSrv);
 
   return {
     base: `http://127.0.0.1:${hubSrv.address().port}`,
+    hubSrv, hubPort: hubSrv.address().port, hubNodesPath,
+    remoteFedSrv, remoteNodesPath, remoteApiSrv, remoteApiPort: remoteApiSrv.address().port,
+    remoteAuth: auth,
     close: async () => {
       for (const srv of [hubSrv, remoteFedSrv, remoteApiSrv]) await new Promise((r) => srv.close(r));
       fs.rmSync(dir, { recursive: true, force: true });
@@ -353,7 +371,7 @@ test('dal vivo FEDERATO: ticket, cookie riscritto col prefisso della route, sott
   t.after(() => { panel.wss.close(); panel.server.close(); void fed.close(); });
 
   // 1. La PWA chiede il ticket per la cella A del nodo Remoto, via federata.
-  const tk = await fetch(`${fed.base}/api/route/Remoto/_/panel/A/ticket`, {
+  const tk = await fetch(`${fed.base}/api/route/remoto/_/panel/A/ticket`, {
     method: 'POST', headers: { authorization: `Bearer ${TOKEN}` },
   });
   assert.equal(tk.status, 200, 'emissione federata del ticket');
@@ -363,19 +381,19 @@ test('dal vivo FEDERATO: ticket, cookie riscritto col prefisso della route, sott
   // 2. L'iframe remoto: prima richiesta col ticket. Sotto, l'hop federato ha
   //    iniettato il Bearer del NODO — e il ticket ha precedenza, altrimenti
   //    verrebbe inghiottito dal Bearer e il cookie non nascerebbe mai.
-  const page = await richiedi(`${fed.base}/api/route/Remoto/_/panel/A/page.html?ticket=${ticket}`);
+  const page = await richiedi(`${fed.base}/api/route/remoto/_/panel/A/page.html?ticket=${ticket}`);
   assert.equal(page.status, 200);
   assert.match(page.body, /pannello/);
   const sc = page.setCookie || '';
   assert.match(
     sc,
-    /Path=\/api\/route\/Remoto\/_\/panel\/A;/,
+    /Path=\/api\/route\/remoto\/_\/panel\/A;/,
     'cookie riscritto col prefisso federato: è QUESTO path che il browser usa per le sotto-risorse',
   );
 
   // 3. La sotto-risorsa remota passa col cookie: il giro completo, non un frame bianco.
   const cookie = sc.split(';')[0];
-  const asset = await richiedi(`${fed.base}/api/route/Remoto/_/panel/A/app.js`, { headers: { cookie } });
+  const asset = await richiedi(`${fed.base}/api/route/remoto/_/panel/A/app.js`, { headers: { cookie } });
   assert.equal(asset.status, 200, 'la sotto-risorsa remota è servita col cookie di visione');
   assert.match(asset.body, /panel/);
 });
@@ -388,7 +406,66 @@ test('dal vivo FEDERATO: nodo che NON concede panelAccess → 403 panel-not-gran
   // Il gate sta sul nodo che possiede il pannello: il rifiuto attraversa la
   // federazione e arriva al browser COME CAUSA con nome — è lo stato
   // 'not-granted' del CellPanel, con la sua azione (concedere sul nodo).
-  const r = await richiedi(`${fed.base}/api/route/Remoto/_/panel/A/page.html?ticket=quello-che-vuoi`);
+  const r = await richiedi(`${fed.base}/api/route/remoto/_/panel/A/page.html?ticket=quello-che-vuoi`);
   assert.equal(r.status, 403);
   assert.match(r.body, /panel-not-granted/, 'la causa è nominata, non collassata');
+});
+
+test('dal vivo FEDERATO: la WebSocket del pannello remoto attraversa l\'hub col cookie di visione', async (t) => {
+  const panel = await pannelloFinto();
+  const fed = await federazioneDiProva(panel.port, { panelAccess: true });
+  t.after(() => { panel.wss.close(); panel.server.close(); void fed.close(); });
+  // Gli upgrade dell'hub: come in server.js, le panel federate col cookie
+  // transitano anche senza token (decide il nodo proprietario).
+  fed.hubSrv.on('upgrade', (req, socket, head) => {
+    const panelFed = /^\/api\/route\/[^?#]*\/_\/panel\/[A-Za-z0-9._-]{1,32}(?:\/.*)?$/.test(req.url)
+      && /(?:^|;\s*)npanel=/.test(String(req.headers.cookie || ''));
+    const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!panelFed && bearer !== TOKEN) return socket.destroy();
+    federation.forwardUpgrade({
+      req, socket, head, nodesPath: fed.hubNodesPath, localPort: 1,
+      localCredential: () => 'hub', ingress: null, hopSecret: 'hopsegreto',
+    });
+  });
+  // Gli upgrade del nodo remoto: il peer si identifica col token federativo.
+  fed.remoteFedSrv.on('upgrade', (req, socket, head) => {
+    const ingress = federation.peerFromToken(fed.remoteNodesPath, String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
+    if (!ingress) return socket.destroy();
+    federation.forwardUpgrade({
+      req, socket, head, nodesPath: fed.remoteNodesPath, localPort: fed.remoteApiPort,
+      localCredential: () => 'remoto-buono', ingress, hopSecret: 'hopsegreto',
+    });
+  });
+  // E l'upgrade dell'API remota finisce nel pannello, come in server.js.
+  fed.remoteApiSrv.on('upgrade', (req, socket, head) => {
+    handlePanelUpgrade({
+      req, socket, head, resolveCellPanel: async (id) => (id === 'A' ? `http://127.0.0.1:${panel.port}` : undefined),
+      authorize: fed.remoteAuth.authorizeUpgrade,
+    });
+  });
+
+  // Il flusso del browser: ticket federato → prima richiesta (cookie) → ws.
+  const tk = await fetch(`${fed.base}/api/route/remoto/_/panel/A/ticket`, {
+    method: 'POST', headers: { authorization: `Bearer ${TOKEN}` },
+  });
+  assert.equal(tk.status, 200);
+  const { ticket } = await tk.json();
+  const page = await richiedi(`${fed.base}/api/route/remoto/_/panel/A/page.html?ticket=${ticket}`);
+  assert.equal(page.status, 200);
+  const cookie = (page.setCookie || '').split(';')[0];
+
+  const ws = new WebSocket(`ws://127.0.0.1:${fed.hubPort}/api/route/remoto/_/panel/A/websockify`, { headers: { cookie } });
+  const ricevuti = await new Promise((resolve, reject) => {
+    const out = [];
+    const timer = setTimeout(() => reject(new Error('nessun frame: il pannello remoto resterebbe nero')), 5000);
+    ws.on('message', (data) => {
+      out.push(String(data));
+      if (out.length === 1) ws.send('ciao');
+      if (out.length === 2) { clearTimeout(timer); resolve(out); }
+    });
+    ws.on('error', (e) => { clearTimeout(timer); reject(e); });
+  });
+  ws.close();
+  assert.equal(ricevuti[0], 'benvenuto');
+  assert.equal(ricevuti[1], 'eco:ciao');
 });
