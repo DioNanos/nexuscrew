@@ -11,7 +11,7 @@ import { useNodes } from '../hooks/useNodes.js';
 import RosterHandle from './RosterHandle.jsx';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
-import { hostRenderState, hostNextAction } from '../lib/host-designation.js';
+import { hostRenderState, hostNextAction, hostLeaseTitleKey } from '../lib/host-designation.js';
 import PinPersistBanner from './PinPersistBanner.jsx';
 import {
   rel, nodeStateLabel, healthDot, healthTitle, buildLocalRoster, buildRemoteRoster,
@@ -28,7 +28,7 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 // apertura, filtro, pin e ordine hanno quindi un solo contratto condiviso
 // (hook useRosterPreferences + model roster-view-model).
 
-export default function SessionList({ onPick, token, onSettings, onOpenVlSession, hostCell = null, onDesignateCell, onClearHostCell }) {
+export default function SessionList({ onPick, token, onSettings, onOpenVlSession, hostCell = null, hostLease = null, onDesignateCell, onClearHostCell }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   // Gruppi per-nodo remoto (B2): zero nodi configurati -> [] e home identica.
   const nodeGroups = useNodes(token);
@@ -262,9 +262,14 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
       const session = route.length
         ? (group?.sessions || []).find((candidate) => candidate.name === c.tmuxSession)
         : byName.get(c.tmuxSession);
-      const stateTitle = c.degraded
+      // Come in Sidebar: sull'host designato il titolo porta anche lo stato del
+      // lease. Solo per le celle LOCALI — `hostLease` descrive la designazione di
+      // questo nodo, e appiccicarlo a una cella federata direbbe una cosa falsa.
+      const leaseKey = position === 'local' ? hostLeaseTitleKey(starState, hostLease) : null;
+      const baseStateTitle = c.degraded
         ? t('cell-degraded')
         : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
+      const stateTitle = leaseKey ? `${baseStateTitle} · ${t(leaseKey)}` : baseStateTitle;
       const canPower = route.length === 0 || (group?.capabilities || []).includes(c.active ? 'down' : 'up');
       const canBoot = route.length === 0
         ? fleetCapabilities.includes('boot')
