@@ -331,3 +331,28 @@ test('panelAccess: la vista redatta lo mostra — e una decisione dell operatore
   assert.equal(red.panelAccess, true);
   assert.ok(!('token' in red), 'il token resta fuori');
 });
+
+// Stessa regola di panelAccess, stessa ragione: la cella ospite Live e'
+// un'azione del nodo che la possiede, e la designazione da un peer remoto non
+// si concede acquisendola per anzianita' del pairing.
+test('liveHostAccess: default NEGATO, e un record vecchio non lo acquisisce per anzianita', () => {
+  const base = validStore().nodes[0];
+  const parsed = store.parseNode(base, 1);
+  assert.ok(parsed, 'un record senza il campo resta valido');
+  assert.equal(parsed.liveHostAccess, false, 'assente non significa concesso');
+
+  const concesso = store.parseNode({ ...base, liveHostAccess: true }, 1);
+  assert.equal(concesso.liveHostAccess, true, 'si concede per singolo nodo');
+
+  for (const cattivo of ['true', 'false', 1, 0, null, {}]) {
+    assert.equal(store.parseNode({ ...base, liveHostAccess: cattivo }, 1), null,
+      `liveHostAccess=${JSON.stringify(cattivo)} invalida il record invece di essere indovinato`);
+  }
+});
+
+test('liveHostAccess: la vista redatta lo mostra — e una decisione dell operatore, non un segreto', () => {
+  const base = validStore().nodes[0];
+  const red = store.redactNode(store.parseNode({ ...base, liveHostAccess: true }, 1));
+  assert.equal(red.liveHostAccess, true);
+  assert.ok(!('token' in red), 'il token resta fuori');
+});
