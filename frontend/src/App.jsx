@@ -134,8 +134,11 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
   // D8: pannello grafico per-cella. `panelUrl` arriva dal fleetStatus (contratto
   // col backend: stringa per-cella, opzionale, già validata a monte http/https
   // loopback — qui si consuma, non si ri-valida). Opt-in totale: senza campo
-  // né il bottone né il pannello esistono.
+  // né il bottone né il pannello esistono. L'iframe NON punta al panelUrl
+  // grezzo (loopback della macchina remota): punta alla NOSTRA route con un
+  // ticket di visione — via locale o federata a seconda del nodo della cella.
   const [panelUrl, setPanelUrl] = useState('');
+  const [panelCellId, setPanelCellId] = useState('');
   const [showPanel, setShowPanel] = useState(false);
   const zoom = (delta) => setFontSize((v) => {
     const next = Math.max(FONT_MIN, Math.min(FONT_MAX, v + delta));
@@ -185,8 +188,10 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
       }));
       // D8: campo opzionale; assente o vuoto (anche solo spazi) → nessun
       // pannello. Non è una ri-validazione: è la resa dello stato "nessun
-      // pannello configurato".
+      // pannello configurato". Serve anche l'ID della cella: è la chiave con
+      // cui si chiede il ticket di visione sul nodo che la possiede.
       setPanelUrl(typeof cell?.panelUrl === 'string' ? cell.panelUrl.trim() : '');
+      setPanelCellId(typeof cell?.cell === 'string' ? cell.cell : '');
       let txt = '';
       if (cell) txt = `${cell.engine}${cell.key ? `·${cell.key}` : ''}`;
       else if (sess) txt = sess.attached ? `attached · ${rel(sess.activity)}` : (sess.activity ? rel(sess.activity) : '');
@@ -221,9 +226,17 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
           selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
           keyboardGesture={inputPreferences.terminalKeyboardGesture} />
         {/* D8: pannello in alternativa al terminale, overlay assoluto — il
-            terminale resta montato (PTY vivo, nessun reflow al toggle). */}
-        {showPanel && panelUrl && (
-          <CellPanel url={panelUrl} title={title} />
+            terminale resta montato (PTY vivo, nessun reflow al toggle).
+            L'ingresso passa dal ticket: la PWA lo chiede e l'iframe punta
+            alla nostra route (locale o federata), mai al panelUrl grezzo. */}
+        {showPanel && panelUrl && panelCellId && (
+          <CellPanel
+            cellId={panelCellId}
+            panelUrl={panelUrl}
+            route={node ? node.split('/') : []}
+            token={token}
+            title={title}
+          />
         )}
       </div>
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} onCellSwitcher={onCellSwitcher} cellSwitcherOpen={cellSwitcherOpen}

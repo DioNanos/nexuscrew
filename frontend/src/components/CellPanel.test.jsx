@@ -2,149 +2,114 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-// L'i18n è mockato con la traduzione italiana REALE di 'panel-unreachable':
-// il test verifica che il messaggio dichiari il limite (entrambe le cause),
-// non solo che la chiave esista. Le altre chiavi passano attraverso.
+// L'i18n è mockato con le traduzioni italiane REALI delle cause nuove: il test
+// verifica che il messaggio dica la causa GIUSTA (nonGranted dice «concedere
+// sul nodo», denied dice «biglietto»), non solo che la chiave esista.
 vi.mock('../lib/i18n.js', () => ({
-  t: (k) => (k === 'panel-unreachable'
-    ? 'Pannello non raggiungibile: servizio fermo oppure certificato non ancora accettato. Apri l\'URL in una scheda: se è il certificato, accettalo lì, poi torna qui.'
-    : k),
+  t: (k) => ({
+    'panel-not-granted': 'Questo nodo non concede il pannello a chi lo chiede: l\'accesso va concesso sul nodo che possiede la cella, non riprovando qui.',
+    'panel-denied': 'Ingresso al pannello rifiutato: il biglietto non è più valido. Riprova: verrà chiesto un biglietto nuovo.',
+  }[k] || k),
+}));
+
+// Il ticket arriva da requestPanelTicket: qui si mocka SOLO il trasporto —
+// i casi danno gli esiti classificati che il vero modulo produce.
+vi.mock('../lib/api.js', () => ({
+  requestPanelTicket: vi.fn(),
+  routeBase: (route) => Array.isArray(route) && route.length
+    ? `/api/route/${route.map(encodeURIComponent).join('/')}/_` : '',
 }));
 
 import CellPanel from './CellPanel.jsx';
+import { requestPanelTicket } from '../lib/api.js';
 
-describe('CellPanel (D8: pannello per-cella da panelUrl)', () => {
-  let openSpy;
+const ticketOk = (ticket = 'TK-1234567890') => requestPanelTicket.mockResolvedValue({ ok: true, ticket });
 
-  beforeEach(() => {
-    openSpy = vi.fn();
-    vi.stubGlobal('open', openSpy);
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+describe('CellPanel (D8: ingresso al pannello via ticket)', () => {
+  beforeEach(() => { requestPanelTicket.mockReset(); });
+  afterEach(() => { vi.clearAllMocks(); });
 
-  it('stato 1 — url assente o vuota: lo stato è reso, nessun iframe', () => {
-    const { container } = render(<CellPanel url="" title="Dev" />);
-    // Lo stato è reso (role=status), non un silenzio.
+  it('senza cella o senza token: stato reso (panel-none), nessun iframe, nessuna richiesta', () => {
+    const { container } = render(<CellPanel cellId="" panelUrl="https://127.0.0.1:6901/vnc.html" route={[]} token="t" title="A" />);
     expect(screen.getByRole('status').textContent).toContain('panel-none');
-    // Nessun iframe in nessuna forma.
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(requestPanelTicket).not.toHaveBeenCalled();
+  });
+
+  it('flusso locale: ticket ok → iframe alla NOSTRA route con la pagina del panelUrl, mai al panelUrl grezzo', async () => {
+    ticketOk();
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/vnc.html" route={[]} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    const src = container.querySelector('iframe').getAttribute('src');
+    expect(src.startsWith('/panel/A/vnc.html?ticket=TK-1234567890')).toBe(true);
+    expect(src.includes('127.0.0.1:6901')).toBe(false, 'il loopback del container non compare mai nell\'iframe');
+    expect(requestPanelTicket).toHaveBeenCalledWith('t', [], 'A', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it('flusso REMOTO: il ticket e l\'iframe passano dalla via federata del nodo', async () => {
+    ticketOk('TK-REMOTE');
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={['Pixel']} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    expect(requestPanelTicket).toHaveBeenCalledWith('t', ['Pixel'], 'A', expect.anything());
+    const src = container.querySelector('iframe').getAttribute('src');
+    expect(src.startsWith('/api/route/Pixel/_/panel/A/?ticket=TK-REMOTE')).toBe(true);
+  });
+
+  it('not-granted: causa NOMINATA con la sua azione (concedere sul nodo), non collassata', async () => {
+    requestPanelTicket.mockResolvedValue({ ok: false, cause: 'not-granted' });
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('non concede il pannello'); });
+    expect(screen.getByRole('status').textContent).toContain('nodo che possiede la cella');
     expect(container.querySelector('iframe')).toBeNull();
   });
 
-  it('stato 1 (variante) — url undefined: stessa resa esplicita', () => {
-    const { container } = render(<CellPanel title="Dev" />);
-    expect(screen.getByRole('status').textContent).toContain('panel-none');
-    expect(container.querySelector('iframe')).toBeNull();
-  });
-
-  it('probe OK — iframe presente con l\'URL esatto della cella', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({})));
-    const { container } = render(<CellPanel url="https://127.0.0.1:6901" title="Dev" />);
-    await waitFor(() => {
-      const frame = container.querySelector('iframe');
-      expect(frame).toBeTruthy();
-      expect(frame.getAttribute('src')).toBe('https://127.0.0.1:6901');
-    });
-  });
-
-  it('stati 2/3 — probe fallita: rende il limite (entrambe le cause) e l\'azione scheda', async () => {
-    // Certificato self-signed rifiutato e servizio fermo producono lo stesso
-    // esito osservabile (fetch no-cors -> TypeError): il pannello NON indovina,
-    // dichiara entrambe le cause (limite scritto) e offre l'azione.
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
-    render(<CellPanel url="https://127.0.0.1:6901" title="Dev" />);
-    const status = await screen.findByRole('status');
-    expect(status.textContent).toContain('Pannello non raggiungibile');
-    // Il messaggio dichiara il limite: entrambe le cause nominate.
-    expect(status.textContent).toContain('certificato');
-    expect(status.textContent).toContain('raggiungibile');
-    // Nessun iframe mentre la probe è rossa.
-    expect(document.querySelector('iframe')).toBeNull();
-    // Azione suggerita: aprire l'URL in una scheda (accetta il certificato).
-    fireEvent.click(screen.getByTitle('panel-open'));
-    expect(openSpy).toHaveBeenCalledWith('https://127.0.0.1:6901', '_blank', 'noopener,noreferrer');
-  });
-
-  it('stati 2/3 — Riprova riesegue la probe: da rossa a iframe verde', async () => {
-    let calls = 0;
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      calls += 1;
-      if (calls === 1) throw new TypeError('Failed to fetch');
-      return {};
-    }));
-    const { container } = render(<CellPanel url="https://127.0.0.1:6901" title="Dev" />);
-    await screen.findByRole('status'); // unreachable
+  it('denied (biglietto rifiutato): messaggio proprio, e Riprova chiede un biglietto NUOVO', async () => {
+    requestPanelTicket.mockResolvedValueOnce({ ok: false, cause: 'denied' });
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('biglietto non è più valido'); });
+    requestPanelTicket.mockResolvedValueOnce({ ok: true, ticket: 'TK-NUOVO' });
     fireEvent.click(screen.getByTitle('panel-retry'));
-    await waitFor(() => {
-      expect(container.querySelector('iframe')).toBeTruthy();
-    });
-    expect(calls).toBe(2);
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    expect(container.querySelector('iframe').getAttribute('src')).toContain('ticket=TK-NUOVO');
+    expect(requestPanelTicket).toHaveBeenCalledTimes(2);
   });
 
-  it('ritorno alla scheda (visibilitychange) dopo l\'accettazione: auto-riprova', async () => {
-    let calls = 0;
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      calls += 1;
-      if (calls === 1) throw new TypeError('Failed to fetch');
-      return {};
+  it('unauthorized e no-panel: cause distinte dal backend, rese con lo stato giusto', async () => {
+    requestPanelTicket.mockResolvedValueOnce({ ok: false, cause: 'unauthorized' });
+    const { container, rerender } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('biglietto non è più valido'); });
+    requestPanelTicket.mockResolvedValueOnce({ ok: false, cause: 'no-panel' });
+    rerender(<CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" />);
+    await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('panel-none'); });
+    expect(container.querySelector('iframe')).toBeNull();
+  });
+
+  it('timeout deterministico: il nostro timer chiude la partita, stato panel-timeout NON unreachable', async () => {
+    requestPanelTicket.mockImplementation((_t, _route, _cell, { signal }) => new Promise((_res, rej) => {
+      signal.addEventListener('abort', () => rej(new DOMException('The operation was aborted.', 'AbortError')));
     }));
-    const { container } = render(<CellPanel url="https://127.0.0.1:6901" title="Dev" />);
-    await screen.findByRole('status'); // unreachable
-    fireEvent.click(screen.getByTitle('panel-open')); // l'operatore accetta il certificato lì
-    document.dispatchEvent(new Event('visibilitychange')); // e torna
-    await waitFor(() => {
-      expect(container.querySelector('iframe')).toBeTruthy();
-    });
-    expect(calls).toBe(2);
-  });
-
-  // --- timeout: causa DETERMINISTICA distinta (rilievo 2 audit D8) ----------
-  // La probe che non risponde entro il limite viene chiusa dal NOSTRO timer
-  // (AbortController): AbortError è riconoscibile e vale uno stato PROPRIO.
-  // L'azione di chi legge è RIPROVARE, non andare a cercare un certificato:
-  // mostrarlo come unreachable indirizzerebbe l'operatore dalla parte sbagliata.
-  // La fetch qui sotto non risponde mai ma onora l'AbortSignal: è l'abort del
-  // timer a chiudere la partita, in modo deterministico.
-  it('timeout — la probe scade: stato proprio panel-timeout, NON unreachable', async () => {
-    vi.stubGlobal('fetch', vi.fn((_url, opts) => new Promise((_resolve, reject) => {
-      opts.signal.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')));
-    })));
-    render(<CellPanel url="https://127.0.0.1:6901" title="Dev" probeTimeoutMs={30} />);
-    // waitFor sul CONTENUTO: il primo render è 'checking' (role=status esiste
-    // subito), la scadenza arriva col timer.
+    render(<CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" requestTimeoutMs={30} />);
     await waitFor(() => {
       expect(screen.getByRole('status').textContent).toContain('panel-timeout');
     }, { timeout: 2000 });
-    const status = screen.getByRole('status');
-    expect(status.textContent).not.toContain('panel-unreachable');
-    expect(status.textContent).not.toContain('Pannello non raggiungibile');
-    // nel dubbio: l'azione del timeout è solo Riprova, niente "apri in una
-    // scheda" (quella cura il certificato, che qui non c'entra).
+    expect(screen.getByRole('status').textContent).not.toContain('unreachable');
     expect(screen.queryByTitle('panel-open')).toBeNull();
-    expect(screen.getByTitle('panel-retry')).toBeTruthy();
-    expect(document.querySelector('iframe')).toBeNull();
   });
 
-  it('timeout — Riprova dopo la scadenza riesegue la probe e può arrivare verde', async () => {
-    let calls = 0;
-    vi.stubGlobal('fetch', vi.fn((_url, opts) => {
-      calls += 1;
-      if (calls === 1) {
-        return new Promise((_resolve, reject) => {
-          opts.signal.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')));
-        });
-      }
-      return Promise.resolve({});
-    }));
-    const { container } = render(<CellPanel url="https://127.0.0.1:6901" title="Dev" probeTimeoutMs={30} />);
-    await waitFor(() => {
-      expect(screen.getByRole('status').textContent).toContain('panel-timeout');
-    }, { timeout: 2000 });
-    fireEvent.click(screen.getByTitle('panel-retry'));
-    await waitFor(() => {
-      expect(container.querySelector('iframe')).toBeTruthy();
-    });
-    expect(calls).toBe(2);
+  it('rete che cade: panel-unreachable (verso la NOSTRA origine) con Riprova', async () => {
+    requestPanelTicket.mockRejectedValue(new TypeError('Failed to fetch'));
+    render(<CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" />);
+    await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('panel-unreachable'); });
+    expect(screen.getByTitle('panel-retry')).toBeTruthy();
   });
 });

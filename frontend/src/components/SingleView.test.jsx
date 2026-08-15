@@ -24,7 +24,15 @@ vi.mock('./DeckBar.jsx', () => ({ default: () => null }));
 vi.mock('./SettingsPanel.jsx', () => ({ default: () => null }));
 vi.mock('./Wizard.jsx', () => ({ default: () => null }));
 vi.mock('./NotifyCenter.jsx', () => ({ default: () => null }));
-vi.mock('./CellPanel.jsx', () => ({ default: ({ url, title }) => <div data-testid="cellpanel" data-url={url} data-title={title} /> }));
+vi.mock('./CellPanel.jsx', () => ({
+  // Contratto D8 nuovo: SingleView consegna le COORDINATE per il ticket di
+  // visione (cellId, panelUrl, route del nodo, token) — è CellPanel che chiede
+  // il ticket e punta l'iframe alla NOSTRA route, mai al panelUrl grezzo.
+  default: ({ cellId, panelUrl, route, token, title }) => (
+    <div data-testid="cellpanel" data-cell={cellId} data-panelurl={panelUrl}
+      data-route={(route || []).join('/')} data-token={token} data-title={title} />
+  ),
+}));
 vi.mock('../lib/i18n.js', () => ({ t: (k) => k }));
 vi.mock('../hooks/useLang.js', () => ({ useLang: () => ['en', vi.fn()] }));
 
@@ -132,7 +140,7 @@ describe('SingleView — pannello per-cella (D8, panelUrl)', () => {
     expect(screen.queryByTestId('cellpanel')).toBeNull();
   });
 
-  it('cella con panelUrl: bottone presente, pannello chiuso finché non aperto, poi URL esatto', async () => {
+  it('cella con panelUrl: pannello chiuso finché non aperto, poi coordinate esatte per il ticket (LOCALE)', async () => {
     fixture.cells = [{ cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'claude.native', key: 'A', panelUrl: 'https://127.0.0.1:6901' }];
     render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
     const btn = await screen.findByTitle('panel');
@@ -140,11 +148,26 @@ describe('SingleView — pannello per-cella (D8, panelUrl)', () => {
     expect(screen.queryByTestId('cellpanel')).toBeNull();
     fireEvent.click(btn);
     const panel = screen.getByTestId('cellpanel');
-    expect(panel.getAttribute('data-url')).toBe('https://127.0.0.1:6901');
+    // Il pannello riceve le coordinate per chiedere il ticket: cellId, panelUrl
+    // (da cui il percorso della pagina), la via (vuota = locale) e il token.
+    // L'URL grezzo NON è più ciò che finisce nell'iframe: è un ingresso della
+    // richiesta, e il test fissa QUESTO contratto.
+    expect(panel.getAttribute('data-cell')).toBe('Dev');
+    expect(panel.getAttribute('data-panelurl')).toBe('https://127.0.0.1:6901');
+    expect(panel.getAttribute('data-route')).toBe('');
+    expect(panel.getAttribute('data-token')).toBe('t');
     // Il bottone dichiara lo stato (aria-pressed) e il pannello si chiude di nuovo.
     expect(btn.getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(btn);
     expect(screen.queryByTestId('cellpanel')).toBeNull();
+  });
+
+  it('cella REMOTA: le coordinate portano la via federata del nodo che la possiede', async () => {
+    fixture.cells = [{ cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'claude.native', key: 'A', panelUrl: 'https://127.0.0.1:6901' }];
+    render(<SingleView session="cloud-Dev" node="Pixel" token="t" onBack={vi.fn()} />);
+    fireEvent.click(await screen.findByTitle('panel'));
+    const panel = screen.getByTestId('cellpanel');
+    expect(panel.getAttribute('data-route')).toBe('Pixel', 'il ticket e l\'iframe passano da /api/route/Pixel/_');
   });
 
   it('cambio sessione resetta il pannello (nessun leakage fra celle)', async () => {
