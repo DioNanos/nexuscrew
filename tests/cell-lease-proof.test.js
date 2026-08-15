@@ -3,7 +3,7 @@
 // del supervisore (contratto rev1: PREMESSA, A2/B1, D1/D2, C4, C3-sospesa).
 // Il canale e i side effect sono quelli veri del manager (TCP pair come nella
 // suite 2a): qui si prova che il modello di autorizzazione e' cambiato.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const net = require('node:net');
 const fs = require('node:fs');
@@ -11,6 +11,15 @@ const os = require('node:os');
 const path = require('node:path');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const { verifyProof, loadOrCreateVerifier } = require('../lib/fleet/lease-verifier.js');
+
+// I socket aperti da pair(): senza chiuderli il processo NON ESCE dopo l'ultimo
+// test — con `--test-timeout=0` il gate intero resta appeso senza un rosso, e
+// sembra lento invece che rotto. Cinque socket misurati con
+// process._getActiveHandles().
+const socketAperti = [];
+after(() => {
+  for (const s of socketAperti) { try { s.destroy(); } catch (_) { /* gia' chiuso */ } }
+});
 
 function pair() {
   return new Promise((resolve, reject) => {
@@ -21,7 +30,11 @@ function pair() {
       const port = srv.address().port;
       const client = net.createConnection(port, '127.0.0.1', () => {
         const wait = () => {
-          if (pending) { srv.close(() => {}); resolve({ serverSide: pending, client }); }
+          if (pending) {
+            srv.close(() => {});
+            socketAperti.push(pending, client);
+            resolve({ serverSide: pending, client });
+          }
           else setTimeout(wait, 2);
         };
         wait();
