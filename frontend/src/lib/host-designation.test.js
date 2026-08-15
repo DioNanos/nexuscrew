@@ -105,3 +105,32 @@ describe('ciclo end-to-end su item reale (desktop e mobile usano lo stesso model
     expect(hostRenderState({ hostCell: 'Dev', pins: [dev.key], item: dev })).toBe(HOST_LIVE);
   });
 });
+
+// --- Seam lease↔designazione: lo stato lease arriva DISTINTO a chi legge ------
+// I cinque stati (live|grace|expired|none|unavailable) non collassano: chi legge
+// la stellina deve distinguere «non idonea perche' morta» da «non idonea perche'
+// in recupero». Ogni stato ha la propria chiave i18n (guardia: parita' it/en/es).
+import { hostLeaseTitleKey } from './host-designation.js';
+
+describe('hostLeaseTitleKey', () => {
+  const dev = localItems().find((i) => i.value.cell === 'Dev');
+
+  it('live host: una chiave DISTINCTA per ognuno dei cinque stati', () => {
+    expect(hostLeaseTitleKey('live', 'live')).toBe('host-lease-live');
+    expect(hostLeaseTitleKey('live', 'grace')).toBe('host-lease-grace');
+    expect(hostLeaseTitleKey('live', 'expired')).toBe('host-lease-expired');
+    expect(hostLeaseTitleKey('live', 'none')).toBe('host-lease-none');
+    expect(hostLeaseTitleKey('live', 'unavailable')).toBe('host-lease-unavailable');
+  });
+
+  it('nessuno stato lease da mostrare fuori dal live host, o senza stato dal server', () => {
+    expect(hostLeaseTitleKey('favorite', 'grace')).toBeNull();
+    expect(hostLeaseTitleKey('none', 'live')).toBeNull();
+    expect(hostLeaseTitleKey('live', null)).toBeNull();
+    expect(hostLeaseTitleKey('live', undefined)).toBeNull();
+  });
+
+  it('uno stato sconosciuto non inventa una etichetta (nessuna bugia)', () => {
+    expect(hostLeaseTitleKey('live', 'bogus')).toBeNull();
+  });
+});

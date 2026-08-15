@@ -37,3 +37,19 @@ export function hostNextAction(renderState) {
   if (renderState === HOST_FAVORITE) return 'designate';
   return 'addPin';
 }
+
+// Seam lease↔designazione (2026-08-15): lo stato lease dell'host designato,
+// distintamente. I cinque stati del backend (live|grace|expired|none|
+// unavailable) non collassano: chi legge distingue «non idonea perche' morta»
+// da «non idonea perche' in recupero». Ogni stato ha la propria chiave i18n
+// (guardia tests/i18n.test.js: parita' it/en/es, mai vuote).
+// - Solo il LIVE HOST mostra lo stato lease: fuori dal live non c'e' soggetto.
+// - Stato assente (server vecchio che non espone host.lease) o sconosciuto:
+//   NESSUNA etichetta — mai una bugia per riempire lo spazio.
+const HOST_LEASE_STATES = Object.freeze(['live', 'grace', 'expired', 'none', 'unavailable']);
+
+export function hostLeaseTitleKey(renderState, hostLease) {
+  if (renderState !== HOST_LIVE) return null;
+  if (!HOST_LEASE_STATES.includes(hostLease)) return null;
+  return `host-lease-${hostLease}`;
+}
