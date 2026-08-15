@@ -35,7 +35,14 @@ function pair() {
     });
   });
 }
-const recv = (sock, pred, ms = 500) => new Promise((resolve, reject) => {
+// Stessa guardia di liveness di cell-lease-server, e stesso motivo: il timeout
+// di recv dice «il messaggio non arrivera' MAI», non «e' arrivato tardi». Su
+// loopback in-process arriva in pochi ms; i 500ms del vecchio default non
+// proteggevano nulla e sotto il load di base di questa macchina (>7, flotta
+// attiva, runner a concorrenza 2) li superava lo scheduling, non un difetto —
+// il file cadeva 1 volta su 3 anche ISOLATO, con la firma «recv timeout».
+// 5000ms coprono il «mai» restando invisibili quando tutto funziona.
+const recv = (sock, pred, ms = 5000) => new Promise((resolve, reject) => {
   let buf = '';
   const to = setTimeout(() => { sock.removeListener('data', on); reject(new Error('recv timeout')); }, ms);
   const on = (c) => {

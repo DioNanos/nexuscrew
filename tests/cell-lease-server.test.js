@@ -33,7 +33,14 @@ function pair() {
   });
 }
 
-function recv(client, predicate, timeoutMs = 500) {
+// Il timeout di recv e' una guardia di liveness, non un'asserzione sul tempo:
+// il messaggio o arriva (loopback in-process, di norma pochi ms) o non arriva
+// mai (difetto). Il vecchio default di 500ms non proteggeva niente e sotto load
+// di base >7 (flotta attiva, runner a concorrenza 2) un event loop satura
+// superava i 500ms di scheduling e il file dava rossi casuali nel gate, verdi
+// in isolamento — la firma esatta del debito soglie di README-flake.md.
+// 5000ms coprono il «mai» restando invisibili quando tutto va bene.
+function recv(client, predicate, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
     let buf = '';
     const to = setTimeout(() => { cleanup(); reject(new Error('recv timeout')); }, timeoutMs);
@@ -220,13 +227,16 @@ test('R3.3.4: reconnect accetta SOLO la transizione legittima (generation === cu
     const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     clock.t = 5_000;
     client.end();
-    await new Promise((r) => setTimeout(r, 30));
+    // EOF attraverso il pair: attesa guidata dall'evento (stato non piu' live),
+    // non dal cronometro — 30ms fissi erano una race sotto carico (vedi
+    // untilNotLive). Il gemello «regressione auditor» aspetta gia' cosi'.
+    await untilNotLive(mgr, 'Dev');
     // reconnect che AVANZA la generation di ESATTAMENTE 1 (un restart del
     // supervisore, cell-exec.js `generation += 1`): transizione legittima -> lease.
     clock.t = 30_000;
     const a1 = await reconnect(info.stablePath, { type: 'reconnect', generation: 1, proof });
     assert.equal(a1.type, 'lease', 'avanzamento legittimo 0->1 (un restart del supervisore) accettato');
-    await new Promise((r) => setTimeout(r, 30)); // EOF -> grace sul lease gen 1
+    await untilNotLive(mgr, 'Dev'); // EOF -> grace sul lease gen 1
     // reconnect con generation 99 (salto AVANTI arbitrario, non +1): deny. Il
     // supervisore onesto non presenterebbe mai 99 partendo da 1 (avanza di 1).
     // Il proof qui e' quello del lease gen-1 (fresco, jti non consumato): il
