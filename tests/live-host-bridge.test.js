@@ -41,7 +41,7 @@ const mockFleet = (cells) => Promise.resolve({
 // vincolante del contratto è che il ponte crei conversazioni proprie ANCHE in
 // questo stato, senza mai pilotare quella thread.
 function makeFakeDaemon({ socketPath, threadId = 'bridge-thread-0001', failThreadStart = false, delayMs = 0 } = {}) {
-  const seen = { connections: 0, methods: [], threadStarts: [] };
+  const seen = { connections: 0, methods: [], threadStarts: [], threadStops: [] };
   const server = http.createServer((_req, res) => { res.writeHead(426); res.end(); });
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (req, socket, head) => {
@@ -70,10 +70,18 @@ function makeFakeDaemon({ socketPath, threadId = 'bridge-thread-0001', failThrea
             ws.send(JSON.stringify(payload));
           };
           if (delayMs) setTimeout(respond, delayMs); else respond();
+        } else if (msg.method === 'thread/stop') {
+          seen.threadStops.push((msg.params || {}).threadId || null);
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }));
+        } else if (msg.method === 'turn/start' || msg.method === 'thread/resume') {
+          // Il VERO app-server li accetta — turn/start su qualunque thread
+          // esistente, ed e' proprio la ragione per cui il ponte non deve
+          // usarli. Un finto che li rifiutasse sarebbe piu' restrittivo del
+          // vero e nasconderebbe il pericolo: a provare che il ponte non li usa
+          // e' la spia sui metodi, non un errore di comodo. Rilievo di audit.
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { accepted: true } }));
         } else if (msg.method) {
-          // Metodo NON previsto dal ponte (turn/start, thread/resume, ...):
-          // risponde errore. La SPIA seen.methods lo renderà visibile all'assert.
-          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'metodo inatteso' } }));
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'metodo sconosciuto' } }));
         }
       });
     });
@@ -457,4 +465,29 @@ test('config: chiavi ponte nei default e negli env override (MC0 isolabile)', ()
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
   }
+});
+
+// La corsa che lascia una thread ORFANA: thread/start viene processato, ma la
+// risposta arriva DOPO che il ponte ha gia' dichiarato il timeout. Il ponte
+// fallisce e la thread esiste: se nessuno la chiude, resta viva senza che
+// nessuno la usi — un successo parziale dichiarato fallimento. Rilievo di un
+// audit indipendente.
+test('thread ORFANA: se la risposta arriva dopo il timeout, il ponte chiude comunque la thread', async () => {
+  const cwd = path.join(os.tmpdir(), 'cell-orfana');
+  fs.mkdirSync(cwd, { recursive: true });
+  const ctx = await boot({ cells: CELLS_NATIVE(cwd), timeoutMs: 150, daemonOpts: { delayMs: 400 } });
+  try {
+    await ctx.designate('cloud-Alfa');
+    const b = await j(await ctx.bridgeCall());
+
+    // L'esito per chi ha chiesto il ponte non cambia: e' un fallimento, e resta
+    // dichiarato con la sua causa.
+    assert.equal(b.mode, 'none');
+    assert.equal(b.reason, 'bridge-timeout');
+
+    // Ma la thread era nata davvero, e va chiusa.
+    await new Promise((r) => setTimeout(r, 900));
+    assert.deepEqual(ctx.daemon.seen.threadStops, ['bridge-thread-0001'],
+      'la thread nata dopo il timeout viene chiusa, non lasciata orfana');
+  } finally { await ctx.close(); }
 });
