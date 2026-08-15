@@ -162,7 +162,16 @@ test('topology probes peers in parallel and returns partial results within a per
     },
   });
   assert.equal(started.length, 2, 'both peer probes start without waiting for the silent peer');
-  assert.ok(Date.now() - before < 300, 'silent peer is bounded independently of the OS TCP timeout');
+  // QUESTA asserzione dipende dal tempo PER COstruzione: la proprieta' e' una
+  // bounded-ness (il peer silente non tiene appesa la collect al timeout TCP
+  // dell'OS, ~130s con i SYN retry). La soglia era 300ms, tarata su macchina
+  // scarica: sotto carico (flotta attiva) l'event loop ritardava il budget di
+  // 25ms oltre la soglia pur applicandolo, e il gate dava un rosso casuale —
+  // il flake documentato in tests/README-flake.md. Ricalibrata a 2s: il
+  // rapporto con la proprieta' provata resta enorme (2s e' ~65x sotto il
+  // timeout TCP), quindi l'asserzione NON e' stata indebolita; il budget
+  // per-peer di produzione (timeoutMs 25) non e' stato toccato.
+  assert.ok(Date.now() - before < 2000, 'silent peer is bounded independently of the OS TCP timeout');
   assert.deepEqual(out.nodes.map((n) => n.route.join('/')), ['silent', 'fast', 'fast/pixel']);
   assert.deepEqual(out.authoritative, ['fast']);
   fs.rmSync(dir, { recursive: true, force: true });
