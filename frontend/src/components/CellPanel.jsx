@@ -39,7 +39,7 @@ import './CellPanel.css';
 //    un problema che questo flusso non ha.
 
 export default function CellPanel({
-  cellId, panelUrl, route = [], token, title, requestTimeoutMs = 4000,
+  cellId, panelUrl, route = [], panelPort = 0, token, title, requestTimeoutMs = 4000,
 }) {
   const [state, setState] = useState(cellId && token ? 'requesting' : 'none');
   const [frameUrl, setFrameUrl] = useState('');
@@ -62,7 +62,16 @@ export default function CellPanel({
         // proxy lo risolve sulla destinazione della cella.
         let page = '/';
         try { page = new URL(panelUrl).pathname || '/'; } catch (_) { /* panelUrl già validato a monte */ }
-        setFrameUrl(`${routeBase(route)}/panel/${encodeURIComponent(cellId)}${page}?ticket=${encodeURIComponent(esito.ticket)}`);
+        // P0 sicurezza 2026-08-16: locale (route vuota) e porta pannello nota
+        // → URL ASSOLUTO verso quell'origin, mai un path sotto la nostra. Una
+        // porta diversa è ciò che rende l'origin diversa per il browser: un
+        // path relativo, per quanto corretto, resterebbe same-origin col
+        // control plane — esattamente il difetto che questo chiude. Remoto
+        // (route non vuota) o panelPort assente (0, config non ancora
+        // arrivata): via storica invariata — limite dichiarato, nessuna
+        // negoziazione porta-pannello per nodo remoto in questo giro.
+        const base = (!route.length && panelPort) ? `http://127.0.0.1:${panelPort}` : routeBase(route);
+        setFrameUrl(`${base}/panel/${encodeURIComponent(cellId)}${page}?ticket=${encodeURIComponent(esito.ticket)}`);
         setState('ready');
       } else {
         // not-granted | no-panel | unauthorized | denied: cause con nome.
@@ -74,7 +83,7 @@ export default function CellPanel({
       // AbortError = il NOSTRO timer ha chiuso la partita: deterministico.
       setState(err && err.name === 'AbortError' ? 'timeout' : 'unreachable');
     }
-  }, [cellId, panelUrl, route, token, requestTimeoutMs]);
+  }, [cellId, panelUrl, route, panelPort, token, requestTimeoutMs]);
 
   useEffect(() => { apri(); }, [apri]);
 
