@@ -469,3 +469,32 @@ test('dal vivo FEDERATO: la WebSocket del pannello remoto attraversa l\'hub col 
   assert.equal(ricevuti[0], 'benvenuto');
   assert.equal(ricevuti[1], 'eco:ciao');
 });
+
+// —— I DUE CASI CATTIVI della via federata (chiusura di sicurezza) ————————
+// ROSSI FINO AL RIMEDIO: riproducono la catena che l'audit ha aperto. Un
+// processo locale dell'hub — di qualunque utente, perché il bind su loopback
+// non isola per utente — raggiunge la via federata SENZA alcun token
+// dell'hub. L'ultimo hop entra nell'API del nodo proprietario col BEARER
+// DEL NODO, e il panelAuth di là lo accetta come fosse la PWA: il contenuto
+// esce. Questi test lo provano in modo eseguibile: finché sono rossi, il
+// difetto è aperto; il rimedio (hop proof VERIFICATA: federata ⇒ il Bearer
+// del nodo non vale, servono ticket/cookie del proprietario) li gira verdi.
+test('DIFETTO APERTO (finché rosso): solo il transito federato — nessun ticket, nessun cookie — NON deve servire il pannello', async (t) => {
+  const panel = await pannelloFinto();
+  const fed = await federazioneDiProva(panel.port, { panelAccess: true });
+  t.after(() => { panel.wss.close(); panel.server.close(); void fed.close(); });
+  const r = await richiedi(`${fed.base}/api/route/remoto/_/panel/A/page.html`);
+  assert.equal(r.status, 401, 'chi non ha né ticket né cookie non vede il pannello di un nodo remoto');
+  assert.ok(!/pannello/.test(r.body), 'e soprattutto non ne vede il CONTENUTO');
+});
+
+test('DIFETTO APERTO (finché rosso): cookie FABBRICATO più il Bearer dell\'hop NON deve servire il pannello', async (t) => {
+  const panel = await pannelloFinto();
+  const fed = await federazioneDiProva(panel.port, { panelAccess: true });
+  t.after(() => { panel.wss.close(); panel.server.close(); void fed.close(); });
+  const r = await richiedi(`${fed.base}/api/route/remoto/_/panel/A/page.html`, {
+    headers: { cookie: 'npanel=valore-fabbricato-senza-aver-mai-preso-un-ticket' },
+  });
+  assert.equal(r.status, 401, 'un cookie inventato non è un ingresso');
+  assert.ok(!/pannello/.test(r.body));
+});
