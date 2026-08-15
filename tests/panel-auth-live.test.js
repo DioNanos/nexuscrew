@@ -506,3 +506,61 @@ test('DIFETTO APERTO (finché rosso): cookie FABBRICATO più il Bearer dell\'hop
   assert.equal(r.status, 401, 'un cookie inventato non è un ingresso');
   assert.ok(!/pannello/.test(r.body));
 });
+
+// E la stessa cosa sull'UPGRADE, che è un percorso separato: forwardUpgrade non
+// passa dal middleware, quindi il confine va scritto due volte e provato due
+// volte. Per un pannello questa è la porta che conta — i frame arrivano da qui —
+// e senza questo caso la guardia dell'upgrade non avrebbe colore: si potrebbe
+// toglierla e il gate resterebbe verde.
+//
+// Il cookie è FABBRICATO apposta: serve ad attraversare l'hub (che lascia
+// transitare le panel federate che ne portano uno, perché a decidere è il nodo
+// proprietario) e ad arrivare fin dove sta la guardia. Di là il Bearer è quello
+// dell'hop, e da solo non deve aprire nulla.
+test('DIFETTO se cade: la WebSocket federata col Bearer dell\'hop e un cookie fabbricato NON deve aprirsi', async (t) => {
+  const panel = await pannelloFinto();
+  const fed = await federazioneDiProva(panel.port, { panelAccess: true });
+  t.after(() => { panel.wss.close(); panel.server.close(); void fed.close(); });
+
+  fed.hubSrv.on('upgrade', (req, socket, head) => {
+    const panelFed = /^\/api\/route\/[^?#]*\/_\/panel\/[A-Za-z0-9._-]{1,32}(?:\/.*)?$/.test(req.url)
+      && /(?:^|;\s*)npanel=/.test(String(req.headers.cookie || ''));
+    const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!panelFed && bearer !== TOKEN) return socket.destroy();
+    federation.forwardUpgrade({
+      req, socket, head, nodesPath: fed.hubNodesPath, localPort: 1,
+      localCredential: () => 'hub', ingress: null, hopSecret: 'hopsegreto',
+    });
+  });
+  fed.remoteFedSrv.on('upgrade', (req, socket, head) => {
+    const ingress = federation.peerFromToken(fed.remoteNodesPath, String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
+    if (!ingress) return socket.destroy();
+    federation.forwardUpgrade({
+      req, socket, head, nodesPath: fed.remoteNodesPath, localPort: fed.remoteApiPort,
+      localCredential: () => 'remoto-buono', ingress, hopSecret: 'hopsegreto',
+    });
+  });
+  fed.remoteApiSrv.on('upgrade', (req, socket, head) => {
+    handlePanelUpgrade({
+      req, socket, head, resolveCellPanel: async (id) => (id === 'A' ? `http://127.0.0.1:${panel.port}` : undefined),
+      authorize: fed.remoteAuth.authorizeUpgrade,
+    });
+  });
+
+  const ws = new WebSocket(`ws://127.0.0.1:${fed.hubPort}/api/route/remoto/_/panel/A/websockify`, {
+    headers: { cookie: 'npanel=valore-fabbricato-senza-aver-mai-preso-un-ticket' },
+  });
+  const esito = await new Promise((resolve) => {
+    // Un esito esplicito in entrambi i versi: aperta o messaggio = il pannello
+    // remoto sarebbe servito; error/close = respinta. Il timer non decide nulla,
+    // dichiara solo che nessuno dei due è arrivato.
+    const timer = setTimeout(() => resolve('nessun esito'), 5000);
+    const fine = (v) => { clearTimeout(timer); resolve(v); };
+    ws.on('open', () => fine('aperta'));
+    ws.on('message', () => fine('aperta'));
+    ws.on('error', () => fine('respinta'));
+    ws.on('close', () => fine('respinta'));
+  });
+  try { ws.close(); } catch (_) { /* già chiusa */ }
+  assert.equal(esito, 'respinta', 'senza un cookie VERO la socket del pannello remoto non si apre');
+});
