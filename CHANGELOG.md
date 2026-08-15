@@ -2,7 +2,7 @@
 
 All notable changes to NexusCrew are tracked here.
 
-## Unreleased
+## 0.9.0 — 2026-08-15 — "The Star Keeps Its Promise"
 
 - **A cell panel finally opens — through our own route, not the raw URL.** An
   `<iframe src>` is a browser navigation and carries no headers, so the
