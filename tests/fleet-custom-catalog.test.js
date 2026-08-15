@@ -96,7 +96,7 @@ test('D2 end-to-end: parseDefinitions -> extraModelsFrom -> resolveManagedEngine
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-// D2 (correzione dopo NEEDS_CHANGES): il consumatore vero di questo file non
+// D2 (correzione dopo revisione): il consumatore vero di questo file non
 // e' il test — e' Pi. Il test precedente leggeva solo il file .ts generato e
 // restava verde su un'estensione che Pi 0.80.10 rifiuta a runtime, perche' i
 // descrittori grezzi (id/engine/contextWindow/maxTokens/reasoning) non hanno

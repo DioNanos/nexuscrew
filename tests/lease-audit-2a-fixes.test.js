@@ -1,6 +1,6 @@
 'use strict';
 
-// Test delle tre riparazioni dell'audit 2a (verbale NEEDS_CHANGES @ 142e272).
+// Test delle tre riparazioni emerse dalla revisione della 2a (@ 142e272).
 // NON replicano il rimedio dentro il test: ATTRAVERSANO broker, lease manager e
 // chiamante REALI, con gli stessi seam dell'indagine indipendente (fake fs per
 // l'EIO iniettato, spawn che conta). Era il difetto dei due test P1-3 originali:
@@ -249,7 +249,7 @@ test('F-B: lease persa per tutta la grace -> onLost avvisa il supervisore (nient
   }
 });
 
-// --- Correzione (riconsegna NEEDS_CHANGES): F-B — un solo SIGTERM non basta -
+// --- Correzione dopo revisione: F-B — un solo SIGTERM non basta ------------
 
 // Il test sopra (F-B: lease persa) dichiarava di attraversare cell-exec ma
 // osservava solo la callback onLost — si fermava prima del punto in cui il

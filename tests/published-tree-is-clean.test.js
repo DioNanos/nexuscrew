@@ -68,6 +68,16 @@ const VIETATI = [
     perche: 'attribuzione a una cella interna: e\' cio\' che e\' sfuggito nella 0.8.53' },
   { re: /Co-Authored-By|Generated with \[?Claude/,
     perche: 'attribuzione AI' },
+  // L'handle dell'operatore come PAROLA ISOLATA. Il lookaround evita i falsi
+  // positivi ovvi (parole che lo contengono); misurato sull'albero attuale:
+  // zero occorrenze, quindi la guardia nasce verde e non copre un debito.
+  { re: /(?<![\w-])DAG(?![\w-])/,
+    perche: 'handle dell\'operatore nel testo pubblicato' },
+  // Marker di processo interno: il verdetto di una revisione e il register di
+  // merge vivono nella documentazione interna, non in un albero che si legge da
+  // fuori. Un lettore esterno non deve ricostruire come lavoriamo dai commenti.
+  { re: /NEEDS_CHANGES|merge-feature-register/,
+    perche: 'marker di processo interno (verdetto di revisione / register)' },
 ];
 
 // DEC3 — CHI viene guardato, non COSA si cerca (i pattern sopra non cambiano).
@@ -154,14 +164,14 @@ test('l\'elenco dei motivi non e\' vuoto ne\' inerte', () => {
   // assenza di controlli invece che per assenza di tracce. Qui si prova che i
   // motivi mordono ancora, su un testo costruito apposta.
   const io = require('node:os').userInfo().username;
-  const finto = `vedi /home/${io}/segreto e DocsHub/x, rilievo di DevAuditor, Co-Authored-By: x`;
+  const finto = `vedi /home/${io}/segreto e DocsHub/x, rilievo di DevAuditor, Co-Authored-By: x, chiesto da DAG, verdetto NEEDS_CHANGES`;
   const presi = VIETATI.filter(({ re }) => re.test(finto));
   assert.equal(presi.length, VIETATI.length,
     'ogni motivo deve riconoscere il proprio caso: se uno non morde, e\' decorativo');
   // E non devono mordere il caso legittimo.
   // I segnaposto sintetici NON devono mordere: erano falsi positivi della
   // prima stesura, e un guardiano che grida al lupo si smette di ascoltarlo.
-  for (const ok of ['/home/tester/.ssh/id_ed25519', '/home/user/work', '/home/foreign/x', 'session/api/home/fileExists']) {
+  for (const ok of ['/home/tester/.ssh/id_ed25519', '/home/user/work', '/home/foreign/x', 'session/api/home/fileExists', 'DAGGER', 'my-DAG-graph', 'topological DAGs']) {
     assert.ok(!VIETATI.some(({ re }) => re.test(ok)), `falso positivo su: ${ok}`);
   }
 });
