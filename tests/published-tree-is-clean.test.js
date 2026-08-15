@@ -127,15 +127,87 @@ function colpeIn(testo, rel) {
 // non la rivelava, perche' i due combaciavano proprio sul lato non sanificato.
 // Il 2026-08-07 quella riconciliazione manuale e' saltata al primo tentativo.
 // Ora i file sono puliti alla radice e questo test lo mantiene vero.
+//
+// QUESTA E' UNA SIMULAZIONE LOCALE, NON LA VERIFICA DEL MIRROR. L'esclusione
+// qui sotto presuppone che `docs/superpowers/`, `test-report/` e
+// `docs/CURRENT_STATE.md` non arrivino mai sul mirror pubblico — e' la regola
+// scritta in DocsHub/projects/nexuscrew/ROADMAP.md, non un fatto verificato
+// da questo test. Sul ramo interno quei percorsi possono parlare liberamente
+// (decisione DAG 2026-08-05: Forge non si sanifica), quindi qui restano
+// esclusi apposta. Il controllo che quella regola sia VERA sul mirror reale
+// e' nei due test 'IL MIRROR REALE' piu' sotto: e' li' che si scopre se
+// l'assunzione ha retto, non qui. Il 2026-08-15 non aveva retto: nove file
+// (poi risultati undici) erano nell'indice di github/main nonostante questa
+// esclusione locale li desse per assenti.
 function tracked() {
   const { execFileSync } = require('node:child_process');
   const out = execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8' });
   return out.split('\n').filter(Boolean)
-    // I documenti interni non finiscono sul mirror: sono esclusi per percorso,
-    // non sanificati, ed e' giusto che possano parlare liberamente.
+    // I documenti interni non finiscono sul mirror (per regola — vedi sopra):
+    // sono esclusi per percorso, non sanificati, ed e' giusto che possano
+    // parlare liberamente SU QUESTO ramo.
     .filter((f) => !/^(docs\/superpowers\/|test-report\/|docs\/CURRENT_STATE\.md$)/.test(f))
     .map((f) => path.join(ROOT, f));
 }
+
+// --- IL MIRROR REALE -------------------------------------------------------
+// I due test sopra (tracked/published) verificano alberi LOCALI, prevedendo
+// cosa dovrebbe succedere se il mirror venisse costruito per regola. Nessuno
+// dei due apre mai `github/main`. Il 2026-08-15 questo ha lasciato passare
+// undici file interni gia' pubblicati (nove noti + due sotto `test-report/`
+// non ancora segnalati), perche' la regola di esclusione sopra e' stata
+// scambiata per un fatto sul mirror invece che per un'intenzione su di esso.
+//
+// Qui si legge l'unica cosa che conta davvero: cosa c'e' OGGI su github/main.
+function alberoGithubReale() {
+  const { execFileSync } = require('node:child_process');
+  execFileSync('git', ['fetch', 'github', 'main'], { cwd: ROOT, stdio: 'pipe' });
+  const out = execFileSync('git', ['ls-tree', '-r', '--name-only', 'github/main'],
+    { cwd: ROOT, encoding: 'utf8' });
+  return out.split('\n').filter(Boolean);
+}
+
+function leggiDaGithub(rel) {
+  const { execFileSync } = require('node:child_process');
+  return execFileSync('git', ['show', `github/main:${rel}`], { cwd: ROOT, encoding: 'utf8' });
+}
+
+// I percorsi che, per la regola scritta in ROADMAP.md, non devono MAI comparire
+// nel mirror pubblico. E' un PREFISSO, non un elenco di nomi: un file nuovo
+// scritto domani sotto `docs/superpowers/` fa fallire questo test tanto quanto
+// i nove di oggi, senza bisogno di aggiungerlo a mano da nessuna parte. E'
+// proprio l'assenza di questa proprieta' — un'esclusione per nome invece che
+// per regola — il difetto che ha lasciato passare gli undici file di oggi.
+const PERCORSI_VIETATI_NEL_MIRROR = [
+  { re: /^docs\/superpowers\//, perche: 'documentazione interna di pianificazione, esclusa per regola dal mirror' },
+  { re: /^test-report\//, perche: 'report di test interno, escluso per regola dal mirror' },
+  { re: /^docs\/CURRENT_STATE\.md$/, perche: 'stato interno del progetto, escluso per regola dal mirror' },
+];
+
+test('IL MIRROR REALE (github/main) non contiene i percorsi interni vietati', () => {
+  const colpevoli = [];
+  for (const rel of alberoGithubReale()) {
+    for (const { re, perche } of PERCORSI_VIETATI_NEL_MIRROR) {
+      if (re.test(rel)) colpevoli.push(`${rel}: ${perche}`);
+    }
+  }
+  assert.deepEqual(colpevoli, [],
+    `github/main contiene questi percorsi interni (la regola dice che non dovrebbero esserci):\n  ${colpevoli.join('\n  ')}`);
+});
+
+test('IL MIRROR REALE (github/main) non porta le tracce vietate nel contenuto', () => {
+  // Copre cio' che il controllo per percorso sopra non copre: materiale
+  // interno finito FUORI dai tre prefissi noti. Riusa colpeIn — stessa
+  // regola, stessa esclusione per il file che la definisce (SELF_EXCLUDE).
+  const colpevoli = [];
+  for (const rel of alberoGithubReale()) {
+    let testo;
+    try { testo = leggiDaGithub(rel); } catch (_) { continue; }
+    colpevoli.push(...colpeIn(testo, rel));
+  }
+  assert.deepEqual(colpevoli, [],
+    `github/main contiene queste tracce (fuori dai percorsi gia' vietati sopra):\n  ${colpevoli.join('\n  ')}`);
+});
 
 test('nemmeno l\'albero versionato porta quelle tracce, tests inclusi', () => {
   const colpevoli = [];
