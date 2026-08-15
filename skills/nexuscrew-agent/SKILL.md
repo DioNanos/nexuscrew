@@ -169,3 +169,21 @@ work. The setting is also applied to windows created later in that session.
 - **Assuming a node listens on the port you know** → NexusCrew selects a free port per installation, and a peer's remote port is not the port that node listens on locally. Read it from `nexuscrew status` on that node; a health check aimed at the wrong port reports a dead service that is perfectly alive.
 - **Writing a reply into a local inbox directory** → the inbox is per-installation and is not synchronised between nodes. Answering a remote caller by dropping a file in your own inbox reaches nobody; reply through the tool that addressed you.
 - **Treating a dead scroll gesture as a web-terminal bug** → the pane is in the alternate buffer. Check whether it predates the NexusCrew setting or opted out with `alternateScreen:true`; never send raw page keys to a TUI to work around it.
+
+## Dependencies
+
+**Bundled (installed with the package):** the `nexuscrew` CLI, `lib/`, these
+skills, and the `bin/nc-send` / `bin/nc-deliver` helpers arrive with
+`npm install -g @mmmbuto/nexuscrew` (Node.js >= 18 required by `engines`).
+
+**External (you must provide):**
+
+| Need | Install | Probe / failure mode |
+|---|---|---|
+| Node.js >= 18 | Debian/Ubuntu `apt install nodejs` (nodesource for 18+), Fedora `dnf install nodejs`, macOS `brew install node`, Termux `pkg install nodejs-lts` | `node -v` prints >= 18; below that `npm install` refuses per `engines` |
+| tmux | Debian/Ubuntu `apt install tmux`, Fedora `dnf install tmux`, macOS `brew install tmux`, Termux `pkg install tmux` | `nexuscrew doctor` reports tmux missing by name; `nc-send` exits 127 with `nc-send: tmux not found on PATH (set TMUX_BIN)` — the failure names itself |
+| An AI client that can register the MCP server | register the stdio command `nexuscrew mcp` in the client's MCP config | if the `nc_*` tools are not exposed, no `nc_` tool exists in the session — see "MCP bridge" above |
+| A running NexusCrew service (for most tools) | `nexuscrew serve` (foreground) or your platform service manager | tools fail to reach the bridge; Termux has no systemd — run `nexuscrew serve` inside a tmux session or your own keep-alive |
+
+If tmux is missing, MCP inspection (`nc_status`, `nc_identity`) still works;
+anything that targets a session (including the `nc-send` fallback) does not.

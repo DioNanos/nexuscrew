@@ -7,6 +7,7 @@ const path = require('node:path');
 const express = require('express');
 const { createServer } = require('../lib/server.js');
 const { fleetRoutes } = require('../lib/fleet/routes.js');
+const { defaultDesktopEngine } = require('../lib/fleet/builtin.js');
 
 const FAKE_TMUX = path.join(__dirname, 'fixtures', 'fake-tmux.sh');
 
@@ -331,4 +332,41 @@ test('builtin: una cella con label sopravvive al round-trip di backup', async (t
   const cell = status.cells.find((c) => c.cell === 'Dev');
   assert.ok(cell, 'la cella ripristinata deve comparire');
   assert.equal(cell.label, 'Cella di sviluppo', 'il nome sopravvive al ripristino');
+});
+
+// D8: panelUrl deve attraversare il confine backend->frontend nella VERA
+// risposta HTTP di /status, senza mock in mezzo. Un test che iniettasse
+// panelUrl a mano nel fixture non proverebbe l'attraversamento — e' esattamente
+// il tipo di test che ha lasciato passare il cavo staccato (cellStatus() non
+// copiava panelUrl nell'oggetto per-cella: due suite verdi, zero attraversamento).
+test('builtin: /status porta panelUrl DAVVERO fino alla risposta HTTP — engine precompila, cella sovrascrive, assenza resta assente', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncflpu-'));
+  const defsPath = path.join(dir, 'fleet.json');
+  const defs = {
+    schemaVersion: 1,
+    engines: [defaultDesktopEngine(), { id: 'sh', label: 'Shell', command: FAKE_TMUX, args: ['-i'], promptMode: 'send-keys' }],
+    cells: [
+      { id: 'Inherits', cwd: dir, engine: 'desktop.local' },
+      { id: 'Overrides', cwd: dir, engine: 'desktop.local', panelUrl: 'https://localhost:6901' },
+      { id: 'NoPanel', cwd: dir, engine: 'sh' },
+    ],
+  };
+  fs.writeFileSync(defsPath, JSON.stringify(defs), { mode: 0o600 });
+  fs.chmodSync(defsPath, 0o600);
+  const { base, token } = await boot(t, {
+    home: dir,
+    fleetDefsPath: defsPath,
+    providerSecretsPath: path.join(dir, '.nexuscrew', 'providers.env'),
+    providerShellPath: path.join(dir, '.config', 'ai-shell', 'providers.zsh'),
+    providerKeysPath: path.join(dir, '.config', 'keys', 'ai.env'),
+    providerSecurePath: path.join(dir, '.config', 'secure', '.env'),
+    credentialsPath: path.join(dir, '.nexuscrew', 'credentials.json'),
+  });
+  const st = await (await fetch(`${base}/api/fleet/status`, { headers: H(token) })).json();
+  const inherits = st.cells.find((c) => c.cell === 'Inherits');
+  const overrides = st.cells.find((c) => c.cell === 'Overrides');
+  const noPanel = st.cells.find((c) => c.cell === 'NoPanel');
+  assert.equal(inherits.panelUrl, 'https://127.0.0.1:6901', 'cella senza override eredita il panelUrl precompilato dall\'engine, nella VERA risposta /status');
+  assert.equal(overrides.panelUrl, 'https://localhost:6901', 'cella con panelUrl proprio: vince sul default dell\'engine');
+  assert.equal(noPanel.panelUrl, '', 'engine senza panelUrl e cella senza panelUrl: assenza resta assenza, non un valore inventato');
 });

@@ -302,3 +302,32 @@ test('migrateLegacyNodes: nodo legacy malformato -> throw esplicito (no silent)'
   assert.throws(() => store.migrateLegacyNodes(cfg, nodesPath), /non valido/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// Il pannello di una cella e' un browser con sessioni gia' autenticate: un
+// accesso di quel tipo non si revoca cambiando una chiave. Il resto del modello
+// tratta un peer pairato come l'operatore stesso; qui no, di proposito.
+test('panelAccess: default NEGATO, e un record vecchio non lo acquisisce per anzianita', () => {
+  const base = validStore().nodes[0];
+  const { panelAccess: _ignora, ...senzaCampo } = base;
+  const parsed = store.parseNode(senzaCampo, 1);
+  assert.ok(parsed, 'un record senza il campo resta valido');
+  assert.equal(parsed.panelAccess, false, 'assente non significa concesso');
+
+  const concesso = store.parseNode({ ...base, panelAccess: true }, 1);
+  assert.equal(concesso.panelAccess, true, 'si concede per singolo nodo');
+
+  // Schema chiuso: un valore che non e' un booleano non viene interpretato
+  // "al meglio". Una stringa "false" sarebbe truthy in JS — il fail-closed qui
+  // vale piu' della tolleranza.
+  for (const cattivo of ['true', 'false', 1, 0, null, {}]) {
+    assert.equal(store.parseNode({ ...base, panelAccess: cattivo }, 1), null,
+      `panelAccess=${JSON.stringify(cattivo)} invalida il record invece di essere indovinato`);
+  }
+});
+
+test('panelAccess: la vista redatta lo mostra — e una decisione dell operatore, non un segreto', () => {
+  const base = validStore().nodes[0];
+  const red = store.redactNode(store.parseNode({ ...base, panelAccess: true }, 1));
+  assert.equal(red.panelAccess, true);
+  assert.ok(!('token' in red), 'il token resta fuori');
+});
