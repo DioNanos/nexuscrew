@@ -89,7 +89,15 @@ function readState(statePath) {
   try { return JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) { return null; }
 }
 
-async function waitForState(statePath, predicate, timeoutMs = 6000) {
+// Il limite serve solo a non appendere il test all'infinito: NESSUNA asserzione
+// di questo file dipende da quanto IN FRETTA il supervisore entra in uno stato,
+// solo dal fatto che ci entri. Sei secondi su una macchina con la flotta attiva
+// (load 10-12) non proteggevano niente e producevano rossi casuali — misurato:
+// tre giri isolati su develop puro davano 3 fail, 0, 2. Un test del gate che
+// cade a caso e' peggio di un test assente, perche' insegna a ignorare i rossi.
+// Alzarlo qui NON cura un sintomo: il criterio era gia' l'attesa dell'evento,
+// era il limite a essere tarato su una macchina scarica.
+async function waitForState(statePath, predicate, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   const seen = [];
   while (Date.now() < deadline) {
@@ -138,7 +146,7 @@ test('reverse-forward failure ripetuta NON e terminale: resta degraded e recuper
   let forward = null;
   try {
     // Prima fase: almeno 3 fallimenti -> il supervisor entra in degraded (non muore).
-    const degraded = await waitForState(statePath, (s) => s.status === 'degraded', 6000);
+    const degraded = await waitForState(statePath, (s) => s.status === 'degraded', 20000);
     assert.equal(degraded.ok, true, `il supervisor deve entrare in degraded, seen=${degraded.seen && degraded.seen.join(',')}`);
     assert.equal(degraded.state.terminal, false, 'degraded non e terminale');
     assert.equal(degraded.state.code, 'reverse-forward-failed');
@@ -182,7 +190,7 @@ test('reverse-forward-bind resta degraded con la classe corretta e NON muore', a
     dir, name: 'hub', fakeSsh, forwardPort, reversePort: 44001, runId: 'bind-generation',
   });
   try {
-    const degraded = await waitForState(statePath, (s) => s.status === 'degraded', 6000);
+    const degraded = await waitForState(statePath, (s) => s.status === 'degraded', 20000);
     assert.equal(degraded.ok, true, `seen=${degraded.seen && degraded.seen.join(',')}`);
     assert.equal(degraded.state.code, 'reverse-forward-bind');
     assert.equal(degraded.state.reversePort, 44001);
@@ -209,7 +217,7 @@ test('reverse-forward-failed persistente resta degraded con classe reverse-forwa
     dir, name: 'hub', fakeSsh, forwardPort, reversePort: 44001, runId: 'failed-generation',
   });
   try {
-    const degraded = await waitForState(statePath, (s) => s.status === 'degraded', 6000);
+    const degraded = await waitForState(statePath, (s) => s.status === 'degraded', 20000);
     assert.equal(degraded.ok, true, `seen=${degraded.seen && degraded.seen.join(',')}`);
     assert.equal(degraded.state.code, 'reverse-forward-failed');
     assert.equal(degraded.state.reversePort, 44001);
@@ -260,11 +268,28 @@ test('dopo il budget iniziale il retry e fisso: steadyRetryMs costante, backoff 
     envExtra: { NEXUSCREW_TUNNEL_STEADY_RETRY_MS: '70' },
   });
   try {
+    // Raccolta guidata dall'EVENTO, non da un cronometro. Prima leggeva per
+    // cinque secondi fissi e poi sperava che nel mezzo fosse passato lo stato
+    // atteso: su una macchina carica il supervisore non ci arrivava, e il test
+    // falliva due volte su tre — misurato, anche su develop e anche isolato.
+    // Un test del gate che cade a caso e' peggio di un test assente: insegna a
+    // ignorare i rossi.
+    //
+    // Il limite NON e' stato alzato per curare il sintomo: e' cambiato il
+    // criterio. Si aspetta finche' lo stato atteso compare, e se non compare
+    // affatto il test fallisce come prima — l'asserzione non si e' indebolita.
     const collected = [];
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + 15000;
+    let visto = false;
     while (Date.now() < deadline) {
       const s = readState(statePath);
-      if (s) collected.push(s);
+      if (s) {
+        collected.push(s);
+        if (s.status === 'degraded') visto = true;
+      }
+      // Dopo aver visto il degraded si continua un poco, per avere abbastanza
+      // campioni di `retrying` da confrontare fra loro.
+      if (visto && collected.filter((x) => x.status === 'degraded').length >= 3) break;
       await new Promise((resolve) => setTimeout(resolve, 35));
     }
     const degraded = collected.filter((s) => s.status === 'degraded');
@@ -299,7 +324,7 @@ test('in produzione il retry degraded resta fisso a 60s anche con un env breve',
     },
   });
   try {
-    const degraded = await waitForState(statePath, (s) => s.status === 'degraded', 3000);
+    const degraded = await waitForState(statePath, (s) => s.status === 'degraded', 20000);
     assert.equal(degraded.ok, true, `seen=${degraded.seen && degraded.seen.join(',')}`);
     assert.equal(degraded.state.steadyRetryMs, 60000, 'runtime non accetta una cadenza breve');
   } finally {
@@ -326,7 +351,7 @@ test('un listener permanentemente occupato (bind) resta diagnosticato e non colp
   const A = startSupervisor({ dir, name: 'hub-a', fakeSsh: fakeBind, forwardPort: portA, reversePort: 44001, runId: 'peer-a' });
   const B = startSupervisor({ dir, name: 'hub-b', fakeSsh: fakeStable, forwardPort: portB, reversePort: 44002, runId: 'peer-b' });
   try {
-    const aDegr = await waitForState(A.statePath, (s) => s.status === 'degraded', 6000);
+    const aDegr = await waitForState(A.statePath, (s) => s.status === 'degraded', 20000);
     const bReady = await waitForState(B.statePath, (s) => s.status === 'transport-ready', 6000);
     assert.equal(aDegr.ok, true, `A deve essere degraded, seen=${aDegr.seen && aDegr.seen.join(',')}`);
     assert.equal(bReady.ok, true, `B deve essere healthy nonostante A degraded, seen=${bReady.seen && bReady.seen.join(',')}`);
