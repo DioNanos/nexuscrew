@@ -530,7 +530,7 @@ test('commandForDiagnostics: over-redaction benigno (NODE_ENV), shape e ACL inva
   const diag = TOOLS.find((tool) => tool.name === 'nc_cell_diagnostics');
   assert.ok(diag, 'nc_cell_diagnostics presente');
   assert.equal(diag.annotations.readOnlyHint, true);
-  assert.equal(TOOLS.length, 20, 'registry tool (20 tool)');
+  assert.equal(TOOLS.length, 23, 'registry tool (23 tool: 20 + 3 lease child 2b)');
 });
 
 test('nc_send_cell: risolve sender e target dalla directory e restituisce receipt onesto', async () => {
@@ -1157,7 +1157,7 @@ test('subprocess: handshake + tools/call nc_notify contro server HTTP finto', as
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
 
   const list = await call(2, 'tools/list');
-  assert.equal(list.result.tools.length, 20);
+  assert.equal(list.result.tools.length, 23);
 
   const notif = await call(3, 'tools/call', { name: 'nc_notify', arguments: { title: 'e2e ok' } });
   assert.deepEqual(JSON.parse(notif.result.content[0].text), { delivered: { ui: 1, push: 0 } });

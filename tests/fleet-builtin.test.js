@@ -1038,14 +1038,16 @@ test('up non dichiara successo quando il client esce subito, anche senza prompt 
 // non esponeva close(). Un reconnect valido otteneva un lease con Fleet non
 // disponibile. La recovery non deve precedere il gate fail-closed.
 // Il test ATTRAVERSA createBuiltinFleet (non invoca leaseManager.boot() direttamente).
-function tryLeaseReconnect(stablePath, launchEpoch, capability, timeoutMs = 400) {
+// 2b: il reconnect presenta un proof (la capability e' revocata). L'helper
+// serve a provare che un endpoint NON risponde: il proof e' opaco per il test.
+function tryLeaseReconnect(stablePath, launchEpoch, proof, timeoutMs = 400) {
   return new Promise((resolve) => {
     let done = false; let sock = null;
     const to = setTimeout(() => finish(null), timeoutMs);
     const finish = (v) => { if (done) return; done = true; clearTimeout(to); try { sock && sock.destroy(); } catch (_) {} resolve(v); };
     try {
       sock = net.createConnection(stablePath, () => {
-        try { sock.write(`${JSON.stringify({ type: 'reconnect', launchEpoch, generation: 0, capability })}\n`); } catch (_) { finish(null); }
+        try { sock.write(`${JSON.stringify({ type: 'reconnect', launchEpoch, generation: 0, ...(proof ? { proof } : {}) })}\n`); } catch (_) { finish(null); }
       });
     } catch (_) { clearTimeout(to); return resolve(null); }
     sock.setEncoding('utf8');
@@ -1113,16 +1115,19 @@ test('P1-2: gate availability post-validazione (migrazione tmux fallita) NON las
   const setup = createLeaseManager({ home, log: () => {} });
   await setup.track('Dev.Work'); setup.close();
   const stablePath = path.join(runDir, 'cell-Dev.Work.sock');
-  const leases = JSON.parse(fs.readFileSync(path.join(runDir, 'cell-leases.json'), 'utf8'));
-  const launchEpoch = leases['Dev.Work'] && leases['Dev.Work'].launchEpoch;
-  const capability = leases['Dev.Work'] && leases['Dev.Work'].capability;
+  // 2b: storage per-cell, senza capability (revocata). Per il reconnect di
+  // prova si firma un proof con la chiave per-installazione della dir reale.
+  const entry = JSON.parse(fs.readFileSync(path.join(runDir, 'cell-leases', 'Dev.Work.json'), 'utf8'));
+  const launchEpoch = entry.launchEpoch;
+  const { loadOrCreateVerifier, signProof } = require('../lib/fleet/lease-verifier.js');
+  const proof = signProof(loadOrCreateVerifier({ dir: runDir }), { kind: 'lease', cellId: 'Dev.Work', launchEpoch, leaseId: 'a'.repeat(16), generation: '0', jti: 'b'.repeat(16), issuedAt: Date.now() }, { now: () => Date.now() });
 
   const fleet = await createBuiltinFleet({ home, fleetDefsPath: defsPath, tmuxBin, cellLeaseEnabled: true });
   try {
     assert.equal(fleet.available, false, 'migrazione fallita -> Fleet unavailable (blocked)');
     assert.equal(fs.existsSync(stablePath), false, 'P1-2: endpoint cell-Dev.Work.sock NON vivo con Fleet unavailable da gate post-validazione');
     assert.equal(typeof fleet.close, 'function', 'close() esposto');
-    const leaseMsg = await tryLeaseReconnect(stablePath, launchEpoch, capability);
+    const leaseMsg = await tryLeaseReconnect(stablePath, launchEpoch, proof);
     assert.equal(leaseMsg, null, 'P1-2: nessun lease ottenuto (migrazione fallita, endpoint mai aperto)');
   } finally {
     if (typeof fleet.close === 'function') { try { await fleet.close(); } catch (_) {} }

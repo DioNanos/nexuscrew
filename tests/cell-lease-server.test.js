@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const L = require('../lib/fleet/cell-lease.js');
+const { loadOrCreateVerifier, signProof } = require('../lib/fleet/lease-verifier.js');
 
 // Coppia server/client su un server TCP throwaway: lato "server" passato al
 // manager come connessione broker one-shot, lato "client" per scrivere/EOF.
@@ -57,21 +58,63 @@ function setup() {
   return { home, clock, mgr };
 }
 
-test('track apre endpoint stabile 0o600 e ritorna identity+capability', async () => {
+const runDir = (home) => path.join(home, '.nexuscrew', 'run');
+const cellStateFile = (home, cellId) => path.join(runDir(home), 'cell-leases', `${cellId}.json`);
+
+// 2b: apre il lease dal percorso di produzione e cattura il primo proof che il
+// server consegna all'attach (il detentore legittimo e' il supervisore, qui
+// simulato dal lato client della pair). E' l'equivalente 2b del vecchio
+// `info.capability`: il proof sostituisce la capability statica revocata (A2).
+async function attachWithProof(mgr, cellId, clock, { generation = 0 } = {}) {
+  const info = await mgr.track(cellId);
+  const { serverSide, client } = await pair();
+  assert.equal(mgr.attachInitial(cellId, serverSide, { generation }), true);
+  const first = await recv(client, (m) => m.type === 'lease' && m.proof);
+  return { info, client, proof: first.proof, leaseId: first.leaseId };
+}
+
+// 2b: firma un proof con la chiave per-installazione della dir di test — la
+// stessa che userebbe il server. Per fixture sintetiche (identity scritta a
+// mano) e per isolare la causa di un deny (proof fresco => la scadenza NON e'
+// il motivo, resta il bound di grace).
+function forgeProof(home, clock, claims, { issuedAt = null } = {}) {
+  const v = loadOrCreateVerifier({ dir: runDir(home) });
+  return signProof(v, { ...claims, issuedAt: issuedAt == null ? clock.t : issuedAt }, { now: () => clock.t });
+}
+
+// Scrive una entry per-cella a mano (formato 2b: {launchEpoch, graceDeadline}).
+function writeLeaseEntry(home, cellId, entry) {
+  const file = cellStateFile(home, cellId);
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, JSON.stringify(entry), { mode: 0o600 });
+  return file;
+}
+
+function reconnect(stablePath, msg) {
+  return new Promise((resolve, reject) => {
+    const rc = net.createConnection(stablePath, () => {
+      rc.write(`${JSON.stringify(msg)}\n`);
+    });
+    recv(rc, (m) => m.type === 'lease' || m.type === 'deny').then(resolve, reject);
+    rc.once('error', reject);
+  });
+}
+
+test('track apre endpoint stabile 0o600, identity per-cell; nessuna capability (A2/B1)', async () => {
   const { home, mgr } = setup();
   try {
     const info = await mgr.track('Dev');
     assert.ok(info.stablePath.startsWith(home), 'stablePath sotto runtime dir');
     assert.match(path.basename(info.stablePath), /^cell-Dev\.sock$/, 'path stabile, non casuale');
     assert.ok(info.launchEpoch && /^[a-f0-9]+$/.test(info.launchEpoch));
-    assert.ok(info.capability && /^[a-f0-9]{64}$/.test(info.capability));
+    assert.equal('capability' in info, false, '2b: nessuna capability statica nel ritorno di track');
     const st = fs.statSync(info.stablePath);
     assert.equal(st.mode & 0o077, 0, 'endpoint stabile 0o600');
-    // state persistito
-    const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
-    const persisted = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    assert.equal(persisted.Dev.launchEpoch, info.launchEpoch);
-    assert.equal(persisted.Dev.capability, info.capability);
+    // state persistito PER CELLA (D1), senza segreti (C5)
+    const persisted = JSON.parse(fs.readFileSync(cellStateFile(home, 'Dev'), 'utf8'));
+    assert.equal(persisted.launchEpoch, info.launchEpoch);
+    assert.equal('capability' in persisted, false);
+    assert.ok(Number.isInteger(persisted.graceDeadline));
   } finally { mgr.close(); }
 });
 
@@ -134,150 +177,118 @@ test('attachInitial -> live; EOF -> grace con deadline = EOF+60s NON estendibile
   } finally { mgr.close(); }
 });
 
-test('reconnect entro grace -> lease NUOVO (leaseId diverso), stessa identita, live', async () => {
+test('reconnect con proof entro grace -> lease NUOVO (leaseId diverso), stessa identita, live', async () => {
   const { clock, mgr } = setup();
   try {
-    const info = await mgr.track('Dev');
-    const { serverSide, client } = await pair();
-    mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     const firstLeaseId = mgr.status('Dev').leaseId;
     clock.t = 5_000;
     client.end();
     await new Promise((r) => setTimeout(r, 30));
     assert.equal(mgr.status('Dev').state, 'grace');
-    // reconnect entro grace
+    // reconnect entro grace col proof detenuto (2b: niente capability)
     clock.t = 30_000;
-    const rc = net.createConnection(info.stablePath, () => {
-      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
-    });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    const reply = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof });
     assert.equal(reply.type, 'lease', 'reconnect accettato entro grace');
     assert.notEqual(reply.leaseId, firstLeaseId, 'lease NUOVO, leaseId diverso (non resurrezione)');
     assert.equal(mgr.status('Dev').state, 'live');
     assert.equal(mgr.status('Dev').leaseId, reply.leaseId);
-    rc.destroy();
+    assert.ok(reply.proof && reply.proof.leaseId === reply.leaseId, 'il lease nuovo consegna il proprio proof');
   } finally { mgr.close(); }
 });
 
 test('R3.3.4: reconnect accetta SOLO la transizione legittima (generation === current o current+1); salto avanti arbitrario o all indietro -> deny', async () => {
   const { clock, mgr } = setup();
   try {
-    const info = await mgr.track('Dev');
-    const { serverSide, client } = await pair();
-    mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     clock.t = 5_000;
     client.end();
     await new Promise((r) => setTimeout(r, 30));
     // reconnect che AVANZA la generation di ESATTAMENTE 1 (un restart del
-    // supervisore, cell-exec.js:384 `generation += 1`): transizione legittima -> lease.
+    // supervisore, cell-exec.js `generation += 1`): transizione legittima -> lease.
     clock.t = 30_000;
-    const r1 = net.createConnection(info.stablePath, () => {
-      r1.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 1, capability: info.capability })}\n`);
-    });
-    const a1 = await recv(r1, (m) => m.type === 'lease' || m.type === 'deny');
+    const a1 = await reconnect(info.stablePath, { type: 'reconnect', generation: 1, proof });
     assert.equal(a1.type, 'lease', 'avanzamento legittimo 0->1 (un restart del supervisore) accettato');
-    r1.destroy();
     await new Promise((r) => setTimeout(r, 30)); // EOF -> grace sul lease gen 1
     // reconnect con generation 99 (salto AVANTI arbitrario, non +1): deny. Il
     // supervisore onesto non presenterebbe mai 99 partendo da 1 (avanza di 1).
+    // Il proof qui e' quello del lease gen-1 (fresco, jti non consumato): il
+    // deny deve arrivare dalla GENERATION, non dal proof.
     clock.t = 31_000;
-    const r2 = net.createConnection(info.stablePath, () => {
-      r2.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 99, capability: info.capability })}\n`);
-    });
-    const a2 = await recv(r2, (m) => m.type === 'lease' || m.type === 'deny');
+    const a2 = await reconnect(info.stablePath, { type: 'reconnect', generation: 99, proof: a1.proof });
     assert.equal(a2.type, 'deny', 'R3.3.4: salto avanti arbitrario (1->99) rifiutato (non transizione attesa)');
-    r2.destroy();
     // reconnect con generation 0 (all indietro, stale): deny.
     clock.t = 32_000;
-    const r3 = net.createConnection(info.stablePath, () => {
-      r3.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
-    });
-    const a3 = await recv(r3, (m) => m.type === 'lease' || m.type === 'deny');
+    const a3 = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof: a1.proof });
     assert.equal(a3.type, 'deny', 'R3.3.4: generation all indietro (1->0) rifiutata (stale)');
-    r3.destroy();
   } finally { mgr.close(); }
 });
 
-test('R3.3.4 regressione auditor: generation 0->99 (salto arbitrario) su lease vivo -> deny', async () => {
-  // Sonda diretta del difetto dell audit (requested=0->99, server_state=live).
+test('R3.3.4 regressione auditor: generation 0->99 (salto arbitrario) su lease in grace -> deny', async () => {
+  // Sonda diretta del difetto dell audit (requested=0->99, server_state=grace).
   // Il guard precedente (`incoming >= current`) accettava qualunque salto avanti;
   // il server deve esigere una transizione verificabile, non solo non-decreasing.
   const { clock, mgr } = setup();
   try {
-    const info = await mgr.track('Dev');
-    const { serverSide, client } = await pair();
-    mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     assert.equal(mgr.status('Dev').state, 'live');
     clock.t = 5_000;
     client.end();
     await new Promise((r) => setTimeout(r, 30));
     // lease in grace (vivo), reconnect con generation 99 (salto arbitrario da 0): deny.
     clock.t = 30_000;
-    const rc = net.createConnection(info.stablePath, () => {
-      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 99, capability: info.capability })}\n`);
-    });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    const reply = await reconnect(info.stablePath, { type: 'reconnect', generation: 99, proof });
     assert.equal(reply.type, 'deny', '0->99 e un salto arbitrario, non la transizione attesa -> deny');
-    rc.destroy();
   } finally { mgr.close(); }
 });
 
-test('reconnect con capability sbagliata o launchEpoch sbagliata -> deny', async () => {
-  const { clock, mgr } = setup();
+test('reconnect con proof di un altra cella, contraffatto o di kind sbagliato -> deny', async () => {
+  const { home, clock, mgr } = setup();
   try {
-    const info = await mgr.track('Dev');
-    const { serverSide, client } = await pair();
-    mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     client.end();
     await new Promise((r) => setTimeout(r, 30));
-    // capability sbagliata
-    const r1 = net.createConnection(info.stablePath, () => {
-      r1.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: 'cc'.repeat(32) })}\n`);
-    });
-    const d1 = await recv(r1, (m) => m.type === 'deny');
-    assert.equal(d1.type, 'deny', 'capability sbagliata -> deny');
-    r1.destroy();
-    // launchEpoch sbagliata
-    const r2 = net.createConnection(info.stablePath, () => {
-      r2.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: 'deadbeef', generation: 0, capability: info.capability })}\n`);
-    });
-    const d2 = await recv(r2, (m) => m.type === 'deny');
-    assert.equal(d2.type, 'deny', 'launchEpoch sbagliata -> deny');
-    r2.destroy();
+    // proof di un altra cella (claims firmati per Beta): la firma e' valida ma
+    // i claims attesi (cellId=Dev) non combaciano -> deny.
+    const betaProof = forgeProof(home, clock, { kind: 'lease', cellId: 'Beta', launchEpoch: proof.launchEpoch, leaseId: proof.leaseId, generation: '0', jti: 'a'.repeat(16) });
+    const d1 = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof: betaProof });
+    assert.equal(d1.type, 'deny', 'proof di un altra cella -> deny');
+    // firma contraffatta
+    const d2 = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof: { ...proof, proof: '0'.repeat(64) } });
+    assert.equal(d2.type, 'deny', 'firma contraffatta -> deny');
+    // kind sbagliato (scope separation, B4)
+    const childProof = forgeProof(home, clock, { kind: 'child', cellId: 'Dev', incarnationId: 'b'.repeat(16), jti: 'c'.repeat(16) });
+    const d3 = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof: childProof });
+    assert.equal(d3.type, 'deny', 'proof kind child non vale per il reconnect (proofKind firmato) -> deny');
   } finally { mgr.close(); }
 });
 
-test('reconnect oltre grace -> deny (R3.3.5)', async () => {
-  const { clock, mgr } = setup();
+test('reconnect oltre grace -> deny (R3.3.5) — proof fresco: il deny e della grace, non della scadenza', async () => {
+  const { home, clock, mgr } = setup();
   try {
-    const info = await mgr.track('Dev');
-    const { serverSide, client } = await pair();
-    mgr.attachInitial('Dev', serverSide, { generation: 0 });
+    const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     clock.t = 5_000;
     client.end();
     await new Promise((r) => setTimeout(r, 30));
-    // ora oltre la deadline (grace scaduta)
+    // ora oltre la deadline (grace scaduta). Il proof detenuto e' scaduto pure:
+    // per isolare la CAUSA firmino un proof fresco (il server ne emetterebbe uno
+    // legittimo fino all'ultimo refresh) — resta solo il bound di grace a negare.
     clock.t = 5_000 + 60_001;
-    const rc = net.createConnection(info.stablePath, () => {
-      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
-    });
-    const reply = await recv(rc, (m) => m.type === 'deny');
+    const fresh = forgeProof(home, clock, { kind: 'lease', cellId: 'Dev', launchEpoch: info.launchEpoch, leaseId: proof.leaseId, generation: '0', jti: 'd'.repeat(16) });
+    const reply = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof: fresh });
     assert.equal(reply.type, 'deny', 'reconnect oltre grace -> deny');
-    rc.destroy();
   } finally { mgr.close(); }
 });
 
-test('R3.3.5 post-restart: reconnect oltre la grace rifiutato anche con lease null (bound persistito)', async () => {
+test('R3.3.5 post-restart: reconnect oltre la grace rifiutato anche con lease null (bound persistito per-cell)', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-beyond-'));
   const clock = { t: 10_000 };
-  let mgr = null; let rc = null; let pairClient = null;
+  let mgr = null; let pairClient = null;
   try {
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
-    const info = await mgr.track('Dev');
-    const { serverSide, client } = await pair();
+    const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     pairClient = client;
-    mgr.attachInitial('Dev', serverSide, { generation: 0 });
-    // EOF arma la grace: deadline = 5_000 + 60_000 = 65_000, persistita come bound.
+    // EOF arma la grace: deadline = 5_000 + 60_000 = 65_000, persistita come bound per-cell.
     clock.t = 5_000;
     client.end();
     await new Promise((r) => setTimeout(r, 30));
@@ -287,16 +298,12 @@ test('R3.3.5 post-restart: reconnect oltre la grace rifiutato anche con lease nu
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
     await mgr.boot();
     assert.equal(mgr.status('Dev').state, 'none', 'lease null post-restart (fail-closed)');
-    // reconnect OLTRE la grace (+600001 ms oltre l'origine): lease null ma bound noto -> deny.
+    // reconnect OLTRE la grace con proof FRESCO (isola la causa): lease null ma bound noto -> deny.
     clock.t = 65_000 + 600_001;
-    rc = net.createConnection(info.stablePath, () => {
-      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
-    });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    const fresh = forgeProof(home, clock, { kind: 'lease', cellId: 'Dev', launchEpoch: info.launchEpoch, leaseId: proof.leaseId, generation: '0', jti: 'e'.repeat(16) });
+    const reply = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof: fresh });
     assert.equal(reply.type, 'deny', 'R3.3.5: reconnect oltre la grace rifiutato anche post-restart (lease null)');
-    rc.destroy();
   } finally {
-    try { if (rc) rc.destroy(); } catch (_) {}
     try { if (pairClient) pairClient.destroy(); } catch (_) {}
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
@@ -305,18 +312,15 @@ test('R3.3.5 post-restart: reconnect oltre la grace rifiutato anche con lease nu
 
 test('R3.3.5 post-restart: reconnect ESATTAMENTE alla graceDeadline rifiutato (bound >= , non >)', async () => {
   // Off-by-one: con entry.lease===null il guard post-restart usava `now > graceDeadline`,
-  // aprendo un lease alla deadline esatta. La transizione pura (cell-lease.js:76) usa `>=`:
+  // aprendo un lease alla deadline esatta. La transizione pura (cell-lease.js) usa `>=`:
   // alla deadline la grace e' gia scaduta.
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-deadline-'));
   const clock = { t: 10_000 };
-  let mgr = null; let rc = null; let pairClient = null;
+  let mgr = null; let pairClient = null;
   try {
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
-    const info = await mgr.track('Dev');
-    const { serverSide, client } = await pair();
+    const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     pairClient = client;
-    mgr.attachInitial('Dev', serverSide, { generation: 0 });
-    // EOF arma la grace: deadline = 5_000 + 60_000 = 65_000, persistita come bound.
     clock.t = 5_000;
     client.end();
     await new Promise((r) => setTimeout(r, 30));
@@ -326,66 +330,57 @@ test('R3.3.5 post-restart: reconnect ESATTAMENTE alla graceDeadline rifiutato (b
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
     await mgr.boot();
     assert.equal(mgr.status('Dev').state, 'none', 'lease null post-restart (fail-closed)');
-    // reconnect ESATTAMENTE alla deadline (now === graceDeadline): grace scaduta -> deny.
+    // reconnect ESATTAMENTE alla deadline (now === graceDeadline) con proof fresco: deny.
     clock.t = 65_000;
-    rc = net.createConnection(info.stablePath, () => {
-      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
-    });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    const fresh = forgeProof(home, clock, { kind: 'lease', cellId: 'Dev', launchEpoch: info.launchEpoch, leaseId: proof.leaseId, generation: '0', jti: 'f'.repeat(16) });
+    const reply = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof: fresh });
     assert.equal(reply.type, 'deny', 'alla deadline esatta (now === graceDeadline) la grace e gia scaduta -> deny');
-    rc.destroy();
   } finally {
-    try { if (rc) rc.destroy(); } catch (_) {}
     try { if (pairClient) pairClient.destroy(); } catch (_) {}
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
 
-test('refresh: heartbeat -> ack; non cambia state live', async () => {
+test('refresh: heartbeat -> ack (+ proof nuovo); non cambia state live', async () => {
   const { clock, mgr } = setup();
   try {
-    const info = await mgr.track('Dev');
+    await mgr.track('Dev');
     const { serverSide, client } = await pair();
     mgr.attachInitial('Dev', serverSide, { generation: 0 });
     clock.t = 25_000;
     client.write(`${JSON.stringify({ type: 'refresh' })}\n`);
     const ack = await recv(client, (m) => m.type === 'ack');
     assert.equal(ack.type, 'ack');
+    assert.ok(ack.proof && ack.proof.kind === 'lease', 'il refresh consegna un proof nuovo (B1)');
     assert.equal(mgr.status('Dev').state, 'live', 'refresh mantiene live');
     client.destroy();
   } finally { mgr.close(); }
 });
 
-test('restart server fail-closed: boot() recovery ripristina identity + endpoint; reconnect ricostruisce (percorso produzione)', async () => {
+test('restart server fail-closed: boot() recovery ripristina identity + endpoint; reconnect col proof detenuto ricostruisce (percorso produzione)', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-restart-'));
   const clock = { t: 10_000 };
-  let mgr = null; let rc = null; let pairClient = null;
+  let mgr = null; let pairClient = null;
   try {
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
-    const info = await mgr.track('Dev');
-    const { serverSide, client } = await pair();
+    const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     pairClient = client;
-    mgr.attachInitial('Dev', serverSide, { generation: 0 });
     assert.equal(mgr.status('Dev').state, 'live');
     try { client.destroy(); pairClient = null; } catch (_) {}
     // restart del server: manager chiuso e ricreato. Nessun lease sopravvive.
     mgr.close(); mgr = null;
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
-    // PRODUZIONE: boot() (non loadPersisted()+track() a mano) ripristina l'identity
-    // persistita e RIAPRE l'endpoint stabile. La cella non viene rilanciata (boot:false):
-    // senza boot() il supervisore vivo non troverebbe l'endpoint.
+    // PRODUZIONE: boot() ripristina l'identity persistita e RIAPRE l'endpoint
+    // stabile. Il proof detenuto dal supervisore verifica con la chiave
+    // per-installazione persistita: la recovery non ha bisogno di capability.
     await mgr.boot();
     assert.equal(mgr.status('Dev').state, 'none', 'fail-closed: nessun lease sopravvive al restart');
     clock.t = 12_000;
-    rc = net.createConnection(info.stablePath, () => {
-      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
-    });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
-    assert.equal(reply.type, 'lease', 'reconnect post-restart ricostruisce il lease (identity persistita via boot)');
+    const reply = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof });
+    assert.equal(reply.type, 'lease', 'reconnect post-restart ricostruisce il lease (proof verificato dal verifier persistito)');
     assert.equal(mgr.status('Dev').state, 'live');
   } finally {
-    try { if (rc) rc.destroy(); } catch (_) {}
     try { if (pairClient) pairClient.destroy(); } catch (_) {}
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
@@ -394,35 +389,30 @@ test('restart server fail-closed: boot() recovery ripristina identity + endpoint
 
 test('B3/GC1: post-restart con cella LIVE il reconnect oltre il bound live (now+GRACE_MS) e negato (no fail-open null)', async () => {
   // GC1.1: graceDeadline sempre valorizzato (cella live = now+GRACE_MS), mai null.
-  // Su HEAD il bound live persistito e' null -> post-restart un reconnect oltre e' lease (fail-open).
+  // Su HEAD il bound live persistito era null -> post-restart un reconnect oltre era lease (fail-open).
   // Con GC1 il bound e' now+GRACE_MS -> oltre quel bound, deny.
   // Fixture dal percorso di produzione (track + attachInitial -> bindLiveSocket). Nessun EOF.
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-livebound-'));
   const clock = { t: 10_000 };
-  let mgr = null; let rc = null; let pairClient = null;
+  let mgr = null; let pairClient = null;
   try {
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
-    const info = await mgr.track('Dev');
-    const { serverSide, client } = await pair();
+    const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     pairClient = client;
-    mgr.attachInitial('Dev', serverSide, { generation: 0 });
     assert.equal(mgr.status('Dev').state, 'live');
     // Chiusura del manager SENZA processare l'EOF (detachSocket rimuove i listener
     // close/end prima del destroy): il bound persistito resta quello live.
     mgr.close(); mgr = null;
+    pairClient = null;
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
     await mgr.boot();
     assert.equal(mgr.status('Dev').state, 'none', 'fail-closed: lease null post-restart');
-    // reconnect OLTRE il bound live (10_000 + GRACE_MS). Su HEAD: lease; con GC1: deny.
+    // reconnect OLTRE il bound live (10_000 + GRACE_MS) con proof FRESCO: deny del bound.
     clock.t = 10_000 + L.GRACE_MS + 1;
-    rc = net.createConnection(info.stablePath, () => {
-      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
-    });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    const fresh = forgeProof(home, clock, { kind: 'lease', cellId: 'Dev', launchEpoch: info.launchEpoch, leaseId: proof.leaseId, generation: '0', jti: '1'.repeat(16) });
+    const reply = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof: fresh });
     assert.equal(reply.type, 'deny', 'B3: reconnect oltre il bound live valorizzato -> deny (no piu fail-open null)');
-    rc.destroy();
   } finally {
-    try { if (rc) rc.destroy(); } catch (_) {}
     try { if (pairClient) pairClient.destroy(); } catch (_) {}
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
@@ -434,45 +424,36 @@ test('B3/GC1.6: graceDeadline illeggibile/non-intero su disco = grace gia scadut
   // Fixture prodotta dal percorso (track + attachInitial + EOF), poi bound corroto.
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-corrupt-'));
   const clock = { t: 10_000 };
-  let mgr = null; let rc = null; let pairClient = null;
+  let mgr = null; let pairClient = null;
   try {
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
-    const info = await mgr.track('Dev');
-    const { serverSide, client } = await pair();
+    const { info, client, proof } = await attachWithProof(mgr, 'Dev', clock);
     pairClient = client;
-    mgr.attachInitial('Dev', serverSide, { generation: 0 });
     clock.t = 5_000;
     client.end();
     await new Promise((r) => setTimeout(r, 30)); // EOF -> bound armGrace persistito
     try { pairClient.destroy(); pairClient = null; } catch (_) {}
     mgr.close(); mgr = null;
-    // Corrompi il bound su disco: valore non-intero.
-    const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
-    const raw = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    raw.Dev.graceDeadline = 'NOT-AN-INTEGER';
-    fs.writeFileSync(stateFile, JSON.stringify(raw), { mode: 0o600 });
+    // Corrompi il bound su disco (file per-cell): valore non-intero.
+    const raw = JSON.parse(fs.readFileSync(cellStateFile(home, 'Dev'), 'utf8'));
+    raw.graceDeadline = 'NOT-AN-INTEGER';
+    fs.writeFileSync(cellStateFile(home, 'Dev'), JSON.stringify(raw), { mode: 0o600 });
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
     await mgr.boot();
-    // qualunque now: bound non-intero -> scaduto -> deny
+    // qualunque now con proof fresco: bound non-intero -> scaduto -> deny
     clock.t = 5_000 + 1;
-    rc = net.createConnection(info.stablePath, () => {
-      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
-    });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    const fresh = forgeProof(home, clock, { kind: 'lease', cellId: 'Dev', launchEpoch: info.launchEpoch, leaseId: proof.leaseId, generation: '0', jti: '2'.repeat(16) });
+    const reply = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof: fresh });
     assert.equal(reply.type, 'deny', 'GC1.6: graceDeadline non-intero -> grace scaduta -> deny');
-    rc.destroy();
   } finally {
-    try { if (rc) rc.destroy(); } catch (_) {}
     try { if (pairClient) pairClient.destroy(); } catch (_) {}
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
 
-test('B3/GC1.2: refresh rinfresca il bound durevole su disco (now+GRACE_MS)', async () => {
-  // GC1.1/GC1.2: il refresh rinfresca il bound (oggi cell-lease-server.js refresh non
-  // tocca il disco) e lo persiste PRIMA dell'ACK. Su c438a55 il refresh non persiste ->
-  // bound non cambia (rossa); con GC1.2 -> bound = now+GRACE_MS.
+test('B3/GC1.2: refresh rinfresca il bound durevole su disco (now+GRACE_MS), per-cell', async () => {
+  // GC1.1/GC1.2: il refresh rinfresca il bound e lo persiste PRIMA dell'ACK.
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-refresh-'));
   const clock = { t: 10_000 };
   let mgr = null; let client = null;
@@ -482,13 +463,13 @@ test('B3/GC1.2: refresh rinfresca il bound durevole su disco (now+GRACE_MS)', as
     const { serverSide, client: c } = await pair();
     client = c;
     mgr.attachInitial('Dev', serverSide, { generation: 0 });
-    const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
-    const boundBefore = JSON.parse(fs.readFileSync(stateFile, 'utf8')).Dev.graceDeadline;
+    const stateFile = cellStateFile(home, 'Dev');
+    const boundBefore = JSON.parse(fs.readFileSync(stateFile, 'utf8')).graceDeadline;
     clock.t = 30_000;
     client.write(`${JSON.stringify({ type: 'refresh' })}\n`);
     const ack = await recv(client, (m) => m.type === 'ack');
     assert.equal(ack.type, 'ack');
-    const boundAfter = JSON.parse(fs.readFileSync(stateFile, 'utf8')).Dev.graceDeadline;
+    const boundAfter = JSON.parse(fs.readFileSync(stateFile, 'utf8')).graceDeadline;
     assert.equal(boundAfter, 30_000 + L.GRACE_MS, 'GC1.2: refresh rinfresca il bound a now+GRACE_MS');
     assert.notEqual(boundAfter, boundBefore, 'il bound e cambiato dopo il refresh');
   } finally {
@@ -498,10 +479,9 @@ test('B3/GC1.2: refresh rinfresca il bound durevole su disco (now+GRACE_MS)', as
   }
 });
 
-test('B3/GC1.2: persistenza fallita nel refresh = nessun ACK (errore non ingoiato)', async () => {
-  // GC1.2: se writePersisted non committa al refresh, nessun ACK. seam writeFileSync
-  // condizionato (fail DOPO il setup): track/attachInitial persistono OK, poi il refresh
-  // fallisce a scrivere. (P1-2b: track non tollera piu' persist fallita -> seam condizionato.)
+test('B3/GC1.2: persistenza fallita nel refresh = nessun ACK e nessun proof (errore non ingoiato)', async () => {
+  // GC1.2: se writePersisted non committa al refresh, nessun ACK (e nessun proof
+  // nuovo: il detentore resta col proof vecchio, che scade per conto suo).
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-noack-'));
   const clock = { t: 10_000 };
   let writeFail = false;
@@ -525,96 +505,56 @@ test('B3/GC1.2: persistenza fallita nel refresh = nessun ACK (errore non ingoiat
   }
 });
 
-test('P1-1: errore di lettura dello store al refresh NON cancella le altre celle (e non ACK)', async () => {
-  // P1-1 (audit 3405df0): readPersisted ingoia qualunque errore in {} -> persistEntry
-  // RMW riscrive lo store con solo la cella corrente, cancellando le altre. Qui due
-  // celle (Dev+Research) gia' persistite; un EIO sintetico sulla read al refresh di Dev.
-  // Su 3405df0: Research sparisce + ACK. Dopo fix: Research resta + nessun ACK.
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1-readfail-'));
-  const clock = { t: 10_000 };
-  const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
-  let readFail = false;
-  const fakeFs = {
-    ...fs,
-    readFileSync(p, ...rest) {
-      if (readFail && p === stateFile) { const e = new Error('EIO'); e.code = 'EIO'; throw e; }
-      return fs.readFileSync(p, ...rest);
-    },
-  };
-  let mgr = null; let cD = null; let cR = null;
-  try {
-    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t, fs: fakeFs });
-    await mgr.track('Dev'); await mgr.track('Research');
-    const D = await pair(); const R = await pair();
-    cD = D.client; cR = R.client;
-    mgr.attachInitial('Dev', D.serverSide, { generation: 0 });
-    mgr.attachInitial('Research', R.serverSide, { generation: 0 });
-    const before = Object.keys(JSON.parse(fs.readFileSync(stateFile, 'utf8'))).sort();
-    assert.deepEqual(before, ['Dev', 'Research'], 'setup: entrambe le celle persistite');
-    // ora la lettura dello store fallisce (EIO)
-    readFail = true;
-    clock.t = 30_000;
-    cD.write(`${JSON.stringify({ type: 'refresh' })}\n`);
-    const probe = await Promise.race([
-      recv(cD, (m) => m.type === 'ack', 250).then(() => 'ack').catch(() => 'noack'),
-      new Promise((r) => setTimeout(() => r('noack'), 300)),
-    ]);
-    readFail = false;
-    const after = Object.keys(JSON.parse(fs.readFileSync(stateFile, 'utf8'))).sort();
-    assert.deepEqual(after, ['Dev', 'Research'], 'P1-1: Research NON cancellata da un errore di lettura dello store');
-    assert.equal(probe, 'noack', 'P1-1: nessun ACK quando la lettura dello store fallisce');
-  } finally {
-    readFail = false;
-    try { if (cD) cD.destroy(); } catch (_) {}
-    try { if (cR) cR.destroy(); } catch (_) {}
-    try { if (mgr) mgr.close(); } catch (_) {}
-    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
-  }
-});
+// P1-1 (audit 3405df0) nasceva con lo store unico: la RMW del refresh che
+// rileggeva TUTTO lo store poteva cancellare le altre celle su errore di
+// lettura. Con lo storage per-cell (D1) il refresh non rilegge piu' nulla e
+// scrive solo il proprio file: la garanzia equivalente ("il refresh di una
+// cella non tocca le altre") e' provata in tests/cell-lease-proof.test.js
+// (test D1/E3). Nessuna RMW condivisa, nessuna cancellazione possibile.
 
 // Fixture normativa (FC1 rev26 / P1-3 audit 3405df0): produce lo stato della cella
 // DAL PERCORSO DI PRODUZIONE — track + attachInitial (bindLiveSocket) + almeno un
-// refresh con ACK — verifica che il bound rinfrescato sia un intero rilettro da disco,
+// refresh con ACK — verifica che il bound rinfrescato sia un intero riletto da disco,
 // poi restart via boot(). I casi di reconnect (entro/alla deadline/oltre) e la
-// corruzione negativa poggiano su questa fixture, MAI su un cell-leases.json scritto
-// a mano: il formato riletto dopo restart deve essere quello emesso dal refresh.
+// corruzione negativa poggiano su questa fixture, MAI su un file scritto a mano:
+// il formato riletto dopo restart deve essere quello emesso dal refresh.
 async function liveBoundFixture() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-fixture-'));
   const clock = { t: 10_000 };
-  const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
+  const stateFile = cellStateFile(home, 'Dev');
   let mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
   const info = await mgr.track('Dev');
   const { serverSide, client } = await pair();
   mgr.attachInitial('Dev', serverSide, { generation: 0 });
-  // almeno un refresh con ACK: rinfresca il bound a now+GRACE_MS e lo persiste (GC1).
+  // almeno un refresh con ACK: rinfresca il bound a now+GRACE_MS, lo persiste (GC1)
+  // e consegna un proof nuovo (2b) — quello che il supervisore detiene da qui.
   clock.t = 30_000;
   client.write(`${JSON.stringify({ type: 'refresh' })}\n`);
   const ack = await recv(client, (m) => m.type === 'ack');
-  if (!ack || ack.type !== 'ack') { try { client.destroy(); mgr.close(); } catch (_) {} throw new Error('fixture: refresh non ACKato'); }
+  if (!ack || ack.type !== 'ack' || !ack.proof) { try { client.destroy(); mgr.close(); } catch (_) {} throw new Error('fixture: refresh non ACKato con proof'); }
+  const proof = ack.proof;
   // verifica: il bound riletto da disco e' l'intero atteso (now+GRACE_MS), non null.
   const onDisk = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-  const bound = onDisk.Dev && onDisk.Dev.graceDeadline;
+  const bound = onDisk.graceDeadline;
   try { client.destroy(); } catch (_) {}
   if (!Number.isInteger(bound) || bound !== 30_000 + L.GRACE_MS) { try { mgr.close(); } catch (_) {} throw new Error(`fixture: bound atteso ${30_000 + L.GRACE_MS}, got ${bound}`); }
   // restart via boot(): nessun lease sopravvive (fail-closed); il bound persistito resta.
   mgr.close(); mgr = null;
   mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
   await mgr.boot();
-  const f = { home, clock, mgr, info, stateFile, bound };
+  const f = { home, clock, mgr, info, stateFile, bound, proof };
   f.cleanup = () => { try { f.mgr.close(); } catch (_) {} try { fs.rmSync(f.home, { recursive: true, force: true }); } catch (_) {} };
   return f;
 }
 
-test('P1-3 fixture normativa: bind + refresh(ACK) + restart/boot; reconnect entro il bound -> lease', async () => {
+test('P1-3 fixture normativa: bind + refresh(ACK) + restart/boot; reconnect entro il bound col proof -> lease', async () => {
   const f = await liveBoundFixture();
   try {
     assert.equal(f.mgr.status('Dev').state, 'none', 'fail-closed: lease null post-restart');
-    assert.equal(f.bound, 30_000 + L.GRACE_MS, 'bound intero rinfrescato dal refresh, rilettro da disco');
+    assert.equal(f.bound, 30_000 + L.GRACE_MS, 'bound intero rinfrescato dal refresh, riletto da disco');
     f.clock.t = f.bound - 1;
-    const rc = net.createConnection(f.info.stablePath, () => { rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: f.info.launchEpoch, generation: 0, capability: f.info.capability })}\n`); });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
-    assert.equal(reply.type, 'lease', 'entro il bound rinfrescato -> lease (recovery)');
-    rc.destroy();
+    const reply = await reconnect(f.info.stablePath, { type: 'reconnect', generation: 0, proof: f.proof });
+    assert.equal(reply.type, 'lease', 'entro il bound rinfrescato, col proof del refresh -> lease (recovery)');
   } finally { f.cleanup(); }
 });
 
@@ -622,21 +562,19 @@ test('P1-3 fixture normativa: reconnect ALLA deadline (bound rinfrescato) -> den
   const f = await liveBoundFixture();
   try {
     f.clock.t = f.bound;
-    const rc = net.createConnection(f.info.stablePath, () => { rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: f.info.launchEpoch, generation: 0, capability: f.info.capability })}\n`); });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    const reply = await reconnect(f.info.stablePath, { type: 'reconnect', generation: 0, proof: f.proof });
     assert.equal(reply.type, 'deny', 'alla deadline (bound rinfrescato dal refresh) -> deny');
-    rc.destroy();
   } finally { f.cleanup(); }
 });
 
-test('P1-3 fixture normativa: reconnect OLTRE il bound (rinfrescato) -> deny', async () => {
+test('P1-3 fixture normativa: reconnect OLTRE il bound (rinfrescato), proof fresco -> deny', async () => {
   const f = await liveBoundFixture();
   try {
     f.clock.t = f.bound + 1;
-    const rc = net.createConnection(f.info.stablePath, () => { rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: f.info.launchEpoch, generation: 0, capability: f.info.capability })}\n`); });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
-    assert.equal(reply.type, 'deny', 'oltre il bound (rinfrescato dal refresh) -> deny');
-    rc.destroy();
+    // proof fresco firmato adesso: il deny non puo' venire dalla scadenza.
+    const fresh = forgeProof(f.home, f.clock, { kind: 'lease', cellId: 'Dev', launchEpoch: f.info.launchEpoch, leaseId: f.proof.leaseId, generation: '0', jti: '3'.repeat(16) });
+    const reply = await reconnect(f.info.stablePath, { type: 'reconnect', generation: 0, proof: fresh });
+    assert.equal(reply.type, 'deny', 'oltre il bound (rinfrescato) -> deny');
   } finally { f.cleanup(); }
 });
 
@@ -645,75 +583,73 @@ test('P1-3 fixture normativa, negativo: bound corroto (non-intero) partito dalla
   try {
     // corrompe solo il bound, partendo dalla fixture reale (non riscrive l'intera entry).
     const raw = JSON.parse(fs.readFileSync(f.stateFile, 'utf8'));
-    raw.Dev.graceDeadline = 'CORRUPT';
+    raw.graceDeadline = 'CORRUPT';
     fs.writeFileSync(f.stateFile, JSON.stringify(raw), { mode: 0o600 });
     f.mgr.close();
     f.mgr = createLeaseManager({ home: f.home, log: () => {} }, { now: () => f.clock.t });
     await f.mgr.boot();
     f.clock.t = 30_001;
-    const rc = net.createConnection(f.info.stablePath, () => { rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: f.info.launchEpoch, generation: 0, capability: f.info.capability })}\n`); });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    const fresh = forgeProof(f.home, f.clock, { kind: 'lease', cellId: 'Dev', launchEpoch: f.info.launchEpoch, leaseId: f.proof.leaseId, generation: '0', jti: '4'.repeat(16) });
+    const reply = await reconnect(f.info.stablePath, { type: 'reconnect', generation: 0, proof: fresh });
     assert.equal(reply.type, 'deny', 'bound corroto (non-intero) partito dalla fixture reale -> deny');
-    rc.destroy();
   } finally { f.cleanup(); }
 });
 
-// P1-1b (audit 2a05db2): la guardia era a livello I/O; il difetto e' riemerso a livello
-// FORMA DEL DATO. Una root JSON valida ma non-oggetto ([], null, numero, stringa) non e'
-// uno store celle: readPersisted deve trattarla come illeggibile (propaga), non come vuoto.
-test('P1-1b schema: root JSON valida ma non-oggetto -> refresh NESSUN ACK e store non riscritto', async () => {
+// P1-1b (audit 2a05db2): la guardia era a livello I/O; il difetto era la FORMA
+// del dato. Con lo store per-cell la radice non-oggetto riguarda il SINGOLO file
+// della cella: boot() deve saltare quella cella (fail-closed), non trattarla
+// come vuota ne' caricarla.
+test('P1-1b schema: file per-cell con root valida-JSON ma non-oggetto -> cella saltata al boot', async () => {
   const badRoots = ['[]', 'null', '42', '"oops"'];
   for (const badRoot of badRoots) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1-schema-'));
     const clock = { t: 10_000 };
-    const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
-    let mgr = null; let cD = null; let cR = null;
+    let mgr = null;
     try {
       mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
-      await mgr.track('Dev'); await mgr.track('Research');
-      const D = await pair(); const R = await pair();
-      cD = D.client; cR = R.client;
-      mgr.attachInitial('Dev', D.serverSide, { generation: 0 });
-      mgr.attachInitial('Research', R.serverSide, { generation: 0 });
-      // sovrascrivi lo store con una root valida-JSON ma non-oggetto
-      fs.writeFileSync(stateFile, badRoot, { mode: 0o600 });
-      clock.t = 30_000;
-      cD.write(`${JSON.stringify({ type: 'refresh' })}\n`);
-      const probe = await Promise.race([
-        recv(cD, (m) => m.type === 'ack', 250).then(() => 'ack').catch(() => 'noack'),
-        new Promise((r) => setTimeout(() => r('noack'), 300)),
-      ]);
-      const after = fs.readFileSync(stateFile, 'utf8');
-      assert.equal(probe, 'noack', `P1-1b: root '${badRoot}' non e' uno store -> nessun ACK`);
-      assert.equal(after, badRoot, `P1-1b: root '${badRoot}' store non riscritto (nessun finto successo)`);
+      await mgr.track('Dev');
+      await mgr.track('Research');
+      mgr.close(); mgr = null;
+      // sovrascrivi il file DI DEV con una root valida-JSON ma non-oggetto
+      fs.writeFileSync(cellStateFile(home, 'Dev'), badRoot, { mode: 0o600 });
+      mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+      await mgr.boot();
+      const ids = [...mgr._cells.keys()].sort();
+      assert.deepEqual(ids, ['Research'], `P1-1b: root '${badRoot}' non e' una entry -> solo quella cella saltata`);
     } finally {
-      try { if (cD) cD.destroy(); } catch (_) {}
-      try { if (cR) cR.destroy(); } catch (_) {}
       try { if (mgr) mgr.close(); } catch (_) {}
       try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
     }
   }
 });
 
-test('P1-2b: track con store illeggibile NON restituisce identity senza record durevole (propaga)', async () => {
-  // P1-2b: track ignorava persistEntry=false e tornava identity+endpoint anche senza
-  // record durevole -> al restart niente recovery. Il record durevole (identity) e'
-  // essenziale in track: se non committa, track fallisce (non promette recovery).
+// P1-2b (audit 2a): il record durevole e' essenziale. Con lo store unico la
+// lettura illeggibile PROPAGAVA perche' la RMW avrebbe riscritto TUTTO lo store
+// alla cieca. Con lo storage per-cell la lettura illeggibile riguarda SOLO il
+// file di quella cella: track rigenera l'identity e RIPARA il file (il danno e'
+// contenuto alla cella, non all'intero store). Il guarantee originale — track
+// non promette recovery senza record durevole — resta provato dal fallimento
+// della SCRITTURA (test P1-2 e chmod: persist fallita -> track reject).
+test('P1-2b per-cell: file della cella illeggibile -> track rigenera e ripara il record (danno contenuto alla cella)', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1-track-'));
   const clock = { t: 10_000 };
-  const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
-  const fakeFs = {
-    ...fs,
-    readFileSync(p, ...rest) {
-      if (p === stateFile) { const e = new Error('EIO'); e.code = 'EIO'; throw e; }
-      return fs.readFileSync(p, ...rest);
-    },
-  };
+  const stateFile = cellStateFile(home, 'Dev');
   let mgr = null;
   try {
-    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t, fs: fakeFs });
-    await assert.rejects(() => mgr.track('Dev'), /non persistito|store|EIO/i, 'P1-2b: track propaga il fallimento del record durevole');
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    const first = await mgr.track('Dev');
+    mgr.close(); mgr = null;
+    // rende il file illeggibile (permessi): la identity vecchia e' persa per Dev,
+    // ma Research non e' coinvolta.
+    fs.chmodSync(stateFile, 0o000);
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    const second = await mgr.track('Dev');
+    fs.chmodSync(stateFile, 0o600);
+    const repaired = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    assert.equal(repaired.launchEpoch, second.launchEpoch, 'record riparato con la nuova identity');
+    assert.notEqual(repaired.launchEpoch, first.launchEpoch, 'identity rigenerata (il file era illeggibile)');
   } finally {
+    try { fs.chmodSync(stateFile, 0o600); } catch (_) {}
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
@@ -721,33 +657,27 @@ test('P1-2b: track con store illeggibile NON restituisce identity senza record d
 
 test('P1-2b: reconnect con bound non durevole (persist fallita) -> deny, nessun lease', async () => {
   // P1-2b: handleReconnect mandava lease anche quando il nuovo bound non committava.
-  // Qui Dev e' caricato in memoria (boot con store OK), poi si corrompe lo store:
-  // il reattach non persiste il bound -> bindLiveSocket false -> deny (no lease).
+  // Dev e' caricato in memoria (boot OK); poi la SCRITTURA si rompe: il reattach
+  // non persiste il bound -> bindLiveSocket false -> deny (no lease finto).
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1-reconnect-'));
   const clock = { t: 10_000 };
-  const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
-  let mgr1 = null; let mgr2 = null; let rc = null; let pairClient = null;
+  let writeFail = false;
+  const fakeFs = { ...fs, writeFileSync(...args) { if (writeFail) throw new Error('disk full'); return fs.writeFileSync(...args); } };
+  let mgr1 = null; let mgr2 = null; let pairClient = null;
   try {
     mgr1 = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
-    const info = await mgr1.track('Dev');
-    const { serverSide, client } = await pair();
+    const { info, client, proof } = await attachWithProof(mgr1, 'Dev', clock);
     pairClient = client;
-    mgr1.attachInitial('Dev', serverSide, { generation: 0 });
     try { client.destroy(); pairClient = null; } catch (_) {}
     mgr1.close(); mgr1 = null;
-    mgr2 = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
-    await mgr2.boot(); // carica Dev dal store OK (identity in memoria)
-    // ORA corrompi lo store (root []): il reattach non potra' persistere il bound.
-    fs.writeFileSync(stateFile, '[]', { mode: 0o600 });
+    mgr2 = createLeaseManager({ home, log: () => {} }, { now: () => clock.t, fs: fakeFs });
+    await mgr2.boot(); // carica Dev dal disco OK (identity in memoria)
+    writeFail = true; // da qui ogni persist fallisce
     clock.t = 12_000;
-    rc = net.createConnection(info.stablePath, () => {
-      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
-    });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    const reply = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof });
     assert.equal(reply.type, 'deny', 'P1-2b: reconnect con bound non durevole -> deny (no lease finto)');
-    rc.destroy();
   } finally {
-    try { if (rc) rc.destroy(); } catch (_) {}
+    writeFail = false;
     try { if (pairClient) pairClient.destroy(); } catch (_) {}
     try { if (mgr2) mgr2.close(); } catch (_) {}
     try { if (mgr1) mgr1.close(); } catch (_) {}
@@ -755,36 +685,34 @@ test('P1-2b: reconnect con bound non durevole (persist fallita) -> deny, nessun 
   }
 });
 
-// P1-1 (reaudit dd38c83): __proto__ come cellId produce un finto successo: track
-// restituisce identity+endpoint ma obj['__proto__'] invoca il setter del prototype
-// invece di creare una proprieta' propria → JSON.stringify produce {} → nessun record
-// durevole → niente recovery al restart. Fix: Object.create(null) in persistEntry.
-test('P1-1: __proto__ come cellId crea record durevole proprio (non {} su disco)', async () => {
+// P1-1 (reaudit dd38c83): __proto__ come cellId produceva un finto successo con
+// lo store unico (obj['__proto__'] invocava il setter del prototype invece di
+// creare una proprieta' propria -> JSON.stringify produceva {} -> nessun record
+// durevole). Con lo storage per-cell non esiste piu' NESSUN contenitore mappato
+// per cellId: il cellId diventa un NOME FILE via sanitizeCell e il file contiene
+// una entry a campi fissi. I tre test storici restano nella forma per-cell.
+test('P1-1: __proto__ come cellId crea un file per-cell proprio (record durevole)', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-proto1-'));
   const clock = { t: 10_000 };
   let mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
   try {
     const info = await mgr.track('__proto__');
     assert.ok(info.launchEpoch, 'track restituisce identity');
-    const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
-    const raw = fs.readFileSync(stateFile, 'utf8');
+    const raw = fs.readFileSync(cellStateFile(home, '__proto__'), 'utf8');
     const persisted = JSON.parse(raw);
-    assert.ok(raw.includes('"__proto__"'), 'il file JSON contiene la chiave __proto__ serializzata');
-    assert.ok(Object.prototype.hasOwnProperty.call(persisted, '__proto__'), 'proprieta\' propria __proto__');
-    assert.equal(persisted['__proto__'].launchEpoch, info.launchEpoch, 'launchEpoch durevole');
+    assert.equal(persisted.launchEpoch, info.launchEpoch, 'launchEpoch durevole nel file proprio');
+    assert.ok(Number.isInteger(persisted.graceDeadline));
   } finally { try { mgr.close(); } catch (_) {} try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {} }
 });
 
 test('P1-1: __proto__ record durevole sopravvive al restart (boot recovery)', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-proto2-'));
   const clock = { t: 10_000 };
-  let mgr = null; let rc = null; let pairClient = null;
+  let mgr = null; let pairClient = null;
   try {
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
-    const info = await mgr.track('__proto__');
-    const { serverSide, client } = await pair();
+    const { info, client, proof } = await attachWithProof(mgr, '__proto__', clock);
     pairClient = client;
-    mgr.attachInitial('__proto__', serverSide, { generation: 0 });
     assert.equal(mgr.status('__proto__').state, 'live');
     try { client.destroy(); pairClient = null; } catch (_) {}
     mgr.close(); mgr = null;
@@ -792,31 +720,24 @@ test('P1-1: __proto__ record durevole sopravvive al restart (boot recovery)', as
     await mgr.boot();
     assert.notEqual(mgr.status('__proto__').state, undefined, 'cella __proto__ caricata dopo restart');
     clock.t = 12_000;
-    rc = net.createConnection(info.stablePath, () => {
-      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: info.launchEpoch, generation: 0, capability: info.capability })}\n`);
-    });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
-    assert.equal(reply.type, 'lease', 'P1-1: __proto__ recovery funziona dopo restart (record durevole)');
-    rc.destroy();
+    const reply = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof });
+    assert.equal(reply.type, 'lease', 'P1-1: __proto__ recovery funziona dopo restart (record durevole per-cell)');
   } finally {
-    try { if (rc) rc.destroy(); } catch (_) {}
     try { if (pairClient) pairClient.destroy(); } catch (_) {}
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
 
-test('P1-1: __proto__ non inquina altre celle (null-prototype non propaga)', async () => {
+test('P1-1: __proto__ non inquina altre celle (file separati per construction)', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-proto3-'));
   const clock = { t: 10_000 };
   let mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
   try {
     await mgr.track('Dev');
     await mgr.track('__proto__');
-    const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
-    const persisted = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    assert.ok(Object.prototype.hasOwnProperty.call(persisted, 'Dev'), 'Dev presente');
-    assert.ok(Object.prototype.hasOwnProperty.call(persisted, '__proto__'), '__proto__ presente');
+    assert.ok(fs.existsSync(cellStateFile(home, 'Dev')), 'Dev presente (file proprio)');
+    assert.ok(fs.existsSync(cellStateFile(home, '__proto__')), '__proto__ presente (file proprio)');
   } finally { try { mgr.close(); } catch (_) {} try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {} }
 });
 
@@ -853,10 +774,8 @@ test('P1-2: secondo track() con persist fallita NON cancella lease viva esistent
 });
 
 // P1-3 (reaudit dd38c83): onLease in builtin.js ignorava il boolean di attachInitial.
-// Se la persistenza del bind fallisce, il payload lease e' gia' stato consegnato dal
-// broker (scrive PRIMA di chiamare onLease). La socket resta aperta su entrambi i lati
-// ma il manager e' state=none: il supervisore ha un lease-client connesso a nulla.
-// Fix: onLease consuma il false e chiude la socket (EOF osservabile).
+// Se la persistenza del bind fallisce, il payload lease non deve essere consegnato:
+// la socket va chiusa (EOF osservabile), non lasciata aperta su un manager vuoto.
 // Test: simula il wiring onLease con pair() (socket TCP throwaway come fa il broker).
 test('P1-3: onLease con attachInitial=false chiude la socket (EOF osservabile dal supervisore)', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1_3fail-'));
@@ -915,26 +834,18 @@ test('P1-3: onLease con attachInitial=true NON chiude la socket (lease vivo, hap
   }
 });
 
-// P1-4 (reaudit dd38c83): forma ≠ semantica. loadPersisted accettava qualunque
-// string come launchEpoch/capability e qualunque intero come graceDeadline. Il
-// runtime produce solo hex di lunghezza fissa (16/64 char) e bound entro now+GRACE_MS.
-// Fix: loadPersisted valida il formato (regex hex) e la plausibilita' del bound.
-// Fail-closed: entry con valori non producibili = saltata (nessun endpoint, nessun lease).
-
-// Helper: scrive un cell-leases.json a mano
-function writeLeaseStore(home, obj) {
-  const stateFile = path.join(home, '.nexuscrew', 'run', 'cell-leases.json');
-  fs.mkdirSync(path.dirname(stateFile), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(stateFile, JSON.stringify(obj), { mode: 0o600 });
-  return stateFile;
-}
+// P1-4 (reaudit dd38c83): forma ≠ semantica. loadPersisted accetta solo cio'
+// che il runtime produce: launchEpoch hex-16 e bound entro now+2*GRACE_MS.
+// Fail-closed: entry con valori non producibili = saltata (nessun endpoint,
+// nessun lease). La capability non esiste piu' (A2): l'autenticazione al
+// reconnect e' il proof firmato con la chiave per-installazione della dir.
 
 test('P1-4: identity di un byte (launchEpoch="x") rifiutata — entry saltata, nessun endpoint', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1_4id-'));
   const clock = { t: 10_000 };
   let mgr = null;
   try {
-    writeLeaseStore(home, { Dev: { launchEpoch: 'x', capability: 'x', graceDeadline: 10_000 + L.GRACE_MS } });
+    writeLeaseEntry(home, 'Dev', { launchEpoch: 'x', graceDeadline: 10_000 + L.GRACE_MS });
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
     await mgr.boot();
     // La entry con identity di 1 byte NON deve essere caricata: nessun endpoint aperto
@@ -946,53 +857,48 @@ test('P1-4: identity di un byte (launchEpoch="x") rifiutata — entry saltata, n
   }
 });
 
-test('P1-4: graceDeadline = MAX_SAFE_INTEGER rifiutata (bound assurdo -> scaduto -> deny)', async () => {
+test('P1-4: graceDeadline = MAX_SAFE_INTEGER rifiutata (bound assurdo -> scaduto -> deny anche con proof fresco)', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1_4gd-'));
   const clock = { t: 10_000 };
-  let mgr = null; let rc = null;
+  let mgr = null;
   try {
     const crypto = require('node:crypto');
     const ep = crypto.randomBytes(8).toString('hex');
-    const cap = crypto.randomBytes(32).toString('hex');
-    writeLeaseStore(home, { Dev: { launchEpoch: ep, capability: cap, graceDeadline: Number.MAX_SAFE_INTEGER } });
+    writeLeaseEntry(home, 'Dev', { launchEpoch: ep, graceDeadline: Number.MAX_SAFE_INTEGER });
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
     await mgr.boot();
     // MAX_SAFE_INTEGER non e' producibile da now()+GRACE_MS: trattato come scaduto (0)
     const stablePath = path.join(home, '.nexuscrew', 'run', 'cell-Dev.sock');
-    rc = net.createConnection(stablePath, () => {
-      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: ep, generation: 0, capability: cap })}\n`);
-    });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
+    // proof legittimo (firmato con la chiave per-installazione), fresco: il deny
+    // puo' venire SOLO dal bound assurdo.
+    const proof = forgeProof(home, clock, { kind: 'lease', cellId: 'Dev', launchEpoch: ep, leaseId: '5'.repeat(16), generation: '0', jti: '6'.repeat(16) });
+    const reply = await reconnect(stablePath, { type: 'reconnect', generation: 0, proof });
     assert.equal(reply.type, 'deny', 'P1-4: graceDeadline assurdo -> deny (no lease illimitato)');
-    rc.destroy();
   } finally {
-    try { if (rc) rc.destroy(); } catch (_) {}
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
 
-test('P1-4: identity con formato valido (hex 16/64) accettata normalmente', async () => {
+test('P1-4: identity con formato valido (hex 16) accettata; reconnect con proof verificato -> lease', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-p1_4ok-'));
   const clock = { t: 10_000 };
-  let mgr = null; let rc = null;
+  let mgr = null;
   try {
     const crypto = require('node:crypto');
     const ep = crypto.randomBytes(8).toString('hex');
-    const cap = crypto.randomBytes(32).toString('hex');
-    writeLeaseStore(home, { Dev: { launchEpoch: ep, capability: cap, graceDeadline: 10_000 + L.GRACE_MS } });
+    writeLeaseEntry(home, 'Dev', { launchEpoch: ep, graceDeadline: 10_000 + L.GRACE_MS });
     mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
     await mgr.boot();
     const stablePath = path.join(home, '.nexuscrew', 'run', 'cell-Dev.sock');
     assert.equal(fs.existsSync(stablePath), true, 'identity valida -> endpoint aperto');
-    rc = net.createConnection(stablePath, () => {
-      rc.write(`${JSON.stringify({ type: 'reconnect', launchEpoch: ep, generation: 0, capability: cap })}\n`);
-    });
-    const reply = await recv(rc, (m) => m.type === 'lease' || m.type === 'deny');
-    assert.equal(reply.type, 'lease', 'identity valida entro bound -> lease (recovery normale)');
-    rc.destroy();
+    // 2b: il proof e' emesso dal server (chiave per-installazione) e presentato
+    // dal detentore; post-boot non c'e' lease in memoria, quindi il gate e'
+    // firma+expiry+bound — esattamente il caso recovery post-restart.
+    const proof = forgeProof(home, clock, { kind: 'lease', cellId: 'Dev', launchEpoch: ep, leaseId: '7'.repeat(16), generation: '0', jti: '8'.repeat(16) });
+    const reply = await reconnect(stablePath, { type: 'reconnect', generation: 0, proof });
+    assert.equal(reply.type, 'lease', 'identity valida entro bound, proof verificato -> lease (recovery normale)');
   } finally {
-    try { if (rc) rc.destroy(); } catch (_) {}
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }

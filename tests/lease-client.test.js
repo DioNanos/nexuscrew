@@ -1,106 +1,138 @@
 'use strict';
-
-// Test del lease-client lato supervisore (lib/fleet/lease-client.js) con seams
-// (setTimeout/clearTimeout/net/now) e socket fake EventEmitter. Il tempo e'
-// simulato: fire() fa avanzare l'orologio dei ms del timer che esegue.
-// Copre:
-//  - R3.3.4: il reconnect presenta la generation corrente via getter (cell-exec
-//    la fa avanzare coi restart), non un valore fisso.
-//  - R3.2: >=2 tentativi di reconnect STRETTAMENTE dentro la grace 60s anche se
-//    il server e' muto (per-attempt timeout: senza, una socket appesa lasciava
-//    1 solo tentativo e 0 timer successivi).
-//  - R3.2: il retry dopo deny e' bounded dalla grace (oltre non si ritenta).
-
+// Fetta 2b — lease-client lato supervisore: detiene l'ultimo proof ricevuto sul
+// canale (lease frame all'attach, ack a ogni refresh) e lo presenta al
+// reconnect. La capability statica non esiste piu' (A2): il payload porta solo
+// i dati di routing (cellId, launchEpoch, stablePath).
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { EventEmitter } = require('node:events');
+const net = require('node:net');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { startLeaseClient } = require('../lib/fleet/lease-client.js');
 
-function fakeSocket() {
-  const s = new EventEmitter();
-  s.setEncoding = () => {};
-  s.write = (data) => { s.written = (s.written || '') + String(data); return true; };
-  s.destroy = () => { if (s.destroyed) return; s.destroyed = true; s.emit('close'); };
-  s.removeAllListeners = (ev) => EventEmitter.prototype.removeAllListeners.call(s, ev);
-  s.writable = true;
-  s.destroyed = false;
-  return s;
+function recvLine(sock, predicate, timeoutMs = 500) {
+  return new Promise((resolve, reject) => {
+    let buf = '';
+    const to = setTimeout(() => { cleanup(); reject(new Error('recv timeout')); }, timeoutMs);
+    function cleanup() { clearTimeout(to); sock.removeListener('data', on); }
+    function on(chunk) {
+      buf += chunk.toString();
+      let nl;
+      while ((nl = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
+        let msg; try { msg = JSON.parse(line); } catch (_) { continue; }
+        if (!predicate || predicate(msg)) { cleanup(); resolve(msg); }
+      }
+    }
+    sock.on('data', on);
+  });
 }
 
-// harness(info, { reply }): reply = 'hang' (muto) | 'deny' | 'lease'. Il server
-// fake risponde (onConnect + reply) su un timer(0), cosi' i listener 'data' del
-// client sono gia' registrati quando la reply arriva.
-function harness(info, { reply = 'hang' } = {}) {
-  let clock = 0;
-  const now = () => clock;
-  const timers = [];
-  let timerId = 1;
-  const setTimeout = (fn, ms) => { const id = timerId++; timers.push({ id, fn, ms: ms || 0 }); return id; };
-  const clearTimeout = (id) => {
-    const i = timers.findIndex((t) => t.id === id);
-    if (i >= 0) timers.splice(i, 1);
-  };
-  const created = [];
-  const net = {
-    createConnection: (_path, onConnect) => {
-      const s = fakeSocket();
-      created.push({ s });
-      setTimeout(() => {
-        try { onConnect(); } catch (_) {}
-        if (reply === 'deny') s.emit('data', `${JSON.stringify({ type: 'deny' })}\n`);
-        else if (reply === 'lease') s.emit('data', `${JSON.stringify({ type: 'lease', leaseId: 'aa'.repeat(16) })}\n`);
-        // 'hang': nessuna reply
-      }, 0);
-      return s;
-    },
-  };
-  const initial = fakeSocket();
-  const ctl = startLeaseClient(initial, info, { setTimeout, clearTimeout, net, now });
-  return {
-    initial, created, ctl,
-    clock: () => clock,
-    pending: () => timers.length,
-    fire: () => { const t = timers.shift(); if (!t) return false; clock += t.ms; t.fn(); return true; },
-  };
+// Canale iniziale: pair TCP come broker one-shot.
+function pair() {
+  return new Promise((resolve, reject) => {
+    let pending = null;
+    const srv = net.createServer((sock) => { pending = sock; });
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const client = net.createConnection(srv.address().port, '127.0.0.1', () => {
+        const wait = () => {
+          if (pending) { srv.close(() => {}); resolve({ serverSide: pending, client }); }
+          else setTimeout(wait, 2);
+        };
+        wait();
+      });
+      client.once('error', reject);
+    });
+  });
 }
 
-test('R3.3.4 lease-client: il reconnect presenta la generation corrente (getter che avanza)', () => {
-  let gen = 0;
-  const { initial, created, fire } = harness({
-    stablePath: '/tmp/x.sock', launchEpoch: 'ep', capability: 'ab'.repeat(32),
-    generation: () => gen,
-  }, { reply: 'lease' });
-  initial.emit('end');     // EOF
-  fire(); fire();          // reconnect(0) + onConnect/lease(0) -> attempt1 settle
-  assert.ok(created.length >= 1, 'almeno un tentativo');
-  assert.equal(JSON.parse(created[0].s.written.trim()).generation, 0, 'primo reconnect: generation 0');
-  gen = 3;                 // cell-exec ha riavviato il child
-  created[0].s.emit('end'); // EOF sulla socket corrente
-  fire(); fire();          // attempt2
-  assert.ok(created.length >= 2, 'secondo tentativo');
-  assert.equal(JSON.parse(created[1].s.written.trim()).generation, 3, 'secondo reconnect: generation avanzata a 3 via getter');
+const PROOF = {
+  kind: 'lease', cellId: 'Dev', launchEpoch: 'a'.repeat(16), leaseId: 'b'.repeat(16),
+  generation: '0', jti: 'c'.repeat(16), issuedAt: 1_000, expiresAt: 61_000,
+  proof: 'd'.repeat(64),
+};
+
+test('client conserva il proof del canale e lo presenta al reconnect (nessuna capability)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'leasecli-'));
+  const stablePath = path.join(dir, 'cell-Dev.sock');
+  // Endpoint stabile finto: raccoglie il messaggio di reconnect.
+  let reconnectMsg = null;
+  const stable = net.createServer((sock) => {
+    sock.setEncoding('utf8');
+    sock.on('data', (chunk) => {
+      if (reconnectMsg) return;
+      const nl = chunk.indexOf('\n');
+      if (nl === -1) return;
+      try { reconnectMsg = JSON.parse(chunk.slice(0, nl)); } catch (_) { reconnectMsg = { parse: 'fail' }; }
+      sock.write(`${JSON.stringify({ type: 'deny' })}\n`); // il client ara' il retry: ci basta il primo msg
+    });
+  });
+  await new Promise((resolve) => stable.listen(stablePath, resolve));
+
+  const { serverSide, client } = await pair();
+  const ctl = startLeaseClient(serverSide, {
+    stablePath,
+    launchEpoch: PROOF.launchEpoch,
+    generation: 0,
+    onLost: () => {},
+  }, {});
+  assert.ok(ctl, 'client partito senza capability nel payload');
+
+  // Il peer (il lato server del canale) consegna il proof sul canale, come
+  // fanno attach (frame lease) e refresh (ack) in 2b.
+  client.write(`${JSON.stringify({ type: 'lease', leaseId: PROOF.leaseId, proof: PROOF })}\n`);
+  await new Promise((r) => setTimeout(r, 20));
+  // EOF lato server: il client deve reconnectare allo stable path col proof.
+  client.destroy();
+  const msg = await new Promise((resolve, reject) => {
+    const to = setTimeout(() => reject(new Error('nessun reconnect entro il timeout')), 1500);
+    const wait = () => {
+      if (reconnectMsg) { clearTimeout(to); resolve(reconnectMsg); }
+      else setTimeout(wait, 5);
+    };
+    wait();
+  });
+  assert.equal(msg.type, 'reconnect');
+  assert.deepEqual(msg.proof, PROOF, 'il proof detenuto (ricevuto sul canale) e presentato tale e quale');
+  assert.equal('capability' in msg, false, 'nessuna capability nel messaggio (revocata)');
+  ctl.stop();
+  stable.close();
+  try { fs.unlinkSync(stablePath); } catch (_) {}
+  client.destroy();
 });
 
-test('R3.2 lease-client: server muto -> almeno 2 tentativi dentro la grace (per-attempt timeout)', () => {
-  const { initial, created, fire, clock } = harness({
-    stablePath: '/tmp/x.sock', launchEpoch: 'ep', capability: 'ab'.repeat(32),
-  }, { reply: 'hang' });
-  initial.emit('end');     // EOF @0, grace deadline 60000
-  let guard = 0;
-  while (fire() && guard++ < 200) { /* svuota i timer */ }
-  // Senza per-attempt timeout il client restava con 1 tentativo e 0 timer.
-  assert.ok(created.length >= 2, `R3.2: >=2 tentativi dentro la grace anche con server muto, ottenuti ${created.length}`);
-  // I tentativi si FERMANO entro la grace (non vanno oltre 60s).
-  assert.ok(clock() <= 60_000 + 1, `R3.2: tentativi fermi entro la grace, clock=${clock()}`);
-});
-
-test('R3.2 lease-client: deny -> retry bounded dalla grace (oltre non si ritenta)', () => {
-  const { initial, created, fire, clock } = harness({
-    stablePath: '/tmp/x.sock', launchEpoch: 'ep', capability: 'ab'.repeat(32),
-  }, { reply: 'deny' });
-  initial.emit('end');     // EOF @0, grace deadline 60000
-  let guard = 0;
-  while (fire() && guard++ < 200) { /* svuota i timer */ }
-  assert.ok(created.length >= 2, `retry dentro la grace, ottenuti ${created.length}`);
-  assert.ok(clock() <= 60_000 + 1, `R3.2: deny non si ritenta oltre la grace, clock=${clock()}`);
+test('senza proof ricevuto il reconnect parte comunque senza proof (il deny e del server)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'leasecli2-'));
+  const stablePath = path.join(dir, 'cell-Dev.sock');
+  let reconnectMsg = null;
+  const stable = net.createServer((sock) => {
+    sock.setEncoding('utf8');
+    sock.on('data', (chunk) => {
+      if (reconnectMsg) return;
+      const nl = chunk.indexOf('\n');
+      if (nl === -1) return;
+      try { reconnectMsg = JSON.parse(chunk.slice(0, nl)); } catch (_) { reconnectMsg = { parse: 'fail' }; }
+      sock.write(`${JSON.stringify({ type: 'deny' })}\n`);
+    });
+  });
+  await new Promise((resolve) => stable.listen(stablePath, resolve));
+  const { serverSide, client } = await pair();
+  const ctl = startLeaseClient(serverSide, { stablePath, launchEpoch: 'a'.repeat(16), generation: 0, onLost: () => {} }, {});
+  client.destroy(); // EOF senza che il server abbia mai consegnato proof
+  const msg = await new Promise((resolve, reject) => {
+    const to = setTimeout(() => reject(new Error('nessun reconnect entro il timeout')), 1500);
+    const wait = () => {
+      if (reconnectMsg) { clearTimeout(to); resolve(reconnectMsg); }
+      else setTimeout(wait, 5);
+    };
+    wait();
+  });
+  assert.equal(msg.type, 'reconnect');
+  assert.equal(msg.proof, undefined, 'nessun proof detenuto: messaggio senza proof, deny affidato al server');
+  ctl.stop();
+  stable.close();
+  try { fs.unlinkSync(stablePath); } catch (_) {}
+  client.destroy();
 });
