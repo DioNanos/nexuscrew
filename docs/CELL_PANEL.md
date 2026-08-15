@@ -9,21 +9,85 @@ panel button.
 
 ## Configuring it
 
-Add `panelUrl` to a cell (or to an engine, where it becomes the default for the
-cells that use it):
+`panelUrl` is a **property of the cell**, a sibling of `engine` and `cwd`. It is
+not a command, not an argument, and not something the cell runs:
 
 ```json
 {
   "cells": [
-    { "id": "Design", "tmuxSession": "cloud-Design", "engine": "claude.native",
-      "panelUrl": "http://127.0.0.1:6080/vnc.html" }
+    {
+      "id": "Design",
+      "engine": "shell.local",
+      "commands": { "shell.local": "zsh" },
+      "panelUrl": "http://127.0.0.1:6080/vnc.html"
+    }
   ]
 }
 ```
 
+Put it on an **engine** instead, and it becomes the default for every cell using
+that engine.
+
 The value must be an `http:` or `https:` URL pointing at **loopback** —
 `127.0.0.1`, `[::1]` or `localhost`. Anything else is rejected when the
-definition is read, and the cell keeps working without a panel.
+definition is read, and the cell keeps working without a panel. A container's
+own address does not count as loopback: publish the port to `127.0.0.1` on the
+host and point the panel there.
+
+### The mistake to avoid
+
+Do not put the URL in the cell's **command**. The command is what the cell
+executes, so this:
+
+```json
+"commands": { "shell.local": "panelUrl: http://127.0.0.1:6900/" }
+```
+
+makes the cell try to run `panelUrl:` as a program. It fails to start, and
+because no `panelUrl` property was ever set, no panel button appears either —
+two symptoms, one cause, and neither of them says "wrong field".
+
+### There is no form for this yet
+
+The app reads `panelUrl` and shows the button, and a fleet backup preserves it,
+but **no screen currently writes it**. Until one exists, set it in the fleet
+definition — edit it directly, or export a fleet backup, add the property, and
+import it back.
+
+This is a gap in the interface, not in the feature: the value is validated and
+honoured the moment the definition is read.
+
+## A worked example
+
+A container publishing a remote desktop on the host's loopback:
+
+```
+127.0.0.1:6900  ->  the desktop's web interface
+```
+
+Then, on the cell you want to watch it from:
+
+```json
+"panelUrl": "http://127.0.0.1:6900/"
+```
+
+Start the cell and open it: the panel button sits next to the terminal.
+
+If the desktop asks for a password, you will be asked for it inside the panel —
+the forwarder carries no credentials of its own, in either direction.
+
+## Checking it worked
+
+| What you see | What it means |
+|---|---|
+| No panel button at all | The cell has no valid `panelUrl`. Either it was never set, or it was rejected — a non-loopback host, or a value that is not a URL. |
+| Button present, frame says the panel is unavailable | The cell was found but the destination did not answer. Check the service is listening **on loopback of the machine running the node**. |
+| Button present, frame shows the page | Working. Sub-resources and WebSocket travel on the viewing cookie described below. |
+| "This node does not grant the panel to the requester" | The panel lives on a paired node that has not granted access. It is granted there, not here — see the last section. |
+
+Note the difference between the first two rows: a missing button is a
+**configuration** problem, an unavailable frame is a **reachability** one. They
+look similar and have nothing to do with each other.
 
 ## Why loopback only
 
