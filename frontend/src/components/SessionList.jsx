@@ -11,7 +11,9 @@ import { useNodes } from '../hooks/useNodes.js';
 import RosterHandle from './RosterHandle.jsx';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
-import { hostRenderState, hostNextAction, hostLeaseTitleKey } from '../lib/host-designation.js';
+import {
+  hostRenderState, hostNextAction, hostLeaseTitleKey, hostRouteKey,
+} from '../lib/host-designation.js';
 import PinPersistBanner from './PinPersistBanner.jsx';
 import {
   rel, nodeStateLabel, healthDot, healthTitle, buildLocalRoster, buildRemoteRoster,
@@ -28,7 +30,7 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 // apertura, filtro, pin e ordine hanno quindi un solo contratto condiviso
 // (hook useRosterPreferences + model roster-view-model).
 
-export default function SessionList({ onPick, token, onSettings, onOpenVlSession, hostCell = null, hostLease = null, onDesignateCell, onClearHostCell }) {
+export default function SessionList({ onPick, token, onSettings, onOpenVlSession, hostByRoute = {}, onDesignateCell, onClearHostCell }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   // Gruppi per-nodo remoto (B2): zero nodi configurati -> [] e home identica.
   const nodeGroups = useNodes(token);
@@ -47,18 +49,21 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
   const {
     pins, orders, togglePin, removePin, pinError, retryPinPersist, clearPinError, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
-  // Ciclo stellina (parita' desktop): none -> favorite -> live -> none. Solo le
-  // celle LOCALI possono essere host del nodo; remote/sessioni restano su togglePin.
-  function onStarClick(item, c, state, position) {
-    if (position !== 'local') { togglePin(item.key); return; }
+  // Stato live del NODO che possiede `route` — mai quello di un altro nodo.
+  const hostFor = (route) => hostByRoute[hostRouteKey(route)] || {};
+  // Ciclo stellina (parita' desktop): none -> favorite -> live -> none, per
+  // QUALUNQUE nodo (locale o remoto). `route` e' quella del nodo che possiede
+  // LA CELLA su cui si preme — mai quella (implicita) del nodo che serve la
+  // pagina, che era esattamente il difetto originale.
+  function onStarClick(item, c, state, route) {
     const action = hostNextAction(state);
     if (action === 'addPin') { togglePin(item.key); return; }
-    if (action === 'designate') { if (onDesignateCell) onDesignateCell(c.cell); return; }
+    if (action === 'designate') { if (onDesignateCell) onDesignateCell(c.cell, route); return; }
     if (action === 'clearAndUnpin') {
       if (!onClearHostCell) return;
       // removePin legge localStorage al momento dell'applicazione (no lost update)
       // e segnala un fallimento di persistenza nello stato (banner ritentabile).
-      Promise.resolve(onClearHostCell()).then((ok) => { if (ok) removePin(item.key); });
+      Promise.resolve(onClearHostCell(route)).then((ok) => { if (ok) removePin(item.key); });
     }
   }
   const {
@@ -256,16 +261,14 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
     const canMove = canMoveRoster;
     if (item.type === 'cell') {
       const c = item.value;
-      const starState = position === 'local'
-        ? hostRenderState({ hostCell, pins, item })
-        : (pins.includes(item.key) ? 'favorite' : 'none');
+      const host = hostFor(route);
+      const starState = hostRenderState({ hostCell: host.hostCell ?? null, pins, item });
       const session = route.length
         ? (group?.sessions || []).find((candidate) => candidate.name === c.tmuxSession)
         : byName.get(c.tmuxSession);
       // Come in Sidebar: sull'host designato il titolo porta anche lo stato del
-      // lease. Solo per le celle LOCALI — `hostLease` descrive la designazione di
-      // questo nodo, e appiccicarlo a una cella federata direbbe una cosa falsa.
-      const leaseKey = position === 'local' ? hostLeaseTitleKey(starState, hostLease) : null;
+      // lease — quello DEL NODO GIUSTO (hostFor(route)), locale o remoto.
+      const leaseKey = hostLeaseTitleKey(starState, host.hostLease ?? null);
       const baseStateTitle = c.degraded
         ? t('cell-degraded')
         : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
@@ -293,7 +296,7 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
           <button className={`nc-act pin${starState === 'live' ? ' live' : starState === 'favorite' ? ' on' : ''}`}
             aria-label={`${starState === 'live' ? 'live host' : t('pin')} ${c.cell}`}
             title={starState === 'live' ? 'live host' : t('pin')}
-            onClick={() => onStarClick(item, c, starState, position)}>
+            onClick={() => onStarClick(item, c, starState, route)}>
             {starState === 'none' ? '\u2606' : '\u2605'}
           </button>
           {canBoot && <button className={`nc-act boot${boot ? ' on' : ''}`} disabled={bootBusy.has(bootKey)}
