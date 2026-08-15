@@ -299,7 +299,15 @@ async function federazioneDiProva(panelPort, { panelAccess } = {}) {
 
   // REMOTO: API vera + listener federato vero.
   const resolveCellPanel = async (cellId) => (cellId === 'A' ? `http://127.0.0.1:${panelPort}` : undefined);
-  const auth = createPanelAuth({ verifyToken: (t2) => t2 === REMOTE_TOKEN, resolveCellPanel });
+  // Stesso segreto di hop del peerRouter qui sotto: come in server.js, dove
+  // panelAuth e la federazione condividono il segreto per-processo. Cablarlo
+  // e' parte del rimedio, non un aggiustamento del banco di prova — con un
+  // segreto ASSENTE ogni federata sarebbe 'sospetta' e i casi cattivi
+  // passerebbero per il motivo sbagliato. A discriminare i due rami e' il test
+  // del ticket federato: resta 200 solo se l'hop viene davvero VERIFICATA.
+  const auth = createPanelAuth({
+    verifyToken: (t2) => t2 === REMOTE_TOKEN, resolveCellPanel, hopSecret: 'hopsegreto',
+  });
   const proxy = createPanelProxy({ resolveCellPanel });
   const remoteApi = express();
   remoteApi.use('/api', requireToken({ get: () => REMOTE_TOKEN }));
