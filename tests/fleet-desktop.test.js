@@ -163,3 +163,101 @@ test("IL BOOTSTRAP non AGGIUNGE desktop.local a chi non ce l'ha", async () => {
   assert.equal(dopo, undefined, 'il bootstrap ha aggiunto un engine che deve restare manuale');
   fs.rmSync(home, { recursive: true, force: true });
 });
+
+// --- I quattro casi che l'audit indipendente ha riprodotto ------------------
+
+test("il resolver non propone un eseguibile che il salvataggio rifiuterebbe", () => {
+  // L'audit ha mostrato un docker 0777 scelto dal resolver e poi rifiutato come
+  // world-writable: il default proposto non superava la validazione che lo
+  // attendeva. Ora la decisione la prende la STESSA funzione, quindi le due non
+  // possono divergere — e questo test lo verifica sul comportamento, non
+  // leggendo il sorgente.
+  const { validateCommandTrust } = require('../lib/fleet/definitions.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-path-'));
+  const cattivo = path.join(dir, 'docker');
+  fs.writeFileSync(cattivo, '#!/bin/sh\n', { mode: 0o777 });
+  fs.chmodSync(cattivo, 0o777);
+
+  const vecchioPath = process.env.PATH;
+  process.env.PATH = dir; // solo il candidato world-writable
+  try {
+    const eng = defaultDesktopEngine();
+    // O lo scarta (e resta il fallback), o quel che propone passa la boundary.
+    if (eng.command === cattivo) {
+      assert.fail('proposto un eseguibile world-writable che il salvataggio rifiuta');
+    }
+    const esito = validateCommandTrust(eng.command);
+    assert.ok(esito.ok || /non accessibile/.test(esito.reason),
+      `default non salvabile e senza causa chiara: ${esito.reason}`);
+  } finally {
+    process.env.PATH = vecchioPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RIPARAZIONE: un percorso relativo scelto dall'utente non e' un residuo", () => {
+  // `vendor/docker` ha lo stesso basename del residuo, ma e' una scelta: punta
+  // a un binario proprio. L'audit lo ha visto sovrascritto col Docker di
+  // sistema — riparare non deve mai voler dire sostituire.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-vend-'));
+  const file = path.join(dir, 'fleet.json');
+  atomicWrite(file, {
+    schemaVersion: 1,
+    engines: [{ ...defaultDesktopEngine(), command: 'vendor/docker' }],
+    cells: [],
+  });
+  backfillDesktopEngine(file, loadDefinitions(file));
+  const daDisco = loadDefinitions(file).engines.find((e) => e.id === 'desktop.local');
+  assert.equal(daDisco.command, 'vendor/docker', 'una scelta relativa e\' stata sovrascritta');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('RIPARAZIONE: se non riesce a scrivere lo DICE, invece di tacere', () => {
+  // Prima l\'errore era inghiottito: su uno store non scrivibile il comando
+  // restava rotto e l\'avvio sembrava aver fatto il suo lavoro.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-ro-'));
+  const file = path.join(dir, 'fleet.json');
+  atomicWrite(file, {
+    schemaVersion: 1,
+    engines: [{ ...defaultDesktopEngine(), command: 'docker' }],
+    cells: [],
+  });
+  const detto = [];
+  const { riparaDesktopEngine } = require('../lib/fleet/builtin.js');
+  fs.chmodSync(dir, 0o500); // directory non scrivibile: il rename fallisce
+  try {
+    riparaDesktopEngine(file, loadDefinitions(file), (m) => detto.push(m));
+    assert.ok(detto.length > 0, 'fallimento silenzioso: nessun messaggio');
+    assert.match(detto.join('\n'), /desktop\.local/);
+  } finally {
+    fs.chmodSync(dir, 0o700);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('RIPARAZIONE: una scrittura concorrente non viene persa', () => {
+  // L\'audit ha iniettato un writer fra la lettura e il rename: la riparazione
+  // tornava col proprio draft e la modifica altrui spariva. Qui il concorrente
+  // scrive PRIMA che la riparazione persista, partendo da uno stato gia\' letto.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-conc-'));
+  const file = path.join(dir, 'fleet.json');
+  atomicWrite(file, {
+    schemaVersion: 1,
+    engines: [{ ...defaultDesktopEngine(), command: 'docker', label: 'Prima' }],
+    cells: [],
+  });
+  const stantio = loadDefinitions(file); // lo stato "vecchio", come all'avvio
+
+  // Un altro writer salva nel frattempo — letto e riscritto da fuori, come
+  // farebbe l'interfaccia, senza passare per gli helper interni.
+  const altro = JSON.parse(fs.readFileSync(file, 'utf8'));
+  altro.engines.find((e) => e.id === 'desktop.local').label = 'Scelta concorrente';
+  atomicWrite(file, altro);
+
+  const { riparaDesktopEngine } = require('../lib/fleet/builtin.js');
+  riparaDesktopEngine(file, stantio);
+
+  const daDisco = loadDefinitions(file).engines.find((e) => e.id === 'desktop.local');
+  assert.equal(daDisco.label, 'Scelta concorrente', 'la scrittura concorrente e\' stata persa');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
