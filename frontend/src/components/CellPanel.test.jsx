@@ -117,8 +117,13 @@ describe('CellPanel (D8: ingresso al pannello via ticket)', () => {
     // credenziale dà lo stesso esito.
     await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('Credenziale non valida'); });
     expect(screen.queryByTitle('panel-retry')).toBeNull();
+    // La seconda causa si prova su una CELLA diversa, non con un rerender
+    // identico: da quando il pannello non si riapre a ogni render del padre
+    // (era il difetto del ricaricamento continuo), un rerender uguale non
+    // ripete la richiesta — ed è la proprietà voluta. Qui interessa che le due
+    // cause siano rese distinte, non come si arriva alla seconda.
     requestPanelTicket.mockResolvedValueOnce({ ok: false, cause: 'no-panel' });
-    rerender(<CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" />);
+    rerender(<CellPanel cellId="B" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="B" />);
     await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('panel-none'); });
     expect(container.querySelector('iframe')).toBeNull();
   });
@@ -203,5 +208,46 @@ describe('CellPanel — origin separata (panelPort)', () => {
     const src = container.querySelector('iframe').getAttribute('src');
     expect(src.startsWith('/api/route/Pixel/_/panel/A/?ticket=TK-REMOTE-VECCHIO')).toBe(true);
     expect(src.includes(':0')).toBe(false);
+  });
+
+  it('il padre che ri-renderizza NON fa ricaricare il pannello (un solo biglietto)', async () => {
+    // Il difetto visto sul campo: il frame si ricaricava senza sosta e non
+    // dava il tempo di interagire — un login dentro il pannello non arrivava
+    // mai a compimento. `route` è un array: una prop NUOVA a ogni render del
+    // padre anche a contenuto identico, e il padre ri-renderizza di continuo
+    // per il polling della flotta. Con l'array fra le dipendenze, ogni giro
+    // chiedeva un biglietto nuovo e rimontava l'iframe.
+    //
+    // Il test isolato non poteva vederlo: senza un padre che ri-renderizza, il
+    // difetto non esiste. Qui il padre c'è, ed è la sola differenza.
+    ticketOk('TK-STABILE');
+    const Padre = ({ giro }) => (
+      <div data-giro={giro}>
+        {/* array LETTERALE, come nell'app: nuova referenza a ogni render */}
+        <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" />
+      </div>
+    );
+    const { container, rerender } = render(<Padre giro={1} />);
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    const primoSrc = container.querySelector('iframe').getAttribute('src');
+
+    for (let g = 2; g <= 6; g += 1) rerender(<Padre giro={g} />);
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+
+    expect(requestPanelTicket).toHaveBeenCalledTimes(1);
+    // E l'iframe non deve nemmeno cambiare src: cambiarlo È il ricaricamento.
+    expect(container.querySelector('iframe').getAttribute('src')).toBe(primoSrc);
+  });
+
+  it('ma se la route cambia DAVVERO, il pannello si riapre', async () => {
+    // Il verso opposto: la stabilizzazione non deve congelare il componente su
+    // un nodo quando l'utente ne guarda un altro.
+    ticketOk('TK-1');
+    const { rerender } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(requestPanelTicket).toHaveBeenCalledTimes(1); });
+    rerender(<CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={['Pixel']} token="t" title="A" />);
+    await waitFor(() => { expect(requestPanelTicket).toHaveBeenCalledTimes(2); });
   });
 });

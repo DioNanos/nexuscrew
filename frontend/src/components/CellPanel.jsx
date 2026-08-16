@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { requestPanelTicket, routeBase } from '../lib/api.js';
 import './CellPanel.css';
@@ -43,6 +43,18 @@ export default function CellPanel({
 }) {
   const [state, setState] = useState(cellId && token ? 'requesting' : 'none');
   const [frameUrl, setFrameUrl] = useState('');
+  // `route` è un ARRAY, quindi una prop nuova a ogni render del padre anche
+  // quando il contenuto è identico — e il padre ri-renderizza di continuo, per
+  // il polling della flotta. Messo direttamente fra le dipendenze faceva
+  // ricreare `apri` a ogni giro, l'effetto chiedeva un biglietto nuovo e
+  // l'iframe si RIMONTAVA: il pannello si ricaricava senza sosta e chi guarda
+  // non faceva in tempo a interagirci — un login dentro il frame non arrivava
+  // mai a compimento. La chiave è sul CONTENUTO: l'identità cambia solo quando
+  // la route cambia davvero. `\u0000` come separatore perché non può comparire
+  // in un nome di nodo, quindi ['a','b'] e ['a\u0000b'] restano distinti.
+  const routeKey = Array.isArray(route) ? route.join('\u0000') : '';
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const rotta = useMemo(() => (Array.isArray(route) ? route : []), [routeKey]);
   // Partita corrente: una risposta tardiva di una richiesta vecchia (cambio
   // cella o retry) non sovrascrive uno stato più fresco.
   const seq = useRef(0);
@@ -54,7 +66,7 @@ export default function CellPanel({
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), requestTimeoutMs);
     try {
-      const esito = await requestPanelTicket(token, route, cellId, { signal: ctl.signal });
+      const esito = await requestPanelTicket(token, rotta, cellId, { signal: ctl.signal });
       clearTimeout(timer);
       if (mio !== seq.current) return;
       if (esito.ok) {
@@ -71,7 +83,7 @@ export default function CellPanel({
         // control plane — esattamente il difetto che questo chiude. panelPort
         // assente (0: config non ancora arrivata, o nodo remoto senza porta
         // negoziata — un peer accoppiato prima): via storica invariata.
-        const base = panelPort ? `http://127.0.0.1:${panelPort}` : routeBase(route);
+        const base = panelPort ? `http://127.0.0.1:${panelPort}` : routeBase(rotta);
         setFrameUrl(`${base}/panel/${encodeURIComponent(cellId)}${page}?ticket=${encodeURIComponent(esito.ticket)}`);
         setState('ready');
       } else {
@@ -84,7 +96,7 @@ export default function CellPanel({
       // AbortError = il NOSTRO timer ha chiuso la partita: deterministico.
       setState(err && err.name === 'AbortError' ? 'timeout' : 'unreachable');
     }
-  }, [cellId, panelUrl, route, panelPort, token, requestTimeoutMs]);
+  }, [cellId, panelUrl, rotta, panelPort, token, requestTimeoutMs]);
 
   useEffect(() => { apri(); }, [apri]);
 
