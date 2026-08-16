@@ -53,3 +53,37 @@
 .nc-cell-switcher-controls .nc-cell-switcher-close { font-size: 24px; }
 @keyframes nc-cell-switcher-pulse { 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .nc-cell-switcher-dot.working { animation: none; } }
+
+/* Il pallino è un bersaglio, non una decorazione: cliccandolo si apre
+   l'anteprima. Su schermo tattile serve area piena, altrimenti si finisce per
+   sbaglio sul bottone accanto — che invece cambia cella. */
+.nc-cell-switcher-peek {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.nc-cell-switcher-peek:hover,
+.nc-cell-switcher-peek:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Il testo dell'anteprima nel popup: monospazio e a capo preservati, perché è
+   output di terminale — riflowarlo lo rende illeggibile. */
+.nc-peek-testo {
+  margin: 0;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}

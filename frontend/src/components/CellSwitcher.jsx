@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import CellPopup from './CellPopup.jsx';
 import { apiFetch, fleetStatus, getRouteSessions } from '../lib/api.js';
 import { readCellSwitcherSnapshot, writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-view-model.js';
@@ -66,6 +67,10 @@ function rowsFromSnapshot(snapshot) {
         active: cell.active === true,
         activity: session.activity || cell.activity || 0,
         subtitle: runtime.subtitle,
+        // Il preview esisteva gia' nel roster e non arrivava alla riga: il
+        // popup lo mostra, senza chiedere nulla di nuovo al server.
+        preview: session.preview || cell.preview || '',
+        panelUrl: cell.panelUrl || '',
       });
     }
   };
@@ -150,6 +155,9 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
   const [showAll, setShowAll] = useState(false);
   const [ready, setReady] = useState(false);
   const [notice, setNotice] = useState('');
+  // La cella che si sta SBIRCIANDO. È distinta da quella selezionata: aprire
+  // il popup non cambia dove sei — è la differenza fra guardare e andare.
+  const [peek, setPeek] = useState(null);
   const [selectedKey, setSelectedKey] = useState('');
   const [picking, setPicking] = useState('');
   const dialogRef = useRef(null);
@@ -293,10 +301,18 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
                   canMove={canMoveRoster}
                   onMove={(source, target) => moveRoster(position, source, target, rawItems)}
                   onStep={(delta) => stepRoster(position, row.key, delta, rawItems)} />
+                {/* Il pallino era uno span DENTRO il bottone di selezione: cliccarlo
+                    cambiava cella. Ora è un bottone suo e apre il popup — guardare
+                    una cella senza andarci, che è tutto il punto. Il resto della
+                    riga continua a selezionare, invariato. */}
+                <button type="button" className="nc-cell-switcher-peek"
+                  title={t('cell-peek')} aria-label={`${t('cell-peek')}: ${row.cellName}`}
+                  onClick={(event) => { event.stopPropagation(); setPeek(row); }}>
+                  <span className={`nc-cell-switcher-dot${row.degraded ? ' warn' : row.live ? ` on${row.working ? ' working' : ''}` : ''}`} />
+                </button>
                 <button type="button" className="nc-cell-switcher-row-select"
                   aria-current={currentRow ? 'true' : undefined} aria-pressed={selected} aria-disabled={!row.selectable}
                   disabled={picking === row.key} onClick={() => select(row)}>
-                  <span className={`nc-cell-switcher-dot${row.degraded ? ' warn' : row.live ? ` on${row.working ? ' working' : ''}` : ''}`} />
                   <span className="nc-cell-switcher-copy"><b>{row.cellName}</b><small className="nc-cell-switcher-state">{status}</small><small>{[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}</small></span>
                 </button>
               </div>
@@ -304,6 +320,17 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
           })}
         </div>
         {notice && <div className="nc-cell-switcher-notice" role="status">{notice}</div>}
+        {peek && (
+          <CellPopup
+            title={peek.cellName}
+            subtitle={[peek.nodeLabel, peek.subtitle].filter(Boolean).join(' · ')}
+            onClose={() => setPeek(null)}
+          >
+            {/* Il contenuto è quello che il roster porta già. Se un giorno
+                arriva il flusso live, cambia il figlio — non il contenitore. */}
+            <pre className="nc-peek-testo">{peek.preview || t('cell-peek-vuoto')}</pre>
+          </CellPopup>
+        )}
         <div className="nc-cell-switcher-actions">
           <button type="button" className="nc-cell-switcher-open" disabled={!selectedRow || !!picking} onClick={pick}>
             {selectedRow ? `${t('cell-switcher-open')}: ${selectedRow.cellName}` : t('cell-switcher-select')}
