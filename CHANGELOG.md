@@ -2,6 +2,66 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.1 — 2026-08-16 — "What the Guard Was Not Guarding"
+
+- **The panel now lives on its own origin, so its JavaScript can no longer
+  reach the operator's token.** The panel was served from the same origin as
+  the control plane, in an iframe with no `sandbox` and no CSP, while the
+  token sat in `localStorage` — meaning a panel's own scripts could take it
+  and act as the operator. It is now served by a second loopback listener
+  (`NEXUSCREW_PANEL_PORT`, default 41821) that mounts `/panel/*` and nothing
+  else: no control API, no bearer. The port is part of the origin, so the
+  browser's same-origin policy does the enforcing rather than a convention.
+  For a **remote** node the port is negotiated during pairing
+  (`panelLocalPort`/`panelRemotePort`, as an obligatory pair) and travels on
+  its own forward. A node paired before this release keeps working on the old
+  path, and a remote cell without a negotiated port gets none — never a
+  borrowed local one.
+
+- **A cookie set by a panel no longer reaches our origin — including through
+  the WebSocket handshake.** `Set-Cookie` was stripped on the HTTP path but
+  copied verbatim on the `101` upgrade, so the same property held on one route
+  and not the other. A panel could overwrite the legitimate viewing cookie and
+  break the user's own panel from the inside. Hop-by-hop headers still pass on
+  the upgrade — there they *are* the response.
+
+- **Designating the Live cell works from a remote node.** The star now
+  commands the node that *owns* the cell rather than the one serving the page,
+  which was the main defect of 0.9.0. `liveHostAccess` is a per-peer
+  permission, denied by default, granted with `nexuscrew nodes live-host <node>
+  on`, and a refusal names its cause instead of failing silently. Turning the
+  star **off** across federation is now covered end to end, not just turning
+  it on.
+
+- **"Retry" is offered only where retrying can change the outcome.** Any `403`
+  without a named reason — a read-only node refusing a federated mutation, for
+  instance — was classified as an expired ticket, so the interface said "your
+  ticket is no longer valid" and offered a button that could not succeed.
+  Permanent refusals and invalid credentials now have their own causes and
+  messages, with no button; transient ones keep it.
+
+- **The published-tree guard no longer reports "clean" without having
+  looked.** Any blob it failed to read was silently skipped: with reads
+  failing, the gate stayed green having inspected nothing at all. An unreadable
+  blob is now a failure, and the number of inspected files must match the
+  tree — an empty result no longer counts as "no traces found".
+
+- **The test suite stopped measuring the machine.** Five tests that raced a
+  millisecond budget turned red under load and green in isolation; each false
+  alarm cost three isolated re-runs to dismiss, and a gate that is sometimes
+  red for no reason teaches people to distrust red. They now wait for an
+  observable condition instead. Where time *is* the property — deadlines,
+  grace periods — the clock was already injectable and those tests were left
+  alone. No timeout was raised and no assertion was loosened.
+
+- **New skills: `live`, `aidesktop`, and `nexuscrew` as the entry point.**
+  `aidesktop` ships a Docker recipe — Dockerfile, CDP relay, example compose —
+  for a desktop a browser-driving MCP can attach to. It documents the security
+  trade it makes rather than implying one it does not: the browser inside runs
+  unsandboxed, because the changes that would sandbox it are exactly the ones
+  that weaken the container, and on a loopback-only desktop the container is
+  the stronger boundary. What that costs you is stated plainly.
+
 ## 0.9.0 — 2026-08-15 — "The Star Keeps Its Promise"
 
 - **A cell panel finally opens — through our own route, not the raw URL.** An
