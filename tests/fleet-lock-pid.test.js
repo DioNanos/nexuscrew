@@ -236,3 +236,84 @@ test('il token scritto da una presa reale porta pid, hex E nascita di questo pro
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Rilievo 2 dell'audit pre-release: la scrittura del token può FALLIRE
+// («catch (_) { /* informativo */ }») — disco pieno, quota, errore transitorio.
+// Il lock esiste ma è VUOTO: nessun pid da interrogare, e dopo 30s il lock di
+// un proprietario VIVO E AL LAVORO viene espropriato, perché per il codice è
+// «di nessuno». Quel contenuto non è informativo: è l'unica cosa che rende il
+// lock attribuibile. Chi non riesce a scrivere il proprio token non è titolare
+// di nulla — e non deve nemmeno fingere di esserlo scrivendo i dati.
+// ---------------------------------------------------------------------------
+test('NEGATIVO write del token fallita: la presa NON riesce, niente scrittura, nessun lock vuoto', () => {
+  const dir = tmpDir();
+  const p = path.join(dir, 'fleet.json');
+  // Disco che rifiuta SOLO la scrittura su fd (la firma del token): atomicWrite
+  // scrive per PATH e non viene toccata. È il modo chirurgico di fare ENOSPC
+  // su una sola write senza dipendere dal filesystem.
+  const veroWrite = fs.writeFileSync;
+  fs.writeFileSync = function writeCheFallisceSuFd(target, dati, ...resto) {
+    if (typeof target === 'number') {
+      const e = new Error('simulato: scrittura del token fallita (disco pieno)');
+      e.code = 'ENOSPC';
+      throw e;
+    }
+    return veroWrite.call(fs, target, dati, ...resto);
+  };
+  try {
+    atomicWrite(p, validDef());
+    const messaggi = [];
+    const out = aggiornaDefinizioni(p, (defs) => validDef([...defs.cells, { id: 'DiUno', cwd: '/tmp', engine: 'sh' }]), {
+      log: (m) => messaggi.push(m),
+    });
+
+    // Contro il codice attuale: la presa RIESCE comunque (fd aperto, token mai
+    // scritto), la trasforma gira, atomicWrite scrive — una scrittura sotto una
+    // mutua esclusione ILLUSORIA — e il lock VUOTO resta sul disco, espropriabile
+    // da chiunque dopo 30s. Il contratto nuovo: nessuna titolarità senza token.
+    assert.ok(messaggi.some((m) => m.includes('lock non ottenuto')),
+      'la presa senza token rinuncia e lo dichiara');
+    assert.deepEqual(cellIds(loadDefinitions(p)), ['Base'],
+      'nessuna scrittura senza mutua esclusione reale');
+    const residui = fs.readdirSync(dir).filter((n) => n.endsWith('.lock'));
+    assert.deepEqual(residui, [], 'nessun lock vuoto lasciato sul disco');
+    void out;
+  } finally {
+    fs.writeFileSync = veroWrite;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// La conseguenza dichiarata dal rilievo, provata COM'E' OGGI: un lock vuoto
+// sul disco è già espropriabile a 31s. Dopo la correzione questo scenario non
+// può più nascere da una presa (la write fallita non lascia nulla), e il
+// relitto di un CRASH fra open e write — l'unica origine rimasta — è di un
+// processo che non esiste più: recuperarlo è GIUSTO, e resta il test 162 di
+// lock-edges a pinnare quella semantica.
+test('dopo la correzione il sistema resta utilizzabile: la presa successiva scrive regolarmente', () => {
+  const dir = tmpDir();
+  const p = path.join(dir, 'fleet.json');
+  const veroWrite = fs.writeFileSync;
+  try {
+    atomicWrite(p, validDef());
+    // Prima presa: write del token fallita -> rinuncia, disco intatto, zero lock.
+    fs.writeFileSync = function (target, dati, ...resto) {
+      if (typeof target === 'number') { const e = new Error('ENOSPC simulato'); e.code = 'ENOSPC'; throw e; }
+      return veroWrite.call(fs, target, dati, ...resto);
+    };
+    aggiornaDefinizioni(p, (defs) => validDef([...defs.cells, { id: 'NonDeve', cwd: '/tmp', engine: 'sh' }]));
+    fs.writeFileSync = veroWrite; // il disco «guarisce»
+
+    // Seconda presa: disco tornato scrivibile, nessun relitto da attendere.
+    const inizio = Date.now();
+    const out = aggiornaDefinizioni(p, (defs) => validDef([...defs.cells, { id: 'Dopo', cwd: '/tmp', engine: 'sh' }]));
+    const durata = Date.now() - inizio;
+    assert.deepEqual(cellIds(out), ['Base', 'Dopo'], 'la presa successiva scrive');
+    assert.ok(durata < 1800, `subito, senza attendere scadenze di lock fantasma (durata ${durata}ms)`);
+    assert.deepEqual(cellIds(loadDefinitions(p)), ['Base', 'Dopo'], 'su disco');
+  } finally {
+    fs.writeFileSync = veroWrite;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
