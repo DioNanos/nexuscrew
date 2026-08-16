@@ -425,6 +425,51 @@ test('prompt VUOTO: reason empty (presente ma non dice nulla), nessuna iniezione
   } finally { await ctx.close(); }
 });
 
+// —— docs/LIVE_PROMPT.md: la prova che conta ——
+// Non basta che il codice sembri leggere dal path che la documentazione
+// descrive: qui si copia il template VERO del repo (non un contenuto
+// fittizio) esattamente dove docs/LIVE_PROMPT.md dice che va, e si verifica
+// che il daemon riceva davvero quel testo su thread/start. Se la doc mentisse
+// sul path, o il ponte lo cercasse altrove, questo test lo troverebbe — un
+// test sul solo contenuto del file non lo avrebbe mai potuto vedere.
+const TEMPLATES_DIR = path.join(__dirname, '..', 'docs', 'live-prompt-templates');
+const TEMPLATE_LANGS = ['it', 'en', 'es'];
+
+for (const lang of TEMPLATE_LANGS) {
+  test(`template ${lang}: copiato dove docs/LIVE_PROMPT.md dice che va, il ponte lo legge e lo applica`, async () => {
+    const templatePath = path.join(TEMPLATES_DIR, `LIVE_PROMPT.${lang}.md`);
+    const templateText = fs.readFileSync(templatePath, 'utf8');
+    assert.ok(templateText.trim().length > 0, `il template ${lang} non deve essere vuoto`);
+
+    const cwd = path.join(os.tmpdir(), `cell-template-${lang}`);
+    fs.mkdirSync(cwd, { recursive: true });
+    const ctx = await boot({ cells: CELLS_NATIVE(cwd) });
+    try {
+      // Esattamente il path che docs/LIVE_PROMPT.md descrive:
+      // <NexusFiles>/cloud-<Cell>/LIVE_PROMPT.md — nessuna rinomina fatta qui
+      // per il ponte, solo copia del contenuto del template nel nome fisso.
+      const promptDir = path.join(ctx.root, 'cloud-Alfa');
+      fs.mkdirSync(promptDir, { recursive: true });
+      fs.copyFileSync(templatePath, path.join(promptDir, 'LIVE_PROMPT.md'));
+
+      await ctx.designate('cloud-Alfa');
+      const b = await j(await ctx.bridgeCall());
+
+      assert.equal(b.mode, 'native');
+      assert.deepEqual(b.prompt, { applied: true, source: 'LIVE_PROMPT.md' },
+        `il template ${lang} deve risultare applicato, non ignorato`);
+      assert.equal(ctx.daemon.seen.threadStarts.length, 1);
+      // Il testo arrivato sul socket e' esattamente quello del file del repo
+      // (trim, come fa readCellPrompt) — non un riassunto, non un frammento.
+      assert.equal(
+        ctx.daemon.seen.threadStarts[0].developerInstructions,
+        templateText.trim(),
+        `developerInstructions deve essere il contenuto integrale del template ${lang}`,
+      );
+    } finally { await ctx.close(); }
+  });
+}
+
 test('socket di controllo irraggiungibile: none/bridge-socket-failed con cella e detail (MC1.5)', async () => {
   const cwd = path.join(os.tmpdir(), 'cell-no-daemon');
   const ctx = await boot({ cells: CELLS_NATIVE(cwd) });

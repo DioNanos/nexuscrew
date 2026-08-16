@@ -201,7 +201,8 @@ describes the whole system, what an AI agent can do through it, and the rules
 that hold across every other skill.
 
 Two extend Fleet itself: [`live`](../skills/live/SKILL.md) covers designating
-and permitting a node's Live host cell, and
+and permitting a node's Live host cell, plus the
+[per-cell voice prompt](LIVE_PROMPT.md) it reads once a session lands, and
 [`aidesktop`](../skills/aidesktop/SKILL.md) covers a cell's web panel together
 with the AI Desktop container recipe. The rest cover one capability each — the
 operator channel ([`nexuscrew-agent`](../skills/nexuscrew-agent/SKILL.md)) and
