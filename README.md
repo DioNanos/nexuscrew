@@ -159,6 +159,8 @@ Portable skills ship with the package, and
 |---|---|
 | [`nexuscrew`](skills/nexuscrew/SKILL.md) | **Start here** — the whole system and the rules across it |
 | [`nexuscrew-agent`](skills/nexuscrew-agent/SKILL.md) | Talking to the human, runtime discovery, delivery to cells |
+| [`live`](skills/live/SKILL.md) | Designating and permitting a node's Live host cell |
+| [`aidesktop`](skills/aidesktop/SKILL.md) | A cell's web panel, and the AI Desktop container recipe |
 | [`memory`](skills/memory/SKILL.md) | Persistent agent state |
 | [`vl-msa`](skills/vl-msa/SKILL.md) | Searchable document memory |
 | [`crew`](skills/crew/SKILL.md) | Bounded worker delegation |

@@ -200,9 +200,13 @@ The package ships portable skills, and
 describes the whole system, what an AI agent can do through it, and the rules
 that hold across every other skill.
 
-The rest cover one capability each — the operator channel
-([`nexuscrew-agent`](../skills/nexuscrew-agent/SKILL.md)) and the optional MCP
-companions listed in [`mcp-companions.json`](../mcp-companions.json):
+Two extend Fleet itself: [`live`](../skills/live/SKILL.md) covers designating
+and permitting a node's Live host cell, and
+[`aidesktop`](../skills/aidesktop/SKILL.md) covers a cell's web panel together
+with the AI Desktop container recipe. The rest cover one capability each — the
+operator channel ([`nexuscrew-agent`](../skills/nexuscrew-agent/SKILL.md)) and
+the optional MCP companions listed in
+[`mcp-companions.json`](../mcp-companions.json):
 [`memory`](../skills/memory/SKILL.md),
 [`vl-msa`](../skills/vl-msa/SKILL.md),
 [`crew`](../skills/crew/SKILL.md) and
