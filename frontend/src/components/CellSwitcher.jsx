@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import CellPopup from './CellPopup.jsx';
+import Terminal from './Terminal.jsx';
+import CellPanel from './CellPanel.jsx';
 import { apiFetch, fleetStatus, getRouteSessions } from '../lib/api.js';
 import { readCellSwitcherSnapshot, writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-view-model.js';
@@ -11,6 +13,26 @@ import { t } from '../lib/i18n.js';
 import './CellSwitcher.css';
 
 const POLL_MS = 4000;
+
+// Quanto è passata dall'ultima attività della cella, dette le stesse tre
+// regole della telemetria: assenza legittima (niente epoch = niente campo),
+// niente stantio spacciato per fresco (oltre la soglia il campo sparisce: una
+// cella ferma da ore non mostra «5m» per sempre), degradazione silenziosa.
+// L'unità compatta (m/h) è la stessa in ogni lingua: si traduce solo l'etichetta.
+const ATTIVITÀ_MASSIMA_MS = 30 * 60 * 1000;
+
+export function formattaAttività(t, epoch, oraMs = Date.now()) {
+  const ms = Number(epoch);
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  const età = oraMs - ms;
+  if (età < 0 || età > ATTIVITÀ_MASSIMA_MS) return '';
+  // L'etichetta c'è sempre: un «2m» nudo accanto alla telemetria non dice
+  // cosa stia misurando, e una riga che non si spiega viene letta male.
+  if (età < 60 * 1000) return `${t('cell-activity')} ${t('cell-activity-now')}`;
+  const minuti = Math.floor(età / 60000);
+  if (minuti < 60) return `${t('cell-activity')} ${minuti}m`;
+  return `${t('cell-activity')} ${Math.floor(minuti / 60)}h`;
+}
 
 // La telemetria di riga, dove la cella la pubblica. Il VERSO è nel testo
 // stesso: il contesto è LIBERO, i tier sono USATI — l'etichetta «libero»
@@ -177,11 +199,27 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
   const [notice, setNotice] = useState('');
   // La cella che si sta SBIRCIANDO. È distinta da quella selezionata: aprire
   // il popup non cambia dove sei — è la differenza fra guardare e andare.
+  // Il popup tiene una CHIAVE, mai la riga: la lista si aggiorna sotto ogni
+  // 4s e una riga salvata sarebbe un fotogramma morto — il popup che mostra
+  // il contenuto della cella sbagliata (o quello stantio di una cella andata)
+  // è esattamente il difetto che questo stato non deve permettere. A ogni
+  // render la chiave si RIrisolve sulle righe correnti: o la cella c'è ancora
+  // e il popup mostra il presente di QUELLA cella, o non c'è più e il popup
+  // si chiude da sé. `source` è la sorgente aperta: anteprima, streaming o
+  // pannello.
   const [peek, setPeek] = useState(null);
   const [selectedKey, setSelectedKey] = useState('');
   const [picking, setPicking] = useState('');
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
+  // Ref del terminale nel popup: il contratto della tile, così Terminal non
+  // dipende da chi lo monta. takeSize={false} sotto: il popup non ruba il
+  // size-lock della sessione a chi sta sotto.
+  const sendRef = useRef(() => {});
+  const composerRef = useRef(() => false);
+  const actionRef = useRef(() => {});
+  const ctrlRef = useRef(false);
+  const [ctrlArmed, setCtrlArmed] = useState(false);
   const rows = useMemo(() => rowsFromSnapshot(snapshot), [snapshot]);
   const rosterItems = useMemo(() => rosterItemsByPosition(snapshot), [snapshot]);
   const { pins, orders, canMoveRoster, moveRoster, stepRoster } = useRosterPreferences();
@@ -194,6 +232,8 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
     [orderedRows, showAll],
   );
   const selectedRow = useMemo(() => rows.find((row) => row.key === selectedKey && row.selectable), [rows, selectedKey]);
+  // La riga sbirciata si RIrisolve a ogni lista: mai un fotogramma morto.
+  const peekRow = useMemo(() => (peek ? rows.find((row) => row.key === peek.key) : null), [rows, peek]);
 
   useEffect(() => {
     const previousFocus = document.activeElement;
@@ -313,7 +353,9 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
             const status = statusFor(row);
             // Vuota per le celle che non pubblicano telemetria: niente campo,
             // la riga resta esattamente com'era (il «dove supportato» richiesto).
+            const attività = formattaAttività(t, row.activity);
             const telemetry = formattaTelemetria(t, row.telemetry);
+            const rigaDati = [attività, telemetry].filter(Boolean).join(' · ');
             const position = row.node || 'local';
             const rawItems = rosterItems.get(position)
               || rows.filter((candidate) => (candidate.node || 'local') === position);
@@ -327,36 +369,95 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
                 {/* Il pallino era uno span DENTRO il bottone di selezione: cliccarlo
                     cambiava cella. Ora è un bottone suo e apre il popup — guardare
                     una cella senza andarci, che è tutto il punto. Il resto della
-                    riga continua a selezionare, invariato. */}
+                    riga continua a selezionare, invariato. Apre su ANTEPRIMA;
+                    streaming e pannello si scelgono dentro, o dai bottoni stretti. */}
                 <button type="button" className="nc-cell-switcher-peek"
                   title={t('cell-peek')} aria-label={`${t('cell-peek')}: ${row.cellName}`}
-                  onClick={(event) => { event.stopPropagation(); setPeek(row); }}>
+                  onClick={(event) => { event.stopPropagation(); setPeek({ key: row.key, source: 'preview' }); }}>
                   <span className={`nc-cell-switcher-dot${row.degraded ? ' warn' : row.live ? ` on${row.working ? ' working' : ''}` : ''}`} />
                 </button>
+                {/* Stretto (mobile): il puntino è un bersaglio troppo piccolo per
+                    tre azioni — controlli veri e distinti, che aprono direttamente
+                    la sorgente. `stopPropagation` anche qui: guardare non è
+                    selezionare, su nessuno schermo. Sul largo restano nascosti e
+                    il puntino resta il selettore. */}
+                <span className="nc-cell-switcher-acts">
+                  <button type="button" className="nc-cell-switcher-act"
+                    title={t('cell-peek-stream')} aria-label={`${t('cell-peek-stream')}: ${row.cellName}`}
+                    onClick={(event) => { event.stopPropagation(); setPeek({ key: row.key, source: 'stream' }); }}>▶</button>
+                  {row.panelUrl && (
+                    <button type="button" className="nc-cell-switcher-act"
+                      title={t('cell-peek-panel')} aria-label={`${t('cell-peek-panel')}: ${row.cellName}`}
+                      onClick={(event) => { event.stopPropagation(); setPeek({ key: row.key, source: 'panel' }); }}>▣</button>
+                  )}
+                </span>
                 <button type="button" className="nc-cell-switcher-row-select"
                   aria-current={currentRow ? 'true' : undefined} aria-pressed={selected} aria-disabled={!row.selectable}
                   disabled={picking === row.key} onClick={() => select(row)}>
-                  <span className="nc-cell-switcher-copy"><b>{row.cellName}</b><small className="nc-cell-switcher-state">{status}</small><small>{[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}</small>{telemetry && <small className="nc-cell-switcher-telemetry">{telemetry}</small>}</span>
+                  <span className="nc-cell-switcher-copy"><b>{row.cellName}</b><small className="nc-cell-switcher-state">{status}</small><small>{[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}</small>{rigaDati && <small className="nc-cell-switcher-telemetry">{rigaDati}</small>}</span>
                 </button>
               </div>
             );
           })}
         </div>
         {notice && <div className="nc-cell-switcher-notice" role="status">{notice}</div>}
-        {peek && (
-          <CellPopup
-            title={peek.cellName}
-            subtitle={[peek.nodeLabel, peek.subtitle].filter(Boolean).join(' · ')}
-            onClose={() => setPeek(null)}
-          >
-            {/* Il contenuto è quello che il roster porta già. Se un giorno
-                arriva il flusso live, cambia il figlio — non il contenitore. */}
-            <pre className="nc-peek-testo">{peek.preview || t('cell-peek-vuoto')}</pre>
-            {formattaTelemetria(t, peek.telemetry) && (
-              <small className="nc-cell-switcher-telemetry">{formattaTelemetria(t, peek.telemetry)}</small>
-            )}
-          </CellPopup>
-        )}
+        {/* `peek && peekRow`: se la lista aggiornata non ha più la cella, il
+            popup si chiude da sé. Mostrare il contenuto di una riga morta —
+            l'anteprima di un'ALTRA cella creduta la propria — è peggio di non
+            vedere niente. La sorgente panel ricade su anteprima se la cella
+            ha perso panelUrl: stesso principio, sul contratto della sorgente. */}
+        {peek && peekRow && (() => {
+          const source = peek.source === 'panel' && !peekRow.panelUrl ? 'preview' : peek.source;
+          const tabs = [
+            ['preview', t('cell-peek-preview')],
+            ['stream', t('cell-peek-stream')],
+            ...(peekRow.panelUrl ? [['panel', t('cell-peek-panel')]] : []),
+          ];
+          return (
+            <CellPopup
+              title={peekRow.cellName}
+              subtitle={[peekRow.nodeLabel, peekRow.subtitle].filter(Boolean).join(' · ')}
+              onClose={() => setPeek(null)}
+            >
+              {/* Le tre sorgenti in un contenitore solo: chi apre decide COSA
+                  guardare, il contenitore decide COME si chiude. */}
+              <div className="nc-peek-sorgenti" role="tablist">
+                {tabs.map(([id, label]) => (
+                  <button key={id} type="button" role="tab" aria-selected={source === id}
+                    className={`nc-peek-sorgente${source === id ? ' attiva' : ''}`}
+                    onClick={() => setPeek({ key: peek.key, source: id })}>{label}</button>
+                ))}
+              </div>
+              {source === 'stream' ? (
+                <div className="nc-peek-stream">
+                  <Terminal
+                    key={`peek:${peekRow.key}`}
+                    session={peekRow.session} node={peekRow.node || undefined} token={token}
+                    readonly={false} takeSize={false} focused
+                    sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
+                    ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
+                  />
+                </div>
+              ) : source === 'panel' ? (
+                <CellPanel
+                  cellId={peekRow.cellName}
+                  panelUrl={peekRow.panelUrl}
+                  route={peekRow.route || []}
+                  panelPort={0}
+                  token={token}
+                  title={peekRow.cellName}
+                />
+              ) : (
+                <>
+                  <pre className="nc-peek-testo">{peekRow.preview || t('cell-peek-vuoto')}</pre>
+                  {formattaTelemetria(t, peekRow.telemetry) && (
+                    <small className="nc-cell-switcher-telemetry">{formattaTelemetria(t, peekRow.telemetry)}</small>
+                  )}
+                </>
+              )}
+            </CellPopup>
+          );
+        })()}
         <div className="nc-cell-switcher-actions">
           <button type="button" className="nc-cell-switcher-open" disabled={!selectedRow || !!picking} onClick={pick}>
             {selectedRow ? `${t('cell-switcher-open')}: ${selectedRow.cellName}` : t('cell-switcher-select')}
