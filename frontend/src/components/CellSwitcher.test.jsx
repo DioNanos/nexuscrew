@@ -9,7 +9,11 @@ vi.mock('../lib/api.js', () => ({
 // Le sorgenti pesanti del popup fanno rete (ws, ticket del pannello): stub
 // con traccia delle props, stesso pattern di GridTile.test.jsx.
 vi.mock('./Terminal.jsx', () => ({ default: (props) => <div data-testid="peek-term" data-session={props.session} /> }));
-vi.mock('./CellPanel.jsx', () => ({ default: (props) => <div data-testid="peek-panel" data-cell={props.cellId} /> }));
+vi.mock('./CellPanel.jsx', () => ({
+  default: (props) => (
+    <div data-testid="peek-panel" data-cell={props.cellId} data-panel-port={props.panelPort} data-route={JSON.stringify(props.route)} />
+  ),
+}));
 
 import CellSwitcher from './CellSwitcher.jsx';
 import { writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
@@ -283,6 +287,73 @@ describe('CellSwitcher', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Panel: Dev' }));
     const panel = await screen.findByTestId('peek-panel');
     expect(panel.getAttribute('data-cell')).toBe('Dev');
+  });
+
+  // P0 sicurezza: con una porta nota il frame va su un origin SEPARATO dal
+  // control plane — e' quella separazione a impedire al JS del pannello di
+  // raggiungere il token dell'operatore. Passare 0 (o un valore sbagliato)
+  // ricade su un path relativo, cioe' SAME-ORIGIN col control plane: il
+  // difetto chiuso in 0.9.1, riaperto in questo ingresso.
+  it('panel origin: a LOCAL cell panel uses the node\'s own panel port, never 0 when one is configured', async () => {
+    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [
+      { ...active('Dev', 'cloud-Dev'), panelUrl: 'https://panel.example' },
+    ] }));
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
+      sessions: [{ name: 'cloud-Dev', activity: 0 }],
+    }) });
+    render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={vi.fn()} onClose={vi.fn()}
+      panelPort={41821} nodePanelPorts={{}} />);
+    await screen.findByRole('button', { name: /^Dev / });
+    fireEvent.click(screen.getByRole('button', { name: 'Panel: Dev' }));
+    const panel = await screen.findByTestId('peek-panel');
+    expect(panel.dataset.panelPort).toBe('41821');
+  });
+
+  it('panel origin: a REMOTE cell with a negotiated port for its route gets that port, never the local one', async () => {
+    writeCellSwitcherSnapshot({
+      sessions: [], cells: [],
+      nodeGroups: [{
+        route: ['hub'], label: 'Hub', sessions: [{ name: 'cloud-Remote', activity: 0 }],
+        cells: [{ ...active('Remote', 'cloud-Remote'), panelUrl: 'https://panel.example' }],
+      }],
+    });
+    mocks.fleetStatus.mockImplementation(async (_token, r = []) => (r.length
+      ? { available: true, cells: [{ ...active('Remote', 'cloud-Remote'), panelUrl: 'https://panel.example' }] }
+      : { available: true, cells: [] }));
+    mocks.getRouteSessions.mockResolvedValue({ sessions: [{ name: 'cloud-Remote', activity: 0 }] });
+    // Porta LOCALE deliberatamente diversa dalla porta negoziata per 'hub':
+    // se il frame prendesse quella locale sarebbe l'origine SBAGLIATA per
+    // una cella remota, non un fallback innocuo.
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+      panelPort={9999} nodePanelPorts={{ hub: 41821 }} />);
+    await screen.findByRole('button', { name: /^Remote / });
+    fireEvent.click(screen.getByRole('button', { name: 'Panel: Remote' }));
+    const panel = await screen.findByTestId('peek-panel');
+    expect(panel.dataset.panelPort).toBe('41821');
+    expect(panel.dataset.panelPort).not.toBe('9999');
+  });
+
+  it('panel origin — no regression: a REMOTE cell whose route has NO negotiated port stays at 0, never borrows the local one', async () => {
+    writeCellSwitcherSnapshot({
+      sessions: [], cells: [],
+      nodeGroups: [{
+        route: ['unpaired'], label: 'Unpaired', sessions: [{ name: 'cloud-Remote', activity: 0 }],
+        cells: [{ ...active('Remote', 'cloud-Remote'), panelUrl: 'https://panel.example' }],
+      }],
+    });
+    mocks.fleetStatus.mockImplementation(async (_token, r = []) => (r.length
+      ? { available: true, cells: [{ ...active('Remote', 'cloud-Remote'), panelUrl: 'https://panel.example' }] }
+      : { available: true, cells: [] }));
+    mocks.getRouteSessions.mockResolvedValue({ sessions: [{ name: 'cloud-Remote', activity: 0 }] });
+    // 'unpaired' non e' nella mappa negoziata (peer accoppiato prima che il
+    // pairing negoziasse la porta pannello): questa e' esattamente la guardia
+    // di lib/panel-port.js che non va regredita.
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+      panelPort={9999} nodePanelPorts={{ hub: 41821 }} />);
+    await screen.findByRole('button', { name: /^Remote / });
+    fireEvent.click(screen.getByRole('button', { name: 'Panel: Remote' }));
+    const panel = await screen.findByTestId('peek-panel');
+    expect(panel.dataset.panelPort).toBe('0');
   });
 
   it('the row renders what the cell is doing: fresh activity as its age, stale or absent as nothing', async () => {

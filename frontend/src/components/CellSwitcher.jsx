@@ -9,6 +9,7 @@ import { positionKey } from '../lib/nodes-model.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import RosterHandle from './RosterHandle.jsx';
+import { panelPortForRoute } from '../lib/panel-port.js';
 import { t } from '../lib/i18n.js';
 import './CellSwitcher.css';
 
@@ -194,7 +195,7 @@ function orderRowsByPosition(rows, rosterItems, pins, orders) {
   });
 }
 
-export default function CellSwitcher({ token, current, onPick, onClose }) {
+export default function CellSwitcher({ token, current, onPick, onClose, panelPort = 0, nodePanelPorts = {} }) {
   const [snapshot, setSnapshot] = useState(readCellSwitcherSnapshot);
   const [showAll, setShowAll] = useState(false);
   const [ready, setReady] = useState(false);
@@ -445,7 +446,7 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
                   cellId={peekRow.cellName}
                   panelUrl={peekRow.panelUrl}
                   route={peekRow.route || []}
-                  panelPort={0}
+                  panelPort={panelPortForRoute(peekRow.route || [], nodePanelPorts, panelPort)}
                   token={token}
                   title={peekRow.cellName}
                 />
