@@ -382,7 +382,7 @@ test('F-B (correzione): un figlio che IGNORA SIGTERM viene comunque terminato (e
   }
 });
 
-// --- Correzione (audit 2a, precisata da Dev): handler 'error' sui socket -----
+// --- Correzione (audit 2a, precisata da una revisione indipendente successiva): handler 'error' sui socket -----
 //
 // La segnalazione originale ("grep vuoto su .on('error')") era imprecisa: gli
 // handler sul SERVER ci sono in tutti e tre i moduli. Il buco vero e' piu'
