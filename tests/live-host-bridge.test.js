@@ -35,6 +35,17 @@ const mockFleet = (cells) => Promise.resolve({
   status: async () => ({ available: true, cells }),
 });
 
+// Aspetta una condizione osservabile SENZA budget di macchina: la condizione o
+// arriva (verde), o non arriva mai e il test resta appeso — e un gate appeso e'
+// un fallimento, fermato dallo stall-watchdog di tests/run-isolated.js. Un
+// budget di ms qui misurerebbe la velocita' della macchina, non la proprieta'.
+async function aspettaEvento(condizione, passoMs = 25) {
+  for (;;) {
+    if (condizione()) return;
+    await new Promise((r) => setTimeout(r, passoMs));
+  }
+}
+
 // —— Daemon finto: WebSocket server su unix socket, protocollo V3 ——
 // Registra ogni metodo ricevuto. Simula una cella VIVA E OCCUPATA: esiste una
 // thread di TUI (existingThread) con un turno in corso — il requisito più
@@ -69,7 +80,10 @@ function makeFakeDaemon({ socketPath, threadId = 'bridge-thread-0001', failThrea
               };
             ws.send(JSON.stringify(payload));
           };
-          if (delayMs) setTimeout(respond, delayMs); else respond();
+          // delayMs < 0: veleno che NON finisce mai — la risposta non arriva,
+          // senza lasciare timer appesi nel processo di test (un setTimeout
+          // enorme terrebbe vivo l'event loop dopo la fine del file).
+          if (delayMs > 0) setTimeout(respond, delayMs); else if (delayMs === 0) respond();
         } else if (msg.method === 'thread/stop') {
           seen.threadStops.push((msg.params || {}).threadId || null);
           ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }));
@@ -157,6 +171,17 @@ async function boot({
         setTimeout(() => res.json({ hostCell: 'never', revision: 9, eligible: true, at: 0 }), slowHubMs);
         return;
       }
+      next();
+    });
+  } else if (slowHubMs < 0) {
+    // Veleno che non finisce mai: l'hub resta muto sulla GET DEL PONTE. La
+    // prima GET (quella della designate del test) passa: è il contatore
+    // hubRequests.gets qui sopra a distinguerle — il middleware del contatore
+    // è registrato prima, quindi quando questo gira la GET corrente è già
+    // contata. Nessun timer lasciato appeso: l'handle della richiesta muta
+    // muore con il server alla chiusura del contesto.
+    app.use('/api/live-host', (req, res, next) => {
+      if (req.method === 'GET' && req.path === '/' && hubRequests.gets > 1) return;
       next();
     });
   }
@@ -363,38 +388,31 @@ test('thread/start rifiutato dal daemon (error JSON-RPC): none/bridge-socket-fai
   } finally { await ctx.close(); }
 });
 
+// I due test di bounded-ness usano il VELENO INFINITO (delayMs/slowHubMs < 0:
+// la dipendenza non risponde MAI). Allora «il ponte non aspetta» e' la
+// RISOLUZIONE stessa col proprio budget (timeoutMs 150), non una misura di
+// elapsed. Storia: con veleno finito e soglia elapsed ogni ricalibratura
+// (900/800, poi 3000/2000) inseguiva il carico della notte — falso rosso, flake
+// documentato in tests/README-flake.md. Un ponte che aspettasse la dipendenza
+// resterebbe appeso: il gate lo fermerebbe con lo stall-watchdog.
 test('socket LENTO oltre il limite: none/bridge-timeout senza allungare l\'attesa (MC1.5)', async () => {
   const cwd = path.join(os.tmpdir(), 'cell-slow-daemon');
-  const ctx = await boot({ cells: CELLS_NATIVE(cwd), timeoutMs: 150, daemonOpts: { delayMs: 3000 } });
+  const ctx = await boot({ cells: CELLS_NATIVE(cwd), timeoutMs: 150, daemonOpts: { delayMs: -1 } });
   try {
     await ctx.designate('cloud-Alfa');
-    const t0 = Date.now();
     const b = await j(await ctx.bridgeCall());
-    const elapsed = Date.now() - t0;
     assert.equal(b.mode, 'none');
     assert.equal(b.reason, 'bridge-timeout');
-    assert.ok(elapsed < 2000, `la risoluzione non resta appesa (elapsed=${elapsed}ms)`);
   } finally { await ctx.close(); }
 });
 
-// Le soglie `elapsed` misurano una bounded-ness: la risoluzione NON aspetta il
-// veleno (delayMs/slowHubMs), torna al proprio budget (timeoutMs 150). Con
-// veleno 900ms e soglia 800ms il margine era 100ms: sotto carico (flotta
-// attiva, load >18 misurato) lo scheduling da solo lo consumava, con reason
-// CORRETTO — falso rosso, flake del gate documentato in tests/README-flake.md.
-// Ricalibrati INSIEME (veleno 900->3000, soglia 800->2000): la proprieta'
-// provata e' la stessa, il margine assoluto sale a 1s. timeoutMs di produzione
-// non toccato.
 test('hub LENTO oltre il limite: none/live-host-timeout (la GET non aspetta)', async () => {
-  const ctx = await boot({ cells: CELLS_NATIVE('/tmp'), timeoutMs: 150, slowHubMs: 3000 });
+  const ctx = await boot({ cells: CELLS_NATIVE('/tmp'), timeoutMs: 150, slowHubMs: -1 });
   try {
     await ctx.designate('cloud-Alfa');
-    const t0 = Date.now();
     const b = await j(await ctx.bridgeCall());
-    const elapsed = Date.now() - t0;
     assert.equal(b.mode, 'none');
     assert.equal(b.reason, 'live-host-timeout');
-    assert.ok(elapsed < 2000, `la GET non allunga l'avvio (elapsed=${elapsed}ms)`);
   } finally { await ctx.close(); }
 });
 
@@ -503,8 +521,12 @@ test('thread ORFANA: se la risposta arriva dopo il timeout, il ponte chiude comu
     assert.equal(b.mode, 'none');
     assert.equal(b.reason, 'bridge-timeout');
 
-    // Ma la thread era nata davvero, e va chiusa.
-    await new Promise((r) => setTimeout(r, 900));
+    // Ma la thread era nata davvero, e va chiusa: la chiusura e' un EVENTO del
+    // daemon, non un tempo da attendere. Il vecchio sleep(900) era una finestra
+    // che sotto carico chiudeva prima dell'evento → finto rosso «thread
+    // ORFANA». Se la chiusura non arriva mai, il test resta appeso e il gate lo
+    // ferma con lo stall-watchdog: rosso per la ragione giusta.
+    await aspettaEvento(() => ctx.daemon.seen.threadStops.length > 0);
     assert.deepEqual(ctx.daemon.seen.threadStops, ['bridge-thread-0001'],
       'la thread nata dopo il timeout viene chiusa, non lasciata orfana');
   } finally { await ctx.close(); }
