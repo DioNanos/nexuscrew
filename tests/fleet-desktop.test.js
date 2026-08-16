@@ -261,3 +261,74 @@ test('RIPARAZIONE: una scrittura concorrente non viene persa', () => {
   assert.equal(daDisco.label, 'Scelta concorrente', 'la scrittura concorrente e\' stata persa');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("il resolver guarda TUTTA la catena, non il solo genitore", () => {
+  // Un audit ha mostrato che fermarsi al genitore lascia passare
+  // /antenato0777/child0755/docker: il binario e la sua directory sono
+  // ineccepibili, ma chi scrive nell'antenato puo' rinominare `child` e
+  // sostituire l'intero percorso.
+  const radice = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-anc-'));
+  const antenato = path.join(radice, 'antenato');
+  const child = path.join(antenato, 'child');
+  fs.mkdirSync(child, { recursive: true });
+  fs.chmodSync(child, 0o755);
+  fs.chmodSync(antenato, 0o777); // scrivibile da chiunque, senza sticky
+  const bin = path.join(child, 'docker');
+  fs.writeFileSync(bin, '#!/bin/sh\n', { mode: 0o755 });
+  fs.chmodSync(bin, 0o755);
+
+  const vecchioPath = process.env.PATH;
+  process.env.PATH = child;
+  try {
+    const eng = defaultDesktopEngine();
+    assert.notEqual(eng.command, bin,
+      'proposto un binario sotto un antenato scrivibile da chiunque: e\' sostituibile rinominando la directory');
+  } finally {
+    process.env.PATH = vecchioPath;
+    fs.chmodSync(antenato, 0o755);
+    fs.rmSync(radice, { recursive: true, force: true });
+  }
+});
+
+test("IL BOOTSTRAP passa il logger: il fallimento non resta muto", async () => {
+  // L'audit ha verificato che il callback funziona SE qualcuno lo passa — e che
+  // il bootstrap non lo passava. Il messaggio si fermava a un parametro che
+  // nessuno forniva: esattamente il silenzio che si voleva togliere.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-log-'));
+  const defsPath = path.join(home, 'fleet.json');
+  atomicWrite(defsPath, {
+    schemaVersion: 1,
+    engines: [{ ...defaultDesktopEngine(), command: 'docker' }],
+    cells: [],
+  });
+  const detto = [];
+  fs.chmodSync(home, 0o500); // lo store non e' scrivibile: la riparazione fallisce
+  try {
+    await createBuiltinFleet({ home, fleetDefsPath: defsPath, log: (m) => detto.push(String(m)) });
+    assert.ok(detto.some((m) => /desktop\.local/.test(m)),
+      `l'avvio non ha detto nulla del fallimento: ${JSON.stringify(detto.slice(0, 5))}`);
+  } finally {
+    fs.chmodSync(home, 0o700);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("RIPARAZIONE: se la configurazione non si rilegge, non si scrive", () => {
+  // `loadDefinitions` non lancia: restituisce null. Un catch da solo non lo
+  // intercettava, e si sarebbe deciso su uno stato mai letto.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-nul-'));
+  const file = path.join(dir, 'fleet.json');
+  atomicWrite(file, {
+    schemaVersion: 1,
+    engines: [{ ...defaultDesktopEngine(), command: 'docker' }],
+    cells: [],
+  });
+  const stato = loadDefinitions(file);
+  fs.writeFileSync(file, '{ questo non e json'); // rilettura destinata a fallire
+  const { riparaDesktopEngine } = require('../lib/fleet/builtin.js');
+  const esito = riparaDesktopEngine(file, stato);
+  assert.ok(esito && Array.isArray(esito.engines), 'restituito uno stato inutilizzabile');
+  assert.equal(fs.readFileSync(file, 'utf8'), '{ questo non e json',
+    'ha scritto pur non avendo potuto rileggere');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
