@@ -2,6 +2,73 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.3 — 2026-08-16 — "A Receipt Is Not an Outcome"
+
+The previous release fixed the Desktop engine and shipped the fix inert. Pulling
+on that thread produced most of this one: a repair that was never called, a race
+underneath it, a lock that reopened the race it closed, and — at the end — a
+success reported for a write that never happened. A `200 OK` for a change that
+was silently dropped is worse than a refusal, because nothing downstream has any
+reason to look again.
+
+- **Every write to the fleet definitions now goes through a lock, and a
+  surrendered write is no longer reported as success.** Ten code paths did
+  read-modify-write on the same file with no mutual exclusion, so a concurrent
+  update could be read, overwritten, and lost. The lock is taken by creating a
+  file exclusively — one syscall, no window between checking and acting — and
+  its owner is identified per acquisition rather than per process. Liveness is
+  asked of the kernel: a lock is only broken when it is both old *and* its owner
+  is gone, because age alone never proved a process dead. The first version of
+  this guard evicted **live** owners, which is how a cure reopens the disease
+  it was written for; the case is now pinned by tests in both directions.
+
+  Two callers want opposite behaviour and now get it: an opportunistic
+  migration gives up in silence, while a change a person asked for **fails**
+  with its own cause — `409` when the lock is busy, `400` when the data is
+  invalid. Previously both answered `200 OK`.
+
+- **Creating the definitions for the first time also goes through the lock.**
+  `init` wrote the file directly, so a first run racing with a live service
+  could erase a configuration instead of creating one.
+
+- **The panel's own password reaches the panel.** `Authorization` was stripped
+  wholesale on the way in, so any panel behind HTTP authentication was
+  impossible to log into by construction — not misconfigured, impossible. The
+  header now travels for the schemes a panel actually uses (`Basic`, `Digest`,
+  `NTLM`, `Negotiate`) and never for a bearer token, which belongs to the
+  control plane and must not leak into a proxied application. It is a closed
+  list, not a denylist: an unknown scheme is refused rather than forwarded.
+
+- **A container that opens over the page instead of taking you away from it.**
+  Opening a cell's preview, or its desktop panel, used to mean leaving whatever
+  you were looking at. There is now one popup — closed by `Escape`, by clicking
+  outside it, never by clicking inside it, and it takes focus when it opens —
+  reached from two places: the status dot beside each cell in the list, and the
+  cell's own tile in the grid. The panel was previously reachable **only** from
+  an enlarged cell, so opening a browser meant leaving the grid first.
+
+- **The cell list shows free context and tier usage, where the cell can report
+  them.** The numbers come from a small file written beside the cell's own
+  files; a documented snippet is included for producing it
+  (`docs/STATUSLINE_TELEMETRY.md`), and nothing is written automatically. Three
+  rules govern the display: a reading older than five minutes is dropped rather
+  than shown as current, cells that cannot report simply have no such line —
+  no dash, no "n/a" — and an unreadable or malformed file degrades to nothing
+  without failing the list. Values are accepted only as integers already in
+  percent: a `null` would otherwise have been converted to a perfectly credible
+  `0%`.
+
+- **The voice interface knows which cell it is attached to.** It received the
+  working directory and a prompt, never an identity, so a Live session had to
+  go looking through terminal sessions to guess where it was — and could
+  describe another cell's work as its own. The bridge now always prepends the
+  designated cell's identity to the instructions it sends, alone when no
+  per-cell prompt exists. The identity travels on the bridge rather than in the
+  prompt on purpose: a prompt may legitimately be absent, and if identity
+  depended on it, a missing prompt would have meant a Live with no idea who it
+  was. The exact session name is included only when the roster declares it,
+  never inferred.
+
 ## 0.9.2 — 2026-08-16 — "Offered and Then Refused"
 
 Both defects in this release were found by using the product, not by a test —
