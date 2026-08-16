@@ -9,7 +9,7 @@ import { panelPortForRoute } from './panel-port.js';
 // porta del nodo locale — sarebbe l'origin del pannello sbagliato, non un
 // fallback.
 describe('panelPortForRoute — porta pannello per cella', () => {
-  const mappa = { vps3: 43101, pixel: 43102 };
+  const mappa = { vps: 43101, relay: 43102 };
 
   it('cella locale (route vuota): la porta pannello del nodo che serve la pagina', () => {
     expect(panelPortForRoute([], mappa, 41821)).toBe(41821);
@@ -17,21 +17,21 @@ describe('panelPortForRoute — porta pannello per cella', () => {
   });
 
   it('cella remota: la porta inoltrata del primo nodo della route', () => {
-    expect(panelPortForRoute(['vps3'], mappa, 41821)).toBe(43101);
-    expect(panelPortForRoute(['vps3', 'relay'], mappa, 41821)).toBe(43101, 'la route appartiene al nodo che possiede la cella');
+    expect(panelPortForRoute(['vps'], mappa, 41821)).toBe(43101);
+    expect(panelPortForRoute(['vps', 'relay'], mappa, 41821)).toBe(43101, 'la route appartiene al nodo che possiede la cella');
   });
 
   it('nodo remoto senza porta negoziata (peer vecchio): 0, MAI la porta locale', () => {
     expect(panelPortForRoute(['sconosciuto'], mappa, 41821)).toBe(0);
-    expect(panelPortForRoute(['vps3'], {}, 41821)).toBe(0);
+    expect(panelPortForRoute(['vps'], {}, 41821)).toBe(0);
   });
 
   it('valori malati non attraversano: porta 0 o non intero viene rifiutata, non aggiustata', () => {
     expect(panelPortForRoute([], mappa, 0)).toBe(0, 'config non ancora arrivata: 0, mai un frame verso porta 0');
     expect(panelPortForRoute([], mappa, undefined)).toBe(0);
-    expect(panelPortForRoute(['vps3'], { vps3: '43101' }, 41821)).toBe(0, 'stringa non e\' una porta');
-    expect(panelPortForRoute(['vps3'], { vps3: 0 }, 41821)).toBe(0);
-    expect(panelPortForRoute(['vps3'], { vps3: 70000 }, 41821)).toBe(0);
+    expect(panelPortForRoute(['vps'], { vps: '43101' }, 41821)).toBe(0, 'stringa non e\' una porta');
+    expect(panelPortForRoute(['vps'], { vps: 0 }, 41821)).toBe(0);
+    expect(panelPortForRoute(['vps'], { vps: 70000 }, 41821)).toBe(0);
     expect(panelPortForRoute('non-un-array', mappa, 41821)).toBe(0, 'garbage in, zero out');
   });
 });

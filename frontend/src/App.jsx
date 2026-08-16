@@ -28,6 +28,7 @@ import {
 } from './lib/deck-model.js';
 import { deckId, refWithOwner, resolveLayoutForViewer } from './lib/deck-federation.js';
 import { hostRouteKey, hostDesignationFailureMessage } from './lib/host-designation.js';
+import { panelPortForRoute } from './lib/panel-port.js';
 import {t} from './lib/i18n.js';
 import { useLang } from './hooks/useLang.js';
 import { useNodes } from './hooks/useNodes.js';
@@ -357,10 +358,13 @@ export default function App() {
   // banner settings che lo dichiara). Default false finche' non arriva la config.
   const [roDefault, setRoDefault] = useState(false);
   // Porta pannello (P0 sicurezza 2026-08-16, da /api/config): origin DIVERSA
-  // dal control plane, solo per il caso locale — v. CellPanel.jsx. 0 finche'
-  // la config non e' ancora arrivata: CellPanel tratta 0 come "non disponibile
-  // ancora" e resta sulla via storica, mai un frame verso porta 0.
+  // dal control plane. La porta LOCALE serve le celle di QUESTO nodo; le celle
+  // remote usano la porta INOLTRATA del loro nodo (mappa nodePanelPorts,
+  // negoziata nel pairing) — v. lib/panel-port.js e CellPanel.jsx. 0/assente
+  // = non disponibile (config in arrivo, o peer accoppiato senza negoziazione
+  // pannello): via storica, mai un frame verso porta 0.
   const [panelPort, setPanelPort] = useState(0);
+  const [nodePanelPorts, setNodePanelPorts] = useState({});
 
   useEffect(() => {
     try { localStorage.setItem(SIDE_W_KEY, String(sideW)); } catch (_) {}
@@ -387,6 +391,8 @@ export default function App() {
       });
       setRoDefault(!!c.readonlyDefault);
       setPanelPort(Number.isInteger(c.panelPort) ? c.panelPort : 0);
+      setNodePanelPorts(c.nodePanelPorts && typeof c.nodePanelPorts === 'object' && !Array.isArray(c.nodePanelPorts)
+        ? c.nodePanelPorts : {});
       if (s.firstRun === true && !c.readonlyDefault) setWizardOpen(true);
       else if (pairPending) setWizardOpen(true); // deep-link #pair: apri wizard sul pairing
     }).catch(() => { /* wizard best-effort: la UI resta usabile */ });
@@ -685,7 +691,7 @@ export default function App() {
     }
     return <>
       <SingleView session={session.session} node={session.node} ownerId={session.ownerId} cellName={session.cellName} token={token} readonly={roDefault}
-        panelPort={panelPort}
+        panelPort={panelPortForRoute(session.node ? session.node.split('/') : [], nodePanelPorts, panelPort)}
         onBack={() => setSession(null)} onCellSwitcher={() => setCellSwitcherOpen(true)} cellSwitcherOpen={cellSwitcherOpen} />
       {cellSwitcherOpen && <CellSwitcher token={token} current={session}
         onPick={(next) => { pickSession(next); setCellSwitcherOpen(false); }} onClose={() => setCellSwitcherOpen(false)} />}
@@ -765,7 +771,9 @@ export default function App() {
           <SingleView
             session={single.session} node={single.node} ownerId={single.ownerId}
             cellName={cellDisplayName({ session: single.session, node: single.node, ownerId: single.ownerId, cells, nodeGroups })}
-            token={token} readonly={roDefault} panelPort={panelPort} onBack={() => setSingle(null)}
+            token={token} readonly={roDefault}
+            panelPort={panelPortForRoute(single.node ? single.node.split('/') : [], nodePanelPorts, panelPort)}
+            onBack={() => setSingle(null)}
           />
         </div>
       )}

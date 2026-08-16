@@ -82,6 +82,9 @@ function boot(t, fetchScript) {
     pairRequestTimeoutMs: 25,
     ...(fetchScript.hostname ? { hostname: fetchScript.hostname } : {}),
     ...(fetchScript.diagnosis ? { readTunnelDiagnostic: () => fetchScript.diagnosis } : {}),
+    // Seam separato per la riserva della porta PANNELLO: cosi' un test puo'
+    // rompere solo quella (la porta di controllo usa il binder di default).
+    ...(fetchScript.createPanelPortServer ? { createPanelPortServer: fetchScript.createPanelPortServer } : {}),
     probeTransportReady: async () => {
       let lastError = '';
       for (let i = 0; i < 6; i += 1) {
@@ -381,13 +384,13 @@ test('pair panel: il peer che annuncia panelPort nel join ottiene il secondo -L'
   assert.equal(calls.spawnArgs.length, 2, 'spawn provvisorio + spawn finale');
   const [provvisorio, finale] = calls.spawnArgs;
   const fwProvvisorio = provvisorio.filter((a, i) => provvisorio[i - 1] === '-L');
-  assert.deepEqual(fwProvvisorio.map((x) => x.endsWith(':41820')), [true],
+  assert.deepEqual(fwProvvisorio.map((x) => x.endsWith(':41830')), [true],
     'prima del join si inoltra solo il control plane: la porta pannello non si conosce ancora');
   const fwFinale = finale.filter((a, i) => finale[i - 1] === '-L');
   assert.equal(fwFinale.length, 2, 'il supervisor finale porta controllo E pannello');
   assert.ok(fwFinale.some((x) => x === `127.0.0.1:${n.panelLocalPort}:127.0.0.1:41821`),
     'il -L pannello usa la coppia negoziata');
-  assert.ok(fwFinale.some((x) => x === '127.0.0.1:43001:127.0.0.1:41820'),
+  assert.ok(fwFinale.some((x) => x === '127.0.0.1:43001:127.0.0.1:41830'),
     'il -L di controllo resta al suo posto');
 });
 
@@ -412,6 +415,36 @@ test('pair panel: il peer che NON annuncia panelPort si accoppia come sempre, se
     const fw = args.filter((a, i) => args[i - 1] === '-L');
     assert.equal(fw.length, 1, 'un solo -L: il tunnel e quello di sempre');
   }
+});
+
+// Il pannello e' un'estensione, il legame viene prima: se la porta locale per
+// il forward pannello non si riesce a riservare, il pairing NON fallisce — si
+// accoppia senza coppia e il pannello remoto resta sulla via storica.
+test('pair panel: riserva della porta pannello fallita -> pairing riuscito senza coppia', async (t) => {
+  const { base, token, dir, nodesPath, calls } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID, panelPort: 41821 }),
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+    // Solo la riserva del PANNELLO salta (errore non-EADDRINUSE: niente
+    // scan, throw subito); la porta di controllo usa il binder di default.
+    createPanelPortServer: () => ({
+      _err: null,
+      once(ev, fn) { if (ev === 'error') this._err = fn; },
+      removeListener() {},
+      listen() { this._err(Object.assign(new Error('binder pannello rotto'), { code: 'EPANEL' })); },
+    }),
+  });
+  const r = await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) });
+  assert.equal(r.status, 200, 'il legame non fallisce per una porta pannello che non c\'e\'');
+  assert.equal((await r.json()).paired, true);
+
+  const n = store.getNode(store.loadStore(nodesPath), 'peer');
+  assert.equal(n.panelLocalPort, undefined, 'nessuna coppia senza porta riservata');
+  assert.equal(n.panelRemotePort, undefined);
+  const finale = calls.spawnArgs.at(-1);
+  const fw = finale.filter((a, i) => finale[i - 1] === '-L');
+  assert.equal(fw.length, 1, 'il tunnel finale resta a un -L: via storica per il pannello');
 });
 
 test('Share PWA: OFF persiste, revoca sul -L vivo e solo dopo riavvia senza -R', async (t) => {

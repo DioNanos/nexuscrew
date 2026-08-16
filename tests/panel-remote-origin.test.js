@@ -36,12 +36,12 @@ function scriviStoreVecchio(dir) {
     schemaVersion: 2,
     nodeId: 'a'.repeat(32),
     nodes: [{
-      name: 'vps3', ssh: 'dag@cloud.alpacalibre.com', sshPort: 22,
+      name: 'vps', ssh: 'user@hub.example.com', sshPort: 22,
       remotePort: 41777, localPort: 43001,
       roles: { client: true, node: false }, rolesKnown: true,
       direction: 'outbound', transport: 'auto', autostart: true,
       shared: false, panelAccess: false, liveHostAccess: false,
-      visibility: 'network', label: 'VPS3',
+      visibility: 'network', label: 'Hub',
       token: 'VECCHIO-REMOTE-SECRET-123', acceptToken: 'VECCHIO-ACCEPT-SECRET-1',
       nodeId: 'b'.repeat(32), reversePort: 44001,
     }],
@@ -57,13 +57,13 @@ function scriviStoreNuovo(dir) {
     schemaVersion: 2,
     nodeId: 'a'.repeat(32),
     nodes: [{
-      name: 'vps3', ssh: 'dag@cloud.alpacalibre.com', sshPort: 22,
+      name: 'vps', ssh: 'user@hub.example.com', sshPort: 22,
       remotePort: 41777, localPort: 43001,
       panelLocalPort: 43101, panelRemotePort: 41821,
       roles: { client: true, node: false }, rolesKnown: true,
       direction: 'outbound', transport: 'auto', autostart: true,
       shared: false, panelAccess: false, liveHostAccess: false,
-      visibility: 'network', label: 'VPS3',
+      visibility: 'network', label: 'Hub',
       token: 'NUOVO-REMOTE-SECRET-123', acceptToken: 'NUOVO-ACCEPT-SECRET-1',
       nodeId: 'b'.repeat(32), reversePort: 44001,
     }],
@@ -94,7 +94,7 @@ test('PUNTO 4: stato nodi vecchio (0.9.0, nessuna coppia panel) — nessun perco
   // 1. Lo store carica com'e': strict, nessuna migrazione forzata.
   const st = store.loadStore(nodesPath);
   assert.ok(st, 'un nodes.json di ieri carica senza errori');
-  const nodo = st.nodes.find((n) => n.name === 'vps3');
+  const nodo = st.nodes.find((n) => n.name === 'vps');
   assert.ok(nodo, 'il nodo accoppiato c\'e\'');
   assert.equal(nodo.panelLocalPort, undefined, 'e la coppia panel non c\'e: non si inventa');
   assert.equal(nodo.panelRemotePort, undefined);
@@ -115,7 +115,7 @@ test('PUNTO 4: stato nodi vecchio (0.9.0, nessuna coppia panel) — nessun perco
   });
   assert.equal(rNodes.status, 200, '/api/nodes risponde, il nodo vecchio non rompe la vista');
   const jNodes = await rNodes.json();
-  const visto = (jNodes.nodes || []).find((n) => n.name === 'vps3');
+  const visto = (jNodes.nodes || []).find((n) => n.name === 'vps');
   assert.ok(visto, 'il nodo vecchio e\' in lista');
   assert.equal(visto.panelLocalPort, undefined, 'nessuna coppia panel nella vista redatta');
 
@@ -128,7 +128,7 @@ test('PUNTO 4: stato nodi vecchio (0.9.0, nessuna coppia panel) — nessun perco
   assert.equal(rCfg.status, 200);
   const jCfg = await rCfg.json();
   const mappa = jCfg.nodePanelPorts || {};
-  assert.equal(mappa.vps3, undefined, 'il nodo senza porta pannello negoziata non compare nella mappa');
+  assert.equal(mappa.vps, undefined, 'il nodo senza porta pannello negoziata non compare nella mappa');
 });
 
 test('stato nodi nuovo: la coppia panel arriva al frontend via /api/config', async (t) => {
@@ -144,14 +144,14 @@ test('stato nodi nuovo: la coppia panel arriva al frontend via /api/config', asy
   });
   assert.equal(r.status, 200);
   const j = await r.json();
-  assert.deepEqual(j.nodePanelPorts, { vps3: 43101 },
+  assert.deepEqual(j.nodePanelPorts, { vps: 43101 },
     'il frontend scopre la porta inoltrata del pannello per nome nodo');
 
   // E /api/nodes la mostra nel record: stessa fonte, due consumatori.
   const rNodes = await fetch(`http://127.0.0.1:${made.server.address().port}/api/nodes`, {
     headers: { authorization: `Bearer ${made.token}` },
   });
-  const visto = ((await rNodes.json()).nodes || []).find((n) => n.name === 'vps3');
+  const visto = ((await rNodes.json()).nodes || []).find((n) => n.name === 'vps');
   assert.equal(visto.panelLocalPort, 43101);
   assert.equal(visto.panelRemotePort, 41821);
 });

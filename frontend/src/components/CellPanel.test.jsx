@@ -163,7 +163,7 @@ describe('CellPanel — origin separata (panelPort)', () => {
     expect(requestPanelTicket).toHaveBeenCalledWith('t', ['Pixel'], 'A', expect.anything());
     const src = container.querySelector('iframe').getAttribute('src');
     expect(src.startsWith('http://127.0.0.1:43101/panel/A/?ticket=TK-REMOTE-ORIGIN')).toBe(true,
-      'origin separata anche per la cella remota: e\' il P0 che si chiude per DAG');
+      'origin separata anche per la cella remota: e\' la seconda meta\' del P0');
     expect(src.startsWith('/api/route/')).toBe(false, 'niente via federata same-origin quando la porta c\'e\'');
   });
 
