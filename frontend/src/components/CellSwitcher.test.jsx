@@ -205,9 +205,10 @@ describe('CellSwitcher', () => {
       sessions: [{ name: 'cloud-Dev', activity: 10, working: true, telemetry }],
     }) });
     render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={vi.fn()} onClose={vi.fn()} />);
-    // «free» sta appiccicata al numero del CONTESTO e a nessun altro: la riga
-    // non può dire il contrario del vero.
-    expect(await screen.findByText('context 71% free · 5h tier 33% · 7d tier 8%')).toBeTruthy();
+    // Il verso è scritto DENTRO ogni etichetta: «free» sul contesto E «used»
+    // su ogni tier. Un tier senza il suo verso prenderebbe per contagio il
+    // «free» del vicino e la riga direbbe il contrario del vero.
+    expect(await screen.findByText('context 71% free · 5h used 33% · 7d used 8%')).toBeTruthy();
   });
 
   it('no telemetry, no field: cells that do not publish it keep the row exactly as it was', async () => {

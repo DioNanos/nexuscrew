@@ -10,7 +10,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { leggiTelemetria, MASSIMA_ETA_MS, NOME_FILE } = require('../lib/files/telemetry.js');
+const { leggiTelemetria, MASSIMA_ETA_MS, FUTURO_TOLLERATO_MS, NOME_FILE } = require('../lib/files/telemetry.js');
 
 const dirsDaRipulire = [];
 test.after(() => { for (const d of dirsDaRipulire) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) { /* best effort */ } } });
@@ -64,6 +64,28 @@ test('timestamp obbligatorio: oltre la soglia il dato è morto → null', () => 
   // Al limite esatto è ancora vivo: la soglia taglia dopo, non prima.
   scrivi(root, 'cloud-Dev', JSON.stringify({
     ts: ORA - MASSIMA_ETA_MS,
+    contextFreePct: 71, tier5hUsedPct: 33, tier7dUsedPct: 8,
+  }));
+  assert.ok(leggiTelemetria(root, 'cloud-Dev', ORA));
+});
+
+test('timestamp nel futuro: oltre la tolleranza il dato è rotto → null, «fresco per sempre» non è fresco', () => {
+  const root = tmpRoot();
+  // ts NEL FUTURO: `ora - ts` è NEGATIVO e non supera mai la massima età —
+  // il rilievo dell'audit. Un orologio avanti, o uno ts scritto male, e la
+  // riga mostrerebbe un numero morto che non scadrà mai. La soglia ora
+  // guarda anche questo verso.
+  scrivi(root, 'cloud-Dev', JSON.stringify({
+    ts: ORA + FUTURO_TOLLERATO_MS + 1,
+    contextFreePct: 71, tier5hUsedPct: 33, tier7dUsedPct: 8,
+  }));
+  assert.strictEqual(leggiTelemetria(root, 'cloud-Dev', ORA), null,
+    'uno ts troppo avanti è un ts rotto: il dato non esiste');
+  // Entro la tolleranza resta accettato: due minuti sono lo skew che un
+  // orologio legittimamente sforato può avere, e rifiutarli scarterebbe
+  // dati buoni su macchine normali.
+  scrivi(root, 'cloud-Dev', JSON.stringify({
+    ts: ORA + FUTURO_TOLLERATO_MS,
     contextFreePct: 71, tier5hUsedPct: 33, tier7dUsedPct: 8,
   }));
   assert.ok(leggiTelemetria(root, 'cloud-Dev', ORA));

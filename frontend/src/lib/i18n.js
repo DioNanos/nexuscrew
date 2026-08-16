@@ -107,13 +107,15 @@ export const DICTS = {
     'panel-not-granted': 'Questo nodo non concede il pannello a chi lo chiede: l\'accesso va concesso sul nodo che possiede la cella, non riprovando qui.',
     'panel-denied': 'Ingresso al pannello rifiutato: il biglietto non è più valido. Riprova: verrà chiesto un biglietto nuovo.',
     'cell-peek': 'Sbircia senza cambiare cella',
-    // Telemetria di riga: il VERSO è parte del dato — il contesto è LIBERO,
-    // i tier sono USATI. Le etichette lo ripetono, così la riga non può
-    // dire il contrario del vero.
+    // Telemetria di riga: il VERSO è parte del dato e sta scritto DENTRO
+    // ogni etichetta — il contesto è LIBERO, i tier sono USATI. Non basta
+    // che il verso viva nei nomi del contratto: chi legge vede solo questa
+    // riga, e «libero» accanto a un numero non qualificato verrebbe applicato
+    // anche agli altri. Ogni numero dice il proprio verso.
     'cell-tele-ctx': 'contesto',
     'cell-tele-free': 'libero',
-    'cell-tele-5h': 'tier 5h',
-    'cell-tele-7d': 'tier 7g',
+    'cell-tele-5h': '5h usati',
+    'cell-tele-7d': '7g usati',
     'cell-activity': 'attività',
     'cell-activity-now': 'adesso',
     'cell-peek-preview': 'Anteprima',
@@ -798,8 +800,8 @@ export const DICTS = {
     'cell-peek': 'Peek without switching cell',
     'cell-tele-ctx': 'context',
     'cell-tele-free': 'free',
-    'cell-tele-5h': '5h tier',
-    'cell-tele-7d': '7d tier',
+    'cell-tele-5h': '5h used',
+    'cell-tele-7d': '7d used',
     'cell-activity': 'activity',
     'cell-activity-now': 'now',
     'cell-peek-preview': 'Preview',
@@ -1484,8 +1486,8 @@ export const DICTS = {
     'cell-peek': 'Echa un vistazo sin cambiar de celda',
     'cell-tele-ctx': 'contexto',
     'cell-tele-free': 'libre',
-    'cell-tele-5h': 'tramo 5h',
-    'cell-tele-7d': 'tramo 7d',
+    'cell-tele-5h': '5h usados',
+    'cell-tele-7d': '7d usados',
     'cell-activity': 'actividad',
     'cell-activity-now': 'ahora',
     'cell-peek-preview': 'Vista previa',
