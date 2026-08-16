@@ -1,0 +1,93 @@
+/* Il velo copre la pagina ma non la smonta: sotto restano griglia, terminale e
+   cella corrente, vivi. Aprire non e' navigare. */
+.nc-popup-velo {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2vmin;
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.nc-popup {
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, 96vw);
+  height: min(820px, 92vh);
+  overflow: hidden;
+  border: 1px solid var(--nc-border, #1f3f2f);
+  border-radius: 10px;
+  background: var(--nc-bg, #0b0f0d);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55);
+}
+
+.nc-popup-testa {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--nc-border, #1f3f2f);
+  /* La testata non si comprime: su mobile, con il corpo pieno, era la prima a
+     cedere — e restare senza il bottone di chiusura in un modale e' una
+     trappola. */
+  flex: 0 0 auto;
+}
+
+.nc-popup-titolo {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.nc-popup-sub {
+  opacity: 0.65;
+  font-weight: 400;
+  font-size: 0.82em;
+}
+
+.nc-popup-chiudi {
+  flex: 0 0 auto;
+  /* Bersaglio pieno anche su schermo tattile: la X e' l'unica via d'uscita
+     insieme a Esc, che su mobile non c'e'. */
+  min-width: 40px;
+  min-height: 40px;
+  border: 1px solid var(--nc-border, #1f3f2f);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.nc-popup-corpo {
+  flex: 1 1 auto;
+  min-height: 0; /* senza, un figlio alto sfonda il contenitore invece di scorrere */
+  position: relative;
+  overflow: auto;
+}
+
+/* Un figlio che si dimensiona da solo — l'iframe del pannello — riempie il
+   corpo invece di restare alto quanto il suo contenuto. */
+.nc-popup-corpo > iframe,
+.nc-popup-corpo > .nc-cellpanel {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+@media (max-width: 720px) {
+  .nc-popup-velo { padding: 0; }
+  .nc-popup {
+    width: 100vw;
+    height: 100vh;
+    border: 0;
+    border-radius: 0;
+  }
+}
