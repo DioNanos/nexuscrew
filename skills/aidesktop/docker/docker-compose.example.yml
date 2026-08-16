@@ -50,14 +50,23 @@ services:
     mem_reservation: 1g
     cpus: 2.0
 
-    # Deliberately NOT setting no-new-privileges here: it would block the
-    # setuid chrome-sandbox helper from ever elevating, which is a
-    # NECESSARY condition for a real sandbox. It is not a SUFFICIENT one —
-    # this image's browser is still launched with --no-sandbox hardcoded by
-    # an upstream wrapper regardless of this setting, so do not read this
-    # line as "the browser is sandboxed." See ../SKILL.md's "The sandbox:
-    # installed, but not engaged" for what that actually requires and how to
-    # verify it, not assume it.
+    # KEEP THIS. The container is the boundary that holds here, and this line
+    # is part of it. The browser inside runs with --no-sandbox — that is not
+    # an accident, it is the trade this image makes: giving Chromium its own
+    # sandbox would require handing the container CAP_SYS_ADMIN or
+    # seccomp=unconfined, weakening the one boundary that is actually doing
+    # the work in order to add one inside it.
+    #
+    # Measured, not assumed: with this line set, launching the browser without
+    # --no-sandbox aborts — the setuid helper cannot elevate (PR_SET_NO_NEW_PRIVS)
+    # and the namespace sandbox is denied ("failed to move to new namespace:
+    # Operation not permitted"). See ../SKILL.md, "Where the boundary is".
+    #
+    # The consequence is real and you should plan for it: a renderer exploit
+    # lands in this container. Treat what the browser can reach — its profile,
+    # its sessions, anything you mount — as being inside the blast radius.
+    security_opt:
+      - no-new-privileges:true
 
     logging:
       driver: json-file

@@ -105,71 +105,74 @@ nothing carried over. The example compose ships no branding and no
 pre-populated `/config` — you get a bare webtop desktop plus the two
 additions below.
 
-### The two lines, and why each exists
+### The two additions, and why each exists
 
-- **`chromium-sandbox`** — the upstream webtop image does not install
-  Chromium's setuid sandbox helper. This line puts it on disk. It is a
-  *necessary* precondition for a real sandbox, but on its own it does **not**
-  produce one — see the next section for why, and do not read this bullet as
-  "the browser is sandboxed."
 - **`socat`** — modern Chrome ignores `--remote-debugging-address` and binds
   its DevTools/CDP port to `127.0.0.1` *inside* the container, so a Docker
   port mapping alone never reaches it. `socat` relays
   `0.0.0.0:9223 -> 127.0.0.1:9222` inside the container's own network
   namespace; the published host port still only opens on `127.0.0.1`, so the
-  loopback-only rule is unchanged — nothing new is exposed, only bridged. The
-  same init script also clears `Singleton{Lock,Cookie,Socket}` files an
+  loopback-only rule is unchanged — nothing new is exposed, only bridged.
+- **the init script** also clears `Singleton{Lock,Cookie,Socket}` files an
   unclean shutdown leaves behind, which otherwise stop Chromium from starting
   again with no visible error.
 
-### The sandbox: installed, but not engaged
+Notably absent: anything that tries to sandbox the browser. That is the next
+section, and it is the part worth reading before you adapt this recipe.
 
-Installing `chromium-sandbox` does not remove `--no-sandbox`. The base image
-launches Chromium through a wrapper, `/usr/local/bin/wrapped-chromium`, and
-that wrapper hardcodes the flag that turns the sandbox off:
+### Where the boundary is
+
+**The browser in this container runs with `--no-sandbox`, and this recipe
+keeps it that way.** That is a trade, made deliberately, and you should
+understand it before deciding whether it fits your situation.
+
+The base image launches Chromium through `/usr/local/bin/wrapped-chromium`,
+which hardcodes the flag:
 
 ```
 ${BIN} --password-store=basic --no-sandbox --test-type "$@"
 ```
 
-Verified on a running container: both the main Chromium process and its
-zygote carry `--no-sandbox`, while the SUID helper the line above installs
-(`chrome-sandbox`, mode `-rwsr-xr-x`) sits on disk unused. The browser that
-holds your authenticated sessions runs unsandboxed regardless of this line —
-the line is necessary, it is just not sufficient by itself.
+Installing Chromium's setuid helper does not change this, and overriding the
+wrapper to drop the flag does not produce a sandbox either. Measured inside a
+running container, launching the browser without it aborts:
 
-**What removing `--no-sandbox` for real needs:** overriding that wrapper so
-it stops passing the flag — for example, replacing
-`/usr/local/bin/wrapped-chromium` with a version that drops it, or
-intercepting Chromium's launch earlier in the chain. This recipe does not do
-that yet.
+```
+The setuid sandbox is not running as root. Common causes:
+  * A parent process set prctl(PR_SET_NO_NEW_PRIVS, ...)
+Failed to move to new namespace: PID namespaces supported,
+Network namespace supported, but failed: errno = Operation not permitted
+```
 
-**The caveat that matters more than the fix itself:** the two hardenings pull
-against each other, and which one you keep decides *which* sandbox Chromium
-can still use.
+Both routes are closed, and for opposite reasons. The **setuid** sandbox needs
+its helper to elevate, which `no-new-privileges` exists to prevent. The
+**namespace** sandbox needs unprivileged user namespaces, which the container
+denies. Opening either one means handing the container `CAP_SYS_ADMIN` or
+`seccomp=unconfined`.
 
-- With `no-new-privileges` **set**, a SUID bit cannot take effect, so
-  `chrome-sandbox` can never elevate. The setuid sandbox is off the table, and
-  the only remaining option is Chromium's **namespace** sandbox — which needs
-  unprivileged user namespaces, something a container may well deny.
-- With it **unset** — what the example compose does, see its comment — the
-  SUID helper can elevate and the setuid sandbox is available again. That is
-  why the flag is left off there: not as an oversight, as the precondition.
+That is the trade: **you would weaken the boundary that is actually holding in
+order to build one inside it.** For a desktop reachable only over loopback,
+the container is the stronger of the two — so the recipe keeps the container
+hard and accepts the browser soft. `no-new-privileges` stays on.
 
-Either way, `--no-sandbox` on the command line wins over both. Removing the
-flag is what makes the question live at all, and whether the result is a real
-sandbox in *your* container **has not been tested here**. Do not patch the
-wrapper, drop `--no-sandbox`, and call the browser sandboxed on the strength
-of this paragraph — verify it:
+**What this costs you, stated plainly:** a renderer exploit lands in the
+container. Everything the browser can reach is in the blast radius — its
+profile, its logged-in sessions, and anything you mount. Mount as little as
+possible, keep the published ports on loopback, and do not treat this desktop
+as isolation between *sites*: it is isolation between the desktop and the
+host.
+
+**If your situation differs** — an untrusted desktop, or a host where the
+container boundary matters less than the browser one — the inverse trade is
+legitimate: grant `seccomp=unconfined`, override the wrapper, and verify you
+actually got a sandbox rather than assuming it. Check the running process, not
+the launch log:
 
 - open `chrome://sandbox` inside the desktop and read what it reports, or
-- from a shell in the container, confirm the zygote process no longer carries
-  `--no-sandbox` / `--no-zygote-sandbox` (`ps aux | grep zygote`).
+- confirm the zygote no longer carries `--no-sandbox` (`ps -eo args | grep zygote`).
 
-Until one of those confirms it, treat this recipe's browser the same way as
-the image it replaces: holding authenticated sessions, without the isolation
-its own `chromium-sandbox` line might suggest it has.
-
+Until one of those confirms it, assume the browser is unsandboxed — which,
+with this recipe as shipped, it is.
 ### Commanding the browser
 
 The relay's published port, `127.0.0.1:9222` on the host, is the CDP

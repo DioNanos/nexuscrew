@@ -1,19 +1,17 @@
-# AI Desktop = a webtop base, plus what it takes to attempt a real sandbox
-# for the browser inside it (NOT confirmed working as shipped — see below and
-# ../SKILL.md's "The sandbox: installed, but not engaged").
+# AI Desktop = a webtop base plus the one thing the base is missing: a way to
+# reach Chrome DevTools Protocol from outside the container.
 #
-# WHY A CUSTOM IMAGE
-# The upstream webtop image does not install Chromium's setuid sandbox helper
-# on its own; this Dockerfile puts it there. That line is NECESSARY for a
-# real sandbox but not SUFFICIENT: the base image launches Chromium through a
-# wrapper that hardcodes --no-sandbox regardless, so the helper this line
-# installs sits unused unless that wrapper is also overridden — which this
-# recipe does not yet do. Read the full explanation before assuming this
-# container's browser is sandboxed; as shipped, it is not confirmed to be.
+# WHAT THIS IMAGE DELIBERATELY DOES NOT DO
+# It does not try to give the browser its own sandbox. That is a decision, not
+# an omission, and it was made after measuring — see ../SKILL.md, "Where the
+# boundary is". In short: inside this container the browser's own sandbox
+# cannot start (setuid helper blocked by no-new-privileges, unprivileged user
+# namespaces denied), and the changes that would let it start are exactly the
+# ones that weaken the container — the boundary that actually holds here.
 FROM lscr.io/linuxserver/webtop:debian-xfce
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends chromium-sandbox socat \
+ && apt-get install -y --no-install-recommends socat \
  && rm -rf /var/lib/apt/lists/*
 
 # socat: modern Chrome IGNORES --remote-debugging-address and binds CDP to
