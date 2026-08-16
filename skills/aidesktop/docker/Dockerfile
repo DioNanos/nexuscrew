@@ -1,20 +1,15 @@
-# AI Desktop = a webtop base plus Chromium's real sandbox.
+# AI Desktop = a webtop base, plus what it takes to attempt a real sandbox
+# for the browser inside it (NOT confirmed working as shipped — see below and
+# ../SKILL.md's "The sandbox: installed, but not engaged").
 #
 # WHY A CUSTOM IMAGE
-# The upstream webtop image ships Chromium but not `chromium-sandbox`, and the
-# container denies unprivileged user namespaces. Result: Chromium has neither
-# sandbox mechanism available and refuses to start ("No usable sandbox").
-#
-# The shortcut would be `--no-sandbox`. It is deliberately not taken here:
-# this browser is meant to hold authenticated sessions and visit arbitrary
-# sites — exactly the workload the renderer sandbox exists to contain.
-#
-# CONSEQUENCE for the compose file: the setuid sandbox helper needs to elevate
-# privileges, so `no-new-privileges` must NOT be set for this container. That
-# is a deliberate trade: give up a weak protection (privilege escalation
-# inside a container that is already isolated, where the asset of value — the
-# browser profile — belongs to the unprivileged user anyway) to keep a strong
-# one (renderer isolation against hostile web content).
+# The upstream webtop image does not install Chromium's setuid sandbox helper
+# on its own; this Dockerfile puts it there. That line is NECESSARY for a
+# real sandbox but not SUFFICIENT: the base image launches Chromium through a
+# wrapper that hardcodes --no-sandbox regardless, so the helper this line
+# installs sits unused unless that wrapper is also overridden — which this
+# recipe does not yet do. Read the full explanation before assuming this
+# container's browser is sandboxed; as shipped, it is not confirmed to be.
 FROM lscr.io/linuxserver/webtop:debian-xfce
 
 RUN apt-get update \

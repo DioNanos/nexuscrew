@@ -50,11 +50,14 @@ services:
     mem_reservation: 1g
     cpus: 2.0
 
-    # Deliberately NOT setting no-new-privileges here: the setuid sandbox
-    # helper installed by the Dockerfile (chromium-sandbox) needs to elevate
-    # privileges to do its job. Setting it would silently push Chromium back
-    # toward --no-sandbox in practice — the exact shortcut this recipe exists
-    # to avoid. See the Dockerfile's own comment for the full reasoning.
+    # Deliberately NOT setting no-new-privileges here: it would block the
+    # setuid chrome-sandbox helper from ever elevating, which is a
+    # NECESSARY condition for a real sandbox. It is not a SUFFICIENT one —
+    # this image's browser is still launched with --no-sandbox hardcoded by
+    # an upstream wrapper regardless of this setting, so do not read this
+    # line as "the browser is sandboxed." See ../SKILL.md's "The sandbox:
+    # installed, but not engaged" for what that actually requires and how to
+    # verify it, not assume it.
 
     logging:
       driver: json-file

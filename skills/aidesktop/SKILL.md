@@ -35,19 +35,33 @@ worked example.
 The panel used to be served from the same origin as the control plane, which
 meant a compromised or hostile page mounted in the panel iframe could, in
 principle, read the operator's token straight out of the app's own
-`localStorage`. As of 0.9.1, for a **local** cell the panel is served from a
-**second loopback port** — the browser's Same-Origin Policy treats a
-different port as a different origin, so a document in that frame has nothing
-of the control plane's to read or write. The app also sends
+`localStorage`. As of 0.9.1, the panel is served from a **second loopback
+port** — the browser's Same-Origin Policy treats a different port as a
+different origin, so a document in that frame has nothing of the control
+plane's to read or write. The app also sends
 `Content-Security-Policy: frame-ancestors` on its own page, which is a
 separate, orthogonal protection: it stops the app itself from being embedded
 as someone else's iframe.
 
-**Declared gap:** for a cell owned by a *remote, paired* node, the panel still
-travels through the federated proxy on the control plane's own origin — the
-per-node negotiation of a dedicated panel port has not been extended to the
-pairing protocol yet. Treat the origin-separation guarantee as covering the
-local case only until that lands.
+This covers **remote** cells too, not just local ones. Two paired nodes
+negotiate a second port pair the same way they already negotiate the control
+plane's own tunnel: when the hub side has a panel server running, it
+announces its panel port at join time, the joining side reserves a local port
+for it, and the supervisor forwards both destinations over the same SSH
+connection — one `-L` for control, one for the panel, never sharing a port.
+`GET /api/config` exposes the result as `nodePanelPorts` (node name → the
+locally forwarded port), and the app resolves the right one per cell from its
+route before ever opening the frame.
+
+A node with no port pair on record — paired **before** this existed, or
+paired since but with the local port reservation having failed at the time
+(pairing still succeeds; the port pair is treated as an extension, never a
+reason to fail the bond) — is not treated as an error either way: its cells
+fall back to the old federated path (same origin as the control plane)
+exactly as before, and a cell never borrows another node's port to paper over
+the gap — the absence stays visible as the old behavior, not a silent, wrong
+origin. The pair is only established at pairing time, not by reconnecting an
+existing tunnel; re-pair the node to pick one up.
 
 None of this changes how a request actually gets into the frame: an
 authenticated call asks for a one-use ticket bound to one cell, the frame's
@@ -93,16 +107,11 @@ additions below.
 
 ### The two lines, and why each exists
 
-- **`chromium-sandbox`** — the upstream webtop image ships Chromium but not
-  its sandbox binary, and the container denies unprivileged user namespaces,
-  so Chromium refuses to start at all ("No usable sandbox"). The shortcut
-  would be `--no-sandbox`; it is deliberately **not** taken, because this
-  browser is meant to hold authenticated sessions and visit arbitrary sites —
-  exactly the workload the renderer sandbox exists to contain. The
-  consequence lands in the compose file: the setuid sandbox helper needs to
-  elevate privileges, so `no-new-privileges` must not be set for this
-  container. That is a deliberate trade, not an oversight — see the comments
-  in `docker/Dockerfile` and `docker/docker-compose.example.yml`.
+- **`chromium-sandbox`** — the upstream webtop image does not install
+  Chromium's setuid sandbox helper. This line puts it on disk. It is a
+  *necessary* precondition for a real sandbox, but on its own it does **not**
+  produce one — see the next section for why, and do not read this bullet as
+  "the browser is sandboxed."
 - **`socat`** — modern Chrome ignores `--remote-debugging-address` and binds
   its DevTools/CDP port to `127.0.0.1` *inside* the container, so a Docker
   port mapping alone never reaches it. `socat` relays
@@ -112,6 +121,48 @@ additions below.
   same init script also clears `Singleton{Lock,Cookie,Socket}` files an
   unclean shutdown leaves behind, which otherwise stop Chromium from starting
   again with no visible error.
+
+### The sandbox: installed, but not engaged
+
+Installing `chromium-sandbox` does not remove `--no-sandbox`. The base image
+launches Chromium through a wrapper, `/usr/local/bin/wrapped-chromium`, and
+that wrapper hardcodes the flag that turns the sandbox off:
+
+```
+${BIN} --password-store=basic --no-sandbox --test-type "$@"
+```
+
+Verified on a running container: both the main Chromium process and its
+zygote carry `--no-sandbox`, while the SUID helper the line above installs
+(`chrome-sandbox`, mode `-rwsr-xr-x`) sits on disk unused. The browser that
+holds your authenticated sessions runs unsandboxed regardless of this line —
+the line is necessary, it is just not sufficient by itself.
+
+**What removing `--no-sandbox` for real needs:** overriding that wrapper so
+it stops passing the flag — for example, replacing
+`/usr/local/bin/wrapped-chromium` with a version that drops it, or
+intercepting Chromium's launch earlier in the chain. This recipe does not do
+that yet.
+
+**The caveat that matters more than the fix itself:** `no-new-privileges`
+blocks a SUID bit from taking effect, so `chrome-sandbox` cannot elevate
+while it is set — which is why the example compose leaves it unset for this
+container (see its comment). But dropping `--no-sandbox` while
+`no-new-privileges` stays *off* only produces a real sandbox if Chromium
+falls back to its **namespace** sandbox instead of the setuid one, and this
+same base image's own constraint — unprivileged user namespaces denied inside
+the container — is exactly what a namespace sandbox needs and may not have.
+Whether the two are actually compatible here **has not been tested**. Do not
+patch the wrapper, drop `--no-sandbox`, and call the browser sandboxed on the
+strength of this paragraph — verify it:
+
+- open `chrome://sandbox` inside the desktop and read what it reports, or
+- from a shell in the container, confirm the zygote process no longer carries
+  `--no-sandbox` / `--no-zygote-sandbox` (`ps aux | grep zygote`).
+
+Until one of those confirms it, treat this recipe's browser the same way as
+the image it replaces: holding authenticated sessions, without the isolation
+its own `chromium-sandbox` line might suggest it has.
 
 ### Commanding the browser
 
