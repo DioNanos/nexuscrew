@@ -3,14 +3,15 @@
 [← Documentation index](README.md)
 
 When Live starts a native session (engine `codex-vl*`), the bridge
-(`lib/live-host/bridge.js`) always sends `thread/start` an identity header —
-which cell it is attached to, and the exact tmux session the roster reports
-for it — and, if a per-cell prompt file exists, appends its text after a
-blank line. The app-server **accumulates** this as an additional developer
-section; it does not remove or replace the global instruction chain. This
-page is about the template file itself: what it must contain, exactly where
-it goes, and how to prove the bridge actually reads it. For the Live host
-designation itself (which cell a node's Live session lands on), see
+(`lib/live-host/bridge.js`) always sends `thread/start` a `developerInstructions`
+field that opens with an identity header — which cell it is attached to, and
+the exact tmux session the roster reports for it — and, if a per-cell prompt
+file exists, appends its text after a blank line. How the app-server
+combines that field with its other configured instructions is not
+established here — a separate verification of that consumer is in progress.
+This page is about the template file itself: what it must contain, exactly
+where it goes, and how to prove the bridge actually reads it. For the Live
+host designation itself (which cell a node's Live session lands on), see
 [`live`](../skills/live/SKILL.md).
 
 ## Where the file goes
