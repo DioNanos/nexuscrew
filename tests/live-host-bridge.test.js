@@ -311,7 +311,13 @@ test('NATIVA con cella OCCUPATA: thread NUOVA del ponte, cwd e prompt per-cella 
     assert.equal(ctx.daemon.seen.threadStarts.length, 1);
     const params = ctx.daemon.seen.threadStarts[0];
     assert.equal(params.cwd, cwd);
-    assert.equal(params.developerInstructions, 'Regole Live della cella Alfa: opera nel perimetro della cella.');
+    // R2: l'intestazione identità viaggia SEMPRE, PRIMA del prompt per-cella —
+    // il fatto (chi sei) precede le istruzioni (come si lavora lì).
+    assert.equal(
+      params.developerInstructions,
+      'Live NexusCrew agganciata alla cella cloud-Alfa (sessione tmux cloud-Alfa).'
+        + '\n\nRegole Live della cella Alfa: opera nel perimetro della cella.',
+    );
 
     // Prompt dichiarato applicato, e il testo NON viaggia in risposta (KC3-audit:
     // il contenuto del prompt resta lato nodo).
@@ -319,7 +325,7 @@ test('NATIVA con cella OCCUPATA: thread NUOVA del ponte, cwd e prompt per-cella 
   } finally { await ctx.close(); }
 });
 
-test('prompt per-cella ASSENTE (ENOENT): si procede senza, e senza developerInstructions (LC2.3)', async () => {
+test('prompt ASSENTE (ENOENT): l\'identità arriva comunque — developerInstructions è la SOLA intestazione (R2)', async () => {
   const cwd = path.join(os.tmpdir(), 'cell-no-prompt');
   const ctx = await boot({ cells: CELLS_NATIVE(cwd) });
   try {
@@ -328,8 +334,55 @@ test('prompt per-cella ASSENTE (ENOENT): si procede senza, e senza developerInst
     assert.equal(b.mode, 'native');
     assert.deepEqual(b.prompt, { applied: false, reason: 'missing' });
     assert.equal(ctx.daemon.seen.threadStarts.length, 1);
-    assert.equal(ctx.daemon.seen.threadStarts[0].developerInstructions, undefined,
-      'prompt mancante: l\'app-server applica il proprio gradino globale (MC2.4)');
+    // R2 (2026-08-16): prima, senza LIVE_PROMPT.md il campo non viaggiava e la
+    // voce partiva senza sapere chi è — andava a leggere tmux per indovinare.
+    // Ora l'intestazione viaggia da sola. L'app-server ACCUMULA il campo come
+    // sezione developer aggiuntiva e il gradino globale resta (verifica su
+    // sorgente: thread_processor.rs → session/mod.rs, nessuna sostituzione).
+    assert.equal(
+      ctx.daemon.seen.threadStarts[0].developerInstructions,
+      'Live NexusCrew agganciata alla cella cloud-Alfa (sessione tmux cloud-Alfa).',
+      'senza LIVE_PROMPT.md il campo deve portare comunque l\'identità designata',
+    );
+  } finally { await ctx.close(); }
+});
+
+test('R2 identità: cella Fleet e sessione tmux viaggiano DISTINTI nell\'intestazione', async () => {
+  const cwd = path.join(os.tmpdir(), 'cell-identity-distinti');
+  // cell e tmuxSession DIVERSI (come nel reale: cell 'Dev', sessione
+  // 'cloud-Dev'): il test discrimina le due cose — un'intestazione che
+  // riportasse una sola delle due passerebbe anche nominando l'altra.
+  const cells = [{ cell: 'Dev', active: true, tmux: true, tmuxSession: 'cloud-Dev', engine: 'codex-vl.native', cwd }];
+  const ctx = await boot({ cells });
+  try {
+    // Designazione SENZA prefisso: la stessa forma di live-host.json reale
+    // (hostCell: Dev) — copre la via che la voce incontra sul campo.
+    await ctx.designate('Dev');
+    const b = await j(await ctx.bridgeCall());
+    assert.equal(b.mode, 'native');
+    assert.equal(b.cell, 'Dev');
+    assert.equal(
+      ctx.daemon.seen.threadStarts[0].developerInstructions,
+      'Live NexusCrew agganciata alla cella Dev (sessione tmux cloud-Dev).',
+    );
+  } finally { await ctx.close(); }
+});
+
+test('R2 identità: senza tmuxSession nel roster l\'intestazione dice la cella e basta', async () => {
+  const cwd = path.join(os.tmpdir(), 'cell-identity-senza-sessione');
+  const cells = [{ cell: 'cloud-Nova', active: true, tmux: true, engine: 'codex-vl.native', cwd }];
+  const ctx = await boot({ cells });
+  try {
+    await ctx.designate('cloud-Nova');
+    const b = await j(await ctx.bridgeCall());
+    assert.equal(b.mode, 'native');
+    // Il roster è la verità: se non dichiara la sessione, il ponte non la
+    // indovina dalla convenzione cloud-<Cella>. Il fatto degradato, mai un
+    // campo inventato.
+    assert.equal(
+      ctx.daemon.seen.threadStarts[0].developerInstructions,
+      'Live NexusCrew agganciata alla cella cloud-Nova.',
+    );
   } finally { await ctx.close(); }
 });
 
@@ -346,11 +399,15 @@ test('prompt ILEGGIBILE (c\'è ma non si può leggere): reason unreadable, DISTI
     assert.equal(b.mode, 'native');
     assert.equal(b.prompt.applied, false);
     assert.equal(b.prompt.reason, 'unreadable');
-    assert.equal(ctx.daemon.seen.threadStarts[0].developerInstructions, undefined);
+    // R2: il prompt illeggibile non inietta il suo testo, ma l'identità viaggia.
+    assert.equal(
+      ctx.daemon.seen.threadStarts[0].developerInstructions,
+      'Live NexusCrew agganciata alla cella cloud-Alfa (sessione tmux cloud-Alfa).',
+    );
   } finally { await ctx.close(); }
 });
 
-test('prompt VUOTO: reason empty (presente ma non dice nulla), nessuna iniezione', async () => {
+test('prompt VUOTO: reason empty (presente ma non dice nulla), nessuna iniezione di prompt — identità comunque', async () => {
   const cwd = path.join(os.tmpdir(), 'cell-empty-prompt');
   const ctx = await boot({ cells: CELLS_NATIVE(cwd) });
   try {
@@ -360,6 +417,11 @@ test('prompt VUOTO: reason empty (presente ma non dice nulla), nessuna iniezione
     await ctx.designate('cloud-Alfa');
     const b = await j(await ctx.bridgeCall());
     assert.deepEqual(b.prompt, { applied: false, reason: 'empty' });
+    // R2: nessuna iniezione DI PROMPT (il file non dice nulla), identità comunque.
+    assert.equal(
+      ctx.daemon.seen.threadStarts[0].developerInstructions,
+      'Live NexusCrew agganciata alla cella cloud-Alfa (sessione tmux cloud-Alfa).',
+    );
   } finally { await ctx.close(); }
 });
 
