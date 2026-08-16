@@ -12,6 +12,23 @@ import './CellSwitcher.css';
 
 const POLL_MS = 4000;
 
+// La telemetria di riga, dove la cella la pubblica. Il VERSO è nel testo
+// stesso: il contesto è LIBERO, i tier sono USATI — l'etichetta «libero»
+// sta appiccicata al numero del contesto e a nessun altro, così la riga
+// non può dire il contrario del vero. Campi mancanti → la riga mostra
+// quelli che ci sono; nessun campo → stringa vuota e la riga resta com'era
+// (celle non-Claude: assenza legittima, niente trattino).
+export function formattaTelemetria(t, tele) {
+  if (!tele || typeof tele !== 'object') return '';
+  const parti = [];
+  if (Number.isInteger(tele.contextFreePct)) {
+    parti.push(`${t('cell-tele-ctx')} ${tele.contextFreePct}% ${t('cell-tele-free')}`);
+  }
+  if (Number.isInteger(tele.tier5hUsedPct)) parti.push(`${t('cell-tele-5h')} ${tele.tier5hUsedPct}%`);
+  if (Number.isInteger(tele.tier7dUsedPct)) parti.push(`${t('cell-tele-7d')} ${tele.tier7dUsedPct}%`);
+  return parti.join(' · ');
+}
+
 async function localSessions(token) {
   const response = await apiFetch('/api/sessions', token);
   if (response?.ok === false) throw new Error(`HTTP ${response.status}`);
@@ -70,6 +87,9 @@ function rowsFromSnapshot(snapshot) {
         // Il preview esisteva gia' nel roster e non arrivava alla riga: il
         // popup lo mostra, senza chiedere nulla di nuovo al server.
         preview: session.preview || cell.preview || '',
+        // Contesto libero e tier usati, se la cella li pubblica. Null per le
+        // non-Claude: la riga non mostra nulla, com'era prima.
+        telemetry: session.telemetry || null,
         panelUrl: cell.panelUrl || '',
       });
     }
@@ -291,6 +311,9 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
             const currentRow = current?.session === row.session && (current?.node || '') === row.node;
             const selected = selectedKey === row.key;
             const status = statusFor(row);
+            // Vuota per le celle che non pubblicano telemetria: niente campo,
+            // la riga resta esattamente com'era (il «dove supportato» richiesto).
+            const telemetry = formattaTelemetria(t, row.telemetry);
             const position = row.node || 'local';
             const rawItems = rosterItems.get(position)
               || rows.filter((candidate) => (candidate.node || 'local') === position);
@@ -313,7 +336,7 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
                 <button type="button" className="nc-cell-switcher-row-select"
                   aria-current={currentRow ? 'true' : undefined} aria-pressed={selected} aria-disabled={!row.selectable}
                   disabled={picking === row.key} onClick={() => select(row)}>
-                  <span className="nc-cell-switcher-copy"><b>{row.cellName}</b><small className="nc-cell-switcher-state">{status}</small><small>{[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}</small></span>
+                  <span className="nc-cell-switcher-copy"><b>{row.cellName}</b><small className="nc-cell-switcher-state">{status}</small><small>{[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}</small>{telemetry && <small className="nc-cell-switcher-telemetry">{telemetry}</small>}</span>
                 </button>
               </div>
             );
@@ -329,6 +352,9 @@ export default function CellSwitcher({ token, current, onPick, onClose }) {
             {/* Il contenuto è quello che il roster porta già. Se un giorno
                 arriva il flusso live, cambia il figlio — non il contenitore. */}
             <pre className="nc-peek-testo">{peek.preview || t('cell-peek-vuoto')}</pre>
+            {formattaTelemetria(t, peek.telemetry) && (
+              <small className="nc-cell-switcher-telemetry">{formattaTelemetria(t, peek.telemetry)}</small>
+            )}
           </CellPopup>
         )}
         <div className="nc-cell-switcher-actions">

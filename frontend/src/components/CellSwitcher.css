@@ -42,6 +42,9 @@
 .nc-cell-switcher-copy b { color: #d8ffe8; font-size: 14px; }
 .nc-cell-switcher-copy small { opacity: .62; font-size: 11px; }
 .nc-cell-switcher-copy .nc-cell-switcher-state { opacity: .88; color: #d8ffe8; }
+/* Telemetria (contesto libero · tier usati): tinta neutra — non compete con
+   lo stato della cella, e sparisce del tutto quando la cella non la pubblica. */
+.nc-cell-switcher-copy .nc-cell-switcher-telemetry, .nc-cell-switcher-telemetry { color: #9fd8c2; }
 .nc-cell-switcher-notice { color: #ffd36b; font-size: 12px; }
 .nc-cell-switcher-actions { display: flex; min-width: 0; }
 .nc-cell-switcher-open { min-width: 0; min-height: 44px; width: 100%; padding: 0 12px; border: 1px solid #79d9ff; border-radius: 9px; background: #16445e; color: #effcff; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

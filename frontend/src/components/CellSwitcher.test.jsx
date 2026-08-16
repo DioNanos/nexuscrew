@@ -189,6 +189,34 @@ describe('CellSwitcher', () => {
     expect(screen.queryByText(/N900/)).toBeNull();
   });
 
+  it('shows cell telemetry with its direction baked into the text: context is free, tiers are used', async () => {
+    const telemetry = { ts: Date.now(), contextFreePct: 71, tier5hUsedPct: 33, tier7dUsedPct: 8 };
+    writeCellSwitcherSnapshot({
+      sessions: [{ name: 'cloud-Dev', activity: 10, working: true, telemetry }],
+      cells: [active('Dev', 'cloud-Dev')],
+      nodeGroups: [],
+    });
+    // Anche il poll deve riportarla, o la riga la mostra e la perde al primo refresh.
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
+      sessions: [{ name: 'cloud-Dev', activity: 10, working: true, telemetry }],
+    }) });
+    render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    // «free» sta appiccicata al numero del CONTESTO e a nessun altro: la riga
+    // non può dire il contrario del vero.
+    expect(await screen.findByText('context 71% free · 5h tier 33% · 7d tier 8%')).toBeTruthy();
+  });
+
+  it('no telemetry, no field: cells that do not publish it keep the row exactly as it was', async () => {
+    // Nessuna sessione porta telemetria (celle non-Claude: assenza legittima).
+    render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^Dev / });
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    await screen.findByRole('button', { name: /^Research / });
+    expect(document.querySelectorAll('.nc-cell-switcher-telemetry').length).toBe(0);
+    // E nemmeno un segnaposto al posto del campo: nessuna percentuale, mai.
+    expect(screen.queryByText(/%/)).toBeNull();
+  });
+
   it('closes on Escape without trapping focus', () => {
     const onClose = vi.fn();
     render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} />);
