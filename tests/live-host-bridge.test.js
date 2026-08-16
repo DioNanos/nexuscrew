@@ -336,9 +336,16 @@ test('prompt ASSENTE (ENOENT): l\'identità arriva comunque — developerInstruc
     assert.equal(ctx.daemon.seen.threadStarts.length, 1);
     // R2 (2026-08-16): prima, senza LIVE_PROMPT.md il campo non viaggiava e la
     // voce partiva senza sapere chi è — andava a leggere tmux per indovinare.
-    // Ora l'intestazione viaggia da sola. L'app-server ACCUMULA il campo come
-    // sezione developer aggiuntiva e il gradino globale resta (verifica su
-    // sorgente: thread_processor.rs → session/mod.rs, nessuna sostituzione).
+    // Ora l'intestazione viaggia da sola.
+    //
+    // Il prezzo, dichiarato: il consumer SOSTITUISCE le proprie developer
+    // instructions con quelle ricevute invece di sommarle, quindi una cella
+    // senza prompt per-cella non riceve più quelle globali. Scelta accettata,
+    // non subita: cambiarla sarebbe un contratto nuovo per ogni client, e la
+    // via designata resta LIVE_PROMPT.md della cella. Vedi il blocco MC2 in
+    // lib/live-host/bridge.js — questo commento diceva l'opposto fino al terzo
+    // giro di revisione, che l'ha trovato qui dopo che era stato corretto
+    // altrove: la stessa affermazione viveva in cinque posti.
     assert.equal(
       ctx.daemon.seen.threadStarts[0].developerInstructions,
       'Live NexusCrew agganciata alla cella cloud-Alfa (sessione tmux cloud-Alfa).',
