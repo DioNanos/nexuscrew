@@ -144,17 +144,23 @@ it stops passing the flag — for example, replacing
 intercepting Chromium's launch earlier in the chain. This recipe does not do
 that yet.
 
-**The caveat that matters more than the fix itself:** `no-new-privileges`
-blocks a SUID bit from taking effect, so `chrome-sandbox` cannot elevate
-while it is set — which is why the example compose leaves it unset for this
-container (see its comment). But dropping `--no-sandbox` while
-`no-new-privileges` stays *off* only produces a real sandbox if Chromium
-falls back to its **namespace** sandbox instead of the setuid one, and this
-same base image's own constraint — unprivileged user namespaces denied inside
-the container — is exactly what a namespace sandbox needs and may not have.
-Whether the two are actually compatible here **has not been tested**. Do not
-patch the wrapper, drop `--no-sandbox`, and call the browser sandboxed on the
-strength of this paragraph — verify it:
+**The caveat that matters more than the fix itself:** the two hardenings pull
+against each other, and which one you keep decides *which* sandbox Chromium
+can still use.
+
+- With `no-new-privileges` **set**, a SUID bit cannot take effect, so
+  `chrome-sandbox` can never elevate. The setuid sandbox is off the table, and
+  the only remaining option is Chromium's **namespace** sandbox — which needs
+  unprivileged user namespaces, something a container may well deny.
+- With it **unset** — what the example compose does, see its comment — the
+  SUID helper can elevate and the setuid sandbox is available again. That is
+  why the flag is left off there: not as an oversight, as the precondition.
+
+Either way, `--no-sandbox` on the command line wins over both. Removing the
+flag is what makes the question live at all, and whether the result is a real
+sandbox in *your* container **has not been tested here**. Do not patch the
+wrapper, drop `--no-sandbox`, and call the browser sandboxed on the strength
+of this paragraph — verify it:
 
 - open `chrome://sandbox` inside the desktop and read what it reports, or
 - from a shell in the container, confirm the zygote process no longer carries
