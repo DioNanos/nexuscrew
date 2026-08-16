@@ -27,6 +27,8 @@ import {
   MAIN_DECK, deckLocationFromPath, deckUrl, readLayoutRaw,
 } from './lib/deck-model.js';
 import { deckId, refWithOwner, resolveLayoutForViewer } from './lib/deck-federation.js';
+import { hostRouteKey, hostDesignationFailureMessage } from './lib/host-designation.js';
+import { panelPortForRoute } from './lib/panel-port.js';
 import {t} from './lib/i18n.js';
 import { useLang } from './hooks/useLang.js';
 import { useNodes } from './hooks/useNodes.js';
@@ -119,7 +121,9 @@ function useDesktop() {
 // cellName (opzionale, Tranche D): titolo logico Fleet gia' risolto dal roster
 // (desktop overlay). Se assente (mobile), la lookup fleetStatus esistente lo
 // risolve al primo ciclo. Il titolo visibile deriva sempre da `cell.cell`.
-export function SingleView({ session, node, ownerId, cellName, token, readonly = false, onBack, onCellSwitcher, cellSwitcherOpen = false }) {
+export function SingleView({
+  session, node, ownerId, cellName, token, readonly = false, panelPort = 0, onBack, onCellSwitcher, cellSwitcherOpen = false,
+}) {
   useLang(); // re-render allo switch lingua
   const [inputPreferences] = useInputPreferences();
   const [showFiles, setShowFiles] = useState(false);
@@ -234,6 +238,7 @@ export function SingleView({ session, node, ownerId, cellName, token, readonly =
             cellId={panelCellId}
             panelUrl={panelUrl}
             route={node ? node.split('/') : []}
+            panelPort={panelPort}
             token={token}
             title={title}
           />
@@ -352,6 +357,14 @@ export default function App() {
   // read-only quando il server lo e' (coerenza col gate server §4b(6) + il
   // banner settings che lo dichiara). Default false finche' non arriva la config.
   const [roDefault, setRoDefault] = useState(false);
+  // Porta pannello (P0 sicurezza 2026-08-16, da /api/config): origin DIVERSA
+  // dal control plane. La porta LOCALE serve le celle di QUESTO nodo; le celle
+  // remote usano la porta INOLTRATA del loro nodo (mappa nodePanelPorts,
+  // negoziata nel pairing) — v. lib/panel-port.js e CellPanel.jsx. 0/assente
+  // = non disponibile (config in arrivo, o peer accoppiato senza negoziazione
+  // pannello): via storica, mai un frame verso porta 0.
+  const [panelPort, setPanelPort] = useState(0);
+  const [nodePanelPorts, setNodePanelPorts] = useState({});
 
   useEffect(() => {
     try { localStorage.setItem(SIDE_W_KEY, String(sideW)); } catch (_) {}
@@ -377,6 +390,9 @@ export default function App() {
         localNameDefault: s.localName || '',
       });
       setRoDefault(!!c.readonlyDefault);
+      setPanelPort(Number.isInteger(c.panelPort) ? c.panelPort : 0);
+      setNodePanelPorts(c.nodePanelPorts && typeof c.nodePanelPorts === 'object' && !Array.isArray(c.nodePanelPorts)
+        ? c.nodePanelPorts : {});
       if (s.firstRun === true && !c.readonlyDefault) setWizardOpen(true);
       else if (pairPending) setWizardOpen(true); // deep-link #pair: apri wizard sul pairing
     }).catch(() => { /* wizard best-effort: la UI resta usabile */ });
@@ -384,13 +400,18 @@ export default function App() {
   }, [token, pairPending]);
 
   // Cella ospite Live: stato server-owned letto nel poll (best-effort, inerzia).
-  const [hostCell, setHostCell] = useState(null);
-  // Stato del lease dell'host designato (seam 2026-08-15). Distinto da hostCell:
-  // quello dice CHI e' designato, questo se la designazione ha ancora una
-  // supervisione viva dietro. Null quando il server non lo espone — mai un
-  // valore inventato per riempire lo spazio.
-  const [hostLease, setHostLease] = useState(null);
-  const [hostRevision, setHostRevision] = useState(0);
+  // PER NODO (0.9.1 seconda meta'): una hostCell/hostLease/hostRevision sola,
+  // globale, faceva si' che designare/leggere lo stato di una cella REMOTA
+  // colpisse sempre e solo il nodo locale — la stella comandava il nodo
+  // sbagliato. hostByRoute e' una mappa {hostRouteKey(route) -> {hostCell,
+  // hostLease, hostRevision}}, una voce per nodo — 'local' e' il nodo che serve
+  // la pagina, tutte le altre sono le route di nodeGroups.
+  const [hostByRoute, setHostByRoute] = useState({});
+  // Rif. sempre fresco a nodeGroups per il polling qui sotto: leggerlo via ref
+  // (non come dependency dell'effect) evita di ricreare l'intervallo ogni volta
+  // che useNodes produce un nuovo array (~4s, anche a dati invariati).
+  const nodeGroupsRef = useRef(nodeGroups);
+  useEffect(() => { nodeGroupsRef.current = nodeGroups; }, [nodeGroups]);
   const poll = useCallback(async () => {
     try {
       const r = await apiFetch('/api/sessions', token);
@@ -403,18 +424,33 @@ export default function App() {
       setFleetCapabilities(fs.available ? (fs.capabilities || []) : []);
     } catch (_) { setCells([]); setFleetCapabilities([]); }
   }, [token]);
-  // hostCell e' server-owned e vale per DESKTOP e MOBILE: polling separato dal
-  // poll sessions/fleet (desktop-only), best-effort, nessun retry (inerzia).
+  // hostByRoute e' server-owned e vale per DESKTOP e MOBILE: polling separato dal
+  // poll sessions/fleet (desktop-only), best-effort, nessun retry (inerzia). Una
+  // route irraggiungibile o senza liveHostAccess non tocca le altre voci della
+  // mappa: resta lo stato precedente per quella sola route (stesso principio
+  // "best-effort per-owner" gia' usato per i nodi VL in useNodes.js).
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      try {
-        const h = await getLiveHost(token);
-        if (cancelled) return;
-        setHostCell(h && typeof h.hostCell === 'string' ? h.hostCell : null);
-        setHostLease(h && h.host && typeof h.host.lease === 'string' ? h.host.lease : null);
-        setHostRevision(Number.isInteger(h && h.revision) ? h.revision : 0);
-      } catch (_) { /* best-effort: resta lo stato precedente */ }
+      const routes = [[], ...(nodeGroupsRef.current || [])
+        .filter((g) => g.kind !== 'vl' && g.status === 'up')
+        .map((g) => (Array.isArray(g.route) && g.route.length ? g.route : [g.name]))];
+      const entries = await Promise.all(routes.map(async (route) => {
+        try {
+          const h = await getLiveHost(token, route);
+          return [hostRouteKey(route), {
+            hostCell: h && typeof h.hostCell === 'string' ? h.hostCell : null,
+            hostLease: h && h.host && typeof h.host.lease === 'string' ? h.host.lease : null,
+            hostRevision: Number.isInteger(h && h.revision) ? h.revision : 0,
+          }];
+        } catch (_) { return null; }
+      }));
+      if (cancelled) return;
+      setHostByRoute((current) => {
+        let changed = false; const next = { ...current };
+        for (const entry of entries) { if (entry) { next[entry[0]] = entry[1]; changed = true; } }
+        return changed ? next : current;
+      });
     };
     load();
     const id = setInterval(load, 4000);
@@ -428,24 +464,46 @@ export default function App() {
     const id = setInterval(poll, 4000);
     return () => clearInterval(id);
   }, [isDesktop, poll]);
-  // Designazione cella ospite: API-first. designate imposta hostCell riflettendo
-  // la risposta del server (mai ottimismo pre-response); clear ritorna un boolean
-  // cosi' la Sidebar rimuove il pin locale solo a riuscita del clear.
-  const designateCellHost = useCallback(async (cellId) => {
+  // Designazione cella ospite: API-first. designate imposta hostByRoute[route]
+  // riflettendo la risposta del server (mai ottimismo pre-response); clear
+  // ritorna un boolean cosi' la Sidebar rimuove il pin locale solo a riuscita
+  // del clear. `route` e' quella del nodo che POSSIEDE la cella su cui si preme
+  // la stella — locale ([]) o remota — mai quella (implicita) del nodo che
+  // serve la pagina: e' esattamente il difetto che questa funzione chiude.
+  // Il fallimento NOMINA la causa (window.alert, come promptNodeRename in
+  // Sidebar): il difetto peggiore non era la route sbagliata, era il silenzio.
+  const designateCellHost = useCallback(async (cellId, route = []) => {
+    const key = hostRouteKey(route);
+    const revision = (hostByRoute[key] && hostByRoute[key].hostRevision) || 0;
     try {
-      const r = await designateHostCell(token, cellId, hostRevision);
-      setHostCell(r.hostCell || null);
-      setHostRevision(Number.isInteger(r.revision) ? r.revision : hostRevision);
-    } catch (_) { /* resta lo stato precedente */ }
-  }, [token, hostRevision]);
-  const clearCellHost = useCallback(async () => {
+      const r = await designateHostCell(token, cellId, revision, route);
+      setHostByRoute((current) => ({
+        ...current,
+        [key]: {
+          hostCell: r.hostCell || null,
+          hostLease: r.host && typeof r.host.lease === 'string' ? r.host.lease : null,
+          hostRevision: Number.isInteger(r.revision) ? r.revision : revision,
+        },
+      }));
+    } catch (e) {
+      window.alert(t(hostDesignationFailureMessage(e)));
+    }
+  }, [token, hostByRoute]);
+  const clearCellHost = useCallback(async (route = []) => {
+    const key = hostRouteKey(route);
+    const revision = (hostByRoute[key] && hostByRoute[key].hostRevision) || 0;
     try {
-      const r = await clearHostCell(token, hostRevision);
-      setHostCell(r.hostCell || null);
-      setHostRevision(Number.isInteger(r.revision) ? r.revision : hostRevision);
+      const r = await clearHostCell(token, revision, route);
+      setHostByRoute((current) => ({
+        ...current,
+        [key]: { hostCell: r.hostCell || null, hostLease: null, hostRevision: Number.isInteger(r.revision) ? r.revision : revision },
+      }));
       return true;
-    } catch (_) { return false; }
-  }, [token, hostRevision]);
+    } catch (e) {
+      window.alert(t(hostDesignationFailureMessage(e)));
+      return false;
+    }
+  }, [token, hostByRoute]);
 
   // Coerenza versione UI/server (tutte le viste).
   //
@@ -626,13 +684,14 @@ export default function App() {
       return (
         <>
           <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession}
-            hostCell={hostCell} hostLease={hostLease} onDesignateCell={designateCellHost} onClearHostCell={clearCellHost} />
+            hostByRoute={hostByRoute} onDesignateCell={designateCellHost} onClearHostCell={clearCellHost} />
           {settingsOverlays}
         </>
       );
     }
     return <>
       <SingleView session={session.session} node={session.node} ownerId={session.ownerId} cellName={session.cellName} token={token} readonly={roDefault}
+        panelPort={panelPortForRoute(session.node ? session.node.split('/') : [], nodePanelPorts, panelPort)}
         onBack={() => setSession(null)} onCellSwitcher={() => setCellSwitcherOpen(true)} cellSwitcherOpen={cellSwitcherOpen} />
       {cellSwitcherOpen && <CellSwitcher token={token} current={session}
         onPick={(next) => { pickSession(next); setCellSwitcherOpen(false); }} onClose={() => setCellSwitcherOpen(false)} />}
@@ -654,8 +713,7 @@ export default function App() {
           bootSettlement={bootSettlement}
           onBootSettlementApplied={onBootSettlementApplied}
           localNodeId={deckStore.localNodeId}
-          hostCell={hostCell}
-          hostLease={hostLease}
+          hostByRoute={hostByRoute}
           onDesignateCell={designateCellHost}
           onClearHostCell={clearCellHost}
           onPick={openSingle}
@@ -713,7 +771,9 @@ export default function App() {
           <SingleView
             session={single.session} node={single.node} ownerId={single.ownerId}
             cellName={cellDisplayName({ session: single.session, node: single.node, ownerId: single.ownerId, cells, nodeGroups })}
-            token={token} readonly={roDefault} onBack={() => setSingle(null)}
+            token={token} readonly={roDefault}
+            panelPort={panelPortForRoute(single.node ? single.node.split('/') : [], nodePanelPorts, panelPort)}
+            onBack={() => setSingle(null)}
           />
         </div>
       )}

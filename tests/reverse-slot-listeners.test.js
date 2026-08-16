@@ -46,10 +46,14 @@ function rawUpgrade(port, target, headers = {}) {
       if (buf.includes('\r\n\r\n')) done();
     });
     // Un upgrade rifiutato chiude il socket senza rispondere: `close` ed
-    // `error` (ECONNRESET) sono esiti attesi, non fallimenti del test.
+    // `error` (ECONNRESET) sono esiti attesi, non fallimenti del test. Gli
+    // esiti legittimi sono tutti eventi — risposta o chiusura — quindi NON c'e'
+    // un timer di budget: il vecchio setTimeout(4000) era una soglia di
+    // lentezza che sotto carico tagliava la risposta legittima. Un listener
+    // che tace per sempre e' un difetto, e il gate lo ferma con lo
+    // stall-watchdog di tests/run-isolated.js.
     sock.on('close', done);
     sock.on('error', done);
-    sock.setTimeout(4000, done);
   });
 }
 

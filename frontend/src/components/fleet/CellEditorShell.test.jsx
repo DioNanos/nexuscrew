@@ -65,3 +65,52 @@ describe('CellEditor cell label', () => {
     expect(screen.getByDisplayValue('Vecchio').disabled).toBeFalsy();
   });
 });
+
+// --- panelUrl: il campo che rende attivabile il pannello (0.9.1 punto 3) ---
+// La guardia che conta non e' "il campo esiste": e' che scrivendo un valore
+// NON-loopback l'utente LEGGA PERCHE' e' rifiutato, prima ancora di salvare —
+// il backend lo rifiuterebbe comunque, ma con un messaggio generico che non
+// dice quale campo ne e' la causa (mutate() in lib/fleet/builtin.js incarta
+// qualunque errore di parseDefinitions in "definizioni non valide: <msg>").
+describe('CellEditor panelUrl', () => {
+  it('espone un campo scrivibile per panelUrl, che finisce nel form', () => {
+    const state = { mode: 'new', form: { id: 'Dev', cwd: '/home/user/work', engine: 'claude.native', panelUrl: '' } };
+    const setState = vi.fn();
+    render(<CellEditor
+      token="t" route={null} targets={[]} location={null} setLocation={vi.fn()}
+      state={state} setState={setState} engines={engines} busy={false} onSave={vi.fn()}
+    />);
+    const field = screen.getByPlaceholderText('fleet-panel-url');
+    fireEvent.change(field, { target: { value: 'https://127.0.0.1:6901' } });
+    const patched = setState.mock.calls.at(-1)[0];
+    const form = typeof patched === 'function' ? patched(state).form : patched.form;
+    expect(form.panelUrl).toBe('https://127.0.0.1:6901');
+  });
+
+  it('un panelUrl NON-loopback mostra il messaggio che spiega perche — non un campo rosso muto', () => {
+    const state = { mode: 'new', form: { id: 'Dev', cwd: '/home/user/work', engine: 'claude.native', panelUrl: 'http://172.17.0.2:6901' } };
+    render(<CellEditor
+      token="t" route={null} targets={[]} location={null} setLocation={vi.fn()}
+      state={state} setState={vi.fn()} engines={engines} busy={false} onSave={vi.fn()}
+    />);
+    expect(screen.getByText('fleet-panel-url-invalid')).toBeTruthy();
+  });
+
+  it('un panelUrl loopback valido non mostra alcun errore', () => {
+    const state = { mode: 'new', form: { id: 'Dev', cwd: '/home/user/work', engine: 'claude.native', panelUrl: 'https://127.0.0.1:6901' } };
+    render(<CellEditor
+      token="t" route={null} targets={[]} location={null} setLocation={vi.fn()}
+      state={state} setState={vi.fn()} engines={engines} busy={false} onSave={vi.fn()}
+    />);
+    expect(screen.queryByText('fleet-panel-url-invalid')).toBeNull();
+  });
+
+  it('campo vuoto: opt-in, nessun errore mostrato', () => {
+    const state = { mode: 'new', form: { id: 'Dev', cwd: '/home/user/work', engine: 'claude.native', panelUrl: '' } };
+    render(<CellEditor
+      token="t" route={null} targets={[]} location={null} setLocation={vi.fn()}
+      state={state} setState={vi.fn()} engines={engines} busy={false} onSave={vi.fn()}
+    />);
+    expect(screen.queryByText('fleet-panel-url-invalid')).toBeNull();
+  });
+});

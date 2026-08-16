@@ -17,6 +17,21 @@ const NODE = {
   keyPath: '/home/user/.nexuscrew/keys/host_ed25519',
 };
 
+// Aspetta una condizione osservabile (stato su disco, pidfile, processo vivo)
+// SENZA budget di macchina: la condizione o arriva — per quanto ci metta questa
+// esecuzione — o non arriva mai, e il test resta appeso. Un gate appeso e' un
+// fallimento, fermato dallo stall-watchdog di tests/run-isolated.js: rosso per
+// la ragione giusta. I budget di ms che qui sostituisce misuravano la velocita'
+// della macchina e sotto carico aprivano falsi rossi su proprieta' intatte
+// (flake notturni documentati in tests/README-flake.md).
+async function aspettaChe(condizione, passoMs = 25) {
+  for (;;) {
+    const esito = condizione();
+    if (esito) return esito;
+    await new Promise((resolve) => setTimeout(resolve, passoMs));
+  }
+}
+
 // --- argv EXACT-MATCH (design §4b(1)) --------------------------------------
 
 test('buildForwardArgs: argv esatto dal template §4b(1)', () => {
@@ -91,6 +106,36 @@ test('build*Args: spec invalida -> throw (no argv injection)', () => {
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, localPort: 0 }), /localPort/);
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, sshPort: 0 }), /sshPort/);
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, keyPath: 'relative' }), /keyPath/);
+});
+
+// P0 sicurezza, meta' remota: un nodo con porta pannello negoziata inoltra
+// ENTRAMBE le destinazioni sullo stesso supervisor (-L control plane + -L
+// pannello). La porta pannello del peer diventa un loopback nostro con una
+// origin tutta sua: e' quello che il browser vede come origin diversa.
+test('buildForwardArgs: coppia pannello negoziata -> DUE -L (control plane + pannello)', () => {
+  const args = tunnel.buildForwardArgs({ ...NODE, panelLocalPort: 43101, panelRemotePort: 41821 });
+  const forwards = args.filter((a, i) => args[i - 1] === '-L');
+  assert.deepEqual(forwards, [
+    '127.0.0.1:43001:127.0.0.1:41820',
+    '127.0.0.1:43101:127.0.0.1:41821',
+  ], 'il forward pannello viaggia accanto a quello di controllo, non al posto suo');
+});
+
+test('buildForwardArgs: nodo senza coppia pannello -> UN solo -L, argv invariato', () => {
+  // Il record di un 0.9.0, o di un peer che non ha annunciato la sua porta
+  // pannello: il tunnel deve restare ESATTAMENTE quello di prima. Nessun -L
+  // inventato, nessun errore.
+  const args = tunnel.buildForwardArgs(NODE);
+  const forwards = args.filter((a, i) => args[i - 1] === '-L');
+  assert.deepEqual(forwards, ['127.0.0.1:43001:127.0.0.1:41820']);
+});
+
+test('buildForwardArgs: mezza coppia pannello -> throw (il forward impossibile non parte)', () => {
+  assert.throws(() => tunnel.buildForwardArgs({ ...NODE, panelLocalPort: 43101 }), /panel/);
+  assert.throws(() => tunnel.buildForwardArgs({ ...NODE, panelRemotePort: 41821 }), /panel/);
+  assert.throws(() => tunnel.buildForwardArgs({ ...NODE, panelLocalPort: 0, panelRemotePort: 41821 }), /panel/);
+  // bind conflitto col -L di controllo: ssh cadrebbe con ExitOnForwardFailure
+  assert.throws(() => tunnel.buildForwardArgs({ ...NODE, panelLocalPort: 43001, panelRemotePort: 41821 }), /panel/);
 });
 
 // --- backoff deterministico -------------------------------------------------
@@ -604,15 +649,17 @@ test('F1 supervisor: un ssh che cade viene rilanciato con stato retrying/backoff
   });
   pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId });
   try {
-    const deadline = Date.now() + 6000;
+    // Il rilancio e' una proprieta' del supervisor (i tentativi crescono), non
+    // una corsa contro un budget di macchina: si aspetta che arrivi. Se il
+    // supervisor smettesse di rilanciare, il test resterebbe appeso e il gate
+    // lo fermerebbe con lo stall-watchdog — rosso per la ragione giusta.
     let attempts = 0;
     let state = null;
-    while (Date.now() < deadline) {
+    await aspettaChe(() => {
       try { attempts = fs.readFileSync(attemptsPath, 'utf8').trim().split('\n').filter(Boolean).length; } catch (_) {}
       try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) {}
-      if (attempts >= 2 && state && state.attempt >= 1) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+      return attempts >= 2 && state && state.attempt >= 1;
+    }, 100);
     assert.ok(attempts >= 2, `attesi almeno 2 tentativi, osservati ${attempts}`);
     assert.ok(state, 'sidecar stato supervisor non scritto');
     assert.ok(['starting', 'retrying'].includes(state.status));
@@ -666,13 +713,14 @@ test('reverse-forward failure ripetuto entra in stato degraded NON terminale e c
   try {
     // Superato il budget il supervisor NON esce: resta "degraded" e conservando
     // la diagnosi reverse-forward. Prima del fix qui si aspettava l'exit terminale.
-    const deadline = Date.now() + 6000;
+    // Lo stato degraded e' la condizione osservabile: arriva quando arriva su
+    // QUESTA macchina (retry/backoff inclusi); se non arrivasse mai, il test
+    // resterebbe appeso e il gate lo fermerebbe con lo stall-watchdog.
     let raw = null;
-    while (Date.now() < deadline) {
+    await aspettaChe(() => {
       try { raw = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) {}
-      if (raw && raw.status === 'degraded') break;
-      await new Promise((resolve) => setTimeout(resolve, 30));
-    }
+      return raw && raw.status === 'degraded';
+    }, 30);
     assert.ok(raw, 'sidecar stato supervisor non scritto');
     assert.equal(raw.status, 'degraded');
     assert.equal(raw.terminal, false);
@@ -713,13 +761,14 @@ test('F1 supervisor dichiara transport-ready e resetta il backoff solo dopo stab
   });
   pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId });
   try {
-    const deadline = Date.now() + 3000;
+    // transport-ready e' la condizione osservabile (probe + stabilita' del
+    // supervisor): arriva quando arriva su questa macchina, senza budget di ms
+    // che misurerebbe solo il carico.
     let state = null;
-    while (Date.now() < deadline) {
+    await aspettaChe(() => {
       try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) {}
-      if (state && state.status === 'transport-ready') break;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
+      return state && state.status === 'transport-ready';
+    });
     assert.ok(state, 'sidecar stato supervisor non scritto');
     assert.equal(state.status, 'transport-ready');
     assert.equal(state.runId, runId);
@@ -763,17 +812,26 @@ test('F1 supervisor non dichiara ready finche il forward TCP non risponde', asyn
   });
   pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId });
   try {
-    const deadline = Date.now() + 1500;
     let state = null;
-    while (Date.now() < deadline) {
+    await aspettaChe(() => {
       try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) {}
-      if (state?.status === 'transport-probing') break;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
+      return state?.status === 'transport-probing';
+    });
     assert.ok(state, 'sidecar stato supervisor non scritto');
     assert.equal(state.status, 'transport-probing');
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    // Proprieta' negativa senza finestra di ms: si aspetta che il supervisor
+    // abbia RI-provato il forward — il sidecar probing viene riscritto a ogni
+    // probe fallito, quindi updatedAt avanza — e SOLO DOPO si guarda lo stato.
+    // Il supervisor ha avuto la sua occasione di qualificarsi, quanta gli serve
+    // su questa macchina, e non l'ha colta. Il vecchio sleep(400) era una
+    // finestra fissa: sotto carico il probe non era ancora avvenuto e il test
+    // passava senza aver provato quasi nulla; e se la finestra fosse stata piu'
+    // larga sarebbe tornata la corsa contro il carico.
+    const primoProbe = state.updatedAt;
+    await aspettaChe(() => {
+      try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) {}
+      return state?.updatedAt > primoProbe;
+    });
     assert.notEqual(state.status, 'transport-ready');
     assert.equal(state.attempt, 0, 'il processo e vivo ma non deve qualificarsi come trasporto pronto');
   } finally {
@@ -813,23 +871,26 @@ test('F1 supervisor termina ssh e se stesso quando perde la generazione pidfile'
   pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId });
   let sshPid = null;
   try {
-    const readyBy = Date.now() + 3000;
-    while (Date.now() < readyBy) {
+    // La readiness (spawn + probe + stabilita') e' una proprieta' del
+    // supervisor: arriva quando arriva su questa macchina. Il budget di 3000ms
+    // qui sotto misurava la velocita' e sotto carico produceva il falso rosso
+    // «ssh child non avviato».
+    await aspettaChe(() => {
       try { sshPid = Number(fs.readFileSync(sshPidPath, 'utf8')); } catch (_) {}
       let state = null;
       try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) {}
-      if (sshPid && state?.status === 'transport-ready') break;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
+      return sshPid && state?.status === 'transport-ready';
+    });
     assert.ok(sshPid, 'ssh child non avviato');
     fs.writeFileSync(pidPath, `${JSON.stringify({ pid: child.pid, cmd: 'replacement', runId: 'replacement-generation' })}\n`, { mode: 0o600 });
-    await new Promise((resolve, reject) => {
+    // L'uscita del supervisor e' un EVENTO, non una corsa contro 3500ms: se la
+    // generazione persa non terminasse piu' il processo, il test resterebbe
+    // appeso e il gate lo fermerebbe con lo stall-watchdog.
+    await new Promise((resolve) => {
       if (child.exitCode !== null) return resolve();
-      const timer = setTimeout(() => reject(new Error('supervisor orfano non terminato')), 3500);
-      child.once('exit', () => { clearTimeout(timer); resolve(); });
+      child.once('exit', resolve);
     });
-    const sshGoneBy = Date.now() + 2000;
-    while (pidf.pidExists(sshPid) && Date.now() < sshGoneBy) await new Promise((resolve) => setTimeout(resolve, 25));
+    await aspettaChe(() => !pidf.pidExists(sshPid));
     assert.equal(pidf.pidExists(sshPid), false, 'ssh child deve terminare con la generazione persa');
   } finally {
     try { child.kill('SIGKILL'); } catch (_) {}

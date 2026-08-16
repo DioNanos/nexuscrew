@@ -20,9 +20,29 @@ async function pannelloFinto() {
       res.end('<html>pannello</html>');
       return;
     }
+    // Un pannello che prova a posare un cookie sulla NOSTRA origine. Non e'
+    // una cattiveria teorica: qualunque applicazione web lo fa per la propria
+    // sessione, e servita sotto la nostra origine finirebbe li'.
+    if (req.url.startsWith('/mette-cookie')) {
+      res.writeHead(200, {
+        'content-type': 'text/plain',
+        'set-cookie': ['npanel=forgiato; Path=/api/panel/Dev', 'altro=x; Path=/'],
+        'x-innocuo': 'passa',
+      });
+      res.end('ok');
+      return;
+    }
     res.writeHead(404); res.end();
   });
   const wss = new WebSocketServer({ server, path: '/websockify' });
+  // Lo stesso tentativo di `/mette-cookie`, ma nell'HANDSHAKE: la 101 e' una
+  // risposta come le altre e il browser ne persiste i cookie. Passa anche un
+  // header innocuo, che serve da controprova — filtrare tutto romperebbe
+  // l'upgrade e un test scritto male non se ne accorgerebbe.
+  wss.on('headers', (headers) => {
+    headers.push('Set-Cookie: npanel=forgiato-nell-handshake; Path=/');
+    headers.push('X-Innocuo-Ws: passa');
+  });
   wss.on('connection', (ws) => {
     ws.on('message', (data) => ws.send(`eco:${data}`));
     ws.send('benvenuto');
@@ -89,6 +109,31 @@ test('dal vivo: i frame WebSocket attraversano il proxy nei DUE sensi', async (t
   assert.equal(ricevuti[1], 'eco:ciao');
 });
 
+test('dal vivo: il cookie posato nell\'HANDSHAKE non arriva al browser', async (t) => {
+  const panel = await pannelloFinto();
+  const proxy = await proxyVero(panel.port);
+  t.after(() => { panel.wss.close(); panel.server.close(); proxy.server.close(); });
+
+  // Il ramo HTTP toglieva `set-cookie` da sempre; il ramo upgrade copiava ogni
+  // header della 101 tale e quale, quindi la stessa proprieta' valeva su una
+  // via e non sull'altra. Un pannello WebSocket poteva SOVRASCRIVERE il cookie
+  // di visione legittimo e rompere il pannello dell'utente dal di dentro.
+  const ws = new WebSocket(`ws://127.0.0.1:${proxy.port}/api/panel/Dev/websockify?token=buono`);
+  const res = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('nessun upgrade entro 5s')), 5000);
+    ws.on('upgrade', (r) => { clearTimeout(timer); resolve(r); });
+    ws.on('error', (e) => { clearTimeout(timer); reject(e); });
+  });
+  ws.close();
+
+  assert.equal(res.headers['set-cookie'], undefined,
+    'il pannello ha posato un cookie nella 101 e il proxy lo ha inoltrato: la porta separata protegge il DOM, non gli header');
+  // Controprova: se questa fallisse, staremmo filtrando troppo — e il test
+  // sopra passerebbe per il motivo sbagliato.
+  assert.equal(res.headers['x-innocuo-ws'], 'passa',
+    'un header innocuo dell\'handshake e\' stato tolto: il filtro e\' troppo largo');
+});
+
 test('dal vivo: senza token valido l\'upgrade non si apre', async (t) => {
   const panel = await pannelloFinto();
   const proxy = await proxyVero(panel.port);
@@ -114,4 +159,69 @@ test('dal vivo: una cella senza pannello non apre nulla, e non e\' un errore gen
   });
   assert.equal(res.status, 404);
   assert.match(res.acc, /cell-unknown/, 'il motivo e\' nella risposta, non solo nei log');
+});
+
+test('dal vivo: panelUrl CON path — il pathname non si raddoppia', async (t) => {
+  // Contratto D8 (CellPanel.jsx): il frame carica /api/panel/<cella> + il
+  // pathname del panelUrl, e il browser risolve le sotto-risorse relative
+  // rispetto a quell'origine: al proxy arrivano SEMPRE path assoluti del
+  // pannello. Se il proxy ricompone basePath + rest, la pagina stessa diventa
+  // /vnc/lite.html/vnc/lite.html: il pannello risponde 404 e il frame resta
+  // su «not found». Provato nel browser vero (harness d8, cella sottovia):
+  // il difetto c'e', ed e' questo.
+  const panel = http.createServer((req, res) => {
+    const u = req.url.split('?')[0];
+    if (u === '/vnc/lite.html') { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<html>lite</html>'); return; }
+    if (u === '/vnc/app.js') { res.writeHead(200, { 'content-type': 'application/javascript' }); res.end('ok'); return; }
+    res.writeHead(404); res.end('not found');
+  });
+  await new Promise((r) => panel.listen(0, '127.0.0.1', r));
+  const proxy = createPanelProxy({
+    resolveCellPanel: async (cellId) => (cellId === 'Dev' ? `http://127.0.0.1:${panel.address().port}/vnc/lite.html` : undefined),
+  });
+  const srv = http.createServer((req, res) => {
+    if (!req.url.startsWith('/api/panel/')) { res.writeHead(404); res.end(); return; }
+    req.url = req.url.slice('/api/panel'.length);
+    proxy(req, res);
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => { panel.close(); srv.close(); });
+
+  const get = (p) => new Promise((resolve, reject) => {
+    http.get(`http://127.0.0.1:${srv.address().port}${p}`, (res) => {
+      let acc = ''; res.on('data', (c) => { acc += c; }); res.on('end', () => resolve({ status: res.statusCode, acc }));
+    }).on('error', reject);
+  });
+  const page = await get('/api/panel/Dev/vnc/lite.html');
+  assert.equal(page.status, 200, 'la pagina arriva: rest e gia il path del pannello, non si ricompone col basePath');
+  assert.match(page.acc, /lite/);
+  const sub = await get('/api/panel/Dev/vnc/app.js');
+  assert.equal(sub.status, 200, 'la sotto-risorsa arriva col suo path assoluto (il browser l\'ha gia risolta)');
+});
+
+// Il pannello e' servito sotto la NOSTRA origine: un suo `Set-Cookie` atterra
+// li'. Non gli aprirebbe il pannello di un'altra cella — il cookie di visione
+// non e' autoportante, `verifyCookie` cerca il valore in una mappa del server
+// e un valore inventato non c'e' — ma puo' sovrascrivere quello legittimo e
+// rompere il pannello dell'utente dal di dentro.
+//
+// Il filtro riguarda SOLO `set-cookie`: gli altri header devono passare, o si
+// romperebbero i pannelli veri. Percio' il test guarda i due versi.
+test('dal vivo: il Set-Cookie del pannello NON raggiunge la nostra origine, gli altri header si', async (t) => {
+  const { server: panel, wss } = await pannelloFinto();
+  const { server: nostro } = await proxyVero(panel.address().port);
+  t.after(() => { for (const c of wss.clients) c.terminate(); wss.close(); panel.close(); nostro.close(); });
+
+  const risposta = await new Promise((resolve, reject) => {
+    http.get(`http://127.0.0.1:${nostro.address().port}/api/panel/Dev/mette-cookie`, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers }));
+    }).on('error', reject);
+  });
+
+  assert.equal(risposta.status, 200, 'la richiesta arriva al pannello: il filtro non deve rompere il transito');
+  assert.equal(risposta.headers['set-cookie'], undefined,
+    'set-cookie del pannello filtrato: non deve poter posare cookie sulla nostra origine');
+  assert.equal(risposta.headers['x-innocuo'], 'passa',
+    'gli altri header passano: filtrare tutto romperebbe i pannelli veri');
 });

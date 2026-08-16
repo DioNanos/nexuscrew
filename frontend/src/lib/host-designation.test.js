@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { hostRenderState, hostNextAction, HOST_NONE, HOST_FAVORITE, HOST_LIVE } from './host-designation.js';
+import {
+  hostRenderState, hostNextAction, HOST_NONE, HOST_FAVORITE, HOST_LIVE,
+  hostRouteKey, hostDesignationFailureMessage,
+} from './host-designation.js';
 import { buildLocalRoster } from './roster-view-model.js';
 
 // FIX (audit): la fixture usa la FORMA DI PRODUZIONE, dove `cell` e `tmuxSession`
@@ -132,5 +135,35 @@ describe('hostLeaseTitleKey', () => {
 
   it('uno stato sconosciuto non inventa una etichetta (nessuna bugia)', () => {
     expect(hostLeaseTitleKey('live', 'bogus')).toBeNull();
+  });
+});
+
+// --- Per-nodo (0.9.1 seconda meta'): la mappa hostByRoute -------------------
+describe('hostRouteKey — stessa forma di bootCellKey/nodeRoute altrove nel progetto', () => {
+  it('locale (route vuota o assente) -> "local"', () => {
+    expect(hostRouteKey([])).toBe('local');
+    expect(hostRouteKey(undefined)).toBe('local');
+    expect(hostRouteKey(null)).toBe('local');
+  });
+  it('route remota -> route.join("/"), MAI collassata su "local"', () => {
+    expect(hostRouteKey(['relay'])).toBe('relay');
+    expect(hostRouteKey(['relay', 'pixel'])).toBe('relay/pixel');
+  });
+  it('due nodi diversi devono avere due chiavi diverse (la guardia del bug originale)', () => {
+    expect(hostRouteKey(['relay'])).not.toBe(hostRouteKey([]));
+    expect(hostRouteKey(['relay'])).not.toBe(hostRouteKey(['pixel']));
+  });
+});
+
+describe('hostDesignationFailureMessage — il rifiuto nomina la causa, mai un silenzio', () => {
+  it('reason "live-host-not-granted" (dal gate federato) -> la sua chiave, non generica', () => {
+    const err = new Error('cella ospite live non concessa da questo nodo');
+    err.data = { reason: 'live-host-not-granted' };
+    expect(hostDesignationFailureMessage(err)).toBe('live-host-not-granted');
+  });
+  it('qualunque altro fallimento (rete, 500, nodo giu) -> chiave generica, comunque presente', () => {
+    expect(hostDesignationFailureMessage(new Error('boom'))).toBe('live-host-error');
+    expect(hostDesignationFailureMessage({})).toBe('live-host-error');
+    expect(hostDesignationFailureMessage(undefined)).toBe('live-host-error');
   });
 });

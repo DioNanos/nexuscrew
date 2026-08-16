@@ -1,0 +1,75 @@
+# Example compose for the AI Desktop recipe. Copy this next to the Dockerfile
+# and custom-cont-init.d/, adjust the marked values, then:
+#
+#   docker compose up -d --build
+#
+# First start creates an EMPTY browser profile under ./config — no logins,
+# no history, nothing carried over from anywhere else. Expect a self-signed
+# certificate warning on the HTTPS port on first connect: normal for a
+# loopback-only service, and safe to trust locally.
+services:
+  ai-desktop:
+    build: .
+    image: ai-desktop:local
+    container_name: ai-desktop
+    restart: unless-stopped
+
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC                    # set your own timezone
+      - TITLE=AI Desktop
+      # GUI login: without a password, anyone who reaches the port gets a
+      # terminal with passwordless sudo INSIDE the container. Create your own
+      # ./.gui_password file (mode 600, one line, no trailing newline needed)
+      # before the first start — do not put the password in this file.
+      - CUSTOM_USER=admin              # set your own login name
+      - FILE__PASSWORD=/run/gui_password
+
+    volumes:
+      - ./config:/config
+      - ./.gui_password:/run/gui_password:ro
+      - ./custom-cont-init.d:/custom-cont-init.d:ro
+
+    # Loopback only, like everything else in NexusCrew: reach this from
+    # elsewhere through an SSH tunnel or VPN you control, never by publishing
+    # these ports beyond 127.0.0.1.
+    # 6900 = http, 6901 = https. The https port is the one worth using day to
+    # day — full desktop features (clipboard, audio/video codecs) need it.
+    ports:
+      - "127.0.0.1:6900:3000"
+      - "127.0.0.1:6901:3001"
+      # CDP of the Chromium running on the desktop: the channel a Playwright
+      # MCP client attaches to (see SKILL.md). Same browser you see and use
+      # over the desktop, so same logins.
+      - "127.0.0.1:9222:9223"
+
+    # Chromium crashes on tab open without adequate /dev/shm.
+    shm_size: "1gb"
+    mem_limit: 4g               # tune to your machine
+    mem_reservation: 1g
+    cpus: 2.0
+
+    # KEEP THIS. The container is the boundary that holds here, and this line
+    # is part of it. The browser inside runs with --no-sandbox — that is not
+    # an accident, it is the trade this image makes: giving Chromium its own
+    # sandbox would require handing the container CAP_SYS_ADMIN or
+    # seccomp=unconfined, weakening the one boundary that is actually doing
+    # the work in order to add one inside it.
+    #
+    # Measured, not assumed: with this line set, launching the browser without
+    # --no-sandbox aborts — the setuid helper cannot elevate (PR_SET_NO_NEW_PRIVS)
+    # and the namespace sandbox is denied ("failed to move to new namespace:
+    # Operation not permitted"). See ../SKILL.md, "Where the boundary is".
+    #
+    # The consequence is real and you should plan for it: a renderer exploit
+    # lands in this container. Treat what the browser can reach — its profile,
+    # its sessions, anything you mount — as being inside the blast radius.
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
