@@ -39,7 +39,7 @@ import './CellPanel.css';
 //    un problema che questo flusso non ha.
 
 export default function CellPanel({
-  cellId, panelUrl, route = [], token, title, requestTimeoutMs = 4000,
+  cellId, panelUrl, route = [], panelPort = 0, token, title, requestTimeoutMs = 4000,
 }) {
   const [state, setState] = useState(cellId && token ? 'requesting' : 'none');
   const [frameUrl, setFrameUrl] = useState('');
@@ -62,7 +62,17 @@ export default function CellPanel({
         // proxy lo risolve sulla destinazione della cella.
         let page = '/';
         try { page = new URL(panelUrl).pathname || '/'; } catch (_) { /* panelUrl già validato a monte */ }
-        setFrameUrl(`${routeBase(route)}/panel/${encodeURIComponent(cellId)}${page}?ticket=${encodeURIComponent(esito.ticket)}`);
+        // P0 sicurezza 2026-08-16: porta pannello PER QUESTA CELLA nota (la
+        // prop arriva già risolta: porta del nodo locale per le celle locali,
+        // porta inoltrata del nodo remoto per le remote — v. lib/panel-port)
+        // → URL ASSOLUTO verso quell'origin, mai un path sotto la nostra. Una
+        // porta diversa è ciò che rende l'origin diversa per il browser: un
+        // path relativo, per quanto corretto, resterebbe same-origin col
+        // control plane — esattamente il difetto che questo chiude. panelPort
+        // assente (0: config non ancora arrivata, o nodo remoto senza porta
+        // negoziata — un peer accoppiato prima): via storica invariata.
+        const base = panelPort ? `http://127.0.0.1:${panelPort}` : routeBase(route);
+        setFrameUrl(`${base}/panel/${encodeURIComponent(cellId)}${page}?ticket=${encodeURIComponent(esito.ticket)}`);
         setState('ready');
       } else {
         // not-granted | no-panel | unauthorized | denied: cause con nome.
@@ -74,7 +84,7 @@ export default function CellPanel({
       // AbortError = il NOSTRO timer ha chiuso la partita: deterministico.
       setState(err && err.name === 'AbortError' ? 'timeout' : 'unreachable');
     }
-  }, [cellId, panelUrl, route, token, requestTimeoutMs]);
+  }, [cellId, panelUrl, route, panelPort, token, requestTimeoutMs]);
 
   useEffect(() => { apri(); }, [apri]);
 
@@ -97,8 +107,23 @@ export default function CellPanel({
       </div>
     );
   }
-  if (state === 'not-granted') return msg('panel-not-granted');
-  if (state === 'denied' || state === 'unauthorized') return msg('panel-denied');
+  // Retry SOLO dove riprovare può cambiare l'esito. La distinzione non è fra
+  // «rifiutato» e «non rifiutato»: è fra una condizione che può essere già
+  // cambiata e una che dipende da una decisione altrove.
+  //
+  // Senza Riprova, perché il gesto non può riuscire: `not-granted` (il permesso
+  // si concede sul nodo che possiede la cella), `node-refused` (quel nodo
+  // rifiuta ogni mutazione, per esempio in sola lettura) e `unauthorized` (la
+  // credenziale locale non è valida — la si ripara altrove, non riprovando).
+  //
+  // Con Riprova: `denied` è ciò che resta, ed è transitorio — biglietto non più
+  // valido, o un errore passeggero del nodo — quindi chiederne uno nuovo è la
+  // strada di recupero; `timeout`/`unreachable` dipendono da una condizione che
+  // nel frattempo può essere cambiata.
+  if (state === 'not-granted') return msg('panel-not-granted', false);
+  if (state === 'node-refused') return msg('panel-node-refused', false);
+  if (state === 'unauthorized') return msg('panel-unauthorized', false);
+  if (state === 'denied') return msg('panel-denied');
   if (state === 'timeout') return msg('panel-timeout');
   if (state === 'unreachable') return msg('panel-unreachable');
   return (

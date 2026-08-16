@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import { t } from '../../lib/i18n.js';
 import { listDirs } from '../../lib/api.js';
+// Anticipazione lato UI: STESSO validatore gia' usato per il round-trip del
+// backup (validBackupPanelUrl in fleet-backup.js), non una terza copia — e
+// quella e' gia' sorvegliata da un test di parita' col validatore autorevole
+// del backend (validPanelUrl, tests/fleet-definitions.test.js). Il rifiuto che
+// conta resta quello del server: qui si dice PRIMA perche' fallirebbe, cosi'
+// l'utente non prova tre volte alla cieca (v. docs/CELL_PANEL.md, "Why
+// loopback only").
+import { validBackupPanelUrl } from '../../lib/fleet-backup.js';
 
 // Editor di una cella. State-less rispetto alle API: la posizione di creazione
 // è un campo obbligatorio DENTRO il form e riceve/solleva stato al parent.
@@ -76,6 +84,12 @@ export default function CellEditor({ token, route, targets = [], location, setLo
     {pickErr && <div className="nc-err">{pickErr}</div>}
     <select value={f.engine} onChange={(e) => chooseEngine(e.target.value)}>{engines.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}</select>
     <label className="nc-check"><input type="checkbox" checked={!!f.boot} onChange={(e) => set({ boot: e.target.checked })} /> {t('fleet-boot')}</label>
+    {/* panelUrl: comune a qualunque engine (Shell incluso — un container puo'
+        avere un pannello anche se la cella lancia solo un comando). Fuori dai
+        due rami sotto, che si biforcano su model/prompt, non su questo. */}
+    <input value={f.panelUrl || ''} maxLength={512} placeholder={t('fleet-panel-url')} onChange={(e) => set({ panelUrl: e.target.value })} />
+    <small>{t('fleet-panel-url-help')}</small>
+    {f.panelUrl && !validBackupPanelUrl(f.panelUrl) && <small className="nc-err">{t('fleet-panel-url-invalid')}</small>}
     {isShell ? <>
       <input value={f.command || ''} maxLength={4096} placeholder={t('fleet-shell-command-placeholder')} onChange={(e) => setCommand(e.target.value)} />
       <small>{f.command ? t('fleet-shell-command-help') : t('fleet-shell-interactive')}</small>

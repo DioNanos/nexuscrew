@@ -331,3 +331,93 @@ test('panelAccess: la vista redatta lo mostra — e una decisione dell operatore
   assert.equal(red.panelAccess, true);
   assert.ok(!('token' in red), 'il token resta fuori');
 });
+
+// Stessa regola di panelAccess, stessa ragione: la cella ospite Live e'
+// un'azione del nodo che la possiede, e la designazione da un peer remoto non
+// si concede acquisendola per anzianita' del pairing.
+test('liveHostAccess: default NEGATO, e un record vecchio non lo acquisisce per anzianita', () => {
+  const base = validStore().nodes[0];
+  const parsed = store.parseNode(base, 1);
+  assert.ok(parsed, 'un record senza il campo resta valido');
+  assert.equal(parsed.liveHostAccess, false, 'assente non significa concesso');
+
+  const concesso = store.parseNode({ ...base, liveHostAccess: true }, 1);
+  assert.equal(concesso.liveHostAccess, true, 'si concede per singolo nodo');
+
+  for (const cattivo of ['true', 'false', 1, 0, null, {}]) {
+    assert.equal(store.parseNode({ ...base, liveHostAccess: cattivo }, 1), null,
+      `liveHostAccess=${JSON.stringify(cattivo)} invalida il record invece di essere indovinato`);
+  }
+});
+
+test('liveHostAccess: la vista redatta lo mostra — e una decisione dell operatore, non un segreto', () => {
+  const base = validStore().nodes[0];
+  const red = store.redactNode(store.parseNode({ ...base, liveHostAccess: true }, 1));
+  assert.equal(red.liveHostAccess, true);
+  assert.ok(!('token' in red), 'il token resta fuori');
+});
+
+// P0 sicurezza, meta' remota: la porta pannello di un peer entra nel record
+// del nodo come COPPIA (loopback nostro -> porta pannello del peer), accanto a
+// localPort/remotePort. Coppia perche' un -L SSH ha bisogno di entrambe le
+// estremita': mezza coppia non e' "meno pannello", e' un forward impossibile.
+test('panelLocalPort/panelRemotePort: coppia completa accettata, mezza coppia rifiutata', () => {
+  const base = validStore().nodes[0];
+  const parsed = store.parseNode({ ...base, panelLocalPort: 43101, panelRemotePort: 41821 }, 1);
+  assert.ok(parsed, 'una coppia completa di porte valide e\' un record valido');
+  assert.equal(parsed.panelLocalPort, 43101);
+  assert.equal(parsed.panelRemotePort, 41821);
+
+  assert.equal(store.parseNode({ ...base, panelLocalPort: 43101 }, 1), null,
+    'panelLocalPort senza panelRemotePort invalida il record, non viene indovinata');
+  assert.equal(store.parseNode({ ...base, panelRemotePort: 41821 }, 1), null,
+    'panelRemotePort senza panelLocalPort invalida il record');
+
+  for (const [lp, rp] of [[0, 41821], [43101, 0], ['43101', 41821], [43101, '41821'], [-1, 41821], [70000, 41821]]) {
+    assert.equal(store.parseNode({ ...base, panelLocalPort: lp, panelRemotePort: rp }, 1), null,
+      `panelLocalPort=${String(lp)}/panelRemotePort=${String(rp)} non sono porte: record rifiutato`);
+  }
+  // Il forward pannello NON puo' stare sulla stessa porta locale del control
+  // plane: ssh farebbe fallire ExitOnForwardFailure e il tunnel intero.
+  assert.equal(store.parseNode({ ...base, panelLocalPort: 43001, panelRemotePort: 41821 }, 1), null,
+    'panelLocalPort == localPort e\' un bind conflitto: record rifiutato');
+});
+
+test('panelLocalPort/panelRemotePort: un nodo gia\' accoppiato senza la coppia resta valido, senza campi', () => {
+  // Esattamente il record che un 0.9.0 scrive oggi: nessun campo panel. Deve
+  // continuare a caricare — un campo introdotto dopo non puo\' rendere rotta
+  // un'installazione esistente.
+  const base = validStore().nodes[0];
+  const parsed = store.parseNode(base, 1);
+  assert.ok(parsed, 'un record senza coppia panel resta valido');
+  assert.equal(parsed.panelLocalPort, undefined, 'nessun campo inventato per anzianita\'');
+  assert.equal(parsed.panelRemotePort, undefined);
+  const s = store.parseStore(validStore());
+  assert.ok(s, 'l\'intero store di un 0.9.0 carica com\'e\'');
+});
+
+test('panelLocalPort: un listener locale ha un solo owner — collisioni fra nodi rifiutate', () => {
+  const base = validStore().nodes[0];
+  const conPanel = { ...base, panelLocalPort: 43101, panelRemotePort: 41821 };
+  assert.ok(store.parseStore({ ...validStore(), nodes: [conPanel] }));
+  // Due nodi che inoltrano il pannello sulla STESSA porta locale: il secondo
+  // ssh fallirebbe il bind. Lo store lo rifiuta in scrittura, non a runtime.
+  const altro = { ...conPanel, name: 'pixel', localPort: 43002, panelLocalPort: 43101 };
+  assert.equal(store.parseStore({ ...validStore(), nodes: [conPanel, altro] }), null,
+    'due panelLocalPort uguali = due owner dello stesso listener: store rifiutato');
+  const conflittoControl = { ...conPanel, name: 'pixel', localPort: 43101 };
+  assert.equal(store.parseStore({ ...validStore(), nodes: [conPanel, conflittoControl] }), null,
+    'panelLocalPort di un nodo sulla localPort di un altro: stesso listener, store rifiutato');
+});
+
+test('panelLocalPort/panelRemotePort: la vista redatta li mostra — una porta non e\' un segreto', () => {
+  const base = validStore().nodes[0];
+  const red = store.redactNode(store.parseNode({ ...base, panelLocalPort: 43101, panelRemotePort: 41821 }, 1));
+  assert.equal(red.panelLocalPort, 43101);
+  assert.equal(red.panelRemotePort, 41821);
+  assert.ok(!('token' in red), 'il token resta fuori');
+  // Il nodo senza coppia non mostra campi panel in vista: il frontend legge
+  // l\'assenza come "via storica", non come "porta 0".
+  const redVecchio = store.redactNode(store.parseNode(base, 1));
+  assert.ok(!('panelLocalPort' in redVecchio) && !('panelRemotePort' in redVecchio));
+});

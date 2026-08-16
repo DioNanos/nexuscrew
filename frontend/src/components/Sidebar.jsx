@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { t, LANGUAGES } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { pinRank, cmpRank } from '../lib/pins.js';
-import { hostRenderState, hostNextAction, hostLeaseTitleKey } from '../lib/host-designation.js';
+import {
+  hostRenderState, hostNextAction, hostLeaseTitleKey, hostRouteKey,
+} from '../lib/host-designation.js';
 import PinPersistBanner from './PinPersistBanner.jsx';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
@@ -30,7 +32,7 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 export default function Sidebar({
   sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onBoot, onNodePower, onKill, onVisibility, onNew,
   onNodeRename, onSettings, onBootError, localNodeId, fleetCapabilities = [], bootSettlement = null,
-  hostCell = null, hostLease = null, onDesignateCell, onClearHostCell,
+  hostByRoute = {}, onDesignateCell, onClearHostCell,
   onBootSettlementApplied, onOpenVlSession,
   width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
@@ -41,14 +43,20 @@ export default function Sidebar({
   const {
     groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
   } = useNodePreferences();
-  // Ciclo stellina cella locale: none -> favorite (pin) -> live (designate) ->
-  // none (clear server + remove pin). API-first: il pin si rimuove SOLO a clear
-  // riuscito, mai prima della risposta del server (nessun ottimismo locale). Le
-  // celle remote e le sessioni restano su togglePin (non sono mai host del nodo).
-  function handleLocalStar(item, c, state) {
+  // Stato live del NODO che possiede `route` — mai quello di un altro nodo. La
+  // designazione e' per-nodo lato server (CAS su una sola hostCell a testa);
+  // hostByRoute e' la sua controparte lato client, una voce per route.
+  const hostFor = (route) => hostByRoute[hostRouteKey(route)] || {};
+  // Ciclo stellina: none -> favorite (pin) -> live (designate) -> none (clear
+  // server + remove pin). API-first: il pin si rimuove SOLO a clear riuscito,
+  // mai prima della risposta del server (nessun ottimismo locale). Vale per
+  // QUALUNQUE nodo (locale o remoto): `route` e' quella del nodo che possiede
+  // LA CELLA su cui si preme, non quella del nodo che serve la pagina — e'
+  // esattamente la distinzione che il difetto originale ignorava.
+  function handleStar(item, c, state, route) {
     const action = hostNextAction(state);
     if (action === 'addPin') { togglePin(item.key); return; }
-    if (action === 'designate') { if (onDesignateCell) onDesignateCell(c.cell); return; }
+    if (action === 'designate') { if (onDesignateCell) onDesignateCell(c.cell, route); return; }
     if (action === 'clearAndUnpin') {
       if (!onClearHostCell) return;
       // Rimozione idempotente (NON toggle): su uno stato server-owned senza pin
@@ -57,7 +65,7 @@ export default function Sidebar({
       // lo stato UI e' gia' "none" perche' hostCell e' stato chiarito dal server.
       // removePin legge localStorage al momento dell'applicazione (no lost update)
       // e segnala un fallimento di persistenza nello stato (banner ritentabile).
-      Promise.resolve(onClearHostCell()).then((ok) => { if (ok) removePin(item.key); });
+      Promise.resolve(onClearHostCell(route)).then((ok) => { if (ok) removePin(item.key); });
     }
   }
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
@@ -331,13 +339,14 @@ export default function Sidebar({
         <div className="nc-side-group">
           {localItems.map((item) => item.type === 'cell' ? (() => {
             const c = item.value;
-            const starState = hostRenderState({ hostCell, pins, item });
+            const host = hostFor([]);
+            const starState = hostRenderState({ hostCell: host.hostCell ?? null, pins, item });
             const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
             // Sull'host designato il titolo porta anche lo stato del lease: dice
             // se dietro la designazione c'e' ancora una supervisione viva. Senza
             // stato (server che non lo espone) non si aggiunge nulla — mai una
             // bugia per riempire lo spazio.
-            const leaseKey = hostLeaseTitleKey(starState, hostLease);
+            const leaseKey = hostLeaseTitleKey(starState, host.hostLease ?? null);
             const baseTitle = c.degraded
               ? t('cell-degraded')
               : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
@@ -370,7 +379,7 @@ export default function Sidebar({
                 <button
                   className={`nc-pin${starState === 'live' ? ' live' : starState === 'favorite' ? ' on' : ''}`}
                   title={starState === 'live' ? 'live host' : t('pin')}
-                  onClick={(e) => { e.stopPropagation(); handleLocalStar(item, c, starState); }}
+                  onClick={(e) => { e.stopPropagation(); handleStar(item, c, starState, []); }}
                 >{starState === 'none' ? '☆' : '★'}</button>
                 {onBoot && fleetCapabilities.includes('boot') && bootButton(c)}
                 <button
@@ -497,15 +506,21 @@ export default function Sidebar({
             <div className="nc-side-group">
               {remoteItems.map((item) => item.type === 'cell' ? (() => {
                 const c = item.value;
+                const route = g.route || [g.name];
+                const host = hostFor(route);
+                const starState = hostRenderState({ hostCell: host.hostCell ?? null, pins, item });
+                const leaseKey = hostLeaseTitleKey(starState, host.hostLease ?? null);
                 const live = !!c.tmux;
                 const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
+                const baseTitle = item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
+                const cardTitle = leaseKey ? `${baseTitle} · ${t(leaseKey)}` : baseTitle;
                 return (
                   <div
                     key={item.key}
                     data-roster-key={item.key}
                     data-position={nodeRoute}
                     className={`nc-side-card nc-cell${live ? ' live' : ''}${active.has(c.key) ? ' active' : ''}`}
-                    title={item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off')}
+                    title={cardTitle}
                     draggable={live}
                     onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', c.key) : undefined}
                     onClick={live ? () => onAddTile && onAddTile(c.key) : undefined}
@@ -520,8 +535,11 @@ export default function Sidebar({
                       <b>{c.cell}</b>
                       <small title={item.subtitle}>{item.subtitle}</small>
                     </span>
-                    <button className={`nc-pin${pins.includes(item.key) ? ' on' : ''}`} title={t('pin')}
-                      onClick={(e) => { e.stopPropagation(); togglePin(item.key); }}>{pins.includes(item.key) ? '★' : '☆'}</button>
+                    <button
+                      className={`nc-pin${starState === 'live' ? ' live' : starState === 'favorite' ? ' on' : ''}`}
+                      title={starState === 'live' ? 'live host' : t('pin')}
+                      onClick={(e) => { e.stopPropagation(); handleStar(item, c, starState, route); }}
+                    >{starState === 'none' ? '☆' : '★'}</button>
                     {onBoot && (g.capabilities || []).includes('boot') && bootButton(c, g.route || [])}
                     {(g.capabilities || []).includes(c.active ? 'down' : 'up') && (
                       <button className={`nc-power${c.active ? ' on' : ''}${c.degraded ? ' warn' : ''}`}

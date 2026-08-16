@@ -164,6 +164,13 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     // rimuove, perche' `null` cancella la chiave lato backend.
     const label = (f.label || '').trim();
     if (creating) { if (label) def.label = label; } else def.label = label || null;
+    // panelUrl: stessa asimmetria della label, per la stessa ragione — un
+    // campo vuoto in creazione e' assenza di intenzione (omesso), in modifica
+    // e' l'intenzione di cancellare (`null`, letto cosi' da editCell in
+    // lib/fleet/builtin.js). Il validatore autorevole resta quello del server
+    // (validPanelUrl): l'anticipazione lato UI e' in CellEditor.jsx.
+    const panelUrl = (f.panelUrl || '').trim();
+    if (creating) { if (panelUrl) def.panelUrl = panelUrl; } else def.panelUrl = panelUrl || null;
     // Stessa asimmetria della label, per la stessa ragione: in creazione il
     // campo assente significa «tutti», e `parseCell` rifiuta un `mcp: null`; in
     // modifica serve `null`, perche' e' cosi' che il backend CANCELLA la chiave.

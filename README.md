@@ -11,6 +11,12 @@ NexusCrew turns live tmux sessions, AI CLI workers and connected machines into
 one local-first browser control plane. Your terminals stay real, your tools
 stay yours, and your infrastructure stays under your control.
 
+> **Reading this as an AI agent?** Start with
+> **[`skills/nexuscrew`](skills/nexuscrew/SKILL.md)**. It is the entry point:
+> what the system is, what you can actually do through it, which companion
+> skill covers which capability, where the trust boundaries are, and the rules
+> that hold across all of them. Every other NexusCrew skill assumes it.
+
 <p align="center">
   <img src="docs/img/fleet-deck-desktop.png" width="960" alt="NexusCrew desktop deck with multiple live tmux sessions">
 </p>
@@ -143,10 +149,22 @@ product verifies a configured pool before it can rotate within it. See
 | [Operations](docs/OPERATIONS.md) | CLI, boot, backup, updates and diagnostics |
 | [Security](docs/SECURITY.md) | Trust boundaries, tokens and credential handling |
 
-The repository also includes [MCP companion guidance](MCP_COMPANIONS.md),
-the machine-readable [`mcp-companions.json`](mcp-companions.json), and portable
-skills for memory, searchable document memory, bounded worker delegation,
-mail assistance and form filling.
+The repository also includes [MCP companion guidance](MCP_COMPANIONS.md) and
+the machine-readable [`mcp-companions.json`](mcp-companions.json).
+
+Portable skills ship with the package, and
+[`nexuscrew`](skills/nexuscrew/SKILL.md) is the one to read first:
+
+| Skill | Covers |
+|---|---|
+| [`nexuscrew`](skills/nexuscrew/SKILL.md) | **Start here** — the whole system and the rules across it |
+| [`nexuscrew-agent`](skills/nexuscrew-agent/SKILL.md) | Talking to the human, runtime discovery, delivery to cells |
+| [`live`](skills/live/SKILL.md) | Designating and permitting a node's Live host cell |
+| [`aidesktop`](skills/aidesktop/SKILL.md) | A cell's web panel, and the AI Desktop container recipe |
+| [`memory`](skills/memory/SKILL.md) | Persistent agent state |
+| [`vl-msa`](skills/vl-msa/SKILL.md) | Searchable document memory |
+| [`crew`](skills/crew/SKILL.md) | Bounded worker delegation |
+| [`mail-assistant`](skills/mail-assistant/SKILL.md) | Mailbox discovery, triage and reading |
 
 ## Platforms
 

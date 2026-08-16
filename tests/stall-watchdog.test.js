@@ -32,7 +32,13 @@ test('il gate si ferma: ROSSO, e la causa è nominata', { timeout: 15_000 }, asy
   });
   assert.equal(code, 1, 'un gate appeso deve valere rosso, non attesa infinita');
   assert.match(err.testo(), /nessun avanzamento/, 'dice CHE COSA è successo');
-  assert.match(err.testo(), /handle aperti/, 'e dove guardare');
+  // Le cause di uno stallo sono DUE e mandano in posti diversi: un file che
+  // non rilascia gli handle, oppure un test che aspetta una condizione mai
+  // arrivata — cioè una regressione vera nel codice, non nel test. Nominarne
+  // una sola manda chi indaga dalla parte sbagliata nella metà dei casi.
+  assert.match(err.testo(), /handle aperti/i, 'la prima causa: dove guardare');
+  assert.match(err.testo(), /aspetta una condizione/i,
+    'la seconda causa: una proprietà rotta si manifesta come stallo, non come assert fallito');
 });
 
 test('il gate finisce da solo: il verdetto resta quello dei test', async () => {

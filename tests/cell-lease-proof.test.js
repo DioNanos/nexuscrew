@@ -44,11 +44,16 @@ function pair() {
   });
 }
 
-function recv(client, predicate, timeoutMs = 500) {
-  return new Promise((resolve, reject) => {
+// recv attende la risposta del manager come CONDIZIONE, non entro un budget.
+// Il vecchio timeout fisso (500ms) misurava la velocita' della macchina: sotto
+// carico produceva «recv timeout» con la proprieta' intatta (flake notturno
+// documentato). Se la risposta non arriva mai, il test resta appeso e il gate
+// lo ferma con lo stall-watchdog di tests/run-isolated.js: rosso per la
+// ragione giusta invece che finto rosso per lentezza.
+function recv(client, predicate) {
+  return new Promise((resolve) => {
     let buf = '';
-    const to = setTimeout(() => { cleanup(); reject(new Error('recv timeout')); }, timeoutMs);
-    function cleanup() { clearTimeout(to); client.removeListener('data', on); }
+    function cleanup() { client.removeListener('data', on); }
     function on(chunk) {
       buf += chunk.toString();
       let nl;

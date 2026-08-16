@@ -195,11 +195,23 @@ backups.
 
 ## Bundled skills
 
-The package includes portable skills for optional MCP companions and
-[`fill-forms`](../skills/fill-forms/SKILL.md). `fill-forms` inspects, fills and
-visually validates local PDF and DOCX forms without overwriting the blank
-source or sending documents elsewhere. Optional Python dependencies are not
-installed automatically.
+The package ships portable skills, and
+[`nexuscrew`](../skills/nexuscrew/SKILL.md) is the one to read first: it
+describes the whole system, what an AI agent can do through it, and the rules
+that hold across every other skill.
+
+Two extend Fleet itself: [`live`](../skills/live/SKILL.md) covers designating
+and permitting a node's Live host cell, and
+[`aidesktop`](../skills/aidesktop/SKILL.md) covers a cell's web panel together
+with the AI Desktop container recipe. The rest cover one capability each — the
+operator channel ([`nexuscrew-agent`](../skills/nexuscrew-agent/SKILL.md)) and
+the optional MCP companions listed in
+[`mcp-companions.json`](../mcp-companions.json):
+[`memory`](../skills/memory/SKILL.md),
+[`vl-msa`](../skills/vl-msa/SKILL.md),
+[`crew`](../skills/crew/SKILL.md) and
+[`mail-assistant`](../skills/mail-assistant/SKILL.md). The companions are
+separate servers: absent unless installed, and never installed silently.
 
 ## Related guides
 

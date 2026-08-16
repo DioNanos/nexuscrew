@@ -33,10 +33,23 @@ const DEFAULT_TICK_MS = 15 * 1000;
 
 const SPIEGAZIONE = [
   'Nessun output per il tempo indicato: il gate è APPESO, non lento.',
-  'Di solito è un file che lascia handle aperti — il suo processo non esce e il',
-  'runner lo aspetta per sempre. Trovalo con process._getActiveHandles() nel file',
-  'che stava girando, e ricorda che server.close() NON libera l\'handle finché ci',
-  'sono connessioni aperte: servono closeAllConnections() e closeIdleConnections().',
+  '',
+  'Le cause sono due, e mandano in posti diversi:',
+  '',
+  '1. Un file che lascia HANDLE APERTI: il suo processo non esce e il runner lo',
+  '   aspetta per sempre. Trovalo con process._getActiveHandles() nel file che',
+  '   stava girando, e ricorda che server.close() NON libera l\'handle finché ci',
+  '   sono connessioni aperte: servono closeAllConnections() e',
+  '   closeIdleConnections().',
+  '',
+  '2. Un test che ASPETTA UNA CONDIZIONE che non arriverà mai. Diversi test',
+  '   attendono un fatto osservabile (stato su disco, pidfile, evento) senza',
+  '   budget di tempo, apposta: un budget misurerebbe la velocità della macchina',
+  '   e sotto carico aprirebbe falsi rossi. Il prezzo è che una proprietà ROTTA',
+  '   si manifesta qui, come stallo, invece che come assert fallito. Se il file',
+  '   che stava girando è fra quelli, sospetta una regressione VERA nel codice',
+  '   che doveva produrre quella condizione — non il test.',
+  '',
   'La soglia si regola con NEXUSCREW_TEST_STALL_MS.',
 ].join('\n');
 

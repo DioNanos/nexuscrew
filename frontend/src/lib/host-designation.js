@@ -19,8 +19,11 @@ export const HOST_LIVE = 'live';
 // - live: hostCell === item.value.cell (la cella e' l'host del nodo).
 // - favorite: l'item e' nel pin locale (item.key) e non e' live.
 // - none: altrimenti.
-// Le sessioni tmux e le celle remote non hanno value.cell locale: non sono mai
-// host di questo nodo, quindi ricadono su favorite/none.
+// Le sessioni tmux non hanno value.cell: non sono mai host di un nodo, quindi
+// ricadono su favorite/none. Le celle REMOTE invece ce l'hanno (stessa forma
+// dell'oggetto cella locale, v. roster-view-model.js buildRemoteRoster) — la
+// funzione e' identica per locale e remoto: e' il CHIAMANTE che deve passare
+// l'hostCell DEL NODO GIUSTO (v. hostRouteKey sotto), mai quello di un altro.
 export function hostRenderState({ hostCell, pins = [], item }) {
   const cell = item && item.value && typeof item.value.cell === 'string' ? item.value.cell : null;
   if (cell != null && hostCell === cell) return HOST_LIVE;
@@ -52,4 +55,25 @@ export function hostLeaseTitleKey(renderState, hostLease) {
   if (renderState !== HOST_LIVE) return null;
   if (!HOST_LEASE_STATES.includes(hostLease)) return null;
   return `host-lease-${hostLease}`;
+}
+
+// --- Per-nodo (0.9.1 seconda meta') ------------------------------------------
+// hostByRoute e' una mappa {chiave -> {hostCell, hostLease, hostRevision}}, una
+// voce per nodo. La chiave e' la stessa forma gia' in uso altrove per lo stesso
+// scopo (bootCellKey in Sidebar/SessionList, nodeRoute): la route joinata, o
+// 'local' quando vuota/assente. Una singola funzione condivisa evita che le due
+// shell (desktop/mobile) divergano su com'e' fatta la chiave.
+export const HOST_LOCAL_KEY = 'local';
+export function hostRouteKey(route) {
+  return Array.isArray(route) && route.length ? route.join('/') : HOST_LOCAL_KEY;
+}
+
+// Quale causa mostrare quando designate/clear falliscono. Il gate federato
+// (lib/proxy/federation.js) risponde 403 con reason 'live-host-not-granted' —
+// jsonFetch (frontend/src/lib/api.js) lo propaga come err.data.reason. Ogni
+// altro fallimento (rete, 500, nodo irraggiungibile) ha comunque una chiave:
+// il difetto che questo chiude e' il silenzio, non la precisione della causa.
+export function hostDesignationFailureMessage(error) {
+  const reason = error && error.data && typeof error.data === 'object' ? error.data.reason : null;
+  return reason === 'live-host-not-granted' ? 'live-host-not-granted' : 'live-host-error';
 }

@@ -50,3 +50,39 @@ ragione scritta accanto.
 Le soglie dei file elencati sopra vanno riviste una per una, come è stato fatto
 per `share-reconnect`: attesa guidata dall'evento, limite generoso, e nessuna
 asserzione che dipenda dalla velocità. Finché non è fatto, vale la procedura.
+
+## Il debito pagato: i cinque file della notte (2026-08-16)
+
+I cinque file che in una nottata hanno prodotto rossi da contesa (`nodes-tunnel`,
+`live-host-bridge`, `pair-route-stages`, `reverse-slot-listeners`,
+`cell-lease-proof`) sono stati riscritti sul criterio «aspetta la proprietà, non
+il tempo». Nessun timeout alzato, nessuna asserzione allentata: ogni test
+toccato è stato visto rosso con la proprietà rotta prima di essere dichiarato
+equivalente. Tre forme, caso per caso:
+
+- **Attesa di condizione osservabile, senza budget** (`nodes-tunnel`: stato su
+  disco, pidfile, processo vivo; `live-host-bridge` orfana: l'evento
+  `thread/stop` nel daemon finto; `cell-lease-proof`: `recv` senza timeout). La
+  condizione o arriva — per quanto ci metta questa macchina — o non arriva mai.
+  Un test appeso è un fallimento del gate: lo ferma lo stall-watchdog di
+  `run-isolated.js`, che resta l'UNICO bound necessario.
+- **Veleno infinito** (`live-host-bridge`: daemon che non risponde mai,
+  hub muto sulla GET del ponte). La bounded-ness diventa la risoluzione stessa:
+  niente più soglie `elapsed` da ricalibrare a ogni notte di carico.
+- **La risposta è la bounded-ness** (`pair-route-stages` join half-open): la
+  richiesta o risponde col suo timeout strutturato, o il test pende.
+- Dove il tempo È la proprietà (scadenze, grace), l'orologio era già iniettato
+  (`now` nelle factory): quei test non flakavano e non sono stati toccati.
+
+La proprietà negativa di `nodes-tunnel` («vivo ma non ready») ora aspetta che il
+supervisor abbia RI-provato il forward (il sidecar `transport-probing` viene
+riscritto a ogni probe fallito: `updatedAt` avanza) prima di asserire: la
+finestra fissa di 400ms dava al supervisor un'occasione che dipendeva dal
+carico, non dalla proprietà.
+
+`reverse-slot-listeners`: gli esiti legittimi di un upgrade sono tutti eventi
+(risposta o chiusura); il timer di budget 4000ms tagliava risposte legittime
+lente.
+
+La procedura qui sopra resta valida per ogni rosso nuovo: prima tre giri
+isolati, poi la diagnosi.
