@@ -9,6 +9,8 @@ vi.mock('../lib/i18n.js', () => ({
   t: (k) => ({
     'panel-not-granted': 'Questo nodo non concede il pannello a chi lo chiede: l\'accesso va concesso sul nodo che possiede la cella, non riprovando qui.',
     'panel-denied': 'Ingresso al pannello rifiutato: il biglietto non è più valido. Riprova: verrà chiesto un biglietto nuovo.',
+    'panel-node-refused': 'Il nodo che possiede la cella rifiuta la richiesta: è in sola lettura, o la sua policy blocca questa operazione. Riprovare qui non cambia l\'esito.',
+    'panel-unauthorized': 'Credenziale non valida per questo nodo: va corretta dove è configurata, non riprovando da qui.',
   }[k] || k),
 }));
 
@@ -68,9 +70,10 @@ describe('CellPanel (D8: ingresso al pannello via ticket)', () => {
     expect(screen.getByRole('status').textContent).toContain('nodo che possiede la cella');
     expect(container.querySelector('iframe')).toBeNull();
     // E NESSUN Riprova: il testo dice «non riprovando qui», offrire quel gesto
-    // contraddirebbe la causa appena nominata. È l'unico stato in cui il
-    // pulsante manca — negli altri (biglietto scaduto, timeout, rete) riprovare
-    // è la strada di recupero, e restano con il loro Riprova.
+    // contraddirebbe la causa appena nominata. Vale per i tre stati che
+    // dipendono da una decisione presa ALTROVE (questo, node-refused,
+    // unauthorized); dove la condizione può essere già cambiata — biglietto,
+    // timeout, rete — il pulsante resta.
     expect(screen.queryByTitle('panel-retry')).toBeNull();
   });
 
@@ -87,12 +90,33 @@ describe('CellPanel (D8: ingresso al pannello via ticket)', () => {
     expect(requestPanelTicket).toHaveBeenCalledTimes(2);
   });
 
+  it('node-refused (il nodo owner è in sola lettura): causa propria e NESSUN Riprova', async () => {
+    // Un audit indipendente ha percorso questa catena: peer autorizzato, nodo
+    // owner READONLY, 403 senza `reason` → il frontend lo classificava
+    // `denied`, cioè «biglietto scaduto», e offriva Riprova. La richiesta
+    // successiva è identica e resta 403 finché non cambia la policy del nodo:
+    // il pulsante prometteva un recupero che non poteva avvenire.
+    requestPanelTicket.mockResolvedValue({ ok: false, cause: 'node-refused' });
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('sola lettura'); });
+    // La causa deve essere DISTINTA da quella del biglietto, non un sinonimo.
+    expect(screen.getByRole('status').textContent).not.toContain('biglietto');
+    expect(screen.queryByTitle('panel-retry')).toBeNull();
+    expect(container.querySelector('iframe')).toBeNull();
+  });
+
   it('unauthorized e no-panel: cause distinte dal backend, rese con lo stato giusto', async () => {
     requestPanelTicket.mockResolvedValueOnce({ ok: false, cause: 'unauthorized' });
     const { container, rerender } = render(
       <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" />,
     );
-    await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('biglietto non è più valido'); });
+    // 401 è una credenziale locale non valida, non un biglietto scaduto:
+    // messaggio proprio, e nessun Riprova, perché riprovare con la stessa
+    // credenziale dà lo stesso esito.
+    await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('Credenziale non valida'); });
+    expect(screen.queryByTitle('panel-retry')).toBeNull();
     requestPanelTicket.mockResolvedValueOnce({ ok: false, cause: 'no-panel' });
     rerender(<CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" />);
     await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('panel-none'); });

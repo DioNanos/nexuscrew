@@ -165,3 +165,33 @@ test('CON permesso: designare da remoto funziona — la stella cambia davvero su
   assert.equal(after.status, 200);
   assert.equal(after.body.hostCell, 'A', 'la stella e\' cambiata sul nodo che possiede la cella');
 });
+
+test('CON permesso: anche SPEGNERE da remoto arriva al nodo posseduto', async (t) => {
+  // Un audit indipendente ha notato che `clear` era nel gate e nel routing ma
+  // non aveva un caso end-to-end: il comportamento reggeva, la regressione no.
+  // Accendere e non poter spegnere e' un modo di rompere la funzione che i due
+  // test sopra non vedrebbero — chiudono entrambi sul verso «accendi».
+  const fed = await federazioneDiProva({ liveHostAccess: true });
+  t.after(() => fed.close());
+  const d = await post(fed.base, '/api/route/remoto/_/live-host/designate', { cellId: 'A', expectedRevision: 0 });
+  assert.equal(d.status, 200, JSON.stringify(d.body));
+
+  const c = await post(fed.base, '/api/route/remoto/_/live-host/clear', { expectedRevision: d.body.revision });
+  assert.equal(c.status, 200, JSON.stringify(c.body));
+  assert.equal(c.body.hostCell, null, 'clear ha risposto senza spegnere');
+
+  // E la conferma dal nodo che possiede la cella, non dalla risposta di chi ha
+  // chiesto: e' la lettura successiva a dire se lo stato e' cambiato davvero.
+  const after = await get(fed.base, '/api/route/remoto/_/live-host');
+  assert.equal(after.status, 200);
+  assert.equal(after.body.hostCell, null, 'la stella e\' rimasta accesa sul nodo remoto');
+});
+
+test('SENZA permesso: nemmeno SPEGNERE passa — il gate copre i due versi', async (t) => {
+  const fed = await federazioneDiProva({ liveHostAccess: false });
+  t.after(() => fed.close());
+  const c = await post(fed.base, '/api/route/remoto/_/live-host/clear', { expectedRevision: 0 });
+  assert.equal(c.status, 403);
+  assert.match(JSON.stringify(c.body), /live-host-not-granted/,
+    'il rifiuto deve nominare la causa, come per designate');
+});

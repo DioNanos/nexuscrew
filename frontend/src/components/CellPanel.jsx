@@ -107,16 +107,23 @@ export default function CellPanel({
       </div>
     );
   }
-  // Retry SOLO dove riprovare può cambiare l'esito. `not-granted` è l'unico
-  // stato in cui non può: la decisione è di un ALTRO nodo, e il messaggio dice
-  // esso stesso «non riprovando qui» — offrire il gesto che il testo esclude
-  // manda l'utente a premere un bottone che non può funzionare.
-  // Gli altri restano con Riprova, e non è una svista: `denied`/`unauthorized`
-  // significano biglietto scaduto, e Riprova ne chiede uno NUOVO (è la strada
-  // di recupero, coperta da test); `timeout`/`unreachable` dipendono da una
-  // condizione che può essere già cambiata.
+  // Retry SOLO dove riprovare può cambiare l'esito. La distinzione non è fra
+  // «rifiutato» e «non rifiutato»: è fra una condizione che può essere già
+  // cambiata e una che dipende da una decisione altrove.
+  //
+  // Senza Riprova, perché il gesto non può riuscire: `not-granted` (il permesso
+  // si concede sul nodo che possiede la cella), `node-refused` (quel nodo
+  // rifiuta ogni mutazione, per esempio in sola lettura) e `unauthorized` (la
+  // credenziale locale non è valida — la si ripara altrove, non riprovando).
+  //
+  // Con Riprova: `denied` è ciò che resta, ed è transitorio — biglietto non più
+  // valido, o un errore passeggero del nodo — quindi chiederne uno nuovo è la
+  // strada di recupero; `timeout`/`unreachable` dipendono da una condizione che
+  // nel frattempo può essere cambiata.
   if (state === 'not-granted') return msg('panel-not-granted', false);
-  if (state === 'denied' || state === 'unauthorized') return msg('panel-denied');
+  if (state === 'node-refused') return msg('panel-node-refused', false);
+  if (state === 'unauthorized') return msg('panel-unauthorized', false);
+  if (state === 'denied') return msg('panel-denied');
   if (state === 'timeout') return msg('panel-timeout');
   if (state === 'unreachable') return msg('panel-unreachable');
   return (

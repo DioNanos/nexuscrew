@@ -260,25 +260,70 @@ test('IL MIRROR REALE (github/main) non contiene i percorsi interni vietati', ()
     `github/main contiene questi percorsi interni (la regola dice che non dovrebbero esserci):\n  ${colpevoli.join('\n  ')}`);
 });
 
+// Il ciclo sta QUI, fuori dal test, e prende il lettore come argomento: e'
+// l'unico modo di provare che si accorge di NON aver letto. Con la lettura
+// cablata dentro, il caso «il contenuto non si legge» non e' esprimibile e
+// resta scoperto — che e' esattamente com'e' passato inosservato.
+function scansionaContenuti(elenco, leggi) {
+  const colpevoli = [];
+  let ispezionati = 0;
+  for (const rel of elenco) {
+    let testo;
+    // Un blob che non si legge NON si salta: saltandolo, il test direbbe
+    // «pulito» per non aver guardato. Con un `continue` cieco qui, 557 letture
+    // fallite hanno lasciato il gate verde avendo ispezionato ZERO contenuti.
+    try { testo = leggi(rel); }
+    catch (e) { colpevoli.push(`${rel}: contenuto NON ISPEZIONATO (${e && e.message ? String(e.message).split('\n')[0] : 'lettura fallita'})`); continue; }
+    ispezionati += 1;
+    colpevoli.push(...colpeIn(testo, rel));
+  }
+  return { colpevoli, ispezionati };
+}
+
 test('IL MIRROR REALE (github/main) non porta le tracce vietate nel contenuto', () => {
   // Copre cio' che il controllo per percorso sopra non copre: materiale
   // interno finito FUORI dai tre prefissi noti. Riusa colpeIn — stessa
   // regola, stessa esclusione per il file che la definisce (SELF_EXCLUDE).
-  const colpevoli = [];
-  for (const rel of alberoGithubReale()) {
-    let testo;
-    try { testo = leggiDaGithub(rel); } catch (_) { continue; }
-    colpevoli.push(...colpeIn(testo, rel));
-  }
+  const albero = alberoGithubReale();
+  const { colpevoli, ispezionati } = scansionaContenuti(albero, leggiDaGithub);
+  // E nemmeno un albero vuoto vale come «pulito»: senza questa riga il test
+  // resta verde anche quando non c'e' NIENTE da guardare, che e' l'altro modo
+  // di non distinguere «non trovo niente» da «non ho cercato».
+  assert.ok(ispezionati > 0 && ispezionati === albero.length,
+    `ispezionati ${ispezionati} blob su ${albero.length}: il gate deve leggerli tutti, o non sta verificando l'albero pubblicato`);
   assert.deepEqual(colpevoli, [],
     `github/main contiene queste tracce (fuori dai percorsi gia' vietati sopra):\n  ${colpevoli.join('\n  ')}`);
 });
 
+test('CONTROLLO NEGATIVO: se i contenuti non si leggono, il gate deve diventare ROSSO', () => {
+  // La prova che il test sopra non e' verde per assenza di ispezione. Un
+  // auditor l'ha ottenuta dirottando `git show` con un finto nel PATH: 557
+  // letture fallite, zero blob guardati, gate verde ed exit 0. Qui la stessa
+  // condizione e' dentro il gate, quindi non puo' tornare senza che si veda.
+  const elenco = ['README.md', 'package.json', 'lib/cli/commands.js'];
+  const illeggibile = () => { throw new Error('fatal: path does not exist in github/main'); };
+
+  const rotto = scansionaContenuti(elenco, illeggibile);
+  assert.equal(rotto.ispezionati, 0, 'nessun contenuto doveva risultare ispezionato');
+  assert.equal(rotto.colpevoli.length, elenco.length,
+    'ogni lettura fallita deve produrre una colpa: se questo elenco e\' vuoto, il gate e\' tornato cieco');
+  for (const c of rotto.colpevoli) assert.match(c, /NON ISPEZIONATO/);
+
+  // Controprova sullo stesso ciclo: con un lettore che funziona e contenuti
+  // innocui, non inventa colpe.
+  const sano = scansionaContenuti(elenco, () => 'contenuto del tutto innocuo\n');
+  assert.deepEqual(sano.colpevoli, [], 'il ciclo accusa contenuti puliti');
+  assert.equal(sano.ispezionati, elenco.length);
+});
+
 test('nemmeno l\'albero versionato porta quelle tracce, tests inclusi', () => {
   const colpevoli = [];
+  // Stessa correzione del test sopra, e per la stessa ragione: due copie della
+  // medesima logica avevano lo stesso `continue` cieco.
   for (const file of tracked()) {
     let testo;
-    try { testo = fs.readFileSync(file, 'utf8'); } catch (_) { continue; }
+    try { testo = fs.readFileSync(file, 'utf8'); }
+    catch (e) { colpevoli.push(`${path.relative(ROOT, file)}: contenuto NON ISPEZIONATO (${e && e.code ? e.code : 'lettura fallita'})`); continue; }
     colpevoli.push(...colpeIn(testo, path.relative(ROOT, file)));
   }
   assert.deepEqual(colpevoli, [],

@@ -35,8 +35,14 @@ export async function requestPanelTicket(t, route, cellId, { signal } = {}) {
   const j = await r.json().catch(() => ({}));
   if (r.status === 200 && j && typeof j.ticket === 'string') return { ok: true, ticket: j.ticket };
   if (r.status === 403 && j && j.reason === 'panel-not-granted') return { ok: false, cause: 'not-granted' };
+  // Ogni ALTRO 403 è il nodo che rifiuta per policy — READONLY blocca ogni
+  // mutazione federata, e l'emissione del biglietto è una mutazione. Dura
+  // finché quella policy non cambia, quindi non è un caso da «riprova»:
+  // dentro `denied` faceva offrire un gesto che non poteva riuscire.
+  if (r.status === 403) return { ok: false, cause: 'node-refused' };
   if (r.status === 404) return { ok: false, cause: 'no-panel' };
   if (r.status === 401) return { ok: false, cause: 'unauthorized' };
+  // Quel che resta (409, 5xx) è transitorio: lì riprovare ha senso.
   return { ok: false, cause: 'denied' };
 }
 

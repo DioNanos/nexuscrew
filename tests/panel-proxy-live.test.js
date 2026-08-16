@@ -35,6 +35,14 @@ async function pannelloFinto() {
     res.writeHead(404); res.end();
   });
   const wss = new WebSocketServer({ server, path: '/websockify' });
+  // Lo stesso tentativo di `/mette-cookie`, ma nell'HANDSHAKE: la 101 e' una
+  // risposta come le altre e il browser ne persiste i cookie. Passa anche un
+  // header innocuo, che serve da controprova — filtrare tutto romperebbe
+  // l'upgrade e un test scritto male non se ne accorgerebbe.
+  wss.on('headers', (headers) => {
+    headers.push('Set-Cookie: npanel=forgiato-nell-handshake; Path=/');
+    headers.push('X-Innocuo-Ws: passa');
+  });
   wss.on('connection', (ws) => {
     ws.on('message', (data) => ws.send(`eco:${data}`));
     ws.send('benvenuto');
@@ -99,6 +107,31 @@ test('dal vivo: i frame WebSocket attraversano il proxy nei DUE sensi', async (t
   // avrebbe consegnato nessuno dei due.
   assert.equal(ricevuti[0], 'benvenuto');
   assert.equal(ricevuti[1], 'eco:ciao');
+});
+
+test('dal vivo: il cookie posato nell\'HANDSHAKE non arriva al browser', async (t) => {
+  const panel = await pannelloFinto();
+  const proxy = await proxyVero(panel.port);
+  t.after(() => { panel.wss.close(); panel.server.close(); proxy.server.close(); });
+
+  // Il ramo HTTP toglieva `set-cookie` da sempre; il ramo upgrade copiava ogni
+  // header della 101 tale e quale, quindi la stessa proprieta' valeva su una
+  // via e non sull'altra. Un pannello WebSocket poteva SOVRASCRIVERE il cookie
+  // di visione legittimo e rompere il pannello dell'utente dal di dentro.
+  const ws = new WebSocket(`ws://127.0.0.1:${proxy.port}/api/panel/Dev/websockify?token=buono`);
+  const res = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('nessun upgrade entro 5s')), 5000);
+    ws.on('upgrade', (r) => { clearTimeout(timer); resolve(r); });
+    ws.on('error', (e) => { clearTimeout(timer); reject(e); });
+  });
+  ws.close();
+
+  assert.equal(res.headers['set-cookie'], undefined,
+    'il pannello ha posato un cookie nella 101 e il proxy lo ha inoltrato: la porta separata protegge il DOM, non gli header');
+  // Controprova: se questa fallisse, staremmo filtrando troppo — e il test
+  // sopra passerebbe per il motivo sbagliato.
+  assert.equal(res.headers['x-innocuo-ws'], 'passa',
+    'un header innocuo dell\'handshake e\' stato tolto: il filtro e\' troppo largo');
 });
 
 test('dal vivo: senza token valido l\'upgrade non si apre', async (t) => {
