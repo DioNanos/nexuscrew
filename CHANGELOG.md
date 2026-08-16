@@ -2,6 +2,37 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.2 — 2026-08-16 — "Offered and Then Refused"
+
+Both defects in this release were found by using the product, not by a test —
+and both were invisible to the suite for the same reason: each test exercised
+one piece in isolation, and neither defect exists in isolation.
+
+- **The Desktop engine could be selected but never saved.** It declared
+  `command: 'docker'` — a bare name — while engine validation requires an
+  absolute path, so it appeared in the list and was rejected on save with
+  *"command must be an absolute path"*: a message describing the shape of the
+  value instead of saying the command had not been resolved. The path is now
+  resolved from `PATH` through `realpath`, which matters because validation
+  uses `lstat` and rejects symlinks — and in many installs the first hit on
+  `PATH` is exactly that. Where Docker is absent the fallback makes the
+  refusal say *"not accessible (ENOENT)"*, naming the real cause.
+
+  Installations that already had the engine are **repaired**: the backfill
+  skips what already exists, so fixing the default alone would have changed
+  nothing precisely where the defect was seen. The repair only touches a
+  command that is both non-absolute and still named `docker` — an absolute
+  path, or a command you changed yourself, is left alone.
+
+- **The panel reloaded without pause, leaving no time to interact with it.**
+  A panel behind a login was unusable: the sign-in prompt appeared and the
+  frame remounted before it could be completed. `route` is an array, so it was
+  a new prop on every parent render — and the parent re-renders continuously
+  to poll the fleet. With the array among the effect's dependencies, every
+  render requested a fresh ticket and remounted the iframe. The dependency is
+  now keyed on content, so the panel reopens when the route actually changes
+  and not otherwise.
+
 ## 0.9.1 — 2026-08-16 — "What the Guard Was Not Guarding"
 
 - **The panel now lives on its own origin, so its JavaScript can no longer

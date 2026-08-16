@@ -12,10 +12,31 @@ const { parseDefinitions } = require('../lib/fleet/definitions.js');
 const { defaultDesktopEngine, backfillDesktopEngine } = require('../lib/fleet/builtin.js');
 const { loadDefinitions, atomicWrite } = require('../lib/fleet/definitions.js');
 
+test('l\'engine Desktop supera la trust boundary che il salvataggio applica', () => {
+  // La prova che il difetto non torna: si chiama la funzione VERA del prodotto,
+  // non una sua imitazione. Se docker non e' installato su questa macchina il
+  // caso non e' esprimibile e il test lo dichiara invece di fingere di averlo
+  // verificato — un verde per assenza di condizioni resta un verde muto.
+  const { validateCommandTrust } = require('../lib/fleet/definitions.js');
+  const eng = defaultDesktopEngine();
+  const esito = validateCommandTrust(eng.command);
+  if (esito.ok) { assert.equal(esito.reason, 'trusted'); return; }
+  assert.notEqual(esito.reason, 'command deve essere un path assoluto',
+    'il command e\' di nuovo relativo: l\'engine sarebbe offerto e poi rifiutato');
+  assert.match(esito.reason, /non accessibile/,
+    `docker assente qui: atteso un rifiuto che NOMINA la causa, ricevuto "${esito.reason}"`);
+});
+
 test('defaultDesktopEngine: comando esatto che entra nel container, panelUrl precompilato', () => {
   const eng = defaultDesktopEngine();
   assert.equal(eng.id, 'desktop.local');
-  assert.equal(eng.command, 'docker');
+  // Il command NON si confronta con la stringa 'docker': quel test passava
+  // mentre l'engine era inutilizzabile. Cio' che conta e' che superi la stessa
+  // trust boundary che il salvataggio applichera' — un engine built-in offerto
+  // nell'elenco e poi rifiutato al salvataggio e' peggio di uno assente.
+  assert.ok(path.isAbsolute(eng.command),
+    `command deve essere un path assoluto, e' ${eng.command}`);
+  assert.equal(path.basename(eng.command), 'docker');
   assert.deepEqual(eng.args, ['exec', '-it', '-u', 'abc', 'ai-desktop', 'bash']);
   assert.equal(eng.promptMode, 'send-keys');
   assert.equal(eng.panelUrl, 'https://127.0.0.1:6901');
@@ -69,4 +90,37 @@ test('backfillDesktopEngine: idempotente, non distruttivo su collisione id', () 
     assert.equal(a2.engines.length, 1);
     assert.equal(a2.engines[0].command, '/bin/x', 'collisione: custom desktop.local preservato');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("RIPARAZIONE: un desktop.local gia' salvato con command relativo viene corretto", () => {
+  // Il caso vero, e quello che il fix del default NON copre: su una macchina
+  // gia' configurata l'engine esiste, quindi il backfill lo salta e il comando
+  // rotto resta. E' esattamente la situazione in cui il difetto e' stato visto.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-desk-'));
+  const file = path.join(dir, 'fleet.json');
+  const rotto = { ...defaultDesktopEngine(), command: 'docker' };
+  atomicWrite(file, { schemaVersion: 1, engines: [rotto], cells: [] });
+
+  const dopo = backfillDesktopEngine(file, loadDefinitions(file));
+  const voce = dopo.engines.find((e) => e.id === 'desktop.local');
+  assert.ok(path.isAbsolute(voce.command), `command ancora relativo: ${voce.command}`);
+  assert.equal(path.basename(voce.command), 'docker');
+  // E la riparazione dev'essere DUREVOLE, non solo in memoria: quello che
+  // conta e' cosa trovera' il prossimo avvio su disco.
+  const daDisco = loadDefinitions(file).engines.find((e) => e.id === 'desktop.local');
+  assert.equal(daDisco.command, voce.command, 'riparato in memoria ma non su disco');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("RIPARAZIONE: non tocca una scelta dell'utente", () => {
+  // Il verso opposto, senza il quale la riparazione sarebbe una sovrascrittura
+  // travestita: un path assoluto o un comando diverso restano com'erano.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-desk2-'));
+  const file = path.join(dir, 'fleet.json');
+  const scelto = { ...defaultDesktopEngine(), command: '/opt/mio/podman' };
+  atomicWrite(file, { schemaVersion: 1, engines: [scelto], cells: [] });
+
+  const dopo = backfillDesktopEngine(file, loadDefinitions(file));
+  assert.equal(dopo.engines.find((e) => e.id === 'desktop.local').command, '/opt/mio/podman');
+  fs.rmSync(dir, { recursive: true, force: true });
 });
