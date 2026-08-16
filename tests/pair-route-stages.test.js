@@ -294,12 +294,16 @@ test('pair stages: join half-open termina col timeout strutturato invece di rest
       }, { once: true });
     }),
   });
-  const started = Date.now();
+  // La bounded-ness e' la RISPOSTA stessa, non una misura: il join finto risponde
+  // solo all'abort del coordinator (pairRequestTimeoutMs), quindi se la state
+  // machine si appendeva qui il test resterebbe appeso e il gate lo fermerebbe
+  // con lo stall-watchdog di tests/run-isolated.js. La vecchia soglia
+  // elapsed<1000 misurava la velocita' della macchina (il timer di abort da
+  // 25ms piu' la coda di eventi superava il secondo sotto carico: falso rosso).
   const r = await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) });
   const j = await r.json();
   assert.equal(j.stage, 'join'); assert.equal(j.code, 'join-ambiguous');
   assert.equal(calls.join, 1);
-  assert.ok(Date.now() - started < 1000, 'timeout bounded nel test, nessun hang');
 });
 
 test('pair stages: confirm fallisce -> stage confirm, cancel remoto UNA volta, nodo rimosso', async (t) => {
