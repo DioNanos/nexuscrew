@@ -3,58 +3,71 @@
 [← Documentation index](README.md)
 
 When Live starts a native session (engine `codex-vl*`), the bridge
-(`lib/live-host/bridge.js`) looks for a per-cell prompt file and, if it finds
-one, sends its text as `developerInstructions` on `thread/start`. That text
-**replaces** whatever global instructions the app-server would otherwise
-inject — it is not appended to them. This page is about the template file
-itself: what it must contain, exactly where it goes, and how to prove the
-bridge actually reads it. For the Live host designation itself (which cell a
-node's Live session lands on), see [`live`](../skills/live/SKILL.md).
+(`lib/live-host/bridge.js`) always sends `thread/start` an identity header —
+which cell it is attached to, and the exact tmux session the roster reports
+for it — and, if a per-cell prompt file exists, appends its text after a
+blank line. The app-server **accumulates** this as an additional developer
+section; it does not remove or replace the global instruction chain. This
+page is about the template file itself: what it must contain, exactly where
+it goes, and how to prove the bridge actually reads it. For the Live host
+designation itself (which cell a node's Live session lands on), see
+[`live`](../skills/live/SKILL.md).
 
 ## Where the file goes
 
 ```
-<NexusFiles>/cloud-<Cell>/LIVE_PROMPT.md
+<NexusFiles>/<tmuxSession>/LIVE_PROMPT.md
 ```
 
 - `<NexusFiles>` is the `filesRoot` NexusCrew resolves for the node running
   the bridge — `~/NexusFiles` unless overridden by configuration. This is
   the node's own home, not a remote peer's.
-- `<Cell>` is the **Fleet cell name** — the `cell` field you get back from
-  `nc_cells` or fleet status (for example `Dev`), not the tmux session name.
-  A tmux session name carries a device prefix (`cloud-Dev`, `macair-Dev`,
-  …); the cell name does not.
-- The `cloud-` segment in the folder name is **fixed in the bridge's code
-  today** (`readCellPrompt` in `lib/live-host/bridge.js`): it is prepended
-  whenever the cell name does not already start with it, regardless of what
-  prefix the device itself uses for tmux sessions. In practice this means
-  the folder is always `cloud-<Cell>`, on every device — the file location
-  does not follow the device's own naming.
+- `<tmuxSession>` is the **exact tmux session name the Fleet roster reports**
+  for the designated cell (`cell.tmuxSession` in fleet status / `nc_cells`)
+  — the same value the bridge puts in the identity header, not a name
+  reconstructed from a device prefix. On a device whose sessions are named
+  `cloud-*` this is `cloud-<Cell>`; on a device using a different prefix (or
+  none) it is whatever that device actually calls the session. There is no
+  fixed prefix to guess: **until 2026-08-16 the bridge assumed `cloud-` as a
+  universal default, and on any device using a different prefix the prompt
+  was never found** — this page described that assumption as the contract
+  before it was understood to be the bug.
+- If the roster does not report a `tmuxSession` for the cell at all, the
+  bridge does not construct a path from the cell name as a fallback — see
+  "What the bridge does with it" below for what happens instead.
 
 To install a template: copy one of the files in
-[`live-prompt-templates/`](live-prompt-templates/) next to that cell's
-`PROMPT.md` and `ACTIVE_WORK.md`, and rename it to `LIVE_PROMPT.md`. Nothing
-in the file needs editing — it never names the cell or the operator; the
-voice discovers both at runtime through `nc_identity`/`nc_cells`, exactly as
-the file tells it to.
+[`live-prompt-templates/`](live-prompt-templates/) into that session's
+NexusFiles folder, next to that cell's `PROMPT.md` and `ACTIVE_WORK.md`, and
+rename it to `LIVE_PROMPT.md`. Nothing in the file needs editing — it never
+names the cell or the operator; the voice discovers both at runtime through
+`nc_identity`/`nc_cells`, exactly as the file tells it to.
 
 ## What the bridge does with it
 
-`readCellPrompt(filesRoot, cellId)` has three distinct outcomes, and the
+`readCellPrompt(filesRoot, tmuxSession)` has four distinct outcomes. The
 distinction matters for anyone debugging why a Live session sounds
-unbriefed:
+unbriefed — "I don't even know where to look," "I looked and it's not
+there," and "it's there but useless" point to different fixes:
 
 | Outcome | Cause | What happens |
 |---|---|---|
-| `applied: true` | file exists, reads, non-empty after trim | its text becomes `developerInstructions`; the app-server's own global/default chain does **not** run for this session |
-| `applied: false`, `reason: "missing"` | no such file (`ENOENT`) | legitimate absence — the session starts with the app-server's normal global instructions, no error |
+| `applied: true` | file exists, reads, non-empty after trim | its text is appended to the identity header, separated by a blank line |
+| `applied: false`, `reason: "session-unknown"` | the roster does not report a `tmuxSession` for this cell | no path is built at all — never a guess from the cell name; only the identity header (cell name, no session) is sent |
+| `applied: false`, `reason: "missing"` | the session is known, but no such file exists there (`ENOENT`) | legitimate absence — the identity header still ships, no per-cell prompt is appended, no error |
 | `applied: false`, `reason: "unreadable"` or `"empty"` | file exists but can't be read, or is blank/whitespace-only | almost certainly a mistake — worth fixing, not silent |
 
-Two things this table implies:
+Three things this table implies:
 
 - A missing file is not a bug. Not every cell needs one.
-- An unreadable or empty file is very likely one: something is there, and it
-  is not doing what its presence suggests.
+- `session-unknown` is not the same failure as `missing`, and collapsing them
+  is exactly how the prefix bug hid: every session on a non-`cloud-` device
+  looked "missing" when the real cause was "never looked, wrong assumed
+  path." If this ever shows up in practice, it means the roster isn't
+  reporting a tmux session for an active cell — worth investigating on its
+  own, not something to silently fall back from.
+- An unreadable or empty file is very likely a mistake: something is there,
+  and it is not doing what its presence suggests.
 
 ## Engine scope
 
@@ -73,10 +86,18 @@ The bridge's own test suite (`tests/live-host-bridge.test.js`) builds the
 real bridge against a real HTTP hub and a real WebSocket daemon, writes a
 `LIVE_PROMPT.md` file to disk at the exact path this page describes, and
 asserts on what the fake app-server actually *received* on the wire — not on
-what the code merely appears to do reading it top to bottom. That test
-(`'NATIVA con cella OCCUPATA...'`) is the proof this page's own claims are
-checked against, and it is the pattern to extend if this contract ever
-changes.
+what the code merely appears to do reading it top to bottom. Two tests are
+the pattern to extend if this contract ever changes:
+
+- `'NATIVA con cella OCCUPATA...'` — the ordinary case, file found and
+  applied, identity header followed by the prompt text.
+- `'BUG prefisso: un device con prefisso diverso da cloud- deve trovare
+  comunque il prompt'` — a device whose sessions are named `macair-*`: the
+  file is written under that exact session name, not under `cloud-`, and the
+  bridge is expected to find it there. This is the test that would have
+  caught the original bug — it fails against the pre-fix bridge and passes
+  against the current one, with a sibling test pinning that the `cloud-`
+  case does not regress.
 
 ## See also
 

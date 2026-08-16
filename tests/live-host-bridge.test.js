@@ -383,6 +383,13 @@ test('R2 identità: senza tmuxSession nel roster l\'intestazione dice la cella e
       ctx.daemon.seen.threadStarts[0].developerInstructions,
       'Live NexusCrew agganciata alla cella cloud-Nova.',
     );
+    // Stesso motivo vale per il prompt: senza una sessione dichiarata non si
+    // costruisce NESSUN path (nemmeno indovinando cloud-<Cella>), quindi non
+    // si tenta nemmeno la lettura — 'session-unknown' è un esito DISTINTO da
+    // 'missing' ("ho cercato nel posto giusto e non c'è"): qui non si è
+    // potuto nemmeno cercare. È il caso dove la prossima assenza silenziosa
+    // si nasconderebbe se questo restasse indistinguibile da 'missing'.
+    assert.deepEqual(b.prompt, { applied: false, reason: 'session-unknown' });
   } finally { await ctx.close(); }
 });
 
@@ -459,16 +466,75 @@ for (const lang of TEMPLATE_LANGS) {
       assert.deepEqual(b.prompt, { applied: true, source: 'LIVE_PROMPT.md' },
         `il template ${lang} deve risultare applicato, non ignorato`);
       assert.equal(ctx.daemon.seen.threadStarts.length, 1);
-      // Il testo arrivato sul socket e' esattamente quello del file del repo
-      // (trim, come fa readCellPrompt) — non un riassunto, non un frammento.
+      // Il testo arrivato sul socket e' l'intestazione R2 (sempre anteposta)
+      // seguita dal contenuto integrale del template del repo — non un
+      // riassunto, non un frammento, e non il solo template senza identita'.
       assert.equal(
         ctx.daemon.seen.threadStarts[0].developerInstructions,
-        templateText.trim(),
-        `developerInstructions deve essere il contenuto integrale del template ${lang}`,
+        `Live NexusCrew agganciata alla cella cloud-Alfa (sessione tmux cloud-Alfa).\n\n${templateText.trim()}`,
+        `developerInstructions deve essere intestazione + contenuto integrale del template ${lang}`,
       );
     } finally { await ctx.close(); }
   });
 }
+
+// —— Il bug trovato scrivendo docs/LIVE_PROMPT.md: il prefisso 'cloud-' era
+// FISSO nel codice di readCellPrompt, non dichiarato dal roster. Su un device
+// che chiama le proprie sessioni con un prefisso diverso, il prompt non viene
+// MAI trovato (o, se il cellId arriva gia' con un prefisso non-cloud-,
+// costruisce un path inventato) — e l'esito e' 'missing', cioe' "assenza
+// legittima": il difetto si maschera esattamente nel ramo che dovrebbe
+// segnalarlo. Questo test scrive il file dove la sessione del roster dice
+// DAVVERO che sta (macair-Nova, non cloud-Nova) — e' rosso finche' il ponte
+// non usa cell.tmuxSession invece di ricostruire il prefisso a mano.
+test('BUG prefisso: un device con prefisso diverso da cloud- deve trovare comunque il prompt', async () => {
+  const cwd = path.join(os.tmpdir(), 'cell-prefisso-macair');
+  const cells = [{ cell: 'Nova', active: true, tmux: true, tmuxSession: 'macair-Nova', engine: 'codex-vl.native', cwd }];
+  const ctx = await boot({ cells });
+  try {
+    const promptDir = path.join(ctx.root, 'macair-Nova');
+    fs.mkdirSync(promptDir, { recursive: true });
+    fs.writeFileSync(path.join(promptDir, 'LIVE_PROMPT.md'), 'Regole Live della cella Nova su questo device.\n');
+
+    await ctx.designate('Nova');
+    const b = await j(await ctx.bridgeCall());
+
+    assert.equal(b.mode, 'native');
+    // Il file C'E' ed E' LEGGIBILE, nella cartella che il roster dichiara
+    // davvero: applied deve essere true. Se il ponte cercasse ancora
+    // cloud-Nova (che su questo device non esiste), l'esito sarebbe
+    // 'missing' — l'assenza legittima che maschera il bug.
+    assert.deepEqual(b.prompt, { applied: true, source: 'LIVE_PROMPT.md' });
+    assert.equal(
+      ctx.daemon.seen.threadStarts[0].developerInstructions,
+      'Live NexusCrew agganciata alla cella Nova (sessione tmux macair-Nova).'
+        + '\n\nRegole Live della cella Nova su questo device.',
+    );
+  } finally { await ctx.close(); }
+});
+
+// Il caso esistente non deve regredire: su un device 'cloud-', comportamento
+// identico a prima, byte per byte.
+test('BUG prefisso — nessuna regressione: device cloud- invariato', async () => {
+  const cwd = path.join(os.tmpdir(), 'cell-prefisso-cloud-invariato');
+  const cells = [{ cell: 'Rho', active: true, tmux: true, tmuxSession: 'cloud-Rho', engine: 'codex-vl.native', cwd }];
+  const ctx = await boot({ cells });
+  try {
+    const promptDir = path.join(ctx.root, 'cloud-Rho');
+    fs.mkdirSync(promptDir, { recursive: true });
+    fs.writeFileSync(path.join(promptDir, 'LIVE_PROMPT.md'), 'Regole Live della cella Rho.\n');
+
+    await ctx.designate('Rho');
+    const b = await j(await ctx.bridgeCall());
+
+    assert.deepEqual(b.prompt, { applied: true, source: 'LIVE_PROMPT.md' });
+    assert.equal(
+      ctx.daemon.seen.threadStarts[0].developerInstructions,
+      'Live NexusCrew agganciata alla cella Rho (sessione tmux cloud-Rho).'
+        + '\n\nRegole Live della cella Rho.',
+    );
+  } finally { await ctx.close(); }
+});
 
 test('socket di controllo irraggiungibile: none/bridge-socket-failed con cella e detail (MC1.5)', async () => {
   const cwd = path.join(os.tmpdir(), 'cell-no-daemon');

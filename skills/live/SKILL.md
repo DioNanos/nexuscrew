@@ -85,11 +85,11 @@ owning node, not a retry from the requester.
 
 ## The per-cell voice prompt
 
-Once a session lands on a host cell, a native Live (engine `codex-vl*`) reads
-a per-cell prompt file and, if present, sends it as `developerInstructions`
-on `thread/start` — replacing the app-server's global injection for that
-session. See [The Live per-cell prompt](../../docs/LIVE_PROMPT.md) for where
-the file goes and the ready-to-copy IT/EN/ES templates.
+Once a session lands on a host cell, a native Live (engine `codex-vl*`)
+always sends `thread/start` an identity header naming the designated cell
+and its exact tmux session, and appends a per-cell prompt file's text after
+it when one exists. See [The Live per-cell prompt](../../docs/LIVE_PROMPT.md)
+for where the file goes and the ready-to-copy IT/EN/ES templates.
 
 ## Dependencies
 
