@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { parseDefinitions } = require('../lib/fleet/definitions.js');
-const { defaultDesktopEngine, backfillDesktopEngine } = require('../lib/fleet/builtin.js');
+const { defaultDesktopEngine, backfillDesktopEngine, createBuiltinFleet } = require('../lib/fleet/builtin.js');
 const { loadDefinitions, atomicWrite } = require('../lib/fleet/definitions.js');
 
 test('l\'engine Desktop supera la trust boundary che il salvataggio applica', () => {
@@ -123,4 +123,43 @@ test("RIPARAZIONE: non tocca una scelta dell'utente", () => {
   const dopo = backfillDesktopEngine(file, loadDefinitions(file));
   assert.equal(dopo.engines.find((e) => e.id === 'desktop.local').command, '/opt/mio/podman');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('IL BOOTSTRAP ripara: la correzione arriva ad avvio, non solo chiamando la funzione', async () => {
+  // Il test qui sopra chiamava la riparazione DIRETTAMENTE ed era verde mentre
+  // la funzione non aveva alcun chiamante: scritta, testata e mai eseguita.
+  // Il difetto e' stato trovato aggiornando una macchina vera, dove dopo il
+  // riavvio il comando era ancora relativo. Questo esercita il percorso REALE —
+  // se l'aggancio al bootstrap sparisce, questo diventa rosso e quello sopra no.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-boot-'));
+  const defsPath = path.join(home, 'fleet.json');
+  atomicWrite(defsPath, {
+    schemaVersion: 1,
+    engines: [{ ...defaultDesktopEngine(), command: 'docker' }],
+    cells: [],
+  });
+
+  await createBuiltinFleet({ home, fleetDefsPath: defsPath });
+
+  const daDisco = loadDefinitions(defsPath).engines.find((e) => e.id === 'desktop.local');
+  assert.ok(path.isAbsolute(daDisco.command),
+    `dopo l'avvio il comando e' ancora relativo (${daDisco.command}): la riparazione non gira`);
+  assert.equal(path.basename(daDisco.command), 'docker');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("IL BOOTSTRAP non AGGIUNGE desktop.local a chi non ce l'ha", async () => {
+  // Il verso opposto, e la decisione di progetto che va preservata: la
+  // riparazione non deve trasformarsi in un backfill universale, perche'
+  // l'engine presuppone un container con un nome preciso che quasi nessuna
+  // installazione avra'.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-boot2-'));
+  const defsPath = path.join(home, 'fleet.json');
+  atomicWrite(defsPath, { schemaVersion: 1, engines: [], cells: [] });
+
+  await createBuiltinFleet({ home, fleetDefsPath: defsPath });
+
+  const dopo = loadDefinitions(defsPath).engines.find((e) => e.id === 'desktop.local');
+  assert.equal(dopo, undefined, 'il bootstrap ha aggiunto un engine che deve restare manuale');
+  fs.rmSync(home, { recursive: true, force: true });
 });
