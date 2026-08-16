@@ -23,6 +23,13 @@ async function pannelloFinto() {
     // Un pannello che prova a posare un cookie sulla NOSTRA origine. Non e'
     // una cattiveria teorica: qualunque applicazione web lo fa per la propria
     // sessione, e servita sotto la nostra origine finirebbe li'.
+    // Riporta cosa il proxy gli ha lasciato arrivare: e' l'unico modo di
+    // verificare l'inoltro guardando il DESTINATARIO invece del mittente.
+    if (req.url.startsWith('/che-mi-arriva')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ authorization: req.headers.authorization || null }));
+      return;
+    }
     if (req.url.startsWith('/mette-cookie')) {
       res.writeHead(200, {
         'content-type': 'text/plain',
@@ -224,4 +231,36 @@ test('dal vivo: il Set-Cookie del pannello NON raggiunge la nostra origine, gli 
     'set-cookie del pannello filtrato: non deve poter posare cookie sulla nostra origine');
   assert.equal(risposta.headers['x-innocuo'], 'passa',
     'gli altri header passano: filtrare tutto romperebbe i pannelli veri');
+});
+
+test('dal vivo: la password del pannello ARRIVA al pannello, il nostro Bearer NO', async (t) => {
+  const panel = await pannelloFinto();
+  const proxy = await proxyVero(panel.port);
+  t.after(() => { panel.wss.close(); panel.server.close(); proxy.server.close(); });
+
+  const chiedi = (auth) => new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1', port: proxy.port, method: 'GET',
+      path: '/api/panel/Dev/che-mi-arriva', headers: { authorization: auth },
+    }, (res) => { let a = ''; res.on('data', (c) => { a += c; }); res.on('end', () => resolve(JSON.parse(a || '{}'))); });
+    req.on('error', reject); req.end();
+  });
+
+  // Un pannello protetto risponde 401 e il browser rimanda le credenziali che
+  // l'utente ha inserito PER LUI: buttarle via rendeva il login impossibile —
+  // il prompt tornava all'infinito e poi la pagina moriva.
+  const conBasic = await chiedi('Basic ' + Buffer.from('utente:segreto').toString('base64'));
+  assert.equal(conBasic.authorization, 'Basic ' + Buffer.from('utente:segreto').toString('base64'),
+    'la credenziale del pannello non gli arriva: il login non puo\' riuscire');
+
+  // Il Bearer e' il token del control plane: non deve raggiungere il container
+  // in nessun caso. E' la ragione per cui questo strip esiste.
+  const conBearer = await chiedi('Bearer token-del-nodo');
+  assert.equal(conBearer.authorization, null,
+    'il token del control plane e\' arrivato al pannello');
+
+  // Uno schema che non riconosciamo vale come il nostro: davanti al dubbio non
+  // si consegna nulla.
+  const strano = await chiedi('token-nudo-senza-schema');
+  assert.equal(strano.authorization, null, 'uno schema non riconosciuto e\' stato inoltrato');
 });
