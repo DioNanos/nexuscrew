@@ -93,6 +93,36 @@ test('build*Args: spec invalida -> throw (no argv injection)', () => {
   assert.throws(() => tunnel.buildForwardArgs({ ...NODE, keyPath: 'relative' }), /keyPath/);
 });
 
+// P0 sicurezza, meta' remota: un nodo con porta pannello negoziata inoltra
+// ENTRAMBE le destinazioni sullo stesso supervisor (-L control plane + -L
+// pannello). La porta pannello del peer diventa un loopback nostro con una
+// origin tutta sua: e' quello che il browser vede come origin diversa.
+test('buildForwardArgs: coppia pannello negoziata -> DUE -L (control plane + pannello)', () => {
+  const args = tunnel.buildForwardArgs({ ...NODE, panelLocalPort: 43101, panelRemotePort: 41821 });
+  const forwards = args.filter((a, i) => args[i - 1] === '-L');
+  assert.deepEqual(forwards, [
+    '127.0.0.1:43001:127.0.0.1:41820',
+    '127.0.0.1:43101:127.0.0.1:41821',
+  ], 'il forward pannello viaggia accanto a quello di controllo, non al posto suo');
+});
+
+test('buildForwardArgs: nodo senza coppia pannello -> UN solo -L, argv invariato', () => {
+  // Il record di un 0.9.0, o di un peer che non ha annunciato la sua porta
+  // pannello: il tunnel deve restare ESATTAMENTE quello di prima. Nessun -L
+  // inventato, nessun errore.
+  const args = tunnel.buildForwardArgs(NODE);
+  const forwards = args.filter((a, i) => args[i - 1] === '-L');
+  assert.deepEqual(forwards, ['127.0.0.1:43001:127.0.0.1:41820']);
+});
+
+test('buildForwardArgs: mezza coppia pannello -> throw (il forward impossibile non parte)', () => {
+  assert.throws(() => tunnel.buildForwardArgs({ ...NODE, panelLocalPort: 43101 }), /panel/);
+  assert.throws(() => tunnel.buildForwardArgs({ ...NODE, panelRemotePort: 41821 }), /panel/);
+  assert.throws(() => tunnel.buildForwardArgs({ ...NODE, panelLocalPort: 0, panelRemotePort: 41821 }), /panel/);
+  // bind conflitto col -L di controllo: ssh cadrebbe con ExitOnForwardFailure
+  assert.throws(() => tunnel.buildForwardArgs({ ...NODE, panelLocalPort: 43001, panelRemotePort: 41821 }), /panel/);
+});
+
 // --- backoff deterministico -------------------------------------------------
 
 test('backoffDelay: esponenziale, cap, jitter deterministico', () => {

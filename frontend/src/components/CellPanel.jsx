@@ -62,15 +62,16 @@ export default function CellPanel({
         // proxy lo risolve sulla destinazione della cella.
         let page = '/';
         try { page = new URL(panelUrl).pathname || '/'; } catch (_) { /* panelUrl già validato a monte */ }
-        // P0 sicurezza 2026-08-16: locale (route vuota) e porta pannello nota
+        // P0 sicurezza 2026-08-16: porta pannello PER QUESTA CELLA nota (la
+        // prop arriva già risolta: porta del nodo locale per le celle locali,
+        // porta inoltrata del nodo remoto per le remote — v. lib/panel-port)
         // → URL ASSOLUTO verso quell'origin, mai un path sotto la nostra. Una
         // porta diversa è ciò che rende l'origin diversa per il browser: un
         // path relativo, per quanto corretto, resterebbe same-origin col
-        // control plane — esattamente il difetto che questo chiude. Remoto
-        // (route non vuota) o panelPort assente (0, config non ancora
-        // arrivata): via storica invariata — limite dichiarato, nessuna
-        // negoziazione porta-pannello per nodo remoto in questo giro.
-        const base = (!route.length && panelPort) ? `http://127.0.0.1:${panelPort}` : routeBase(route);
+        // control plane — esattamente il difetto che questo chiude. panelPort
+        // assente (0: config non ancora arrivata, o nodo remoto senza porta
+        // negoziata — un peer accoppiato prima): via storica invariata.
+        const base = panelPort ? `http://127.0.0.1:${panelPort}` : routeBase(route);
         setFrameUrl(`${base}/panel/${encodeURIComponent(cellId)}${page}?ticket=${encodeURIComponent(esito.ticket)}`);
         setState('ready');
       } else {
