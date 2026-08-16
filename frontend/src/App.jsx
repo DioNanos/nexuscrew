@@ -758,6 +758,8 @@ export default function App() {
           onSendToDeck={onSendToDeck}
           cells={cells}
           nodeGroups={nodeGroups}
+          panelPort={panelPort}
+          nodePanelPorts={nodePanelPorts}
         />
       </div>
 
