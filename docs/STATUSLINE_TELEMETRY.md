@@ -33,12 +33,17 @@ Regole del contratto (il lettore è `lib/files/telemetry.js`, i test in
   accetta solo interi: una frazione scritta per errore (0.5 che voleva essere
   50%) viene rifiutata, non arrotondata a 1% — un numero sbagliato mostrato con
   sicurezza è il difetto che conta.
-- **`ts` è epoch-ms, obbligatorio.** Oltre 5 minuti il lettore considera il
-  dato morto e la riga non mostra nulla: un numero stantio che sembra fresco è
-  peggio di un numero assente.
-- **il VERSO è nei nomi e non si tocca**: `contextFreePct` è quanto RESTA,
-  `tier*UsedPct` è quanto è STATO CONSUMATO. I due versi sono opposti:
-  confonderli produce una riga che dice il contrario del vero.
+- **`ts` è epoch-ms, obbligatorio, nei DUE versi.** Oltre 5 minuti nel
+  passato il dato è morto; oltre 2 minuti nel FUTURO è rotto — un orologio
+  avanti lo farebbe restare «fresco» per sempre, perché la differenza
+  negativa non supera mai la soglia. In entrambi i casi la riga non mostra
+  nulla: un numero stantio che sembra fresco è peggio di un numero assente.
+- **il VERSO è nei nomi E nelle etichette, e non si tocca**:
+  `contextFreePct` è quanto RESTA, `tier*UsedPct` è quanto è STATO CONSUMATO.
+  I due versi sono opposti: confonderli produce una riga che dice il
+  contrario del vero. Per questo ogni etichetta della riga porta il proprio
+  verso scritto («libero» / «usati»): i nomi del contratto li vede chi
+  scrive il codice, l'etichetta la vede chi legge la riga.
 - **celle non-Claude non scrivono nulla, mai**: codex-vl, agy, grok, shell non
   hanno questa statusline. File assente = campo assente nella riga (niente
   trattino, niente «n/d»).
@@ -69,10 +74,15 @@ if [ -n "$NC_TELE_SESSIONE" ] && [ -n "$input" ]; then
       try {
         const j = JSON.parse(raw);
         // stdin porta FRAZIONI 0..1: qui e solo qui diventano interi 0..100.
+        // La normalizzazione RIFIUTA, non converte: typeof number esplicito,
+        // perché `Number(null) === 0` — un campo presente-ma-null dello stdin
+        // diventerebbe uno 0 perfettamente valido nel file, il lettore lo
+        // accetterebbe e la riga mostrerebbe «0%» per un dato che non c'è.
+        // Il difetto si sposterebbe dal lettore (che lo respinge) allo
+        // scrittore (che qui non può). Campo assente = campo cancellato.
         const pct = (x) => {
-          const v = Number(x);
-          if (!Number.isFinite(v) || v < 0 || v > 1) return null;
-          return Math.round(v * 100);
+          if (typeof x !== "number" || !Number.isFinite(x) || x < 0 || x > 1) return null;
+          return Math.round(x * 100);
         };
         const campi = {
           ts: Date.now(),

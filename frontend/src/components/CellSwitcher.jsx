@@ -34,12 +34,14 @@ export function formattaAttività(t, epoch, oraMs = Date.now()) {
   return `${t('cell-activity')} ${Math.floor(minuti / 60)}h`;
 }
 
-// La telemetria di riga, dove la cella la pubblica. Il VERSO è nel testo
-// stesso: il contesto è LIBERO, i tier sono USATI — l'etichetta «libero»
-// sta appiccicata al numero del contesto e a nessun altro, così la riga
-// non può dire il contrario del vero. Campi mancanti → la riga mostra
-// quelli che ci sono; nessun campo → stringa vuota e la riga resta com'era
-// (celle non-Claude: assenza legittima, niente trattino).
+// La telemetria di riga, dove la cella la pubblica. Il VERSO è scritto nel
+// testo stesso di OGNI numero: il contesto è «libero», i tier sono «usati».
+// Non basta che il verso stia nei nomi del contratto (contextFreePct /
+// tier*UsedPct): chi legge vede solo questa riga — un numero senza il suo
+// verso prenderebbe per contagio quello del vicino («contesto 71% libero ·
+// 5h 33%» si legge tutto libero). Ogni etichetta dice il proprio.
+// Campi mancanti → la riga mostra quelli che ci sono; nessun campo → stringa
+// vuota e la riga resta com'era (celle non-Claude: assenza legittima).
 export function formattaTelemetria(t, tele) {
   if (!tele || typeof tele !== 'object') return '';
   const parti = [];
