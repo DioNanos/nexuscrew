@@ -47,15 +47,15 @@ makes the cell try to run `panelUrl:` as a program. It fails to start, and
 because no `panelUrl` property was ever set, no panel button appears either —
 two symptoms, one cause, and neither of them says "wrong field".
 
-### There is no form for this yet
+### Setting it from the app
 
-The app reads `panelUrl` and shows the button, and a fleet backup preserves it,
-but **no screen currently writes it**. Until one exists, set it in the fleet
-definition — edit it directly, or export a fleet backup, add the property, and
-import it back.
+The cell and engine editors carry a `panelUrl` field. It anticipates the same
+loopback rule the backend enforces, so a non-loopback value is flagged before
+you save — but that check is not authoritative: the definition is validated
+again, the same way, the moment it is actually read.
 
-This is a gap in the interface, not in the feature: the value is validated and
-honoured the moment the definition is read.
+You can still set it by editing the fleet definition directly, or by exporting
+a fleet backup, adding the property, and importing it back.
 
 ## A worked example
 
