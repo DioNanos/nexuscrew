@@ -315,11 +315,16 @@ test('waitForDeadPane: la proroga tocca SOLO al pane gia morto con status pendin
 
   // 2. VIVO con status pending: NON deve prorogare. Se qualcuno mutasse il
   //    confronto in `dead === '0'`, qui la durata salterebbe oltre i 40ms.
+  // NON si misura il TEMPO: sotto carico un cronometro stretto diventa un
+  // flake, ed e' lo stesso difetto corretto poco sopra in questo file. Il
+  // codice produce gia' un segnale deterministico — la dicitura nel messaggio.
   s = scriptato(['0\t\t']);
-  let t0 = Date.now();
-  await assert.rejects(() => waitForDeadPane(null, '%0', 40, 70, { tmuxImpl: s.impl }));
-  let durata = Date.now() - t0;
-  assert.ok(durata < 40 + 70, `un pane VIVO non si proroga: ${durata}ms`);
+  await assert.rejects(() => waitForDeadPane(null, '%0', 40, 70, { tmuxImpl: s.impl }),
+    (e) => {
+      assert.doesNotMatch(e.message, /proroga usata/, 'un pane VIVO non si proroga');
+      assert.match(e.message, /pane non morto/, 'e il motivo lo dice');
+      return true;
+    });
 
   // 3. morto+pending che poi si risolve: la proroga serve e funziona.
   s = scriptato(['1\t\t', '1\t\t', '1\t\t', '1\t0\t']);
@@ -328,20 +333,23 @@ test('waitForDeadPane: la proroga tocca SOLO al pane gia morto con status pendin
 
   // 4. morto+pending per sempre: fallisce, e il messaggio DICHIARA la proroga.
   s = scriptato(['1\t\t']);
-  t0 = Date.now();
+  const t0 = Date.now();
   await assert.rejects(() => waitForDeadPane(null, '%0', 40, 70, { tmuxImpl: s.impl }),
     (e) => {
       assert.match(e.message, /proroga usata/, 'il messaggio dice che la proroga e\' stata spesa');
       assert.match(e.message, /pending/);
       return true;
     });
-  durata = Date.now() - t0;
-  assert.ok(durata >= 40 + 70 - 15, `la proroga viene davvero attesa: ${durata}ms`);
+  // Qui il tempo si puo' misurare solo dal basso: la proroga ALLUNGA l'attesa,
+  // e un carico alto la allunga ancora — mai la accorcia.
+  assert.ok(Date.now() - t0 >= 40 + 70 - 15, 'la proroga viene davvero attesa');
 
   // 5. errore di tmux: nessuna proroga, la scadenza resta secca.
   s = scriptato([{ code: 1, stdout: '', stderr: 'no server' }]);
-  t0 = Date.now();
-  await assert.rejects(() => waitForDeadPane(null, '%0', 40, 70, { tmuxImpl: s.impl }));
-  durata = Date.now() - t0;
-  assert.ok(durata < 40 + 70, `un comando fallito non migliora aspettando: ${durata}ms`);
+  await assert.rejects(() => waitForDeadPane(null, '%0', 40, 70, { tmuxImpl: s.impl }),
+    (e) => {
+      assert.doesNotMatch(e.message, /proroga usata/, 'un comando fallito non migliora aspettando');
+      assert.match(e.message, /comando tmux fallito/);
+      return true;
+    });
 });
