@@ -2,6 +2,20 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
+// Sidebar ora importa CellPeek (popup) che a sua volta importa Terminal
+// (@xterm/xterm) e CellPanel: pesanti e non relevant per i test della lista.
+// Stesso pattern di GridTile.test.jsx e CellSwitcher.test.jsx.
+vi.mock('./Terminal.jsx', () => ({ default: () => null }));
+vi.mock('./CellPanel.jsx', () => ({ default: () => null }));
+vi.mock('./CellPeek.jsx', () => ({
+  default: ({ row, onClose }) => (
+    <div role="dialog" aria-label={row.cellName} data-testid="cell-peek">
+      <span className="nc-peek-testo">{row.preview}</span>
+      <button type="button" onClick={onClose}>close</button>
+    </div>
+  ),
+}));
+
 import Sidebar from './Sidebar.jsx';
 
 beforeEach(() => {
@@ -10,6 +24,54 @@ beforeEach(() => {
 });
 
 describe('Sidebar session identity', () => {
+  // Il bersaglio della correzione: sul DESKTOP la lista che si usa davvero è
+  // questa. Il pallino verde deve essere un bersaglio SUO che apre il popup —
+  // DUE asserzioni: il popup si apre E la cella NON entra in griglia. Il resto
+  // della riga continua a fare la tile: il gesto che c'era resta.
+  const peekProps = (onAddTile) => ({
+    cells: [{ cell: 'Local Cell', tmuxSession: 'local-cell', tmux: true, active: true }],
+    sessions: [{ name: 'local-cell', preview: 'anteprima locale' }],
+    nodeGroups: [],
+    onPick: vi.fn(),
+    onAddTile,
+    onSettings: vi.fn(),
+  });
+
+  it('desktop: cliccare il PALLINO apre il popup E non aggiunge la tile (due asserzioni)', async () => {
+    const onAddTile = vi.fn();
+    const { container } = render(<Sidebar {...peekProps(onAddTile)} />);
+    const row = screen.getByText('Local Cell').closest('.nc-cell');
+    const dot = row.querySelector('.nc-dot');
+    fireEvent.click(dot);
+    expect(await screen.findByRole('dialog', { name: 'Local Cell' })).toBeTruthy();
+    expect(onAddTile).not.toHaveBeenCalled();
+    // e dentro c'è l'anteprima della cella giusta (nel <pre> del popup)
+    expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('anteprima locale');
+  });
+
+  it('desktop: cliccare il RESTO della riga aggiunge la tile come prima (non-regressione)', () => {
+    const onAddTile = vi.fn();
+    render(<Sidebar {...peekProps(onAddTile)} />);
+    fireEvent.click(screen.getByText('Local Cell'));
+    expect(onAddTile).toHaveBeenCalledWith('local-cell');
+    expect(screen.queryByRole('dialog', { name: 'Local Cell' })).toBeNull();
+  });
+
+  // IL DIFETTO CERCATO: il popup della sidebar e quello dello switcher sono
+  // due overlay fissi. Se si aprono entrambi, si sovrappongono — due dialog
+  // aria-modal che si contendono il fuoco. La policy voluta: UNO solo. Aprire
+  // dalla sidebar chiude lo switcher (onPeekOpen); aprire lo switcher chiude
+  // il peek della sidebar. L'asserzione: quando la sidebar apre il popup,
+  // onPeekOpen viene chiamato (App lo collega a setCellSwitcherOpen(false)).
+  it('desktop: aprire il popup della sidebar chiude lo switcher (un solo popup)', async () => {
+    const onPeekOpen = vi.fn();
+    const { container } = render(<Sidebar {...peekProps(vi.fn())} onPeekOpen={onPeekOpen} />);
+    const row = screen.getByText('Local Cell').closest('.nc-cell');
+    fireEvent.click(row.querySelector('.nc-dot'));
+    expect(await screen.findByRole('dialog', { name: 'Local Cell' })).toBeTruthy();
+    expect(onPeekOpen).toHaveBeenCalledTimes(1);
+  });
+
   it('toggles boot from local and routed desktop rows without using power', async () => {
     const onBoot = vi.fn(async () => {}); const onPower = vi.fn();
     const onBootSettlementApplied = vi.fn();
