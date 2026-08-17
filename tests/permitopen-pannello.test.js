@@ -290,16 +290,18 @@ test('refusalDetails: senza chiave pubblica non promette una riga da sostituire'
   assert.match(senza.hint, /A MANO/, 'si chiede una modifica manuale della riga esistente');
   assert.match(senza.hint, /permitopen="127\.0\.0\.1:41821"/, 'ma le destinazioni da aggiungere si dicono');
 
-  // .pub illeggibile: stesso verso, con la causa diversa nominata.
+  // Identita' dichiarata ma assente sul disco: col resolver enumerato e il
+  // formatter unico la causa ORA e' ESATTA — non piu' l'elenco di possibilita'
+  // che si usava quando non si potevano distinguere.
   const rotta = supervisor.refusalDetails({
     remoteDestinations: ['127.0.0.1:41800'], identityFile: path.join(dir, 'assente'),
   });
   assert.equal(rotta.authorizedKeys, '');
+  assert.equal(rotta.outcome, tunnel.PUBKEY_NO_IDENTITY, 'l\'esito enumerato viaggia col hint');
   assert.doesNotMatch(rotta.hint, /SOSTITUISCI/);
-  // Il messaggio NON deve scegliere una causa che non conosce: da qui non si
-  // distingue una privata assente da una protetta da passphrase. Le elenca.
-  assert.match(rotta.hint, /non riesco a derivare la chiave pubblica/, 'dice cosa non e\' riuscito');
-  assert.match(rotta.hint, /passphrase/, 'e nomina le cause possibili senza sceglierne una');
+  assert.match(rotta.hint, /non esiste/, 'dice la causa ESATTA: il file manca');
+  assert.doesNotMatch(rotta.hint, /passphrase/,
+    'e non elenca piu\' possibilita\' che ora sa distinguere');
   assert.doesNotMatch(rotta.hint, /parte pubblica non e' leggibile/,
     'MAI dire che la pubblica non e\' leggibile: con una chiave cifrata esiste eccome');
 
@@ -315,6 +317,10 @@ test('refusalDetails: senza chiave pubblica non promette una riga da sostituire'
       remoteDestinations: ['127.0.0.1:41800'], identityFile: cifrata,
     });
     assert.equal(conCifrata.authorizedKeys, '', 'nessuna riga: la privata non e\' derivabile in batch');
+    assert.equal(conCifrata.outcome, tunnel.PUBKEY_ENCRYPTED_OR_UNREADABLE,
+      'la cifrata ha il SUO esito, distinto dal file mancante');
+    assert.match(conCifrata.hint, /cifrata o illeggibile/, 'la causa esatta nel hint');
+    assert.doesNotMatch(conCifrata.hint, /non esiste/, 'e non dice che manca: il file c\'e\'');
     assert.doesNotMatch(conCifrata.hint, /parte pubblica non e' leggibile/,
       'e il messaggio non afferma una cosa falsa su un file che esiste');
   }
