@@ -6,6 +6,10 @@ import { openTerminalSocket } from '../lib/ws-client.js';
 import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
+import {
+  clampDraggedCell, edgeScrollDirection, handlePositions, normalizeRange,
+  rangeFromXterm, rangeToSelect,
+} from '../lib/selection-handles.js';
 import { t } from '../lib/i18n.js';
 import { filesFromTransfer, hasFilePayload, uploadSessionFiles } from '../lib/attachments.js';
 import {
@@ -36,6 +40,26 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // basta la tastiera virtuale). In quel caso il testo resta copiabile ma non
   // e' piu' mostrato, e chi guarda deve saperlo invece di dedurlo.
   const [selectionDetached, setSelectionDetached] = useState(false);
+  // R25 — due maniglie trascinabili SOPRA la selezione di xterm. La verita'
+  // del range vive nel buffer di xterm; questi stati sono solo la vista:
+  // selRange = l'ultimo range che xterm ha restituito, handleGeom le sue
+  // coordinate px, geomTick forza il ricalcolo quando cambia il viewport o
+  // arriva un redraw ma il range no.
+  const [selRange, setSelRange] = useState(null);
+  const [handleGeom, setHandleGeom] = useState(null);
+  const [geomTick, setGeomTick] = useState(0);
+  const [draggingHandle, setDraggingHandle] = useState(null);
+  // Il testo SOTTO una selezione attiva puo' essere sovrascritto (una
+  // progress bar che riscrive la riga, un redraw dell'app): la copia
+  // consegnerebbe il testo nuovo mentre chi guarda ha in mente quello
+  // vecchio. Snapshot PER RIGA all'ultimo cambiamento di selezione: il
+  // confronto a ogni render legge SOLO le righe renderizzate che intersecano
+  // la selezione (il range arriva dall'evento onRender), mai la selezione
+  // intera — il costo non deve crescere con la lunghezza della selezione,
+  // perche' il caso che morde e' proprio una selezione lunga mentre la cella
+  // produce output.
+  const selectionSnapshotRef = useRef(null);
+  const [selectionChanged, setSelectionChanged] = useState(false);
 
   const doCopy = async () => {
     const value = apiRef.current?.term?.getSelection() || selection;
@@ -53,6 +77,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // sempre la versione fresca, senza dover re-iscrivere i listener.
   const doCopyRef = useRef(doCopy);
   doCopyRef.current = doCopy;
+  // R25: il drag delle maniglie vive nell'effect grande (dove stanno cellXY e
+  // l'offset touch); il ponte espone startHandleDrag ai div renderizzati.
+  const handleDragApiRef = useRef({ startHandleDrag: () => {} });
+  const handleGeomRef = useRef(null);
+  handleGeomRef.current = handleGeom;
 
   // Focus → size-owner (§5b): quando il tile prende/perde il focus manda il
   // frame 'focus' cosi' il server promuove/demota il client (ignore-size).
@@ -227,6 +256,55 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       const next = term.getSelection();
       if (next) { setSelection(next); setSelectionDetached(false); }
       else setSelectionDetached(true);
+      // R25: le maniglie seguono la selezione — il range si rilegge a ogni
+      // cambiamento (gesto nostro o no); lo snapshot per riga e' la base del
+      // confronto per il contenuto sovrascritto sotto il range.
+      const range = rangeFromXterm(term.getSelectionPosition());
+      setSelRange(range);
+      let snap = null;
+      if (range && typeof term.buffer.active.getLine === 'function') {
+        const lines = [];
+        for (let y = range.start.row; y <= range.end.row; y++) {
+          const line = term.buffer.active.getLine(y);
+          lines.push(line ? line.translateToString() : '');
+        }
+        snap = { startRow: range.start.row, endRow: range.end.row, lines };
+      }
+      selectionSnapshotRef.current = snap;
+      setSelectionChanged(false);
+    });
+    // R25: le maniglie si ri-derivano a OGNI redraw e a OGNI scroll — i loro
+    // pixel dipendono dal viewport, il range no. Nessuna posizione viene mai
+    // ricordata: sempre ricalcolata dal range. E' cosi' che sopravvivono ai
+    // ridisegni senza andare alla deriva. Allo stesso battito si confronta il
+    // testo vivo con lo snapshot: se il contenuto sotto il range e' cambiato
+    // senza un gesto, si segnala (la copia darebbe il testo nuovo).
+    const onRender = term.onRender((rendered) => {
+      if (term.hasSelection?.()) {
+        // Il range dell'evento e' in righe VIEWPORT (0..rows-1, lo dice la
+        // doc di xterm e lo conferma chi lo consuma dentro xterm indicizzando
+        // il buffer con ydisp+riga): si converte in righe assolute e si
+        // confrontano SOLO le righe renderizzate che intersecano la
+        // selezione. L'output che passa altrove non tocca la selezione.
+        const snap = selectionSnapshotRef.current;
+        const start = rendered && rendered.start;
+        const end = rendered && rendered.end;
+        if (snap && Number.isInteger(start) && Number.isInteger(end)
+          && typeof term.buffer.active.getLine === 'function') {
+          const viewportY = Number(term.buffer.active.viewportY) || 0;
+          const lo = Math.max(viewportY + start, snap.startRow);
+          const hi = Math.min(viewportY + end, snap.endRow);
+          for (let y = lo; y <= hi; y++) {
+            const line = term.buffer.active.getLine(y);
+            const now = line ? line.translateToString() : '';
+            if (now !== snap.lines[y - snap.startRow]) { setSelectionChanged(true); break; }
+          }
+        }
+        setGeomTick((v) => v + 1);
+      }
+    });
+    const onScrollViewport = term.onScroll(() => {
+      if (term.hasSelection?.()) setGeomTick((v) => v + 1);
     });
     term.attachCustomKeyEventHandler((e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && term.getSelection()) {
@@ -546,6 +624,84 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     host.addEventListener('mousedown', onMouseDown, true);
     host.addEventListener('mousemove', onMouseMove, true);
     host.addEventListener('mouseup', onMouseUp, true);
+
+    // R25 — il drag delle DUE maniglie. Il gesto e' quello di Termux portato
+    // nel browser: offset RELATIVO (al tocco si registra il delta fra dito e
+    // maniglia, il movimento applica il delta: niente salto alla presa, il
+    // dito non deve centrare l'ancora), le maniglie NON si incrociano, il
+    // dito oltre il bordo fa scorrere il terminale. La selezione resta tutta
+    // di xterm: qui si chiede solo un nuovo range a term.select().
+    let handleDrag = null;         // { which, offsetX, offsetY }
+    let handleEdgeTimer = null;
+    let lastHandlePointer = { x: 0, y: 0, type: 'touch' };
+    const stopHandleEdgeScroll = () => {
+      if (handleEdgeTimer) { clearInterval(handleEdgeTimer); handleEdgeTimer = null; }
+    };
+    const applyHandlePoint = (px, py, pointerType) => {
+      if (!handleDrag) return;
+      const range = rangeFromXterm(term.getSelectionPosition());
+      if (!range) return;
+      const fixed = handleDrag.which === 'start' ? range.end : range.start;
+      // Su touch il dito COPRE il punto: la cella di lavoro sta ±2 righe piu'
+      // in la', lo stesso offset del long-press. Il mouse ha il cursore
+      // preciso: niente offset.
+      const cell = pointerType === 'mouse'
+        ? cellXY(px, py)
+        : touchSelectionCellAt({ clientX: px, clientY: py }, touchSelectionOffsetFor(py));
+      const maxRow = Math.max(0, Number(term.buffer.active.baseY || 0) + term.rows - 1);
+      const moved = clampDraggedCell({ moving: cell, fixed, which: handleDrag.which, cols: term.cols, maxRow });
+      const sel = rangeToSelect(normalizeRange(moved, fixed, term.cols), term.cols);
+      term.select(sel.col, sel.row, sel.length);
+      // Bordo: la maniglia sulla prima/ultima riga visibile fa scorrere il
+      // terminale; a ogni giro la STESSA posizione del dito mappa a una riga
+      // diversa (coordinate assolute nel buffer), quindi la selezione si
+      // estende finche' il buffer finisce o il dito rientra.
+      const viewportY = Number(term.buffer.active.viewportY) || 0;
+      const dir = edgeScrollDirection({ visibleRow: moved.row - viewportY, rows: term.rows });
+      stopHandleEdgeScroll();
+      // Sull'ALTERNATE buffer niente edge-scroll, dichiarato: li' lo scroll
+      // e' dell'applicazione (stessa decisione di Termux); le maniglie
+      // restano clampate al visibile.
+      if (dir === 0 || term.buffer.active.type === 'alternate') return;
+      handleEdgeTimer = setInterval(() => {
+        const before = Number(term.buffer.active.viewportY) || 0;
+        term.scrollLines(dir);
+        const after = Number(term.buffer.active.viewportY) || 0;
+        if (after === before) { stopHandleEdgeScroll(); return; } // fondo del buffer
+        applyHandlePoint(lastHandlePointer.x - handleDrag.offsetX, lastHandlePointer.y - handleDrag.offsetY, lastHandlePointer.type);
+      }, 130);
+    };
+    const onHandleDragMove = (e) => {
+      if (!handleDrag) return;
+      e.preventDefault();
+      lastHandlePointer = { x: e.clientX, y: e.clientY, type: e.pointerType || lastHandlePointer.type };
+      applyHandlePoint(e.clientX - handleDrag.offsetX, e.clientY - handleDrag.offsetY, lastHandlePointer.type);
+    };
+    const onHandleDragEnd = () => {
+      handleDrag = null;
+      stopHandleEdgeScroll();
+      setDraggingHandle(null);
+      window.removeEventListener('pointermove', onHandleDragMove);
+      window.removeEventListener('pointerup', onHandleDragEnd);
+      window.removeEventListener('pointercancel', onHandleDragEnd);
+    };
+    handleDragApiRef.current = {
+      startHandleDrag: (which, e) => {
+        if (!term.getSelectionPosition()) return;
+        e.preventDefault(); e.stopPropagation();
+        const g = handleGeomRef.current && handleGeomRef.current[which];
+        handleDrag = {
+          which,
+          offsetX: g ? e.clientX - g.left : 0,
+          offsetY: g ? e.clientY - g.top : 0,
+        };
+        lastHandlePointer = { x: e.clientX, y: e.clientY, type: e.pointerType || 'touch' };
+        setDraggingHandle(which);
+        window.addEventListener('pointermove', onHandleDragMove);
+        window.addEventListener('pointerup', onHandleDragEnd);
+        window.addEventListener('pointercancel', onHandleDragEnd);
+      },
+    };
     // Copia con FEEDBACK (Cmd+C Mac / Ctrl+Shift+C X11): non ci si affida solo a
     // attachCustomKeyEventHandler (async, senza feedback). Se c'e' selezione
     // locale, doCopy() copia con stato visibile (copiato / manuale) e blocchiamo
@@ -600,6 +756,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       if (actionRef) actionRef.current = () => false;
       onData.dispose();
       onSelection.dispose();
+      onRender.dispose();
+      onScrollViewport.dispose();
+      stopHandleEdgeScroll();
+      window.removeEventListener('pointermove', onHandleDragMove);
+      window.removeEventListener('pointerup', onHandleDragEnd);
+      window.removeEventListener('pointercancel', onHandleDragEnd);
+      handleDragApiRef.current = { startHandleDrag: () => {} };
       host.removeEventListener('touchstart', onTouchStart);
       host.removeEventListener('touchmove', onTouchMove, { capture: true });
       host.removeEventListener('touchend', onTouchEnd);
@@ -627,9 +790,40 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     };
   }, [session, node, token, readonly, takeSize, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, onFiles]);
 
+  // R25: dal range (coordinate buffer) ai pixel delle maniglie. Gira a ogni
+  // cambiamento del range e a ogni tick di viewport/redraw; misura lo schermo
+  // reale e deriva la grandezza della cella — la stessa strada del caret del
+  // long-press, cosi' le due viste non divergono.
+  useEffect(() => {
+    const host = hostRef.current;
+    const term = apiRef.current ? apiRef.current.term : null;
+    if (!host || !term || !selRange) { setHandleGeom(null); return; }
+    const screen = host.querySelector('.xterm-screen') || host;
+    const screenRect = screen.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    setHandleGeom(handlePositions({
+      range: selRange,
+      viewportY: Number(term.buffer.active.viewportY) || 0,
+      rows: term.rows,
+      cellWidth: screenRect.width / Math.max(1, term.cols),
+      cellHeight: screenRect.height / Math.max(1, term.rows),
+      screenLeft: screenRect.left - hostRect.left,
+      screenTop: screenRect.top - hostRect.top,
+    }));
+  }, [selRange, geomTick]);
+
   return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
     <div className="nc-terminal-host" ref={hostRef} />
     {touchSelectionCaret && <div className="nc-touch-selection-caret" style={touchSelectionCaret} aria-hidden="true" />}
+    {selRange && handleGeom && ['start', 'end'].map((which) => (handleGeom[which].visible && (
+      <div
+        key={`nc-sel-handle-${which}`}
+        className={`nc-sel-handle ${which}${draggingHandle === which ? ' dragging' : ''}`}
+        style={{ left: `${handleGeom[which].left}px`, top: `${handleGeom[which].top}px` }}
+        onPointerDown={(e) => handleDragApiRef.current.startHandleDrag(which, e)}
+        aria-hidden="true"
+      />
+    )))}
     {uploadState && <div className={`nc-upload-state${uploadState.error ? ' error' : ''}`} role="status">
       {uploadState.error
         ? uploadState.error
@@ -640,6 +834,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     {(selection || selectionMode) && <div className="nc-selection-tools">
       {selection ? <button type="button" onClick={doCopy}>{copyState || t('copy')}</button> : <span>{t('select-drag')}</span>}
       {selection && selectionDetached && <span className="nc-selection-held">{t('selection-held')}</span>}
+      {selection && !selectionDetached && selectionChanged && <span className="nc-selection-changed">{t('selection-changed')}</span>}
       <button type="button" onClick={() => { apiRef.current?.term?.clearSelection(); setSelection(''); setSelectionDetached(false); onSelectionModeChange?.(false); }}>{t('cancel')}</button>
       {copyState === t('copy-manual') && <textarea readOnly value={selection} onFocus={(e) => e.target.select()} />}
     </div>}
