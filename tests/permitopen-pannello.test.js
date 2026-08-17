@@ -301,3 +301,49 @@ test('readPublicKey: senza ssh-keygen non si compone nessuna riga', () => {
   assert.equal(tunnel.readPublicKey('/qualunque/chiave', { execImpl: rifiuta }), null,
     'e una privata illeggibile o protetta da passphrase porta allo stesso esito');
 });
+
+// L'HELPER CHE SOPRAVVIVE AL PADRE. `execFileSync` col timeout uccide SOLO il
+// processo diretto: se `ssh-keygen` ha lanciato un askpass, quello resta orfano.
+// E il supervisore chiama questa strada a ogni rifiuto del canale, quindi i
+// retry accumulerebbero prompt e processi che nessuno raccoglie — lo stesso
+// difetto degli ssh orfani, per un'altra porta.
+test('readPublicKey: una privata cifrata non lascia discendenti askpass', (t) => {
+  if (!sshKeygenDisponibile()) return t.skip('ssh-keygen non disponibile su questa macchina');
+  const { execFileSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'askpass-'));
+  const key = path.join(dir, 'cifrata');
+  execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', 'passphrase-di-prova', '-f', key],
+    { stdio: 'ignore', timeout: 20000 });
+  // Un askpass che NON torna: se venisse invocato e sopravvivesse, lo si vede.
+  const marcatore = `nc-askpass-${process.pid}-${Date.now()}`;
+  const ap = path.join(dir, 'ap.sh');
+  fs.writeFileSync(ap, `#!/bin/sh\nexec -a ${marcatore} sleep 120\n`, { mode: 0o700 });
+
+  const vivi = () => {
+    try {
+      return execFileSync('ps', ['-eo', 'args'], { encoding: 'utf8' })
+        .split('\n').filter((r) => r.includes(marcatore)).length;
+    } catch (_) { return 0; }
+  };
+  assert.equal(vivi(), 0, 'nessun residuo prima di cominciare');
+
+  const t0 = Date.now();
+  const prima = process.env.SSH_ASKPASS;
+  const primaReq = process.env.SSH_ASKPASS_REQUIRE;
+  const primaDisplay = process.env.DISPLAY;
+  try {
+    process.env.SSH_ASKPASS = ap;
+    process.env.SSH_ASKPASS_REQUIRE = 'force';
+    process.env.DISPLAY = ':99';
+    assert.equal(tunnel.readPublicKey(key), null, 'una privata cifrata non si deriva in batch');
+  } finally {
+    // Ripristino nello STESSO blocco: se il test morisse in mezzo, l'ambiente
+    // alterato sopravviverebbe agli altri test di questo file.
+    if (prima === undefined) delete process.env.SSH_ASKPASS; else process.env.SSH_ASKPASS = prima;
+    if (primaReq === undefined) delete process.env.SSH_ASKPASS_REQUIRE; else process.env.SSH_ASKPASS_REQUIRE = primaReq;
+    if (primaDisplay === undefined) delete process.env.DISPLAY; else process.env.DISPLAY = primaDisplay;
+  }
+  assert.ok(Date.now() - t0 < 4000, 'fallisce SUBITO, non aspettando il timeout');
+  assert.equal(vivi(), 0, 'e non lascia nessun helper askpass vivo dietro di se');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

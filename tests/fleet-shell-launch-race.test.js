@@ -111,13 +111,13 @@ function parsePaneDeadState(stdout) {
 // status pending», si concede una proroga UNA volta e la si dichiara nel
 // messaggio: cosi' un rosso resta un rosso, e una macchina occupata non
 // diventa un difetto del prodotto.
-async function waitForDeadPane(socket, paneId, timeoutMs = 8000, prorogaMs = 12000) {
+async function waitForDeadPane(socket, paneId, timeoutMs = 8000, prorogaMs = 12000, impl = {}) {
   let deadline = Date.now() + timeoutMs;
   let prorogato = false;
   const poll = 25;
   let last = { code: -1, dead: null, status: undefined, raw: '', stderr: '' };
   do {
-    const state = tmux(socket, ['display-message', '-p', '-t', paneId,
+    const state = (impl.tmuxImpl || tmux)(socket, ['display-message', '-p', '-t', paneId,
       '#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}']);
     const parsed = parsePaneDeadState(state.stdout);
     last = {
@@ -288,4 +288,60 @@ test('start e stop di una cella con id puntato non lasciano sessioni orfane', ()
     tmux(socket, ['kill-session', '-t', sid]);
     assert.equal(tmux(socket, ['list-sessions', '-F', '#{session_name}']).stdout.trim(), '', 'stop pulito, nessuna orfana');
   } finally { cleanup(socket); }
+});
+
+// IL RAMO DELLA PROROGA, pinnato in modo deterministico. L'integrazione tmux
+// produce quasi sempre l'esito subito, quindi non esercita mai questo ramo: una
+// mutazione del confronto `dead === '1'` resterebbe verde. Qui la sonda si
+// scrive a mano, e la proroga si vede.
+test('waitForDeadPane: la proroga tocca SOLO al pane gia morto con status pending', async () => {
+  const risposta = (raw) => ({ code: 0, stdout: `${raw}\n`, stderr: '' });
+  const scriptato = (sequenza) => {
+    let i = 0;
+    const chiamate = [];
+    const impl = () => {
+      const r = sequenza[Math.min(i, sequenza.length - 1)];
+      i += 1; chiamate.push(r);
+      return typeof r === 'string' ? risposta(r) : r;
+    };
+    return { impl, quante: () => i };
+  };
+
+  // 1. morto con status: torna subito, una sola chiamata.
+  let s = scriptato(['1\t0\t']);
+  const dead = await waitForDeadPane(null, '%0', 40, 70, { tmuxImpl: s.impl });
+  assert.equal(dead.status, '0');
+  assert.equal(s.quante(), 1, 'nessuna attesa quando la risposta c\'e\' subito');
+
+  // 2. VIVO con status pending: NON deve prorogare. Se qualcuno mutasse il
+  //    confronto in `dead === '0'`, qui la durata salterebbe oltre i 40ms.
+  s = scriptato(['0\t\t']);
+  let t0 = Date.now();
+  await assert.rejects(() => waitForDeadPane(null, '%0', 40, 70, { tmuxImpl: s.impl }));
+  let durata = Date.now() - t0;
+  assert.ok(durata < 40 + 70, `un pane VIVO non si proroga: ${durata}ms`);
+
+  // 3. morto+pending che poi si risolve: la proroga serve e funziona.
+  s = scriptato(['1\t\t', '1\t\t', '1\t\t', '1\t0\t']);
+  const dopo = await waitForDeadPane(null, '%0', 5, 200, { tmuxImpl: s.impl });
+  assert.equal(dopo.status, '0', 'la proroga lascia il tempo di convergere');
+
+  // 4. morto+pending per sempre: fallisce, e il messaggio DICHIARA la proroga.
+  s = scriptato(['1\t\t']);
+  t0 = Date.now();
+  await assert.rejects(() => waitForDeadPane(null, '%0', 40, 70, { tmuxImpl: s.impl }),
+    (e) => {
+      assert.match(e.message, /proroga usata/, 'il messaggio dice che la proroga e\' stata spesa');
+      assert.match(e.message, /pending/);
+      return true;
+    });
+  durata = Date.now() - t0;
+  assert.ok(durata >= 40 + 70 - 15, `la proroga viene davvero attesa: ${durata}ms`);
+
+  // 5. errore di tmux: nessuna proroga, la scadenza resta secca.
+  s = scriptato([{ code: 1, stdout: '', stderr: 'no server' }]);
+  t0 = Date.now();
+  await assert.rejects(() => waitForDeadPane(null, '%0', 40, 70, { tmuxImpl: s.impl }));
+  durata = Date.now() - t0;
+  assert.ok(durata < 40 + 70, `un comando fallito non migliora aspettando: ${durata}ms`);
 });
