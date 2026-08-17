@@ -332,3 +332,57 @@ test('il riavvio portatile dell\'update attraversa lo STESSO nucleo del manuale:
   await uscito;
   assert.equal(fs.existsSync(pidPath), false, 'il pidfile del vecchio runtime è stato pulito');
 });
+
+// R-pidfile-2 (2026-08-17): il difetto MISURATO, non solo temuto — qui, non
+// in pidfile.test.js, perché è dove si vede davvero. Un nodo il cui runtime
+// è ancora precedente ad a7c8a56 (0.9.4, dove processStart è nato) ha un
+// pidfile LEGACY: nessun campo processStart, nessun campo attestation — non
+// perché l'attestazione sia fallita, ma perché quel codice non la conosceva
+// affatto. Quando aggiorna, npm install sovrascrive lib/cli/pidfile.js PRIMA
+// che questo runner lo richieda: stopPortableRuntime (nucleo REALE, come il
+// test sopra) legge il pidfile VECCHIO col codice NUOVO. Se killPidfile
+// trattasse "nessun campo" come indeterminate (fail-closed, come nel primo
+// giro di questo fix), stopped.killed sarebbe false, restartRuntime
+// lancerebbe "restart portatile fallito", e l'update morirebbe per OGNI nodo
+// in questo stato — non un rischio, un guasto certo. Il fix (lib/cli/
+// pidfile.js) tratta il meta legacy come un caso a sé (ricade sul cmd,
+// dichiarato unverifiedBirth:'legacy'): questo test prova che il ciclo di
+// vita reale — pidfile legacy scritto sul disco, poi il percorso vero del
+// runner — non fallisce. Se qualcuno tornasse a fondere legacy e
+// indeterminate, questo test si accende prima che raggiunga un nodo reale.
+test('npm update runner: un pidfile LEGACY (pre-attestazione) non fa fallire l\'update', async (t) => {
+  const { spawn } = require('node:child_process');
+  const pidf = require('../lib/cli/pidfile.js');
+  const realCommands = require('../lib/cli/commands.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-update-legacy-'));
+  const code = 'setInterval(() => {}, 1000)';
+  const child = spawn(process.execPath, ['-e', code], { stdio: 'ignore' });
+  t.after(() => { try { child.kill('SIGKILL'); } catch (_) {} fs.rmSync(dir, { recursive: true, force: true }); });
+  const uscito = new Promise((resolve) => { child.on('exit', resolve); });
+  const pidPath = pidf.defaultPidfilePath(dir);
+  await new Promise((resolve) => { if (child.pid) resolve(); else child.on('spawn', resolve); });
+  fs.mkdirSync(path.dirname(pidPath), { recursive: true });
+  // Scritto A MANO, non con pidf.writePidfile: è esattamente quello che il
+  // codice PRIMA di a7c8a56 avrebbe scritto — nessun processStart, nessun
+  // attestation, perché quel campo non esisteva ancora.
+  fs.writeFileSync(pidPath, `${JSON.stringify({
+    pid: child.pid, cmd: `${process.execPath} -e ${code}`, startTs: Date.now(),
+  })}\n`, { mode: 0o600 });
+
+  const mode = await restartRuntime({
+    home: dir, platform: 'linux', port: 41820, token: 't',
+    commands: {
+      isServiceRunning: () => false, // ramo portatile
+      fermaTunnelPrimaDiRiavviare: realCommands.fermaTunnelPrimaDiRiavviare, // REALE
+      stopPortableRuntime: realCommands.stopPortableRuntime,                 // REALE — killPidfile nudo
+      startPortable: () => ({ started: true }),
+      portAvailable: async () => true,
+    },
+    stopTunnelsImpl: () => {},
+    waitForRuntimeImpl: async () => true,
+  });
+
+  assert.equal(mode, 'portable', 'l\'update NON fallisce su un pidfile legacy: nessun throw da stopPortableRuntime');
+  await uscito;
+  assert.equal(fs.existsSync(pidPath), false, 'il pidfile legacy del vecchio runtime è stato pulito, come sempre');
+});

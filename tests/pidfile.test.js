@@ -361,37 +361,60 @@ test('isAlive: non calcolabile — senza nascita leggibile vale il cmd, nel dubb
   }
 });
 
-// R-pidfile-2 (2026-08-17, audit su 7b6571c/529e32f): l'audit ha trovato che
-// killPidfile segnalava ANCORA sul solo pid+cmd quando il meta non aveva
-// processStart — non solo il "formato vecchio" onesto, ma anche i pidfile
-// scritti da writePidfile quando l'attestazione falliva alla creazione senza
-// una causa classificabile. La stessa identica forma di meta che il test
-// SOPRA (isAlive) accetta come "vivo, nel dubbio" qui PRIMA faceva anche
-// segnalare — e un pid ereditato con un cmd compatibile riceveva il segnale
-// come se fosse verificato. Questo test PRIMA di oggi asseriva `r.killed ===
-// true` per esattamente questo meta ("pidfile senza nascita: il kill
-// verificato di sempre" — il commento originale, ora sbagliato). Da oggi
-// asserisce il contrario: senza una classificazione dichiarata alla
-// creazione (attested o unsupported), killPidfile rifiuta — perché un meta
-// senza campo non si distingue da un tentativo fallito per un motivo che
-// potrebbe riguardare solo QUESTO pid, non la piattaforma, e quell'assenza
-// non e' una proprieta' stabile su cui vale la pena segnalare. Non e' un
-// indebolimento nascosto: e' il buco che l'audit ha aperto. Costo dichiarato:
-// un pidfile scritto da una versione precedente a questo fix (o su una
-// piattaforma dove l'attestazione fallisce in modo non classificabile)
-// richiede un riavvio/stop manuale la prima volta — un fallimento visibile,
-// non un segnale silenzioso al bersaglio sbagliato.
-test('killPidfile: senza classificazione dichiarata (meta vecchio o indeterminate) RIFIUTA, non e\' piu\' il kill verificato di sempre', async () => {
+// R-pidfile-2 (2026-08-17, audit su 7b6571c/529e32f): primo giro — l'audit
+// ha trovato che killPidfile segnalava sul solo pid+cmd quando il meta non
+// aveva processStart, in QUALUNQUE caso. Questo test asseriva `r.killed ===
+// true` per un meta senza processStart ("pidfile senza nascita: il kill
+// verificato di sempre" — il commento originale). Un primo fix aveva reso
+// TUTTI i meta senza attestazione un rifiuto, senza distinguere. Dev ha
+// MISURATO il costo di quella scelta sul path reale dell'aggiornamento
+// automatico: lib/update/runner.js chiama stopPortableRuntime -> killPidfile
+// nudo, senza degrado; un rifiuto fa FALLIRE l'update per ogni nodo il cui
+// runtime e' ancora precedente ad a7c8a56 (0.9.4, dove processStart e'
+// nato) — npm install sovrascrive pidfile.js prima che il runner lo
+// richieda, legge il pidfile VECCHIO del runtime in esecuzione, rifiuta,
+// l'update muore. Un guasto certo per ogni nodo in quello stato, non un
+// rischio raro.
+//
+// Decisione di prodotto (Dev): un meta senza NESSUN campo di attestazione
+// (ne' processStart ne' attestation) e' LEGACY — scritto da un codice che
+// l'attestazione non la conosceva, non da un tentativo che e' fallito. Da
+// oggi questo test asserisce di nuovo `r.killed === true`: il ramo legacy
+// ricade sul cmd come SEMPRE ha fatto in produzione (nessun peggioramento),
+// ma lo DICHIARA (unverifiedBirth:'legacy', distinto da 'unsupported'). Il
+// caso che DEVE rifiutare — il codice nuovo che ha provato e fallito — e'
+// un meta diverso, attestation:'indeterminate' esplicito: vedi il test
+// subito sotto.
+test('killPidfile: meta LEGACY (nessun campo di attestazione) ricade sul cmd come sempre, dichiarato', async () => {
   const child = figlioCheTieneIlNumero();
   await figlioPronto(child);
   const p = tmpPid();
   try {
     const cmdVivo = readCmdline(child.pid);
-    const senza = { pid: child.pid, cmd: cmdVivo, uid: currentUid() };
-    fs.writeFileSync(p, `${JSON.stringify(senza)}\n`);
+    const legacy = { pid: child.pid, cmd: cmdVivo, uid: currentUid() };
+    fs.writeFileSync(p, `${JSON.stringify(legacy)}\n`);
     const r = killPidfile(p, 'SIGTERM');
-    assert.equal(r.killed, false, 'meta senza processStart e senza attestation dichiarata: NON si segnala');
-    assert.match(r.reason, /unattested/, `reason nomina la causa: ${r.reason}`);
+    assert.equal(r.killed, true, 'meta legacy (nessun campo attestation): il kill verificato via cmd resta possibile');
+    assert.equal(r.unverifiedBirth, 'legacy', 'dichiarato, e distinguibile da unsupported');
+    await aspettaExit(child);
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+});
+
+test('killPidfile: attestation indeterminate (tentativo fallito, non mai tentato) RIFIUTA', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  try {
+    const cmdVivo = readCmdline(child.pid);
+    const indeterminato = { pid: child.pid, cmd: cmdVivo, attestation: 'indeterminate', uid: currentUid() };
+    fs.writeFileSync(p, `${JSON.stringify(indeterminato)}\n`);
+    const r = killPidfile(p, 'SIGTERM');
+    assert.equal(r.killed, false, 'tentativo fallito senza causa classificabile: NON si segnala');
+    assert.match(r.reason, /indeterminate/, `reason nomina la causa: ${r.reason}`);
     assert.ok(fs.existsSync(p), 'il pidfile NON si tocca: non sappiamo se sia stale');
     assert.equal(pidOwnership(child.pid), 'owned', 'il legittimo e\' ancora vivo, non toccato');
   } finally {
@@ -401,14 +424,19 @@ test('killPidfile: senza classificazione dichiarata (meta vecchio o indeterminat
   }
 });
 
-// CONTROLLO NEGATIVO OBBLIGATORIO (Dev, R-pidfile-2): la sonda dell'auditor
-// riprodotta cosi' com'e', mockata come l'ha descritta — pid ereditato, cmd
-// compatibile, nessuna attestazione nel meta. PRIMA di questo fix: ownership
-// owned, cmd match, start reader mai interrogato (il ramo non c'era) ->
-// segnala e rimuove il pidfile. DOPO: rifiuta, non tocca il pidfile.
-test('AUDITOR negativo: pid ereditato + cmd compatibile + nessuna attestazione — PRIMA segnalava, ORA no', () => {
+// CONTROLLO NEGATIVO OBBLIGATORIO (Dev, R-pidfile-2), riscritto per il
+// secondo giro. La sonda ORIGINALE dell'auditor (meta senza NESSUN campo,
+// pid ereditato, cmd compatibile) rappresentava, senza saperlo, il caso
+// LEGACY — e quel caso ora DEVE tornare a segnalare (test sopra), o
+// l'aggiornamento automatico si rompe per ogni nodo pre-0.9.4. Riscritta con
+// attestation:'indeterminate' esplicito: e' quello il caso che l'intento
+// dell'auditor vuole chiuso (un pid ereditato, verificato solo per
+// inclusione di stringa, quando l'identita' avrebbe potuto essere provata e
+// non lo e' stata) — non "qualunque meta senza nascita", che includerebbe
+// anche il legacy onesto. PRIMA (prima del fix): segnala. DOPO: rifiuta.
+test('AUDITOR negativo: pid ereditato + cmd compatibile + attestazione TENTATA E FALLITA — PRIMA segnalava, ORA no', () => {
   const p = tmpPid();
-  fs.writeFileSync(p, `${JSON.stringify({ pid: 424242, cmd: 'node same-command' })}\n`);
+  fs.writeFileSync(p, `${JSON.stringify({ pid: 424242, cmd: 'node same-command', attestation: 'indeterminate' })}\n`);
   const segnali = [];
   const killImpl = (pid, signal) => { segnali.push([pid, signal]); }; // non lancia mai: ownership 'owned'
   const r = killPidfile(p, 'SIGTERM', {
@@ -416,7 +444,7 @@ test('AUDITOR negativo: pid ereditato + cmd compatibile + nessuna attestazione �
     readCmdlineImpl: () => 'node same-command',
     readProcessStartImpl: () => null,
   });
-  assert.equal(r.killed, false, 'pid solo ereditato, cmd compatibile, nessuna attestazione: NON si segnala');
+  assert.equal(r.killed, false, 'pid ereditato, cmd compatibile, attestazione tentata e fallita: NON si segnala');
   assert.deepEqual(segnali, [[424242, 0]], 'solo la probe di ownership: nessun SIGTERM verso il riusato');
   assert.ok(fs.existsSync(p), 'il pidfile non verificabile non si tocca: non sappiamo se sia stale');
   fs.rmSync(path.dirname(p), { recursive: true, force: true });
@@ -424,7 +452,8 @@ test('AUDITOR negativo: pid ereditato + cmd compatibile + nessuna attestazione �
 
 // unsupported: DICHIARATO alla creazione (probeProcessStart, non ricalcolato
 // al kill). Qui la piattaforma non sa attestare per davvero (mock: ne' proc
-// ne' ps rispondono) e il kill ricade sul cmd — ma lo DICE nel risultato.
+// ne' ps rispondono) e il kill ricade sul cmd — ma lo DICE nel risultato,
+// distinto da 'legacy' (stesso comportamento, causa diversa).
 test('killPidfile: unsupported dichiarato alla creazione ricade sul cmd, ma lo dichiara nel risultato', async () => {
   const child = figlioCheTieneIlNumero();
   await figlioPronto(child);
@@ -434,7 +463,7 @@ test('killPidfile: unsupported dichiarato alla creazione ricade sul cmd, ma lo d
     fs.writeFileSync(p, `${JSON.stringify({ pid: child.pid, cmd: cmdVivo, attestation: 'unsupported', uid: currentUid() })}\n`);
     const r = killPidfile(p, 'SIGTERM');
     assert.equal(r.killed, true, 'unsupported dichiarato: il kill verificato via cmd resta possibile (Termux non si spegne)');
-    assert.equal(r.unverifiedBirth, true, 'ma il risultato lo dichiara: non e\' un kill verificato quanto quello attestato');
+    assert.equal(r.unverifiedBirth, 'unsupported', 'dichiarato, e distinguibile da \'legacy\'');
     await aspettaExit(child);
   } finally {
     child.kill('SIGKILL');
