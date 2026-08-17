@@ -40,11 +40,14 @@ const MIN_H = 240;
 // Misure di default del CSS: min(1100px, 96vw) × min(820px, 92vh).
 const DEFAULT_W = 1100;
 const DEFAULT_H = 820;
-// Quanta barra del titolo deve restare afferrabile anche ai bordi: la
-// finestra non deve poter finire fuori schermo al punto da non poterla piu'
-// prendere.
+// La finestra non deve poter finire fuori schermo al punto da non poterla
+// piu' afferrare. Due misure, DUE lati diversi — non sono la stessa costante:
+// GRAB = quanto deve sporgere ORIZZONTALMENTE (bordi sinistro/destro), dove
+// basta un angolo della barra da prendere col puntatore;
+// TESTA = quanta barra deve restare visibile VERTICALMENTE (bordo basso:
+// l'altezza della barra stessa, min-height 40 + padding) — sotto il bordo
+// basso non si va mai (top >= 0), quindi in alto il vincolo e' totale.
 const GRAB = 48;
-// Altezza della barra da tenere comunque visibile (min-height 40 + padding).
 const TESTA = 44;
 
 function viewport() {

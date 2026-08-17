@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 
 // R24 — la finestra del popup si sposta, si ridimensiona, ricorda la
 // geometria. Il punto che decide se funziona: dentro c'e' un IFRAME che si
@@ -138,6 +138,51 @@ describe('CellPopup R24: finestra spostabile e ridimensionabile', () => {
     // E molto oltre il bordo sinistro: almeno un pezzo di barra resta dentro.
     fireEvent.mouseMove(window, { clientX: -5000, clientY: 10 });
     expect(popup.style.left).toBe(`${-(w - 48)}px`);
+    fireEvent.mouseUp(window);
+  });
+
+  it('clamp BASSO: oltre il fondo la barra resta visibile (y <= vh - altezza barra)', () => {
+    // L'audit: la dichiarazione copriva sinistro, destro e alto, ma il
+    // vincolo basso (top mai oltre vh - TESTA) non era esercitato da
+    // nessuno. Nota: TESTA=44 non e' GRAB=48 — sono due misure per due lati
+    // diversi, e il test pretende esattamente quella bassa.
+    matchMediaFisso(false);
+    const { container } = render(<CellPopup title="Dev" onClose={() => {}}><div /></CellPopup>);
+    const popup = container.querySelector('.nc-popup');
+    const testa = container.querySelector('.nc-popup-testa');
+    fireEvent.mouseDown(testa, { button: 0, clientX: 500, clientY: 10 });
+    // Prova a buttarla MOLTO sotto il bordo basso.
+    fireEvent.mouseMove(window, { clientX: 500, clientY: 5000 });
+    expect(popup.style.top).toBe(`${window.innerHeight - 44}px`);
+    // E risali oltre il bordo alto: li' il vincolo e' totale (top >= 0).
+    fireEvent.mouseMove(window, { clientX: 500, clientY: -5000 });
+    expect(popup.style.top).toBe('0px');
+    fireEvent.mouseUp(window);
+  });
+
+  it('ritorno da mobile a desktop: la geometria salvata viene riletta e riclampata', () => {
+    // Il ramo useEffect([mobile]) che rilegge la posizione quando si torna
+    // da mobile: prima non aveva test. Si guida il listener che il
+    // componente registra su matchMedia.
+    const mq = matchMediaFisso(true);
+    window.localStorage.setItem(KEY, JSON.stringify({ x: 50, y: 60, w: 500, h: 400 }));
+    const { container } = render(<CellPopup title="Dev" onClose={() => {}}><div /></CellPopup>);
+    const popup = container.querySelector('.nc-popup');
+    // Fase mobile: schermo pieno, nessuna geometria inline.
+    expect(popup.style.left).toBe('');
+    const cambio = mq.addEventListener.mock.calls.find((c) => c[0] === 'change');
+    expect(cambio).toBeTruthy();
+    const fire = cambio[1];
+    // La viewport torna desktop: il componente rilegge la geometria salvata.
+    act(() => { fire({ matches: false }); });
+    expect(popup.style.left).toBe('50px');
+    expect(popup.style.top).toBe('60px');
+    expect(popup.style.width).toBe('500px');
+    expect(popup.style.height).toBe('400px');
+    // E il trascinamento torna attivo davvero: un drag sposta la finestra.
+    fireEvent.mouseDown(container.querySelector('.nc-popup-testa'), { button: 0, clientX: 100, clientY: 70 });
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 170 });
+    expect(popup.style.left).toBe('150px');
     fireEvent.mouseUp(window);
   });
 
