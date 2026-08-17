@@ -164,3 +164,31 @@ test('refusalDetails espone la riga come campo, oltre che dentro la frase', () =
   assert.equal(senza.authorizedKeys, '');
   assert.ok(senza.hint.includes('permitopen'), 'la frase resta utile a chi legge');
 });
+
+// LA COMPOSIZIONE DAL NODO, cioe' la stessa funzione che la route del pairing
+// usa per rispondere. Il test precedente prova il pezzo che compone la riga;
+// questo prova la domanda che il prodotto si pone davvero — "quale riga deve
+// incollare il peer di QUESTO nodo?" — e il suo limite.
+//
+// NON copre il giro HTTP completo: quello richiede un peer che risponda al
+// join, e l'infrastruttura sta in pairing-panel-port-e2e.test.js. Qui si prova
+// la logica che la route invoca, e il limite che decide se la riga esce.
+test('authorizedKeysForNode: con la chiave la riga esce, senza identityFile no', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'akfn-'));
+  const key = path.join(dir, 'id_ed25519');
+  fs.writeFileSync(`${key}.pub`, 'ssh-ed25519 AAAAC3TestNodo prova\n');
+
+  const conChiave = tunnel.authorizedKeysForNode(
+    { remotePort: 41800, identityFile: key }, 41821);
+  assert.ok(conChiave.includes('permitopen="127.0.0.1:41800"'), 'la porta nexus');
+  assert.ok(conChiave.includes('permitopen="127.0.0.1:41821"'), 'la porta pannello');
+  assert.ok(conChiave.includes('AAAAC3TestNodo'), 'la chiave letta dal .pub accanto alla privata');
+
+  // IL LIMITE, dichiarato: senza identityFile ssh usa le chiavi di default
+  // dell'utente, che il prodotto non conosce. Non si inventa una riga: si torna
+  // null, e la riparazione passa dalla sonda del supervisore.
+  assert.equal(tunnel.authorizedKeysForNode({ remotePort: 41800 }, 41821), null);
+  // E con la chiave dichiarata ma il .pub assente, stesso verso: niente mezza istruzione.
+  assert.equal(tunnel.authorizedKeysForNode(
+    { remotePort: 41800, identityFile: path.join(dir, 'inesistente') }, 41821), null);
+});
