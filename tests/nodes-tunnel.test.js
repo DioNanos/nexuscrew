@@ -891,7 +891,7 @@ test('F1 supervisor: il degraded per canale scrive authorizedKeys come CAMPO, no
   const key = path.join(dir, 'id_ed25519');
   // Senza il .pub accanto la riga completa non si puo' comporre e il campo
   // resta vuoto per contratto: qui c'e', quindi deve arrivare.
-  fs.writeFileSync(`${key}.pub`, `${pubValida('ssh-ed25519', 'TestCampo')}\n`);
+  fs.writeFileSync(`${key}.pub`, `${pubValida('TestCampo')}\n`);
   fs.writeFileSync(fakeSsh, "setInterval(() => {}, 1000);\n", { mode: 0o700 });
   const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
   const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh,

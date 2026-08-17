@@ -15,12 +15,12 @@ const cmds = require('../lib/nodes/commands.js');
 const store = require('../lib/nodes/store.js');
 const tunnel = require('../lib/nodes/tunnel.js');
 const supervisor = require('../lib/nodes/tunnel-supervisor.js');
-const { pubValida } = require('./helpers/pubkey.js');
+const { pubValida, campoSsh } = require('./helpers/pubkey.js');
 
 // Chiave VALIDA, non un segnaposto: viene anche scritta in un `.pub` e riletta,
 // e la lettura ora valida algoritmo e blob. Un finto piu' permissivo del vero
 // rendeva verdi test che in produzione non sarebbero mai passati.
-const FAKE_PUB = pubValida('ssh-ed25519', 'PermitOpenPannello test key');
+const FAKE_PUB = pubValida('PermitOpenPannello test key');
 
 // —— A: la riga con DUE destinazioni esplicite (mai un permesso generico) ———
 
@@ -246,7 +246,7 @@ test('readPublicKey: una sola chiave valida, altrimenti niente', () => {
     return k;
   };
 
-  const buona = scrivi('ok', `${pubValida('ssh-ed25519', 'dag@host con spazi')}\n`);
+  const buona = scrivi('ok', `${pubValida('dag@host con spazi')}\n`);
   const letta = tunnel.readPublicKey(buona);
   assert.ok(letta && letta.startsWith('ssh-ed25519 '), 'una riga valida si legge');
   assert.ok(!/[\r\n]/.test(letta), 'e non porta dentro ritorni a capo');
@@ -254,7 +254,7 @@ test('readPublicKey: una sola chiave valida, altrimenti niente', () => {
   const riga = tunnel.authorizedKeysForNode({ remotePort: 41800, identityFile: buona }, 41821);
   assert.equal(riga.split('\n').length, 1, 'il blocco da copiare e\' una riga sola');
 
-  const dueChiavi = scrivi('due', `${pubValida()}\n${pubValida('ssh-ed25519', 'seconda')}\n`);
+  const dueChiavi = scrivi('due', `${pubValida()}\n${pubValida('seconda')}\n`);
   assert.equal(tunnel.readPublicKey(dueChiavi), null,
     'due chiavi concatenate: la seconda finirebbe SENZA restrizioni nel blocco copiato');
   assert.equal(tunnel.authorizedKeysForNode({ remotePort: 41800, identityFile: dueChiavi }, 41821), null,
@@ -262,9 +262,61 @@ test('readPublicKey: una sola chiave valida, altrimenti niente', () => {
 
   assert.equal(tunnel.readPublicKey(scrivi('opz', `command="/bin/sh" ${pubValida()}\n`)), null,
     'opzioni prefissate: non e\' una chiave nuda e non si compone');
-  const b = pubValida('ssh-ed25519').split(' ')[1];
+  const b = pubValida().split(' ')[1];
   assert.equal(tunnel.readPublicKey(scrivi('inc', `ssh-rsa ${b} x\n`)), null,
     'algoritmo dichiarato diverso da quello scritto dentro il blob');
   assert.equal(tunnel.readPublicKey(scrivi('vuoto', '\n\n')), null, 'nessuna chiave');
   assert.equal(tunnel.readPublicKey(scrivi('spazzatura', 'non-una-chiave\n')), null, 'testo qualunque');
+});
+
+// L'ORACOLO NON SIAMO NOI. Il test precedente costruiva la chiave con lo stesso
+// sottoinsieme di formato che il parser controlla: verde per costruzione, e
+// infatti quel finto era rifiutato da `ssh-keygen -l`. Qui la chiave dell'helper
+// la valida CHI ESEGUE DAVVERO L'OPERAZIONE, e i casi che il parser deve
+// rifiutare sono blob strutturalmente rotti — non nomi sbagliati.
+test('readPublicKey: la struttura del blob, verificata contro ssh-keygen', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blob-'));
+  const scrivi = (nome, testo) => {
+    const k = path.join(dir, nome);
+    fs.writeFileSync(`${k}.pub`, testo);
+    return k;
+  };
+
+  const buona = scrivi('ok', `${pubValida('oracolo@test')}\n`);
+  let riconosciuta = null;
+  try {
+    riconosciuta = require('node:child_process')
+      .execFileSync('ssh-keygen', ['-l', '-f', `${buona}.pub`], { encoding: 'utf8' }).trim();
+  } catch (e) {
+    // Se ssh-keygen non c'e' su questa macchina lo si DICHIARA: un oracolo
+    // assente non e' un oracolo soddisfatto.
+    riconosciuta = null;
+    console.log('# ssh-keygen non disponibile: oracolo esterno non eseguito');
+  }
+  if (riconosciuta !== null) {
+    assert.match(riconosciuta, /ED25519/, `ssh-keygen deve riconoscere la chiave dell'helper: ${riconosciuta}`);
+  }
+  assert.ok(tunnel.readPublicKey(buona), 'e il nostro lettore concorda con lui');
+
+  // Blob composto SOLO dal nome dell'algoritmo: nessuna chiave dentro.
+  const soloNome = campoSsh(Buffer.from('ssh-ed25519')).toString('base64');
+  assert.equal(tunnel.readPublicKey(scrivi('sn', `ssh-ed25519 ${soloNome} x\n`)), null,
+    'un blob senza la chiave non e\' una chiave');
+
+  // ed25519 con payload troncato: la lunghezza dichiarata c\'e\', i byte no.
+  const corto = Buffer.concat([campoSsh(Buffer.from('ssh-ed25519')), campoSsh(Buffer.alloc(1))]).toString('base64');
+  assert.equal(tunnel.readPublicKey(scrivi('c1', `ssh-ed25519 ${corto} x\n`)), null,
+    'ed25519 vuole 32 byte esatti: 1 non e\' "quasi giusto"');
+
+  // Due chiavi separate da un CR NUDO: `split(/\r?\n/)` non le separava, e il
+  // ritorno a capo finiva dentro il valore restituito.
+  assert.equal(tunnel.readPublicKey(scrivi('cr', `${pubValida()}\r${pubValida()}\n`)), null,
+    'un CR nudo non trasforma due chiavi in una riga sola');
+
+  // Byte di coda dopo l'ultimo campo: firma di un blob costruito a mano.
+  const conCoda = Buffer.concat([
+    campoSsh(Buffer.from('ssh-ed25519')), campoSsh(Buffer.alloc(32)), Buffer.from([0x00, 0x01]),
+  ]).toString('base64');
+  assert.equal(tunnel.readPublicKey(scrivi('coda', `ssh-ed25519 ${conCoda} x\n`)), null,
+    'byte che avanzano dopo l\'ultimo campo');
 });

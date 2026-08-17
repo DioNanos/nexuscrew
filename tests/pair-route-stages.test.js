@@ -402,7 +402,7 @@ test('pair panel: con un\'identita\' dedicata la riga esce, con entrambe le dest
   });
   const key = path.join(dir, 'id_ed25519_dedicata');
   fs.writeFileSync(key, 'FINTA-PRIVATA\n', { mode: 0o600 });
-  fs.writeFileSync(`${key}.pub`, `${pubValida('ssh-ed25519', 'dedicata')}\n`);
+  fs.writeFileSync(`${key}.pub`, `${pubValida('dedicata')}\n`);
   const r = await pairReq(base, token, {
     name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir), identityFile: key,
   });
