@@ -2,6 +2,23 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.4 — 2026-08-17 — "The Interface Was Last Week's"
+
+- **The published interface is the one this version was built from.** 0.9.3
+  shipped a `frontend/dist` compiled eight hours before the interface work it
+  was supposed to contain: the popup with its three sources, the telemetry
+  line, the tier labels and the panel origin fix were all in the source and
+  none of them in the bundle. The server was 0.9.3 and the interface was
+  0.9.2, and everything about it looked fine — the package installed, the
+  service started, the pages loaded.
+
+  What caught it is worth stating: the product's own guard did, by comparing
+  the version the interface declares against the version the server is running
+  and refusing to pretend they were the same. Not a test, and not the release
+  check — which verified that the fixes were present in `lib/` and never looked
+  at the bundle. A smoke test that inspects only the half it thinks of is a
+  smoke test with a blind side.
+
 ## 0.9.3 — 2026-08-16 — "A Receipt Is Not an Outcome"
 
 The previous release fixed the Desktop engine and shipped the fix inert. Pulling
