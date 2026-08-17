@@ -252,27 +252,38 @@ test('npm update runner: il riavvio PORTATILE ferma i tunnel, come quello manual
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('npm update runner: se fermare i tunnel fallisce, l\'aggiornamento prosegue', async () => {
+test('npm update runner: se fermare i tunnel fallisce, l\'aggiornamento prosegue — e lo dice SUL PATH PRODUTTIVO, senza log iniettato', async () => {
   // Il compito principale e' aggiornare. Un errore qui non deve bloccarlo —
-  // ma non deve nemmeno sparire: viene detto.
-  const detto = [];
+  // ma non deve nemmeno sparire: viene detto. NESSUN log iniettato: un test
+  // che passa un logger di comodo prova solo se stesso. Qui si cattura lo
+  // stdout REALE del processo — lo stesso canale che manager.js redirige sul
+  // file di log dell'update quando lancia questo runner come figlio staccato
+  // — cosi' la prova e' che l'utente lo vede davvero, non che il seam esiste.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-update-tunnels-ko-'));
-  const mode = await restartRuntime({
-    home: dir, platform: 'termux', port: 41820, token: 't',
-    commands: {
-      isServiceRunning: () => false,
-      fermaTunnelPrimaDiRiavviare: require('../lib/cli/commands.js').fermaTunnelPrimaDiRiavviare,
-      startPortable: () => ({ started: true }),
-      portAvailable: async () => true,
-    },
-    stopTunnelsImpl: () => { throw new Error('ssh non raggiungibile'); },
-    log: (m) => detto.push(m),
-    pidfile: { defaultPidfilePath: () => path.join(dir, 'x.pid'), readPidfile: () => null },
-    waitForRuntimeImpl: async () => true,
-  });
+  const originalWrite = process.stdout.write;
+  const scritto = [];
+  process.stdout.write = (chunk, ...rest) => { scritto.push(String(chunk)); return true; };
+  let mode;
+  try {
+    mode = await restartRuntime({
+      home: dir, platform: 'termux', port: 41820, token: 't',
+      commands: {
+        isServiceRunning: () => false,
+        fermaTunnelPrimaDiRiavviare: require('../lib/cli/commands.js').fermaTunnelPrimaDiRiavviare,
+        startPortable: () => ({ started: true }),
+        portAvailable: async () => true,
+      },
+      stopTunnelsImpl: () => { throw new Error('ssh non raggiungibile'); },
+      pidfile: { defaultPidfilePath: () => path.join(dir, 'x.pid'), readPidfile: () => null },
+      waitForRuntimeImpl: async () => true,
+    });
+  } finally {
+    process.stdout.write = originalWrite;
+  }
 
   assert.ok(mode, 'l\'aggiornamento non si ferma per questo');
-  assert.match(detto.join('\n'), /stop tunnel non riuscito/, 'ma non tace');
+  assert.match(scritto.join('\n'), /stop tunnel non riuscito/,
+    'ma non tace — deve comparire sullo stdout reale, non solo se qualcuno inietta un log nel test');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
