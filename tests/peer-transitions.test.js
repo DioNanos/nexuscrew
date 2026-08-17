@@ -86,6 +86,22 @@ test('tunnel giu\' non inventa un secondo fallimento "servizio giu\'": un solo r
   assert.equal(records[0].code, 'TUNNEL_TRANSITION');
 });
 
+// Il verso SIMMETRICO del test sopra. Il tunnel torna su: il servizio, che
+// durante il buio era 'unknown' per costruzione (mai misurato, non "caduto"),
+// non "ritorna" — diventa di nuovo osservabile. Scrivere "unknown -> ok" qui
+// sarebbe un fatto inventato quanto lo sarebbe stato "ok -> unknown" alla
+// caduta: un solo record, quello del tunnel.
+test('tunnel che TORNA su non inventa una "ripresa del servizio": un solo record', () => {
+  const diagnostics = createDiagnostics({ now: () => 0 });
+  recordPeerTransition('nodo-h', health({ transport: 'up', auth: 'ok', reachability: 'ok' }), diagnostics);
+  recordPeerTransition('nodo-h', health({ transport: 'down', auth: 'unknown', reachability: 'unknown' }), diagnostics);
+  recordPeerTransition('nodo-h', health({ transport: 'up', auth: 'ok', reachability: 'ok' }), diagnostics);
+  const { records } = diagnostics.logs();
+  assert.equal(records.length, 2,
+    `atteso 2 record (tunnel giu' + tunnel su, MAI il servizio), trovati: ${JSON.stringify(records.map((r) => r.code))}`);
+  assert.deepEqual(records.map((r) => r.code), ['TUNNEL_TRANSITION', 'TUNNEL_TRANSITION']);
+});
+
 test('due peer distinti hanno storie indipendenti: la transizione di uno non tocca l\'altro', () => {
   const diagnostics = createDiagnostics({ now: () => 0 });
   recordPeerTransition('nodo-e1', health({ transport: 'up' }), diagnostics);

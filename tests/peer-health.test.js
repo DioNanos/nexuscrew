@@ -301,10 +301,11 @@ test('route /api/nodes end-to-end: la sonda gia\' fatta per la UI scrive SOLO qu
   assert.equal((await peerRecords()).length, 0, 'stato "down" ripetuto: nessun record');
 
   // La transizione REALE: il peer torna raggiungibile. Tunnel e servizio
-  // tornano su nello STESSO probe: il tunnel produce il suo record; il
-  // servizio (auth/reachability, prima 'unknown' col tunnel giu') e' un
-  // secondo fatto vero e produce il proprio — restano due eventi, mai
-  // collassati, anche quando coincidono nel tempo.
+  // tornano su nello STESSO probe: il tunnel produce il SUO record. Il
+  // servizio no — durante il buio era 'unknown' per costruzione (mai
+  // misurato, non "caduto"): scrivere qui "unknown -> ok" sarebbe un fatto
+  // inventato tanto quanto lo sarebbe "ok -> unknown" alla caduta (gia'
+  // soppresso, vedi il primo probe "down" sopra). Un solo record, simmetrico.
   modo = 'up';
   nodesHealth.clearHealthCache();
   await get(port, '/api/nodes', { authorization: `Bearer ${token}` });
@@ -312,6 +313,9 @@ test('route /api/nodes end-to-end: la sonda gia\' fatta per la UI scrive SOLO qu
   const tunnelUp = dopoRipristino.find((r) => r.code === 'TUNNEL_TRANSITION');
   assert.ok(tunnelUp, 'la transizione vera del tunnel deve produrre un record');
   assert.equal(tunnelUp.meta.state, 'up');
+  assert.equal(dopoRipristino.find((r) => r.code === 'SERVICE_TRANSITION'), undefined,
+    'la ripresa non deve inventare un record di servizio: era "unknown" per costruzione, mai misurato');
+  assert.equal(dopoRipristino.length, 1, 'un solo record alla ripresa: il tunnel, non il servizio');
   const contoRipristino = dopoRipristino.length;
 
   // Ripetuta ancora: lo stato "up" non aggiunge altro.
