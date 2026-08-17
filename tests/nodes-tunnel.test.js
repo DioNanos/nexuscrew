@@ -8,6 +8,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const tunnel = require('../lib/nodes/tunnel.js');
 const pidf = require('../lib/cli/pidfile.js');
+const { pubValida } = require('./helpers/pubkey.js');
 
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'nc-tun-'));
 
@@ -890,7 +891,7 @@ test('F1 supervisor: il degraded per canale scrive authorizedKeys come CAMPO, no
   const key = path.join(dir, 'id_ed25519');
   // Senza il .pub accanto la riga completa non si puo' comporre e il campo
   // resta vuoto per contratto: qui c'e', quindi deve arrivare.
-  fs.writeFileSync(`${key}.pub`, 'ssh-ed25519 AAAAC3TestCampo prova\n');
+  fs.writeFileSync(`${key}.pub`, `${pubValida('ssh-ed25519', 'TestCampo')}\n`);
   fs.writeFileSync(fakeSsh, "setInterval(() => {}, 1000);\n", { mode: 0o700 });
   const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
   const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh,
@@ -918,7 +919,7 @@ test('F1 supervisor: il degraded per canale scrive authorizedKeys come CAMPO, no
       `lo stato deve portare il CAMPO, non solo la frase — chiavi: ${Object.keys(state).join(',')}`);
     assert.ok(state.authorizedKeys.startsWith('restrict,port-forwarding,permitopen='),
       `il campo e' la riga intera da incollare: ${state.authorizedKeys}`);
-    assert.ok(state.authorizedKeys.includes('AAAAC3TestCampo'), 'la chiave pubblica letta dal .pub');
+    assert.ok(state.authorizedKeys.includes('TestCampo'), 'la chiave pubblica letta dal .pub');
     assert.ok(state.hint.includes(state.authorizedKeys),
       'la frase continua a contenere la stessa riga, per chi legge un log');
   } finally {

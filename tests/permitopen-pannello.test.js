@@ -15,8 +15,12 @@ const cmds = require('../lib/nodes/commands.js');
 const store = require('../lib/nodes/store.js');
 const tunnel = require('../lib/nodes/tunnel.js');
 const supervisor = require('../lib/nodes/tunnel-supervisor.js');
+const { pubValida } = require('./helpers/pubkey.js');
 
-const FAKE_PUB = 'ssh-ed25519 AAAAfake PermitOpenPannello test key';
+// Chiave VALIDA, non un segnaposto: viene anche scritta in un `.pub` e riletta,
+// e la lettura ora valida algoritmo e blob. Un finto piu' permissivo del vero
+// rendeva verdi test che in produzione non sarebbero mai passati.
+const FAKE_PUB = pubValida('ssh-ed25519', 'PermitOpenPannello test key');
 
 // —— A: la riga con DUE destinazioni esplicite (mai un permesso generico) ———
 
@@ -148,7 +152,7 @@ test('refusalHint: con il .pub accanto alla chiave dice la riga COMPLETA da inco
 test('refusalDetails espone la riga come campo, oltre che dentro la frase', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'refusal-'));
   const key = path.join(dir, 'id_ed25519');
-  fs.writeFileSync(`${key}.pub`, 'ssh-ed25519 AAAAC3Test prova\n');
+  fs.writeFileSync(`${key}.pub`, `${pubValida()}\n`);
   const d = supervisor.refusalDetails({
     remoteDestinations: ['127.0.0.1:41800', '127.0.0.1:41821'],
     identityFile: key,
@@ -176,17 +180,19 @@ test('refusalDetails espone la riga come campo, oltre che dentro la frase', () =
 test('authorizedKeysForNode: con la chiave la riga esce, senza identityFile no', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'akfn-'));
   const key = path.join(dir, 'id_ed25519');
-  fs.writeFileSync(`${key}.pub`, 'ssh-ed25519 AAAAC3TestNodo prova\n');
+  fs.writeFileSync(`${key}.pub`, `${pubValida()}\n`);
 
   const conChiave = tunnel.authorizedKeysForNode(
     { remotePort: 41800, identityFile: key }, 41821);
   assert.ok(conChiave.includes('permitopen="127.0.0.1:41800"'), 'la porta nexus');
   assert.ok(conChiave.includes('permitopen="127.0.0.1:41821"'), 'la porta pannello');
-  assert.ok(conChiave.includes('AAAAC3TestNodo'), 'la chiave letta dal .pub accanto alla privata');
+  assert.ok(conChiave.includes('prova@test'), 'la chiave letta dal .pub accanto alla privata');
 
   // IL LIMITE, dichiarato: senza identityFile ssh usa le chiavi di default
-  // dell'utente, che il prodotto non conosce. Non si inventa una riga: si torna
-  // null, e la riparazione passa dalla sonda del supervisore.
+  // dell'utente, un agent o la config, e il prodotto non sa quale. Non si
+  // inventa una riga: si torna null. E non esiste un altro canale che ripari —
+  // nemmeno la sonda del supervisore, che la chiave la ricava solo da `-i`.
+  // Per quei nodi la riparazione automatica NON c'e', e il prodotto lo dice.
   assert.equal(tunnel.authorizedKeysForNode({ remotePort: 41800 }, 41821), null);
   // E con la chiave dichiarata ma il .pub assente, stesso verso: niente mezza istruzione.
   assert.equal(tunnel.authorizedKeysForNode(
@@ -201,7 +207,7 @@ test('authorizedKeysForNode: con la chiave la riga esce, senza identityFile no',
 test('refusalDetails: senza chiave pubblica non promette una riga da sostituire', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'refusal2-'));
   const key = path.join(dir, 'id_ed25519');
-  fs.writeFileSync(`${key}.pub`, 'ssh-ed25519 AAAAC3TestDue prova\n');
+  fs.writeFileSync(`${key}.pub`, `${pubValida()}\n`);
 
   const con = supervisor.refusalDetails({ remoteDestinations: ['127.0.0.1:41800'], identityFile: key });
   assert.match(con.hint, /SOSTITUISCI/, 'con la chiave si sostituisce la riga intera');
@@ -224,4 +230,41 @@ test('refusalDetails: senza chiave pubblica non promette una riga da sostituire'
   assert.equal(rotta.authorizedKeys, '');
   assert.doesNotMatch(rotta.hint, /SOSTITUISCI/);
   assert.match(rotta.hint, /non e' leggibile/, 'la causa e\' diversa e va detta');
+});
+
+
+// IL CONFINE CHE QUESTA LETTURA DIFENDE. Il valore letto viene CONCATENATO
+// dopo `restrict,port-forwarding,permitopen=...`: se il file contenesse due
+// chiavi, il blocco che l'utente copia diventerebbe due righe e la seconda
+// sarebbe una chiave SENZA restrizioni. Incollandola si aggirerebbe proprio la
+// regola che quella riga esiste per imporre. Qui non si tollera: si rifiuta.
+test('readPublicKey: una sola chiave valida, altrimenti niente', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pubkey-'));
+  const scrivi = (nome, testo) => {
+    const k = path.join(dir, nome);
+    fs.writeFileSync(`${k}.pub`, testo);
+    return k;
+  };
+
+  const buona = scrivi('ok', `${pubValida('ssh-ed25519', 'dag@host con spazi')}\n`);
+  const letta = tunnel.readPublicKey(buona);
+  assert.ok(letta && letta.startsWith('ssh-ed25519 '), 'una riga valida si legge');
+  assert.ok(!/[\r\n]/.test(letta), 'e non porta dentro ritorni a capo');
+  // e la riga composta resta UNA sola: e' la proprieta' che protegge l'utente
+  const riga = tunnel.authorizedKeysForNode({ remotePort: 41800, identityFile: buona }, 41821);
+  assert.equal(riga.split('\n').length, 1, 'il blocco da copiare e\' una riga sola');
+
+  const dueChiavi = scrivi('due', `${pubValida()}\n${pubValida('ssh-ed25519', 'seconda')}\n`);
+  assert.equal(tunnel.readPublicKey(dueChiavi), null,
+    'due chiavi concatenate: la seconda finirebbe SENZA restrizioni nel blocco copiato');
+  assert.equal(tunnel.authorizedKeysForNode({ remotePort: 41800, identityFile: dueChiavi }, 41821), null,
+    'e quindi non esce nessun blocco copiabile');
+
+  assert.equal(tunnel.readPublicKey(scrivi('opz', `command="/bin/sh" ${pubValida()}\n`)), null,
+    'opzioni prefissate: non e\' una chiave nuda e non si compone');
+  const b = pubValida('ssh-ed25519').split(' ')[1];
+  assert.equal(tunnel.readPublicKey(scrivi('inc', `ssh-rsa ${b} x\n`)), null,
+    'algoritmo dichiarato diverso da quello scritto dentro il blob');
+  assert.equal(tunnel.readPublicKey(scrivi('vuoto', '\n\n')), null, 'nessuna chiave');
+  assert.equal(tunnel.readPublicKey(scrivi('spazzatura', 'non-una-chiave\n')), null, 'testo qualunque');
 });
