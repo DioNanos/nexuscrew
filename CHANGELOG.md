@@ -2,6 +2,61 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.6 — 2026-08-18 — "Causes With Names"
+
+The previous release fixed a blank panel, a service that hung on a terminal, and
+a message that named the wrong cause. They were three symptoms of one defect: a
+value that collapsed different states into `null`, and a low level composing
+sentences about facts it could not know. This release fixes the defect itself.
+
+- **Resolving a public key now has five distinct outcomes instead of one
+  `null`**: derived, no identity configured, identity present but the actual key
+  unknown, the tool itself missing, and encrypted-or-unreadable. They are data,
+  not prose — nothing downstream has to parse a sentence to learn what happened.
+  The pairing response carries the outcome beside the text, so a consumer has
+  the fact rather than an interpretation of it.
+
+  Previously all five answered `null`, and the message that followed had to
+  guess: "I cannot derive the public key" was shown for a missing file, a
+  missing binary and an encrypted key alike, and only one of the three had
+  anything to do with a passphrase.
+
+- **The sentences are now composed in one place.** A single formatter turns each
+  outcome into a cause and an action. Success stays silent — there is nothing to
+  say when a thing works — and an outcome the formatter does not recognise is
+  **named** rather than swallowed, because a silent default rebuilds exactly the
+  collapse this removes.
+
+- **The boot service no longer points at a path that expires.** The generated
+  unit and launch agent recorded the interpreter path of the moment, which on
+  package managers that version their install directory disappears at the next
+  upgrade — and the entry point was versioned too, so fixing only the first
+  produced a service that looked repaired and failed identically. Both are now
+  resolved to a stable alias when one exists and points at the very same file;
+  when none exists the current path is written **and the fact is declared**,
+  because a path that will expire silently is worse than a warning.
+
+- **Unreachable peers are no longer polled at a fixed rate forever.** Three
+  stopped peers used to fill the console until the service worker gave up. The
+  interval now backs off with a ceiling and recovers as soon as the peer answers
+  — the recovery is what the test pins, because a backoff that never resets is a
+  sentence rather than a protection.
+
+  And three different answers stopped looking alike: a peer that is absent, one
+  that is present and refuses, and one missing that route each say so, with the
+  action they imply — wait, grant the permission **on the remote node**, update
+  that node.
+
+- **The panel window can be moved and resized**, remembers where it was, and
+  can be recentred when it gets lost. Below the mobile breakpoint it stays full
+  screen and dragging is genuinely disabled rather than merely hidden.
+
+- **The panel no longer reports "ready" and then stops watching.** It now
+  distinguishes a frame that loaded from one that failed, using the events the
+  element actually emits — with the limit stated where it matters: a `load`
+  event fires for an error page too, so it means "a response arrived", never
+  "the panel is alive".
+
 ## 0.9.5 — 2026-08-17 — "Measured From Where It Breaks"
 
 Almost everything in this release was already broken before it, and none of it
