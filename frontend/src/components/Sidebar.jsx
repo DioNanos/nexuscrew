@@ -106,12 +106,16 @@ export default function Sidebar({
   // unico nella federazione: `cloud-Dev` esiste su piu' installazioni. Per una
   // cella REMOTA quella tabella risponderebbe con la sessione locale omonima,
   // e il popup mostrerebbe l'anteprima di un'ALTRA cella creduta la propria —
-  // lo stesso difetto di R4, raggiunto per un'altra strada. Per le remote
-  // valgono solo i dati che viaggiano con la cella. `route` vuota = locale, ed
-  // e' gia' il criterio con cui questa funzione decide `node` qui sotto.
-  const peekRowFromItem = (item, c, route = [], nodeLabel = '') => {
+  // lo stesso difetto di R4, raggiunto per un'altra strada. Una riga remota si
+  // risolve nelle sessioni DEL SUO nodo, come fa gia' SessionList: `route`
+  // vuota = locale, ed e' gia' il criterio con cui questa funzione decide
+  // `node` qui sotto. Senza le sessioni del nodo si resta ai dati che
+  // viaggiano con la cella — mai a quelli di un omonimo locale.
+  const peekRowFromItem = (item, c, route = [], nodeLabel = '', sessioniNodo = null) => {
     const locale = route.length === 0;
-    const sessione = locale ? (byName.get(c.tmuxSession) || {}) : {};
+    const sessione = (locale
+      ? byName.get(c.tmuxSession)
+      : (sessioniNodo || []).find((s) => s && s.name === c.tmuxSession)) || {};
     return {
       key: item.key,
       cellName: c.cell,
@@ -711,10 +715,13 @@ export default function Sidebar({
           dalla lista aggiornata → il popup non si rende, come in R4. */}
       {peekItem && (() => {
         const c = peekItem.value;
-        const route = peekItem.nodeRoute ? (nodeGroups.find((g) => (g.route || [g.name]).join('/') === peekItem.nodeRoute) || {}).route || [peekItem.nodeRoute] : [];
+        const gruppo = peekItem.nodeRoute
+          ? (nodeGroups.find((g) => (g.route || [g.name]).join('/') === peekItem.nodeRoute) || {})
+          : null;
+        const route = peekItem.nodeRoute ? (gruppo.route || [peekItem.nodeRoute]) : [];
         return (
           <CellPeek
-            row={peekRowFromItem(peekItem, c, route, peekItem.nodeLabel || '')}
+            row={peekRowFromItem(peekItem, c, route, peekItem.nodeLabel || '', gruppo && gruppo.sessions)}
             token={token}
             initialSource={peekSource}
             onClose={() => { setPeekKey(null); setPeekSource('preview'); }}

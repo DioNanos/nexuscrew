@@ -97,6 +97,28 @@ describe('Sidebar session identity', () => {
     expect(mostrato).not.toBe('ANTEPRIMA DELLA CELLA LOCALE');
   });
 
+  // Il verso positivo dello stesso criterio: risolvere nel nodo GIUSTO non
+  // significa rinunciare al dato. Se il gruppo remoto porta le sue sessioni,
+  // il popup legge di la' — come fa gia' SessionList — e la sessione vince sul
+  // campo che viaggia con la cella, esattamente come nel caso locale.
+  it('il popup di una cella REMOTA legge la sessione del SUO nodo, non solo il campo della cella', async () => {
+    render(<Sidebar
+      cells={[]}
+      sessions={[{ name: 'cloud-Dev', preview: 'ANTEPRIMA DELLA CELLA LOCALE' }]}
+      nodeGroups={[{
+        name: 'relay', label: 'Relay', route: ['relay'], instanceId: 'd'.repeat(32), status: 'up',
+        sessions: [{ name: 'cloud-Dev', preview: 'anteprima dal nodo remoto', activity: 42 }],
+        unmanaged: [], capabilities: [], engines: [],
+        cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev', tmux: true, active: true,
+                  preview: 'campo che viaggia con la cella' }],
+      }]}
+      onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()} />);
+    const riga = screen.getByText('Dev').closest('.nc-cell');
+    fireEvent.click(riga.querySelector('.nc-side-peek'));
+    expect(await screen.findByRole('dialog', { name: 'Dev' })).toBeTruthy();
+    expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('anteprima dal nodo remoto');
+  });
+
   it('toggles boot from local and routed desktop rows without using power', async () => {
     const onBoot = vi.fn(async () => {}); const onPower = vi.fn();
     const onBootSettlementApplied = vi.fn();
