@@ -590,6 +590,24 @@ describe('hint di salute — l azione che ripara il nodo', () => {
     expect(screen.getByText(/canale rifiutato dal NODO remoto/).textContent).not.toContain('permitopen');
   });
 
+  // Il contratto robusto: la riga arriva come CAMPO, non ritagliata da una
+  // frase che il backend puo' riscrivere o tradurre. Qui la frase e' diversa e
+  // non contiene affatto la riga: il ritaglio fallirebbe, il campo no.
+  it('preferisce il campo strutturato alla frase, e regge se la frase cambia', async () => {
+    renderSheet({
+      ...peer,
+      tunnel: { status: 'degraded' },
+      health: {
+        status: 'degraded', detail: 'forward-channel-blocked',
+        hint: 'una frase riscritta domani che non contiene piu la riga',
+        authorizedKeys: riga,
+      },
+    });
+    const campo = await screen.findByLabelText('Line to replace in ~/.ssh/authorized_keys on the peer');
+    expect(campo.value).toBe(riga);
+    expect(screen.getByText('una frase riscritta domani che non contiene piu la riga')).toBeTruthy();
+  });
+
   it('un nodo sano non mostra nessun blocco di riparazione', () => {
     renderSheet({ ...peer, health: { status: 'healthy', detail: 'ok' } });
     expect(screen.queryByLabelText('Line to replace in ~/.ssh/authorized_keys on the peer')).toBeNull();

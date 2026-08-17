@@ -140,3 +140,27 @@ test('refusalHint: con il .pub accanto alla chiave dice la riga COMPLETA da inco
     assert.ok(senzaPub.includes('127.0.0.1:41821') && !senzaPub.includes('restrict,'), 'senza pubkey: cosa aggiungere, non una riga a metà');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// Il contratto che la UI consuma: la riga e' un CAMPO, non una frase da
+// ritagliare. Chi la mostra non deve conoscere il testo italiano costruito
+// qui, altrimenti riscrivere la frase rompe la riparazione senza che nessun
+// test se ne accorga.
+test('refusalDetails espone la riga come campo, oltre che dentro la frase', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'refusal-'));
+  const key = path.join(dir, 'id_ed25519');
+  fs.writeFileSync(`${key}.pub`, 'ssh-ed25519 AAAAC3Test prova\n');
+  const d = supervisor.refusalDetails({
+    remoteDestinations: ['127.0.0.1:41800', '127.0.0.1:41821'],
+    identityFile: key,
+  });
+  assert.ok(d.authorizedKeys.startsWith('restrict,port-forwarding,permitopen='),
+    `il campo deve portare la riga intera: ${d.authorizedKeys}`);
+  assert.ok(d.authorizedKeys.includes('127.0.0.1:41821'), 'la porta pannello deve esserci');
+  assert.ok(d.hint.includes(d.authorizedKeys), 'la frase contiene la stessa riga, per chi legge un log');
+
+  // Senza la chiave pubblica la riga completa non si puo' comporre: il campo
+  // resta VUOTO invece di portare mezza istruzione che l'utente incollerebbe.
+  const senza = supervisor.refusalDetails({ remoteDestinations: ['127.0.0.1:41800'] });
+  assert.equal(senza.authorizedKeys, '');
+  assert.ok(senza.hint.includes('permitopen'), 'la frase resta utile a chi legge');
+});

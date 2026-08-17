@@ -64,10 +64,22 @@ export function healthTitle(h) {
 const RIGA_AUTHKEYS = 'restrict,port-forwarding,permitopen=';
 export function healthHintParts(h) {
   const hint = (h && typeof h.hint === 'string' && h.hint.trim()) || '';
+  const strutturato = (h && typeof h.authorizedKeys === 'string' && h.authorizedKeys.trim()) || '';
+  // Il CAMPO vince sempre sul testo: la riga arriva intera da chi l'ha
+  // costruita, invece di essere ritagliata da una frase che quel codice puo'
+  // riscrivere o tradurre senza sapere che qualcuno la sta tagliando.
+  if (strutturato) {
+    const i = hint.indexOf(strutturato);
+    // Se la frase la contiene, la nota e' la frase SENZA la riga: mostrarla due
+    // volte sarebbe rumore proprio dove serve leggere.
+    const note = i >= 0 ? hint.slice(0, i).replace(/[:\s]+$/, '') : hint;
+    return { note, line: strutturato };
+  }
   if (!hint) return null;
+  // Fallback per una salute prodotta da una versione che il campo non lo manda:
+  // degrada al ritaglio, e se non trova la riga mostra la frase intera.
   const i = hint.indexOf(RIGA_AUTHKEYS);
   if (i < 0) return { note: hint, line: '' };
-  // La nota perde il ': ' di giunzione, che appartiene alla frase e non alla riga.
   return { note: hint.slice(0, i).replace(/[:\s]+$/, ''), line: hint.slice(i).trim() };
 }
 
