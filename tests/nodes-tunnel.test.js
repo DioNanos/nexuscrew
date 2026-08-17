@@ -928,6 +928,102 @@ test('F1 supervisor: canale -L rifiutato PERSISTENTEMENTE degrada invece di sond
   }
 });
 
+function leggiPidRegistrati(p) {
+  try { return fs.readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map(Number); }
+  catch (_) { return []; }
+}
+
+// R19 seguito, SECONDO difetto (Dev, 2026-08-17, audit su develop@437d29f).
+// Il child del canale -L e' ANCORA VIVO quando enterDegraded lo manda in
+// degraded — a differenza del reverse-forward (li' il crash del processo e'
+// l'evento che porta a enterDegraded: child e' gia' null). run()
+// sovrascriveva la variabile `child` con un nuovo spawn senza fermare il
+// precedente: un ssh orfano per ogni ciclo di degraded, titolare dei suoi
+// bind, irraggiungibile da stop(). Sonda dell'auditor riprodotta alla
+// lettera: canale sempre rifiutato, retry breve, max probe 1. Il test conta
+// PROCESSI VIVI (kernel), non lo stato dichiarato dal supervisor: e'
+// esattamente il caso in cui i due raccontano cose diverse.
+test('F1 supervisor: canale -L rifiutato PERSISTENTEMENTE non lascia processi orfani al ciclo di degraded', async () => {
+  const dir = tmpDir();
+  const rifiuta = net.createServer((s) => { setImmediate(() => { try { s.destroy(); } catch (_) {} }); });
+  await new Promise((resolve) => rifiuta.listen(0, '127.0.0.1', resolve));
+  const forwardPort = rifiuta.address().port;
+  const fakeSsh = path.join(dir, 'refused-orphan-ssh.js');
+  const statePath = path.join(dir, 'refused-orphan.state.json');
+  const pidPath = path.join(dir, 'refused-orphan.pid');
+  const attemptsPath = path.join(dir, 'attempts.log');
+  const runId = 'refused-orphan-generation';
+  // Ogni generazione registra il PROPRIO pid appena parte: e' l'osservabile
+  // che conta, non lo stato dichiarato dal supervisor.
+  fs.writeFileSync(fakeSsh, [
+    "'use strict';",
+    "const fs = require('node:fs');",
+    `fs.appendFileSync(${JSON.stringify(attemptsPath)}, process.pid + '\\n');`,
+    'setInterval(() => {}, 1000);',
+    '',
+  ].join('\n'), { mode: 0o700 });
+  const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
+  const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh,
+    '-L', `127.0.0.1:${forwardPort}:127.0.0.1:41777`], {
+    env: {
+      ...process.env,
+      NEXUSCREW_TUNNEL_STATE: statePath,
+      NEXUSCREW_TUNNEL_PIDFILE: pidPath,
+      NEXUSCREW_TUNNEL_RUN_ID: runId,
+      NEXUSCREW_TUNNEL_STABLE_MS: '50',
+      NEXUSCREW_TUNNEL_CHANNEL_PROBE_MAX: '1', // "max probe 1": degrada al piu' presto
+      NEXUSCREW_TUNNEL_TEST_MODE: '1',
+      NEXUSCREW_TUNNEL_STEADY_RETRY_MS: '100', // "retry 100ms": la sonda dell'auditor
+    },
+    stdio: 'ignore',
+  });
+  pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId });
+  try {
+    await aspettaChe(() => {
+      try { return JSON.parse(fs.readFileSync(statePath, 'utf8')).status === 'degraded'; } catch (_) { return false; }
+    });
+    // Aspetta che una SECONDA generazione sia partita per davvero (il suo
+    // pid registrato): e' la finestra in cui l'orfano si crea o no.
+    await aspettaChe(() => leggiPidRegistrati(attemptsPath).length >= 2);
+    // Margine oltre la registrazione: se il difetto c'e', la prima
+    // generazione e' ancora viva ORA, non solo nell'istante del passaggio.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const pids = leggiPidRegistrati(attemptsPath);
+    assert.ok(pids.length >= 2, `precondizione: almeno due generazioni partite, viste=${pids.length}`);
+    const viveOra = pids.filter((pid) => pidf.pidExists(pid));
+    assert.deepEqual(viveOra, [pids[pids.length - 1]],
+      `solo l'ULTIMA generazione deve essere viva: vive=${JSON.stringify(viveOra)} attese=[${pids[pids.length - 1]}] (tutte=${JSON.stringify(pids)})`);
+
+    // Il SIGTERM al supervisor e la sua verifica restano DENTRO il try: se
+    // l'assert sotto fallisse dentro un finally, le righe di pulizia dopo di
+    // lui non girerebbero mai — lo stesso leak (socket, qui processi) che
+    // questa sessione ha gia' corretto altrove per lo stesso motivo. Il
+    // finally resta pulizia pura, incondizionata.
+    child.kill('SIGTERM');
+    await new Promise((resolve) => {
+      if (child.exitCode !== null) return resolve();
+      const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} resolve(); }, 3000);
+      child.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
+    const pidsFinali = leggiPidRegistrati(attemptsPath);
+    const ancoraVive = pidsFinali.filter((pid) => pidf.pidExists(pid));
+    assert.deepEqual(ancoraVive, [], `dopo SIGTERM al supervisor: zero processi vivi, trovate=${JSON.stringify(ancoraVive)}`);
+  } finally {
+    if (child.exitCode === null) {
+      try { child.kill('SIGKILL'); } catch (_) {}
+      await new Promise((resolve) => {
+        if (child.exitCode !== null) return resolve();
+        child.once('exit', resolve);
+      });
+    }
+    for (const pid of leggiPidRegistrati(attemptsPath)) {
+      if (pidf.pidExists(pid)) { try { process.kill(pid, 'SIGKILL'); } catch (_) {} }
+    }
+    await new Promise((resolve) => rifiuta.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('F1 supervisor termina ssh e se stesso quando perde la generazione pidfile', async () => {
   const dir = tmpDir();
   const forward = await serverAperto();
