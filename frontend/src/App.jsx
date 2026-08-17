@@ -710,6 +710,9 @@ export default function App() {
           cells={cells}
           activeSessions={activeSessions}
           nodeGroups={nodeGroups}
+          token={token}
+          onPeekOpen={() => setCellSwitcherOpen(false)}
+          overlayOpen={cellSwitcherOpen}
           fleetCapabilities={fleetCapabilities}
           bootSettlement={bootSettlement}
           onBootSettlementApplied={onBootSettlementApplied}

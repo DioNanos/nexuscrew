@@ -1,0 +1,36 @@
+/* La sbirciata di cella, condivisa da switcher e sidebar (vedi CellPeek.jsx).
+   Le regole del CONTENUTO popup vivono qui; quelle della riga dello switcher
+   restano in CellSwitcher.css. */
+
+/* Telemetria/attività: tinta neutra — non compete con lo stato della cella. */
+.nc-cell-switcher-telemetry { color: #9fd8c2; }
+
+/* Le sorgenti del popup: anteprima, flusso, pannello. Stessa barra, stesso
+   gesto; la sorgente attiva è l'unica scura. */
+.nc-peek-sorgenti { display: flex; gap: 6px; margin-bottom: 8px; }
+.nc-peek-sorgente {
+  border: 1px solid rgba(216, 255, 232, .25); background: transparent; color: #d8ffe8;
+  border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+}
+.nc-peek-sorgente.attiva { background: rgba(216, 255, 232, .16); }
+.nc-peek-stream { min-height: 46vh; display: flex; flex-direction: column; }
+
+/* Il testo dell'anteprima nel popup: monospazio e a capo preservati, perché è
+   output di terminale — riflowarlo lo rende illeggibile. */
+.nc-peek-testo {
+  margin: 0;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+/* Il pallino-sbirciata nelle righe della sidebar: bersaglio SUO, con margine
+   perché il clic non scivoli sulla riga (che aggiunge la tile). */
+.nc-side-peek {
+  border: none; background: transparent; padding: 4px 6px; margin-left: -6px;
+  cursor: pointer; display: inline-flex; align-items: center;
+}
+.nc-side-peek .nc-dot { pointer-events: none; }
