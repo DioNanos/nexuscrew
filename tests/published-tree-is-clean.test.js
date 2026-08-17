@@ -66,6 +66,30 @@ const VIETATI = [
     perche: 'nome del repository interno di documentazione' },
   { re: /\bDev(Worker|Auditor)\b|\bForkAuditor\b/,
     perche: 'attribuzione a una cella interna: e\' cio\' che e\' sfuggito nella 0.8.53' },
+  // SWEEP CELLE (categoria, non piu' tre nomi soli): il caso 0.8.53 era un
+  // NOME di cella dentro una frase di attribuzione interna ("rilievo R1 di
+  // DevAuditor su rc.14"). Il pattern sopra copre quei tre nomi OVUNQUE nudi,
+  // perche' verificato che non hanno impiego legittimo nel prodotto. Gli
+  // ALTRI nostri nomi (SysAdmin, GameDev, WarMaster, DesignCreator,
+  // GameAuditor, Trading, Research, Personal, Fork, Dev, Shell, ...) NON
+  // possono avere lo stesso trattamento sul nome nudo: sono anche i nomi
+  // d'ESEMPIO che il prodotto stesso usa nei propri test — misurato:
+  // `cell: 'SysAdmin'` in tests/fleet-boot.test.js, `'GameDev'` e
+  // `'WarMaster'` in frontend/.../CellSwitcher.test.jsx, e altri. Un pattern
+  // sul nome nudo qui sarebbe il criterio troppo largo che produce rumore su
+  // file legittimi del prodotto: il modo in cui una guardia si disattiva
+  // davvero, non un'ipotesi.
+  //
+  // Il criterio e' quindi il CONTESTO che ha reso il caso reale un problema,
+  // non il nome da solo: rilievo/audit/revisione/verdetto/segnalato/
+  // trovato/corretto/chiesto DI/DA <NomeCella>, sulla STESSA riga (mai oltre
+  // fine frase — evita di legare due frasi indipendenti). L'elenco dei nomi
+  // resta un limite dichiarato (una cella futura non ancora elencata non e'
+  // coperta, come per i nomi di macchina piu' sotto), ma la difesa non
+  // dipende piu' dal ricordarsene caso per caso dopo un incidente: la stessa
+  // frase, con QUALUNQUE nome tra quelli elencati, viene presa.
+  { re: /\b(?:rilievo|audit|revisione|verdetto|segnalat[oa]|trovat[oa]|corrett[oa]|chiest[oa])\b[^.\n]{0,25}?\b(?:di|da|dell['’]|dall['’])\s+\b(?:BrowserAI|DevWorkerP|DevWorkerA|DevWorker|DevAuditor|ForkAuditor|WarMaster|DesignCreator|SysAdmin|GameAuditor|GameDev|Trading|Research|Personal|Fork|Dev|Shell)\b/,
+    perche: 'attribuzione a una cella interna in un commento di audit/revisione (stessa classe del caso 0.8.53, nome diverso)' },
   { re: /Co-Authored-By|Generated with \[?Claude/,
     perche: 'attribuzione AI' },
   // L'handle dell'operatore come PAROLA ISOLATA. Il lookaround evita i falsi
@@ -339,6 +363,73 @@ test('l\'albero pubblicato non porta tracce di dove e\' stato costruito', () => 
   }
   assert.deepEqual(colpevoli, [],
     `il pacchetto non deve contenere queste tracce:\n  ${colpevoli.join('\n  ')}`);
+});
+
+// SWEEP CELLE — il precedente e' un fatto, non un timore: la 0.8.53 e' uscita
+// su npm con un commento che nominava una delle nostre celle interne
+// (`DevAuditor`) accanto a un riferimento di audit ("rilievo R1 ... su
+// rc.14"), dentro lib/mcp/tools.js — un file che il pacchetto spedisce.
+// Corretto nell'albero (npm non si ripubblica), e il pattern sopra
+// (`\bDev(Worker|Auditor)\b|\bForkAuditor\b`) copre quei tre nomi nudi
+// ovunque appaiano, perche' verificato che non hanno impiego legittimo nel
+// prodotto (zero occorrenze fuori da questo file).
+//
+// Il resto dei nostri nomi di cella (WarMaster, SysAdmin, GameDev, Trading,
+// Research, Personal, Fork, Dev, Shell, ...) NON puo' avere lo stesso
+// trattamento: sono anche i nomi di ESEMPIO che il prodotto stesso usa nei
+// propri test (NexusCrew gestisce celle Fleet, quindi i suoi test hanno
+// bisogno di nomi cella plausibili) — misurato: `cell: 'SysAdmin'` in
+// tests/fleet-boot.test.js, `'GameDev'`/`'WarMaster'`/`'DesignCreator'` in
+// CellSwitcher.test.jsx, e altri. Un pattern sul nome nudo qui sarebbe
+// ESATTAMENTE il criterio troppo largo che produce rumore su file legittimi
+// del prodotto — il modo in cui una guardia si disattiva davvero.
+//
+// Il criterio scelto e' il CONTESTO che ha reso il caso reale un problema:
+// non il nome da solo, ma il nome dentro una frase di ATTRIBUZIONE interna
+// (rilievo/audit/segnalato/trovato/corretto/chiesto DI/DA <NomeCella>) — la
+// stessa forma del caso 0.8.53. Un elenco esplicito di nomi cella noti
+// dentro quel contesto: non protegge una cella futura non ancora elencata
+// (limite dichiarato, come per i nomi di macchina sopra), ma non dipende piu'
+// dal ricordarsi caso per caso dopo un incidente — la stessa frase, con
+// QUALUNQUE dei nomi elencati, viene presa.
+test('SWEEP CELLE — controllo negativo: un\'attribuzione a una cella nostra fuori dai tre gia\' coperti (es. WarMaster) DEVE essere respinta', () => {
+  // Questo e' esattamente il caso 0.8.53 con un nome DIVERSO da quelli gia'
+  // coperti dal pattern DevWorker/DevAuditor/ForkAuditor — la prova che la
+  // categoria, non solo i tre nomi gia' scoperti, e' ora coperta.
+  const casi = [
+    'nessun conteggio (rilievo R2 di WarMaster su rc.20)',
+    'ramo morto travestito da informazione (segnalato da SysAdmin)',
+    'il default sbagliato (trovato da Fork durante la verifica)',
+    'guardia mancante (audit di GameDev, non ancora corretto)',
+  ];
+  for (const testo of casi) {
+    const colpe = colpeIn(testo, 'lib/esempio.js');
+    assert.ok(colpe.length >= 1,
+      `attribuzione a una cella interna NON respinta — testo: "${testo}"`);
+  }
+});
+
+// Il verso che conta quanto il primo: questi sono i casi REALI, misurati
+// nell'albero di oggi, di nomi cella usati come DATO di test (nessuna
+// attribuzione, nessun "rilievo di"/"segnalato da" nei paraggi) — se il
+// criterio sopra fosse sul nome nudo invece che sul contesto, questi
+// diventerebbero rumore su file legittimi del prodotto. Non lo sono.
+test('SWEEP CELLE — controllo positivo: un nome cella usato come DATO (nessuna attribuzione) non deve mordere', () => {
+  const casi = [
+    "{ cell: 'SysAdmin', boot: true }",               // tests/fleet-boot.test.js
+    "off('WarMaster', 'cloud-WarMaster')",            // frontend CellSwitcher.test.jsx
+    "off('GameDev', 'cloud-GameDev')",                // idem
+    "active('SysAdmin', 'cloud-SysAdmin')",           // idem
+    "cell: 'Codex-VL', label: 'SysAdmin'",            // tests/cells-routes.test.js
+    "assert.equal(scope.allowsCell('SysAdmin'), false)", // tests/cell-scope.test.js
+    "const cells = [{ cell: 'Dev' }, { cell: 'Research' }, { cell: 'SysAdmin' }]",
+    "il tool Shell e' utile per diagnosticare una cella locale",
+    "gestisce le celle Fork e Personal come qualunque altra",
+  ];
+  for (const testo of casi) {
+    const colpe = colpeIn(testo, 'tests/esempio.test.js');
+    assert.deepEqual(colpe, [], `falso positivo su dato legittimo: "${testo}" — colpe: ${JSON.stringify(colpe)}`);
+  }
 });
 
 test('l\'elenco dei motivi non e\' vuoto ne\' inerte', () => {
