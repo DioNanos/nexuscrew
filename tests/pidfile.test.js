@@ -7,7 +7,7 @@ const path = require('node:path');
 const cp = require('node:child_process');
 const {
   readPidfile, writePidfile, pidOwnership, pidExists, isAlive, cleanStale, killPidfile, removePidfile,
-  currentUid, readCmdline,
+  currentUid, readCmdline, probeProcessStart,
 } = require('../lib/cli/pidfile.js');
 
 function tmpPid() {
@@ -215,8 +215,19 @@ test('killPidfile: lo stop da CLI NON si rompe — post-kill il pidfile si togli
   // Simulazione fedele: il pidfile è di un "server" vivo (mock killImpl non
   // uccide davvero), il cmd matcha, il segnale parte. La rimozione post-kill
   // usa la garanzia allowLive: senza, un /proc lento bloccherebbe lo stop.
+  //
+  // R-pidfile-2 (2026-08-17): il pid qui era 424243, un numero mai esistito
+  // davvero — prima del fix odierno questo non contava, il ramo cmd-only non
+  // guardava mai la nascita. Ora writePidfile classifica un pid inattestabile
+  // come 'indeterminate' (non sappiamo perché 424243 non si legge: se manca
+  // solo perché non esiste, o se questa macchina non sa attestare affatto) e
+  // killPidfile rifiuta PRIMA di questo test, che non e' quello che questo
+  // test vuole provare. Serve un pid REALMENTE attestabile perché il test
+  // arrivi al codice che vuole esercitare (rimozione post-kill con /proc
+  // lento) — usiamo process.pid, vivo per davvero: il cmd resta mockato,
+  // quindi non importa che sia il nostro processo di test.
   const p = tmpPid();
-  writePidfile(p, 424243, 'node nexuscrew serve');
+  writePidfile(p, process.pid, 'node nexuscrew serve');
   const segnali = [];
   const killImpl = (pid, signal) => {
     segnali.push(signal);
@@ -326,10 +337,14 @@ test('verso giusto: pidfile di un vivo con la PROPRIA nascita — vivo per la vi
   }
 });
 
-test('non calcolabile: senza nascita leggibile vale il cmd — nel dubbio il pidfile resta del vivo', async () => {
+test('isAlive: non calcolabile — senza nascita leggibile vale il cmd, nel dubbio il vivo resta vivo', async () => {
+  // Solo isAlive: questo fix (R-pidfile-2) non la tocca. isAttributable resta
+  // fail-closed sulla stessa mancanza (richiede processStart, invariato); qui
+  // il criterio storico "nel dubbio vale il cmd" resta quello di sempre —
+  // isAlive non manda mai un segnale, killPidfile si', ed e' li' che il
+  // dubbio smette di essere gratis (vedi il test sotto).
   const child = figlioCheTieneIlNumero();
   await figlioPronto(child);
-  const p = tmpPid();
   try {
     const cmdVivo = readCmdline(child.pid);
     // a) meta SENZA processStart (pidfile vecchio, /proc nascosto): via cmd.
@@ -340,16 +355,112 @@ test('non calcolabile: senza nascita leggibile vale il cmd — nel dubbio il pid
     const nonLeggibile = { pid: child.pid, cmd: cmdVivo, processStart: 'linux:1', uid: currentUid() };
     assert.equal(isAlive(nonLeggibile, { readProcessStartImpl: () => null }), true,
       'criterio non calcolabile: mai dichiarare morto un vivo');
-    // c) pidfile vecchio + killPidfile: via cmd, il legittimo si ferma.
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+  }
+});
+
+// R-pidfile-2 (2026-08-17, audit su 7b6571c/529e32f): l'audit ha trovato che
+// killPidfile segnalava ANCORA sul solo pid+cmd quando il meta non aveva
+// processStart — non solo il "formato vecchio" onesto, ma anche i pidfile
+// scritti da writePidfile quando l'attestazione falliva alla creazione senza
+// una causa classificabile. La stessa identica forma di meta che il test
+// SOPRA (isAlive) accetta come "vivo, nel dubbio" qui PRIMA faceva anche
+// segnalare — e un pid ereditato con un cmd compatibile riceveva il segnale
+// come se fosse verificato. Questo test PRIMA di oggi asseriva `r.killed ===
+// true` per esattamente questo meta ("pidfile senza nascita: il kill
+// verificato di sempre" — il commento originale, ora sbagliato). Da oggi
+// asserisce il contrario: senza una classificazione dichiarata alla
+// creazione (attested o unsupported), killPidfile rifiuta — perché un meta
+// senza campo non si distingue da un tentativo fallito per un motivo che
+// potrebbe riguardare solo QUESTO pid, non la piattaforma, e quell'assenza
+// non e' una proprieta' stabile su cui vale la pena segnalare. Non e' un
+// indebolimento nascosto: e' il buco che l'audit ha aperto. Costo dichiarato:
+// un pidfile scritto da una versione precedente a questo fix (o su una
+// piattaforma dove l'attestazione fallisce in modo non classificabile)
+// richiede un riavvio/stop manuale la prima volta — un fallimento visibile,
+// non un segnale silenzioso al bersaglio sbagliato.
+test('killPidfile: senza classificazione dichiarata (meta vecchio o indeterminate) RIFIUTA, non e\' piu\' il kill verificato di sempre', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  try {
+    const cmdVivo = readCmdline(child.pid);
+    const senza = { pid: child.pid, cmd: cmdVivo, uid: currentUid() };
     fs.writeFileSync(p, `${JSON.stringify(senza)}\n`);
     const r = killPidfile(p, 'SIGTERM');
-    assert.equal(r.killed, true, 'pidfile senza nascita: il kill verificato di sempre');
+    assert.equal(r.killed, false, 'meta senza processStart e senza attestation dichiarata: NON si segnala');
+    assert.match(r.reason, /unattested/, `reason nomina la causa: ${r.reason}`);
+    assert.ok(fs.existsSync(p), 'il pidfile NON si tocca: non sappiamo se sia stale');
+    assert.equal(pidOwnership(child.pid), 'owned', 'il legittimo e\' ancora vivo, non toccato');
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+});
+
+// CONTROLLO NEGATIVO OBBLIGATORIO (Dev, R-pidfile-2): la sonda dell'auditor
+// riprodotta cosi' com'e', mockata come l'ha descritta — pid ereditato, cmd
+// compatibile, nessuna attestazione nel meta. PRIMA di questo fix: ownership
+// owned, cmd match, start reader mai interrogato (il ramo non c'era) ->
+// segnala e rimuove il pidfile. DOPO: rifiuta, non tocca il pidfile.
+test('AUDITOR negativo: pid ereditato + cmd compatibile + nessuna attestazione — PRIMA segnalava, ORA no', () => {
+  const p = tmpPid();
+  fs.writeFileSync(p, `${JSON.stringify({ pid: 424242, cmd: 'node same-command' })}\n`);
+  const segnali = [];
+  const killImpl = (pid, signal) => { segnali.push([pid, signal]); }; // non lancia mai: ownership 'owned'
+  const r = killPidfile(p, 'SIGTERM', {
+    killImpl,
+    readCmdlineImpl: () => 'node same-command',
+    readProcessStartImpl: () => null,
+  });
+  assert.equal(r.killed, false, 'pid solo ereditato, cmd compatibile, nessuna attestazione: NON si segnala');
+  assert.deepEqual(segnali, [[424242, 0]], 'solo la probe di ownership: nessun SIGTERM verso il riusato');
+  assert.ok(fs.existsSync(p), 'il pidfile non verificabile non si tocca: non sappiamo se sia stale');
+  fs.rmSync(path.dirname(p), { recursive: true, force: true });
+});
+
+// unsupported: DICHIARATO alla creazione (probeProcessStart, non ricalcolato
+// al kill). Qui la piattaforma non sa attestare per davvero (mock: ne' proc
+// ne' ps rispondono) e il kill ricade sul cmd — ma lo DICE nel risultato.
+test('killPidfile: unsupported dichiarato alla creazione ricade sul cmd, ma lo dichiara nel risultato', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  try {
+    const cmdVivo = readCmdline(child.pid);
+    fs.writeFileSync(p, `${JSON.stringify({ pid: child.pid, cmd: cmdVivo, attestation: 'unsupported', uid: currentUid() })}\n`);
+    const r = killPidfile(p, 'SIGTERM');
+    assert.equal(r.killed, true, 'unsupported dichiarato: il kill verificato via cmd resta possibile (Termux non si spegne)');
+    assert.equal(r.unverifiedBirth, true, 'ma il risultato lo dichiara: non e\' un kill verificato quanto quello attestato');
     await aspettaExit(child);
   } finally {
     child.kill('SIGKILL');
     await aspettaExit(child);
     fs.rmSync(path.dirname(p), { recursive: true, force: true });
   }
+});
+
+// probeProcessStart: 'unsupported' e' una congiunzione (proc E ps ENTRAMBI
+// strutturalmente impossibili), non "il tentativo e' fallito". Su questa
+// macchina ne' /proc ne' ps sono strutturalmente assenti: un pid che
+// semplicemente non esiste fallisce comunque, ma per un motivo che riguarda
+// SOLO quel pid — mai unsupported, sempre indeterminate. E' la distinzione
+// che l'audit ha chiesto: non "ha fallito?" ma "perche'?".
+test('probeProcessStart: pid inesistente su una macchina normale e\' indeterminate, mai unsupported', () => {
+  const pidInesistente = 999999;
+  const { value, cause } = probeProcessStart(pidInesistente);
+  assert.equal(value, null);
+  assert.equal(cause, 'indeterminate',
+    'ne\' /proc ne\' ps sono strutturalmente assenti qui: non e\' un fatto sulla piattaforma');
+});
+
+test('probeProcessStart: il nostro pid, sempre leggibile qui, attesta', () => {
+  const { value, cause } = probeProcessStart(process.pid);
+  assert.ok(value, 'su questa macchina /proc esiste: il probe sul nostro pid attesta');
+  assert.equal(cause, null);
 });
 
 // Nascita attestata ma non rileggibile: l'identita' non e' verificabile e il
