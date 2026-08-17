@@ -16,6 +16,7 @@ const store = require('../lib/nodes/store.js');
 const tunnel = require('../lib/nodes/tunnel.js');
 const supervisor = require('../lib/nodes/tunnel-supervisor.js');
 const { generaCoppia, sshKeygenDisponibile } = require('./helpers/pubkey.js');
+const { loadPty } = require('../lib/pty/provider.js');
 
 // Chiave VALIDA, non un segnaposto: viene anche scritta in un `.pub` e riletta,
 // e la lettura ora valida algoritmo e blob. Un finto piu' permissivo del vero
@@ -420,4 +421,104 @@ test('readPublicKey: una privata cifrata non lascia discendenti askpass', (t) =>
   // correttamente "non nostro" comunque.
   assert.ok(pidCatturato !== null, 'il braccio 2 deve aver lasciato un pid da ripulire, altrimenti non si e\' provato niente');
   assert.equal(nostro(pidCatturato), false, 'il test ripulisce i propri residui, e lo chiede al kernel');
+});
+
+// —— P4: il difetto che il gate non-PTY non poteva vedere ——————————————————
+//
+// Con una chiave CIFRATA e un controlling terminal, `ssh-keygen` legge la
+// passphrase da /dev/tty — non da stdin, e con SSH_ASKPASS_REQUIRE=never
+// nemmeno da un askpass — e li' resta ad aspettare fino al timeout intero di
+// execFileSync. Il percorso e' raggiungibile in produzione: `nexuscrew serve`
+// foreground chiama authorizedKeysForNode in modo sincrono durante il pairing.
+//
+// Il gate non-PTY non l'ha visto per tre giri perche' senza controlling
+// terminal il difetto non si tocca: ssh-keygen non apre /dev/tty e fallisce
+// subito anche sul codice rotto. Quindi questo test il PTY SE LO PORTA:
+// node-pty, lo stesso provider dei terminali. E la probe dichiara se il
+// controlling terminal era davvero aperto — un verde che mente sul tty non
+// vale niente.
+
+// Lancia la probe dentro un PTY reale e aspetta l'exit (con watchdog proprio:
+// il timeout iniettato nella readPublicKey e' della probe, non del lancio).
+function lanciaProbePty(pty, args, watchdogMs) {
+  const probe = path.join(__dirname, 'helpers', 'pubkey-pty-probe.js');
+  return new Promise((resolve, reject) => {
+    let out = '';
+    let sciolto = false;
+    const child = pty.spawn(process.execPath, [probe, ...args], {
+      cols: 80, rows: 24,
+      env: { PATH: process.env.PATH || '/usr/bin:/bin', HOME: process.env.HOME || os.homedir() },
+    });
+    const watchdog = setTimeout(() => {
+      if (sciolto) return;
+      sciolto = true;
+      try { child.kill(); } catch (_) {}
+      reject(new Error(`probe PTY oltre il watchdog di ${watchdogMs} ms; output: ${out}`));
+    }, watchdogMs);
+    child.onData((d) => { out += d; });
+    child.onExit(({ exitCode }) => {
+      if (sciolto) return;
+      sciolto = true;
+      clearTimeout(watchdog);
+      resolve({ out, exitCode });
+    });
+  });
+}
+
+// La probe stampa UNA riga JSON; il PTY ci mette del suo (\r, eventuali
+// echi): si cerca la riga che ha forma di JSON, non si assume sia l'unica.
+function parseProbe(out) {
+  for (const riga of String(out).split('\n')) {
+    const pulita = riga.replace(/\r/g, '').trim();
+    if (pulita.startsWith('{') && pulita.endsWith('}')) {
+      try { return JSON.parse(pulita); } catch (_) { /* continua a cercare */ }
+    }
+  }
+  return null;
+}
+
+test('readPublicKey (P4): sotto PTY la chiave cifrata fallisce subito, non sul timeout', async (t) => {
+  if (!sshKeygenDisponibile()) return t.skip('ssh-keygen non disponibile su questa macchina');
+  let pty;
+  try { pty = loadPty(); } catch (e) {
+    // Niente provider PTY reale: il difetto non si tocca in-test. SI DICHIARA,
+    // non si finge verde. Riproduzione a mano, dentro un PTY vero:
+    //   script -qec 'node tests/helpers/pubkey-pty-probe.js <chiave-cifrata> 3000' /dev/null
+    // (su macOS: script -q /dev/null node tests/helpers/pubkey-pty-probe.js <chiave> 3000)
+    return t.skip(`nessun provider PTY reale disponibile (${e.message}): difetto non riproducibile in-test`);
+  }
+  const TIMEOUT_MS = 3000; // iniettato: l'esito deve arrivare SENZA che scatti
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'p4-pty-'));
+  const cifrata = path.join(dir, 'cifrata');
+  const inChiaro = path.join(dir, 'inchiaro');
+  const { execFileSync } = require('node:child_process');
+  try {
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', 'passphrase-di-prova', '-f', cifrata],
+      { stdio: 'ignore', timeout: 20000 });
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', inChiaro],
+      { stdio: 'ignore', timeout: 20000 });
+
+    // BRACCIO 1 — la chiave cifrata: null, e SUBITO. Non un cronometro stretto
+    // (ci e' gia' costato un falso rosso 164 vs 110): si inietta il timeout e
+    // si pretende che l'esito arrivi a meta' strada da esso, con margine largo.
+    // Sul codice rotto ssh-keygen aspetta il timeout INTERO su /dev/tty:
+    // elapsedMs ~ TIMEOUT_MS, e questa asserzione cade.
+    const r1 = parseProbe((await lanciaProbePty(pty, [cifrata, String(TIMEOUT_MS)], TIMEOUT_MS + 15000)).out);
+    assert.ok(r1, 'la probe deve stampare l\'esito in JSON');
+    assert.equal(r1.tty, 'aperto',
+      'la probe DEVE avere un controlling terminal aperto: senza, ssh-keygen non tocca /dev/tty e questo test non vede il difetto');
+    assert.equal(r1.esito, null, 'una chiave cifrata non si deriva in batch');
+    assert.ok(r1.elapsedMs < TIMEOUT_MS / 2,
+      `deve fallire subito (${r1.elapsedMs} ms), non aspettare il timeout di ${TIMEOUT_MS} ms: se cade, ssh-keygen sta leggendo la passphrase da /dev/tty`);
+
+    // BRACCIO 2 — il caso buono non deve regredire (misura F del briefing):
+    // chiave in chiaro, stessa cura force+askpass-inesistente, stessa PTY.
+    const r2 = parseProbe((await lanciaProbePty(pty, [inChiaro, String(TIMEOUT_MS)], TIMEOUT_MS + 15000)).out);
+    assert.ok(r2, 'la probe deve stampare l\'esito in JSON (chiave in chiaro)');
+    assert.equal(r2.tty, 'aperto', 'anche il caso buono va misurato sotto PTY');
+    assert.ok(typeof r2.esito === 'string' && r2.esito.startsWith('ssh-ed25519 '),
+      'la chiave in chiaro continua a derivare la pubblica');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
