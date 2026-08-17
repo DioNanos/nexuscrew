@@ -326,8 +326,6 @@ test('readPublicKey: una privata cifrata non lascia discendenti askpass', (t) =>
   execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', 'passphrase-di-prova', '-f', key],
     { stdio: 'ignore', timeout: 20000 });
 
-  // Marcatore nel NOME: `ps` mostra `/bin/sh /…/ap-<marcatore>.sh`, e il corpo
-  // e' un `sleep` nudo che qualunque shell POSIX sa eseguire.
   // UN SOLO PROCESSO, CON UN'IDENTITA' OSSERVABILE. Due difetti pagati qui:
   //  1. marcavo la shell e uccidevo quella, ma `sleep` era un FIGLIO separato e
   //     senza marcatore — sopravviveva, e la ricerca dei residui non lo vedeva:
@@ -366,8 +364,17 @@ test('readPublicKey: una privata cifrata non lascia discendenti askpass', (t) =>
     const pid = pidResiduo();
     return pid !== null && nostro(pid);
   };
+  // P2 (rilievo auditor): `uccidiResidui` cancellava il pidfile PRIMA che
+  // l'assert finale potesse rileggerlo — `vivo()` a quel punto non trova piu'
+  // nessun pid e torna false SEMPRE, che l'uccisione sia riuscita o no.
+  // L'auditor ha tolto il SIGKILL sotto e la suite e' rimasta verde: la
+  // guardia non pinnava niente. Ora il pid si legge e si CATTURA prima di
+  // toccare qualunque file, e l'ultimo assert lo riverifica per appartenenza
+  // (argv) — non per numero nudo, ne' rileggendolo da un file che non c'e' piu'.
+  let pidCatturato = null;
   const uccidiResidui = () => {
     const pid = pidResiduo();
+    pidCatturato = pid;
     if (pid !== null && nostro(pid)) { try { process.kill(pid, 'SIGKILL'); } catch (_) {} }
     try { fs.unlinkSync(pidfile); } catch (_) {}
   };
@@ -406,5 +413,11 @@ test('readPublicKey: una privata cifrata non lascia discendenti askpass', (t) =>
     uccidiResidui();
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  assert.equal(vivo(), false, 'il test ripulisce i propri residui, e lo chiede al kernel');
+  // Sul PID catturato PRIMA della cancellazione, non riletto da un pidfile
+  // che a questo punto non esiste piu': `nostro` interroga il kernel via
+  // `ps`, non il filesystem del tempdir gia' rimosso — un pid morto (o
+  // riassegnato a un estraneo senza il nostro testimone nell'argv) risulta
+  // correttamente "non nostro" comunque.
+  assert.ok(pidCatturato !== null, 'il braccio 2 deve aver lasciato un pid da ripulire, altrimenti non si e\' provato niente');
+  assert.equal(nostro(pidCatturato), false, 'il test ripulisce i propri residui, e lo chiede al kernel');
 });
