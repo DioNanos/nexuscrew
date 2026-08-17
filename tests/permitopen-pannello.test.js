@@ -15,12 +15,15 @@ const cmds = require('../lib/nodes/commands.js');
 const store = require('../lib/nodes/store.js');
 const tunnel = require('../lib/nodes/tunnel.js');
 const supervisor = require('../lib/nodes/tunnel-supervisor.js');
-const { pubValida, campoSsh } = require('./helpers/pubkey.js');
+const { generaCoppia, sshKeygenDisponibile } = require('./helpers/pubkey.js');
 
 // Chiave VALIDA, non un segnaposto: viene anche scritta in un `.pub` e riletta,
 // e la lettura ora valida algoritmo e blob. Un finto piu' permissivo del vero
 // rendeva verdi test che in produzione non sarebbero mai passati.
-const FAKE_PUB = pubValida('PermitOpenPannello test key');
+// `authorizedKeysLine` riceve la pubblica GIA' derivata: qui e' un valore
+// opaco e una stringa fissa basta. Il legame con la privata lo prova il test
+// dedicato piu' sotto, sull'unica funzione che lo puo' garantire.
+const FAKE_PUB = 'ssh-ed25519 AAAAC3TestLinea PermitOpenPannello';
 
 // —— A: la riga con DUE destinazioni esplicite (mai un permesso generico) ———
 
@@ -129,16 +132,15 @@ test('probeForwardChannels: distingue canale APERTO da canale RIFIUTATO da bind 
 test('refusalHint: con il .pub accanto alla chiave dice la riga COMPLETA da incollare', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-hint-'));
   try {
-    const key = path.join(dir, 'tunnel_key');
-    fs.writeFileSync(key, 'PRIVATA-finta');
-    fs.writeFileSync(`${key}.pub`, `${FAKE_PUB}\n`);
+    const key = generaCoppia(dir, 'tunnel_key', 'hint test');
+    const pub = tunnel.readPublicKey(key);
     const hint = supervisor.refusalHint({
       remoteDestinations: ['127.0.0.1:41820', '127.0.0.1:41821'],
       identityFile: key,
     });
     assert.ok(hint.includes('authorized_keys'), 'nomina authorized_keys');
     assert.ok(hint.includes(`permitopen="127.0.0.1:41820",permitopen="127.0.0.1:41821"`), 'la riga con TUTTE le destinazioni');
-    assert.ok(hint.includes(FAKE_PUB), 'la pubkey: la riga è incollabile');
+    assert.ok(hint.includes(pub), 'la pubkey derivata dalla privata: la riga e\' incollabile');
     // Senza .pub: comunque le destinazioni, mai una riga incompleta.
     const senzaPub = supervisor.refusalHint({ remoteDestinations: ['127.0.0.1:41821'], identityFile: path.join(dir, 'inesistente') });
     assert.ok(senzaPub.includes('127.0.0.1:41821') && !senzaPub.includes('restrict,'), 'senza pubkey: cosa aggiungere, non una riga a metà');
@@ -151,8 +153,7 @@ test('refusalHint: con il .pub accanto alla chiave dice la riga COMPLETA da inco
 // test se ne accorga.
 test('refusalDetails espone la riga come campo, oltre che dentro la frase', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'refusal-'));
-  const key = path.join(dir, 'id_ed25519');
-  fs.writeFileSync(`${key}.pub`, `${pubValida()}\n`);
+  const key = generaCoppia(dir, 'id_ed25519');
   const d = supervisor.refusalDetails({
     remoteDestinations: ['127.0.0.1:41800', '127.0.0.1:41821'],
     identityFile: key,
@@ -179,14 +180,14 @@ test('refusalDetails espone la riga come campo, oltre che dentro la frase', () =
 // la logica che la route invoca, e il limite che decide se la riga esce.
 test('authorizedKeysForNode: con la chiave la riga esce, senza identityFile no', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'akfn-'));
-  const key = path.join(dir, 'id_ed25519');
-  fs.writeFileSync(`${key}.pub`, `${pubValida()}\n`);
+  const key = generaCoppia(dir, 'id_ed25519');
 
   const conChiave = tunnel.authorizedKeysForNode(
     { remotePort: 41800, identityFile: key }, 41821);
   assert.ok(conChiave.includes('permitopen="127.0.0.1:41800"'), 'la porta nexus');
   assert.ok(conChiave.includes('permitopen="127.0.0.1:41821"'), 'la porta pannello');
-  assert.ok(conChiave.includes('prova@test'), 'la chiave letta dal .pub accanto alla privata');
+  assert.ok(conChiave.includes(tunnel.readPublicKey(key)),
+    'la chiave derivata dalla privata, non letta da un file accanto');
 
   // IL LIMITE, dichiarato: senza identityFile ssh usa le chiavi di default
   // dell'utente, un agent o la config, e il prodotto non sa quale. Non si
@@ -194,7 +195,8 @@ test('authorizedKeysForNode: con la chiave la riga esce, senza identityFile no',
   // nemmeno la sonda del supervisore, che la chiave la ricava solo da `-i`.
   // Per quei nodi la riparazione automatica NON c'e', e il prodotto lo dice.
   assert.equal(tunnel.authorizedKeysForNode({ remotePort: 41800 }, 41821), null);
-  // E con la chiave dichiarata ma il .pub assente, stesso verso: niente mezza istruzione.
+  // E con una identityFile che non esiste (o non e' una chiave), stesso verso:
+  // niente mezza istruzione.
   assert.equal(tunnel.authorizedKeysForNode(
     { remotePort: 41800, identityFile: path.join(dir, 'inesistente') }, 41821), null);
 });
@@ -206,8 +208,7 @@ test('authorizedKeysForNode: con la chiave la riga esce, senza identityFile no',
 // peggiora il guasto e' peggio di nessun messaggio.
 test('refusalDetails: senza chiave pubblica non promette una riga da sostituire', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'refusal2-'));
-  const key = path.join(dir, 'id_ed25519');
-  fs.writeFileSync(`${key}.pub`, `${pubValida()}\n`);
+  const key = generaCoppia(dir, 'id_ed25519');
 
   const con = supervisor.refusalDetails({ remoteDestinations: ['127.0.0.1:41800'], identityFile: key });
   assert.match(con.hint, /SOSTITUISCI/, 'con la chiave si sostituisce la riga intera');
@@ -233,115 +234,49 @@ test('refusalDetails: senza chiave pubblica non promette una riga da sostituire'
 });
 
 
-// IL CONFINE CHE QUESTA LETTURA DIFENDE. Il valore letto viene CONCATENATO
-// dopo `restrict,port-forwarding,permitopen=...`: se il file contenesse due
-// chiavi, il blocco che l'utente copia diventerebbe due righe e la seconda
-// sarebbe una chiave SENZA restrizioni. Incollandola si aggirerebbe proprio la
-// regola che quella riga esiste per imporre. Qui non si tollera: si rifiuta.
-test('readPublicKey: una sola chiave valida, altrimenti niente', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pubkey-'));
-  const scrivi = (nome, testo) => {
-    const k = path.join(dir, nome);
-    fs.writeFileSync(`${k}.pub`, testo);
-    return k;
-  };
+// IL LEGAME FRA LE DUE META', che e' la proprieta' che conta. Validare `A.pub`
+// prova che quel file contiene UNA chiave valida, non che sia LA chiave di A.
+// Se `A.pub` e' stale o ripristinato da un backup, si pubblica la chiave
+// sbagliata: l'utente sostituisce la riga di A con quella di B e al reconnect
+// successivo A perde l'accesso — il prodotto causa il guasto che prometteva di
+// riparare. Derivare la pubblica DALLA privata rende il legame garantito per
+// costruzione invece che verificato a posteriori.
+test('readPublicKey: la pubblica viene dalla privata, non dal file accanto', (t) => {
+  if (!sshKeygenDisponibile()) return t.skip('ssh-keygen non disponibile su questa macchina');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bind-'));
+  const A = generaCoppia(dir, 'A', 'chiave-A');
+  const B = generaCoppia(dir, 'B', 'chiave-B');
 
-  const buona = scrivi('ok', `${pubValida('dag@host con spazi')}\n`);
-  const letta = tunnel.readPublicKey(buona);
-  assert.ok(letta && letta.startsWith('ssh-ed25519 '), 'una riga valida si legge');
-  assert.ok(!/[\r\n]/.test(letta), 'e non porta dentro ritorni a capo');
-  // e la riga composta resta UNA sola: e' la proprieta' che protegge l'utente
-  const riga = tunnel.authorizedKeysForNode({ remotePort: 41800, identityFile: buona }, 41821);
+  const daA = tunnel.readPublicKey(A);
+  assert.ok(daA && daA.startsWith('ssh-ed25519 '), 'una coppia vera si legge');
+
+  // Il `.pub` di A viene sostituito con quello di B: e' il caso reale del
+  // backup ripristinato o del file stale.
+  fs.copyFileSync(`${B}.pub`, `${A}.pub`);
+  assert.equal(tunnel.readPublicKey(A), daA,
+    'la pubblica non cambia: viene dalla privata, il file accanto non la decide');
+
+  // E senza `.pub` del tutto continua a funzionare: quel file non serve piu'.
+  fs.unlinkSync(`${A}.pub`);
+  assert.equal(tunnel.readPublicKey(A), daA, 'il .pub non e\' piu\' una dipendenza');
+
+  // Una privata che non esiste, o che non e' una chiave, non produce niente.
+  assert.equal(tunnel.readPublicKey(path.join(dir, 'inesistente')), null);
+  fs.writeFileSync(path.join(dir, 'spazzatura'), 'non sono una chiave\n');
+  assert.equal(tunnel.readPublicKey(path.join(dir, 'spazzatura')), null);
+
+  // La riga composta resta UNA sola.
+  const riga = tunnel.authorizedKeysForNode({ remotePort: 41800, identityFile: A }, 41821);
   assert.equal(riga.split('\n').length, 1, 'il blocco da copiare e\' una riga sola');
-
-  const dueChiavi = scrivi('due', `${pubValida()}\n${pubValida('seconda')}\n`);
-  assert.equal(tunnel.readPublicKey(dueChiavi), null,
-    'due chiavi concatenate: la seconda finirebbe SENZA restrizioni nel blocco copiato');
-  assert.equal(tunnel.authorizedKeysForNode({ remotePort: 41800, identityFile: dueChiavi }, 41821), null,
-    'e quindi non esce nessun blocco copiabile');
-
-  assert.equal(tunnel.readPublicKey(scrivi('opz', `command="/bin/sh" ${pubValida()}\n`)), null,
-    'opzioni prefissate: non e\' una chiave nuda e non si compone');
-  const b = pubValida().split(' ')[1];
-  assert.equal(tunnel.readPublicKey(scrivi('inc', `ssh-rsa ${b} x\n`)), null,
-    'algoritmo dichiarato diverso da quello scritto dentro il blob');
-  assert.equal(tunnel.readPublicKey(scrivi('vuoto', '\n\n')), null, 'nessuna chiave');
-  assert.equal(tunnel.readPublicKey(scrivi('spazzatura', 'non-una-chiave\n')), null, 'testo qualunque');
+  assert.ok(riga.includes('permitopen="127.0.0.1:41821"'), 'con la destinazione pannello');
 });
 
-// L'ORACOLO NON SIAMO NOI, ed e' finito dentro il prodotto. Dopo due giri in
-// cui validavo la chiave da solo — prima il nome, poi la struttura dei campi —
-// un audit ha trovato ogni volta materiale che il mio controllo accettava e
-// `ssh-keygen` rifiuta: punto ECDSA fuori curva, modulo RSA di zeri, curva che
-// non corrisponde. Non sono difetti di struttura: sono proprieta'
-// crittografiche. Ora decide chi la chiave la usera'.
-test('readPublicKey: decide ssh-keygen, e i due controlli che lui non fa restano nostri', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blob-'));
-  const scrivi = (nome, testo) => {
-    const k = path.join(dir, nome);
-    fs.writeFileSync(`${k}.pub`, testo);
-    return k;
-  };
-  const { execFileSync } = require('node:child_process');
-  // Se ssh-keygen manca, il prodotto rifiuta TUTTO per disegno: qui non c'e'
-  // niente da provare e il test lo dice, invece di restare verde per assenza.
-  try {
-    execFileSync('ssh-keygen', ['-A', '-f', path.join(dir, 'vuoto')], { stdio: 'ignore' });
-  } catch (e) {
-    if (e && e.code === 'ENOENT') return t.skip('ssh-keygen non disponibile su questa macchina');
-  }
-
-  // CHIAVI VERE, generate da ssh-keygen: la regressione da temere e' rifiutarne
-  // una legittima, non accettarne una rotta.
-  for (const tipo of ['ed25519', 'rsa', 'ecdsa']) {
-    const k = path.join(dir, `vera_${tipo}`);
-    execFileSync('ssh-keygen', ['-q', '-t', tipo, '-N', '', '-C', `vera-${tipo}`, '-f', k], { stdio: 'ignore' });
-    assert.ok(tunnel.readPublicKey(k), `una ${tipo} vera deve essere accettata`);
-    assert.ok(tunnel.authorizedKeysForNode({ remotePort: 41800, identityFile: k }, 41821),
-      `e comporre la riga per una ${tipo} vera`);
-  }
-
-  // I DUE CONTROLLI CHE SSH-KEYGEN NON FA. Con due chiavi nel file lui accetta
-  // e mostra la prima (misurato): il blocco copiato ne porterebbe una SENZA
-  // restrizioni. E un CR nudo non separa le righe per lui.
-  const vera = fs.readFileSync(`${path.join(dir, 'vera_ed25519')}.pub`, 'utf8').trim();
-  assert.equal(tunnel.readPublicKey(scrivi('due', `${vera}\n${vera}\n`)), null,
-    'due chiavi: la seconda finirebbe senza restrizioni nel blocco copiato');
-  assert.equal(tunnel.readPublicKey(scrivi('cr', `${vera}\r${vera}\n`)), null,
-    'un CR nudo non trasforma due chiavi in una riga sola');
-
-  // MATERIALE STRUTTURALMENTE PLAUSIBILE E CRIPTOGRAFICAMENTE NO: e' la classe
-  // che il mio controllo fatto a mano lasciava passare due volte di fila.
-  const ec = Buffer.concat([
-    campoSsh(Buffer.from('ecdsa-sha2-nistp256')), campoSsh(Buffer.from('nistp256')), campoSsh(Buffer.alloc(1)),
-  ]).toString('base64');
-  assert.equal(tunnel.readPublicKey(scrivi('ec1', `ecdsa-sha2-nistp256 ${ec} x\n`)), null,
-    'punto ECDSA di un byte: strutturalmente plausibile, non una chiave');
-  const rsa = Buffer.concat([
-    campoSsh(Buffer.from('ssh-rsa')), campoSsh(Buffer.from([1, 0, 1])), campoSsh(Buffer.alloc(128)),
-  ]).toString('base64');
-  assert.equal(tunnel.readPublicKey(scrivi('rsa0', `ssh-rsa ${rsa} x\n`)), null,
-    'modulo RSA di soli zeri');
-
-  // IL TAB e' legittimo fra algoritmo e blob: ssh-keygen lo accetta, e prima lo
-  // rifiutavamo noi.
-  assert.ok(tunnel.readPublicKey(scrivi('tab', `${vera.replace(' ', '\t')}\n`)),
-    'un tab come separatore non squalifica una chiave valida');
-});
-
-// SE L'ORACOLO NON C'E', NON SI PROMETTE NIENTE. La guardia precedente
-// catturava QUALUNQUE errore di ssh-keygen come "binario assente" e saltava
-// l'asserzione: con una chiave invalida il binario fallisce, e il test restava
-// verde proprio sul caso che doveva bocciare. ENOENT e rifiuto sono due cose
-// diverse e ora si distinguono.
+// SE L'ORACOLO NON C'E', NON SI PROMETTE NIENTE.
 test('readPublicKey: senza ssh-keygen non si compone nessuna riga', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'noorac-'));
-  const k = path.join(dir, 'k');
-  fs.writeFileSync(`${k}.pub`, `${pubValida()}\n`);
   const assente = () => { const e = new Error('spawn ssh-keygen ENOENT'); e.code = 'ENOENT'; throw e; };
-  assert.equal(tunnel.readPublicKey(k, { execImpl: assente }), null,
+  assert.equal(tunnel.readPublicKey('/qualunque/chiave', { execImpl: assente }), null,
     'binario assente: si rifiuta, non si tira a indovinare');
-  const rifiuta = () => { const e = new Error('is not a public key file'); e.status = 255; throw e; };
-  assert.equal(tunnel.readPublicKey(k, { execImpl: rifiuta }), null,
-    'e un rifiuto vero porta allo stesso esito, per una ragione diversa');
+  const rifiuta = () => { const e = new Error('load failed'); e.status = 255; throw e; };
+  assert.equal(tunnel.readPublicKey('/qualunque/chiave', { execImpl: rifiuta }), null,
+    'e una privata illeggibile o protetta da passphrase porta allo stesso esito');
 });

@@ -9,7 +9,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { pubValida } = require('./helpers/pubkey.js');
+const { generaCoppia } = require('./helpers/pubkey.js');
 const { createServer } = require('../lib/server.js');
 const peering = require('../lib/nodes/peering.js');
 const store = require('../lib/nodes/store.js');
@@ -400,9 +400,7 @@ test('pair panel: con un\'identita\' dedicata la riga esce, con entrambe le dest
     confirm: () => R(200, { ok: true }),
     health: () => R(200, { ok: true, instanceId: PEER_ID }),
   });
-  const key = path.join(dir, 'id_ed25519_dedicata');
-  fs.writeFileSync(key, 'FINTA-PRIVATA\n', { mode: 0o600 });
-  fs.writeFileSync(`${key}.pub`, `${pubValida('dedicata')}\n`);
+  const key = generaCoppia(dir, 'id_ed25519_dedicata', 'dedicata');
   const r = await pairReq(base, token, {
     name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir), identityFile: key,
   });
@@ -411,7 +409,8 @@ test('pair panel: con un\'identita\' dedicata la riga esce, con entrambe le dest
   assert.equal(j.paired, true);
   assert.ok(typeof j.authorizedKeys === 'string' && j.authorizedKeys,
     `la riga deve arrivare al client — chiavi: ${Object.keys(j).join(',')}`);
-  assert.ok(j.authorizedKeys.includes('dedicata'), 'la chiave letta dal .pub');
+  assert.ok(j.authorizedKeys.startsWith('restrict,port-forwarding,permitopen='),
+    'la riga intera, derivata dalla privata dichiarata nel corpo');
   assert.ok(j.authorizedKeys.includes('permitopen="127.0.0.1:41821"'), 'la destinazione pannello');
   assert.match(j.authorizedKeys, /permitopen="127\.0\.0\.1:\d+".*permitopen="127\.0\.0\.1:41821"/,
     'due destinazioni distinte, controllo e pannello');
