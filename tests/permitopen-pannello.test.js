@@ -192,3 +192,36 @@ test('authorizedKeysForNode: con la chiave la riga esce, senza identityFile no',
   assert.equal(tunnel.authorizedKeysForNode(
     { remotePort: 41800, identityFile: path.join(dir, 'inesistente') }, 41821), null);
 });
+
+// I DUE RAMI DEVONO DIRE COSE DIVERSE. Prima, senza la chiave pubblica, si
+// costruiva un frammento e lo si presentava come "Riga da usare (SOSTITUISCI
+// quella esistente)": chi avesse obbedito avrebbe sostituito una riga valida
+// con mezza riga, rompendo l'accesso invece di ripararlo. Un messaggio che
+// peggiora il guasto e' peggio di nessun messaggio.
+test('refusalDetails: senza chiave pubblica non promette una riga da sostituire', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'refusal2-'));
+  const key = path.join(dir, 'id_ed25519');
+  fs.writeFileSync(`${key}.pub`, 'ssh-ed25519 AAAAC3TestDue prova\n');
+
+  const con = supervisor.refusalDetails({ remoteDestinations: ['127.0.0.1:41800'], identityFile: key });
+  assert.match(con.hint, /SOSTITUISCI/, 'con la chiave si sostituisce la riga intera');
+  assert.equal(con.authorizedKeys, con.hint.slice(con.hint.indexOf('restrict,')),
+    'e il campo copiabile e\' esattamente quella riga');
+
+  // Nessun -i: ssh usa chiavi di default, un agent o la config. Da qui non si
+  // puo' sapere quale, quindi non esiste una riga da dare.
+  const senza = supervisor.refusalDetails({ remoteDestinations: ['127.0.0.1:41800', '127.0.0.1:41821'] });
+  assert.equal(senza.authorizedKeys, '', 'niente campo copiabile: non c\'e\' una riga completa');
+  assert.doesNotMatch(senza.hint, /SOSTITUISCI/, 'mai chiedere di sostituire cio\' che non abbiamo');
+  assert.doesNotMatch(senza.hint, /Riga da usare/, 'e mai chiamarlo "riga"');
+  assert.match(senza.hint, /A MANO/, 'si chiede una modifica manuale della riga esistente');
+  assert.match(senza.hint, /permitopen="127\.0\.0\.1:41821"/, 'ma le destinazioni da aggiungere si dicono');
+
+  // .pub illeggibile: stesso verso, con la causa diversa nominata.
+  const rotta = supervisor.refusalDetails({
+    remoteDestinations: ['127.0.0.1:41800'], identityFile: path.join(dir, 'assente'),
+  });
+  assert.equal(rotta.authorizedKeys, '');
+  assert.doesNotMatch(rotta.hint, /SOSTITUISCI/);
+  assert.match(rotta.hint, /non e' leggibile/, 'la causa e\' diversa e va detta');
+});
