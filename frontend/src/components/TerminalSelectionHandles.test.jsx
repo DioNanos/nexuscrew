@@ -18,7 +18,17 @@ vi.mock('@xterm/xterm', () => ({
     constructor() {
       this.textarea = document.createElement('textarea');
       this.options = {}; this.cols = 80; this.rows = 24;
-      this.buffer = { active: { viewportY: 0, baseY: 100, type: 'normal' } };
+      this.lineTexts = new Map(); this.getLineCalls = [];
+      const self = this;
+      this.buffer = { active: {
+        viewportY: 0, baseY: 100, type: 'normal',
+        // Fedele all'API pubblica di xterm: getLine(y) → riga del buffer,
+        // translateToString() ne da' il testo.
+        getLine(y) {
+          self.getLineCalls.push(y);
+          return { translateToString: () => self.lineTexts.get(y) ?? '' };
+        },
+      } };
       this.selectCalls = []; this.scrollLinesCalls = [];
       this.selectionText = ''; this.selectionPosition = null;
       this.parser = { registerCsiHandler: () => ({ dispose() {} }), registerEscHandler: () => ({ dispose() {} }) };
@@ -44,6 +54,9 @@ vi.mock('@xterm/xterm', () => ({
         end: { x: endLinear % this.cols, y: Math.floor(endLinear / this.cols) },
       };
       this.selectionText = `testo-${row}-${col}-${length}`;
+      for (let y = row; y <= Math.floor((row * this.cols + col + length - 1) / this.cols); y++) {
+        this.lineTexts.set(y, `contenuto-riga-${y}`);
+      }
       this.emitSelection();
     }
     getSelection() { return this.selectionText; }
@@ -281,14 +294,29 @@ describe('R25 — sopravvivenza al redraw e testo sovrascritto', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
-    act(() => term.select(2, 1, 10)); // snapshot: testo-1-2-10
+    act(() => term.select(2, 1, 10)); // snapshot per riga: riga buffer 1
     expect(view.container.querySelector('.nc-selection-changed')).toBeNull();
-    // L'app riscrive la riga: la selezione (range) non cambia, il testo si'.
-    term.selectionText = 'NUOVO-testo-sotto';
+    // L'app riscrive la riga: la selezione (range) non cambia, il contenuto
+    // si'. Il render passa proprio quella riga (viewport 0 + riga 1).
+    term.lineTexts.set(1, 'NUOVO-testo-sotto');
     act(() => term.renderCb && term.renderCb({ start: 1, end: 1 }));
     expect(view.container.querySelector('.nc-selection-changed')).toBeTruthy();
     // Un gesto nuovo resetta: chi riseleziona sa cosa sta copiando.
     act(() => term.select(2, 1, 10));
     expect(view.container.querySelector('.nc-selection-changed')).toBeNull();
+  });
+
+  it('l\'output FUORI dalla selezione non la rilegge nemmeno: il confronto resta O(intersezione)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10)); // selezione sulla riga buffer 1
+    const lettureDopoSnapshot = term.getLineCalls.length;
+    // L'app produce output sulla riga 5: renderizzata SOLO lei.
+    term.lineTexts.set(5, 'output-altrove');
+    act(() => term.renderCb && term.renderCb({ start: 5, end: 5 }));
+    expect(view.container.querySelector('.nc-selection-changed')).toBeNull();
+    // La selezione non e' stata letta: nessuna chiamata getLine in piu'.
+    expect(term.getLineCalls.length).toBe(lettureDopoSnapshot);
   });
 });

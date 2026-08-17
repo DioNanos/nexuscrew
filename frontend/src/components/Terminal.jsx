@@ -52,9 +52,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // Il testo SOTTO una selezione attiva puo' essere sovrascritto (una
   // progress bar che riscrive la riga, un redraw dell'app): la copia
   // consegnerebbe il testo nuovo mentre chi guarda ha in mente quello
-  // vecchio. Snapshot del testo all'ultimo cambiamento di selezione: se
-  // diverge mentre la selezione e' viva, senza un gesto, si dice.
-  const selectionSnapshotRef = useRef('');
+  // vecchio. Snapshot PER RIGA all'ultimo cambiamento di selezione: il
+  // confronto a ogni render legge SOLO le righe renderizzate che intersecano
+  // la selezione (il range arriva dall'evento onRender), mai la selezione
+  // intera — il costo non deve crescere con la lunghezza della selezione,
+  // perche' il caso che morde e' proprio una selezione lunga mentre la cella
+  // produce output.
+  const selectionSnapshotRef = useRef(null);
   const [selectionChanged, setSelectionChanged] = useState(false);
 
   const doCopy = async () => {
@@ -253,11 +257,21 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       if (next) { setSelection(next); setSelectionDetached(false); }
       else setSelectionDetached(true);
       // R25: le maniglie seguono la selezione — il range si rilegge a ogni
-      // cambiamento (gesto nostro o no), lo snapshot del testo e' la base del
+      // cambiamento (gesto nostro o no); lo snapshot per riga e' la base del
       // confronto per il contenuto sovrascritto sotto il range.
-      selectionSnapshotRef.current = next;
+      const range = rangeFromXterm(term.getSelectionPosition());
+      setSelRange(range);
+      let snap = null;
+      if (range && typeof term.buffer.active.getLine === 'function') {
+        const lines = [];
+        for (let y = range.start.row; y <= range.end.row; y++) {
+          const line = term.buffer.active.getLine(y);
+          lines.push(line ? line.translateToString() : '');
+        }
+        snap = { startRow: range.start.row, endRow: range.end.row, lines };
+      }
+      selectionSnapshotRef.current = snap;
       setSelectionChanged(false);
-      setSelRange(rangeFromXterm(term.getSelectionPosition()));
     });
     // R25: le maniglie si ri-derivano a OGNI redraw e a OGNI scroll — i loro
     // pixel dipendono dal viewport, il range no. Nessuna posizione viene mai
@@ -265,9 +279,27 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // ridisegni senza andare alla deriva. Allo stesso battito si confronta il
     // testo vivo con lo snapshot: se il contenuto sotto il range e' cambiato
     // senza un gesto, si segnala (la copia darebbe il testo nuovo).
-    const onRender = term.onRender(() => {
+    const onRender = term.onRender((rendered) => {
       if (term.hasSelection?.()) {
-        if (term.getSelection() !== selectionSnapshotRef.current) setSelectionChanged(true);
+        // Il range dell'evento e' in righe VIEWPORT (0..rows-1, lo dice la
+        // doc di xterm e lo conferma chi lo consuma dentro xterm indicizzando
+        // il buffer con ydisp+riga): si converte in righe assolute e si
+        // confrontano SOLO le righe renderizzate che intersecano la
+        // selezione. L'output che passa altrove non tocca la selezione.
+        const snap = selectionSnapshotRef.current;
+        const start = rendered && rendered.start;
+        const end = rendered && rendered.end;
+        if (snap && Number.isInteger(start) && Number.isInteger(end)
+          && typeof term.buffer.active.getLine === 'function') {
+          const viewportY = Number(term.buffer.active.viewportY) || 0;
+          const lo = Math.max(viewportY + start, snap.startRow);
+          const hi = Math.min(viewportY + end, snap.endRow);
+          for (let y = lo; y <= hi; y++) {
+            const line = term.buffer.active.getLine(y);
+            const now = line ? line.translateToString() : '';
+            if (now !== snap.lines[y - snap.startRow]) { setSelectionChanged(true); break; }
+          }
+        }
         setGeomTick((v) => v + 1);
       }
     });
