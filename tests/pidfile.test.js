@@ -521,6 +521,111 @@ test('killPidfile: ostacolo SYMLINK sul marker — stato non determinabile, rifi
   }
 });
 
+// AUDITOR R-pidfile-5 (2026-08-17, audit su develop@fa8bd90): controllo
+// negativo alla lettera. La scrittura del marker fallisce SENZA lasciare
+// traccia (ENOSPC qui — quota, EROFS, permesso transitorio, una race sono
+// la stessa famiglia: nessuno lascia nulla sul filesystem). Due writePidfile
+// "riuscite" (il pidfile stesso si scrive; SOLO il marker fallisce, come
+// nella misura di Dev) — poi killPidfile su un meta senza attestazione, cmd
+// compatibile. PRIMA di questo giro: checkSchemaMarker vedeva il path
+// ENOENT (nessuna traccia dell'errore) -> 'absent' -> ambiguous-compat
+// concesso, SIGTERM inviato. DOPO: claimSchemaMarker riprova ADESSO, fallisce
+// ADESSO (l'errore e' ancora presente) -> rifiuta. DUE BRACCI, non uno:
+// ripristinato l'errore, il kill successivo riprova e concede UNA volta —
+// perche' ORA la scrittura riesce per davvero, non perche' glielo diciamo.
+test('AUDITOR R-pidfile-5: scrittura del marker fallisce con ENOSPC senza lasciare traccia — PRIMA concedeva sempre, ORA rifiuta finche\' l\'errore c\'e\', concede UNA volta quando sparisce', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  const markerPath = schemaMarkerPath(p);
+  const scritturaOriginale = fs.writeFileSync;
+  const conENOSPC = (target, ...rest) => {
+    if (target === markerPath) {
+      const err = new Error('ENOSPC: no space left on device');
+      err.code = 'ENOSPC';
+      throw err;
+    }
+    return scritturaOriginale.call(fs, target, ...rest);
+  };
+  try {
+    // Fa fallire SOLO la scrittura del marker (path esatto): il pidfile e
+    // tutto il resto passano dalla scrittura vera.
+    fs.writeFileSync = conENOSPC;
+    for (let i = 0; i < 2; i += 1) {
+      const scritturaV2 = path.join(path.dirname(p), `altro-${i}.pid`);
+      writePidfile(scritturaV2, process.pid, `node altro-${i}`, {});
+      fs.rmSync(scritturaV2, { force: true });
+    }
+    assert.equal(fs.existsSync(markerPath), false,
+      'precondizione: due writePidfile "riuscite", il marker non e\' MAI nato — ENOSPC lo impedisce in silenzio, nessuna traccia');
+
+    const cmdVivo = readCmdline(child.pid);
+    fs.writeFileSync = scritturaOriginale; // il pidfile stesso lo scriviamo col vero fs
+    fs.writeFileSync(p, `${JSON.stringify({ pid: child.pid, cmd: cmdVivo, uid: currentUid() })}\n`);
+    fs.writeFileSync = conENOSPC; // l'errore torna attivo per il kill
+
+    // Braccio 1: l'errore c'e' ancora -> rifiuta.
+    const r1 = killPidfile(p, 'SIGTERM');
+    assert.equal(r1.killed, false, 'ENOSPC ancora presente ADESSO: NON si segnala');
+    assert.match(r1.reason, /undeterminable/, `reason nomina lo stato: ${r1.reason}`);
+    assert.equal(pidOwnership(child.pid), 'owned', 'il legittimo e\' ancora vivo, non toccato');
+
+    // Braccio 2: l'errore sparisce -> il prossimo kill riprova ADESSO,
+    // riesce per davvero, e concede UNA volta.
+    fs.writeFileSync = scritturaOriginale;
+    const r2 = killPidfile(p, 'SIGTERM');
+    assert.equal(r2.killed, true, 'ENOSPC rimosso: la creazione ORA riesce per davvero, concessa una volta');
+    assert.equal(r2.unverifiedBirth, 'ambiguous-compat');
+    assert.equal(hasSchemaMarker(p), true, 'il marker ora esiste per davvero: non piu\' un evento passato non osservabile');
+    await aspettaExit(child);
+  } finally {
+    fs.writeFileSync = scritturaOriginale;
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+});
+
+// Il caso di confine dichiarato nel commento accanto a claimSchemaMarker:
+// un pidfile che sta per essere RIMOSSO puo' lasciare dietro un marker in
+// una directory che magari non ospitera' mai piu' un runtime. Qui lo si
+// dimostra: dopo un kill che crea il marker E rimuove il pidfile, il marker
+// resta — innocuo, perche' il suo unico effetto e' rendere le decisioni
+// FUTURE su quella directory piu' caute (fail-closed), mai piu' permissive.
+test('confine dichiarato: il marker sopravvive alla rimozione del pidfile che lo ha creato — innocuo, mai piu\' permissivo', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  try {
+    const cmdVivo = readCmdline(child.pid);
+    fs.writeFileSync(p, `${JSON.stringify({ pid: child.pid, cmd: cmdVivo, uid: currentUid() })}\n`);
+    assert.equal(hasSchemaMarker(p), false, 'precondizione: nessuna migrazione ancora in questa directory');
+    const r = killPidfile(p, 'SIGTERM');
+    assert.equal(r.killed, true);
+    assert.equal(fs.existsSync(p), false, 'il pidfile e\' rimosso, come sempre dopo un kill riuscito');
+    assert.equal(hasSchemaMarker(p), true, 'il marker SOPRAVVIVE alla rimozione del pidfile che lo ha innescato');
+    // Effetto del residuo: la STESSA directory, ora, rifiuta un ALTRO meta
+    // ambiguo — mai il contrario.
+    const secondoPath = path.join(path.dirname(p), 'secondo.pid');
+    const child2 = figlioCheTieneIlNumero();
+    await figlioPronto(child2);
+    try {
+      fs.writeFileSync(secondoPath,
+        `${JSON.stringify({ pid: child2.pid, cmd: readCmdline(child2.pid), uid: currentUid() })}\n`);
+      const r2 = killPidfile(secondoPath, 'SIGTERM');
+      assert.equal(r2.killed, false, 'il residuo rende la STESSA directory piu\' cauta, mai piu\' permissiva');
+    } finally {
+      child2.kill('SIGKILL');
+      await aspettaExit(child2);
+    }
+    await aspettaExit(child);
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+});
+
 // LA DOMANDA CHE DEV HA GIRATO ALL'AUDITOR, MISURATA non dedotta: dopo la
 // migrazione (marker presente per davvero), un nodo che davvero non sa
 // attestare resta fermabile? Si', perche' attestation:'unsupported' e'
