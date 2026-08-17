@@ -46,3 +46,21 @@
 .nc-cellpanel-actions button:hover {
   background: #1a2a33;
 }
+
+/* R20 — hint «frame montato, carico in corso»: absolute come il frame (il
+   genitore .nc-termwrap è position:relative), z-index sopra il frame,
+   pointer-events none perché non deve rubare interazioni al pannello. */
+.nc-cellpanel-loading {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  padding: 4px 12px;
+  background: rgba(11, 16, 20, 0.85);
+  border: 1px solid #243;
+  border-radius: 12px;
+  color: #9fd;
+  font-size: 12px;
+  pointer-events: none;
+}
