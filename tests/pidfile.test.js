@@ -7,6 +7,7 @@ const path = require('node:path');
 const cp = require('node:child_process');
 const {
   readPidfile, writePidfile, pidOwnership, pidExists, isAlive, cleanStale, killPidfile, removePidfile,
+  currentUid, readCmdline,
 } = require('../lib/cli/pidfile.js');
 
 function tmpPid() {
@@ -230,4 +231,123 @@ test('killPidfile: lo stop da CLI NON si rompe — post-kill il pidfile si togli
   assert.equal(r.killed, true);
   assert.equal(readPidfile(p), null, 'post-kill: il pidfile è rimosso');
   fs.rmSync(path.dirname(p), { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// R-pidfile (2026-08-17): il pidfile di un morto il cui NUMERO è stato
+// riassegnato a un processo NOSTRO con un cmd COMPATIBILE. cmdMatches è per
+// inclusioni («salvato incluso nel vivo»), quindi un comando più lungo del
+// salvato matcha: due supervisor dello stesso tunnel, due serve, il restart
+// di ieri. Il cmd non distingue due processi con lo stesso comando — la
+// NASCITA sì (processStart, già nel meta di writePidfile, mai confrontato
+// qui). Costo visto sui chiamanti: commands.js getta «already running» per
+// un server che non c'è; killPidfile (tunnel restart, stop) segnala il
+// processo riusato. Finora.
+// Costruzione: figlio REALE che porta il numero che fu del defunto; il
+// pidfile attesta la nascita del defunto (un tick qualunque diverso dal
+// vero) e il cmd VERO del figlio — l'osservabile esatto del riassegno.
+// ---------------------------------------------------------------------------
+
+// Piccolo figlio vivo che tiene il numero (come il test della sopravvivenza).
+function figlioCheTieneIlNumero() {
+  const child = cp.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
+  child.unref();
+  return child;
+}
+async function figlioPronto(child) {
+  await new Promise((r) => setTimeout(r, 150));
+}
+
+test('NEGATIVO riassegno cmd-compatibile: cleanStale riconosce lo stale dalla NASCITA, non dal cmd', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  try {
+    const cmdVivo = readCmdline(child.pid);
+    assert.ok(cmdVivo, 'precondizione: cmdline del figlio leggibile');
+    // Il pidfile del DEFUNTO: il numero del figlio, il suo cmd (il riuso è
+    // cmd-compatibile per costruzione), la nascita di CHI NON C'E' PIU'.
+    fs.writeFileSync(p, `${JSON.stringify({ pid: child.pid, cmd: cmdVivo, processStart: 'linux:1', uid: currentUid() })}\n`);
+    // Contro il codice attuale: owned + cmd match = «vivo» → cleanStale non
+    // tocca MAI → already-running per sempre su un server che non c'è.
+    assert.equal(cleanStale(p), true, 'la nascita non mente: lo stale si riconosce e si rimuove');
+    assert.ok(!fs.existsSync(p));
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+});
+
+test('NEGATIVO riassegno cmd-compatibile: killPidfile NON segnala il processo riusato', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  try {
+    const cmdVivo = readCmdline(child.pid);
+    fs.writeFileSync(p, `${JSON.stringify({ pid: child.pid, cmd: cmdVivo, processStart: 'linux:1', uid: currentUid() })}\n`);
+    // Contro il codice attuale: ownership owned + cmd match → kill(child):
+    // ammazza il riusato. Il contratto nuovo: la nascita attestata non è la
+    // sua → il pidfile è stale, il processo non si tocca.
+    const r = killPidfile(p, 'SIGTERM');
+    assert.equal(r.killed, false, 'il processo riusato non si segnala');
+    assert.ok(/start mismatch/.test(r.reason || ''), `reason parla di nascita: ${r.reason}`);
+    assert.ok(!fs.existsSync(p), 'il pidfile stale si rimuove');
+    // E il figlio è ancora lì: la dimostrazione che nessuno lo ha toccato.
+    assert.equal(pidOwnership(child.pid), 'owned', 'il riusato è ancora vivo e nostro');
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+});
+
+test('verso giusto: pidfile di un vivo con la PROPRIA nascita — vivo per la via nuova, protetto, e killabile come legittimo proprietario', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  try {
+    writePidfile(p, child.pid, readCmdline(child.pid)); // start VERO nel meta
+    const meta = readPidfile(p);
+    assert.ok(typeof meta.processStart === 'string' && meta.processStart, 'precondizione: la nascita viaggia nel meta');
+    // Il confronto della nascita è ATTIVO e la nascita è SUA: vivo.
+    assert.equal(isAlive(meta), true, 'nascita matchante: è lui, è vivo');
+    assert.equal(removePidfile(p), false, 'la rimozione naked resta rifiutata');
+    assert.ok(fs.existsSync(p));
+    // E il legittimo proprietario si ferma normalmente: il kill verificato
+    // funziona perché la nascita È la sua.
+    const r = killPidfile(p, 'SIGTERM');
+    assert.equal(r.killed, true, 'il proprietario vero si ferma: la correzione non blocca lo stop');
+    await aspettaExit(child);
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+});
+
+test('non calcolabile: senza nascita leggibile vale il cmd — nel dubbio il pidfile resta del vivo', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  try {
+    const cmdVivo = readCmdline(child.pid);
+    // a) meta SENZA processStart (pidfile vecchio, /proc nascosto): via cmd.
+    const senza = { pid: child.pid, cmd: cmdVivo, uid: currentUid() };
+    assert.equal(isAlive(senza), true, 'senza nascita nel meta: il cmd decide, come sempre');
+    // b) nascita nel meta ma NON leggibile ora (macOS senza ps, /proc negato):
+    // non è «morto», è NON LO SO — il cmd vale, il vivo resta vivo.
+    const nonLeggibile = { pid: child.pid, cmd: cmdVivo, processStart: 'linux:1', uid: currentUid() };
+    assert.equal(isAlive(nonLeggibile, { readProcessStartImpl: () => null }), true,
+      'criterio non calcolabile: mai dichiarare morto un vivo');
+    // c) pidfile vecchio + killPidfile: via cmd, il legittimo si ferma.
+    fs.writeFileSync(p, `${JSON.stringify(senza)}\n`);
+    const r = killPidfile(p, 'SIGTERM');
+    assert.equal(r.killed, true, 'pidfile senza nascita: il kill verificato di sempre');
+    await aspettaExit(child);
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
 });

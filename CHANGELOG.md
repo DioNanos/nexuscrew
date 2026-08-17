@@ -2,6 +2,163 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.4 — 2026-08-17 — "The Interface Was Last Week's"
+
+- **The published interface is the one this version was built from.** 0.9.3
+  shipped a `frontend/dist` compiled eight hours before the interface work it
+  was supposed to contain: the popup with its three sources, the telemetry
+  line, the tier labels and the panel origin fix were all in the source and
+  none of them in the bundle. The server was 0.9.3 and the interface was
+  0.9.2, and everything about it looked fine — the package installed, the
+  service started, the pages loaded.
+
+  What caught it is worth stating: the product's own guard did, by comparing
+  the version the interface declares against the version the server is running
+  and refusing to pretend they were the same. Not a test, and not the release
+  check — which verified that the fixes were present in `lib/` and never looked
+  at the bundle. A smoke test that inspects only the half it thinks of is a
+  smoke test with a blind side.
+
+## 0.9.3 — 2026-08-16 — "A Receipt Is Not an Outcome"
+
+The previous release fixed the Desktop engine and shipped the fix inert. Pulling
+on that thread produced most of this one: a repair that was never called, a race
+underneath it, a lock that reopened the race it closed, and — at the end — a
+success reported for a write that never happened. A `200 OK` for a change that
+was silently dropped is worse than a refusal, because nothing downstream has any
+reason to look again.
+
+- **Every write to the fleet definitions now goes through a lock, and a
+  surrendered write is no longer reported as success.** Ten code paths did
+  read-modify-write on the same file with no mutual exclusion, so a concurrent
+  update could be read, overwritten, and lost. The lock is taken by creating a
+  file exclusively — one syscall, no window between checking and acting — and
+  its owner is identified per acquisition rather than per process. Liveness is
+  asked of the kernel: a lock is only broken when it is both old *and* its owner
+  is gone, because age alone never proved a process dead. The first version of
+  this guard evicted **live** owners, which is how a cure reopens the disease
+  it was written for; the case is now pinned by tests in both directions.
+
+  Two callers want opposite behaviour and now get it: an opportunistic
+  migration gives up in silence, while a change a person asked for **fails**
+  with its own cause — `409` when the lock is busy, `400` when the data is
+  invalid. Previously both answered `200 OK`.
+
+- **Creating the definitions for the first time also goes through the lock.**
+  `init` wrote the file directly, so a first run racing with a live service
+  could erase a configuration instead of creating one.
+
+- **The panel's own password reaches the panel.** `Authorization` was stripped
+  wholesale on the way in, so any panel behind HTTP authentication was
+  impossible to log into by construction — not misconfigured, impossible. The
+  header now travels for the schemes a panel actually uses (`Basic`, `Digest`,
+  `NTLM`, `Negotiate`) and never for a bearer token, which belongs to the
+  control plane and must not leak into a proxied application. It is a closed
+  list, not a denylist: an unknown scheme is refused rather than forwarded.
+
+- **A container that opens over the page instead of taking you away from it.**
+  Opening a cell's preview, or its desktop panel, used to mean leaving whatever
+  you were looking at. There is now one popup — closed by `Escape`, by clicking
+  outside it, never by clicking inside it, and it takes focus when it opens —
+  reached from the status dot beside each cell in the list and from the cell's
+  own tile in the grid. The panel was previously reachable **only** from an
+  enlarged cell, so opening a browser meant leaving the grid first. The popup
+  now holds all three sources — preview, live stream, desktop panel — and on
+  narrow screens they get real buttons instead of one small dot carrying three
+  meanings. Looking at a cell never selects it.
+
+  One defect found on the way, worth stating because it was invisible: the
+  popup held onto the **row** it was opened from — a single frame of a list
+  that refreshes every few seconds. Left open across a refresh it could show
+  another cell's preview, or a dead one's. It now holds the key and re-resolves
+  it on every render; a cell that disappears closes its own popup.
+
+- **The panel opened from the list is served from its own origin again.** A
+  panel reached through the new popup was passed no port, and with no port the
+  frame falls back to a relative path — same-origin with the control plane,
+  which is precisely what 0.9.1 separated so that a panel's own scripts cannot
+  reach the operator's token. The new entry point had quietly reopened it, with
+  nothing to show for it: the panel opened and worked. The port is now resolved
+  per row by the same function the grid uses, and a remote cell whose node has
+  no negotiated port still gets none rather than borrowing the local one —
+  a wrong origin is not a fallback.
+
+- **A lock is no longer held by a process that merely inherited its number.**
+  Liveness was decided by asking the kernel whether a pid existed, but pids are
+  reused: once the number was handed to an unrelated process, the lock was
+  never considered abandoned and every write to the fleet definitions gave up
+  in silence. The lock's token now also records **when** its owner started, so
+  two processes that held the same number at different times are told apart.
+  Where that cannot be read — systems without `/proc` — the lock is left alone:
+  a delayed write, never an eviction. That case is documented, not closed.
+
+  Also: a lock whose token could not be written is no longer treated as owned.
+  The write was best-effort, so a failure left an **empty** lock that named
+  nobody, and thirty seconds later a live owner could be evicted from it.
+
+- **A migration no longer overwrites work committed while it was running.**
+  The concurrency check compared a snapshot taken *after* the migration's own
+  work, so anything written during it was already inside the snapshot: the
+  comparison passed and the older state won. The baseline is now taken at the
+  source, covering the whole window.
+
+- **The cell list shows free context and tier usage, where the cell can report
+  them.** The numbers come from a small file written beside the cell's own
+  files; a documented snippet is included for producing it
+  (`docs/STATUSLINE_TELEMETRY.md`), and nothing is written automatically. Three
+  rules govern the display: a reading older than five minutes is dropped rather
+  than shown as current, cells that cannot report simply have no such line —
+  no dash, no "n/a" — and an unreadable or malformed file degrades to nothing
+  without failing the list. Values are accepted only as integers already in
+  percent: a `null` would otherwise have been converted to a perfectly credible
+  `0%` — and the same conversion was found in the documented snippet, on the
+  writing side, where the reader cannot defend against it: a zero written in
+  place of nothing is a valid integer and would have passed.
+
+  Freshness is checked in **both** directions. A reading stamped in the future
+  was never older than the limit, so it would have stayed "current" forever;
+  beyond a small tolerance for clock skew it is now dropped like any other
+  unusable value. And every number carries its own direction in its label —
+  `context 71% free · 5h used 33%` — because a comment claiming the labels said
+  so was not the same as the labels saying so, and next to a "free" the reader
+  supplies the missing word themselves.
+
+- **The voice interface knows which cell it is attached to.** It received the
+  working directory and a prompt, never an identity, so a Live session had to
+  go looking through terminal sessions to guess where it was — and could
+  describe another cell's work as its own. The bridge now always prepends the
+  designated cell's identity to the instructions it sends, alone when no
+  per-cell prompt exists. The identity travels on the bridge rather than in the
+  prompt on purpose: a prompt may legitimately be absent, and if identity
+  depended on it, a missing prompt would have meant a Live with no idea who it
+  was. The exact session name is included only when the roster declares it,
+  never inferred.
+
+  **Please note, if you set `developer_instructions` in your configuration.**
+  The bridge sends that field on every Live session now, and the consumer
+  *replaces* its configured value with what it receives rather than adding to
+  it. A cell with no per-cell prompt therefore no longer receives the global
+  developer instructions it used to get. This is accepted rather than worked
+  around: changing the field's meaning would be a new contract for every
+  client, and the intended place for a cell's own instructions is its
+  `LIVE_PROMPT.md`.
+
+- **The per-cell prompt is found on machines that name their sessions
+  anything.** Its directory was built by pinning the literal prefix `cloud-` in
+  front of the cell name, so on a host whose sessions are named otherwise the
+  file was either looked for where it does not exist, or under an invented
+  path. Both ended in "absent" — the same answer as a file that genuinely is
+  not there, so the defect hid inside the branch meant to report it. The
+  directory is now the session the roster declares, and when the roster
+  declares none there is a distinct outcome: no path is built at all, rather
+  than a prefix guessed.
+
+- **Ready-to-copy prompt templates** in `docs/live-prompt-templates/`, in
+  English, Italian and Spanish, with `docs/LIVE_PROMPT.md` describing where the
+  file goes and the four outcomes the bridge can report. They name no cell, no
+  operator and no host: the voice takes its identity from the tools at runtime,
+  so the file works as copied.
+
 ## 0.9.2 — 2026-08-16 — "Offered and Then Refused"
 
 Both defects in this release were found by using the product, not by a test —
