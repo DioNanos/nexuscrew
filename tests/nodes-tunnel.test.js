@@ -872,6 +872,65 @@ test('F1 supervisor non dichiara ready finche il forward TCP non risponde', asyn
 });
 
 // Il contratto deciso dopo l'audit R19 (regressione: il gate si appendeva su
+// IL CAMPO, NON LA FRASE. Il test qui sopra prova che `hint` porta la riga; ma
+// la UI non deve ritagliarla da un testo italiano costruito nel supervisore, e
+// per questo esiste `authorizedKeys`. Questa prova attraversa `enterDegraded`
+// fino allo STATO SU DISCO — cioe' il percorso vero — invece di fermarsi alla
+// funzione che compone la riga: il campo si era gia' perso una volta esattamente
+// li' in mezzo, con la funzione verde e la catena a valle che riceveva sempre
+// il fallback.
+test('F1 supervisor: il degraded per canale scrive authorizedKeys come CAMPO, non solo dentro hint', async () => {
+  const dir = tmpDir();
+  const rifiuta = net.createServer((s) => { setImmediate(() => { try { s.destroy(); } catch (_) {} }); });
+  await new Promise((resolve) => rifiuta.listen(0, '127.0.0.1', resolve));
+  const forwardPort = rifiuta.address().port;
+  const fakeSsh = path.join(dir, 'refused-ssh-campo.js');
+  const statePath = path.join(dir, 'campo.state.json');
+  const pidPath = path.join(dir, 'campo.pid');
+  const key = path.join(dir, 'id_ed25519');
+  // Senza il .pub accanto la riga completa non si puo' comporre e il campo
+  // resta vuoto per contratto: qui c'e', quindi deve arrivare.
+  fs.writeFileSync(`${key}.pub`, 'ssh-ed25519 AAAAC3TestCampo prova\n');
+  fs.writeFileSync(fakeSsh, "setInterval(() => {}, 1000);\n", { mode: 0o700 });
+  const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
+  const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh,
+    '-i', key,
+    '-L', `127.0.0.1:${forwardPort}:127.0.0.1:41777`], {
+    env: {
+      ...process.env,
+      NEXUSCREW_TUNNEL_STATE: statePath,
+      NEXUSCREW_TUNNEL_PIDFILE: pidPath,
+      NEXUSCREW_TUNNEL_RUN_ID: 'campo-generation',
+      NEXUSCREW_TUNNEL_STABLE_MS: '50',
+      NEXUSCREW_TUNNEL_CHANNEL_PROBE_MAX: '2',
+    },
+    stdio: 'ignore',
+  });
+  pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId: 'campo-generation' });
+  try {
+    let state = null;
+    await aspettaChe(() => {
+      try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) {}
+      return state && state.status === 'degraded';
+    });
+    assert.equal(state.code, 'forward-channel-blocked');
+    assert.ok(typeof state.authorizedKeys === 'string' && state.authorizedKeys,
+      `lo stato deve portare il CAMPO, non solo la frase — chiavi: ${Object.keys(state).join(',')}`);
+    assert.ok(state.authorizedKeys.startsWith('restrict,port-forwarding,permitopen='),
+      `il campo e' la riga intera da incollare: ${state.authorizedKeys}`);
+    assert.ok(state.authorizedKeys.includes('AAAAC3TestCampo'), 'la chiave pubblica letta dal .pub');
+    assert.ok(state.hint.includes(state.authorizedKeys),
+      'la frase continua a contenere la stessa riga, per chi legge un log');
+  } finally {
+    child.kill('SIGKILL');
+    await new Promise((resolve) => {
+      if (child.exitCode !== null) return resolve();
+      child.once('exit', resolve);
+    });
+    await new Promise((resolve) => rifiuta.close(resolve));
+  }
+});
+
 // questo file): un canale rifiutato SEMPRE non e' come il bind-failed sopra
 // (li' la sonda successiva e' fresca e si qualifica da sola quando il
 // servizio remoto torna su — continuare e' giusto). Un permitopen negato non
