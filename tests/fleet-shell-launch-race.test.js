@@ -103,8 +103,17 @@ function parsePaneDeadState(stdout) {
 //  - successo solo con dead === '1' e status valorizzato (numero).
 //  - al timeout diagnostica bounded distinto: pane non morto / morto con status
 //    ancora pending / comando tmux fallito o risposta malformata.
-async function waitForDeadPane(socket, paneId, timeoutMs = 8000) {
-  const deadline = Date.now() + timeoutMs;
+// PROROGA SOLO PER LO STATO CHE STA CONVERGENDO. Il limite fisso ha prodotto
+// due rossi falsi in un giorno, entrambi sopra carico ~6: il pane era MORTO e
+// tmux non aveva ancora reso disponibile l'exit status. Quello e' l'unico esito
+// che il carico rallenta — «pane non morto» e «comando fallito» non migliorano
+// aspettando. Quindi alla scadenza base, se e solo se lo stato e' «morto,
+// status pending», si concede una proroga UNA volta e la si dichiara nel
+// messaggio: cosi' un rosso resta un rosso, e una macchina occupata non
+// diventa un difetto del prodotto.
+async function waitForDeadPane(socket, paneId, timeoutMs = 8000, prorogaMs = 12000) {
+  let deadline = Date.now() + timeoutMs;
+  let prorogato = false;
   const poll = 25;
   let last = { code: -1, dead: null, status: undefined, raw: '', stderr: '' };
   do {
@@ -121,6 +130,11 @@ async function waitForDeadPane(socket, paneId, timeoutMs = 8000) {
       return last;
     }
     await new Promise((resolve) => setTimeout(resolve, poll));
+    if (Date.now() >= deadline && !prorogato
+        && last.code === 0 && last.wellFormed && last.dead === '1') {
+      prorogato = true;              // sta convergendo: aspetta ancora, una volta
+      deadline = Date.now() + prorogaMs;
+    }
   } while (Date.now() < deadline);
   let reason;
   if (last.code !== 0) {
@@ -132,7 +146,8 @@ async function waitForDeadPane(socket, paneId, timeoutMs = 8000) {
   } else {
     reason = 'pane morto ma exit status/segnale ancora non disponibili (pending)';
   }
-  assert.fail(`pane ${paneId} non pronto entro ${timeoutMs}ms: ${reason} — raw=${JSON.stringify(last.raw)} stderr=${JSON.stringify(last.stderr)}`);
+  const atteso = prorogato ? `${timeoutMs}+${prorogaMs}ms (proroga usata)` : `${timeoutMs}ms`;
+  assert.fail(`pane ${paneId} non pronto entro ${atteso}: ${reason} — raw=${JSON.stringify(last.raw)} stderr=${JSON.stringify(last.stderr)}`);
 }
 
 test('parser pane_dead preserva i campi pending e rifiuta risposte malformate', () => {
