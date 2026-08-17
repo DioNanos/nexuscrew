@@ -58,6 +58,25 @@ function haveSkipReason(bin) {
 
 // --- Linux systemd ---
 
+// 1-bis (R23): il servizio per-nodo e' il SECONDO punto di scrittura dei path
+// del boot. L'override entryPath (passato dai punti di scrittura che usano il
+// risolutore) vince sulla derivazione da repoRoot; senza override il contratto
+// vecchio resta intatto.
+test('generateService: entryPath risolto vince sulla derivazione da repoRoot (1-bis)', () => {
+  const entry = '/opt/homebrew/lib/node_modules/@mmmbuto/nexuscrew/bin/nexuscrew.js';
+  const linux = generateLinux(ctx({ entryPath: entry }));
+  assert.match(linux, new RegExp(`ExecStart=/usr/bin/node ${entry} serve`));
+  const mac = generateMac(ctx({ entryPath: entry }));
+  assert.ok(mac.includes(`<string>${entry}</string>`), 'ProgramArguments usa l\'entry risolto');
+  const termux = generateTermux(ctx({ entryPath: entry }));
+  assert.ok(termux.includes(entry), 'lo script termux usa l\'entry risolto');
+});
+
+test('generateService: senza entryPath si deriva da repoRoot, come prima', () => {
+  const linux = generateLinux(ctx());
+  assert.match(linux, /ExecStart=\/usr\/bin\/node \/home\/user\/nexuscrew\/bin\/nexuscrew\.js serve/);
+});
+
 test('generateLinux: struttura systemd --user', () => {
   const s = generateLinux(ctx());
   assert.match(s, /\[Unit\]/);

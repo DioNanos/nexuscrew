@@ -561,6 +561,21 @@ test('service/regenerate: scrive l\'unit ma NON esegue restart (activation skipp
   const unit = fs.readFileSync(j.target, 'utf8');
   assert.match(unit, /ExecStart=/);
   assert.doesNotMatch(unit, /NEXUSCREW_PORT/);
+  // 1-bis (R23): la rigenerazione passa dallo STESSO risolutore di init: i
+  // path scritti sono quelli risolti e le dichiarazioni viaggiano come DATI
+  // nella risposta (non testo composto in basso).
+  const attesoBoot = require('../lib/cli/stable-alias.js').resolveBootPaths({
+    nodeBin: process.execPath,
+    entryPath: path.join(__dirname, '..', 'bin', 'nexuscrew.js'),
+  });
+  const rigaExec = unit.split('\n').find((l) => l.startsWith('ExecStart='));
+  assert.ok(rigaExec.includes(attesoBoot.nodeBin),
+    `ExecStart deve contenere il node risolto (${attesoBoot.nodeBin})`);
+  assert.ok(rigaExec.includes(attesoBoot.entryPath),
+    `ExecStart deve contenere l'entry risolto (${attesoBoot.entryPath})`);
+  assert.ok(Array.isArray(j.warnings), 'le dichiarazioni sono dati nella risposta');
+  assert.equal(j.warnings.length, attesoBoot.warnings.length,
+    'la risposta riporta esattamente le dichiarazioni del risolutore');
   assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).port, 42555);
   // ora il service risulta installato nella vista read-only
   const s = await (await fetch(`${base}/api/settings`, { headers: H(token) })).json();

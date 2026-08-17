@@ -209,6 +209,20 @@ test('runInit scrive il companion di boot con i path RISOLTI e dichiara cio\' ch
     for (const w of atteso.warnings) {
       assert.ok(warns.some((a) => a.includes(w)), `la dichiarazione va riportata: ${w}`);
     }
+
+    // 1-bis: il servizio PER-NODO e' il secondo punto di scrittura degli
+    // stessi path — i due siti NON devono divergere (correggerne uno solo
+    // lascerebbe il difetto vivo). Stesse attese, stesso risolutore.
+    const svcUnit = fs.readFileSync(installTarget, 'utf8');
+    const svcExec = svcUnit.split('\n').find((l) => l.startsWith('ExecStart='));
+    assert.ok(svcExec, 'ExecStart presente nell\'unit del servizio per-nodo');
+    assert.ok(svcExec.includes(escapeSystemdExec(atteso.nodeBin)),
+      `il servizio per-nodo deve contenere il node RISOLTO (${atteso.nodeBin})`);
+    assert.ok(svcExec.includes(escapeSystemdExec(atteso.entryPath)),
+      `il servizio per-nodo deve contenere l'entry RISOLTO (${atteso.entryPath})`);
+    const svcWarns = r.actions.filter((a) => a.startsWith('WARN service:'));
+    assert.equal(svcWarns.length, atteso.warnings.length,
+      'anche il servizio per-nodo dichiara cio\' che non ha alias');
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
