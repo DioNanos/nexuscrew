@@ -72,6 +72,31 @@ describe('Sidebar session identity', () => {
     expect(onPeekOpen).toHaveBeenCalledTimes(1);
   });
 
+  // IL DIFETTO CHE R4 AVEVA CHIUSO SU UN ALTRO ASSE. Il nome di una sessione
+  // tmux non e' unico nella federazione: `cloud-Dev` esiste su ogni nodo che
+  // abbia quella cella. La sidebar indicizza le sessioni LOCALI per nome, e se
+  // risolve li' anche la riga di una cella REMOTA il popup mostra l'anteprima
+  // della cella locale omonima — di nuovo "un'altra cella creduta la propria",
+  // stavolta per collisione di nome invece che per riga salvata.
+  it('il popup di una cella REMOTA non prende l\'anteprima della sessione locale omonima', async () => {
+    render(<Sidebar
+      cells={[]}
+      sessions={[{ name: 'cloud-Dev', preview: 'ANTEPRIMA DELLA CELLA LOCALE', activity: 999 }]}
+      nodeGroups={[{
+        name: 'relay', label: 'Relay', route: ['relay'], instanceId: 'd'.repeat(32), status: 'up',
+        sessions: [], unmanaged: [], capabilities: [], engines: [],
+        cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev', tmux: true, active: true,
+                  preview: 'anteprima della cella remota' }],
+      }]}
+      onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()} />);
+    const riga = screen.getByText('Dev').closest('.nc-cell');
+    fireEvent.click(riga.querySelector('.nc-side-peek'));
+    expect(await screen.findByRole('dialog', { name: 'Dev' })).toBeTruthy();
+    const mostrato = document.querySelector('.nc-peek-testo')?.textContent;
+    expect(mostrato).toBe('anteprima della cella remota');
+    expect(mostrato).not.toBe('ANTEPRIMA DELLA CELLA LOCALE');
+  });
+
   it('toggles boot from local and routed desktop rows without using power', async () => {
     const onBoot = vi.fn(async () => {}); const onPower = vi.fn();
     const onBootSettlementApplied = vi.fn();

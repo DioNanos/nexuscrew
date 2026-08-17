@@ -102,19 +102,30 @@ export default function Sidebar({
   // CellPeek vuole: key, cellName, subtitle, nodeLabel, node, session, route,
   // panelUrl, telemetry, preview, activity. Le sorgenti flusso/pannello usano
   // session (tmuxSession reale) e node (route qualificata o '').
-  const peekRowFromItem = (item, c, route = [], nodeLabel = '') => ({
-    key: item.key,
-    cellName: c.cell,
-    subtitle: item.subtitle || '',
-    nodeLabel,
-    node: route.length ? route.join('/') : '',
-    session: c.tmuxSession,
-    route,
-    panelUrl: c.panelUrl || '',
-    telemetry: (byName.get(c.tmuxSession) || {}).telemetry || null,
-    preview: (byName.get(c.tmuxSession) || {}).preview || c.preview || '',
-    activity: (byName.get(c.tmuxSession) || {}).activity || c.activity || 0,
-  });
+  // `byName` indicizza le sessioni di QUESTO nodo, e un tmuxSession non e'
+  // unico nella federazione: `cloud-Dev` esiste su piu' installazioni. Per una
+  // cella REMOTA quella tabella risponderebbe con la sessione locale omonima,
+  // e il popup mostrerebbe l'anteprima di un'ALTRA cella creduta la propria —
+  // lo stesso difetto di R4, raggiunto per un'altra strada. Per le remote
+  // valgono solo i dati che viaggiano con la cella. `route` vuota = locale, ed
+  // e' gia' il criterio con cui questa funzione decide `node` qui sotto.
+  const peekRowFromItem = (item, c, route = [], nodeLabel = '') => {
+    const locale = route.length === 0;
+    const sessione = locale ? (byName.get(c.tmuxSession) || {}) : {};
+    return {
+      key: item.key,
+      cellName: c.cell,
+      subtitle: item.subtitle || '',
+      nodeLabel,
+      node: route.length ? route.join('/') : '',
+      session: c.tmuxSession,
+      route,
+      panelUrl: c.panelUrl || '',
+      telemetry: sessione.telemetry || null,
+      preview: sessione.preview || c.preview || '',
+      activity: sessione.activity || c.activity || 0,
+    };
+  };
   const openPeek = (item, c, route = [], nodeLabel = '', source = 'preview') => (event) => {
     if (event) { event.stopPropagation(); }
     setPeekSource(source);
