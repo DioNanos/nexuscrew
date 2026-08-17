@@ -2,6 +2,48 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.7 — 2026-08-18 — "Two Handles"
+
+- **Selecting text in the terminal now has two draggable handles.** They mark
+  the start and the end of the selection and can be moved **after** the
+  selection is made — the gesture people already know from mobile terminals.
+  It works in a tile, in the popup and in the main session, because they share
+  one terminal.
+
+  The selection itself stays where it belongs: **inside the terminal
+  emulator**. The handles are a view recomputed from the emulator's own
+  selection on every render and scroll, never a remembered position — which is
+  how handles drift away from what they point at. Dragging one writes back
+  through the emulator's API rather than recalculating which cells are
+  selected.
+
+  Three cases decide whether this is usable rather than merely present, and
+  each is pinned by a test:
+
+  - dragging a handle past the edge **scrolls** and extends the selection,
+    because the range is held in buffer coordinates rather than screen ones —
+    but **not** inside a full-screen application, where scrolling belongs to
+    that application and taking it over would break it;
+  - the handle hangs **below** the point it sets and follows the finger by the
+    offset it was grabbed at, so the finger never has to cover the thing it is
+    positioning;
+  - the handles cannot cross each other, and the selection survives a redraw.
+
+- **If the text underneath a live selection is overwritten, the interface now
+  says so.** A selection is held against buffer coordinates, so output that
+  rewrites those lines changes what a copy would produce while the reader still
+  has the old text in mind. That is a consequence of the design rather than a
+  defect — and consequences that a reader cannot see are the thing this project
+  keeps removing, so it is stated instead of left implicit.
+
+  The check reads only the rendered lines that intersect the selection, not the
+  whole selection on every frame; a test pins the **cost**, not just the
+  outcome, by asserting that output elsewhere reads nothing at all.
+
+  Declared limit: a change to selected lines that never enters a rendered frame
+  will not raise the notice. The indicator is a courtesy, not a correctness
+  gate, and everything visible passes through a render.
+
 ## 0.9.6 — 2026-08-18 — "Causes With Names"
 
 The previous release fixed a blank panel, a service that hung on a terminal, and

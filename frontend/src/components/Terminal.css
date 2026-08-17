@@ -24,6 +24,26 @@
 /* Il testo e' ancora copiabile ma xterm non lo evidenzia piu': si dice, senza
    gridarlo. Tono spento perche' non e' un errore — e' una precisazione. */
 .nc-selection-held { color: #b7c98a; font-size: 10px; opacity: .85; max-width: 190px; }
+/* R25 — le due maniglie della selezione: vista pura sopra la selezione di
+   xterm, mai una verita' propria. La barra pende SOTTO il punto indicato
+   (come Termux): il dito che trascina non copre la cella puntata. Il target
+   tattile e' molto piu' grande dei 2 px visibili — una linea sottile non si
+   afferra col polpastrello. */
+.nc-sel-handle {
+  position: absolute; z-index: 9; width: 2px; height: 26px;
+  background: #baff79; box-shadow: 0 0 0 1px rgba(4, 12, 4, .88), 0 0 8px rgba(186, 255, 121, .55);
+  touch-action: none; cursor: grab;
+}
+.nc-sel-handle::after { content: ''; position: absolute; left: -16px; right: -16px; top: -12px; bottom: -12px; }
+.nc-sel-handle::before {
+  content: ''; position: absolute; left: -5px; top: 100%; width: 12px; height: 12px;
+  border-radius: 50%; background: #baff79; box-shadow: 0 0 0 1px rgba(4, 12, 4, .88);
+}
+.nc-sel-handle.dragging { background: #eaffb0; cursor: grabbing; }
+.nc-sel-handle.dragging::before { background: #eaffb0; }
+/* Il contenuto sotto la selezione e' stato sovrascritto: la copia dara' il
+   testo nuovo. Si dice, con lo stesso tono di selection-held. */
+.nc-selection-changed { color: #edda8a; font-size: 10px; opacity: .9; max-width: 210px; }
 .nc-upload-state {
   position:absolute; z-index:10; left:50%; top:12px; transform:translateX(-50%);
   max-width:min(520px,calc(100% - 24px)); padding:6px 10px; border-radius:7px;
