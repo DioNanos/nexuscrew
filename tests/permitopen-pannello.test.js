@@ -230,7 +230,28 @@ test('refusalDetails: senza chiave pubblica non promette una riga da sostituire'
   });
   assert.equal(rotta.authorizedKeys, '');
   assert.doesNotMatch(rotta.hint, /SOSTITUISCI/);
-  assert.match(rotta.hint, /non e' leggibile/, 'la causa e\' diversa e va detta');
+  // Il messaggio NON deve scegliere una causa che non conosce: da qui non si
+  // distingue una privata assente da una protetta da passphrase. Le elenca.
+  assert.match(rotta.hint, /non riesco a derivare la chiave pubblica/, 'dice cosa non e\' riuscito');
+  assert.match(rotta.hint, /passphrase/, 'e nomina le cause possibili senza sceglierne una');
+  assert.doesNotMatch(rotta.hint, /parte pubblica non e' leggibile/,
+    'MAI dire che la pubblica non e\' leggibile: con una chiave cifrata esiste eccome');
+
+  // IL CASO VERO, che il test precedente non copriva: privata cifrata con il
+  // suo `.pub` valido accanto. La pubblica ESISTE; cio' che non si puo' fare in
+  // batch e' derivarla. Dirlo male manda a cercare il problema dove non e'.
+  if (sshKeygenDisponibile()) {
+    const cifrata = path.join(dir, 'cifrata');
+    require('node:child_process').execFileSync('ssh-keygen',
+      ['-q', '-t', 'ed25519', '-N', 'passphrase-di-prova', '-f', cifrata], { stdio: 'ignore', timeout: 20000 });
+    assert.ok(fs.existsSync(`${cifrata}.pub`), 'il .pub c\'e\' ed e\' valido');
+    const conCifrata = supervisor.refusalDetails({
+      remoteDestinations: ['127.0.0.1:41800'], identityFile: cifrata,
+    });
+    assert.equal(conCifrata.authorizedKeys, '', 'nessuna riga: la privata non e\' derivabile in batch');
+    assert.doesNotMatch(conCifrata.hint, /parte pubblica non e' leggibile/,
+      'e il messaggio non afferma una cosa falsa su un file che esiste');
+  }
 });
 
 
