@@ -269,54 +269,79 @@ test('readPublicKey: una sola chiave valida, altrimenti niente', () => {
   assert.equal(tunnel.readPublicKey(scrivi('spazzatura', 'non-una-chiave\n')), null, 'testo qualunque');
 });
 
-// L'ORACOLO NON SIAMO NOI. Il test precedente costruiva la chiave con lo stesso
-// sottoinsieme di formato che il parser controlla: verde per costruzione, e
-// infatti quel finto era rifiutato da `ssh-keygen -l`. Qui la chiave dell'helper
-// la valida CHI ESEGUE DAVVERO L'OPERAZIONE, e i casi che il parser deve
-// rifiutare sono blob strutturalmente rotti — non nomi sbagliati.
-test('readPublicKey: la struttura del blob, verificata contro ssh-keygen', () => {
+// L'ORACOLO NON SIAMO NOI, ed e' finito dentro il prodotto. Dopo due giri in
+// cui validavo la chiave da solo — prima il nome, poi la struttura dei campi —
+// un audit ha trovato ogni volta materiale che il mio controllo accettava e
+// `ssh-keygen` rifiuta: punto ECDSA fuori curva, modulo RSA di zeri, curva che
+// non corrisponde. Non sono difetti di struttura: sono proprieta'
+// crittografiche. Ora decide chi la chiave la usera'.
+test('readPublicKey: decide ssh-keygen, e i due controlli che lui non fa restano nostri', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blob-'));
   const scrivi = (nome, testo) => {
     const k = path.join(dir, nome);
     fs.writeFileSync(`${k}.pub`, testo);
     return k;
   };
-
-  const buona = scrivi('ok', `${pubValida('oracolo@test')}\n`);
-  let riconosciuta = null;
+  const { execFileSync } = require('node:child_process');
+  // Se ssh-keygen manca, il prodotto rifiuta TUTTO per disegno: qui non c'e'
+  // niente da provare e il test lo dice, invece di restare verde per assenza.
   try {
-    riconosciuta = require('node:child_process')
-      .execFileSync('ssh-keygen', ['-l', '-f', `${buona}.pub`], { encoding: 'utf8' }).trim();
+    execFileSync('ssh-keygen', ['-A', '-f', path.join(dir, 'vuoto')], { stdio: 'ignore' });
   } catch (e) {
-    // Se ssh-keygen non c'e' su questa macchina lo si DICHIARA: un oracolo
-    // assente non e' un oracolo soddisfatto.
-    riconosciuta = null;
-    console.log('# ssh-keygen non disponibile: oracolo esterno non eseguito');
+    if (e && e.code === 'ENOENT') return t.skip('ssh-keygen non disponibile su questa macchina');
   }
-  if (riconosciuta !== null) {
-    assert.match(riconosciuta, /ED25519/, `ssh-keygen deve riconoscere la chiave dell'helper: ${riconosciuta}`);
+
+  // CHIAVI VERE, generate da ssh-keygen: la regressione da temere e' rifiutarne
+  // una legittima, non accettarne una rotta.
+  for (const tipo of ['ed25519', 'rsa', 'ecdsa']) {
+    const k = path.join(dir, `vera_${tipo}`);
+    execFileSync('ssh-keygen', ['-q', '-t', tipo, '-N', '', '-C', `vera-${tipo}`, '-f', k], { stdio: 'ignore' });
+    assert.ok(tunnel.readPublicKey(k), `una ${tipo} vera deve essere accettata`);
+    assert.ok(tunnel.authorizedKeysForNode({ remotePort: 41800, identityFile: k }, 41821),
+      `e comporre la riga per una ${tipo} vera`);
   }
-  assert.ok(tunnel.readPublicKey(buona), 'e il nostro lettore concorda con lui');
 
-  // Blob composto SOLO dal nome dell'algoritmo: nessuna chiave dentro.
-  const soloNome = campoSsh(Buffer.from('ssh-ed25519')).toString('base64');
-  assert.equal(tunnel.readPublicKey(scrivi('sn', `ssh-ed25519 ${soloNome} x\n`)), null,
-    'un blob senza la chiave non e\' una chiave');
-
-  // ed25519 con payload troncato: la lunghezza dichiarata c\'e\', i byte no.
-  const corto = Buffer.concat([campoSsh(Buffer.from('ssh-ed25519')), campoSsh(Buffer.alloc(1))]).toString('base64');
-  assert.equal(tunnel.readPublicKey(scrivi('c1', `ssh-ed25519 ${corto} x\n`)), null,
-    'ed25519 vuole 32 byte esatti: 1 non e\' "quasi giusto"');
-
-  // Due chiavi separate da un CR NUDO: `split(/\r?\n/)` non le separava, e il
-  // ritorno a capo finiva dentro il valore restituito.
-  assert.equal(tunnel.readPublicKey(scrivi('cr', `${pubValida()}\r${pubValida()}\n`)), null,
+  // I DUE CONTROLLI CHE SSH-KEYGEN NON FA. Con due chiavi nel file lui accetta
+  // e mostra la prima (misurato): il blocco copiato ne porterebbe una SENZA
+  // restrizioni. E un CR nudo non separa le righe per lui.
+  const vera = fs.readFileSync(`${path.join(dir, 'vera_ed25519')}.pub`, 'utf8').trim();
+  assert.equal(tunnel.readPublicKey(scrivi('due', `${vera}\n${vera}\n`)), null,
+    'due chiavi: la seconda finirebbe senza restrizioni nel blocco copiato');
+  assert.equal(tunnel.readPublicKey(scrivi('cr', `${vera}\r${vera}\n`)), null,
     'un CR nudo non trasforma due chiavi in una riga sola');
 
-  // Byte di coda dopo l'ultimo campo: firma di un blob costruito a mano.
-  const conCoda = Buffer.concat([
-    campoSsh(Buffer.from('ssh-ed25519')), campoSsh(Buffer.alloc(32)), Buffer.from([0x00, 0x01]),
+  // MATERIALE STRUTTURALMENTE PLAUSIBILE E CRIPTOGRAFICAMENTE NO: e' la classe
+  // che il mio controllo fatto a mano lasciava passare due volte di fila.
+  const ec = Buffer.concat([
+    campoSsh(Buffer.from('ecdsa-sha2-nistp256')), campoSsh(Buffer.from('nistp256')), campoSsh(Buffer.alloc(1)),
   ]).toString('base64');
-  assert.equal(tunnel.readPublicKey(scrivi('coda', `ssh-ed25519 ${conCoda} x\n`)), null,
-    'byte che avanzano dopo l\'ultimo campo');
+  assert.equal(tunnel.readPublicKey(scrivi('ec1', `ecdsa-sha2-nistp256 ${ec} x\n`)), null,
+    'punto ECDSA di un byte: strutturalmente plausibile, non una chiave');
+  const rsa = Buffer.concat([
+    campoSsh(Buffer.from('ssh-rsa')), campoSsh(Buffer.from([1, 0, 1])), campoSsh(Buffer.alloc(128)),
+  ]).toString('base64');
+  assert.equal(tunnel.readPublicKey(scrivi('rsa0', `ssh-rsa ${rsa} x\n`)), null,
+    'modulo RSA di soli zeri');
+
+  // IL TAB e' legittimo fra algoritmo e blob: ssh-keygen lo accetta, e prima lo
+  // rifiutavamo noi.
+  assert.ok(tunnel.readPublicKey(scrivi('tab', `${vera.replace(' ', '\t')}\n`)),
+    'un tab come separatore non squalifica una chiave valida');
+});
+
+// SE L'ORACOLO NON C'E', NON SI PROMETTE NIENTE. La guardia precedente
+// catturava QUALUNQUE errore di ssh-keygen come "binario assente" e saltava
+// l'asserzione: con una chiave invalida il binario fallisce, e il test restava
+// verde proprio sul caso che doveva bocciare. ENOENT e rifiuto sono due cose
+// diverse e ora si distinguono.
+test('readPublicKey: senza ssh-keygen non si compone nessuna riga', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'noorac-'));
+  const k = path.join(dir, 'k');
+  fs.writeFileSync(`${k}.pub`, `${pubValida()}\n`);
+  const assente = () => { const e = new Error('spawn ssh-keygen ENOENT'); e.code = 'ENOENT'; throw e; };
+  assert.equal(tunnel.readPublicKey(k, { execImpl: assente }), null,
+    'binario assente: si rifiuta, non si tira a indovinare');
+  const rifiuta = () => { const e = new Error('is not a public key file'); e.status = 255; throw e; };
+  assert.equal(tunnel.readPublicKey(k, { execImpl: rifiuta }), null,
+    'e un rifiuto vero porta allo stesso esito, per una ragione diversa');
 });
