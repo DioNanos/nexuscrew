@@ -7,7 +7,7 @@ const path = require('node:path');
 const cp = require('node:child_process');
 const {
   readPidfile, writePidfile, pidOwnership, pidExists, isAlive, cleanStale, killPidfile, removePidfile,
-  currentUid, readCmdline, probeProcessStart, hasSchemaMarker,
+  currentUid, readCmdline, probeProcessStart, hasSchemaMarker, checkSchemaMarker, schemaMarkerPath,
 } = require('../lib/cli/pidfile.js');
 
 function tmpPid() {
@@ -433,6 +433,120 @@ test('killPidfile: POST-migrazione (marker presente), meta senza attestazione NO
     assert.match(r.reason, /schema migration/, `reason nomina la causa: ${r.reason}`);
     assert.ok(fs.existsSync(p), 'il pidfile NON si tocca: non sappiamo se sia stale');
     assert.equal(pidOwnership(child.pid), 'owned', 'il legittimo e\' ancora vivo, non toccato');
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+});
+
+// R-pidfile-4 (2026-08-17, audit su develop@437d29f): CONTROLLO NEGATIVO
+// OBBLIGATORIO, la sonda dell'auditor riprodotta alla lettera. PRIMA di
+// questo giro: .pidfile-schema-v2 come DIRECTORY faceva tornare
+// hasSchemaMarker() false per costruzione (isFile() falso su una directory)
+// — "nessun marker" letto come "assente", cioe' PERMISSIVO — ed
+// ensureSchemaMarker ingoiava l'errore di creazione (EISDIR, non EEXIST)
+// senza distinguerlo. Due writePidfile v2 riuscite di fila non bastavano a
+// far nascere il marker: l'ostacolo lo impediva OGNI volta, per sempre — non
+// un giro in piu' di compatibilita'. PRIMA: killed:true, SIGTERM inviato.
+// DOPO: il meccanismo che non sa determinare il proprio stato chiude invece
+// di concedere — killed:false, motivo che nomina l'ostacolo.
+test('AUDITOR R-pidfile-4: ostacolo DIRECTORY sul marker — PRIMA segnalava sempre, ORA rifiuta (stato non determinabile)', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  try {
+    // Precrea .pidfile-schema-v2 come DIRECTORY, esattamente come l'auditor.
+    fs.mkdirSync(schemaMarkerPath(p), { recursive: true });
+    // Due writePidfile v2 riuscite di fila in questa stessa directory: il
+    // marker non nasce mai (l'ostacolo lo impedisce), ma writePidfile non
+    // fallisce mai per questo — e' il punto del difetto.
+    for (let i = 0; i < 2; i += 1) {
+      const scritturaV2 = path.join(path.dirname(p), `altro-${i}.pid`);
+      writePidfile(scritturaV2, process.pid, `node altro-${i}`, {});
+      fs.rmSync(scritturaV2, { force: true });
+    }
+    assert.equal(hasSchemaMarker(p), false, 'precondizione: il marker non e\' MAI nato (l\'ostacolo lo impedisce)');
+    assert.equal(checkSchemaMarker(p).state, 'undeterminable', 'precondizione: non e\' "absent", e\' "non determinabile"');
+
+    const cmdVivo = readCmdline(child.pid);
+    const ambiguo = { pid: child.pid, cmd: cmdVivo, uid: currentUid() };
+    fs.writeFileSync(p, `${JSON.stringify(ambiguo)}\n`);
+    const segnali = [];
+    const r = killPidfile(p, 'SIGTERM', {
+      killImpl: (_pid, sig) => { segnali.push(sig); }, // non lancia mai: ownership 'owned'
+    });
+    assert.equal(r.killed, false, 'stato del marker non determinabile: NON si segnala, mai piu\' un bypass permanente');
+    assert.match(r.reason, /undeterminable/, `reason nomina l'ostacolo: ${r.reason}`);
+    assert.deepEqual(segnali, [0], 'solo la probe di ownership: nessun SIGTERM inviato');
+    assert.ok(fs.existsSync(p), 'il pidfile NON si tocca: non sappiamo se sia stale');
+    assert.equal(pidOwnership(child.pid), 'owned', 'il legittimo e\' ancora vivo, non toccato');
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+});
+
+// Lo stesso ostacolo, forma SYMLINK invece di directory — richiesto
+// esplicitamente da Dev. lstat (non stat) lo vede come symlink PRIMA di
+// seguirlo: non importa dove punti (un file regolare altrove, il nulla, o
+// se stesso) — un symlink al posto del marker non e' mai un file regolare
+// scritto da noi, ed e' esattamente il tipo di ostacolo che un avversario
+// userebbe per tenere aperta la finestra di compatibilita' ambigua.
+test('killPidfile: ostacolo SYMLINK sul marker — stato non determinabile, rifiuta', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  try {
+    const altrove = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'nc-pid-symlink-target-')), 'niente');
+    fs.symlinkSync(altrove, schemaMarkerPath(p)); // symlink dangling: punta al nulla
+    for (let i = 0; i < 2; i += 1) {
+      const scritturaV2 = path.join(path.dirname(p), `altro-${i}.pid`);
+      writePidfile(scritturaV2, process.pid, `node altro-${i}`, {});
+      fs.rmSync(scritturaV2, { force: true });
+    }
+    assert.equal(checkSchemaMarker(p).state, 'undeterminable', 'un symlink non e\' mai un file regolare "nostro"');
+    assert.match(checkSchemaMarker(p).reason, /symlink/, 'la causa nomina esplicitamente il symlink');
+
+    const cmdVivo = readCmdline(child.pid);
+    fs.writeFileSync(p, `${JSON.stringify({ pid: child.pid, cmd: cmdVivo, uid: currentUid() })}\n`);
+    const r = killPidfile(p, 'SIGTERM');
+    assert.equal(r.killed, false, 'symlink al posto del marker: NON si segnala');
+    assert.match(r.reason, /undeterminable/, `reason nomina l'ostacolo: ${r.reason}`);
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+});
+
+// LA DOMANDA CHE DEV HA GIRATO ALL'AUDITOR, MISURATA non dedotta: dopo la
+// migrazione (marker presente per davvero), un nodo che davvero non sa
+// attestare resta fermabile? Si', perche' attestation:'unsupported' e'
+// controllato PRIMA del marker nel codice (killPidfile sopra) — un nodo
+// dichiarato unsupported non passa mai dal ramo del marker. Qui lo si
+// dimostra costruendo il caso reale: marker presente (migrazione avvenuta),
+// POI un pidfile con attestation:'unsupported' scritto da un nodo che non
+// sa attestare — deve restare fermabile esattamente come prima.
+test('MISURATO: dopo la migrazione, un nodo unsupported vero resta fermabile', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  try {
+    const scritturaV2 = path.join(path.dirname(p), 'migrazione.pid');
+    writePidfile(scritturaV2, process.pid, 'node migrazione', {});
+    fs.rmSync(scritturaV2, { force: true });
+    assert.equal(hasSchemaMarker(p), true, 'precondizione: la migrazione e\' avvenuta per davvero in questa directory');
+
+    const cmdVivo = readCmdline(child.pid);
+    fs.writeFileSync(p, `${JSON.stringify({
+      pid: child.pid, cmd: cmdVivo, attestation: 'unsupported', uid: currentUid(),
+    })}\n`);
+    const r = killPidfile(p, 'SIGTERM');
+    assert.equal(r.killed, true, 'MISURATO: unsupported vero resta fermabile anche dopo la migrazione (Termux non si spegne)');
+    assert.equal(r.unverifiedBirth, 'unsupported', 'dichiarato, non confuso con ambiguous-compat');
+    await aspettaExit(child);
   } finally {
     child.kill('SIGKILL');
     await aspettaExit(child);
