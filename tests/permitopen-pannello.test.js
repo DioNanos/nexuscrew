@@ -304,9 +304,20 @@ test('readPublicKey: senza ssh-keygen non si compone nessuna riga', () => {
 
 // L'HELPER CHE SOPRAVVIVE AL PADRE. `execFileSync` col timeout uccide SOLO il
 // processo diretto: se `ssh-keygen` ha lanciato un askpass, quello resta orfano.
-// E il supervisore chiama questa strada a ogni rifiuto del canale, quindi i
-// retry accumulerebbero prompt e processi che nessuno raccoglie — lo stesso
-// difetto degli ssh orfani, per un'altra porta.
+// Il supervisore chiama questa strada a ogni rifiuto del canale, quindi i retry
+// accumulerebbero processi che nessuno raccoglie.
+//
+// LA PRIMA VERSIONE DI QUESTO TEST ERA CIECA, e vale la pena che resti scritto:
+// il finto «che non torna» usava `exec -a <nome> sleep`, che e' una bashism —
+// `/bin/sh` qui e' dash, l'helper moriva subito con exit 127, e le asserzioni
+// restavano verdi ANCHE SENZA la difesa. Il marcatore ora sta nel NOME del file
+// dell'helper (che `ps` mostra comunque) e il corpo e' un `sleep` nudo.
+//
+// E il controllo negativo e' DENTRO il test, non a fianco: il secondo braccio
+// esegue la stessa chiamata con l'ambiente EREDITATO — cioe' il comportamento
+// di prima — e pretende che l'orfano ci sia. Se un giorno qualcuno togliesse la
+// difesa, il primo braccio diventerebbe rosso; se la togliesse anche dal
+// braccio di controllo, sarebbe il secondo a cadere.
 test('readPublicKey: una privata cifrata non lascia discendenti askpass', (t) => {
   if (!sshKeygenDisponibile()) return t.skip('ssh-keygen non disponibile su questa macchina');
   const { execFileSync } = require('node:child_process');
@@ -314,36 +325,59 @@ test('readPublicKey: una privata cifrata non lascia discendenti askpass', (t) =>
   const key = path.join(dir, 'cifrata');
   execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', 'passphrase-di-prova', '-f', key],
     { stdio: 'ignore', timeout: 20000 });
-  // Un askpass che NON torna: se venisse invocato e sopravvivesse, lo si vede.
-  const marcatore = `nc-askpass-${process.pid}-${Date.now()}`;
-  const ap = path.join(dir, 'ap.sh');
-  fs.writeFileSync(ap, `#!/bin/sh\nexec -a ${marcatore} sleep 120\n`, { mode: 0o700 });
+
+  // Marcatore nel NOME: `ps` mostra `/bin/sh /…/ap-<marcatore>.sh`, e il corpo
+  // e' un `sleep` nudo che qualunque shell POSIX sa eseguire.
+  const marcatore = `ncorf${process.pid}x${Date.now()}`;
+  const ap = path.join(dir, `ap-${marcatore}.sh`);
+  fs.writeFileSync(ap, '#!/bin/sh\nsleep 90\n', { mode: 0o700 });
 
   const vivi = () => {
     try {
-      return execFileSync('ps', ['-eo', 'args'], { encoding: 'utf8' })
-        .split('\n').filter((r) => r.includes(marcatore)).length;
-    } catch (_) { return 0; }
+      return execFileSync('ps', ['-eo', 'pid,args'], { encoding: 'utf8' })
+        .split('\n').filter((r) => r.includes(marcatore) && !r.includes('[ps]'));
+    } catch (_) { return []; }
   };
-  assert.equal(vivi(), 0, 'nessun residuo prima di cominciare');
+  const uccidiResidui = () => {
+    for (const riga of vivi()) {
+      const pid = Number(String(riga).trim().split(/\s+/)[0]);
+      if (Number.isInteger(pid) && pid > 0) { try { process.kill(pid, 'SIGKILL'); } catch (_) {} }
+    }
+  };
+  assert.equal(vivi().length, 0, 'nessun residuo prima di cominciare');
 
-  const t0 = Date.now();
-  const prima = process.env.SSH_ASKPASS;
-  const primaReq = process.env.SSH_ASKPASS_REQUIRE;
-  const primaDisplay = process.env.DISPLAY;
+  const ambienteOstile = { SSH_ASKPASS: ap, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: ':99' };
   try {
-    process.env.SSH_ASKPASS = ap;
-    process.env.SSH_ASKPASS_REQUIRE = 'force';
-    process.env.DISPLAY = ':99';
-    assert.equal(tunnel.readPublicKey(key), null, 'una privata cifrata non si deriva in batch');
+    // BRACCIO 1 — la difesa: ambiente controllato dentro readPublicKey.
+    const t0 = Date.now();
+    const salva = { ...process.env };
+    Object.assign(process.env, ambienteOstile);
+    let esito;
+    try { esito = tunnel.readPublicKey(key); } finally {
+      for (const k of Object.keys(ambienteOstile)) {
+        if (salva[k] === undefined) delete process.env[k]; else process.env[k] = salva[k];
+      }
+    }
+    assert.equal(esito, null, 'una privata cifrata non si deriva in batch');
+    assert.ok(Date.now() - t0 < 4000, 'fallisce SUBITO, non aspettando il timeout');
+    assert.equal(vivi().length, 0, 'e non lascia nessun helper askpass vivo dietro di se');
+
+    // BRACCIO 2 — il controllo negativo: la STESSA chiamata con l'ambiente
+    // ereditato, cioe' come si comportava prima. Se qui l'orfano NON comparisse,
+    // vorrebbe dire che il braccio 1 non prova niente.
+    const ereditaAmbiente = (bin, args, opts) => execFileSync(bin, args, {
+      ...opts, env: { ...process.env, ...ambienteOstile },
+    });
+    const t1 = Date.now();
+    assert.equal(tunnel.readPublicKey(key, { execImpl: ereditaAmbiente }), null,
+      'anche senza la difesa la chiave non si deriva: cambia il COSTO, non l\'esito');
+    const durataSenza = Date.now() - t1;
+    const residui = vivi();
+    assert.ok(residui.length > 0,
+      `senza l'ambiente controllato l'askpass DEVE restare orfano, altrimenti il braccio 1 non prova niente (durata ${durataSenza} ms)`);
   } finally {
-    // Ripristino nello STESSO blocco: se il test morisse in mezzo, l'ambiente
-    // alterato sopravviverebbe agli altri test di questo file.
-    if (prima === undefined) delete process.env.SSH_ASKPASS; else process.env.SSH_ASKPASS = prima;
-    if (primaReq === undefined) delete process.env.SSH_ASKPASS_REQUIRE; else process.env.SSH_ASKPASS_REQUIRE = primaReq;
-    if (primaDisplay === undefined) delete process.env.DISPLAY; else process.env.DISPLAY = primaDisplay;
+    uccidiResidui();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
-  assert.ok(Date.now() - t0 < 4000, 'fallisce SUBITO, non aspettando il timeout');
-  assert.equal(vivi(), 0, 'e non lascia nessun helper askpass vivo dietro di se');
-  fs.rmSync(dir, { recursive: true, force: true });
+  assert.equal(vivi().length, 0, 'il test ripulisce i propri residui');
 });
