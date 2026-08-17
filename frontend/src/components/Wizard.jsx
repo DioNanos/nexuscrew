@@ -3,6 +3,7 @@ import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { saveConfig } from '../lib/api.js';
 import PairingCard from './PairingCard.jsx';
+import AuthorizedKeysLine from './AuthorizedKeysLine.jsx';
 import './Wizard.css';
 
 // Every installation is always local and may join one Hydra network.
@@ -21,6 +22,9 @@ export default function Wizard({ token, initialPair, deviceDefault = '', localNo
   const [step, setStep] = useState(initialPair ? 'pair' : 'welcome');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  // Questo passo SMONTA la PairingCard: la riga authorized_keys che il pairing
+  // ha prodotto va tenuta qui, altrimenti sparisce proprio al primo pairing.
+  const [authKeys, setAuthKeys] = useState(null);
 
   const finish = async () => {
     setBusy(true); setErr(null);
@@ -42,7 +46,13 @@ export default function Wizard({ token, initialPair, deviceDefault = '', localNo
         <PairingCard token={token} initial={initialPair || ''} autoStart={!!initialPair}
           deviceDefault={deviceDefault} localNodeId={localNodeId} localNameDefault={localNameDefault}
           onBusyChange={setBusy}
-          onSuccess={async () => { if (onPairDone) onPairDone(); setStep('done'); }} />
+          onSuccess={async (esito) => {
+            setAuthKeys(esito && esito.authorizedKeys
+              ? { line: esito.authorizedKeys, note: esito.authorizedKeysNote || '' }
+              : null);
+            if (onPairDone) onPairDone();
+            setStep('done');
+          }} />
         <div className="nc-sheet-actions">
           <button className="nc-btn ghost" disabled={busy}
             onClick={() => { if (onPairDone) onPairDone(); setStep('welcome'); }}>{t('back')}</button>
@@ -50,6 +60,7 @@ export default function Wizard({ token, initialPair, deviceDefault = '', localNo
       </div>}
       {step === 'done' && <div className="nc-wiz-body">
         <div className="nc-wiz-done">{t('node-connected')}</div>
+        {authKeys && <AuthorizedKeysLine line={authKeys.line} note={authKeys.note} />}
         <div className="nc-sheet-actions"><button className="nc-btn primary" disabled={busy} onClick={finish}>{t('finish')}</button></div>
       </div>}
       {err && <div className="nc-err">{err}</div>}

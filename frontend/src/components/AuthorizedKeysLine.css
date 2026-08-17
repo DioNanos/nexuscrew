@@ -1,0 +1,21 @@
+/* La riga authorized_keys dopo un pairing con pannello. Sta in un file suo
+   perché il blocco è condiviso da Impostazioni → Nodi e dal wizard: due copie
+   dello stile divergerebbero come sono già divergute due copie della logica. */
+.nc-authkeys {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 10px; padding: 10px;
+  border: 1px solid #2f5;
+  border-radius: 8px;
+  background: rgba(34, 255, 85, 0.04);
+}
+/* La riga è lunga e va COPIATA, non letta a occhio: si manda a capo invece di
+   scorrere in orizzontale, così l'utente vede che è una riga sola e sceglie
+   consapevolmente il pulsante invece di selezionarla a mano male. */
+.nc-authkeys-line {
+  width: 100%; min-width: 0; box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; line-height: 1.4;
+  white-space: pre-wrap; word-break: break-all;
+  resize: vertical;
+}
+.nc-authkeys .nc-btn { align-self: flex-start; }

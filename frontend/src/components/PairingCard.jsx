@@ -7,6 +7,7 @@ import {
   createSubmitGuard, describePairError, resolvePairingInput, PAIR_STAGES,
 } from '../lib/pairing-flow.js';
 import QrScanModal from './QrScanModal.jsx';
+import AuthorizedKeysLine from './AuthorizedKeysLine.jsx';
 import './PairingCard.css';
 
 const blankForm = () => ({ name: '', label: '', ssh: '', sshPort: '', pairingUrl: '', localLabel: '', localName: '' });
@@ -29,6 +30,11 @@ export default function PairingCard({ token, initial = '', autoStart = false, de
   const [phase, setPhase] = useState('idle'); // idle | busy | ok
   const [fail, setFail] = useState(null);     // describePairError()
   const [notice, setNotice] = useState('');
+  // La riga authorized_keys che il peer deve sostituire: il backend la
+  // costruisce solo quando il peer dichiara una porta pannello, e senza di
+  // essa il forward del pannello resta rifiutato per sempre. Vive in uno stato
+  // SUO, non nel form: il form si azzera al successo e la riga deve restare.
+  const [authKeys, setAuthKeys] = useState(null);
   const [nameEdited, setNameEdited] = useState(false);
   const [localNameEdited, setLocalNameEdited] = useState(false);
   const guardRef = useRef(createSubmitGuard());
@@ -49,7 +55,7 @@ export default function PairingCard({ token, initial = '', autoStart = false, de
     if (!guardRef.current.start(value)) return;
     setPhase('busy'); setFail(null); setNotice('');
     try {
-      await pairNode(token, buildPairBody({
+      const esito = await pairNode(token, buildPairBody({
         ...f,
         localName: localNameEdited ? f.localName : (
           deriveLocalName(f.localLabel || deviceDefault, localNodeId) || localNameDefault
@@ -57,9 +63,15 @@ export default function PairingCard({ token, initial = '', autoStart = false, de
       }, { deviceDefault, localNodeId, localNameDefault }));
       // Stato locale PRIMA del callback: il genitore può smontare la card.
       setPhase('ok'); setAdvanced(false); setForm(blankForm());
+      setAuthKeys(esito && esito.authorizedKeys
+        ? { line: esito.authorizedKeys, note: esito.authorizedKeysNote || '' }
+        : null);
       touchedRef.current = new Set(); setNameEdited(false); setLocalNameEdited(false);
       guardRef.current.finish();
-      if (onSuccess) await onSuccess();
+      // L'esito viaggia al genitore: il Wizard SMONTA questa card al successo
+      // (setStep('done')), quindi una riga mostrata solo qui sparirebbe proprio
+      // nel percorso del primo pairing, dove serve di più.
+      if (onSuccess) await onSuccess(esito);
     } catch (e) {
       const d = describePairError(e);
       setFail(d); setPhase('idle');
@@ -175,6 +187,7 @@ export default function PairingCard({ token, initial = '', autoStart = false, de
       <div className="nc-pair-status" aria-live="polite">
         {busy && <div className="nc-pair-progress">{t('pair-progress')}</div>}
         {phase === 'ok' && <div className="nc-set-test ok">{t('node-connected')}</div>}
+        {phase === 'ok' && authKeys && <AuthorizedKeysLine line={authKeys.line} note={authKeys.note} />}
         {notice && <div className="nc-set-hint nc-pair-notice">{notice}</div>}
         {fail && (
           <div className="nc-err" role="alert">
