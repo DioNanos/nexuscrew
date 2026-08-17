@@ -328,34 +328,50 @@ test('readPublicKey: una privata cifrata non lascia discendenti askpass', (t) =>
 
   // Marcatore nel NOME: `ps` mostra `/bin/sh /…/ap-<marcatore>.sh`, e il corpo
   // e' un `sleep` nudo che qualunque shell POSIX sa eseguire.
-  // UN SOLO PROCESSO, e il suo pid scritto su file. La versione precedente
-  // marcava la shell e uccideva quella — ma `sleep` era un FIGLIO separato,
-  // senza marcatore: sopravviveva al SIGKILL e `vivi()` non lo vedeva, quindi
-  // il test dichiarava di aver ripulito mentre lasciava un residuo a ogni run.
-  // Il test che prova «non lascia orfani» ne lasciava.
-  // `exec` sostituisce la shell: il pid scritto con `$$` resta valido dopo, e
-  // non nasce nessun figlio da rincorrere.
+  // UN SOLO PROCESSO, CON UN'IDENTITA' OSSERVABILE. Due difetti pagati qui:
+  //  1. marcavo la shell e uccidevo quella, ma `sleep` era un FIGLIO separato e
+  //     senza marcatore — sopravviveva, e la ricerca dei residui non lo vedeva:
+  //     il test che prova «non lascia orfani» ne lasciava uno per esecuzione;
+  //  2. poi ho identificato il processo col solo PID letto da un file. Un pid
+  //     e' un NUMERO, non un'identita': se la suite resta sospesa oltre la vita
+  //     dell'helper (oggi se n'e' vista una ferma 23 minuti), quel numero puo'
+  //     essere riassegnato e il cleanup ucciderebbe un estraneo dello stesso
+  //     utente. E' la stessa classe che il prodotto ha appena finito di
+  //     chiudere nel pidfile, reintrodotta in un test.
+  // `exec` sostituisce la shell, quindi il processo e' UNO; `tail -f` su un
+  // path unico di questo tempdir mette quel path nell'argv, dove resta
+  // osservabile fino al segnale. Prima di uccidere si RIVERIFICA che l'argv sia
+  // ancora il nostro: il numero da' la liveness, l'argv da' l'appartenenza.
+  const testimone = path.join(dir, `askpass-${process.pid}-${Date.now()}.vivo`);
+  fs.writeFileSync(testimone, 'x');
   const pidfile = path.join(dir, 'askpass.pid');
   const ap = path.join(dir, 'ap.sh');
-  fs.writeFileSync(ap, `#!/bin/sh\necho $$ > ${pidfile}\nexec sleep 90\n`, { mode: 0o700 });
+  fs.writeFileSync(ap, `#!/bin/sh\necho $$ > ${pidfile}\nexec tail -f -n 0 ${testimone} >/dev/null 2>&1\n`, { mode: 0o700 });
 
-  // Il kernel, non una stringa in `ps`: si chiede se QUEL pid e' vivo.
   const pidResiduo = () => {
     try {
       const n = Number(String(fs.readFileSync(pidfile, 'utf8')).trim());
       return Number.isInteger(n) && n > 0 ? n : null;
     } catch (_) { return null; }
   };
+  // Appartenenza PRIMA della liveness: un pid vivo che non porta il nostro
+  // testimone nell'argv non e' nostro, e non si tocca.
+  const nostro = (pid) => {
+    try {
+      const argv = execFileSync('ps', ['-p', String(pid), '-o', 'args='], { encoding: 'utf8' });
+      return argv.includes(testimone);
+    } catch (_) { return false; }
+  };
   const vivo = () => {
     const pid = pidResiduo();
-    if (pid === null) return false;
-    try { process.kill(pid, 0); return true; } catch (e) { return e && e.code === 'EPERM'; }
+    return pid !== null && nostro(pid);
   };
   const uccidiResidui = () => {
     const pid = pidResiduo();
-    if (pid !== null) { try { process.kill(pid, 'SIGKILL'); } catch (_) {} }
+    if (pid !== null && nostro(pid)) { try { process.kill(pid, 'SIGKILL'); } catch (_) {} }
     try { fs.unlinkSync(pidfile); } catch (_) {}
   };
+
   assert.equal(vivo(), false, 'nessun residuo prima di cominciare');
 
   const ambienteOstile = { SSH_ASKPASS: ap, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: ':99' };
