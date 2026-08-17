@@ -7,7 +7,7 @@ const path = require('node:path');
 const cp = require('node:child_process');
 const {
   readPidfile, writePidfile, pidOwnership, pidExists, isAlive, cleanStale, killPidfile, removePidfile,
-  currentUid, readCmdline, probeProcessStart,
+  currentUid, readCmdline, probeProcessStart, hasSchemaMarker,
 } = require('../lib/cli/pidfile.js');
 
 function tmpPid() {
@@ -370,36 +370,99 @@ test('isAlive: non calcolabile — senza nascita leggibile vale il cmd, nel dubb
 // MISURATO il costo di quella scelta sul path reale dell'aggiornamento
 // automatico: lib/update/runner.js chiama stopPortableRuntime -> killPidfile
 // nudo, senza degrado; un rifiuto fa FALLIRE l'update per ogni nodo il cui
-// runtime e' ancora precedente ad a7c8a56 (0.9.4, dove processStart e'
-// nato) — npm install sovrascrive pidfile.js prima che il runner lo
-// richieda, legge il pidfile VECCHIO del runtime in esecuzione, rifiuta,
-// l'update muore. Un guasto certo per ogni nodo in quello stato, non un
-// rischio raro.
+// runtime e' ancora precedente a quando processStart e' nato — un guasto
+// certo, non un rischio raro.
 //
-// Decisione di prodotto (Dev): un meta senza NESSUN campo di attestazione
-// (ne' processStart ne' attestation) e' LEGACY — scritto da un codice che
-// l'attestazione non la conosceva, non da un tentativo che e' fallito. Da
-// oggi questo test asserisce di nuovo `r.killed === true`: il ramo legacy
-// ricade sul cmd come SEMPRE ha fatto in produzione (nessun peggioramento),
-// ma lo DICHIARA (unverifiedBirth:'legacy', distinto da 'unsupported'). Il
-// caso che DEVE rifiutare — il codice nuovo che ha provato e fallito — e'
-// un meta diverso, attestation:'indeterminate' esplicito: vedi il test
-// subito sotto.
-test('killPidfile: meta LEGACY (nessun campo di attestazione) ricade sul cmd come sempre, dichiarato', async () => {
+// R-pidfile-3: SECONDO giro. Il primo fix chiamava questo ramo "legacy" e lo
+// permetteva SEMPRE quando il meta non aveva ne' processStart ne'
+// attestation. L'auditor ha dimostrato che "nessun campo" non prova la
+// provenienza (un chiamante puo' scrivere quella stessa forma anche con
+// codice v2 — vedi il test sui campi riservati sotto) — quindi "legacy
+// permanente" lasciava aperti per sempre restore da backup, corruzione e
+// downgrade. Ora si chiama COMPATIBILITA' AMBIGUA (unverifiedBirth:
+// 'ambiguous-compat', non piu' 'legacy') ed e' concessa SOLO finche' questa
+// installazione non ha mai completato una scrittura v2 (nessun marker di
+// schema nella directory del pidfile — schemaMarkerPath). Questo test resta
+// nel caso PRE-migrazione (tmpPid() da' sempre una directory nuova, senza
+// marker): l'asserzione e' la stessa di prima, `r.killed === true`, ma il
+// significato e' piu' stretto — non "sempre", "finche' non e' successo
+// altro". Il caso POST-migrazione (marker presente) e' il test subito sotto.
+test('killPidfile: PRE-migrazione (nessun marker), meta senza attestazione ricade sul cmd, dichiarato ambiguous-compat', async () => {
   const child = figlioCheTieneIlNumero();
   await figlioPronto(child);
   const p = tmpPid();
   try {
     const cmdVivo = readCmdline(child.pid);
-    const legacy = { pid: child.pid, cmd: cmdVivo, uid: currentUid() };
-    fs.writeFileSync(p, `${JSON.stringify(legacy)}\n`);
+    const ambiguo = { pid: child.pid, cmd: cmdVivo, uid: currentUid() };
+    fs.writeFileSync(p, `${JSON.stringify(ambiguo)}\n`);
     const r = killPidfile(p, 'SIGTERM');
-    assert.equal(r.killed, true, 'meta legacy (nessun campo attestation): il kill verificato via cmd resta possibile');
-    assert.equal(r.unverifiedBirth, 'legacy', 'dichiarato, e distinguibile da unsupported');
+    assert.equal(r.killed, true, 'nessun marker in questa directory: pre-migrazione, il kill via cmd resta possibile');
+    assert.equal(r.unverifiedBirth, 'ambiguous-compat', 'dichiarato, e distinguibile da unsupported');
     await aspettaExit(child);
   } finally {
     child.kill('SIGKILL');
     await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+});
+
+// Il negativo che l'auditor ha chiesto per il marker one-way: STESSO meta
+// senza attestazione, ma questa volta l'installazione ha GIA' completato una
+// scrittura v2 (marker presente — costruito qui con una writePidfile REALE
+// su un pid diverso, esattamente come farebbe il codice nuovo al primo
+// avvio). Da questo momento "nessun campo" non e' piu' spiegabile come
+// pre-migrazione: e' sospetto, e rifiuta come indeterminate.
+test('killPidfile: POST-migrazione (marker presente), meta senza attestazione NON e\' piu\' accettato', async () => {
+  const child = figlioCheTieneIlNumero();
+  await figlioPronto(child);
+  const p = tmpPid();
+  try {
+    // La prima scrittura v2 in QUESTA directory (quella di p): crea il
+    // marker per davvero, come farebbe il codice nuovo al primo avvio.
+    // Un pidfile usa-e-getta, in nulla diverso da un avvio vero.
+    const scritturaV2 = path.join(path.dirname(p), 'altro.pid');
+    writePidfile(scritturaV2, process.pid, 'node altro', {});
+    fs.rmSync(scritturaV2, { force: true }); // il pidfile non serve, il marker accanto resta
+    assert.equal(hasSchemaMarker(p), true, 'precondizione: il marker ora c\'e\' in questa directory');
+
+    const cmdVivo = readCmdline(child.pid);
+    const ambiguo = { pid: child.pid, cmd: cmdVivo, uid: currentUid() };
+    fs.writeFileSync(p, `${JSON.stringify(ambiguo)}\n`);
+    const r = killPidfile(p, 'SIGTERM');
+    assert.equal(r.killed, false, 'marker presente: nessun campo attestazione non e\' piu\' pre-migrazione, e\' sospetto');
+    assert.match(r.reason, /schema migration/, `reason nomina la causa: ${r.reason}`);
+    assert.ok(fs.existsSync(p), 'il pidfile NON si tocca: non sappiamo se sia stale');
+    assert.equal(pidOwnership(child.pid), 'owned', 'il legittimo e\' ancora vivo, non toccato');
+  } finally {
+    child.kill('SIGKILL');
+    await aspettaExit(child);
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+});
+
+// GATE OBBLIGATORIO (Dev, R-pidfile-3): la sua misura esatta. Con lo spread
+// di extra per ultimo, un chiamante poteva scrivere un'attestazione
+// INVENTATA che vinceva sul valore vero calcolato da probeProcessStart —
+// "nessun campo attestazione = pre-fix" non era piu' una deduzione valida
+// perche' quella forma (o una fasulla) la poteva produrre anche il writer
+// nuovo. RESERVED_META_FIELDS filtra extra e i campi veri sono scritti DOPO:
+// dopo il fix questa chiamata non deve poter cambiare ne' processStart ne'
+// attestation.
+test('writePidfile: i campi riservati NON sono sovrascrivibili da extra (misura esatta di Dev)', () => {
+  const p = tmpPid();
+  try {
+    writePidfile(p, process.pid, 'node test-reserved', {
+      processStart: 'FINTO', attestation: 'unsupported', unaChiaveInnocua: 'ok',
+    });
+    const meta = readPidfile(p);
+    assert.notEqual(meta.processStart, 'FINTO', 'processStart NON e\' quello iniettato da extra');
+    assert.notEqual(meta.attestation, 'unsupported', 'attestation NON e\' quella iniettata da extra (o e\' assente: processStart vince)');
+    // Sulla nostra macchina process.pid e' sempre attestabile per davvero:
+    // il valore VERO deve essere quello scritto, non il finto.
+    assert.ok(typeof meta.processStart === 'string' && meta.processStart.length > 0,
+      'il valore VERO (probeProcessStart sul nostro pid) e\' quello che vince');
+    assert.equal(meta.unaChiaveInnocua, 'ok', 'i campi NON riservati di extra restano scrivibili come sempre');
+  } finally {
     fs.rmSync(path.dirname(p), { recursive: true, force: true });
   }
 });
@@ -453,7 +516,9 @@ test('AUDITOR negativo: pid ereditato + cmd compatibile + attestazione TENTATA E
 // unsupported: DICHIARATO alla creazione (probeProcessStart, non ricalcolato
 // al kill). Qui la piattaforma non sa attestare per davvero (mock: ne' proc
 // ne' ps rispondono) e il kill ricade sul cmd — ma lo DICE nel risultato,
-// distinto da 'legacy' (stesso comportamento, causa diversa).
+// distinto da 'ambiguous-compat' (stesso comportamento, causa diversa: qui è
+// un fatto sulla piattaforma, verificato a ogni scrittura; lì è solo
+// l'assenza di un marker per questa installazione).
 test('killPidfile: unsupported dichiarato alla creazione ricade sul cmd, ma lo dichiara nel risultato', async () => {
   const child = figlioCheTieneIlNumero();
   await figlioPronto(child);
@@ -463,7 +528,7 @@ test('killPidfile: unsupported dichiarato alla creazione ricade sul cmd, ma lo d
     fs.writeFileSync(p, `${JSON.stringify({ pid: child.pid, cmd: cmdVivo, attestation: 'unsupported', uid: currentUid() })}\n`);
     const r = killPidfile(p, 'SIGTERM');
     assert.equal(r.killed, true, 'unsupported dichiarato: il kill verificato via cmd resta possibile (Termux non si spegne)');
-    assert.equal(r.unverifiedBirth, 'unsupported', 'dichiarato, e distinguibile da \'legacy\'');
+    assert.equal(r.unverifiedBirth, 'unsupported', 'dichiarato, e distinguibile da \'ambiguous-compat\'');
     await aspettaExit(child);
   } finally {
     child.kill('SIGKILL');
