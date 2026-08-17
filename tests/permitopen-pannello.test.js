@@ -328,23 +328,35 @@ test('readPublicKey: una privata cifrata non lascia discendenti askpass', (t) =>
 
   // Marcatore nel NOME: `ps` mostra `/bin/sh /…/ap-<marcatore>.sh`, e il corpo
   // e' un `sleep` nudo che qualunque shell POSIX sa eseguire.
-  const marcatore = `ncorf${process.pid}x${Date.now()}`;
-  const ap = path.join(dir, `ap-${marcatore}.sh`);
-  fs.writeFileSync(ap, '#!/bin/sh\nsleep 90\n', { mode: 0o700 });
+  // UN SOLO PROCESSO, e il suo pid scritto su file. La versione precedente
+  // marcava la shell e uccideva quella — ma `sleep` era un FIGLIO separato,
+  // senza marcatore: sopravviveva al SIGKILL e `vivi()` non lo vedeva, quindi
+  // il test dichiarava di aver ripulito mentre lasciava un residuo a ogni run.
+  // Il test che prova «non lascia orfani» ne lasciava.
+  // `exec` sostituisce la shell: il pid scritto con `$$` resta valido dopo, e
+  // non nasce nessun figlio da rincorrere.
+  const pidfile = path.join(dir, 'askpass.pid');
+  const ap = path.join(dir, 'ap.sh');
+  fs.writeFileSync(ap, `#!/bin/sh\necho $$ > ${pidfile}\nexec sleep 90\n`, { mode: 0o700 });
 
-  const vivi = () => {
+  // Il kernel, non una stringa in `ps`: si chiede se QUEL pid e' vivo.
+  const pidResiduo = () => {
     try {
-      return execFileSync('ps', ['-eo', 'pid,args'], { encoding: 'utf8' })
-        .split('\n').filter((r) => r.includes(marcatore) && !r.includes('[ps]'));
-    } catch (_) { return []; }
+      const n = Number(String(fs.readFileSync(pidfile, 'utf8')).trim());
+      return Number.isInteger(n) && n > 0 ? n : null;
+    } catch (_) { return null; }
+  };
+  const vivo = () => {
+    const pid = pidResiduo();
+    if (pid === null) return false;
+    try { process.kill(pid, 0); return true; } catch (e) { return e && e.code === 'EPERM'; }
   };
   const uccidiResidui = () => {
-    for (const riga of vivi()) {
-      const pid = Number(String(riga).trim().split(/\s+/)[0]);
-      if (Number.isInteger(pid) && pid > 0) { try { process.kill(pid, 'SIGKILL'); } catch (_) {} }
-    }
+    const pid = pidResiduo();
+    if (pid !== null) { try { process.kill(pid, 'SIGKILL'); } catch (_) {} }
+    try { fs.unlinkSync(pidfile); } catch (_) {}
   };
-  assert.equal(vivi().length, 0, 'nessun residuo prima di cominciare');
+  assert.equal(vivo(), false, 'nessun residuo prima di cominciare');
 
   const ambienteOstile = { SSH_ASKPASS: ap, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: ':99' };
   try {
@@ -360,7 +372,7 @@ test('readPublicKey: una privata cifrata non lascia discendenti askpass', (t) =>
     }
     assert.equal(esito, null, 'una privata cifrata non si deriva in batch');
     assert.ok(Date.now() - t0 < 4000, 'fallisce SUBITO, non aspettando il timeout');
-    assert.equal(vivi().length, 0, 'e non lascia nessun helper askpass vivo dietro di se');
+    assert.equal(vivo(), false, 'e non lascia nessun helper askpass vivo dietro di se');
 
     // BRACCIO 2 — il controllo negativo: la STESSA chiamata con l'ambiente
     // ereditato, cioe' come si comportava prima. Se qui l'orfano NON comparisse,
@@ -372,12 +384,11 @@ test('readPublicKey: una privata cifrata non lascia discendenti askpass', (t) =>
     assert.equal(tunnel.readPublicKey(key, { execImpl: ereditaAmbiente }), null,
       'anche senza la difesa la chiave non si deriva: cambia il COSTO, non l\'esito');
     const durataSenza = Date.now() - t1;
-    const residui = vivi();
-    assert.ok(residui.length > 0,
+    assert.equal(vivo(), true,
       `senza l'ambiente controllato l'askpass DEVE restare orfano, altrimenti il braccio 1 non prova niente (durata ${durataSenza} ms)`);
   } finally {
     uccidiResidui();
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  assert.equal(vivi().length, 0, 'il test ripulisce i propri residui');
+  assert.equal(vivo(), false, 'il test ripulisce i propri residui, e lo chiede al kernel');
 });
