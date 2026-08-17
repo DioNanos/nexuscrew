@@ -106,7 +106,9 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     // A host without a running tmux server can still expose a complete Fleet
     // inventory. Do not hide its cells merely because /sessions is degraded.
     if (!sessionsAvailable && !fleetInventoryAvailable) {
-      out.push({ ...base, status: 'unreachable' });
+      // R21: la CAUSA del mancato raggiungimento viaggia col gruppo: tre
+      // esiti (502/403/404) suggeriscono tre azioni diverse a chi guarda.
+      out.push({ ...base, status: 'unreachable', cause: (r && r.cause) || null });
       continue;
     }
     const sessions = (sessionsAvailable ? r.sessions : [])
@@ -145,7 +147,9 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     const sessionsAvailable = !!(r && !r.error && Array.isArray(r.sessions));
     const fleetInventoryAvailable = !!(f && f.available === true && Array.isArray(f.cells));
     if (!sessionsAvailable && !fleetInventoryAvailable) {
-      out.push({ ...base, status: 'unreachable', downSince: (down && down[key]) || null });
+      // R21: come sopra — la causa distingue l'assenza dal rifiuto dalla
+      // rotta inesistente, e il recupero non deve buttarla via.
+      out.push({ ...base, status: 'unreachable', downSince: (down && down[key]) || null, cause: (r && r.cause) || null });
       continue;
     }
     const sessions = (sessionsAvailable ? r.sessions : []).filter((s) => s && typeof s.name === 'string' && s.name)

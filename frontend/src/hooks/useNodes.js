@@ -9,18 +9,28 @@ import {
 } from '../lib/api.js';
 import { buildNodeGroups, trackDown } from '../lib/nodes-model.js';
 import { vlNodeToPeer, topologyVlOwners, vlSidebarGroups } from '../lib/vl-nodes-model.js';
+import {
+  classifyPeerFailure, recordPeerFailure, recordPeerSuccess, shouldPollPeer,
+} from '../lib/peer-backoff.js';
 
 const POLL_MS = 4000;
 
 export function useNodes(token, enabled = true, refreshKey = 0) {
   const [groups, setGroups] = useState([]);
   const downRef = useRef({});
+  // R21: backoff per-peer (stato) + ultima risposta nota (cache). Il peer
+  // morto non si interroga piu' a cadenza fissa: si dirada fino al tetto, e
+  // quando torna la cadenza torna normale. La cache mostra l'ultimo stato
+  // noto durante i giri saltati — incluso il motivo per cui si salta.
+  const backoffRef = useRef({});
+  const peerCacheRef = useRef({ remote: {} });
 
   useEffect(() => {
     if (!enabled || !token) { setGroups([]); return undefined; }
     let alive = true;
 
     async function poll() {
+      const pollStart = Date.now();
       let nodes = []; let topology = []; let aliases = {}; let localInstanceId = '';
       await Promise.all([
         getNodes(token).then((j) => { nodes = Array.isArray(j.nodes) ? j.nodes : []; }).catch(() => {}),
@@ -46,13 +56,20 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       ];
       const vlPeers = [];
       await Promise.all(vlOwners.map(async (owner) => {
+        // R21: stesso backoff dei peer — un owner morto interrogato ogni 4 s
+        // faceva lo stesso rumore indistinto (vl-nodes nel log del pannello).
+        const key = `vl:${owner.route.join('/')}`;
+        if (!shouldPollPeer(backoffRef.current, key, pollStart)) return; // zero righe, come owner irraggiungibile
         try {
           const payload = await getVlNodes(token, owner.route);
+          backoffRef.current = recordPeerSuccess(backoffRef.current, key);
           for (const raw of payload.nodes || []) {
             const peer = vlNodeToPeer(raw, owner);
             if (peer) vlPeers.push(peer);
           }
-        } catch (_) { /* owner senza vl-nodes o irraggiungibile: zero righe, mai un blocco */ }
+        } catch (e) {
+          backoffRef.current = recordPeerFailure(backoffRef.current, key, classifyPeerFailure(e), pollStart);
+        }
       }));
       if (!alive) return;
       const remote = {};
@@ -76,16 +93,36 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       // nodo: ogni posizione mostra celle Fleet + tmux unmanaged (inventario Hydra).
       await Promise.all(routes.map(async (route) => {
         const key = route.join('/');
+        if (!shouldPollPeer(backoffRef.current, key, pollStart)) {
+          // R21: il peer in backoff NON si interroga — chi guarda gli ALTRI
+          // peer non deve essere intasato dal suo rumore. Resta l'ultimo
+          // stato noto, con la causa che l'ha prodotto.
+          const cached = peerCacheRef.current.remote[key];
+          if (cached) remote[key] = cached;
+          return;
+        }
+        let sessionsOk = false;
         try {
           remote[key] = await getRouteSessions(token, route);
-        } catch (_) {
-          remote[key] = { error: 'unreachable' };
+          sessionsOk = true;
+          peerCacheRef.current.remote[key] = remote[key];
+        } catch (e) {
+          // R21: la causa distingue 502 (peer assente), 403 (peer nega),
+          // 404 (rotta inesistente): tre azioni diverse per chi guarda.
+          remote[key] = { error: 'unreachable', cause: classifyPeerFailure(e) };
+          peerCacheRef.current.remote[key] = remote[key];
         }
         try {
           fleet[key] = await fleetStatus(token, route);
-        } catch (_) {
-          fleet[key] = { available: false };
+        } catch (e) {
+          fleet[key] = { available: false, cause: classifyPeerFailure(e) };
         }
+        // Il backoff segue sessions, il segnale di vita del peer: se riesce,
+        // il peer e' vivo anche se fleet nega o non conosce la rotta —
+        // quelle sono cause da MOSTRARE, non motivi per smettere di guardare.
+        backoffRef.current = sessionsOk
+          ? recordPeerSuccess(backoffRef.current, key)
+          : recordPeerFailure(backoffRef.current, key, remote[key].cause, pollStart);
       }));
       if (!alive) return;
       const first = buildNodeGroups({ nodes, topology, remote, fleet, aliases, down: downRef.current });

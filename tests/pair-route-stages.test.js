@@ -391,6 +391,10 @@ test('pair panel: la riga authorized_keys esce SOLO quando la chiave e\' determi
   assert.equal(jp.authorizedKeys, undefined,
     'senza identita\' dedicata la riga non e\' componibile: non si promette');
   assert.equal(jp.authorizedKeysNote, undefined, 'e nemmeno la nota che la accompagna');
+  // Ma l'esito enumerato ARRIVA come dato: prima la riga spariva in silenzio
+  // e chi guardava non sapeva perche' (resolver a cinque esiti).
+  assert.equal(jp.authorizedKeysOutcome, 'actual-key-unknown',
+    'senza identita dedicata il fatto e\' nominato, non taciuto');
 });
 
 test('pair panel: con un\'identita\' dedicata la riga esce, con entrambe le destinazioni', async (t) => {
@@ -416,6 +420,7 @@ test('pair panel: con un\'identita\' dedicata la riga esce, con entrambe le dest
     'due destinazioni distinte, controllo e pannello');
   assert.ok(j.authorizedKeysNote && j.authorizedKeysNote.includes('41821'),
     'la nota dice quale porta ha reso necessaria la sostituzione');
+  assert.equal(j.authorizedKeysOutcome, 'derived', 'l\'esito enumerato accompagna la riga');
 });
 
 // P0 sicurezza, meta' remota. Un peer che ANNUNCIA la sua porta pannello nel
