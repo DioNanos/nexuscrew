@@ -81,3 +81,36 @@ describe('pairing SSH locale', () => {
     expect(mocks.pairNode.mock.calls[1][1].pairingUrl).toBe(initial);
   });
 });
+
+// IL DIFETTO: il backend costruisce la riga authorized_keys che il peer deve
+// sostituire — senza, il forward del pannello resta rifiutato per sempre — e
+// la card scartava il valore di ritorno di pairNode(). Nessun consumatore in
+// tutto il frontend: una garanzia prodotta e mai consegnata.
+describe('riga authorized_keys dopo il pairing', () => {
+  beforeEach(() => {
+    localStorage.setItem('nc_lang', 'en');
+    mocks.pairNode.mockReset();
+  });
+
+  it('mostra la riga quando la risposta la porta, e sopravvive all azzeramento del form', async () => {
+    const riga = 'restrict,port-forwarding,permitopen="127.0.0.1:41800",permitopen="127.0.0.1:41821",command="/bin/false" ssh-ed25519 AAAAC3Test peer';
+    mocks.pairNode.mockResolvedValueOnce({
+      paired: true, authorizedKeys: riga, authorizedKeysNote: 'il peer ha un pannello sulla propria porta 41821',
+    });
+    render(<PairingCard token="token" initial={pairingUrl()} autoStart
+      deviceDefault="AsusRP3" localNodeId={'5bd61234'.repeat(4)} localNameDefault="asus-rp3-5bd6" />);
+    await waitFor(() => expect(mocks.pairNode).toHaveBeenCalledTimes(1));
+    const campo = await screen.findByLabelText('Line to replace in ~/.ssh/authorized_keys on the peer');
+    expect(campo.value).toBe(riga);
+    expect(screen.getByText('il peer ha un pannello sulla propria porta 41821')).toBeTruthy();
+  });
+
+  it('non mostra nulla quando la risposta non porta la riga', async () => {
+    mocks.pairNode.mockResolvedValueOnce({ paired: true });
+    render(<PairingCard token="token" initial={pairingUrl()} autoStart
+      deviceDefault="AsusRP3" localNodeId={'5bd61234'.repeat(4)} localNameDefault="asus-rp3-5bd6" />);
+    await waitFor(() => expect(mocks.pairNode).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Node connected. The network will synchronize automatically.')).toBeTruthy();
+    expect(screen.queryByLabelText('Line to replace in ~/.ssh/authorized_keys on the peer')).toBeNull();
+  });
+});

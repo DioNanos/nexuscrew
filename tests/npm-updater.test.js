@@ -252,27 +252,38 @@ test('npm update runner: il riavvio PORTATILE ferma i tunnel, come quello manual
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('npm update runner: se fermare i tunnel fallisce, l\'aggiornamento prosegue', async () => {
+test('npm update runner: se fermare i tunnel fallisce, l\'aggiornamento prosegue — e lo dice SUL PATH PRODUTTIVO, senza log iniettato', async () => {
   // Il compito principale e' aggiornare. Un errore qui non deve bloccarlo —
-  // ma non deve nemmeno sparire: viene detto.
-  const detto = [];
+  // ma non deve nemmeno sparire: viene detto. NESSUN log iniettato: un test
+  // che passa un logger di comodo prova solo se stesso. Qui si cattura lo
+  // stdout REALE del processo — lo stesso canale che manager.js redirige sul
+  // file di log dell'update quando lancia questo runner come figlio staccato
+  // — cosi' la prova e' che l'utente lo vede davvero, non che il seam esiste.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-update-tunnels-ko-'));
-  const mode = await restartRuntime({
-    home: dir, platform: 'termux', port: 41820, token: 't',
-    commands: {
-      isServiceRunning: () => false,
-      fermaTunnelPrimaDiRiavviare: require('../lib/cli/commands.js').fermaTunnelPrimaDiRiavviare,
-      startPortable: () => ({ started: true }),
-      portAvailable: async () => true,
-    },
-    stopTunnelsImpl: () => { throw new Error('ssh non raggiungibile'); },
-    log: (m) => detto.push(m),
-    pidfile: { defaultPidfilePath: () => path.join(dir, 'x.pid'), readPidfile: () => null },
-    waitForRuntimeImpl: async () => true,
-  });
+  const originalWrite = process.stdout.write;
+  const scritto = [];
+  process.stdout.write = (chunk, ...rest) => { scritto.push(String(chunk)); return true; };
+  let mode;
+  try {
+    mode = await restartRuntime({
+      home: dir, platform: 'termux', port: 41820, token: 't',
+      commands: {
+        isServiceRunning: () => false,
+        fermaTunnelPrimaDiRiavviare: require('../lib/cli/commands.js').fermaTunnelPrimaDiRiavviare,
+        startPortable: () => ({ started: true }),
+        portAvailable: async () => true,
+      },
+      stopTunnelsImpl: () => { throw new Error('ssh non raggiungibile'); },
+      pidfile: { defaultPidfilePath: () => path.join(dir, 'x.pid'), readPidfile: () => null },
+      waitForRuntimeImpl: async () => true,
+    });
+  } finally {
+    process.stdout.write = originalWrite;
+  }
 
   assert.ok(mode, 'l\'aggiornamento non si ferma per questo');
-  assert.match(detto.join('\n'), /stop tunnel non riuscito/, 'ma non tace');
+  assert.match(scritto.join('\n'), /stop tunnel non riuscito/,
+    'ma non tace — deve comparire sullo stdout reale, non solo se qualcuno inietta un log nel test');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -320,4 +331,119 @@ test('il riavvio portatile dell\'update attraversa lo STESSO nucleo del manuale:
   // timeout del runner lo dichiara, e il kill nel t.after lo ripulisce.
   await uscito;
   assert.equal(fs.existsSync(pidPath), false, 'il pidfile del vecchio runtime è stato pulito');
+});
+
+// R-pidfile-2/3 (2026-08-17): il difetto MISURATO, non solo temuto — qui,
+// non in pidfile.test.js, perché è dove si vede davvero. Un nodo il cui
+// runtime è ancora precedente a quando processStart è nato (8fe514f, v0.9.0
+// — non a7c8a56/0.9.4 come creduto in un primo momento) ha un pidfile senza
+// nessun campo di attestazione: non perché l'attestazione sia fallita, ma
+// perché quel codice non la conosceva affatto. Quando aggiorna, npm install
+// sovrascrive lib/cli/pidfile.js PRIMA che questo runner lo richieda:
+// stopPortableRuntime (nucleo REALE, come il test sopra) legge il pidfile
+// VECCHIO col codice NUOVO. Se killPidfile trattasse "nessun campo" come
+// indeterminate sempre (fail-closed), stopped.killed sarebbe false,
+// restartRuntime lancerebbe "restart portatile fallito", e l'update
+// morirebbe per OGNI nodo in questo stato — non un rischio, un guasto certo.
+//
+// Il fix (lib/cli/pidfile.js) tratta questo caso come COMPATIBILITÀ
+// AMBIGUA, concessa SOLO finché questa installazione non ha mai completato
+// una scrittura v2 (nessun marker di schema — non "legacy" permanente, che
+// l'auditor ha contestato: lasciava aperti per sempre restore/downgrade).
+// Questo test copre ENTRAMBI i requisiti del gate 2 e 3: il ciclo di vita
+// reale non fallisce QUI (pre-migrazione), e lo dice sul log VERO — non solo
+// nel valore di ritorno che runner.js:73 ignora quando killed è true
+// (lib/cli/runtime-lifecycle.js stopPortableRuntime lo scrive quando
+// unverifiedBirth è presente).
+test('npm update runner: un pidfile senza attestazione PRE-migrazione non fa fallire l\'update, e lo dice sul log vero', async (t) => {
+  const { spawn } = require('node:child_process');
+  const pidf = require('../lib/cli/pidfile.js');
+  const realCommands = require('../lib/cli/commands.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-update-ambig-'));
+  const code = 'setInterval(() => {}, 1000)';
+  const child = spawn(process.execPath, ['-e', code], { stdio: 'ignore' });
+  t.after(() => { try { child.kill('SIGKILL'); } catch (_) {} fs.rmSync(dir, { recursive: true, force: true }); });
+  const uscito = new Promise((resolve) => { child.on('exit', resolve); });
+  const pidPath = pidf.defaultPidfilePath(dir);
+  await new Promise((resolve) => { if (child.pid) resolve(); else child.on('spawn', resolve); });
+  fs.mkdirSync(path.dirname(pidPath), { recursive: true });
+  // Scritto A MANO, non con pidf.writePidfile: è esattamente quello che il
+  // codice pre-v0.9.0 avrebbe scritto — nessun processStart, nessun
+  // attestation, perché quel campo non esisteva ancora. Nessun marker in
+  // questa directory nuova: precondizione pre-migrazione.
+  fs.writeFileSync(pidPath, `${JSON.stringify({
+    pid: child.pid, cmd: `${process.execPath} -e ${code}`, startTs: Date.now(),
+  })}\n`, { mode: 0o600 });
+  assert.equal(pidf.hasSchemaMarker(pidPath), false, 'precondizione: nessuna scrittura v2 in questa directory ancora');
+
+  const originalWrite = process.stdout.write;
+  const scritto = [];
+  process.stdout.write = (chunk, ...rest) => { scritto.push(String(chunk)); return true; };
+  let mode;
+  try {
+    mode = await restartRuntime({
+      home: dir, platform: 'linux', port: 41820, token: 't',
+      commands: {
+        isServiceRunning: () => false, // ramo portatile
+        fermaTunnelPrimaDiRiavviare: realCommands.fermaTunnelPrimaDiRiavviare, // REALE
+        stopPortableRuntime: realCommands.stopPortableRuntime,                 // REALE — killPidfile nudo
+        startPortable: () => ({ started: true }),
+        portAvailable: async () => true,
+      },
+      stopTunnelsImpl: () => {},
+      waitForRuntimeImpl: async () => true,
+      // NIENTE log iniettato: il path produttivo reale, come nel test sopra
+      // sul tunnel — un log che prova solo se stesso non prova che
+      // l'operatore lo vedrà mai.
+    });
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  assert.equal(mode, 'portable', 'l\'update NON fallisce su compatibilità ambigua pre-migrazione: nessun throw da stopPortableRuntime');
+  assert.match(scritto.join('\n'), /identita' NON completamente verificata \(ambiguous-compat\)/,
+    'gate 2: il ramo permissivo arriva al log VERO, non solo al valore di ritorno che runner.js ignora quando killed è true');
+  await uscito;
+  assert.equal(fs.existsSync(pidPath), false, 'il pidfile del vecchio runtime è stato pulito, come sempre');
+});
+
+// Gate 3 (Dev, R-pidfile-3): il negativo dopo migrazione. STESSO scenario di
+// sopra, ma questa installazione ha GIÀ completato una scrittura v2 (marker
+// presente): "nessun campo attestazione" non è più spiegabile come
+// pre-migrazione, ed è ESATTAMENTE il guasto che Dev ha misurato — l'update
+// deve fallire, di nuovo, ma solo qui: dopo la migrazione, non per sempre.
+test('npm update runner: un pidfile senza attestazione DOPO la migrazione fa fallire l\'update, di nuovo', async (t) => {
+  const { spawn } = require('node:child_process');
+  const pidf = require('../lib/cli/pidfile.js');
+  const realCommands = require('../lib/cli/commands.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-update-postmig-'));
+  const code = 'setInterval(() => {}, 1000)';
+  const child = spawn(process.execPath, ['-e', code], { stdio: 'ignore' });
+  t.after(() => { try { child.kill('SIGKILL'); } catch (_) {} fs.rmSync(dir, { recursive: true, force: true }); });
+  const pidPath = pidf.defaultPidfilePath(dir);
+  await new Promise((resolve) => { if (child.pid) resolve(); else child.on('spawn', resolve); });
+  fs.mkdirSync(path.dirname(pidPath), { recursive: true });
+  // La prima scrittura v2 in questa directory: crea il marker per davvero.
+  const scritturaV2 = path.join(path.dirname(pidPath), 'altro.pid');
+  pidf.writePidfile(scritturaV2, process.pid, 'node altro', {});
+  fs.rmSync(scritturaV2, { force: true });
+  assert.equal(pidf.hasSchemaMarker(pidPath), true, 'precondizione: la migrazione è già avvenuta in questa directory');
+  // Ora il pidfile SENZA attestazione, come sopra — ma dopo la migrazione.
+  fs.writeFileSync(pidPath, `${JSON.stringify({
+    pid: child.pid, cmd: `${process.execPath} -e ${code}`, startTs: Date.now(),
+  })}\n`, { mode: 0o600 });
+
+  await assert.rejects(() => restartRuntime({
+    home: dir, platform: 'linux', port: 41820, token: 't',
+    commands: {
+      isServiceRunning: () => false,
+      fermaTunnelPrimaDiRiavviare: realCommands.fermaTunnelPrimaDiRiavviare,
+      stopPortableRuntime: realCommands.stopPortableRuntime,
+      startPortable: () => ({ started: true }),
+      portAvailable: async () => true,
+    },
+    stopTunnelsImpl: () => {},
+    waitForRuntimeImpl: async () => true,
+  }), /restart portatile fallito/, 'dopo la migrazione, un pidfile senza attestazione torna a bloccare l\'update — sospetto, non più pre-migrazione');
+  assert.equal(pidf.pidOwnership(child.pid), 'owned', 'il processo legittimo non è stato toccato: il rifiuto non tocca il pidfile né il pid');
 });

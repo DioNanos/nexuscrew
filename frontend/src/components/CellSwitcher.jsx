@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import CellPopup from './CellPopup.jsx';
-import Terminal from './Terminal.jsx';
-import CellPanel from './CellPanel.jsx';
+import CellPeek, { formattaAttività, formattaTelemetria } from './CellPeek.jsx';
 import { apiFetch, fleetStatus, getRouteSessions } from '../lib/api.js';
 import { readCellSwitcherSnapshot, writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-view-model.js';
@@ -14,45 +12,6 @@ import { t } from '../lib/i18n.js';
 import './CellSwitcher.css';
 
 const POLL_MS = 4000;
-
-// Quanto è passata dall'ultima attività della cella, dette le stesse tre
-// regole della telemetria: assenza legittima (niente epoch = niente campo),
-// niente stantio spacciato per fresco (oltre la soglia il campo sparisce: una
-// cella ferma da ore non mostra «5m» per sempre), degradazione silenziosa.
-// L'unità compatta (m/h) è la stessa in ogni lingua: si traduce solo l'etichetta.
-const ATTIVITÀ_MASSIMA_MS = 30 * 60 * 1000;
-
-export function formattaAttività(t, epoch, oraMs = Date.now()) {
-  const ms = Number(epoch);
-  if (!Number.isFinite(ms) || ms <= 0) return '';
-  const età = oraMs - ms;
-  if (età < 0 || età > ATTIVITÀ_MASSIMA_MS) return '';
-  // L'etichetta c'è sempre: un «2m» nudo accanto alla telemetria non dice
-  // cosa stia misurando, e una riga che non si spiega viene letta male.
-  if (età < 60 * 1000) return `${t('cell-activity')} ${t('cell-activity-now')}`;
-  const minuti = Math.floor(età / 60000);
-  if (minuti < 60) return `${t('cell-activity')} ${minuti}m`;
-  return `${t('cell-activity')} ${Math.floor(minuti / 60)}h`;
-}
-
-// La telemetria di riga, dove la cella la pubblica. Il VERSO è scritto nel
-// testo stesso di OGNI numero: il contesto è «libero», i tier sono «usati».
-// Non basta che il verso stia nei nomi del contratto (contextFreePct /
-// tier*UsedPct): chi legge vede solo questa riga — un numero senza il suo
-// verso prenderebbe per contagio quello del vicino («contesto 71% libero ·
-// 5h 33%» si legge tutto libero). Ogni etichetta dice il proprio.
-// Campi mancanti → la riga mostra quelli che ci sono; nessun campo → stringa
-// vuota e la riga resta com'era (celle non-Claude: assenza legittima).
-export function formattaTelemetria(t, tele) {
-  if (!tele || typeof tele !== 'object') return '';
-  const parti = [];
-  if (Number.isInteger(tele.contextFreePct)) {
-    parti.push(`${t('cell-tele-ctx')} ${tele.contextFreePct}% ${t('cell-tele-free')}`);
-  }
-  if (Number.isInteger(tele.tier5hUsedPct)) parti.push(`${t('cell-tele-5h')} ${tele.tier5hUsedPct}%`);
-  if (Number.isInteger(tele.tier7dUsedPct)) parti.push(`${t('cell-tele-7d')} ${tele.tier7dUsedPct}%`);
-  return parti.join(' · ');
-}
 
 async function localSessions(token) {
   const response = await apiFetch('/api/sessions', token);
@@ -215,14 +174,6 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
   const [picking, setPicking] = useState('');
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
-  // Ref del terminale nel popup: il contratto della tile, così Terminal non
-  // dipende da chi lo monta. takeSize={false} sotto: il popup non ruba il
-  // size-lock della sessione a chi sta sotto.
-  const sendRef = useRef(() => {});
-  const composerRef = useRef(() => false);
-  const actionRef = useRef(() => {});
-  const ctrlRef = useRef(false);
-  const [ctrlArmed, setCtrlArmed] = useState(false);
   const rows = useMemo(() => rowsFromSnapshot(snapshot), [snapshot]);
   const rosterItems = useMemo(() => rosterItemsByPosition(snapshot), [snapshot]);
   const { pins, orders, canMoveRoster, moveRoster, stepRoster } = useRosterPreferences();
@@ -409,58 +360,19 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
             l'anteprima di un'ALTRA cella creduta la propria — è peggio di non
             vedere niente. La sorgente panel ricade su anteprima se la cella
             ha perso panelUrl: stesso principio, sul contratto della sorgente. */}
-        {peek && peekRow && (() => {
-          const source = peek.source === 'panel' && !peekRow.panelUrl ? 'preview' : peek.source;
-          const tabs = [
-            ['preview', t('cell-peek-preview')],
-            ['stream', t('cell-peek-stream')],
-            ...(peekRow.panelUrl ? [['panel', t('cell-peek-panel')]] : []),
-          ];
-          return (
-            <CellPopup
-              title={peekRow.cellName}
-              subtitle={[peekRow.nodeLabel, peekRow.subtitle].filter(Boolean).join(' · ')}
-              onClose={() => setPeek(null)}
-            >
-              {/* Le tre sorgenti in un contenitore solo: chi apre decide COSA
-                  guardare, il contenitore decide COME si chiude. */}
-              <div className="nc-peek-sorgenti" role="tablist">
-                {tabs.map(([id, label]) => (
-                  <button key={id} type="button" role="tab" aria-selected={source === id}
-                    className={`nc-peek-sorgente${source === id ? ' attiva' : ''}`}
-                    onClick={() => setPeek({ key: peek.key, source: id })}>{label}</button>
-                ))}
-              </div>
-              {source === 'stream' ? (
-                <div className="nc-peek-stream">
-                  <Terminal
-                    key={`peek:${peekRow.key}`}
-                    session={peekRow.session} node={peekRow.node || undefined} token={token}
-                    readonly={false} takeSize={false} focused
-                    sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
-                    ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
-                  />
-                </div>
-              ) : source === 'panel' ? (
-                <CellPanel
-                  cellId={peekRow.cellName}
-                  panelUrl={peekRow.panelUrl}
-                  route={peekRow.route || []}
-                  panelPort={panelPortForRoute(peekRow.route || [], nodePanelPorts, panelPort)}
-                  token={token}
-                  title={peekRow.cellName}
-                />
-              ) : (
-                <>
-                  <pre className="nc-peek-testo">{peekRow.preview || t('cell-peek-vuoto')}</pre>
-                  {formattaTelemetria(t, peekRow.telemetry) && (
-                    <small className="nc-cell-switcher-telemetry">{formattaTelemetria(t, peekRow.telemetry)}</small>
-                  )}
-                </>
-              )}
-            </CellPopup>
-          );
-        })()}
+        {/* `peek && peekRow`: se la lista aggiornata non ha più la cella, il
+            popup si chiude da sé — mai il fotogramma morto di una riga salvata.
+            Il contenuto a tre sorgenti è CellPeek, condiviso con la Sidebar:
+            un posto solo, la terza copia non nasce. */}
+        {peek && peekRow && (
+          <CellPeek
+            row={peekRow}
+            token={token}
+            initialSource={peek.source}
+            panelPort={panelPortForRoute(peekRow.route || [], nodePanelPorts, panelPort)}
+            onClose={() => setPeek(null)}
+          />
+        )}
         <div className="nc-cell-switcher-actions">
           <button type="button" className="nc-cell-switcher-open" disabled={!selectedRow || !!picking} onClick={pick}>
             {selectedRow ? `${t('cell-switcher-open')}: ${selectedRow.cellName}` : t('cell-switcher-select')}

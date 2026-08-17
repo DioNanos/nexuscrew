@@ -42,9 +42,9 @@
 .nc-cell-switcher-copy b { color: #d8ffe8; font-size: 14px; }
 .nc-cell-switcher-copy small { opacity: .62; font-size: 11px; }
 .nc-cell-switcher-copy .nc-cell-switcher-state { opacity: .88; color: #d8ffe8; }
-/* Telemetria (contesto libero · tier usati): tinta neutra — non compete con
-   lo stato della cella, e sparisce del tutto quando la cella non la pubblica. */
-.nc-cell-switcher-copy .nc-cell-switcher-telemetry, .nc-cell-switcher-telemetry { color: #9fd8c2; }
+/* Telemetria (contesto libero · tier usati) nella RIGA dello switcher: la
+   regola generica del popup vive in CellPeek.css (componente condiviso). */
+.nc-cell-switcher-copy .nc-cell-switcher-telemetry { color: #9fd8c2; }
 
 /* Controlli diretti per lo stretto: sul telefono il puntino è un bersaglio
    troppo piccolo per tre azioni. Sul largo restano nascosti e il puntino
@@ -61,13 +61,6 @@
 
 /* Le sorgenti del popup: anteprima, flusso, pannello. Stessa barra, stesso
    gesto; la sorgente attiva e' l'unica scura. */
-.nc-peek-sorgenti { display: flex; gap: 6px; margin-bottom: 8px; }
-.nc-peek-sorgente {
-  border: 1px solid rgba(216, 255, 232, .25); background: transparent; color: #d8ffe8;
-  border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
-}
-.nc-peek-sorgente.attiva { background: rgba(216, 255, 232, .16); }
-.nc-peek-stream { min-height: 46vh; display: flex; flex-direction: column; }
 .nc-cell-switcher-notice { color: #ffd36b; font-size: 12px; }
 .nc-cell-switcher-actions { display: flex; min-width: 0; }
 .nc-cell-switcher-open { min-width: 0; min-height: 44px; width: 100%; padding: 0 12px; border: 1px solid #79d9ff; border-radius: 9px; background: #16445e; color: #effcff; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -100,16 +93,4 @@
 .nc-cell-switcher-peek:hover,
 .nc-cell-switcher-peek:focus-visible {
   background: rgba(255, 255, 255, 0.06);
-}
-
-/* Il testo dell'anteprima nel popup: monospazio e a capo preservati, perché è
-   output di terminale — riflowarlo lo rende illeggibile. */
-.nc-peek-testo {
-  margin: 0;
-  padding: 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.86rem;
-  line-height: 1.45;
 }

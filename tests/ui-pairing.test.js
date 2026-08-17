@@ -64,7 +64,21 @@ test('Wizard e deep-link #pair: stesso ricevitore condiviso, consumo solo su suc
   assert.match(w, /autoStart=\{!!initialPair\}/, 'deep-link completo parte da solo');
   assert.match(w, /onBusyChange=\{setBusy\}/, 'durante il pairing il wizard non puo\' annullare lasciando la richiesta in corsa');
   assert.doesNotMatch(w, /pairNode/, 'nessun secondo flusso di pairing nel wizard');
-  assert.match(w, /onSuccess=\{async \(\) => \{ if \(onPairDone\) onPairDone\(\);/, 'invite consumato SOLO a successo');
+  // QUI C'ERA un'ancora che pretendeva `onPairDone()` subito dentro `onSuccess`.
+  // Cambiata la forma del blocco l'ho riscritta con un quantificatore
+  // "tollerante" — e il controllo negativo l'ha smascherata: togliendo la
+  // chiamata da `onSuccess` restava VERDE, perche' la trovava nell'`onClick`
+  // di annulla poche righe piu' giu'. Una guardia che non fallisce quando deve
+  // e' peggio di nessuna guardia, e una regex non sa dire "dentro QUESTO
+  // blocco".
+  // Quindi qui resta cio' che una lettura del sorgente puo' davvero garantire —
+  // che il blocco riceva l'esito del pairing, senza il quale la riga
+  // authorized_keys non potrebbe mai raggiungere il passo finale — e la
+  // PROPRIETA' del consumo (solo a successo, mai su fallimento) e' provata col
+  // comportamento in frontend/src/components/Wizard.test.jsx, con la spia su
+  // onPairDone nei due rami.
+  assert.match(w, /onSuccess=\{async \(esito\) => \{/, 'il passo finale riceve l\'esito del pairing');
+  assert.match(w, /if \(onPairDone\) onPairDone\(\);/, 'l\'invito viene consumato dal wizard');
   assert.match(w, /onClick=\{\(\) => \{ if \(onPairDone\) onPairDone\(\); setStep\('welcome'\); \}\}/, 'o su annulla esplicito');
   const app = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'App.jsx'), 'utf8');
   assert.match(app, /pairPending\) setWizardOpen\(true\)/, 'deep-link su installazione configurata apre il flusso di pairing');

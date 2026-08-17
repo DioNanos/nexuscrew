@@ -55,6 +55,34 @@ export function healthTitle(h) {
   return h.detail || h.status || '';
 }
 
+// Un hint di salute puo' portare l'AZIONE che ripara il nodo, non solo la
+// descrizione del guasto: quando il canale -L viene rifiutato, il supervisore
+// costruisce la riga `authorized_keys` da sostituire sul peer. Un nodo gia'
+// accoppiato non rifara' mai il pairing, quindi questo e' l'UNICO posto in cui
+// quella riga puo' raggiungerlo. Separa la spiegazione dalla riga cosi' la
+// riga si puo' copiare: senza, resta annegata in una frase lunga.
+const RIGA_AUTHKEYS = 'restrict,port-forwarding,permitopen=';
+export function healthHintParts(h) {
+  const hint = (h && typeof h.hint === 'string' && h.hint.trim()) || '';
+  const strutturato = (h && typeof h.authorizedKeys === 'string' && h.authorizedKeys.trim()) || '';
+  // Il CAMPO vince sempre sul testo: la riga arriva intera da chi l'ha
+  // costruita, invece di essere ritagliata da una frase che quel codice puo'
+  // riscrivere o tradurre senza sapere che qualcuno la sta tagliando.
+  if (strutturato) {
+    const i = hint.indexOf(strutturato);
+    // Se la frase la contiene, la nota e' la frase SENZA la riga: mostrarla due
+    // volte sarebbe rumore proprio dove serve leggere.
+    const note = i >= 0 ? hint.slice(0, i).replace(/[:\s]+$/, '') : hint;
+    return { note, line: strutturato };
+  }
+  if (!hint) return null;
+  // Fallback per una salute prodotta da una versione che il campo non lo manda:
+  // degrada al ritaglio, e se non trova la riga mostra la frase intera.
+  const i = hint.indexOf(RIGA_AUTHKEYS);
+  if (i < 0) return { note: hint, line: '' };
+  return { note: hint.slice(0, i).replace(/[:\s]+$/, ''), line: hint.slice(i).trim() };
+}
+
 // True se la sessione ha output in outbox piu' recente dell'ultima volta che
 // l'utente l'ha vista (badge "nuovi file"). key e' route-qualified (seenKey).
 export function hasFreshOutput(session, key, storage = globalThis.localStorage) {

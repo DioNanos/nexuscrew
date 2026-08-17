@@ -30,16 +30,29 @@ const TOKEN = 'buono';
 // Un "pannello" vero: pagina + sotto-risorsa + WebSocket, e registra TUTTO
 // ciò che riceve — path e header — perché i test negativi sui dati inoltrati
 // (ticket, referer, cookie) si provano dal lato del container.
-async function pannelloFinto() {
+//
+// P1 (rilievo auditor, poi misura sul pannello REALE — 2026-08-17): `scriptSrc`
+// e' configurabile — di default `./assets/app.js`, RELATIVO, com'e' il
+// pannello vero. Misurato dopo che l'operatore ha temporaneamente rimosso la
+// Basic auth davanti al pannello per la verifica: l'HTML servito referenzia
+// SOLO risorse relative — "./assets/index-*.css", "./assets/index-*.js",
+// "icon.png", "manifest.json", "src/universalTouchGamepad.js" — nessun path
+// assoluto, nessun tag `<base>`. Non e' piu' un'assunzione del commento
+// storico di panel-auth.js: e' verificata. Un test dedicato passa comunque
+// un `src` assoluto per DOCUMENTARE cosa succederebbe se quell'assunzione cambiasse
+// (non e' il caso oggi) — nessuno dei due valori e' hardcoded nel test che
+// consuma l'HTML: il path della sotto-risorsa si DERIVA da quello che il
+// pannello ha davvero servito, mai inventato a mano.
+async function pannelloFinto({ scriptSrc = './assets/app.js' } = {}) {
   const seen = { requests: [] };
   const server = http.createServer((req, res) => {
     seen.requests.push({ url: req.url, headers: { ...req.headers } });
     if (req.url.startsWith('/page.html')) {
       res.writeHead(200, { 'content-type': 'text/html' });
-      res.end('<html><script src="/app.js"></script>pannello</html>');
+      res.end(`<html><script src="${scriptSrc}"></script>pannello</html>`);
       return;
     }
-    if (req.url.startsWith('/app.js')) {
+    if (req.url.startsWith('/assets/app.js') || req.url.startsWith('/app.js')) {
       res.writeHead(200, { 'content-type': 'application/javascript' });
       res.end('console.log("panel");');
       return;
@@ -59,6 +72,21 @@ async function pannelloFinto() {
 // Il nostro lato: panelAuth + proxy montati come in produzione (l'auth sta
 // davanti al proxy, il proxy non vede chi non è entrato). Orologio iniettabile
 // per provare le scadenze deterministicamente.
+//
+// R22: montato con VERO express, stessa forma di server.js (api router sotto
+// /api, /panel dentro l'api router) — non più uno strip manuale su un server
+// http grezzo. Il fix dipende da `req.baseUrl`, che express popola SOLO
+// quando il mount è vero: uno strip a mano lo lascerebbe `undefined` e ogni
+// test qui sotto passerebbe per un motivo che in produzione non esiste.
+function serverControlPlane(auth, resolveCellPanel) {
+  const proxy = createPanelProxy({ resolveCellPanel });
+  const app = express();
+  const api = express.Router();
+  api.use('/panel', auth.panelAuthMiddleware, proxy);
+  app.use('/api', api);
+  return http.createServer(app);
+}
+
 async function latoNostro(panelPort, { ticketTtlMs, cookieTtlMs } = {}) {
   let clock = 1_000_000;
   const resolveCellPanel = async (cellId) => {
@@ -72,12 +100,7 @@ async function latoNostro(panelPort, { ticketTtlMs, cookieTtlMs } = {}) {
     ...(ticketTtlMs ? { ticketTtlMs } : {}),
     ...(cookieTtlMs ? { cookieTtlMs } : {}),
   });
-  const proxy = createPanelProxy({ resolveCellPanel });
-  const server = http.createServer((req, res) => {
-    if (!req.url.startsWith('/api/panel/')) { res.writeHead(404); res.end(); return; }
-    req.url = req.url.slice('/api/panel'.length);
-    auth.panelAuthMiddleware(req, res, () => proxy(req, res));
-  });
+  const server = serverControlPlane(auth, resolveCellPanel);
   server.on('upgrade', (req, socket, head) => {
     handlePanelUpgrade({ req, socket, head, resolveCellPanel, authorize: auth.authorizeUpgrade });
   });
@@ -89,6 +112,28 @@ async function latoNostro(panelPort, { ticketTtlMs, cookieTtlMs } = {}) {
   };
 }
 
+// R22: il SECONDO mount — porta pannello dedicata, `panelApp.use('/panel', …)`
+// SENZA nessun livello sopra (a differenza del control plane, che vive dentro
+// `/api`). Stesso `auth` di `latoNostro` se condiviso da chi chiama, cosi' un
+// ticket emesso dal control plane si consuma sulla porta pannello — proprio
+// come in produzione, dove `panelAuth` e' UNA istanza sola condivisa dai due
+// mount (server.js:614, 627, 642).
+async function latoNostroPortaPannello(auth, resolveCellPanel) {
+  const proxy = createPanelProxy({ resolveCellPanel });
+  const panelApp = express();
+  panelApp.use('/panel', auth.consumeMiddleware, proxy);
+  // Stesso catch-all esplicito di server.js:652 — senza, express risponde
+  // ai path fuori da /panel con la sua pagina HTML di default "Cannot GET",
+  // non col 404 JSON che il test sull'assoluto (sotto) deve pinnare davvero.
+  panelApp.use((_req, res) => res.status(404).json({ error: 'not found' }));
+  const server = http.createServer(panelApp);
+  server.on('upgrade', (req, socket, head) => {
+    handlePanelUpgrade({ req, socket, head, resolveCellPanel, authorize: auth.authorizeUpgrade });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { server, port: server.address().port, base: `http://127.0.0.1:${server.address().port}` };
+}
+
 const richiedi = (url, { headers = {} } = {}) => fetch(url, { headers, redirect: 'manual' })
   .then(async (r) => ({ status: r.status, setCookie: r.headers.get('set-cookie'), body: await r.text() }));
 
@@ -97,6 +142,170 @@ async function postTicket(base, cell, headers = {}) {
   const r = await fetch(`${base}/api/panel/${cell}/ticket`, { method: 'POST', headers });
   return { status: r.status, body: await r.json().catch(() => ({})) };
 }
+
+// —— R22: il Path del cookie deve valere per il mount REALE da cui la
+// richiesta e' entrata — non per una costante. Due mount, due Path diversi;
+// con un solo mount il test non discrimina (il briefing lo dice alla lettera).
+
+test('R22: control plane — Path=/api/panel/<cella>', async (t) => {
+  const panel = await pannelloFinto();
+  const lato = await latoNostro(panel.port);
+  t.after(() => { panel.wss.close(); panel.server.close(); lato.server.close(); });
+  const tk = await postTicket(lato.base, 'A', { authorization: `Bearer ${TOKEN}` });
+  const page = await richiedi(`${lato.base}/api/panel/A/page.html?ticket=${tk.body.ticket}`);
+  assert.equal(page.status, 200);
+  assert.match(page.setCookie || '', /Path=\/api\/panel\/A;/);
+});
+
+test('R22: porta pannello dedicata — Path=/panel/<cella>, NON /api/panel/<cella>', async (t) => {
+  const panel = await pannelloFinto();
+  const lato = await latoNostro(panel.port); // emette il ticket (control plane, dietro Bearer)
+  const porta = await latoNostroPortaPannello(lato.auth, async (cellId) => (
+    cellId === 'A' ? `http://127.0.0.1:${panel.port}` : undefined
+  ));
+  t.after(() => { panel.wss.close(); panel.server.close(); lato.server.close(); porta.server.close(); });
+
+  const tk = await postTicket(lato.base, 'A', { authorization: `Bearer ${TOKEN}` });
+  // Il ticket si consuma sulla PORTA PANNELLO — e' li' che l'iframe apre davvero.
+  const page = await richiedi(`${porta.base}/panel/A/page.html?ticket=${tk.body.ticket}`);
+  assert.equal(page.status, 200);
+  const sc = page.setCookie || '';
+  assert.match(sc, /Path=\/panel\/A;/, 'Path della porta pannello, non del control plane');
+  assert.ok(!/\/api\/panel/.test(sc), 'MAI il prefisso del control plane su questo mount');
+});
+
+// RFC 6265 §5.1.4 (path-match): un browser manda il cookie SOLO se il path
+// della richiesta comincia col Path del cookie E (il Path finisce con '/',
+// oppure il path della richiesta finisce esattamente li', oppure il
+// carattere successivo e' '/'). Deliberatamente NON "estraggo il cookie e lo
+// mando comunque" — quello bypasserebbe esattamente il meccanismo che fa
+// scoprire il difetto, dando falsa sicurezza come un test verde che non
+// discrimina niente.
+function browserManderebbeIlCookie(cookiePath, requestPath) {
+  if (!requestPath.startsWith(cookiePath)) return false;
+  return cookiePath.endsWith('/')
+    || requestPath.length === cookiePath.length
+    || requestPath[cookiePath.length] === '/';
+}
+
+// P1 (rilievo auditor sul MIO test): il path della sotto-risorsa non si
+// inventa — si estrae dall'HTML che il pannello ha DAVVERO servito. Un test
+// che hardcoda `requestPath` puo' restare verde su un prodotto rotto, se il
+// valore inventato non e' quello che un browser costruirebbe: e' esattamente
+// quello che l'auditor ha dimostrato cambiando solo quel valore.
+function estraiSrcScript(html) {
+  const m = /<script src="([^"]*)">/.exec(String(html || ''));
+  return m ? m[1] : null;
+}
+
+// Il pannello REALE (AIDesktop) E' STATO usato come oracolo per questo: con
+// la Basic auth temporaneamente rimossa dall'operatore, si e' letto l'HTML
+// servito davvero — tutte risorse relative, nessun `<base>` (vedi sopra). Il
+// pannello finto qui sotto riflette quella misura, non un'assunzione.
+
+// R22 punto 3 — il test end-to-end che oggi manca: non basta che la PRIMA
+// richiesta (col ticket) passi. Qui si simula la SECONDA — la sotto-risorsa
+// — decidendo di mandare il cookie SOLO se il Path dichiarato dal server
+// combacerebbe per un browser vero, contro un requestPath DERIVATO
+// dall'HTML servito (mai inventato). Se il Path fosse quello del difetto
+// originale (/api/panel/A), `browserManderebbeIlCookie` sarebbe false PRIMA
+// ancora di arrivare alla richiesta, e l'assert sotto lo direbbe alla lettera
+// — non un 401 generico da interpretare.
+test('R22: porta pannello — la sotto-risorsa passa SOLO col cookie che un browser vero manderebbe per il path che la pagina servita dichiara davvero', async (t) => {
+  const panel = await pannelloFinto(); // scriptSrc relativo di default, com'e' il pannello reale
+  const lato = await latoNostro(panel.port);
+  const porta = await latoNostroPortaPannello(lato.auth, async (cellId) => (
+    cellId === 'A' ? `http://127.0.0.1:${panel.port}` : undefined
+  ));
+  t.after(() => { panel.wss.close(); panel.server.close(); lato.server.close(); porta.server.close(); });
+
+  const tk = await postTicket(lato.base, 'A', { authorization: `Bearer ${TOKEN}` });
+  const pageUrl = `${porta.base}/panel/A/page.html`;
+  const page = await richiedi(`${pageUrl}?ticket=${tk.body.ticket}`);
+  assert.equal(page.status, 200);
+  const src = estraiSrcScript(page.body);
+  assert.ok(src, 'la pagina servita deve dichiarare la sua sotto-risorsa');
+  // Risolto come farebbe il browser: relativo alla pagina, non alla root.
+  const requestPath = new URL(src, pageUrl).pathname;
+  assert.equal(requestPath, '/panel/A/assets/app.js', 'un src relativo si risolve sotto la directory della pagina');
+
+  const sc = page.setCookie || '';
+  const cookiePath = (/Path=([^;]+)/.exec(sc) || [])[1];
+  assert.ok(cookiePath, 'il Set-Cookie deve dichiarare un Path');
+  const cookiePair = sc.split(';')[0];
+
+  const manderebbe = browserManderebbeIlCookie(cookiePath, requestPath);
+  assert.ok(
+    manderebbe,
+    `Path=${cookiePath} non combacia con ${requestPath}: un browser vero non manderebbe MAI questo cookie qui — e' esattamente il difetto R22`,
+  );
+
+  const asset = await richiedi(`${porta.base}${requestPath}`, { headers: { cookie: cookiePair } });
+  assert.equal(asset.status, 200, 'la sotto-risorsa passa: niente frame bianco sulla porta pannello');
+  assert.match(asset.body, /panel/);
+});
+
+// SOLO DOCUMENTAZIONE, non un rischio aperto: il pannello reale usa risorse
+// relative (misurato sopra), quindi questo caso non e' quello che AIDesktop
+// serve oggi. Un path ASSOLUTO ignora la directory della pagina e si
+// risolve alla ROOT del server — R22 (il Path del cookie) resta corretto,
+// verificato sotto — ma la richiesta che un browser farebbe per QUESTO path
+// non sarebbe nemmeno sotto `/panel`: cadrebbe nel catch-all 404 di
+// `panelApp` (server.js:652) prima che panelAuth o il proxy vengano
+// interpellati. Il test non "passa" nel senso di dimostrare successo — PINNA
+// il comportamento per il caso non servito oggi, cosi' se un giorno il
+// pannello cambiasse forma (un path assoluto ricomparisse) qualcuno se ne
+// accorgerebbe da qui, non da un frame bianco in produzione.
+test('R22 (documentazione — non il caso reale): un src ASSOLUTO non arriva nemmeno al middleware', async (t) => {
+  const panel = await pannelloFinto({ scriptSrc: '/app.js' });
+  const lato = await latoNostro(panel.port);
+  const porta = await latoNostroPortaPannello(lato.auth, async (cellId) => (
+    cellId === 'A' ? `http://127.0.0.1:${panel.port}` : undefined
+  ));
+  t.after(() => { panel.wss.close(); panel.server.close(); lato.server.close(); porta.server.close(); });
+
+  const tk = await postTicket(lato.base, 'A', { authorization: `Bearer ${TOKEN}` });
+  const pageUrl = `${porta.base}/panel/A/page.html`;
+  const page = await richiedi(`${pageUrl}?ticket=${tk.body.ticket}`);
+  assert.equal(page.status, 200);
+  const src = estraiSrcScript(page.body);
+  assert.equal(src, '/app.js', 'banco di prova: il pannello finto serve davvero un path assoluto qui');
+  const requestPath = new URL(src, pageUrl).pathname;
+  assert.equal(
+    requestPath, '/app.js',
+    'un path assoluto ignora la directory della pagina: un browser vero lo chiede alla ROOT del server, non sotto /panel/A',
+  );
+
+  const sc = page.setCookie || '';
+  assert.match(sc, /Path=\/panel\/A;/, 'R22 resta corretto: il Path del cookie segue comunque il mount');
+
+  const asset = await richiedi(`${porta.base}${requestPath}`);
+  assert.equal(asset.status, 404, 'pinnato: un path assoluto non arriva al pannello — non e\' un problema di cookie');
+  assert.deepEqual(
+    JSON.parse(asset.body),
+    { error: 'not found' },
+    'proprio il catch-all di panelApp (server.js:652), non un 404 generico qualunque',
+  );
+});
+
+// R22 punto 5 — guardia: un mount non riconosciuto non deve MAI produrre un
+// cookie con uno scope indovinato (Path=/ o Path=/panel nudo coprirebbero
+// TUTTE le celle). mountPrefixOfForTest e' la whitelist stessa: qui si prova
+// che rifiuta qualunque baseUrl fuori dai due noti, non solo quelli ovvi.
+test('R22: un mount non riconosciuto non produce un Path — mai `/` ne\' `/panel` nudo', () => {
+  const auth = createPanelAuth({ verifyToken: () => true, resolveCellPanel: async () => undefined });
+  for (const baseUrl of [undefined, '', '/', '/api', '/api/panel/', '/PANEL', '/panel/A']) {
+    assert.equal(
+      auth.mountPrefixOfForTest({ baseUrl }),
+      null,
+      `baseUrl=${JSON.stringify(baseUrl)} deve essere rifiutato, non approssimato`,
+    );
+  }
+  // E i due UNICI valori legittimi passano esattamente come se stessi, mai
+  // riscritti o normalizzati verso qualcosa di piu' ampio.
+  assert.equal(auth.mountPrefixOfForTest({ baseUrl: '/api/panel' }), '/api/panel');
+  assert.equal(auth.mountPrefixOfForTest({ baseUrl: '/panel' }), '/panel');
+});
 
 test('dal vivo: il flusso dell\'iframe — ticket, cookie, sotto-risorsa — passa per intero', async (t) => {
   const panel = await pannelloFinto();
