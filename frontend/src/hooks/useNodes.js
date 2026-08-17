@@ -57,7 +57,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       const vlPeers = [];
       await Promise.all(vlOwners.map(async (owner) => {
         // R21: stesso backoff dei peer — un owner morto interrogato ogni 4 s
-        // faceva lo stesso rumore indistinto (vl-nodes nel log di DAG).
+        // faceva lo stesso rumore indistinto (vl-nodes nel log del pannello).
         const key = `vl:${owner.route.join('/')}`;
         if (!shouldPollPeer(backoffRef.current, key, pollStart)) return; // zero righe, come owner irraggiungibile
         try {
