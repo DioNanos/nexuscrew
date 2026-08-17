@@ -11,6 +11,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { probeHealth } = require('../lib/proxy/federation.js');
 const nodesHealth = require('../lib/nodes/health.js');
+const { clearPeerTransitions } = require('../lib/nodes/peer-transitions.js');
 const store = require('../lib/nodes/store.js');
 const { createServer } = require('../lib/server.js');
 
@@ -258,6 +259,66 @@ test('route /api/nodes: ogni nodo porta {health, tunnel}; token MAI esposto', as
   assert.ok(['down', 'degraded', 'up', 'unknown'].includes(out.tunnel.status));
   // token mai esposto
   assert.ok(!r.body.includes('SECRET-OUTBOUND'));
+});
+
+// --- route /api/nodes: la sonda gia' esistente scrive le SUE transizioni ----
+// Misurato il 2026-08-07: un nodo giu' per 25 minuti produceva ZERO record
+// (lib/diagnostics: nextSeq 1, retained 0) — la salute viene gia' sondata a
+// ogni GET /api/nodes/peers e il risultato veniva buttato via. Qui si prova
+// l'integrazione END TO END, via HTTP reale: nessun probe in piu' (lo stesso
+// fetchImpl mockato serve sia la risposta della UI sia il registro), zero
+// record quando lo stato non cambia, un record quando cambia davvero.
+test('route /api/nodes end-to-end: la sonda gia\' fatta per la UI scrive SOLO quando lo stato del peer cambia', async (t) => {
+  let modo = 'down'; // il test lo cambia per simulare la transizione REALE
+  const fetchStateful = async () => {
+    if (modo === 'down') { const e = new TypeError('fetch failed'); e.code = 'ECONNREFUSED'; throw e; }
+    return { status: 200, json: async () => ({ ok: true, instanceId: NODE_ID }), headers: {} };
+  };
+  const { port, token, nodesPath } = await boot(t, { fetchImpl: fetchStateful });
+  let st = store.loadStoreStrict(nodesPath);
+  st = store.addNode(st, {
+    name: 'e2e-peer', remotePort: 41820, localPort: 44006, direction: 'inbound', transport: 'inbound',
+    autostart: true, visibility: 'network', shared: true, nodeId: NODE_ID, token: 'PEER-E2E', acceptToken: 'ACC-E2E',
+  });
+  store.atomicWriteStore(nodesPath, st);
+  nodesHealth.clearHealthCache();
+  clearPeerTransitions();
+
+  const peerRecords = async () => {
+    const r = await get(port, '/api/diagnostics/logs', { authorization: `Bearer ${token}` });
+    return JSON.parse(r.body).records.filter((rec) => rec.meta && rec.meta.node === 'e2e-peer');
+  };
+
+  // Primo probe (down): mai una "transizione" dal nulla.
+  await get(port, '/api/nodes', { authorization: `Bearer ${token}` });
+  assert.equal((await peerRecords()).length, 0, 'il primo probe non e\' una transizione');
+
+  // Stessa richiesta, stesso esito: ancora zero. La UI polla /api/nodes ogni
+  // pochi secondi — e' esattamente il volume che non deve diventare rumore.
+  nodesHealth.clearHealthCache();
+  await get(port, '/api/nodes', { authorization: `Bearer ${token}` });
+  await get(port, '/api/nodes', { authorization: `Bearer ${token}` });
+  assert.equal((await peerRecords()).length, 0, 'stato "down" ripetuto: nessun record');
+
+  // La transizione REALE: il peer torna raggiungibile. Tunnel e servizio
+  // tornano su nello STESSO probe: il tunnel produce il suo record; il
+  // servizio (auth/reachability, prima 'unknown' col tunnel giu') e' un
+  // secondo fatto vero e produce il proprio — restano due eventi, mai
+  // collassati, anche quando coincidono nel tempo.
+  modo = 'up';
+  nodesHealth.clearHealthCache();
+  await get(port, '/api/nodes', { authorization: `Bearer ${token}` });
+  const dopoRipristino = await peerRecords();
+  const tunnelUp = dopoRipristino.find((r) => r.code === 'TUNNEL_TRANSITION');
+  assert.ok(tunnelUp, 'la transizione vera del tunnel deve produrre un record');
+  assert.equal(tunnelUp.meta.state, 'up');
+  const contoRipristino = dopoRipristino.length;
+
+  // Ripetuta ancora: lo stato "up" non aggiunge altro.
+  nodesHealth.clearHealthCache();
+  await get(port, '/api/nodes', { authorization: `Bearer ${token}` });
+  await get(port, '/api/nodes', { authorization: `Bearer ${token}` });
+  assert.equal((await peerRecords()).length, contoRipristino, 'stato "up" ripetuto: nessun record aggiuntivo');
 });
 
 // I DUE STRATI SI DISTINGUONO, e prima avevano lo stesso messaggio.

@@ -236,6 +236,9 @@ test('npm update runner: il riavvio PORTATILE ferma i tunnel, come quello manual
     home: dir, platform: 'termux', port: 41820, token: 't',
     commands: {
       isServiceRunning: () => false, // ramo portatile
+      // Il passo tunnel dal punto unico REALE: lo stopTunnelsImpl del test
+      // passa attraverso di esso, come nel prodotto.
+      fermaTunnelPrimaDiRiavviare: require('../lib/cli/commands.js').fermaTunnelPrimaDiRiavviare,
       startPortable: () => ({ started: true }),
       portAvailable: async () => true,
     },
@@ -258,6 +261,7 @@ test('npm update runner: se fermare i tunnel fallisce, l\'aggiornamento prosegue
     home: dir, platform: 'termux', port: 41820, token: 't',
     commands: {
       isServiceRunning: () => false,
+      fermaTunnelPrimaDiRiavviare: require('../lib/cli/commands.js').fermaTunnelPrimaDiRiavviare,
       startPortable: () => ({ started: true }),
       portAvailable: async () => true,
     },
@@ -270,4 +274,50 @@ test('npm update runner: se fermare i tunnel fallisce, l\'aggiornamento prosegue
   assert.ok(mode, 'l\'aggiornamento non si ferma per questo');
   assert.match(detto.join('\n'), /stop tunnel non riuscito/, 'ma non tace');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('il riavvio portatile dell\'update attraversa lo STESSO nucleo del manuale: tunnel e abbattimento veri', async (t) => {
+  // Questo test esiste per il controllo negativo: il nucleo condiviso
+  // (fermaTunnelPrimaDiRiavviare, stopPortableRuntime) è REALE qui — non
+  // stubbato. Se qualcuno rompe il passo nel punto unico, diventano rossi
+  // ENTRAMBI i percorsi: questo (update) e quelli di commands.test (mano).
+  // Se invece una copia tornasse a vivere, solo uno dei due se ne accorgerebbe.
+  const { spawn } = require('node:child_process');
+  const pidf = require('../lib/cli/pidfile.js');
+  const realCommands = require('../lib/cli/commands.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-update-nucleo-'));
+  // Il cmd nel pidfile deve corrispondere al cmdline VERO del processo
+  // (isAlive verifica la coppia pid+cmdline): stesso trucco di portableFixture
+  // in commands.test. Il child muore di SIGTERM di default, come un serve.
+  const code = 'setInterval(() => {}, 1000)';
+  const child = spawn(process.execPath, ['-e', code], { stdio: 'ignore' });
+  // Il cleanup si registra SUBITO: se un assert fallisce a metà, il child
+  // vivo terrebbe appeso l'intero runner — un test fallito che sembra un
+  // hang è la forma peggiore di guasto (vista oggi, e non per caso).
+  t.after(() => { try { child.kill('SIGKILL'); } catch (_) {} fs.rmSync(dir, { recursive: true, force: true }); });
+  const uscito = new Promise((resolve) => { child.on('exit', resolve); });
+  const pidPath = pidf.defaultPidfilePath(dir);
+  await new Promise((resolve) => { if (child.pid) resolve(); else child.on('spawn', resolve); });
+  pidf.writePidfile(pidPath, child.pid, `${process.execPath} -e ${code}`);
+  const fermati = [];
+
+  const mode = await restartRuntime({
+    home: dir, platform: 'linux', port: 41820, token: 't',
+    commands: {
+      isServiceRunning: () => false, // ramo portatile
+      fermaTunnelPrimaDiRiavviare: realCommands.fermaTunnelPrimaDiRiavviare, // REALE
+      stopPortableRuntime: realCommands.stopPortableRuntime,                 // REALE
+      startPortable: () => ({ started: true }),
+      portAvailable: async () => true,
+    },
+    stopTunnelsImpl: () => { fermati.push('tunnel'); },
+    waitForRuntimeImpl: async () => true,
+  });
+
+  assert.equal(mode, 'portable');
+  assert.equal(fermati.length, 1, 'i tunnel passano dal punto unico');
+  // Se il nucleo reale non abbattesse il child, il test resta appeso: il
+  // timeout del runner lo dichiara, e il kill nel t.after lo ripulisce.
+  await uscito;
+  assert.equal(fs.existsSync(pidPath), false, 'il pidfile del vecchio runtime è stato pulito');
 });

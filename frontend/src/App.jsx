@@ -694,6 +694,7 @@ export default function App() {
         panelPort={panelPortForRoute(session.node ? session.node.split('/') : [], nodePanelPorts, panelPort)}
         onBack={() => setSession(null)} onCellSwitcher={() => setCellSwitcherOpen(true)} cellSwitcherOpen={cellSwitcherOpen} />
       {cellSwitcherOpen && <CellSwitcher token={token} current={session}
+        panelPort={panelPort} nodePanelPorts={nodePanelPorts}
         onPick={(next) => { pickSession(next); setCellSwitcherOpen(false); }} onClose={() => setCellSwitcherOpen(false)} />}
       {settingsOverlays}
     </>;
@@ -758,6 +759,8 @@ export default function App() {
           onSendToDeck={onSendToDeck}
           cells={cells}
           nodeGroups={nodeGroups}
+          panelPort={panelPort}
+          nodePanelPorts={nodePanelPorts}
         />
       </div>
 

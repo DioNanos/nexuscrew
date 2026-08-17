@@ -83,6 +83,14 @@ owning node, not a retry from the requester.
   with nothing designated still answers `GET` with `hostCell: null` — a valid
   state, distinct from "not permitted to ask".
 
+## The per-cell voice prompt
+
+Once a session lands on a host cell, a native Live (engine `codex-vl*`)
+always sends `thread/start` an identity header naming the designated cell
+and its exact tmux session, and appends a per-cell prompt file's text after
+it when one exists. See [The Live per-cell prompt](../../docs/LIVE_PROMPT.md)
+for where the file goes and the ready-to-copy IT/EN/ES templates.
+
 ## Dependencies
 
 **Bundled:** this is a NexusCrew core feature. No external MCP companion or

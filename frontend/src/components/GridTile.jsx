@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import Terminal from './Terminal.jsx';
 import ComposerBar from './ComposerBar.jsx';
 import FilesPanel from './FilesPanel.jsx';
+import CellPanel from './CellPanel.jsx';
+import CellPopup from './CellPopup.jsx';
 import Icon from './Icon.jsx';
 import { t } from '../lib/i18n.js';
 import { TILE_FONT_DEF } from '../lib/grid-model.js';
@@ -20,7 +22,7 @@ import './GridTile.css';
 // cellName (Tranche D): titolo visibile risolto dal campo Fleet `cell` (es.
 // `Dev`). node/route/tmuxSession restano identita' tecniche e non compaiono
 // nel titolo visibile; solo il tooltip porta un identificativo tecnico.
-export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, available = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck }) {
+export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, available = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0 }) {
   const [inputPreferences] = useInputPreferences();
   // Titolo visibile = nome logico Fleet (gestita) o nome sessione (unmanaged).
   // session (tmuxSession reale) resta l'identita' del tile per attach/drag.
@@ -32,6 +34,11 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
   const [ctrlArmed, setCtrlArmed] = useState(false);
   const [showComposer, setShowComposer] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
+  // D8-griglia: il pannello si apre dentro CellPopup (contenitore condiviso
+  // con lista/live/vista singola) — non un overlay proprio della tile. Sotto
+  // resta tutto montato: griglia, terminale di questa tile, le altre tile.
+  // Opt-in totale via panelUrl, stesso contratto della vista singola.
+  const [showPanel, setShowPanel] = useState(false);
   const [filesEvent, setFilesEvent] = useState(null);
   const [terminalGeneration, setTerminalGeneration] = useState(0);
   const previousAlive = useRef(alive);
@@ -86,6 +93,9 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
           )}
           <button onClick={() => setShowComposer((v) => !v)} title={t('composer')}>⌨</button>
           <button onClick={() => setShowFiles((v) => !v)} title={t('files')}>📁</button>
+          {panelUrl && (
+            <button onClick={() => setShowPanel((v) => !v)} title={t('panel')} aria-pressed={showPanel}><Icon name="monitor" size={14} /></button>
+          )}
           {onOpenSingle && <button onClick={() => onOpenSingle({ session, node, ownerId })} title={t('single-view')}>↗</button>}
           {onClose && <button className="nc-tile-close" onClick={() => onClose(tileKey)} title={t('close')}>✕</button>}
         </span>
@@ -115,6 +125,21 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
           <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId}
             keepKeyboardClosedOnVoice={inputPreferences.voiceKeepsKeyboardClosed} />
         </div>
+      )}
+
+      {/* D8-griglia: CellPopup e' un modale fixed a schermo intero — la griglia
+          e il terminale di questa tile restano montati sotto, invariati. */}
+      {available && showPanel && panelUrl && panelCellId && (
+        <CellPopup title={visibleName} onClose={() => setShowPanel(false)}>
+          <CellPanel
+            cellId={panelCellId}
+            panelUrl={panelUrl}
+            route={node ? node.split('/') : []}
+            panelPort={panelPort}
+            token={token}
+            title={visibleName}
+          />
+        </CellPopup>
       )}
     </div>
   );

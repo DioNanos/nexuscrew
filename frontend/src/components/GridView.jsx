@@ -4,7 +4,8 @@ import {
   addTile, moveTile, removeTile, sessions, resizeColumn, resizeTile,
   dropForQuadrant, snapFraction, zoomTile, refKey,
 } from '../lib/grid-model.js';
-import { cellDisplayName } from '../lib/cell-display.js';
+import { cellDisplayName, findManagedCell } from '../lib/cell-display.js';
+import { panelPortForRoute } from '../lib/panel-port.js';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import './GridView.css';
@@ -33,6 +34,9 @@ export default function GridView({
   // Roster Fleet gia' caricato (Tranche D): usato per risolvere il titolo
   // visibile di ogni tile dal campo `cell`, senza fetch per-tile.
   cells = [], nodeGroups = [],
+  // D8-griglia: stessa fonte della vista singola (App) per il pannello
+  // per-cella — nessuna fetch propria, nessuna seconda fonte.
+  panelPort = 0, nodePanelPorts = {},
 }) {
   useLang();                                         // re-render allo switch lingua
   const [drag, setDrag] = useState(null);            // {col} | {col,row,quadrant}
@@ -160,12 +164,23 @@ export default function GridView({
             {col.tiles.flatMap((tile, ri) => {
               const tnodes = [];
               const key = refKey(tile);
-              // Titolo visibile del tile dal campo Fleet `cell` (es. `Dev`):
-              // route/tmuxSession restano identita' tecniche, non in titolo.
-              const cellName = cellDisplayName({
+              // Cella Fleet gestita per questo tile (route + ownerId + tmuxSession),
+              // risolta una sola volta: titolo visibile e pannello per-cella
+              // condividono lo stesso lookup, mai due fonti divergenti.
+              const managedCell = findManagedCell({
                 session: tile.session, node: tile.node, ownerId: tile.ownerId,
                 cells, nodeGroups,
               });
+              // Titolo visibile del tile dal campo Fleet `cell` (es. `Dev`):
+              // route/tmuxSession restano identita' tecniche, non in titolo.
+              const cellName = cellDisplayName({
+                session: tile.session, cell: managedCell, node: tile.node, ownerId: tile.ownerId,
+                cells, nodeGroups,
+              });
+              // D8-griglia: stesso contratto della vista singola — panelUrl
+              // opzionale e gia' validato a monte, si consuma senza ri-validare.
+              const panelUrl = typeof managedCell?.panelUrl === 'string' ? managedCell.panelUrl.trim() : '';
+              const panelCellId = typeof managedCell?.cell === 'string' ? managedCell.cell : '';
               tnodes.push(
                 <div
                   key={key}
@@ -187,6 +202,8 @@ export default function GridView({
                     fontSize={tile.fontSize}
                     onZoom={(delta) => onLayoutChange(zoomTile(layout, ci, ri, delta))}
                     decks={decks} currentDeck={currentDeck} onSendToDeck={onSendToDeck}
+                    panelUrl={panelUrl} panelCellId={panelCellId}
+                    panelPort={panelPortForRoute(tile.node ? tile.node.split('/') : [], nodePanelPorts, panelPort)}
                   />
                 </div>,
               );

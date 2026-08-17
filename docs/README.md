@@ -9,6 +9,7 @@ guides. Start with installation, then open only the area you need.
 |---|---|
 | [Installation](INSTALLATION.md) | Platform prerequisites, first run, verification and upgrades |
 | [Fleet and terminals](FLEET.md) | Cells, engines, providers, decks, terminal input and mobile behavior |
+| [The Live per-cell prompt](LIVE_PROMPT.md) | Where `LIVE_PROMPT.md` goes, what the bridge does with it, and the ready-to-copy IT/EN/ES templates |
 | [The cell panel](CELL_PANEL.md) | A web interface next to the terminal: configuration, the loopback rule, how the frame authenticates, and granting it across nodes |
 | [Connect nodes](NODES.md) | Pairing, SSH routes, private/share state and routed aliases |
 | [Notifications](NOTIFICATIONS.md) | In-app toasts, Web Push and on-device spoken alerts |
