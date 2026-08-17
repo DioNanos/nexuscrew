@@ -14,6 +14,7 @@ import {
 } from '../lib/roster-view-model.js';
 import { OWNER_ID_RE } from '../lib/grid-model.js';
 import Icon from './Icon.jsx';
+import CellPeek from './CellPeek.jsx';
 import RosterHandle from './RosterHandle.jsx';
 import './Sidebar.css';
 
@@ -34,6 +35,15 @@ export default function Sidebar({
   onNodeRename, onSettings, onBootError, localNodeId, fleetCapabilities = [], bootSettlement = null,
   hostByRoute = {}, onDesignateCell, onClearHostCell,
   onBootSettlementApplied, onOpenVlSession,
+  // Il popup di sbirciata porta tre sorgenti: flusso e pannello chiedono il
+  // token al server. La sidebar non lo aveva mai bisogno — ora sì.
+  token = '',
+  // UN solo popup alla volta: aprire il peek qui chiude l'overlay esterno
+  // (lo switcher) tramite onPeekOpen; e se l'overlay esterno si apre, la
+  // sidebar chiude il proprio peek (overlayOpen). Due overlay fissi
+  // sovrapposti si contendono il fuoco e confondono l'utente.
+  onPeekOpen,
+  overlayOpen = false,
   width = 240, collapsed = false, onResize, onToggleCollapse,
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
@@ -82,6 +92,55 @@ export default function Sidebar({
     return d || a.name.localeCompare(b.name);
   });
   const active = new Set(activeSessions || []);
+  // La sbirciata tiene una CHIAVE, mai la riga: la lista si aggiorna sotto e
+  // una riga salvata sarebbe un fotogramma morto — il popup che mostra
+  // l'anteprima di un'ALTRA cella creduta la propria è il difetto cercato in
+  // R4 e chiuso lì. La chiave si ri-risolve a ogni render sulle righe correnti.
+  const [peekKey, setPeekKey] = useState(null);
+  const [peekSource, setPeekSource] = useState('preview');
+  // Costruisce la riga-contratto di CellPeek da un item della sidebar.
+  // CellPeek vuole: key, cellName, subtitle, nodeLabel, node, session, route,
+  // panelUrl, telemetry, preview, activity. Le sorgenti flusso/pannello usano
+  // session (tmuxSession reale) e node (route qualificata o '').
+  // `byName` indicizza le sessioni di QUESTO nodo, e un tmuxSession non e'
+  // unico nella federazione: lo stesso nome di sessione esiste su piu'
+  // installazioni. Per una
+  // cella REMOTA quella tabella risponderebbe con la sessione locale omonima,
+  // e il popup mostrerebbe l'anteprima di un'ALTRA cella creduta la propria —
+  // lo stesso difetto di R4, raggiunto per un'altra strada. Una riga remota si
+  // risolve nelle sessioni DEL SUO nodo, come fa gia' SessionList: `route`
+  // vuota = locale, ed e' gia' il criterio con cui questa funzione decide
+  // `node` qui sotto. Senza le sessioni del nodo si resta ai dati che
+  // viaggiano con la cella — mai a quelli di un omonimo locale.
+  const peekRowFromItem = (item, c, route = [], nodeLabel = '', sessioniNodo = null) => {
+    const locale = route.length === 0;
+    const sessione = (locale
+      ? byName.get(c.tmuxSession)
+      : (sessioniNodo || []).find((s) => s && s.name === c.tmuxSession)) || {};
+    return {
+      key: item.key,
+      cellName: c.cell,
+      subtitle: item.subtitle || '',
+      nodeLabel,
+      node: route.length ? route.join('/') : '',
+      session: c.tmuxSession,
+      route,
+      panelUrl: c.panelUrl || '',
+      telemetry: sessione.telemetry || null,
+      preview: sessione.preview || c.preview || '',
+      activity: sessione.activity || c.activity || 0,
+    };
+  };
+  const openPeek = (item, c, route = [], nodeLabel = '', source = 'preview') => (event) => {
+    if (event) { event.stopPropagation(); }
+    setPeekSource(source);
+    setPeekKey(item.key);
+    // UN solo popup: chiudo l'overlay esterno (switcher) se è aperto.
+    if (typeof onPeekOpen === 'function') onPeekOpen();
+  };
+  // Se un overlay esterno si apre (switcher), il peek della sidebar si chiude:
+  // due popup fissi sovrapposti sono il difetto che questa riga toglie.
+  useEffect(() => { if (overlayOpen) { setPeekKey(null); setPeekSource('preview'); } }, [overlayOpen]);
   const localRawItems = buildLocalRoster(sortedCells, others, byName);
   const localItems = sidebarItems(localRawItems, pins, viewFor('local').filter, sidebarOrder(orders, 'local'));
   const preferredNodeGroups = preferredGroups(nodeGroups || []);
@@ -96,6 +155,13 @@ export default function Sidebar({
     const items = sidebarItems(rawItems, pins, groupView.filter, sidebarOrder(orders, nodeRoute));
     return { g, nodeRoute, groupView, rawItems, items };
   });
+  // La riga sbirciata, cercata fra gli item locali e remoti per chiave. Se la
+  // cella sparisce dalla lista, peekItem è null e il popup non si rende.
+  const allCellItems = [
+    ...localItems,
+    ...remoteRosters.flatMap(({ items, nodeRoute, g }) => (items || []).map((it) => ({ ...it, nodeRoute, nodeLabel: g.label || g.name }))),
+  ].filter((it) => it.type === 'cell');
+  const peekItem = peekKey ? allCellItems.find((it) => it.key === peekKey) : null;
   const pickOwned = (session, node, ownerId) => onPick && onPick({
     session,
     ...(node ? { node } : {}),
@@ -313,6 +379,12 @@ export default function Sidebar({
     );
   }
 
+  // MODALITÀ MINI (sidebar collassata a 48px): il pallino È tutta la riga e
+  // fa onAddTile/onPower. Non c'è spazio per due bersagli distinti: un bottone
+  // da otto pixel accanto al dot sarebbe un bersaglio peggiore del gesto che
+  // c'è. Scelta dichiarata (briefing): in mini resti COM'È. La sbirciata si
+  // apre dall'espanso, quando l'utente allarga la sidebar.
+
   return (
     <aside className="nc-sidebar" style={style}>
       <div className="nc-side-head">
@@ -371,7 +443,23 @@ export default function Sidebar({
                   canMove={canMoveRoster}
                   onMove={(source, target) => moveRoster('local', source, target, localRawItems)}
                   onStep={(delta) => stepRoster('local', item.key, delta, localRawItems)} />
-                <span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} />
+                {/* Il pallino è un bersaglio SUO: apre la sbirciata (CellPopup,
+                    tre sorgenti) senza aggiungere la tile. stopPropagation
+                    ferma l'onClick della riga — la non-regressione del gesto
+                    che c'è (riga → tile, doppio clic → vista singola). Su
+                    cella spenta resta decorativo: niente popup su chi non
+                    risponde. */}
+                {live ? (
+                  <button
+                    type="button"
+                    className="nc-side-peek"
+                    title={t('cell-peek')}
+                    aria-label={`${t('cell-peek')}: ${c.cell}`}
+                    onClick={openPeek(item, c, [], '')}
+                  ><span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} /></button>
+                ) : (
+                  <span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} />
+                )}
                 <span className="nc-cell-main">
                   <b title={c.cell}>{c.cell}</b>
                   <small title={item.subtitle}>{item.subtitle}</small>
@@ -530,7 +618,17 @@ export default function Sidebar({
                       canMove={canMoveRoster}
                       onMove={(source, target) => moveRoster(nodeRoute, source, target, rawItems)}
                       onStep={(delta) => stepRoster(nodeRoute, item.key, delta, rawItems)} />
-                    <span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} />
+                    {live ? (
+                      <button
+                        type="button"
+                        className="nc-side-peek"
+                        title={t('cell-peek')}
+                        aria-label={`${t('cell-peek')}: ${c.cell}`}
+                        onClick={openPeek(item, c, g.route || [g.name], g.label || g.name)}
+                      ><span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} /></button>
+                    ) : (
+                      <span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} />
+                    )}
                     <span className="nc-card-main">
                       <b>{c.cell}</b>
                       <small title={item.subtitle}>{item.subtitle}</small>
@@ -612,6 +710,25 @@ export default function Sidebar({
       </div>
 
       <div className="nc-side-resize" onPointerDown={startResize} title="" />
+
+      {/* La sbirciata, solo in modalità espansa (in mini non c'è spazio per
+          due bersagli: vedi scelta sopra). peekItem null = cella sparita
+          dalla lista aggiornata → il popup non si rende, come in R4. */}
+      {peekItem && (() => {
+        const c = peekItem.value;
+        const gruppo = peekItem.nodeRoute
+          ? (nodeGroups.find((g) => (g.route || [g.name]).join('/') === peekItem.nodeRoute) || {})
+          : null;
+        const route = peekItem.nodeRoute ? (gruppo.route || [peekItem.nodeRoute]) : [];
+        return (
+          <CellPeek
+            row={peekRowFromItem(peekItem, c, route, peekItem.nodeLabel || '', gruppo && gruppo.sessions)}
+            token={token}
+            initialSource={peekSource}
+            onClose={() => { setPeekKey(null); setPeekSource('preview'); }}
+          />
+        );
+      })()}
     </aside>
   );
 }

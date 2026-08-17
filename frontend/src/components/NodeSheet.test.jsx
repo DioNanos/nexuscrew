@@ -564,3 +564,52 @@ describe('VL prompt: digitare sopravvive al polling', () => {
     expect(field.value).toBe('c');
   });
 });
+
+// IL CASO CHE IL FIX DELLA PAIRING CARD NON COPRE: un nodo accoppiato PRIMA
+// che la riga authorized_keys esistesse ha una sola permitopen e non rifara'
+// mai il pairing — aggiornando non passa da onSuccess. L'unico canale che gli
+// resta e' l'hint della sonda, che il prodotto conservava e non mostrava a
+// nessuno: l'utente vedeva un nodo guasto senza l'azione che lo ripara.
+describe('hint di salute — l azione che ripara il nodo', () => {
+  const riga = 'restrict,port-forwarding,permitopen="127.0.0.1:41800",permitopen="127.0.0.1:41821",command="/bin/false" ssh-ed25519 AAAAC3Test peer';
+  const guasto = {
+    ...peer,
+    tunnel: { status: 'degraded' },
+    health: {
+      status: 'degraded', detail: 'forward-channel-blocked',
+      hint: `canale rifiutato dal NODO remoto: la chiave in ~/.ssh/authorized_keys non autorizza queste destinazioni. Riga da usare: ${riga}`,
+    },
+  };
+
+  it('mostra la riga da sostituire, separata dalla spiegazione e copiabile', async () => {
+    renderSheet(guasto);
+    const campo = await screen.findByLabelText('Line to replace in ~/.ssh/authorized_keys on the peer');
+    expect(campo.value).toBe(riga);
+    // la spiegazione resta, ma senza la riga annegata dentro
+    expect(screen.getByText(/canale rifiutato dal NODO remoto/)).toBeTruthy();
+    expect(screen.getByText(/canale rifiutato dal NODO remoto/).textContent).not.toContain('permitopen');
+  });
+
+  // Il contratto robusto: la riga arriva come CAMPO, non ritagliata da una
+  // frase che il backend puo' riscrivere o tradurre. Qui la frase e' diversa e
+  // non contiene affatto la riga: il ritaglio fallirebbe, il campo no.
+  it('preferisce il campo strutturato alla frase, e regge se la frase cambia', async () => {
+    renderSheet({
+      ...peer,
+      tunnel: { status: 'degraded' },
+      health: {
+        status: 'degraded', detail: 'forward-channel-blocked',
+        hint: 'una frase riscritta domani che non contiene piu la riga',
+        authorizedKeys: riga,
+      },
+    });
+    const campo = await screen.findByLabelText('Line to replace in ~/.ssh/authorized_keys on the peer');
+    expect(campo.value).toBe(riga);
+    expect(screen.getByText('una frase riscritta domani che non contiene piu la riga')).toBeTruthy();
+  });
+
+  it('un nodo sano non mostra nessun blocco di riparazione', () => {
+    renderSheet({ ...peer, health: { status: 'healthy', detail: 'ok' } });
+    expect(screen.queryByLabelText('Line to replace in ~/.ssh/authorized_keys on the peer')).toBeNull();
+  });
+});

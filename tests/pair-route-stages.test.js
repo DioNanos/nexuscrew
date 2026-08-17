@@ -9,6 +9,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { generaCoppia } = require('./helpers/pubkey.js');
 const { createServer } = require('../lib/server.js');
 const peering = require('../lib/nodes/peering.js');
 const store = require('../lib/nodes/store.js');
@@ -362,6 +363,59 @@ test('pair stages: happy path -> paired:true solo dopo health autenticato ok', a
   assert.equal(n.reversePort, 44001);
   assert.equal(n.shared, false, 'pairing e privato finche Share non viene attivato');
   assert.equal(n.sshPort, 2222);
+});
+
+// IL CABLAGGIO, non il pezzo che compone la riga. La funzione che la costruisce
+// ha i suoi test; qui si attraversa l'HANDLER VERO, perche' questa classe di
+// difetto — helper verde e chiamante che perde il dato — si e' gia' presentata
+// due volte in questa stessa riparazione.
+//
+// E fissa una proprieta' che e' un LIMITE DICHIARATO, non un difetto: nel
+// percorso normale della PWA il corpo non porta `identityFile`, il nodo non ne
+// riceve uno, e ssh usera' le chiavi di default dell'utente — che il prodotto
+// non conosce e non puo' nominare. In quel caso la riga NON esce, e non deve:
+// mezza istruzione e' peggio di nessuna. Il payload resta un'estensione
+// condizionale per chi un'identita' dedicata ce l'ha.
+test('pair panel: la riga authorized_keys esce SOLO quando la chiave e\' determinabile', async (t) => {
+  const { base, token, dir } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID, panelPort: 41821 }),
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+  });
+  // 1. percorso PWA normale: nessuna identita' nel corpo -> nessuna riga
+  const pwa = await pairReq(base, token, { name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir) });
+  assert.equal(pwa.status, 200);
+  const jp = await pwa.json();
+  assert.equal(jp.paired, true);
+  assert.equal(jp.authorizedKeys, undefined,
+    'senza identita\' dedicata la riga non e\' componibile: non si promette');
+  assert.equal(jp.authorizedKeysNote, undefined, 'e nemmeno la nota che la accompagna');
+});
+
+test('pair panel: con un\'identita\' dedicata la riga esce, con entrambe le destinazioni', async (t) => {
+  const { base, token, dir } = await boot(t, {
+    probe: () => R(401, {}),
+    join: () => R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID, panelPort: 41821 }),
+    confirm: () => R(200, { ok: true }),
+    health: () => R(200, { ok: true, instanceId: PEER_ID }),
+  });
+  const key = generaCoppia(dir, 'id_ed25519_dedicata', 'dedicata');
+  const r = await pairReq(base, token, {
+    name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir), identityFile: key,
+  });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.paired, true);
+  assert.ok(typeof j.authorizedKeys === 'string' && j.authorizedKeys,
+    `la riga deve arrivare al client — chiavi: ${Object.keys(j).join(',')}`);
+  assert.ok(j.authorizedKeys.startsWith('restrict,port-forwarding,permitopen='),
+    'la riga intera, derivata dalla privata dichiarata nel corpo');
+  assert.ok(j.authorizedKeys.includes('permitopen="127.0.0.1:41821"'), 'la destinazione pannello');
+  assert.match(j.authorizedKeys, /permitopen="127\.0\.0\.1:\d+".*permitopen="127\.0\.0\.1:41821"/,
+    'due destinazioni distinte, controllo e pannello');
+  assert.ok(j.authorizedKeysNote && j.authorizedKeysNote.includes('41821'),
+    'la nota dice quale porta ha reso necessaria la sostituzione');
 });
 
 // P0 sicurezza, meta' remota. Un peer che ANNUNCIA la sua porta pannello nel
