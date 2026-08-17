@@ -6,7 +6,7 @@
 //
 // LIMITE DICHIARATO: jsdom non prova il pointer capture ne' il feel del touch
 // reale (copertura del dito, presa della maniglia): la prova finale e' il
-// dito di DAG su un telefono vero.
+// dito di chi lo usa su un telefono vero.
 import React from 'react';
 import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
