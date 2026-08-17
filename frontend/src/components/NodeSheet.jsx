@@ -5,6 +5,8 @@ import { nodeAction, removeNode, updateNode, setNodeVisibility, sendVlNodeComman
 import { tunnelInfo, isValidLabel } from '../lib/settings-model.js';
 import { nodeDetailModel, selectionCandidates, cellScopeGrants, cellScopeCandidates } from '../lib/node-detail.js';
 import { vlNodeActions, vlCommandStatus, vlHasPrompt, vlDefaultArgs, VL_PROMPT_MAX } from '../lib/vl-node-detail.js';
+import { healthHintParts } from '../lib/roster-view-model.js';
+import AuthorizedKeysLine from './AuthorizedKeysLine.jsx';
 import DetailSheet, { SheetSection } from './DetailSheet.jsx';
 import Icon from './Icon.jsx';
 
@@ -254,6 +256,17 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
             {node.health.detail}
           </div>
         )}
+        {/* L'hint porta l'AZIONE, non la descrizione del guasto: un nodo
+            accoppiato prima di R19 ha una sola `permitopen` e non rifara' mai
+            il pairing, quindi la card di pairing non lo raggiunge. Questo e'
+            l'unico posto dove la riga corretta puo' arrivargli. */}
+        {(() => {
+          const parti = healthHintParts(node.health);
+          if (!parti) return null;
+          return parti.line
+            ? <AuthorizedKeysLine line={parti.line} note={parti.note} />
+            : <small className="nc-set-hint">{parti.note}</small>;
+        })()}
         {test && <div className={`nc-set-test${test.ok ? ' ok' : ' ko'}`}>{test.result}{test.detail ? ` — ${test.detail}` : ''}</div>}
       </SheetSection>
 
