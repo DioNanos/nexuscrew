@@ -19,7 +19,16 @@ import './CellPanel.css';
 // Gli STATI sono cause con nome, perché l'azione di chi legge è diversa:
 //   none          — nessun pannello configurato per la cella
 //   requesting    — ticket in corso
-//   ready         — iframe montato col ticket
+//   ready         — iframe MONTATO col ticket, carico in corso: lo dice un
+//                   hint visibile (R20: prima il componente dichiarava pronto
+//                   il frame e poi non guardava più nulla)
+//   loaded        — il frame ha sparato `load`: qualcosa HA caricato. DICHIARATO:
+//                   `load` scatta anche su una pagina d'errore (401/502 serviti
+//                   come pagina), quindi prova che il frame è arrivato a una
+//                   risposta, NON che il pannello sia vivo
+//   frame-error   — il frame ha sparato `error`: carico fallito a livello di
+//                   risorsa (destinazione irraggiungibile, biglietto rifiutato
+//                   prima di qualunque risposta): azione Riprova con biglietto NUOVO
 //   not-granted   — il nodo NON concede il pannello a chi chiede (panelAccess):
 //                   l'azione è concedere l'accesso sul nodo, non riprovare qui
 //   denied        — ticket rifiutato (scaduto, già usato, non nostro): si
@@ -29,10 +38,16 @@ import './CellPanel.css';
 //                   (l'AbortController è solo del nostro timer)
 //   unreachable   — la richiesta non arriva nemmeno all'origine nostra
 //
-// Limiti dichiarati (aggiornati al flusso nuovo):
+// Limiti dichiarati (aggiornati al flusso nuovo e a R20):
 // 1. Il ticket riuscito NON prova che il container serva: se il pannello muore
-//    dopo l'ingresso, l'iframe mostra quello che il proxy risponde (502). Non
-//    è osservabile da qui senza consumare un secondo biglietto; dichiarato.
+//    dopo l'ingresso, l'iframe mostra quello che il proxy risponde (502) — e
+//    quel 502 è una PAGINA, quindi spara `load`, non `error`: lo stato sarà
+//    `loaded` e il difetto resta visibile solo DENTRO il frame. Distinguere
+//    «pagina servita» da «pannello vivo» richiederebbe un secondo biglietto
+//    (monouso, 30 s di vita): non si fa; dichiarato. Quel che R20 chiude è il
+//    silenzio: prima non c'era NESSUNO stato dopo il ticket, ora il carico del
+//    frame è osservato (load/error) e il fallimento a livello di risorsa ha un
+//    nome e un'azione.
 // 2. La causa CERTIFICATO non esiste più per il frame: l'origine è la nostra e
 //    verso il container parla il proxy. Per questo è sparito anche il bottone
 //    «apri in una scheda» e l'auto-riprova al ritorno sulla scheda: curavano
@@ -98,6 +113,31 @@ export default function CellPanel({
     }
   }, [cellId, panelUrl, rotta, panelPort, token, requestTimeoutMs]);
 
+  // R20: il biglietto riuscita NON chiude la partita — il suo CONSUMO può
+  // ancora fallire dentro l'iframe (scaduto: 30 s di vita; già usato: monouso;
+  // destinazione morta). Gli eventi load/error sono il canale che l'iframe
+  // offre già: non se ne inventa uno nuovo. I passaggi di stato sono filtrati
+  // dallo stato CORRENTE: un evento tardivo di una navigazione vecchia non
+  // riscrive uno stato più fresco (stessa disciplina di seq per il ticket).
+  const onFrameLoad = useCallback(() => {
+    // `load` scatta ANCHE sulle pagine d'errore: qui si registra solo che il
+    // frame è arrivato a una risposta — non si promette che il pannello viva.
+    setState((s) => (s === 'ready' ? 'loaded' : s));
+  }, []);
+  const onFrameError = useCallback(() => {
+    setState((s) => (s === 'ready' || s === 'loaded' ? 'frame-error' : s));
+  }, []);
+  // Gli handler si legano DIRETTI sull'elemento, non come prop React: `error`
+  // non bubbla e React non lo riceve sull'iframe (in jsdom il test restava
+  // verde sul frame bianco — lo stesso silenzio del difetto, nel test). Il
+  // ref lega entrambi, per simmetria e perché load resti deterministicamente
+  // osservato comunque.
+  const legaFrame = useCallback((el) => {
+    if (!el) return;
+    el.onload = onFrameLoad;
+    el.onerror = onFrameError;
+  }, [onFrameLoad, onFrameError]);
+
   useEffect(() => { apri(); }, [apri]);
 
   const msg = (key, azioni = true) => (
@@ -138,12 +178,28 @@ export default function CellPanel({
   if (state === 'denied') return msg('panel-denied');
   if (state === 'timeout') return msg('panel-timeout');
   if (state === 'unreachable') return msg('panel-unreachable');
+  // R20: il consumo del biglietto è fallito a livello di risorsa: il frame è
+  // bianco e prima NESSUNO stato lo diceva. Ora ha nome e azione (biglietto
+  // nuovo), come `denied` — ma la causa è diversa: `denied` è l'EMISSIONE
+  // rifiutata, questa è la navigazione del frame fallita DOPO un biglietto ok.
+  if (state === 'frame-error') return msg('panel-frame-error');
+  // ready | loaded: il frame resta montato. L'hint visibile dice «montato,
+  // carico in corso» e sparisce al load — la distinzione fra i due stati non
+  // resta chiusa nel componente: chi guarda la vede. data-frame-state la
+  // espone anche a chi prova il DOM.
   return (
-    <iframe
-      className="nc-cellpanel nc-cellpanel-frame"
-      src={frameUrl}
-      title={title || t('panel')}
-      allowFullScreen
-    />
+    <>
+      {state === 'ready' && (
+        <div className="nc-cellpanel-loading" role="status">{t('panel-frame-loading')}</div>
+      )}
+      <iframe
+        ref={legaFrame}
+        className="nc-cellpanel nc-cellpanel-frame"
+        data-frame-state={state}
+        src={frameUrl}
+        title={title || t('panel')}
+        allowFullScreen
+      />
+    </>
   );
 }

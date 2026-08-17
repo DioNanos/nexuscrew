@@ -179,27 +179,93 @@ test('refusalDetails espone la riga come campo, oltre che dentro la frase', () =
 // NON copre il giro HTTP completo: quello richiede un peer che risponda al
 // join, e l'infrastruttura sta in pairing-panel-port-e2e.test.js. Qui si prova
 // la logica che la route invoca, e il limite che decide se la riga esce.
-test('authorizedKeysForNode: con la chiave la riga esce, senza identityFile no', () => {
+test('authorizedKeysForNode: esito enumerato — riga solo se derived, mai mezza istruzione', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'akfn-'));
   const key = generaCoppia(dir, 'id_ed25519');
 
   const conChiave = tunnel.authorizedKeysForNode(
     { remotePort: 41800, identityFile: key }, 41821);
-  assert.ok(conChiave.includes('permitopen="127.0.0.1:41800"'), 'la porta nexus');
-  assert.ok(conChiave.includes('permitopen="127.0.0.1:41821"'), 'la porta pannello');
-  assert.ok(conChiave.includes(tunnel.readPublicKey(key)),
+  assert.equal(conChiave.outcome, tunnel.PUBKEY_DERIVED);
+  assert.ok(conChiave.line.includes('permitopen="127.0.0.1:41800"'), 'la porta nexus');
+  assert.ok(conChiave.line.includes('permitopen="127.0.0.1:41821"'), 'la porta pannello');
+  assert.ok(conChiave.line.includes(tunnel.readPublicKey(key)),
     'la chiave derivata dalla privata, non letta da un file accanto');
 
   // IL LIMITE, dichiarato: senza identityFile ssh usa le chiavi di default
   // dell'utente, un agent o la config, e il prodotto non sa quale. Non si
-  // inventa una riga: si torna null. E non esiste un altro canale che ripari —
-  // nemmeno la sonda del supervisore, che la chiave la ricava solo da `-i`.
-  // Per quei nodi la riparazione automatica NON c'e', e il prodotto lo dice.
-  assert.equal(tunnel.authorizedKeysForNode({ remotePort: 41800 }, 41821), null);
-  // E con una identityFile che non esiste (o non e' una chiave), stesso verso:
-  // niente mezza istruzione.
-  assert.equal(tunnel.authorizedKeysForNode(
-    { remotePort: 41800, identityFile: path.join(dir, 'inesistente') }, 41821), null);
+  // inventa una riga — ma ora l'esito e' un DATO con nome, non un null muto:
+  // chi compone il messaggio puo' dire la cosa giusta invece di tacere.
+  const senzaIdentita = tunnel.authorizedKeysForNode({ remotePort: 41800 }, 41821);
+  assert.equal(senzaIdentita.outcome, tunnel.PUBKEY_ACTUAL_KEY_UNKNOWN);
+  assert.equal(senzaIdentita.line, null);
+  // IdentityFile dichiarata ma assente sul disco: esito DISTINTO — prima era
+  // lo stesso null di «cifrata», «illeggibile» e «ssh-keygen assente».
+  const assente = tunnel.authorizedKeysForNode(
+    { remotePort: 41800, identityFile: path.join(dir, 'inesistente') }, 41821);
+  assert.equal(assente.outcome, tunnel.PUBKEY_NO_IDENTITY);
+  assert.equal(assente.line, null);
+});
+
+// —— resolver a esito enumerato: i cinque esiti, uno per uno ————————————————
+// Il difetto strutturale che ha generato meta' della 0.9.5: null|stringa
+// comprimeva stati diversi. Qui ogni esito ha la sua prova; la coppia
+// cifrata/in-chiaro sullo STESSO meccanismo prova che la discriminante
+// guarda l'oggetto giusto.
+
+test('resolvePublicKey: chiave valida -> derived con la riga', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'res-der-'));
+  const key = generaCoppia(dir, 'id_ed25519');
+  const r = tunnel.resolvePublicKey(key);
+  assert.equal(r.outcome, tunnel.PUBKEY_DERIVED);
+  assert.ok(r.line.startsWith('ssh-ed25519 '), 'la riga pubblica derivata');
+});
+
+test('resolvePublicKey: dichiarata ma assente sul disco -> no-identity (distinto da cifrata)', () => {
+  const r = tunnel.resolvePublicKey('/non/esiste/da/nessuna/parte/id_ed25519');
+  assert.equal(r.outcome, tunnel.PUBKEY_NO_IDENTITY);
+  assert.equal(r.path, '/non/esiste/da/nessuna/parte/id_ed25519');
+});
+
+test('resolvePublicKey: non dichiarata -> actual-key-unknown (la chiave di ssh non e\' sapibile)', () => {
+  for (const v of [undefined, null, '', '   ', 42]) {
+    assert.equal(tunnel.resolvePublicKey(v).outcome, tunnel.PUBKEY_ACTUAL_KEY_UNKNOWN,
+      `per ${JSON.stringify(v)}`);
+  }
+});
+
+test('resolvePublicKey: ssh-keygen assente -> tool-unavailable (distinto dal file che non si deriva)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'res-tool-'));
+  const key = generaCoppia(dir, 'id_ed25519'); // il file C'E' ed e' valido
+  const mancaBinario = () => { const e = new Error('spawn ssh-keygen ENOENT'); e.code = 'ENOENT'; throw e; };
+  const r = tunnel.resolvePublicKey(key, { execImpl: mancaBinario });
+  assert.equal(r.outcome, tunnel.PUBKEY_TOOL_UNAVAILABLE,
+    'l\'assenza del binario e\' un\'altra causa rispetto al file che non si deriva');
+});
+
+test('resolvePublicKey: cifrata vs in chiaro — la coppia discriminante (P4)', () => {
+  if (!sshKeygenDisponibile()) return; // oracolo assente: dichiarato, non finto verde
+  const { execFileSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'res-cifr-'));
+  const cifrata = path.join(dir, 'cifrata');
+  const inchiaro = path.join(dir, 'inchiaro');
+  execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', 'passphrase-di-prova', '-f', cifrata],
+    { stdio: 'ignore', timeout: 20000 });
+  execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', inchiaro],
+    { stdio: 'ignore', timeout: 20000 });
+
+  // Prima erano lo stesso null. Ora: cifrata -> encrypted-or-unreadable,
+  // in chiaro -> derived. Se la guardia guardasse l'oggetto sbagliato, i due
+  // esiti coinciderebbero.
+  const rc = tunnel.resolvePublicKey(cifrata);
+  assert.equal(rc.outcome, tunnel.PUBKEY_ENCRYPTED_OR_UNREADABLE,
+    'la chiave cifrata non si deriva, e ora ha il SUO esito');
+  assert.equal(rc.line, undefined);
+  const ri = tunnel.resolvePublicKey(inchiaro);
+  assert.equal(ri.outcome, tunnel.PUBKEY_DERIVED);
+  assert.ok(ri.line.startsWith('ssh-ed25519 '));
+  // E il contratto storico resta intatto per chi compone ancora su null|stringa.
+  assert.equal(tunnel.readPublicKey(cifrata), null);
+  assert.equal(tunnel.readPublicKey(inchiaro), ri.line);
 });
 
 // I DUE RAMI DEVONO DIRE COSE DIVERSE. Prima, senza la chiave pubblica, si
@@ -225,16 +291,18 @@ test('refusalDetails: senza chiave pubblica non promette una riga da sostituire'
   assert.match(senza.hint, /A MANO/, 'si chiede una modifica manuale della riga esistente');
   assert.match(senza.hint, /permitopen="127\.0\.0\.1:41821"/, 'ma le destinazioni da aggiungere si dicono');
 
-  // .pub illeggibile: stesso verso, con la causa diversa nominata.
+  // Identita' dichiarata ma assente sul disco: col resolver enumerato e il
+  // formatter unico la causa ORA e' ESATTA — non piu' l'elenco di possibilita'
+  // che si usava quando non si potevano distinguere.
   const rotta = supervisor.refusalDetails({
     remoteDestinations: ['127.0.0.1:41800'], identityFile: path.join(dir, 'assente'),
   });
   assert.equal(rotta.authorizedKeys, '');
+  assert.equal(rotta.outcome, tunnel.PUBKEY_NO_IDENTITY, 'l\'esito enumerato viaggia col hint');
   assert.doesNotMatch(rotta.hint, /SOSTITUISCI/);
-  // Il messaggio NON deve scegliere una causa che non conosce: da qui non si
-  // distingue una privata assente da una protetta da passphrase. Le elenca.
-  assert.match(rotta.hint, /non riesco a derivare la chiave pubblica/, 'dice cosa non e\' riuscito');
-  assert.match(rotta.hint, /passphrase/, 'e nomina le cause possibili senza sceglierne una');
+  assert.match(rotta.hint, /non esiste/, 'dice la causa ESATTA: il file manca');
+  assert.doesNotMatch(rotta.hint, /passphrase/,
+    'e non elenca piu\' possibilita\' che ora sa distinguere');
   assert.doesNotMatch(rotta.hint, /parte pubblica non e' leggibile/,
     'MAI dire che la pubblica non e\' leggibile: con una chiave cifrata esiste eccome');
 
@@ -250,6 +318,10 @@ test('refusalDetails: senza chiave pubblica non promette una riga da sostituire'
       remoteDestinations: ['127.0.0.1:41800'], identityFile: cifrata,
     });
     assert.equal(conCifrata.authorizedKeys, '', 'nessuna riga: la privata non e\' derivabile in batch');
+    assert.equal(conCifrata.outcome, tunnel.PUBKEY_ENCRYPTED_OR_UNREADABLE,
+      'la cifrata ha il SUO esito, distinto dal file mancante');
+    assert.match(conCifrata.hint, /cifrata o illeggibile/, 'la causa esatta nel hint');
+    assert.doesNotMatch(conCifrata.hint, /non esiste/, 'e non dice che manca: il file c\'e\'');
     assert.doesNotMatch(conCifrata.hint, /parte pubblica non e' leggibile/,
       'e il messaggio non afferma una cosa falsa su un file che esiste');
   }
@@ -288,9 +360,10 @@ test('readPublicKey: la pubblica viene dalla privata, non dal file accanto', (t)
   assert.equal(tunnel.readPublicKey(path.join(dir, 'spazzatura')), null);
 
   // La riga composta resta UNA sola.
-  const riga = tunnel.authorizedKeysForNode({ remotePort: 41800, identityFile: A }, 41821);
-  assert.equal(riga.split('\n').length, 1, 'il blocco da copiare e\' una riga sola');
-  assert.ok(riga.includes('permitopen="127.0.0.1:41821"'), 'con la destinazione pannello');
+  const esito = tunnel.authorizedKeysForNode({ remotePort: 41800, identityFile: A }, 41821);
+  assert.equal(esito.outcome, tunnel.PUBKEY_DERIVED);
+  assert.equal(esito.line.split('\n').length, 1, 'il blocco da copiare e\' una riga sola');
+  assert.ok(esito.line.includes('permitopen="127.0.0.1:41821"'), 'con la destinazione pannello');
 });
 
 // SE L'ORACOLO NON C'E', NON SI PROMETTE NIENTE.

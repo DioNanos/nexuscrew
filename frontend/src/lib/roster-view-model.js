@@ -12,6 +12,7 @@
 import { seenKey } from './api.js';
 import { t } from './i18n.js';
 import { positionKey } from './nodes-model.js';
+import { CAUSE_PEER_ASENTE, CAUSE_PEER_NEGA, CAUSE_ROTTA_INESISTENTE } from './peer-backoff.js';
 
 // Tempo relativo compatto da epoch sec: 'ora' | 'Nm' | 'Nh' | 'Ng'.
 // nowSec e' iniettabile solo per i test; il default e' l'ora corrente, come
@@ -32,7 +33,15 @@ export function nodeStateLabel(g) {
   if (g.status === 'down') {
     return g.downSince ? t('tunnel-down-since').replace('{t}', rel(g.downSince)) : t('tunnel-down');
   }
-  if (g.status === 'unreachable') return t('node-unreachable');
+  if (g.status === 'unreachable') {
+    // R21: tre cause, tre azioni. Il rumore indistinto faceva fare la cosa
+    // sbagliata: riprovare dove conviene aspettare, aspettare dove conviene
+    // concedere un permesso, ignorare un nodo da aggiornare.
+    if (g.cause === CAUSE_PEER_NEGA) return t('peer-cause-nega');
+    if (g.cause === CAUSE_ROTTA_INESISTENTE) return t('peer-cause-rotta');
+    if (g.cause === CAUSE_PEER_ASENTE) return t('peer-cause-assente');
+    return t('node-unreachable');
+  }
   if (g.status === 'offline') return g.lastSeen ? t('node-offline-seen').replace('{t}', rel(g.lastSeen)) : t('node-offline');
   if (g.status === 'needs-repair') return t('node-needs-repair');
   return '';

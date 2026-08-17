@@ -17,6 +17,8 @@
   width: min(1100px, 96vw);
   height: min(820px, 92vh);
   overflow: hidden;
+  /* R24: l'angolo di ridimensionamento si ancora al riquadro. */
+  position: relative;
   border: 1px solid var(--nc-border, #1f3f2f);
   border-radius: 10px;
   background: var(--nc-bg, #0b0f0d);
@@ -82,6 +84,48 @@
   border: 0;
 }
 
+/* R24 — finestra posizionata dall'utente: esce dal centraggio flex del velo
+   e sta dove l'ha messa chi guarda (left/top/width/height inline). */
+.nc-popup-libera {
+  position: fixed;
+  z-index: 2;
+}
+
+/* R24 — l'angolo per ridimensionare: piccolo, in basso a destra, con un
+   tacca visibile. Solo desktop: su mobile il popup e' a schermo pieno. */
+.nc-popup-angolo {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  z-index: 3;
+}
+.nc-popup-angolo::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--nc-border, #1f3f2f);
+  border-bottom: 2px solid var(--nc-border, #1f3f2f);
+}
+
+/* R24 — il velo del drag: per la sola durata del trascinamento copre TUTTO,
+   iframe incluso. Un iframe si mangia gli eventi del mouse: senza questo
+   velo, appena il cursore ci entra sopra il movimento si pianta e la finestra
+   resta a meta' strada. Trasparente per non nascondere niente, rimosso al
+   rilascio. */
+.nc-popup-velo-drag {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  background: transparent;
+  cursor: grabbing;
+}
+
 @media (max-width: 720px) {
   .nc-popup-velo { padding: 0; }
   .nc-popup {
@@ -90,4 +134,5 @@
     border: 0;
     border-radius: 0;
   }
+  .nc-popup-angolo { display: none; }
 }

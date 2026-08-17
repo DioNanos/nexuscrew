@@ -11,6 +11,8 @@ vi.mock('../lib/i18n.js', () => ({
     'panel-denied': 'Ingresso al pannello rifiutato: il biglietto non è più valido. Riprova: verrà chiesto un biglietto nuovo.',
     'panel-node-refused': 'Il nodo che possiede la cella rifiuta la richiesta: è in sola lettura, o la sua policy blocca questa operazione. Riprovare qui non cambia l\'esito.',
     'panel-unauthorized': 'Credenziale non valida per questo nodo: va corretta dove è configurata, non riprovando da qui.',
+    'panel-frame-loading': 'pannello montato: caricamento in corso',
+    'panel-frame-error': 'Il frame del pannello non si è caricato: il biglietto può essere scaduto (30 s di vita, monouso) o la destinazione è irraggiungibile. Riprova: verrà chiesto un biglietto nuovo.',
   }[k] || k),
 }));
 
@@ -105,6 +107,63 @@ describe('CellPanel (D8: ingresso al pannello via ticket)', () => {
     expect(screen.getByRole('status').textContent).not.toContain('biglietto');
     expect(screen.queryByTitle('panel-retry')).toBeNull();
     expect(container.querySelector('iframe')).toBeNull();
+  });
+
+  // —— R20: il CONSUMO del biglietto non è più invisibile ——————————————————
+  // Prima: stato `ready` appena arriva il ticket e da lì il componente non
+  // osservava più nulla — consumo fallito (biglietto scaduto: 30 s, monouso;
+  // destinazione morta) = frame bianco e NESSUNO stato a dirlo. Gli stati
+  // denied/panel-denied coprivano solo l'EMISSIONE. Ora il frame si osserva
+  // col canale che l'iframe offre già (load/error), e i due momenti — montato
+  // e caricato — sono distinti e visibili.
+
+  it('R20: biglietto ok → frame MONTATO (ready): hint visibile e data-frame-state, prima del load', async () => {
+    ticketOk('TK-MONTATO');
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/vnc.html" route={[]} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    const frame = container.querySelector('iframe');
+    // La distinzione «montato, non ancora caricato» è DICHIARATA, non chiusa
+    // nel componente: hint visibile + stato esposto sul DOM.
+    expect(frame.getAttribute('data-frame-state')).toBe('ready');
+    expect(screen.getByRole('status').textContent).toContain('caricamento in corso');
+  });
+
+  it('R20: il load del frame porta a loaded — l\'hint sparisce e il frame NON si ricarica', async () => {
+    ticketOk('TK-LOAD');
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/vnc.html" route={[]} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    const frame = container.querySelector('iframe');
+    const srcPrima = frame.getAttribute('src');
+    fireEvent.load(frame);
+    await waitFor(() => { expect(container.querySelector('iframe').getAttribute('data-frame-state')).toBe('loaded'); });
+    expect(screen.queryByText(/caricamento in corso/)).toBeNull();
+    // Il passaggio di stato NON deve rimontare/ricaricare il frame: un login
+    // dentro il pannello non deve ricominciare da capo (stesso difetto storico
+    // del ricaricamento continuo, altra forma).
+    expect(container.querySelector('iframe').getAttribute('src')).toBe(srcPrima);
+  });
+
+  it('R20: error del frame → frame-error NOMINATO con Riprova; il biglietto nuovo ripristina il frame', async () => {
+    requestPanelTicket.mockResolvedValueOnce({ ok: true, ticket: 'TK-PRIMO' });
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/vnc.html" route={[]} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    fireEvent.error(container.querySelector('iframe'));
+    // Il frame bianco ora ha un nome e un'azione — la promessa di recupero
+    // che il vecchio commento faceva solo per l'emissione.
+    await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('non si è caricato'); });
+    expect(screen.getByRole('status').textContent).toContain('biglietto');
+    expect(container.querySelector('iframe')).toBeNull();
+    requestPanelTicket.mockResolvedValueOnce({ ok: true, ticket: 'TK-SECONDO' });
+    fireEvent.click(screen.getByTitle('panel-retry'));
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    expect(container.querySelector('iframe').getAttribute('src')).toContain('ticket=TK-SECONDO');
+    expect(requestPanelTicket).toHaveBeenCalledTimes(2);
   });
 
   it('unauthorized e no-panel: cause distinte dal backend, rese con lo stato giusto', async () => {
