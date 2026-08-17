@@ -2,6 +2,89 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.5 — 2026-08-17 — "Measured From Where It Breaks"
+
+Almost everything in this release was already broken before it, and none of it
+was found by the tests that were supposed to cover it. The pattern repeats often
+enough to be worth naming: a check that runs from a convenient place reports
+success for a mechanism it never actually crossed. The panel tunnel was declared
+ready by measuring a local bind and never a request through it. A public key was
+called valid by our own parser rather than by the program that would authenticate
+with it. A test that promised "leaves no orphans" left one. Each of them was
+green for weeks.
+
+- **The per-cell panel could not load, and the interface said it was ready.**
+  The viewing cookie was issued with `Path=/api/panel/<cell>`, but the dedicated
+  panel port serves `/panel/<cell>` — the control-plane prefix is not there. A
+  browser stores that cookie and never sends it back: the first request enters
+  with its ticket, and every sub-resource of the panel is refused, as is the
+  WebSocket upgrade, which looks for exactly that cookie. The panel stays blank.
+
+  The cookie path now follows the mount the request actually entered through,
+  taken from the router rather than from a constant, with a strict allow-list —
+  an unrecognised mount fails closed instead of guessing a scope, and it is
+  checked *before* the single-use ticket is spent, so a misconfiguration cannot
+  burn a ticket belonging to someone who did nothing wrong.
+
+  Present since the panel port was separated. It survived because a neighbouring
+  function in the same file already handled *both* prefixes: someone had thought
+  of the case, in one place out of two.
+
+- **Deriving a public key could hang the foreground service for five seconds.**
+  Reading a key ran `ssh-keygen -y -f`, with stdin closed and the askpass helper
+  disabled. Neither matters: OpenSSH does not read a passphrase from stdin, it
+  opens `/dev/tty`. Against an encrypted key on a terminal, the call waited out
+  its whole timeout — and the pairing path calls it synchronously, so the event
+  loop stopped with it.
+
+  Now the prompt is forced away from the terminal and onto a helper that cannot
+  run, so the attempt fails in a tenth of a second instead of five seconds.
+  Below OpenSSH 8.4 that control does not exist and the timeout remains the net:
+  slow, but never stuck. The limit is stated in the code rather than assumed.
+
+  This one was invisible by construction: automated runs have no controlling
+  terminal, so `/dev/tty` does not exist and the defect cannot appear. The test
+  now **brings its own** terminal rather than skipping, and the probe *measures*
+  whether it got one instead of trusting that it did.
+
+- **The panel tunnel was authorised to fail.** The generated `authorized_keys`
+  line restricted forwarding to the node port and never listed the panel port,
+  which had been separated in an earlier release — so pairing negotiated the
+  port, reserved the local side, wrote the line, and the server refused the
+  channel. "Forward ready" was reported after checking the local bind only,
+  which is the half that always succeeds. The channel is now exercised, the
+  probe gives up on a budget instead of retrying forever, and when a key cannot
+  be determined the product no longer promises a line it cannot produce.
+
+- **A public key is now derived from the private one, not read from beside it.**
+  Three rounds of hardening had gone into validating the `.pub` file, which
+  proves that a file contains *a* valid key — never that it is *the* key for
+  that identity. Deriving it removes the question. Relatedly, whether a key is
+  acceptable is now decided by the program that will use it, not by our parser.
+
+- **Replacing a degraded forwarding channel no longer leaves stray processes.**
+  Stopping and waiting now happen at a single point before any replacement.
+  The test that certified this used to leave an orphan of its own, and its
+  guard identified processes by number rather than by what they were — a
+  recycled id could satisfy it.
+
+- **A pidfile declares its identity at birth**, its schema marker is one-way,
+  and an obstacle to writing that marker now closes the window instead of
+  holding it open forever. A refusal that was uniform across two different
+  causes used to break updates; the two are separated.
+
+- **A remote cell's row resolves against its own node's sessions.** Both the
+  sidebar row and the popup could show data from a same-named local session.
+
+### Notes for anyone reading the tests
+
+Several fixes here are in tests that were passing while proving nothing: a guard
+that matched too loosely to ever fail, a timing assertion that measured a
+stopwatch instead of the signal it cared about, a cleanup check that read a file
+it had already deleted, and one that could not fail because the shell it relied
+on rejected the syntax it used. If a test has never been seen red for the right
+reason, it has not been seen at all.
+
 ## 0.9.4 — 2026-08-17 — "The Interface Was Last Week's"
 
 - **The published interface is the one this version was built from.** 0.9.3
