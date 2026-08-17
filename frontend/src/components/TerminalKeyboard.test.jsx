@@ -9,8 +9,8 @@ vi.mock('@xterm/xterm', () => ({
     constructor() {
       this.textarea = document.createElement('textarea');
       this.options = {}; this.cols = 80; this.rows = 24;
-      this.buffer = { active: { viewportY: 0 } };
-      this.selectCalls = [];
+      this.buffer = { active: { viewportY: 0, baseY: 0, type: 'normal' } };
+      this.selectCalls = []; this.scrollLinesCalls = [];
       // Modalita' e parser come li espone xterm: `modes` per il tracking del
       // mouse, `parser` per osservare la codifica SGR (DECSET 1006) sul filo.
       this.modes = { mouseTrackingMode: 'none' };
@@ -46,6 +46,10 @@ vi.mock('@xterm/xterm', () => ({
     focus() { fixture.focusCount += 1; this.textarea.focus(); }
     onData() { return { dispose() {} }; }
     onSelectionChange(cb) { this.selectionCb = cb; return { dispose() {} }; }
+    onRender(cb) { this.renderCb = cb; return { dispose() {} }; }
+    onScroll(cb) { this.scrollCb = cb; return { dispose() {} }; }
+    getSelectionPosition() { return this.selectionPosition || null; }
+    scrollLines(n) { this.scrollLinesCalls.push(n); }
     // Simula cio' che fa xterm: la selezione cambia, e puo' anche essere
     // AZZERATA da lui (onUserInput, resize, click con mouse tracking).
     emitSelection(text) { this.selectionText = text; if (this.selectionCb) this.selectionCb(); }
@@ -389,7 +393,7 @@ describe('terminal scroll plan integration', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
-    expect(term.buffer.active.type).toBeUndefined(); // normal screen
+    expect(term.buffer.active.type).toBe('normal'); // normal screen (non alternate)
     // touch: finger down (clientY increases) -> older history -> scroll-up
     fireEvent.touchStart(host, { touches: [{ clientX: 30, clientY: 40 }] });
     fireEvent.touchMove(host, { touches: [{ clientX: 30, clientY: 64 }] }); // +24 = STEP
