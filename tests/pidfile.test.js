@@ -351,3 +351,27 @@ test('non calcolabile: senza nascita leggibile vale il cmd — nel dubbio il pid
     fs.rmSync(path.dirname(p), { recursive: true, force: true });
   }
 });
+
+// Nascita attestata ma non rileggibile: l'identita' non e' verificabile e il
+// segnale NON parte. Trovato dall'audit su codice gia' pubblicato: il ramo
+// esisteva e proseguiva sul solo cmd, che matcha per inclusioni. La finestra
+// qui non e' di microsecondi come il TOCTOU: dura quanto /proc resta illeggibile.
+test('killPidfile: nascita attestata e ora illeggibile => rinuncia, nessun segnale', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-pid-unver-'));
+  const p = path.join(dir, 'x.pid');
+  fs.writeFileSync(p, JSON.stringify({
+    pid: 424242, cmd: process.argv.join(' '), processStart: '99999',
+  }));
+  const segnali = [];
+  const out = killPidfile(p, 'SIGTERM', {
+    killImpl: (pid, sig) => { segnali.push(sig); },
+    readCmdlineImpl: () => process.argv.join(' '),
+    readProcessStartImpl: () => null,
+  });
+  assert.equal(out.killed, false, 'con nascita non riverificabile non si segnala');
+  assert.match(String(out.reason), /unverifiable/);
+  assert.deepEqual(segnali.filter((s) => s && s !== 0), [],
+    'nessun segnale distruttivo deve essere partito');
+  assert.ok(fs.existsSync(p), 'il pidfile resta: non sappiamo se sia stale');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
