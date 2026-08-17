@@ -32,6 +32,33 @@ async function aspettaChe(condizione, passoMs = 25) {
   }
 }
 
+// Lo stand-in giusto per "il servizio remoto e' su e raggiungibile" sotto la
+// sonda a finestra di grazia (R19, tunnel-supervisor.js): un canale APERTO
+// per davvero, nessuna chiusura lato server. Un .end() immediato appena
+// accettata la connessione imita un canale RIFIUTATO (permitopen negato),
+// non uno aperto — la sonda lo classifica channel-refused in pochi ms, non
+// channel-ok dopo la finestra di grazia. I socket accettati si tracciano per
+// poterli distruggere alla chiusura: srv.close() da solo non libera l'handle
+// finche' una connessione resta aperta, e qui restano aperte apposta finche'
+// la sonda non decide.
+function serverAperto() {
+  return new Promise((resolve) => {
+    const sockets = new Set();
+    const srv = net.createServer((s) => {
+      sockets.add(s);
+      s.once('close', () => sockets.delete(s));
+    });
+    srv.listen(0, '127.0.0.1', () => resolve({
+      srv,
+      port: srv.address().port,
+      chiudi: () => new Promise((r) => {
+        for (const s of sockets) { try { s.destroy(); } catch (_) {} }
+        srv.close(() => r());
+      }),
+    }));
+  });
+}
+
 // --- argv EXACT-MATCH (design §4b(1)) --------------------------------------
 
 test('buildForwardArgs: argv esatto dal template §4b(1)', () => {
@@ -739,9 +766,8 @@ test('reverse-forward failure ripetuto entra in stato degraded NON terminale e c
 
 test('F1 supervisor dichiara transport-ready e resetta il backoff solo dopo stabilita', async () => {
   const dir = tmpDir();
-  const forward = net.createServer((socket) => socket.end());
-  await new Promise((resolve) => forward.listen(0, '127.0.0.1', resolve));
-  const forwardPort = forward.address().port;
+  const forward = await serverAperto();
+  const forwardPort = forward.port;
   const fakeSsh = path.join(dir, 'stable-ssh.js');
   const statePath = path.join(dir, 'stable.state.json');
   const pidPath = path.join(dir, 'stable.pid');
@@ -782,7 +808,7 @@ test('F1 supervisor dichiara transport-ready e resetta il backoff solo dopo stab
       const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} resolve(); }, 2000);
       child.once('exit', () => { clearTimeout(timer); resolve(); });
     });
-    await new Promise((resolve) => forward.close(resolve));
+    await forward.chiudi();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -845,11 +871,67 @@ test('F1 supervisor non dichiara ready finche il forward TCP non risponde', asyn
   }
 });
 
+// Il contratto deciso dopo l'audit R19 (regressione: il gate si appendeva su
+// questo file): un canale rifiutato SEMPRE non e' come il bind-failed sopra
+// (li' la sonda successiva e' fresca e si qualifica da sola quando il
+// servizio remoto torna su — continuare e' giusto). Un permitopen negato non
+// si risolve da solo: dopo il budget la sonda deve diventare OSSERVABILE
+// invece di continuare a girare ogni 250ms in silenzio per sempre. Stesso
+// stato del forward inverso — degraded, vivo, mai un "pronto" dichiarato
+// senza averlo verificato (sarebbe la stessa bugia che R19 ha tolto).
+test('F1 supervisor: canale -L rifiutato PERSISTENTEMENTE degrada invece di sondare per sempre', async () => {
+  const dir = tmpDir();
+  const rifiuta = net.createServer((s) => { setImmediate(() => { try { s.destroy(); } catch (_) {} }); });
+  await new Promise((resolve) => rifiuta.listen(0, '127.0.0.1', resolve));
+  const forwardPort = rifiuta.address().port;
+  const fakeSsh = path.join(dir, 'refused-ssh.js');
+  const statePath = path.join(dir, 'refused.state.json');
+  const pidPath = path.join(dir, 'refused.pid');
+  const runId = 'refused-generation';
+  fs.writeFileSync(fakeSsh, "setInterval(() => {}, 1000);\n", { mode: 0o700 });
+  const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
+  const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh,
+    '-L', `127.0.0.1:${forwardPort}:127.0.0.1:41777`], {
+    env: {
+      ...process.env,
+      NEXUSCREW_TUNNEL_STATE: statePath,
+      NEXUSCREW_TUNNEL_PIDFILE: pidPath,
+      NEXUSCREW_TUNNEL_RUN_ID: runId,
+      NEXUSCREW_TUNNEL_STABLE_MS: '50',
+      // Budget piccolo apposta: qui si prova il CONTRATTO, non la sua durata
+      // di produzione (gia' dichiarata sopra CHANNEL_GRACE_MS/channelProbeMax
+      // in tunnel-supervisor.js).
+      NEXUSCREW_TUNNEL_CHANNEL_PROBE_MAX: '2',
+    },
+    stdio: 'ignore',
+  });
+  pidf.writePidfile(pidPath, child.pid, `${process.execPath} ${supervisor}`, { runId });
+  try {
+    let state = null;
+    await aspettaChe(() => {
+      try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch (_) {}
+      return state && state.status === 'degraded';
+    });
+    assert.equal(state.code, 'forward-channel-blocked');
+    assert.match(state.detail, /rifiutato/);
+    assert.ok(state.hint && state.hint.includes('permitopen'), 'il degraded porta la riga da sostituire, non solo il fatto');
+    assert.equal(state.terminal, false, 'degraded resta vivo, mai un dead-end silenzioso');
+    assert.equal(child.exitCode, null, 'il supervisor resta vivo in degraded (auto-guarigione, niente OFF/ON)');
+  } finally {
+    child.kill('SIGKILL');
+    await new Promise((resolve) => {
+      if (child.exitCode !== null) return resolve();
+      child.once('exit', resolve);
+    });
+    await new Promise((resolve) => rifiuta.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('F1 supervisor termina ssh e se stesso quando perde la generazione pidfile', async () => {
   const dir = tmpDir();
-  const forward = net.createServer((socket) => socket.end());
-  await new Promise((resolve) => forward.listen(0, '127.0.0.1', resolve));
-  const forwardPort = forward.address().port;
+  const forward = await serverAperto();
+  const forwardPort = forward.port;
   const sshPidPath = path.join(dir, 'ssh.pid');
   const fakeSsh = path.join(dir, 'owned-ssh.js');
   const statePath = path.join(dir, 'owned.state.json');
@@ -895,7 +977,7 @@ test('F1 supervisor termina ssh e se stesso quando perde la generazione pidfile'
   } finally {
     try { child.kill('SIGKILL'); } catch (_) {}
     if (sshPid) try { process.kill(sshPid, 'SIGKILL'); } catch (_) {}
-    await new Promise((resolve) => forward.close(resolve));
+    await forward.chiudi();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

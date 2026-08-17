@@ -108,6 +108,33 @@ async function waitForState(statePath, predicate, timeoutMs = 20000) {
   return { ok: false, state: readState(statePath), seen };
 }
 
+// Lo stand-in giusto per "il servizio remoto e' su e raggiungibile" sotto la
+// sonda a finestra di grazia (R19, tunnel-supervisor.js): un canale APERTO
+// per davvero, nessuna chiusura lato server. Un .end() immediato appena
+// accettata la connessione imita un canale RIFIUTATO (permitopen negato), non
+// uno aperto — con la sonda a finestra di grazia il probe lo classifica
+// channel-refused in pochi ms, mai channel-ok. I socket accettati si
+// tracciano per poterli distruggere alla chiusura: close() da solo non libera
+// l'handle finche' una connessione resta aperta, e qui restano aperte apposta
+// finche' il probe non decide.
+function serverAperto(port = 0) {
+  return new Promise((resolve) => {
+    const sockets = new Set();
+    const srv = net.createServer((s) => {
+      sockets.add(s);
+      s.once('close', () => sockets.delete(s));
+    });
+    srv.listen(port, '127.0.0.1', () => resolve({
+      srv,
+      port: srv.address().port,
+      chiudi: () => new Promise((r) => {
+        for (const s of sockets) { try { s.destroy(); } catch (_) {} }
+        srv.close(() => r());
+      }),
+    }));
+  });
+}
+
 async function stopSupervisor(child) {
   try { child.kill('SIGTERM'); } catch (_) {}
   await new Promise((resolve) => {
@@ -155,15 +182,14 @@ test('reverse-forward failure ripetuta NON e terminale: resta degraded e recuper
     // Seconda fase: il listener sul hub si libera -> al prossimo tentativo il
     // reverse ha successo e il probe -L promuove transport-ready. Nessun OFF/ON.
     fs.unlinkSync(failFlag);
-    forward = net.createServer((socket) => socket.end());
-    await new Promise((resolve) => forward.listen(forwardPort, '127.0.0.1', resolve));
+    forward = await serverAperto(forwardPort);
     const ready = await waitForState(statePath, (s) => s.status === 'transport-ready', 6000);
     assert.equal(ready.ok, true, `deve recuperare fino a transport-ready, seen=${ready.seen && ready.seen.join(',')}`);
     assert.equal(child.exitCode, null, 'il supervisor e ancora VIVO dopo il recupero');
     assert.equal(ready.state.attempt, 0, 'il backoff e stato resettato al successo');
   } finally {
     await stopSupervisor(child);
-    if (forward) await new Promise((resolve) => forward.close(resolve));
+    if (forward) await forward.chiudi();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -337,9 +363,8 @@ test('in produzione il retry degraded resta fisso a 60s anche con un env breve',
 test('un listener permanentemente occupato (bind) resta diagnosticato e non colpisce altri peer', async () => {
   const dir = tmpDir();
   // peer B healthy: forward server reale + fake ssh stabile
-  const forwardB = net.createServer((socket) => socket.end());
-  await new Promise((resolve) => forwardB.listen(0, '127.0.0.1', resolve));
-  const portB = forwardB.address().port;
+  const forwardB = await serverAperto();
+  const portB = forwardB.port;
   const fakeStable = path.join(dir, 'stable.js');
   fs.writeFileSync(fakeStable, "setInterval(() => {}, 1000);\n", { mode: 0o700 });
   // peer A: reverse-forward-bind permanente
@@ -361,7 +386,7 @@ test('un listener permanentemente occupato (bind) resta diagnosticato e non colp
   } finally {
     await stopSupervisor(A.child);
     await stopSupervisor(B.child);
-    await new Promise((resolve) => forwardB.close(resolve));
+    await forwardB.chiudi();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -77,10 +77,30 @@ test('nodesAdd senza pannello (informazione che ancora non c\'è): una destinazi
 // chiusura. Fedele al comportamento OpenSSH con PermitOpen negato: il listener
 // locale ACCETTA la TCP e il canale negato la CHIUDE nel giro di millisecondi.
 
+// Il caso 'aperto' tiene la connessione accettata SENZA chiuderla mai: e' il
+// punto del test (il canale che regge). Ma srv.close() da solo non libera
+// l'handle finche' una connessione resta aperta — e la chiusura lato client
+// (settle() in probeForwardChannels distrugge il socket del probe DOPO la
+// finestra di grazia) non e' garanzia che il lato server abbia gia' propagato
+// la chiusura nell'istante in cui il test chiama srv.close(): una corsa, non
+// un fatto. Senza tracciare e distruggere i socket accettati, il file puo'
+// restare appeso da solo (osservato: misurato da Dev sul campo).
 function serverChe(onConnessione) {
   return new Promise((resolve) => {
-    const srv = net.createServer((s) => { onConnessione(s); });
-    srv.listen(0, '127.0.0.1', () => resolve({ srv, port: srv.address().port }));
+    const sockets = new Set();
+    const srv = net.createServer((s) => {
+      sockets.add(s);
+      s.once('close', () => sockets.delete(s));
+      onConnessione(s);
+    });
+    srv.listen(0, '127.0.0.1', () => resolve({
+      srv,
+      port: srv.address().port,
+      chiudi: () => new Promise((r) => {
+        for (const s of sockets) { try { s.destroy(); } catch (_) {} }
+        srv.close(() => r());
+      }),
+    }));
   });
 }
 
@@ -88,7 +108,8 @@ test('probeForwardChannels: distingue canale APERTO da canale RIFIUTATO da bind 
   const aperto = await serverChe(() => { /* il canale tiene: nessuna chiusura */ });
   const rifiutato = await serverChe((s) => { setImmediate(() => { try { s.destroy(); } catch (_) {} }); });
   const porteLibere = 1; // nessun listener: connect rifiutato dal loopback
-  const libera = await serverChe(() => {}); libera.srv.close(); // ottiene una porta e la libera
+  const libera = await serverChe(() => {});
+  await libera.chiudi(); // ottiene una porta e la libera
   const esiti = await supervisor.probeForwardChannels({
     ports: [aperto.port, rifiutato.port, libera.port + porteLibere],
     graceMs: 300,
@@ -96,7 +117,7 @@ test('probeForwardChannels: distingue canale APERTO da canale RIFIUTATO da bind 
   assert.equal(esiti.get(aperto.port), 'channel-ok', 'listener che tiene: canale aperto');
   assert.equal(esiti.get(rifiutato.port), 'channel-refused', 'accetta e chiude: il server ha negato il canale');
   assert.equal(esiti.get(libera.port + porteLibere), 'bind-failed', 'nessuno in ascolto: bind locale fallito');
-  aperto.srv.close(); rifiutato.srv.close();
+  await Promise.all([aperto.chiudi(), rifiutato.chiudi()]);
 });
 
 // —— D: il rifiuto deve DIRE la riga da sostituire (chi ha la chiave vecchia) —
