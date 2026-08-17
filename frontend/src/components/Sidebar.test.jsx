@@ -73,7 +73,7 @@ describe('Sidebar session identity', () => {
   });
 
   // IL DIFETTO CHE R4 AVEVA CHIUSO SU UN ALTRO ASSE. Il nome di una sessione
-  // tmux non e' unico nella federazione: `cloud-Dev` esiste su ogni nodo che
+  // tmux non e' unico nella federazione: `host-Alpha` esiste su ogni nodo che
   // abbia quella cella. La sidebar indicizza le sessioni LOCALI per nome, e se
   // risolve li' anche la riga di una cella REMOTA il popup mostra l'anteprima
   // della cella locale omonima — di nuovo "un'altra cella creduta la propria",
@@ -81,11 +81,11 @@ describe('Sidebar session identity', () => {
   it('il popup di una cella REMOTA non prende l\'anteprima della sessione locale omonima', async () => {
     render(<Sidebar
       cells={[]}
-      sessions={[{ name: 'cloud-Dev', preview: 'ANTEPRIMA DELLA CELLA LOCALE', activity: 999 }]}
+      sessions={[{ name: 'host-Alpha', preview: 'ANTEPRIMA DELLA CELLA LOCALE', activity: 999 }]}
       nodeGroups={[{
         name: 'relay', label: 'Relay', route: ['relay'], instanceId: 'd'.repeat(32), status: 'up',
         sessions: [], unmanaged: [], capabilities: [], engines: [],
-        cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev', tmux: true, active: true,
+        cells: [{ cell: 'Dev', tmuxSession: 'host-Alpha', tmux: true, active: true,
                   preview: 'anteprima della cella remota' }],
       }]}
       onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()} />);
@@ -104,12 +104,12 @@ describe('Sidebar session identity', () => {
   it('il popup di una cella REMOTA legge la sessione del SUO nodo, non solo il campo della cella', async () => {
     render(<Sidebar
       cells={[]}
-      sessions={[{ name: 'cloud-Dev', preview: 'ANTEPRIMA DELLA CELLA LOCALE' }]}
+      sessions={[{ name: 'host-Alpha', preview: 'ANTEPRIMA DELLA CELLA LOCALE' }]}
       nodeGroups={[{
         name: 'relay', label: 'Relay', route: ['relay'], instanceId: 'd'.repeat(32), status: 'up',
-        sessions: [{ name: 'cloud-Dev', preview: 'anteprima dal nodo remoto', activity: 42 }],
+        sessions: [{ name: 'host-Alpha', preview: 'anteprima dal nodo remoto', activity: 42 }],
         unmanaged: [], capabilities: [], engines: [],
-        cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev', tmux: true, active: true,
+        cells: [{ cell: 'Dev', tmuxSession: 'host-Alpha', tmux: true, active: true,
                   preview: 'campo che viaggia con la cella' }],
       }]}
       onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()} />);

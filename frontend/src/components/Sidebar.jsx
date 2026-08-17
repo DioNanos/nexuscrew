@@ -103,7 +103,8 @@ export default function Sidebar({
   // panelUrl, telemetry, preview, activity. Le sorgenti flusso/pannello usano
   // session (tmuxSession reale) e node (route qualificata o '').
   // `byName` indicizza le sessioni di QUESTO nodo, e un tmuxSession non e'
-  // unico nella federazione: `cloud-Dev` esiste su piu' installazioni. Per una
+  // unico nella federazione: lo stesso nome di sessione esiste su piu'
+  // installazioni. Per una
   // cella REMOTA quella tabella risponderebbe con la sessione locale omonima,
   // e il popup mostrerebbe l'anteprima di un'ALTRA cella creduta la propria —
   // lo stesso difetto di R4, raggiunto per un'altra strada. Una riga remota si
