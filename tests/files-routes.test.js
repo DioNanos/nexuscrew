@@ -123,7 +123,12 @@ test('upload: path non incollabile -> 502 SENZA tentare la PTY', async (t) => {
   t.after(() => { fs.rmSync(outer, { recursive: true, force: true }); });
   const { pasted, base } = await setup(t, { root });
   const r = await fetch(`${base}/upload`, { method: 'POST', body: form('doc.txt', 'ciao') });
-  assert.equal(r.status, 502, 'il testo respinto non e\' una consegna riuscita');
+  // 500, non 502 (rilievo audit su d6c47c6): qui tmux NON e' stato mai
+  // contattato — a rifiutare siamo noi, per configurazione nostra. 502
+  // affermerebbe «il servizio a monte non risponde»: falso, e sveglierebbe un
+  // allarme su un tmux che sta benissimo. La coppia di codici e' informazione:
+  // 502 = raggiunto ma non ha preso (b); 500 = mai tentato, colpa nostra (c).
+  assert.equal(r.status, 500, 'il rifiuto a monte e\' colpa nostra, non del valle: 500');
   const j = await r.json();
   assert.match(j.error, /paste fallito: path non incollabile/, JSON.stringify(j));
   assert.ok(j.name.endsWith('_doc.txt'), 'il file salvato resta nella risposta');
