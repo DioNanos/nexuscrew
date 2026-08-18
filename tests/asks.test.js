@@ -118,6 +118,7 @@ test('answer: oltre MAX_ANSWER la risposta e RIFIUTATA, non troncata in silenzio
   assert.equal(r.status, 400, 'oltre il tetto si rifiuta con 400');
   const body = await r.json();
   assert.match(body.error || '', /3900/, 'l\'errore dichiara il tetto');
+  assert.match(body.error || '', /3901/, 'e dichiara anche QUANTO era lungo: senza, sai che c\'e\' un tetto ma non di quanto tagliare');
 
   // niente paste: il testo monco non deve MAI raggiungere la cella
   assert.equal(pasted.length, 0);
