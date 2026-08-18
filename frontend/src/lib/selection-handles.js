@@ -132,6 +132,27 @@ export function wordBoundsAt({ line, col, cols }) {
   return { start, end };
 }
 
+// R34 — layout della bolla lente: VICINO alla maniglia attiva, mai in cima
+// fissa a coprire righe. Sopra l'ancora per default; se non c'e' spazio
+// ribalta SOTTO la puntina (la maniglia in drag nelle prime righe non deve
+// finire coperta dalla lente che la descrive); orizzontalmente centrata
+// sull'ancora e clampata ai margini dell'host. Coordinate px nello spazio
+// dell'host (come handlePositions). pinHeight = ingombro verticale della
+// puntina sotto l'ancora (barretta + pallino), per il ribalto.
+export function magnifierLayout({ anchorLeft, anchorTop, hostWidth, hostHeight, bubbleWidth, bubbleHeight, pinHeight = 30, margin = 4, gap = 8 }) {
+  const w = Number(bubbleWidth);
+  const h = Number(bubbleHeight);
+  const m = Number(margin);
+  const maxLeft = Math.max(m, Number(hostWidth) - m - w);
+  const left = Math.max(m, Math.min(maxLeft, Number(anchorLeft) - Math.round(w / 2)));
+  let top = Number(anchorTop) - Number(gap) - h;
+  let flipped = false;
+  if (top < m) { top = Number(anchorTop) + Number(pinHeight) + Number(gap); flipped = true; }
+  const maxTop = Math.max(m, Number(hostHeight) - m - h);
+  if (top > maxTop) top = maxTop;
+  return { left, top, flipped };
+}
+
 // Argomenti per term.select() a partire da un range ordinato: xterm vuole
 // (colonna, riga, lunghezza) in ordine lineare row-major.
 export function rangeToSelect(range, cols) {

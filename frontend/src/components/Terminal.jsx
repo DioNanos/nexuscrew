@@ -7,7 +7,7 @@ import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
 import {
-  clampDraggedCell, edgeScrollDirection, extendRangeToCell, handlePositions, normalizeRange,
+  clampDraggedCell, edgeScrollDirection, extendRangeToCell, handlePositions, magnifierLayout, normalizeRange,
   rangeFromXterm, rangeToSelect, selectionUiPolicy, snapWideCol, wordBoundsAt, zoomLineForRange,
 } from '../lib/selection-handles.js';
 import { MQ_DESKTOP } from '../lib/desktop.js';
@@ -57,6 +57,12 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // memoria della verita': il testo si rilegge dal buffer a ogni battito.
   const [zoomFocus, setZoomFocus] = useState('start');
   const [zoomView, setZoomView] = useState(null);
+  // R34 — la lente e' una BOLLA vicino alla maniglia attiva e vive SOLO
+  // durante il gesto: long-press/selezione touch in corso (dito giu') o drag
+  // di una maniglia. A gesto finito sparisce: il terminale torna tutto
+  // leggibile e niente resta acceso a rubare righe.
+  const [touchGestureActive, setTouchGestureActive] = useState(false);
+  const [magGeom, setMagGeom] = useState(null);
   // R34 — origine del gesto che ha creato la selezione ('touch' | 'mouse' |
   // null). La modalita' della UI di selezione segue LEI (policy in
   // selection-handles.js), non il device: sul laptop touch-screen il criterio
@@ -531,8 +537,12 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         const end = { row: pressed.row, col: bounds.end };
         term.clearSelection();
         // R34: la selezione NASCE qui, dal dito — la marcatura va DOPO il
-        // clearSelection (onSelection azzera l'origine a range nullo).
+        // clearSelection (onSelection azzera l'origine a range nullo). Il
+        // gesto e' attivo (bolla lente accesa) e la bolla guarda il capo
+        // finale della parola appena presa, dove sta il caret.
         markOrigin('touch');
+        setTouchGestureActive(true);
+        setZoomFocus('end');
         term.select(bounds.start, pressed.row, bounds.end - bounds.start + 1);
         showTouchSelectionCaret(end);
         return;
@@ -558,6 +568,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         const end = { row: pressed.row, col: bounds.end };
         term.clearSelection();
         markOrigin('touch'); // dopo il clear (onSelection azzera a range nullo)
+        setTouchGestureActive(true); // bolla lente accesa finche' il dito resta giu'
+        setZoomFocus('end');
         term.select(bounds.start, pressed.row, bounds.end - bounds.start + 1);
         showTouchSelectionCaret(end);
         try { navigator.vibrate?.(10); } catch (_) {}
@@ -579,6 +591,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         const end = { row: raw.row, col };
         const b2 = end.row * term.cols + end.col;
         const first = a <= b2 ? selectStart : end;
+        setZoomFocus(side); // la bolla segue il capo che il dito sta muovendo
         term.select(first.col, first.row, Math.abs(b2 - a) + 1);
         showTouchSelectionCaret(end);
         return;
@@ -596,6 +609,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         const end = { row: raw.row, col };
         const b2 = end.row * term.cols + end.col;
         const first = a <= b2 ? selectStart : end;
+        setZoomFocus(side); // la bolla segue il capo che il dito sta muovendo
         term.select(first.col, first.row, Math.abs(b2 - a) + 1);
         showTouchSelectionCaret(end);
         return;
@@ -625,6 +639,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       clearLongPress(); touchY = null; touchX = null; tapX = null; tapY = null;
       selectStart = null; touchSelecting = false; touchMoved = false; multiTouchActive = false;
       setTouchSelectionCaret(null);
+      setTouchGestureActive(false); // R34: a gesto finito la bolla lente si spegne
       touchScroll = { mode: null, remainder: 0 };
       lastTouchTs = Date.now(); // la finestra ghost-click copre il mousedown sintetico post-touchend
     };
@@ -937,21 +952,23 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // cambiamento del range e a ogni tick di viewport/redraw; misura lo schermo
   // reale e deriva la grandezza della cella — la stessa strada del caret del
   // long-press, cosi' le due viste non divergono.
-  // R25-zoom: allo STESSO battito si deriva la barra di zoom — la riga della
-  // maniglia in focus si rilegge dal buffer QUI, quindi la barra segue il
-  // drag, lo scroll e il testo vivo esattamente come le maniglie, senza una
-  // fonte di verita' separata da tenere in sync. L'ingrandimento e' 2x la
-  // cella REALE del terminale (misurata qui sopra), non un font fisso.
+  // R25-zoom → R34: allo STESSO battito si deriva la vista lente — la riga
+  // della maniglia in focus si rilegge dal buffer QUI, quindi la vista segue
+  // il drag, lo scroll e il testo vivo esattamente come le maniglie, senza
+  // una fonte di verita' separata. R34: la vista e' una BOLLA vicino alla
+  // maniglia attiva (magnifierLayout puro), accesa solo durante il gesto
+  // (long-press iniziale o drag maniglia): a gesto finito il terminale torna
+  // tutto leggibile. L'ingrandimento resta 2x la cella REALE misurata qui.
   useEffect(() => {
     const host = hostRef.current;
     const term = apiRef.current ? apiRef.current.term : null;
-    if (!host || !term || !selRange) { setHandleGeom(null); setZoomView(null); return; }
+    if (!host || !term || !selRange) { setHandleGeom(null); setZoomView(null); setMagGeom(null); return; }
     const screen = host.querySelector('.xterm-screen') || host;
     const screenRect = screen.getBoundingClientRect();
     const hostRect = host.getBoundingClientRect();
     const cellWidth = screenRect.width / Math.max(1, term.cols);
     const cellHeight = screenRect.height / Math.max(1, term.rows);
-    setHandleGeom(handlePositions({
+    const positions = handlePositions({
       range: selRange,
       viewportY: Number(term.buffer.active.viewportY) || 0,
       rows: term.rows,
@@ -959,17 +976,36 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       cellHeight,
       screenLeft: screenRect.left - hostRect.left,
       screenTop: screenRect.top - hostRect.top,
-    }));
+    });
+    setHandleGeom(positions);
     let line = null;
     const focusRow = selRange[zoomFocus === 'end' ? 'end' : 'start'].row;
     if (typeof term.buffer.active.getLine === 'function') {
       line = term.buffer.active.getLine(Number(focusRow));
     }
-    setZoomView(!line ? null : {
+    const zoomFontSize = Math.max(16, Math.round(cellHeight * 2));
+    const zoom = !line ? null : {
       ...zoomLineForRange({ range: selRange, side: zoomFocus, line, cols: term.cols }),
-      fontSize: Math.max(16, Math.round(cellHeight * 2)),
-    });
-  }, [selRange, geomTick, zoomFocus]);
+      fontSize: zoomFontSize,
+    };
+    setZoomView(zoom);
+    // R34: la bolla si posiziona solo se un gesto e' in corso (long-press o
+    // drag maniglia) e l'ancora e' visibile. Larghezza/altezza della bolla
+    // sono STIME dal contenuto (jsdom non misura il layout): servono al clamp
+    // orizzontale, non alla forma — quella resta al CSS (max-width + overflow).
+    const gestureActive = draggingHandle !== null || touchGestureActive;
+    const anchor = positions[zoomFocus === 'end' ? 'end' : 'start'];
+    if (!gestureActive || !zoom || !anchor || !anchor.visible) { setMagGeom(null); return; }
+    const textLen = (zoom.before + zoom.sel + zoom.after).length;
+    const charWidth = cellWidth * (zoomFontSize / Math.max(1, cellHeight));
+    const bubbleWidth = Math.min(hostRect.width - 8, Math.round(textLen * charWidth) + 16);
+    const bubbleHeight = Math.round(zoomFontSize * 1.25) + 12;
+    setMagGeom(magnifierLayout({
+      anchorLeft: anchor.left, anchorTop: anchor.top,
+      hostWidth: hostRect.width, hostHeight: hostRect.height,
+      bubbleWidth, bubbleHeight,
+    }));
+  }, [selRange, geomTick, zoomFocus, draggingHandle, touchGestureActive]);
 
   // R34: la UI di selezione segue l'origine del gesto (policy pura) — sul
   // desktop niente maniglie né lente sopra una selezione da mouse.
@@ -987,8 +1023,12 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         aria-hidden="true"
       />
     )))}
-    {selRange && zoomView && uiPolicy.magnifier && (
-      <div className="nc-zoom-bar" aria-hidden="true">
+    {selRange && zoomView && uiPolicy.magnifier && magGeom && (
+      <div
+        className={`nc-zoom-bubble${magGeom.flipped ? ' flipped' : ''}`}
+        style={{ left: `${magGeom.left}px`, top: `${magGeom.top}px` }}
+        aria-hidden="true"
+      >
         <pre className="nc-zoom-line" style={{ fontSize: `${zoomView.fontSize}px` }}>
           <span>{zoomView.before}</span><span className="nc-zoom-sel">{zoomView.sel}</span><span>{zoomView.after}</span>
         </pre>

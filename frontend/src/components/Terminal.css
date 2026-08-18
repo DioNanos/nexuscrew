@@ -21,17 +21,22 @@
 }
 .nc-selection-tools button { background: #172417; border: 1px solid #486044; color: #d8ffe8; border-radius: 6px; padding: 5px 9px; }
 .nc-selection-tools textarea { width: 180px; height: 48px; background: #071007; color: #d8ffe8; }
-/* R25-zoom: la riga della maniglia in focus, ingrandita 2x la cella reale,
-   spezzata in prima/selezionato/dopo. Sotto i pulsanti Copia/Annulla, sopra
-   il terminale: copre l'alto mentre si regola la selezione, e sparisce con
-   lei. Il font-size lo misura il componente (2x la cella), qui solo la
-   forma. aria-hidden: e' una vista del testo che resta del terminale. */
-.nc-zoom-bar {
-  position: absolute; z-index: 8; top: 44px; left: 0; right: 0;
+/* R34 — la lente e' una BOLLA vicino alla maniglia attiva (non piu' una barra
+   fissa in cima che copre le righe e sta lontana dal dito). Vive solo durante
+   il gesto (long-press o drag maniglia): a gesto finito sparisce e il
+   terminale torna tutto leggibile. La posizione la decide il componente
+   (magnifierLayout: sopra l'ancora, ribalta sotto in cima, clamp ai bordi);
+   qui solo la forma. Il contenuto resta la riga ingrandita 2x spezzata in
+   prima/selezionato/dopo (idea della PR #5 di @sadoc1184-droid). aria-hidden:
+   e' una vista del testo che resta del terminale. */
+.nc-zoom-bubble {
+  position: absolute; z-index: 10; max-width: calc(100% - 8px); box-sizing: border-box;
   background: rgba(14, 20, 14, .96);
-  border-top: 1px solid #586b2a; border-bottom: 1px solid #586b2a;
-  padding: 4px 8px; box-sizing: border-box; overflow: hidden;
+  border: 1px solid #586b2a; border-radius: 10px;
+  padding: 4px 8px; overflow: hidden;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .55), 0 0 0 1px rgba(4, 12, 4, .6);
 }
+.nc-zoom-bubble.flipped { box-shadow: 0 -4px 18px rgba(0, 0, 0, .55), 0 0 0 1px rgba(4, 12, 4, .6); }
 .nc-zoom-line {
   margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   line-height: 1.25; color: #d8ffe8;
