@@ -19,6 +19,8 @@ vi.mock('@xterm/xterm', () => ({
       this.textarea = document.createElement('textarea');
       this.options = {}; this.cols = 80; this.rows = 24;
       this.lineTexts = new Map(); this.getLineCalls = [];
+      // R25-zoom rev4: celle per glifi larghi (getWidth 2/0) e testo per cella.
+      this.cellMaps = new Map();
       const self = this;
       this.buffer = { active: {
         viewportY: 0, baseY: 100, type: 'normal',
@@ -35,6 +37,20 @@ vi.mock('@xterm/xterm', () => ({
                 out = text.slice(startColumn, endColumn);
               }
               return trimRight ? out.replace(/\s+$/, '') : out;
+            },
+            // R25-zoom rev4: API pubblica di xterm per la parola e lo snap
+            // wide. Default: 1 char per cella, larghezza 1; i test wide
+            // impostano cellMaps (chars + widths per riga).
+            getCell(col) {
+              const map = self.cellMaps?.get(y);
+              if (map) {
+                return {
+                  getChars: () => map.chars[col] ?? '',
+                  getWidth: () => map.widths[col] ?? 1,
+                };
+              }
+              const text = self.lineTexts.get(y) ?? '';
+              return { getChars: () => text[col] ?? '', getWidth: () => 1 };
             },
           };
         },
@@ -331,6 +347,92 @@ describe('R25 — sopravvivenza al redraw e testo sovrascritto', () => {
     // dal buffer la riga della maniglia in focus: UNA riga fissa, non una per
     // riga selezionata — il confronto resta O(intersezione) + 1.
     expect(term.getLineCalls.length).toBe(lettureDopoSnapshot + 1);
+  });
+});
+
+describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi larghi)', () => {
+  function longPressAt(view, x, y) {
+    const host = view.container.querySelector('.nc-terminal-host');
+    fireEvent.touchStart(host, { touches: [{ clientX: x, clientY: y }] });
+    act(() => vi.advanceTimersByTime(450));
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: x, clientY: y }] });
+  }
+
+  it('long-press: la selezione comincia alla riga premuta, non due righe sopra (rev4 #1)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    // y=200 → riga visibile 10 (viewport 0). Oggi l'offset -2 la porta a 8.
+    longPressAt(view, 50, 200);
+    expect(term.selectCalls.at(-1).row).toBe(10);
+  });
+
+  it('long-press su una parola: selezionata la parola intera (rev4 #2)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    term.lineTexts.set(10, 'ciao mondo');
+    // x=65 → col 6, dentro 'mondo' (col 5..9).
+    longPressAt(view, 65, 200);
+    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 5 });
+  });
+
+  it('long-press su uno spazio: resta una cella (rev4 #2)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    term.lineTexts.set(10, 'ciao mondo');
+    // x=45 → col 4, lo spazio fra le due parole.
+    longPressAt(view, 45, 200);
+    expect(term.selectCalls.at(-1)).toEqual({ col: 4, row: 10, length: 1 });
+  });
+
+  it('maniglia end trascinata dentro un glifo doppio (界): finisce al bordo destro, mai a meta\' (rev4 #3)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10)); // end (1,11)
+    term.cellMaps.set(8, {
+      chars: ['a', '界', '', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
+      widths: [1, 2, 0, 1, 1, 1, 1, 1, 1, 1],
+    });
+    fireEvent.pointerDown(handles(view).end, { clientX: 120, clientY: 40, pointerType: 'mouse' });
+    // (25, 200): col 2 = cella di continuazione del glifo; offset touch -2 → riga 8.
+    fireEvent.pointerMove(window, { clientX: 25, clientY: 200, pointerType: 'touch' });
+    const last = term.selectCalls.at(-1);
+    const endLinear = 1 * 80 + 11 + last.length - 1;
+    expect(endLinear % 80).toBe(3); // bordo destro del glifo, non la continuazione
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
+  });
+
+  it('maniglia start trascinata dentro un glifo doppio (emoji): finisce al bordo sinistro (rev4 #3)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10)); // start (1,2)
+    term.cellMaps.set(8, {
+      chars: ['a', '😀', '', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
+      widths: [1, 2, 0, 1, 1, 1, 1, 1, 1, 1],
+    });
+    fireEvent.pointerDown(handles(view).start, { clientX: 20, clientY: 40, pointerType: 'mouse' });
+    fireEvent.pointerMove(window, { clientX: 25, clientY: 200, pointerType: 'touch' });
+    const last = term.selectCalls.at(-1);
+    const endLinear = 1 * 80 + 11 + last.length - 1;
+    expect(endLinear % 80).toBe(1); // bordo sinistro del glifo
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
+  });
+
+  it('long-press a meta\' di un glifo doppio: il punto iniziale va al bordo del glifo (rev4 #3)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    term.cellMaps.set(10, {
+      chars: ['a', '界', '', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
+      widths: [1, 2, 0, 1, 1, 1, 1, 1, 1, 1],
+    });
+    // x=25 → col 2 = continuazione: snap al bordo sinistro (col 1), poi parola.
+    longPressAt(view, 25, 200);
+    expect(term.selectCalls.at(-1)).toEqual({ col: 0, row: 10, length: 2 });
   });
 });
 

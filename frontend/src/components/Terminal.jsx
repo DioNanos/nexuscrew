@@ -8,7 +8,7 @@ import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
 import {
   clampDraggedCell, edgeScrollDirection, handlePositions, normalizeRange,
-  rangeFromXterm, rangeToSelect, zoomLineForRange,
+  rangeFromXterm, rangeToSelect, snapWideCol, wordBoundsAt, zoomLineForRange,
 } from '../lib/selection-handles.js';
 import { t } from '../lib/i18n.js';
 import { filesFromTransfer, hasFilePayload, uploadSessionFiles } from '../lib/attachments.js';
@@ -479,10 +479,16 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         e.preventDefault(); e.stopPropagation();
         // R25-zoom rev4: punto di pressione ESATTO (niente offset di riga —
         // la barra di zoom mostra la riga ingrandita). Stesso trattamento
-        // del long-press: la selezione parte dalla cella premuta.
-        selectStart = cellXY(e.touches[0].clientX, e.touches[0].clientY);
+        // del long-press: la selezione parte dalla cella premuta, con
+        // espansione a parola (Termux).
+        const pressed = cellXY(e.touches[0].clientX, e.touches[0].clientY);
+        const line = term.buffer.active.getLine(pressed.row);
+        const bounds = wordBoundsAt({ line, col: pressed.col, cols: term.cols });
+        selectStart = { row: pressed.row, col: bounds.start };
+        const end = { row: pressed.row, col: bounds.end };
         term.clearSelection();
-        showTouchSelectionCaret(selectStart);
+        term.select(bounds.start, pressed.row, bounds.end - bounds.start + 1);
+        showTouchSelectionCaret(end);
         return;
       }
       touchY = e.touches[0].clientY; touchX = e.touches[0].clientX;
@@ -495,11 +501,16 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         // R25-zoom rev4: punto di pressione ESATTO — la selezione comincia
         // alla riga premuta, non due righe sopra (l'offset nasceva perche'
         // la cella sotto il polpastrello non si vedeva; la barra di zoom
-        // mostra la riga ingrandita, la ragione non esiste piu').
-        selectStart = cellXY(start.x, start.y);
-        const end = { row: selectStart.row, col: selectStart.col };
+        // mostra la riga ingrandita, la ragione non esiste piu'). Se il
+        // punto cade su una parola, si seleziona la parola intera (Termux
+        // TextSelectionCursorController); su uno spazio resta una cella.
+        const pressed = cellXY(start.x, start.y);
+        const line = term.buffer.active.getLine(pressed.row);
+        const bounds = wordBoundsAt({ line, col: pressed.col, cols: term.cols });
+        selectStart = { row: pressed.row, col: bounds.start };
+        const end = { row: pressed.row, col: bounds.end };
         term.clearSelection();
-        term.select(end.col, end.row, 1);
+        term.select(bounds.start, pressed.row, bounds.end - bounds.start + 1);
         showTouchSelectionCaret(end);
         try { navigator.vibrate?.(10); } catch (_) {}
         // Da questo momento il gesto e' selezione, non scroll.

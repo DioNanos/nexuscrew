@@ -50,6 +50,34 @@ export function clampDraggedCell({ moving, fixed, which, cols, maxRow }) {
   return { row, col };
 }
 
+// R25-zoom rev4 (Termux TextSelectionCursorController): espansione a parola
+// del punto premuto. Se la cella contiene una parola (non vuota, non spazio)
+// la selezione si espande ai confini della parola; se e' spazio o vuota
+// resta una cella. Confine = cella vuota o spazio, come in Termux
+// (`!"".equals(text(...))`). `line` e' l'IBufferLine vero o un mock con la
+// STESSA firma: getCell(col) → { getChars() }.
+export function wordBoundsAt({ line, col, cols }) {
+  const c = Math.max(0, Math.min(Number(cols) - 1, Number(col)));
+  const charsAt = (i) => {
+    const cell = line && typeof line.getCell === 'function' ? line.getCell(i) : null;
+    return cell && typeof cell.getChars === 'function' ? cell.getChars() : '';
+  };
+  if (charsAt(c) === '' || charsAt(c) === ' ') return { start: c, end: c };
+  let start = c;
+  while (start > 0) {
+    const ch = charsAt(start - 1);
+    if (ch === '' || ch === ' ') break;
+    start -= 1;
+  }
+  let end = c;
+  while (end < Number(cols) - 1) {
+    const ch = charsAt(end + 1);
+    if (ch === '' || ch === ' ') break;
+    end += 1;
+  }
+  return { start, end };
+}
+
 // Argomenti per term.select() a partire da un range ordinato: xterm vuole
 // (colonna, riga, lunghezza) in ordine lineare row-major.
 export function rangeToSelect(range, cols) {
