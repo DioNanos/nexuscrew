@@ -50,6 +50,52 @@ export function clampDraggedCell({ moving, fixed, which, cols, maxRow }) {
   return { row, col };
 }
 
+// R25-zoom rev4: una colonna bersaglio che cade DENTRO un glifo largo (cella
+// di continuazione, getWidth() === 0) viene portata al bordo del glifo.
+// VARIANTE CONSAPEVOLE di Termux getValidCurX (che porta SEMPRE al bordo
+// destro): qui la maniglia start / il punto iniziale vanno al bordo SINISTRO
+// (glifo incluso). Sul punto iniziale il risultato netto coincide con Termux
+// (l'espansione a parola include comunque il glifo) ed e' coerente con una
+// selezione che parte dall'inizio del glifo; la end va al bordo destro, come
+// Termux. Mai una maniglia a meta' di un emoji o di un CJK. Colonne di
+// terminale, non indici di stringa: la stessa famiglia del difetto che ha
+// fatto tornare indietro due volte la barra.
+export function snapWideCol({ line, col, side, cols }) {
+  const c = Math.max(0, Math.min(Number(cols) - 1, Number(col)));
+  const cell = line && typeof line.getCell === 'function' ? line.getCell(c) : null;
+  const width = cell && typeof cell.getWidth === 'function' ? Number(cell.getWidth()) : 1;
+  if (width !== 0) return c;
+  return side === 'end' ? Math.min(Number(cols) - 1, c + 1) : Math.max(0, c - 1);
+}
+
+// R25-zoom rev4 (Termux TextSelectionCursorController): espansione a parola
+// del punto premuto. Se la cella contiene una parola (non vuota, non spazio)
+// la selezione si espande ai confini della parola; se e' spazio o vuota
+// resta una cella. Confine = cella vuota o spazio, come in Termux
+// (`!"".equals(text(...))`). `line` e' l'IBufferLine vero o un mock con la
+// STESSA firma: getCell(col) → { getChars() }.
+export function wordBoundsAt({ line, col, cols }) {
+  const c = Math.max(0, Math.min(Number(cols) - 1, Number(col)));
+  const charsAt = (i) => {
+    const cell = line && typeof line.getCell === 'function' ? line.getCell(i) : null;
+    return cell && typeof cell.getChars === 'function' ? cell.getChars() : '';
+  };
+  if (charsAt(c) === '' || charsAt(c) === ' ') return { start: c, end: c };
+  let start = c;
+  while (start > 0) {
+    const ch = charsAt(start - 1);
+    if (ch === '' || ch === ' ') break;
+    start -= 1;
+  }
+  let end = c;
+  while (end < Number(cols) - 1) {
+    const ch = charsAt(end + 1);
+    if (ch === '' || ch === ' ') break;
+    end += 1;
+  }
+  return { start, end };
+}
+
 // Argomenti per term.select() a partire da un range ordinato: xterm vuole
 // (colonna, riga, lunghezza) in ordine lineare row-major.
 export function rangeToSelect(range, cols) {
@@ -98,4 +144,49 @@ export function edgeScrollDirection({ visibleRow, rows }) {
   if (r <= 0) return -1;
   if (r >= Number(rows) - 1) return 1;
   return 0;
+}
+
+// La barra di zoom: il testo della riga della maniglia in focus, spezzato in
+// prima/selezionato/dopo. L'idea e' della PR #5; qui la struttura e' quella
+// delle maniglie — la riga arriva dal buffer di xterm AL MOMENTO della
+// chiamata, non da uno stato parallelo, quindi la barra segue il drag, lo
+// scroll e il testo vivo con lo stesso battito che ridisegna le maniglie.
+//
+// La spezzatura lavora in COLONNE di xterm, non in indici JS: `line` e'
+// l'IBufferLine vero (o un mock con la STESSA firma) e i tre segmenti si
+// leggono con translateToString(trimRight, startColumn, endColumn) — perche'
+// un carattere wide (emoji, CJK) occupa due celle e un combining sta nella
+// cella del base: string.slice sulle colonne leggerebbe il carattere
+// sbagliato o niente (audit r25zoom: colonne tagliate come indici JS).
+// `side` dice quale maniglia guida la barra ('start'|'end').
+// Se la porzione selezionata e' tutta spazi (selezione nata su una riga poi
+// accorciata, o oltre il testo reale) l'evidenziazione e' vuota: le celle
+// selezionate esistono, ma non c'e' testo da mostrare — non si evidenzia
+// rumore.
+export function zoomLineForRange({ range, side, line, cols }) {
+  if (!range || !range.start || !range.end || !line) return null;
+  const lastCol = Math.max(0, Number(cols) - 1);
+  const focus = side === 'end' ? range.end : range.start;
+  const row = Number(focus.row);
+  // Colonne del range VIVE su questa riga (fino a fine riga = lastCol sulla
+  // riga di start; dall'inizio sulla riga di end). Le maniglie stanno ai
+  // capi, quindi il focus e' sempre un capo; il ramo intermedio resta come
+  // difesa se un domani la barra seguisse una riga interna.
+  let fromCol, toCol;
+  if (Number(range.start.row) === Number(range.end.row)) {
+    fromCol = Number(range.start.col); toCol = Number(range.end.col);
+  } else if (row === Number(range.start.row)) {
+    fromCol = Number(range.start.col); toCol = lastCol;
+  } else if (row === Number(range.end.row)) {
+    fromCol = 0; toCol = Number(range.end.col);
+  } else {
+    fromCol = 0; toCol = lastCol;
+  }
+  fromCol = Math.max(0, Math.min(lastCol, fromCol));
+  toCol = Math.max(fromCol, Math.min(lastCol, toCol));
+  const before = line.translateToString(true, 0, fromCol);
+  let sel = line.translateToString(false, fromCol, toCol + 1);
+  if (sel.replace(/\s+$/, '') === '') sel = '';
+  const after = line.translateToString(true, Math.min(lastCol + 1, toCol + 1), lastCol + 1);
+  return { row, before, sel, after };
 }

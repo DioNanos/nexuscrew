@@ -8,7 +8,7 @@ import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
 import {
   clampDraggedCell, edgeScrollDirection, handlePositions, normalizeRange,
-  rangeFromXterm, rangeToSelect,
+  rangeFromXterm, rangeToSelect, snapWideCol, wordBoundsAt, zoomLineForRange,
 } from '../lib/selection-handles.js';
 import { t } from '../lib/i18n.js';
 import { filesFromTransfer, hasFilePayload, uploadSessionFiles } from '../lib/attachments.js';
@@ -46,9 +46,16 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // coordinate px, geomTick forza il ricalcolo quando cambia il viewport o
   // arriva un redraw ma il range no.
   const [selRange, setSelRange] = useState(null);
+  const selRangeRef = useRef(null); // specchio dello stato per le closure del drag
   const [handleGeom, setHandleGeom] = useState(null);
   const [geomTick, setGeomTick] = useState(0);
   const [draggingHandle, setDraggingHandle] = useState(null);
+  // R25-zoom: la barra con la riga della maniglia in focus ingrandita 2x.
+  // zoomFocus = quale maniglia guida la barra (l'ultima presa; 'start' finche'
+  // non si tocca niente), zoomView = la vista derivata. Anche qui niente
+  // memoria della verita': il testo si rilegge dal buffer a ogni battito.
+  const [zoomFocus, setZoomFocus] = useState('start');
+  const [zoomView, setZoomView] = useState(null);
   // Il testo SOTTO una selezione attiva puo' essere sovrascritto (una
   // progress bar che riscrive la riga, un redraw dell'app): la copia
   // consegnerebbe il testo nuovo mentre chi guarda ha in mente quello
@@ -252,6 +259,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // davvero qualcosa di nuovo selezionato, e si svuota soltanto quando
     // l'operatore agisce — copia o annulla. Il riquadro giallo puo' sparire
     // (e' di xterm, non nostro), il testo da copiare no.
+    // handleDrag vive qui sopra perche' onSelection lo chiude (rev5): se
+    // xterm azzera la selezione a meta' drag, il gesto finisce li'.
+    let handleDrag = null;         // { which, offsetX, offsetY, fixed }
     const onSelection = term.onSelectionChange(() => {
       const next = term.getSelection();
       if (next) { setSelection(next); setSelectionDetached(false); }
@@ -259,8 +269,19 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       // R25: le maniglie seguono la selezione — il range si rilegge a ogni
       // cambiamento (gesto nostro o no); lo snapshot per riga e' la base del
       // confronto per il contenuto sovrascritto sotto il range.
-      const range = rangeFromXterm(term.getSelectionPosition());
+      // R25-zoom rev3: xterm 6.0 restituisce getSelectionPosition() NON
+      // normalizzato — un drag nativo all'indietro produce start>end. Il
+      // range si normalizza QUI, al punto di lettura, cosi' TUTTI i
+      // consumatori (maniglie, barra, snapshot) vedono start<=end row-major.
+      const raw = rangeFromXterm(term.getSelectionPosition());
+      const range = raw ? normalizeRange(raw.start, raw.end, term.cols) : null;
       setSelRange(range);
+      selRangeRef.current = range;
+      // R25-zoom rev5 (r25rev4-audit): xterm AZZERA la selezione su resize di
+      // righe e su trim oltre il top. Se il drag e' in corso, l'ancora
+      // congelata risusciterebbe una selezione cancellata al prossimo
+      // pointermove: il gesto si CHIUDE qui, non resta a meta'.
+      if (!range && handleDrag) endHandleDrag();
       let snap = null;
       if (range && typeof term.buffer.active.getLine === 'function') {
         const lines = [];
@@ -404,7 +425,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     let touchY = null, touchX = null, tapX = null, tapY = null;
     let touchMoved = false, multiTouchActive = false;
     let touchScroll = { mode: null, remainder: 0 }, vertical = null, selectStart = null;
-    let longPressTimer = null; let touchSelecting = false; let touchSelectionOffsetRows = 0;
+    let longPressTimer = null; let touchSelecting = false;
     const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
     const cellXY = (clientX, clientY) => {
       const screen = host.querySelector('.xterm-screen') || host;
@@ -414,6 +435,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       return { col, row: term.buffer.active.viewportY + visibleRow };
     };
     const cellAt = (touch) => cellXY(touch.clientX, touch.clientY);
+    // R25-zoom rev4: questo offset serve SOLO al drag delle maniglie (il
+    // dito non deve centrare l'ancora che trascina). La selezione touch
+    // (long-press, SELECT, tocchi successivi) usa il punto di pressione
+    // ESATTO: la barra di zoom mostra la riga ingrandita, l'offset di riga
+    // non ha piu' ragione di esistere li'.
     const TOUCH_SELECTION_OFFSET_ROWS = 2;
     const touchSelectionOffsetFor = (clientY) => {
       const screen = host.querySelector('.xterm-screen') || host;
@@ -455,20 +481,25 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         // Se un secondo dito arriva durante una selezione long-press, il caret
         // non descrive piu' un punto attivo del gesto: nascondilo subito,
         // senza alterare la selezione gia' confermata.
-        setTouchSelectionCaret(null); touchSelectionOffsetRows = 0;
+        setTouchSelectionCaret(null);
         touchY = null; touchX = null; tapX = null; tapY = null;
         return;
       }
       if (selectionModeRef.current) {
         e.preventDefault(); e.stopPropagation();
-        // Stesso trattamento del long-press: il punto di lavoro sta sopra il
-        // dito, non sotto. Finora questo ramo — quello che si percorre col
-        // tasto SELECT e a ogni tocco successivo — usava la cella coperta dal
-        // polpastrello, cioe' l'unica che non si vede mentre la si sceglie.
-        touchSelectionOffsetRows = touchSelectionOffsetFor(e.touches[0].clientY);
-        selectStart = touchSelectionCellAt(e.touches[0], touchSelectionOffsetRows);
+        // R25-zoom rev4: punto di pressione ESATTO (niente offset di riga —
+        // la barra di zoom mostra la riga ingrandita). Stesso trattamento
+        // del long-press: la selezione parte dalla cella premuta, con
+        // espansione a parola (Termux).
+        const pressed = cellXY(e.touches[0].clientX, e.touches[0].clientY);
+        const line = term.buffer.active.getLine(pressed.row);
+        const startCol = snapWideCol({ line, col: pressed.col, side: 'start', cols: term.cols });
+        const bounds = wordBoundsAt({ line, col: startCol, cols: term.cols });
+        selectStart = { row: pressed.row, col: bounds.start };
+        const end = { row: pressed.row, col: bounds.end };
         term.clearSelection();
-        showTouchSelectionCaret(selectStart);
+        term.select(bounds.start, pressed.row, bounds.end - bounds.start + 1);
+        showTouchSelectionCaret(end);
         return;
       }
       touchY = e.touches[0].clientY; touchX = e.touches[0].clientX;
@@ -478,14 +509,20 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         longPressTimer = null; touchSelecting = true; touchMoved = true; lastTerminalTap = null;
         selectionModeRef.current = true;
         onSelectionModeChange?.(true);
-        selectStart = cellXY(start.x, start.y);
-        touchSelectionOffsetRows = touchSelectionOffsetFor(start.y);
-        const end = touchSelectionCellAt({ clientX: start.x, clientY: start.y }, touchSelectionOffsetRows);
+        // R25-zoom rev4: punto di pressione ESATTO — la selezione comincia
+        // alla riga premuta, non due righe sopra (l'offset nasceva perche'
+        // la cella sotto il polpastrello non si vedeva; la barra di zoom
+        // mostra la riga ingrandita, la ragione non esiste piu'). Se il
+        // punto cade su una parola, si seleziona la parola intera (Termux
+        // TextSelectionCursorController); su uno spazio resta una cella.
+        const pressed = cellXY(start.x, start.y);
+        const line = term.buffer.active.getLine(pressed.row);
+        const startCol = snapWideCol({ line, col: pressed.col, side: 'start', cols: term.cols });
+        const bounds = wordBoundsAt({ line, col: startCol, cols: term.cols });
+        selectStart = { row: pressed.row, col: bounds.start };
+        const end = { row: pressed.row, col: bounds.end };
         term.clearSelection();
-        const a = selectStart.row * term.cols + selectStart.col;
-        const b = end.row * term.cols + end.col;
-        const first = a <= b ? selectStart : end;
-        term.select(first.col, first.row, Math.abs(b - a) + 1);
+        term.select(bounds.start, pressed.row, bounds.end - bounds.start + 1);
         showTouchSelectionCaret(end);
         try { navigator.vibrate?.(10); } catch (_) {}
         // Da questo momento il gesto e' selezione, non scroll.
@@ -495,21 +532,35 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const onTouchMove = (e) => {
       if (touchSelecting && selectStart && e.touches.length === 1) {
         e.preventDefault(); e.stopPropagation();
-        const end = touchSelectionCellAt(e.touches[0], touchSelectionOffsetRows);
+        // R25-zoom rev4: estremita' mobile = cella ESATTA sotto il dito, con
+        // snap al bordo del glifo largo (mai a meta' di un emoji/CJK).
+        const raw = cellXY(e.touches[0].clientX, e.touches[0].clientY);
         const a = selectStart.row * term.cols + selectStart.col;
-        const b = end.row * term.cols + end.col;
-        const first = a <= b ? selectStart : end;
-        term.select(first.col, first.row, Math.abs(b - a) + 1);
+        const b = raw.row * term.cols + raw.col;
+        const side = a <= b ? 'end' : 'start';
+        const line = term.buffer.active.getLine(raw.row);
+        const col = snapWideCol({ line, col: raw.col, side, cols: term.cols });
+        const end = { row: raw.row, col };
+        const b2 = end.row * term.cols + end.col;
+        const first = a <= b2 ? selectStart : end;
+        term.select(first.col, first.row, Math.abs(b2 - a) + 1);
         showTouchSelectionCaret(end);
         return;
       }
       if (selectionModeRef.current && selectStart && e.touches.length === 1) {
         e.preventDefault(); e.stopPropagation();
-        const end = touchSelectionCellAt(e.touches[0], touchSelectionOffsetRows);
+        // R25-zoom rev4: estremita' mobile = cella ESATTA sotto il dito, con
+        // snap al bordo del glifo largo (mai a meta' di un emoji/CJK).
+        const raw = cellXY(e.touches[0].clientX, e.touches[0].clientY);
         const a = selectStart.row * term.cols + selectStart.col;
-        const b = end.row * term.cols + end.col;
-        const first = a <= b ? selectStart : end;
-        term.select(first.col, first.row, Math.abs(b - a) + 1);
+        const b = raw.row * term.cols + raw.col;
+        const side = a <= b ? 'end' : 'start';
+        const line = term.buffer.active.getLine(raw.row);
+        const col = snapWideCol({ line, col: raw.col, side, cols: term.cols });
+        const end = { row: raw.row, col };
+        const b2 = end.row * term.cols + end.col;
+        const first = a <= b2 ? selectStart : end;
+        term.select(first.col, first.row, Math.abs(b2 - a) + 1);
         showTouchSelectionCaret(end);
         return;
       }
@@ -537,7 +588,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const resetTouch = () => {
       clearLongPress(); touchY = null; touchX = null; tapX = null; tapY = null;
       selectStart = null; touchSelecting = false; touchMoved = false; multiTouchActive = false;
-      touchSelectionOffsetRows = 0; setTouchSelectionCaret(null);
+      setTouchSelectionCaret(null);
       touchScroll = { mode: null, remainder: 0 };
     };
     const onTouchEnd = (e) => {
@@ -631,23 +682,29 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // dito non deve centrare l'ancora), le maniglie NON si incrociano, il
     // dito oltre il bordo fa scorrere il terminale. La selezione resta tutta
     // di xterm: qui si chiede solo un nuovo range a term.select().
-    let handleDrag = null;         // { which, offsetX, offsetY }
     let handleEdgeTimer = null;
     let lastHandlePointer = { x: 0, y: 0, type: 'touch' };
     const stopHandleEdgeScroll = () => {
       if (handleEdgeTimer) { clearInterval(handleEdgeTimer); handleEdgeTimer = null; }
     };
     const applyHandlePoint = (px, py, pointerType) => {
-      if (!handleDrag) return;
-      const range = rangeFromXterm(term.getSelectionPosition());
-      if (!range) return;
-      const fixed = handleDrag.which === 'start' ? range.end : range.start;
+      if (!handleDrag || !handleDrag.fixed) return;
+      // R25-zoom rev3-audit: l'ancora e' quella catturata ALLA PRESA dallo
+      // stato normalizzato (selRange), non una rilettura del range grezzo a
+      // ogni pointermove: su una selezione nativa invertita la rilettura
+      // dava l'estremita' sbagliata (maniglia congelata, lato opposto perso).
+      const fixed = handleDrag.fixed;
       // Su touch il dito COPRE il punto: la cella di lavoro sta ±2 righe piu'
-      // in la', lo stesso offset del long-press. Il mouse ha il cursore
-      // preciso: niente offset.
-      const cell = pointerType === 'mouse'
+      // in la' (offset del drag maniglie, diverso dall'offset di riga della
+      // selezione touch, rimosso in rev4). Il mouse ha il cursore preciso:
+      // niente offset.
+      const raw = pointerType === 'mouse'
         ? cellXY(px, py)
         : touchSelectionCellAt({ clientX: px, clientY: py }, touchSelectionOffsetFor(py));
+      // R25-zoom rev4: la maniglia non si pianta a meta' di un glifo largo
+      // (variante di getValidCurX: start al bordo sinistro, end al destro).
+      const line = term.buffer.active.getLine(raw.row);
+      const cell = { row: raw.row, col: snapWideCol({ line, col: raw.col, side: handleDrag.which, cols: term.cols }) };
       const maxRow = Math.max(0, Number(term.buffer.active.baseY || 0) + term.rows - 1);
       const moved = clampDraggedCell({ moving: cell, fixed, which: handleDrag.which, cols: term.cols, maxRow });
       const sel = rangeToSelect(normalizeRange(moved, fixed, term.cols), term.cols);
@@ -677,7 +734,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       lastHandlePointer = { x: e.clientX, y: e.clientY, type: e.pointerType || lastHandlePointer.type };
       applyHandlePoint(e.clientX - handleDrag.offsetX, e.clientY - handleDrag.offsetY, lastHandlePointer.type);
     };
-    const onHandleDragEnd = () => {
+    const endHandleDrag = () => {
       handleDrag = null;
       stopHandleEdgeScroll();
       setDraggingHandle(null);
@@ -685,6 +742,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       window.removeEventListener('pointerup', onHandleDragEnd);
       window.removeEventListener('pointercancel', onHandleDragEnd);
     };
+    const onHandleDragEnd = () => endHandleDrag();
     handleDragApiRef.current = {
       startHandleDrag: (which, e) => {
         if (!term.getSelectionPosition()) return;
@@ -694,9 +752,16 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
           which,
           offsetX: g ? e.clientX - g.left : 0,
           offsetY: g ? e.clientY - g.top : 0,
+          // R25-zoom rev3-audit: l'ancora e' una decisione presa UNA volta,
+          // alla presa della maniglia, dallo stato normalizzato (selRange).
+          // Rileggerla grezza a ogni pointermove (getSelectionPosition) su
+          // una selezione nativa invertita (start>end) dava l'estremita'
+          // sbagliata: maniglia congelata o lato opposto perso.
+          fixed: selRangeRef.current ? (which === 'start' ? selRangeRef.current.end : selRangeRef.current.start) : null,
         };
         lastHandlePointer = { x: e.clientX, y: e.clientY, type: e.pointerType || 'touch' };
         setDraggingHandle(which);
+        setZoomFocus(which); // la barra zoom segue la maniglia che si muove
         window.addEventListener('pointermove', onHandleDragMove);
         window.addEventListener('pointerup', onHandleDragEnd);
         window.addEventListener('pointercancel', onHandleDragEnd);
@@ -794,23 +859,39 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // cambiamento del range e a ogni tick di viewport/redraw; misura lo schermo
   // reale e deriva la grandezza della cella — la stessa strada del caret del
   // long-press, cosi' le due viste non divergono.
+  // R25-zoom: allo STESSO battito si deriva la barra di zoom — la riga della
+  // maniglia in focus si rilegge dal buffer QUI, quindi la barra segue il
+  // drag, lo scroll e il testo vivo esattamente come le maniglie, senza una
+  // fonte di verita' separata da tenere in sync. L'ingrandimento e' 2x la
+  // cella REALE del terminale (misurata qui sopra), non un font fisso.
   useEffect(() => {
     const host = hostRef.current;
     const term = apiRef.current ? apiRef.current.term : null;
-    if (!host || !term || !selRange) { setHandleGeom(null); return; }
+    if (!host || !term || !selRange) { setHandleGeom(null); setZoomView(null); return; }
     const screen = host.querySelector('.xterm-screen') || host;
     const screenRect = screen.getBoundingClientRect();
     const hostRect = host.getBoundingClientRect();
+    const cellWidth = screenRect.width / Math.max(1, term.cols);
+    const cellHeight = screenRect.height / Math.max(1, term.rows);
     setHandleGeom(handlePositions({
       range: selRange,
       viewportY: Number(term.buffer.active.viewportY) || 0,
       rows: term.rows,
-      cellWidth: screenRect.width / Math.max(1, term.cols),
-      cellHeight: screenRect.height / Math.max(1, term.rows),
+      cellWidth,
+      cellHeight,
       screenLeft: screenRect.left - hostRect.left,
       screenTop: screenRect.top - hostRect.top,
     }));
-  }, [selRange, geomTick]);
+    let line = null;
+    const focusRow = selRange[zoomFocus === 'end' ? 'end' : 'start'].row;
+    if (typeof term.buffer.active.getLine === 'function') {
+      line = term.buffer.active.getLine(Number(focusRow));
+    }
+    setZoomView(!line ? null : {
+      ...zoomLineForRange({ range: selRange, side: zoomFocus, line, cols: term.cols }),
+      fontSize: Math.max(16, Math.round(cellHeight * 2)),
+    });
+  }, [selRange, geomTick, zoomFocus]);
 
   return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
     <div className="nc-terminal-host" ref={hostRef} />
@@ -824,6 +905,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         aria-hidden="true"
       />
     )))}
+    {selRange && zoomView && (
+      <div className="nc-zoom-bar" aria-hidden="true">
+        <pre className="nc-zoom-line" style={{ fontSize: `${zoomView.fontSize}px` }}>
+          <span>{zoomView.before}</span><span className="nc-zoom-sel">{zoomView.sel}</span><span>{zoomView.after}</span>
+        </pre>
+      </div>
+    )}
     {uploadState && <div className={`nc-upload-state${uploadState.error ? ' error' : ''}`} role="status">
       {uploadState.error
         ? uploadState.error

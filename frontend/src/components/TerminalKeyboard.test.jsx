@@ -9,7 +9,18 @@ vi.mock('@xterm/xterm', () => ({
     constructor() {
       this.textarea = document.createElement('textarea');
       this.options = {}; this.cols = 80; this.rows = 24;
-      this.buffer = { active: { viewportY: 0, baseY: 0, type: 'normal' } };
+      const self = this;
+      this.buffer = { active: {
+        viewportY: 0, baseY: 0, type: 'normal',
+        // API pubblica di xterm: getLine(y) → riga del buffer con getCell(col).
+        getLine: (y) => ({
+          getCell: (col) => {
+            const text = self.lineTexts.get(y) ?? '';
+            return { getChars: () => text[col] ?? '', getWidth: () => 1 };
+          },
+        }),
+      } };
+      this.lineTexts = new Map();
       this.selectCalls = []; this.scrollLinesCalls = [];
       // Modalita' e parser come li espone xterm: `modes` per il tracking del
       // mouse, `parser` per osservare la codifica SGR (DECSET 1006) sul filo.
@@ -57,7 +68,14 @@ vi.mock('@xterm/xterm', () => ({
     getSelection() { return this.selectionText || ''; }
     hasSelection() { return !!this.selectionText; }
     clearSelection() { this.selectionText = ''; }
-    select(col, row, length) { this.selectCalls.push({ col, row, length }); }
+    select(col, row, length) {
+      this.selectCalls.push({ col, row, length });
+      const endLinear = row * this.cols + col + length - 1;
+      this.selectionPosition = {
+        start: { x: col, y: row },
+        end: { x: endLinear % this.cols, y: Math.floor(endLinear / this.cols) },
+      };
+    }
     write() {}
     paste() {}
     dispose() {}
@@ -222,7 +240,7 @@ describe('terminal double-tap cancellation', () => {
 });
 
 describe('terminal long-press touch selection', () => {
-  it('keeps the anchor under the long-press while the visible caret tracks two rows above the finger', () => {
+  it('il punto premuto e\' la cella esatta: la selezione parte li\' e il caret la segue (rev4)', () => {
     const onSelectionModeChange = vi.fn();
     const view = renderTerminal('double-tap', { onSelectionModeChange });
     const host = view.container.querySelector('.nc-terminal-host');
@@ -233,22 +251,24 @@ describe('terminal long-press touch selection', () => {
     act(() => vi.advanceTimersByTime(450));
     let caret = view.container.querySelector('.nc-touch-selection-caret');
     expect(onSelectionModeChange).toHaveBeenCalledWith(true);
-    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 8, length: 161 });
+    // riga 10 = riga premuta (niente offset -2); cella vuota → 1 cella.
+    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 1 });
     expect(caret.style.left).toBe('50px');
-    expect(caret.style.top).toBe('160px');
+    expect(caret.style.top).toBe('200px');
 
     fireEvent.touchMove(host, { touches: [{ clientX: 70, clientY: 240 }] });
     caret = view.container.querySelector('.nc-touch-selection-caret');
-    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 3 });
+    // estremita' mobile = cella esatta sotto il dito: (7, 12).
+    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 163 });
     expect(caret.style.left).toBe('70px');
-    expect(caret.style.top).toBe('200px');
+    expect(caret.style.top).toBe('240px');
 
     fireEvent.touchEnd(host, { changedTouches: [{ clientX: 70, clientY: 240 }] });
     expect(view.container.querySelector('.nc-touch-selection-caret')).toBeNull();
-    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 3 });
+    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 163 });
   });
 
-  it('inverts below the top edge and renders the caret even on the last empty cell', () => {
+  it('il punto esatto vale anche sul bordo alto: caret sulla cella premuta (rev4)', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
@@ -257,31 +277,30 @@ describe('terminal long-press touch selection', () => {
     fireEvent.touchStart(host, { touches: [{ clientX: 799, clientY: 10 }] });
     act(() => vi.advanceTimersByTime(450));
     const caret = view.container.querySelector('.nc-touch-selection-caret');
-    expect(term.selectCalls.at(-1)).toEqual({ col: 79, row: 0, length: 161 });
+    // ultima colonna, prima riga: la cella premuta, senza offset.
+    expect(term.selectCalls.at(-1)).toEqual({ col: 79, row: 0, length: 1 });
     expect(caret.style.left).toBe('790px');
-    expect(caret.style.top).toBe('40px');
+    expect(caret.style.top).toBe('0px');
     expect(caret.style.width).toBe('10px');
     expect(caret.style.height).toBe('20px');
   });
 
-  // Il long-press lavora due righe sopra il dito e mostra un caret, cosi' si
-  // vede cosa si sta prendendo. Il percorso selectionMode — quello del tasto
-  // SELECT e di ogni tocco successivo — usava invece la cella SOTTO il
-  // polpastrello, cioe' l'unica coperta mentre la si sceglie. Erano due
-  // comportamenti diversi per lo stesso gesto, e il secondo era quello che
-  // l'operatore incontrava piu' spesso.
-  it('applies the same lift and caret on the selectionMode path', () => {
+  // Long-press e percorso selectionMode (tasto SELECT, tocchi successivi)
+  // condividono lo stesso contratto: punto di pressione ESATTO, caret sulla
+  // cella premuta, espansione a parola. Prima erano due comportamenti
+  // diversi per lo stesso gesto.
+  it('il percorso selectionMode usa lo stesso punto esatto del long-press (rev4)', () => {
     const view = renderTerminal('double-tap', { selectionMode: true });
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
     terminalBounds(host);
 
     fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
-    fireEvent.touchMove(host, { touches: [{ clientX: 50, clientY: 240 }] });
-    // Due righe piu' in alto dell'ancora assoluta di prima, su entrambi gli
-    // estremi: la selezione resta della stessa lunghezza ma si vede.
-    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 8, length: 161 });
+    // il tocco in selectionMode seleziona SUBITO la cella premuta (riga 10)
+    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 1 });
     expect(view.container.querySelector('.nc-touch-selection-caret')).not.toBeNull();
+    fireEvent.touchMove(host, { touches: [{ clientX: 50, clientY: 240 }] });
+    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 161 });
   });
 
   it('hides the long-press caret immediately when a second finger joins the gesture', () => {
