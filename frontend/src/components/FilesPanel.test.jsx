@@ -44,3 +44,24 @@ describe('FilesPanel error messages (R27 #7)', () => {
     expect(apiFetch).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('FilesPanel upload (R31-A2)', () => {
+  it('shows when a requested paste never reached the cell: 502 + server cause', async () => {
+    // Il backend risponde 502 con la causa vera quando il paste richiesto non
+    // arriva alla PTY. uploadFiles legge gia' j.error qualunque sia lo status:
+    // questa guardia protegge la catena — un upload "riuscito" che nessuna
+    // cella ha ricevuto deve dire perche', a schermo come in risposta.
+    apiFetch.mockResolvedValueOnce({
+      ok: false, status: 502,
+      json: async () => ({
+        error: 'paste fallito: sessione "cloud-Dev" non raggiungibile',
+        name: '20260819-0000_doc.txt', path: '/tmp/nc/doc.txt', size: 4, pasted: false,
+      }),
+    });
+    apiFetch.mockResolvedValueOnce(listResponse); // refresh dopo l'upload
+    const { container } = render(<FilesPanel session="cloud-Dev" token="t" onClose={() => {}} />);
+    const input = container.querySelector('input[type=file]');
+    fireEvent.change(input, { target: { files: [new File(['ciao'], 'doc.txt', { type: 'text/plain' })] } });
+    expect(await screen.findByText('errore: paste fallito: sessione "cloud-Dev" non raggiungibile')).toBeTruthy();
+  });
+});
