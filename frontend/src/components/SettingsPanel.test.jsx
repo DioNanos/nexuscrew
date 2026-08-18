@@ -550,3 +550,36 @@ describe('Settings Nodes tab — VL nodes across REMOTE owners (NC_UI_NODI_VL_RE
   });
 });
 
+
+// R31: un controllo MAI eseguito non puo' produrre il verdetto «up to date».
+// Due stati che prima coincidevano: phase 'idle' + lastCheckedAt vuoto (nessun
+// controllo mai partito) vs phase 'idle' + lastCheckedAt pieno (controllato,
+// nessuna novita'). Il secondo deve restare «up to date».
+describe('R31 — «mai controllato» non è «up to date»', () => {
+  // Fixture fedeli alla risposta reale: il campo derivato `checked` ora
+  // arriva dal manager (status()); la UI NON lo ricava da sola.
+  const MAI_CONTROLLATO = {
+    supported: true, phase: 'idle', current: '0.9.7', latest: '0.9.7',
+    available: false, lastCheckedAt: '', checked: false,
+  };
+  const CONTROLLATO = { ...MAI_CONTROLLATO, lastCheckedAt: '2026-08-18T19:00:00.000Z', checked: true };
+
+  function renderSystemTab(update) {
+    mocks.getSettings.mockResolvedValue({
+      version: '0.9.7', platform: 'linux', port: 41820, update,
+    });
+    return render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+  }
+
+  it('CONTROLLO NEGATIVO: stato mai inizializzato — oggi dice «up to date», deve dire «never checked»', async () => {
+    renderSystemTab(MAI_CONTROLLATO);
+    await waitFor(() => expect(document.body.textContent).toContain('never checked'));
+    expect(document.body.textContent).not.toContain('up to date');
+  });
+
+  it('controllato davvero e senza novità: «up to date» resta il verdetto giusto', async () => {
+    renderSystemTab(CONTROLLATO);
+    await waitFor(() => expect(document.body.textContent).toContain('up to date'));
+    expect(document.body.textContent).not.toContain('never checked');
+  });
+});

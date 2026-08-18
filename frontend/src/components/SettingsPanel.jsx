@@ -999,7 +999,15 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
               <div className="nc-set-info">
                 {t('npm-update-current')} v{updateView.current}
                 {updateView.latest ? ` · ${t('npm-update-latest')} v${updateView.latest}` : ''}
-                {' · '}{t(`npm-update-${updateView.supported ? updateView.phase : 'unsupported'}`)}
+                {' · '}{t(updateView.supported
+                  // R31: phase 'idle' su uno stato MAI controllato non e' il
+                  // verdetto «up to date» — e' un'ignoranza travestita da
+                  // buona notizia. La frase positiva spetta solo a un check
+                  // davvero eseguito (lastCheckedAt scritto a ogni check).
+                  ? (updateView.phase === 'idle' && updateView.checked !== true
+                    ? 'npm-update-never'
+                    : `npm-update-${updateView.phase}`)
+                  : 'unsupported')}
               </div>
             )}
             <div className="nc-set-row">
