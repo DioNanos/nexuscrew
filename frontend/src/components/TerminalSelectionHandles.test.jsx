@@ -23,10 +23,20 @@ vi.mock('@xterm/xterm', () => ({
       this.buffer = { active: {
         viewportY: 0, baseY: 100, type: 'normal',
         // Fedele all'API pubblica di xterm: getLine(y) → riga del buffer,
-        // translateToString() ne da' il testo.
+        // translateToString(trimRight, startColumn, endColumn) ne da' il testo
+        // per COLONNE (i test mockano righe ASCII: slice per colonne e' fedele).
         getLine(y) {
           self.getLineCalls.push(y);
-          return { translateToString: () => self.lineTexts.get(y) ?? '' };
+          return {
+            translateToString: (trimRight, startColumn, endColumn) => {
+              const text = self.lineTexts.get(y) ?? '';
+              let out = text;
+              if (Number.isInteger(startColumn) && Number.isInteger(endColumn)) {
+                out = text.slice(startColumn, endColumn);
+              }
+              return trimRight ? out.replace(/\s+$/, '') : out;
+            },
+          };
         },
       } };
       this.selectCalls = []; this.scrollLinesCalls = [];

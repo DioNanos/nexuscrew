@@ -824,14 +824,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       screenLeft: screenRect.left - hostRect.left,
       screenTop: screenRect.top - hostRect.top,
     }));
-    let lineText = null;
+    let line = null;
     const focusRow = selRange[zoomFocus === 'end' ? 'end' : 'start'].row;
     if (typeof term.buffer.active.getLine === 'function') {
-      const line = term.buffer.active.getLine(Number(focusRow));
-      lineText = line ? line.translateToString(true) : '';
+      line = term.buffer.active.getLine(Number(focusRow));
     }
-    setZoomView(lineText === null ? null : {
-      ...zoomLineForRange({ range: selRange, side: zoomFocus, lineText }),
+    setZoomView(!line ? null : {
+      ...zoomLineForRange({ range: selRange, side: zoomFocus, line, cols: term.cols }),
       fontSize: Math.max(16, Math.round(cellHeight * 2)),
     });
   }, [selRange, geomTick, zoomFocus]);
