@@ -32,9 +32,20 @@ function r28RimedioFixture(platform, { thirdPartyService = false } = {}) {
   fs.mkdirSync(path.dirname(serviceTarget), { recursive: true });
   fs.mkdirSync(path.dirname(fleetTarget), { recursive: true });
   const thirdParty = '[Unit]\nDescription=Altro servizio\n[Service]\nExecStart=/usr/bin/altro\n';
+  // Le definizioni "nostre" della fixture nascono dal GENERATORE VERO col node
+  // morto: un file scritto a mano non prova il riconoscimento di proprieta',
+  // prova solo che la fixture contiene la parola giusta.
+  const ctxGen = {
+    repoRoot: path.resolve(__dirname, '..'), nodeBin: deadNode,
+    entryPath: path.join(path.resolve(__dirname, '..'), 'bin', 'nexuscrew.js'),
+    home: dir, uid: 501, port: 41777,
+  };
   fs.writeFileSync(serviceTarget, thirdPartyService ? thirdParty
-    : `# NexusCrew service (fixture) — punta al node morto\nExec=${deadNode} serve\n`);
-  fs.writeFileSync(fleetTarget, `# NexusCrew fleet boot companion (fixture) — punta al node morto\nExec=${deadNode} fleet-boot\n`);
+    : serviceMod.generateService(platform, ctxGen));
+  fs.writeFileSync(fleetTarget, fleetMod.generateFleetService({
+    platform, nodeBin: deadNode, entryPath: ctxGen.entryPath,
+    repoRoot: ctxGen.repoRoot, home: dir,
+  }));
   const platformMod = {
     detectPlatform: () => platform,
     nodeBin: () => deadNode,
@@ -539,14 +550,22 @@ test('npm update runner: l\'upgrade rigenera ENTRAMBE le definizioni di boot qua
 
   // Le definizioni installate PRIMA dell'upgrade: entrambe puntano al node
   // morto. Devono esistere già — il contratto R28 sana solo ciò che c'è.
-  // R28-rimedio: l'header `NexusCrew` come nelle definizioni reali — la
-  // sanazione ora riconosce come NOSTRE solo le definizioni col nostro nome.
+  // Le definizioni di partenza nascono dal GENERATORE VERO, col node morto:
+  // una fixture scritta a mano si adatta alla guardia invece che alla realta',
+  // e il riconoscimento di proprieta' resterebbe non provato.
   const serviceTarget = serviceMod.installPath('linux', dir);
   const fleetTarget = fleetMod.fleetInstallPath('linux', dir);
   fs.mkdirSync(path.dirname(serviceTarget), { recursive: true });
   fs.mkdirSync(path.dirname(fleetTarget), { recursive: true });
-  fs.writeFileSync(serviceTarget, `# NexusCrew service (systemd --user) — fixture\n[Service]\nExecStart=${deadNode} serve\n`);
-  fs.writeFileSync(fleetTarget, `# NexusCrew fleet boot companion — fixture\n[Service]\nExecStart=${deadNode} fleet-boot\n`);
+  const entryPath = path.join(path.resolve(__dirname, '..'), 'bin', 'nexuscrew.js');
+  fs.writeFileSync(serviceTarget, serviceMod.generateService('linux', {
+    repoRoot: path.resolve(__dirname, '..'), nodeBin: deadNode, entryPath,
+    home: dir, uid: 1000, port: 41777,
+  }));
+  fs.writeFileSync(fleetTarget, fleetMod.generateFleetService({
+    platform: 'linux', nodeBin: deadNode, entryPath,
+    repoRoot: path.resolve(__dirname, '..'), home: dir,
+  }));
 
   const platformMod = {
     detectPlatform: () => 'linux',
@@ -738,4 +757,83 @@ test('npm update runner: un file regolare DI TERZI al posto del target non viene
     'lo skip del file di terzi è dichiarato, non silenzioso');
   assert.ok(out.regenerated.includes('fleet-companion'),
     'la definizione NOSTRA viene comunque sanata');
+});
+
+
+// ---------------------------------------------------------------------------
+// R28 proprieta' strutturale (audit rev2): la guardia /nexuscrew/i sovrascriveva
+// un file di terzi che nomina NexusCrew in un commento, e presumeva NOSTRO un
+// file illeggibile. La proprieta' si riconosce da un'ancora STRUTTURALE emessa
+// dal nostro generatore, e cio' che non si riesce a identificare non si tocca.
+// ---------------------------------------------------------------------------
+
+test('R28: un unit di TERZI che NOMINA NexusCrew in un commento non viene toccato', (t) => {
+  const f = r28RimedioFixture('linux', { thirdPartyService: true });
+  t.after(f.cleanup);
+  // Caso reale: un servizio altrui che dichiara di lavorare accanto al nostro.
+  const terzoCheCiNomina = [
+    '# Avviato dopo NexusCrew, con cui condivide il tmux',
+    '[Unit]',
+    'Description=Monitor di terze parti',
+    '[Service]',
+    'ExecStart=/usr/bin/monitor --accanto-a nexuscrew',
+    '',
+  ].join('\n');
+  fs.writeFileSync(f.serviceTarget, terzoCheCiNomina);
+
+  const out = regenBootDefinitions({
+    home: f.dir, platform: 'linux',
+    platformMod: f.platformMod, aliasMod: f.aliasMod, exists: f.onlyAlive,
+    log: () => {},
+  });
+
+  assert.equal(fs.readFileSync(f.serviceTarget, 'utf8'), terzoCheCiNomina,
+    'nominare NexusCrew non rende un file NOSTRO: resta intatto');
+  assert.ok(out.skipped.some((x) => x.startsWith('service:')),
+    'lo skip e\' dichiarato');
+  assert.ok(!out.regenerated.includes('service'),
+    'il servizio di terzi non risulta rigenerato');
+  assert.ok(out.regenerated.includes('fleet-companion'),
+    'la definizione nostra viene comunque sanata');
+});
+
+test('R28: un file ILLEGGIBILE non si presume nostro — si salta e si dichiara', (t) => {
+  const f = r28RimedioFixture('linux');
+  t.after(f.cleanup);
+  const eacces = () => { const e = new Error('permesso negato'); e.code = 'EACCES'; throw e; };
+
+  const out = regenBootDefinitions({
+    home: f.dir, platform: 'linux',
+    platformMod: f.platformMod, aliasMod: f.aliasMod, exists: f.onlyAlive,
+    readFileImpl: (p) => (p === f.serviceTarget ? eacces() : fs.readFileSync(p, 'utf8')),
+    log: () => {},
+  });
+
+  assert.ok(!out.regenerated.includes('service'),
+    'cio\' che non si riesce a leggere non si sovrascrive');
+  assert.ok(out.skipped.some((x) => x.startsWith('service:') && /legg|identific/i.test(x)),
+    'il motivo dichiarato dice che non si e\' potuto identificare, non che e\' di terzi');
+  assert.ok(out.regenerated.includes('fleet-companion'),
+    'un target illeggibile non blocca la sanazione dell\'altro');
+});
+
+test('R28: il generatore vero produce definizioni che il riconoscitore accetta', () => {
+  // Ancora e comportamento: se qualcuno cambia il template e non l'ancora,
+  // questo diventa rosso invece di far fallire la sanazione sul campo.
+  const repoRoot = path.resolve(__dirname, '..');
+  const ctx = {
+    repoRoot, nodeBin: '/usr/bin/node',
+    entryPath: path.join(repoRoot, 'bin', 'nexuscrew.js'),
+    home: '/home/tizio', uid: 501, port: 41777,
+  };
+  for (const platform of ['linux', 'mac', 'termux']) {
+    assert.equal(serviceMod.isOurService(platform, serviceMod.generateService(platform, ctx)), true,
+      `il servizio generato per ${platform} e\' riconosciuto come nostro`);
+    assert.equal(fleetMod.isOurFleetService(platform, fleetMod.generateFleetService({
+      platform, nodeBin: ctx.nodeBin, entryPath: ctx.entryPath, repoRoot, home: ctx.home,
+    })), true, `la companion generata per ${platform} e\' riconosciuta come nostra`);
+    // e un file altrui non lo e', neanche se ci nomina
+    assert.equal(serviceMod.isOurService(platform, '# accanto a NexusCrew\nDescription=Altro\n'), false,
+      `un file di terzi che ci nomina non e\' nostro (${platform})`);
+  }
 });

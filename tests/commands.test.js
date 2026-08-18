@@ -1458,8 +1458,17 @@ test('update: npm ok -> rigenera le definizioni sul node VIVO e applica daemon-r
   const fleetTarget = fleetMod.fleetInstallPath('linux', dir);
   fs.mkdirSync(path.dirname(serviceTarget), { recursive: true });
   fs.mkdirSync(path.dirname(fleetTarget), { recursive: true });
-  fs.writeFileSync(serviceTarget, `# NexusCrew service (fixture) — punta al node morto\nExec=${deadNode} serve\n`);
-  fs.writeFileSync(fleetTarget, `# NexusCrew fleet boot companion (fixture) — punta al node morto\nExec=${deadNode} fleet-boot\n`);
+  // Generatore VERO col node morto: una fixture scritta a mano proverebbe la
+  // guardia contro se' stessa invece che contro le definizioni reali.
+  const entryPathFx = path.join(path.resolve(__dirname, '..'), 'bin', 'nexuscrew.js');
+  fs.writeFileSync(serviceTarget, serviceMod.generateService('linux', {
+    repoRoot: path.resolve(__dirname, '..'), nodeBin: deadNode, entryPath: entryPathFx,
+    home: dir, uid: 1000, port: 41777,
+  }));
+  fs.writeFileSync(fleetTarget, fleetMod.generateFleetService({
+    platform: 'linux', nodeBin: deadNode, entryPath: entryPathFx,
+    repoRoot: path.resolve(__dirname, '..'), home: dir,
+  }));
   const platformMod = {
     detectPlatform: () => 'linux',
     nodeBin: () => deadNode,
