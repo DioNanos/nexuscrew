@@ -30,7 +30,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   const [selection, setSelection] = useState('');
   const [copyState, setCopyState] = useState('');
   const [uploadState, setUploadState] = useState(null);
-  const [touchSelectionCaret, setTouchSelectionCaret] = useState(null);
+  // Maniglie di selezione touch (start/end): posizioni pixel relative all'host.
+  // Sostituiscono il caret singolo: due maniglie draggable per affinare i bordi.
+  const [touchHandles, setTouchHandles] = useState(null);
+  const selBoundsRef = useRef(null);   // {start:{col,row}, end:{col,row}} bounds correnti
+  const handleDragRef = useRef(null);  // 'start' | 'end' | null durante il drag di una maniglia
   // Lo snapshot puo' sopravvivere alla propria evidenziazione: xterm la butta
   // a ogni input verso l'applicazione e a ogni resize di righe (sul telefono
   // basta la tastiera virtuale). In quel caso il testo resta copiabile ma non
@@ -45,7 +49,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // Lo snapshot e' persistente per costruzione: solo copia e annulla lo
     // svuotano. Se una copia riuscita non lo facesse, la barra resterebbe su
     // per sempre offrendo di ricopiare un testo gia' preso.
-    if (ok) { apiRef.current?.term?.clearSelection(); setSelection(''); setSelectionDetached(false); onSelectionModeChange?.(false); }
+    if (ok) { apiRef.current?.term?.clearSelection(); setSelection(''); setSelectionDetached(false); setTouchHandles(null); selBoundsRef.current = null; onSelectionModeChange?.(false); }
     setTimeout(() => setCopyState(''), 1800);
   };
   // doCopy cambia ad ogni render (closure su selection/lang): lo si tiene in un
@@ -53,6 +57,85 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // sempre la versione fresca, senza dover re-iscrivere i listener.
   const doCopyRef = useRef(doCopy);
   doCopyRef.current = doCopy;
+
+  // --- Maniglie di selezione touch (sostituiscono il caret) ------------------
+  // cellAtClient: coord client -> {col, row} in coordinate buffer (lato componente,
+  // per il drag delle maniglie che vivono fuori dal mount effect).
+  const cellAtClient = (clientX, clientY) => {
+    const api = apiRef.current; const host = hostRef.current; if (!api || !host) return null;
+    const term = api.term;
+    const screen = host.querySelector('.xterm-screen') || host;
+    const r = screen.getBoundingClientRect();
+    const col = Math.max(0, Math.min(term.cols - 1, Math.floor(((clientX - r.left) / Math.max(1, r.width)) * term.cols)));
+    const visibleRow = Math.max(0, Math.min(term.rows - 1, Math.floor(((clientY - r.top) / Math.max(1, r.height)) * term.rows)));
+    return { col, row: term.buffer.active.viewportY + visibleRow };
+  };
+  // Posiziona le due maniglie dai bounds correnti (selBoundsRef) + metriche cella.
+  const positionHandles = () => {
+    const api = apiRef.current; const host = hostRef.current; const b = selBoundsRef.current;
+    if (!api || !host || !b) { setTouchHandles(null); return; }
+    const term = api.term;
+    const screen = host.querySelector('.xterm-screen') || host;
+    const sr = screen.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    const cellW = sr.width / Math.max(1, term.cols);
+    const cellH = sr.height / Math.max(1, term.rows);
+    const vpY = Number(term.buffer.active.viewportY) || 0;
+    const px = (cell, atRight) => {
+      const vr = Math.max(0, Math.min(term.rows - 1, cell.row - vpY));
+      return {
+        left: (sr.left - hostRect.left) + (atRight ? (cell.col + 1) : cell.col) * cellW,
+        top: (sr.top - hostRect.top) + (vr + 1) * cellH,
+      };
+    };
+    setTouchHandles({ start: px(b.start, false), end: px(b.end, true) });
+  };
+  const positionHandlesRef = useRef(positionHandles); positionHandlesRef.current = positionHandles;
+  // Drag di una maniglia: sposta solo quel bordo, l'altro resta (touch-action:none
+  // sullo handle basta a fermare lo scroll; i listener React sono passive).
+  // --- Barra zoom (linea selezionata ingrandita, in alto) -------------------
+  // Mostra la riga under selection a 2x con la porzione selezionata evidenziata,
+  // cosi' l'operatore vede cosa sta selezionando senza lente sul dito. Aggiornata
+  // a ogni cambio selezione (onSelectionChange copre tutti i path touch).
+  const [zoomLine, setZoomLine] = useState(null);
+  const zoomFocusRef = useRef('start');  // quale maniglia sta guidando la barra zoom
+  const updateZoomLine = () => {
+    const b = selBoundsRef.current; const api = apiRef.current;
+    if (!b || !api || !selectionModeRef.current) { setZoomLine(null); return; }
+    const term = api.term;
+    const side = zoomFocusRef.current || 'start';
+    const row = b[side].row;
+    const line = term.buffer.active.getLine(row);
+    const text = line ? line.translateToString(true) : '';
+    // Porzione selezionata sulla riga della maniglia in focus.
+    let s, e;
+    if (b.start.row === b.end.row) { s = b.start.col; e = b.end.col; }
+    else if (row === b.start.row) { s = b.start.col; e = text.length - 1; }
+    else if (row === b.end.row) { s = 0; e = b.end.col; }
+    else { s = 0; e = text.length - 1; }
+    s = Math.max(0, Math.min(text.length - 1, s));
+    e = Math.max(s, Math.min(text.length - 1, e));
+    setZoomLine({ before: text.slice(0, s), sel: text.slice(s, e + 1), after: text.slice(e + 1) });
+  };
+  const updateZoomLineRef = useRef(updateZoomLine); updateZoomLineRef.current = updateZoomLine;
+  // Drag di una maniglia: sposta solo quel bordo, l'altro resta (touch-action:none
+  // sullo handle basta a fermare lo scroll; i listener React sono passive).
+  const onHandleTouchStart = (side) => (e) => { e.stopPropagation(); handleDragRef.current = side; zoomFocusRef.current = side; };
+  const onHandleTouchMove = (side) => (e) => {
+    if (handleDragRef.current !== side) return;
+    const api = apiRef.current; if (!api || e.touches.length !== 1) return;
+    const term = api.term;
+    const cell = cellAtClient(e.touches[0].clientX, e.touches[0].clientY); if (!cell) return;
+    const b = selBoundsRef.current; if (!b) return;
+    const other = side === 'start' ? b.end : b.start;
+    const a = side === 'start' ? cell : other, c = side === 'start' ? other : cell;
+    const ai = a.row * term.cols + a.col, ci = c.row * term.cols + c.col;
+    const lo = ai <= ci ? a : c, hi = ai <= ci ? c : a;
+    term.select(lo.col, lo.row, Math.abs(ci - ai) + 1);
+    selBoundsRef.current = { start: lo, end: hi };
+    positionHandles();
+  };
+  const onHandleTouchEnd = () => { handleDragRef.current = null; };
 
   // Focus → size-owner (§5b): quando il tile prende/perde il focus manda il
   // frame 'focus' cosi' il server promuove/demota il client (ignore-size).
@@ -226,7 +309,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const onSelection = term.onSelectionChange(() => {
       const next = term.getSelection();
       if (next) { setSelection(next); setSelectionDetached(false); }
-      else setSelectionDetached(true);
+      else { setSelectionDetached(true); selBoundsRef.current = null; setTouchHandles(null); }
+      updateZoomLineRef.current?.();
     });
     term.attachCustomKeyEventHandler((e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && term.getSelection()) {
@@ -326,7 +410,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     let touchY = null, touchX = null, tapX = null, tapY = null;
     let touchMoved = false, multiTouchActive = false;
     let touchScroll = { mode: null, remainder: 0 }, vertical = null, selectStart = null;
-    let longPressTimer = null; let touchSelecting = false; let touchSelectionOffsetRows = 0;
+    let longPressTimer = null; let touchSelecting = false;
     const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
     const cellXY = (clientX, clientY) => {
       const screen = host.querySelector('.xterm-screen') || host;
@@ -336,36 +420,24 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       return { col, row: term.buffer.active.viewportY + visibleRow };
     };
     const cellAt = (touch) => cellXY(touch.clientX, touch.clientY);
-    const TOUCH_SELECTION_OFFSET_ROWS = 2;
-    const touchSelectionOffsetFor = (clientY) => {
+    // Selezione iniziale touch ~1cm orizzontale ESATTAMENTE sul punto premuto:
+    // le due maniglie sono gia' distanziate di ~1cm, centrate sul dito. Niente
+    // offset di riga: la selezione parte dove si preme.
+    const beginTouchSelection = (clientX, clientY) => {
+      const press = cellXY(clientX, clientY);
+      const row = press.row;
       const screen = host.querySelector('.xterm-screen') || host;
-      const r = screen.getBoundingClientRect();
-      const visibleRow = Math.max(0, Math.min(term.rows - 1,
-        Math.floor(((clientY - r.top) / Math.max(1, r.height)) * term.rows)));
-      return visibleRow < TOUCH_SELECTION_OFFSET_ROWS
-        ? TOUCH_SELECTION_OFFSET_ROWS
-        : -TOUCH_SELECTION_OFFSET_ROWS;
-    };
-    const touchSelectionCellAt = (touch, offsetRows) => {
-      const screen = host.querySelector('.xterm-screen') || host;
-      const r = screen.getBoundingClientRect();
-      const rowHeight = r.height / Math.max(1, term.rows);
-      return cellXY(touch.clientX, touch.clientY + offsetRows * rowHeight);
-    };
-    const showTouchSelectionCaret = (cell) => {
-      const screen = host.querySelector('.xterm-screen') || host;
-      const screenRect = screen.getBoundingClientRect();
-      const hostRect = host.getBoundingClientRect();
-      const cellWidth = screenRect.width / Math.max(1, term.cols);
-      const cellHeight = screenRect.height / Math.max(1, term.rows);
-      const viewportY = Number(term.buffer.active.viewportY) || 0;
-      const visibleRow = Math.max(0, Math.min(term.rows - 1, cell.row - viewportY));
-      setTouchSelectionCaret({
-        left: `${screenRect.left - hostRect.left + cell.col * cellWidth}px`,
-        top: `${screenRect.top - hostRect.top + visibleRow * cellHeight}px`,
-        width: `${cellWidth}px`,
-        height: `${cellHeight}px`,
-      });
+      const sr = screen.getBoundingClientRect();
+      const cellW = sr.width / Math.max(1, term.cols);
+      const half = Math.max(1, Math.round(37.8 / cellW / 2)); // ~1cm (37.8px CSS)
+      const startCol = Math.max(0, press.col - half);
+      const endCol = Math.min(term.cols - 1, press.col + half);
+      selectStart = { col: startCol, row };
+      term.clearSelection();
+      term.select(startCol, row, endCol - startCol + 1);
+      selBoundsRef.current = { start: { col: startCol, row }, end: { col: endCol, row } };
+      zoomFocusRef.current = 'start';
+      positionHandlesRef.current();
     };
     const onTouchStart = (e) => {
       clearLongPress(); touchSelecting = false; touchMoved = false;
@@ -374,23 +446,18 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         // sopprimi tutti i touchend finche' ogni dito non e' stato rilasciato.
         // Altrimenti il secondo rilascio potrebbe diventare un nuovo candidato.
         multiTouchActive = true; touchMoved = true; lastTerminalTap = null;
-        // Se un secondo dito arriva durante una selezione long-press, il caret
-        // non descrive piu' un punto attivo del gesto: nascondilo subito,
-        // senza alterare la selezione gia' confermata.
-        setTouchSelectionCaret(null); touchSelectionOffsetRows = 0;
+        // Se un secondo dito arriva durante una selezione long-press, le
+        // maniglie non descrivono piu' un punto attivo del gesto: nascondile
+        // subito, senza alterare la selezione gia' confermata.
+        setTouchHandles(null); selBoundsRef.current = null;
         touchY = null; touchX = null; tapX = null; tapY = null;
         return;
       }
       if (selectionModeRef.current) {
         e.preventDefault(); e.stopPropagation();
-        // Stesso trattamento del long-press: il punto di lavoro sta sopra il
-        // dito, non sotto. Finora questo ramo — quello che si percorre col
-        // tasto SELECT e a ogni tocco successivo — usava la cella coperta dal
-        // polpastrello, cioe' l'unica che non si vede mentre la si sceglie.
-        touchSelectionOffsetRows = touchSelectionOffsetFor(e.touches[0].clientY);
-        selectStart = touchSelectionCellAt(e.touches[0], touchSelectionOffsetRows);
-        term.clearSelection();
-        showTouchSelectionCaret(selectStart);
+        // Re-tocco con selezione attiva: ri-ancora una nuova selezione ~1cm
+        // esattamente sul dito e mostra la lente di zoom.
+        beginTouchSelection(e.touches[0].clientX, e.touches[0].clientY);
         return;
       }
       touchY = e.touches[0].clientY; touchX = e.touches[0].clientX;
@@ -400,40 +467,30 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         longPressTimer = null; touchSelecting = true; touchMoved = true; lastTerminalTap = null;
         selectionModeRef.current = true;
         onSelectionModeChange?.(true);
-        selectStart = cellXY(start.x, start.y);
-        touchSelectionOffsetRows = touchSelectionOffsetFor(start.y);
-        const end = touchSelectionCellAt({ clientX: start.x, clientY: start.y }, touchSelectionOffsetRows);
-        term.clearSelection();
-        const a = selectStart.row * term.cols + selectStart.col;
-        const b = end.row * term.cols + end.col;
-        const first = a <= b ? selectStart : end;
-        term.select(first.col, first.row, Math.abs(b - a) + 1);
-        showTouchSelectionCaret(end);
+        beginTouchSelection(start.x, start.y);
         try { navigator.vibrate?.(10); } catch (_) {}
         // Da questo momento il gesto e' selezione, non scroll.
         touchY = null; touchX = null; vertical = null; touchScroll = { mode: null, remainder: 0 };
       }, LONG_PRESS_MS);
     };
     const onTouchMove = (e) => {
-      if (touchSelecting && selectStart && e.touches.length === 1) {
-        e.preventDefault(); e.stopPropagation();
-        const end = touchSelectionCellAt(e.touches[0], touchSelectionOffsetRows);
+      // Estende il bordo mobile (end) della selezione touch: l'ancora e'
+      // selectStart, il dito trascina l'altro bordo al punto esatto del dito.
+      const extendEnd = () => {
+        const end = cellAt(e.touches[0]);
         const a = selectStart.row * term.cols + selectStart.col;
         const b = end.row * term.cols + end.col;
-        const first = a <= b ? selectStart : end;
-        term.select(first.col, first.row, Math.abs(b - a) + 1);
-        showTouchSelectionCaret(end);
-        return;
+        const lo = a <= b ? selectStart : end, hi = a <= b ? end : selectStart;
+        term.select(lo.col, lo.row, Math.abs(b - a) + 1);
+        selBoundsRef.current = { start: lo, end: hi };
+        zoomFocusRef.current = (a <= b) ? 'end' : 'start'; // la maniglia che segue il dito
+        positionHandlesRef.current();
+      };
+      if (touchSelecting && selectStart && e.touches.length === 1) {
+        e.preventDefault(); e.stopPropagation(); extendEnd(); return;
       }
       if (selectionModeRef.current && selectStart && e.touches.length === 1) {
-        e.preventDefault(); e.stopPropagation();
-        const end = touchSelectionCellAt(e.touches[0], touchSelectionOffsetRows);
-        const a = selectStart.row * term.cols + selectStart.col;
-        const b = end.row * term.cols + end.col;
-        const first = a <= b ? selectStart : end;
-        term.select(first.col, first.row, Math.abs(b - a) + 1);
-        showTouchSelectionCaret(end);
-        return;
+        e.preventDefault(); e.stopPropagation(); extendEnd(); return;
       }
       if (touchY === null || e.touches.length !== 1) return;
       // preventDefault SUBITO, non dopo la soglia: al primo touchmove il
@@ -459,7 +516,6 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const resetTouch = () => {
       clearLongPress(); touchY = null; touchX = null; tapX = null; tapY = null;
       selectStart = null; touchSelecting = false; touchMoved = false; multiTouchActive = false;
-      touchSelectionOffsetRows = 0; setTouchSelectionCaret(null);
       touchScroll = { mode: null, remainder: 0 };
     };
     const onTouchEnd = (e) => {
@@ -559,7 +615,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     };
     host.addEventListener('keydown', onKeyCopy, true);
 
-    const onResize = () => { fit.fit(); sock.resize(term.cols, term.rows); };
+    const onResize = () => { fit.fit(); sock.resize(term.cols, term.rows); if (selectionModeRef.current) positionHandlesRef.current(); };
     window.addEventListener('resize', onResize);
     // the soft keyboard opening/closing changes the visible height without firing
     // window 'resize' on some mobile browsers — track the visualViewport too.
@@ -629,7 +685,15 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
 
   return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
     <div className="nc-terminal-host" ref={hostRef} />
-    {touchSelectionCaret && <div className="nc-touch-selection-caret" style={touchSelectionCaret} aria-hidden="true" />}
+    {touchHandles && <>
+      <div className="nc-handle nc-handle-start" style={{ left: `${touchHandles.start.left}px`, top: `${touchHandles.start.top}px` }}
+        onTouchStart={onHandleTouchStart('start')} onTouchMove={onHandleTouchMove('start')} onTouchEnd={onHandleTouchEnd} onTouchCancel={onHandleTouchEnd} aria-hidden="true" />
+      <div className="nc-handle nc-handle-end" style={{ left: `${touchHandles.end.left}px`, top: `${touchHandles.end.top}px` }}
+        onTouchStart={onHandleTouchStart('end')} onTouchMove={onHandleTouchMove('end')} onTouchEnd={onHandleTouchEnd} onTouchCancel={onHandleTouchEnd} aria-hidden="true" />
+    </>}
+    {selectionMode && zoomLine && <div className="nc-zoom-bar" aria-hidden="true">
+      <pre className="nc-zoom-line"><span>{zoomLine.before}</span><span className="nc-zoom-sel">{zoomLine.sel}</span><span>{zoomLine.after}</span></pre>
+    </div>}
     {uploadState && <div className={`nc-upload-state${uploadState.error ? ' error' : ''}`} role="status">
       {uploadState.error
         ? uploadState.error
@@ -640,7 +704,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     {(selection || selectionMode) && <div className="nc-selection-tools">
       {selection ? <button type="button" onClick={doCopy}>{copyState || t('copy')}</button> : <span>{t('select-drag')}</span>}
       {selection && selectionDetached && <span className="nc-selection-held">{t('selection-held')}</span>}
-      <button type="button" onClick={() => { apiRef.current?.term?.clearSelection(); setSelection(''); setSelectionDetached(false); onSelectionModeChange?.(false); }}>{t('cancel')}</button>
+      <button type="button" onClick={() => { apiRef.current?.term?.clearSelection(); setSelection(''); setSelectionDetached(false); setTouchHandles(null); selBoundsRef.current = null; onSelectionModeChange?.(false); }}>{t('cancel')}</button>
       {copyState === t('copy-manual') && <textarea readOnly value={selection} onFocus={(e) => e.target.select()} />}
     </div>}
   </div>;

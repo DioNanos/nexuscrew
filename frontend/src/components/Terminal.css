@@ -9,10 +9,44 @@
    traducono in copy-mode tmux (la cronologia vera). */
 .nc-terminal-host, .nc-terminal .xterm, .nc-terminal .xterm-viewport { touch-action: none; }
 .nc-terminal.selecting { box-shadow: inset 0 0 0 2px #d6a600; }
-.nc-touch-selection-caret {
-  position: absolute; z-index: 8; box-sizing: border-box; pointer-events: none;
-  border: 2px solid #baff79; background: rgba(64, 130, 44, .34);
-  box-shadow: 0 0 0 1px rgba(4, 12, 4, .88), 0 0 8px rgba(186, 255, 121, .55);
+/* Maniglie di selezione touch (start/end): zona touch 32px centrata sul
+   punto, cerchio visivo verde (palette terminale). touch-action:none ferma lo
+   scroll durante il drag (i listener React sono passive). */
+.nc-handle {
+  position: absolute; z-index: 12; width: 32px; height: 32px;
+  transform: translate(-50%, -50%);
+  touch-action: none; background: transparent;
+}
+.nc-handle::before {
+  content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #586b2a; border: 2px solid #baff79;
+  box-shadow: 0 0 0 1px rgba(4, 12, 4, .88), 0 1px 4px rgba(0,0,0,.6), 0 0 8px rgba(186, 255, 121, .45);
+}
+/* Triangolo (teardrop) sopra il cerchio: punta verso la riga di testo e
+   indica il bordo esatto della selezione. Goccia alla Android/Termux. */
+.nc-handle::after {
+  content: ''; position: absolute; left: 50%; top: calc(50% - 7px);
+  transform: translate(-50%, -100%);
+  border-left: 5px solid transparent; border-right: 5px solid transparent;
+  border-bottom: 7px solid #baff79;
+}
+/* Barra zoom: strip in alto (sotto Copia/Annulla) che mostra la riga della
+   maniglia attiva ingrandita (~2x) con la porzione selezionata evidenziata. */
+.nc-zoom-bar {
+  position: absolute; z-index: 8; top: 44px; left: 0; right: 0;
+  background: rgba(14, 20, 14, .96);
+  border-top: 1px solid #586b2a; border-bottom: 1px solid #586b2a;
+  padding: 4px 8px; box-sizing: border-box; overflow: hidden;
+}
+.nc-zoom-line {
+  margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 22px; line-height: 1.25; color: #d8ffe8;
+  white-space: pre; overflow-x: auto;
+}
+.nc-zoom-sel {
+  background: rgba(186, 255, 121, .30); border-radius: 2px;
+  box-shadow: inset 0 -2px 0 #baff79;
 }
 .nc-selection-tools {
   position: absolute; z-index: 9; right: 10px; top: 10px; display: flex; gap: 6px; align-items: center;

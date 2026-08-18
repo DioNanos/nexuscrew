@@ -218,7 +218,9 @@ describe('terminal double-tap cancellation', () => {
 });
 
 describe('terminal long-press touch selection', () => {
-  it('keeps the anchor under the long-press while the visible caret tracks two rows above the finger', () => {
+  // Long-press -> selezione ~1cm orizzontale ESATTAMENTE sul punto premuto
+  // + due maniglie draggable ai bordi. Il dito puo' poi estendere il bordo mobile.
+  it('selects a ~1cm range at the exact press point and shows two draggable handles', () => {
     const onSelectionModeChange = vi.fn();
     const view = renderTerminal('double-tap', { onSelectionModeChange });
     const host = view.container.querySelector('.nc-terminal-host');
@@ -227,24 +229,31 @@ describe('terminal long-press touch selection', () => {
 
     fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
     act(() => vi.advanceTimersByTime(450));
-    let caret = view.container.querySelector('.nc-touch-selection-caret');
     expect(onSelectionModeChange).toHaveBeenCalledWith(true);
-    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 8, length: 161 });
-    expect(caret.style.left).toBe('50px');
-    expect(caret.style.top).toBe('160px');
+    // ~1cm (37.8px / cella 10px = ~4 celle) centrato sul col 5, riga 10 (punto esatto).
+    expect(term.selectCalls.at(-1)).toEqual({ col: 3, row: 10, length: 5 });
+    expect(view.container.querySelectorAll('.nc-handle')).toHaveLength(2);
+    const start = view.container.querySelector('.nc-handle-start');
+    const end = view.container.querySelector('.nc-handle-end');
+    expect(start.style.left).toBe('30px');
+    expect(start.style.top).toBe('220px');
+    expect(end.style.left).toBe('80px');
+    expect(end.style.top).toBe('220px');
 
+    // Il dito estende il bordo mobile (end): la maniglia di fine segue il dito.
     fireEvent.touchMove(host, { touches: [{ clientX: 70, clientY: 240 }] });
-    caret = view.container.querySelector('.nc-touch-selection-caret');
-    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 3 });
-    expect(caret.style.left).toBe('70px');
-    expect(caret.style.top).toBe('200px');
+    expect(term.selectCalls.at(-1)).toEqual({ col: 3, row: 10, length: 165 });
+    expect(view.container.querySelector('.nc-handle-start').style.left).toBe('30px');
+    expect(view.container.querySelector('.nc-handle-end').style.left).toBe('80px');
+    expect(view.container.querySelector('.nc-handle-end').style.top).toBe('260px');
 
+    // Al rilascio le maniglie restano (per affinarle), la selezione pure.
     fireEvent.touchEnd(host, { changedTouches: [{ clientX: 70, clientY: 240 }] });
-    expect(view.container.querySelector('.nc-touch-selection-caret')).toBeNull();
-    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 3 });
+    expect(view.container.querySelectorAll('.nc-handle')).toHaveLength(2);
+    expect(term.selectCalls.at(-1)).toEqual({ col: 3, row: 10, length: 165 });
   });
 
-  it('inverts below the top edge and renders the caret even on the last empty cell', () => {
+  it('selects at the exact point even near the top edge', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
@@ -252,35 +261,32 @@ describe('terminal long-press touch selection', () => {
 
     fireEvent.touchStart(host, { touches: [{ clientX: 799, clientY: 10 }] });
     act(() => vi.advanceTimersByTime(450));
-    const caret = view.container.querySelector('.nc-touch-selection-caret');
-    expect(term.selectCalls.at(-1)).toEqual({ col: 79, row: 0, length: 161 });
-    expect(caret.style.left).toBe('790px');
-    expect(caret.style.top).toBe('40px');
-    expect(caret.style.width).toBe('10px');
-    expect(caret.style.height).toBe('20px');
+    // Dito in cima (riga 0): selezione esattamente sulla riga 0.
+    expect(term.selectCalls.at(-1)).toEqual({ col: 77, row: 0, length: 3 });
+    const start = view.container.querySelector('.nc-handle-start');
+    const end = view.container.querySelector('.nc-handle-end');
+    expect(start.style.left).toBe('770px');
+    expect(start.style.top).toBe('20px');
+    expect(end.style.left).toBe('800px');
+    expect(end.style.top).toBe('20px');
   });
 
-  // Il long-press lavora due righe sopra il dito e mostra un caret, cosi' si
-  // vede cosa si sta prendendo. Il percorso selectionMode — quello del tasto
-  // SELECT e di ogni tocco successivo — usava invece la cella SOTTO il
-  // polpastrello, cioe' l'unica coperta mentre la si sceglie. Erano due
-  // comportamenti diversi per lo stesso gesto, e il secondo era quello che
-  // l'operatore incontrava piu' spesso.
-  it('applies the same lift and caret on the selectionMode path', () => {
+  it('applies the same ~1cm selection on the selectionMode (re-touch) path', () => {
     const view = renderTerminal('double-tap', { selectionMode: true });
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
     terminalBounds(host);
 
     fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
+    expect(term.selectCalls.at(-1)).toEqual({ col: 3, row: 10, length: 5 });
+    expect(view.container.querySelectorAll('.nc-handle')).toHaveLength(2);
+
     fireEvent.touchMove(host, { touches: [{ clientX: 50, clientY: 240 }] });
-    // Due righe piu' in alto dell'ancora assoluta di prima, su entrambi gli
-    // estremi: la selezione resta della stessa lunghezza ma si vede.
-    expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 8, length: 161 });
-    expect(view.container.querySelector('.nc-touch-selection-caret')).not.toBeNull();
+    expect(term.selectCalls.at(-1)).toEqual({ col: 3, row: 10, length: 163 });
+    expect(view.container.querySelectorAll('.nc-handle')).toHaveLength(2);
   });
 
-  it('hides the long-press caret immediately when a second finger joins the gesture', () => {
+  it('hides the handles immediately when a second finger joins the gesture', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     terminalBounds(host);
@@ -288,10 +294,10 @@ describe('terminal long-press touch selection', () => {
     const first = { clientX: 50, clientY: 200 };
     fireEvent.touchStart(host, { touches: [first] });
     act(() => vi.advanceTimersByTime(450));
-    expect(view.container.querySelector('.nc-touch-selection-caret')).not.toBeNull();
+    expect(view.container.querySelectorAll('.nc-handle')).toHaveLength(2);
 
     fireEvent.touchStart(host, { touches: [first, { clientX: 70, clientY: 220 }] });
-    expect(view.container.querySelector('.nc-touch-selection-caret')).toBeNull();
+    expect(view.container.querySelectorAll('.nc-handle')).toHaveLength(0);
   });
 });
 
