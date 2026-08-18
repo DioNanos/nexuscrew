@@ -120,6 +120,29 @@ test('una notifica con target raggiunge l\'operatore sull\'altro nodo', async (t
   assert.equal(frame.title, 'build finita');
 });
 
+// R31-A3: la via federata rispondeva SEMPRE `status:'delivered'`, anche con
+// zero UI connesse e zero subscription push — un verdetto positivo su un fatto
+// mai avvenuto (stessa famiglia di A5). `notifier.emit` e' best-effort: il
+// push va in catch → 0, `ui` conta i write SSE riusciti. La cella mittente
+// vede SOLO lo status (il dispatcher non propaga i conteggi, vedi R1/rc.14),
+// quindi l'etichetta deve essere un riassunto onesto di `delivered`, derivata
+// da esso — non un'opinione dichiarata accanto ad esso.
+test('zero consegne sul target NON viene etichettato delivered', async (t) => {
+  const { a, b } = await pair(t);
+  // Nessun firstNotify: nessuna UI aperta su B, nessuna subscription push.
+  const res = await a.plain('POST', '/api/notify', {
+    title: 'silenzio', session: a.session, target: b.nodeId,
+  });
+  const out = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(out));
+  assert.equal(out.status, 'no-delivery', JSON.stringify(out));
+  // Il legame fra etichetta e misura NON si puo' asserire qui: forward()
+  // propaga solo lo status (i conteggi muoiono nel dispatcher, R1/rc.14) e
+  // `out.delivered` oltre il dispatcher e' undefined. L'invariante e'
+  // protetta in tests/notify-federated-status.test.js, dove la risposta del
+  // TARGET si vede intera (rilievo audit su 44d4f62).
+});
+
 test('il mittente e\' derivato dalla catena, non dal campo dichiarato', async (t) => {
   const { a, b } = await pair(t);
   const arrived = firstNotify(b);
@@ -179,7 +202,10 @@ test('il budget federato e\' separato: saturarlo non zittisce le celle locali', 
       title: `raffica ${i}`, session: a.session, target: b.nodeId,
     });
     const out = await res.json();
-    if (out.status !== 'delivered') refused += 1;
+    // R31-A3: conta i RIFIUTI veri, non i "non delivered" — senza UI aperte le
+    // consegne legittime rispondono 'no-delivery', e mescolarle qui farebbe
+    // passare l'assert anche se il budget non si chiudesse mai.
+    if (out.status === 'refused') refused += 1;
   }
   assert.ok(refused >= 1, 'il budget federato deve chiudersi: nessun rifiuto dopo 13 invii');
 
