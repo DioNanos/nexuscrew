@@ -51,7 +51,14 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
     const r = await apiFetch(
       `${base}/files/download?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
     );
-    if (!r.ok) { setBusy('errore download'); return; }
+    if (!r.ok) {
+      // R27 #7: come l'upload — il body porta la causa vera (401/404/5xx),
+      // non un generico 'errore download' che manda a cercare un guasto
+      // di rete inesistente.
+      const j = await r.json().catch(() => ({}));
+      setBusy(j.error ? `errore: ${j.error}` : 'errore download');
+      return;
+    }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -60,10 +67,17 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   }
 
   async function del(name) {
-    await apiFetch(
+    const r = await apiFetch(
       `${base}/files?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
       { method: 'DELETE' },
     );
+    if (!r.ok) {
+      // R27 #7: prima il delete taceva e dopo refresh() il file ricompariva
+      // senza spiegazione. Ora si legge il body e si dice cosa e' fallito.
+      const j = await r.json().catch(() => ({}));
+      setBusy(j.error ? `errore: ${j.error}` : 'errore delete');
+      return;
+    }
     refresh();
   }
 
