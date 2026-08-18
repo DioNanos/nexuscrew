@@ -415,7 +415,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     let touchY = null, touchX = null, tapX = null, tapY = null;
     let touchMoved = false, multiTouchActive = false;
     let touchScroll = { mode: null, remainder: 0 }, vertical = null, selectStart = null;
-    let longPressTimer = null; let touchSelecting = false; let touchSelectionOffsetRows = 0;
+    let longPressTimer = null; let touchSelecting = false;
     const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
     const cellXY = (clientX, clientY) => {
       const screen = host.querySelector('.xterm-screen') || host;
@@ -425,6 +425,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       return { col, row: term.buffer.active.viewportY + visibleRow };
     };
     const cellAt = (touch) => cellXY(touch.clientX, touch.clientY);
+    // R25-zoom rev4: questo offset serve SOLO al drag delle maniglie (il
+    // dito non deve centrare l'ancora che trascina). La selezione touch
+    // (long-press, SELECT, tocchi successivi) usa il punto di pressione
+    // ESATTO: la barra di zoom mostra la riga ingrandita, l'offset di riga
+    // non ha piu' ragione di esistere li'.
     const TOUCH_SELECTION_OFFSET_ROWS = 2;
     const touchSelectionOffsetFor = (clientY) => {
       const screen = host.querySelector('.xterm-screen') || host;
@@ -466,18 +471,16 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         // Se un secondo dito arriva durante una selezione long-press, il caret
         // non descrive piu' un punto attivo del gesto: nascondilo subito,
         // senza alterare la selezione gia' confermata.
-        setTouchSelectionCaret(null); touchSelectionOffsetRows = 0;
+        setTouchSelectionCaret(null);
         touchY = null; touchX = null; tapX = null; tapY = null;
         return;
       }
       if (selectionModeRef.current) {
         e.preventDefault(); e.stopPropagation();
-        // Stesso trattamento del long-press: il punto di lavoro sta sopra il
-        // dito, non sotto. Finora questo ramo — quello che si percorre col
-        // tasto SELECT e a ogni tocco successivo — usava la cella coperta dal
-        // polpastrello, cioe' l'unica che non si vede mentre la si sceglie.
-        touchSelectionOffsetRows = touchSelectionOffsetFor(e.touches[0].clientY);
-        selectStart = touchSelectionCellAt(e.touches[0], touchSelectionOffsetRows);
+        // R25-zoom rev4: punto di pressione ESATTO (niente offset di riga —
+        // la barra di zoom mostra la riga ingrandita). Stesso trattamento
+        // del long-press: la selezione parte dalla cella premuta.
+        selectStart = cellXY(e.touches[0].clientX, e.touches[0].clientY);
         term.clearSelection();
         showTouchSelectionCaret(selectStart);
         return;
@@ -489,14 +492,14 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         longPressTimer = null; touchSelecting = true; touchMoved = true; lastTerminalTap = null;
         selectionModeRef.current = true;
         onSelectionModeChange?.(true);
+        // R25-zoom rev4: punto di pressione ESATTO — la selezione comincia
+        // alla riga premuta, non due righe sopra (l'offset nasceva perche'
+        // la cella sotto il polpastrello non si vedeva; la barra di zoom
+        // mostra la riga ingrandita, la ragione non esiste piu').
         selectStart = cellXY(start.x, start.y);
-        touchSelectionOffsetRows = touchSelectionOffsetFor(start.y);
-        const end = touchSelectionCellAt({ clientX: start.x, clientY: start.y }, touchSelectionOffsetRows);
+        const end = { row: selectStart.row, col: selectStart.col };
         term.clearSelection();
-        const a = selectStart.row * term.cols + selectStart.col;
-        const b = end.row * term.cols + end.col;
-        const first = a <= b ? selectStart : end;
-        term.select(first.col, first.row, Math.abs(b - a) + 1);
+        term.select(end.col, end.row, 1);
         showTouchSelectionCaret(end);
         try { navigator.vibrate?.(10); } catch (_) {}
         // Da questo momento il gesto e' selezione, non scroll.
@@ -506,7 +509,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const onTouchMove = (e) => {
       if (touchSelecting && selectStart && e.touches.length === 1) {
         e.preventDefault(); e.stopPropagation();
-        const end = touchSelectionCellAt(e.touches[0], touchSelectionOffsetRows);
+        // R25-zoom rev4: estremita' mobile = cella ESATTA sotto il dito.
+        const end = cellXY(e.touches[0].clientX, e.touches[0].clientY);
         const a = selectStart.row * term.cols + selectStart.col;
         const b = end.row * term.cols + end.col;
         const first = a <= b ? selectStart : end;
@@ -516,7 +520,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       if (selectionModeRef.current && selectStart && e.touches.length === 1) {
         e.preventDefault(); e.stopPropagation();
-        const end = touchSelectionCellAt(e.touches[0], touchSelectionOffsetRows);
+        // R25-zoom rev4: estremita' mobile = cella ESATTA sotto il dito.
+        const end = cellXY(e.touches[0].clientX, e.touches[0].clientY);
         const a = selectStart.row * term.cols + selectStart.col;
         const b = end.row * term.cols + end.col;
         const first = a <= b ? selectStart : end;
@@ -548,7 +553,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const resetTouch = () => {
       clearLongPress(); touchY = null; touchX = null; tapX = null; tapY = null;
       selectStart = null; touchSelecting = false; touchMoved = false; multiTouchActive = false;
-      touchSelectionOffsetRows = 0; setTouchSelectionCaret(null);
+      setTouchSelectionCaret(null);
       touchScroll = { mode: null, remainder: 0 };
     };
     const onTouchEnd = (e) => {
