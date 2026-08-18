@@ -129,7 +129,17 @@ test('npm update runner: install globale pin esatto, cwd stabile, verifica e res
   assert.equal(install.argv.includes('latest'), false);
   assert.equal(installOpts.cwd, path.join(dir, '.nexuscrew'));
   assert.equal(restarted, true);
-  assert.deepEqual(out, { updated: true, version: '0.8.9', restartMode: 'portable' });
+  // R28: il risultato ora riporta anche l'esito della rigenerazione delle
+  // definizioni di boot. In questa home sintetica non ci sono unit/plist
+  // installate: tutto skipped, nessuna rigenerazione, nessun errore. (Le
+  // warnings dipendono dall'ambiente reale degli alias, quindi non fanno
+  // parte dell'uguaglianza: il contratto verificato qui è il resto.)
+  assert.equal(out.updated, true);
+  assert.equal(out.version, '0.8.9');
+  assert.equal(out.restartMode, 'portable');
+  assert.deepEqual(out.bootDefinitions.regenerated, []);
+  assert.deepEqual(out.bootDefinitions.errors, []);
+  assert.equal(out.bootDefinitions.skipped.length, 2);
   const saved = core.readState(statusPath);
   assert.equal(saved.phase, 'installed');
   assert.equal(saved.current, '0.8.9');
