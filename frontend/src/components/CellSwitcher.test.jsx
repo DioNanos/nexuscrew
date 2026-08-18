@@ -437,4 +437,55 @@ describe('CellSwitcher', () => {
     expect([...document.querySelectorAll('.nc-cell-switcher-row[data-position="local"]')]
       .map((row) => row.dataset.rosterKey)).toEqual(['cloud-Research', 'cloud-Dev']);
   });
+
+  // R27 #4: «questa cella non è più attiva» detto quando è la VERIFICA a
+  // fallire (rete, timeout, 502) induce a riavviare una cella che stava
+  // lavorando. «Non ho potuto verificare» non autorizza «verificato spenta».
+  it('open with a failed status check says unverifiable, not "no longer active"', async () => {
+    const onPick = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
+    const remote = await screen.findByRole('button', { name: /^Remote / });
+    fireEvent.click(remote);
+    // La verifica del pick parte adesso e fallisce (502): la lettura non è
+    // riuscita, la cella NON è stata trovata spenta.
+    mocks.fleetStatus.mockImplementation(async () => { throw new Error('HTTP 502'); });
+    fireEvent.click(screen.getByRole('button', { name: 'open cell: Remote' }));
+    expect(await screen.findByText('Could not verify: try again shortly.')).toBeTruthy();
+    expect(screen.queryByText('this cell is no longer active')).toBeNull();
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it('open with a VERIFIED dead cell still says no longer active', async () => {
+    const onPick = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
+    const remote = await screen.findByRole('button', { name: /^Remote / });
+    fireEvent.click(remote);
+    // Lettura riuscita (fresh) e la cella risulta davvero spenta: qui
+    // «non più attiva» è la verità e deve restare.
+    mocks.fleetStatus.mockImplementation(async (_t, r = []) => (r.length
+      ? { available: true, cells: [off('Remote', 'cloud-Remote')] }
+      : { available: true, cells: [active('Dev', 'cloud-Dev')] }));
+    mocks.getRouteSessions.mockResolvedValue({ sessions: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'open cell: Remote' }));
+    expect(await screen.findByText('this cell is no longer active')).toBeTruthy();
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it('clicking a row whose status could not be read says not confirmed, not no longer active', async () => {
+    // Primo refresh con lettura flotta fallita: le righe restano (ultimo
+    // snapshot noto) come «status not confirmed» — cliccarle non può dire
+    // «non più attiva», perché nessuno ha potuto leggerle.
+    mocks.fleetStatus.mockImplementation(async () => { throw new Error('HTTP 502'); });
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: 'all' });
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    const dev = await screen.findByRole('button', { name: /^Dev / });
+    expect(dev.textContent).toContain('status not confirmed');
+    fireEvent.click(dev);
+    // Il notice ha role="status" proprio: le righe portano lo stesso testo
+    // come <small>, findByText sarebbe ambiguo.
+    const notice = await screen.findByRole('status');
+    expect(notice.textContent).toBe('status not confirmed');
+    expect(screen.queryByText('this cell is no longer active')).toBeNull();
+  });
 });
