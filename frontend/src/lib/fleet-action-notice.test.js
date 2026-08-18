@@ -41,4 +41,33 @@ describe('upActionNotice', () => {
       expect(n.text).not.toBe(`fleet-recovery-${recovery}`, 'chiave i18n risolta, non grezza');
     }
   });
+
+  // R27 #3: /fleet/up risponde readinessDegraded:true quando la cella vl parte
+  // senza marcatore di prontezza (DEC1: degrada e procede). Quel risultato non
+  // doveva sparire: la UI diceva solo «attiva» e l'incarico finiva in un
+  // terminale che non elabora. Il booleano viaggia anche da un nodo remoto
+  // federato, quindi qui si accetta SOLO true esatto e il testo è i18n locale.
+  it('readinessDegraded true -> avviso i18n locale, non silenzio', () => {
+    const n = upActionNotice({ ok: true, cell: 'Dev', session: 'work-vl', readinessDegraded: true });
+    expect(n).not.toBeNull();
+    expect(n.code).toBe('READINESS_DEGRADED');
+    expect(n.text).toBeTruthy();
+    expect(n.text.length).toBeGreaterThan(10);
+    expect(n.text).not.toBe('fleet-readiness-degraded', 'chiave i18n risolta, non grezza');
+  });
+
+  it('readinessDegraded assente o non-true -> null (nessun falso degrado)', () => {
+    expect(upActionNotice({ ok: true, cell: 'Dev', session: 's' })).toBeNull();
+    expect(upActionNotice({ ok: true, readinessDegraded: false })).toBeNull();
+    expect(upActionNotice({ ok: true, readinessDegraded: 'evil' })).toBeNull();
+  });
+
+  it('actionRequired vince su readinessDegraded: entrambi presenti -> recovery, non degrado', () => {
+    const n = upActionNotice({
+      ok: true,
+      readinessDegraded: true,
+      actionRequired: { code: 'KIMI_AUTH_ACTION_REQUIRED', recovery: 'kimi-cli-login' },
+    });
+    expect(n.code).toBe('KIMI_AUTH_ACTION_REQUIRED');
+  });
 });

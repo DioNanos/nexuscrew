@@ -20,8 +20,20 @@ const RECOVERY_SLUGS = [
 
 export function upActionNotice(result) {
   const ar = result && typeof result === 'object' ? result.actionRequired : null;
-  if (!ar || typeof ar !== 'object') return null;
-  if (!ACTION_CODES.includes(ar.code)) return null;
-  if (!RECOVERY_SLUGS.includes(ar.recovery)) return null;
-  return { code: ar.code, recovery: ar.recovery, text: t(`fleet-recovery-${ar.recovery}`) };
+  if (ar && typeof ar === 'object') {
+    if (ACTION_CODES.includes(ar.code) && RECOVERY_SLUGS.includes(ar.recovery)) {
+      return { code: ar.code, recovery: ar.recovery, text: t(`fleet-recovery-${ar.recovery}`) };
+    }
+  }
+  // R27 #3: /fleet/up porta readinessDegraded:true quando una cella vl parte
+  // senza marcatore di prontezza (DEC1 in runtime.js: degrada e procede).
+  // Quel risultato veniva scartato e la cella appariva semplicemente «attiva»:
+  // l'incarico finiva in un terminale che non elabora. Booleano strict === true
+  // perche' il payload puo' arrivare da un nodo remoto federato; il testo, come
+  // per actionRequired, e' sempre i18n locale. actionRequired vince: chiede
+  // un'azione precisa nel terminale ed e' piu' specifico del degrado.
+  if (result && typeof result === 'object' && result.readinessDegraded === true) {
+    return { code: 'READINESS_DEGRADED', recovery: null, text: t('fleet-readiness-degraded') };
+  }
+  return null;
 }
