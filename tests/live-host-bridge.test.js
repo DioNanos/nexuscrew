@@ -35,6 +35,20 @@ const mockFleet = (cells) => Promise.resolve({
   status: async () => ({ available: true, cells }),
 });
 
+// —— R30: verifica COMPORTAMENTALE dell'intestazione ——
+// L'intestazione non si verifica byte per byte (un assert del genere
+// degenera al primo ritocco di copy): si verifica il FATTO — la sessione
+// dichiarata dal roster è estraibile dal testo come valore utilizzabile di
+// NEXUSCREW_MCP_SESSION, esattamente come la leggerà la Live. Il charset
+// della regex è quello delle sessioni valide (lib/files/store.js
+// SESSION_RE): non cattura mai parole del copy circostante.
+const MCP_SESSION_IN_HEADER = /NEXUSCREW_MCP_SESSION=([A-Za-z0-9_.@%:+-]+)/;
+
+function sessioneDichiarataNeiTool(instructions) {
+  const m = instructions && instructions.match(MCP_SESSION_IN_HEADER);
+  return m ? m[1] : null;
+}
+
 // Aspetta una condizione osservabile SENZA budget di macchina: la condizione o
 // arriva (verde), o non arriva mai e il test resta appeso — e un gate appeso e'
 // un fallimento, fermato dallo stall-watchdog di tests/run-isolated.js. Un
@@ -311,12 +325,17 @@ test('NATIVA con cella OCCUPATA: thread NUOVA del ponte, cwd e prompt per-cella 
     assert.equal(ctx.daemon.seen.threadStarts.length, 1);
     const params = ctx.daemon.seen.threadStarts[0];
     assert.equal(params.cwd, cwd);
-    // R2: l'intestazione identità viaggia SEMPRE, PRIMA del prompt per-cella —
-    // il fatto (chi sei) precede le istruzioni (come si lavora lì).
-    assert.equal(
-      params.developerInstructions,
-      'Live NexusCrew agganciata alla cella cloud-Alfa (sessione tmux cloud-Alfa).'
-        + '\n\nRegole Live della cella Alfa: opera nel perimetro della cella.',
+    // R2+R30: l'intestazione identità (con la via ai tool) viaggia SEMPRE,
+    // PRIMA del prompt per-cella — il fatto (chi sei, come raggiungi i tool)
+    // precede le istruzioni (come si lavora lì). Comportamentale: il valore
+    // della variabile è la sessione roster; il prompt arriva integro, dopo.
+    assert.equal(sessioneDichiarataNeiTool(params.developerInstructions), 'cloud-Alfa');
+    const viaIdx = params.developerInstructions.indexOf('NEXUSCREW_MCP_SESSION=');
+    const promptIdx = params.developerInstructions.indexOf('Regole Live della cella Alfa');
+    assert.ok(viaIdx >= 0 && promptIdx > viaIdx, 'la via ai tool precede il prompt per-cella');
+    assert.ok(
+      params.developerInstructions.endsWith('Regole Live della cella Alfa: opera nel perimetro della cella.'),
+      'il prompt arriva integro, in coda',
     );
 
     // Prompt dichiarato applicato, e il testo NON viaggia in risposta (KC3-audit:
@@ -347,9 +366,8 @@ test('prompt ASSENTE (ENOENT): l\'identità arriva comunque — developerInstruc
     // giro di revisione, che l'ha trovato qui dopo che era stato corretto
     // altrove: la stessa affermazione viveva in cinque posti.
     assert.equal(
-      ctx.daemon.seen.threadStarts[0].developerInstructions,
-      'Live NexusCrew agganciata alla cella cloud-Alfa (sessione tmux cloud-Alfa).',
-      'senza LIVE_PROMPT.md il campo deve portare comunque l\'identità designata',
+      sessioneDichiarataNeiTool(ctx.daemon.seen.threadStarts[0].developerInstructions), 'cloud-Alfa',
+      "senza LIVE_PROMPT.md il campo deve portare comunque identità e via ai tool",
     );
   } finally { await ctx.close(); }
 });
@@ -368,10 +386,11 @@ test('R2 identità: cella Fleet e sessione tmux viaggiano DISTINTI nell\'intesta
     const b = await j(await ctx.bridgeCall());
     assert.equal(b.mode, 'native');
     assert.equal(b.cell, 'Dev');
-    assert.equal(
-      ctx.daemon.seen.threadStarts[0].developerInstructions,
-      'Live NexusCrew agganciata alla cella Dev (sessione tmux cloud-Dev).',
-    );
+    const istr = ctx.daemon.seen.threadStarts[0].developerInstructions;
+    // Il valore della variabile è la SESSIONE che il roster dichiara, NON il
+    // cellId: se l'intestazione li scambiasse, qui salterebbe fuori 'Dev'.
+    assert.equal(sessioneDichiarataNeiTool(istr), 'cloud-Dev');
+    assert.ok(/cella Dev\b/.test(istr), 'il cellId viaggia comunque, distinto dalla sessione');
   } finally { await ctx.close(); }
 });
 
@@ -386,10 +405,16 @@ test('R2 identità: senza tmuxSession nel roster l\'intestazione dice la cella e
     // Il roster è la verità: se non dichiara la sessione, il ponte non la
     // indovina dalla convenzione cloud-<Cella>. Il fatto degradato, mai un
     // campo inventato.
-    assert.equal(
-      ctx.daemon.seen.threadStarts[0].developerInstructions,
-      'Live NexusCrew agganciata alla cella cloud-Nova.',
-    );
+    const istr = ctx.daemon.seen.threadStarts[0].developerInstructions;
+    // Il roster è la verità: se non dichiara la sessione, il ponte non la
+    // indovina dalla convenzione cloud-<Cella> — e non suggerisce NESSUNA
+    // via ai tool (R30 guardia): senza sessione non c'è identità possibile.
+    assert.ok(/cella cloud-Nova\b/.test(istr), 'l\'intestazione dice la cella');
+    // Fatto numerico, non di copy: il nome compare UNA volta sola (la cella).
+    // Se il ponte ricostruisse la convenzione inventando «(sessione tmux
+    // cloud-Nova)», il nome comparirebbe due volte.
+    assert.equal((istr.match(/cloud-Nova/g) || []).length, 1, 'nessuna sessione inventata');
+    assert.equal(sessioneDichiarataNeiTool(istr), null);
     // Stesso motivo vale per il prompt: senza una sessione dichiarata non si
     // costruisce NESSUN path (nemmeno indovinando cloud-<Cella>), quindi non
     // si tenta nemmeno la lettura — 'session-unknown' è un esito DISTINTO da
@@ -397,6 +422,99 @@ test('R2 identità: senza tmuxSession nel roster l\'intestazione dice la cella e
     // potuto nemmeno cercare. È il caso dove la prossima assenza silenziosa
     // si nasconderebbe se questo restasse indistinguibile da 'missing'.
     assert.deepEqual(b.prompt, { applied: false, reason: 'session-unknown' });
+  } finally { await ctx.close(); }
+});
+
+// —— R30 (v2): l'intestazione dice anche COME raggiungere i tool NexusCrew ——
+// Il daemon app-server condivide UN solo insieme di server MCP fra tutte le
+// Live, con l'ambiente del daemon: nexuscrew e' l'unico che prende l'identita'
+// dall'ambiente ereditato, quindi senza rimedio i suoi tool che richiedono la
+// sessione restano fail-closed (nc_identity: MISSING). Il rimedio ce l'ha gia'
+// il ponte in mano: il nome ESATTO della sessione della cella designata.
+// L'intestazione R2 lo diceva (chi sei) senza dire la via (come usi i tool).
+//
+// Questi test verificano il FATTO osservabile — cio' che il daemon riceve su
+// thread/start — non il copy dell'intestazione: al primo ritocco di frase un
+// test testuale degenererebbe, questi no.
+
+test('R30 via ai tool: l\'intestazione porta NEXUSCREW_MCP_SESSION=<sessione roster> e il comando stdio', async () => {
+  const cwd = path.join(os.tmpdir(), 'cell-r30-via-tool');
+  const ctx = await boot({ cells: CELLS_NATIVE(cwd) });
+  try {
+    await ctx.designate('cloud-Alfa');
+    const b = await j(await ctx.bridgeCall());
+    assert.equal(b.mode, 'native');
+    const instructions = ctx.daemon.seen.threadStarts[0].developerInstructions;
+    // Il FATTO 1: il valore che la Live deve mettere nella variabile e' la
+    // sessione dichiarata dal ROSTER, estraibile dal testo cosi' come il
+    // modello la leggera' — non il cellId, non un prefisso indovinato.
+    assert.equal(
+      sessioneDichiarataNeiTool(instructions), 'cloud-Alfa',
+      'l\'intestazione deve portare la via ai tool con la sessione roster esatta',
+    );
+    // Il FATTO 2: la via dice come raggiungere il server: binario nexuscrew,
+    // trasporto stdio. Senza di questo la variabile da sola non e' azionabile.
+    assert.match(instructions, /nexuscrew mcp/, 'l\'intestazione deve nominare il comando stdio');
+    assert.match(instructions, /stdio|stdin/i, 'la via deve dichiarare il trasporto stdio');
+  } finally { await ctx.close(); }
+});
+
+test('R30 via ai tool: la via PRECEDE il prompt per-cella (MC2 invariato)', async () => {
+  const cwd = path.join(os.tmpdir(), 'cell-r30-via-prima-prompt');
+  const ctx = await boot({ cells: CELLS_NATIVE(cwd) });
+  try {
+    const promptDir = path.join(ctx.root, 'cloud-Alfa');
+    fs.mkdirSync(promptDir, { recursive: true });
+    fs.writeFileSync(path.join(promptDir, 'LIVE_PROMPT.md'), 'REGOLA-UNICA: opera nel perimetro della cella Alfa.\n');
+    await ctx.designate('cloud-Alfa');
+    await ctx.bridgeCall();
+    const instructions = ctx.daemon.seen.threadStarts[0].developerInstructions;
+    const via = instructions.indexOf('NEXUSCREW_MCP_SESSION=');
+    const prompt = instructions.indexOf('REGOLA-UNICA');
+    // Il FATTO: chi sei e come raggiungi i tool stanno PRIMA delle istruzioni
+    // di lavoro — la gerarchia di MC2 non cambia per l'estensione R30.
+    assert.ok(via >= 0, 'la via ai tool deve esserci, con prompt presente');
+    assert.ok(prompt > via, 'la via ai tool deve precedere il prompt per-cella');
+  } finally { await ctx.close(); }
+});
+
+test('R30 via ai tool: la via viaggia anche SENZA prompt (R2 invariato)', async () => {
+  const cwd = path.join(os.tmpdir(), 'cell-r30-via-senza-prompt');
+  const ctx = await boot({ cells: CELLS_NATIVE(cwd) });
+  try {
+    await ctx.designate('cloud-Alfa');
+    const b = await j(await ctx.bridgeCall());
+    assert.deepEqual(b.prompt, { applied: false, reason: 'missing' });
+    const instructions = ctx.daemon.seen.threadStarts[0].developerInstructions;
+    // Il FATTO: l'assenza del prompt non diventa assenza di identita' E DI VIA:
+    // una Live senza LIVE_PROMPT.md deve comunque poter usare i tool.
+    assert.equal(
+      sessioneDichiarataNeiTool(instructions), 'cloud-Alfa',
+      'senza prompt la via ai tool deve viaggiare comunque',
+    );
+  } finally { await ctx.close(); }
+});
+
+test('R30 guardia: senza tmuxSession l\'intestazione NON suggerisce alcuna via (asimmetria)', async () => {
+  const cwd = path.join(os.tmpdir(), 'cell-r30-guardia-senza-sessione');
+  const cells = [{ cell: 'cloud-Nova', active: true, tmux: true, engine: 'codex-vl.native', cwd }];
+  const ctx = await boot({ cells });
+  try {
+    await ctx.designate('cloud-Nova');
+    const b = await j(await ctx.bridgeCall());
+    assert.equal(b.mode, 'native');
+    const instructions = ctx.daemon.seen.threadStarts[0].developerInstructions;
+    // Il FATTO (asimmetria): senza sessione dichiarata, NESSUNA occorrenza
+    // della variabile ne' del comando. Suggerire `NEXUSCREW_MCP_SESSION=…
+    // nexuscrew mcp` senza un valore vero farebbe eseguire alla Live un
+    // comando che fallisce — o peggio, con una sessione indovinata,
+    // l'identita' di un'altra cella.
+    assert.equal(sessioneDichiarataNeiTool(instructions), null,
+      "senza sessione roster non ci può essere un valore di NEXUSCREW_MCP_SESSION");
+    assert.doesNotMatch(instructions, /nexuscrew mcp/,
+      'senza sessione roster l\'intestazione non deve suggerire il comando stdio');
+    assert.doesNotMatch(instructions, /NEXUSCREW_MCP_SESSION/,
+      'senza sessione roster l\'intestazione non deve nemmeno nominare la variabile');
   } finally { await ctx.close(); }
 });
 
@@ -413,10 +531,10 @@ test('prompt ILEGGIBILE (c\'è ma non si può leggere): reason unreadable, DISTI
     assert.equal(b.mode, 'native');
     assert.equal(b.prompt.applied, false);
     assert.equal(b.prompt.reason, 'unreadable');
-    // R2: il prompt illeggibile non inietta il suo testo, ma l'identità viaggia.
+    // R2+R30: il prompt illeggibile non inietta il suo testo, ma identità e
+    // via ai tool viaggiano comunque.
     assert.equal(
-      ctx.daemon.seen.threadStarts[0].developerInstructions,
-      'Live NexusCrew agganciata alla cella cloud-Alfa (sessione tmux cloud-Alfa).',
+      sessioneDichiarataNeiTool(ctx.daemon.seen.threadStarts[0].developerInstructions), 'cloud-Alfa',
     );
   } finally { await ctx.close(); }
 });
@@ -431,10 +549,10 @@ test('prompt VUOTO: reason empty (presente ma non dice nulla), nessuna iniezione
     await ctx.designate('cloud-Alfa');
     const b = await j(await ctx.bridgeCall());
     assert.deepEqual(b.prompt, { applied: false, reason: 'empty' });
-    // R2: nessuna iniezione DI PROMPT (il file non dice nulla), identità comunque.
+    // R2+R30: nessuna iniezione DI PROMPT (il file non dice nulla), identità
+    // e via ai tool comunque.
     assert.equal(
-      ctx.daemon.seen.threadStarts[0].developerInstructions,
-      'Live NexusCrew agganciata alla cella cloud-Alfa (sessione tmux cloud-Alfa).',
+      sessioneDichiarataNeiTool(ctx.daemon.seen.threadStarts[0].developerInstructions), 'cloud-Alfa',
     );
   } finally { await ctx.close(); }
 });
@@ -473,13 +591,18 @@ for (const lang of TEMPLATE_LANGS) {
       assert.deepEqual(b.prompt, { applied: true, source: 'LIVE_PROMPT.md' },
         `il template ${lang} deve risultare applicato, non ignorato`);
       assert.equal(ctx.daemon.seen.threadStarts.length, 1);
-      // Il testo arrivato sul socket e' l'intestazione R2 (sempre anteposta)
-      // seguita dal contenuto integrale del template del repo — non un
-      // riassunto, non un frammento, e non il solo template senza identita'.
+      // Il testo arrivato sul socket e' l'intestazione R2+R30 (sempre anteposta,
+      // con la via ai tool) seguita dal contenuto integrale del template del
+      // repo — non un riassunto, non un frammento, e non il solo template
+      // senza identita'.
+      const istr = ctx.daemon.seen.threadStarts[0].developerInstructions;
       assert.equal(
-        ctx.daemon.seen.threadStarts[0].developerInstructions,
-        `Live NexusCrew agganciata alla cella cloud-Alfa (sessione tmux cloud-Alfa).\n\n${templateText.trim()}`,
-        `developerInstructions deve essere intestazione + contenuto integrale del template ${lang}`,
+        sessioneDichiarataNeiTool(istr), 'cloud-Alfa',
+        `l'intestazione con la via ai tool viaggia anche col template ${lang}`,
+      );
+      assert.ok(
+        istr.endsWith(templateText.trim()),
+        `developerInstructions deve chiudersi col contenuto integrale del template ${lang}`,
       );
     } finally { await ctx.close(); }
   });
@@ -512,11 +635,11 @@ test('BUG prefisso: un device con prefisso diverso da cloud- deve trovare comunq
     // cloud-Nova (che su questo device non esiste), l'esito sarebbe
     // 'missing' — l'assenza legittima che maschera il bug.
     assert.deepEqual(b.prompt, { applied: true, source: 'LIVE_PROMPT.md' });
-    assert.equal(
-      ctx.daemon.seen.threadStarts[0].developerInstructions,
-      'Live NexusCrew agganciata alla cella Nova (sessione tmux macair-Nova).'
-        + '\n\nRegole Live della cella Nova su questo device.',
-    );
+    const istr = ctx.daemon.seen.threadStarts[0].developerInstructions;
+    // La via ai tool porta la sessione CHE IL ROSTER DICHIARA (macair-Nova),
+    // anche quando non segue la convenzione cloud-.
+    assert.equal(sessioneDichiarataNeiTool(istr), 'macair-Nova');
+    assert.ok(istr.endsWith('Regole Live della cella Nova su questo device.'));
   } finally { await ctx.close(); }
 });
 
@@ -535,11 +658,9 @@ test('BUG prefisso — nessuna regressione: device cloud- invariato', async () =
     const b = await j(await ctx.bridgeCall());
 
     assert.deepEqual(b.prompt, { applied: true, source: 'LIVE_PROMPT.md' });
-    assert.equal(
-      ctx.daemon.seen.threadStarts[0].developerInstructions,
-      'Live NexusCrew agganciata alla cella Rho (sessione tmux cloud-Rho).'
-        + '\n\nRegole Live della cella Rho.',
-    );
+    const istr = ctx.daemon.seen.threadStarts[0].developerInstructions;
+    assert.equal(sessioneDichiarataNeiTool(istr), 'cloud-Rho');
+    assert.ok(istr.endsWith('Regole Live della cella Rho.'));
   } finally { await ctx.close(); }
 });
 
