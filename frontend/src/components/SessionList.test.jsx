@@ -360,8 +360,14 @@ describe('SessionList — cella ospite Live per nodo', () => {
 // unmanaged — un guasto della lettura svuotava la home e sembrava «tutto
 // offline» mentre server e celle erano vivi. Il refresh manuale (bottone in
 // header) forza il secondo poll senza aspettare l'intervallo da 4s.
-describe('R27 — un fleet che non risponde non svuota la home in silenzio', () => {
+// R27 rev3 (audit): available:false NON e' un fallimento di lettura — e' il
+// server che parla. TRE esiti: reject → stale (resta l'ultima lista);
+// available:false + reason di config esplicita → DATO: lista vuota e
+// indicatore «fleet non disponibile» (niente celle fantasma di un fleet
+// spento per scelta); available:false + fleet.json illeggibile → stale.
+describe('R27 — tre esiti: non letto, spento per scelta, dato vivo', () => {
   const STALE_EN = 'Fleet read failed: the cell list may not be up to date.';
+  const OFF_EN = 'Fleet unavailable: no cells.';
 
   function localOnly() {
     fixture.sessions = [];
@@ -379,17 +385,38 @@ describe('R27 — un fleet che non risponde non svuota la home in silenzio', () 
     expect(screen.getByText('Live Cell')).toBeTruthy(); // la cella NON e' sparita
   });
 
-  it('CONTROLLO NEGATIVO: available:false non e\' «zero celle» — come il reject, resta la cella e appare lo stale', async () => {
+  it('CONTROLLO NEGATIVO rev3: fleet SPENTO PER SCELTA (fleetEnabled=false) — lista vuota e indicatore «non disponibile», NON stale e NON celle fantasma', async () => {
     localOnly();
     renderRoster();
     expect(await screen.findByText('Live Cell')).toBeTruthy();
-    fleetStatus.mockResolvedValueOnce({ available: false });
+    fleetStatus.mockResolvedValueOnce({
+      available: false, provider: 'disabled',
+      reason: 'fleet disabilitata (fleetEnabled=false)',
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'refresh' }));
+    // zero celle e' LA VERITA' di un fleet spento: la card sparisce
+    await waitFor(() => expect(screen.queryByText('Live Cell')).toBeNull());
+    // e l'indicatore dice che cosa e' successo — distinto dallo stale
+    await waitFor(() => expect(document.body.textContent).toContain(OFF_EN));
+    expect(document.body.textContent).toContain('fleetEnabled=false'); // il reason del server arriva
+    expect(document.body.textContent).not.toContain(STALE_EN); // la lettura NON e' fallita
+  });
+
+  it('available:false per fleet.json illeggibile → resta l\'ultima lista nota con stale', async () => {
+    localOnly();
+    renderRoster();
+    expect(await screen.findByText('Live Cell')).toBeTruthy();
+    fleetStatus.mockResolvedValueOnce({
+      available: false, provider: 'disabled',
+      reason: 'fleet.json mancante o invalido (fail-closed)',
+    });
     fireEvent.click(screen.getByRole('button', { name: 'refresh' }));
     expect(await screen.findByText(STALE_EN)).toBeTruthy();
     expect(screen.getByText('Live Cell')).toBeTruthy();
+    expect(document.body.textContent).not.toContain(OFF_EN);
   });
 
-  it('zero celle con lettura RIUSCITA resta un dato vero: lista vuota, NESSUNO stale', async () => {
+  it('zero celle con lettura RIUSCITA resta un dato vero: lista vuota, NESSUN indicatore', async () => {
     localOnly();
     renderRoster();
     expect(await screen.findByText('Live Cell')).toBeTruthy();
@@ -397,6 +424,7 @@ describe('R27 — un fleet che non risponde non svuota la home in silenzio', () 
     fireEvent.click(screen.getByRole('button', { name: 'refresh' }));
     await waitFor(() => expect(screen.queryByText('Live Cell')).toBeNull());
     expect(screen.queryByText(STALE_EN)).toBeNull();
+    expect(document.body.textContent).not.toContain(OFF_EN);
   });
 
   it('un fleet che torna a rispondere riporta la lettura viva: stale via, lista aggiornata', async () => {

@@ -297,6 +297,8 @@ export default function App() {
   const [fleetCapabilities, setFleetCapabilities] = useState([]);
   // R27: lettura fleet non riuscita → lista esposta = ultima nota (stale)
   const [fleetStale, setFleetStale] = useState(false);
+  // R27 rev3: fleet SPENTO (available:false del server) → zero celle vera
+  const [fleetOff, setFleetOff] = useState(null);
   const [layout, setLayout] = useState(() => initialDeck.ownerId ? emptyLayout() : loadLayout(initialDeck.name));
   const [gridFocus, setGridFocus] = useState(null);   // refKey del tile focato
   const [single, setSingle] = useState(null);     // overlay vista singola desktop: ref {session, node?}
@@ -431,8 +433,15 @@ export default function App() {
       setCells(fleet.cells);
       setFleetCapabilities(fleet.capabilities);
       setFleetStale(false);
-    } else {
+      setFleetOff(null);
+    } else if (fleet.kind === 'stale') {
       setFleetStale(true);
+      setFleetOff(null);
+    } else {
+      setCells([]);
+      setFleetCapabilities([]);
+      setFleetStale(false);
+      setFleetOff(fleet.reason || '');
     }
   }, [token]);
   // hostByRoute e' server-owned e vale per DESKTOP e MOBILE: polling separato dal
@@ -726,6 +735,7 @@ export default function App() {
           overlayOpen={cellSwitcherOpen}
           fleetCapabilities={fleetCapabilities}
           fleetStale={fleetStale}
+          fleetOff={fleetOff}
           bootSettlement={bootSettlement}
           onBootSettlementApplied={onBootSettlementApplied}
           localNodeId={deckStore.localNodeId}

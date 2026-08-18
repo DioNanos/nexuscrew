@@ -43,9 +43,12 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
   const [localNodeId, setLocalNodeId] = useState('');
   const [cells, setCells] = useState([]);
   const [fleetCapabilities, setFleetCapabilities] = useState([]);
-  // R27: la lettura del fleet non e' riuscita (rete/401/5xx o available:false)
-  // → la lista esposta e' l'ultima nota, non un dato: lo si dichiara.
+  // R27: la lettura del fleet non e' riuscita (rete/401/5xx o fleet.json
+  // illeggibile) → la lista esposta e' l'ultima nota, non un dato: lo si dichiara.
   const [fleetStale, setFleetStale] = useState(false);
+  // R27 rev3: il fleet e' SPENTO (available:false del server) → zero celle e'
+  // la verita'; l'indicatore distinto porta il reason del server.
+  const [fleetOff, setFleetOff] = useState(null);
   const [bootOverrides, setBootOverrides] = useState({});
   const [bootBusy, setBootBusy] = useState(new Set());
   const [powerCell, setPowerCell] = useState(null);
@@ -117,8 +120,17 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
       setCells(fleet.cells);
       setFleetCapabilities(fleet.capabilities);
       setFleetStale(false);
-    } else {
+      setFleetOff(null);
+    } else if (fleet.kind === 'stale') {
       setFleetStale(true);
+      setFleetOff(null);
+    } else {
+      // spento per scelta (o non classificato): zero celle e' la verita' del
+      // server — lista vuota con indicatore, mai l'ultima lista come fantasma
+      setCells([]);
+      setFleetCapabilities([]);
+      setFleetStale(false);
+      setFleetOff(fleet.reason || '');
     }
   }
 
@@ -380,6 +392,11 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
 
       {err && <div className="nc-err">{err}</div>}
       {fleetStale && <div className="nc-set-hint nc-fleet-stale" role="status">{t('fleet-stale')}</div>}
+      {fleetOff !== null && (
+        <div className="nc-set-hint nc-fleet-off" role="status">
+          {t('fleet-off')}{fleetOff ? ` (${fleetOff})` : ''}
+        </div>
+      )}
 
       <section className="nc-group" data-position="local">
         <MobilePositionHeader label={t('position-local')} count={localItems.length} state={localView}
