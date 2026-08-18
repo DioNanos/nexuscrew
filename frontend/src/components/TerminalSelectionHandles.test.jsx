@@ -148,6 +148,48 @@ if (typeof window.PointerEvent === 'undefined') {
 beforeEach(() => { fixture.instances.length = 0; vi.useFakeTimers(); });
 afterEach(() => vi.useRealTimers());
 
+describe('R34 — origine della selezione, osservabile (pezzo 1)', () => {
+  it('il touch marca data-selection-origin="touch" fin dal touchstart', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
+    expect(host.dataset.selectionOrigin).toBe('touch');
+    act(() => vi.advanceTimersByTime(450)); // long-press: selezione a parola
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 50, clientY: 200 }] });
+    expect(host.dataset.selectionOrigin).toBe('touch');
+  });
+
+  it('il mousedown marca "mouse"; la selezione cancellata azzera l\'origine', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    fireEvent.mouseDown(host);
+    expect(host.dataset.selectionOrigin).toBe('mouse');
+    act(() => term.select(2, 1, 10));
+    expect(host.dataset.selectionOrigin).toBe('mouse');
+    act(() => term.clearSelection());
+    expect(host.dataset.selectionOrigin).toBe('');
+  });
+
+  it('il mousedown SINTETICO dopo un touch non ruba l\'origine (ghost-click guard)', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 50, clientY: 200 }] });
+    // Chrome spara un mousedown compat subito dopo il touchend non prevenuto:
+    // NON deve cambiare l'origine.
+    fireEvent.mouseDown(host);
+    expect(host.dataset.selectionOrigin).toBe('touch');
+    // Passato il margine, un mousedown e' un mouse vero.
+    act(() => vi.advanceTimersByTime(800));
+    fireEvent.mouseDown(host);
+    expect(host.dataset.selectionOrigin).toBe('mouse');
+  });
+});
+
 describe('R25 — maniglie: vista pura sopra la selezione xterm', () => {
   it('due maniglie ai due capi quando la selezione esiste, e restano dopo il gesto', () => {
     const view = renderTerminal();

@@ -15,6 +15,18 @@
 //  - range = { start: {row,col}, end: {row,col} } con start <= end
 //    nell'ordine row-major (row*cols+col).
 
+// R34 — policy di VISTA per origine del gesto. La modalita' della UI di
+// selezione segue il gesto che l'ha creata, non il device: una selezione nata
+// dal tocco mostra maniglie + lente; una nata dal mouse nessuna delle due (il
+// mouse ha la selezione nativa precisa e Shift+click per estendere). Origine
+// ignota (null) → touch: se la rilevazione fallisce su un telefono, togliere
+// le maniglie rende la selezione irregolabile; sul desktop mostrarle e' solo
+// brutto. Direzione conservativa = touch.
+export function selectionUiPolicy(origin) {
+  const touch = origin !== 'mouse';
+  return { handles: touch, magnifier: touch };
+}
+
 // Converte il range come lo restituisce xterm (getSelectionPosition:
 // {start:{x,y}, end:{x,y}}, y = riga assoluta nel buffer, x = colonna)
 // nella forma {row,col} usata da questo modulo.

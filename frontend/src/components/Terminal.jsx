@@ -56,6 +56,15 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // memoria della verita': il testo si rilegge dal buffer a ogni battito.
   const [zoomFocus, setZoomFocus] = useState('start');
   const [zoomView, setZoomView] = useState(null);
+  // R34 — origine del gesto che ha creato la selezione ('touch' | 'mouse' |
+  // null). La modalita' della UI di selezione segue LEI (policy in
+  // selection-handles.js), non il device: sul laptop touch-screen il criterio
+  // matchMedia non puo' decidere, decide il gesto. Ref per le closure dei
+  // gesti, stato per il render; il dataset sull'host la rende osservabile
+  // (stessa ragione di data-mouse-tracking: senza, una prova non distingue
+  // «policy giusta» da «attributo mai scritto»).
+  const [selOrigin, setSelOrigin] = useState(null);
+  const selOriginRef = useRef(null);
   // Il testo SOTTO una selezione attiva puo' essere sovrascritto (una
   // progress bar che riscrive la riga, un redraw dell'app): la copia
   // consegnerebbe il testo nuovo mentre chi guarda ha in mente quello
@@ -89,6 +98,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   const handleDragApiRef = useRef({ startHandleDrag: () => {} });
   const handleGeomRef = useRef(null);
   handleGeomRef.current = handleGeom;
+
+  // R34: l'origine selezione e' osservabile sull'host (unico scrittore: il
+  // render-side, cosi' dataset e UI non possono divergere).
+  useEffect(() => {
+    const host = hostRef.current;
+    if (host) host.dataset.selectionOrigin = selOrigin || '';
+  }, [selOrigin]);
 
   // Focus → size-owner (§5b): quando il tile prende/perde il focus manda il
   // frame 'focus' cosi' il server promuove/demota il client (ignore-size).
@@ -261,6 +277,10 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // (e' di xterm, non nostro), il testo da copiare no.
     // handleDrag vive qui sopra perche' onSelection lo chiude (rev5): se
     // xterm azzera la selezione a meta' drag, il gesto finisce li'.
+    // R34: scrive l'origine del gesto (ref per le closure + stato per il
+    // render). Unico punto di scrittura dentro l'effect: i gesti la marcano,
+    // onSelection la azzera quando xterm non ha piu' selezione.
+    const markOrigin = (o) => { selOriginRef.current = o; setSelOrigin(o); };
     let handleDrag = null;         // { which, offsetX, offsetY, fixed }
     const onSelection = term.onSelectionChange(() => {
       const next = term.getSelection();
@@ -277,6 +297,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       const range = raw ? normalizeRange(raw.start, raw.end, term.cols) : null;
       setSelRange(range);
       selRangeRef.current = range;
+      // R34: selezione sparita → origine sparita. La policy conservativa su
+      // null e' touch, ma a selezione assente non c'e' nulla da mostrare.
+      if (!range) markOrigin(null);
       // R25-zoom rev5 (r25rev4-audit): xterm AZZERA la selezione su resize di
       // righe e su trim oltre il top. Se il drag e' in corso, l'ancora
       // congelata risusciterebbe una selezione cancellata al prossimo
@@ -426,6 +449,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     let touchMoved = false, multiTouchActive = false;
     let touchScroll = { mode: null, remainder: 0 }, vertical = null, selectStart = null;
     let longPressTimer = null; let touchSelecting = false;
+    // R34: timestamp dell'ultimo contatto touch — il mousedown SINTETICO che
+    // Chrome spara dopo un touchend non prevenuto non deve rubare l'origine
+    // "touch" di una selezione appena nata dal dito (ghost-click guard).
+    const GHOST_CLICK_MS = 750;
+    let lastTouchTs = 0;
     const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
     const cellXY = (clientX, clientY) => {
       const screen = host.querySelector('.xterm-screen') || host;
@@ -472,6 +500,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       });
     };
     const onTouchStart = (e) => {
+      // R34: l'origine si marca al PRIMO contatto, prima di ogni ramo
+      // (multi-touch compreso): da qui in poi la selezione e' nata dal dito.
+      lastTouchTs = Date.now(); markOrigin('touch');
       clearLongPress(); touchSelecting = false; touchMoved = false;
       if (multiTouchActive || e.touches.length !== 1) {
         // Multi-touch (pinch / due dita): invalida il candidato doppio tap e
@@ -498,6 +529,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         selectStart = { row: pressed.row, col: bounds.start };
         const end = { row: pressed.row, col: bounds.end };
         term.clearSelection();
+        // R34: la selezione NASCE qui, dal dito — la marcatura va DOPO il
+        // clearSelection (onSelection azzera l'origine a range nullo).
+        markOrigin('touch');
         term.select(bounds.start, pressed.row, bounds.end - bounds.start + 1);
         showTouchSelectionCaret(end);
         return;
@@ -522,6 +556,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         selectStart = { row: pressed.row, col: bounds.start };
         const end = { row: pressed.row, col: bounds.end };
         term.clearSelection();
+        markOrigin('touch'); // dopo il clear (onSelection azzera a range nullo)
         term.select(bounds.start, pressed.row, bounds.end - bounds.start + 1);
         showTouchSelectionCaret(end);
         try { navigator.vibrate?.(10); } catch (_) {}
@@ -590,6 +625,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       selectStart = null; touchSelecting = false; touchMoved = false; multiTouchActive = false;
       setTouchSelectionCaret(null);
       touchScroll = { mode: null, remainder: 0 };
+      lastTouchTs = Date.now(); // la finestra ghost-click copre il mousedown sintetico post-touchend
     };
     const onTouchEnd = (e) => {
       if (multiTouchActive) {
@@ -640,6 +676,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // xterm/tmux come prima (comportamento touch invariato).
     let mouseSelectStart = null;
     const onMouseDown = (e) => {
+      // R34: l'origine si marca PRIMA del gate Shift — anche il drag nativo
+      // (senza Shift, senza tracking) deve risultare nato dal mouse. Salvo
+      // ghost-click: un mousedown entro 750ms dall'ultimo touchend e' il
+      // sintetico di compatibilita', non un mouse vero.
+      if (Date.now() - lastTouchTs >= GHOST_CLICK_MS) markOrigin('mouse');
       if (!wantsLocalSelection(e)) return;
       e.preventDefault(); e.stopPropagation();
       mouseSelectStart = cellXY(e.clientX, e.clientY);
