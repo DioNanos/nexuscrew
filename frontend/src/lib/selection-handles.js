@@ -132,6 +132,15 @@ export function wordBoundsAt({ line, col, cols }) {
   return { start, end };
 }
 
+// R34 — le due puntine a meno di un target tattile di distanza (selezione
+// corta) vengono marcate "tight": il CSS le scagliona in verticale (la start
+// piu' in alto, la end piu' in basso) e le piega ai lati opposti, cosi' il
+// dito trova due prese distinte anche su una parola di due caratteri. Soglia
+// = larghezza del target tattile (>=44px: HIG Apple / Material).
+export function handlesTooClose({ startLeft, endLeft, targetWidth = 46 }) {
+  return Math.abs(Number(endLeft) - Number(startLeft)) < Number(targetWidth);
+}
+
 // R34 — layout della bolla lente: VICINO alla maniglia attiva, mai in cima
 // fissa a coprire righe. Sopra l'ancora per default; se non c'e' spazio
 // ribalta SOTTO la puntina (la maniglia in drag nelle prime righe non deve

@@ -7,7 +7,7 @@ import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
 import {
-  clampDraggedCell, edgeScrollDirection, extendRangeToCell, handlePositions, magnifierLayout, normalizeRange,
+  clampDraggedCell, edgeScrollDirection, extendRangeToCell, handlePositions, handlesTooClose, magnifierLayout, normalizeRange,
   rangeFromXterm, rangeToSelect, selectionUiPolicy, snapWideCol, wordBoundsAt, zoomLineForRange,
 } from '../lib/selection-handles.js';
 import { MQ_DESKTOP } from '../lib/desktop.js';
@@ -1017,7 +1017,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     {selRange && handleGeom && uiPolicy.handles && ['start', 'end'].map((which) => (handleGeom[which].visible && (
       <div
         key={`nc-sel-handle-${which}`}
-        className={`nc-sel-handle ${which}${draggingHandle === which ? ' dragging' : ''}`}
+        className={`nc-sel-handle ${which}${draggingHandle === which ? ' dragging' : ''}${
+          handlesTooClose({ startLeft: handleGeom.start.left, endLeft: handleGeom.end.left }) ? ' tight' : ''}`}
         style={{ left: `${handleGeom[which].left}px`, top: `${handleGeom[which].top}px` }}
         onPointerDown={(e) => handleDragApiRef.current.startHandleDrag(which, e)}
         aria-hidden="true"

@@ -649,6 +649,26 @@ describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi l
   });
 });
 
+describe('R34 — puntine: selezione corta → presa "tight" (pezzo 4)', () => {
+  it('a meno di un target tattile di distanza, ENTRAMBE le puntine si marcano tight', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 2)); // 2 celle: start 20px, end 40px → 20px < 46
+    expect(handles(view).start.classList.contains('tight')).toBe(true);
+    expect(handles(view).end.classList.contains('tight')).toBe(true);
+  });
+
+  it('selezione larga: niente tight (le prese non si sovrappongono)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10)); // 10 celle: 100px
+    expect(handles(view).start.classList.contains('tight')).toBe(false);
+    expect(handles(view).end.classList.contains('tight')).toBe(false);
+  });
+});
+
 describe('R34 — la bolla lente vicino alla maniglia attiva (pezzo 3)', () => {
   function zoomBubble(view) {
     return {
