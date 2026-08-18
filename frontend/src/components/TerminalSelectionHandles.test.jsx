@@ -390,6 +390,51 @@ describe('R25-zoom — la barra con la riga della maniglia in focus', () => {
     expect(z.sel.textContent).toBe('NUOVA-riga-1'.slice(2, 12)); // col 2..11
   });
 
+  it('selezione invertita sulla stessa riga: la barra mostra il segmento vero, non la colonna dell\'ancora (R25-zoom rev3)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    term.lineTexts.set(1, '0123456789');
+    // drag nativo all'indietro: xterm 6.0 restituisce start>end NON normalizzati
+    term.selectionPosition = { start: { x: 6, y: 1 }, end: { x: 3, y: 1 } };
+    term.selectionText = 'invertita';
+    act(() => term.emitSelection());
+    const z = zoomBar(view);
+    expect(z.sel.textContent).toBe('3456'); // col 3..6, non la sola col 6
+  });
+
+  it('selezione invertita multi-riga: la barra mostra la riga e lo span della start vera (R25-zoom rev3)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    term.lineTexts.set(1, 'abcdefghij');
+    term.lineTexts.set(2, 'ABCDEFGHIJ');
+    // drag all'indietro: ancora su riga 2 col 5, fine su riga 1 col 3
+    term.selectionPosition = { start: { x: 5, y: 2 }, end: { x: 3, y: 1 } };
+    term.selectionText = 'invertita';
+    act(() => term.emitSelection());
+    const z = zoomBar(view);
+    expect(z.line.textContent).toBe('abcdefghij'); // riga della start vera
+    expect(z.sel.textContent).toBe('defghij');      // col 3..fine riga
+  });
+
+  it('selezione invertita: le maniglie NON sono scambiate, start a sinistra di end con +1 sulla fine vera (R25-zoom rev3)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    term.lineTexts.set(1, '0123456789');
+    term.selectionPosition = { start: { x: 6, y: 1 }, end: { x: 3, y: 1 } };
+    term.selectionText = 'invertita';
+    act(() => term.emitSelection());
+    const h = handles(view);
+    expect(h.start).toBeTruthy();
+    expect(h.end).toBeTruthy();
+    const left = (el) => Number(el.style.left.replace('px', ''));
+    expect(left(h.start)).toBeLessThan(left(h.end));
+    expect(h.start.style.left).toBe('30px'); // start vera: col 3
+    expect(h.end.style.left).toBe('70px');   // end vera: (col 6 + 1)
+  });
+
   it('selezione annullata → la barra sparisce con le maniglie', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));

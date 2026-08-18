@@ -265,7 +265,12 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       // R25: le maniglie seguono la selezione — il range si rilegge a ogni
       // cambiamento (gesto nostro o no); lo snapshot per riga e' la base del
       // confronto per il contenuto sovrascritto sotto il range.
-      const range = rangeFromXterm(term.getSelectionPosition());
+      // R25-zoom rev3: xterm 6.0 restituisce getSelectionPosition() NON
+      // normalizzato — un drag nativo all'indietro produce start>end. Il
+      // range si normalizza QUI, al punto di lettura, cosi' TUTTI i
+      // consumatori (maniglie, barra, snapshot) vedono start<=end row-major.
+      const raw = rangeFromXterm(term.getSelectionPosition());
+      const range = raw ? normalizeRange(raw.start, raw.end, term.cols) : null;
       setSelRange(range);
       let snap = null;
       if (range && typeof term.buffer.active.getLine === 'function') {
