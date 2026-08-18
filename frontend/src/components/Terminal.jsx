@@ -46,6 +46,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // coordinate px, geomTick forza il ricalcolo quando cambia il viewport o
   // arriva un redraw ma il range no.
   const [selRange, setSelRange] = useState(null);
+  const selRangeRef = useRef(null); // specchio dello stato per le closure del drag
   const [handleGeom, setHandleGeom] = useState(null);
   const [geomTick, setGeomTick] = useState(0);
   const [draggingHandle, setDraggingHandle] = useState(null);
@@ -272,6 +273,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       const raw = rangeFromXterm(term.getSelectionPosition());
       const range = raw ? normalizeRange(raw.start, raw.end, term.cols) : null;
       setSelRange(range);
+      selRangeRef.current = range;
       let snap = null;
       if (range && typeof term.buffer.active.getLine === 'function') {
         const lines = [];
@@ -679,13 +681,16 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       if (handleEdgeTimer) { clearInterval(handleEdgeTimer); handleEdgeTimer = null; }
     };
     const applyHandlePoint = (px, py, pointerType) => {
-      if (!handleDrag) return;
-      const range = rangeFromXterm(term.getSelectionPosition());
-      if (!range) return;
-      const fixed = handleDrag.which === 'start' ? range.end : range.start;
+      if (!handleDrag || !handleDrag.fixed) return;
+      // R25-zoom rev3-audit: l'ancora e' quella catturata ALLA PRESA dallo
+      // stato normalizzato (selRange), non una rilettura del range grezzo a
+      // ogni pointermove: su una selezione nativa invertita la rilettura
+      // dava l'estremita' sbagliata (maniglia congelata, lato opposto perso).
+      const fixed = handleDrag.fixed;
       // Su touch il dito COPRE il punto: la cella di lavoro sta ±2 righe piu'
-      // in la', lo stesso offset del long-press. Il mouse ha il cursore
-      // preciso: niente offset.
+      // in la' (offset del drag maniglie, diverso dall'offset di riga della
+      // selezione touch, rimosso in rev4). Il mouse ha il cursore preciso:
+      // niente offset.
       const raw = pointerType === 'mouse'
         ? cellXY(px, py)
         : touchSelectionCellAt({ clientX: px, clientY: py }, touchSelectionOffsetFor(py));
@@ -739,6 +744,12 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
           which,
           offsetX: g ? e.clientX - g.left : 0,
           offsetY: g ? e.clientY - g.top : 0,
+          // R25-zoom rev3-audit: l'ancora e' una decisione presa UNA volta,
+          // alla presa della maniglia, dallo stato normalizzato (selRange).
+          // Rileggerla grezza a ogni pointermove (getSelectionPosition) su
+          // una selezione nativa invertita (start>end) dava l'estremita'
+          // sbagliata: maniglia congelata o lato opposto perso.
+          fixed: selRangeRef.current ? (which === 'start' ? selRangeRef.current.end : selRangeRef.current.start) : null,
         };
         lastHandlePointer = { x: e.clientX, y: e.clientY, type: e.pointerType || 'touch' };
         setDraggingHandle(which);

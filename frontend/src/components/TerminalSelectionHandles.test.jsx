@@ -350,6 +350,47 @@ describe('R25 — sopravvivenza al redraw e testo sovrascritto', () => {
   });
 });
 
+describe('R25-zoom rev3-audit — drag su selezione nativa INVERTITA preesistente', () => {
+  it('end tirata verso l\'esterno: la maniglia si muove e il lato opposto (col 3) non sparisce', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    // selezione nativa invertita (start>end), NESSUN term.select intermedio:
+    // e' il caso in cui applyHandlePoint rileggeva il range grezzo.
+    term.selectionPosition = { start: { x: 6, y: 1 }, end: { x: 3, y: 1 } };
+    term.selectionText = 'invertita';
+    act(() => term.emitSelection());
+    // selRange normalizzato (rev3): start (1,3) → 30px, end (1,6) → 70px.
+    const h = handles(view);
+    fireEvent.pointerDown(h.end, { clientX: 70, clientY: 40, pointerType: 'mouse' });
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 40, pointerType: 'mouse' });
+    const last = term.selectCalls.at(-1);
+    const endLinear = last.row * 80 + last.col + last.length - 1;
+    expect(last.col).toBe(3);        // il lato opposto resta: parte da col 3
+    expect(endLinear % 80).toBe(20); // la end si e' mossa fino a col 20
+    fireEvent.pointerUp(window, { pointerType: 'mouse' });
+  });
+
+  it('end tirata verso l\'interno: la maniglia si muove invece di congelarsi', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    term.selectionPosition = { start: { x: 6, y: 1 }, end: { x: 3, y: 1 } };
+    term.selectionText = 'invertita';
+    act(() => term.emitSelection());
+    const h = handles(view);
+    fireEvent.pointerDown(h.end, { clientX: 70, clientY: 40, pointerType: 'mouse' });
+    // (30, 20) → riga 1, col 3: la end raggiunge l'ancora (col 3) e la
+    // selezione si accorcia a una cella. Col range grezzo si clampava a
+    // col 6: congelata.
+    fireEvent.pointerMove(window, { clientX: 30, clientY: 20, pointerType: 'mouse' });
+    const last = term.selectCalls.at(-1);
+    const endLinear = last.row * 80 + last.col + last.length - 1;
+    expect(endLinear % 80).toBe(3);
+    fireEvent.pointerUp(window, { pointerType: 'mouse' });
+  });
+});
+
 describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi larghi)', () => {
   function longPressAt(view, x, y) {
     const host = view.container.querySelector('.nc-terminal-host');
