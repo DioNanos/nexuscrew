@@ -190,6 +190,114 @@ describe('R34 — origine della selezione, osservabile (pezzo 1)', () => {
   });
 });
 
+describe('R34 — desktop: maniglie e lente solo se il gesto e\' touch (pezzo 2)', () => {
+  it('selezione nata dal MOUSE: niente maniglie, niente barra zoom; la barra strumenti resta', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    fireEvent.mouseDown(host); // drag nativo: origine mouse
+    act(() => term.select(2, 1, 10));
+    expect(handles(view).start).toBeNull();
+    expect(handles(view).end).toBeNull();
+    expect(view.container.querySelector('.nc-zoom-bar')).toBeNull();
+    expect(view.container.querySelector('.nc-selection-tools')).toBeTruthy(); // la copia resta
+  });
+
+  it('selezione nata dal TOCCO (long-press): maniglie presenti', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
+    act(() => vi.advanceTimersByTime(450));
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 50, clientY: 200 }] });
+    expect(handles(view).start).toBeTruthy();
+    expect(handles(view).end).toBeTruthy();
+  });
+
+  it('origine ignota (select programmatico): maniglie presenti — conservativo touch', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10));
+    expect(handles(view).start).toBeTruthy();
+  });
+});
+
+describe('R34 — Shift+click estende la selezione (pezzo 2)', () => {
+  it('Shift+click DOPO la fine, senza drag: sposta end (e non cancella)', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10)); // start (1,2), end (1,11)
+    // (300,20) → col 30, riga 1.
+    fireEvent.mouseDown(host, { shiftKey: true, clientX: 300, clientY: 20 });
+    fireEvent.mouseUp(host, { shiftKey: true, clientX: 300, clientY: 20 });
+    expect(term.selectCalls.at(-1)).toEqual({ col: 2, row: 1, length: 30 - 2 + 1 });
+    expect(term.hasSelection()).toBe(true);
+  });
+
+  it('Shift+click PRIMA dell\'inizio, senza drag: sposta start', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10));
+    // (10,20) → col 1, riga 1.
+    fireEvent.mouseDown(host, { shiftKey: true, clientX: 10, clientY: 20 });
+    fireEvent.mouseUp(host, { shiftKey: true, clientX: 10, clientY: 20 });
+    expect(term.selectCalls.at(-1)).toEqual({ col: 1, row: 1, length: 11 - 1 + 1 });
+  });
+
+  it('Shift+click+DRAG: apre una selezione NUOVA (non estende la vecchia)', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10)); // selezione preesistente (1,2)-(1,11)
+    fireEvent.mouseDown(host, { shiftKey: true, clientX: 300, clientY: 20 }); // col 30, riga 1
+    fireEvent.mouseMove(host, { shiftKey: true, clientX: 400, clientY: 60 });  // col 40, riga 3
+    fireEvent.mouseUp(host, { shiftKey: true, clientX: 400, clientY: 60 });
+    expect(term.selectCalls.at(-1)).toEqual({ col: 30, row: 1, length: (3 * 80 + 40) - (1 * 80 + 30) + 1 });
+  });
+
+  it('Shift+click senza selezione attiva e senza drag: nessuna selezione (come oggi)', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    fireEvent.mouseDown(host, { shiftKey: true, clientX: 300, clientY: 20 });
+    fireEvent.mouseUp(host, { shiftKey: true, clientX: 300, clientY: 20 });
+    expect(term.hasSelection()).toBe(false);
+    expect(term.selectCalls.length).toBe(0);
+  });
+});
+
+describe('R34 — doppio clic: la tastiera e\' un gesto touch (pezzo 2)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('su DESKTOP il dblclick NON chiede la tastiera (la parola la seleziona xterm)', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    expect(term.textarea.getAttribute('inputmode')).toBe('none'); // double-tap bloccato a montaggio
+    fireEvent.doubleClick(host);
+    expect(term.textarea.getAttribute('inputmode')).toBe('none');
+  });
+
+  it('fuori desktop il dblclick chiede la tastiera come oggi', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    fireEvent.doubleClick(host);
+    expect(term.textarea.getAttribute('inputmode')).toBe('text');
+  });
+});
+
 describe('R25 — maniglie: vista pura sopra la selezione xterm', () => {
   it('due maniglie ai due capi quando la selezione esiste, e restano dopo il gesto', () => {
     const view = renderTerminal();

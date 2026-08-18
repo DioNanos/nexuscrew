@@ -7,9 +7,10 @@ import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
 import {
-  clampDraggedCell, edgeScrollDirection, handlePositions, normalizeRange,
-  rangeFromXterm, rangeToSelect, snapWideCol, wordBoundsAt, zoomLineForRange,
+  clampDraggedCell, edgeScrollDirection, extendRangeToCell, handlePositions, normalizeRange,
+  rangeFromXterm, rangeToSelect, selectionUiPolicy, snapWideCol, wordBoundsAt, zoomLineForRange,
 } from '../lib/selection-handles.js';
+import { MQ_DESKTOP } from '../lib/desktop.js';
 import { t } from '../lib/i18n.js';
 import { filesFromTransfer, hasFilePayload, uploadSessionFiles } from '../lib/attachments.js';
 import {
@@ -658,6 +659,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     host.addEventListener('touchend', onTouchEnd, { passive: true });
     host.addEventListener('touchcancel', onTouchCancel, { passive: true });
     const onDoubleClick = () => {
+      // R34: la tastiera virtuale e' un gesto TOUCH. Sul desktop il dblclick
+      // seleziona la parola (xterm nativo) e basta. matchMedia assente
+      // (jsdom, browser antichi) → NON desktop: il gesto tastiera resta.
+      const desktop = typeof window.matchMedia === 'function' && window.matchMedia(MQ_DESKTOP).matches;
+      if (desktop) return;
       if (!selectionModeRef.current && keyboardGestureRef.current === 'double-tap') requestTerminalKeyboard();
     };
     host.addEventListener('dblclick', onDoubleClick);
@@ -683,8 +689,15 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       if (Date.now() - lastTouchTs >= GHOST_CLICK_MS) markOrigin('mouse');
       if (!wantsLocalSelection(e)) return;
       e.preventDefault(); e.stopPropagation();
-      mouseSelectStart = cellXY(e.clientX, e.clientY);
-      term.clearSelection();
+      // R34: Shift+click (senza drag) con selezione attiva ESTENDE il capo
+      // vicino; Shift+drag resta selezione nuova. La scelta si fa al primo
+      // movimento oltre soglia, quindi qui NON si cancella piu' la selezione:
+      // serve viva se il gesto e' un click.
+      mouseSelectStart = {
+        cell: cellXY(e.clientX, e.clientY),
+        clientX: e.clientX, clientY: e.clientY,
+        extendFrom: selRangeRef.current, dragged: false,
+      };
     };
     const onMouseMove = (e) => {
       if (!mouseSelectStart) {
@@ -706,13 +719,37 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         return;
       }
       e.preventDefault(); e.stopPropagation();
+      // R34: sotto soglia il gesto resta un CANDIDATO click-estendi: il jitter
+      // di pochi pixel non deve trasformarlo in una selezione nuova.
+      if (!mouseSelectStart.dragged
+        && !movedBeyondLongPress(mouseSelectStart.clientX, mouseSelectStart.clientY, e.clientX, e.clientY)) {
+        return;
+      }
+      mouseSelectStart.dragged = true;
+      const startCell = mouseSelectStart.cell;
       const end = cellXY(e.clientX, e.clientY);
-      const a = mouseSelectStart.row * term.cols + mouseSelectStart.col;
+      const a = startCell.row * term.cols + startCell.col;
       const b = end.row * term.cols + end.col;
-      const first = a <= b ? mouseSelectStart : end;
+      const first = a <= b ? startCell : end;
       term.select(first.col, first.row, Math.abs(b - a) + 1);
     };
-    const onMouseUp = (e) => { if (mouseSelectStart) { e.stopPropagation(); mouseSelectStart = null; } };
+    const onMouseUp = (e) => {
+      if (!mouseSelectStart) return;
+      e.stopPropagation();
+      // R34: Shift+click (mai trascinato) con selezione attiva → il capo piu'
+      // vicino si sposta sulla cella cliccata (funzione pura; snap ai glifi
+      // larghi sul capo mosso, come nelle maniglie).
+      const { cell, extendFrom, dragged } = mouseSelectStart;
+      mouseSelectStart = null;
+      if (dragged || !extendFrom) return;
+      const next = extendRangeToCell({ range: extendFrom, cell, cols: term.cols });
+      if (!next.moved) return;
+      const movedCell = next[next.moved];
+      const line = term.buffer.active.getLine(movedCell.row);
+      movedCell.col = snapWideCol({ line, col: movedCell.col, side: next.moved, cols: term.cols });
+      const sel = rangeToSelect({ start: next.start, end: next.end }, term.cols);
+      term.select(sel.col, sel.row, sel.length);
+    };
     host.addEventListener('mousedown', onMouseDown, true);
     host.addEventListener('mousemove', onMouseMove, true);
     host.addEventListener('mouseup', onMouseUp, true);
@@ -934,10 +971,14 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     });
   }, [selRange, geomTick, zoomFocus]);
 
+  // R34: la UI di selezione segue l'origine del gesto (policy pura) — sul
+  // desktop niente maniglie né lente sopra una selezione da mouse.
+  const uiPolicy = selectionUiPolicy(selOrigin);
+
   return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
     <div className="nc-terminal-host" ref={hostRef} />
     {touchSelectionCaret && <div className="nc-touch-selection-caret" style={touchSelectionCaret} aria-hidden="true" />}
-    {selRange && handleGeom && ['start', 'end'].map((which) => (handleGeom[which].visible && (
+    {selRange && handleGeom && uiPolicy.handles && ['start', 'end'].map((which) => (handleGeom[which].visible && (
       <div
         key={`nc-sel-handle-${which}`}
         className={`nc-sel-handle ${which}${draggingHandle === which ? ' dragging' : ''}`}
@@ -946,7 +987,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         aria-hidden="true"
       />
     )))}
-    {selRange && zoomView && (
+    {selRange && zoomView && uiPolicy.magnifier && (
       <div className="nc-zoom-bar" aria-hidden="true">
         <pre className="nc-zoom-line" style={{ fontSize: `${zoomView.fontSize}px` }}>
           <span>{zoomView.before}</span><span className="nc-zoom-sel">{zoomView.sel}</span><span>{zoomView.after}</span>

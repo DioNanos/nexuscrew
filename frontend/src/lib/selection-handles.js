@@ -15,6 +15,30 @@
 //  - range = { start: {row,col}, end: {row,col} } con start <= end
 //    nell'ordine row-major (row*cols+col).
 
+// R34 — Shift+click desktop: con una selezione attiva, il click SENZA drag
+// muove il capo piu' vicino alla cella cliccata (l'equivalente desktop della
+// regolazione a maniglie: il mouse non ha puntine, ha questo). Fuori dal range
+// si muove il capo di quel lato; dentro il capo piu' vicino (a parita' vince
+// start); su un capo, nessun movimento. Non conosce il buffer: lo snap ai
+// glifi larghi e' del chiamante, che conosce `moved`.
+export function extendRangeToCell({ range, cell, cols }) {
+  const c = Number(cols);
+  const iS = Number(range.start.row) * c + Number(range.start.col);
+  const iE = Number(range.end.row) * c + Number(range.end.col);
+  const iC = Number(cell.row) * c + Number(cell.col);
+  const out = {
+    start: { row: range.start.row, col: range.start.col },
+    end: { row: range.end.row, col: range.end.col },
+    moved: null,
+  };
+  if (iC < iS) { out.start = { row: Number(cell.row), col: Number(cell.col) }; out.moved = 'start'; }
+  else if (iC > iE) { out.end = { row: Number(cell.row), col: Number(cell.col) }; out.moved = 'end'; }
+  else if (iC === iS || iC === iE) { return out; }
+  else if (iC - iS <= iE - iC) { out.start = { row: Number(cell.row), col: Number(cell.col) }; out.moved = 'start'; }
+  else { out.end = { row: Number(cell.row), col: Number(cell.col) }; out.moved = 'end'; }
+  return out;
+}
+
 // R34 — policy di VISTA per origine del gesto. La modalita' della UI di
 // selezione segue il gesto che l'ha creata, non il device: una selezione nata
 // dal tocco mostra maniglie + lente; una nata dal mouse nessuna delle due (il
