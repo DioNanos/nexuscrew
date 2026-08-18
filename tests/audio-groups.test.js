@@ -139,3 +139,48 @@ test('stop gruppo: ferma solo endpoint gia ammessi e impedisce il failover tardi
   await waitIdle(speaker, initial.utteranceId);
   assert.deepEqual(called.speak, [B], 'lo stop non lascia partire il failover C');
 });
+
+// —— R31-A4: il difetto nasce qui, e qui va provato ——
+// saveGroup/removeGroup lanciavano Error generici indistinguibili dagli errori
+// di I/O di atomicWrite: il chiamante poteva separarli solo col match sul
+// testo del messaggio. Il contratto diventa: validazione = status 400 + code
+// chiuso; scrittura fallita = errore fs nativo con il suo errno, mai 400.
+test('R31-A4: validazione distinguibile per contratto (status+code), non per testo', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaudio-groups-a4-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cfg = { home: dir, tokenPath: path.join(dir, '.nexuscrew', 'token') };
+
+  assert.throws(
+    () => groups.saveGroup(cfg, 'Non-Valido!', { targets: [B], mode: 'fanout' }, dir),
+    (e) => e.status === 400 && e.code === 'AUDIO_GROUP_NAME_INVALID',
+  );
+  assert.throws(
+    () => groups.saveGroup(cfg, 'ok-name', { targets: [], mode: 'fanout' }, dir),
+    (e) => e.status === 400 && e.code === 'AUDIO_GROUP_SPEC_INVALID',
+  );
+  assert.throws(
+    () => groups.removeGroup(cfg, 'Non-Valido!', dir),
+    (e) => e.status === 400 && e.code === 'AUDIO_GROUP_NAME_INVALID',
+  );
+});
+
+test('R31-A4: scrittura fallita resta errore fs nativo, senza status 400', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaudio-groups-a4-ro-'));
+  // Il ripristino tocca .nexuscrew, non la radice: è quella la dir 0o500,
+  // e rmSync non può svuotarla finché resta senza scrittura.
+  t.after(() => {
+    fs.chmodSync(path.join(dir, '.nexuscrew'), 0o700);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const cfg = { home: dir, tokenPath: path.join(dir, '.nexuscrew', 'token') };
+  fs.mkdirSync(path.join(dir, '.nexuscrew'), { recursive: true });
+  // Prima un salvataggio buono, poi la directory diventa non scrivibile: il
+  // prossimo saveGroup deve lanciare l'errore fs CON il suo errno e SENZA
+  // status — cosi' la route non puo' confonderlo con una validazione.
+  groups.saveGroup(cfg, 'studio', { targets: [B], mode: 'fanout' }, dir);
+  fs.chmodSync(path.join(dir, '.nexuscrew'), 0o500);
+  assert.throws(
+    () => groups.saveGroup(cfg, 'studio', { targets: [C], mode: 'fanout' }, dir),
+    (e) => e.code === 'EACCES' && e.status === undefined,
+  );
+});
