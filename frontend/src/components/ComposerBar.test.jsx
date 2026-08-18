@@ -320,3 +320,17 @@ describe('ComposerBar IME live-DOM submit', () => {
     expect(loadComposerCell(key).history).toEqual([]);
   });
 });
+
+describe('ComposerBar readonly messaging (R27 #6)', () => {
+  it('shows the readonly message instead of a retry hint when the tile is readonly', async () => {
+    const submitText = vi.fn(async () => false);
+    renderComposer({ readonly: true, submitText });
+    const input = textarea();
+    fireEvent.change(input, { target: { value: 'keep me' } });
+    fireEvent.click(document.querySelector('button.go'));
+    expect(await screen.findByText('READONLY active: changes are blocked by the server (NEXUSCREW_READONLY=1)')).toBeTruthy();
+    expect(submitText).not.toHaveBeenCalled();
+    expect(screen.queryByText('connection not ready — text kept, try again')).toBeNull();
+    expect(input.value).toBe('keep me');
+  });
+});

@@ -122,7 +122,7 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
 
       {available && showComposer && (
         <div className="nc-tile-composer" onMouseDown={(e) => e.stopPropagation()}>
-          <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId}
+          <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId} readonly={readonly}
             keepKeyboardClosedOnVoice={inputPreferences.voiceKeepsKeyboardClosed} />
         </div>
       )}
