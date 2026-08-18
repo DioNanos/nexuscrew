@@ -44,6 +44,10 @@
 .nc-mini-dot:hover, .nc-mini-init:hover { border-color: #244; }
 .nc-mini-dot.active, .nc-mini-init.active { border-color: #2e7d32; background: #14200f; }
 .nc-side-title { font-size: 13px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; opacity: .8; }
+/* R27: la lista celle e' l'ultima nota, la lettura fleet e' fallita */
+.nc-side-fleet-stale { color: #e0b020; font-size: 12px; cursor: help; }
+/* R27 rev3: fleet spento per scelta — zero celle e' la verita' */
+.nc-side-fleet-off { color: #8fa08f; font-size: 12px; cursor: help; }
 .nc-new-btn {
   background: #2e7d32; color: #fff; border: none; border-radius: 8px;
   padding: 4px 10px; font-size: 12px; cursor: pointer;

@@ -206,6 +206,10 @@
 }
 .nc-act.power.on { color: #00cc66; border-color: rgba(0,204,102,0.55); background: rgba(0,204,102,0.10); }
 .nc-act.power.warn { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.10); }
+/* R27: la lista celle mostrata e' l'ultima nota, non un dato fresco */
+.nc-fleet-stale { color: #e8c547; }
+/* R27 rev3: il fleet e' spento — zero celle e' la verita', indicatore neutro */
+.nc-fleet-off { color: #b0b8ad; }
 .nc-act.boot.on { color: #69b7ff; border-color: rgba(105,183,255,.58); background: rgba(105,183,255,.10); }
 .nc-act.boot:disabled { cursor: wait; opacity: .55; }
 .nc-act.pin.on { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.08); }

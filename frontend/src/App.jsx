@@ -28,6 +28,7 @@ import {
 } from './lib/deck-model.js';
 import { deckId, refWithOwner, resolveLayoutForViewer } from './lib/deck-federation.js';
 import { hostRouteKey, hostDesignationFailureMessage } from './lib/host-designation.js';
+import { fleetReadOutcome } from './lib/fleet-read-policy.js';
 import { panelPortForRoute } from './lib/panel-port.js';
 import {t} from './lib/i18n.js';
 import { useLang } from './hooks/useLang.js';
@@ -294,6 +295,10 @@ export default function App() {
   const [dSessions, setDSessions] = useState([]);
   const [cells, setCells] = useState([]);
   const [fleetCapabilities, setFleetCapabilities] = useState([]);
+  // R27: lettura fleet non riuscita → lista esposta = ultima nota (stale)
+  const [fleetStale, setFleetStale] = useState(false);
+  // R27 rev3: fleet SPENTO (available:false del server) → zero celle vera
+  const [fleetOff, setFleetOff] = useState(null);
   const [layout, setLayout] = useState(() => initialDeck.ownerId ? emptyLayout() : loadLayout(initialDeck.name));
   const [gridFocus, setGridFocus] = useState(null);   // refKey del tile focato
   const [single, setSingle] = useState(null);     // overlay vista singola desktop: ref {session, node?}
@@ -418,11 +423,26 @@ export default function App() {
       const j = await r.json();
       if (!j.error) setDSessions(j.sessions || []);
     } catch (_) { /* best-effort */ }
-    try {
-      const fs = await fleetStatus(token);
-      setCells(fs.available ? (fs.cells || []) : []);
-      setFleetCapabilities(fs.available ? (fs.capabilities || []) : []);
-    } catch (_) { setCells([]); setFleetCapabilities([]); }
+    // R27: stessa policy pura della home mobile (lib/fleet-read-policy.js) —
+    // un fallimento di lettura NON svuota la lista: non e' «zero celle»,
+    // resta l'ultima nota con l'indicatore stale in sidebar.
+    let fs = null; let fleetError = null;
+    try { fs = await fleetStatus(token); } catch (e) { fleetError = e; }
+    const fleet = fleetReadOutcome({ fs, error: fleetError });
+    if (fleet.kind === 'data') {
+      setCells(fleet.cells);
+      setFleetCapabilities(fleet.capabilities);
+      setFleetStale(false);
+      setFleetOff(null);
+    } else if (fleet.kind === 'stale') {
+      setFleetStale(true);
+      setFleetOff(null);
+    } else {
+      setCells([]);
+      setFleetCapabilities([]);
+      setFleetStale(false);
+      setFleetOff(fleet.reason || '');
+    }
   }, [token]);
   // hostByRoute e' server-owned e vale per DESKTOP e MOBILE: polling separato dal
   // poll sessions/fleet (desktop-only), best-effort, nessun retry (inerzia). Una
@@ -714,6 +734,8 @@ export default function App() {
           onPeekOpen={() => setCellSwitcherOpen(false)}
           overlayOpen={cellSwitcherOpen}
           fleetCapabilities={fleetCapabilities}
+          fleetStale={fleetStale}
+          fleetOff={fleetOff}
           bootSettlement={bootSettlement}
           onBootSettlementApplied={onBootSettlementApplied}
           localNodeId={deckStore.localNodeId}

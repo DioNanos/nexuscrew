@@ -32,7 +32,7 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 // Collassabile (mini 48px, solo dot) e ridimensionabile (maniglia bordo destro).
 export default function Sidebar({
   sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onBoot, onNodePower, onKill, onVisibility, onNew,
-  onNodeRename, onSettings, onBootError, localNodeId, fleetCapabilities = [], bootSettlement = null,
+  onNodeRename, onSettings, onBootError, localNodeId, fleetCapabilities = [], fleetStale = false, fleetOff = null, bootSettlement = null,
   hostByRoute = {}, onDesignateCell, onClearHostCell,
   onBootSettlementApplied, onOpenVlSession,
   // Il popup di sbirciata porta tre sorgenti: flusso e pannello chiedono il
@@ -390,6 +390,14 @@ export default function Sidebar({
       <div className="nc-side-head">
         <button className="nc-collapse-btn" onClick={onToggleCollapse} title={t('collapse')}>⟨</button>
         <span className="nc-side-title">{t('fleet')}</span>
+        {/* R27: lettura fleet non riuscita → la lista e' l'ultima nota, non un dato */}
+        {fleetStale && <span className="nc-side-fleet-stale" role="status" title={t('fleet-stale')} aria-label={t('fleet-stale')}>●</span>}
+        {/* R27 rev3: fleet spento per scelta → zero celle e' la verita' (reason del server) */}
+        {fleetOff !== null && (
+          <span className="nc-side-fleet-off" role="status"
+            title={`${t('fleet-off')}${fleetOff ? ` (${fleetOff})` : ''}`}
+            aria-label={`${t('fleet-off')}${fleetOff ? ` (${fleetOff})` : ''}`}>○</span>
+        )}
         <button className="nc-new-btn" onClick={onNew} title={t('fleet-new-cell')}>+ {t('new')}</button>
       </div>
 
