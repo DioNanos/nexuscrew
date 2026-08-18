@@ -1370,15 +1370,20 @@ test('doctor: check MCP incluso ma non fail su PWA-only (env senza identita -> c
 });
 
 test('update: npm ok -> installa @latest + restart se attivo', () => {
-  const calls = [];
-  const r = update({
-    platform: 'linux', log: () => {},
-    execImpl: (b, a) => { calls.push([b, a]); if (a && a.includes('is-active')) return 'active'; return ''; },
-    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
-  });
-  assert.equal(r.code, 0);
-  assert.ok(calls.some((c) => c[0] === 'npm' && c[1].join(' ').includes('@mmmbuto/nexuscrew@latest')));
-  assert.ok(calls.some((c) => c[0] === 'systemctl' && c[1].includes('restart')));
+  // R28-rimedio: update() ora sana le definizioni di boot — home isolata,
+  // mai quella reale di chi gira i test.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-update-man-'));
+  try {
+    const calls = [];
+    const r = update({
+      platform: 'linux', home: dir, log: () => {},
+      execImpl: (b, a) => { calls.push([b, a]); if (a && a.includes('is-active')) return 'active'; return ''; },
+      ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
+    });
+    assert.equal(r.code, 0);
+    assert.ok(calls.some((c) => c[0] === 'npm' && c[1].join(' ').includes('@mmmbuto/nexuscrew@latest')));
+    assert.ok(calls.some((c) => c[0] === 'systemctl' && c[1].includes('restart')));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('update: npm fallito -> code 1 + messaggio chiaro', () => {
@@ -1393,18 +1398,107 @@ test('update: npm fallito -> code 1 + messaggio chiaro', () => {
 });
 
 test('update: restart fallito restituisce code 1 e non dichiara successo', () => {
-  const logs = [];
+  // R28-rimedio: home isolata (update() ora sana le definizioni di boot).
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-update-manfail-'));
+  try {
+    const logs = [];
+    const r = update({
+      platform: 'linux', home: dir, log: (line) => logs.push(line),
+      execImpl: (_bin, args) => args && args.includes('is-active') ? 'active' : '',
+      restartImpl: () => ({ restarted: false, reason: 'tmux survival guard failed' }),
+    });
+    assert.equal(r.updated, true);
+    assert.equal(r.restarted, false);
+    assert.equal(r.code, 1);
+    assert.match(r.reason, /tmux survival guard failed/);
+    assert.match(logs.join('\n'), /restart fallito/);
+    assert.doesNotMatch(logs.join('\n'), /servizio riavviato sul nuovo codice/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// R28-rimedio, difetto 1 (audit): `nexuscrew update` manuale reinstalla e
+// riavvia MAI rigenerando le definizioni di boot — due cervelli per lo
+// stesso concetto, uno dei quali sbagliato. La via manuale deve attraversare
+// la STESSA sanazione del runner: un solo cervello per
+// «reinstalla ⇒ sana le definizioni ⇒ rendile note al service manager».
+test('update: la via manuale attraversa la STESSA sanazione delle definizioni del runner', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-r28man-heal-'));
+  try {
+    const calls = [];
+    const r = update({
+      platform: 'linux', home: dir, log: () => {},
+      execImpl: (b, a) => { calls.push([b, a]); return a && a.includes('is-active') ? 'active' : ''; },
+      ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
+      restartImpl: () => ({ restarted: true }),
+      healBootImpl: () => {
+        calls.push(['heal', 'called']);
+        return { regenerated: [], skipped: [], warnings: [], errors: [], activation: { applied: [], skipped: [], errors: [] } };
+      },
+    });
+    assert.equal(r.code, 0);
+    assert.ok(calls.some((c) => c[0] === 'heal'),
+      'update() deve chiamare la sanazione: senza, chi aggiorna a mano con un node appena cambiato riparte su path morti');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// R28-rimedio, difetto 1+2 end-to-end sulla via manuale: rigenera le
+// definizioni sul node VIVO e applica daemon-reload nello stesso percorso.
+test('update: npm ok -> rigenera le definizioni sul node VIVO e applica daemon-reload (via manuale)', (t) => {
+  const serviceMod = require('../lib/cli/service.js');
+  const fleetMod = require('../lib/cli/fleet-service.js');
+  const realAlias = require('../lib/cli/stable-alias.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-r28man-e2e-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const deadNode = path.join(dir, 'dead', 'Cellar', 'node', '26.4.0', 'bin', 'node');
+  const aliveNode = path.join(dir, 'alive', 'bin', 'node');
+  fs.mkdirSync(path.dirname(aliveNode), { recursive: true });
+  fs.writeFileSync(aliveNode, '#!/bin/sh\n', { mode: 0o755 });
+  const serviceTarget = serviceMod.installPath('linux', dir);
+  const fleetTarget = fleetMod.fleetInstallPath('linux', dir);
+  fs.mkdirSync(path.dirname(serviceTarget), { recursive: true });
+  fs.mkdirSync(path.dirname(fleetTarget), { recursive: true });
+  // Generatore VERO col node morto: una fixture scritta a mano proverebbe la
+  // guardia contro se' stessa invece che contro le definizioni reali.
+  const entryPathFx = path.join(path.resolve(__dirname, '..'), 'bin', 'nexuscrew.js');
+  fs.writeFileSync(serviceTarget, serviceMod.generateService('linux', {
+    repoRoot: path.resolve(__dirname, '..'), nodeBin: deadNode, entryPath: entryPathFx,
+    home: dir, uid: 1000, port: 41777,
+  }));
+  fs.writeFileSync(fleetTarget, fleetMod.generateFleetService({
+    platform: 'linux', nodeBin: deadNode, entryPath: entryPathFx,
+    repoRoot: path.resolve(__dirname, '..'), home: dir,
+  }));
+  const platformMod = {
+    detectPlatform: () => 'linux',
+    nodeBin: () => deadNode,
+    repoRoot: () => path.resolve(__dirname, '..'),
+    uid: () => 1000,
+  };
+  const aliasMod = {
+    resolveLiveBootPaths: (o) => realAlias.resolveLiveBootPaths({
+      ...o, env: { PREFIX: path.join(dir, 'alive') },
+    }),
+  };
+  const onlyAlive = (p) => p === aliveNode;
+
+  const calls = [];
   const r = update({
-    platform: 'linux', log: (line) => logs.push(line),
-    execImpl: (_bin, args) => args && args.includes('is-active') ? 'active' : '',
-    restartImpl: () => ({ restarted: false, reason: 'tmux survival guard failed' }),
+    platform: 'linux', home: dir, log: () => {},
+    execImpl: (b, a) => { calls.push(`${b} ${(a || []).join(' ')}`); return a && a.includes('is-active') ? 'active' : ''; },
+    ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
+    restartImpl: () => ({ restarted: true }),
+    regenSeams: { platformMod, aliasMod, exists: onlyAlive },
   });
-  assert.equal(r.updated, true);
-  assert.equal(r.restarted, false);
-  assert.equal(r.code, 1);
-  assert.match(r.reason, /tmux survival guard failed/);
-  assert.match(logs.join('\n'), /restart fallito/);
-  assert.doesNotMatch(logs.join('\n'), /servizio riavviato sul nuovo codice/);
+  assert.equal(r.code, 0);
+  const svc = fs.readFileSync(serviceTarget, 'utf8');
+  const flt = fs.readFileSync(fleetTarget, 'utf8');
+  assert.ok(svc.includes(aliveNode) && !svc.includes(deadNode),
+    'il servizio principale ripunta al node vivo anche dalla via manuale');
+  assert.ok(flt.includes(aliveNode) && !flt.includes(deadNode),
+    'la companion ripunta al node vivo anche dalla via manuale');
+  assert.ok(calls.includes('systemctl --user daemon-reload'),
+    'daemon-reload applicato nella via manuale — senza, il restart userebbe la definizione VECCHIA in memoria');
 });
 
 test('smart-up idempotente: gia\' attivo e configurato -> no start, no output, no browser', async () => {
