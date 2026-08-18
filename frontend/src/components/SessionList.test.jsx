@@ -27,7 +27,7 @@ vi.mock('../hooks/useNodes.js', () => ({ useNodes: () => fixture.nodes }));
 vi.mock('../hooks/useLang.js', () => ({ useLang: () => ['en', vi.fn()] }));
 
 import SessionList from './SessionList.jsx';
-import { fleetBoot, fleetDown, fleetUp, renameNodeLabel, setSessionTechnical } from '../lib/api.js';
+import { fleetBoot, fleetDown, fleetStatus, fleetUp, renameNodeLabel, setSessionTechnical } from '../lib/api.js';
 import { readCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 
 function cell(cell, tmuxSession, live, engine = 'claude.native') {
@@ -352,5 +352,64 @@ describe('SessionList — cella ospite Live per nodo', () => {
       hostByRoute={{ local: { hostCell: 'Relay Live' } }} />);
     await screen.findByText('Relay Live');
     expect(screen.queryByRole('button', { name: 'live host Relay Live' })).toBeNull();
+  });
+});
+
+// R27: il fleet che non risponde non deve far SPARIRE le celle in silenzio.
+// Riproduce l'incidente reale: solo celle Fleet locali, nessuna sessione
+// unmanaged — un guasto della lettura svuotava la home e sembrava «tutto
+// offline» mentre server e celle erano vivi. Il refresh manuale (bottone in
+// header) forza il secondo poll senza aspettare l'intervallo da 4s.
+describe('R27 — un fleet che non risponde non svuota la home in silenzio', () => {
+  const STALE_EN = 'Fleet read failed: the cell list may not be up to date.';
+
+  function localOnly() {
+    fixture.sessions = [];
+    fixture.nodes = [];
+    fixture.cells = [cell('Live Cell', 'local-live', true)];
+  }
+
+  it('CONTROLLO NEGATIVO: fleet che respinge (rete/401/5xx) — la cella resta e appare lo stale', async () => {
+    localOnly();
+    renderRoster();
+    expect(await screen.findByText('Live Cell')).toBeTruthy();
+    fleetStatus.mockRejectedValueOnce(new Error('fetch failed'));
+    fireEvent.click(screen.getByRole('button', { name: 'refresh' }));
+    expect(await screen.findByText(STALE_EN)).toBeTruthy();
+    expect(screen.getByText('Live Cell')).toBeTruthy(); // la cella NON e' sparita
+  });
+
+  it('CONTROLLO NEGATIVO: available:false non e\' «zero celle» — come il reject, resta la cella e appare lo stale', async () => {
+    localOnly();
+    renderRoster();
+    expect(await screen.findByText('Live Cell')).toBeTruthy();
+    fleetStatus.mockResolvedValueOnce({ available: false });
+    fireEvent.click(screen.getByRole('button', { name: 'refresh' }));
+    expect(await screen.findByText(STALE_EN)).toBeTruthy();
+    expect(screen.getByText('Live Cell')).toBeTruthy();
+  });
+
+  it('zero celle con lettura RIUSCITA resta un dato vero: lista vuota, NESSUNO stale', async () => {
+    localOnly();
+    renderRoster();
+    expect(await screen.findByText('Live Cell')).toBeTruthy();
+    fleetStatus.mockResolvedValueOnce({ available: true, capabilities: [], cells: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'refresh' }));
+    await waitFor(() => expect(screen.queryByText('Live Cell')).toBeNull());
+    expect(screen.queryByText(STALE_EN)).toBeNull();
+  });
+
+  it('un fleet che torna a rispondere riporta la lettura viva: stale via, lista aggiornata', async () => {
+    localOnly();
+    renderRoster();
+    expect(await screen.findByText('Live Cell')).toBeTruthy();
+    fleetStatus.mockRejectedValueOnce(new Error('fetch failed'));
+    fireEvent.click(screen.getByRole('button', { name: 'refresh' }));
+    expect(await screen.findByText(STALE_EN)).toBeTruthy();
+    // recupero: la prossima lettura riuscita (con una cella in piu') aggiorna e spegne lo stale
+    fixture.cells = [cell('Live Cell', 'local-live', true), cell('New Cell', 'local-new', true)];
+    fireEvent.click(screen.getByRole('button', { name: 'refresh' }));
+    await screen.findByText('New Cell');
+    expect(screen.queryByText(STALE_EN)).toBeNull();
   });
 });
