@@ -860,3 +860,27 @@ test('R28: un terzo che COMINCIA la Description col nostro nome non e\' nostro',
   assert.equal(serviceMod.isOurService('mac', '<key>Label</key><string>com.mmmbuto.nexuscrew.altro</string>'), false,
     'il Label deve essere esatto, non un prefisso');
 });
+
+// R31: «aggiornato» non e' un verdetto che uno stato mai inizializzato puo'
+// dare. `phase:'idle'` di DEFAULT (file di stato mai scritto) e `idle` DOPO un
+// check senza novita' coincidono — il campo derivato `checked` li distingue:
+// lastCheckedAt viene scritto a ogni check (anche fallito, manager:206/212).
+test('npm updater: R31 — status() distingue «mai controllato» da «controllato senza novita»', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-updater-r31-'));
+  const updater = createNpmUpdater({
+    currentVersion: '0.9.7', home: dir, statusPath: path.join(dir, 'state.json'),
+    supported: true, enabled: false,
+    lookupLatest: async () => '0.9.7', // stessa versione: check vero, nessuna novita'
+  });
+  const before = updater.status();
+  assert.equal(before.phase, 'idle');
+  assert.equal(before.lastCheckedAt, '');
+  assert.equal(before.checked, false, 'stato mai scritto: nessun controllo e\' mai partito');
+
+  const after = await updater.check();
+  assert.equal(after.phase, 'idle');
+  assert.equal(after.checked, true, 'check eseguito (senza novita\'): ora il verdetto e\' saputo');
+
+  updater.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
