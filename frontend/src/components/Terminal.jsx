@@ -5,7 +5,7 @@ import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../lib/ws-client.js';
 import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
-import { wantsLocalSelection, isCopyShortcut, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
+import { wantsLocalSelection, isCopyShortcut, copyShortcutHint, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
 import {
   clampDraggedCell, edgeScrollDirection, extendRangeToCell, handlePositions, handlesTooClose, magnifierLayout, normalizeRange,
   rangeFromXterm, rangeToSelect, selectionUiPolicy, snapWideCol, wordBoundsAt, zoomLineForRange,
@@ -1043,7 +1043,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
           : t('attach-upload-progress').replace('{n}', String(uploadState.current || 0)).replace('{total}', String(uploadState.total || 0))}
     </div>}
     {(selection || selectionMode) && <div className="nc-selection-tools">
-      {selection ? <button type="button" onClick={doCopy}>{copyState || t('copy')}</button> : <span>{t('select-drag')}</span>}
+      {selection ? <button type="button" onClick={doCopy}>{copyState || `${t('copy')} · ${copyShortcutHint(typeof navigator !== 'undefined' ? navigator.userAgent : '')}`}</button> : <span>{t('select-drag')}</span>}
       {selection && selectionDetached && <span className="nc-selection-held">{t('selection-held')}</span>}
       {selection && !selectionDetached && selectionChanged && <span className="nc-selection-changed">{t('selection-changed')}</span>}
       <button type="button" onClick={() => { apiRef.current?.term?.clearSelection(); setSelection(''); setSelectionDetached(false); onSelectionModeChange?.(false); }}>{t('cancel')}</button>

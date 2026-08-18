@@ -27,6 +27,14 @@ export function isCopyShortcut(e) {
   return !!(e.metaKey || (e.ctrlKey && e.shiftKey));
 }
 
+// R34: il pulsante Copia dichiara la scorciatoia reale della piattaforma —
+// la scorciatoia esiste gia' (isCopyShortcut), ma chi non la conosce non la
+// scopre mai. Mai copia automatica: la clipboard si tocca solo a gesto
+// esplicito (decisione Dev, R34 risposta 1).
+export function copyShortcutHint(userAgent) {
+  return /mac|iphone|ipad/i.test(String(userAgent || '')) ? '⌘C' : 'Ctrl+Shift+C';
+}
+
 // Touch: una pressione ferma attiva la selezione locale; un movimento prima
 // della soglia resta invece uno scroll tmux. Valori puri per testare la gesture.
 export const LONG_PRESS_MS = 450;

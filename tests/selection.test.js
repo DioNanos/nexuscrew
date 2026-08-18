@@ -45,3 +45,12 @@ test('long press touch: piccoli tremori non cancellano, drag/scroll sì', async 
   assert.equal(movedBeyondLongPress(100, 100, 109, 100), true);
   assert.equal(movedBeyondLongPress(100, 100, 100, 91), true);
 });
+
+test('R34 — copyShortcutHint: il pulsante Copia dichiara la scorciatoia della piattaforma', async () => {
+  const { copyShortcutHint } = await sel();
+  assert.equal(copyShortcutHint('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'), '⌘C', 'Mac');
+  assert.equal(copyShortcutHint('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)'), '⌘C', 'iPhone');
+  assert.equal(copyShortcutHint('Mozilla/5.0 (X11; Linux x86_64)'), 'Ctrl+Shift+C', 'Linux');
+  assert.equal(copyShortcutHint('Mozilla/5.0 (Windows NT 10.0)'), 'Ctrl+Shift+C', 'Windows');
+  assert.equal(copyShortcutHint(undefined), 'Ctrl+Shift+C', 'sconosciuto → X11');
+});
