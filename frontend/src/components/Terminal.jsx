@@ -5,11 +5,12 @@ import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../lib/ws-client.js';
 import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
-import { wantsLocalSelection, isCopyShortcut, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
+import { wantsLocalSelection, isCopyShortcut, copyShortcutHint, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
 import {
-  clampDraggedCell, edgeScrollDirection, handlePositions, normalizeRange,
-  rangeFromXterm, rangeToSelect, snapWideCol, wordBoundsAt, zoomLineForRange,
+  clampDraggedCell, edgeScrollDirection, extendRangeToCell, handlePositions, handlesTooClose, magnifierLayout, normalizeRange,
+  rangeFromXterm, rangeToSelect, selectionUiPolicy, snapWideCol, wordBoundsAt, zoomLineForRange,
 } from '../lib/selection-handles.js';
+import { MQ_DESKTOP } from '../lib/desktop.js';
 import { t } from '../lib/i18n.js';
 import { filesFromTransfer, hasFilePayload, uploadSessionFiles } from '../lib/attachments.js';
 import {
@@ -56,6 +57,21 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // memoria della verita': il testo si rilegge dal buffer a ogni battito.
   const [zoomFocus, setZoomFocus] = useState('start');
   const [zoomView, setZoomView] = useState(null);
+  // R34 — la lente e' una BOLLA vicino alla maniglia attiva e vive SOLO
+  // durante il gesto: long-press/selezione touch in corso (dito giu') o drag
+  // di una maniglia. A gesto finito sparisce: il terminale torna tutto
+  // leggibile e niente resta acceso a rubare righe.
+  const [touchGestureActive, setTouchGestureActive] = useState(false);
+  const [magGeom, setMagGeom] = useState(null);
+  // R34 — origine del gesto che ha creato la selezione ('touch' | 'mouse' |
+  // null). La modalita' della UI di selezione segue LEI (policy in
+  // selection-handles.js), non il device: sul laptop touch-screen il criterio
+  // matchMedia non puo' decidere, decide il gesto. Ref per le closure dei
+  // gesti, stato per il render; il dataset sull'host la rende osservabile
+  // (stessa ragione di data-mouse-tracking: senza, una prova non distingue
+  // «policy giusta» da «attributo mai scritto»).
+  const [selOrigin, setSelOrigin] = useState(null);
+  const selOriginRef = useRef(null);
   // Il testo SOTTO una selezione attiva puo' essere sovrascritto (una
   // progress bar che riscrive la riga, un redraw dell'app): la copia
   // consegnerebbe il testo nuovo mentre chi guarda ha in mente quello
@@ -89,6 +105,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   const handleDragApiRef = useRef({ startHandleDrag: () => {} });
   const handleGeomRef = useRef(null);
   handleGeomRef.current = handleGeom;
+
+  // R34: l'origine selezione e' osservabile sull'host (unico scrittore: il
+  // render-side, cosi' dataset e UI non possono divergere).
+  useEffect(() => {
+    const host = hostRef.current;
+    if (host) host.dataset.selectionOrigin = selOrigin || '';
+  }, [selOrigin]);
 
   // Focus → size-owner (§5b): quando il tile prende/perde il focus manda il
   // frame 'focus' cosi' il server promuove/demota il client (ignore-size).
@@ -261,6 +284,10 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // (e' di xterm, non nostro), il testo da copiare no.
     // handleDrag vive qui sopra perche' onSelection lo chiude (rev5): se
     // xterm azzera la selezione a meta' drag, il gesto finisce li'.
+    // R34: scrive l'origine del gesto (ref per le closure + stato per il
+    // render). Unico punto di scrittura dentro l'effect: i gesti la marcano,
+    // onSelection la azzera quando xterm non ha piu' selezione.
+    const markOrigin = (o) => { selOriginRef.current = o; setSelOrigin(o); };
     let handleDrag = null;         // { which, offsetX, offsetY, fixed }
     const onSelection = term.onSelectionChange(() => {
       const next = term.getSelection();
@@ -277,6 +304,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       const range = raw ? normalizeRange(raw.start, raw.end, term.cols) : null;
       setSelRange(range);
       selRangeRef.current = range;
+      // R34: selezione sparita → origine sparita. La policy conservativa su
+      // null e' touch, ma a selezione assente non c'e' nulla da mostrare.
+      if (!range) markOrigin(null);
       // R25-zoom rev5 (r25rev4-audit): xterm AZZERA la selezione su resize di
       // righe e su trim oltre il top. Se il drag e' in corso, l'ancora
       // congelata risusciterebbe una selezione cancellata al prossimo
@@ -426,6 +456,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     let touchMoved = false, multiTouchActive = false;
     let touchScroll = { mode: null, remainder: 0 }, vertical = null, selectStart = null;
     let longPressTimer = null; let touchSelecting = false;
+    // R34: timestamp dell'ultimo contatto touch — il mousedown SINTETICO che
+    // Chrome spara dopo un touchend non prevenuto non deve rubare l'origine
+    // "touch" di una selezione appena nata dal dito (ghost-click guard).
+    const GHOST_CLICK_MS = 750;
+    let lastTouchTs = 0;
     const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
     const cellXY = (clientX, clientY) => {
       const screen = host.querySelector('.xterm-screen') || host;
@@ -472,6 +507,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       });
     };
     const onTouchStart = (e) => {
+      // R34: l'origine si marca al PRIMO contatto, prima di ogni ramo
+      // (multi-touch compreso): da qui in poi la selezione e' nata dal dito.
+      lastTouchTs = Date.now(); markOrigin('touch');
       clearLongPress(); touchSelecting = false; touchMoved = false;
       if (multiTouchActive || e.touches.length !== 1) {
         // Multi-touch (pinch / due dita): invalida il candidato doppio tap e
@@ -498,6 +536,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         selectStart = { row: pressed.row, col: bounds.start };
         const end = { row: pressed.row, col: bounds.end };
         term.clearSelection();
+        // R34: la selezione NASCE qui, dal dito — la marcatura va DOPO il
+        // clearSelection (onSelection azzera l'origine a range nullo). Il
+        // gesto e' attivo (bolla lente accesa) e la bolla guarda il capo
+        // finale della parola appena presa, dove sta il caret.
+        markOrigin('touch');
+        setTouchGestureActive(true);
+        setZoomFocus('end');
         term.select(bounds.start, pressed.row, bounds.end - bounds.start + 1);
         showTouchSelectionCaret(end);
         return;
@@ -522,6 +567,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         selectStart = { row: pressed.row, col: bounds.start };
         const end = { row: pressed.row, col: bounds.end };
         term.clearSelection();
+        markOrigin('touch'); // dopo il clear (onSelection azzera a range nullo)
+        setTouchGestureActive(true); // bolla lente accesa finche' il dito resta giu'
+        setZoomFocus('end');
         term.select(bounds.start, pressed.row, bounds.end - bounds.start + 1);
         showTouchSelectionCaret(end);
         try { navigator.vibrate?.(10); } catch (_) {}
@@ -543,6 +591,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         const end = { row: raw.row, col };
         const b2 = end.row * term.cols + end.col;
         const first = a <= b2 ? selectStart : end;
+        setZoomFocus(side); // la bolla segue il capo che il dito sta muovendo
         term.select(first.col, first.row, Math.abs(b2 - a) + 1);
         showTouchSelectionCaret(end);
         return;
@@ -560,6 +609,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         const end = { row: raw.row, col };
         const b2 = end.row * term.cols + end.col;
         const first = a <= b2 ? selectStart : end;
+        setZoomFocus(side); // la bolla segue il capo che il dito sta muovendo
         term.select(first.col, first.row, Math.abs(b2 - a) + 1);
         showTouchSelectionCaret(end);
         return;
@@ -589,7 +639,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       clearLongPress(); touchY = null; touchX = null; tapX = null; tapY = null;
       selectStart = null; touchSelecting = false; touchMoved = false; multiTouchActive = false;
       setTouchSelectionCaret(null);
+      setTouchGestureActive(false); // R34: a gesto finito la bolla lente si spegne
       touchScroll = { mode: null, remainder: 0 };
+      lastTouchTs = Date.now(); // la finestra ghost-click copre il mousedown sintetico post-touchend
     };
     const onTouchEnd = (e) => {
       if (multiTouchActive) {
@@ -622,6 +674,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     host.addEventListener('touchend', onTouchEnd, { passive: true });
     host.addEventListener('touchcancel', onTouchCancel, { passive: true });
     const onDoubleClick = () => {
+      // R34: la tastiera virtuale e' un gesto TOUCH. Sul desktop il dblclick
+      // seleziona la parola (xterm nativo) e basta. matchMedia assente
+      // (jsdom, browser antichi) → NON desktop: il gesto tastiera resta.
+      const desktop = typeof window.matchMedia === 'function' && window.matchMedia(MQ_DESKTOP).matches;
+      if (desktop) return;
       if (!selectionModeRef.current && keyboardGestureRef.current === 'double-tap') requestTerminalKeyboard();
     };
     host.addEventListener('dblclick', onDoubleClick);
@@ -640,10 +697,22 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // xterm/tmux come prima (comportamento touch invariato).
     let mouseSelectStart = null;
     const onMouseDown = (e) => {
+      // R34: l'origine si marca PRIMA del gate Shift — anche il drag nativo
+      // (senza Shift, senza tracking) deve risultare nato dal mouse. Salvo
+      // ghost-click: un mousedown entro 750ms dall'ultimo touchend e' il
+      // sintetico di compatibilita', non un mouse vero.
+      if (Date.now() - lastTouchTs >= GHOST_CLICK_MS) markOrigin('mouse');
       if (!wantsLocalSelection(e)) return;
       e.preventDefault(); e.stopPropagation();
-      mouseSelectStart = cellXY(e.clientX, e.clientY);
-      term.clearSelection();
+      // R34: Shift+click (senza drag) con selezione attiva ESTENDE il capo
+      // vicino; Shift+drag resta selezione nuova. La scelta si fa al primo
+      // movimento oltre soglia, quindi qui NON si cancella piu' la selezione:
+      // serve viva se il gesto e' un click.
+      mouseSelectStart = {
+        cell: cellXY(e.clientX, e.clientY),
+        clientX: e.clientX, clientY: e.clientY,
+        extendFrom: selRangeRef.current, dragged: false,
+      };
     };
     const onMouseMove = (e) => {
       if (!mouseSelectStart) {
@@ -665,13 +734,37 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         return;
       }
       e.preventDefault(); e.stopPropagation();
+      // R34: sotto soglia il gesto resta un CANDIDATO click-estendi: il jitter
+      // di pochi pixel non deve trasformarlo in una selezione nuova.
+      if (!mouseSelectStart.dragged
+        && !movedBeyondLongPress(mouseSelectStart.clientX, mouseSelectStart.clientY, e.clientX, e.clientY)) {
+        return;
+      }
+      mouseSelectStart.dragged = true;
+      const startCell = mouseSelectStart.cell;
       const end = cellXY(e.clientX, e.clientY);
-      const a = mouseSelectStart.row * term.cols + mouseSelectStart.col;
+      const a = startCell.row * term.cols + startCell.col;
       const b = end.row * term.cols + end.col;
-      const first = a <= b ? mouseSelectStart : end;
+      const first = a <= b ? startCell : end;
       term.select(first.col, first.row, Math.abs(b - a) + 1);
     };
-    const onMouseUp = (e) => { if (mouseSelectStart) { e.stopPropagation(); mouseSelectStart = null; } };
+    const onMouseUp = (e) => {
+      if (!mouseSelectStart) return;
+      e.stopPropagation();
+      // R34: Shift+click (mai trascinato) con selezione attiva → il capo piu'
+      // vicino si sposta sulla cella cliccata (funzione pura; snap ai glifi
+      // larghi sul capo mosso, come nelle maniglie).
+      const { cell, extendFrom, dragged } = mouseSelectStart;
+      mouseSelectStart = null;
+      if (dragged || !extendFrom) return;
+      const next = extendRangeToCell({ range: extendFrom, cell, cols: term.cols });
+      if (!next.moved) return;
+      const movedCell = next[next.moved];
+      const line = term.buffer.active.getLine(movedCell.row);
+      movedCell.col = snapWideCol({ line, col: movedCell.col, side: next.moved, cols: term.cols });
+      const sel = rangeToSelect({ start: next.start, end: next.end }, term.cols);
+      term.select(sel.col, sel.row, sel.length);
+    };
     host.addEventListener('mousedown', onMouseDown, true);
     host.addEventListener('mousemove', onMouseMove, true);
     host.addEventListener('mouseup', onMouseUp, true);
@@ -859,21 +952,23 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // cambiamento del range e a ogni tick di viewport/redraw; misura lo schermo
   // reale e deriva la grandezza della cella — la stessa strada del caret del
   // long-press, cosi' le due viste non divergono.
-  // R25-zoom: allo STESSO battito si deriva la barra di zoom — la riga della
-  // maniglia in focus si rilegge dal buffer QUI, quindi la barra segue il
-  // drag, lo scroll e il testo vivo esattamente come le maniglie, senza una
-  // fonte di verita' separata da tenere in sync. L'ingrandimento e' 2x la
-  // cella REALE del terminale (misurata qui sopra), non un font fisso.
+  // R25-zoom → R34: allo STESSO battito si deriva la vista lente — la riga
+  // della maniglia in focus si rilegge dal buffer QUI, quindi la vista segue
+  // il drag, lo scroll e il testo vivo esattamente come le maniglie, senza
+  // una fonte di verita' separata. R34: la vista e' una BOLLA vicino alla
+  // maniglia attiva (magnifierLayout puro), accesa solo durante il gesto
+  // (long-press iniziale o drag maniglia): a gesto finito il terminale torna
+  // tutto leggibile. L'ingrandimento resta 2x la cella REALE misurata qui.
   useEffect(() => {
     const host = hostRef.current;
     const term = apiRef.current ? apiRef.current.term : null;
-    if (!host || !term || !selRange) { setHandleGeom(null); setZoomView(null); return; }
+    if (!host || !term || !selRange) { setHandleGeom(null); setZoomView(null); setMagGeom(null); return; }
     const screen = host.querySelector('.xterm-screen') || host;
     const screenRect = screen.getBoundingClientRect();
     const hostRect = host.getBoundingClientRect();
     const cellWidth = screenRect.width / Math.max(1, term.cols);
     const cellHeight = screenRect.height / Math.max(1, term.rows);
-    setHandleGeom(handlePositions({
+    const positions = handlePositions({
       range: selRange,
       viewportY: Number(term.buffer.active.viewportY) || 0,
       rows: term.rows,
@@ -881,32 +976,60 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       cellHeight,
       screenLeft: screenRect.left - hostRect.left,
       screenTop: screenRect.top - hostRect.top,
-    }));
+    });
+    setHandleGeom(positions);
     let line = null;
     const focusRow = selRange[zoomFocus === 'end' ? 'end' : 'start'].row;
     if (typeof term.buffer.active.getLine === 'function') {
       line = term.buffer.active.getLine(Number(focusRow));
     }
-    setZoomView(!line ? null : {
+    const zoomFontSize = Math.max(16, Math.round(cellHeight * 2));
+    const zoom = !line ? null : {
       ...zoomLineForRange({ range: selRange, side: zoomFocus, line, cols: term.cols }),
-      fontSize: Math.max(16, Math.round(cellHeight * 2)),
-    });
-  }, [selRange, geomTick, zoomFocus]);
+      fontSize: zoomFontSize,
+    };
+    setZoomView(zoom);
+    // R34: la bolla si posiziona solo se un gesto e' in corso (long-press o
+    // drag maniglia) e l'ancora e' visibile. Larghezza/altezza della bolla
+    // sono STIME dal contenuto (jsdom non misura il layout): servono al clamp
+    // orizzontale, non alla forma — quella resta al CSS (max-width + overflow).
+    const gestureActive = draggingHandle !== null || touchGestureActive;
+    const anchor = positions[zoomFocus === 'end' ? 'end' : 'start'];
+    if (!gestureActive || !zoom || !anchor || !anchor.visible) { setMagGeom(null); return; }
+    const textLen = (zoom.before + zoom.sel + zoom.after).length;
+    const charWidth = cellWidth * (zoomFontSize / Math.max(1, cellHeight));
+    const bubbleWidth = Math.min(hostRect.width - 8, Math.round(textLen * charWidth) + 16);
+    const bubbleHeight = Math.round(zoomFontSize * 1.25) + 12;
+    setMagGeom(magnifierLayout({
+      anchorLeft: anchor.left, anchorTop: anchor.top,
+      hostWidth: hostRect.width, hostHeight: hostRect.height,
+      bubbleWidth, bubbleHeight,
+    }));
+  }, [selRange, geomTick, zoomFocus, draggingHandle, touchGestureActive]);
+
+  // R34: la UI di selezione segue l'origine del gesto (policy pura) — sul
+  // desktop niente maniglie né lente sopra una selezione da mouse.
+  const uiPolicy = selectionUiPolicy(selOrigin);
 
   return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
     <div className="nc-terminal-host" ref={hostRef} />
     {touchSelectionCaret && <div className="nc-touch-selection-caret" style={touchSelectionCaret} aria-hidden="true" />}
-    {selRange && handleGeom && ['start', 'end'].map((which) => (handleGeom[which].visible && (
+    {selRange && handleGeom && uiPolicy.handles && ['start', 'end'].map((which) => (handleGeom[which].visible && (
       <div
         key={`nc-sel-handle-${which}`}
-        className={`nc-sel-handle ${which}${draggingHandle === which ? ' dragging' : ''}`}
+        className={`nc-sel-handle ${which}${draggingHandle === which ? ' dragging' : ''}${
+          handlesTooClose({ startLeft: handleGeom.start.left, endLeft: handleGeom.end.left }) ? ' tight' : ''}`}
         style={{ left: `${handleGeom[which].left}px`, top: `${handleGeom[which].top}px` }}
         onPointerDown={(e) => handleDragApiRef.current.startHandleDrag(which, e)}
         aria-hidden="true"
       />
     )))}
-    {selRange && zoomView && (
-      <div className="nc-zoom-bar" aria-hidden="true">
+    {selRange && zoomView && uiPolicy.magnifier && magGeom && (
+      <div
+        className={`nc-zoom-bubble${magGeom.flipped ? ' flipped' : ''}`}
+        style={{ left: `${magGeom.left}px`, top: `${magGeom.top}px` }}
+        aria-hidden="true"
+      >
         <pre className="nc-zoom-line" style={{ fontSize: `${zoomView.fontSize}px` }}>
           <span>{zoomView.before}</span><span className="nc-zoom-sel">{zoomView.sel}</span><span>{zoomView.after}</span>
         </pre>
@@ -920,7 +1043,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
           : t('attach-upload-progress').replace('{n}', String(uploadState.current || 0)).replace('{total}', String(uploadState.total || 0))}
     </div>}
     {(selection || selectionMode) && <div className="nc-selection-tools">
-      {selection ? <button type="button" onClick={doCopy}>{copyState || t('copy')}</button> : <span>{t('select-drag')}</span>}
+      {selection ? <button type="button" onClick={doCopy}>{copyState || `${t('copy')} · ${copyShortcutHint(typeof navigator !== 'undefined' ? navigator.userAgent : '')}`}</button> : <span>{t('select-drag')}</span>}
       {selection && selectionDetached && <span className="nc-selection-held">{t('selection-held')}</span>}
       {selection && !selectionDetached && selectionChanged && <span className="nc-selection-changed">{t('selection-changed')}</span>}
       <button type="button" onClick={() => { apiRef.current?.term?.clearSelection(); setSelection(''); setSelectionDetached(false); onSelectionModeChange?.(false); }}>{t('cancel')}</button>

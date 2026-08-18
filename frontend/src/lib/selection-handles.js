@@ -15,6 +15,42 @@
 //  - range = { start: {row,col}, end: {row,col} } con start <= end
 //    nell'ordine row-major (row*cols+col).
 
+// R34 — Shift+click desktop: con una selezione attiva, il click SENZA drag
+// muove il capo piu' vicino alla cella cliccata (l'equivalente desktop della
+// regolazione a maniglie: il mouse non ha puntine, ha questo). Fuori dal range
+// si muove il capo di quel lato; dentro il capo piu' vicino (a parita' vince
+// start); su un capo, nessun movimento. Non conosce il buffer: lo snap ai
+// glifi larghi e' del chiamante, che conosce `moved`.
+export function extendRangeToCell({ range, cell, cols }) {
+  const c = Number(cols);
+  const iS = Number(range.start.row) * c + Number(range.start.col);
+  const iE = Number(range.end.row) * c + Number(range.end.col);
+  const iC = Number(cell.row) * c + Number(cell.col);
+  const out = {
+    start: { row: range.start.row, col: range.start.col },
+    end: { row: range.end.row, col: range.end.col },
+    moved: null,
+  };
+  if (iC < iS) { out.start = { row: Number(cell.row), col: Number(cell.col) }; out.moved = 'start'; }
+  else if (iC > iE) { out.end = { row: Number(cell.row), col: Number(cell.col) }; out.moved = 'end'; }
+  else if (iC === iS || iC === iE) { return out; }
+  else if (iC - iS <= iE - iC) { out.start = { row: Number(cell.row), col: Number(cell.col) }; out.moved = 'start'; }
+  else { out.end = { row: Number(cell.row), col: Number(cell.col) }; out.moved = 'end'; }
+  return out;
+}
+
+// R34 — policy di VISTA per origine del gesto. La modalita' della UI di
+// selezione segue il gesto che l'ha creata, non il device: una selezione nata
+// dal tocco mostra maniglie + lente; una nata dal mouse nessuna delle due (il
+// mouse ha la selezione nativa precisa e Shift+click per estendere). Origine
+// ignota (null) → touch: se la rilevazione fallisce su un telefono, togliere
+// le maniglie rende la selezione irregolabile; sul desktop mostrarle e' solo
+// brutto. Direzione conservativa = touch.
+export function selectionUiPolicy(origin) {
+  const touch = origin !== 'mouse';
+  return { handles: touch, magnifier: touch };
+}
+
 // Converte il range come lo restituisce xterm (getSelectionPosition:
 // {start:{x,y}, end:{x,y}}, y = riga assoluta nel buffer, x = colonna)
 // nella forma {row,col} usata da questo modulo.
@@ -94,6 +130,36 @@ export function wordBoundsAt({ line, col, cols }) {
     end += 1;
   }
   return { start, end };
+}
+
+// R34 — le due puntine a meno di un target tattile di distanza (selezione
+// corta) vengono marcate "tight": il CSS le scagliona in verticale (la start
+// piu' in alto, la end piu' in basso) e le piega ai lati opposti, cosi' il
+// dito trova due prese distinte anche su una parola di due caratteri. Soglia
+// = larghezza del target tattile (>=44px: HIG Apple / Material).
+export function handlesTooClose({ startLeft, endLeft, targetWidth = 46 }) {
+  return Math.abs(Number(endLeft) - Number(startLeft)) < Number(targetWidth);
+}
+
+// R34 — layout della bolla lente: VICINO alla maniglia attiva, mai in cima
+// fissa a coprire righe. Sopra l'ancora per default; se non c'e' spazio
+// ribalta SOTTO la puntina (la maniglia in drag nelle prime righe non deve
+// finire coperta dalla lente che la descrive); orizzontalmente centrata
+// sull'ancora e clampata ai margini dell'host. Coordinate px nello spazio
+// dell'host (come handlePositions). pinHeight = ingombro verticale della
+// puntina sotto l'ancora (barretta + pallino), per il ribalto.
+export function magnifierLayout({ anchorLeft, anchorTop, hostWidth, hostHeight, bubbleWidth, bubbleHeight, pinHeight = 30, margin = 4, gap = 8 }) {
+  const w = Number(bubbleWidth);
+  const h = Number(bubbleHeight);
+  const m = Number(margin);
+  const maxLeft = Math.max(m, Number(hostWidth) - m - w);
+  const left = Math.max(m, Math.min(maxLeft, Number(anchorLeft) - Math.round(w / 2)));
+  let top = Number(anchorTop) - Number(gap) - h;
+  let flipped = false;
+  if (top < m) { top = Number(anchorTop) + Number(pinHeight) + Number(gap); flipped = true; }
+  const maxTop = Math.max(m, Number(hostHeight) - m - h);
+  if (top > maxTop) top = maxTop;
+  return { left, top, flipped };
 }
 
 // Argomenti per term.select() a partire da un range ordinato: xterm vuole

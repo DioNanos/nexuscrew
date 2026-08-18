@@ -37,6 +37,7 @@ import { useDecks } from './hooks/useDecks.js';
 import { useInputPreferences } from './hooks/useInputPreferences.js';
 import { reportServerVersions } from './lib/sw-update.js';
 import { parseBootstrapHash } from './lib/fragment.js';
+import { useDesktop } from './lib/desktop.js';
 import './App.css';
 
 const FONT_MIN = 9;
@@ -44,7 +45,6 @@ const FONT_MAX = 24;
 const SIDE_W_KEY = 'nc_side_w';
 const SIDE_MIN_KEY = 'nc_side_min';
 const SIDE_W_DEF = 240;
-const MQ_DESKTOP = '(min-width:1024px) and (pointer:fine)';
 
 function loadSideW() {
   const v = Number(localStorage.getItem(SIDE_W_KEY));
@@ -102,18 +102,6 @@ function rel(epochSec) {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}g`;
-}
-
-// Desktop = schermo largo E puntatore fine (mouse). Risponde al cambio (resize/rotate).
-function useDesktop() {
-  const [d, setD] = useState(() => window.matchMedia(MQ_DESKTOP).matches);
-  useEffect(() => {
-    const mq = window.matchMedia(MQ_DESKTOP);
-    const h = (e) => setD(e.matches);
-    mq.addEventListener('change', h);
-    return () => mq.removeEventListener('change', h);
-  }, []);
-  return d;
 }
 
 // Vista singola autosufficiente: usata dal flusso mobile e dall'overlay desktop.

@@ -148,6 +148,156 @@ if (typeof window.PointerEvent === 'undefined') {
 beforeEach(() => { fixture.instances.length = 0; vi.useFakeTimers(); });
 afterEach(() => vi.useRealTimers());
 
+describe('R34 — origine della selezione, osservabile (pezzo 1)', () => {
+  it('il touch marca data-selection-origin="touch" fin dal touchstart', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
+    expect(host.dataset.selectionOrigin).toBe('touch');
+    act(() => vi.advanceTimersByTime(450)); // long-press: selezione a parola
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 50, clientY: 200 }] });
+    expect(host.dataset.selectionOrigin).toBe('touch');
+  });
+
+  it('il mousedown marca "mouse"; la selezione cancellata azzera l\'origine', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    fireEvent.mouseDown(host);
+    expect(host.dataset.selectionOrigin).toBe('mouse');
+    act(() => term.select(2, 1, 10));
+    expect(host.dataset.selectionOrigin).toBe('mouse');
+    act(() => term.clearSelection());
+    expect(host.dataset.selectionOrigin).toBe('');
+  });
+
+  it('il mousedown SINTETICO dopo un touch non ruba l\'origine (ghost-click guard)', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 50, clientY: 200 }] });
+    // Chrome spara un mousedown compat subito dopo il touchend non prevenuto:
+    // NON deve cambiare l'origine.
+    fireEvent.mouseDown(host);
+    expect(host.dataset.selectionOrigin).toBe('touch');
+    // Passato il margine, un mousedown e' un mouse vero.
+    act(() => vi.advanceTimersByTime(800));
+    fireEvent.mouseDown(host);
+    expect(host.dataset.selectionOrigin).toBe('mouse');
+  });
+});
+
+describe('R34 — desktop: maniglie e lente solo se il gesto e\' touch (pezzo 2)', () => {
+  it('selezione nata dal MOUSE: niente maniglie, niente barra zoom; la barra strumenti resta', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    fireEvent.mouseDown(host); // drag nativo: origine mouse
+    act(() => term.select(2, 1, 10));
+    expect(handles(view).start).toBeNull();
+    expect(handles(view).end).toBeNull();
+    expect(view.container.querySelector('.nc-zoom-bubble')).toBeNull();
+    expect(view.container.querySelector('.nc-selection-tools')).toBeTruthy(); // la copia resta
+  });
+
+  it('selezione nata dal TOCCO (long-press): maniglie presenti', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
+    act(() => vi.advanceTimersByTime(450));
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 50, clientY: 200 }] });
+    expect(handles(view).start).toBeTruthy();
+    expect(handles(view).end).toBeTruthy();
+  });
+
+  it('origine ignota (select programmatico): maniglie presenti — conservativo touch', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10));
+    expect(handles(view).start).toBeTruthy();
+  });
+});
+
+describe('R34 — Shift+click estende la selezione (pezzo 2)', () => {
+  it('Shift+click DOPO la fine, senza drag: sposta end (e non cancella)', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10)); // start (1,2), end (1,11)
+    // (300,20) → col 30, riga 1.
+    fireEvent.mouseDown(host, { shiftKey: true, clientX: 300, clientY: 20 });
+    fireEvent.mouseUp(host, { shiftKey: true, clientX: 300, clientY: 20 });
+    expect(term.selectCalls.at(-1)).toEqual({ col: 2, row: 1, length: 30 - 2 + 1 });
+    expect(term.hasSelection()).toBe(true);
+  });
+
+  it('Shift+click PRIMA dell\'inizio, senza drag: sposta start', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10));
+    // (10,20) → col 1, riga 1.
+    fireEvent.mouseDown(host, { shiftKey: true, clientX: 10, clientY: 20 });
+    fireEvent.mouseUp(host, { shiftKey: true, clientX: 10, clientY: 20 });
+    expect(term.selectCalls.at(-1)).toEqual({ col: 1, row: 1, length: 11 - 1 + 1 });
+  });
+
+  it('Shift+click+DRAG: apre una selezione NUOVA (non estende la vecchia)', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10)); // selezione preesistente (1,2)-(1,11)
+    fireEvent.mouseDown(host, { shiftKey: true, clientX: 300, clientY: 20 }); // col 30, riga 1
+    fireEvent.mouseMove(host, { shiftKey: true, clientX: 400, clientY: 60 });  // col 40, riga 3
+    fireEvent.mouseUp(host, { shiftKey: true, clientX: 400, clientY: 60 });
+    expect(term.selectCalls.at(-1)).toEqual({ col: 30, row: 1, length: (3 * 80 + 40) - (1 * 80 + 30) + 1 });
+  });
+
+  it('Shift+click senza selezione attiva e senza drag: nessuna selezione (come oggi)', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    const term = fixture.instances[0];
+    fireEvent.mouseDown(host, { shiftKey: true, clientX: 300, clientY: 20 });
+    fireEvent.mouseUp(host, { shiftKey: true, clientX: 300, clientY: 20 });
+    expect(term.hasSelection()).toBe(false);
+    expect(term.selectCalls.length).toBe(0);
+  });
+});
+
+describe('R34 — doppio clic: la tastiera e\' un gesto touch (pezzo 2)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('su DESKTOP il dblclick NON chiede la tastiera (la parola la seleziona xterm)', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    expect(term.textarea.getAttribute('inputmode')).toBe('none'); // double-tap bloccato a montaggio
+    fireEvent.doubleClick(host);
+    expect(term.textarea.getAttribute('inputmode')).toBe('none');
+  });
+
+  it('fuori desktop il dblclick chiede la tastiera come oggi', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    const term = fixture.instances[0];
+    fireEvent.doubleClick(host);
+    expect(term.textarea.getAttribute('inputmode')).toBe('text');
+  });
+});
+
 describe('R25 — maniglie: vista pura sopra la selezione xterm', () => {
   it('due maniglie ai due capi quando la selezione esiste, e restano dopo il gesto', () => {
     const view = renderTerminal();
@@ -499,88 +649,164 @@ describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi l
   });
 });
 
-describe('R25-zoom — la barra con la riga della maniglia in focus', () => {
-  function zoomBar(view) {
+describe('R34 — puntine: selezione corta → presa "tight" (pezzo 4)', () => {
+  it('a meno di un target tattile di distanza, ENTRAMBE le puntine si marcano tight', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 2)); // 2 celle: start 20px, end 40px → 20px < 46
+    expect(handles(view).start.classList.contains('tight')).toBe(true);
+    expect(handles(view).end.classList.contains('tight')).toBe(true);
+  });
+
+  it('selezione larga: niente tight (le prese non si sovrappongono)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10)); // 10 celle: 100px
+    expect(handles(view).start.classList.contains('tight')).toBe(false);
+    expect(handles(view).end.classList.contains('tight')).toBe(false);
+  });
+});
+
+describe('R34 — la bolla lente vicino alla maniglia attiva (pezzo 3)', () => {
+  function zoomBubble(view) {
     return {
-      bar: view.container.querySelector('.nc-zoom-bar'),
+      bubble: view.container.querySelector('.nc-zoom-bubble'),
       line: view.container.querySelector('.nc-zoom-line'),
       sel: view.container.querySelector('.nc-zoom-line .nc-zoom-sel'),
       spans: view.container.querySelectorAll('.nc-zoom-line span'),
     };
   }
+  function grabHandle(view, which, x, y) {
+    fireEvent.pointerDown(handles(view)[which], { clientX: x, clientY: y, pointerType: 'touch' });
+  }
 
-  it('con la selezione appare e mostra la riga della maniglia start spezzata in tre, al 2x della cella reale', () => {
-    const view = renderTerminal();
-    terminalBounds(view.container.querySelector('.nc-terminal-host'));
-    const term = fixture.instances[0];
-    expect(zoomBar(view).bar).toBeNull(); // senza selezione non c'e' barra
-    act(() => term.select(2, 1, 10)); // riga 1, col 2..11
-    const z = zoomBar(view);
-    expect(z.bar).toBeTruthy();
-    // 'contenuto-riga-1': prima 'co' (col 0..1), selezionato 'ntenuto-ri'
-    // (col 2..11), dopo 'ga-1'. Il focus di default e' start.
-    expect(z.spans[0].textContent).toBe('co');
-    expect(z.sel.textContent).toBe('ntenuto-ri');
-    expect(z.spans[2].textContent).toBe('ga-1');
-    // cella 20px misurata → testo 2x = 40px.
-    expect(z.line.style.fontSize).toBe('40px');
-  });
-
-  it('la barra segue la maniglia che si muove: trascinata la end su un\'altra riga, mostra la SUA riga', () => {
+  it('a selezione FERMA nessuna bolla: la lente esiste solo DURANTE il gesto', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
     act(() => term.select(2, 1, 10));
-    const h = handles(view);
-    fireEvent.pointerDown(h.end, { clientX: 120, clientY: 40, pointerType: 'mouse' });
-    // (200, 40): col 20, riga buffer 2 → selezione multi-riga, end (2,20).
-    fireEvent.pointerMove(window, { clientX: 200, clientY: 40, pointerType: 'mouse' });
-    fireEvent.pointerUp(window, { pointerType: 'mouse' });
-    const z = zoomBar(view);
-    // Riga della END: selezionato dall'inizio riga fino a col 20 (la riga e'
-    // lunga 16: tutta), prima vuota.
-    expect(z.spans[0].textContent).toBe('');
-    expect(z.sel.textContent).toBe('contenuto-riga-2');
+    expect(zoomBubble(view).bubble).toBeNull();
   });
 
-  it('la barra rilegge il testo VIVO dal buffer: la riga riscritta sotto la selezione appare alla barra', () => {
+  it('durante il drag la bolla mostra la riga della maniglia attiva, spezzata in tre, al 2x della cella reale', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10)); // riga 1, col 2..11
+    expect(zoomBubble(view).bubble).toBeNull();
+    grabHandle(view, 'start', 20, 40);
+    const z = zoomBubble(view);
+    expect(z.bubble).toBeTruthy();
+    // 'contenuto-riga-1': prima 'co', selezionato 'ntenuto-ri', dopo 'ga-1'.
+    expect(z.spans[0].textContent).toBe('co');
+    expect(z.sel.textContent).toBe('ntenuto-ri');
+    expect(z.spans[2].textContent).toBe('ga-1');
+    expect(z.line.style.fontSize).toBe('40px'); // cella 20px → 2x
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
+  });
+
+  it('la bolla sta SOPRA la maniglia attiva quando c\'e\' spazio (non in cima allo schermo)', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    // start (10,30): ancora left 300, top (10+1)*20 = 220. Bolla alta 62 (font 40):
+    // top = 220 - 8 - 62 = 150 — NON il vecchio 44px fisso.
+    act(() => term.select(30, 10, 10));
+    grabHandle(view, 'start', 300, 220);
+    expect(zoomBubble(view).bubble.style.top).toBe('150px');
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
+  });
+
+  it('maniglia nelle prime righe: la bolla ribalta SOTTO la puntina', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    // start (1,2): ancora top 40 → sopra non c'e' spazio → flip: 40 + 30 + 8 = 78.
+    act(() => term.select(2, 1, 10));
+    grabHandle(view, 'start', 20, 40);
+    expect(zoomBubble(view).bubble.style.top).toBe('78px');
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
+  });
+
+  it('la bolla segue la maniglia che si muove: trascinata la end su un\'altra riga, mostra la SUA riga', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10));
+    grabHandle(view, 'end', 120, 40);
+    // touch con offset -2 righe: (200,140) → col 20, riga 5.
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 140, pointerType: 'touch' });
+    const z = zoomBubble(view);
+    expect(z.spans[0].textContent).toBe('');
+    expect(z.sel.textContent).toBe('contenuto-riga-5');
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
+  });
+
+  it('a gesto finito la bolla sparisce', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10));
+    grabHandle(view, 'end', 120, 40);
+    expect(zoomBubble(view).bubble).toBeTruthy();
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
+    expect(zoomBubble(view).bubble).toBeNull();
+  });
+
+  it('long-press: la bolla appare DURANTE il gesto iniziale (il dito copre la parola) e sparisce al rilascio', () => {
+    const view = renderTerminal();
+    const host = view.container.querySelector('.nc-terminal-host');
+    terminalBounds(host);
+    fireEvent.touchStart(host, { touches: [{ clientX: 50, clientY: 200 }] });
+    act(() => vi.advanceTimersByTime(450)); // selezione a parola, dito ancora giu'
+    expect(zoomBubble(view).bubble).toBeTruthy();
+    fireEvent.touchEnd(host, { changedTouches: [{ clientX: 50, clientY: 200 }] });
+    expect(zoomBubble(view).bubble).toBeNull();
+  });
+
+  it('la bolla rilegge il testo VIVO dal buffer: la riga riscritta sotto la selezione appare durante il drag', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
     act(() => term.select(2, 1, 10)); // focus start, riga 1
+    grabHandle(view, 'start', 20, 40);
     term.lineTexts.set(1, 'NUOVA-riga-1');
     act(() => term.renderCb && term.renderCb({ start: 1, end: 1 }));
-    const z = zoomBar(view);
+    const z = zoomBubble(view);
     expect(z.line.textContent).toBe('NUOVA-riga-1');
     expect(z.sel.textContent).toBe('NUOVA-riga-1'.slice(2, 12)); // col 2..11
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
   });
 
-  it('selezione invertita sulla stessa riga: la barra mostra il segmento vero, non la colonna dell\'ancora (R25-zoom rev3)', () => {
+  it('selezione invertita sulla stessa riga: la bolla mostra il segmento vero, non la colonna dell\'ancora (R25-zoom rev3)', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
     term.lineTexts.set(1, '0123456789');
-    // drag nativo all'indietro: xterm 6.0 restituisce start>end NON normalizzati
     term.selectionPosition = { start: { x: 6, y: 1 }, end: { x: 3, y: 1 } };
     term.selectionText = 'invertita';
     act(() => term.emitSelection());
-    const z = zoomBar(view);
-    expect(z.sel.textContent).toBe('3456'); // col 3..6, non la sola col 6
+    grabHandle(view, 'start', 30, 40);
+    expect(zoomBubble(view).sel.textContent).toBe('3456'); // col 3..6
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
   });
 
-  it('selezione invertita multi-riga: la barra mostra la riga e lo span della start vera (R25-zoom rev3)', () => {
+  it('selezione invertita multi-riga: la bolla mostra la riga e lo span della start vera (R25-zoom rev3)', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
     term.lineTexts.set(1, 'abcdefghij');
     term.lineTexts.set(2, 'ABCDEFGHIJ');
-    // drag all'indietro: ancora su riga 2 col 5, fine su riga 1 col 3
     term.selectionPosition = { start: { x: 5, y: 2 }, end: { x: 3, y: 1 } };
     term.selectionText = 'invertita';
     act(() => term.emitSelection());
-    const z = zoomBar(view);
-    expect(z.line.textContent).toBe('abcdefghij'); // riga della start vera
-    expect(z.sel.textContent).toBe('defghij');      // col 3..fine riga
+    grabHandle(view, 'start', 30, 40);
+    const z = zoomBubble(view);
+    expect(z.line.textContent).toBe('abcdefghij');
+    expect(z.sel.textContent).toBe('defghij');
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
   });
 
   it('selezione invertita: le maniglie NON sono scambiate, start a sinistra di end con +1 sulla fine vera (R25-zoom rev3)', () => {
@@ -600,13 +826,14 @@ describe('R25-zoom — la barra con la riga della maniglia in focus', () => {
     expect(h.end.style.left).toBe('70px');   // end vera: (col 6 + 1)
   });
 
-  it('selezione annullata → la barra sparisce con le maniglie', () => {
+  it('selezione annullata → la bolla sparisce con le maniglie', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
     act(() => term.select(2, 1, 10));
-    expect(zoomBar(view).bar).toBeTruthy();
+    grabHandle(view, 'start', 20, 40);
+    expect(zoomBubble(view).bubble).toBeTruthy();
     act(() => term.clearSelection());
-    expect(zoomBar(view).bar).toBeNull();
+    expect(zoomBubble(view).bubble).toBeNull();
   });
 });
