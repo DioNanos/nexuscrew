@@ -837,3 +837,26 @@ test('R28: il generatore vero produce definizioni che il riconoscitore accetta',
       `un file di terzi che ci nomina non e\' nostro (${platform})`);
   }
 });
+
+// R28, terzo giro (audit): l'ancora era un PREFISSO, quindi un servizio di terzi
+// che comincia la propria Description col nostro nome veniva riconosciuto come
+// nostro — e sovrascritto. Ora l'ancora e' la RIGA ESATTA, condivisa fra
+// template e riconoscitore. Questo test e' il controcaso del controcaso: se
+// qualcuno riallenta l'ancora a prefisso, diventa rosso qui.
+test('R28: un terzo che COMINCIA la Description col nostro nome non e\' nostro', () => {
+  const terzi = [
+    '[Unit]\nDescription=NexusCrew-compatible proxy\n',
+    '[Unit]\nDescription=NexusCrew fork by tizio\n',
+    '[Unit]\nDescription=NexusCrew fleet boot companion di tizio\n',
+    '[Unit]\nDescription=NexusCrewish\n',
+  ];
+  for (const testo of terzi) {
+    assert.equal(serviceMod.isOurService('linux', testo), false,
+      `prefisso non basta: «${testo.trim().split('\n').pop()}» non e' nostro`);
+    assert.equal(fleetMod.isOurFleetService('linux', testo), false,
+      `prefisso non basta nemmeno per la companion: «${testo.trim().split('\n').pop()}»`);
+  }
+  // e un plist di terzi che NOMINA il nostro label senza esserlo
+  assert.equal(serviceMod.isOurService('mac', '<key>Label</key><string>com.mmmbuto.nexuscrew.altro</string>'), false,
+    'il Label deve essere esatto, non un prefisso');
+});
