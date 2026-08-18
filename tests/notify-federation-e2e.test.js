@@ -136,6 +136,11 @@ test('zero consegne sul target NON viene etichettato delivered', async (t) => {
   const out = await res.json();
   assert.equal(res.status, 200, JSON.stringify(out));
   assert.equal(out.status, 'no-delivery', JSON.stringify(out));
+  // Il legame fra etichetta e misura NON si puo' asserire qui: forward()
+  // propaga solo lo status (i conteggi muoiono nel dispatcher, R1/rc.14) e
+  // `out.delivered` oltre il dispatcher e' undefined. L'invariante e'
+  // protetta in tests/notify-federated-status.test.js, dove la risposta del
+  // TARGET si vede intera (rilievo audit su 44d4f62).
 });
 
 test('il mittente e\' derivato dalla catena, non dal campo dichiarato', async (t) => {
