@@ -107,6 +107,36 @@ test('answer: paste col prefisso neutro, answered una volta sola', async (t) => 
   assert.equal(open.asks.length, 0);
 });
 
+test('answer: oltre MAX_ANSWER la risposta e RIFIUTATA, non troncata in silenzio', async (t) => {
+  const { j, pasted } = await setup(t);
+  const { id } = await (await j('/api/asks', {
+    method: 'POST', body: JSON.stringify({ question: 'procedo?', session: 'cell-a' }),
+  })).json();
+
+  const lungo = 'x'.repeat(3901);
+  const r = await j(`/api/asks/${id}/answer`, { method: 'POST', body: JSON.stringify({ text: lungo }) });
+  assert.equal(r.status, 400, 'oltre il tetto si rifiuta con 400');
+  const body = await r.json();
+  assert.match(body.error || '', /3900/, 'l\'errore dichiara il tetto');
+  assert.match(body.error || '', /3901/, 'e dichiara anche QUANTO era lungo: senza, sai che c\'e\' un tetto ma non di quanto tagliare');
+
+  // niente paste: il testo monco non deve MAI raggiungere la cella
+  assert.equal(pasted.length, 0);
+
+  // l'ask resta open e ri-risponibile: il rifiuto non consuma nulla
+  const retry = await j(`/api/asks/${id}/answer`, { method: 'POST', body: JSON.stringify({ text: 'versione corta' }) });
+  assert.equal(retry.status, 200);
+  assert.deepEqual(pasted, [['cell-a', `[human reply · ask#${id}] versione corta`]]);
+
+  // al limite esatto (3900) passa ancora: un tetto, non un rasoio
+  const secondo = await (await j('/api/asks', {
+    method: 'POST', body: JSON.stringify({ question: 'altro?', session: 'cell-a' }),
+  })).json();
+  const alTetto = await j(`/api/asks/${secondo.id}/answer`, { method: 'POST', body: JSON.stringify({ text: 'y'.repeat(3900) }) });
+  assert.equal(alTetto.status, 200, '3900 esatti passano');
+});
+
+
 test('answer: sanificazione control char (multiriga -> una riga, mai Invio)', async (t) => {
   const { j, pasted } = await setup(t);
   const { id } = await (await j('/api/asks', {
