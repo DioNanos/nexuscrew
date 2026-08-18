@@ -218,19 +218,25 @@ export function previewNotificationSpeech(text, lang, scope = browserScope(), op
     let started = false;
     let timer = null;
     let onAbort = null;
-    const finish = (ok) => {
+    // R27 #8: il risultato riporta la CAUSA, non un boolean. Tre cause reali
+    // finivano tutte in finish(false) e la UI ne raccontava una falsa in due
+    // casi su tre. true = successo; altrimenti la causa:
+    //   'no-activation' — il browser non ha mai avviato (frase attuale vera)
+    //   'voice-error'   — avviata e fallita (voce mancante, audio rotto)
+    //   'timeout'       — nessun esito entro il tempo massimo
+    const finish = (cause) => {
       if (settled) return;
       settled = true;
       if (signal && onAbort) signal.removeEventListener('abort', onAbort);
       if (timer !== null) clearTimer(timer);
-      if (!ok) {
+      if (cause !== true) {
         try { scope.speechSynthesis.cancel(); } catch (_) {}
       } else {
         primedScopes.add(scope);
       }
-      resolve(ok);
+      resolve(cause);
     };
-    onAbort = () => finish(false);
+    onAbort = () => finish('no-activation');
     if (signal) signal.addEventListener('abort', onAbort, { once: true });
     try {
       scope.speechSynthesis.cancel();
@@ -239,12 +245,12 @@ export function previewNotificationSpeech(text, lang, scope = browserScope(), op
       const voice = notificationSpeechVoice(readNotificationSpeechVoices(scope), utterance.lang);
       if (voice) utterance.voice = voice;
       utterance.onstart = () => { started = true; };
-      utterance.onend = () => finish(started);
-      utterance.onerror = () => finish(false);
-      timer = setTimer(() => finish(false), timeoutMs);
+      utterance.onend = () => finish(started ? true : 'no-activation');
+      utterance.onerror = () => finish('voice-error');
+      timer = setTimer(() => finish('timeout'), timeoutMs);
       scope.speechSynthesis.speak(utterance);
     } catch (_) {
-      finish(false);
+      finish('no-activation');
     }
   });
 }

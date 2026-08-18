@@ -251,7 +251,7 @@ export function SingleView({
         keepKeyboardClosed={inputPreferences.keybarKeepsKeyboardClosed} showEnter={inputPreferences.showKeybarEnter}
         keybarLayout={inputPreferences.keybarLayout} />
       {showComposer && (
-        <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId}
+        <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId} readonly={readonly}
           keepKeyboardClosedOnVoice={inputPreferences.voiceKeepsKeyboardClosed} />
       )}
       {showFiles && (

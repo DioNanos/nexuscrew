@@ -311,13 +311,19 @@ describe('Settings notification speech', () => {
   });
 
   it('reports a failed native delivery instead of claiming preview success', async () => {
+    // R27 #8: onerror e' il caso 'voice-error' — il browser HA avviato ed e'
+    // fallito. La frase non prescrive piu' l'interazione e suggerisce di
+    // controllare la voce selezionata.
     installSpeech('error');
     render(<NotificationSpeechRow />);
     fireEvent.click(screen.getByRole('checkbox', { name: 'read notifications aloud' }));
     expect(await screen.findByText(
-      'The browser did not start the voice test. Interact with the page and try again.',
+      'The voice test failed: voice or audio unavailable. Check the selected voice and try again.',
     )).toBeTruthy();
     expect(screen.queryByText('Voice test completed.')).toBeNull();
+    expect(screen.queryByText(
+      'The browser did not start the voice test. Interact with the page and try again.',
+    )).toBeNull();
   });
 
   it('cancels and invalidates an in-flight preview when Settings unmounts', () => {
