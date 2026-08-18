@@ -259,6 +259,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // davvero qualcosa di nuovo selezionato, e si svuota soltanto quando
     // l'operatore agisce — copia o annulla. Il riquadro giallo puo' sparire
     // (e' di xterm, non nostro), il testo da copiare no.
+    // handleDrag vive qui sopra perche' onSelection lo chiude (rev5): se
+    // xterm azzera la selezione a meta' drag, il gesto finisce li'.
+    let handleDrag = null;         // { which, offsetX, offsetY, fixed }
     const onSelection = term.onSelectionChange(() => {
       const next = term.getSelection();
       if (next) { setSelection(next); setSelectionDetached(false); }
@@ -274,6 +277,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       const range = raw ? normalizeRange(raw.start, raw.end, term.cols) : null;
       setSelRange(range);
       selRangeRef.current = range;
+      // R25-zoom rev5 (r25rev4-audit): xterm AZZERA la selezione su resize di
+      // righe e su trim oltre il top. Se il drag e' in corso, l'ancora
+      // congelata risusciterebbe una selezione cancellata al prossimo
+      // pointermove: il gesto si CHIUDE qui, non resta a meta'.
+      if (!range && handleDrag) endHandleDrag();
       let snap = null;
       if (range && typeof term.buffer.active.getLine === 'function') {
         const lines = [];
@@ -674,7 +682,6 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // dito non deve centrare l'ancora), le maniglie NON si incrociano, il
     // dito oltre il bordo fa scorrere il terminale. La selezione resta tutta
     // di xterm: qui si chiede solo un nuovo range a term.select().
-    let handleDrag = null;         // { which, offsetX, offsetY }
     let handleEdgeTimer = null;
     let lastHandlePointer = { x: 0, y: 0, type: 'touch' };
     const stopHandleEdgeScroll = () => {
@@ -695,7 +702,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         ? cellXY(px, py)
         : touchSelectionCellAt({ clientX: px, clientY: py }, touchSelectionOffsetFor(py));
       // R25-zoom rev4: la maniglia non si pianta a meta' di un glifo largo
-      // (getValidCurX di Termux): la colonna di continuazione va al bordo.
+      // (variante di getValidCurX: start al bordo sinistro, end al destro).
       const line = term.buffer.active.getLine(raw.row);
       const cell = { row: raw.row, col: snapWideCol({ line, col: raw.col, side: handleDrag.which, cols: term.cols }) };
       const maxRow = Math.max(0, Number(term.buffer.active.baseY || 0) + term.rows - 1);
@@ -727,7 +734,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       lastHandlePointer = { x: e.clientX, y: e.clientY, type: e.pointerType || lastHandlePointer.type };
       applyHandlePoint(e.clientX - handleDrag.offsetX, e.clientY - handleDrag.offsetY, lastHandlePointer.type);
     };
-    const onHandleDragEnd = () => {
+    const endHandleDrag = () => {
       handleDrag = null;
       stopHandleEdgeScroll();
       setDraggingHandle(null);
@@ -735,6 +742,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       window.removeEventListener('pointerup', onHandleDragEnd);
       window.removeEventListener('pointercancel', onHandleDragEnd);
     };
+    const onHandleDragEnd = () => endHandleDrag();
     handleDragApiRef.current = {
       startHandleDrag: (which, e) => {
         if (!term.getSelectionPosition()) return;

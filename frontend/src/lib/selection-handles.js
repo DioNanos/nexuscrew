@@ -50,12 +50,16 @@ export function clampDraggedCell({ moving, fixed, which, cols, maxRow }) {
   return { row, col };
 }
 
-// R25-zoom rev4 (Termux getValidCurX): una colonna bersaglio che cade DENTRO
-// un glifo largo (cella di continuazione, getWidth() === 0) viene portata al
-// bordo del glifo — a sinistra per la maniglia start / punto iniziale, a
-// destra per la end. Mai una maniglia a meta' di un emoji o di un CJK.
-// Colonne di terminale, non indici di stringa: la stessa famiglia del difetto
-// che ha fatto tornare indietro due volte la barra.
+// R25-zoom rev4: una colonna bersaglio che cade DENTRO un glifo largo (cella
+// di continuazione, getWidth() === 0) viene portata al bordo del glifo.
+// VARIANTE CONSAPEVOLE di Termux getValidCurX (che porta SEMPRE al bordo
+// destro): qui la maniglia start / il punto iniziale vanno al bordo SINISTRO
+// (glifo incluso). Sul punto iniziale il risultato netto coincide con Termux
+// (l'espansione a parola include comunque il glifo) ed e' coerente con una
+// selezione che parte dall'inizio del glifo; la end va al bordo destro, come
+// Termux. Mai una maniglia a meta' di un emoji o di un CJK. Colonne di
+// terminale, non indici di stringa: la stessa famiglia del difetto che ha
+// fatto tornare indietro due volte la barra.
 export function snapWideCol({ line, col, side, cols }) {
   const c = Math.max(0, Math.min(Number(cols) - 1, Number(col)));
   const cell = line && typeof line.getCell === 'function' ? line.getCell(c) : null;

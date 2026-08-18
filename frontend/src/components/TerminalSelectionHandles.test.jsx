@@ -391,6 +391,25 @@ describe('R25-zoom rev3-audit — drag su selezione nativa INVERTITA preesistent
   });
 });
 
+describe('R25-zoom rev5 — liveness: il drag non risuscita una selezione cancellata', () => {
+  it('selezione cancellata a meta\' drag: il pointermove NON la fa ricomparire', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10));
+    const h = handles(view);
+    fireEvent.pointerDown(h.end, { clientX: 120, clientY: 40, pointerType: 'mouse' });
+    // xterm azzera la selezione (resize di righe / trim oltre il top):
+    // onSelectionChange porta null e il gesto deve chiudersi.
+    act(() => term.clearSelection());
+    const calls = term.selectCalls.length;
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 40, pointerType: 'mouse' });
+    expect(term.selectCalls.length).toBe(calls); // nessuna select nuova
+    expect(term.hasSelection()).toBe(false);
+    fireEvent.pointerUp(window, { pointerType: 'mouse' });
+  });
+});
+
 describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi larghi)', () => {
   function longPressAt(view, x, y) {
     const host = view.container.querySelector('.nc-terminal-host');
