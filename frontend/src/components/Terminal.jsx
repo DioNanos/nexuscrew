@@ -483,7 +483,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         // espansione a parola (Termux).
         const pressed = cellXY(e.touches[0].clientX, e.touches[0].clientY);
         const line = term.buffer.active.getLine(pressed.row);
-        const bounds = wordBoundsAt({ line, col: pressed.col, cols: term.cols });
+        const startCol = snapWideCol({ line, col: pressed.col, side: 'start', cols: term.cols });
+        const bounds = wordBoundsAt({ line, col: startCol, cols: term.cols });
         selectStart = { row: pressed.row, col: bounds.start };
         const end = { row: pressed.row, col: bounds.end };
         term.clearSelection();
@@ -506,7 +507,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         // TextSelectionCursorController); su uno spazio resta una cella.
         const pressed = cellXY(start.x, start.y);
         const line = term.buffer.active.getLine(pressed.row);
-        const bounds = wordBoundsAt({ line, col: pressed.col, cols: term.cols });
+        const startCol = snapWideCol({ line, col: pressed.col, side: 'start', cols: term.cols });
+        const bounds = wordBoundsAt({ line, col: startCol, cols: term.cols });
         selectStart = { row: pressed.row, col: bounds.start };
         const end = { row: pressed.row, col: bounds.end };
         term.clearSelection();
@@ -520,23 +522,35 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const onTouchMove = (e) => {
       if (touchSelecting && selectStart && e.touches.length === 1) {
         e.preventDefault(); e.stopPropagation();
-        // R25-zoom rev4: estremita' mobile = cella ESATTA sotto il dito.
-        const end = cellXY(e.touches[0].clientX, e.touches[0].clientY);
+        // R25-zoom rev4: estremita' mobile = cella ESATTA sotto il dito, con
+        // snap al bordo del glifo largo (mai a meta' di un emoji/CJK).
+        const raw = cellXY(e.touches[0].clientX, e.touches[0].clientY);
         const a = selectStart.row * term.cols + selectStart.col;
-        const b = end.row * term.cols + end.col;
-        const first = a <= b ? selectStart : end;
-        term.select(first.col, first.row, Math.abs(b - a) + 1);
+        const b = raw.row * term.cols + raw.col;
+        const side = a <= b ? 'end' : 'start';
+        const line = term.buffer.active.getLine(raw.row);
+        const col = snapWideCol({ line, col: raw.col, side, cols: term.cols });
+        const end = { row: raw.row, col };
+        const b2 = end.row * term.cols + end.col;
+        const first = a <= b2 ? selectStart : end;
+        term.select(first.col, first.row, Math.abs(b2 - a) + 1);
         showTouchSelectionCaret(end);
         return;
       }
       if (selectionModeRef.current && selectStart && e.touches.length === 1) {
         e.preventDefault(); e.stopPropagation();
-        // R25-zoom rev4: estremita' mobile = cella ESATTA sotto il dito.
-        const end = cellXY(e.touches[0].clientX, e.touches[0].clientY);
+        // R25-zoom rev4: estremita' mobile = cella ESATTA sotto il dito, con
+        // snap al bordo del glifo largo (mai a meta' di un emoji/CJK).
+        const raw = cellXY(e.touches[0].clientX, e.touches[0].clientY);
         const a = selectStart.row * term.cols + selectStart.col;
-        const b = end.row * term.cols + end.col;
-        const first = a <= b ? selectStart : end;
-        term.select(first.col, first.row, Math.abs(b - a) + 1);
+        const b = raw.row * term.cols + raw.col;
+        const side = a <= b ? 'end' : 'start';
+        const line = term.buffer.active.getLine(raw.row);
+        const col = snapWideCol({ line, col: raw.col, side, cols: term.cols });
+        const end = { row: raw.row, col };
+        const b2 = end.row * term.cols + end.col;
+        const first = a <= b2 ? selectStart : end;
+        term.select(first.col, first.row, Math.abs(b2 - a) + 1);
         showTouchSelectionCaret(end);
         return;
       }
@@ -672,9 +686,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       // Su touch il dito COPRE il punto: la cella di lavoro sta ±2 righe piu'
       // in la', lo stesso offset del long-press. Il mouse ha il cursore
       // preciso: niente offset.
-      const cell = pointerType === 'mouse'
+      const raw = pointerType === 'mouse'
         ? cellXY(px, py)
         : touchSelectionCellAt({ clientX: px, clientY: py }, touchSelectionOffsetFor(py));
+      // R25-zoom rev4: la maniglia non si pianta a meta' di un glifo largo
+      // (getValidCurX di Termux): la colonna di continuazione va al bordo.
+      const line = term.buffer.active.getLine(raw.row);
+      const cell = { row: raw.row, col: snapWideCol({ line, col: raw.col, side: handleDrag.which, cols: term.cols }) };
       const maxRow = Math.max(0, Number(term.buffer.active.baseY || 0) + term.rows - 1);
       const moved = clampDraggedCell({ moving: cell, fixed, which: handleDrag.which, cols: term.cols, maxRow });
       const sel = rangeToSelect(normalizeRange(moved, fixed, term.cols), term.cols);

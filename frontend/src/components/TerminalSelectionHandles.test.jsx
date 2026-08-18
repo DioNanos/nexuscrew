@@ -400,7 +400,7 @@ describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi l
     // (25, 200): col 2 = cella di continuazione del glifo; offset touch -2 → riga 8.
     fireEvent.pointerMove(window, { clientX: 25, clientY: 200, pointerType: 'touch' });
     const last = term.selectCalls.at(-1);
-    const endLinear = 1 * 80 + 11 + last.length - 1;
+    const endLinear = last.row * 80 + last.col + last.length - 1;
     expect(endLinear % 80).toBe(3); // bordo destro del glifo, non la continuazione
     fireEvent.pointerUp(window, { pointerType: 'touch' });
   });
@@ -410,15 +410,18 @@ describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi l
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
     act(() => term.select(2, 1, 10)); // start (1,2)
-    term.cellMaps.set(8, {
+    // Il glifo largo sta sulla riga 0: la maniglia start va trascinata PRIMA
+    // di end (il no-crossing la fermerebbe su end, non sullo snap).
+    term.cellMaps.set(0, {
       chars: ['a', '😀', '', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
       widths: [1, 2, 0, 1, 1, 1, 1, 1, 1, 1],
     });
     fireEvent.pointerDown(handles(view).start, { clientX: 20, clientY: 40, pointerType: 'mouse' });
-    fireEvent.pointerMove(window, { clientX: 25, clientY: 200, pointerType: 'touch' });
+    // (25, 40): col 2 = continuazione; offset touch -2 → riga 0.
+    fireEvent.pointerMove(window, { clientX: 25, clientY: 40, pointerType: 'touch' });
     const last = term.selectCalls.at(-1);
-    const endLinear = 1 * 80 + 11 + last.length - 1;
-    expect(endLinear % 80).toBe(1); // bordo sinistro del glifo
+    expect(last.col).toBe(1); // bordo sinistro del glifo, non la continuazione
+    expect(last.row).toBe(0);
     fireEvent.pointerUp(window, { pointerType: 'touch' });
   });
 

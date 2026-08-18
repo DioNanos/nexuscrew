@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   normalizeRange, clampDraggedCell, rangeToSelect, handlePositions, edgeScrollDirection,
-  rangeFromXterm, zoomLineForRange,
+  rangeFromXterm, snapWideCol, wordBoundsAt, zoomLineForRange,
 } from './selection-handles.js';
 
 describe('normalizeRange', () => {
@@ -93,6 +93,41 @@ describe('edgeScrollDirection — la regola di Termux: la maniglia sul bordo, no
     expect(edgeScrollDirection({ visibleRow: 1, rows: 24 })).toBe(0);
     expect(edgeScrollDirection({ visibleRow: 22, rows: 24 })).toBe(0);
     expect(edgeScrollDirection({ visibleRow: 10, rows: 24 })).toBe(0);
+  });
+});
+
+describe('wordBoundsAt — espansione a parola (Termux TextSelectionCursorController)', () => {
+  const line = (chars) => ({ getCell: (i) => ({ getChars: () => chars[i] ?? '' }) });
+  it('su una parola espande ai confini della parola', () => {
+    expect(wordBoundsAt({ line: line('ciao mondo'), col: 6, cols: 80 })).toEqual({ start: 5, end: 9 });
+  });
+  it('su uno spazio resta una cella', () => {
+    expect(wordBoundsAt({ line: line('ciao mondo'), col: 4, cols: 80 })).toEqual({ start: 4, end: 4 });
+  });
+  it('su una cella vuota resta una cella', () => {
+    expect(wordBoundsAt({ line: line('ab  cd'), col: 2, cols: 80 })).toEqual({ start: 2, end: 2 });
+  });
+  it('ai bordi della riga non esce dai limiti', () => {
+    expect(wordBoundsAt({ line: line('abc'), col: 0, cols: 80 })).toEqual({ start: 0, end: 2 });
+    expect(wordBoundsAt({ line: line('abc'), col: 2, cols: 80 })).toEqual({ start: 0, end: 2 });
+  });
+  it('senza line (difensivo) resta la colonna', () => {
+    expect(wordBoundsAt({ line: null, col: 3, cols: 80 })).toEqual({ start: 3, end: 3 });
+  });
+});
+
+describe('snapWideCol — bordo del glifo largo (Termux getValidCurX)', () => {
+  const line = (widths) => ({ getCell: (i) => ({ getWidth: () => widths[i] ?? 1 }) });
+  it('cella di continuazione: bordo sinistro per start, destro per end', () => {
+    expect(snapWideCol({ line: line([1, 2, 0, 1]), col: 2, side: 'start', cols: 80 })).toBe(1);
+    expect(snapWideCol({ line: line([1, 2, 0, 1]), col: 2, side: 'end', cols: 80 })).toBe(3);
+  });
+  it('cella normale o cella del glifo: invariata', () => {
+    expect(snapWideCol({ line: line([1, 2, 0, 1]), col: 0, side: 'end', cols: 80 })).toBe(0);
+    expect(snapWideCol({ line: line([1, 2, 0, 1]), col: 1, side: 'start', cols: 80 })).toBe(1);
+  });
+  it('senza line (difensivo) resta la colonna', () => {
+    expect(snapWideCol({ line: null, col: 2, side: 'start', cols: 80 })).toBe(2);
   });
 });
 

@@ -50,6 +50,20 @@ export function clampDraggedCell({ moving, fixed, which, cols, maxRow }) {
   return { row, col };
 }
 
+// R25-zoom rev4 (Termux getValidCurX): una colonna bersaglio che cade DENTRO
+// un glifo largo (cella di continuazione, getWidth() === 0) viene portata al
+// bordo del glifo — a sinistra per la maniglia start / punto iniziale, a
+// destra per la end. Mai una maniglia a meta' di un emoji o di un CJK.
+// Colonne di terminale, non indici di stringa: la stessa famiglia del difetto
+// che ha fatto tornare indietro due volte la barra.
+export function snapWideCol({ line, col, side, cols }) {
+  const c = Math.max(0, Math.min(Number(cols) - 1, Number(col)));
+  const cell = line && typeof line.getCell === 'function' ? line.getCell(c) : null;
+  const width = cell && typeof cell.getWidth === 'function' ? Number(cell.getWidth()) : 1;
+  if (width !== 0) return c;
+  return side === 'end' ? Math.min(Number(cols) - 1, c + 1) : Math.max(0, c - 1);
+}
+
 // R25-zoom rev4 (Termux TextSelectionCursorController): espansione a parola
 // del punto premuto. Se la cella contiene una parola (non vuota, non spazio)
 // la selezione si espande ai confini della parola; se e' spazio o vuota
