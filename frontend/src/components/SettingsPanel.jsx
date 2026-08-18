@@ -441,18 +441,24 @@ export function NotificationSpeechRow() {
     setPrimed(false);
     previewActive.current = true;
     previewAbort.current = controller;
-    const ok = await previewNotificationSpeech(
+    const result = await previewNotificationSpeech(
       t('notification-speech-preview'), getLang(), undefined,
       controller ? { signal: controller.signal } : {},
     );
-    if (request !== previewSeq.current) return ok;
+    if (request !== previewSeq.current) return result;
     previewAbort.current = null;
     previewActive.current = false;
     setTesting(false);
-    setPrimed(ok);
-    if (ok) setNote(t('notification-speech-preview-ok'));
+    setPrimed(result === true);
+    // R27 #8: la causa arriva dal preview. 'no-activation' mantiene la frase
+    // attuale (vera in quel caso); voice-error e timeout dicono che la prova
+    // E' FALLITA senza prescrivere l'interazione, con un suggerimento sulla
+    // voce selezionata.
+    if (result === true) setNote(t('notification-speech-preview-ok'));
+    else if (result === 'voice-error') setErr(t('notification-speech-preview-voice-error'));
+    else if (result === 'timeout') setErr(t('notification-speech-preview-timeout'));
     else setErr(t('notification-speech-preview-failed'));
-    return ok;
+    return result;
   };
 
   const toggle = (next) => {
