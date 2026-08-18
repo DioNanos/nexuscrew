@@ -8,7 +8,7 @@ import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
 import {
   clampDraggedCell, edgeScrollDirection, handlePositions, normalizeRange,
-  rangeFromXterm, rangeToSelect,
+  rangeFromXterm, rangeToSelect, zoomLineForRange,
 } from '../lib/selection-handles.js';
 import { t } from '../lib/i18n.js';
 import { filesFromTransfer, hasFilePayload, uploadSessionFiles } from '../lib/attachments.js';
@@ -49,6 +49,12 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   const [handleGeom, setHandleGeom] = useState(null);
   const [geomTick, setGeomTick] = useState(0);
   const [draggingHandle, setDraggingHandle] = useState(null);
+  // R25-zoom: la barra con la riga della maniglia in focus ingrandita 2x.
+  // zoomFocus = quale maniglia guida la barra (l'ultima presa; 'start' finche'
+  // non si tocca niente), zoomView = la vista derivata. Anche qui niente
+  // memoria della verita': il testo si rilegge dal buffer a ogni battito.
+  const [zoomFocus, setZoomFocus] = useState('start');
+  const [zoomView, setZoomView] = useState(null);
   // Il testo SOTTO una selezione attiva puo' essere sovrascritto (una
   // progress bar che riscrive la riga, un redraw dell'app): la copia
   // consegnerebbe il testo nuovo mentre chi guarda ha in mente quello
@@ -697,6 +703,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         };
         lastHandlePointer = { x: e.clientX, y: e.clientY, type: e.pointerType || 'touch' };
         setDraggingHandle(which);
+        setZoomFocus(which); // la barra zoom segue la maniglia che si muove
         window.addEventListener('pointermove', onHandleDragMove);
         window.addEventListener('pointerup', onHandleDragEnd);
         window.addEventListener('pointercancel', onHandleDragEnd);
@@ -794,23 +801,40 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // cambiamento del range e a ogni tick di viewport/redraw; misura lo schermo
   // reale e deriva la grandezza della cella — la stessa strada del caret del
   // long-press, cosi' le due viste non divergono.
+  // R25-zoom: allo STESSO battito si deriva la barra di zoom — la riga della
+  // maniglia in focus si rilegge dal buffer QUI, quindi la barra segue il
+  // drag, lo scroll e il testo vivo esattamente come le maniglie, senza una
+  // fonte di verita' separata da tenere in sync. L'ingrandimento e' 2x la
+  // cella REALE del terminale (misurata qui sopra), non un font fisso.
   useEffect(() => {
     const host = hostRef.current;
     const term = apiRef.current ? apiRef.current.term : null;
-    if (!host || !term || !selRange) { setHandleGeom(null); return; }
+    if (!host || !term || !selRange) { setHandleGeom(null); setZoomView(null); return; }
     const screen = host.querySelector('.xterm-screen') || host;
     const screenRect = screen.getBoundingClientRect();
     const hostRect = host.getBoundingClientRect();
+    const cellWidth = screenRect.width / Math.max(1, term.cols);
+    const cellHeight = screenRect.height / Math.max(1, term.rows);
     setHandleGeom(handlePositions({
       range: selRange,
       viewportY: Number(term.buffer.active.viewportY) || 0,
       rows: term.rows,
-      cellWidth: screenRect.width / Math.max(1, term.cols),
-      cellHeight: screenRect.height / Math.max(1, term.rows),
+      cellWidth,
+      cellHeight,
       screenLeft: screenRect.left - hostRect.left,
       screenTop: screenRect.top - hostRect.top,
     }));
-  }, [selRange, geomTick]);
+    let lineText = null;
+    const focusRow = selRange[zoomFocus === 'end' ? 'end' : 'start'].row;
+    if (typeof term.buffer.active.getLine === 'function') {
+      const line = term.buffer.active.getLine(Number(focusRow));
+      lineText = line ? line.translateToString(true) : '';
+    }
+    setZoomView(lineText === null ? null : {
+      ...zoomLineForRange({ range: selRange, side: zoomFocus, lineText }),
+      fontSize: Math.max(16, Math.round(cellHeight * 2)),
+    });
+  }, [selRange, geomTick, zoomFocus]);
 
   return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
     <div className="nc-terminal-host" ref={hostRef} />
@@ -824,6 +848,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         aria-hidden="true"
       />
     )))}
+    {selRange && zoomView && (
+      <div className="nc-zoom-bar" aria-hidden="true">
+        <pre className="nc-zoom-line" style={{ fontSize: `${zoomView.fontSize}px` }}>
+          <span>{zoomView.before}</span><span className="nc-zoom-sel">{zoomView.sel}</span><span>{zoomView.after}</span>
+        </pre>
+      </div>
+    )}
     {uploadState && <div className={`nc-upload-state${uploadState.error ? ' error' : ''}`} role="status">
       {uploadState.error
         ? uploadState.error

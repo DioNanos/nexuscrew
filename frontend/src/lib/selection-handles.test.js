@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   normalizeRange, clampDraggedCell, rangeToSelect, handlePositions, edgeScrollDirection,
-  rangeFromXterm,
+  rangeFromXterm, zoomLineForRange,
 } from './selection-handles.js';
 
 describe('normalizeRange', () => {
@@ -104,5 +104,37 @@ describe('rangeFromXterm', () => {
   it('senza range restituisce null, non un finto range', () => {
     expect(rangeFromXterm(null)).toBeNull();
     expect(rangeFromXterm({ start: { x: 0, y: 0 } })).toBeNull();
+  });
+});
+
+describe('zoomLineForRange — la barra di zoom spezza la riga della maniglia in focus', () => {
+  const RIGA2 = '0123456789abcdefghij'; // 21 caratteri
+  it('stessa riga: selezionata la porzione start.col..end.col, il resto ai lati', () => {
+    const range = { start: { row: 2, col: 3 }, end: { row: 2, col: 6 } };
+    expect(zoomLineForRange({ range, side: 'start', lineText: RIGA2 }))
+      .toEqual({ row: 2, before: '012', sel: '3456', after: '789abcdefghij' });
+  });
+  it('focus start su range multi-riga: prima dalla colonna di start, selezionato fino a fine riga', () => {
+    const range = { start: { row: 2, col: 3 }, end: { row: 5, col: 2 } };
+    expect(zoomLineForRange({ range, side: 'start', lineText: RIGA2 }))
+      .toEqual({ row: 2, before: '012', sel: '3456789abcdefghij', after: '' });
+  });
+  it('focus end su range multi-riga: selezionato dall\'inizio fino alla colonna di end', () => {
+    const range = { start: { row: 2, col: 3 }, end: { row: 5, col: 4 } };
+    expect(zoomLineForRange({ range, side: 'end', lineText: RIGA2 }))
+      .toEqual({ row: 5, before: '', sel: '01234', after: '56789abcdefghij' });
+  });
+  it('riga piu\' corta del range: le colonne si clampano al testo REALE, senza inventare spazi', () => {
+    const range = { start: { row: 2, col: 3 }, end: { row: 2, col: 40 } };
+    expect(zoomLineForRange({ range, side: 'start', lineText: 'ab' }))
+      .toEqual({ row: 2, before: 'ab', sel: '', after: '' });
+  });
+  it('riga vuota: barra vuota, niente crash', () => {
+    const range = { start: { row: 7, col: 0 }, end: { row: 7, col: 0 } };
+    expect(zoomLineForRange({ range, side: 'start', lineText: '' }))
+      .toEqual({ row: 7, before: '', sel: '', after: '' });
+  });
+  it('senza range niente barra', () => {
+    expect(zoomLineForRange({ range: null, side: 'start', lineText: RIGA2 })).toBeNull();
   });
 });

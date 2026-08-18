@@ -99,3 +99,42 @@ export function edgeScrollDirection({ visibleRow, rows }) {
   if (r >= Number(rows) - 1) return 1;
   return 0;
 }
+
+// La barra di zoom: il testo della riga della maniglia in focus, spezzato in
+// prima/selezionato/dopo. L'idea e' della PR #5; qui la struttura e' quella
+// delle maniglie — il testo arriva dal buffer di xterm AL MOMENTO della
+// chiamata (chi chiama ha appena letto getLine), non da uno stato parallelo,
+// quindi la barra segue il drag, lo scroll e il testo vivo con lo stesso
+// battito che ridisegna le maniglie. `side` dice quale maniglia guida la
+// barra ('start'|'end'); righe intermedie del range sono interamente
+// selezionate; le colonne vengono clampate al testo REALE della riga (il
+// range puo' nascere quando la riga e' piu' corta di come la si ricorda).
+export function zoomLineForRange({ range, side, lineText }) {
+  if (!range || !range.start || !range.end) return null;
+  const text = String(lineText ?? '');
+  const last = text.length - 1;
+  const focus = side === 'end' ? range.end : range.start;
+  const row = Number(focus.row);
+  // Colonne del range VIVE su questa riga, prima di ogni clamp: dicono quale
+  // trancio della selezione abita qui (Infinity = fino a fine riga: riga di
+  // start o riga intermedia). Le maniglie stanno ai capi, quindi il focus e'
+  // sempre la riga di start o quella di end; il ramo intermedio resta come
+  // difesa se un domani la barra seguisse una riga interna.
+  let from, to;
+  if (Number(range.start.row) === Number(range.end.row)) {
+    from = Number(range.start.col); to = Number(range.end.col);
+  } else if (row === Number(range.start.row)) {
+    from = Number(range.start.col); to = Infinity;
+  } else if (row === Number(range.end.row)) {
+    from = 0; to = Number(range.end.col);
+  } else {
+    from = 0; to = Infinity;
+  }
+  // La riga puo' essere piu' corta di quando la selezione e' nata (testo vivo
+  // riscritto): se la selezione comincia oltre la fine REALE, su questa riga
+  // non c'e' niente di selezionato — non si evidenzia un carattere per sbaglio.
+  if (from > last) return { row, before: text, sel: '', after: '' };
+  const s = Math.max(0, from);
+  const e = Math.min(last, to);
+  return { row, before: text.slice(0, s), sel: text.slice(s, e + 1), after: text.slice(e + 1) };
+}

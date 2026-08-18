@@ -316,7 +316,77 @@ describe('R25 — sopravvivenza al redraw e testo sovrascritto', () => {
     term.lineTexts.set(5, 'output-altrove');
     act(() => term.renderCb && term.renderCb({ start: 5, end: 5 }));
     expect(view.container.querySelector('.nc-selection-changed')).toBeNull();
-    // La selezione non e' stata letta: nessuna chiamata getLine in piu'.
-    expect(term.getLineCalls.length).toBe(lettureDopoSnapshot);
+    // La selezione non e' stata riletta per il confronto; l'unica lettura in
+    // piu' e' la riga della BARRA ZOOM (R25-zoom), che a ogni battito rilegge
+    // dal buffer la riga della maniglia in focus: UNA riga fissa, non una per
+    // riga selezionata — il confronto resta O(intersezione) + 1.
+    expect(term.getLineCalls.length).toBe(lettureDopoSnapshot + 1);
+  });
+});
+
+describe('R25-zoom — la barra con la riga della maniglia in focus', () => {
+  function zoomBar(view) {
+    return {
+      bar: view.container.querySelector('.nc-zoom-bar'),
+      line: view.container.querySelector('.nc-zoom-line'),
+      sel: view.container.querySelector('.nc-zoom-line .nc-zoom-sel'),
+      spans: view.container.querySelectorAll('.nc-zoom-line span'),
+    };
+  }
+
+  it('con la selezione appare e mostra la riga della maniglia start spezzata in tre, al 2x della cella reale', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    expect(zoomBar(view).bar).toBeNull(); // senza selezione non c'e' barra
+    act(() => term.select(2, 1, 10)); // riga 1, col 2..11
+    const z = zoomBar(view);
+    expect(z.bar).toBeTruthy();
+    // 'contenuto-riga-1': prima 'co' (col 0..1), selezionato 'ntenuto-ri'
+    // (col 2..11), dopo 'ga-1'. Il focus di default e' start.
+    expect(z.spans[0].textContent).toBe('co');
+    expect(z.sel.textContent).toBe('ntenuto-ri');
+    expect(z.spans[2].textContent).toBe('ga-1');
+    // cella 20px misurata → testo 2x = 40px.
+    expect(z.line.style.fontSize).toBe('40px');
+  });
+
+  it('la barra segue la maniglia che si muove: trascinata la end su un\'altra riga, mostra la SUA riga', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10));
+    const h = handles(view);
+    fireEvent.pointerDown(h.end, { clientX: 120, clientY: 40, pointerType: 'mouse' });
+    // (200, 40): col 20, riga buffer 2 → selezione multi-riga, end (2,20).
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 40, pointerType: 'mouse' });
+    fireEvent.pointerUp(window, { pointerType: 'mouse' });
+    const z = zoomBar(view);
+    // Riga della END: selezionato dall'inizio riga fino a col 20 (la riga e'
+    // lunga 16: tutta), prima vuota.
+    expect(z.spans[0].textContent).toBe('');
+    expect(z.sel.textContent).toBe('contenuto-riga-2');
+  });
+
+  it('la barra rilegge il testo VIVO dal buffer: la riga riscritta sotto la selezione appare alla barra', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10)); // focus start, riga 1
+    term.lineTexts.set(1, 'NUOVA-riga-1');
+    act(() => term.renderCb && term.renderCb({ start: 1, end: 1 }));
+    const z = zoomBar(view);
+    expect(z.line.textContent).toBe('NUOVA-riga-1');
+    expect(z.sel.textContent).toBe('NUOVA-riga-1'.slice(2, 12)); // col 2..11
+  });
+
+  it('selezione annullata → la barra sparisce con le maniglie', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(2, 1, 10));
+    expect(zoomBar(view).bar).toBeTruthy();
+    act(() => term.clearSelection());
+    expect(zoomBar(view).bar).toBeNull();
   });
 });
