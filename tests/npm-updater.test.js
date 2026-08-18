@@ -457,3 +457,137 @@ test('npm update runner: un pidfile senza attestazione DOPO la migrazione fa fal
   }), /restart portatile fallito/, 'dopo la migrazione, un pidfile senza attestazione torna a bloccare l\'update — sospetto, non più pre-migrazione');
   assert.equal(pidf.pidOwnership(child.pid), 'owned', 'il processo legittimo non è stato toccato: il rifiuto non tocca il pidfile né il pid');
 });
+
+// R28 — i due test dedicati che mancano alla consegna parziale 79fe968.
+//
+// Il guasto misurato (2026-08-18, upgrade 0.9.6→0.9.7 su mac): l'upgrade
+// reinstalla il pacchetto nel prefix del node NUOVO, ma le definizioni di
+// boot installate restano quelle di prima — la companion puntata al Cellar
+// del node vecchio, ormai unlinkato. `npm install` NON riscrive un'unit già
+// installata (lo dichiara anche service.js sopra ensureLinuxTmuxSurvival):
+// senza un passo esplicito di rigenerazione, exit 78 EX_CONFIG e celle
+// boot:true mute finché qualcuno non lancia `nexuscrew init` a mano.
+//
+// Qui il percorso È quello del runner, end-to-end: runUpdate vero, con soli
+// i seam previsti per il determinismo. `platformMod.nodeBin()` restituisce
+// il path MORTO perché è lo scenario reale: il runner dell'update gira con
+// il node che lo ha lanciato, che l'upgrade di Homebrew ha già unlinkato
+// (il processo resta in memoria, il file no). Il node vivo del test entra
+// tra i candidati stabili via PREFIX (seam aliasMod, vedi sotto) e `exists`
+// lo rende l'unico eleggibile: senza questo, il primo candidato presente
+// sulla macchina che gira i test (/usr/local/bin/node su una, /usr/bin/node
+// su un'altra) renderebbe l'esito dipendente dall'host.
+// service.js, fleet-service.js e stable-alias.js sono i MODULI REALI: le
+// definizioni che finiscono su disco passano da generateLinux/
+// generateFleetLinux/resolveLiveBootPaths veri.
+test('npm update runner: l\'upgrade rigenera ENTRAMBE le definizioni di boot quando il node puntato è morto', async (t) => {
+  const serviceMod = require('../lib/cli/service.js');
+  const fleetMod = require('../lib/cli/fleet-service.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-r28-regen-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  const statusPath = path.join(dir, 'state.json');
+
+  // Il node morto: il Cellar della versione precedente, già rimpiazzata.
+  const deadNode = path.join(dir, 'dead', 'Cellar', 'node', '26.4.0', 'bin', 'node');
+  // Il node vivo: un percorso stabile installato (esiste su disco).
+  const aliveNode = path.join(dir, 'alive', 'bin', 'node');
+  fs.mkdirSync(path.dirname(aliveNode), { recursive: true });
+  fs.writeFileSync(aliveNode, '#!/bin/sh\n', { mode: 0o755 });
+
+  // Le definizioni installate PRIMA dell'upgrade: entrambe puntano al node
+  // morto. Devono esistere già — il contratto R28 sana solo ciò che c'è.
+  const serviceTarget = serviceMod.installPath('linux', dir);
+  const fleetTarget = fleetMod.fleetInstallPath('linux', dir);
+  fs.mkdirSync(path.dirname(serviceTarget), { recursive: true });
+  fs.mkdirSync(path.dirname(fleetTarget), { recursive: true });
+  fs.writeFileSync(serviceTarget, `[Service]\nExecStart=${deadNode} serve\n`);
+  fs.writeFileSync(fleetTarget, `[Service]\nExecStart=${deadNode} fleet-boot\n`);
+
+  const platformMod = {
+    detectPlatform: () => 'linux',
+    nodeBin: () => deadNode,
+    repoRoot: () => path.resolve(__dirname, '..'),
+    uid: () => 1000,
+  };
+  // regenBootDefinitions non inoltra `env` a resolveLiveBootPaths, quindi il
+  // node vivo del test entra nell'elenco dei candidati stabili tramite il
+  // seam aliasMod previsto: un wrapper che delega al modulo REALE aggiungendo
+  // solo il PREFIX del test (regola documentata di stable-alias:PREFIX aggiunge
+  // <PREFIX>/bin/node ai candidati). `exists` restringe poi i candidati al
+  // solo node vivo, altrimenti il primo candidato presente sull'host che
+  // gira i test vincerebbe sull'ordine.
+  const realAlias = require('../lib/cli/stable-alias.js');
+  const aliasMod = {
+    resolveLiveBootPaths: (o) => realAlias.resolveLiveBootPaths({
+      ...o, env: { PREFIX: path.join(dir, 'alive') },
+    }),
+  };
+  const onlyAlive = (p) => p === aliveNode;
+
+  const out = await runUpdate({
+    version: '0.9.8', home: dir, statusPath,
+    execImpl: () => {},
+    readInstalledVersion: () => '0.9.8',
+    preflightImpl: async () => true,
+    restartImpl: async () => 'portable',
+    regenSeams: { platformMod, aliasMod, exists: onlyAlive },
+  });
+
+  assert.equal(out.updated, true, 'la rigenerazione best-effort non blocca l\'aggiornamento');
+  assert.deepEqual(out.bootDefinitions.regenerated, ['service', 'fleet-companion'],
+    'ENTRAMBE le definizioni, non solo la principale — è il difetto di R28');
+  assert.deepEqual(out.bootDefinitions.errors, []);
+  const serviceTxt = fs.readFileSync(serviceTarget, 'utf8');
+  const fleetTxt = fs.readFileSync(fleetTarget, 'utf8');
+  assert.ok(serviceTxt.includes(aliveNode) && !serviceTxt.includes(deadNode),
+    `il servizio principale riparte su un node vivo (${aliveNode})`);
+  assert.ok(fleetTxt.includes(aliveNode) && !fleetTxt.includes(deadNode),
+    `la companion riparte su un node vivo (${aliveNode}) — il path che nessun altro sanava`);
+  assert.match(out.bootDefinitions.warnings.join('\n'), new RegExp(`il node del servizio.*${deadNode}.*non esiste piu' su disco`),
+    'la sostituzione è DICHIARATA, non silenziosa');
+  // Le skippedActivation sono per COMANDO (3 systemctl per il service, 2 per
+  // la companion): ciò che il contratto richiede è che LE DICHIARI ENTRAMBE
+  // le componenti — activate:false, il companion oneshot non parte a metà update.
+  assert.ok(out.bootDefinitions.warnings.some((w) => w.startsWith('service: attivazione differita')),
+    'il service principale dichiara l\'attivazione differita');
+  assert.ok(out.bootDefinitions.warnings.some((w) => w.startsWith('fleet-companion: attivazione differita')),
+    'la companion dichiara l\'attivazione differita');
+});
+
+// Il controllo negativo dello stesso guasto: senza il passo di rigenerazione
+// (regenBootImpl che non fa nulla, come il runner pre-R28), la companion
+// resta puntata al node morto. Prova che è QUEL passo a sanare — non
+// l'npm install, non il restart, non qualcos'altro lungo la strada.
+test('npm update runner: senza il passo di rigenerazione la companion resta puntata al node morto', async (t) => {
+  const serviceMod = require('../lib/cli/service.js');
+  const fleetMod = require('../lib/cli/fleet-service.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-r28-noregen-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  const statusPath = path.join(dir, 'state.json');
+
+  const deadNode = path.join(dir, 'dead', 'Cellar', 'node', '26.4.0', 'bin', 'node');
+  const serviceTarget = serviceMod.installPath('linux', dir);
+  const fleetTarget = fleetMod.fleetInstallPath('linux', dir);
+  fs.mkdirSync(path.dirname(serviceTarget), { recursive: true });
+  fs.mkdirSync(path.dirname(fleetTarget), { recursive: true });
+  const vecchiaService = `[Service]\nExecStart=${deadNode} serve\n`;
+  const vecchiaFleet = `[Service]\nExecStart=${deadNode} fleet-boot\n`;
+  fs.writeFileSync(serviceTarget, vecchiaService);
+  fs.writeFileSync(fleetTarget, vecchiaFleet);
+
+  const out = await runUpdate({
+    version: '0.9.8', home: dir, statusPath,
+    execImpl: () => {},
+    readInstalledVersion: () => '0.9.8',
+    preflightImpl: async () => true,
+    restartImpl: async () => 'portable',
+    // Il runner pre-R28: nessun passo di rigenerazione delle definizioni.
+    regenBootImpl: () => ({ regenerated: [], skipped: [], warnings: [], errors: [] }),
+  });
+
+  assert.equal(out.updated, true, 'l\'aggiornamento riusciva anche allora — questo è il punto: il guasto era silenzioso');
+  assert.equal(fs.readFileSync(serviceTarget, 'utf8'), vecchiaService,
+    'il servizio principale resta sulla definizione vecchia');
+  assert.equal(fs.readFileSync(fleetTarget, 'utf8'), vecchiaFleet,
+    'la companion resta puntata al node morto: exit 78 al prossimo boot, nessun altro passo la sana');
+});
