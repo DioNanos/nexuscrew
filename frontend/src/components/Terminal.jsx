@@ -845,10 +845,18 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         if (!term.getSelectionPosition()) return;
         e.preventDefault(); e.stopPropagation();
         const g = handleGeomRef.current && handleGeomRef.current[which];
+        // R36: g.left/g.top sono px NELL'HOST (vanno a style.left/top), mentre
+        // e.clientX/Y e cellXY lavorano in px VIEWPORT. Il delta della presa
+        // si registra in UNO spazio solo — il viewport: senza la conversione,
+        // con l'host spostato dall'origine (sul telefono c'e' la top bar) ogni
+        // punto del drag veniva letto hostRect piu' in alto/sinistra; sulla
+        // END il punto cadeva sopra la riga di start e il clamp no-crossing
+        // COLLASSAVA la selezione al primo movimento (riprodotto in browser).
+        const hostRect = host.getBoundingClientRect();
         handleDrag = {
           which,
-          offsetX: g ? e.clientX - g.left : 0,
-          offsetY: g ? e.clientY - g.top : 0,
+          offsetX: g ? e.clientX - (hostRect.left + g.left) : 0,
+          offsetY: g ? e.clientY - (hostRect.top + g.top) : 0,
           // R25-zoom rev3-audit: l'ancora e' una decisione presa UNA volta,
           // alla presa della maniglia, dallo stato normalizzato (selRange).
           // Rileggerla grezza a ogni pointermove (getSelectionPosition) su
