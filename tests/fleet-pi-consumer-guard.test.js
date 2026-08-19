@@ -163,7 +163,7 @@ test('DRIFT 3: la dist esiste ma non esporta composeModelProvider (API rinominat
 // I due DRIFT sopra usano seams.which per isolare la logica. Questi due test
 // invece attraversano il percorso REALE (execFileSync('which', ['pi'])) con
 // un binario `which` fittizio anteposto al PATH — la stessa forma che
-// produceva il difetto misurato da Dev, non una ricostruzione del rimedio
+// produceva il difetto misurato, non una ricostruzione del rimedio
 // dentro il test. Un `which` fittizio maschera quello di sistema a
 // prescindere da cosa sia realmente installato: verifica che la guardia si
 // accorga del problema anche se Pi fosse davvero presente sulla macchina.

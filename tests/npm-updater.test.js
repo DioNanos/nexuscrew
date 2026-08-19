@@ -8,7 +8,61 @@ const path = require('node:path');
 
 const core = require('../lib/update/core.js');
 const { createNpmUpdater, isGlobalInstall, lookupLatestNpm } = require('../lib/update/manager.js');
-const { restartRuntime, runUpdate } = require('../lib/update/runner.js');
+const { restartRuntime, runUpdate, regenBootDefinitions } = require('../lib/update/runner.js');
+const serviceMod = require('../lib/cli/service.js');
+const fleetMod = require('../lib/cli/fleet-service.js');
+const realAlias = require('../lib/cli/stable-alias.js');
+
+// R28-rimedio — fixture condivisa dei test di sanazione: definizioni NOSTRE
+// installate (l'header `NexusCrew`, come le genera installService /
+// installFleetService) che puntano a un node morto, più un node vivo
+// raggiungibile solo tramite il PREFIX del test (stessa regola dei test R28
+// sopra). `thirdPartyService` sostituisce la definizione del servizio
+// principale con un file DI TERZI (senza il nostro nome: per quello il
+// riconoscimento è sul contenuto, non solo sul tipo).
+function r28RimedioFixture(platform, { thirdPartyService = false } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `nc-r28rim-${platform}-`));
+  const cleanup = () => { fs.rmSync(dir, { recursive: true, force: true }); };
+  const deadNode = path.join(dir, 'dead', 'Cellar', 'node', '26.4.0', 'bin', 'node');
+  const aliveNode = path.join(dir, 'alive', 'bin', 'node');
+  fs.mkdirSync(path.dirname(aliveNode), { recursive: true });
+  fs.writeFileSync(aliveNode, '#!/bin/sh\n', { mode: 0o755 });
+  const serviceTarget = serviceMod.installPath(platform, dir);
+  const fleetTarget = fleetMod.fleetInstallPath(platform, dir);
+  fs.mkdirSync(path.dirname(serviceTarget), { recursive: true });
+  fs.mkdirSync(path.dirname(fleetTarget), { recursive: true });
+  const thirdParty = '[Unit]\nDescription=Altro servizio\n[Service]\nExecStart=/usr/bin/altro\n';
+  // Le definizioni "nostre" della fixture nascono dal GENERATORE VERO col node
+  // morto: un file scritto a mano non prova il riconoscimento di proprieta',
+  // prova solo che la fixture contiene la parola giusta.
+  const ctxGen = {
+    repoRoot: path.resolve(__dirname, '..'), nodeBin: deadNode,
+    entryPath: path.join(path.resolve(__dirname, '..'), 'bin', 'nexuscrew.js'),
+    home: dir, uid: 501, port: 41777,
+  };
+  fs.writeFileSync(serviceTarget, thirdPartyService ? thirdParty
+    : serviceMod.generateService(platform, ctxGen));
+  fs.writeFileSync(fleetTarget, fleetMod.generateFleetService({
+    platform, nodeBin: deadNode, entryPath: ctxGen.entryPath,
+    repoRoot: ctxGen.repoRoot, home: dir,
+  }));
+  const platformMod = {
+    detectPlatform: () => platform,
+    nodeBin: () => deadNode,
+    repoRoot: () => path.resolve(__dirname, '..'),
+    uid: () => 501,
+  };
+  const aliasMod = {
+    resolveLiveBootPaths: (o) => realAlias.resolveLiveBootPaths({
+      ...o, env: { PREFIX: path.join(dir, 'alive') },
+    }),
+  };
+  const onlyAlive = (p) => p === aliveNode;
+  return {
+    dir, cleanup, deadNode, aliveNode, serviceTarget, fleetTarget,
+    platformMod, aliasMod, onlyAlive,
+  };
+}
 
 test('npm updater: confronto semver stabile/prerelease e parsing npm JSON', () => {
   assert.equal(core.compareVersions('0.8.9', '0.8.8'), 1);
@@ -129,7 +183,17 @@ test('npm update runner: install globale pin esatto, cwd stabile, verifica e res
   assert.equal(install.argv.includes('latest'), false);
   assert.equal(installOpts.cwd, path.join(dir, '.nexuscrew'));
   assert.equal(restarted, true);
-  assert.deepEqual(out, { updated: true, version: '0.8.9', restartMode: 'portable' });
+  // R28: il risultato ora riporta anche l'esito della rigenerazione delle
+  // definizioni di boot. In questa home sintetica non ci sono unit/plist
+  // installate: tutto skipped, nessuna rigenerazione, nessun errore. (Le
+  // warnings dipendono dall'ambiente reale degli alias, quindi non fanno
+  // parte dell'uguaglianza: il contratto verificato qui è il resto.)
+  assert.equal(out.updated, true);
+  assert.equal(out.version, '0.8.9');
+  assert.equal(out.restartMode, 'portable');
+  assert.deepEqual(out.bootDefinitions.regenerated, []);
+  assert.deepEqual(out.bootDefinitions.errors, []);
+  assert.equal(out.bootDefinitions.skipped.length, 2);
   const saved = core.readState(statusPath);
   assert.equal(saved.phase, 'installed');
   assert.equal(saved.current, '0.8.9');
@@ -407,10 +471,10 @@ test('npm update runner: un pidfile senza attestazione PRE-migrazione non fa fal
   assert.equal(fs.existsSync(pidPath), false, 'il pidfile del vecchio runtime è stato pulito, come sempre');
 });
 
-// Gate 3 (Dev, R-pidfile-3): il negativo dopo migrazione. STESSO scenario di
+// Gate 3 (R-pidfile-3): il negativo dopo migrazione. STESSO scenario di
 // sopra, ma questa installazione ha GIÀ completato una scrittura v2 (marker
 // presente): "nessun campo attestazione" non è più spiegabile come
-// pre-migrazione, ed è ESATTAMENTE il guasto che Dev ha misurato — l'update
+// pre-migrazione, ed è ESATTAMENTE il guasto misurato — l'update
 // deve fallire, di nuovo, ma solo qui: dopo la migrazione, non per sempre.
 test('npm update runner: un pidfile senza attestazione DOPO la migrazione fa fallire l\'update, di nuovo', async (t) => {
   const { spawn } = require('node:child_process');
@@ -446,4 +510,377 @@ test('npm update runner: un pidfile senza attestazione DOPO la migrazione fa fal
     waitForRuntimeImpl: async () => true,
   }), /restart portatile fallito/, 'dopo la migrazione, un pidfile senza attestazione torna a bloccare l\'update — sospetto, non più pre-migrazione');
   assert.equal(pidf.pidOwnership(child.pid), 'owned', 'il processo legittimo non è stato toccato: il rifiuto non tocca il pidfile né il pid');
+});
+
+// R28 — i due test dedicati che mancano alla consegna parziale 79fe968.
+//
+// Il guasto misurato (2026-08-18, upgrade 0.9.6→0.9.7 su mac): l'upgrade
+// reinstalla il pacchetto nel prefix del node NUOVO, ma le definizioni di
+// boot installate restano quelle di prima — la companion puntata al Cellar
+// del node vecchio, ormai unlinkato. `npm install` NON riscrive un'unit già
+// installata (lo dichiara anche service.js sopra ensureLinuxTmuxSurvival):
+// senza un passo esplicito di rigenerazione, exit 78 EX_CONFIG e celle
+// boot:true mute finché qualcuno non lancia `nexuscrew init` a mano.
+//
+// Qui il percorso È quello del runner, end-to-end: runUpdate vero, con soli
+// i seam previsti per il determinismo. `platformMod.nodeBin()` restituisce
+// il path MORTO perché è lo scenario reale: il runner dell'update gira con
+// il node che lo ha lanciato, che l'upgrade di Homebrew ha già unlinkato
+// (il processo resta in memoria, il file no). Il node vivo del test entra
+// tra i candidati stabili via PREFIX (seam aliasMod, vedi sotto) e `exists`
+// lo rende l'unico eleggibile: senza questo, il primo candidato presente
+// sulla macchina che gira i test (/usr/local/bin/node su una, /usr/bin/node
+// su un'altra) renderebbe l'esito dipendente dall'host.
+// service.js, fleet-service.js e stable-alias.js sono i MODULI REALI: le
+// definizioni che finiscono su disco passano da generateLinux/
+// generateFleetLinux/resolveLiveBootPaths veri.
+test('npm update runner: l\'upgrade rigenera ENTRAMBE le definizioni di boot quando il node puntato è morto', async (t) => {
+  const serviceMod = require('../lib/cli/service.js');
+  const fleetMod = require('../lib/cli/fleet-service.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-r28-regen-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  const statusPath = path.join(dir, 'state.json');
+
+  // Il node morto: il Cellar della versione precedente, già rimpiazzata.
+  const deadNode = path.join(dir, 'dead', 'Cellar', 'node', '26.4.0', 'bin', 'node');
+  // Il node vivo: un percorso stabile installato (esiste su disco).
+  const aliveNode = path.join(dir, 'alive', 'bin', 'node');
+  fs.mkdirSync(path.dirname(aliveNode), { recursive: true });
+  fs.writeFileSync(aliveNode, '#!/bin/sh\n', { mode: 0o755 });
+
+  // Le definizioni installate PRIMA dell'upgrade: entrambe puntano al node
+  // morto. Devono esistere già — il contratto R28 sana solo ciò che c'è.
+  // Le definizioni di partenza nascono dal GENERATORE VERO, col node morto:
+  // una fixture scritta a mano si adatta alla guardia invece che alla realta',
+  // e il riconoscimento di proprieta' resterebbe non provato.
+  const serviceTarget = serviceMod.installPath('linux', dir);
+  const fleetTarget = fleetMod.fleetInstallPath('linux', dir);
+  fs.mkdirSync(path.dirname(serviceTarget), { recursive: true });
+  fs.mkdirSync(path.dirname(fleetTarget), { recursive: true });
+  const entryPath = path.join(path.resolve(__dirname, '..'), 'bin', 'nexuscrew.js');
+  fs.writeFileSync(serviceTarget, serviceMod.generateService('linux', {
+    repoRoot: path.resolve(__dirname, '..'), nodeBin: deadNode, entryPath,
+    home: dir, uid: 1000, port: 41777,
+  }));
+  fs.writeFileSync(fleetTarget, fleetMod.generateFleetService({
+    platform: 'linux', nodeBin: deadNode, entryPath,
+    repoRoot: path.resolve(__dirname, '..'), home: dir,
+  }));
+
+  const platformMod = {
+    detectPlatform: () => 'linux',
+    nodeBin: () => deadNode,
+    repoRoot: () => path.resolve(__dirname, '..'),
+    uid: () => 1000,
+  };
+  // regenBootDefinitions non inoltra `env` a resolveLiveBootPaths, quindi il
+  // node vivo del test entra nell'elenco dei candidati stabili tramite il
+  // seam aliasMod previsto: un wrapper che delega al modulo REALE aggiungendo
+  // solo il PREFIX del test (regola documentata di stable-alias:PREFIX aggiunge
+  // <PREFIX>/bin/node ai candidati). `exists` restringe poi i candidati al
+  // solo node vivo, altrimenti il primo candidato presente sull'host che
+  // gira i test vincerebbe sull'ordine.
+  const realAlias = require('../lib/cli/stable-alias.js');
+  const aliasMod = {
+    resolveLiveBootPaths: (o) => realAlias.resolveLiveBootPaths({
+      ...o, env: { PREFIX: path.join(dir, 'alive') },
+    }),
+  };
+  const onlyAlive = (p) => p === aliveNode;
+
+  const out = await runUpdate({
+    version: '0.9.8', home: dir, statusPath,
+    execImpl: () => {},
+    readInstalledVersion: () => '0.9.8',
+    preflightImpl: async () => true,
+    restartImpl: async () => 'portable',
+    regenSeams: { platformMod, aliasMod, exists: onlyAlive },
+  });
+
+  assert.equal(out.updated, true, 'la rigenerazione best-effort non blocca l\'aggiornamento');
+  assert.deepEqual(out.bootDefinitions.regenerated, ['service', 'fleet-companion'],
+    'ENTRAMBE le definizioni, non solo la principale — è il difetto di R28');
+  assert.deepEqual(out.bootDefinitions.errors, []);
+  const serviceTxt = fs.readFileSync(serviceTarget, 'utf8');
+  const fleetTxt = fs.readFileSync(fleetTarget, 'utf8');
+  assert.ok(serviceTxt.includes(aliveNode) && !serviceTxt.includes(deadNode),
+    `il servizio principale riparte su un node vivo (${aliveNode})`);
+  assert.ok(fleetTxt.includes(aliveNode) && !fleetTxt.includes(deadNode),
+    `la companion riparte su un node vivo (${aliveNode}) — il path che nessun altro sanava`);
+  assert.match(out.bootDefinitions.warnings.join('\n'), new RegExp(`il node del servizio.*${deadNode}.*non esiste piu' su disco`),
+    'la sostituzione è DICHIARATA, non silenziosa');
+  // Le skippedActivation sono per COMANDO (3 systemctl per il service, 2 per
+  // la companion): ciò che il contratto richiede è che LE DICHIARI ENTRAMBE
+  // le componenti — activate:false, il companion oneshot non parte a metà update.
+  assert.ok(out.bootDefinitions.warnings.some((w) => w.startsWith('service: attivazione differita')),
+    'il service principale dichiara l\'attivazione differita');
+  assert.ok(out.bootDefinitions.warnings.some((w) => w.startsWith('fleet-companion: attivazione differita')),
+    'la companion dichiara l\'attivazione differita');
+});
+
+// Il controllo negativo dello stesso guasto: senza il passo di rigenerazione
+// (regenBootImpl che non fa nulla, come il runner pre-R28), la companion
+// resta puntata al node morto. Prova che è QUEL passo a sanare — non
+// l'npm install, non il restart, non qualcos'altro lungo la strada.
+test('npm update runner: senza il passo di rigenerazione la companion resta puntata al node morto', async (t) => {
+  const serviceMod = require('../lib/cli/service.js');
+  const fleetMod = require('../lib/cli/fleet-service.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-r28-noregen-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  const statusPath = path.join(dir, 'state.json');
+
+  const deadNode = path.join(dir, 'dead', 'Cellar', 'node', '26.4.0', 'bin', 'node');
+  const serviceTarget = serviceMod.installPath('linux', dir);
+  const fleetTarget = fleetMod.fleetInstallPath('linux', dir);
+  fs.mkdirSync(path.dirname(serviceTarget), { recursive: true });
+  fs.mkdirSync(path.dirname(fleetTarget), { recursive: true });
+  const vecchiaService = `[Service]\nExecStart=${deadNode} serve\n`;
+  const vecchiaFleet = `[Service]\nExecStart=${deadNode} fleet-boot\n`;
+  fs.writeFileSync(serviceTarget, vecchiaService);
+  fs.writeFileSync(fleetTarget, vecchiaFleet);
+
+  const out = await runUpdate({
+    version: '0.9.8', home: dir, statusPath,
+    execImpl: () => {},
+    readInstalledVersion: () => '0.9.8',
+    preflightImpl: async () => true,
+    restartImpl: async () => 'portable',
+    // Il runner pre-R28: nessun passo di rigenerazione delle definizioni.
+    regenBootImpl: () => ({ regenerated: [], skipped: [], warnings: [], errors: [] }),
+  });
+
+  assert.equal(out.updated, true, 'l\'aggiornamento riusciva anche allora — questo è il punto: il guasto era silenzioso');
+  assert.equal(fs.readFileSync(serviceTarget, 'utf8'), vecchiaService,
+    'il servizio principale resta sulla definizione vecchia');
+  assert.equal(fs.readFileSync(fleetTarget, 'utf8'), vecchiaFleet,
+    'la companion resta puntata al node morto: exit 78 al prossimo boot, nessun altro passo la sana');
+});
+
+// R28-rimedio, difetto 2 (audit): l'attivazione differita dichiarata dalla
+// regen («il restart dell'aggiornamento la applica») era una promessa FALSA
+// in silenzio: `restart` fa `systemctl --user restart` SENZA daemon-reload,
+// quindi systemd riavviava con la definizione VECCHIA in memoria; e col
+// runtime spento non c'è restart affatto. L'attivazione va APPLICATA nel
+// percorso di update, dopo la regen.
+test("npm update runner: linux — l'attivazione differita è APPLICATA qui (daemon-reload dopo la regen)", async (t) => {
+  const f = r28RimedioFixture('linux');
+  t.after(f.cleanup);
+  const calls = [];
+  const out = await runUpdate({
+    version: '0.9.8', home: f.dir, statusPath: path.join(f.dir, 'state.json'),
+    execImpl: (b, a) => { calls.push(`${b} ${(a || []).join(' ')}`); },
+    readInstalledVersion: () => '0.9.8',
+    preflightImpl: async () => true,
+    restartImpl: async () => 'service',
+    regenBootImpl: (o) => { const r = regenBootDefinitions(o); calls.push('REGEN:DONE'); return r; },
+    regenSeams: { platformMod: f.platformMod, aliasMod: f.aliasMod, exists: f.onlyAlive },
+  });
+  assert.equal(out.updated, true);
+  const regenDone = calls.indexOf('REGEN:DONE');
+  const reload = calls.indexOf('systemctl --user daemon-reload');
+  assert.ok(reload >= 0, 'daemon-reload eseguito nel percorso di update — senza di esso il restart carica la definizione VECCHIA');
+  assert.ok(reload > regenDone, 'applicato DOPO la rigenerazione delle definizioni');
+});
+
+// R28-rimedio, difetto 2 su mac: launchd NON ha un «reload senza eseguire»:
+// kickstart (start/restart) riusa la definizione già caricata, quindi
+// l'unica attivazione vera è bootout+bootstrap. Col runtime attivo il
+// principale riparte subito sul nuovo codice (coincide col restart che
+// l'update farebbe comunque) e il companion — RunAtLoad — parte DOPO, col
+// principale già nuovo.
+test("npm update runner: mac runtime attivo — bootout+bootstrap di servizio e companion nel percorso di update", async (t) => {
+  const f = r28RimedioFixture('mac');
+  t.after(f.cleanup);
+  const calls = [];
+  const out = await runUpdate({
+    version: '0.9.8', home: f.dir, statusPath: path.join(f.dir, 'state.json'),
+    execImpl: (b, a) => { calls.push(`${b} ${(a || []).join(' ')}`); },
+    readInstalledVersion: () => '0.9.8',
+    preflightImpl: async () => true,
+    isRunningImpl: () => true,
+    restartImpl: async () => 'service',
+    regenBootImpl: (o) => { const r = regenBootDefinitions(o); calls.push('REGEN:DONE'); return r; },
+    regenSeams: { platformMod: f.platformMod, aliasMod: f.aliasMod, exists: f.onlyAlive },
+  });
+  assert.equal(out.updated, true);
+  const regenDone = calls.indexOf('REGEN:DONE');
+  const svcBoot = calls.findIndex((c) => c.startsWith('launchctl bootstrap') && c.includes(f.serviceTarget));
+  const fleetBoot = calls.findIndex((c) => c.startsWith('launchctl bootstrap') && c.includes(f.fleetTarget));
+  assert.ok(svcBoot >= 0, 'il principale viene ri-caricato con bootout+bootstrap (definizione nuova)');
+  assert.ok(fleetBoot >= 0, 'anche la companion viene ri-caricata: nessun altro passo la conosce');
+  assert.ok(svcBoot > regenDone && fleetBoot > regenDone, 'dopo la regen');
+  assert.ok(fleetBoot > svcBoot, 'il companion DOPO il principale: le celle boot:true partono col servizio già nuovo');
+  assert.ok(calls.includes('launchctl bootout gui/501/com.mmmbuto.nexuscrew'), 'bootout del principale prima del bootstrap');
+});
+
+// R28-rimedio, difetto 2 su mac col runtime SPENTO: nessun bootstrap (non si
+// accende ciò che l'utente ha spento) e il LIMITE reale dichiarato al posto
+// della promessa falsa.
+test("npm update runner: mac runtime SPENTO — nessun bootstrap, limite dichiarato invece della promessa falsa", async (t) => {
+  const f = r28RimedioFixture('mac');
+  t.after(f.cleanup);
+  const calls = [];
+  const out = await runUpdate({
+    version: '0.9.8', home: f.dir, statusPath: path.join(f.dir, 'state.json'),
+    execImpl: (b, a) => { calls.push(`${b} ${(a || []).join(' ')}`); },
+    readInstalledVersion: () => '0.9.8',
+    preflightImpl: async () => true,
+    isRunningImpl: () => false,
+    restartImpl: async () => 'inactive',
+    regenSeams: { platformMod: f.platformMod, aliasMod: f.aliasMod, exists: f.onlyAlive },
+  });
+  assert.equal(out.updated, true);
+  assert.ok(!calls.some((c) => c.startsWith('launchctl bootstrap')), 'non si accende un runtime che l\'utente ha spento');
+  const declared = (out.bootDefinitions.warnings.join('\n') + '\n'
+    + JSON.stringify(out.bootDefinitions.activation || {}));
+  assert.ok(!declared.includes('il restart dell\'aggiornamento la applica'),
+    'la promessa falsa è sparita: il restart non carica definizioni (kickstart) e qui non c\'è neanche');
+  assert.ok(/prossimo boot|nexuscrew init/.test(declared),
+    'il limite reale è dichiarato: definizioni scritte, caricate al prossimo boot o con init');
+});
+
+// R28-rimedio, difetto 3 (audit): un file regolare DI TERZI al posto del
+// target non va sovrascritto (symlink e directory erano già saltati: il
+// buco era il file regolare non nostro).
+test('npm update runner: un file regolare DI TERZI al posto del target non viene toccato', (t) => {
+  const f = r28RimedioFixture('linux', { thirdPartyService: true });
+  t.after(f.cleanup);
+  const thirdParty = '[Unit]\nDescription=Altro servizio\n[Service]\nExecStart=/usr/bin/altro\n';
+  const out = regenBootDefinitions({
+    home: f.dir, platform: 'linux',
+    platformMod: f.platformMod, aliasMod: f.aliasMod, exists: f.onlyAlive,
+    log: () => {},
+  });
+  assert.equal(fs.readFileSync(f.serviceTarget, 'utf8'), thirdParty,
+    'il file di terzi resta intatto: la sanazione non sovrascrive ciò che non è suo');
+  assert.ok(out.skipped.some((s) => s.startsWith('service:') && /terzi|non .*nexuscrew/i.test(s)),
+    'lo skip del file di terzi è dichiarato, non silenzioso');
+  assert.ok(out.regenerated.includes('fleet-companion'),
+    'la definizione NOSTRA viene comunque sanata');
+});
+
+
+// ---------------------------------------------------------------------------
+// R28 proprieta' strutturale (audit rev2): la guardia /nexuscrew/i sovrascriveva
+// un file di terzi che nomina NexusCrew in un commento, e presumeva NOSTRO un
+// file illeggibile. La proprieta' si riconosce da un'ancora STRUTTURALE emessa
+// dal nostro generatore, e cio' che non si riesce a identificare non si tocca.
+// ---------------------------------------------------------------------------
+
+test('R28: un unit di TERZI che NOMINA NexusCrew in un commento non viene toccato', (t) => {
+  const f = r28RimedioFixture('linux', { thirdPartyService: true });
+  t.after(f.cleanup);
+  // Caso reale: un servizio altrui che dichiara di lavorare accanto al nostro.
+  const terzoCheCiNomina = [
+    '# Avviato dopo NexusCrew, con cui condivide il tmux',
+    '[Unit]',
+    'Description=Monitor di terze parti',
+    '[Service]',
+    'ExecStart=/usr/bin/monitor --accanto-a nexuscrew',
+    '',
+  ].join('\n');
+  fs.writeFileSync(f.serviceTarget, terzoCheCiNomina);
+
+  const out = regenBootDefinitions({
+    home: f.dir, platform: 'linux',
+    platformMod: f.platformMod, aliasMod: f.aliasMod, exists: f.onlyAlive,
+    log: () => {},
+  });
+
+  assert.equal(fs.readFileSync(f.serviceTarget, 'utf8'), terzoCheCiNomina,
+    'nominare NexusCrew non rende un file NOSTRO: resta intatto');
+  assert.ok(out.skipped.some((x) => x.startsWith('service:')),
+    'lo skip e\' dichiarato');
+  assert.ok(!out.regenerated.includes('service'),
+    'il servizio di terzi non risulta rigenerato');
+  assert.ok(out.regenerated.includes('fleet-companion'),
+    'la definizione nostra viene comunque sanata');
+});
+
+test('R28: un file ILLEGGIBILE non si presume nostro — si salta e si dichiara', (t) => {
+  const f = r28RimedioFixture('linux');
+  t.after(f.cleanup);
+  const eacces = () => { const e = new Error('permesso negato'); e.code = 'EACCES'; throw e; };
+
+  const out = regenBootDefinitions({
+    home: f.dir, platform: 'linux',
+    platformMod: f.platformMod, aliasMod: f.aliasMod, exists: f.onlyAlive,
+    readFileImpl: (p) => (p === f.serviceTarget ? eacces() : fs.readFileSync(p, 'utf8')),
+    log: () => {},
+  });
+
+  assert.ok(!out.regenerated.includes('service'),
+    'cio\' che non si riesce a leggere non si sovrascrive');
+  assert.ok(out.skipped.some((x) => x.startsWith('service:') && /legg|identific/i.test(x)),
+    'il motivo dichiarato dice che non si e\' potuto identificare, non che e\' di terzi');
+  assert.ok(out.regenerated.includes('fleet-companion'),
+    'un target illeggibile non blocca la sanazione dell\'altro');
+});
+
+test('R28: il generatore vero produce definizioni che il riconoscitore accetta', () => {
+  // Ancora e comportamento: se qualcuno cambia il template e non l'ancora,
+  // questo diventa rosso invece di far fallire la sanazione sul campo.
+  const repoRoot = path.resolve(__dirname, '..');
+  const ctx = {
+    repoRoot, nodeBin: '/usr/bin/node',
+    entryPath: path.join(repoRoot, 'bin', 'nexuscrew.js'),
+    home: '/home/tizio', uid: 501, port: 41777,
+  };
+  for (const platform of ['linux', 'mac', 'termux']) {
+    assert.equal(serviceMod.isOurService(platform, serviceMod.generateService(platform, ctx)), true,
+      `il servizio generato per ${platform} e\' riconosciuto come nostro`);
+    assert.equal(fleetMod.isOurFleetService(platform, fleetMod.generateFleetService({
+      platform, nodeBin: ctx.nodeBin, entryPath: ctx.entryPath, repoRoot, home: ctx.home,
+    })), true, `la companion generata per ${platform} e\' riconosciuta come nostra`);
+    // e un file altrui non lo e', neanche se ci nomina
+    assert.equal(serviceMod.isOurService(platform, '# accanto a NexusCrew\nDescription=Altro\n'), false,
+      `un file di terzi che ci nomina non e\' nostro (${platform})`);
+  }
+});
+
+// R28, terzo giro (audit): l'ancora era un PREFISSO, quindi un servizio di terzi
+// che comincia la propria Description col nostro nome veniva riconosciuto come
+// nostro — e sovrascritto. Ora l'ancora e' la RIGA ESATTA, condivisa fra
+// template e riconoscitore. Questo test e' il controcaso del controcaso: se
+// qualcuno riallenta l'ancora a prefisso, diventa rosso qui.
+test('R28: un terzo che COMINCIA la Description col nostro nome non e\' nostro', () => {
+  const terzi = [
+    '[Unit]\nDescription=NexusCrew-compatible proxy\n',
+    '[Unit]\nDescription=NexusCrew fork by tizio\n',
+    '[Unit]\nDescription=NexusCrew fleet boot companion di tizio\n',
+    '[Unit]\nDescription=NexusCrewish\n',
+  ];
+  for (const testo of terzi) {
+    assert.equal(serviceMod.isOurService('linux', testo), false,
+      `prefisso non basta: «${testo.trim().split('\n').pop()}» non e' nostro`);
+    assert.equal(fleetMod.isOurFleetService('linux', testo), false,
+      `prefisso non basta nemmeno per la companion: «${testo.trim().split('\n').pop()}»`);
+  }
+  // e un plist di terzi che NOMINA il nostro label senza esserlo
+  assert.equal(serviceMod.isOurService('mac', '<key>Label</key><string>com.mmmbuto.nexuscrew.altro</string>'), false,
+    'il Label deve essere esatto, non un prefisso');
+});
+
+// R31: «aggiornato» non e' un verdetto che uno stato mai inizializzato puo'
+// dare. `phase:'idle'` di DEFAULT (file di stato mai scritto) e `idle` DOPO un
+// check senza novita' coincidono — il campo derivato `checked` li distingue:
+// lastCheckedAt viene scritto a ogni check (anche fallito, manager:206/212).
+test('npm updater: R31 — status() distingue «mai controllato» da «controllato senza novita»', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-updater-r31-'));
+  const updater = createNpmUpdater({
+    currentVersion: '0.9.7', home: dir, statusPath: path.join(dir, 'state.json'),
+    supported: true, enabled: false,
+    lookupLatest: async () => '0.9.7', // stessa versione: check vero, nessuna novita'
+  });
+  const before = updater.status();
+  assert.equal(before.phase, 'idle');
+  assert.equal(before.lastCheckedAt, '');
+  assert.equal(before.checked, false, 'stato mai scritto: nessun controllo e\' mai partito');
+
+  const after = await updater.check();
+  assert.equal(after.phase, 'idle');
+  assert.equal(after.checked, true, 'check eseguito (senza novita\'): ora il verdetto e\' saputo');
+
+  updater.close();
+  fs.rmSync(dir, { recursive: true, force: true });
 });

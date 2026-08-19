@@ -159,12 +159,29 @@ describe('notification speech browser adapter', () => {
       const f = speechFixture();
       const result = previewNotificationSpeech('Silent', 'en', f.scope, { timeoutMs: 1000 });
       await vi.advanceTimersByTimeAsync(1000);
-      await expect(result).resolves.toBe(false);
+      await expect(result).resolves.toBe('timeout');
       expect(f.synth.cancel).toHaveBeenCalledTimes(2);
       expect(notificationSpeechPrimed(f.scope)).toBe(false);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('reports a voice error when the native engine fails after starting (R27 #8)', async () => {
+    const f = speechFixture();
+    const result = previewNotificationSpeech('Broken', 'en', f.scope);
+    f.spoken[0].onstart();
+    f.spoken[0].onerror();
+    await expect(result).resolves.toBe('voice-error');
+    expect(notificationSpeechPrimed(f.scope)).toBe(false);
+  });
+
+  it('reports missing activation when the engine ends without ever starting (R27 #8)', async () => {
+    const f = speechFixture();
+    const result = previewNotificationSpeech('Ghost', 'en', f.scope);
+    f.spoken[0].onend();
+    await expect(result).resolves.toBe('no-activation');
+    expect(notificationSpeechPrimed(f.scope)).toBe(false);
   });
 
   it('aborts an in-flight preview without accepting a later native end', async () => {
@@ -176,7 +193,7 @@ describe('notification speech browser adapter', () => {
     f.spoken[0].onstart();
     controller.abort();
     f.spoken[0].onend();
-    await expect(result).resolves.toBe(false);
+    await expect(result).resolves.toBe('no-activation');
     expect(f.synth.cancel).toHaveBeenCalledTimes(2);
     expect(notificationSpeechPrimed(f.scope)).toBe(false);
   });

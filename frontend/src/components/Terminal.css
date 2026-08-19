@@ -21,26 +21,62 @@
 }
 .nc-selection-tools button { background: #172417; border: 1px solid #486044; color: #d8ffe8; border-radius: 6px; padding: 5px 9px; }
 .nc-selection-tools textarea { width: 180px; height: 48px; background: #071007; color: #d8ffe8; }
+/* R34 — la lente e' una BOLLA vicino alla maniglia attiva (non piu' una barra
+   fissa in cima che copre le righe e sta lontana dal dito). Vive solo durante
+   il gesto (long-press o drag maniglia): a gesto finito sparisce e il
+   terminale torna tutto leggibile. La posizione la decide il componente
+   (magnifierLayout: sopra l'ancora, ribalta sotto in cima, clamp ai bordi);
+   qui solo la forma. Il contenuto resta la riga ingrandita 2x spezzata in
+   prima/selezionato/dopo (idea della PR #5 di @sadoc1184-droid). aria-hidden:
+   e' una vista del testo che resta del terminale. */
+.nc-zoom-bubble {
+  position: absolute; z-index: 10; max-width: calc(100% - 8px); box-sizing: border-box;
+  background: rgba(14, 20, 14, .96);
+  border: 1px solid #586b2a; border-radius: 10px;
+  padding: 4px 8px; overflow: hidden;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .55), 0 0 0 1px rgba(4, 12, 4, .6);
+}
+.nc-zoom-bubble.flipped { box-shadow: 0 -4px 18px rgba(0, 0, 0, .55), 0 0 0 1px rgba(4, 12, 4, .6); }
+.nc-zoom-line {
+  margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  line-height: 1.25; color: #d8ffe8;
+  white-space: pre; overflow-x: auto;
+}
+.nc-zoom-sel {
+  background: rgba(186, 255, 121, .30); border-radius: 2px;
+  box-shadow: inset 0 -2px 0 #baff79;
+}
 /* Il testo e' ancora copiabile ma xterm non lo evidenzia piu': si dice, senza
    gridarlo. Tono spento perche' non e' un errore — e' una precisazione. */
 .nc-selection-held { color: #b7c98a; font-size: 10px; opacity: .85; max-width: 190px; }
-/* R25 — le due maniglie della selezione: vista pura sopra la selezione di
-   xterm, mai una verita' propria. La barra pende SOTTO il punto indicato
-   (come Termux): il dito che trascina non copre la cella puntata. Il target
-   tattile e' molto piu' grande dei 2 px visibili — una linea sottile non si
-   afferra col polpastrello. */
+/* R34 — le due PUNTINE della selezione: vista pura sopra la selezione di
+   xterm, mai una verita' propria. La barretta (2px) sta SUL bordo esatto
+   della cella (la precisione non si sposta); il pallone di presa pende sotto
+   e DI LATO: la start a sinistra, la end a destra — si legge a colpo d'occhio
+   quale capo si sta per prendere e, sulle selezioni corte, i target tattili
+   si separano invece di sovrapporsi (il difetto della "lotteria DOM-order").
+   Target tattile (::after) >= 44px (HIG/Material), piu' alto sotto perche'
+   e' li' che sta il pallone. In drag il capo attivo sta sopra tutto. */
 .nc-sel-handle {
   position: absolute; z-index: 9; width: 2px; height: 26px;
   background: #baff79; box-shadow: 0 0 0 1px rgba(4, 12, 4, .88), 0 0 8px rgba(186, 255, 121, .55);
   touch-action: none; cursor: grab;
 }
-.nc-sel-handle::after { content: ''; position: absolute; left: -16px; right: -16px; top: -12px; bottom: -12px; }
+.nc-sel-handle::after { content: ''; position: absolute; top: -12px; bottom: -16px; }
+.nc-sel-handle.start::after { left: -28px; right: -14px; }  /* 44px, centro a sinistra */
+.nc-sel-handle.end::after { left: -14px; right: -28px; }    /* 44px, centro a destra */
 .nc-sel-handle::before {
-  content: ''; position: absolute; left: -5px; top: 100%; width: 12px; height: 12px;
+  content: ''; position: absolute; top: 100%; width: 14px; height: 14px;
   border-radius: 50%; background: #baff79; box-shadow: 0 0 0 1px rgba(4, 12, 4, .88);
 }
-.nc-sel-handle.dragging { background: #eaffb0; cursor: grabbing; }
-.nc-sel-handle.dragging::before { background: #eaffb0; }
+.nc-sel-handle.start::before { left: -15px; }  /* pallone a sinistra del bordo */
+.nc-sel-handle.end::before { left: 3px; }      /* pallone a destra del bordo */
+/* Selezione corta (tight): i palloni si scagliano in verticale — la start
+   resta alta, la end scende: due prese distinte anche su due caratteri. */
+.nc-sel-handle.tight.end::before { top: calc(100% + 10px); }
+.nc-sel-handle.tight.end::after { bottom: -26px; }
+.nc-sel-handle.dragging { background: #eaffb0; cursor: grabbing; z-index: 12; }
+.nc-sel-handle.dragging::before { background: #eaffb0; transform: scale(1.25); }
 /* Il contenuto sotto la selezione e' stato sovrascritto: la copia dara' il
    testo nuovo. Si dice, con lo stesso tono di selection-held. */
 .nc-selection-changed { color: #edda8a; font-size: 10px; opacity: .9; max-width: 210px; }

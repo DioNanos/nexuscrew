@@ -1,5 +1,5 @@
 'use strict';
-// VL (vl.native) — runtime TUI Vivling (~/Dev/20_ai-labs/vl), binario `vl`.
+// VL (vl.native) — runtime TUI Vivling (repository `vl`), binario `vl`.
 // Runtime locale: auth propria del runtime (auth 'none', nessuna credenziale
 // NexusCrew). Backfill idempotente pattern Kimi (NESSUN platform gate: musl-
 // friendly ovunque). vl non ha flag prompt, --model, ne' di approvazione: lancia
@@ -178,7 +178,7 @@ test('D4-4a classifyPane vl: client non-vl sullo stesso testo resta unknown (no 
 // --- DEC1: vlPaneReadiness (content-readiness vl con degrado) -----------------
 // Punto di innesto della readiness vl: capture-pane + classifyPane('vl'). MAI
 // fail-closed: a timeout degrada a {ready:true, degraded:true}. Il controllo
-// negativo di Dev: una riga di stato non riconosciuta NON deve bloccare l'avvio.
+// controllo negativo: una riga di stato non riconosciuta NON deve bloccare l'avvio.
 function clockTick() {
   let t = 0;
   return { now: () => t, sleep: async (ms) => { t += ms; } };

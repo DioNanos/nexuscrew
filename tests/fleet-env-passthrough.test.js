@@ -4,7 +4,7 @@
 // blocco. Il ramo `vl` di resolveManagedEngine (managed.js) non compone env
 // provider (auth 'none'): il runtime VL/Vivling legge le sue variabili da
 // config.toml / env proprie, ma il nome di quella da cui legge la chiave NON e'
-// fisso nel binario (vivling/src/main.rs). Una patch locale di SysAdmin
+// fisso nel binario (vivling/src/main.rs). Una patch locale
 // passava un nome hardcoded: si perdeva a ogni npm upgrade. La via generale e'
 // che l'operatore dichiari, nello spec managed, l'elenco dei NOMI che la sua
 // config vuole vedere nel child. NexusCrew li risolve dalle credentialSources e

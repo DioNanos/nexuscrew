@@ -311,13 +311,19 @@ describe('Settings notification speech', () => {
   });
 
   it('reports a failed native delivery instead of claiming preview success', async () => {
+    // R27 #8: onerror e' il caso 'voice-error' — il browser HA avviato ed e'
+    // fallito. La frase non prescrive piu' l'interazione e suggerisce di
+    // controllare la voce selezionata.
     installSpeech('error');
     render(<NotificationSpeechRow />);
     fireEvent.click(screen.getByRole('checkbox', { name: 'read notifications aloud' }));
     expect(await screen.findByText(
-      'The browser did not start the voice test. Interact with the page and try again.',
+      'The voice test failed: voice or audio unavailable. Check the selected voice and try again.',
     )).toBeTruthy();
     expect(screen.queryByText('Voice test completed.')).toBeNull();
+    expect(screen.queryByText(
+      'The browser did not start the voice test. Interact with the page and try again.',
+    )).toBeNull();
   });
 
   it('cancels and invalidates an in-flight preview when Settings unmounts', () => {
@@ -550,3 +556,36 @@ describe('Settings Nodes tab — VL nodes across REMOTE owners (NC_UI_NODI_VL_RE
   });
 });
 
+
+// R31: un controllo MAI eseguito non puo' produrre il verdetto «up to date».
+// Due stati che prima coincidevano: phase 'idle' + lastCheckedAt vuoto (nessun
+// controllo mai partito) vs phase 'idle' + lastCheckedAt pieno (controllato,
+// nessuna novita'). Il secondo deve restare «up to date».
+describe('R31 — «mai controllato» non è «up to date»', () => {
+  // Fixture fedeli alla risposta reale: il campo derivato `checked` ora
+  // arriva dal manager (status()); la UI NON lo ricava da sola.
+  const MAI_CONTROLLATO = {
+    supported: true, phase: 'idle', current: '0.9.7', latest: '0.9.7',
+    available: false, lastCheckedAt: '', checked: false,
+  };
+  const CONTROLLATO = { ...MAI_CONTROLLATO, lastCheckedAt: '2026-08-18T19:00:00.000Z', checked: true };
+
+  function renderSystemTab(update) {
+    mocks.getSettings.mockResolvedValue({
+      version: '0.9.7', platform: 'linux', port: 41820, update,
+    });
+    return render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+  }
+
+  it('CONTROLLO NEGATIVO: stato mai inizializzato — oggi dice «up to date», deve dire «never checked»', async () => {
+    renderSystemTab(MAI_CONTROLLATO);
+    await waitFor(() => expect(document.body.textContent).toContain('never checked'));
+    expect(document.body.textContent).not.toContain('up to date');
+  });
+
+  it('controllato davvero e senza novità: «up to date» resta il verdetto giusto', async () => {
+    renderSystemTab(CONTROLLATO);
+    await waitFor(() => expect(document.body.textContent).toContain('up to date'));
+    expect(document.body.textContent).not.toContain('never checked');
+  });
+});

@@ -92,7 +92,7 @@ test('nodesAdd senza pannello (informazione che ancora non c\'è): una destinazi
 // finestra di grazia) non e' garanzia che il lato server abbia gia' propagato
 // la chiusura nell'istante in cui il test chiama srv.close(): una corsa, non
 // un fatto. Senza tracciare e distruggere i socket accettati, il file puo'
-// restare appeso da solo (osservato: misurato da Dev sul campo).
+// restare appeso da solo (osservato: misurato sul campo).
 function serverChe(onConnessione) {
   return new Promise((resolve) => {
     const sockets = new Set();

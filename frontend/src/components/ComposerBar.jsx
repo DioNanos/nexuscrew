@@ -15,7 +15,7 @@ import './ComposerBar.css';
 // non lascia la VPS).
 //
 // node (opzionale): sessione remota — upload/voice passano dal proxy /node/<name>.
-export default function ComposerBar({ submitText, token, session, node, ownerId, keepKeyboardClosedOnVoice = true }) {
+export default function ComposerBar({ submitText, token, session, node, ownerId, readonly = false, keepKeyboardClosedOnVoice = true }) {
   useLang();
   const base = node ? `/api/route/${String(node).split('/').map(encodeURIComponent).join('/')}/_` : '/api';
   const {
@@ -81,6 +81,10 @@ export default function ComposerBar({ submitText, token, session, node, ownerId,
     const draft = live;
     const value = stripTrailingNewlines(draft);
     if (!value || sending) return;
+    // R27 #6: il readonly rende isReady() falso per sempre — riprovare non
+    // puo' mai riuscire. E' un input, non un esito: si distingue PRIMA di
+    // provare, e il messaggio giusto e' settings-readonly, non il retry hint.
+    if (readonly) { setErr(t('settings-readonly')); return; }
     setSending(true);
     setErr('');
     let ok = false;
