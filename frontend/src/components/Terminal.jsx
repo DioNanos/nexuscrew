@@ -475,22 +475,26 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // (long-press, SELECT, tocchi successivi) usa il punto di pressione
     // ESATTO: la barra di zoom mostra la riga ingrandita, l'offset di riga
     // non ha piu' ragione di esistere li'.
-    const TOUCH_SELECTION_OFFSET_ROWS = 2;
-    const touchSelectionOffsetFor = (clientY) => {
-      const screen = host.querySelector('.xterm-screen') || host;
-      const r = screen.getBoundingClientRect();
-      const visibleRow = Math.max(0, Math.min(term.rows - 1,
-        Math.floor(((clientY - r.top) / Math.max(1, r.height)) * term.rows)));
-      return visibleRow < TOUCH_SELECTION_OFFSET_ROWS
-        ? TOUCH_SELECTION_OFFSET_ROWS
-        : -TOUCH_SELECTION_OFFSET_ROWS;
-    };
-    const touchSelectionCellAt = (touch, offsetRows) => {
+    // R35: lo scarto e' una FRAZIONE dell'altezza della maniglia, misurata sul
+    // DOM, sempre verso l'alto e in pixel — come Termux (HandleView:110,
+    // -mHandleHeight * 0.3). Prima erano ±2 RIGHE INTERE che INVERTEVANO
+    // vicino al bordo alto (righe 0-1: +2, oltre: -2): con due righe intere
+    // in cima non c'e' spazio sopra il dito, e il +2 era il clamp che evitava
+    // di leggere fuori schermo. Con una frazione di riga lo spazio c'e'
+    // SEMPRE: l'inversione non e' stata tolta, muore qui con la condizione
+    // che la giustificava (nessun clamp residuo). La frazione e' adimensionale
+    // — la MISURA e' nostra (CSS), non copiata da Android: se la maniglia non
+    // e' misurabile (layout assente) vale l'altezza di riga.
+    const HANDLE_TOUCH_OFFSET_FRACTION = 0.3;
+    const touchSelectionOffsetFor = () => {
       const screen = host.querySelector('.xterm-screen') || host;
       const r = screen.getBoundingClientRect();
       const rowHeight = r.height / Math.max(1, term.rows);
-      return cellXY(touch.clientX, touch.clientY + offsetRows * rowHeight);
+      const handleEl = host.querySelector('.nc-sel-handle');
+      const handleHeight = handleEl ? handleEl.getBoundingClientRect().height : 0;
+      return -HANDLE_TOUCH_OFFSET_FRACTION * (handleHeight > 0 ? handleHeight : rowHeight);
     };
+    const touchSelectionCellAt = (touch, offsetPx) => cellXY(touch.clientX, touch.clientY + offsetPx);
     const showTouchSelectionCaret = (cell) => {
       const screen = host.querySelector('.xterm-screen') || host;
       const screenRect = screen.getBoundingClientRect();
@@ -787,13 +791,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       // ogni pointermove: su una selezione nativa invertita la rilettura
       // dava l'estremita' sbagliata (maniglia congelata, lato opposto perso).
       const fixed = handleDrag.fixed;
-      // Su touch il dito COPRE il punto: la cella di lavoro sta ±2 righe piu'
-      // in la' (offset del drag maniglie, diverso dall'offset di riga della
-      // selezione touch, rimosso in rev4). Il mouse ha il cursore preciso:
-      // niente offset.
+      // Su touch il dito COPRE il punto: la cella di lavoro sta una frazione
+      // di riga piu' in su' (scarto derivato dall'altezza della maniglia, vedi
+      // touchSelectionOffsetFor — R35: costante, mai invertito). Il mouse ha
+      // il cursore preciso: niente offset.
       const raw = pointerType === 'mouse'
         ? cellXY(px, py)
-        : touchSelectionCellAt({ clientX: px, clientY: py }, touchSelectionOffsetFor(py));
+        : touchSelectionCellAt({ clientX: px, clientY: py }, touchSelectionOffsetFor());
       // R25-zoom rev4: la maniglia non si pianta a meta' di un glifo largo
       // (variante di getValidCurX: start al bordo sinistro, end al destro).
       const line = term.buffer.active.getLine(raw.row);
