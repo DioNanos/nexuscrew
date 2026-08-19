@@ -300,7 +300,10 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       // normalizzato — un drag nativo all'indietro produce start>end. Il
       // range si normalizza QUI, al punto di lettura, cosi' TUTTI i
       // consumatori (maniglie, barra, snapshot) vedono start<=end row-major.
-      const raw = rangeFromXterm(term.getSelectionPosition());
+      // R37: l'end di xterm e' ESCLUSIVO — rangeFromXterm lo converte al
+      // confine (serve cols per il caso x=cols a fine riga); da qui in poi il
+      // range e' inclusivo e nessun consumatore sa dell'altra convenzione.
+      const raw = rangeFromXterm(term.getSelectionPosition(), term.cols);
       const range = raw ? normalizeRange(raw.start, raw.end, term.cols) : null;
       setSelRange(range);
       selRangeRef.current = range;

@@ -53,12 +53,32 @@ export function selectionUiPolicy(origin) {
 
 // Converte il range come lo restituisce xterm (getSelectionPosition:
 // {start:{x,y}, end:{x,y}}, y = riga assoluta nel buffer, x = colonna)
-// nella forma {row,col} usata da questo modulo.
-export function rangeFromXterm(pos) {
+// nella forma {row,col} usata da questo modulo. L'end di xterm e' ESCLUSIVO
+// — la prima cella NON selezionata, non l'ultima selezionata (R37; prove nei
+// sorgenti @xterm/xterm: SelectionModel.finalSelectionEnd produce
+// [start+length] in spazio lineare e [cols, y] quando la selezione finisce a
+// fine riga; il DomRenderer disegna [start, end); isCellInSelection testa
+// coords[0] < end[0]). La conversione avviene QUI, al confine con l'API di
+// xterm: dentro il modulo il range e' sempre inclusivo, e i consumatori
+// (rangeToSelect, handlePositions, zoomLineForRange) non sanno nemmeno che
+// esiste un'altra convenzione. Lavora in spazio lineare perche' il confine
+// non e' solo end.x - 1: x = cols (fine riga) ricade sull'ultima cella della
+// STESSA riga, e un capo oltre il bordo (x = 0 riga dopo) sull'ultima cella
+// della riga PRIMA. Il range arriva anche invertito (drag nativo all'indietro:
+// start > end): i capi si ordinano PRIMA di convertire, cosi' il -1 cade
+// sempre sul capo piu' avanti. Senza cols non c'e' confine in cui convertire:
+// null, non un range sbagliato di una cella.
+export function rangeFromXterm(pos, cols) {
   if (!pos || !pos.start || !pos.end) return null;
+  const c = Number(cols);
+  if (!Number.isFinite(c) || c <= 0) return null;
+  const a = Number(pos.start.y) * c + Number(pos.start.x);
+  const b = Number(pos.end.y) * c + Number(pos.end.x);
+  const startL = Math.min(a, b);
+  const endL = Math.max(startL, Math.max(a, b) - 1); // end ESCLUSIVO -> inclusivo
   return {
-    start: { row: Number(pos.start.y), col: Number(pos.start.x) },
-    end: { row: Number(pos.end.y), col: Number(pos.end.x) },
+    start: { row: Math.floor(startL / c), col: startL % c },
+    end: { row: Math.floor(endL / c), col: endL % c },
   };
 }
 
