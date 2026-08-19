@@ -1,7 +1,7 @@
 // frontend/src/lib/selection-handles.js — R25: geometria e policy delle due
 // maniglie della selezione, SOPRA l'API di selezione di xterm.js.
 //
-// Regola di disegno (approvata da Dev): la VERITA' della selezione vive in
+// Regola di disegno (decisa in revisione): la VERITA' della selezione vive in
 // xterm (buffer, coordinate assolute). Questo modulo NON calcola quali celle
 // sono selezionate: trasforma soltanto il range che xterm restituisce
 // (getSelectionPosition) in posizioni delle maniglie, e applica le regole del
@@ -180,17 +180,33 @@ export function rangeToSelect(range, cols) {
 // Entrambe pendono SOTTO il punto: il dito che trascina non copre la cella.
 // `visible` e' false quando la riga e' fuori dal viewport (le maniglie non si
 // disegnano nel nulla: chi le ha perse oltre il bordo le ritrova scorrendo).
-export function handlePositions({ range, viewportY, rows, cellWidth, cellHeight, screenLeft = 0, screenTop = 0 }) {
+// R35 pezzo 2: `flip` dice che ai margini laterali il corpo della maniglia
+// pende dal lato opposto (la start normalmente a sinistra, la end a destra).
+// Come Termux (HandleView:205-238): il punto di selezione NON SI MUOVE,
+// cambia solo il verso — left/top sono gli stessi con e senza flip. La
+// soglia e' la sporgenza massima del corpo CSS (il target tattile ::after,
+// HANDLE_BODY_PX): se quella sporgenza uscisse dal rettangolo di
+// .xterm-screen, si specchia.
+export const HANDLE_BODY_PX = 28; // sporgenza del ::after di .nc-sel-handle (CSS)
+// R35 pezzo 3: durante il drag, un cambio di verso al massimo ogni 50ms
+// (Termux HandleView:210-215). Fuori dal drag la geometria comanda sempre.
+export const HANDLE_FLIP_THROTTLE_MS = 50;
+export function handlePositions({ range, viewportY, rows, cols = 0, cellWidth, cellHeight, screenLeft = 0, screenTop = 0 }) {
   const out = {};
+  const screenW = Number(cols) * Number(cellWidth);
   for (const which of ['start', 'end']) {
     const cell = range[which];
     const visibleRow = Number(cell.row) - Number(viewportY);
     const visible = visibleRow >= 0 && visibleRow < Number(rows);
     const x = (which === 'start' ? Number(cell.col) : Number(cell.col) + 1) * Number(cellWidth);
+    const flip = which === 'start'
+      ? x - HANDLE_BODY_PX < 0
+      : x + HANDLE_BODY_PX > screenW;
     out[which] = {
       left: Number(screenLeft) + x,
       top: Number(screenTop) + (visibleRow + 1) * Number(cellHeight),
       visible,
+      flip,
     };
   }
   return out;

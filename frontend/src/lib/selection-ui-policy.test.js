@@ -1,5 +1,5 @@
 // R34 — selectionUiPolicy: la modalita' della UI di selezione segue l'ORIGINE
-// del gesto, non il device. Regola approvata da Dev: selezione nata da un gesto
+// del gesto, non il device. Regola decisa in revisione: selezione nata da un gesto
 // touch → maniglie + lente; nata dal mouse → nessuna delle due (il mouse ha la
 // selezione nativa e Shift+click); origine ignota → touch (conservativo: se la
 // rilevazione fallisce su un telefono togliere le maniglie rende la selezione

@@ -104,6 +104,33 @@ const VIETATI = [
   // occorrenze, quindi la guardia nasce verde e non copre un debito.
   { re: /\b(?:rilievo|audit|revisione|verdetto|segnalazion[ei]|decision[ei]|misurat[oa]|confermat[oa]|verificat[oa]|negativo|segnalat[oa]|trovat[oa]|corrett[oa]|chiest[oa])\b[^.\n]{0,80}?\b(?:di|da|dell['’]|dall['’])\s+\b(?:BrowserAI|DevWorkerP|DevWorkerA|DevWorker|DevAuditor|ForkAuditor|WarMaster|DesignCreator|SysAdmin|GameAuditor|GameDev|Trading|Research|Personal|Fork|Dev|Shell)\b/,
     perche: 'attribuzione a una cella interna in un commento di audit/revisione (stessa classe del caso 0.8.53, nome diverso)' },
+  // 0.9.10, terzo giro. Il rilievo che conta non era un'altra forma: era che
+  // il VOCABOLARIO cresce per incidenti. Ogni volta si aggiungeva il verbo che
+  // era appena sfuggito — e stavolta e' sfuggito «approvata da Dev», in due
+  // file di frontend/src che nessuno sweep precedente aveva guardato.
+  //
+  // Questa regola non enumera: in italiano il participio REGOLARE finisce in
+  // -ato/-ata/-ito/-ita/-uto/-uta, quindi «approvata», «misurato»,
+  // «verificata», «eseguito», «portata» e ogni altro che nessuno ha ancora
+  // scritto vengono presi senza aspettare l'incidente. La lista esplicita qui
+  // sotto resta per gli IRREGOLARI (deciso, corretto, chiesto, scritto,
+  // rimosso), che la morfologia non copre.
+  //
+  // Misurato prima di adottarla: zero occorrenze sull'albero, e in particolare
+  // NON morde i due casi in cui un nome di cella e' un DATO di scenario
+  // («il proof di Dev …»), perche' li' non c'e' participio davanti.
+  // Solo «da», il complemento d'AGENTE — non «di», che e' possessivo. La prima
+  // stesura prendeva entrambi ed era troppo larga: misurata su 117 frasi
+  // legittime plausibili ne mordeva 13, fra cui «lo stato di Research resta
+  // invariato». «stato» e' la parola piu' comune di questo prodotto — lo stato
+  // di una cella e' il concetto centrale — e li' il nome e' un DATO, non un
+  // attore. Stessa sorte per dato, lato, risultato, contenuto, formato: tutti
+  // sostantivi comuni che finiscono in -ato. Un guardiano che fa rosso il gate
+  // su «lo stato di Research» grida al lupo, e si smette di ascoltarlo.
+  // Con il solo «da», «approvata da Dev» resta presa e «lo stato di Research»
+  // no: il confine e' fissato dal controllo positivo piu' sotto.
+  { re: new RegExp(`\\b[a-z]+(?:at|it|ut)[oa]\\b[^.\\n]{0,80}?\\bda\\s+\\b(?:BrowserAI|DevWorkerP|DevWorkerA|DevWorker|DevAuditor|ForkAuditor|WarMaster|DesignCreator|SysAdmin|GameAuditor|GameDev|Trading|Research|Personal|Fork|Dev|Shell)\\b`),
+    perche: 'attribuzione a una cella interna con un participio regolare (regola morfologica: non aspetta che il verbo sia in elenco)' },
   // 0.9.9, secondo giro. Allargare la finestra non bastava: restavano QUATTRO
   // attribuzioni scritte in una FORMA che il pattern sopra non puo' vedere,
   // perche' quello cerca «verbo … di/da <Cella>» e queste la preposizione non
@@ -476,6 +503,13 @@ test('SWEEP CELLE — controllo positivo: un nome cella usato come DATO (nessuna
     "atteso: la decisione Personal non tocca Fork",
     // Il terzo esercita un verbo nuovo senza complemento d'agente.
     "misurato sul campo: la cella Fork non risponde",
+    // 0.9.10 — il confine della regola MORFOLOGICA, misurato su 117 frasi
+    // plausibili in una revisione indipendente: prendendo anche «di» ne
+    // mordeva 13. Questi sono i casi peggiori, e sono possesso, non agente:
+    // «stato» e' la parola piu' comune del prodotto.
+    "lo stato di Research resta invariato",
+    "il dato di Shell non cambia",
+    "il risultato di Research e il contenuto di Fork coincidono",
   ];
   for (const testo of casi) {
     const colpe = colpeIn(testo, 'tests/esempio.test.js');
@@ -488,7 +522,7 @@ test('l\'elenco dei motivi non e\' vuoto ne\' inerte', () => {
   // assenza di controlli invece che per assenza di tracce. Qui si prova che i
   // motivi mordono ancora, su un testo costruito apposta.
   const io = require('node:os').userInfo().username;
-  const finto = `vedi /home/${io}/segreto e DocsHub/x in ~/Dev/20_ai-labs/x, rilievo di DevAuditor, Co-Authored-By: x, chiesto da DAG, verdetto NEEDS_CHANGES, SysAdmin ha misurato il costo, dispatch Fork 2026-08-15`;
+  const finto = `vedi /home/${io}/segreto e DocsHub/x in ~/Dev/20_ai-labs/x, rilievo di DevAuditor, Co-Authored-By: x, chiesto da DAG, verdetto NEEDS_CHANGES, SysAdmin ha misurato il costo, dispatch Fork 2026-08-15, regola approvata da Personal`;
   const presi = VIETATI.filter(({ re }) => re.test(finto));
   assert.equal(presi.length, VIETATI.length,
     'ogni motivo deve riconoscere il proprio caso: se uno non morde, e\' decorativo');
