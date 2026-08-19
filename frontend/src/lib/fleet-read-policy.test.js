@@ -72,7 +72,7 @@ describe('fleetReadOutcome — R33 migrationCode vince sulla prosa', () => {
     // l'unica cosa che spiega a un umano cosa e' successo. La fixture qui e'
     // locale, quindi una riformulazione lato server non lo rompe.
     // (Il commento diceva «mai sul testo» e il secondo assert il testo lo
-    // guarda: rilievo di una revisione indipendente, corretto.)
+    // guarda: imprecisione trovata rileggendo, corretta.)
     const out = fleetReadOutcome({ fs: {
       available: false,
       reason: 'migrazione tmux completata ma fleet.json non e persistibile [TMUX_MIGRATION_PERSIST_FAILED]',

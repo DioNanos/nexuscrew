@@ -1,7 +1,7 @@
 // frontend/src/lib/selection-handles.js — R25: geometria e policy delle due
 // maniglie della selezione, SOPRA l'API di selezione di xterm.js.
 //
-// Regola di disegno (approvata da Dev): la VERITA' della selezione vive in
+// Regola di disegno (decisa in revisione): la VERITA' della selezione vive in
 // xterm (buffer, coordinate assolute). Questo modulo NON calcola quali celle
 // sono selezionate: trasforma soltanto il range che xterm restituisce
 // (getSelectionPosition) in posizioni delle maniglie, e applica le regole del
