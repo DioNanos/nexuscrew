@@ -430,6 +430,46 @@ describe('R35 — scarto verticale del drag touch', () => {
   });
 });
 
+describe('R35 — specchiatura ai margini laterali', () => {
+  // Termux (HandleView:205-238): se la maniglia uscirebbe dal schermo cambia
+  // VERSO, e il punto di selezione NON SI MUOVE — cambia solo da che parte
+  // pende il corpo. Da noi il clip e' il rettangolo di .xterm-screen (nel
+  // fixture: 80 colonne * 10px = 800px). La guardia misura le due cose
+  // insieme: la classe flip (il corpo pende dall'altra parte) E l'ancora
+  // ferma al pixel.
+  it('la start alla colonna 0 si specchia: corpo a destra, punto fermo a 0px', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(0, 1, 10)); // start (1,0) → x=0; end (1,10), libera
+    const h = handles(view);
+    expect(h.start.className).toMatch(/\bflip\b/);
+    expect(h.start.style.left).toBe('0px'); // il punto di selezione non si muove
+    expect(h.end.className).not.toMatch(/\bflip\b/); // l'altra resta dritta
+  });
+
+  it('la end all\'ultima colonna si specchia: corpo a sinistra, punto fermo a 800px', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(70, 1, 10)); // end (1,79) → x=80*10=800=larghezza schermo
+    const h = handles(view);
+    expect(h.end.className).toMatch(/\bflip\b/);
+    expect(h.end.style.left).toBe('800px');
+    expect(h.start.className).not.toMatch(/\bflip\b/); // start a col 70, libera
+  });
+
+  it('selezione in mezzo allo schermo: nessuna maniglia si specchia', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(30, 1, 10)); // start col 30, end col 40: interno
+    const h = handles(view);
+    expect(h.start.className).not.toMatch(/\bflip\b/);
+    expect(h.end.className).not.toMatch(/\bflip\b/);
+  });
+});
+
 describe('R25 — edge-scroll: il dito oltre il bordo estende la selezione', () => {
   it('trascinando start sul bordo alto il terminale scorre e la selezione cresce', () => {
     const view = renderTerminal();

@@ -976,6 +976,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       range: selRange,
       viewportY: Number(term.buffer.active.viewportY) || 0,
       rows: term.rows,
+      cols: term.cols,
       cellWidth,
       cellHeight,
       screenLeft: screenRect.left - hostRect.left,
@@ -1022,6 +1023,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       <div
         key={`nc-sel-handle-${which}`}
         className={`nc-sel-handle ${which}${draggingHandle === which ? ' dragging' : ''}${
+          handleGeom[which].flip ? ' flip' : ''}${
           handlesTooClose({ startLeft: handleGeom.start.left, endLeft: handleGeom.end.left }) ? ' tight' : ''}`}
         style={{ left: `${handleGeom[which].left}px`, top: `${handleGeom[which].top}px` }}
         onPointerDown={(e) => handleDragApiRef.current.startHandleDrag(which, e)}

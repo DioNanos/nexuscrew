@@ -70,6 +70,15 @@
   border-radius: 50%; background: #baff79; box-shadow: 0 0 0 1px rgba(4, 12, 4, .88);
 }
 .nc-sel-handle.start::before { left: -15px; }  /* pallone a sinistra del bordo */
+/* R35: ai margini laterali la maniglia SI SPECCHIA — il corpo pende dal lato
+   opposto per restare dentro .xterm-screen, e il punto di selezione resta
+   dov'e' (Termux HandleView:205-238: cambia l'orientamento, non la posizione).
+   La geometria decide il flip (selection-handles.js, HANDLE_BODY_PX); qui la
+   forma specchiata e' la stessa dell'altra maniglia. */
+.nc-sel-handle.start.flip::after { left: -14px; right: -28px; } /* corpo a destra */
+.nc-sel-handle.start.flip::before { left: 3px; }
+.nc-sel-handle.end.flip::after { left: -28px; right: -14px; }  /* corpo a sinistra */
+.nc-sel-handle.end.flip::before { left: -15px; }
 .nc-sel-handle.end::before { left: 3px; }      /* pallone a destra del bordo */
 /* Selezione corta (tight): i palloni si scagliano in verticale — la start
    resta alta, la end scende: due prese distinte anche su due caratteri. */
