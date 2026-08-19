@@ -474,7 +474,7 @@ test('npm update runner: un pidfile senza attestazione PRE-migrazione non fa fal
 // Gate 3 (R-pidfile-3): il negativo dopo migrazione. STESSO scenario di
 // sopra, ma questa installazione ha GIÀ completato una scrittura v2 (marker
 // presente): "nessun campo attestazione" non è più spiegabile come
-// pre-migrazione, ed è ESATTAMENTE il guasto che Dev ha misurato — l'update
+// pre-migrazione, ed è ESATTAMENTE il guasto misurato — l'update
 // deve fallire, di nuovo, ma solo qui: dopo la migrazione, non per sempre.
 test('npm update runner: un pidfile senza attestazione DOPO la migrazione fa fallire l\'update, di nuovo', async (t) => {
   const { spawn } = require('node:child_process');

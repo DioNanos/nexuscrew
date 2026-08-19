@@ -104,6 +104,23 @@ const VIETATI = [
   // occorrenze, quindi la guardia nasce verde e non copre un debito.
   { re: /\b(?:rilievo|audit|revisione|verdetto|segnalazion[ei]|decision[ei]|misurat[oa]|confermat[oa]|verificat[oa]|negativo|segnalat[oa]|trovat[oa]|corrett[oa]|chiest[oa])\b[^.\n]{0,80}?\b(?:di|da|dell['’]|dall['’])\s+\b(?:BrowserAI|DevWorkerP|DevWorkerA|DevWorker|DevAuditor|ForkAuditor|WarMaster|DesignCreator|SysAdmin|GameAuditor|GameDev|Trading|Research|Personal|Fork|Dev|Shell)\b/,
     perche: 'attribuzione a una cella interna in un commento di audit/revisione (stessa classe del caso 0.8.53, nome diverso)' },
+  // 0.9.9, secondo giro. Allargare la finestra non bastava: restavano QUATTRO
+  // attribuzioni scritte in una FORMA che il pattern sopra non puo' vedere,
+  // perche' quello cerca «verbo … di/da <Cella>» e queste la preposizione non
+  // ce l'hanno affatto.
+  //
+  // Forma SOGGETTO — «Dev ha misurato il costo». Il nome e' l'attore, non il
+  // complemento. Solo italiano (ha/hanno): un pattern sull'inglese morderebbe
+  // il testo di prodotto.
+  { re: /\b(?:BrowserAI|DevWorkerP|DevWorkerA|DevWorker|DevAuditor|ForkAuditor|WarMaster|DesignCreator|SysAdmin|GameAuditor|GameDev|Trading|Research|Personal|Fork|Shell|Dev)\b[^a-z]{0,3}(?:ha|hanno)\s+(?:misurat|verificat|confermat|decis|segnalat|trovat|corrett|chiest|notat|osservat|rilevat|indicat|suggerit|propost|applicat|scritt|aggiunt|rimoss|precisat|dichiarat)/,
+    perche: 'attribuzione a una cella interna in forma soggetto (il nome e\' chi ha agito)' },
+  // Forma SENZA PREPOSIZIONE — «dispatch Dev 2026-08-15», «decisione Dev:».
+  // `Shell` e' esclusa QUI di proposito: e' anche il nome di un engine, e
+  // «Shell locale» o «Shell command» sono testo legittimo del prodotto —
+  // misurato, non supposto. Il gancio finale (`:` o una data) tiene stretto il
+  // pattern: senza, «prova Fork» in una frase qualunque morderebbe.
+  { re: /\b(?:decisione|dispatch|scelta|verdetto|misura|rilievo|correzione|segnalazione|richiesta|conferma|verifica|controllo|prova|fix|patch|nota|osservazione|indicazione|suggerimento|proposta|precisazione|dichiarazione)\s+(?:BrowserAI|DevWorkerP|DevWorkerA|DevWorker|DevAuditor|ForkAuditor|WarMaster|DesignCreator|SysAdmin|GameAuditor|GameDev|Trading|Research|Personal|Fork|Dev)(?::|\s+20[0-9]{2}-)/,
+    perche: 'attribuzione a una cella interna senza preposizione (nome attaccato al sostantivo)' },
   // Il layout del filesystem di chi costruisce, che la regola su /home/<user>
   // non prende perche' e' scritto col tilde. Trovato in due file alla
   // sanificazione della 0.9.9. `NexusFiles` NON entra qui: e' un default del
@@ -449,6 +466,16 @@ test('SWEEP CELLE — controllo positivo: un nome cella usato come DATO (nessuna
     "const cells = [{ cell: 'Dev' }, { cell: 'Research' }, { cell: 'SysAdmin' }]",
     "il tool Shell e' utile per diagnosticare una cella locale",
     "gestisce le celle Fork e Personal come qualunque altra",
+    // 0.9.9: il confine dei VERBI e delle FORME nuove va documentato qui, o
+    // resta implicito. Questi tre sono dato, non attribuzione.
+    // Il primo tiene la forma soggetto sul suo confine: «Shell» seguito da
+    // parola comune non e' un attore, e «Shell locale» e' testo di prodotto.
+    "engine 'shell.local': la Shell locale non ha modello",
+    // Il secondo tiene la forma senza preposizione: senza il gancio (`:` o una
+    // data) il nome resta un dato.
+    "atteso: la decisione Personal non tocca Fork",
+    // Il terzo esercita un verbo nuovo senza complemento d'agente.
+    "misurato sul campo: la cella Fork non risponde",
   ];
   for (const testo of casi) {
     const colpe = colpeIn(testo, 'tests/esempio.test.js');
@@ -461,7 +488,7 @@ test('l\'elenco dei motivi non e\' vuoto ne\' inerte', () => {
   // assenza di controlli invece che per assenza di tracce. Qui si prova che i
   // motivi mordono ancora, su un testo costruito apposta.
   const io = require('node:os').userInfo().username;
-  const finto = `vedi /home/${io}/segreto e DocsHub/x in ~/Dev/20_ai-labs/x, rilievo di DevAuditor, Co-Authored-By: x, chiesto da DAG, verdetto NEEDS_CHANGES`;
+  const finto = `vedi /home/${io}/segreto e DocsHub/x in ~/Dev/20_ai-labs/x, rilievo di DevAuditor, Co-Authored-By: x, chiesto da DAG, verdetto NEEDS_CHANGES, SysAdmin ha misurato il costo, dispatch Fork 2026-08-15`;
   const presi = VIETATI.filter(({ re }) => re.test(finto));
   assert.equal(presi.length, VIETATI.length,
     'ogni motivo deve riconoscere il proprio caso: se uno non morde, e\' decorativo');

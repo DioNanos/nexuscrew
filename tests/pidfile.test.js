@@ -366,7 +366,7 @@ test('isAlive: non calcolabile — senza nascita leggibile vale il cmd, nel dubb
 // aveva processStart, in QUALUNQUE caso. Questo test asseriva `r.killed ===
 // true` per un meta senza processStart ("pidfile senza nascita: il kill
 // verificato di sempre" — il commento originale). Un primo fix aveva reso
-// TUTTI i meta senza attestazione un rifiuto, senza distinguere. Dev ha
+// TUTTI i meta senza attestazione un rifiuto, senza distinguere. E' stato
 // MISURATO il costo di quella scelta sul path reale dell'aggiornamento
 // automatico: lib/update/runner.js chiama stopPortableRuntime -> killPidfile
 // nudo, senza degrado; un rifiuto fa FALLIRE l'update per ogni nodo il cui
