@@ -2,6 +2,49 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.10 — 2026-08-19 — "What The Hand Expects"
+
+- **Selecting text now behaves the way a hand expects it to.** 0.9.9 made the
+  selection follow the gesture rather than the device; this release makes the
+  gesture itself match the one people already know from their phone. The
+  comparison was made line by line against a real terminal implementation
+  rather than from memory, and it turned out most of it already matched — the
+  handles were anchored on the right cell boundaries, they hung below the row,
+  a long press on a space took just that space, and the grip was preserved
+  while dragging. What did not match was on the vertical axis and at the edges.
+
+  The touch offset was **two whole rows**, and near the top of the screen it
+  **flipped sign**: the same distance between finger and handle picked a
+  different cell depending on where you were. It is now a fraction of the
+  handle's height, measured from the layout instead of counted in rows — and
+  the flip is gone, not because it was removed but because the condition that
+  made it necessary no longer exists.
+
+  At the left and right edges the handles now **mirror themselves** instead of
+  running off the screen or being clipped: the body swings to the other side
+  and the selection point stays exactly where it was. A 50 ms gate stops them
+  flickering at the boundary, while the first turn after you grab a handle
+  still happens immediately.
+
+  Still not covered by any test, and said plainly: shape, size and overlap are
+  CSS. That half is judged by a finger.
+
+- **The cell list no longer decides on a sentence.** Whether a fleet is
+  unreadable or deliberately off was worked out by pattern-matching the
+  server's human-readable explanation — so rewording a message silently
+  changed what the interface did. One of the eight possible messages was
+  already being read the wrong way: a migration that completed but could not
+  be saved mentions the configuration file while actually being a blocked
+  boot, so the list kept showing cells that were no longer there.
+
+  The server already produced a machine code for exactly those cases and the
+  status route was dropping it. It now travels, and the client decides on it.
+  The client deliberately keeps **no list of known codes**: the presence of the
+  field is enough, because a single place produces it and every code from that
+  place means the same thing — a fixed list would send a newer server's code
+  back to the prose, which is the original defect. For the messages that carry
+  no code the text is still read, and that limit is written where it is read.
+
 ## 0.9.9 — 2026-08-19 — "Naming the Right Cause"
 
 - **Selecting text now follows the gesture, not the device.** A touch selection
