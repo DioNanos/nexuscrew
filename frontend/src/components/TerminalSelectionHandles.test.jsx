@@ -470,6 +470,32 @@ describe('R35 — specchiatura ai margini laterali', () => {
   });
 });
 
+describe('R35 — throttle del cambio di verso durante il drag', () => {
+  // Termux (HandleView:210-215): durante il drag il cambio di orientamento
+  // avviene al massimo ogni 50ms, altrimenti al confine la maniglia
+  // sfarfalla avanti e indietro. Fuori dal drag la geometria comanda sempre.
+  it('il flip non oscilla: entro 50ms il verso resta, poi puo\' cambiare', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(30, 1, 10)); // start col 30, end col 40: interno
+    fireEvent.pointerDown(handles(view).end, { clientX: 410, clientY: 40, pointerType: 'touch' });
+    // Drag verso l'ultima colonna (y=44 → riga 1 con lo scarto touch: la end
+    // resta oltre start e il no-crossing non la ferma): il corpo uscirebbe → flip ON.
+    fireEvent.pointerMove(window, { clientX: 795, clientY: 44, pointerType: 'touch' });
+    expect(handles(view).end.className).toMatch(/\bflip\b/);
+    // Subito dopo (< 50ms, timer non avanzati) il dito rientra: la geometria
+    // direbbe flip OFF, ma il verso NON cambia — niente sfarfallio.
+    fireEvent.pointerMove(window, { clientX: 410, clientY: 44, pointerType: 'touch' });
+    expect(handles(view).end.className).toMatch(/\bflip\b/);
+    // Passati i 50ms, il verso segue di nuovo la geometria.
+    act(() => vi.advanceTimersByTime(60));
+    fireEvent.pointerMove(window, { clientX: 390, clientY: 44, pointerType: 'touch' });
+    expect(handles(view).end.className).not.toMatch(/\bflip\b/);
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
+  });
+});
+
 describe('R25 — edge-scroll: il dito oltre il bordo estende la selezione', () => {
   it('trascinando start sul bordo alto il terminale scorre e la selezione cresce', () => {
     const view = renderTerminal();

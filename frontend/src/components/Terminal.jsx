@@ -7,7 +7,7 @@ import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, copyShortcutHint, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
 import {
-  clampDraggedCell, edgeScrollDirection, extendRangeToCell, handlePositions, handlesTooClose, magnifierLayout, normalizeRange,
+  clampDraggedCell, edgeScrollDirection, extendRangeToCell, HANDLE_FLIP_THROTTLE_MS, handlePositions, handlesTooClose, magnifierLayout, normalizeRange,
   rangeFromXterm, rangeToSelect, selectionUiPolicy, snapWideCol, wordBoundsAt, zoomLineForRange,
 } from '../lib/selection-handles.js';
 import { MQ_DESKTOP } from '../lib/desktop.js';
@@ -1016,6 +1016,22 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // desktop niente maniglie né lente sopra una selezione da mouse.
   const uiPolicy = selectionUiPolicy(selOrigin);
 
+  // R35 pezzo 3: durante il drag il cambio di verso è al massimo uno ogni
+  // 50ms (Termux HandleView:210-215): al confine la geometria oscilla
+  // cella-sì-cella-no e la maniglia sfarfallerebbe. Fuori dal drag la
+  // geometria comanda sempre (gate riaperto). Il primo cambio dopo la presa
+  // passa subito: il gate parte col verso che la maniglia aveva ferma.
+  const flipGateRef = useRef({});
+  const flipFor = (which, computed) => {
+    if (draggingHandle !== which) { flipGateRef.current[which] = { flip: computed, ts: 0 }; return computed; }
+    const gate = flipGateRef.current[which] || { flip: computed, ts: 0 };
+    if (gate.flip === computed) { flipGateRef.current[which] = gate; return computed; }
+    const now = Date.now();
+    if (now - gate.ts < HANDLE_FLIP_THROTTLE_MS) return gate.flip;
+    flipGateRef.current[which] = { flip: computed, ts: now };
+    return computed;
+  };
+
   return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
     <div className="nc-terminal-host" ref={hostRef} />
     {touchSelectionCaret && <div className="nc-touch-selection-caret" style={touchSelectionCaret} aria-hidden="true" />}
@@ -1023,7 +1039,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       <div
         key={`nc-sel-handle-${which}`}
         className={`nc-sel-handle ${which}${draggingHandle === which ? ' dragging' : ''}${
-          handleGeom[which].flip ? ' flip' : ''}${
+          flipFor(which, handleGeom[which].flip) ? ' flip' : ''}${
           handlesTooClose({ startLeft: handleGeom.start.left, endLeft: handleGeom.end.left }) ? ' tight' : ''}`}
         style={{ left: `${handleGeom[which].left}px`, top: `${handleGeom[which].top}px` }}
         onPointerDown={(e) => handleDragApiRef.current.startHandleDrag(which, e)}

@@ -188,6 +188,9 @@ export function rangeToSelect(range, cols) {
 // HANDLE_BODY_PX): se quella sporgenza uscisse dal rettangolo di
 // .xterm-screen, si specchia.
 export const HANDLE_BODY_PX = 28; // sporgenza del ::after di .nc-sel-handle (CSS)
+// R35 pezzo 3: durante il drag, un cambio di verso al massimo ogni 50ms
+// (Termux HandleView:210-215). Fuori dal drag la geometria comanda sempre.
+export const HANDLE_FLIP_THROTTLE_MS = 50;
 export function handlePositions({ range, viewportY, rows, cols = 0, cellWidth, cellHeight, screenLeft = 0, screenTop = 0 }) {
   const out = {};
   const screenW = Number(cols) * Number(cellWidth);
