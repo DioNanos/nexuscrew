@@ -101,7 +101,7 @@ test('attach con takeSize:false resta ok e propaga takeSize (regressione F6)', (
 });
 
 
-// Regressione BLOCKER audit finale (§4b(6)): readonlyDefault del server e' un
+// Regressione bloccante trovata in revisione: readonlyDefault del server e' un
 // PAVIMENTO. Un client che manda readonly:false NON puo' declassare un server
 // READONLY. Il client puo' solo AGGIUNGERE restrizione (readonly:true su server RW).
 test('READONLY: server readonlyDefault=true vince su client readonly:false (pavimento §4b(6))', () => {

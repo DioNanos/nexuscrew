@@ -471,7 +471,7 @@ test('npm update runner: un pidfile senza attestazione PRE-migrazione non fa fal
   assert.equal(fs.existsSync(pidPath), false, 'il pidfile del vecchio runtime è stato pulito, come sempre');
 });
 
-// Gate 3 (Dev, R-pidfile-3): il negativo dopo migrazione. STESSO scenario di
+// Gate 3 (R-pidfile-3): il negativo dopo migrazione. STESSO scenario di
 // sopra, ma questa installazione ha GIÀ completato una scrittura v2 (marker
 // presente): "nessun campo attestazione" non è più spiegabile come
 // pre-migrazione, ed è ESATTAMENTE il guasto che Dev ha misurato — l'update
