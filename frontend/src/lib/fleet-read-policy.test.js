@@ -63,7 +63,16 @@ describe('fleetReadOutcome — R33 migrationCode vince sulla prosa', () => {
     // Il reason con 'fleet.json' DENTRO c'e' apposta: e' la fixture reale e
     // serve a provare la PRECEDENZA del codice sulla prosa — con un reason
     // riformulato senza 'fleet.json' questo test non distinguerebbe
-    // codice-vince da regex-vince. L'assert e' sul kind, mai sul testo.
+    // codice-vince da regex-vince.
+    //
+    // Due assert, due garanzie diverse, e vanno tenute distinte: la
+    // CLASSIFICAZIONE guarda solo `kind` — se dipendesse dal testo avremmo
+    // rimesso il difetto dentro il test. Il secondo assert non classifica
+    // niente: prova che il reason arriva a chi legge INVARIATO, perche' resta
+    // l'unica cosa che spiega a un umano cosa e' successo. La fixture qui e'
+    // locale, quindi una riformulazione lato server non lo rompe.
+    // (Il commento diceva «mai sul testo» e il secondo assert il testo lo
+    // guarda: rilievo di una revisione indipendente, corretto.)
     const out = fleetReadOutcome({ fs: {
       available: false,
       reason: 'migrazione tmux completata ma fleet.json non e persistibile [TMUX_MIGRATION_PERSIST_FAILED]',
