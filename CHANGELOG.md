@@ -2,6 +2,104 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.9 — 2026-08-19 — "Naming the Right Cause"
+
+- **Selecting text now follows the gesture, not the device.** A touch selection
+  gets the handles and the magnifier; a mouse selection gets neither, because a
+  mouse re-selects with native precision and a third element on top of a
+  resolved gesture is in the way. A laptop with a touchscreen switches between
+  the two **gesture by gesture**, rather than being filed under one category
+  forever. The first selection of a session defaults to touch, which is the
+  conservative direction: showing handles that were not needed costs less than
+  withholding handles that were.
+
+  On the desktop the magnifier is **gone**, and `Shift`+click extends the
+  nearer end of an existing selection — the desktop equivalent of dragging a
+  handle. Double-click no longer asks for the on-screen keyboard.
+
+  On mobile the magnifier is no longer a bar pinned to the top: it is a bubble
+  **beside the handle you are holding**, visible only while the gesture lasts.
+  It flips below when the selection is near the first rows, stays inside the
+  edges, and follows the handle that moves. The two handles are asymmetric —
+  one leans left, one leans right — and step apart vertically when the
+  selection is short, so both ends stay separately grabbable.
+
+  Copying is never automatic: the clipboard is not touched without an explicit
+  gesture, and the button states its shortcut.
+
+  The magnifier idea remains **@sadoc1184-droid**'s (PR #5); what changed here
+  is where it sits, not the observation behind it.
+
+- **A live session can reach the NexusCrew tools again.** A Live inherits the
+  environment of a shared daemon, which carries no cell identity, so every tool
+  that needs to know which cell is speaking refused to act — while still
+  appearing in the tool list, which is why this read as "the tools are missing"
+  rather than "the tools are refusing". The bridge already knew the answer: it
+  hands each Live its exact session at start. Now it also says how to use it.
+  Where no session is declared, it says so instead of suggesting a command that
+  would fail.
+
+- **A cell that is alive is no longer reported as stopped.** Two separate
+  causes had been collapsed into one sentence: a readiness marker the interface
+  produced but never displayed, and a failed *check* worded exactly like a cell
+  that is genuinely down — so the reflex was to restart a cell that was
+  working. A failed check now says it failed.
+
+- **A notification delivered to zero channels no longer calls itself
+  delivered.** The status is now derived from the delivery counts instead of
+  being asserted alongside them, so the label and the measurement cannot
+  disagree.
+
+- **An uploaded file that never reached the cell says so.** Three outcomes used
+  to share one silent `false` behind a 200: not requested, the terminal did not
+  take it, and the text was refused. They are now three answers, and the status
+  code separates "reached and not taken" from "never attempted, our fault".
+
+- **A full disk is not an invalid name.** Saving an audio group answered 400
+  "invalid group" for permission errors and out-of-space alike, sending the
+  reader to fix a name while the filesystem was the problem. Validation still
+  answers 400; a write that fails answers 500 and names the real cause.
+
+- The 0.9.8 entry below was missing from this file: the release notes went into
+  the commit and never reached the changelog, so the published package claimed
+  0.9.7 was the newest version. Restored.
+
+## 0.9.8 — 2026-08-18 — "What The Product Knows"
+
+Eight fixes with one thread running through them: the product knew the real
+cause and reported a different one, or reported something true it had never
+checked. A message that names the wrong cause sends the reader to work in the
+wrong place, and costs more than silence.
+
+- Selecting text in the terminal behaves like a phone: a long press takes **the
+  word under the finger**, at the exact point pressed. The two-row offset that
+  pushed the selection away from the fingertip is gone — it existed only to
+  keep the selection visible, and a 2x strip of the line being selected does
+  that instead. Handles stop at the edge of double-width glyphs rather than
+  landing inside an emoji.
+  The strip is **@sadoc1184-droid**'s idea (PR #5); the implementation is ours,
+  the observation was theirs.
+- A cell list that empties no longer looks like lost cells: if the read fails
+  the last known list stays, marked as such, and a fleet that is genuinely
+  disabled says so with the server's own reason instead of showing cells that
+  are not there.
+- An answer past the size limit is **refused**, not silently truncated, and the
+  error states both the limit and how long the text was.
+- `--help` after a subcommand prints the help instead of running the command:
+  `init --help` used to run `init` and print the panel URL **including the
+  token** on the terminal of someone who only wanted to read the syntax.
+- Updating regenerates both boot definitions and actually activates them, on
+  both paths. A definition is ours only if it carries the exact shared line
+  from the template: a third-party unit that merely mentions the product is no
+  longer overwritten, and an unreadable one is skipped and declared.
+- Three messages that gave one cause for several: the composer on a read-only
+  view, download and delete in the file panel, and the audio test.
+- "Up to date" is no longer said about a check that was never run.
+
+Found while building, and already present in 0.9.7: a selection dragged
+backwards left the handles swapped, and reading the raw range let a frozen
+anchor resurrect a cancelled selection.
+
 ## 0.9.7 — 2026-08-18 — "Two Handles"
 
 - **Selecting text in the terminal now has two draggable handles.** They mark

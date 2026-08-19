@@ -1,5 +1,5 @@
 'use strict';
-// Seam lease↔designazione (dispatch Dev 2026-08-15, decisione: eligible in
+// Seam lease↔designazione (dispatch 2026-08-15, decisione: eligible in
 // grace = FALSE). La designazione non perde hostCell mai (invariante store):
 // oscilla l'IDONEITA', non la scelta dell'operatore. I quattro stati lease
 // restano distinti fino a chi legge; il fallback senza fleet.lease e' un
@@ -100,7 +100,7 @@ test('eligible composto: attiva AND lease live; grace/expired/none non sono idon
     assert.equal(body.eligible, true, 'attiva + lease live -> idonea');
     assert.equal(body.host.lease, 'live', 'lo stato lease arriva DISTINTO a chi legge');
 
-    // EOF -> grace: la garanzia non c'e' (decisione Dev: eligible=false)
+    // EOF -> grace: la garanzia non c'e' (decisione presa in revisione: eligible=false)
     p.client.destroy();
     await new Promise((r) => setTimeout(r, 30));
     body = await ctx.get();

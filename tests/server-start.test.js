@@ -1,5 +1,5 @@
 'use strict';
-// F1 (audit run multi-fase, BLOCKER verifier A2): lo startup di start() NON deve
+// Verifica bloccante sullo startup multi-fase: lo startup di start() NON deve
 // stampare il token — l'output finisce nei log del servizio (journalctl/logfile)
 // che il service manager espone. L'apertura autenticata usa `nexuscrew show`.
 const { test } = require('node:test');

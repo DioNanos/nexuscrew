@@ -272,6 +272,77 @@ test('gruppi Settings: schema chiuso e mutazioni local-only', async (t) => {
   })).status, 403);
 });
 
+// —— R31-A4: il disco pieno non è un nome invalido ——
+// Le due mutazioni groups avevano un catch nudo: QUALUNQUE errore diventava
+// 400 «gruppo audio non valido»/«nome gruppo audio non valido». Un EACCES o
+// ENOSPC sulla scrittura di audio-groups.json mandava chi legge a correggere
+// il NOME mentre il problema era il filesystem — e 400 diceva «colpa tua».
+// Tre cause, tre esiti; ogni ramo ha il suo negativo per la causa giusta,
+// e il ripristino dei permessi dimostra la causalità (stessa richiesta,
+// esito opposto).
+test('gruppi Settings: validazione 400, scrittura fallita NON 400 e non nomina il gruppo, inatteso non appiattito', async (t) => {
+  const s = await boot(t);
+  const configDir = s.configDir;
+  const mode0 = fs.statSync(configDir).mode & 0o777;
+  const validBody = { targets: [s.nodeId], mode: 'fanout' };
+  const groupsFile = path.join(configDir, 'audio-groups.json');
+
+  // (1) Nome davvero invalido: resta 400 — una validazione non diventa un
+  // errore di sistema. Con la causa dichiarata (code chiuso).
+  const nome = await s.plain('PUT', '/api/settings/audio/groups/Non-Valido!', validBody);
+  assert.equal(nome.status, 400);
+  const nomeBody = await nome.json();
+  assert.equal(nomeBody.code, 'AUDIO_GROUP_NAME_INVALID');
+  assert.match(nomeBody.error, /nome gruppo audio non valido/);
+
+  // (2) Scrittura fallita: directory del negozio non scrivibile (EACCES). NON
+  // è colpa di chi ha chiesto: non-400, causa vera nel code, e il testo non
+  // parla di «gruppo non valido».
+  fs.chmodSync(configDir, 0o500);
+  let denied;
+  try {
+    denied = await s.plain('PUT', '/api/settings/audio/groups/studio', validBody);
+  } finally { fs.chmodSync(configDir, mode0); }
+  assert.notEqual(denied.status, 400, 'un fallimento di scrittura non è un «nome non valido»');
+  assert.equal(denied.status, 500);
+  const deniedBody = await denied.json();
+  assert.equal(deniedBody.code, 'EACCES', 'la causa vera viaggia: permessi, non nomi');
+  assert.ok(!/gruppo audio/i.test(deniedBody.error), 'l\'errore di scrittura non nomina il gruppo');
+  // Causalità: stessa richiesta, permessi ripristinati → 200. Il rosso di cui
+  // sopra era EACCES, non altro.
+  const retry = await s.plain('PUT', '/api/settings/audio/groups/studio', validBody);
+  assert.equal(retry.status, 200);
+
+  // (3) Inatteso: il negozio diventa un symlink — atomicWrite lo rifiuta con
+  // un errore NOSTRO (non validazione, non fs errno). Non va appiattito sui
+  // primi due: 500 con la sua causa leggibile.
+  fs.renameSync(groupsFile, `${groupsFile}.real`);
+  fs.symlinkSync(`${groupsFile}.real`, groupsFile);
+  const symlinked = await s.plain('PUT', '/api/settings/audio/groups/altro', validBody);
+  assert.notEqual(symlinked.status, 400, 'un errore inatteso non è una validazione');
+  assert.equal(symlinked.status, 500);
+  assert.match((await symlinked.json()).error, /symlink/i, 'il rifiuto symlink arriva con la sua causa, non camuffato');
+  fs.unlinkSync(groupsFile);
+  fs.renameSync(`${groupsFile}.real`, groupsFile);
+
+  // DELETE, stesso difetto e stessa tri-partizione: scrittura fallita ≠
+  // «nome gruppo audio non valido».
+  fs.chmodSync(configDir, 0o500);
+  let delDenied;
+  try {
+    delDenied = await s.plain('DELETE', '/api/settings/audio/groups/studio');
+  } finally { fs.chmodSync(configDir, mode0); }
+  assert.notEqual(delDenied.status, 400);
+  assert.equal(delDenied.status, 500);
+  const delBody = await delDenied.json();
+  assert.equal(delBody.code, 'EACCES');
+  assert.ok(!/gruppo audio/i.test(delBody.error));
+
+  // (1-bis) DELETE con nome invalido: 400 di validazione anche qui.
+  const delNome = await s.plain('DELETE', '/api/settings/audio/groups/Non-Valido!');
+  assert.equal(delNome.status, 400);
+});
+
 test('audio REST: schema di input chiuso e bounded prima di raggiungere l adapter', async (t) => {
   const s = await boot(t);
   await s.setConsent(true);

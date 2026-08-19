@@ -366,7 +366,7 @@ test('isAlive: non calcolabile — senza nascita leggibile vale il cmd, nel dubb
 // aveva processStart, in QUALUNQUE caso. Questo test asseriva `r.killed ===
 // true` per un meta senza processStart ("pidfile senza nascita: il kill
 // verificato di sempre" — il commento originale). Un primo fix aveva reso
-// TUTTI i meta senza attestazione un rifiuto, senza distinguere. Dev ha
+// TUTTI i meta senza attestazione un rifiuto, senza distinguere. E' stato
 // MISURATO il costo di quella scelta sul path reale dell'aggiornamento
 // automatico: lib/update/runner.js chiama stopPortableRuntime -> killPidfile
 // nudo, senza degrado; un rifiuto fa FALLIRE l'update per ogni nodo il cui
@@ -489,7 +489,7 @@ test('AUDITOR R-pidfile-4: ostacolo DIRECTORY sul marker — PRIMA segnalava sem
 });
 
 // Lo stesso ostacolo, forma SYMLINK invece di directory — richiesto
-// esplicitamente da Dev. lstat (non stat) lo vede come symlink PRIMA di
+// esplicitamente. lstat (non stat) lo vede come symlink PRIMA di
 // seguirlo: non importa dove punti (un file regolare altrove, il nulla, o
 // se stesso) — un symlink al posto del marker non e' mai un file regolare
 // scritto da noi, ed e' esattamente il tipo di ostacolo che un avversario
@@ -526,7 +526,7 @@ test('killPidfile: ostacolo SYMLINK sul marker — stato non determinabile, rifi
 // traccia (ENOSPC qui — quota, EROFS, permesso transitorio, una race sono
 // la stessa famiglia: nessuno lascia nulla sul filesystem). Due writePidfile
 // "riuscite" (il pidfile stesso si scrive; SOLO il marker fallisce, come
-// nella misura di Dev) — poi killPidfile su un meta senza attestazione, cmd
+// nella misura) — poi killPidfile su un meta senza attestazione, cmd
 // compatibile. PRIMA di questo giro: checkSchemaMarker vedeva il path
 // ENOENT (nessuna traccia dell'errore) -> 'absent' -> ambiguous-compat
 // concesso, SIGTERM inviato. DOPO: claimSchemaMarker riprova ADESSO, fallisce
@@ -659,7 +659,7 @@ test('MISURATO: dopo la migrazione, un nodo unsupported vero resta fermabile', a
   }
 });
 
-// GATE OBBLIGATORIO (Dev, R-pidfile-3): la sua misura esatta. Con lo spread
+// GATE OBBLIGATORIO (R-pidfile-3): la sua misura esatta. Con lo spread
 // di extra per ultimo, un chiamante poteva scrivere un'attestazione
 // INVENTATA che vinceva sul valore vero calcolato da probeProcessStart —
 // "nessun campo attestazione = pre-fix" non era piu' una deduzione valida
@@ -667,7 +667,7 @@ test('MISURATO: dopo la migrazione, un nodo unsupported vero resta fermabile', a
 // nuovo. RESERVED_META_FIELDS filtra extra e i campi veri sono scritti DOPO:
 // dopo il fix questa chiamata non deve poter cambiare ne' processStart ne'
 // attestation.
-test('writePidfile: i campi riservati NON sono sovrascrivibili da extra (misura esatta di Dev)', () => {
+test('writePidfile: i campi riservati NON sono sovrascrivibili da extra (misura esatta)', () => {
   const p = tmpPid();
   try {
     writePidfile(p, process.pid, 'node test-reserved', {
@@ -706,7 +706,7 @@ test('killPidfile: attestation indeterminate (tentativo fallito, non mai tentato
   }
 });
 
-// CONTROLLO NEGATIVO OBBLIGATORIO (Dev, R-pidfile-2), riscritto per il
+// CONTROLLO NEGATIVO OBBLIGATORIO (R-pidfile-2), riscritto per il
 // secondo giro. La sonda ORIGINALE dell'auditor (meta senza NESSUN campo,
 // pid ereditato, cmd compatibile) rappresentava, senza saperlo, il caso
 // LEGACY — e quel caso ora DEVE tornare a segnalare (test sopra), o

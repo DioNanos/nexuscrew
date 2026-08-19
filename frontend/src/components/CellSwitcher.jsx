@@ -261,7 +261,10 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
   const select = (row) => {
     setNotice('');
     if (!row.selectable) {
-      setNotice(t('cell-switcher-not-active'));
+      // R27 #4: «non più attiva» è una frase VERIFICATA. Se l'ultimo poll non
+      // ha potuto leggere (verified false), la riga non lo sa: dice «stato non
+      // confermato», che non induce a riavviare una cella che magari lavora.
+      setNotice(row.verified ? t('cell-switcher-not-active') : t('cell-switcher-not-confirmed'));
       return;
     }
     setSelectedKey(row.key);
@@ -278,9 +281,19 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
     try {
       // Una cella puo' morire tra il poll e il tocco: ricontrolla la posizione
       // prima di cambiare vista, cosi' non si tenta mai un attach stantio.
+      // R27 #4: il ricontrollo ha TRE esiti, non due — «verificata spenta» e'
+      // l'unico che puo' dirsi «non più attiva». Se la lettura non e'
+      // riuscita (rete, timeout, 502: fresh false o eccezione) la cella NON
+      // e' stata trovata spenta: dire il contrario faceva riavviare celle
+      // che stavano lavorando (stessa famiglia di vl-events-stale e della
+      // tri-partizione in fleet-read-policy.js).
       const latest = await readPosition(token, row.route);
       const cell = (latest.cells || []).find((entry) => entry?.cell === row.cellName
         && entry?.tmuxSession === row.session);
+      if (latest.fresh !== true) {
+        setNotice(t('cell-switcher-verify-failed'));
+        return;
+      }
       if (!isActiveCell(cell, latest.sessions, latest.fresh)) {
         setNotice(t('cell-switcher-not-active'));
         return;
@@ -288,7 +301,7 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
       onPick({ session: row.session, ...(row.node ? { node: row.node } : {}), cellName: row.cellName });
       onClose();
     } catch (_) {
-      setNotice(t('cell-switcher-not-active'));
+      setNotice(t('cell-switcher-verify-failed'));
     } finally {
       setPicking('');
     }

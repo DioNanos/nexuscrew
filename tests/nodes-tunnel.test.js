@@ -993,7 +993,7 @@ function leggiPidRegistrati(p) {
   catch (_) { return []; }
 }
 
-// R19 seguito, SECONDO difetto (Dev, 2026-08-17, audit su develop@437d29f).
+// R19 seguito, SECONDO difetto (2026-08-17, verificato su develop).
 // Il child del canale -L e' ANCORA VIVO quando enterDegraded lo manda in
 // degraded — a differenza del reverse-forward (li' il crash del processo e'
 // l'evento che porta a enterDegraded: child e' gia' null). run()
