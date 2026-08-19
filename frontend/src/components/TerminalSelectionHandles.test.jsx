@@ -72,12 +72,25 @@ vi.mock('@xterm/xterm', () => ({
     emitSelection() { if (this.selectionCb) this.selectionCb(); }
     // select() spara onSelectionChange come l'xterm vero: le maniglie si
     // aggiornano perche' lo dice xterm, non perche' le richiamiamo noi.
+    // R37: l'end di getSelectionPosition e' ESCLUSIVO, fedele a
+    // SelectionModel.finalSelectionEnd di @xterm/xterm (lavora su
+    // startPlusLength = colonna + length, NON sull'indice lineare globale):
+    // [startPlusLength, row] nel caso normale, [cols, y] quando la selezione
+    // finisce a fine riga (startPlusLength % cols === 0, riga = ultima
+    // selezionata), riga sotto solo oltre il confine. Fin qui il mock
+    // codificava end INCLUSIVO (-1): una cella di scarto che nascondeva il
+    // difetto R37 alla suite da tre release.
     select(col, row, length) {
       this.selectCalls.push({ col, row, length });
-      const endLinear = row * this.cols + col + length - 1;
+      const spl = col + length;
+      const end = spl > this.cols
+        ? (spl % this.cols === 0
+          ? { x: this.cols, y: row + Math.floor(spl / this.cols) - 1 }
+          : { x: spl % this.cols, y: row + Math.floor(spl / this.cols) })
+        : { x: spl, y: row };
       this.selectionPosition = {
         start: { x: col, y: row },
-        end: { x: endLinear % this.cols, y: Math.floor(endLinear / this.cols) },
+        end,
       };
       this.selectionText = `testo-${row}-${col}-${length}`;
       for (let y = row; y <= Math.floor((row * this.cols + col + length - 1) / this.cols); y++) {
@@ -648,7 +661,9 @@ describe('R25-zoom rev3-audit — drag su selezione nativa INVERTITA preesistent
     const term = fixture.instances[0];
     // selezione nativa invertita (start>end), NESSUN term.select intermedio:
     // e' il caso in cui applyHandlePoint rileggeva il range grezzo.
-    term.selectionPosition = { start: { x: 6, y: 1 }, end: { x: 3, y: 1 } };
+    // R37: position al patto VERO di xterm — capo destro ESCLUSIVO: la
+    // selezione vera e' celle 3..6 (quattro), quindi il capo nativo sta a 7.
+    term.selectionPosition = { start: { x: 7, y: 1 }, end: { x: 3, y: 1 } };
     term.selectionText = 'invertita';
     act(() => term.emitSelection());
     // selRange normalizzato (rev3): start (1,3) → 30px, end (1,6) → 70px.
@@ -666,7 +681,8 @@ describe('R25-zoom rev3-audit — drag su selezione nativa INVERTITA preesistent
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
-    term.selectionPosition = { start: { x: 6, y: 1 }, end: { x: 3, y: 1 } };
+    // R37: capo destro ESCLUSIVO (celle 3..6 vere → nativo a 7).
+    term.selectionPosition = { start: { x: 7, y: 1 }, end: { x: 3, y: 1 } };
     term.selectionText = 'invertita';
     act(() => term.emitSelection());
     const h = handles(view);
@@ -928,7 +944,8 @@ describe('R34 — la bolla lente vicino alla maniglia attiva (pezzo 3)', () => {
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
     term.lineTexts.set(1, '0123456789');
-    term.selectionPosition = { start: { x: 6, y: 1 }, end: { x: 3, y: 1 } };
+    // R37: capo destro ESCLUSIVO (celle 3..6 vere → nativo a 7).
+    term.selectionPosition = { start: { x: 7, y: 1 }, end: { x: 3, y: 1 } };
     term.selectionText = 'invertita';
     act(() => term.emitSelection());
     grabHandle(view, 'start', 30, 40);
@@ -942,7 +959,9 @@ describe('R34 — la bolla lente vicino alla maniglia attiva (pezzo 3)', () => {
     const term = fixture.instances[0];
     term.lineTexts.set(1, 'abcdefghij');
     term.lineTexts.set(2, 'ABCDEFGHIJ');
-    term.selectionPosition = { start: { x: 5, y: 2 }, end: { x: 3, y: 1 } };
+    // R37: capo destro ESCLUSIVO (la selezione vera finisce a col 5 della
+    // riga 2 → nativo a 6).
+    term.selectionPosition = { start: { x: 6, y: 2 }, end: { x: 3, y: 1 } };
     term.selectionText = 'invertita';
     act(() => term.emitSelection());
     grabHandle(view, 'start', 30, 40);
@@ -957,7 +976,8 @@ describe('R34 — la bolla lente vicino alla maniglia attiva (pezzo 3)', () => {
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
     term.lineTexts.set(1, '0123456789');
-    term.selectionPosition = { start: { x: 6, y: 1 }, end: { x: 3, y: 1 } };
+    // R37: capo destro ESCLUSIVO (celle 3..6 vere → nativo a 7).
+    term.selectionPosition = { start: { x: 7, y: 1 }, end: { x: 3, y: 1 } };
     term.selectionText = 'invertita';
     act(() => term.emitSelection());
     const h = handles(view);
