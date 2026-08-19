@@ -80,6 +80,35 @@ test('fleet unavailable: status {available:false} + provider/caps, comandi 404',
   assert.equal(up.status, 404);
 });
 
+// R33: il client deve decidere lo stato su un CODICE MACCHINA, non sulla
+// prosa del reason. Il provider costruisce migrationCode per il boot
+// bloccato (blocked() in builtin.js); la route lo propagava MAI — era un
+// dato costruito bene e buttato all'ultimo passaggio (stessa famiglia di
+// readinessDegraded, R27 #3).
+test('R33 status: migrationCode del boot bloccato viaggia fino al client; senza codice la risposta non lo inventa', async (t) => {
+  const withCode = await bootRouteOnly(t, {
+    available: false, provider: 'builtin',
+    reason: 'migrazione tmux completata ma fleet.json non e persistibile [TMUX_MIGRATION_PERSIST_FAILED]',
+    migrationCode: 'TMUX_MIGRATION_PERSIST_FAILED',
+    isCellSession: () => false, capabilities: () => [], close: async () => {},
+  });
+  const st = await (await fetch(`${withCode}/api/fleet/status`)).json();
+  assert.equal(st.available, false);
+  assert.equal(st.migrationCode, 'TMUX_MIGRATION_PERSIST_FAILED',
+    'il codice che la policy usa per decidere deve arrivare alla risposta');
+  assert.match(st.reason, /TMUX_MIGRATION_PERSIST_FAILED/);
+
+  // L'altro verso della versione mista: un server VECCHIO non manda il campo
+  // e la risposta non deve averlo (né falso, né vuoto: semplicemente assente).
+  const legacy = await bootRouteOnly(t, {
+    available: false, provider: 'builtin',
+    reason: 'fleet disabilitata (fleetEnabled=false)',
+    isCellSession: () => false, capabilities: () => [], close: async () => {},
+  });
+  const stLegacy = await (await fetch(`${legacy}/api/fleet/status`)).json();
+  assert.equal('migrationCode' in stLegacy, false);
+});
+
 test('fleet builtin: Bearer richiesto, status e lifecycle disponibili', async (t) => {
   const { base, token } = await bootBuiltin(t);
   assert.equal((await fetch(`${base}/api/fleet/status`)).status, 401);

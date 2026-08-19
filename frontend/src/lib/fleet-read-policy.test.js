@@ -51,3 +51,57 @@ describe('fleetReadOutcome — tre esiti: dato, spento-per-scelta, non-letto', (
     expect(fleetReadOutcome().kind).toBe('stale');
   });
 });
+
+// —— R33: il client decide su CODICE MACCHINA, non sulla prosa ——
+// La regex sul reason e' un'interfaccia fragile: una riformulazione lato
+// server cambia il comportamento del client in silenzio. E c'e' gia' un caso
+// classificato MALE: la migrazione completata ma non persistibile blocca il
+// BOOT del fleet (spento davvero, lista vuota = verita'), ma la prosa nomina
+// fleet.json e la regex dice stale -> CELLE FANTASMA.
+describe('fleetReadOutcome — R33 migrationCode vince sulla prosa', () => {
+  it('TMUX_MIGRATION_PERSIST_FAILED con migrationCode → disabled, non stale: il boot e\' bloccato', () => {
+    // Il reason con 'fleet.json' DENTRO c'e' apposta: e' la fixture reale e
+    // serve a provare la PRECEDENZA del codice sulla prosa — con un reason
+    // riformulato senza 'fleet.json' questo test non distinguerebbe
+    // codice-vince da regex-vince.
+    //
+    // Due assert, due garanzie diverse, e vanno tenute distinte: la
+    // CLASSIFICAZIONE guarda solo `kind` — se dipendesse dal testo avremmo
+    // rimesso il difetto dentro il test. Il secondo assert non classifica
+    // niente: prova che il reason arriva a chi legge INVARIATO, perche' resta
+    // l'unica cosa che spiega a un umano cosa e' successo. La fixture qui e'
+    // locale, quindi una riformulazione lato server non lo rompe.
+    // (Il commento diceva «mai sul testo» e il secondo assert il testo lo
+    // guarda: imprecisione trovata rileggendo, corretta.)
+    const out = fleetReadOutcome({ fs: {
+      available: false,
+      reason: 'migrazione tmux completata ma fleet.json non e persistibile [TMUX_MIGRATION_PERSIST_FAILED]',
+      migrationCode: 'TMUX_MIGRATION_PERSIST_FAILED',
+    } });
+    expect(out.kind).toBe('disabled');
+    expect(out.reason).toBe('migrazione tmux completata ma fleet.json non e persistibile [TMUX_MIGRATION_PERSIST_FAILED]');
+  });
+
+  it('qualunque migrationCode significa boot bloccato: nessun enum chiuso nel client', () => {
+    // blocked() e' l'unico produttore del campo e ogni suo codice significa
+    // boot bloccato: un codice emesso da un server PIU' NUOVO di questo
+    // client deve comunque classificarsi disabled, non cadere sulla prosa.
+    expect(fleetReadOutcome({ fs: { available: false, reason: 'x', migrationCode: 'TMUX_MIGRATION_FAILED' } }).kind).toBe('disabled');
+    expect(fleetReadOutcome({ fs: { available: false, reason: 'prosa futura senza nomi di file', migrationCode: 'UN_CODICE_CHE_ANCORA_NON_ESISTE' } }).kind).toBe('disabled');
+  });
+
+  it('SERVER VECCHIO + client nuovo: senza migrationCode decide il ripiego prosa (limite dichiarato, non regressione)', () => {
+    expect(fleetReadOutcome({ fs: {
+      available: false,
+      reason: 'migrazione tmux completata ma fleet.json non e persistibile [TMUX_MIGRATION_PERSIST_FAILED]',
+    } }).kind).toBe('stale');
+  });
+
+  it('il ripiego prosa resta per i reason senza codice: nessuna regressione sui cinque esistenti', () => {
+    expect(fleetReadOutcome({ fs: { available: false, reason: 'fleet disabilitata (fleetEnabled=false)' } }).kind).toBe('disabled');
+    expect(fleetReadOutcome({ fs: { available: false, reason: 'fleet builtin disabilitata (builtinEnabled=false)' } }).kind).toBe('disabled');
+    expect(fleetReadOutcome({ fs: { available: false, reason: 'fleet.json mancante o invalido (fail-closed)' } }).kind).toBe('stale');
+    expect(fleetReadOutcome({ fs: { available: false, reason: 'fleet.json non verificabile (EACCES): fail-closed, non "assente" né "invalido"' } }).kind).toBe('stale');
+    expect(fleetReadOutcome({ fs: { available: false, reason: 'seam di test' } }).kind).toBe('disabled');
+  });
+});
