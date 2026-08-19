@@ -119,7 +119,17 @@ const VIETATI = [
   // Misurato prima di adottarla: zero occorrenze sull'albero, e in particolare
   // NON morde i due casi in cui un nome di cella e' un DATO di scenario
   // («il proof di Dev …»), perche' li' non c'e' participio davanti.
-  { re: new RegExp(`\\b[a-z]+(?:at|it|ut)[oa]\\b[^.\\n]{0,80}?\\b(?:di|da|dell['’]|dall['’])\\s+\\b(?:BrowserAI|DevWorkerP|DevWorkerA|DevWorker|DevAuditor|ForkAuditor|WarMaster|DesignCreator|SysAdmin|GameAuditor|GameDev|Trading|Research|Personal|Fork|Dev|Shell)\\b`),
+  // Solo «da», il complemento d'AGENTE — non «di», che e' possessivo. La prima
+  // stesura prendeva entrambi ed era troppo larga: misurata su 117 frasi
+  // legittime plausibili ne mordeva 13, fra cui «lo stato di Research resta
+  // invariato». «stato» e' la parola piu' comune di questo prodotto — lo stato
+  // di una cella e' il concetto centrale — e li' il nome e' un DATO, non un
+  // attore. Stessa sorte per dato, lato, risultato, contenuto, formato: tutti
+  // sostantivi comuni che finiscono in -ato. Un guardiano che fa rosso il gate
+  // su «lo stato di Research» grida al lupo, e si smette di ascoltarlo.
+  // Con il solo «da», «approvata da Dev» resta presa e «lo stato di Research»
+  // no: il confine e' fissato dal controllo positivo piu' sotto.
+  { re: new RegExp(`\\b[a-z]+(?:at|it|ut)[oa]\\b[^.\\n]{0,80}?\\bda\\s+\\b(?:BrowserAI|DevWorkerP|DevWorkerA|DevWorker|DevAuditor|ForkAuditor|WarMaster|DesignCreator|SysAdmin|GameAuditor|GameDev|Trading|Research|Personal|Fork|Dev|Shell)\\b`),
     perche: 'attribuzione a una cella interna con un participio regolare (regola morfologica: non aspetta che il verbo sia in elenco)' },
   // 0.9.9, secondo giro. Allargare la finestra non bastava: restavano QUATTRO
   // attribuzioni scritte in una FORMA che il pattern sopra non puo' vedere,
@@ -493,6 +503,13 @@ test('SWEEP CELLE — controllo positivo: un nome cella usato come DATO (nessuna
     "atteso: la decisione Personal non tocca Fork",
     // Il terzo esercita un verbo nuovo senza complemento d'agente.
     "misurato sul campo: la cella Fork non risponde",
+    // 0.9.10 — il confine della regola MORFOLOGICA, misurato su 117 frasi
+    // plausibili in una revisione indipendente: prendendo anche «di» ne
+    // mordeva 13. Questi sono i casi peggiori, e sono possesso, non agente:
+    // «stato» e' la parola piu' comune del prodotto.
+    "lo stato di Research resta invariato",
+    "il dato di Shell non cambia",
+    "il risultato di Research e il contenuto di Fork coincidono",
   ];
   for (const testo of casi) {
     const colpe = colpeIn(testo, 'tests/esempio.test.js');
