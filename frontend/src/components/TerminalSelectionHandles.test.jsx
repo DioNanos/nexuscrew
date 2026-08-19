@@ -387,17 +387,111 @@ describe('R25 — drag delle maniglie', () => {
     fireEvent.pointerUp(window, { pointerType: 'mouse' });
   });
 
-  it('il touch usa l\'offset di ±2 righe: il dito non copre il punto di lavoro', () => {
+  it('il touch usa uno scarto costante verso l\'alto: la cella di lavoro sta una frazione di riga sopra il dito', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
     grabEnd(view, term);
-    // Dito a y=200 (riga visibile 10, meta' schermo → offset -2 righe):
-    // la cella di lavoro e' la riga 8, non la 10.
+    // Dito a y=200 (riga 10). Scarto R35: -0.3 * altezza maniglia (in jsdom la
+    // maniglia non e' misurabile → fallback altezza riga = 20px → -6px):
+    // cella di lavoro = riga 9, una frazione sopra il dito, MAI sotto.
     fireEvent.pointerMove(window, { clientX: 100, clientY: 200, pointerType: 'touch' });
     const last = term.selectCalls.at(-1);
     const endRow = Math.floor((1 * 80 + 2 + last.length - 1) / 80);
-    expect(endRow).toBe(8);
+    expect(endRow).toBe(9);
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
+  });
+});
+
+describe('R35 — scarto verticale del drag touch', () => {
+  // R35 pezzo 1: lo scarto ±2 righe INVERTE vicino al bordo alto (righe 0-1:
+  // +2, oltre: -2). Con l'inversione, attraversare la soglia con il dito fa
+  // saltare la cella di lavoro di 3-4 righe per pochi pixel: e' lo scatto che
+  // la mano sente. La guardia misura la CONTINUITA' (2px di dito non possono
+  // valere 3 righe di selezione), non la formula dello scarto.
+  it('la cella di lavoro varia con continuita\' alla soglia del bordo alto', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    // Selezione in riga 0: la end trascinata puo' scendere senza incrociare
+    // start, cosi' il clamp no-crossing non maschera il salto.
+    act(() => term.select(2, 0, 10)); // start (0,2), end (0,11), ancora end a y=20
+    const h = handles(view);
+    fireEvent.pointerDown(h.end, { clientX: 120, clientY: 20, pointerType: 'mouse' });
+    // Dito a y=41 (riga 2, oltre la soglia) e a y=39 (riga 1, sotto): 2px di
+    // differenza. La cella di lavoro non puo' cambiare piu' di 1 riga.
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 41, pointerType: 'touch' });
+    const above = term.selectCalls.at(-1);
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 39, pointerType: 'touch' });
+    const below = term.selectCalls.at(-1);
+    fireEvent.pointerUp(window, { pointerType: 'touch' });
+    const rowOf = (call) => Math.floor((0 * 80 + 2 + call.length - 1) / 80);
+    expect(Math.abs(rowOf(below) - rowOf(above))).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('R35 — specchiatura ai margini laterali', () => {
+  // Termux (HandleView:205-238): se la maniglia uscirebbe dal schermo cambia
+  // VERSO, e il punto di selezione NON SI MUOVE — cambia solo da che parte
+  // pende il corpo. Da noi il clip e' il rettangolo di .xterm-screen (nel
+  // fixture: 80 colonne * 10px = 800px). La guardia misura le due cose
+  // insieme: la classe flip (il corpo pende dall'altra parte) E l'ancora
+  // ferma al pixel.
+  it('la start alla colonna 0 si specchia: corpo a destra, punto fermo a 0px', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(0, 1, 10)); // start (1,0) → x=0; end (1,10), libera
+    const h = handles(view);
+    expect(h.start.className).toMatch(/\bflip\b/);
+    expect(h.start.style.left).toBe('0px'); // il punto di selezione non si muove
+    expect(h.end.className).not.toMatch(/\bflip\b/); // l'altra resta dritta
+  });
+
+  it('la end all\'ultima colonna si specchia: corpo a sinistra, punto fermo a 800px', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(70, 1, 10)); // end (1,79) → x=80*10=800=larghezza schermo
+    const h = handles(view);
+    expect(h.end.className).toMatch(/\bflip\b/);
+    expect(h.end.style.left).toBe('800px');
+    expect(h.start.className).not.toMatch(/\bflip\b/); // start a col 70, libera
+  });
+
+  it('selezione in mezzo allo schermo: nessuna maniglia si specchia', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(30, 1, 10)); // start col 30, end col 40: interno
+    const h = handles(view);
+    expect(h.start.className).not.toMatch(/\bflip\b/);
+    expect(h.end.className).not.toMatch(/\bflip\b/);
+  });
+});
+
+describe('R35 — throttle del cambio di verso durante il drag', () => {
+  // Termux (HandleView:210-215): durante il drag il cambio di orientamento
+  // avviene al massimo ogni 50ms, altrimenti al confine la maniglia
+  // sfarfalla avanti e indietro. Fuori dal drag la geometria comanda sempre.
+  it('il flip non oscilla: entro 50ms il verso resta, poi puo\' cambiare', () => {
+    const view = renderTerminal();
+    terminalBounds(view.container.querySelector('.nc-terminal-host'));
+    const term = fixture.instances[0];
+    act(() => term.select(30, 1, 10)); // start col 30, end col 40: interno
+    fireEvent.pointerDown(handles(view).end, { clientX: 410, clientY: 40, pointerType: 'touch' });
+    // Drag verso l'ultima colonna (y=44 → riga 1 con lo scarto touch: la end
+    // resta oltre start e il no-crossing non la ferma): il corpo uscirebbe → flip ON.
+    fireEvent.pointerMove(window, { clientX: 795, clientY: 44, pointerType: 'touch' });
+    expect(handles(view).end.className).toMatch(/\bflip\b/);
+    // Subito dopo (< 50ms, timer non avanzati) il dito rientra: la geometria
+    // direbbe flip OFF, ma il verso NON cambia — niente sfarfallio.
+    fireEvent.pointerMove(window, { clientX: 410, clientY: 44, pointerType: 'touch' });
+    expect(handles(view).end.className).toMatch(/\bflip\b/);
+    // Passati i 50ms, il verso segue di nuovo la geometria.
+    act(() => vi.advanceTimersByTime(60));
+    fireEvent.pointerMove(window, { clientX: 390, clientY: 44, pointerType: 'touch' });
+    expect(handles(view).end.className).not.toMatch(/\bflip\b/);
     fireEvent.pointerUp(window, { pointerType: 'touch' });
   });
 });
@@ -607,8 +701,9 @@ describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi l
       widths: [1, 2, 0, 1, 1, 1, 1, 1, 1, 1],
     });
     fireEvent.pointerDown(handles(view).end, { clientX: 120, clientY: 40, pointerType: 'mouse' });
-    // (25, 200): col 2 = cella di continuazione del glifo; offset touch -2 → riga 8.
-    fireEvent.pointerMove(window, { clientX: 25, clientY: 200, pointerType: 'touch' });
+    // (25, 180): col 2 = cella di continuazione del glifo; scarto touch R35
+    // (-6px nel fixture) → riga di lavoro 8, dove sta il glifo.
+    fireEvent.pointerMove(window, { clientX: 25, clientY: 180, pointerType: 'touch' });
     const last = term.selectCalls.at(-1);
     const endLinear = last.row * 80 + last.col + last.length - 1;
     expect(endLinear % 80).toBe(3); // bordo destro del glifo, non la continuazione
@@ -627,8 +722,9 @@ describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi l
       widths: [1, 2, 0, 1, 1, 1, 1, 1, 1, 1],
     });
     fireEvent.pointerDown(handles(view).start, { clientX: 20, clientY: 40, pointerType: 'mouse' });
-    // (25, 40): col 2 = continuazione; offset touch -2 → riga 0.
-    fireEvent.pointerMove(window, { clientX: 25, clientY: 40, pointerType: 'touch' });
+    // (25, 20): col 2 = continuazione; scarto touch R35 (-6px nel fixture,
+    // 20-6=14) → riga di lavoro 0, dove sta il glifo.
+    fireEvent.pointerMove(window, { clientX: 25, clientY: 20, pointerType: 'touch' });
     const last = term.selectCalls.at(-1);
     expect(last.col).toBe(1); // bordo sinistro del glifo, non la continuazione
     expect(last.row).toBe(0);
@@ -736,11 +832,11 @@ describe('R34 — la bolla lente vicino alla maniglia attiva (pezzo 3)', () => {
     const term = fixture.instances[0];
     act(() => term.select(2, 1, 10));
     grabHandle(view, 'end', 120, 40);
-    // touch con offset -2 righe: (200,140) → col 20, riga 5.
+    // touch con scarto R35 (-6px nel fixture): (200,140-6) → col 20, riga 6.
     fireEvent.pointerMove(window, { clientX: 200, clientY: 140, pointerType: 'touch' });
     const z = zoomBubble(view);
     expect(z.spans[0].textContent).toBe('');
-    expect(z.sel.textContent).toBe('contenuto-riga-5');
+    expect(z.sel.textContent).toBe('contenuto-riga-6');
     fireEvent.pointerUp(window, { pointerType: 'touch' });
   });
 
