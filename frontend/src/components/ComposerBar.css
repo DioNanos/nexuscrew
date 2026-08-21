@@ -13,6 +13,7 @@
 .nc-composer textarea.expanded { height: clamp(128px, 32dvh, 320px); }
 .nc-composer .mic.on { background: #b02a2a; color: #fff; }
 .nc-composer-err { font-size: 12px; color: #e0a030; padding-bottom: 4px; }
+.nc-composer-info { font-size: 12px; color: #baff79; padding-bottom: 4px; }
 
 /* Touch targets: attach/mic/go grandi; textarea a 16px evita l'auto-zoom iOS/Android. */
 @media (pointer: coarse) {
