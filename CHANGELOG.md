@@ -2,6 +2,22 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.12 — 2026-08-22 — "Build After The Bump"
+
+- **Fixes 0.9.11, which would not start.** `frontend/dist/version.json` said
+  `0.9.10` while the server said `0.9.11`, so the UI refused with «incomplete
+  installation: frontend and server do not match». Everything else in that
+  package was consistent; that one byte was enough. The cause is ordering:
+  `vite.config.js` writes that file from `pkg.version` **at build time**, and
+  the bundle had been built before the version was raised. **Use 0.9.12; 0.9.11
+  is deprecated.**
+
+- **A test now asserts what a checklist used to.** The frontend/package version
+  match had been verified by hand at every release since 0.8.2 — and a check
+  that lives only in a list is skipped the day someone is in a hurry. It now
+  fails on its own, and it was seen failing on a wrong value before it was
+  trusted on the right one.
+
 ## 0.9.11 — 2026-08-22 — "The Cell Gets Its Own Words"
 
 - **A `vl` cell now starts with its own prompt and the model you picked in the
