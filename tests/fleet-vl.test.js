@@ -16,7 +16,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { normalizeManagedSpec, describeManaged, resolveManagedEngine, publicCatalog, findBinary } = require('../lib/fleet/managed.js');
+const { CATALOG, normalizeManagedSpec, describeManaged, resolveManagedEngine, publicCatalog, findBinary } = require('../lib/fleet/managed.js');
 const { classifyPane, vlPaneReadiness } = require('../lib/fleet/prompt-delivery.js');
 const { backfillVlEngine } = require('../lib/fleet/builtin.js');
 const { loadDefinitions, atomicWrite } = require('../lib/fleet/definitions.js');
@@ -427,4 +427,47 @@ test('varianti vl: catalogo onesto — endpoint visibile, protocolli limitati ai
   assert.equal(custom.auth, 'dynamic');
   // il catalogo vl e' un elenco chiuso: un provider mai catalogato si rifiuta (fail-closed)
   assert.equal(normalizeManagedSpec({ client: 'vl', provider: 'openrouter', model: '' }), null, 'provider non in catalogo: niente voce UI che porta a un runtime inesistente');
+});
+
+test('varianti vl: profilo remoto incompleto si RIFIUTA nominando il campo (mai ricadere su Ollama in silenzio)', () => {
+  // Il catalogo e' codice nostro: una voce remota senza vlProvider o endpoint e'
+  // uno stato impossibile che nasce solo da un difetto di scrittura. Il test lo
+  // riproduce per mutazione (il freeze dell'array e' shallow: le voci restano
+  // mutabili) perche' il difetto vero non e' la voce sbagliata ma la reazione
+  // alla voce sbagliata: degradare compose la cella sui default interni
+  // (Ollama locale) mentre la UI dice il contrario. Deve rifiutare, e il
+  // reason deve NOMINARE il campo che manca — stessa forma del fail-closed
+  // delle chiavi.
+  const home = homeWithVl();
+  const anth = CATALOG.find((p) => p.id === 'vl.anthropic');
+  const saved = { vlProvider: anth.vlProvider, endpoint: anth.endpoint };
+  try {
+    delete anth.endpoint;
+    const r1 = resolveManagedEngine(vlRemote('anthropic'), { id: 'Dev' }, { home, env: { VL_API_KEY: 'k' } });
+    assert.equal(r1.ok, false, 'senza endpoint la variante remota non parte');
+    assert.match(r1.reason, /endpoint/, 'il reason NOMINA il campo mancante');
+    assert.match(r1.reason, /vl\.anthropic/, 'il reason nomina il profilo');
+    anth.endpoint = saved.endpoint;
+    delete anth.vlProvider;
+    const r2 = resolveManagedEngine(vlRemote('anthropic'), { id: 'Dev' }, { home, env: { VL_API_KEY: 'k' } });
+    assert.equal(r2.ok, false, 'senza vlProvider la variante remota non parte');
+    assert.match(r2.reason, /vlProvider/, 'il reason NOMINA l\'altro campo mancante');
+    anth.vlProvider = saved.vlProvider;
+    // verso opposto: voce completa ripristinata, la coppia torna a comporsi
+    const r3 = resolveManagedEngine(vlRemote('anthropic'), { id: 'Dev' }, { home, env: { VL_API_KEY: 'k' } });
+    assert.equal(r3.ok, true, 'il rifiuto non stringe troppo: la voce completa riparte');
+    assert.equal(r3.engine.env.VL_PROVIDER, 'anthropic');
+    assert.equal(r3.engine.env.VL_BASE_URL, 'https://api.anthropic.com');
+    // vl.native NON e' toccato: l'assenza delle due env e' la decisione
+    // «usa la tua configurazione», non uno stato impossibile
+    const rNat = resolveManagedEngine({ id: 'vl.native', label: 'VL', managed: { client: 'vl', provider: 'native', model: 'gemma4:31b', permissionPolicy: 'standard' } }, { id: 'Dev' }, { home, env: {} });
+    assert.equal(rNat.ok, true, 'il controllo vale solo per provider !== native');
+    assert.equal(rNat.engine.env.VL_MODEL, 'gemma4:31b');
+    assert.equal(rNat.engine.env.VL_PROVIDER, undefined);
+    assert.equal(rNat.engine.env.VL_BASE_URL, undefined);
+  } finally {
+    anth.vlProvider = saved.vlProvider;
+    anth.endpoint = saved.endpoint;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
