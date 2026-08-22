@@ -1,11 +1,16 @@
 'use strict';
-// VL (vl.native) — runtime TUI Vivling (repository `vl`), binario `vl`.
-// Runtime locale: auth propria del runtime (auth 'none', nessuna credenziale
-// NexusCrew). Backfill idempotente pattern Kimi (NESSUN platform gate: musl-
-// friendly ovunque). vl non ha flag prompt, --model, ne' di approvazione: lancia
-// la TUI senza argomenti; e' standard-only (nessun flag unsafe da cablare).
-// Verifica TUI: `vl --help` -> Usage `vl [OPTIONS]` (nessun argomento richiesto;
-// absent config OK, fallback built-in local Ollama).
+// VL (vl.native + varianti remote) — runtime TUI Vivling (repository `vl`),
+// binario `vl`. Auth propria del runtime in OGNI variante (auth 'none': nessuna
+// credenziale NexusCrew; la chiave, dove serve, viaggia SOLO per nome via
+// envPassthrough, D3). vl.native significa «usa la tua configurazione»: NESSUNA
+// env provider/base_url, perche' i default interni del runtime sono gia'
+// openai-compat + localhost:11434 e le VL_* ambientali li sovrascriverebbero in
+// silenzio, buttando via il config.toml dell'operatore. Le varianti remote
+// (vl.anthropic, vl.custom) compongono SEMPRE la coppia: la' la variante e' la
+// scelta. Il modello scelto in UI viaggia via VL_MODEL (V-69), il prompt di
+// cella via VL_SYSTEM_APPEND_FILE (gate 0.3.1); `vl --profile` esiste ma resta
+// dell'operatore. Standard-only: lancia la TUI senza argomenti, nessun flag di
+// approvazione da cablare.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -141,13 +146,13 @@ test('V-69 senza prompt di cella: il file porta comunque le istruzioni companion
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('V-69 modello dalla UI: scelto -> tripletta VL_MODEL/VL_PROVIDER/VL_BASE_URL; assente -> NESSUNA env modello', () => {
+test('V-69 modello dalla UI: scelto -> SOLO VL_MODEL; vl.native non esporta MAI provider/base_url', () => {
   const home = homeWithVl();
   try {
     const r = vlResolve(home, { id: 'Dev', model: 'gemma4:31b' }, { vlVersionProbe: PROBE_031 });
     assert.equal(r.engine.env.VL_MODEL, 'gemma4:31b', 'la scelta UI ha effetto');
-    assert.equal(r.engine.env.VL_PROVIDER, 'openai-compat', 'provider valido per vl (native = Ollama locale)');
-    assert.equal(r.engine.env.VL_BASE_URL, 'http://127.0.0.1:11434', 'endpoint locale coerente col profilo vl.native');
+    assert.equal(r.engine.env.VL_PROVIDER, undefined, 'vl.native: la configurazione dell\'operatore comanda, nessun override silenzioso');
+    assert.equal(r.engine.env.VL_BASE_URL, undefined, 'vl.native: i default interni del runtime sono gia\' openai-compat+localhost:11434');
     const r0 = vlResolve(home, { id: 'Dev' }, { vlVersionProbe: PROBE_031 });
     assert.equal(r0.engine.env.VL_MODEL, undefined, 'nessun modello scelto: il config.toml dell\'operatore comanda');
     assert.equal(r0.engine.env.VL_PROVIDER, undefined);
@@ -328,4 +333,98 @@ test('DEC1 vlPaneReadiness: capture null/irraggiungibile -> degrada a ready', as
   const r = await vlPaneReadiness('tmux', '%1', { captureImpl: capture, timeoutMs: 500, pollMs: 50, sleepImpl: clk.sleep, nowImpl: clk.now });
   assert.equal(r.ready, true);
   assert.equal(r.degraded, true);
+});
+
+// --- Varianti vl remote: la variante e' la scelta (vl.anthropic, vl.custom) --
+// Il runtime vl parla SOLO tre provider (anthropic | anthropic-bearer |
+// openai-compat/openai, vivling config/mod.rs) e due endpoint wire
+// (/v1/messages, /v1/chat/completions, vl-llm client.rs): il catalogo non puo'
+// offrire dialetti che il runtime non sa parlare. La chiave non si copia mai
+// dal valore: viaggia per NOME (envPassthrough, D3) e un nome assente da ogni
+// fonte non fa partire la cella in silenzio.
+
+function vlRemote(provider, extra = {}) {
+  return {
+    id: `vl.${provider}`, label: 'VL',
+    managed: { client: 'vl', provider, model: '', permissionPolicy: 'standard', ...extra },
+  };
+}
+
+test('varianti vl: vl.anthropic compone SEMPRE provider e base_url (anche senza modello)', () => {
+  const home = homeWithVl();
+  try {
+    const r0 = resolveManagedEngine(vlRemote('anthropic'), { id: 'Dev' }, { home, env: { VL_API_KEY: 'k' } });
+    assert.equal(r0.ok, true);
+    assert.equal(r0.engine.env.VL_PROVIDER, 'anthropic', 'la variante e\' la scelta: la coppia esce sempre');
+    assert.equal(r0.engine.env.VL_BASE_URL, 'https://api.anthropic.com');
+    assert.equal(r0.engine.env.VL_MODEL, undefined, 'senza modello scelto nessuna VL_MODEL');
+    const r1 = resolveManagedEngine(vlRemote('anthropic', { model: 'claude-sonnet-5' }), { id: 'Dev' }, { home, env: { VL_API_KEY: 'k' } });
+    assert.equal(r1.engine.env.VL_MODEL, 'claude-sonnet-5');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('varianti vl: vl.anthropic porta envPassthrough VL_API_KEY di default; assente ovunque -> fail a voce alta', () => {
+  // default portato dal profilo del catalogo, senza che l'operatore dichiari nulla
+  const s = normalizeManagedSpec({ client: 'vl', provider: 'anthropic', model: '' });
+  assert.ok(s);
+  assert.deepEqual(s.envPassthrough, ['VL_API_KEY'], 'il profilo dichiara il NOME, mai il valore');
+  // la lista dell'operatore vince sul default del profilo
+  const s2 = normalizeManagedSpec({ client: 'vl', provider: 'anthropic', model: '', envPassthrough: ['VL_API_KEY', 'VL_OTHER'] });
+  assert.deepEqual(s2.envPassthrough, ['VL_API_KEY', 'VL_OTHER']);
+  const home = homeWithVl();
+  try {
+    // nome assente da ogni fonte: la cella NON parte, e il reason nomina il nome
+    const r = resolveManagedEngine(vlRemote('anthropic'), { id: 'Dev' }, { home, env: {} });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /VL_API_KEY/);
+    assert.match(r.reason, /credential source/i);
+    // presente a runtime: iniettata per nome nel child
+    const r2 = resolveManagedEngine(vlRemote('anthropic'), { id: 'Dev' }, { home, env: { VL_API_KEY: 'secret' } });
+    assert.equal(r2.ok, true);
+    assert.equal(r2.engine.env.VL_API_KEY, 'secret');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('varianti vl: vl.custom richiede baseUrl e protocollo fra i tre reali; la coppia esce sempre', () => {
+  const base = { client: 'vl', provider: 'custom', displayName: 'GW interno', baseUrl: 'https://gw.internal/anthropic', envKey: '' };
+  const okBearer = normalizeManagedSpec({ ...base, protocol: 'anthropic-bearer', model: 'kimi-k2.7' });
+  assert.ok(okBearer, 'bearer + endpoint dichiarato: valido');
+  assert.equal(normalizeManagedSpec({ ...base, protocol: 'grok', model: 'x' }), null, 'protocollo che il runtime non parla: rifiutato');
+  assert.equal(normalizeManagedSpec({ client: 'vl', provider: 'custom', displayName: 'X', protocol: 'openai-compat', model: 'x', envKey: '' }), null, 'senza baseUrl si rifiuta: endpoint obbligatorio, un default spedirebbe un bearer all\'API vera');
+  assert.equal(normalizeManagedSpec({ ...base, protocol: 'openai-compat' }), null, 'custom senza modello: requiresModel');
+  const okOpenAi = normalizeManagedSpec({ ...base, protocol: 'openai-compat', model: 'gpt-x' });
+  assert.equal(Object.prototype.hasOwnProperty.call(okOpenAi, 'envKey'), false, 'envKey vuota ammessa per vl: la chiave, se serve, viaggia per nome');
+  const home = homeWithVl();
+  try {
+    const r = resolveManagedEngine(vlRemote('custom', { displayName: 'GW interno', baseUrl: 'https://gw.internal/anthropic', envKey: '', protocol: 'anthropic-bearer', model: 'kimi-k2.7' }), { id: 'Dev' }, { home, env: {} });
+    assert.equal(r.ok, true);
+    assert.equal(r.engine.env.VL_PROVIDER, 'anthropic-bearer', 'il protocollo scelto E\' il provider wire');
+    assert.equal(r.engine.env.VL_BASE_URL, 'https://gw.internal/anthropic');
+    assert.equal(r.engine.env.VL_MODEL, 'kimi-k2.7');
+    // la chiave del custom, se dichiarata, viaggia per nome (envPassthrough), mai come valore copiato dallo store
+    const r2 = resolveManagedEngine(vlRemote('custom', { displayName: 'Ollama remoto', baseUrl: 'https://ollama.example', envKey: '', protocol: 'openai-compat', model: 'glm-5.2', envPassthrough: ['VL_API_KEY'] }), { id: 'Dev' }, { home, env: { VL_API_KEY: 'sk' } });
+    assert.equal(r2.ok, true);
+    assert.equal(r2.engine.env.VL_API_KEY, 'sk');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('varianti vl: catalogo onesto — endpoint visibile, protocolli limitati ai tre reali, niente credenziali gestite', () => {
+  const vlVoices = publicCatalog().filter((p) => p.client === 'vl');
+  assert.deepEqual(vlVoices.map((p) => p.id).sort(), ['vl.anthropic', 'vl.custom', 'vl.native']);
+  const TRE = ['anthropic', 'anthropic-bearer', 'openai-compat'];
+  for (const p of vlVoices) {
+    assert.equal(p.supportsUnsafe, false, `${p.id}: vl resta standard-only`);
+    assert.equal(p.mcpManaged, false, `${p.id}: MCP gestito solo per claude`);
+    assert.equal(p.rc, false, `${p.id}: nessun remote-control`);
+    for (const proto of (p.protocols || [p.protocol])) {
+      assert.ok(proto === 'vl_native' || TRE.includes(proto), `${p.id}: protocollo ${proto} fra quelli che il runtime parla`);
+    }
+  }
+  const anth = vlVoices.find((p) => p.id === 'vl.anthropic');
+  assert.equal(anth.endpoint, 'https://api.anthropic.com', 'la UI dice dove vive la variante');
+  assert.equal(anth.auth, 'none', 'NexusCrew non gestisce credenziali vl: la chiave viaggia per nome');
+  const custom = vlVoices.find((p) => p.id === 'vl.custom');
+  assert.equal(custom.auth, 'dynamic');
+  // il catalogo vl e' un elenco chiuso: un provider mai catalogato si rifiuta (fail-closed)
+  assert.equal(normalizeManagedSpec({ client: 'vl', provider: 'openrouter', model: '' }), null, 'provider non in catalogo: niente voce UI che porta a un runtime inesistente');
 });
