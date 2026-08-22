@@ -25,6 +25,7 @@ export default function ComposerBar({ submitText, token, session, node, ownerId,
   } = useComposerState({ ownerId, node, session });
   const [rec, setRec] = useState(false);
   const [err, setErr] = useState('');
+  const [info, setInfo] = useState('');
   const [serverStt, setServerStt] = useState(false);
   const recognitionRef = useRef(null);
   const mediaRef = useRef(null);
@@ -42,6 +43,7 @@ export default function ComposerBar({ submitText, token, session, node, ownerId,
   const fileInputRef = useRef(null);
   const camInputRef = useRef(null);
   const galInputRef = useRef(null);
+  const inboxInputRef = useRef(null);
   const composingRef = useRef(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyPos, setHistoryPos] = useState({ left: 0, bottom: 0, width: 320 });
@@ -193,6 +195,22 @@ export default function ComposerBar({ submitText, token, session, node, ownerId,
     }
     setBusy(false);
   }
+  // Add Inbox: carica file di qualsiasi tipo nell'inbox SENZA appenderli al
+  // composer (niente lettura automatica da parte della cella). L'operatore/l'agente
+  // legge il file on demand via nc_inbox o pannello File. Evita l'errore delle
+  // immagini su modelli che non le supportano.
+  async function uploadToInbox(files) {
+    if (!files.length || !session) return;
+    setBusy(true); setErr(''); setInfo('');
+    const { paths, errors } = await uploadSessionFiles({ files, token, session, node, paste: false });
+    if (errors.length) setErr(errors.map((item) => `${item.name}: ${item.message}`).join(' · '));
+    if (paths.length) {
+      setInfo(t('attach-inbox-done').replace('{n}', String(paths.length)));
+      try { navigator.vibrate?.(10); } catch (_) {}
+      setTimeout(() => setInfo(''), 2500);
+    }
+    setBusy(false);
+  }
 
   function stopVoice() {
     if (recognitionRef.current) recognitionRef.current.stop();
@@ -256,6 +274,7 @@ export default function ComposerBar({ submitText, token, session, node, ownerId,
   return (
     <div className="nc-composer">
       {err && <div className="nc-composer-err">{err}</div>}
+      {info && <div className="nc-composer-info">{info}</div>}
       <div className="nc-composer-row">
         {session && (
           <button
@@ -273,6 +292,7 @@ export default function ComposerBar({ submitText, token, session, node, ownerId,
             <button role="menuitem" onClick={() => pick(fileInputRef)}><Icon name="file" size={18} /> {t('attach-file')}</button>
             <button role="menuitem" onClick={() => pick(camInputRef)}><Icon name="camera" size={18} /> {t('attach-camera')}</button>
             <button role="menuitem" onClick={() => pick(galInputRef)}><Icon name="image" size={18} /> {t('attach-gallery')}</button>
+            <button role="menuitem" onClick={() => pick(inboxInputRef)}><Icon name="folder" size={18} /> {t('attach-inbox')}</button>
           </div>
         )}
         <button
@@ -329,6 +349,8 @@ export default function ComposerBar({ submitText, token, session, node, ownerId,
           onChange={(e) => { uploadFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
         <input ref={galInputRef} type="file" accept="image/*,video/*" multiple hidden
           onChange={(e) => { uploadFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
+        <input ref={inboxInputRef} type="file" multiple hidden
+          onChange={(e) => { uploadToInbox(Array.from(e.target.files || [])); e.target.value = ''; }} />
         <textarea
           ref={textareaRef}
           className={expanded ? 'expanded' : ''}

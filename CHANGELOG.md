@@ -2,6 +2,31 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.11 — 2026-08-22 — "The Cell Gets Its Own Words"
+
+- **A `vl` cell now starts with its own prompt and the model you picked in the
+  UI.** It was the only engine that came up bare: the runtime had a branch for
+  it that did nothing, and the code path that hands a cell its prompt skipped
+  `vl` explicitly. The prompt is now written to a private per-cell file
+  (`0600`, atomic replace, symlinks refused, credentials never written there)
+  and passed by path, and the model/provider/base-url travel as environment.
+  A version gate compares the binary FIELD BY FIELD, so an older `vl` degrades
+  to the previous behaviour instead of being handed a flag it cannot parse —
+  and when it degrades it says so in the `/fleet/up` payload rather than
+  failing quietly.
+
+- **"Inbox" in the paperclip menu: upload a file without the cell reading it.**
+  File/Camera/Gallery upload the attachment AND put its path in the composer,
+  so the next Send makes the model read it — and a model that cannot take
+  images errors out and forces a restart. The new item keeps the file in the
+  inbox, reachable from `nc_inbox` and the Files panel, and leaves the composer
+  untouched: the operator decides when, and whether, it gets read. Contributed
+  by @sadoc1184-droid; the bundle shipped here was rebuilt from source on our
+  side rather than taken from the pull request.
+
+- Terminal selection: xterm's EXCLUSIVE end is converted at the boundary, so
+  consumers no longer see it as inclusive.
+
 ## 0.9.10 — 2026-08-19 — "What The Hand Expects"
 
 - **Selecting text now behaves the way a hand expects it to.** 0.9.9 made the
