@@ -54,16 +54,133 @@ test('vl argv: lancia la TUI senza argomenti; nessun prompt su argv; niente toke
   const home = homeWithVl();
   try {
     const eng = () => ({ id: 'vl.native', managed: { client: 'vl', provider: 'native', model: '', permissionPolicy: 'standard' } });
-    // TUI: nessun argomento, niente env/token
+    // TUI: nessun argomento, niente env/token. Lo stub `exit 0` non dichiara
+    // versione: il gate V-69 degrada (dichiarato), quindi NESSUNA env append.
     const r0 = resolveManagedEngine(eng(), { id: 'vl.native' }, { home, platform: 'linux', env: {} });
     assert.equal(r0.ok, true);
     assert.deepEqual(r0.engine.args, [], 'vl lancia la TUI senza argomenti');
-    assert.deepEqual(r0.engine.env, {}, 'runtime locale: nessun token/credenziale');
+    assert.deepEqual(r0.engine.env, {}, 'runtime locale: nessun token/credenziale (e append degradata, non composta)');
     // anche con un prompt di cella, vl NON lo riceve su argv (TUI senza superficie prompt)
     const r1 = resolveManagedEngine(eng(), { id: 'vl.native', prompt: 'you are dev' }, { home, platform: 'linux', env: {} });
     assert.deepEqual(r1.engine.args, [], 'vl non accetta prompt su argv (TUI senza superficie prompt)');
     assert.equal(JSON.stringify(r1.engine).toLowerCase().includes('token'), false);
+    // degrado DICHIARATO (lo stub non dice la versione), non silenzio
+    assert.ok(r1.engine.vlPromptDegraded, 'versione non determinabile dallo stub -> degrado dichiarato');
+    assert.equal(r1.engine.env.VL_SYSTEM_APPEND_FILE, undefined, 'degradato: la env append NON si compone');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+// --- V-69: prompt per-cella via VL_SYSTEM_APPEND_FILE + modello dalla UI -----
+// Il probe di versione e' iniettabile (cfg.vlVersionProbe) perche' i test non
+// dipendano da un vl vero: torna l'output GREZZO di `vl --version`.
+const PROBE_031 = () => 'vl 0.3.1\n';
+const PROBE_010 = () => 'vl 0.1.0\n';
+
+function vlResolve(home, cell, cfgExtra = {}) {
+  const engine = { id: 'vl.native', managed: { client: 'vl', provider: 'native', model: '', permissionPolicy: 'standard' } };
+  return resolveManagedEngine(engine, cell, { home, platform: 'linux', env: {}, ...cfgExtra });
+}
+
+test('V-69 gate versione regge (0.3.1): file per-cella scritto + env composta, NESSUN degrado', () => {
+  const home = homeWithVl();
+  try {
+    const r = vlResolve(home, { id: 'Dev', prompt: 'You are the Dev cell.' }, { vlVersionProbe: PROBE_031 });
+    assert.equal(r.ok, true);
+    assert.equal(r.engine.vlPromptDegraded, undefined, 'versione che regge: nessun degrado');
+    const target = r.engine.env.VL_SYSTEM_APPEND_FILE;
+    assert.ok(target, 'VL_SYSTEM_APPEND_FILE composta');
+    assert.equal(target, path.join(home, '.nexuscrew', 'vl-prompts', 'Dev.md'), 'file per-cella sotto ~/.nexuscrew (forma del precedente pi)');
+    assert.ok(fs.existsSync(target), 'il file esiste');
+    const content = fs.readFileSync(target, 'utf8');
+    assert.ok(content.startsWith('You are the Dev cell.'), 'il prompt della cella apre il file');
+    assert.ok(content.includes('NexusCrew companions'), 'le istruzioni companion seguono il prompt (vl non ha client MCP)');
+    assert.ok((fs.statSync(target).mode & 0o777) === 0o600, 'file 0600: non esposto ad altri utenti');
+    assert.ok((fs.statSync(path.dirname(target)).mode & 0o777) === 0o700, 'directory 0700');
+    assert.deepEqual(r.engine.args, [], 'il prompt resta FUORI da argv (visibile in ps)');
+    assert.equal(JSON.stringify(r.engine).toLowerCase().includes('token'), false);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('V-69 CONTROLLO NEGATIVO — versione vecchia (0.1.0): env append NON composta + degrado DICHIARATO (mai silenzio)', () => {
+  const home = homeWithVl();
+  try {
+    const r = vlResolve(home, { id: 'Dev', prompt: 'You are the Dev cell.' }, { vlVersionProbe: PROBE_010 });
+    assert.equal(r.ok, true, 'la cella PARTE lo stesso: degrado, non blocco');
+    assert.equal(r.engine.env.VL_SYSTEM_APPEND_FILE, undefined, 'mai una env che il runtime ignorerebbe in silenzio');
+    assert.ok(r.engine.vlPromptDegraded && r.engine.vlPromptDegraded.includes('0.1.0'), 'il degrado nomina la versione trovata');
+    assert.ok(r.engine.vlPromptDegraded.includes('0.3.1'), 'il degrado nomina la versione minima');
+    assert.ok(!fs.existsSync(path.join(home, '.nexuscrew')), 'degradato per versione: nessun file scritto');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('V-69 probe non risponde / output non riconosciuto: degrado fail-closed con motivo, cella parte', () => {
+  const home = homeWithVl();
+  try {
+    const rNull = vlResolve(home, { id: 'Dev', prompt: 'p' }, { vlVersionProbe: () => null });
+    assert.equal(rNull.ok, true);
+    assert.equal(rNull.engine.env.VL_SYSTEM_APPEND_FILE, undefined);
+    assert.ok(rNull.engine.vlPromptDegraded.includes('non determinabile'), 'probe muto: motivo non determinabile');
+    const rJunk = vlResolve(home, { id: 'Dev', prompt: 'p' }, { vlVersionProbe: () => 'qualcosaltro' });
+    assert.ok(rJunk.engine.vlPromptDegraded.includes('non riconosciuta'), 'output inatteso: motivo non riconosciuta');
+    // 0.10.0 > 0.3.1 per CAMPI, non per stringa ('0.10.0' < '0.3.1' come testo)
+    const r0100 = vlResolve(home, { id: 'Dev', prompt: 'p' }, { vlVersionProbe: () => 'vl 0.10.0\n' });
+    assert.equal(r0100.engine.vlPromptDegraded, undefined, '0.10.0 regge: confronto per campi, non lessicale');
+    assert.ok(r0100.engine.env.VL_SYSTEM_APPEND_FILE, '0.10.0: append composta');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('V-69 senza prompt di cella: il file porta comunque le istruzioni companion (superficie MCP di vl)', () => {
+  const home = homeWithVl();
+  try {
+    const r = vlResolve(home, { id: 'Dev' }, { vlVersionProbe: PROBE_031 });
+    const target = r.engine.env.VL_SYSTEM_APPEND_FILE;
+    assert.ok(target, 'append composta anche senza prompt');
+    const content = fs.readFileSync(target, 'utf8');
+    assert.ok(content.includes('NexusCrew companions'), 'il companion raggiunge vl anche senza prompt di cella');
+    assert.ok(!content.startsWith('\n'), 'nessun separatore orfano senza prompt');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('V-69 modello dalla UI: scelto -> tripletta VL_MODEL/VL_PROVIDER/VL_BASE_URL; assente -> NESSUNA env modello', () => {
+  const home = homeWithVl();
+  try {
+    const r = vlResolve(home, { id: 'Dev', model: 'gemma4:31b' }, { vlVersionProbe: PROBE_031 });
+    assert.equal(r.engine.env.VL_MODEL, 'gemma4:31b', 'la scelta UI ha effetto');
+    assert.equal(r.engine.env.VL_PROVIDER, 'openai-compat', 'provider valido per vl (native = Ollama locale)');
+    assert.equal(r.engine.env.VL_BASE_URL, 'http://127.0.0.1:11434', 'endpoint locale coerente col profilo vl.native');
+    const r0 = vlResolve(home, { id: 'Dev' }, { vlVersionProbe: PROBE_031 });
+    assert.equal(r0.engine.env.VL_MODEL, undefined, 'nessun modello scelto: il config.toml dell\'operatore comanda');
+    assert.equal(r0.engine.env.VL_PROVIDER, undefined);
+    assert.equal(r0.engine.env.VL_BASE_URL, undefined);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('V-69 difese del percorso per-cella: id traversal e symlink -> degrado, mai scrittura fuori posto', () => {
+  const home = homeWithVl();
+  try {
+    // '..' passa CELL_ID_RE ma come filename e' traversal: rifiutato, degradato
+    const rDot = vlResolve(home, { id: '..', prompt: 'p' }, { vlVersionProbe: PROBE_031 });
+    assert.equal(rDot.ok, true, 'la cella parte');
+    assert.equal(rDot.engine.env.VL_SYSTEM_APPEND_FILE, undefined, 'niente env su un file che non si puo\' scrivere in sicurezza');
+    assert.ok(rDot.engine.vlPromptDegraded.includes('non scrivibile in sicurezza'), 'degrado con motivo');
+    assert.ok(!fs.existsSync(path.join(home, '.nexuscrew', 'vl-prompts')), 'nessun file scritto');
+    // symlink al posto della directory: stessa difesa del precedente pi
+    fs.mkdirSync(path.join(home, 'evil'), { recursive: true });
+    fs.symlinkSync(path.join(home, 'evil'), path.join(home, '.nexuscrew'));
+    const rLink = vlResolve(home, { id: 'Dev', prompt: 'p' }, { vlVersionProbe: PROBE_031 });
+    assert.ok(rLink.engine.vlPromptDegraded.includes('non scrivibile in sicurezza'), 'symlink dir: degrado');
+    assert.equal(fs.readdirSync(path.join(home, 'evil')).length, 0, 'NULLA scritto attraverso il symlink');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('V-69 budget: companionInstructions sta in poche righe (<= 2048 caratteri) — oltre, la spesa va ridiscussa', () => {
+  // Il testo companion entra nel system di OGNI turno di OGNI cella vl: su un
+  // modello locale a 32k non e' gratis. La soglia codifica "poche righe": se il
+  // catalogo companions cresce al punto da superarla, questo test cade e la
+  // decisione se spenderlo torna a chi la decisione spetta, non al silenzio.
+  const { companionInstructions } = require('../lib/mcp/server.js');
+  const text = companionInstructions();
+  assert.ok(text.length > 0 && text.length <= 2048, `companionInstructions: ${text.length} caratteri (soglia 2048)`);
 });
 
 test('vl describeManaged: binario assente -> non configurato (NESSUN gate di piattaforma)', () => {

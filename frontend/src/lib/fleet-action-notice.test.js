@@ -70,4 +70,29 @@ describe('upActionNotice', () => {
     });
     expect(n.code).toBe('KIMI_AUTH_ACTION_REQUIRED');
   });
+
+  // V-69: /fleet/up risponde vlPromptDegraded:true quando una cella vl parte
+  // senza il proprio prompt di cella (runtime < 0.3.1 o file per-cella non
+  // scrivibile). La cella e' viva ma senza identita': il fatto deve vedersi,
+  // non sparire nel booleano. Strict === true perche' il payload puo' arrivare
+  // da un nodo remoto federato; testo i18n locale, come gli altri notice.
+  it('vlPromptDegraded true -> avviso i18n locale, non silenzio', () => {
+    const n = upActionNotice({ ok: true, cell: 'Dev', session: 'work-vl', vlPromptDegraded: true });
+    expect(n).not.toBeNull();
+    expect(n.code).toBe('VL_PROMPT_DEGRADED');
+    expect(n.text).toBeTruthy();
+    expect(n.text.length).toBeGreaterThan(10);
+    expect(n.text).not.toBe('fleet-vl-prompt-degraded', 'chiave i18n risolta, non grezza');
+  });
+
+  it('vlPromptDegraded assente o non-true -> null (nessun falso degrado)', () => {
+    expect(upActionNotice({ ok: true, cell: 'Dev', session: 's' })).toBeNull();
+    expect(upActionNotice({ ok: true, vlPromptDegraded: false })).toBeNull();
+    expect(upActionNotice({ ok: true, vlPromptDegraded: 'evil' })).toBeNull();
+  });
+
+  it('vlPromptDegraded vince su readinessDegraded: identita' + ' mancante piu' + ' grave del timing', () => {
+    const n = upActionNotice({ ok: true, vlPromptDegraded: true, readinessDegraded: true });
+    expect(n.code).toBe('VL_PROMPT_DEGRADED');
+  });
 });
