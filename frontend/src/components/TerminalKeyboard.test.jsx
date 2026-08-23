@@ -70,10 +70,17 @@ vi.mock('@xterm/xterm', () => ({
     clearSelection() { this.selectionText = ''; }
     select(col, row, length) {
       this.selectCalls.push({ col, row, length });
-      const endLinear = row * this.cols + col + length - 1;
+      // R37: end ESCLUSIVO come finalSelectionEnd di xterm (startPlusLength =
+      // col + length, [cols, y] a fine riga), non incluso di una cella.
+      const spl = col + length;
+      const end = spl > this.cols
+        ? (spl % this.cols === 0
+          ? { x: this.cols, y: row + Math.floor(spl / this.cols) - 1 }
+          : { x: spl % this.cols, y: row + Math.floor(spl / this.cols) })
+        : { x: spl, y: row };
       this.selectionPosition = {
         start: { x: col, y: row },
-        end: { x: endLinear % this.cols, y: Math.floor(endLinear / this.cols) },
+        end,
       };
     }
     write() {}

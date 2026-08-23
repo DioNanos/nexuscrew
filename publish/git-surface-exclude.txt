@@ -1,0 +1,28 @@
+# git-surface-exclude.txt — cosa NON esce sul repository pubblico.
+#
+# PERCHE' ESISTE. Ci sono DUE superfici pubbliche e finora ne era gatata una
+# sola. `tests/published-tree-is-clean.test.js` copre cio' che npm spedisce,
+# leggendo l'elenco da `package.json:files`. Il repository su GitHub pubblica
+# invece l'ALBERO INTERO, che e' un insieme piu' grande: un file puo' non
+# essere nel pacchetto npm e stare comunque online.
+#
+# Finora la differenza la teneva a mente chi pubblicava. Il documento del
+# 2026-08-15 lo aveva gia' dichiarato come debito: «l'estensione del gate
+# automatico, cosi' che questa passata non debba dipendere da chi si ricorda
+# di farla». Questo file e' quell'elenco, scritto una volta.
+#
+# COSA NON E': non e' una lista di segreti. E' la lista dei documenti di
+# LAVORO INTERNO — piani, specifiche, referti di audit — che parlano di come
+# la squadra lavora e non di come il prodotto funziona. Chi legge il repo
+# pubblico non deve dedurre l'organizzazione interna dai piani di sviluppo.
+#
+# Un percorso per riga; `dir/` esclude ricorsivamente.
+
+# Piani e specifiche di lavoro interno.
+docs/superpowers/
+
+# Stato di lavoro corrente della cella, non del prodotto.
+docs/CURRENT_STATE.md
+
+# Referti di audit: nominano chi ha auditato e con che verdetto.
+test-report/

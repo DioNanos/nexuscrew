@@ -25,6 +25,17 @@ export function upActionNotice(result) {
       return { code: ar.code, recovery: ar.recovery, text: t(`fleet-recovery-${ar.recovery}`) };
     }
   }
+  // V-69: /fleet/up porta vlPromptDegraded:true quando una cella vl parte
+  // senza il proprio prompt di cella (il runtime sul nodo non regge
+  // VL_SYSTEM_APPEND_FILE, 0.3.1+, o il file per-cella non e' scrivibile in
+  // sicurezza). La cella e' viva ma lavora senza la sua identita'. Booleano
+  // strict === true e testo i18n locale, come per i flag qui accanto.
+  // Ordine: actionRequired > vlPromptDegraded > readinessDegraded — l'identita'
+  // mancante pesa piu' del timing di prontezza (chi non elabora subito verra'
+  // comunque riscoperto al primo incarico; chi lavora senza prompt sbaglia).
+  if (result && typeof result === 'object' && result.vlPromptDegraded === true) {
+    return { code: 'VL_PROMPT_DEGRADED', recovery: null, text: t('fleet-vl-prompt-degraded') };
+  }
   // R27 #3: /fleet/up porta readinessDegraded:true quando una cella vl parte
   // senza marcatore di prontezza (DEC1 in runtime.js: degrada e procede).
   // Quel risultato veniva scartato e la cella appariva semplicemente «attiva»:

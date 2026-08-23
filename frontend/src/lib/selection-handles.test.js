@@ -132,13 +132,37 @@ describe('snapWideCol — bordo del glifo largo (Termux getValidCurX)', () => {
 });
 
 describe('rangeFromXterm', () => {
-  it('traduce {x,y} di xterm in {row,col}', () => {
-    expect(rangeFromXterm({ start: { x: 2, y: 1 }, end: { x: 5, y: 3 } }))
-      .toEqual({ start: { row: 1, col: 2 }, end: { row: 3, col: 5 } });
+  // R37: l'end di getSelectionPosition() e' ESCLUSIVO — la prima cella NON
+  // selezionata, non l'ultima selezionata. Prove nei sorgenti @xterm/xterm:
+  // SelectionModel.finalSelectionEnd produce [col+length, row] (il +1 di
+  // getRangeLength) e [cols, y] a fine riga; il DomRenderer disegna la
+  // selezione come [start, end); isCellInSelection testa coords[0] < end[0].
+  it('traduce {x,y} di xterm in {row,col} e converte l\'end ESCLUSIVO al confine', () => {
+    expect(rangeFromXterm({ start: { x: 2, y: 1 }, end: { x: 5, y: 3 } }, 80))
+      .toEqual({ start: { row: 1, col: 2 }, end: { row: 3, col: 4 } });
+  });
+  it('x = cols (selezione fino a fine riga): end inclusivo e\' l\'ultima cella della riga', () => {
+    // finalSelectionEnd produce [cols, y] quando la selezione finisce
+    // esattamente al bordo destro (startPlusLength % cols === 0).
+    expect(rangeFromXterm({ start: { x: 3, y: 2 }, end: { x: 80, y: 2 } }, 80))
+      .toEqual({ start: { row: 2, col: 3 }, end: { row: 2, col: 79 } });
+  });
+  it('end oltre il confine di riga (x=0 riga dopo): ricade sull\'ultima cella della riga prima', () => {
+    // finalSelectionEnd non lo produce (a fine riga vale [cols,y]), ma la
+    // conversione in spazio lineare lo assume comunque corretto.
+    expect(rangeFromXterm({ start: { x: 0, y: 4 }, end: { x: 0, y: 5 } }, 80))
+      .toEqual({ start: { row: 4, col: 0 }, end: { row: 4, col: 79 } });
+  });
+  it('range invertito (drag nativo all\'indietro): normalizza e converte il capo giusto', () => {
+    expect(rangeFromXterm({ start: { x: 9, y: 1 }, end: { x: 2, y: 1 } }, 80))
+      .toEqual({ start: { row: 1, col: 2 }, end: { row: 1, col: 8 } });
   });
   it('senza range restituisce null, non un finto range', () => {
-    expect(rangeFromXterm(null)).toBeNull();
-    expect(rangeFromXterm({ start: { x: 0, y: 0 } })).toBeNull();
+    expect(rangeFromXterm(null, 80)).toBeNull();
+    expect(rangeFromXterm({ start: { x: 0, y: 0 } }, 80)).toBeNull();
+  });
+  it('senza cols non c\'e\' confine in cui convertire: null, non un range sbagliato di 1', () => {
+    expect(rangeFromXterm({ start: { x: 2, y: 1 }, end: { x: 5, y: 3 } })).toBeNull();
   });
 });
 
