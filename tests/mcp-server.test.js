@@ -700,11 +700,11 @@ test('nc_notify: lang invalida fallisce localmente senza perdere una chiamata va
 test('identita cella: con $TMUX la sessione viene da display-message (execFile finto)', async () => {
   const execFileImpl = (bin, args, _opts, cb) => {
     assert.equal(bin, 'tmux');
-    assert.deepEqual(args, ['display-message', '-p', '#S']);
+    assert.deepEqual(args, ['display-message', '-t', '%5', '-p', '#S']);
     cb(null, 'work-build\n');
   };
   const { srv, calls } = makeSrv({
-    env: { TMUX: '/tmp/fake-tmux,1,0' },
+    env: { TMUX: '/tmp/fake-tmux,1,0', TMUX_PANE: '%5' },
     execFileImpl,
     responder: () => ({ status: 200, json: { delivered: { ui: 0, push: 0 } } }),
   });
@@ -754,7 +754,7 @@ test('nc_identity: fallback valido (no TMUX, NEXUSCREW_MCP_SESSION valido) -> so
 
 test('nc_identity: tmux valido (TMUX set, display-message ok) -> source tmux', async () => {
   const execFileImpl = (bin, args, _opts, cb) => {
-    assert.deepEqual([bin, args], ['tmux', ['display-message', '-p', '#S']]);
+    assert.deepEqual([bin, args], ['tmux', ['display-message', '-t', '%5', '-p', '#S']]);
     cb(null, 'work-build\n');
   };
   const { srv, out, calls } = makeSrv({
@@ -1274,19 +1274,21 @@ test('se la verifica di versione fallisce, l\'errore originale esce intatto', as
   assert.doesNotMatch(testo, /riavvia questa cella/);
 });
 
-// --- P0: identità fail-closed — pane stantio (DevWorker apre, P rifinisce) ---
+// --- P0: identità fail-closed — pane stantio (prima stesura + rifinitura) ---
 // Il difetto misurato: `display-message -p '#S'` senza `-t` risolve la sessione
 // del CLIENT ATTACHED, non del pane del chiamante. Con TMUX_PANE che punta a un
 // pane morto, tmux risponde rc=0 con un nome valido (quello del client) e
-// l'identità viene attribuita comunque. Atteso (fail-closed): pane non
-// corrispondente -> NON attribuire -> code STALE_PANE.
+// l'identità viene attribuita comunque.
+// Rifinitura: il nome ora si chiede con `-t $TMUX_PANE` (una chiamata, nome e
+// verifica sullo stesso pane); sul ramo d'errore `list-panes -a` distingue il
+// pane stantio (STALE_PANE) da tmux degradato (comportamento storico).
 test('P0: TMUX_PANE inesistente -> identita NON attribuita (fail-closed, STALE_PANE)', async () => {
   const execFileImpl = (bin, args, _opts, cb) => {
     assert.equal(bin, 'tmux');
-    if (args[0] === 'display-message' && args[1] === '-p' && args[2] === '#S') {
-      cb(null, 'cloud-Dev\n'); // sessione del client attached (pane %5)
-    } else if (args[0] === 'display-message' && args[1] === '-p' && args[2] === '#{pane_id} #{session_name}') {
-      cb(null, '%5 cloud-Dev\n'); // pane risolto dal client, diverso da TMUX_PANE=%999
+    if (args[0] === 'display-message' && args[1] === '-t' && args[2] === '%999') {
+      cb(new Error('can\'t find pane: %999')); // pane morto: tmux rc!=0
+    } else if (args[0] === 'list-panes' && args[1] === '-a' && args[2] === '-F') {
+      cb(null, '%5\n%7\n'); // pane vivi del server: %999 NON c'è
     } else {
       cb(new Error('argv inatteso: ' + JSON.stringify(args)));
     }
@@ -1304,16 +1306,9 @@ test('P0: TMUX_PANE inesistente -> identita NON attribuita (fail-closed, STALE_P
 });
 
 test('P0: TMUX presente ma TMUX_PANE assente -> identita NON attribuita (fail-closed, STALE_PANE)', async () => {
-  const execFileImpl = (bin, args, _opts, cb) => {
-    assert.equal(bin, 'tmux');
-    if (args[0] === 'display-message' && args[1] === '-p' && args[2] === '#S') {
-      cb(null, 'cloud-Dev\n');
-    } else if (args[0] === 'display-message' && args[1] === '-p' && args[2] === '#{pane_id} #{session_name}') {
-      cb(null, '%5 cloud-Dev\n');
-    } else {
-      cb(new Error('argv inatteso: ' + JSON.stringify(args)));
-    }
-  };
+  // Senza TMUX_PANE il pane non è targetizzabile: NESSUNA chiamata a tmux è
+  // attesa — il finto fallisce se viene toccato.
+  const execFileImpl = () => { throw new Error('tmux non doveva essere chiamato senza TMUX_PANE'); };
   const { srv, out, calls } = makeSrv({
     env: { TMUX: '/tmp/fake-tmux,1,0' }, // niente TMUX_PANE
     execFileImpl,
@@ -1323,5 +1318,103 @@ test('P0: TMUX presente ma TMUX_PANE assente -> identita NON attribuita (fail-cl
   assert.equal(j.identified, false);
   assert.equal(j.session, undefined);
   assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_STALE_PANE');
+  assert.equal(calls.length, 0);
+});
+
+test('P0: TMUX_PANE malformato -> STALE_PANE, NESSUNA chiamata tmux (il valore non parte mai)', async () => {
+  const execFileImpl = () => { throw new Error('tmux non doveva essere chiamato con TMUX_PANE malformato'); };
+  const { srv, out, calls } = makeSrv({
+    env: { TMUX: '/tmp/fake-tmux,1,0', TMUX_PANE: '5; rm -rf /' }, // senza %: malformato
+    execFileImpl,
+  });
+  await srv.handleLine(rpc(39, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.identified, false);
+  assert.equal(j.session, undefined);
+  assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_STALE_PANE');
+  assert.equal(calls.length, 0);
+});
+
+test('P0: pane vivo ma client attached altrove -> display -t risponde col nome DEL PANE (attribuzione corretta)', async () => {
+  // Con la soluzione a cross-check senza -t questo caso degradava una cella
+  // sana: il client attached su un'altra sessione faceva mismatch -> STALE_PANE
+  // falso. Con -t il nome arriva dal pane del chiamante, non dal client.
+  const execFileImpl = (bin, args, _opts, cb) => {
+    assert.equal(bin, 'tmux');
+    assert.deepEqual(args, ['display-message', '-t', '%5', '-p', '#S']);
+    cb(null, 'cloud-CheVaLentissimo\n'); // sessione del PANE %5, non del client
+  };
+  const { srv, out, calls } = makeSrv({
+    env: { TMUX: '/tmp/fake-tmux,1,0', TMUX_PANE: '%5' },
+    execFileImpl,
+  });
+  await srv.handleLine(rpc(40, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.identified, true);
+  assert.equal(j.session, 'cloud-CheVaLentissimo');
+  assert.equal(j.source, 'tmux');
+  assert.equal(j.code, 'OK');
+  assert.equal(calls.length, 0);
+});
+
+test('P0: display -t fallisce ma il pane è vivo (tmux degradato) + fallback valido -> source NEXUSCREW_MCP_SESSION', async () => {
+  const execFileImpl = (bin, args, _opts, cb) => {
+    assert.equal(bin, 'tmux');
+    if (args[0] === 'display-message') {
+      cb(new Error('display-message rotto'));
+    } else if (args[0] === 'list-panes') {
+      cb(null, '%5\n'); // il pane ESISTE: non è stale, è tmux degradato
+    } else {
+      cb(new Error('argv inatteso: ' + JSON.stringify(args)));
+    }
+  };
+  const { srv, out, calls } = makeSrv({
+    env: { TMUX: '/tmp/fake-tmux,1,0', TMUX_PANE: '%5', NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    execFileImpl,
+  });
+  await srv.handleLine(rpc(41, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.identified, true);
+  assert.equal(j.session, 'cloud-Dev');
+  assert.equal(j.source, 'NEXUSCREW_MCP_SESSION'); // precedenza preservata
+  assert.equal(j.code, 'OK');
+  assert.equal(calls.length, 0);
+});
+
+test('P0: display -t fallisce ma il pane è vivo (tmux degradato), senza fallback -> INVALID (storico), NON STALE_PANE', async () => {
+  const execFileImpl = (bin, args, _opts, cb) => {
+    assert.equal(bin, 'tmux');
+    if (args[0] === 'display-message') {
+      cb(new Error('display-message rotto'));
+    } else if (args[0] === 'list-panes') {
+      cb(null, '%5\n');
+    } else {
+      cb(new Error('argv inatteso: ' + JSON.stringify(args)));
+    }
+  };
+  const { srv, out, calls } = makeSrv({
+    env: { TMUX: '/tmp/fake-tmux,1,0', TMUX_PANE: '%5' },
+    execFileImpl,
+  });
+  await srv.handleLine(rpc(42, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.identified, false);
+  assert.equal(j.session, undefined);
+  assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_INVALID'); // segnale presente, tmux degradato
+  assert.equal(calls.length, 0);
+});
+
+test('P0: tmux del tutto irraggiungibile (display e list-panes falliscono) + fallback valido -> source NEXUSCREW_MCP_SESSION', async () => {
+  const execFileImpl = (_bin, _args, _opts, cb) => cb(new Error('no server'));
+  const { srv, out, calls } = makeSrv({
+    env: { TMUX: '/tmp/fake-tmux,1,0', TMUX_PANE: '%5', NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    execFileImpl,
+  });
+  await srv.handleLine(rpc(43, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.identified, true);
+  assert.equal(j.session, 'cloud-Dev');
+  assert.equal(j.source, 'NEXUSCREW_MCP_SESSION');
+  assert.equal(j.code, 'OK');
   assert.equal(calls.length, 0);
 });
