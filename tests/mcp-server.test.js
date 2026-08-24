@@ -1273,3 +1273,55 @@ test('se la verifica di versione fallisce, l\'errore originale esce intatto', as
   assert.match(testo, /permesso negato/);
   assert.doesNotMatch(testo, /riavvia questa cella/);
 });
+
+// --- P0: identità fail-closed — pane stantio (DevWorker apre, P rifinisce) ---
+// Il difetto misurato: `display-message -p '#S'` senza `-t` risolve la sessione
+// del CLIENT ATTACHED, non del pane del chiamante. Con TMUX_PANE che punta a un
+// pane morto, tmux risponde rc=0 con un nome valido (quello del client) e
+// l'identità viene attribuita comunque. Atteso (fail-closed): pane non
+// corrispondente -> NON attribuire -> code STALE_PANE.
+test('P0: TMUX_PANE inesistente -> identita NON attribuita (fail-closed, STALE_PANE)', async () => {
+  const execFileImpl = (bin, args, _opts, cb) => {
+    assert.equal(bin, 'tmux');
+    if (args[0] === 'display-message' && args[1] === '-p' && args[2] === '#S') {
+      cb(null, 'cloud-Dev\n'); // sessione del client attached (pane %5)
+    } else if (args[0] === 'display-message' && args[1] === '-p' && args[2] === '#{pane_id} #{session_name}') {
+      cb(null, '%5 cloud-Dev\n'); // pane risolto dal client, diverso da TMUX_PANE=%999
+    } else {
+      cb(new Error('argv inatteso: ' + JSON.stringify(args)));
+    }
+  };
+  const { srv, out, calls } = makeSrv({
+    env: { TMUX: '/tmp/fake-tmux,1,0', TMUX_PANE: '%999' },
+    execFileImpl,
+  });
+  await srv.handleLine(rpc(37, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.identified, false);
+  assert.equal(j.session, undefined);
+  assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_STALE_PANE');
+  assert.equal(calls.length, 0);
+});
+
+test('P0: TMUX presente ma TMUX_PANE assente -> identita NON attribuita (fail-closed, STALE_PANE)', async () => {
+  const execFileImpl = (bin, args, _opts, cb) => {
+    assert.equal(bin, 'tmux');
+    if (args[0] === 'display-message' && args[1] === '-p' && args[2] === '#S') {
+      cb(null, 'cloud-Dev\n');
+    } else if (args[0] === 'display-message' && args[1] === '-p' && args[2] === '#{pane_id} #{session_name}') {
+      cb(null, '%5 cloud-Dev\n');
+    } else {
+      cb(new Error('argv inatteso: ' + JSON.stringify(args)));
+    }
+  };
+  const { srv, out, calls } = makeSrv({
+    env: { TMUX: '/tmp/fake-tmux,1,0' }, // niente TMUX_PANE
+    execFileImpl,
+  });
+  await srv.handleLine(rpc(38, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.identified, false);
+  assert.equal(j.session, undefined);
+  assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_STALE_PANE');
+  assert.equal(calls.length, 0);
+});
