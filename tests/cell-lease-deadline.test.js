@@ -16,6 +16,7 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const net = require('node:net');
+const { PassThrough } = require('node:stream');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -317,5 +318,49 @@ test('T7 IC3.2/IC10: il refresh di Alpha tocca SOLO i path di Alpha (tmp per-pid
   assert.ok(paths.some((p) => p.endsWith('.tmp')), 'IC10: passa da un temporaneo distinto');
   assert.ok(scritti.some((s) => s.startsWith('renameSync:')), 'IC10: replace atomico del file canonico');
   client.destroy();
+  mgr.close();
+});
+
+// --- T8: IC1.3 — la transazione update→persist→ACK+proof è UN solo giro --------
+
+// IC1.3 non si prova guardando che l'ordine oggi sia giusto (T1/T3 pinnano già
+// i valori e il frame): si prova rompendo l'atomicità e vedendo che qualcuno se
+// ne accorge. L'osservatore è il TEMPO DI CONSEGNA: con un socket in-process
+// (PassThrough, consegna sincrona nello stesso stack del write) l'ACK arriva al
+// detentore NELLO STESSO task in cui il commit è avvenuto — oppure, se un
+// refactor inserisce un `await` fra persist e ACK, dopo almeno un giro di event
+// loop. Il clock «che passa mentre il loop gira» è un setImmediate schedulato
+// PRIMA del refresh: se la transazione è indivisibile la consegna lo precede e
+// il proof consegnato è vivo; se la transazione si spezza, il proof consegnato
+// è già scaduto rispetto al clock di consegna — un «successo» inutilizzabile.
+// ( È la stessa finestra del disco lento di IC1.6/M2, qui aperta dall'async
+//   invece che dalla write: in entrambi i casi l'ACK celebra una D già morta. )
+test('T8 IC1.3: ACK consegnato nello STESSO task del commit — un yield fra persist e ACK consegna un proof gia morto', async () => {
+  const clock = makeClock(10_000);
+  const { mgr } = setup(clock);
+  await mgr.track('Research');
+  const pt = new PassThrough();
+  assert.equal(mgr.attachInitial('Research', pt, { generation: 0 }), true);
+  // Il clock di consegna va catturato DENTRO l'handler 'data' (la consegna è
+  // sincrona dentro la pt.write: dopo l'await il loop sarebbe già girato e la
+  // misura avvelenata). recv si ARMA prima della write, o l'ACK sync viene
+  // consegnato a nessuno.
+  let consegnaClock = null;
+  const ackP = recv(pt, (m) => {
+    if (m.type === 'ack' && m.proof) { consegnaClock = clock.t; return true; }
+    return false;
+  });
+  // Il «tempo che passa» per un giro di event loop. Schedulato PRIMA della
+  // write del refresh: in coda davanti a qualunque setImmediate che la
+  // transazione stessa possa attendere (FIFO), quindi gira comunque dentro la
+  // finestra di un eventuale yield — e solo in quel caso prima della consegna.
+  setImmediate(() => { clock.t += PROOF_TTL_MS + 1_000; });
+  pt.write(`${JSON.stringify({ type: 'refresh' })}\n`);
+  const ack = await ackP;
+  assert.ok(Number(ack.proof.expiresAt) > consegnaClock,
+    `IC1.3 rotta: ACK consegnato dopo almeno un giro di event loop dal commit `
+    + `(proof expiry ${Number(ack.proof.expiresAt)} <= clock di consegna ${consegnaClock}): `
+    + `la transazione update→persist→ACK+proof non è indivisibile`);
+  pt.destroy();
   mgr.close();
 });
