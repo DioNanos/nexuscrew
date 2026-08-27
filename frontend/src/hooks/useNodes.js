@@ -164,6 +164,27 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
           : recordPeerFailure(backoffRef.current, key, remote[key].cause, pollStart);
       }));
       if (!alive) return;
+      // Nodi NON raggiungibili (tunnel giu', passive, needs-repair diretti;
+      // topology stale): la lettura fleet non e' VERIFICABILE, non assente —
+      // stessa forma del backoff R21. L'ultimo elenco noto resta visibile
+      // come elenco fermo (stale) finche' il nodo non torna su: a quel punto
+      // il fetch autorevole (available, anche vuoto, o disabled) LO SOSTITUISCE
+      // per intero — nessuna unione, quindi una cella eliminata davvero sparisce.
+      for (const n of nodes) {
+        if (n.tunnel?.status === 'up') continue;
+        const cachedFleet = peerCacheRef.current.fleet[n.name];
+        if (cachedFleet && !fleet[n.name]) {
+          fleet[n.name] = { ...cachedFleet, available: false, fleetState: 'stale' };
+        }
+      }
+      for (const n of topology) {
+        if (!n.stale || !Array.isArray(n.route) || !n.route.length) continue;
+        const key = n.route.join('/');
+        const cachedFleet = peerCacheRef.current.fleet[key];
+        if (cachedFleet && !fleet[key]) {
+          fleet[key] = { ...cachedFleet, available: false, fleetState: 'stale' };
+        }
+      }
       const first = buildNodeGroups({ nodes, topology, remote, fleet, aliases, down: downRef.current });
       downRef.current = trackDown(downRef.current, first, Math.floor(Date.now() / 1000));
       setGroups([
