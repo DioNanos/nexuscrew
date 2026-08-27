@@ -167,6 +167,11 @@
 .nc-cell.live { cursor: pointer; }
 .nc-cell.live:hover { background: rgba(255,255,255,0.06); }
 .nc-cell.active { outline: 1px solid rgba(0,204,102,0.5); }
+/* Cella preservata (nodo non raggiungibile): elenco fermo, distinguibile a
+   colpo d'occhio da una cella di un nodo vivo — tratteggiata, attenuata. */
+.nc-cell.preserved { opacity: .55; border-style: dashed; cursor: default; }
+.nc-cell.preserved .nc-cell-main b { color: #8fa08f; }
+.nc-cell.preserved .nc-cell-main small { font-style: italic; }
 
 .nc-side-presets { display:flex; gap:4px; padding:2px 8px 6px; }
 .nc-side-presets button { background:none; border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:inherit; cursor:pointer; padding:2px 8px; }

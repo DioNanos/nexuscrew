@@ -90,6 +90,34 @@ test('inventario: backward-compat senza fleet -> cells vuote, sessions tutte le 
   assert.deepEqual(grp.sessions.map((s) => s.name), ['cloud-dev', 'work'], 'sessions = tutte le tmux (retrocompat)');
 });
 
+test('inventario: Fleet stale conserva l\'ultimo elenco ma non lo spaccia per aggiornato', async () => {
+  const { buildNodeGroups } = await nodes();
+  const base = {
+    nodes: [{ name: 'vps', tunnel: { status: 'up' }, nodeId: ID }],
+    remote: { vps: { sessions: [{ name: 'cloud-dev' }] } },
+  };
+  const cell = { cell: 'dev', tmuxSession: 'cloud-dev', engine: 'claude', active: true };
+  const full = buildNodeGroups({ ...base, fleet: { vps: { available: true, cells: [cell] } } });
+  const stale = buildNodeGroups({ ...base, fleet: {
+    vps: { available: false, fleetState: 'stale', cells: [cell] },
+  } });
+  const empty = buildNodeGroups({ ...base, fleet: {
+    vps: { available: true, cells: [] },
+  } });
+  const disabled = buildNodeGroups({ ...base, fleet: {
+    vps: { available: false, fleetState: 'disabled', cells: [] },
+  } });
+
+  assert.equal(full[0].fleetState, 'available');
+  assert.deepEqual(stale[0].cells.map((item) => item.cell), ['dev']);
+  assert.equal(stale[0].fleetState, 'stale');
+  assert.equal(stale[0].fleetAvailable, false);
+  assert.deepEqual(empty[0].cells, []);
+  assert.equal(empty[0].fleetState, 'available');
+  assert.deepEqual(disabled[0].cells, []);
+  assert.equal(disabled[0].fleetState, 'disabled');
+});
+
 test('inventario: nodo degradato (down/unreachable) -> cells vuote, niente crash', async () => {
   const { buildNodeGroups } = await nodes();
   const g = buildNodeGroups({
@@ -146,4 +174,104 @@ test('inventario: engines e route restano associati alle celle remote per il Pow
   });
   assert.deepEqual(groups[0].engines, [{ id: 'claude.zai-p' }]);
   assert.deepEqual(groups[0].cells[0].route, ['relay']);
+});
+
+// --- Celle preservate: il nodo cade, l'elenco resta finché la rimozione è VERA ---
+
+test('celle preservate: nodo DOWN con ultimo elenco noto -> celle visibili e marcate', async () => {
+  const { buildNodeGroups } = await nodes();
+  const cells = [
+    { cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'claude', active: true },
+    { cell: 'Fork', tmuxSession: 'cloud-Fork', engine: 'codex', active: false },
+    { cell: 'Research', tmuxSession: 'cloud-Research', engine: 'glm', active: true },
+  ];
+  const groups = buildNodeGroups({
+    nodes: [{ name: 'vps', nodeId: 'a'.repeat(32), tunnel: { status: 'down' } }],
+    fleet: { vps: { available: false, fleetState: 'stale', cells } },
+    down: {},
+  });
+  const grp = groups[0];
+  assert.equal(grp.status, 'down', 'ramo esercitato: nodo diretto caduto');
+  assert.equal(grp.cells.length, 3, 'le 3 celle dell\'ultimo elenco restano visibili');
+  assert.equal(grp.cellsPreserved, true, 'il gruppo dichiara l\'elenco preservato');
+  assert.equal(grp.fleetState, 'stale');
+  assert.ok(grp.cells.every((c) => c.preserved === true), 'ogni cella è marcata preserved');
+  assert.ok(grp.cells.every((c) => Array.isArray(c.route) && c.route[0] === 'vps'), 'identità route-qualified mantenuta');
+});
+
+test('celle preservate: nodo OFFLINE (topology stale) conserva l\'ultimo elenco', async () => {
+  const { buildNodeGroups } = await nodes();
+  const groups = buildNodeGroups({
+    nodes: [],
+    topology: [{ route: ['vps'], stale: true, lastSeen: 111 }],
+    fleet: { vps: { available: false, fleetState: 'stale', cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev', active: true }] } },
+    down: {},
+  });
+  const grp = groups[0];
+  assert.equal(grp.status, 'offline', 'ramo esercitato: nodo federato stale (il caso «OFFLINE» del sintomo)');
+  assert.equal(grp.cellsPreserved, true);
+  assert.equal(grp.cells.length, 1);
+  assert.equal(grp.cells[0].preserved, true);
+});
+
+test('celle preservate: P2 — il ritorno con dato autorevole SOSTITUISCE, non unisce', async () => {
+  const { buildNodeGroups } = await nodes();
+  const tre = [
+    { cell: 'Dev', tmuxSession: 'cloud-Dev', active: true },
+    { cell: 'Fork', tmuxSession: 'cloud-Fork', active: true },
+    { cell: 'Research', tmuxSession: 'cloud-Research', active: true },
+  ];
+  const due = tre.slice(0, 2);
+  const giu = buildNodeGroups({
+    nodes: [{ name: 'vps', nodeId: 'a'.repeat(32), tunnel: { status: 'down' } }],
+    fleet: { vps: { available: false, fleetState: 'stale', cells: tre } },
+    down: {},
+  });
+  assert.equal(giu[0].cells.length, 3, 'da giù si parte con 3 conservate');
+  const su = buildNodeGroups({
+    nodes: [{ name: 'vps', nodeId: 'a'.repeat(32), tunnel: { status: 'up' } }],
+    remote: { vps: { sessions: [{ name: 'cloud-Dev' }] } },
+    fleet: { vps: { available: true, fleetState: 'available', cells: due } },
+    down: {},
+  });
+  assert.equal(su[0].status, 'up');
+  assert.equal(su[0].cellsPreserved, undefined, 'nessuna conservazione con dato fresco');
+  assert.deepEqual(su[0].cells.map((c) => c.cell), ['Dev', 'Fork'], 'la terza cella SPARISCE (rimozione vera)');
+  assert.ok(su[0].cells.every((c) => c.preserved === undefined));
+});
+
+test('celle preservate: P4 — la caduta di un nodo non tocca l\'elenco dell\'altro', async () => {
+  const { buildNodeGroups } = await nodes();
+  const groups = buildNodeGroups({
+    nodes: [
+      { name: 'a', nodeId: 'a'.repeat(32), tunnel: { status: 'down' } },
+      { name: 'b', nodeId: 'b'.repeat(32), tunnel: { status: 'up' } },
+    ],
+    remote: { b: { sessions: [{ name: 'cloud-X' }] } },
+    fleet: {
+      a: { available: false, fleetState: 'stale', cells: [{ cell: 'A1', tmuxSession: 'cloud-A1', active: true }] },
+      b: { available: true, cells: [{ cell: 'B1', tmuxSession: 'cloud-X', active: true }] },
+    },
+    down: {},
+  });
+  const ga = groups.find((g) => g.name === 'a');
+  const gb = groups.find((g) => g.name === 'b');
+  assert.equal(ga.status, 'down');
+  assert.deepEqual(ga.cells.map((c) => c.cell), ['A1'], 'A conserva le proprie');
+  assert.equal(ga.cellsPreserved, true);
+  assert.equal(gb.status, 'up');
+  assert.deepEqual(gb.cells.map((c) => c.cell), ['B1'], 'B resta col proprio elenco vivo');
+  assert.equal(gb.cellsPreserved, undefined);
+});
+
+test('celle preservate: nodo mai visto giù -> nessuna cella fantasma', async () => {
+  const { buildNodeGroups } = await nodes();
+  const groups = buildNodeGroups({
+    nodes: [{ name: 'nuovo', nodeId: 'c'.repeat(32), tunnel: { status: 'down' } }],
+    fleet: {},
+    down: {},
+  });
+  assert.equal(groups[0].status, 'down');
+  assert.equal(groups[0].cellsPreserved, undefined, 'senza ultimo elenco noto niente conservazione');
+  assert.deepEqual(groups[0].cells, []);
 });
