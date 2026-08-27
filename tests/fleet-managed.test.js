@@ -239,6 +239,7 @@ test('Ollama Direct discovery: errore API usa la shortlist TOP di fallback', asy
   assert.deepEqual(models, [
     'glm-5.2', 'kimi-k2.7-code', 'deepseek-v4-pro', 'minimax-m3',
     'qwen3.5:397b', 'deepseek-v4-flash', 'mistral-large-3:675b', 'gemma4:31b',
+    'glm-5.3-flash',
   ]);
 });
 
@@ -314,7 +315,11 @@ test('Ollama Direct: usa ollama.com + OLLAMA_API_KEY, mai localhost', () => {
       }
       else {
         assert.ok(r.engine.args.includes(`model_context_window=${OLLAMA_CONTEXT['glm-5.2']}`));
-        assert.ok(r.engine.args.includes(`model_catalog_json="${catalog}"`));
+        // Dal 2026-08-27 il catalogo e' GENERATO dagli id dichiarati
+        // dell'engine (custom-catalogs/<client>.<provider>.json); il file
+        // utente ~/.codex/ollama_cloud_model_catalog.json resta solo fallback.
+        const generated = r.engine.args.find((a) => a.startsWith('model_catalog_json='));
+        assert.ok(generated && generated.includes('custom-catalogs'), `atteso catalogo generato, trovato: ${generated}`);
       }
     }
   } finally { fs.rmSync(home, { recursive: true, force: true }); }

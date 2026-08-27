@@ -140,9 +140,9 @@
       "supports_search_tool": false
     },
     {
-      "slug": "grok-4.5",
-      "display_name": "grok-4.5",
-      "description": "OpenCode Go: grok-4.5",
+      "slug": "grok-4.6",
+      "display_name": "grok-4.6",
+      "description": "OpenCode Go: grok-4.6",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {
