@@ -55,7 +55,7 @@ function problemsFor(fleet) {
     const profile = profileForEngine(e.id);
     if (!profile || profile.custom || !Array.isArray(profile.models)) continue;
     const ok = profile.models.includes(model) || (declaredByEngine.get(e.id) || new Set()).has(model);
-    if (!ok) problems.push(`engine "${e.id}": default managed.model "${model}" NON dichiarato ne' in fleet.json models ne' nella lista del profilo ${client_(e.id)}/${profile.provider}`);
+    if (!ok) problems.push(`engine "${e.id}": default managed.model "${model}" NON dichiarato ne' in fleet.json models ne' nella lista del profilo ${profile.client}/${profile.provider}`);
   }
   for (const c of (Array.isArray(fleet.cells) ? fleet.cells : [])) {
     if (!c) continue;
@@ -75,7 +75,7 @@ test('D10: ogni modello usato da una cella o da un default engine e\' dichiarato
 test('D10 (fixture): un modello non dichiarato produce rosso nominando cella, engine e modello', () => {
   const fleet = {
     schemaVersion: 1,
-    engines: [{ id: 'codex-vl.opencode-go', managed: { model: 'deepseek-v4-flash' } }],
+    engines: [{ id: 'codex-vl.opencode-go', managed: { model: 'modello-inesistente' } }],
     models: [],
     cells: [
       { id: 'Probe', engine: 'codex-vl.opencode-go', model: 'glm-5.3-flash' },
@@ -83,6 +83,10 @@ test('D10 (fixture): un modello non dichiarato produce rosso nominando cella, en
     ],
   };
   const problems = problemsFor(fleet);
-  assert.equal(problems.length, 1, `atteso esattamente 1 problema, trovati: ${JSON.stringify(problems)}`);
-  assert.match(problems[0], /"Probe".*codex-vl\.opencode-go.*"glm-5\.3-flash"/);
+  assert.equal(problems.length, 2, `attesi 2 problemi (cella + default engine), trovati: ${JSON.stringify(problems)}`);
+  // I default engine vengono controllati prima delle celle: [0]=engine, [1]=cella.
+  // Il default incoerente deve dare verdetto (non ReferenceError: audit
+  // 0314517 R3 — ramo che prima lanciava client_ is not defined).
+  assert.match(problems[0], /engine "codex-vl\.opencode-go".*"modello-inesistente"/);
+  assert.match(problems[1], /"Probe".*codex-vl\.opencode-go.*"glm-5\.3-flash"/);
 });

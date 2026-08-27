@@ -1054,7 +1054,7 @@ test('launch ollama-cloud genera il catalogo con le capacita dichiarate (niente 
     fs.writeFileSync(secrets, 'OLLAMA_API_KEY=ollama-secret\n', { mode: 0o600 });
     const r = await resolve(
       { id: 'codex-vl.ollama-cloud', label: 'Ollama', managed: { client: 'codex-vl', provider: 'ollama-cloud', model: 'glm-5.3-flash' } },
-      { id: 'Research' },
+      { id: 'cella-ollama' },
       { home, providerSecretsPath: secrets, env: {} },
     );
     assert.equal(r.ok, true, `resolve fallito: ${r.reason}`);
@@ -1066,7 +1066,34 @@ test('launch ollama-cloud genera il catalogo con le capacita dichiarate (niente 
     assert.ok(entry, 'voce glm-5.3-flash assente dal catalogo generato');
     assert.equal(entry.context_window, 1000000, 'finestra non 1M');
     assert.deepEqual(entry.input_modalities, ['text', 'image'], 'vision non dichiarata');
-    assert.equal(entry.supports_parallel_tool_calls, true, 'parallel tools non dichiarate');
+    // parallel NON dichiarato dalla scheda: default conservativo false
+    // finche' non misurato su device (rilievo audit 0314517).
+    assert.equal(entry.supports_parallel_tool_calls, false, 'parallel deve restare conservativo');
     assert.ok(r.engine.args.includes('model_context_window=1000000'));
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('launch ollama-cloud: generazione impossibile ricade sul file utente (no launch failure)', () => {
+  // Audit 0314517 R2: se il path del catalogo generato e' occupato (es. da
+  // una directory), customCatalogFor lancia — il launch NON deve fallire:
+  // ricade sul file utente ~/.codex/ollama_cloud_model_catalog.json.
+  const home = tmp();
+  try {
+    fakeClient(home, 'codex-vl');
+    const stuck = path.join(home, '.nexuscrew', 'custom-catalogs', 'codex-vl.ollama-cloud.json');
+    fs.mkdirSync(stuck, { recursive: true });
+    const userCatalog = path.join(home, '.codex', 'ollama_cloud_model_catalog.json');
+    fs.mkdirSync(path.dirname(userCatalog), { recursive: true });
+    fs.writeFileSync(userCatalog, '{"models":[{"slug":"glm-5.2"}]}\n');
+    const secrets = path.join(home, 'providers.env');
+    fs.writeFileSync(secrets, 'OLLAMA_API_KEY=ollama-secret\n', { mode: 0o600 });
+    const r = resolveManagedEngine(
+      { id: 'codex-vl.ollama-cloud', label: 'Ollama', managed: { client: 'codex-vl', provider: 'ollama-cloud', model: 'glm-5.2' } },
+      { id: 'Dev' },
+      { home, providerSecretsPath: secrets, env: {} },
+    );
+    assert.equal(r.ok, true, `launch non deve fallire: ${r && r.reason}`);
+    const catArg = r.engine.args.find((a) => a.startsWith('model_catalog_json='));
+    assert.ok(catArg && catArg.includes('ollama_cloud_model_catalog.json'), `atteso fallback utente, trovato: ${catArg}`);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
