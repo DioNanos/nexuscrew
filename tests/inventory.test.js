@@ -90,6 +90,34 @@ test('inventario: backward-compat senza fleet -> cells vuote, sessions tutte le 
   assert.deepEqual(grp.sessions.map((s) => s.name), ['cloud-dev', 'work'], 'sessions = tutte le tmux (retrocompat)');
 });
 
+test('inventario: Fleet stale conserva l\'ultimo elenco ma non lo spaccia per aggiornato', async () => {
+  const { buildNodeGroups } = await nodes();
+  const base = {
+    nodes: [{ name: 'vps', tunnel: { status: 'up' }, nodeId: ID }],
+    remote: { vps: { sessions: [{ name: 'cloud-dev' }] } },
+  };
+  const cell = { cell: 'dev', tmuxSession: 'cloud-dev', engine: 'claude', active: true };
+  const full = buildNodeGroups({ ...base, fleet: { vps: { available: true, cells: [cell] } } });
+  const stale = buildNodeGroups({ ...base, fleet: {
+    vps: { available: false, fleetState: 'stale', cells: [cell] },
+  } });
+  const empty = buildNodeGroups({ ...base, fleet: {
+    vps: { available: true, cells: [] },
+  } });
+  const disabled = buildNodeGroups({ ...base, fleet: {
+    vps: { available: false, fleetState: 'disabled', cells: [] },
+  } });
+
+  assert.equal(full[0].fleetState, 'available');
+  assert.deepEqual(stale[0].cells.map((item) => item.cell), ['dev']);
+  assert.equal(stale[0].fleetState, 'stale');
+  assert.equal(stale[0].fleetAvailable, false);
+  assert.deepEqual(empty[0].cells, []);
+  assert.equal(empty[0].fleetState, 'available');
+  assert.deepEqual(disabled[0].cells, []);
+  assert.equal(disabled[0].fleetState, 'disabled');
+});
+
 test('inventario: nodo degradato (down/unreachable) -> cells vuote, niente crash', async () => {
   const { buildNodeGroups } = await nodes();
   const g = buildNodeGroups({

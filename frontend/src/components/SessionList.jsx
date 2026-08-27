@@ -416,8 +416,12 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
           non gestito da qui -> niente power finto. */}
       {preferredNodeGroups.map((g) => {
         const hd = healthDot(g.health, { passive: 'warn' });
-        const dotClass = hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
-        const dotTitle = g.health ? healthTitle(g.health) : (g.status === 'up' ? '' : nodeStateLabel(g));
+        const fleetNotice = g.fleetState === 'stale'
+          ? t('fleet-stale') : g.fleetState === 'disabled' ? t('fleet-off') : '';
+        const dotClass = g.fleetState === 'stale'
+          ? 'warn' : hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
+        const dotTitle = [g.health ? healthTitle(g.health) : (g.status === 'up' ? '' : nodeStateLabel(g)), fleetNotice]
+          .filter(Boolean).join(' · ');
         const route = g.route && g.route.length ? g.route : [g.name];
         const routeKey = route.join('/');
         const groupView = viewFor(routeKey);
@@ -473,9 +477,9 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
         return (
         <section key={`nodo-${routeKey}`} className="nc-group nc-node-order-wrap" data-position={routeKey}
           data-node-order-key={nodeKey(g)}>
-          <MobilePositionHeader label={g.label || g.name} count={items.length} state={groupView}
-            dotClass={dotClass} dotTitle={dotTitle}
-            detail={g.status === 'up' ? '' : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
+              <MobilePositionHeader label={g.label || g.name} count={items.length} state={groupView}
+                dotClass={dotClass} dotTitle={dotTitle}
+                detail={g.status === 'up' ? fleetNotice : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
             onToggle={() => updateView(routeKey, { open: !groupView.open })}
             onFilter={(filter) => updateView(routeKey, { filter })}
             onRename={g.direct ? () => promptNodeRename(g) : null} action={nodeActions} />

@@ -86,6 +86,17 @@ describe('mobile roster parity', () => {
     expect(await screen.findByText('tmux fleet · 3 sessions')).toBeTruthy();
   });
 
+  it('mantiene il roster remoto e rende il ramo non verificabile come stale', async () => {
+    fixture.nodes[0].fleetState = 'stale';
+    fixture.nodes[0].fleetAvailable = false;
+    renderRoster();
+
+    expect(await screen.findByText('Relay Live')).toBeTruthy();
+    expect(screen.getByText('Fleet read failed: the cell list may not be up to date.')).toBeTruthy();
+    const relay = document.querySelector('[data-position="relay"]');
+    expect(relay.querySelector('.dot').classList.contains('warn')).toBe(true);
+  });
+
   it('never reports more attached sessions than the normalized live inventory during cache convergence', async () => {
     fixture.sessions = [session('local-live', 20, { attached: true })];
     fixture.cells = [cell('Live Cell', 'local-live', false)];

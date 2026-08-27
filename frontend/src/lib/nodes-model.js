@@ -54,6 +54,23 @@ function enrichCells(f, route, key) {
   }));
 }
 
+// Fleet remoto: available e' dato aggiornato; stale e' l'ultimo elenco noto
+// mantenuto mentre la lettura non e' verificabile; disabled e' una risposta
+// autorevole che dichiara il fleet spento. Il fallback sui payload precedenti
+// senza fleetState resta fail-closed: available:false e' disabled, assenza di
+// payload e' stale.
+function fleetStateOf(f) {
+  if (f?.fleetState === 'stale') return 'stale';
+  if (f?.fleetState === 'disabled') return 'disabled';
+  if (f?.available === true && Array.isArray(f.cells)) return 'available';
+  if (f?.available === false) return 'disabled';
+  return 'stale';
+}
+
+function fleetInventoryKnown(f, state) {
+  return (state === 'available' || state === 'stale') && Array.isArray(f?.cells);
+}
+
 // buildNodeGroups({nodes, topology, remote, down, fleet}) -> gruppi ordinati.
 //   nodes:  lista /api/nodes (name, label?, tunnel:{status,...}, health?, ...)
 //   topology: lista /api/topology (route transitive, stale/lastSeen)
@@ -102,10 +119,12 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     const r = (remote && (remote[key] || remote[n.name])) || null;
     const f = fleet && (fleet[key] || fleet[n.name]);
     const sessionsAvailable = !!(r && !r.error && Array.isArray(r.sessions));
-    const fleetInventoryAvailable = !!(f && f.available === true && Array.isArray(f.cells));
+    const fleetState = fleetStateOf(f);
+    const fleetInventoryAvailable = fleetState === 'available' && fleetInventoryKnown(f, fleetState);
+    const fleetInventoryPresent = fleetInventoryKnown(f, fleetState);
     // A host without a running tmux server can still expose a complete Fleet
     // inventory. Do not hide its cells merely because /sessions is degraded.
-    if (!sessionsAvailable && !fleetInventoryAvailable) {
+    if (!sessionsAvailable && !fleetInventoryPresent) {
       // R21: la CAUSA del mancato raggiungimento viaggia col gruppo: tre
       // esiti (502/403/404) suggeriscono tre azioni diverse a chi guarda.
       out.push({ ...base, status: 'unreachable', cause: (r && r.cause) || null });
@@ -119,7 +138,8 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     out.push({
       ...base, status: 'up', sessions,
       cells, unmanaged: sessions.filter((s) => !cellTmux.has(s.name)),
-      fleetAvailable: !!(f && f.available), capabilities: (f && f.capabilities) || [],
+      fleetAvailable: fleetInventoryAvailable, fleetState,
+      capabilities: (f && f.capabilities) || [],
       engines: (f && f.engines) || [],
       fleetProvider: (f && f.provider) || null,
       sessionsAvailable, inventoryPartial: !sessionsAvailable,
@@ -145,8 +165,10 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     const r = (remote && remote[key]) || null;
     const f = fleet && fleet[key];
     const sessionsAvailable = !!(r && !r.error && Array.isArray(r.sessions));
-    const fleetInventoryAvailable = !!(f && f.available === true && Array.isArray(f.cells));
-    if (!sessionsAvailable && !fleetInventoryAvailable) {
+    const fleetState = fleetStateOf(f);
+    const fleetInventoryAvailable = fleetState === 'available' && fleetInventoryKnown(f, fleetState);
+    const fleetInventoryPresent = fleetInventoryKnown(f, fleetState);
+    if (!sessionsAvailable && !fleetInventoryPresent) {
       // R21: come sopra — la causa distingue l'assenza dal rifiuto dalla
       // rotta inesistente, e il recupero non deve buttarla via.
       out.push({ ...base, status: 'unreachable', downSince: (down && down[key]) || null, cause: (r && r.cause) || null });
@@ -159,7 +181,8 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     out.push({
       ...base, status: 'up', sessions,
       cells, unmanaged: sessions.filter((s) => !cellTmux.has(s.name)),
-      fleetAvailable: !!(f && f.available), capabilities: (f && f.capabilities) || [],
+      fleetAvailable: fleetInventoryAvailable, fleetState,
+      capabilities: (f && f.capabilities) || [],
       engines: (f && f.engines) || [],
       fleetProvider: (f && f.provider) || null, lastSeen: n.lastSeen || null,
       sessionsAvailable, inventoryPartial: !sessionsAvailable,

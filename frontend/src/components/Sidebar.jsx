@@ -523,7 +523,11 @@ export default function Sidebar({
           solo per nodi diretti gestibili; peer inbound non ha power fittizio. */}
       {remoteRosters.map(({ g, nodeRoute, groupView, rawItems, items: remoteItems }) => {
         const hd = healthDot(g.health);
-        const dotClass = hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
+        const fleetNotice = g.fleetState === 'stale'
+          ? t('fleet-stale') : g.fleetState === 'disabled' ? t('fleet-off') : '';
+        const dotClass = g.fleetState === 'stale'
+          ? 'warn' : hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
+        const dotTitle = [g.health ? healthTitle(g.health) : '', fleetNotice].filter(Boolean).join(' · ');
         // Gruppo nodo VL (VL_NODES_IN_SIDEBAR): stesso posto degli altri nodi,
         // conteggio onesto (1 se il device dichiara l'attach, 0 altrimenti);
         // offline mostra cio' che mostrano gli altri nodi offline. La riga
@@ -540,12 +544,12 @@ export default function Sidebar({
                   onMove={(source, target) => moveNode(source, target, nodeGroups || [])}
                   onStep={(delta) => stepNode(nodeKey(g), delta, nodeGroups || [])} />
                 <span className="nc-node-chevron">{groupView.open ? '⌄' : '›'}</span>
-                <span className={`nc-dot ${dotClass}`} title={g.health ? healthTitle(g.health) : ''} />
+                <span className={`nc-dot ${dotClass}`} title={dotTitle} />
                 <b>{g.label || g.name}</b>
                 <small>
                   {' · '}
                   {g.status === 'up'
-                    ? t('node-sessions').replace('{n}', String(g.sessions.length))
+                    ? [t('node-sessions').replace('{n}', String(g.sessions.length)), fleetNotice].filter(Boolean).join(' · ')
                     : nodeStateLabel(g)}
                 </small>
               </div>
@@ -576,12 +580,12 @@ export default function Sidebar({
               onMove={(source, target) => moveNode(source, target, nodeGroups || [])}
               onStep={(delta) => stepNode(nodeKey(g), delta, nodeGroups || [])} />
             <span className="nc-node-chevron">{groupView.open ? '⌄' : '›'}</span>
-            <span className={`nc-dot ${dotClass}`} title={g.health ? healthTitle(g.health) : ''} />
+            <span className={`nc-dot ${dotClass}`} title={dotTitle} />
             <b>{g.label || g.name}</b>
             <small>
               {' · '}
               {g.status === 'up'
-                ? t('node-sessions').replace('{n}', String(remoteItems.length))
+                ? [t('node-sessions').replace('{n}', String(remoteItems.length)), fleetNotice].filter(Boolean).join(' · ')
                 : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
             </small>
             <select className="nc-node-filter" value={groupView.filter} title={t(`view-${groupView.filter}`)}
