@@ -268,10 +268,28 @@ test('pty grace: exit durante la grazia viene consegnato al client di ritorno', 
   ws2.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't', reconnectToken }), false);
   assert.equal(openAttach.ptys.length, 1, 'un exit non crea un nuovo PTY');
   assert.deepEqual(ws2.sent.map((value) => typeof value === 'string' ? JSON.parse(value) : value), [
-    { type: 'attached', reconnectToken },
     { type: 'exit', code: 23 },
   ]);
   assert.equal(ws2.closedCode, 1000, 'il ritorno riceve la fine della sessione');
+  ws2.emit('message', Buffer.from('late-write'), true);
+  assert.equal(openAttach.ptys[0].writes.length, 0, 'un record terminato non accetta scritture successive');
+  grace.close();
+});
+
+test('pty grace: capability valida fuori scope non riprende un PTY vivo', () => {
+  const ws1 = fakeWs(); const ws2 = fakeWs(); const openAttach = fakePtyFactory();
+  const grace = createPtyGraceStore({ graceMs: 1000, randomBytes: () => Buffer.alloc(32, 12) });
+  bindWs(ws1, okDeps(openAttach, { ptyGrace: grace, isValidSession: () => true }));
+  ws1.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  const reconnectToken = JSON.parse(ws1.sent.at(-1)).reconnectToken;
+  ws1.emit('close');
+
+  bindWs(ws2, okDeps(openAttach, { ptyGrace: grace, isValidSession: () => false }));
+  ws2.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't', reconnectToken }), false);
+  console.log(`wrong_session=${ws2.closedCode} live_resume_consumed=${grace.size() === 0} pty_count=${openAttach.ptys.length}`);
+  assert.equal(ws2.closedCode, 4404, 'una capability non autorizza il resume di un PTY vivo');
+  assert.equal(grace.size(), 1, 'il PTY vivo resta sospeso e non viene consumato');
+  assert.equal(openAttach.ptys.length, 1, 'nessun nuovo PTY viene aperto');
   grace.close();
 });
 
