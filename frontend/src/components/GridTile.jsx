@@ -22,7 +22,7 @@ import './GridTile.css';
 // cellName (Tranche D): titolo visibile risolto dal campo Fleet `cell` (es.
 // `Dev`). node/route/tmuxSession restano identita' tecniche e non compaiono
 // nel titolo visibile; solo il tooltip porta un identificativo tecnico.
-export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, available = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0 }) {
+export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, sessionAlive = alive, available = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0 }) {
   const [inputPreferences] = useInputPreferences();
   // Titolo visibile = nome logico Fleet (gestita) o nome sessione (unmanaged).
   // session (tmuxSession reale) resta l'identita' del tile per attach/drag.
@@ -41,19 +41,20 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
   const [showPanel, setShowPanel] = useState(false);
   const [filesEvent, setFilesEvent] = useState(null);
   const [terminalGeneration, setTerminalGeneration] = useState(0);
-  const previousAlive = useRef(alive);
+  const previousSessionAlive = useRef(sessionAlive);
   const tileKey = node ? `${node}:${session}` : session;
   const deckTargets = decks.filter((deck) => deck.id !== currentDeck && deck.available !== false);
 
-  // Preserve the ended transcript while the cell is off. When the same tmux
-  // session becomes live again, remount just xterm/socket in this same tile.
+  // `alive` is the node-health indicator. Only a real session disappearance
+  // may create a new xterm/socket generation; a node health flap must not
+  // destroy the existing terminal and trigger another full redraw.
   useEffect(() => {
-    const wasAlive = previousAlive.current;
-    if (!wasAlive && alive) {
-      setTerminalGeneration((value) => nextTerminalGeneration(wasAlive, alive, value));
+    const wasSessionAlive = previousSessionAlive.current;
+    if (!wasSessionAlive && sessionAlive) {
+      setTerminalGeneration((value) => nextTerminalGeneration(wasSessionAlive, sessionAlive, value));
     }
-    previousAlive.current = alive;
-  }, [alive]);
+    previousSessionAlive.current = sessionAlive;
+  }, [sessionAlive]);
 
   return (
     <div
