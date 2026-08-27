@@ -43,7 +43,7 @@ function makeFetch(responder) {
   return { calls, impl };
 }
 
-function makeSrv({ env = {}, responder, execFileImpl, tokenPath, idFactory } = {}) {
+function makeSrv({ env = {}, responder, execFileImpl, tokenPath, idFactory, identityRetryMs } = {}) {
   const dir = tmpdir();
   const tp = tokenPath || writeToken(dir);
   const out = makeOut();
@@ -55,6 +55,7 @@ function makeSrv({ env = {}, responder, execFileImpl, tokenPath, idFactory } = {
     fetchImpl: f.impl,
     execFileImpl: execFileImpl || (() => { throw new Error('tmux non deve essere chiamato'); }),
     ...(idFactory ? { idFactory } : {}),
+    ...(identityRetryMs !== undefined ? { identityRetryMs } : {}),
     errlog: () => {},
   });
   return { srv, out, calls: f.calls, dir };
@@ -1417,4 +1418,97 @@ test('P0: display-message in errore (tmux rotto), senza fallback -> INVALID (sto
   assert.equal(j.session, undefined);
   assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_INVALID'); // segnale presente, tmux rotto
   assert.equal(calls.length, 0);
+});
+
+// --- identita': il fallimento non resta cacheato a vita (Area 1, boot) ------
+// Il caso reale: il server MCP parte in un daemon avviato da systemd PRIMA che
+// tmux sia raggiungibile; display-message fallisce, e con la cache a vita
+// l'identita' restava assente anche dopo che tmux era su.
+test('identita: fallimento al boot non resta bloccato — retry dopo la finestra (revival)', async () => {
+  let tmuxUp = false;
+  const execFileImpl = (_bin, _args, _opts, cb) => {
+    if (!tmuxUp) return cb(new Error('connect failed'));
+    cb(null, 'cloud-Revived\n');
+  };
+  const { srv, out } = makeSrv({
+    env: { TMUX: '/tmp/fake-tmux,1,0', TMUX_PANE: '%7' },
+    execFileImpl,
+    identityRetryMs: 5,
+  });
+  await srv.handleLine(rpc(61, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  let j = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(j.identified, false);
+  // Contratto storico: TMUX presente + tmux irraggiungibile -> INVALID
+  // (segnale di identita' presente ma non risolvibile), non MISSING.
+  assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_INVALID');
+  tmuxUp = true; // il server tmux parte DOPO il primo tentativo
+  await new Promise((r) => setTimeout(r, 20)); // oltre la finestra di retry
+  await srv.handleLine(rpc(62, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  j = JSON.parse(out.lines[1].result.content[0].text);
+  assert.equal(j.identified, true);
+  assert.equal(j.session, 'cloud-Revived'); // il fallimento NON ha bloccato la risoluzione
+  assert.equal(j.code, 'OK');
+});
+
+// Controllo negativo del revival: dentro la finestra di anti-hammering il
+// fallimento resta cacheato — un tmux rotto non esegue display-message per
+// ogni tool call. Il revival esiste SOLO oltre la finestra.
+test('identita: anti-hammering — dentro la finestra NON si ri-esegue display-message', async () => {
+  let calls = 0;
+  const execFileImpl = (_bin, _args, _opts, cb) => {
+    calls += 1;
+    cb(new Error('connect failed'));
+  };
+  const { srv, out } = makeSrv({
+    env: { TMUX: '/tmp/fake-tmux,1,0', TMUX_PANE: '%8' },
+    execFileImpl,
+    identityRetryMs: 60_000,
+  });
+  await srv.handleLine(rpc(63, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  await srv.handleLine(rpc(64, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const j1 = JSON.parse(out.lines[0].result.content[0].text);
+  const j2 = JSON.parse(out.lines[1].result.content[0].text);
+  assert.equal(j1.identified, false);
+  assert.equal(j2.identified, false);
+  assert.equal(calls, 1); // UNA sola execFile per due chiamate dentro la finestra
+});
+
+// --- il tool bloccato nomina la causa, non piu' il solo MISSING generico ----
+// (Area 1: nc_identity distingueva STALE_PANE, ma l'errore del tool che si
+// bloccava riduceva tutto a MISSING — chi leggeva andava a allowlistare
+// variabili che erano gia' allowlistate.)
+test('tool bloccato nomina la causa STALE_PANE (pane morto, non MISSING generico)', async () => {
+  // tmux 3.4, -t su pane morto: rc=0 e stdout VUOTO — il segnale dello stantio.
+  const execFileImpl = (_bin, _args, _opts, cb) => cb(null, '\n');
+  const { srv, out } = makeSrv({
+    env: { TMUX: '/tmp/fake-tmux,1,0', TMUX_PANE: '%9' },
+    execFileImpl,
+    identityRetryMs: 60_000,
+  });
+  await srv.handleLine(rpc(65, 'tools/call', { name: 'nc_ask', arguments: { question: 'x' } }));
+  const r = out.lines[0].result;
+  assert.equal(r.isError, true);
+  const msg = r.content[0].text;
+  assert.match(msg, /\[NEXUSCREW_MCP_IDENTITY_STALE_PANE\]/);
+  assert.match(msg, /pane tmux/); // la causa e' nominata nel messaggio del tool
+  assert.equal(/NEXUSCREW_MCP_IDENTITY_MISSING/.test(msg), false);
+});
+
+test('tool bloccato nomina la causa SESSION_MISMATCH (fonti discordi)', async () => {
+  const execFileImpl = (_bin, _args, _opts, cb) => cb(null, 'cloud-Real\n');
+  const { srv, out } = makeSrv({
+    env: {
+      TMUX: '/tmp/fake-tmux,1,0',
+      TMUX_PANE: '%10',
+      NEXUSCREW_MCP_SESSION: 'cloud-Altra',
+    },
+    execFileImpl,
+    identityRetryMs: 60_000,
+  });
+  await srv.handleLine(rpc(66, 'tools/call', { name: 'nc_ask', arguments: { question: 'x' } }));
+  const r = out.lines[0].result;
+  assert.equal(r.isError, true);
+  const msg = r.content[0].text;
+  assert.match(msg, /\[NEXUSCREW_MCP_IDENTITY_SESSION_MISMATCH\]/);
+  assert.match(msg, /sessioni diverse/);
 });
