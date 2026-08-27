@@ -1040,3 +1040,33 @@ test('describeManaged: credenziale ASSENTE (ENOENT) -> "missing" + "set it on th
     assert.doesNotMatch(info.reason, /non verificabile/i);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
+
+test('launch ollama-cloud genera il catalogo con le capacita dichiarate (niente fallback metadata)', async () => {
+  // Il warning «Model metadata ... not found» nasce in codex-vl quando il
+  // lookup del catalogo fallisce (used_fallback_model_metadata). La prova che
+  // il ramo launch lo elimina: gli args portano un model_catalog_json il cui
+  // JSON contiene la voce del modello con contesto e modalita' vere.
+  const { resolveManagedEngine: resolve } = require('../lib/fleet/managed.js');
+  const home = tmp();
+  try {
+    fakeClient(home, 'codex-vl');
+    const secrets = path.join(home, 'providers.env');
+    fs.writeFileSync(secrets, 'OLLAMA_API_KEY=ollama-secret\n', { mode: 0o600 });
+    const r = await resolve(
+      { id: 'codex-vl.ollama-cloud', label: 'Ollama', managed: { client: 'codex-vl', provider: 'ollama-cloud', model: 'glm-5.3-flash' } },
+      { id: 'Research' },
+      { home, providerSecretsPath: secrets, env: {} },
+    );
+    assert.equal(r.ok, true, `resolve fallito: ${r.reason}`);
+    const catArg = r.engine.args.find((a) => a.startsWith('model_catalog_json='));
+    assert.ok(catArg, 'catalogo generato assente dagli args');
+    const catPath = JSON.parse(catArg.slice('model_catalog_json='.length));
+    const cat = JSON.parse(fs.readFileSync(catPath, 'utf8'));
+    const entry = cat.models.find((m) => m.slug === 'glm-5.3-flash');
+    assert.ok(entry, 'voce glm-5.3-flash assente dal catalogo generato');
+    assert.equal(entry.context_window, 1000000, 'finestra non 1M');
+    assert.deepEqual(entry.input_modalities, ['text', 'image'], 'vision non dichiarata');
+    assert.equal(entry.supports_parallel_tool_calls, true, 'parallel tools non dichiarate');
+    assert.ok(r.engine.args.includes('model_context_window=1000000'));
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
