@@ -2167,6 +2167,45 @@ export const DICTS = {
   },
 };
 
+export const THREAD_STATUS_I18N_KEYS = Object.freeze([
+  'host-thread-designated',
+  'host-thread-present',
+  'host-thread-active',
+  'host-thread-unknown',
+]);
+
+const LIVE_CONNECTION_TERM_RE = /\b(?:connected|conness[aoei]|conectad[oa]s?|attached|agganciat[oaie]|attaccat[oaie])\b/i;
+const PRESENCE_TERM_RE = /\b(?:present|presente)\b/gi;
+
+function hasUnqualifiedPresence(value) {
+  const lower = value.toLowerCase();
+  for (const match of lower.matchAll(PRESENCE_TERM_RE)) {
+    const start = Math.max(0, match.index - 24);
+    const end = Math.min(lower.length, match.index + match[0].length + 24);
+    if (!lower.slice(start, end).includes('thread')) return true;
+  }
+  return false;
+}
+
+// These are the labels users see for thread state. Keep the guard scoped to
+// these keys so unrelated product copy can evolve independently.
+export function assertThreadStatusLabelsAreThreadOnly(dicts = DICTS) {
+  for (const lang of LANGS) {
+    const dict = dicts?.[lang];
+    if (!dict) throw new Error(`${lang}: missing dictionary`);
+    for (const key of THREAD_STATUS_I18N_KEYS) {
+      const value = dict[key];
+      if (typeof value !== 'string' || value.trim() === '') {
+        throw new Error(`${lang}.${key}: missing label`);
+      }
+      if (LIVE_CONNECTION_TERM_RE.test(value) || hasUnqualifiedPresence(value)) {
+        throw new Error(`${lang}.${key}: label must describe the thread, not Live connection`);
+      }
+    }
+  }
+  return true;
+}
+
 export function getLang() {
   const ls = safeLocal();
   const v = ls ? ls.getItem(LANG_KEY) : null;
