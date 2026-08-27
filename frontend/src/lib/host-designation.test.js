@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  hostRenderState, hostNextAction, HOST_NONE, HOST_FAVORITE, HOST_LIVE,
+  hostRenderState, hostNextAction, HOST_NONE, HOST_FAVORITE, HOST_THREAD_UNKNOWN,
+  HOST_DESIGNATED,
   hostRouteKey, hostDesignationFailureMessage,
 } from './host-designation.js';
 import { buildLocalRoster } from './roster-view-model.js';
@@ -32,7 +33,7 @@ describe('hostRenderState — identita\' da item.value.cell (NON da item.key)', 
 
   it('live quando hostCell === item.value.cell (il valore server, anche senza pin)', () => {
     const dev = localItems().find((i) => i.value.cell === 'Dev');
-    expect(hostRenderState({ hostCell: 'Dev', pins: [], item: dev })).toBe(HOST_LIVE);
+    expect(hostRenderState({ hostCell: 'Dev', pins: [], item: dev })).toBe(HOST_THREAD_UNKNOWN);
   });
 
   it('NEGATIVA: hostCell uguale al tmuxSession (item.key) NON e\' live — e\' none', () => {
@@ -50,7 +51,7 @@ describe('hostRenderState — identita\' da item.value.cell (NON da item.key)', 
 
   it('live vince su favorite se entrambi veri', () => {
     const dev = localItems().find((i) => i.value.cell === 'Dev');
-    expect(hostRenderState({ hostCell: 'Dev', pins: ['cloud-Dev'], item: dev })).toBe(HOST_LIVE);
+    expect(hostRenderState({ hostCell: 'Dev', pins: ['cloud-Dev'], item: dev })).toBe(HOST_THREAD_UNKNOWN);
   });
 
   it('none quando non host e non pinnata', () => {
@@ -69,7 +70,7 @@ describe('hostNextAction — ciclo a 3 stati, nessun quarto', () => {
   it('none -> addPin, favorite -> designate, live -> clearAndUnpin', () => {
     expect(hostNextAction(HOST_NONE)).toBe('addPin');
     expect(hostNextAction(HOST_FAVORITE)).toBe('designate');
-    expect(hostNextAction(HOST_LIVE)).toBe('clearAndUnpin');
+    expect(hostNextAction(HOST_THREAD_UNKNOWN)).toBe('clearAndUnpin');
   });
 });
 
@@ -87,7 +88,7 @@ describe('ciclo end-to-end su item reale (desktop e mobile usano lo stesso model
     // e il valore e' item.value.cell (il campo server), non item.key.
     expect(hostNextAction(hostRenderState({ hostCell, pins, item: dev }))).toBe('designate');
     hostCell = dev.value.cell; // 'Dev', riflesso della risposta
-    expect(hostRenderState({ hostCell, pins, item: dev })).toBe(HOST_LIVE);
+    expect(hostRenderState({ hostCell, pins, item: dev })).toBe(HOST_THREAD_UNKNOWN);
 
     // clic 3: clearAndUnpin
     expect(hostNextAction(hostRenderState({ hostCell, pins, item: dev }))).toBe('clearAndUnpin');
@@ -105,7 +106,7 @@ describe('ciclo end-to-end su item reale (desktop e mobile usano lo stesso model
   it('regression auditor: clic 2 accende davvero il rosso (non resta favorite)', () => {
     // era il difetto misurato: hostCell registrato ma stellina non aggiornata.
     const dev = localItems().find((i) => i.value.cell === 'Dev');
-    expect(hostRenderState({ hostCell: 'Dev', pins: [dev.key], item: dev })).toBe(HOST_LIVE);
+    expect(hostRenderState({ hostCell: 'Dev', pins: [dev.key], item: dev })).toBe(HOST_THREAD_UNKNOWN);
   });
 });
 
@@ -119,22 +120,22 @@ describe('hostLeaseTitleKey', () => {
   const dev = localItems().find((i) => i.value.cell === 'Dev');
 
   it('live host: una chiave DISTINCTA per ognuno dei cinque stati', () => {
-    expect(hostLeaseTitleKey('live', 'live')).toBe('host-lease-live');
-    expect(hostLeaseTitleKey('live', 'grace')).toBe('host-lease-grace');
-    expect(hostLeaseTitleKey('live', 'expired')).toBe('host-lease-expired');
-    expect(hostLeaseTitleKey('live', 'none')).toBe('host-lease-none');
-    expect(hostLeaseTitleKey('live', 'unavailable')).toBe('host-lease-unavailable');
+    expect(hostLeaseTitleKey(HOST_DESIGNATED, 'live')).toBe('host-lease-live');
+    expect(hostLeaseTitleKey(HOST_DESIGNATED, 'grace')).toBe('host-lease-grace');
+    expect(hostLeaseTitleKey(HOST_DESIGNATED, 'expired')).toBe('host-lease-expired');
+    expect(hostLeaseTitleKey(HOST_DESIGNATED, 'none')).toBe('host-lease-none');
+    expect(hostLeaseTitleKey(HOST_DESIGNATED, 'unavailable')).toBe('host-lease-unavailable');
   });
 
   it('nessuno stato lease da mostrare fuori dal live host, o senza stato dal server', () => {
     expect(hostLeaseTitleKey('favorite', 'grace')).toBeNull();
     expect(hostLeaseTitleKey('none', 'live')).toBeNull();
-    expect(hostLeaseTitleKey('live', null)).toBeNull();
-    expect(hostLeaseTitleKey('live', undefined)).toBeNull();
+    expect(hostLeaseTitleKey(HOST_DESIGNATED, null)).toBeNull();
+    expect(hostLeaseTitleKey(HOST_DESIGNATED, undefined)).toBeNull();
   });
 
   it('uno stato sconosciuto non inventa una etichetta (nessuna bugia)', () => {
-    expect(hostLeaseTitleKey('live', 'bogus')).toBeNull();
+    expect(hostLeaseTitleKey(HOST_DESIGNATED, 'bogus')).toBeNull();
   });
 });
 

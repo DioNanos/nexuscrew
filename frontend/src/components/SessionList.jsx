@@ -12,7 +12,7 @@ import RosterHandle from './RosterHandle.jsx';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
 import {
-  hostRenderState, hostNextAction, hostLeaseTitleKey, hostRouteKey,
+  hostRenderState, hostNextAction, hostLeaseTitleKey, hostThreadTitleKey, hostRouteKey,
 } from '../lib/host-designation.js';
 import PinPersistBanner from './PinPersistBanner.jsx';
 import {
@@ -286,7 +286,7 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
     if (item.type === 'cell') {
       const c = item.value;
       const host = hostFor(route);
-      const starState = hostRenderState({ hostCell: host.hostCell ?? null, pins, item });
+      const starState = hostRenderState({ hostCell: host.hostCell ?? null, threadStatus: host.threadStatus, pins, item });
       const session = route.length
         ? (group?.sessions || []).find((candidate) => candidate.name === c.tmuxSession)
         : byName.get(c.tmuxSession);
@@ -317,9 +317,9 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
           </button>
           {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
           {item.fresh && session?.outbox?.count > 0 && <span className="nc-badge" title={t('new-files-outbox')}>{session.outbox.count}</span>}
-          <button className={`nc-act pin${starState === 'live' ? ' live' : starState === 'favorite' ? ' on' : ''}`}
-            aria-label={`${starState === 'live' ? 'live host' : t('pin')} ${c.cell}`}
-            title={starState === 'live' ? 'live host' : t('pin')}
+          <button className={`nc-act pin${hostThreadTitleKey(starState) ? ` ${starState}` : starState === 'favorite' ? ' on' : ''}`}
+            aria-label={`${hostThreadTitleKey(starState) ? t(hostThreadTitleKey(starState)) : t('pin')} ${c.cell}`}
+            title={hostThreadTitleKey(starState) ? t(hostThreadTitleKey(starState)) : t('pin')}
             onClick={() => onStarClick(item, c, starState, route)}>
             {starState === 'none' ? '\u2606' : '\u2605'}
           </button>
