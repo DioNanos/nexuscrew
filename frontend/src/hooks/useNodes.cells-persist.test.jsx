@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 
-// Il sintomo di DAG, end-to-end: «la lista sparisce anche se c'è già segnato
+// Il sintomo riportato, end-to-end: «la lista sparisce anche se c'è già segnato
 // che è OFFLINE». Tre giri guidati:
 //  1) nodo up, fleet dichiara 3 celle -> 3 visibili, nessuna preservata;
 //  2) il nodo CADE (tunnel down): niente fetch per quella route, l'ultimo
