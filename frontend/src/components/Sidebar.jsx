@@ -3,7 +3,7 @@ import { t, LANGUAGES } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { pinRank, cmpRank } from '../lib/pins.js';
 import {
-  hostRenderState, hostNextAction, hostLeaseTitleKey, hostRouteKey,
+  hostRenderState, hostNextAction, hostLeaseTitleKey, hostThreadTitleKey, hostRouteKey,
 } from '../lib/host-designation.js';
 import PinPersistBanner from './PinPersistBanner.jsx';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
@@ -420,7 +420,7 @@ export default function Sidebar({
           {localItems.map((item) => item.type === 'cell' ? (() => {
             const c = item.value;
             const host = hostFor([]);
-            const starState = hostRenderState({ hostCell: host.hostCell ?? null, pins, item });
+            const starState = hostRenderState({ hostCell: host.hostCell ?? null, threadStatus: host.threadStatus, pins, item });
             const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
             // Sull'host designato il titolo porta anche lo stato del lease: dice
             // se dietro la designazione c'e' ancora una supervisione viva. Senza
@@ -473,8 +473,8 @@ export default function Sidebar({
                   <small title={item.subtitle}>{item.subtitle}</small>
                 </span>
                 <button
-                  className={`nc-pin${starState === 'live' ? ' live' : starState === 'favorite' ? ' on' : ''}`}
-                  title={starState === 'live' ? 'live host' : t('pin')}
+                  className={`nc-pin${hostThreadTitleKey(starState) ? ` ${starState}` : starState === 'favorite' ? ' on' : ''}`}
+                  title={hostThreadTitleKey(starState) ? t(hostThreadTitleKey(starState)) : t('pin')}
                   onClick={(e) => { e.stopPropagation(); handleStar(item, c, starState, []); }}
                 >{starState === 'none' ? '☆' : '★'}</button>
                 {onBoot && fleetCapabilities.includes('boot') && bootButton(c)}
@@ -604,7 +604,7 @@ export default function Sidebar({
                 const c = item.value;
                 const route = g.route || [g.name];
                 const host = hostFor(route);
-                const starState = hostRenderState({ hostCell: host.hostCell ?? null, pins, item });
+                const starState = hostRenderState({ hostCell: host.hostCell ?? null, threadStatus: host.threadStatus, pins, item });
                 const leaseKey = hostLeaseTitleKey(starState, host.hostLease ?? null);
                 const live = !!c.tmux;
                 const dot = c.degraded ? 'warn' : c.tmux ? 'on' : '';
@@ -642,8 +642,8 @@ export default function Sidebar({
                       <small title={item.subtitle}>{item.subtitle}</small>
                     </span>
                     <button
-                      className={`nc-pin${starState === 'live' ? ' live' : starState === 'favorite' ? ' on' : ''}`}
-                      title={starState === 'live' ? 'live host' : t('pin')}
+                      className={`nc-pin${hostThreadTitleKey(starState) ? ` ${starState}` : starState === 'favorite' ? ' on' : ''}`}
+                      title={hostThreadTitleKey(starState) ? t(hostThreadTitleKey(starState)) : t('pin')}
                       onClick={(e) => { e.stopPropagation(); handleStar(item, c, starState, route); }}
                     >{starState === 'none' ? '☆' : '★'}</button>
                     {onBoot && (g.capabilities || []).includes('boot') && bootButton(c, g.route || [])}
