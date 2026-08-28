@@ -25,6 +25,7 @@ async function boot(t, opts = {}) {
     instanceId: () => LOCAL,
     submit: opts.submit || (async (session, text, meta) => { submissions.push({ session, text, meta }); return { submitted: true }; }),
     readonly: () => opts.readonly === true,
+    diagnostics: opts.diagnostics,
     now: () => 1234,
   }));
   const server = http.createServer(app);
@@ -214,4 +215,43 @@ test('directory: la label viene ripulita dei bordi e delimitata a 64', async (t)
   assert.equal(byId.A, 'Ricerca');
   assert.equal(byId.B, 'y'.repeat(64), 'il limite esatto e' + "' ammesso");
   assert.equal(byId.C, '', 'un carattere oltre il limite non passa');
+});
+
+// ── Observability (2026-08-28): ogni invio fra celle lascia metadati, mai testo ──
+function fakeDiag() {
+  const calls = [];
+  return { calls, record: (level, component, code, message, meta) => calls.push({ level, component, code, meta }) };
+}
+
+test('CELL_MESSAGE_SENT: notice con fromCell/toCell/msgId, senza testo del messaggio', async (t) => {
+  const diag = fakeDiag();
+  const { base } = await boot(t, { diagnostics: diag });
+  const res = await fetch(`${base}/api/cells/send`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: MESSAGE, from: { instanceId: LOCAL, cell: 'Alpha', tmuxSession: 'cloud-Alpha' }, to: { instanceId: LOCAL, cell: 'Dev', tmuxSession: 'cloud-Dev' }, message: 'SEGRETONE-che-non-deve-comparire' }),
+  });
+  assert.equal(res.status, 200);
+  const ev = diag.calls.find((c) => c.code === 'CELL_MESSAGE_SENT');
+  assert.ok(ev, 'manca CELL_MESSAGE_SENT');
+  assert.equal(ev.level, 'notice', 'un invio fra celle deve essere visibile di default');
+  assert.equal(ev.meta.fromCell, 'Alpha');
+  assert.equal(ev.meta.toCell, 'Dev');
+  assert.equal(ev.meta.msgId, MESSAGE);
+  const serialized = JSON.stringify(diag.calls);
+  assert.ok(!serialized.includes('SEGRETONE'), 'il contenuto del messaggio NON va mai in diagnostica');
+});
+
+test('CELL_MESSAGE_REJECTED: warn con motivo sul rifiuto (mittente non verificato)', async (t) => {
+  const diag = fakeDiag();
+  const { base } = await boot(t, { diagnostics: diag });
+  const res = await fetch(`${base}/api/cells/send`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-nexuscrew-visited': 'nodo-non-corrispondente' },
+    body: JSON.stringify({ id: MESSAGE, from: { instanceId: REMOTE, cell: 'Intruso', tmuxSession: 'x' }, to: { instanceId: LOCAL, cell: 'Dev', tmuxSession: 'cloud-Dev' }, message: 'ciao' }),
+  });
+  assert.equal(res.status, 403);
+  const ev = diag.calls.find((c) => c.code === 'CELL_MESSAGE_REJECTED');
+  assert.ok(ev, 'manca CELL_MESSAGE_REJECTED');
+  assert.equal(ev.level, 'warn');
+  assert.equal(ev.meta.fromCell, 'Intruso');
+  assert.ok(ev.meta.reason && ev.meta.reason.length <= 48);
 });
