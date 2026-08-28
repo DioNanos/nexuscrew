@@ -2,6 +2,82 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.16 — 2026-08-28 — "The Cap Becomes One Hundred"
+
+- **The fleet engine cap is 100, and the backup reads its own exports.** The
+  server accepted up to 100 engines and refused the 101st with an explicit
+  reason, but the fleet-backup parser on the frontend still enforced the old
+  cap of 24: `createFleetBackup` happily produced documents with 25–100
+  engines that `parseFleetBackup` then rejected as `invalid-format`. The
+  frontend copy is now aligned with the backend cap, and the parser names the
+  cap in its refusal instead of reporting a generic format error — a fleet of
+  any valid size round-trips.
+
+- **WebSocket closures are classified, counted, and visible.** Inter-cell
+  sends and drop counters land in the observability surface, so a connection
+  that keeps falling can be told apart from one that was never stable.
+
+- **The first health sample that says down means down.** Hysteresis only
+  protects a previously authoritative `transport: up`; without one, the first
+  failed probe is a real failure and is reported as such, instead of leaving
+  a dead node labelled unknown.
+
+- **Catalog and skills surface sanitized**: internal cell names are gone from
+  skills, UI placeholders and comments.
+
+## 0.9.15 — 2026-08-27 — "The Terminals Survive A Flaky Connection"
+
+- **Terminal panes no longer rebuild because of one late health probe.** A
+  single slow peer-health check declared a live node dead; the roster
+  emptied, and when the node came back every terminal window was rebuilt from
+  scratch — new socket, new attach, full repaint — whose traffic then caused
+  the next drop on an already queued line. Transient peer-health failures are
+  tolerated instead of tearing the node down.
+
+- **PTYs survive transient terminal disconnects**, and resumes are authorized
+  before scope checks, so a reconnecting pane picks its session back up
+  instead of starting over.
+
+- **The Live star distinguishes a started thread from an active one**, the
+  Live bridge declares its Fleet identity on initialize, and thread status
+  labels are guarded against Live claims.
+
+- **MCP identity failures are no longer cached for life**: a blocked tool
+  names the cause and gets a fresh chance instead of being failed forever.
+
+## 0.9.14 — 2026-08-27 — "The Bundle Builds After The Bump"
+
+- **The package installs.** 0.9.13 shipped with `frontend/dist/version.json`
+  still saying `0.9.12` while the server reported `0.9.13`, so nodes refused
+  to start with «incomplete installation: frontend and server do not match».
+  The bundle had been rebuilt before the version was raised and carried the
+  old number. No functional change against 0.9.13 — the same two fixes ship
+  again, with both sides agreeing on the version.
+
+## 0.9.13 — 2026-08-27 — "The Cells Stay When The Connection Drops"
+
+- **One deadline per lease.** The supervisor's lease read the clock three
+  times for a single transaction: the persisted bound and the proof expiry
+  were taken at different instants, and a one-millisecond gap invalidated the
+  proof at the next check, dropping the lease and letting cells detach and
+  reattach on their own. The deadline is now computed once and the proof
+  expiry derives from it.
+
+- **The roster distinguishes "could not ask" from "nothing is there".** A
+  skipped poll or a fallen node no longer empties the cell list; the last
+  known roster is kept until a real state replaces it.
+
+- **A cell's identity is refused, not borrowed.** Identity resolution fails
+  closed instead of attributing a cell to another one, and a remote `vl`
+  variant that is missing its Ollama pair refuses naming the offending field
+  rather than silently falling back to local Ollama. A `vl` cell can live
+  outside the local Ollama too, and `vl.native` no longer overrides the
+  operator's choices.
+
+- **New skill `cellforge`** (create, modify and audit a cell) and
+  **opencode-go**: `deepseek-v4-flash-vision-exp` added with real
+  measurements; the git publish surface now has the same gate the npm one had.
+
 ## 0.9.12 — 2026-08-22 — "Build After The Bump"
 
 - **Fixes 0.9.11, which would not start.** `frontend/dist/version.json` said
