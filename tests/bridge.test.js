@@ -306,3 +306,58 @@ test('pty grace: un attach read-only resta read-only al reconnect', () => {
   assert.equal(openAttach.ptys[0].writes.length, 0, 'il reconnect non declassifica il PTY read-only');
   grace.close();
 });
+
+// ── Observability (2026-08-28): chiusure classificate, contatore cadute ──
+function fakeDiag() {
+  const calls = [];
+  return { calls, record: (level, component, code, message, meta) => calls.push({ level, component, code, meta }) };
+}
+const diagDeps = (openAttach, diagnostics, over = {}) => okDeps(openAttach, { diagnostics, dropCounter: require('../lib/ws/drop-counter.js').createDropCounter(), ...over });
+
+test('backpressure chiusa dal server produce WS_SERVER_CLOSE warn con motivo e conteggio', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory(); const diag = fakeDiag();
+  bindWs(ws, diagDeps(openAttach, diag));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  const pty = openAttach.ptys[0];
+  ws.bufferedAmount = 13 * 1024 * 1024;
+  pty.onData ? openAttach.handle.emit('data', 'overflow') : null;
+  const ev = diag.calls.find((c) => c.code === 'WS_SERVER_CLOSE');
+  assert.ok(ev, 'manca WS_SERVER_CLOSE');
+  assert.equal(ev.level, 'warn');
+  assert.equal(ev.meta.reason, 'backpressure');
+  assert.equal(ev.meta.cell, 'X');
+  assert.equal(ev.meta.drops, 1, 'la caduta deve essere contata');
+});
+
+test('heartbeat marcato -> close 1006 classificato WS_HEARTBEAT_DROPPED, non drop TCP', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory(); const diag = fakeDiag();
+  bindWs(ws, diagDeps(openAttach, diag));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  ws.__ncCloseReason = 'heartbeat-timeout';
+  ws.emit('close', 1006);
+  const ev = diag.calls.find((c) => c.code === 'WS_HEARTBEAT_DROPPED');
+  assert.ok(ev, 'manca WS_HEARTBEAT_DROPPED');
+  assert.equal(ev.level, 'warn');
+  assert.equal(ev.meta.closeCode, 1006);
+  const closeLines = diag.calls.filter((c) => ['WS_SERVER_CLOSE','WS_HEARTBEAT_DROPPED','WS_ABNORMAL_CLOSE','WS_CLIENT_CLOSE','PTY_EXIT'].includes(c.code));
+  assert.equal(closeLines.length, 1, 'una sola riga di CHIUSURA per socket (WS_ATTACHED debug non conta)');
+});
+
+test('client close pulito = notice, pty exit = PTY_EXIT senza conteggio caduta', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory(); const diag = fakeDiag();
+  bindWs(ws, diagDeps(openAttach, diag));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  ws.emit('close', 1000);
+  const ev = diag.calls.find((c) => c.code === 'WS_CLIENT_CLOSE');
+  assert.ok(ev && ev.level === 'notice');
+  assert.equal(ev.meta.drops, 1, 'anche uno staccamento pulito e una caduta per DAG: conta');
+
+  const ws2 = fakeWs(); const open2 = fakePtyFactory(); const diag2 = fakeDiag();
+  bindWs(ws2, diagDeps(open2, diag2));
+  ws2.emit('message', JSON.stringify({ type: 'attach', session: 'Y', token: 't' }), false);
+  open2.handle.emit('exit', { exitCode: 3 });
+  const exit = diag2.calls.find((c) => c.code === 'PTY_EXIT');
+  assert.ok(exit && exit.meta.exitCode === 3 && exit.level === 'notice');
+  ws2.emit('close', 1000);
+  assert.equal(diag2.calls.filter((c) => c.code === 'WS_CLIENT_CLOSE').length, 0, 'il close post-exit non genera seconda riga');
+});
