@@ -23,7 +23,7 @@ Five nouns carry almost everything:
 - **Node** — one installation on one machine. Its identity is an opaque
   `instanceId`; the human-readable name is a **label**, and two nodes may
   legitimately carry the same one. **Address things by id, never by name.**
-- **Cell** — one stable working identity (`Dev`, `Research`, …) bound to one
+- **Cell** — one stable working identity (`Alpha`, `Beta`, …) bound to one
   tmux session and one engine. A cell is not a process: it survives restarts of
   the service, and stopping it does not end the work it was doing.
 - **Engine** — what a cell runs: an AI CLI, a plain shell, a command in a
