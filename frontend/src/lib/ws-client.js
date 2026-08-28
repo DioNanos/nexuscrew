@@ -14,7 +14,7 @@ export function wsTarget(node, token) {
   return `/api/route/${route}/_/ws?token=${encodeURIComponent(token || '')}`;
 }
 
-export function openTerminalSocket({ session, node, token, cols, rows, readonly = false, takeSize, focused, onData, onExit, onFiles, retryBaseMs = 250 }) {
+export function openTerminalSocket({ session, node, token, cols, rows, readonly = false, takeSize, focused, onData, onExit, onFiles, retryBaseMs = 250, retryStableMs = 5000, onRetryScheduled }) {
   // Fail-closed on the "localhost-only" invariant. The token travels in clear only
   // when the origin is loopback (inside the SSH/VPN tunnel); otherwise serve over HTTPS.
   const isLocal = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname);
@@ -27,13 +27,16 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
   let stopped = false;
   let terminalEnded = false;
   let retryTimer = null;
+  let stableTimer = null;
   let retryAttempt = 0;
+  let reconnectToken = null;
   // Focus/size-owner: lo stato desiderato viene ricordato e (ri)mandato all'apertura
   // — cosi' un tile gia' focato al connect promuove appena il WS e' pronto.
   let wantFocus = focused;
   const scheduleReconnect = () => {
     if (stopped || terminalEnded || retryTimer) return;
     const delay = Math.min(5000, Math.max(0, retryBaseMs) * (2 ** Math.min(retryAttempt++, 5)));
+    if (typeof onRetryScheduled === 'function') onRetryScheduled(delay);
     retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
   };
   const connect = () => {
@@ -43,8 +46,19 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
     current.binaryType = 'arraybuffer';
     current.onopen = () => {
       if (ws !== current || stopped) return;
-      retryAttempt = 0;
+      // Opening the socket is not proof that it can carry a redraw over a
+      // mobile/jittery link. Reset backoff only after this finite stability
+      // window; the caller can tune it for the target connection.
+      if (stableTimer) clearTimeout(stableTimer);
+      const configuredStableMs = Number(retryStableMs);
+      const stableMs = Number.isFinite(configuredStableMs) ? Math.max(0, configuredStableMs) : 5000;
+      stableTimer = setTimeout(() => {
+        stableTimer = null;
+        if (ws === current && current.readyState === 1) retryAttempt = 0;
+      }, stableMs);
+      if (typeof stableTimer.unref === 'function') stableTimer.unref();
       const frame = { type: 'attach', session, token, cols, rows, readonly };
+      if (reconnectToken) frame.reconnectToken = reconnectToken;
       if (takeSize !== undefined) frame.takeSize = takeSize;
       current.send(JSON.stringify(frame));
       if (wantFocus !== undefined) current.send(JSON.stringify({ type: 'focus', on: !!wantFocus }));
@@ -53,6 +67,9 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
       if (ws !== current || stopped) return;
       if (typeof ev.data === 'string') {
         let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.type === 'attached' && typeof msg.reconnectToken === 'string' && msg.reconnectToken) {
+          reconnectToken = msg.reconnectToken;
+        }
         if (msg.type === 'exit') { terminalEnded = true; if (onExit) onExit(msg.code); }
         if (msg.type === 'files' && onFiles) onFiles(msg);
       } else if (onData) {
@@ -62,6 +79,7 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
     current.onerror = () => { if (ws === current) try { current.close(); } catch (_) {} };
     current.onclose = (ev) => {
       if (ws !== current || stopped || terminalEnded) return;
+      if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
       // Protocol/auth/session failures need user action; transient network,
       // service restart and backpressure closes are reconnectable.
       if ([1000, 1002, 4401, 4404].includes(ev?.code)) return;
@@ -88,7 +106,9 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
     close: () => {
       stopped = true;
       if (retryTimer) clearTimeout(retryTimer);
+      if (stableTimer) clearTimeout(stableTimer);
       retryTimer = null;
+      stableTimer = null;
       if (ws) try { ws.close(); } catch (_) {}
     },
     get raw() { return ws; },

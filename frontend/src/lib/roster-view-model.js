@@ -183,7 +183,10 @@ export function buildRemoteRoster(group, storage = globalThis.localStorage) {
       const key = positionKey(route, c.tmuxSession || c.cell);
       const runtime = cellRuntime(c, session);
       return {
-        type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
+        // preserved: cella di un elenco fermo (nodo non raggiungibile) — non
+        // e' "live" nemmeno se l'ultima sessione tmux era attiva: drag, click,
+        // filtri "attive" devono trattarla come spenta.
+        type: 'cell', value: c, key, label: c.cell, live: !!c.tmux && !c.preserved,
         fresh: hasFreshOutput(session, key, storage), activity: session.activity || c.activity || 0,
         working: runtime.working, subtitle: runtime.subtitle,
         searchText: cellSearchText(c, session),

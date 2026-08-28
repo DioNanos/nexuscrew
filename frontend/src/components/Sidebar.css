@@ -167,6 +167,11 @@
 .nc-cell.live { cursor: pointer; }
 .nc-cell.live:hover { background: rgba(255,255,255,0.06); }
 .nc-cell.active { outline: 1px solid rgba(0,204,102,0.5); }
+/* Cella preservata (nodo non raggiungibile): elenco fermo, distinguibile a
+   colpo d'occhio da una cella di un nodo vivo — tratteggiata, attenuata. */
+.nc-cell.preserved { opacity: .55; border-style: dashed; cursor: default; }
+.nc-cell.preserved .nc-cell-main b { color: #8fa08f; }
+.nc-cell.preserved .nc-cell-main small { font-style: italic; }
 
 .nc-side-presets { display:flex; gap:4px; padding:2px 8px 6px; }
 .nc-side-presets button { background:none; border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:inherit; cursor:pointer; padding:2px 8px; }
@@ -179,7 +184,10 @@
 }
 .nc-pin:hover { filter: brightness(1.25); }
 .nc-pin.on { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.08); }
-.nc-pin.live { color: #ff5a5a; border-color: rgba(255,90,90,0.6); background: rgba(255,90,90,0.12); }
+.nc-pin.designated { color: #c8a6ff; border-color: rgba(200,166,255,0.6); background: rgba(200,166,255,0.12); }
+.nc-pin.thread-present { color: #69b7ff; border-color: rgba(105,183,255,0.6); background: rgba(105,183,255,0.12); }
+.nc-pin.thread-active { color: #ff5a5a; border-color: rgba(255,90,90,0.6); background: rgba(255,90,90,0.12); }
+.nc-pin.thread-unknown { color: #e0b020; border-color: rgba(224,176,32,0.6); background: rgba(224,176,32,0.12); }
 .nc-technical {
   flex: 0 0 auto; width: 28px; height: 28px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;

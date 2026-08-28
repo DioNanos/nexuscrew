@@ -103,3 +103,64 @@ test('D8: context concorda tra OPENCODE_GO_LIMITS e catalog opencode-go', () => 
   }
   assert.deepEqual(mismatches, [], `context window divergente tra OPENCODE_GO_LIMITS e catalog (due copie dello stesso valore):\n  ${mismatches.join('\n  ')}`);
 });
+
+
+// ---------------------------------------------------------------------------
+// D9 — GUARDIA inter-liste (2026-08-27). Un id dichiarato in una lista e
+// assente dalla lista sorella e' la classe di guasto osservata per mesi:
+// glm-5.3-flash era usato da celle vive senza voce in OLLAMA_CONTEXT — il
+// launch ricadeva sul fallback 200000 IN SILENZIO. Il test prova il FENOMENO:
+// elenca gli id fuori posto nominando ENTRAMBE le liste; rimuovere un id da
+// UNA sola lista deve rendere il test rosso indicando quale.
+const {
+  OLLAMA_CLOUD_MODELS, OLLAMA_CONTEXT, OLLAMA_MODEL_CAPABILITIES,
+  OPENCODE_GO_MESSAGES_MODELS, OPENCODE_GO_RESPONSES_MODELS, OPENCODE_GO_CHAT_MODELS,
+  ALIBABA_TOKEN_PLAN_MODELS, ALIBABA_PI_MODELS,
+} = require('../lib/fleet/managed.js');
+
+test("D9a: OLLAMA_CLOUD_MODELS e OLLAMA_CONTEXT coprono gli stessi id, in entrambe le direzioni", () => {
+  const inCtx = new Set(Object.keys(OLLAMA_CONTEXT));
+  const problems = [
+    ...OLLAMA_CLOUD_MODELS.filter((m) => !inCtx.has(m))
+      .map((m) => `"${m}" e' in OLLAMA_CLOUD_MODELS ma NON in OLLAMA_CONTEXT (launch con finestra fallback 200000 silenziosa)`),
+    ...Object.keys(OLLAMA_CONTEXT).filter((m) => !OLLAMA_CLOUD_MODELS.includes(m))
+      .map((m) => `"${m}" e' in OLLAMA_CONTEXT ma NON in OLLAMA_CLOUD_MODELS (voce orfana)`),
+  ];
+  assert.deepEqual(problems, [], `divergenza OLLAMA_CLOUD_MODELS <-> OLLAMA_CONTEXT:\n  ${problems.join('\n  ')}`);
+});
+
+test("D9b: ogni id offerto su una wire OpenCode Go ha i suoi limiti, e LIMITS non ha voci morte", () => {
+  // Le tre liste wire DIVERGONO legittimamente (grok risponde solo su
+  // Responses: misurato). L'invariante vera e' sull'UNIONE delle wire.
+  const limits = new Set(Object.keys(OPENCODE_GO_LIMITS));
+  const union = new Set([
+    ...OPENCODE_GO_MESSAGES_MODELS,
+    ...OPENCODE_GO_RESPONSES_MODELS,
+    ...OPENCODE_GO_CHAT_MODELS,
+  ]);
+  const problems = [
+    ...[...union.difference(limits)].map((id) => `"${id}" e' offerto su una wire OpenCode Go ma NON e' in OPENCODE_GO_LIMITS (contesto omesso, il client ricade sul default suo)`),
+    ...[...limits.difference(union)].map((id) => `"${id}" e' in OPENCODE_GO_LIMITS ma non e' offerto su nessuna wire (voce morta)`),
+  ];
+  assert.deepEqual(problems, [], `divergenza wire-union <-> OPENCODE_GO_LIMITS:\n  ${problems.join('\n  ')}`);
+});
+
+test("D9c: i descrittori ALIBABA_PI_MODELS coprono esattamente ALIBABA_TOKEN_PLAN_MODELS", () => {
+  const plan = new Set(ALIBABA_TOKEN_PLAN_MODELS);
+  const pi = new Set(ALIBABA_PI_MODELS.map((m) => m.id));
+  const problems = [
+    ...ALIBABA_TOKEN_PLAN_MODELS.filter((m) => !pi.has(m))
+      .map((m) => `"${m}" e' in ALIBABA_TOKEN_PLAN_MODELS ma non ha descrittore in ALIBABA_PI_MODELS`),
+    ...[...pi].filter((m) => !plan.has(m))
+      .map((m) => `"${m}" ha descrittore PI ma non e' in ALIBABA_TOKEN_PLAN_MODELS`),
+  ];
+  assert.deepEqual(problems, [], `divergenza ALIBABA_TOKEN_PLAN_MODELS <-> ALIBABA_PI_MODELS:\n  ${problems.join('\n  ')}`);
+});
+
+test('D9d: le capacita dichiarate riguardano solo modelli effettivamente in lista', () => {
+  const inList = new Set(OLLAMA_CLOUD_MODELS);
+  const problems = Object.keys(OLLAMA_MODEL_CAPABILITIES)
+    .filter((m) => !inList.has(m))
+    .map((m) => `"${m}" ha capacita in OLLAMA_MODEL_CAPABILITIES ma non e in OLLAMA_CLOUD_MODELS`);
+  assert.deepEqual(problems, [], problems.join('; '));
+});

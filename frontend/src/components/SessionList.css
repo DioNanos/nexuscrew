@@ -213,7 +213,10 @@
 .nc-act.boot.on { color: #69b7ff; border-color: rgba(105,183,255,.58); background: rgba(105,183,255,.10); }
 .nc-act.boot:disabled { cursor: wait; opacity: .55; }
 .nc-act.pin.on { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.08); }
-.nc-act.pin.live { color: #ff5a5a; border-color: rgba(255,90,90,0.6); background: rgba(255,90,90,0.12); }
+.nc-act.pin.designated { color: #c8a6ff; border-color: rgba(200,166,255,0.6); background: rgba(200,166,255,0.12); }
+.nc-act.pin.thread-present { color: #69b7ff; border-color: rgba(105,183,255,0.6); background: rgba(105,183,255,0.12); }
+.nc-act.pin.thread-active { color: #ff5a5a; border-color: rgba(255,90,90,0.6); background: rgba(255,90,90,0.12); }
+.nc-act.pin.thread-unknown { color: #e0b020; border-color: rgba(224,176,32,0.6); background: rgba(224,176,32,0.12); }
 .nc-act.technical.on { color: #d8a8ff; border-color: rgba(180,120,255,.55); background: rgba(180,120,255,.10); }
 .nc-mcard { gap: 8px; }
 .nc-mcard .nc-roster-handle {

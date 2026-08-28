@@ -12,7 +12,9 @@ const { atomicWrite } = require('../lib/fleet/definitions.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const {
   createBuiltinFleet, composeLaunchArgv, minimalEnv, promptCharsOk, redactSecrets,
-  sanitizeEarlyDiagnostic, backfillShellEngine, alternateScreenArgs,
+  sanitizeEarlyDiagnostic, backfillShellEngine, backfillAgyEngine,
+  backfillDesktopEngine, backfillKimiEngine, backfillGrokEngine, backfillVlEngine,
+  alternateScreenArgs,
 } = require('../lib/fleet/builtin.js');
 const { selectProvider } = require('../lib/fleet/provider.js');
 
@@ -272,6 +274,36 @@ test('Shell command: exit immediato zero e completamento one-shot riuscito', asy
     assert.ok(readLog(w).lines.includes('kill-session'));
     await fleet.close();
   } finally { w.cleanup(); }
+});
+
+test('backfill a cap pieno: ogni rifiuto emette engine, conteggio e cap', () => {
+  const backfills = [
+    ['shell.local', (w, defs, log) => backfillShellEngine(w.defsPath, defs, log)],
+    ['agy.native', (w, defs, log) => backfillAgyEngine(w.defsPath, defs, { platform: 'linux', log })],
+    ['desktop.local', (w, defs, log) => backfillDesktopEngine(w.defsPath, defs, log)],
+    ['kimi.native', (w, defs, log) => backfillKimiEngine(w.defsPath, defs, log)],
+    ['grok.native', (w, defs, log) => backfillGrokEngine(w.defsPath, defs, { platform: 'linux', log })],
+    ['vl.native', (w, defs, log) => backfillVlEngine(w.defsPath, defs, log)],
+  ];
+  for (const [engineId, invoke] of backfills) {
+    const w = makeWorld();
+    try {
+      const defs = require('../lib/fleet/definitions.js').loadDefinitions(w.defsPath);
+      defs.engines = Array.from({ length: require('../lib/fleet/definitions.js').CAPS.MAX_ENGINES }, (_, i) => ({
+        id: i === 0 ? 'claude' : `e${i}`,
+        command: w.command,
+        promptMode: 'send-keys',
+      }));
+      atomicWrite(w.defsPath, defs);
+      const logs = [];
+      const after = invoke(w, require('../lib/fleet/definitions.js').loadDefinitions(w.defsPath), (line) => logs.push(String(line)));
+      assert.equal(after.engines.length, require('../lib/fleet/definitions.js').CAPS.MAX_ENGINES);
+      assert.equal(logs.length, 1, `${engineId}: il rifiuto deve essere udibile una volta`);
+      assert.match(logs[0], new RegExp(engineId.replace('.', '\\.')));
+      assert.match(logs[0], /engine dichiarati/);
+      assert.match(logs[0], /cap/);
+    } finally { w.cleanup(); }
+  }
 });
 
 // ---------------------------------------------------------------------------

@@ -23,7 +23,14 @@ const MAX_PROMPT = 8192;
 const MAX_CELL_COMMAND = 4096;
 const MAX_CELLS = 32;
 const MAX_LABEL = 64;
-const MAX_ENGINES = 24;
+// Cap engine del backup: COPIA FRONTEND di CAPS.MAX_ENGINES (lib/fleet/
+// definitions.js), che resta l'autorita'. Il bundle non puo' importare il
+// modulo backend (node-only), quindi la copia e' vigilata dal test di
+// coerenza incrociata in fleet-backup-cap.test.js: se le due divergono il
+// gate e' rosso. Divergere significa che parseFleetBackup rifiuta in
+// lettura documenti che createFleetBackup ha appena prodotto (difetto
+// 0.9.16: copia a 24, backend a 100).
+export const MAX_ENGINES = 100;
 const TOP_KEYS = new Set(['format', 'version', 'exportedAt', 'cells', 'engines', 'models']);
 // v3 portatile: la cella ammette cwdRel (home-relative) e VIETA cwd (assoluta,
 // device-specifica). Un backup v3 con cwd -> invalid-cell (fail-closed).
@@ -297,6 +304,16 @@ export function parseFleetBackup(text) {
   const isV3 = value?.format === FLEET_BACKUP_FORMAT && value?.version === FLEET_BACKUP_VERSION;
   const legacyCwd = isV1 || isV2; // le celle portano cwd assoluta
   const hasEngines = isV2 || isV3; // v1 non aveva engines
+  if (hasEngines && Array.isArray(value.engines) && value.engines.length > MAX_ENGINES) {
+    // Rifiuto esplicito del solo cap: 'invalid-format' generico non distingue
+    // un documento malformato da una flotta valida oltre il cap (stesso
+    // verdetto e stessa frontiera del backend, definitions.js).
+    return {
+      ok: false, error: 'invalid-format',
+      detail: `${value.engines.length} engine dichiarati, cap ${MAX_ENGINES}; riduci gli engine a ${MAX_ENGINES} o meno`,
+      cells: [], engines: [],
+    };
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some((key) => !TOP_KEYS.has(key))
     || (!isV1 && !isV2 && !isV3)

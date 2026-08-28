@@ -38,6 +38,61 @@ test('ws client riconnette dopo close transiente e riattacca con size/focus corr
   }
 });
 
+test('ws client conserva la capability server-side per il reconnect', async () => {
+  const oldWs = globalThis.WebSocket;
+  const oldLocation = globalThis.location;
+  try {
+    FakeWebSocket.sockets = [];
+    globalThis.WebSocket = FakeWebSocket;
+    globalThis.location = { hostname: '127.0.0.1', protocol: 'http:', host: '127.0.0.1:41820' };
+    const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?grace=${Date.now()}`);
+    const socket = openTerminalSocket({ session: 'work-build', token: 't', cols: 80, rows: 24, retryBaseMs: 1 });
+    const first = FakeWebSocket.sockets[0];
+    first.open();
+    first.message(JSON.stringify({ type: 'attached', reconnectToken: 'server-capability' }));
+    first.end(1006);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const second = FakeWebSocket.sockets[1];
+    second.open();
+    assert.equal(JSON.parse(second.sent[0]).reconnectToken, 'server-capability');
+    socket.close();
+  } finally {
+    if (oldWs === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = oldWs;
+    if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
+  }
+});
+
+test('ws client aumenta il backoff se le aperture cadono prima della stabilità', async () => {
+  const oldWs = globalThis.WebSocket;
+  const oldLocation = globalThis.location;
+  try {
+    FakeWebSocket.sockets = [];
+    globalThis.WebSocket = FakeWebSocket;
+    globalThis.location = { hostname: '127.0.0.1', protocol: 'http:', host: '127.0.0.1:41820' };
+    const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?backoff=${Date.now()}`);
+    const delays = [];
+    const socket = openTerminalSocket({
+      session: 'work-build', token: 't', cols: 80, rows: 24,
+      retryBaseMs: 10, retryStableMs: 1000,
+      onRetryScheduled: (delay) => delays.push(delay),
+    });
+    for (let i = 0; i < 4; i++) {
+      const current = FakeWebSocket.sockets.at(-1);
+      current.open();
+      current.end(1006);
+      await new Promise((resolve) => {
+        const poll = () => FakeWebSocket.sockets.length > i + 1 ? resolve() : setTimeout(poll, 1);
+        poll();
+      });
+    }
+    assert.deepEqual(delays, [10, 20, 40, 80], `backoff effettivo: ${delays.join(',')}ms`);
+    socket.close();
+  } finally {
+    if (oldWs === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = oldWs;
+    if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
+  }
+});
+
 test('ws client non riconnette dopo close intenzionale o errore auth', async () => {
   const oldWs = globalThis.WebSocket;
   const oldLocation = globalThis.location;

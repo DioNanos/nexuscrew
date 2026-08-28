@@ -42,7 +42,9 @@ export function trackDown(prev, nodes, nowSec) {
 
 // Arricchisce le celle Fleet di una posizione con identita' route-qualified
 // (key + route), pronte per rendering/pin/azioni. f = payload fleetStatus(route).
-function enrichCells(f, route, key) {
+// preserved: le celle vengono da un elenco fermo (nodo non raggiungibile) —
+// la UI deve mostrarle distinguibili e senza azioni da nodo vivo.
+function enrichCells(f, route, key, preserved = false) {
   if (!f || !Array.isArray(f.cells)) return [];
   return f.cells.map((c) => ({
     ...c,
@@ -51,7 +53,43 @@ function enrichCells(f, route, key) {
     // Usare c.cell (es. Dev) produceva header plausibile ma attach WS a una
     // sessione inesistente invece di cloud-Dev -> terminale remoto vuoto.
     key: `${key}:${c.tmuxSession || c.cell}`,
+    ...(preserved ? { preserved: true } : {}),
   }));
+}
+
+// Campi fleet di un gruppo il cui nodo NON e' raggiungibile ma ha un ultimo
+// elenco noto: stesse regole del backoff R21/755ae60 — la lettura non e'
+// verificabile, non assente. L'elenco sopravvive marcato (fleetState 'stale',
+// cellsPreserved) finche' non arriva un dato autorevole: available (fresco,
+// anche vuoto) o disabled. Nessuna unione, nessun TTL: se il nodo torna su
+// senza una cella, quella cella sparisce.
+function preservedFleetFields(f, route, key) {
+  if (!f) return {};
+  const state = fleetStateOf(f);
+  if (!fleetInventoryKnown(f, state) || state !== 'stale') return {};
+  return {
+    cells: enrichCells(f, route, key, true),
+    fleetState: 'stale',
+    fleetAvailable: false,
+    cellsPreserved: true,
+  };
+}
+
+// Fleet remoto: available e' dato aggiornato; stale e' l'ultimo elenco noto
+// mantenuto mentre la lettura non e' verificabile; disabled e' una risposta
+// autorevole che dichiara il fleet spento. Il fallback sui payload precedenti
+// senza fleetState resta fail-closed: available:false e' disabled, assenza di
+// payload e' stale.
+function fleetStateOf(f) {
+  if (f?.fleetState === 'stale') return 'stale';
+  if (f?.fleetState === 'disabled') return 'disabled';
+  if (f?.available === true && Array.isArray(f.cells)) return 'available';
+  if (f?.available === false) return 'disabled';
+  return 'stale';
+}
+
+function fleetInventoryKnown(f, state) {
+  return (state === 'available' || state === 'stale') && Array.isArray(f?.cells);
 }
 
 // buildNodeGroups({nodes, topology, remote, down, fleet}) -> gruppi ordinati.
@@ -84,28 +122,34 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     };
     if (n.nodeId) seenIds.add(n.nodeId);
     if (!n.nodeId && n.paired === false) {
-      out.push({ ...base, status: 'needs-repair', downSince: (down && down[key]) || null });
+      out.push({ ...base, status: 'needs-repair', downSince: (down && down[key]) || null,
+        ...preservedFleetFields(fleet && (fleet[key] || fleet[n.name]), route, key) });
       continue;
     }
     if (n.health?.auth === 'failed' || (tunnelStatus === 'degraded' && n.health?.status === 'degraded')) {
-      out.push({ ...base, status: 'needs-repair', downSince: (down && down[key]) || null });
+      out.push({ ...base, status: 'needs-repair', downSince: (down && down[key]) || null,
+        ...preservedFleetFields(fleet && (fleet[key] || fleet[n.name]), route, key) });
       continue;
     }
     if (tunnelStatus === 'passive' || n.health?.status === 'passive') {
-      out.push({ ...base, status: 'passive', downSince: null });
+      out.push({ ...base, status: 'passive', downSince: null,
+        ...preservedFleetFields(fleet && (fleet[key] || fleet[n.name]), route, key) });
       continue;
     }
     if (!up) {
-      out.push({ ...base, status: 'down', downSince: (down && down[key]) || null });
+      out.push({ ...base, status: 'down', downSince: (down && down[key]) || null,
+        ...preservedFleetFields(fleet && (fleet[key] || fleet[n.name]), route, key) });
       continue;
     }
     const r = (remote && (remote[key] || remote[n.name])) || null;
     const f = fleet && (fleet[key] || fleet[n.name]);
     const sessionsAvailable = !!(r && !r.error && Array.isArray(r.sessions));
-    const fleetInventoryAvailable = !!(f && f.available === true && Array.isArray(f.cells));
+    const fleetState = fleetStateOf(f);
+    const fleetInventoryAvailable = fleetState === 'available' && fleetInventoryKnown(f, fleetState);
+    const fleetInventoryPresent = fleetInventoryKnown(f, fleetState);
     // A host without a running tmux server can still expose a complete Fleet
     // inventory. Do not hide its cells merely because /sessions is degraded.
-    if (!sessionsAvailable && !fleetInventoryAvailable) {
+    if (!sessionsAvailable && !fleetInventoryPresent) {
       // R21: la CAUSA del mancato raggiungimento viaggia col gruppo: tre
       // esiti (502/403/404) suggeriscono tre azioni diverse a chi guarda.
       out.push({ ...base, status: 'unreachable', cause: (r && r.cause) || null });
@@ -119,7 +163,8 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     out.push({
       ...base, status: 'up', sessions,
       cells, unmanaged: sessions.filter((s) => !cellTmux.has(s.name)),
-      fleetAvailable: !!(f && f.available), capabilities: (f && f.capabilities) || [],
+      fleetAvailable: fleetInventoryAvailable, fleetState,
+      capabilities: (f && f.capabilities) || [],
       engines: (f && f.engines) || [],
       fleetProvider: (f && f.provider) || null,
       sessionsAvailable, inventoryPartial: !sessionsAvailable,
@@ -139,14 +184,17 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
       capabilities: [], engines: [], health: n.health || null, lastSeen: n.lastSeen || null,
     };
     if (n.stale) {
-      out.push({ ...base, status: 'offline', downSince: (down && down[key]) || n.lastSeen || null });
+      out.push({ ...base, status: 'offline', downSince: (down && down[key]) || n.lastSeen || null,
+        ...preservedFleetFields(fleet && fleet[key], n.route, key) });
       continue;
     }
     const r = (remote && remote[key]) || null;
     const f = fleet && fleet[key];
     const sessionsAvailable = !!(r && !r.error && Array.isArray(r.sessions));
-    const fleetInventoryAvailable = !!(f && f.available === true && Array.isArray(f.cells));
-    if (!sessionsAvailable && !fleetInventoryAvailable) {
+    const fleetState = fleetStateOf(f);
+    const fleetInventoryAvailable = fleetState === 'available' && fleetInventoryKnown(f, fleetState);
+    const fleetInventoryPresent = fleetInventoryKnown(f, fleetState);
+    if (!sessionsAvailable && !fleetInventoryPresent) {
       // R21: come sopra — la causa distingue l'assenza dal rifiuto dalla
       // rotta inesistente, e il recupero non deve buttarla via.
       out.push({ ...base, status: 'unreachable', downSince: (down && down[key]) || null, cause: (r && r.cause) || null });
@@ -159,7 +207,8 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     out.push({
       ...base, status: 'up', sessions,
       cells, unmanaged: sessions.filter((s) => !cellTmux.has(s.name)),
-      fleetAvailable: !!(f && f.available), capabilities: (f && f.capabilities) || [],
+      fleetAvailable: fleetInventoryAvailable, fleetState,
+      capabilities: (f && f.capabilities) || [],
       engines: (f && f.engines) || [],
       fleetProvider: (f && f.provider) || null, lastSeen: n.lastSeen || null,
       sessionsAvailable, inventoryPartial: !sessionsAvailable,

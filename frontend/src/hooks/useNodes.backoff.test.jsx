@@ -37,6 +37,7 @@ vi.mock('../lib/api.js', () => ({
 }));
 
 import { useNodes } from './useNodes.js';
+import { fleetStatus, getRouteSessions } from '../lib/api.js';
 
 describe('useNodes: backoff sui peer morti, recupero quando tornano (R21)', () => {
   beforeEach(() => {
@@ -97,5 +98,50 @@ describe('useNodes: backoff sui peer morti, recupero quando tornano (R21)', () =
     // La causa viaggia model -> gruppo (nodes-model) -> dato per la UI; il
     // testo con l'azione lo compone roster-view-model, testato a parte.
     expect(g.cause).toBe('peer-nega');
+  });
+
+  it('conserva le celle Fleet durante il giro remoto in backoff (ramo stale)', async () => {
+    calls.failTimes = 0;
+    fleetStatus.mockResolvedValue({
+      available: true,
+      cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev', active: true }],
+    });
+    const peerError = new Error('HTTP 502');
+    peerError.status = 502;
+    getRouteSessions
+      .mockResolvedValueOnce({ sessions: [{ name: 'cloud-Dev' }] })
+      .mockRejectedValueOnce(peerError)
+      .mockRejectedValueOnce(peerError)
+      .mockResolvedValue({ sessions: [{ name: 'cloud-Dev' }] });
+
+    const { result } = renderHook(() => useNodes('token', true, 7));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(result.current.find((x) => x.name === 'vps').cells).toHaveLength(1);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    // Il terzo giro è saltato dal backoff: deve esporre l'ultima lista nota,
+    // marcandola stale, invece di trasformare fleet assente in celle vuote.
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    const group = result.current.find((x) => x.name === 'vps');
+    expect(group.cells).toHaveLength(1);
+    expect(group.fleetState).toBe('stale');
+    expect(group.fleetAvailable).toBe(false);
+  });
+
+  it('conserva le celle Fleet quando la lettura remota viene rifiutata (ramo stale)', async () => {
+    calls.failTimes = 0;
+    fleetStatus
+      .mockResolvedValueOnce({ available: true, cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev' }] })
+      .mockRejectedValueOnce(new Error('fleet HTTP 502'));
+    const { result } = renderHook(() => useNodes('token', true, 8));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(result.current.find((x) => x.name === 'vps').cells).toHaveLength(1);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    const group = result.current.find((x) => x.name === 'vps');
+    expect(group.cells).toHaveLength(1);
+    expect(group.fleetState).toBe('stale');
+    expect(group.fleetAvailable).toBe(false);
   });
 });

@@ -11,6 +11,9 @@ test('defaults bind to loopback only', () => {
   assert.strictEqual(defaults().replyLabel, 'human');
   assert.strictEqual(defaults().protectSharedTmuxServer, true);
   assert.strictEqual(defaults().alternateScreen, false);
+  assert.strictEqual(defaults().ptyGraceMs, 30000);
+  assert.strictEqual(defaults().ptyGraceMaxSessions, 8);
+  assert.strictEqual(defaults().ptyGraceMaxMemoryBytes, 8 * 1024);
 });
 
 test('assertLoopback rejects non-loopback bind', () => {
@@ -94,6 +97,22 @@ test('loadConfig: env voice override', () => {
   try {
     assert.equal(loadConfig().voiceUrl, 'http://1.2.3.4:9');
   } finally { delete process.env.NEXUSCREW_VOICE_URL; }
+});
+
+test('loadConfig: i limiti PTY grace sono configurabili da env', () => {
+  process.env.NEXUSCREW_PTY_GRACE_MS = '45000';
+  process.env.NEXUSCREW_PTY_GRACE_MAX_SESSIONS = '3';
+  process.env.NEXUSCREW_PTY_GRACE_MAX_MEMORY_BYTES = '3072';
+  try {
+    const c = loadConfig();
+    assert.equal(c.ptyGraceMs, 45000);
+    assert.equal(c.ptyGraceMaxSessions, 3);
+    assert.equal(c.ptyGraceMaxMemoryBytes, 3072);
+  } finally {
+    delete process.env.NEXUSCREW_PTY_GRACE_MS;
+    delete process.env.NEXUSCREW_PTY_GRACE_MAX_SESSIONS;
+    delete process.env.NEXUSCREW_PTY_GRACE_MAX_MEMORY_BYTES;
+  }
 });
 
 test('loadConfig: shared tmux protection defaults on and has an explicit env opt-out', () => {

@@ -45,6 +45,7 @@ const FONT_MAX = 24;
 const SIDE_W_KEY = 'nc_side_w';
 const SIDE_MIN_KEY = 'nc_side_min';
 const SIDE_W_DEF = 240;
+const THREAD_STATUSES = new Set(['absent', 'present', 'active', 'unknown']);
 
 function loadSideW() {
   const v = Number(localStorage.getItem(SIDE_W_KEY));
@@ -444,19 +445,28 @@ export default function App() {
         .filter((g) => g.kind !== 'vl' && g.status === 'up')
         .map((g) => (Array.isArray(g.route) && g.route.length ? g.route : [g.name]))];
       const entries = await Promise.all(routes.map(async (route) => {
+        const key = hostRouteKey(route);
         try {
           const h = await getLiveHost(token, route);
-          return [hostRouteKey(route), {
+          return [key, {
             hostCell: h && typeof h.hostCell === 'string' ? h.hostCell : null,
             hostLease: h && h.host && typeof h.host.lease === 'string' ? h.host.lease : null,
             hostRevision: Number.isInteger(h && h.revision) ? h.revision : 0,
+            threadStatus: h && THREAD_STATUSES.has(h.threadStatus) ? h.threadStatus : 'unknown',
           }];
-        } catch (_) { return null; }
+        } catch (_) { return [key, { error: true }]; }
       }));
       if (cancelled) return;
       setHostByRoute((current) => {
         let changed = false; const next = { ...current };
-        for (const entry of entries) { if (entry) { next[entry[0]] = entry[1]; changed = true; } }
+        for (const entry of entries) {
+          if (!entry) continue;
+          const [key, value] = entry;
+          next[key] = value.error
+            ? { ...(current[key] || {}), threadStatus: 'unknown' }
+            : value;
+          changed = true;
+        }
         return changed ? next : current;
       });
     };
@@ -491,6 +501,7 @@ export default function App() {
           hostCell: r.hostCell || null,
           hostLease: r.host && typeof r.host.lease === 'string' ? r.host.lease : null,
           hostRevision: Number.isInteger(r.revision) ? r.revision : revision,
+          threadStatus: THREAD_STATUSES.has(r.threadStatus) ? r.threadStatus : 'unknown',
         },
       }));
     } catch (e) {
@@ -504,7 +515,7 @@ export default function App() {
       const r = await clearHostCell(token, revision, route);
       setHostByRoute((current) => ({
         ...current,
-        [key]: { hostCell: r.hostCell || null, hostLease: null, hostRevision: Number.isInteger(r.revision) ? r.revision : revision },
+        [key]: { hostCell: r.hostCell || null, hostLease: null, hostRevision: Number.isInteger(r.revision) ? r.revision : revision, threadStatus: 'unknown' },
       }));
       return true;
     } catch (e) {

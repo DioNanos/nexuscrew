@@ -190,6 +190,32 @@ test('cap engines/cells/args/env superati -> null', () => {
   assert.equal(parseDefinitions({ schemaVersion: 1, engines: [{ ...eng('e0'), env: { K: 123 } }], cells: [] }), null, 'env value non stringa');
 });
 
+test('cap engine: 100 definizioni passano, 101 viene rifiutata', () => {
+  const eng = (id) => ({ id, command: '/bin/x', promptMode: 'send-keys' });
+  const defs = { schemaVersion: 1, engines: [], cells: [] };
+  for (let i = 0; i < 100; i += 1) defs.engines.push(eng(`e${i}`));
+  assert.equal(CAPS.MAX_ENGINES, 100, 'il cap dichiarato deve essere 100');
+  assert.ok(parseDefinitions(defs), '100 engine devono essere accettati');
+  defs.engines.push(eng('e100'));
+  assert.equal(parseDefinitions(defs), null, '101 engine devono essere rifiutati');
+});
+
+test('loadDefinitions: il cap engine rifiutato lascia una diagnosi parlante', () => {
+  const dir = tmpDir();
+  try {
+    const file = path.join(dir, 'fleet.json');
+    const engines = Array.from({ length: CAPS.MAX_ENGINES + 1 }, (_, i) => ({
+      id: `e${i}`, command: '/bin/x', promptMode: 'send-keys',
+    }));
+    fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, engines, cells: [] }));
+    const out = {};
+    assert.equal(loadDefinitions(file, out), null);
+    assert.match(out.parseReason, new RegExp(`\\b${CAPS.MAX_ENGINES + 1}\\b`));
+    assert.match(out.parseReason, new RegExp(`\\b${CAPS.MAX_ENGINES}\\b`));
+    assert.match(out.parseReason, /riduci|cap/i);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('env denylist loader/runtime (PATH, LD_PRELOAD, NODE_OPTIONS, NPM_CONFIG_*, DYLD_*) -> null', () => {
   const eng = (env) => ({ schemaVersion: 1, engines: [{ id: 'e0', command: '/bin/x', promptMode: 'send-keys', env }], cells: [] });
   for (const k of ['PATH', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'NODE_OPTIONS', 'NPM_CONFIG_PREFIX', 'SHELL', 'HOME']) {

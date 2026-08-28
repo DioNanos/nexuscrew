@@ -358,7 +358,13 @@ test('R3.3.5 post-restart: reconnect ESATTAMENTE alla graceDeadline rifiutato (b
     await mgr.boot();
     assert.equal(mgr.status('Dev').state, 'none', 'lease null post-restart (fail-closed)');
     // reconnect ESATTAMENTE alla deadline (now === graceDeadline) con proof fresco: deny.
-    clock.t = 65_000;
+    // IC1.2 (rev28): il bound non regredisce piu' — il back-step del fixture
+    // (clock.t=5_000 prima dell'EOF) non abbassa piu' il bound a 65_000: resta
+    // 70_000 (il max). La proprieta' off-by-one pinna da questo test (`>=`,
+    // non `>`) si conserva ancorando il reconnect alla deadline REALE su disco,
+    // non a quella che il bound avrebbe con la regressione vietata.
+    const boundOnDisk = JSON.parse(fs.readFileSync(cellStateFile(home, 'Dev'), 'utf8')).graceDeadline;
+    clock.t = boundOnDisk;
     const fresh = forgeProof(home, clock, { kind: 'lease', cellId: 'Dev', launchEpoch: info.launchEpoch, leaseId: proof.leaseId, generation: '0', jti: 'f'.repeat(16) });
     const reply = await reconnect(info.stablePath, { type: 'reconnect', generation: 0, proof: fresh });
     assert.equal(reply.type, 'deny', 'alla deadline esatta (now === graceDeadline) la grace e gia scaduta -> deny');

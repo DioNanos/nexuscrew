@@ -9,6 +9,7 @@ import {
 } from '../lib/api.js';
 import { buildNodeGroups, trackDown } from '../lib/nodes-model.js';
 import { vlNodeToPeer, topologyVlOwners, vlSidebarGroups } from '../lib/vl-nodes-model.js';
+import { fleetReadOutcome } from '../lib/fleet-read-policy.js';
 import {
   classifyPeerFailure, recordPeerFailure, recordPeerSuccess, shouldPollPeer,
 } from '../lib/peer-backoff.js';
@@ -23,7 +24,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
   // quando torna la cadenza torna normale. La cache mostra l'ultimo stato
   // noto durante i giri saltati — incluso il motivo per cui si salta.
   const backoffRef = useRef({});
-  const peerCacheRef = useRef({ remote: {} });
+  const peerCacheRef = useRef({ remote: {}, fleet: {} });
 
   useEffect(() => {
     if (!enabled || !token) { setGroups([]); return undefined; }
@@ -99,6 +100,11 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
           // stato noto, con la causa che l'ha prodotto.
           const cached = peerCacheRef.current.remote[key];
           if (cached) remote[key] = cached;
+          // Il backoff rende la lettura Fleet NON VERIFICABILE, non vuota.
+          // Conserviamo la risposta precedente soltanto come elenco fermo;
+          // available:false impedisce di presentarla come dato aggiornato.
+          const cachedFleet = peerCacheRef.current.fleet[key];
+          if (cachedFleet) fleet[key] = { ...cachedFleet, available: false, fleetState: 'stale' };
           return;
         }
         let sessionsOk = false;
@@ -112,10 +118,43 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
           remote[key] = { error: 'unreachable', cause: classifyPeerFailure(e) };
           peerCacheRef.current.remote[key] = remote[key];
         }
+        const previousFleet = peerCacheRef.current.fleet[key] || null;
         try {
-          fleet[key] = await fleetStatus(token, route);
+          const response = await fleetStatus(token, route);
+          const outcome = fleetReadOutcome({ fs: response });
+          if (outcome.kind === 'data') {
+            fleet[key] = {
+              ...response,
+              available: true,
+              cells: outcome.cells,
+              fleetState: 'available',
+            };
+          } else if (outcome.kind === 'disabled') {
+            // available:false con ragione di configurazione e' un dato reale:
+            // zero celle, senza conservare celle fantasma.
+            fleet[key] = { ...response, available: false, cells: [], fleetState: 'disabled' };
+          } else {
+            // La risposta e' arrivata, ma la lettura non e' verificabile
+            // (per esempio fleet.json illeggibile): elenco fermo, non vuoto.
+            fleet[key] = {
+              ...(previousFleet || {}),
+              available: false,
+              cells: Array.isArray(previousFleet?.cells) ? previousFleet.cells : [],
+              fleetState: 'stale',
+              ...(response?.reason ? { reason: response.reason } : {}),
+            };
+          }
+          peerCacheRef.current.fleet[key] = fleet[key];
         } catch (e) {
-          fleet[key] = { available: false, cause: classifyPeerFailure(e) };
+          // Un errore di trasporto non prova che il nodo abbia zero celle.
+          fleet[key] = {
+            ...(previousFleet || {}),
+            available: false,
+            cells: Array.isArray(previousFleet?.cells) ? previousFleet.cells : [],
+            fleetState: 'stale',
+            cause: classifyPeerFailure(e),
+          };
+          peerCacheRef.current.fleet[key] = fleet[key];
         }
         // Il backoff segue sessions, il segnale di vita del peer: se riesce,
         // il peer e' vivo anche se fleet nega o non conosce la rotta —
@@ -125,6 +164,27 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
           : recordPeerFailure(backoffRef.current, key, remote[key].cause, pollStart);
       }));
       if (!alive) return;
+      // Nodi NON raggiungibili (tunnel giu', passive, needs-repair diretti;
+      // topology stale): la lettura fleet non e' VERIFICABILE, non assente —
+      // stessa forma del backoff R21. L'ultimo elenco noto resta visibile
+      // come elenco fermo (stale) finche' il nodo non torna su: a quel punto
+      // il fetch autorevole (available, anche vuoto, o disabled) LO SOSTITUISCE
+      // per intero — nessuna unione, quindi una cella eliminata davvero sparisce.
+      for (const n of nodes) {
+        if (n.tunnel?.status === 'up') continue;
+        const cachedFleet = peerCacheRef.current.fleet[n.name];
+        if (cachedFleet && !fleet[n.name]) {
+          fleet[n.name] = { ...cachedFleet, available: false, fleetState: 'stale' };
+        }
+      }
+      for (const n of topology) {
+        if (!n.stale || !Array.isArray(n.route) || !n.route.length) continue;
+        const key = n.route.join('/');
+        const cachedFleet = peerCacheRef.current.fleet[key];
+        if (cachedFleet && !fleet[key]) {
+          fleet[key] = { ...cachedFleet, available: false, fleetState: 'stale' };
+        }
+      }
       const first = buildNodeGroups({ nodes, topology, remote, fleet, aliases, down: downRef.current });
       downRef.current = trackDown(downRef.current, first, Math.floor(Date.now() / 1000));
       setGroups([

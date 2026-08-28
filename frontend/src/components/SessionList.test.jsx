@@ -86,6 +86,17 @@ describe('mobile roster parity', () => {
     expect(await screen.findByText('tmux fleet · 3 sessions')).toBeTruthy();
   });
 
+  it('mantiene il roster remoto e rende il ramo non verificabile come stale', async () => {
+    fixture.nodes[0].fleetState = 'stale';
+    fixture.nodes[0].fleetAvailable = false;
+    renderRoster();
+
+    expect(await screen.findByText('Relay Live')).toBeTruthy();
+    expect(screen.getByText('Fleet read failed: the cell list may not be up to date.')).toBeTruthy();
+    const relay = document.querySelector('[data-position="relay"]');
+    expect(relay.querySelector('.dot').classList.contains('warn')).toBe(true);
+  });
+
   it('never reports more attached sessions than the normalized live inventory during cache convergence', async () => {
     fixture.sessions = [session('local-live', 20, { attached: true })];
     fixture.cells = [cell('Live Cell', 'local-live', false)];
@@ -340,18 +351,18 @@ describe('SessionList — cella ospite Live per nodo', () => {
     expect(onDesignateCell).not.toHaveBeenCalledWith('Relay Live', []);
   });
 
-  it('la stellina remota e\' "live" SOLO quando hostByRoute[quella route] lo dice', async () => {
+  it('la stellina remota e\' designata SOLO quando hostByRoute[quella route] lo dice', async () => {
     render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()}
-      hostByRoute={{ local: { hostCell: null }, relay: { hostCell: 'Relay Live' } }} />);
+      hostByRoute={{ local: { hostCell: null }, relay: { hostCell: 'Relay Live', threadStatus: 'absent' } }} />);
     await screen.findByText('Relay Live');
-    expect(screen.getByRole('button', { name: 'live host Relay Live' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'cell designated; thread absent Relay Live' })).toBeTruthy();
   });
 
   it('NEGATIVA: un hostCell locale con lo stesso nome non accende la stella di un nodo diverso', async () => {
     render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()}
       hostByRoute={{ local: { hostCell: 'Relay Live' } }} />);
     await screen.findByText('Relay Live');
-    expect(screen.queryByRole('button', { name: 'live host Relay Live' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'cell designated; thread absent Relay Live' })).toBeNull();
   });
 });
 

@@ -134,6 +134,10 @@ export const DICTS = {
     'panel-retry': 'Riprova',
     'live-host-not-granted': 'Questo nodo non concede la designazione della cella ospite Live a chi la chiede: va concessa sul nodo che possiede la cella (nodes live-host <nodo> on), non riprovando qui.',
     'live-host-error': 'La designazione della cella ospite Live non è riuscita: riprova tra poco.',
+    'host-thread-designated': 'cella designata; thread assente',
+    'host-thread-present': 'thread presente ma inattivo',
+    'host-thread-active': 'thread attivo',
+    'host-thread-unknown': 'stato del thread sconosciuto',
     'windows': '{n} finestre',
     'empty-files': 'vuota',
     'upload': 'carica',
@@ -388,7 +392,7 @@ export const DICTS = {
     'fleet-cwd-repair-title': 'Ripara cartella cella {id}',
     'fleet-cwd-repair-help': 'La cartella attuale non è portabile su questo dispositivo: appartiene a un altro dispositivo o non esiste sotto la home. Scegli una cartella home-relative (~) sul dispositivo target; il backend ricalcolerà il percorso assoluto.',
     'fleet-cwd-repair-no-source-path': 'Il percorso originale non viene mostrato: è specifico del dispositivo di origine.',
-    'fleet-cwd-repair-placeholder': 'es. Dev',
+    'fleet-cwd-repair-placeholder': 'es. Alpha',
     'fleet-cwd-repair-preview': 'Nuova cartella: {path}',
     'fleet-cwd-repair-browse': 'sfoglia sotto ~',
     'fleet-cwd-repair-fs-empty': 'nessuna sottocartella',
@@ -843,6 +847,10 @@ export const DICTS = {
     'panel-retry': 'Retry',
     'live-host-not-granted': 'This node does not grant the live host cell designation to the requester: it must be granted on the node that owns the cell (nodes live-host <node> on), not by retrying here.',
     'live-host-error': 'The live host cell designation failed: retry in a little while.',
+    'host-thread-designated': 'cell designated; thread absent',
+    'host-thread-present': 'thread present but idle',
+    'host-thread-active': 'thread active',
+    'host-thread-unknown': 'thread status unknown',
     'windows': '{n} windows',
     'empty-files': 'empty',
     'upload': 'upload',
@@ -1097,7 +1105,7 @@ export const DICTS = {
     'fleet-cwd-repair-title': 'Repair cell folder {id}',
     'fleet-cwd-repair-help': 'The current folder is not portable on this device: it belongs to another device or does not exist under the home directory. Choose a home-relative (~) folder on the target device; the backend will recompute the absolute path.',
     'fleet-cwd-repair-no-source-path': 'The original path is not shown: it is specific to the source device.',
-    'fleet-cwd-repair-placeholder': 'e.g. Dev',
+    'fleet-cwd-repair-placeholder': 'e.g. Alpha',
     'fleet-cwd-repair-preview': 'New folder: {path}',
     'fleet-cwd-repair-browse': 'browse under ~',
     'fleet-cwd-repair-fs-empty': 'no subfolders',
@@ -1551,6 +1559,10 @@ export const DICTS = {
     'panel-retry': 'Reintentar',
     'live-host-not-granted': 'Este nodo no concede la designación de celda anfitriona Live a quien la pide: se concede en el nodo que posee la celda (nodes live-host <nodo> on), no reintentando aquí.',
     'live-host-error': 'La designación de celda anfitriona Live no funcionó: reintenta en un momento.',
+    'host-thread-designated': 'celda designada; thread ausente',
+    'host-thread-present': 'thread presente pero inactivo',
+    'host-thread-active': 'thread activo',
+    'host-thread-unknown': 'estado del thread desconocido',
     'windows': '{n} ventanas',
     'empty-files': 'vacía',
     'upload': 'subir',
@@ -2154,6 +2166,45 @@ export const DICTS = {
     'qr-upload': 'usar una foto',
   },
 };
+
+export const THREAD_STATUS_I18N_KEYS = Object.freeze([
+  'host-thread-designated',
+  'host-thread-present',
+  'host-thread-active',
+  'host-thread-unknown',
+]);
+
+const LIVE_CONNECTION_TERM_RE = /\b(?:connected|conness[aoei]|conectad[oa]s?|attached|agganciat[oaie]|attaccat[oaie])\b/i;
+const PRESENCE_TERM_RE = /\b(?:present|presente)\b/gi;
+
+function hasUnqualifiedPresence(value) {
+  const lower = value.toLowerCase();
+  for (const match of lower.matchAll(PRESENCE_TERM_RE)) {
+    const start = Math.max(0, match.index - 24);
+    const end = Math.min(lower.length, match.index + match[0].length + 24);
+    if (!lower.slice(start, end).includes('thread')) return true;
+  }
+  return false;
+}
+
+// These are the labels users see for thread state. Keep the guard scoped to
+// these keys so unrelated product copy can evolve independently.
+export function assertThreadStatusLabelsAreThreadOnly(dicts = DICTS) {
+  for (const lang of LANGS) {
+    const dict = dicts?.[lang];
+    if (!dict) throw new Error(`${lang}: missing dictionary`);
+    for (const key of THREAD_STATUS_I18N_KEYS) {
+      const value = dict[key];
+      if (typeof value !== 'string' || value.trim() === '') {
+        throw new Error(`${lang}.${key}: missing label`);
+      }
+      if (LIVE_CONNECTION_TERM_RE.test(value) || hasUnqualifiedPresence(value)) {
+        throw new Error(`${lang}.${key}: label must describe the thread, not Live connection`);
+      }
+    }
+  }
+  return true;
+}
 
 export function getLang() {
   const ls = safeLocal();

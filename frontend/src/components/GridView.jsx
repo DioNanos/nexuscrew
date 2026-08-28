@@ -6,6 +6,7 @@ import {
 } from '../lib/grid-model.js';
 import { cellDisplayName, findManagedCell } from '../lib/cell-display.js';
 import { panelPortForRoute } from '../lib/panel-port.js';
+import { sessionPresenceForTile } from '../lib/terminal-lifecycle.js';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import './GridView.css';
@@ -15,6 +16,12 @@ const SIDE = 0.28; // fasce laterali left/right (28%)
 const transferHas = (transfer, type) => Array.from(transfer?.types || []).includes(type);
 const isSessionTransfer = (transfer) => transferHas(transfer, 'text/nc-session');
 const isFileTransfer = (transfer) => transferHas(transfer, 'Files') || (transfer?.files?.length || 0) > 0;
+
+function nodeGroupForTile(node, groups) {
+  return node && Array.isArray(groups)
+    ? groups.find((group) => Array.isArray(group?.route) && group.route.join('/') === node)
+    : null;
+}
 
 // Quadrante dal puntatore vs bounding box: fasce laterali 28%, altrimenti metà top/bottom.
 function quadrantOf(x, y, r) {
@@ -164,6 +171,11 @@ export default function GridView({
             {col.tiles.flatMap((tile, ri) => {
               const tnodes = [];
               const key = refKey(tile);
+              const nodeGroup = nodeGroupForTile(tile.node, nodeGroups);
+              const nodeOnline = tile.unavailable !== true
+                && (tile.node ? nodeGroup?.status === 'up' : (!sessionsAlive || sessionsAlive.has(key)));
+              const sessionAlive = tile.unavailable !== true
+                && sessionPresenceForTile({ tileKey: key, node: tile.node, nodeGroups, sessionsAlive });
               // Cella Fleet gestita per questo tile (route + ownerId + tmuxSession),
               // risolta una sola volta: titolo visibile e pannello per-cella
               // condividono lo stesso lookup, mai due fonti divergenti.
@@ -198,7 +210,8 @@ export default function GridView({
                     focused={focusSession === key}
                     onFocus={onFocus} onClose={closeTile} onOpenSingle={onOpenSingle}
                     available={tile.unavailable !== true}
-                    alive={tile.unavailable !== true && (!sessionsAlive || sessionsAlive.has(key))}
+                    alive={nodeOnline}
+                    sessionAlive={sessionAlive}
                     fontSize={tile.fontSize}
                     onZoom={(delta) => onLayoutChange(zoomTile(layout, ci, ri, delta))}
                     decks={decks} currentDeck={currentDeck} onSendToDeck={onSendToDeck}
