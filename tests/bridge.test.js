@@ -350,7 +350,7 @@ test('client close pulito = notice, pty exit = PTY_EXIT senza conteggio caduta',
   ws.emit('close', 1000);
   const ev = diag.calls.find((c) => c.code === 'WS_CLIENT_CLOSE');
   assert.ok(ev && ev.level === 'notice');
-  assert.equal(ev.meta.drops, 1, 'anche uno staccamento pulito e una caduta per DAG: conta');
+  assert.equal(ev.meta.drops, 1, 'anche uno staccamento pulito e una caduta: conta');
 
   const ws2 = fakeWs(); const open2 = fakePtyFactory(); const diag2 = fakeDiag();
   bindWs(ws2, diagDeps(open2, diag2));
