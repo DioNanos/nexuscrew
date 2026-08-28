@@ -76,10 +76,12 @@ test('ogni modello misurato passa e ogni coppia wire/modello rifiutata dal gatew
     assert.equal(normalizeManagedSpec({ client: 'claude', provider: 'opencode-go', model }), null, `messages rifiuta ${model}`);
     assert.equal(normalizeManagedSpec({ client: 'codex-vl', provider: 'opencode-go', model }), null, `responses rifiuta ${model}`);
   }
-  // grok-4.5: 200 solo su Responses (Messages lo rifiuta, Chat risponde 503).
-  assert.ok(normalizeManagedSpec({ client: 'codex-vl', provider: 'opencode-go', model: 'grok-4.5' }));
-  assert.equal(normalizeManagedSpec({ client: 'claude', provider: 'opencode-go', model: 'grok-4.5' }), null);
-  assert.equal(normalizeManagedSpec({ client: 'pi', provider: 'opencode-go', model: 'grok-4.5' }), null);
+  // grok: 200 solo su Responses (Messages lo rifiuta, Chat risponde 503).
+  // Misura wire storica fatta su grok-4.5; dal 2026-08-27 l'id in elenco e'
+  // grok-4.6, e il gate lo tratta uguale (stessa wire, stessi limiti).
+  assert.ok(normalizeManagedSpec({ client: 'codex-vl', provider: 'opencode-go', model: 'grok-4.6' }));
+  assert.equal(normalizeManagedSpec({ client: 'claude', provider: 'opencode-go', model: 'grok-4.6' }), null);
+  assert.equal(normalizeManagedSpec({ client: 'pi', provider: 'opencode-go', model: 'grok-4.6' }), null);
   // qwen e minimax: 200 su Messages, rifiuto esplicito "not supported for
   // format openai" su Responses.
   for (const model of ['qwen3.8-max', 'minimax-m3']) {
