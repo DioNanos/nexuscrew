@@ -22,6 +22,12 @@ All notable changes to NexusCrew are tracked here.
   pattern list emptied to make the suite pass fails with it. What the package
   ships is now a tested property, not a step someone remembers to do.
 
+- **The guides it points to travel with the package.** The README and three
+  built-in skills cite thirteen documentation files that an npm install never
+  contained: all twenty-six relative links were dead out of the box, sending
+  the reader to files that were not there. The thirteen guides now ship with
+  the package — those and no others.
+
 ## 0.9.16 — 2026-08-28 — "The Cap Becomes One Hundred"
 
 - **The fleet engine cap is 100, and the backup reads its own exports.** The
