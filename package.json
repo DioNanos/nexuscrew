@@ -11,7 +11,6 @@
     "lib/",
     "skills/",
     "frontend/dist/",
-    "frontend/index.html",
     "CHANGELOG.md",
     "docs/ALIBABA_TOKEN_PLAN.md",
     "docs/AUDIO_SHARE.md",
