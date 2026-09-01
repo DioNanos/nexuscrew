@@ -3,7 +3,7 @@ import { vlNodeToPeer, topologyVlOwners, vlSidebarGroups } from './vl-nodes-mode
 
 const RAW = {
   nodeId: 'a'.repeat(32),
-  label: 'N900',
+  label: 'VL-Node-A',
   cell: 'VL-aaaaaaaa',
   pairedAt: 1700000000000,
   online: true,
@@ -25,7 +25,7 @@ describe('vlNodeToPeer', () => {
     // nodeRowSummary/nodeIdentity require a truthy `name` or the row silently
     // disappears — the nodeId is the only stable identifier a VL node has.
     expect(peer.name).toBe(RAW.nodeId);
-    expect(peer.label).toBe('N900');
+    expect(peer.label).toBe('VL-Node-A');
   });
 
   it('maps "accoppiato" from pairedAt being set, not copied verbatim', () => {
@@ -178,7 +178,7 @@ describe('vlSidebarGroups', () => {
   it('an attached node is one honest session', () => {
     const [g] = vlSidebarGroups([peerAttached]);
     expect(g.kind).toBe('vl');
-    expect(g.label).toBe('N900');
+    expect(g.label).toBe('VL-Node-A');
     expect(g.status).toBe('up');
     expect(g.sessions).toHaveLength(1);
     expect(g.sessions[0].name).toBe('ollama');

@@ -2,6 +2,108 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.17 — 2026-09-01 — "The Package Reads Like The Product"
+
+- **The installed files no longer carry the workshop's notes.** In the payload
+  of 0.9.16 and earlier, a reader of the installed package could find traces of
+  the environment that builds NexusCrew: device and node names, working paths
+  and hostnames, and the markers of the internal review process, sitting in
+  comments and metadata next to the product's own code. Nothing secret and
+  nothing functional — but writing addressed to the builders has no business
+  shipping to the users, and a version is never republished, so it stayed.
+  The payload has been swept: the installed tree now reads as the product
+  only. The sweep covers the classes above, and says so rather than claiming
+  every sentence of every comment was rewritten.
+
+- **The promise is checked by tests that read the artifact, not by a
+  checklist.** The npm payload and the published git surface are both
+  inspected by the suite: every forbidden pattern is listed with its reason,
+  a file that cannot be read fails the check instead of being skipped, and a
+  pattern list emptied to make the suite pass fails with it. What the package
+  ships is now a tested property, not a step someone remembers to do.
+
+- **The guides it points to travel with the package.** The README and three
+  built-in skills cite thirteen documentation files that an npm install never
+  contained: all twenty-six relative links were dead out of the box, sending
+  the reader to files that were not there. The thirteen guides now ship with
+  the package — those and no others.
+
+## 0.9.16 — 2026-08-28 — "The Cap Becomes One Hundred"
+
+- **The fleet engine cap is 100, and the backup reads its own exports.** The
+  server accepted up to 100 engines and refused the 101st with an explicit
+  reason, but the fleet-backup parser on the frontend still enforced the old
+  cap of 24: `createFleetBackup` happily produced documents with 25–100
+  engines that `parseFleetBackup` then rejected as `invalid-format`. The
+  frontend copy is now aligned with the backend cap, and the parser names the
+  cap in its refusal instead of reporting a generic format error — a fleet of
+  any valid size round-trips.
+
+- **WebSocket closures are classified, counted, and visible.** Inter-cell
+  sends and drop counters land in the observability surface, so a connection
+  that keeps falling can be told apart from one that was never stable.
+
+- **The first health sample that says down means down.** Hysteresis only
+  protects a previously authoritative `transport: up`; without one, the first
+  failed probe is a real failure and is reported as such, instead of leaving
+  a dead node labelled unknown.
+
+- **Catalog and skills surface sanitized**: internal cell names are gone from
+  skills, UI placeholders and comments.
+
+## 0.9.15 — 2026-08-27 — "The Terminals Survive A Flaky Connection"
+
+- **Terminal panes no longer rebuild because of one late health probe.** A
+  single slow peer-health check declared a live node dead; the roster
+  emptied, and when the node came back every terminal window was rebuilt from
+  scratch — new socket, new attach, full repaint — whose traffic then caused
+  the next drop on an already queued line. Transient peer-health failures are
+  tolerated instead of tearing the node down.
+
+- **PTYs survive transient terminal disconnects**, and resumes are authorized
+  before scope checks, so a reconnecting pane picks its session back up
+  instead of starting over.
+
+- **The Live star distinguishes a started thread from an active one**, the
+  Live bridge declares its Fleet identity on initialize, and thread status
+  labels are guarded against Live claims.
+
+- **MCP identity failures are no longer cached for life**: a blocked tool
+  names the cause and gets a fresh chance instead of being failed forever.
+
+## 0.9.14 — 2026-08-27 — "The Bundle Builds After The Bump"
+
+- **The package installs.** 0.9.13 shipped with `frontend/dist/version.json`
+  still saying `0.9.12` while the server reported `0.9.13`, so nodes refused
+  to start with «incomplete installation: frontend and server do not match».
+  The bundle had been rebuilt before the version was raised and carried the
+  old number. No functional change against 0.9.13 — the same two fixes ship
+  again, with both sides agreeing on the version.
+
+## 0.9.13 — 2026-08-27 — "The Cells Stay When The Connection Drops"
+
+- **One deadline per lease.** The supervisor's lease read the clock three
+  times for a single transaction: the persisted bound and the proof expiry
+  were taken at different instants, and a one-millisecond gap invalidated the
+  proof at the next check, dropping the lease and letting cells detach and
+  reattach on their own. The deadline is now computed once and the proof
+  expiry derives from it.
+
+- **The roster distinguishes "could not ask" from "nothing is there".** A
+  skipped poll or a fallen node no longer empties the cell list; the last
+  known roster is kept until a real state replaces it.
+
+- **A cell's identity is refused, not borrowed.** Identity resolution fails
+  closed instead of attributing a cell to another one, and a remote `vl`
+  variant that is missing its Ollama pair refuses naming the offending field
+  rather than silently falling back to local Ollama. A `vl` cell can live
+  outside the local Ollama too, and `vl.native` no longer overrides the
+  operator's choices.
+
+- **New skill `cellforge`** (create, modify and audit a cell) and
+  **opencode-go**: `deepseek-v4-flash-vision-exp` added with real
+  measurements; the git publish surface now has the same gate the npm one had.
+
 ## 0.9.12 — 2026-08-22 — "Build After The Bump"
 
 - **Fixes 0.9.11, which would not start.** `frontend/dist/version.json` said
@@ -2199,7 +2301,7 @@ nothing anywhere said so.
   injection. Persistent offline queues, attachments and delegated capability workers remain
   explicitly deferred rather than being represented as implemented.
 - Tests: **770 total** (769 pass / 1 platform-dependent skip) in the isolated Node harness plus
-  5 passing frontend component tests; production build PASS. Real Mac–hub–Pixel end-to-end
+  5 passing frontend component tests; production build PASS. Real nodo-A–hub–nodo-B end-to-end
   pairing and delivery remain an operator field test and are not represented as automated.
 
 ## 0.8.12 — 2026-07-13 — "Mobile Roster"
@@ -2223,7 +2325,7 @@ nothing anywhere said so.
   is disabled and explains that a Termux boot script still requires the Termux:Boot app to be
   installed and launched once.
 - Tests: **749 total** (748 pass / 1 platform-dependent skip), production build PASS, root and
-  frontend dependency audits clean. Mac–Pixel–hub end-to-end pairing was not executed in this
+  frontend dependency audits clean. nodo-A–nodo-B–hub end-to-end pairing was not executed in this
   release gate.
 
 ## 0.8.11 — 2026-07-13 — "Tmux Survival"
@@ -2281,7 +2383,7 @@ nothing anywhere said so.
   HTTP-port move when paired peers depend on the configured endpoint.
 - Tests: **726 total** (725 pass / 1 platform-dependent skip), frontend production build PASS,
   dependency audit clean, isolated HOME clean, and package/public-tree verification required
-  before publication. Real Mac–Pixel–hub interoperability remains an external follow-up and is
+  before publication. Real nodo-A–nodo-B–hub interoperability remains an external follow-up and is
   not represented as an automated test.
 
 ## 0.8.9 — 2026-07-12 — "Hydra Workspaces"
@@ -2308,6 +2410,11 @@ nothing anywhere said so.
   package/audit verification performed before local installation.
 
 ## 0.8.8 — 2026-07-12 — "Reliable Composer"
+
+> **Never published.** Only a preparation commit exists for this version and
+> npm has no 0.8.8 — the next published release is 0.8.9. The entry stays
+> because the changes it describes are real; a reader looking for the version
+> on the registry should know why it is not there.
 
 - The PWA composer now sends long and multiline drafts through xterm's explicit paste path,
   preserving the terminal application's bracketed-paste mode. Enter travels as a separate
@@ -2625,6 +2732,19 @@ Core rewrite from screenshot-and-poll to a faithful tmux client.
   backpressure cutoff, JSON errors with codes
 - token delivered via URL fragment (never logged), 0600 file, constant-time compare
 
+## 0.2.5 — 2026-04-09 — "Discovery, Routes, Selector"
+
+Reconstructed from the release commit and its tree: this entry was missing
+from the file at the time, and the history before 0.7.1 survives only in the
+`v0.2.5` tag and on npm.
+
+- Engine discovery and explicit send routes in the runtime — the release
+  commit's own summary — with the chat flow and the status bar wired to them.
+- A dedicated model selector interface: new `ModelSelector` component and
+  styles wired into the chat.
+- A prebuilt SQLite library travels with the package instead of requiring a
+  local build.
+
 ## 0.2.4
 
 - added host-scoped tmux/session discovery so active session truth comes from the selected host
@@ -2649,3 +2769,12 @@ Core rewrite from screenshot-and-poll to a faithful tmux client.
 ## 0.2.1
 
 - older release line, now deprecated in favor of the current stable line
+
+## 0.2.0 — 2026-04-01 — "First Published"
+
+- The first version of the 0.2 line to reach npm: a tmux-based cockpit with
+  persistent sessions for Claude Code, Codex CLI, Gemini CLI and Qwen Code,
+  with remote SSH host support.
+- Reconstructed from the published package's own description — no release
+  notes from that date survive in this history. The line was later superseded
+  by the 0.4 rewrite and deprecated.

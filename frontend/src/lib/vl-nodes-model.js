@@ -47,7 +47,7 @@ export function vlNodeToPeer(node, owner = {}) {
     health: node.health ?? null,
     // La sessione DICHIARATA dal device nell'heartbeat ({attached, profile},
     // gia' sanitizzata dal broker) — e' il dato con cui la sidebar scrive
-    // «N900 · 1 sessione». Assente (hub o binario piu' vecchio) -> null,
+    // «VL-Node-A · 1 sessione». Assente (hub o binario piu' vecchio) -> null,
     // mai una sessione inventata.
     session: node.session ?? null,
     capabilities: Array.isArray(node.capabilities) ? node.capabilities : [],
@@ -61,7 +61,7 @@ export function vlNodeToPeer(node, owner = {}) {
   };
 }
 
-// Gruppi sidebar per i nodi VL: la stessa lista dei nodi («N900 · 1
+// Gruppi sidebar per i nodi VL: la stessa lista dei nodi («VL-Node-A · 1
 // sessione»), costruita DAI peer di vlNodeToPeer — non un secondo modello.
 // Conteggio onesto: 1 sessione se il nodo la DICHIARA attaccata
 // (session.attached === true nell'heartbeat), 0 altrimenti; un nodo offline
