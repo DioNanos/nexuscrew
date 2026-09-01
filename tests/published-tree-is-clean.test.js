@@ -19,9 +19,20 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const ROOT = path.join(__dirname, '..');
+const PAYLOAD_RULE_DEFS = JSON.parse(fs.readFileSync(
+  path.join(__dirname, 'published-tree-clean-rules.json'), 'utf8'));
+
+function compilePayloadRules(defs) {
+  return defs.map(({ source, flags, reason }) => ({
+    re: new RegExp(source, flags),
+    perche: reason,
+  }));
+}
 
 // Le directory che `package.json:files` spedisce davvero. Tenerle allineate a
 // mano sarebbe lo stesso errore di prima, quindi si leggono da li'.
@@ -205,40 +216,11 @@ const SELF_EXCLUDE = 'tests/published-tree-is-clean.test.js';
 // Sull'albero versionato nessuna delle due liste si applica: i test portano
 // ancora gli ID come firma dei difetti gia' corretti (debito dichiarato nel
 // follow-up di bonifica integrale).
-const VIETATI_PAYLOAD_STRUTTURALI = [
-  { re: /\(\s*(?:re)?audit\b[^)]{0,60}\)/i,
-    perche: 'parentesi di provenienza del giro di audit interno' },
-  { re: /\b(?:re)?audit\b[^.\n]{0,60}@[0-9a-f]{6,40}/i,
-    perche: 'audit con riferimento a commit interno (@hash)' },
-  { re: /\b(?:re)?audit\s+[0-9a-f]{7,40}\b/i,
-    perche: 'audit con hash di commit come id di rilievo' },
-  { re: /\blease-audit\b/i,
-    perche: 'identificativo di giro di audit interno (lease-audit-*)' },
-  { re: /\bdall['’]auditor\b/i,
-    perche: 'riferimento all\'auditor interno' },
-  { re: /\b(?:revisione|rilievo)\b[^.\n]{0,60}\(?\d{4}-\d{2}-\d{2}/i,
-    perche: 'revisione/rilievo legata alla data del giro interno (R4)' },
-  { re: /\b(?:revisione|rilievo)\b[^.\n]{0,30}(?:\bM6\b|\bD8\b|\brc\.\d+\b|terzo giro)/i,
-    perche: 'revisione/rilievo legata a un id o giro di revisione interno (R4)' },
-];
-const VIETATI_PAYLOAD_IDS = [
-  { re: /\b(?:R-pidfile-\d|R19|R28|F7|F-A|F-B|F-C|P1-2b|P1-2|P1-3|P1-4)\b/,
-    perche: 'identificativo di rilievo interno' },
-  // R5 — forme contestuali osservate che le liste precedenti non mordevano:
-  // la serie F/D/R/rev attaccata a "da revisione" (in entrambi gli ordini),
-  // «questo giro» accanto alla revisione, la data del giro di misura, e gli
-  // hash privati citati dai referti (elenco noto, non esaustivo).
-  { re: /\b(?:da )?revisione\s+(?:F\d(?:\s*\/\s*F\d)?|F\d|D\d|rev\d+|R\d+)\b/i,
-    perche: 'revisione accoppiata a un id di rilievo (serie F/D/R/rev)' },
-  { re: /\b(?:F\d|D\d|rev\d+|R\d+)\s+da revisione\b/i,
-    perche: 'id di rilievo prima di "da revisione" (ordine inverso)' },
-  { re: /questo giro\b[^.\n]{0,60}(?:da )?revisione/i,
-    perche: 'cronologia del giro corrente («questo giro»)' },
-  { re: /\bmisurato\s*\(\d{4}-\d{2}-\d{2}\)/i,
-    perche: 'data del giro di misura interno' },
-  { re: /\b(?:8fe514f|3134d2f|239e2e6|d6c47c6|437d29f|fa8bd90|142e272|2a05db2|dd38c83|3405df0)\b/i,
-    perche: 'hash di commit privato citato dai referti interni' },
-];
+const VIETATI_PAYLOAD_STRUTTURALI = compilePayloadRules(
+  PAYLOAD_RULE_DEFS.payloadStructural);
+// Solo ID corti: il bundle minificato puo' produrre collisioni reali (`F7`).
+// Le grammatiche contestuali, date e hash restano strutturali e mordono dist.
+const VIETATI_PAYLOAD_IDS = compilePayloadRules(PAYLOAD_RULE_DEFS.payloadIds);
 
 // Classifica un file: ritorna l'array (vuoto se pulito) dei motivi di colpa.
 // Estratta perche' sia richiamata sia dall'albero versionato sia dal pacchetto,
@@ -564,6 +546,62 @@ test('PROVENIENZA AUDIT nel dist — le grammatiche strutturali mordono anche il
     'frontend/dist/assets/app.css', true);
   assert.deepEqual(css.filter((c) => /audit|provenienza/.test(c)), [],
     'hex di colore del bundle non e\' provenienza di audit');
+});
+
+test('R6 — tutte le grammatiche R5 strutturali mordono anche nel dist', () => {
+  assert.equal(PAYLOAD_RULE_DEFS.payloadIds.length, 1,
+    'nel ramo esente del dist deve restare solo la grammatica degli ID corti');
+  const casi = [
+    'INVARIANTI (da revisione F2/F3)',
+    'questo giro — da revisione',
+    'MISURATO (2026-08-17)',
+    'Stesso principio tecnico (3134d2f)',
+  ];
+  const esiti = casi.map((testo) => ({
+    testo,
+    colpe: colpeIn(testo, 'frontend/dist/assets/app.js', true),
+  }));
+  assert.deepEqual(
+    esiti.map(({ colpe }) => colpe.length > 0),
+    casi.map(() => true),
+    `grammatiche R5 esenti nel dist: ${JSON.stringify(esiti)}`,
+  );
+});
+
+test('R6 — estrattore e guardia condividono le grammatiche e il TSV fisico', () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-r6-extract-'));
+  fs.mkdirSync(path.join(fixture, 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(fixture, 'package.json'), JSON.stringify({
+    files: ['lib/', 'catalog.json', 'CHANGELOG.md'],
+  }));
+  fs.writeFileSync(path.join(fixture, 'lib', 'inline.js'), [
+    'const first = true; // INVARIANTI (da revisione F2/F3)',
+    'const second = true; // Stesso principio tecnico (3134d2f)',
+  ].join('\n'));
+  fs.writeFileSync(path.join(fixture, 'catalog.json'),
+    '{"note":"revision check without provenance"}\n');
+  fs.writeFileSync(path.join(fixture, 'CHANGELOG.md'),
+    '2026-09-01 - release pubblica\n');
+
+  const result = spawnSync('python3', [
+    path.join(ROOT, 'tools', 'extract-payload-context.py'), fixture,
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, `estrattore fallito: ${result.stderr}`);
+  const physical = result.stdout.trimEnd().split('\n');
+  const tsv = physical.filter((line) => !line.startsWith('# '));
+  const rows = tsv.slice(1).map((line) => line.split('\t'));
+  assert.ok(rows.length >= 4, `record estratti insufficienti: ${result.stdout}`);
+  assert.ok(rows.every((row) => row.length === 7),
+    `il TSV deve avere sette colonne fisiche: ${JSON.stringify(rows)}`);
+
+  const f23 = rows.find((row) => row[6].includes('F2/F3'));
+  const hash = rows.find((row) => row[6].includes('3134d2f'));
+  const catalog = rows.find((row) => row[0] === 'catalog.json');
+  const changelog = rows.find((row) => row[0] === 'CHANGELOG.md');
+  assert.equal(f23?.[4], 'NEUTRALIZZA');
+  assert.equal(hash?.[4], 'NEUTRALIZZA');
+  assert.equal(catalog?.[4], 'REVISIONA');
+  assert.equal(changelog?.[4], 'TIENI');
 });
 
 test('l\'albero pubblicato non porta tracce di dove e\' stato costruito', () => {

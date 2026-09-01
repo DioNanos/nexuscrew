@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "payloadStructural": [
+    {
+      "source": "\\(\\s*(?:re)?audit\\b[^)]{0,60}\\)",
+      "flags": "i",
+      "reason": "parentesi di provenienza del giro di audit interno"
+    },
+    {
+      "source": "\\b(?:re)?audit\\b[^.\\n]{0,60}@[0-9a-f]{6,40}",
+      "flags": "i",
+      "reason": "audit con riferimento a commit interno (@hash)"
+    },
+    {
+      "source": "\\b(?:re)?audit\\s+[0-9a-f]{7,40}\\b",
+      "flags": "i",
+      "reason": "audit con hash di commit come id di rilievo"
+    },
+    {
+      "source": "\\blease-audit\\b",
+      "flags": "i",
+      "reason": "identificativo di giro di audit interno (lease-audit-*)"
+    },
+    {
+      "source": "\\bdall['’]auditor\\b",
+      "flags": "i",
+      "reason": "riferimento all'auditor interno"
+    },
+    {
+      "source": "\\b(?:revisione|rilievo)\\b[^.\\n]{0,60}\\(?\\d{4}-\\d{2}-\\d{2}",
+      "flags": "i",
+      "reason": "revisione o rilievo legato alla data del giro interno"
+    },
+    {
+      "source": "\\b(?:revisione|rilievo)\\b[^.\\n]{0,30}(?:\\bM6\\b|\\bD8\\b|\\brc\\.\\d+\\b|terzo giro)",
+      "flags": "i",
+      "reason": "revisione o rilievo legato a un id o giro interno"
+    },
+    {
+      "source": "\\b(?:da )?revisione\\s+(?:F\\d(?:\\s*\\/\\s*F\\d)?|D\\d|rev\\d+|R\\d+)\\b",
+      "flags": "i",
+      "reason": "revisione accoppiata a un id di rilievo (serie F/D/R/rev)"
+    },
+    {
+      "source": "\\b(?:F\\d(?:\\s*\\/\\s*F\\d)?|D\\d|rev\\d+|R\\d+)\\s+da revisione\\b",
+      "flags": "i",
+      "reason": "id di rilievo prima di da revisione"
+    },
+    {
+      "source": "questo giro\\b[^.\\n]{0,60}(?:da )?revisione",
+      "flags": "i",
+      "reason": "cronologia del giro corrente"
+    },
+    {
+      "source": "\\bmisurato\\s*\\(\\d{4}-\\d{2}-\\d{2}\\)",
+      "flags": "i",
+      "reason": "data del giro di misura interno"
+    },
+    {
+      "source": "\\b(?:8fe514f|3134d2f|239e2e6|d6c47c6|437d29f|fa8bd90|142e272|2a05db2|dd38c83|3405df0)\\b",
+      "flags": "i",
+      "reason": "hash di commit privato citato dai referti interni"
+    }
+  ],
+  "payloadIds": [
+    {
+      "source": "\\b(?:R-pidfile-\\d|R19|R28|F7|F-A|F-B|F-C|P1-2b|P1-2|P1-3|P1-4)\\b",
+      "flags": "",
+      "reason": "identificativo corto di rilievo interno"
+    }
+  ]
+}
