@@ -18,10 +18,10 @@ describe('VlNodeEvents — la conversazione del nodo, in sola lettura', () => {
 
   it('mostra il testo che arriva dal nodo', async () => {
     vi.mocked(getVlNodeEvents).mockResolvedValue({
-      events: [{ seq: 1, kind: 'text', text: 'ciao dal N900' }], cursor: 1,
+      events: [{ seq: 1, kind: 'text', text: 'ciao dal VL-Node-A' }], cursor: 1,
     });
     mount();
-    await waitFor(() => expect(screen.getByText(/ciao dal N900/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/ciao dal VL-Node-A/)).toBeTruthy());
   });
 
   it('dichiara il buco invece di nasconderlo: un gap dice QUANTI eventi mancano', async () => {

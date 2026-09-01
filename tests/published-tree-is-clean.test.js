@@ -423,6 +423,18 @@ test('nemmeno l\'albero versionato porta quelle tracce, tests inclusi', () => {
 });
 
 test('l\'albero pubblicato non porta tracce di dove e\' stato costruito', () => {
+  // Il guardiano si auto-esclude in colpeIn() (contiene i pattern per
+  // definizione). Nel pacchetto l'esclusione non deve servire MAI: tests/
+  // non e' in `files`, quindi il guardiano non viaggia — e questo assert
+  // rende verificato sul pacchetto cio' che oggi e' vero per costruzione.
+  // Se domani `files` includesse tests/, questo rosso arriva PRIMA che
+  // l'auto-esclusione silenziosamente indebolisca il controllo sul
+  // pacchetto.
+  assert.ok(
+    !published().some((f) => f.endsWith(SELF_EXCLUDE)),
+    'il guardiano non deve viaggiare nel pacchetto: se ci fosse, la sua ' +
+    'auto-esclusione lo spegnerebbe proprio li',
+  );
   const colpevoli = [];
   for (const file of published()) {
     let testo;

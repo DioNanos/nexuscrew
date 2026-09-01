@@ -2199,7 +2199,7 @@ nothing anywhere said so.
   injection. Persistent offline queues, attachments and delegated capability workers remain
   explicitly deferred rather than being represented as implemented.
 - Tests: **770 total** (769 pass / 1 platform-dependent skip) in the isolated Node harness plus
-  5 passing frontend component tests; production build PASS. Real Mac–hub–Pixel end-to-end
+  5 passing frontend component tests; production build PASS. Real nodo-A–hub–nodo-B end-to-end
   pairing and delivery remain an operator field test and are not represented as automated.
 
 ## 0.8.12 — 2026-07-13 — "Mobile Roster"
@@ -2223,7 +2223,7 @@ nothing anywhere said so.
   is disabled and explains that a Termux boot script still requires the Termux:Boot app to be
   installed and launched once.
 - Tests: **749 total** (748 pass / 1 platform-dependent skip), production build PASS, root and
-  frontend dependency audits clean. Mac–Pixel–hub end-to-end pairing was not executed in this
+  frontend dependency audits clean. nodo-A–nodo-B–hub end-to-end pairing was not executed in this
   release gate.
 
 ## 0.8.11 — 2026-07-13 — "Tmux Survival"
@@ -2281,7 +2281,7 @@ nothing anywhere said so.
   HTTP-port move when paired peers depend on the configured endpoint.
 - Tests: **726 total** (725 pass / 1 platform-dependent skip), frontend production build PASS,
   dependency audit clean, isolated HOME clean, and package/public-tree verification required
-  before publication. Real Mac–Pixel–hub interoperability remains an external follow-up and is
+  before publication. Real nodo-A–nodo-B–hub interoperability remains an external follow-up and is
   not represented as an automated test.
 
 ## 0.8.9 — 2026-07-12 — "Hydra Workspaces"

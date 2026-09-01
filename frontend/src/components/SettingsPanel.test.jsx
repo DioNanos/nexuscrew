@@ -408,7 +408,7 @@ describe('Settings native node audio', () => {
 
 describe('Settings Nodes tab — VL nodes appear in the same list (NC_UI_NODI_VL)', () => {
   const vlPeer = vlNodeToPeer({
-    nodeId: 'a'.repeat(32), label: 'N900', cell: 'VL-aaaaaaaa',
+    nodeId: 'a'.repeat(32), label: 'VL-Node-A', cell: 'VL-aaaaaaaa',
     pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
     health: { state: 'ok', uptimeSec: 3600, rssBytes: 12345, detail: 'nominal' },
     capabilities: ['status', 'health'],
@@ -423,7 +423,7 @@ describe('Settings Nodes tab — VL nodes appear in the same list (NC_UI_NODI_VL
     // nexuscrew, non una sezione nuova": one button, same class, opens the
     // same sheet — just grouped under its own label like hubs/clients/routed
     // already are.
-    const row = screen.getByRole('button', { name: /N900/ });
+    const row = screen.getByRole('button', { name: /VL-Node-A/ });
     expect(row.className).toContain('nc-node-row');
     expect(row.querySelector('.nc-dot').className).toContain('on'); // online
     expect(view.container.textContent).toContain('nominal'); // real health, not a placeholder
@@ -454,14 +454,14 @@ describe('Settings Nodes tab — VL nodes appear in the same list (NC_UI_NODI_VL
     mocks.getVlNodes.mockResolvedValue({
       instanceId: 'x', protocol: 'vl-node/1',
       nodes: [{
-        nodeId: 'b'.repeat(32), label: 'N900', cell: 'VL-bbbbbbbb',
+        nodeId: 'b'.repeat(32), label: 'VL-Node-A', cell: 'VL-bbbbbbbb',
         pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
         health: { state: 'ok', uptimeSec: 60, rssBytes: 1, detail: 'ok' },
         capabilities: [],
       }],
     });
     render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
-    expect(await screen.findByRole('button', { name: /N900/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /VL-Node-A/ })).toBeTruthy();
     // The Fleet hub is STILL there — union, not replacement.
     expect(screen.getByRole('button', { name: /Hub/ })).toBeTruthy();
   });
@@ -481,8 +481,8 @@ describe('Settings Nodes tab — VL nodes appear in the same list (NC_UI_NODI_VL
       token="token" nodes={[vlPeer]} roster={[]} settings={{}} readonly={false}
       refresh={vi.fn().mockResolvedValue(undefined)} refreshAliases={vi.fn()}
     />);
-    fireEvent.click(screen.getByRole('button', { name: /N900/ }));
-    expect(screen.getAllByText('N900').length).toBeGreaterThan(1); // riga + foglio
+    fireEvent.click(screen.getByRole('button', { name: /VL-Node-A/ }));
+    expect(screen.getAllByText('VL-Node-A').length).toBeGreaterThan(1); // riga + foglio
   });
 });
 
@@ -495,20 +495,20 @@ describe('Settings Nodes tab — VL nodes across REMOTE owners (NC_UI_NODI_VL_RE
     nodes: [{ instanceId: 'remote-vps3-000', route: ['vps3'], label: 'VPS3', stale: false }],
   };
   const remoteVlNode = {
-    nodeId: 'c'.repeat(32), label: 'N900', cell: 'VL-cccccccc',
+    nodeId: 'c'.repeat(32), label: 'VL-Node-A', cell: 'VL-cccccccc',
     pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
     health: { state: 'running', detail: 'nominal' }, capabilities: ['status'],
   };
 
   it('aggregates VL nodes from a REMOTE owner found in /api/topology, not just local', async () => {
     mocks.getTopology.mockResolvedValue(remoteOwnerTopology);
-    // Locale: nessun nodo. Remoto (vps3): un N900.
+    // Locale: nessun nodo. Remoto (vps3): un VL-Node-A.
     mocks.getVlNodes.mockImplementation((token, route = []) => (
       route.length ? Promise.resolve({ instanceId: 'remote-vps3-000', nodes: [remoteVlNode] })
         : Promise.resolve({ nodes: [] })
     ));
     render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
-    expect(await screen.findByRole('button', { name: /N900/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /VL-Node-A/ })).toBeTruthy();
     // Il fetch remoto e' realmente avvenuto sulla route dell'owner, non solo
     // su quella locale.
     await waitFor(() => expect(mocks.getVlNodes).toHaveBeenCalledWith('token', ['vps3']));

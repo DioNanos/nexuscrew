@@ -86,7 +86,7 @@ export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs$
 export const getSettings = (t) => jsonFetch('/api/settings', t);
 export const getNodes = (t) => jsonFetch('/api/nodes', t);
 export const getPeers = (t) => jsonFetch('/api/peers', t);
-// Nodi VL (device N900): endpoint separato, non federato — fuso con i peer
+// Nodi VL (device di esempio): endpoint separato, non federato — fuso con i peer
 // SOLO lato presentazione (vl-nodes-model.js), mai dentro /api/nodes o
 // /api/peers (design NC_UI_NODI_VL, 2026-08-05: non cambiare quel contratto).
 // `route` (default locale, `[]`) instrada verso l'owner giusto — federazione

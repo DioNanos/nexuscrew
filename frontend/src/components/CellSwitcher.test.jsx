@@ -25,8 +25,8 @@ beforeEach(() => {
   localStorage.clear();
   localStorage.setItem('nc_lang', 'en');
   writeCellSwitcherSnapshot({
-    sessions: [{ name: 'cloud-Dev', activity: 10, working: true }],
-    cells: [active('Dev', 'cloud-Dev'), off('Research', 'cloud-Research')],
+    sessions: [{ name: 'cloud-cell-One', activity: 10, working: true }],
+    cells: [active('cell-One', 'cloud-cell-One'), off('cell-Three', 'cloud-cell-Three')],
     nodeGroups: [
       {
         route: ['hub'], label: 'Hub', sessions: [{ name: 'cloud-Remote', activity: 5 }],
@@ -42,13 +42,13 @@ beforeEach(() => {
       },
     ],
   });
-  mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: [{ name: 'cloud-Dev', activity: 10, working: true }] }) });
+  mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: [{ name: 'cloud-cell-One', activity: 10, working: true }] }) });
   mocks.getRouteSessions.mockImplementation(async (_token, route) => {
     if (route.join('/') === 'hub') return { sessions: [{ name: 'cloud-Remote', activity: 5 }] };
     return { sessions: [] };
   });
   mocks.fleetStatus.mockImplementation(async (_token, route = []) => {
-    if (!route.length) return { available: true, cells: [active('Dev', 'cloud-Dev'), off('Research', 'cloud-Research')] };
+    if (!route.length) return { available: true, cells: [active('cell-One', 'cloud-cell-One'), off('cell-Three', 'cloud-cell-Three')] };
     if (route.join('/') === 'hub') return { available: true, cells: [active('Remote', 'cloud-Remote')] };
     if (route.join('/') === 'stale') return { available: true, cells: [off('Stale Cell', 'cloud-Stale')] };
     return {
@@ -61,15 +61,15 @@ beforeEach(() => {
 describe('CellSwitcher', () => {
   it('uses fresh local and route-qualified fleet data, keeps degraded visible and requires explicit opening', async () => {
     const onPick = vi.fn(); const onClose = vi.fn();
-    render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={onPick} onClose={onClose} />);
+    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={onPick} onClose={onClose} />);
 
     const dialog = await screen.findByRole('dialog', { name: 'Cells / cloud sessions' });
     expect(dialog.getAttribute('aria-modal')).toBeNull();
-    expect(screen.getByRole('button', { name: /^Dev / }).getAttribute('aria-current')).toBe('true');
+    expect(screen.getByRole('button', { name: /^cell-One / }).getAttribute('aria-current')).toBe('true');
     const remote = screen.getByRole('button', { name: /^Remote / });
     expect(remote).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Degraded / }).getAttribute('aria-disabled')).toBe('true');
-    expect(screen.queryByRole('button', { name: /^Research / })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^cell-Three / })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Stale Cell / })).toBeNull();
     expect(screen.getByRole('button', { name: 'close cell switcher' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'select a cell' }).disabled).toBe(true);
@@ -91,9 +91,9 @@ describe('CellSwitcher', () => {
   it('exposes the full inventory deliberately and refuses an off target with an explicit status', async () => {
     const onPick = vi.fn();
     render(<CellSwitcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: /^Dev / });
+    await screen.findByRole('button', { name: /^cell-One / });
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
-    const research = screen.getByRole('button', { name: /^Research / });
+    const research = screen.getByRole('button', { name: /^cell-Three / });
     expect(research.getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(research);
     expect(await screen.findByText('this cell is no longer active')).toBeTruthy();
@@ -102,8 +102,8 @@ describe('CellSwitcher', () => {
 
   it('keeps deactivated cells out of active mode even when marked degraded', async () => {
     writeCellSwitcherSnapshot({
-      sessions: [{ name: 'cloud-Dev', activity: 10, working: true }],
-      cells: [active('Dev', 'cloud-Dev')],
+      sessions: [{ name: 'cloud-cell-One', activity: 10, working: true }],
+      cells: [active('cell-One', 'cloud-cell-One')],
       nodeGroups: [
         {
           route: ['hub'], label: 'Hub', sessions: [],
@@ -112,7 +112,7 @@ describe('CellSwitcher', () => {
       ],
     });
     mocks.fleetStatus.mockImplementation(async (_token, route = []) => {
-      if (!route.length) return { available: true, cells: [active('Dev', 'cloud-Dev')] };
+      if (!route.length) return { available: true, cells: [active('cell-One', 'cloud-cell-One')] };
       return {
         available: true,
         cells: [{ cell: 'Ghost Off', tmuxSession: 'cloud-GhostOff', active: false, tmux: false, degraded: true, engine: 'shell.local' }],
@@ -120,7 +120,7 @@ describe('CellSwitcher', () => {
     });
     mocks.getRouteSessions.mockResolvedValue({ sessions: [] });
     render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: /^Dev / });
+    await screen.findByRole('button', { name: /^cell-One / });
     await waitFor(() => expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['hub']));
     expect(screen.queryByRole('button', { name: /^Ghost Off / })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
@@ -129,12 +129,12 @@ describe('CellSwitcher', () => {
 
   it('renders each distinct local cell exactly once (no client-side doubling)', async () => {
     const localCells = [
-      active('Dev', 'cloud-Dev'), active('Alpha', 'cloud-Alpha'),
+      active('cell-One', 'cloud-cell-One'), active('Alpha', 'cloud-Alpha'),
       off('Fork', 'cloud-Fork'), off('Gamma', 'cloud-Gamma'),
-      active('Personal', 'cloud-Personal'), active('Research', 'cloud-Research'),
-      off('Trading', 'cloud-Trading'), off('GameDev', 'cloud-GameDev'),
-      off('GameAuditor', 'cloud-GameAuditor'), active('SysAdmin', 'cloud-SysAdmin'),
-      off('DesignCreator', 'cloud-DesignCreator'), off('WarMaster', 'cloud-WarMaster'),
+      active('cell-Two', 'cloud-cell-Two'), active('cell-Three', 'cloud-cell-Three'),
+      off('cell-Five', 'cloud-cell-Five'), off('cell-Six', 'cloud-cell-Six'),
+      off('cell-Seven', 'cloud-cell-Seven'), active('cell-Four', 'cloud-cell-Four'),
+      off('cell-Eight', 'cloud-cell-Eight'), off('cell-Nine', 'cloud-cell-Nine'),
       active('Beta', 'cloud-Beta'), active('Shell', 'cloud-Shell'),
     ];
     writeCellSwitcherSnapshot({
@@ -149,35 +149,35 @@ describe('CellSwitcher', () => {
       }),
     });
     render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: /^Dev / });
+    await screen.findByRole('button', { name: /^cell-One / });
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
     for (const cell of localCells) {
       expect(screen.getAllByRole('button', { name: new RegExp(`^${cell.cell} `) })).toHaveLength(1);
     }
   });
 
-  // Forma REALE misurata il 2026-08-06 su un client federato (Pixel): il nodo
-  // VL vive su VPS3, quindi `vlNodeToPeer` gli assegna la route dell'OWNER —
-  // la stessa route del gruppo Fleet di VPS3. Due gruppi, una sola posizione.
+  // Forma REALE misurata il 2026-08-06 su un client federato (client-federato): il nodo
+  // VL vive su owner-host, quindi `vlNodeToPeer` gli assegna la route dell'OWNER —
+  // la stessa route del gruppo Fleet di owner-host. Due gruppi, una sola posizione.
   // Il test precedente ('no client-side doubling') usa nodeGroups: [] e non
   // puo' vedere questo caso: il difetto vive esattamente nei gruppi.
   it('never doubles a fleet position when a VL node shares its route', async () => {
     const route = ['cloud-example-com'];
     const vpsCells = [
-      active('Dev', 'cloud-Dev'), active('Personal', 'cloud-Personal'),
-      active('Research', 'cloud-Research'), active('SysAdmin', 'cloud-SysAdmin'),
+      active('cell-One', 'cloud-cell-One'), active('cell-Two', 'cloud-cell-Two'),
+      active('cell-Three', 'cloud-cell-Three'), active('cell-Four', 'cloud-cell-Four'),
     ];
     const vpsSessions = vpsCells.map((c) => ({ name: c.tmuxSession, activity: 1 }));
     writeCellSwitcherSnapshot({
-      // Il Pixel non ha celle proprie attive: tutto cio' che si vede arriva
+      // Il client-federato non ha celle proprie attive: tutto cio' che si vede arriva
       // dalla posizione remota.
       sessions: [],
       cells: [],
       nodeGroups: [
-        { route, label: 'VPS_Cloud', sessions: vpsSessions, cells: vpsCells },
+        { route, label: 'Group-Cloud', sessions: vpsSessions, cells: vpsCells },
         // Come lo produce vlSidebarGroups: cells vuote, e concatenato DOPO i
         // gruppi Fleet (useNodes.js) — per questo, a chiave uguale, vince lui.
-        { kind: 'vl', name: 'vl-82dffb30', route, label: 'N900', sessions: [], cells: [] },
+        { kind: 'vl', name: 'vl-0123abcd', route, label: 'VL-Node-A', sessions: [], cells: [] },
       ],
     });
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: [] }) });
@@ -187,28 +187,28 @@ describe('CellSwitcher', () => {
       : { available: true, cells: [] }));
 
     render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: /^Dev / });
+    await screen.findByRole('button', { name: /^cell-One / });
     for (const cell of vpsCells) {
       expect(screen.getAllByRole('button', { name: new RegExp(`^${cell.cell} `) })).toHaveLength(1);
     }
     // Un nodo VL non e' una posizione Fleet: non deve prestare la sua etichetta
-    // alle celle di VPS3. Se questa riga passa mentre quella sopra fallisce, la
+    // alle celle di owner-host. Se questa riga passa mentre quella sopra fallisce, la
     // duplicazione e' solo mascherata.
-    expect(screen.queryByText(/N900/)).toBeNull();
+    expect(screen.queryByText(/VL-Node-A/)).toBeNull();
   });
 
   it('shows cell telemetry with its direction baked into the text: context is free, tiers are used', async () => {
     const telemetry = { ts: Date.now(), contextFreePct: 71, tier5hUsedPct: 33, tier7dUsedPct: 8 };
     writeCellSwitcherSnapshot({
-      sessions: [{ name: 'cloud-Dev', activity: 10, working: true, telemetry }],
-      cells: [active('Dev', 'cloud-Dev')],
+      sessions: [{ name: 'cloud-cell-One', activity: 10, working: true, telemetry }],
+      cells: [active('cell-One', 'cloud-cell-One')],
       nodeGroups: [],
     });
     // Anche il poll deve riportarla, o la riga la mostra e la perde al primo refresh.
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
-      sessions: [{ name: 'cloud-Dev', activity: 10, working: true, telemetry }],
+      sessions: [{ name: 'cloud-cell-One', activity: 10, working: true, telemetry }],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
     // Il verso è scritto DENTRO ogni etichetta: «free» sul contesto E «used»
     // su ogni tier. Un tier senza il suo verso prenderebbe per contagio il
     // «free» del vicino e la riga direbbe il contrario del vero.
@@ -217,22 +217,22 @@ describe('CellSwitcher', () => {
 
   it('no telemetry, no field: cells that do not publish it keep the row exactly as it was', async () => {
     // Nessuna sessione porta telemetria (celle non-Claude: assenza legittima).
-    render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={vi.fn()} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: /^Dev / });
+    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
-    await screen.findByRole('button', { name: /^Research / });
+    await screen.findByRole('button', { name: /^cell-Three / });
     expect(document.querySelectorAll('.nc-cell-switcher-telemetry').length).toBe(0);
     // E nemmeno un segnaposto al posto del campo: nessuna percentuale, mai.
     expect(screen.queryByText(/%/)).toBeNull();
   });
 
   it('the popup shows the CURRENT content of the peeked cell, never a saved frame of it', async () => {
-    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('Dev', 'cloud-Dev')] }));
+    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
-      sessions: [{ name: 'cloud-Dev', activity: 0, preview: 'frame-uno' }],
+      sessions: [{ name: 'cloud-cell-One', activity: 0, preview: 'frame-uno' }],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={vi.fn()} onClose={vi.fn()} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Peek without switching cell: Dev' }));
+    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Peek without switching cell: cell-One' }));
     // Il pre del popup è il contenuto della sorgente; la preview compare
     // anche nello subtitle della riga, quindi si mira al selettore preciso.
     await waitFor(() => expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('frame-uno'));
@@ -240,53 +240,53 @@ describe('CellSwitcher', () => {
     // Il popup tiene una chiave e ri-risolve la riga: deve mostrare il
     // presente di quella cella, non il fotogramma di quando è stata aperta.
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
-      sessions: [{ name: 'cloud-Dev', activity: 0, preview: 'frame-due-fresca' }],
+      sessions: [{ name: 'cloud-cell-One', activity: 0, preview: 'frame-due-fresca' }],
     }) });
     await waitFor(() => expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('frame-due-fresca'), { timeout: 6000 });
   });
 
   it('a cell that disappears from the updated list closes the popup instead of showing its dead frame', async () => {
-    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('Dev', 'cloud-Dev')] }));
+    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
-      sessions: [{ name: 'cloud-Dev', activity: 0, preview: 'frame-ultimo' }],
+      sessions: [{ name: 'cloud-cell-One', activity: 0, preview: 'frame-ultimo' }],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={vi.fn()} onClose={vi.fn()} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Peek without switching cell: Dev' }));
+    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Peek without switching cell: cell-One' }));
     await waitFor(() => expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('frame-ultimo'));
     // La cella muore sotto il popup: la chiave non risolve più niente e il
     // popup si chiude da sé. L'alternativa — l'anteprima di un'altra cella
     // creduta la propria — è il difetto che questo test tiene chiuso.
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [] }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Dev' })).toBeNull(), { timeout: 6000 });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'cell-One' })).toBeNull(), { timeout: 6000 });
   });
 
   it('streaming is a source of the popup: opened from the row, of that cell, and it never selects it', async () => {
-    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('Dev', 'cloud-Dev')] }));
+    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
-      sessions: [{ name: 'cloud-Dev', activity: 0 }],
+      sessions: [{ name: 'cloud-cell-One', activity: 0 }],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={vi.fn()} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: /^Dev / });
-    fireEvent.click(screen.getByRole('button', { name: 'Stream: Dev' }));
+    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    fireEvent.click(screen.getByRole('button', { name: 'Stream: cell-One' }));
     const term = await screen.findByTestId('peek-term');
-    expect(term.getAttribute('data-session')).toBe('cloud-Dev');
+    expect(term.getAttribute('data-session')).toBe('cloud-cell-One');
     // Guardare non è selezionare: nessuna riga premuta, l'apertura resta chiusa.
-    expect(screen.getByRole('button', { name: /^Dev / }).getAttribute('aria-pressed')).not.toBe('true');
+    expect(screen.getByRole('button', { name: /^cell-One / }).getAttribute('aria-pressed')).not.toBe('true');
     expect(screen.getByRole('button', { name: 'select a cell' }).disabled).toBe(true);
   });
 
   it('the AIDesktop panel is reachable from the list when the cell publishes a panelUrl', async () => {
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [
-      { ...active('Dev', 'cloud-Dev'), panelUrl: 'https://panel.example' },
+      { ...active('cell-One', 'cloud-cell-One'), panelUrl: 'https://panel.example' },
     ] }));
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
-      sessions: [{ name: 'cloud-Dev', activity: 0 }],
+      sessions: [{ name: 'cloud-cell-One', activity: 0 }],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={vi.fn()} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: /^Dev / });
-    fireEvent.click(screen.getByRole('button', { name: 'Panel: Dev' }));
+    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    fireEvent.click(screen.getByRole('button', { name: 'Panel: cell-One' }));
     const panel = await screen.findByTestId('peek-panel');
-    expect(panel.getAttribute('data-cell')).toBe('Dev');
+    expect(panel.getAttribute('data-cell')).toBe('cell-One');
   });
 
   // P0 sicurezza: con una porta nota il frame va su un origin SEPARATO dal
@@ -296,15 +296,15 @@ describe('CellSwitcher', () => {
   // difetto chiuso in 0.9.1, riaperto in questo ingresso.
   it('panel origin: a LOCAL cell panel uses the node\'s own panel port, never 0 when one is configured', async () => {
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [
-      { ...active('Dev', 'cloud-Dev'), panelUrl: 'https://panel.example' },
+      { ...active('cell-One', 'cloud-cell-One'), panelUrl: 'https://panel.example' },
     ] }));
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
-      sessions: [{ name: 'cloud-Dev', activity: 0 }],
+      sessions: [{ name: 'cloud-cell-One', activity: 0 }],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={vi.fn()} onClose={vi.fn()}
+    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()}
       panelPort={41821} nodePanelPorts={{}} />);
-    await screen.findByRole('button', { name: /^Dev / });
-    fireEvent.click(screen.getByRole('button', { name: 'Panel: Dev' }));
+    await screen.findByRole('button', { name: /^cell-One / });
+    fireEvent.click(screen.getByRole('button', { name: 'Panel: cell-One' }));
     const panel = await screen.findByTestId('peek-panel');
     expect(panel.dataset.panelPort).toBe('41821');
   });
@@ -358,16 +358,16 @@ describe('CellSwitcher', () => {
 
   it('the row renders what the cell is doing: fresh activity as its age, stale or absent as nothing', async () => {
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [
-      active('Dev', 'cloud-Dev'), active('Research', 'cloud-Research'),
+      active('cell-One', 'cloud-cell-One'), active('cell-Three', 'cloud-cell-Three'),
     ] }));
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
       sessions: [
-        { name: 'cloud-Dev', activity: Date.now() - 2 * 60 * 1000 },
-        { name: 'cloud-Research', activity: Date.now() - 2 * 60 * 60 * 1000 },
+        { name: 'cloud-cell-One', activity: Date.now() - 2 * 60 * 1000 },
+        { name: 'cloud-cell-Three', activity: Date.now() - 2 * 60 * 60 * 1000 },
       ],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-Dev' }} onPick={vi.fn()} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: /^Dev / });
+    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
     // Fresca: l'età c'è, con la sua etichetta. Stantia (2h): oltre soglia il
     // campo sparisce — un valore morto che sembra fresco è peggio di nessuno.
     await waitFor(() => expect(screen.getByText(/activity \d+m/)).toBeTruthy(), { timeout: 5000 });
@@ -384,58 +384,58 @@ describe('CellSwitcher', () => {
 
   it('preserves unmanaged sessions in the shared order and keeps an off cell in place when it returns', async () => {
     const localSessions = [
-      { name: 'cloud-Dev', activity: 10, working: true },
+      { name: 'cloud-cell-One', activity: 10, working: true },
       { name: 'my-build-watch', activity: 5, preview: 'watching build' },
     ];
     localStorage.setItem('nc_sidebar_order_v1', JSON.stringify({
-      local: ['cloud-Dev', 'my-build-watch', 'cloud-Research'],
+      local: ['cloud-cell-One', 'my-build-watch', 'cloud-cell-Three'],
     }));
     writeCellSwitcherSnapshot({
       sessions: localSessions,
-      cells: [active('Dev', 'cloud-Dev'), off('Research', 'cloud-Research')],
+      cells: [active('cell-One', 'cloud-cell-One'), off('cell-Three', 'cloud-cell-Three')],
       nodeGroups: [],
     });
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: localSessions }) });
     mocks.fleetStatus.mockResolvedValue({
-      available: true, cells: [active('Dev', 'cloud-Dev'), off('Research', 'cloud-Research')],
+      available: true, cells: [active('cell-One', 'cloud-cell-One'), off('cell-Three', 'cloud-cell-Three')],
     });
     const first = render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: /^Dev / });
+    await screen.findByRole('button', { name: /^cell-One / });
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
-    const researchHandle = screen.getByRole('button', { name: 'reorder Research' });
-    const devRow = screen.getByRole('button', { name: /^Dev / }).closest('[data-roster-key]');
+    const researchHandle = screen.getByRole('button', { name: 'reorder cell-Three' });
+    const devRow = screen.getByRole('button', { name: /^cell-One / }).closest('[data-roster-key]');
     const previous = document.elementFromPoint;
     Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: vi.fn(() => devRow) });
     fireEvent.pointerDown(researchHandle, { pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 20 });
     fireEvent.pointerMove(researchHandle, { pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 40 });
     fireEvent.pointerUp(researchHandle, { pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 40 });
     await waitFor(() => expect(JSON.parse(localStorage.getItem('nc_sidebar_order_v1'))?.local)
-      .toEqual(['cloud-Research', 'cloud-Dev', 'my-build-watch']));
+      .toEqual(['cloud-cell-Three', 'cloud-cell-One', 'my-build-watch']));
     Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: previous });
     expect(researchHandle.getAttribute('aria-keyshortcuts')).toBe('ArrowUp ArrowDown');
 
     first.unmount();
     writeCellSwitcherSnapshot({
       sessions: [
-        { name: 'cloud-Dev', activity: 10, working: true },
-        { name: 'cloud-Research', activity: 2, working: false },
+        { name: 'cloud-cell-One', activity: 10, working: true },
+        { name: 'cloud-cell-Three', activity: 2, working: false },
       ],
-      cells: [active('Dev', 'cloud-Dev'), active('Research', 'cloud-Research')],
+      cells: [active('cell-One', 'cloud-cell-One'), active('cell-Three', 'cloud-cell-Three')],
       nodeGroups: [],
     });
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
       sessions: [
-        { name: 'cloud-Dev', activity: 10, working: true },
-        { name: 'cloud-Research', activity: 2, working: false },
+        { name: 'cloud-cell-One', activity: 10, working: true },
+        { name: 'cloud-cell-Three', activity: 2, working: false },
       ],
     }) });
     mocks.fleetStatus.mockResolvedValue({
-      available: true, cells: [active('Dev', 'cloud-Dev'), active('Research', 'cloud-Research')],
+      available: true, cells: [active('cell-One', 'cloud-cell-One'), active('cell-Three', 'cloud-cell-Three')],
     });
     render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: /^Research / });
+    await screen.findByRole('button', { name: /^cell-Three / });
     expect([...document.querySelectorAll('.nc-cell-switcher-row[data-position="local"]')]
-      .map((row) => row.dataset.rosterKey)).toEqual(['cloud-Research', 'cloud-Dev']);
+      .map((row) => row.dataset.rosterKey)).toEqual(['cloud-cell-Three', 'cloud-cell-One']);
   });
 
   // R27 #4: «questa cella non è più attiva» detto quando è la VERIFICA a
@@ -464,7 +464,7 @@ describe('CellSwitcher', () => {
     // «non più attiva» è la verità e deve restare.
     mocks.fleetStatus.mockImplementation(async (_t, r = []) => (r.length
       ? { available: true, cells: [off('Remote', 'cloud-Remote')] }
-      : { available: true, cells: [active('Dev', 'cloud-Dev')] }));
+      : { available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
     mocks.getRouteSessions.mockResolvedValue({ sessions: [] });
     fireEvent.click(screen.getByRole('button', { name: 'open cell: Remote' }));
     expect(await screen.findByText('this cell is no longer active')).toBeTruthy();
@@ -479,7 +479,7 @@ describe('CellSwitcher', () => {
     render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: 'all' });
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
-    const dev = await screen.findByRole('button', { name: /^Dev / });
+    const dev = await screen.findByRole('button', { name: /^cell-One / });
     expect(dev.textContent).toContain('status not confirmed');
     fireEvent.click(dev);
     // Il notice ha role="status" proprio: le righe portano lo stesso testo

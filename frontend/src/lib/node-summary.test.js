@@ -3,7 +3,7 @@ import { nodeReach, nodeExposure, nodeRowSummary } from './node-summary.js';
 import { vlNodeToPeer } from './vl-nodes-model.js';
 
 const RAW_ONLINE = {
-  nodeId: 'a'.repeat(32), label: 'N900', cell: 'VL-aaaaaaaa',
+  nodeId: 'a'.repeat(32), label: 'VL-Node-A', cell: 'VL-aaaaaaaa',
   pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
   health: { state: 'ok', uptimeSec: 3600, rssBytes: 12345, detail: 'nominal' },
   capabilities: ['status', 'health'],
@@ -55,7 +55,7 @@ describe('nodeRowSummary — a VL node produces a real row, not null', () => {
   it('has a title and a non-empty subtitle even with no Fleet fields set', () => {
     const row = nodeRowSummary(vlNodeToPeer(RAW_ONLINE));
     expect(row).not.toBeNull();
-    expect(row.title).toBe('N900');
+    expect(row.title).toBe('VL-Node-A');
     expect(row.subtitle).toBeTruthy();
   });
 

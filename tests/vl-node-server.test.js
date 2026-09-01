@@ -58,7 +58,7 @@ test('real HTTP server pairs, delivers live-only, acks, supersedes stale session
   assert.doesNotMatch(malformedBody, /\/home\/|node_modules|SyntaxError|\bat\s+\w/);
 
   const inviteResponse = await fetch(`${base}/api/vl-nodes/invite`, {
-    method: 'POST', headers: ui, body: JSON.stringify({ label: 'N900', ttlSeconds: 60 }),
+    method: 'POST', headers: ui, body: JSON.stringify({ label: 'VL-Node-A', ttlSeconds: 60 }),
   });
   assert.equal(inviteResponse.status, 201);
   const invite = await json(inviteResponse);
@@ -67,7 +67,7 @@ test('real HTTP server pairs, delivers live-only, acks, supersedes stale session
   const nodeId = 'b'.repeat(32);
   const pairResponse = await fetch(`${base}/vl-node/v1/pair`, {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-vl-invite': invite.invite },
-    body: JSON.stringify({ protocol: 'vl-node/1', nodeId, label: 'N900' }),
+    body: JSON.stringify({ protocol: 'vl-node/1', nodeId, label: 'VL-Node-A' }),
   });
   assert.equal(pairResponse.status, 201);
   const paired = await json(pairResponse);
@@ -195,12 +195,12 @@ test('the declared VL session flows from heartbeat to the nodes API', async (t) 
   const ui = { authorization: `Bearer ${uiToken}`, 'content-type': 'application/json' };
 
   const invite = await json(await fetch(`${base}/api/vl-nodes/invite`, {
-    method: 'POST', headers: ui, body: JSON.stringify({ label: 'N900', ttlSeconds: 60 }),
+    method: 'POST', headers: ui, body: JSON.stringify({ label: 'VL-Node-A', ttlSeconds: 60 }),
   }));
   const nodeId = 'd'.repeat(32);
   const paired = await json(await fetch(`${base}/vl-node/v1/pair`, {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-vl-invite': invite.invite },
-    body: JSON.stringify({ protocol: 'vl-node/1', nodeId, label: 'N900' }),
+    body: JSON.stringify({ protocol: 'vl-node/1', nodeId, label: 'VL-Node-A' }),
   }));
   const node = { authorization: `Bearer ${paired.token}`, 'content-type': 'application/json' };
 
