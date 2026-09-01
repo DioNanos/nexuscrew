@@ -194,11 +194,36 @@ const BINARI_LEGITTIMI = /\.(?:png|jpe?g|gif|webp|icns|ico|bmp|tiff?)$/i;
 // (il byte NUL della regex) no.
 const SELF_EXCLUDE = 'tests/published-tree-is-clean.test.js';
 
+// R3 (0.9.17): grammatiche di PROVENIENZA dell'audit interno osservate nel
+// payload spedito (hash di rilievi, date/giro, ID e riferimenti all'auditor).
+// Si applicano SOLO al pacchetto (payload), non all'albero versionato: i test
+// dell'albero usano ancora questi ID come firma dei difetti gia' corretti
+// (debito dichiarato nel follow-up di bonifica integrale), mentre il pacchetto
+// non li deve spedire. L'elenco di ID non si applica ai bundle minificati
+// (frontend/dist): il minifier puo' produrre token identici (misurato: `F7`
+// nel bundle) — per il dist restano le grammatiche strutturali e i pattern base.
+const VIETATI_PAYLOAD = [
+  { re: /\(\s*(?:re)?audit\b[^)]{0,60}\)/i,
+    perche: 'parentesi di provenienza del giro di audit interno' },
+  { re: /\b(?:re)?audit\b[^.\n]{0,60}@[0-9a-f]{6,40}/i,
+    perche: 'audit con riferimento a commit interno (@hash)' },
+  { re: /\b(?:re)?audit\s+[0-9a-f]{7,40}\b/i,
+    perche: 'audit con hash di commit come id di rilievo' },
+  { re: /\blease-audit\b/i,
+    perche: 'identificativo di giro di audit interno (lease-audit-*)' },
+  { re: /\bdall['’]auditor\b/i,
+    perche: 'riferimento all\'auditor interno' },
+  { re: /\b(?:R-pidfile-\d|R19|R28|F7|F-A|F-B|F-C|P1-2b|P1-2|P1-3|P1-4)\b/,
+    perche: 'identificativo di rilievo interno' },
+];
+
 // Classifica un file: ritorna l'array (vuoto se pulito) dei motivi di colpa.
 // Estratta perche' sia richiamata sia dall'albero versionato sia dal pacchetto,
 // e perche' il controllo negativo la eserciti su input sintetici (non su file
 // reali). Pura: fuori esce solo l'elenco dei motivi, mai il contenuto.
-function colpeIn(testo, rel) {
+// Con payload=true aggiunge le grammatiche di provenienza audit (R3): la
+// chiamata del test sul pacchetto le usa; tracked() no.
+function colpeIn(testo, rel, payload = false) {
   if (rel === SELF_EXCLUDE) return [];
   if (testo.includes('\0')) {
     return BINARI_LEGITTIMI.test(rel)
@@ -209,6 +234,12 @@ function colpeIn(testo, rel) {
   for (const { re, perche } of VIETATI) {
     const m = testo.match(re);
     if (m) colpe.push(`${rel}: ${perche} — «${m[0]}»`);
+  }
+  if (payload && !rel.includes('frontend/dist')) {
+    for (const { re, perche } of VIETATI_PAYLOAD) {
+      const m = testo.match(re);
+      if (m) colpe.push(`${rel}: ${perche} — «${m[0]}»`);
+    }
   }
   return colpe;
 }
@@ -422,6 +453,52 @@ test('nemmeno l\'albero versionato porta quelle tracce, tests inclusi', () => {
     `il mirror pubblico non deve contenere queste tracce:\n  ${colpevoli.join('\n  ')}`);
 });
 
+// R3 — provenienza dell'audit interno nel payload: le grammatiche osservate
+// (audit su <ramo>@<sha>, (audit <giro> @ <sha>), (reaudit <sha>), lease-audit-,
+// "dall'auditor", ID di rilievo) devono mordere i casi sintetici e lasciare
+// stare gli usi legittimi (npm --no-audit, audit log di prodotto, revisione
+// generica). Il taglio dei fix e' "da revisione ...": nessun hash, nessuna
+// data di giro, nessun ID, nessun riferimento all'auditor.
+test('PROVENIENZA AUDIT — le grammatiche osservate mordono i sintetici (payload) e non i legittimi', () => {
+  const morde = (testo, rel) => colpeIn(testo, rel, true);
+  const devonoMordere = [
+    'R-pidfile-4 (2026-08-17, audit su develop@437d29f): misurato in revisione',
+    'F-B (audit 2a @ 142e272): lease persa per tutta la grace senza un reconnect',
+    'P1-2 (reaudit dd38c83): snapshot dell\'entry preesistente prima di mutare',
+    'P2 (audit 2a05db2): questo e\' un fatto contingente del ref corrente',
+    '(lease-audit-2a-fixes, esito positivo). Il proof supervisore arriva con',
+    'misurato dall\'auditor sul ramo di sviluppo',
+    'F-C (audit 2a @ 142e272): track() serializzato PER CELLA',
+  ];
+  for (const testo of devonoMordere) {
+    const colpe = morde(testo, 'lib/esempio.js');
+    assert.ok(colpe.length >= 1,
+      `provenienza di audit interna NON respinta nel payload — testo: "${testo}"`);
+  }
+  const legittimi = [
+    'npm install --no-audit',
+    'l audit log del proxy registra gli eventi dirottati',
+    'auditMode: "off"',
+    'auditEnabled: true nel config di prodotto',
+    'da revisione interna: il motivo tecnico resta, la provenienza no',
+    'rilievo da revisione interna sul routing del pannello',
+    'misurato in revisione caso per caso',
+  ];
+  for (const testo of legittimi) {
+    const colpe = morde(testo, 'lib/esempio.js');
+    assert.deepEqual(colpe, [],
+      `falso positivo su uso legittimo: "${testo}" — colpe: ${JSON.stringify(colpe)}`);
+  }
+  // L'elenco di ID di rilievo non si applica ai bundle minificati: il
+  // minifier puo' produrre token identici (misurato: `F7` nel bundle).
+  const nelDist = colpeIn('return F7(x)', 'frontend/dist/assets/app.js', true);
+  assert.deepEqual(nelDist.filter((c) => /identificativo di rilievo/.test(c)), [],
+    'l\'elenco di ID non deve morire sul bundle minificato');
+  // Mentre in lib/ lo stesso token e' un leak e viene preso.
+  assert.ok(colpeIn('F-B', 'lib/esempio.js', true).length >= 1,
+    'l\'ID di rilievo in lib/ deve essere preso dall\'elenco');
+});
+
 test('l\'albero pubblicato non porta tracce di dove e\' stato costruito', () => {
   // Il guardiano si auto-esclude in colpeIn() (contiene i pattern per
   // definizione). Nel pacchetto l'esclusione non deve servire MAI: tests/
@@ -439,7 +516,9 @@ test('l\'albero pubblicato non porta tracce di dove e\' stato costruito', () => 
   for (const file of published()) {
     let testo;
     try { testo = fs.readFileSync(file, 'utf8'); } catch (_) { continue; }
-    colpevoli.push(...colpeIn(testo, path.relative(ROOT, file)));
+    // payload=true: sul pacchetto valgono anche le grammatiche di provenienza
+    // dell'audit interno (R3), escluse per i bundle minificati (vedi sopra).
+    colpevoli.push(...colpeIn(testo, path.relative(ROOT, file), true));
   }
   assert.deepEqual(colpevoli, [],
     `il pacchetto non deve contenere queste tracce:\n  ${colpevoli.join('\n  ')}`);
