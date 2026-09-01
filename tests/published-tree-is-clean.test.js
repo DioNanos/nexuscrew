@@ -224,6 +224,20 @@ const VIETATI_PAYLOAD_STRUTTURALI = [
 const VIETATI_PAYLOAD_IDS = [
   { re: /\b(?:R-pidfile-\d|R19|R28|F7|F-A|F-B|F-C|P1-2b|P1-2|P1-3|P1-4)\b/,
     perche: 'identificativo di rilievo interno' },
+  // R5 — forme contestuali osservate che le liste precedenti non mordevano:
+  // la serie F/D/R/rev attaccata a "da revisione" (in entrambi gli ordini),
+  // «questo giro» accanto alla revisione, la data del giro di misura, e gli
+  // hash privati citati dai referti (elenco noto, non esaustivo).
+  { re: /\b(?:da )?revisione\s+(?:F\d(?:\s*\/\s*F\d)?|F\d|D\d|rev\d+|R\d+)\b/i,
+    perche: 'revisione accoppiata a un id di rilievo (serie F/D/R/rev)' },
+  { re: /\b(?:F\d|D\d|rev\d+|R\d+)\s+da revisione\b/i,
+    perche: 'id di rilievo prima di "da revisione" (ordine inverso)' },
+  { re: /questo giro\b[^.\n]{0,60}(?:da )?revisione/i,
+    perche: 'cronologia del giro corrente («questo giro»)' },
+  { re: /\bmisurato\s*\(\d{4}-\d{2}-\d{2}\)/i,
+    perche: 'data del giro di misura interno' },
+  { re: /\b(?:8fe514f|3134d2f|239e2e6|d6c47c6|437d29f|fa8bd90|142e272|2a05db2|dd38c83|3405df0)\b/i,
+    perche: 'hash di commit privato citato dai referti interni' },
 ];
 
 // Classifica un file: ritorna l'array (vuoto se pulito) dei motivi di colpa.
@@ -485,6 +499,14 @@ test('PROVENIENZA AUDIT — le grammatiche osservate mordono i sintetici (payloa
     '(lease-audit-2a-fixes, esito positivo). Il proof supervisore arriva con',
     'misurato dall\'auditor sul ramo di sviluppo',
     'F-C (audit 2a @ 142e272): track() serializzato PER CELLA',
+    // R5 — forme contestuali che i sintetici precedenti lasciavano a zero colpe
+    // (controprove indipendenti dell'auditor, riprodotte 1:1):
+    'INVARIANTI (da revisione F2/F3)',
+    'REGOLA (da revisione F5)',
+    'fallback D2 da revisione',
+    'scelta conservata da revisione rev2',
+    'controllato ma mai riprovato al kill (questo giro — da revisione)',
+    'MISURATO (2026-08-17): scelta mantenuta da revisione',
   ];
   for (const testo of devonoMordere) {
     const colpe = morde(testo, 'lib/esempio.js');
@@ -499,6 +521,11 @@ test('PROVENIENZA AUDIT — le grammatiche osservate mordono i sintetici (payloa
     'da revisione interna: il motivo tecnico resta, la provenienza no',
     'rilievo da revisione interna sul routing del pannello',
     'misurato in revisione caso per caso',
+    // R5 — usi legittimi che i pattern nuovi NON devono mordere:
+    'da revisione: il motivo tecnico resta, senza id di giro',
+    'giro di revisione dedicato (non eseguito)',
+    'un suo giro di revisione dedicato',
+    'la revisione ha dimostrato che il ramo e\' sicuro',
   ];
   for (const testo of legittimi) {
     const colpe = morde(testo, 'lib/esempio.js');
