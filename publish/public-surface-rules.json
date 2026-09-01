@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "text": [
+    { "source": "NEEDS_CHANGES|\\bBLOCKER\\b|\\bAPPROVE\\b|merge-feature-register", "flags": "", "reason": "internal review marker" },
+    { "source": "Co-Authored-By|Generated with \\[?Claude", "flags": "i", "reason": "internal attribution" },
+    { "source": "(?:/home/dag/|~/Dev/[0-9]+_)", "flags": "i", "reason": "private workspace path" }
+  ],
+  "path": [
+    { "source": "(?:^|/)(?:publish|published-tree|extract-payload-context)", "flags": "i", "reason": "internal publication guard/helper" },
+    { "source": "(?:^|/)(?:CURRENT_STATE|test-report|superpowers)(?:/|$)", "flags": "i", "reason": "internal work document path" }
+  ]
+}

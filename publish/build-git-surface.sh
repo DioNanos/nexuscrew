@@ -1,35 +1,58 @@
 #!/bin/sh
-# build-git-surface.sh — costruisce l'albero da pubblicare sul repository
-# pubblico, applicando git-surface-exclude.txt.
-#
-#   build-git-surface.sh <tree-ish> <out-dir>
-#
-# L'uscita non deve esistere: un albero mescolato a una pubblicazione
-# precedente e' indistinguibile da uno costruito adesso.
-#
-# NOTA sul confine, perche' il nome non lo dice: i FILE vengono dal tree-ish,
-# l'ELENCO DI ESCLUSIONE dalla copia di lavoro. Due esecuzioni sullo stesso
-# tree-ish possono quindi differire se l'elenco e' cambiato in mezzo.
+# Deletion-only public-tree builder. The verifier receives the exact staged
+# object and writes a detached manifest only after the object equation passes.
 set -eu
 
-[ "$#" -eq 2 ] || { echo "uso: build-git-surface.sh <tree-ish> <out-dir>" >&2; exit 2; }
+[ "$#" -ge 2 ] && [ "$#" -le 3 ] || { echo "uso: build-git-surface.sh <commit-sha> <out-dir> [manifest]" >&2; exit 2; }
 TREEISH=$1
 OUT=$2
+MANIFEST=${3:-${OUT}.manifest.json}
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 LISTA="$DIR/git-surface-exclude.txt"
-[ -f "$LISTA" ] || { echo "elenco assente: $LISTA" >&2; exit 2; }
+VERIFIER="$DIR/verify-git-surface.js"
+RULES="$DIR/public-surface-rules.json"
+
+case "$TREEISH" in *[!0-9a-fA-F]*|'') echo "source SHA non valido: $TREEISH" >&2; exit 2 ;; esac
+[ "${#TREEISH}" -eq 40 ] || { echo "source SHA deve essere completo (40 hex)" >&2; exit 2; }
+[ -f "$LISTA" ] || { echo "exclude-list assente: $LISTA" >&2; exit 2; }
+[ -f "$VERIFIER" ] || { echo "verifier assente: $VERIFIER" >&2; exit 2; }
+[ -f "$RULES" ] || { echo "rule bundle assente: $RULES" >&2; exit 2; }
 [ ! -e "$OUT" ] || { echo "l'uscita esiste gia': $OUT" >&2; exit 2; }
+[ ! -e "$MANIFEST" ] || { echo "il manifest esiste gia': $MANIFEST" >&2; exit 2; }
 
-mkdir -p "$OUT"
-git archive --format=tar "$TREEISH" | tar -x -C "$OUT"
+RESOLVED=$(git rev-parse --verify "$TREEISH^{commit}")
+[ "$RESOLVED" = "$TREEISH" ] || { echo "source SHA non risolve allo stesso commit: $RESOLVED" >&2; exit 2; }
 
-tolti=0
+PARENT=$(CDPATH= cd -- "$(dirname -- "$OUT")" && pwd)
+TMP=$(mktemp -d "$PARENT/.nexuscrew-public.XXXXXX")
+cleanup() { rm -rf -- "$TMP"; }
+trap cleanup EXIT HUP INT TERM
+mkdir "$TMP/tree"
+cp -- "$LISTA" "$TMP/exclude.txt"
+cp -- "$VERIFIER" "$TMP/verifier.js"
+cp -- "$RULES" "$TMP/rules.json"
+cp -- "$0" "$TMP/builder.sh"
+printf '%s\0' "$0" "$@" > "$TMP/invocation.argv"
+
+git archive --format=tar "$TREEISH" | tar -x -C "$TMP/tree"
+
 while IFS= read -r p; do
   case "$p" in ''|'#'*) continue ;; esac
   case "$p" in
-    */) [ -d "$OUT/${p%/}" ] && { n=$(find "$OUT/${p%/}" -type f | wc -l); rm -rf "$OUT/${p%/}"; tolti=$((tolti+n)); } ;;
-    *)  [ -f "$OUT/$p" ] && { rm -f "$OUT/$p"; tolti=$((tolti+1)); } ;;
+    /*|*\\*|*..*|*\**|*\?*|*\[*|*\]*|.*) echo "regola exclude non sicura: $p" >&2; exit 2 ;;
+    */) target="$TMP/tree/${p%/}"; [ -d "$target" ] && rm -rf -- "$target" ;;
+    *)  target="$TMP/tree/$p"; [ ! -e "$target" ] && [ ! -L "$target" ] || rm -f -- "$target" ;;
   esac
-done < "$LISTA"
+done < "$TMP/exclude.txt"
 
-echo "build-git-surface: $(find "$OUT" -type f | wc -l) file pubblicabili, $tolti tolti da $TREEISH"
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-0}; export SOURCE_DATE_EPOCH
+NEXUSCREW_SOURCE_REPO=${NEXUSCREW_SOURCE_REPO:-DioNanos/nexuscrew}; export NEXUSCREW_SOURCE_REPO
+# Execute the verified copy, but attest the canonical checkout objects.  This
+# keeps the manifest provenance stable and makes a substituted temp input
+# observable by its blob/hash fields.
+node "$TMP/verifier.js" "$TREEISH" "$TMP/tree" "$TMP/manifest.json" "$LISTA" "$0" "$RULES" "$VERIFIER" "$TMP/invocation.argv"
+
+mkdir -p -- "$(dirname -- "$MANIFEST")"
+mv -- "$TMP/tree" "$OUT"
+mv -- "$TMP/manifest.json" "$MANIFEST"
+echo "build-git-surface: verified deletion-only tree=$OUT manifest=$MANIFEST"

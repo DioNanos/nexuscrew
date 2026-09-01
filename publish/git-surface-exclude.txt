@@ -26,3 +26,11 @@ docs/CURRENT_STATE.md
 
 # Referti di audit: nominano chi ha auditato e con che verdetto.
 test-report/
+
+# Il costruttore, le sue regole e gli scanner sono strumenti interni: non fanno
+# parte del prodotto e non devono diventare la propria superficie da verificare.
+publish/
+tests/published-tree-is-clean.test.js
+tests/published-tree-clean-rules.json
+tests/publication-boundary.test.js
+tools/extract-payload-context.py
