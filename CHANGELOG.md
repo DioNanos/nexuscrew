@@ -2,6 +2,26 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.17 — 2026-09-01 — "The Package Reads Like The Product"
+
+- **The installed files no longer carry the workshop's notes.** In the payload
+  of 0.9.16 and earlier, a reader of the installed package could find traces of
+  the environment that builds NexusCrew: device and node names, working paths
+  and hostnames, and the markers of the internal review process, sitting in
+  comments and metadata next to the product's own code. Nothing secret and
+  nothing functional — but writing addressed to the builders has no business
+  shipping to the users, and a version is never republished, so it stayed.
+  The payload has been swept: the installed tree now reads as the product
+  only. The sweep covers the classes above, and says so rather than claiming
+  every sentence of every comment was rewritten.
+
+- **The promise is checked by tests that read the artifact, not by a
+  checklist.** The npm payload and the published git surface are both
+  inspected by the suite: every forbidden pattern is listed with its reason,
+  a file that cannot be read fails the check instead of being skipped, and a
+  pattern list emptied to make the suite pass fails with it. What the package
+  ships is now a tested property, not a step someone remembers to do.
+
 ## 0.9.16 — 2026-08-28 — "The Cap Becomes One Hundred"
 
 - **The fleet engine cap is 100, and the backup reads its own exports.** The
