@@ -2411,6 +2411,11 @@ nothing anywhere said so.
 
 ## 0.8.8 — 2026-07-12 — "Reliable Composer"
 
+> **Never published.** Only a preparation commit exists for this version and
+> npm has no 0.8.8 — the next published release is 0.8.9. The entry stays
+> because the changes it describes are real; a reader looking for the version
+> on the registry should know why it is not there.
+
 - The PWA composer now sends long and multiline drafts through xterm's explicit paste path,
   preserving the terminal application's bracketed-paste mode. Enter travels as a separate
   input only after the complete paste was accepted, so agent TUIs no longer absorb submission
@@ -2727,6 +2732,19 @@ Core rewrite from screenshot-and-poll to a faithful tmux client.
   backpressure cutoff, JSON errors with codes
 - token delivered via URL fragment (never logged), 0600 file, constant-time compare
 
+## 0.2.5 — 2026-04-09 — "Discovery, Routes, Selector"
+
+Reconstructed from the release commit and its tree: this entry was missing
+from the file at the time, and the history before 0.7.1 survives only in the
+`v0.2.5` tag and on npm.
+
+- Engine discovery and explicit send routes in the runtime — the release
+  commit's own summary — with the chat flow and the status bar wired to them.
+- A dedicated model selector interface: new `ModelSelector` component and
+  styles wired into the chat.
+- A prebuilt SQLite library travels with the package instead of requiring a
+  local build.
+
 ## 0.2.4
 
 - added host-scoped tmux/session discovery so active session truth comes from the selected host
@@ -2751,3 +2769,12 @@ Core rewrite from screenshot-and-poll to a faithful tmux client.
 ## 0.2.1
 
 - older release line, now deprecated in favor of the current stable line
+
+## 0.2.0 — 2026-04-01 — "First Published"
+
+- The first version of the 0.2 line to reach npm: a tmux-based cockpit with
+  persistent sessions for Claude Code, Codex CLI, Gemini CLI and Qwen Code,
+  with remote SSH host support.
+- Reconstructed from the published package's own description — no release
+  notes from that date survive in this history. The line was later superseded
+  by the 0.4 rewrite and deprecated.
