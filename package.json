@@ -13,6 +13,7 @@
     "frontend/dist/",
     "frontend/index.html",
     "CHANGELOG.md",
+    "docs/ALIBABA_TOKEN_PLAN.md",
     "docs/AUDIO_SHARE.md",
     "docs/CELL_PANEL.md",
     "docs/CONFIGURATION.md",
