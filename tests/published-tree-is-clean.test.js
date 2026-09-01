@@ -194,15 +194,18 @@ const BINARI_LEGITTIMI = /\.(?:png|jpe?g|gif|webp|icns|ico|bmp|tiff?)$/i;
 // (il byte NUL della regex) no.
 const SELF_EXCLUDE = 'tests/published-tree-is-clean.test.js';
 
-// R3 (0.9.17): grammatiche di PROVENIENZA dell'audit interno osservate nel
-// payload spedito (hash di rilievi, date/giro, ID e riferimenti all'auditor).
-// Si applicano SOLO al pacchetto (payload), non all'albero versionato: i test
-// dell'albero usano ancora questi ID come firma dei difetti gia' corretti
-// (debito dichiarato nel follow-up di bonifica integrale), mentre il pacchetto
-// non li deve spedire. L'elenco di ID non si applica ai bundle minificati
-// (frontend/dist): il minifier puo' produrre token identici (misurato: `F7`
-// nel bundle) — per il dist restano le grammatiche strutturali e i pattern base.
-const VIETATI_PAYLOAD = [
+// R3/R4 (0.9.17): grammatiche di PROVENIENZA dell'audit interno osservate nel
+// payload spedito. Due livelli:
+// - VIETATI_PAYLOAD_STRUTTURALI: valgono su TUTTO il pacchetto, bundle
+//   minificato incluso — audit/reaudit con hash o parentesi di giro,
+//   lease-audit-*, "dall'auditor", revisione/rilievo legata a data di giro o
+//   a ID/RC (R4).
+// - VIETATI_PAYLOAD_IDS: l'elenco di ID di rilievo corti — SOLO sui file non
+//   dist: il minifier puo' coniare token identici (misurato: `F7` nel bundle).
+// Sull'albero versionato nessuna delle due liste si applica: i test portano
+// ancora gli ID come firma dei difetti gia' corretti (debito dichiarato nel
+// follow-up di bonifica integrale).
+const VIETATI_PAYLOAD_STRUTTURALI = [
   { re: /\(\s*(?:re)?audit\b[^)]{0,60}\)/i,
     perche: 'parentesi di provenienza del giro di audit interno' },
   { re: /\b(?:re)?audit\b[^.\n]{0,60}@[0-9a-f]{6,40}/i,
@@ -213,6 +216,12 @@ const VIETATI_PAYLOAD = [
     perche: 'identificativo di giro di audit interno (lease-audit-*)' },
   { re: /\bdall['’]auditor\b/i,
     perche: 'riferimento all\'auditor interno' },
+  { re: /\b(?:revisione|rilievo)\b[^.\n]{0,60}\(?\d{4}-\d{2}-\d{2}/i,
+    perche: 'revisione/rilievo legata alla data del giro interno (R4)' },
+  { re: /\b(?:revisione|rilievo)\b[^.\n]{0,30}(?:\bM6\b|\bD8\b|\brc\.\d+\b|terzo giro)/i,
+    perche: 'revisione/rilievo legata a un id o giro di revisione interno (R4)' },
+];
+const VIETATI_PAYLOAD_IDS = [
   { re: /\b(?:R-pidfile-\d|R19|R28|F7|F-A|F-B|F-C|P1-2b|P1-2|P1-3|P1-4)\b/,
     perche: 'identificativo di rilievo interno' },
 ];
@@ -221,7 +230,7 @@ const VIETATI_PAYLOAD = [
 // Estratta perche' sia richiamata sia dall'albero versionato sia dal pacchetto,
 // e perche' il controllo negativo la eserciti su input sintetici (non su file
 // reali). Pura: fuori esce solo l'elenco dei motivi, mai il contenuto.
-// Con payload=true aggiunge le grammatiche di provenienza audit (R3): la
+// Con payload=true aggiunge le grammatiche di provenienza audit (R3/R4): la
 // chiamata del test sul pacchetto le usa; tracked() no.
 function colpeIn(testo, rel, payload = false) {
   if (rel === SELF_EXCLUDE) return [];
@@ -235,10 +244,17 @@ function colpeIn(testo, rel, payload = false) {
     const m = testo.match(re);
     if (m) colpe.push(`${rel}: ${perche} — «${m[0]}»`);
   }
-  if (payload && !rel.includes('frontend/dist')) {
-    for (const { re, perche } of VIETATI_PAYLOAD) {
+  if (payload) {
+    const isDist = rel.includes('frontend/dist');
+    for (const { re, perche } of VIETATI_PAYLOAD_STRUTTURALI) {
       const m = testo.match(re);
       if (m) colpe.push(`${rel}: ${perche} — «${m[0]}»`);
+    }
+    if (!isDist) {
+      for (const { re, perche } of VIETATI_PAYLOAD_IDS) {
+        const m = testo.match(re);
+        if (m) colpe.push(`${rel}: ${perche} — «${m[0]}»`);
+      }
     }
   }
   return colpe;
@@ -497,6 +513,30 @@ test('PROVENIENZA AUDIT — le grammatiche osservate mordono i sintetici (payloa
   // Mentre in lib/ lo stesso token e' un leak e viene preso.
   assert.ok(colpeIn('F-B', 'lib/esempio.js', true).length >= 1,
     'l\'ID di rilievo in lib/ deve essere preso dall\'elenco');
+});
+
+// R4 — controprova dist: le grammatiche STRUTTURALI (audit con hash, parentesi
+// di giro, date di giro legate a revisione/rilievo) mordono ANCHE il bundle
+// minificato; solo l'elenco di ID corti e' esente (falsi positivi del
+// minifier). Il difetto del giro precedente: l'esenzione copriva tutto
+// VIETATI_PAYLOAD, quindi un marker piantato nel dist non veniva preso.
+test('PROVENIENZA AUDIT nel dist — le grammatiche strutturali mordono anche il bundle (R4)', () => {
+  const piantato = colpeIn(
+    'F-B (audit 2a @ 142e272): lease persa per tutta la grace',
+    'frontend/dist/assets/app.js', true);
+  assert.ok(
+    piantato.some((c) => /provenienza del giro|commit interno/.test(c)),
+    'un marker di provenienza piantato nel dist DEVE essere preso dalle ' +
+    'grammatiche strutturali — l\'esenzione dist copre solo l\'elenco di ID',
+  );
+  // E i colori/regex esadecimali del bundle NON sono provenienza: il dist
+  // reale e' pieno di hex a 8 caratteri (colori CSS) che il trigger di
+  // estrazione vede ma la guardia non deve morire.
+  const css = colpeIn(
+    'background:#baff79;box-shadow:0 0 0 1px #040c04e0',
+    'frontend/dist/assets/app.css', true);
+  assert.deepEqual(css.filter((c) => /audit|provenienza/.test(c)), [],
+    'hex di colore del bundle non e\' provenienza di audit');
 });
 
 test('l\'albero pubblicato non porta tracce di dove e\' stato costruito', () => {
