@@ -9,6 +9,10 @@ const { spawnSync } = require('node:child_process');
 
 const ROOT = path.join(__dirname, '..');
 const VERIFIER = path.join(ROOT, 'publish', 'verify-npm-payload.js');
+// La versione attesa è quella del checkout, non un numero congelato: un assert
+// hardcoded tornerebbe rosso a ogni bump e qualcuno lo aggiornerebbe a mano,
+// rimandando la stessa trappola.
+const EXPECTED_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 
 test('npm gate packs and scans the exact source checkout without publishing', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-npm-boundary-'));
@@ -21,7 +25,7 @@ test('npm gate packs and scans the exact source checkout without publishing', ()
     const data = JSON.parse(fs.readFileSync(manifest, 'utf8'));
     assert.equal(data.source.commitSha, sha);
     assert.equal(data.npm.name, '@mmmbuto/nexuscrew');
-    assert.equal(data.npm.version, '0.9.16');
+    assert.equal(data.npm.version, EXPECTED_VERSION);
     assert.match(data.npm.sha256, /^[0-9a-f]{64}$/);
     assert.ok(data.npm.bytes > 0);
     assert.equal(data.npm.scan.result, 'PASS');
