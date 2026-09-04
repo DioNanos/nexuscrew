@@ -67,6 +67,11 @@
       "source": "\\b(?:R-pidfile-\\d|R19|R28|F7|F-A|F-B|F-C|P1-2b|P1-2|P1-3|P1-4)\\b",
       "flags": "",
       "reason": "identificativo corto di rilievo interno"
+    },
+    {
+      "source": "\\bD-[0-9]{3,}\\b",
+      "flags": "",
+      "reason": "identificativo interno di lavoro nel pacchetto"
     }
   ]
 }

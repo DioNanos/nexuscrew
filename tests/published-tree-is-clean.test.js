@@ -522,6 +522,8 @@ test('PROVENIENZA AUDIT — le grammatiche osservate mordono i sintetici (payloa
   // Mentre in lib/ lo stesso token e' un leak e viene preso.
   assert.ok(colpeIn('F-B', 'lib/esempio.js', true).length >= 1,
     'l\'ID di rilievo in lib/ deve essere preso dall\'elenco');
+  assert.ok(colpeIn('D-999', 'lib/esempio.js', true).length >= 1,
+    'un ID di lavoro D-xxx in lib/ deve essere preso dal guardiano');
 });
 
 // R4 — controprova dist: le grammatiche STRUTTURALI (audit con hash, parentesi
@@ -549,8 +551,8 @@ test('PROVENIENZA AUDIT nel dist — le grammatiche strutturali mordono anche il
 });
 
 test('R6 — tutte le grammatiche R5 strutturali mordono anche nel dist', () => {
-  assert.equal(PAYLOAD_RULE_DEFS.payloadIds.length, 1,
-    'nel ramo esente del dist deve restare solo la grammatica degli ID corti');
+  assert.equal(PAYLOAD_RULE_DEFS.payloadIds.length, 2,
+    'nel ramo esente del dist restano gli ID corti e gli ID di lavoro D-xxx');
   const casi = [
     'INVARIANTI (da revisione F2/F3)',
     'questo giro — da revisione',
