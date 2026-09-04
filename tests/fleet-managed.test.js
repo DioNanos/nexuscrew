@@ -211,7 +211,7 @@ test('OpenRouter richiede un modello; Kimi Code accetta solo gli slug documentat
 test('managed matrix: Z.AI su Claude e codex-vl (Responses nativo); Ollama Cloud su entrambi', () => {
   assert.ok(normalizeManagedSpec({ client: 'claude', provider: 'zai-a' }));
   assert.ok(normalizeManagedSpec({ client: 'claude', provider: 'zai-p' }));
-  // D-142: Z.AI arriva anche su codex-vl con wire Responses nativa (default
+  // Z.AI arriva anche su codex-vl con wire Responses nativa (default
   // glm-5.3 dal catalogo); i modelli ammessi sono quelli misurati su /api/v1.
   assert.ok(normalizeManagedSpec({ client: 'codex-vl', provider: 'zai-a' }));
   assert.ok(normalizeManagedSpec({ client: 'codex-vl', provider: 'zai-p' }));

@@ -1,6 +1,6 @@
 'use strict';
 
-// D-145: `extraModels` e' indicizzata per ENGINE ID, ma `declaredFor` e
+// `extraModels` e' indicizzata per ENGINE ID, ma `declaredFor` e
 // `declaredModelsFor` cercavano con la chiave del PROFILO (`profile.id`, per i
 // custom la condivisa `codex-vl.custom`): un engine custom che dichiara i
 // PROPRI modelli non li vedeva mai — il catalogo generato conteneva i modelli
@@ -58,7 +58,7 @@ function engineDeclaredDefs() {
   });
 }
 
-test('D-145 unit: declaredFor trova prima per ENGINE ID, ricade sul profilo; la vecchia firma a chiave-profilo-sola non vede il modello dell\'engine', () => {
+test('declaredFor uses the engine id before the profile fallback', () => {
   const defs = engineDeclaredDefs();
   assert.ok(defs, 'la definizione e\' valida (controllo del setup)');
   const em = extraModelsFrom(defs);
@@ -74,7 +74,7 @@ test('D-145 unit: declaredFor trova prima per ENGINE ID, ricade sul profilo; la 
     'il modello dichiarato sul profilo passa anche quando si cerca per engine');
 });
 
-test('D-145 unit: declaredModelsFor unisce engine+profilo senza duplicati, engine prima', () => {
+test('declaredModelsFor merges engine and profile models without duplicates', () => {
   const defs = engineDeclaredDefs();
   const em = extraModelsFrom(defs);
   const declared = declaredModelsFor(em, 'codex-vl.custom', 'x.zai-p');
@@ -89,7 +89,7 @@ test('D-145 unit: declaredModelsFor unisce engine+profilo senza duplicati, engin
   assert.equal(dedup.filter((id) => id === 'modello-x').length, 1, 'dedup per id');
 });
 
-test('D-145 end-to-end: il catalogo di x.zai-p contiene i modelli dell\'ENGINE, non quelli del profilo condiviso', () => {
+test('end-to-end catalog uses engine models before the shared profile fallback', () => {
   const defs = engineDeclaredDefs();
   const extraModels = extraModelsFrom(defs);
   const home = withBinary(tempHome('nc-d145-e2e-'), 'codex-vl');
@@ -104,7 +104,7 @@ test('D-145 end-to-end: il catalogo di x.zai-p contiene i modelli dell\'ENGINE, 
     assert.ok(catalogArg, 'model_catalog_json e\' negli argv');
     const catalogPath = JSON.parse(catalogArg.slice('model_catalog_json='.length));
     const slugs = JSON.parse(fs.readFileSync(catalogPath, 'utf8')).models.map((m) => m.slug);
-    // Unione senza duplicati (come da fix D-145): PRIMA i modelli dell'engine
+    // Unione senza duplicati: PRIMA i modelli dell'engine
     // (la dichiarazione specifica), poi il fallback del profilo condiviso —
     // il difetto era l'inverso: solo i modelli del profilo, mai quelli dell'engine.
     assert.deepEqual(slugs, ['modello-x', 'modello-x-flash', 'modello-profilo'],

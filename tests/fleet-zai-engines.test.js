@@ -1,6 +1,6 @@
 'use strict';
 
-// D-142: engine codex-vl.zai-a / codex-vl.zai-p — wire Responses nativa di
+// Engines codex-vl.zai-a / codex-vl.zai-p use the native Responses wire for
 // Z.AI su https://api.z.ai/api/v1 (niente AnthMorph). Gli argv generati devono
 // portare base_url/env_key/wire_api corretti, il catalogo con i metadata reali
 // del server e la finestra di contesto misurata (1M). I valori attesi vengono
@@ -37,7 +37,7 @@ function zaiDefs(provider) {
   });
 }
 
-test('D-142: le due voci di catalogo esistono, distinte per chiave, con endpoint e modelli giusti', () => {
+test('catalog entries are distinct and expose the expected endpoint and models', () => {
   for (const key of ['A', 'P']) {
     const entry = CATALOG.find((p) => p.id === `codex-vl.zai-${key.toLowerCase()}`);
     assert.ok(entry, `codex-vl.zai-${key.toLowerCase()} e' nel catalogo`);
@@ -49,7 +49,7 @@ test('D-142: le due voci di catalogo esistono, distinte per chiave, con endpoint
   }
 });
 
-test('D-142: gli argv di codex-vl.zai-p contengono base_url/env_key/wire_api/catalogo/contesto corretti', () => {
+test('zai-p argv contain the endpoint, credentials, wire, catalog, and context', () => {
   const defs = zaiDefs('zai-p');
   assert.ok(defs, 'la definizione con l\'engine di catalogo e\' valida');
   const extraModels = extraModelsFrom(defs);
@@ -75,7 +75,7 @@ test('D-142: gli argv di codex-vl.zai-p contengono base_url/env_key/wire_api/cat
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('D-142: speculare per zai-a — stessa wire, chiave A', () => {
+test('zai-a uses the same wire with the A credential', () => {
   const defs = zaiDefs('zai-a');
   const extraModels = extraModelsFrom(defs);
   const home = withBinary(tempHome('nc-d142-zai-'), 'codex-vl');
@@ -89,7 +89,7 @@ test('D-142: speculare per zai-a — stessa wire, chiave A', () => {
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('D-142: modello fuori dai dichiarati rifiutato con causa nominata (D-143), uno dichiarato in config passa', () => {
+test('rejects an undeclared model with a named cause and accepts a declared one', () => {
   const issues = [];
   const bad = parseDefinitions({
     schemaVersion: 1,
@@ -114,5 +114,5 @@ test('D-142: modello fuori dai dichiarati rifiutato con causa nominata (D-143), 
   assert.ok(good, 'un modello dichiarato in config passa il gate strictModels (via dichiarata a release)');
   const em = extraModelsFrom(good);
   assert.equal(declaredFor(em, 'codex-vl.custom', 'glm-5.4-prossimo', 'codex-vl.zai-p'), true,
-    'la dichiarazione si trova con la chiave ENGINE (D-145)');
+    'la dichiarazione si trova con la chiave ENGINE');
 });

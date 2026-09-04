@@ -1,6 +1,6 @@
 'use strict';
 
-// D-143: un rifiuto di validazione senza causa produce «definizioni fleet non
+// Un rifiuto di validazione senza causa produce «definizioni fleet non
 // valide: validazione fallita» — l'operatore sa che NON va bene, non sa COSA.
 // I validatori nominati di normalizeManagedSpec riportano ora campo, valore e
 // regola tramite il sink `onIssue`, e atomicWrite li incolla nel messaggio
@@ -29,7 +29,7 @@ function collect(defs) {
   return { parsed, issues };
 }
 
-test('D-143: providerId con punto -> rifiuto con campo, valore e regola (regex)', () => {
+test('rejects a provider id with a dot and reports field, value, and rule', () => {
   const { parsed, issues } = collect(baseDoc({ providerId: 'codex-vl.zai-a' }));
   assert.equal(parsed, null, 'providerId con punto e\' rifiutato');
   assert.equal(issues.length, 1);
@@ -38,7 +38,7 @@ test('D-143: providerId con punto -> rifiuto con campo, valore e regola (regex)'
   assert.match(issues[0].rule, /consentito .*\^\[a-z\]/);
 });
 
-test('D-143: envKey non valida -> rifiuto con campo, valore e regola', () => {
+test('rejects an invalid environment key and reports field, value, and rule', () => {
   const { parsed, issues } = collect(baseDoc({ envKey: '9 ZAI BAD' }));
   assert.equal(parsed, null);
   assert.equal(issues.length, 1);
@@ -47,7 +47,7 @@ test('D-143: envKey non valida -> rifiuto con campo, valore e regola', () => {
   assert.match(issues[0].rule, /consentito/);
 });
 
-test('D-143: modello non dichiarato -> rifiuto con campo e regola che dice DOVE dichiarare', () => {
+test('rejects an undeclared model and reports where it must be declared', () => {
   // Il gate strictModels conta sui profili che lo dichiarano (es.
   // alibaba-token-plan); il custom codex-vl non e' strict, quindi il caso usa
   // un profilo strict vero.
@@ -62,7 +62,7 @@ test('D-143: modello non dichiarato -> rifiuto con campo e regola che dice DOVE 
   assert.match(issues[0].rule, /non dichiarato|"models"/);
 });
 
-test('D-143: protocol non supportato -> rifiuto con campo e regola che elenca gli ammessi', () => {
+test('rejects an unsupported protocol and reports the allowed protocols', () => {
   const { parsed, issues } = collect(baseDoc({ protocol: 'chat_completions' }));
   assert.equal(parsed, null);
   assert.equal(issues.length, 1);
@@ -71,13 +71,13 @@ test('D-143: protocol non supportato -> rifiuto con campo e regola che elenca gl
   assert.match(issues[0].rule, /non supportato.*openai_responses/);
 });
 
-test('D-143: caso verde -> definizione valida, nessuna issue', () => {
+test('accepts a valid definition without issues', () => {
   const { parsed, issues } = collect(baseDoc());
   assert.ok(parsed, 'la definizione valida passa');
   assert.deepEqual(issues, [], 'nessuna issue su un documento valido');
 });
 
-test('D-143 end-to-end: atomicWrite riporta la causa nel messaggio lanciato', () => {
+test('atomicWrite reports the validation cause in its thrown message', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d143-'));
   try {
     const target = path.join(dir, 'fleet.json');
