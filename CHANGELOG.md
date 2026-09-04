@@ -2,6 +2,31 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.18 — 2026-09-04
+
+### Upstream Rust 0.153.2
+
+- **New upstream capabilities.** The GPT-6-Astra model catalogue is included,
+  hook activity is visible in the TUI, and app-server supports asynchronous user
+  input with thread metadata.
+- **Smoother daily use.** Vim undo/redo and app-server reconnect improve the
+  interactive experience, while `[tui].disable_paste_burst` is documented in
+  its canonical configuration location.
+- **More context control.** Experimental context management is available for
+  evaluation alongside the upstream release changes.
+
+### Codex VL fixes
+
+- **Loops stay responsive.** Failed `/loop` owner and delegate preconditions
+  report an error without terminating the TUI; `/loop` usage also lists the
+  delegate, strategy, delegation and owner commands.
+- **Vivling and fleet metadata recover cleanly.** `manage_loops` sees its jobs
+  after resume, and Vivling accepts fenced or prefixed JSON replies from any
+  provider while model metadata is resolved by engine identity.
+- **Quieter, clearer operation.** The expression planner no longer floods the
+  log database, terminal state reconciles after every terminal event, and Esc
+  interrupts a running task even during a long tool call.
+
 ## 0.9.17 — 2026-09-01 — "The Package Reads Like The Product"
 
 - **The installed files no longer carry the workshop's notes.** In the payload

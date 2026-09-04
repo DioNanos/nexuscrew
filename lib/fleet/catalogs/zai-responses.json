@@ -1,0 +1,82 @@
+{
+  "models": [
+    {
+      "slug": "glm-5.3",
+      "display_name": "glm-5.3",
+      "description": "Z.ai's latest flagship model",
+      "default_reasoning_level": "max",
+      "supported_reasoning_levels": [
+        {
+          "description": "Light reasoning",
+          "effort": "low"
+        },
+        {
+          "description": "Enhanced reasoning",
+          "effort": "high"
+        },
+        {
+          "description": "Deep reasoning",
+          "effort": "max"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "",
+      "supports_reasoning_summaries": true,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "truncation_policy": {
+        "limit": 10000,
+        "mode": "bytes"
+      },
+      "supports_parallel_tool_calls": true,
+      "availability_nux": null,
+      "upgrade": null,
+      "default_verbosity": null,
+      "web_search_tool_type": "text",
+      "supports_image_detail_original": false
+    },
+    {
+      "slug": "glm-5.3-flash",
+      "display_name": "glm-5.3-flash",
+      "description": "Fast multimodal coding model",
+      "default_reasoning_level": "max",
+      "supported_reasoning_levels": [
+        {
+          "description": "Light reasoning",
+          "effort": "low"
+        },
+        {
+          "description": "Enhanced reasoning",
+          "effort": "high"
+        },
+        {
+          "description": "Deep reasoning",
+          "effort": "max"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 1,
+      "base_instructions": "",
+      "supports_reasoning_summaries": true,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "truncation_policy": {
+        "limit": 10000,
+        "mode": "bytes"
+      },
+      "supports_parallel_tool_calls": true,
+      "availability_nux": null,
+      "upgrade": null,
+      "default_verbosity": null,
+      "web_search_tool_type": "text_and_image",
+      "supports_image_detail_original": true
+    }
+  ]
+}

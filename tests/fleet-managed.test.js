@@ -208,10 +208,20 @@ test('OpenRouter richiede un modello; Kimi Code accetta solo gli slug documentat
   assert.equal(normalizeManagedSpec({ client: 'claude', provider: 'kimi-code', model: 'unknown' }), null);
 });
 
-test('managed matrix: Z.AI solo Claude; Ollama Cloud su entrambi', () => {
+test('managed matrix: Z.AI su Claude e codex-vl (Responses nativo); Ollama Cloud su entrambi', () => {
   assert.ok(normalizeManagedSpec({ client: 'claude', provider: 'zai-a' }));
   assert.ok(normalizeManagedSpec({ client: 'claude', provider: 'zai-p' }));
-  assert.equal(normalizeManagedSpec({ client: 'codex-vl', provider: 'zai-a' }), null);
+  // Z.AI arriva anche su codex-vl con wire Responses nativa (default
+  // glm-5.3 dal catalogo); i modelli ammessi sono quelli misurati su /api/v1.
+  assert.ok(normalizeManagedSpec({ client: 'codex-vl', provider: 'zai-a' }));
+  assert.ok(normalizeManagedSpec({ client: 'codex-vl', provider: 'zai-p' }));
+  for (const key of ['a', 'p']) {
+    const entry = CATALOG.find((p) => p.id === `codex-vl.zai-${key}`);
+    assert.equal(entry.auth, `ZAI_API_KEY_${key.toUpperCase()}`);
+    assert.equal(entry.endpoint, 'https://api.z.ai/api/v1');
+    assert.equal(entry.model, 'glm-5.3');
+    assert.deepEqual(entry.models, ['glm-5.3', 'glm-5.3-flash']);
+  }
   assert.ok(normalizeManagedSpec({ client: 'claude', provider: 'ollama-cloud' }));
   assert.ok(normalizeManagedSpec({ client: 'codex-vl', provider: 'ollama-cloud' }));
   const ollama = CATALOG.find((p) => p.id === 'codex-vl.ollama-cloud');
