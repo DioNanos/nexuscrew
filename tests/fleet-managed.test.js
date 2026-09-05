@@ -250,6 +250,7 @@ test('Ollama Direct discovery: errore API usa la shortlist TOP di fallback', asy
     'glm-5.2', 'kimi-k2.7-code', 'deepseek-v4-pro', 'minimax-m3',
     'qwen3.5:397b', 'deepseek-v4-flash', 'mistral-large-3:675b', 'gemma4:31b',
     'glm-5.3-flash',
+    'glm-5.3',
   ]);
 });
 
@@ -1078,6 +1079,33 @@ test('launch ollama-cloud genera il catalogo con le capacita dichiarate (niente 
     assert.deepEqual(entry.input_modalities, ['text', 'image'], 'vision non dichiarata');
     // parallel NON dichiarato dalla scheda: default conservativo false
     // finche' non misurato su device (rilievo audit 0314517).
+    assert.equal(entry.supports_parallel_tool_calls, false, 'parallel deve restare conservativo');
+    assert.ok(r.engine.args.includes('model_context_window=1000000'));
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('launch ollama-cloud genera glm-5.3 con contesto e capacita reali (niente fallback metadata)', async () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'codex-vl');
+    const secrets = path.join(home, 'providers.env');
+    fs.writeFileSync(secrets, 'OLLAMA_API_KEY=ollama-secret\n', { mode: 0o600 });
+    const r = resolveManagedEngine(
+      { id: 'codex-vl.ollama-cloud', label: 'Ollama', managed: { client: 'codex-vl', provider: 'ollama-cloud', model: 'glm-5.3' } },
+      { id: 'cella-glm53' },
+      { home, providerSecretsPath: secrets, env: {} },
+    );
+    assert.equal(r.ok, true, `resolve fallito: ${r.reason}`);
+    const catArg = r.engine.args.find((a) => a.startsWith('model_catalog_json='));
+    assert.ok(catArg, 'catalogo generato assente dagli args');
+    const catPath = JSON.parse(catArg.slice('model_catalog_json='.length));
+    const cat = JSON.parse(fs.readFileSync(catPath, 'utf8'));
+    const entry = cat.models.find((m) => m.slug === 'glm-5.3');
+    assert.ok(entry, 'voce glm-5.3 assente dal catalogo generato');
+    assert.equal(entry.context_window, 1000000, 'finestra non 1M');
+    assert.deepEqual(entry.input_modalities, ['text'], 'la scheda non dichiara vision');
+    assert.equal(entry.default_reasoning_level, 'high', 'thinking non dichiarato');
+    assert.ok(entry.supported_reasoning_levels.some((l) => l.effort === 'max'), 'thinking massimo non dichiarato');
     assert.equal(entry.supports_parallel_tool_calls, false, 'parallel deve restare conservativo');
     assert.ok(r.engine.args.includes('model_context_window=1000000'));
   } finally { fs.rmSync(home, { recursive: true, force: true }); }

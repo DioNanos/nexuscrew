@@ -2,6 +2,12 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.19 — 2026-09-05
+
+- **Ollama Cloud gains GLM-5.3.** `codex-vl.ollama-cloud` now includes
+  `glm-5.3` in the model catalog with 1M context and tools/thinking metadata,
+  so cells on this engine no longer fall back to default metadata.
+
 ## 0.9.18 — 2026-09-04
 
 ### Upstream Rust 0.153.2
