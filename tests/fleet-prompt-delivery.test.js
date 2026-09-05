@@ -548,7 +548,7 @@ test('up claude.kimi-code report Not logged in: recovery /config; env child name
     }
     assert.ok(!names.includes('NC_SENTINEL_LEAK'), 'env runtime non allowlisted mai ereditato');
     assert.ok(!names.includes('KIMI_API_KEY'), 'la variabile sorgente non passa: il child vede solo ANTHROPIC_*');
-    const allowed = /^(PATH|HOME|SHELL|TERM|COLORTERM|LANG|LANGUAGE|LC_ALL|LC_CTYPE|USER|LOGNAME|TMUX|TMUX_TMPDIR|XDG_[A-Z_]+|DBUS_SESSION_BUS_ADDRESS|PREFIX|TMPDIR|TERMUX_VERSION|ANDROID_DATA|ANDROID_ROOT|ANTHROPIC_[A-Z_]+|CLAUDE_CODE_[A-Z_]+|CLAUDE_CONFIG_DIR|API_TIMEOUT_MS|NEXUSCREW_MCP_SESSION)$/;
+    const allowed = /^(PATH|HOME|SHELL|TERM|COLORTERM|LANG|LANGUAGE|LC_ALL|LC_CTYPE|USER|LOGNAME|TMUX|TMUX_TMPDIR|XDG_[A-Z_]+|DBUS_SESSION_BUS_ADDRESS|PREFIX|TMPDIR|TERMUX_VERSION|ANDROID_DATA|ANDROID_ROOT|ANTHROPIC_[A-Z_]+|CLAUDE_CODE_[A-Z_]+|CLAUDE_CONFIG_DIR|API_TIMEOUT_MS|MCP_DEVICE|NEXUSCREW_MCP_SESSION)$/;
     for (const n of names) assert.match(n, allowed, `env name inatteso nel child: ${n}`);
     assert.ok(!t.args.includes('bootstrap segreto di sistema'), 'prompt mai in argv');
     assert.equal(t.restartPrompt.client, 'claude', 'restart classificato per claude.kimi-code');

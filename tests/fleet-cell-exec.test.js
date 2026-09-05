@@ -118,3 +118,24 @@ test('main: a child that exits normally still resolves its exit code', async () 
   });
   assert.equal(code, 0);
 });
+
+test('main: broker payload env reaches the child, including MCP_DEVICE', async () => {
+  const child = fakeChild();
+  let capturedEnv = null;
+  const spawnStub = (command, args, options) => {
+    capturedEnv = options.env;
+    queueMicrotask(() => child.emit('exit', 0, null));
+    return child;
+  };
+  const code = await main(['--socket', '/tmp/nc-nope', '--nonce', 'd'.repeat(64)], {
+    receivePayload: async () => ({
+      command: '/bin/true', args: [],
+      env: { MCP_DEVICE: 'dev-agent' },
+      supervise: { enabled: false },
+    }),
+    spawn: spawnStub,
+    stderrWrite: () => {},
+  });
+  assert.equal(code, 0);
+  assert.equal(capturedEnv.MCP_DEVICE, 'dev-agent');
+});

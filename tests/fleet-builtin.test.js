@@ -686,6 +686,33 @@ test('managed codex-vl.native: launcher interno, login nativo, fake tmux', async
   } finally { w.cleanup(); }
 });
 
+test('MCP_DEVICE is derived from the cell id and overrides engine env', async () => {
+  const w = makeWorld({ cellPrompt: 'bootstrap managed' });
+  try {
+    atomicWrite(w.defsPath, {
+      schemaVersion: 1,
+      engines: [{
+        id: 'custom', label: 'Custom', rc: true,
+        command: w.command, args: [],
+        env: { MCP_DEVICE: 'engine-override' },
+        model: { flag: '--model', value: 'custom' },
+        promptMode: 'flag', promptFlag: '--prompt',
+      }],
+      cells: [{ id: 'Dev', tmuxSession: 'work-build', cwd: w.cwd, engine: 'custom', prompt: 'bootstrap managed' }],
+    });
+    let launchPayload = null;
+    const fleet = await createBuiltinFleet({
+      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, sendKeysReadyMs: 0,
+      launchBroker: {
+        issue: async (payload) => { launchPayload = payload; return { socketPath: path.join(w.home, 'test.sock'), nonce: 'a'.repeat(64) }; },
+        close: async () => {},
+      },
+    });
+    await fleet.up('Dev');
+    assert.equal(launchPayload.env.MCP_DEVICE, 'dev-agent');
+  } finally { w.cleanup(); }
+});
+
 test('definitions: catalog credential status is target-local, value-free and reports shared used-by', async () => {
   const w = makeWorld();
   try {
