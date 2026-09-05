@@ -65,6 +65,17 @@ test('nc_lease_register: nessun argomento — la cella e la sessione del chiaman
   assert.equal(calls[0].body.session, 'cloud-Dev');
 });
 
+test('nc_lease_register: inoltra il proof disponibile senza usare un flag client per la modalità', async () => {
+  const proof = { version: '1', kind: 'identity-proof', proof: 'a'.repeat(64) };
+  const { srv, lines, calls } = makeSrv({
+    env: ENV,
+    responder: () => ({ status: 200, json: { status: 'registered' } }),
+  });
+  await callTool(srv, lines, 'nc_lease_register', { proof });
+  assert.deepEqual(calls[0].body, { session: 'cloud-Dev', proof });
+  assert.equal(Object.hasOwn(calls[0].body, 'authority'), false);
+});
+
 test('nc_lease_refresh: proof in ingresso, proof nuova in uscita', async () => {
   const proof = { kind: 'child', cellId: 'Dev', incarnationId: 'ab'.repeat(8), jti: 'c'.repeat(16), issuedAt: 1, expiresAt: 61_000, proof: 'd'.repeat(64) };
   const { srv, lines, calls } = makeSrv({

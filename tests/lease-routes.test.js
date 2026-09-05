@@ -14,7 +14,7 @@ const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const { tmuxSessionForCell } = require('../lib/fleet/definitions.js');
 const { createIdentityAuthority } = require('../lib/fleet/identity-authority.js');
 
-function setup({ readonly = false } = {}) {
+function setup({ readonly = false, identityMode = 'authority' } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'leaseroutes-'));
   const clock = { t: 10_000 };
   const mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
@@ -34,7 +34,7 @@ function setup({ readonly = false } = {}) {
   const fleetP = Promise.resolve({ available: true, lease: mgr, identityAuthority: authority });
   const app = express();
   app.use(express.json({ limit: '8kb' }));
-  app.use('/api/lease', leaseRoutes({ fleetP, readonly: () => readonly }));
+  app.use('/api/lease', leaseRoutes({ fleetP, readonly: () => readonly, identityMode }));
   const server = require('node:http').createServer(app);
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
@@ -75,6 +75,17 @@ test('register: sessione valida -> registration; proof kind child in risposta', 
     assert.equal(out.json.status, 'registered');
     assert.equal(out.json.proof.kind, 'child');
     assert.equal(out.json.proof.cellId, 'Dev');
+  } finally { await s.close(); }
+});
+
+test('register legacy: la modalità server preserva il percorso D con la sessione', async () => {
+  const s = await setup({ identityMode: 'legacy' });
+  try {
+    await s.mgr.track('Dev');
+    const out = await call(s.url, 'POST', '/register', { session: sessionDev() });
+    assert.equal(out.status, 200);
+    assert.equal(out.json.status, 'registered');
+    assert.equal(out.json.proof.kind, 'child');
   } finally { await s.close(); }
 });
 
