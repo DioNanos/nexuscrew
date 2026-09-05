@@ -2,8 +2,9 @@
 // Seam lease↔designazione (dispatch 2026-08-15, decisione: eligible in
 // grace = FALSE). La designazione non perde hostCell mai (invariante store):
 // oscilla l'IDONEITA', non la scelta dell'operatore. I quattro stati lease
-// restano distinti fino a chi legge; il fallback senza fleet.lease e' un
-// FAIL-OPEN dichiarato (eligible torna tmux-only, host.lease='unavailable').
+// restano distinti fino a chi legge; senza fleet.lease il dispatch Live e'
+// fail-closed (host.lease='unavailable', eligible=false), mentre l'attach
+// locale D resta fuori da questo gate.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -132,16 +133,16 @@ test('designata attiva MAI supervisionata (lease none): eligible false, host.lea
   } finally { await ctx.close(); }
 });
 
-test('VINCOLO 2 — fallback fail-open dichiarato: senza fleet.lease eligible torna tmux-only e host.lease=unavailable', async () => {
+test('VINCOLO 2 — Live senza lease rifiutata: unavailable non diventa tmux-only', async () => {
   const ctx = await boot({ fleetExtra: {} }); // nessun lease sul provider
   try {
     const d = await ctx.designate('Dev', 0);
     assert.equal(d.hostCell, 'Dev');
     assert.equal(d.host.lease, 'unavailable', 'la garanzia non e disponibile su questa installazione: DETTO, non implicito');
-    assert.equal(d.eligible, true, 'fail-open: idoneita tmux-only quando il lease non esiste');
+    assert.equal(d.eligible, false, 'senza lease Live non e eleggibile');
     const body = await ctx.get();
     assert.equal(body.host.lease, 'unavailable');
-    assert.equal(body.eligible, true);
+    assert.equal(body.eligible, false);
   } finally { await ctx.close(); }
 });
 
