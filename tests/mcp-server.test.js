@@ -1595,3 +1595,48 @@ test('tool bloccato nomina la causa SESSION_MISMATCH (fonti discordi)', async ()
   assert.match(msg, /\[NEXUSCREW_MCP_IDENTITY_SESSION_MISMATCH\]/);
   assert.match(msg, /sessioni diverse/);
 });
+
+test('identity context online: provider non verificato rifiuta ogni tool senza HTTP', async () => {
+  let providerCalls = 0;
+  const { srv, out, calls } = makeSrv({
+    env: {},
+    identityContextProvider: async () => {
+      providerCalls += 1;
+      return { verified: false, mode: 'shared' };
+    },
+    responder: () => ({ status: 200, json: {} }),
+  });
+  for (let i = 0; i < TOOLS.length; i += 1) {
+    out.lines.length = 0;
+    await srv.handleLine(rpc(1000 + i, 'tools/call', { name: TOOLS[i].name, arguments: {} }));
+    const result = out.lines[0] && out.lines[0].result;
+    assert.ok(result && result.isError === true, `${TOOLS[i].name} deve rifiutare un contesto non verificato`);
+    assert.match(result.content[0].text, /non verificato/);
+  }
+  assert.equal(providerCalls, TOOLS.length, 'una introspezione per tools/call');
+  assert.equal(calls.length, 0, 'nessuna chiamata HTTP dopo il rifiuto identita');
+});
+
+test('identity context online: il binding viaggia su ogni chiamata API con effetti', async () => {
+  const proof = {
+    kind: 'child', cellId: 'Dev', incarnationId: 'ab'.repeat(8), jti: 'c'.repeat(16),
+    issuedAt: Date.now() - 1000, expiresAt: Date.now() + 60_000, proof: 'd'.repeat(64),
+  };
+  const provider = async () => sharedContext({ bindingId: 'binding-api', ownerInstanceId: 'a'.repeat(32) });
+  provider.currentProof = () => proof;
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'forged-local-session' },
+    identityContextProvider: provider,
+    responder: () => ({ status: 200, json: { inbox: [] } }),
+  });
+  await srv.handleLine(rpc(80, 'tools/call', { name: 'nc_inbox', arguments: {} }));
+  const result = out.lines[0].result;
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.length, 1);
+  const header = calls[0].headers['x-nexuscrew-identity-binding'];
+  assert.ok(header, 'header binding mancante sulla chiamata API');
+  const parsed = JSON.parse(header);
+  assert.equal(parsed.context.cellId, 'Dev');
+  assert.equal(parsed.context.kind, 'mcp-v1');
+  assert.equal(parsed.proof.jti, proof.jti);
+});

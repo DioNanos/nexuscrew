@@ -167,3 +167,46 @@ test('readonly -> 403 su tutte e tre le mutazioni', async () => {
     assert.equal(c.status, 403);
   } finally { await s.close(); }
 });
+
+test('introspect: authority only; registration authority-backed ok, legacy denied', async () => {
+  const s = await setup();
+  try {
+    await s.mgr.track('Dev');
+    const reg = await call(s.url, 'POST', '/register', { proof: s.identityProof });
+    assert.equal(reg.json.identityMode, 'authority');
+    const out = await call(s.url, 'POST', '/introspect', { proof: reg.json.proof });
+    assert.equal(out.status, 200);
+    assert.equal(out.json.status, 'live');
+    assert.equal(out.json.cellId, 'Dev');
+    assert.equal(out.json.identityMode, 'authority');
+    assert.equal(out.json.incarnationId, reg.json.incarnationId);
+    assert.equal(out.json.expiresAt, reg.json.proof.expiresAt);
+    s.clock.t += 61_000;
+    const stale = await call(s.url, 'POST', '/introspect', { proof: reg.json.proof });
+    assert.equal(stale.json.status, 'expired');
+  } finally { await s.close(); }
+});
+
+test('introspect: legacy mode 501 e proof di registration legacy mai autorizzato', async () => {
+  const legacy = await setup({ identityMode: 'legacy' });
+  try {
+    await legacy.mgr.track('Dev');
+    const reg = await call(legacy.url, 'POST', '/register', { session: sessionDev() });
+    assert.equal(reg.json.status, 'registered');
+    assert.equal(reg.json.identityMode, undefined);
+    const off = await call(legacy.url, 'POST', '/introspect', { proof: reg.json.proof });
+    assert.equal(off.status, 501);
+  } finally { await legacy.close(); }
+  const authority = await setup();
+  try {
+    await authority.mgr.track('Dev');
+    // registration nata senza authority: il proof child esiste ma non puo
+    // autorizzare il percorso shared.
+    const reg = authority.mgr.childRegister('Dev');
+    assert.equal(reg.status, 'registered');
+    const out = await call(authority.url, 'POST', '/introspect', { proof: reg.proof });
+    assert.equal(out.status, 200);
+    assert.equal(out.json.status, 'denied');
+    assert.equal(out.json.reason, 'legacy-registration');
+  } finally { await authority.close(); }
+});

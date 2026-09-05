@@ -4,7 +4,11 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const express = require('express');
 const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { cellsRoutes, publicCells } = require('../lib/cells/routes.js');
+const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 
 const LOCAL = 'a'.repeat(32);
 const REMOTE = 'b'.repeat(32);
@@ -13,6 +17,7 @@ const STATUS = {
   available: true,
   cells: [
     { cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'codex.native', active: true, tmux: true },
+    { cell: 'Alpha', tmuxSession: 'cloud-Alpha', engine: 'claude.native', active: true, tmux: true },
     { cell: 'Off', tmuxSession: 'cloud-Off', engine: 'claude.native', active: false, tmux: false },
   ],
 };
@@ -26,7 +31,7 @@ async function boot(t, opts = {}) {
     submit: opts.submit || (async (session, text, meta) => { submissions.push({ session, text, meta }); return { submitted: true }; }),
     readonly: () => opts.readonly === true,
     diagnostics: opts.diagnostics,
-    now: () => 1234,
+    now: opts.now || (() => 1234),
   }));
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -41,7 +46,7 @@ test('publicCells espone solo identita valide e canReceive onesto', () => {
     { cell: 'Legacy', tmuxSession: 'legacy', engine: 'x', active: true },
   ] }, LOCAL, 42);
   assert.deepEqual(out.map((cell) => [cell.cell, cell.active, cell.canReceive, cell.lastSeen]), [
-    ['Dev', true, true, 42], ['Off', false, false, null], ['Legacy', true, true, 42],
+    ['Dev', true, true, 42], ['Alpha', true, true, 42], ['Off', false, false, null], ['Legacy', true, true, 42],
   ]);
 });
 
@@ -50,7 +55,7 @@ test('GET /cells e POST /cells/send consegnano solo alla cella Fleet attiva esat
   const roster = await (await fetch(`${base}/api/cells`)).json();
   assert.equal(roster.instanceId, LOCAL);
   assert.deepEqual(roster.cells.map((cell) => [cell.id, cell.canReceive]), [
-    [`${LOCAL}:Dev`, true], [`${LOCAL}:Off`, false],
+    [`${LOCAL}:Dev`, true], [`${LOCAL}:Alpha`, true], [`${LOCAL}:Off`, false],
   ]);
   const body = {
     id: MESSAGE,
@@ -94,7 +99,7 @@ test('GET /cells usa lo stato leggero e non blocca sulla discovery del catalogo'
   } });
   const response = await fetch(`${base}/api/cells`);
   assert.equal(response.status, 200);
-  assert.equal((await response.json()).cells.length, 2);
+  assert.equal((await response.json()).cells.length, 3);
   assert.equal(lightCalls, 1);
 });
 
@@ -254,4 +259,101 @@ test('CELL_MESSAGE_REJECTED: warn con motivo sul rifiuto (mittente non verificat
   assert.equal(ev.level, 'warn');
   assert.equal(ev.meta.fromCell, 'Intruso');
   assert.ok(ev.meta.reason && ev.meta.reason.length <= 48);
+});
+
+// ── Mittente verificato: directory locale + binding identity ──
+
+async function leaseMondo(t, { authority = true } = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cells-binding-'));
+  const mgr = createLeaseManager({ home, log: () => {} });
+  await mgr.track('Dev');
+  const reg = mgr.childRegister('Dev', { authority });
+  t.after(() => { try { mgr.close(); } catch (_) {} fs.rmSync(home, { recursive: true, force: true }); });
+  return { mgr, reg };
+}
+
+function bindingHeader(reg, overrides = {}) {
+  const context = {
+    version: '1', kind: 'mcp-v1', verified: true, mode: 'shared',
+    bindingId: `Dev:${reg.proof.incarnationId}`,
+    ownerInstanceId: LOCAL, cellId: 'Dev', tmuxSession: 'cloud-Dev',
+    connectionId: `Dev:${reg.proof.incarnationId}`, threadId: reg.proof.incarnationId,
+    origin: 'daemon', audience: 'nexuscrew-mcp', scopes: ['mcp:tools/call'],
+    issuedAt: reg.proof.issuedAt, notBefore: reg.proof.issuedAt, expiresAt: reg.proof.expiresAt,
+    ...overrides.context,
+  };
+  return { 'x-nexuscrew-identity-binding': JSON.stringify({ context, proof: reg.proof, ...overrides.extra }) };
+}
+
+test('sender locale non presente nella directory è rifiutato', async (t) => {
+  const { base, submissions } = await boot(t);
+  const res = await fetch(`${base}/api/cells/send`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      id: MESSAGE,
+      from: { instanceId: LOCAL, cell: 'Ghost', tmuxSession: 'cloud-Ghost' },
+      to: { instanceId: LOCAL, cell: 'Dev', tmuxSession: 'cloud-Dev' },
+      message: 'spoof',
+    }),
+  });
+  assert.equal(res.status, 403);
+  assert.equal(submissions.length, 0);
+});
+
+test('binding identity presentato senza lease manager è fail-closed', async (t) => {
+  const { reg } = await leaseMondo(t);
+  const { base, submissions } = await boot(t, { fleet: {
+    available: true, status: async () => STATUS, lease: null,
+  }, now: () => Date.now() });
+  // Un binding presentato quando il server non puo verificarlo (lease manager
+  // assente) non degrada a legacy: la richiesta con effetti viene rifiutata.
+  const res = await fetch(`${base}/api/cells/send`, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...bindingHeader(reg) },
+    body: JSON.stringify({
+      id: MESSAGE,
+      from: { instanceId: LOCAL, cell: 'Dev', tmuxSession: 'cloud-Dev' },
+      to: { instanceId: LOCAL, cell: 'Alpha', tmuxSession: 'cloud-Alpha' },
+      message: 'verificato',
+    }),
+  });
+  assert.equal(res.status, 403, 'binding presentato senza lease manager: fail-closed, non fallback');
+  assert.equal(submissions.length, 0);
+});
+
+test('binding identity con lease manager reale: positivo e negativi fail-closed', async (t) => {
+  const { mgr, reg } = await leaseMondo(t);
+  const bootOpts = { fleet: { available: true, status: async () => STATUS, lease: mgr }, now: () => Date.now() };
+  const body = (fromCell = 'Dev', fromSession = 'cloud-Dev') => JSON.stringify({
+    id: MESSAGE,
+    from: { instanceId: LOCAL, cell: fromCell, tmuxSession: fromSession },
+    to: { instanceId: LOCAL, cell: 'Alpha', tmuxSession: 'cloud-Alpha' },
+    message: 'verificato',
+  });
+  const post = async (headers, fromCell, fromSession) => {
+    const b = await boot(t, bootOpts);
+    return fetch(`${b.base}/api/cells/send`, {
+      method: 'POST', headers: { 'content-type': 'application/json', ...headers },
+      body: body(fromCell, fromSession),
+    });
+  };
+  const ok = await post(bindingHeader(reg), 'Dev', 'cloud-Dev');
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).status, 'submitted');
+
+  const discordant = await post(bindingHeader(reg, { context: { cellId: 'Research' } }), 'Dev', 'cloud-Dev');
+  assert.equal(discordant.status, 403);
+
+  const malformed = await post({ 'x-nexuscrew-identity-binding': '{rot json' }, 'Dev', 'cloud-Dev');
+  assert.equal(malformed.status, 403);
+
+  const stale = await post(bindingHeader({ ...reg, proof: { ...reg.proof, expiresAt: 1 } }), 'Dev', 'cloud-Dev');
+  assert.equal(stale.status, 403);
+
+  const legacyMondo = await leaseMondo(t, { authority: false });
+  const legacyBinding = bindingHeader(legacyMondo.reg);
+  const legacy = await fetch(`${(await boot(t, { fleet: { available: true, status: async () => STATUS, lease: legacyMondo.mgr } })).base}/api/cells/send`, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...legacyBinding },
+    body: body('Dev', 'cloud-Dev'),
+  });
+  assert.equal(legacy.status, 403, 'proof child di registration legacy non autorizza il binding');
 });
