@@ -43,7 +43,8 @@ function makeFetch(responder) {
   return { calls, impl };
 }
 
-function makeSrv({ env = {}, responder, execFileImpl, tokenPath, idFactory, identityRetryMs } = {}) {
+function makeSrv({ env = {}, responder, execFileImpl, tokenPath, idFactory, identityRetryMs,
+  identityContextProvider } = {}) {
   const dir = tmpdir();
   const tp = tokenPath || writeToken(dir);
   const out = makeOut();
@@ -56,6 +57,7 @@ function makeSrv({ env = {}, responder, execFileImpl, tokenPath, idFactory, iden
     execFileImpl: execFileImpl || (() => { throw new Error('tmux non deve essere chiamato'); }),
     ...(idFactory ? { idFactory } : {}),
     ...(identityRetryMs !== undefined ? { identityRetryMs } : {}),
+    ...(identityContextProvider ? { identityContextProvider } : {}),
     errlog: () => {},
   });
   return { srv, out, calls: f.calls, dir };
@@ -534,11 +536,61 @@ test('commandForDiagnostics: over-redaction benigno (NODE_ENV), shape e ACL inva
   assert.equal(TOOLS.length, 23, 'registry tool (23 tool: 20 + 3 lease child 2b)');
 });
 
+test('identity context online: ogni richiesta risolve di nuovo e deriva from', async () => {
+  let calls = 0;
+  const ownerInstanceId = 'a'.repeat(32);
+  const { srv, out } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'forged-local-session' },
+    identityContextProvider: async ({ tool }) => {
+      calls += 1;
+      return {
+        verified: true, mode: 'shared', bindingId: `binding-${calls}`,
+        ownerInstanceId, cellId: 'Dev', tmuxSession: 'cloud-Dev', tool,
+      };
+    },
+    responder: (call) => new URL(call.url).pathname === '/api/files'
+      ? { status: 200, json: { inbox: [] } } : { status: 404, json: {} },
+  });
+  await srv.handleLine(rpc(70, 'tools/call', { name: 'nc_inbox', arguments: {} }));
+  await srv.handleLine(rpc(71, 'tools/call', { name: 'nc_inbox', arguments: {} }));
+  assert.equal(calls, 2, 'il successo online non resta cacheato per la vita del processo');
+  assert.equal(out.lines[0].result.isError, undefined);
+  assert.equal(out.lines[1].result.isError, undefined);
+  const context = await srv.ctx.identityContext({ tool: 'test' });
+  assert.deepEqual(context.from, { instanceId: ownerInstanceId, cell: 'Dev', tmuxSession: 'cloud-Dev' });
+  assert.equal(context.verified, true);
+});
+
+test('identity context online: binding assente/non verificato e from discordante sono fail-closed', async () => {
+  const unverified = makeSrv({ identityContextProvider: async () => ({
+    verified: false, mode: 'shared', bindingId: 'binding', ownerInstanceId: 'a'.repeat(32),
+    cellId: 'Dev', tmuxSession: 'cloud-Dev',
+  }) });
+  await assert.rejects(() => unverified.srv.ctx.identityContext({ sharedRequired: true }),
+    (error) => error.code === 'NEXUSCREW_MCP_IDENTITY_CONTEXT_UNVERIFIED');
+
+  const discordant = makeSrv({ identityContextProvider: async () => ({
+    verified: true, mode: 'shared', bindingId: 'binding', ownerInstanceId: 'a'.repeat(32),
+    cellId: 'Dev', tmuxSession: 'cloud-Dev',
+    from: { instanceId: 'b'.repeat(32), cell: 'Dev', tmuxSession: 'cloud-Dev' },
+  }) });
+  await assert.rejects(() => discordant.srv.ctx.identityContext({ sharedRequired: true }),
+    (error) => error.code === 'NEXUSCREW_MCP_IDENTITY_CONTEXT_FROM_MISMATCH');
+
+  const legacy = makeSrv({ env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' } });
+  await assert.rejects(() => legacy.srv.ctx.identityContext({ sharedRequired: true }),
+    (error) => error.code === 'NEXUSCREW_MCP_IDENTITY_CONTEXT_MISSING');
+});
+
 test('nc_send_cell: risolve sender e target dalla directory e restituisce receipt onesto', async () => {
   const localId = 'a'.repeat(32); const remoteId = 'b'.repeat(32);
   const messageId = '12345678-1234-1234-1234-123456789abc';
   const { srv, out, calls } = makeSrv({
-    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' }, idFactory: () => messageId,
+    env: { NEXUSCREW_MCP_SESSION: 'forged-local-session' }, idFactory: () => messageId,
+    identityContextProvider: async () => ({
+      verified: true, mode: 'shared', bindingId: 'binding-send-cell',
+      ownerInstanceId: localId, cellId: 'Dev', tmuxSession: 'cloud-Dev',
+    }),
     responder: (call) => {
       const p = new URL(call.url).pathname;
       if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
@@ -569,6 +621,14 @@ test('nc_send_cell: risolve sender e target dalla directory e restituisce receip
   assert.equal(new URL(post.url).pathname, '/api/route/pixel/_/cells/send');
   assert.deepEqual(post.body.from, { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev' });
   assert.deepEqual(post.body.to, { instanceId: remoteId, cell: 'Worker', tmuxSession: 'cloud-Worker' });
+});
+
+test('nc_send_cell: from client-provided viene rifiutato prima del dispatch', async () => {
+  const tool = TOOLS.find((item) => item.name === 'nc_send_cell');
+  await assert.rejects(() => tool.handler({
+    target: `${'b'.repeat(32)}:Worker`, message: 'hello',
+    from: { instanceId: 'b'.repeat(32), cell: 'Dev', tmuxSession: 'cloud-Dev' },
+  }, {}), /from e' derivato/);
 });
 
 // Una ricerca fallita deve dire QUALE delle tre cose e' andata storta, perche'
