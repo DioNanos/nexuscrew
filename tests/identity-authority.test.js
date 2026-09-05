@@ -179,3 +179,48 @@ test('identity authority: launcher grant is bound to the current server subject'
   assert.equal(grant.ok, true);
   assert.equal(grant.grant.cellId, 'Dev');
 });
+
+test('identity authority: restart fails closed for consumed and revoked proofs', () => {
+  let now = 300_000;
+  const serviceCredential = 'fixture-service-credential';
+  const dir = tmpdir();
+  const expected = {
+    audience: 'codex-vl-app-server',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+  };
+
+  function issueProof(authority) {
+    const registered = authority.registerDaemonChallenge({
+      serviceCredential,
+      audience: 'codex-vl-app-server',
+      daemonBootId: 'boot-a',
+      connectionId: 'connection-a',
+    });
+    assert.equal(registered.ok, true);
+    const grant = authority.issueLaunchGrant({
+      serviceCredential,
+      ...identityArgs(registered.challenge),
+    });
+    assert.equal(grant.ok, true, JSON.stringify(grant));
+    now += 100;
+    const proof = authority.issueChallengeProof({
+      launchGrant: grant.grant,
+      challenge: registered.challenge,
+    });
+    assert.equal(proof.ok, true, JSON.stringify(proof));
+    return proof.proof;
+  }
+
+  const first = createIdentityAuthority({ dir, serviceCredential, now: () => now });
+  const consumedProof = issueProof(first);
+  assert.equal(first.verifyChallengeProof(consumedProof, expected).ok, true);
+  const revokedProof = issueProof(first);
+  assert.equal(first.revoke(revokedProof.parentJti), true);
+
+  const second = createIdentityAuthority({ dir, serviceCredential, now: () => now });
+  const replayAfterRestart = second.verifyChallengeProof(consumedProof, expected);
+  assert.equal(replayAfterRestart.ok, false, 'a consumed proof must not survive the restart');
+  const revokedAfterRestart = second.verifyChallengeProof(revokedProof, expected);
+  assert.equal(revokedAfterRestart.ok, false, 'a revoked proof must not survive the restart');
+});
