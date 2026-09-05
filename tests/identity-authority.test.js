@@ -128,3 +128,54 @@ test('identity authority: proof challenge is one-shot and expiry is enforced', (
   assert.deepEqual(expired, { ok: false, reason: 'expired' });
 });
 
+function authorityV1(overrides = {}) {
+  let now = 100_000;
+  const subject = {
+    ownerInstanceId: 'owner-a', cellId: 'Dev', incarnationId: 'incarnation-a',
+    launchEpoch: 'epoch-a',
+  };
+  const authority = createIdentityAuthority({
+    dir: tmpdir(), daemonCredential: 'daemon-credential',
+    launcherCredential: 'launcher-credential', now: () => now,
+    subjectResolver: (candidate) => Object.entries(subject)
+      .every(([key, value]) => candidate[key] === value),
+    ...overrides,
+  });
+  return { authority, subject, advance: (ms) => { now += ms; } };
+}
+
+function registerV1(authority, credential = 'daemon-credential') {
+  return authority.registerDaemonChallenge({
+    daemonCredential: credential, audience: 'nexuscrew-lease',
+    daemonBootId: 'boot-a', connectionId: 'connection-a',
+  });
+}
+
+test('identity authority: daemon credential cannot choose subject or issue launcher grant', () => {
+  const { authority, subject } = authorityV1();
+  const challenge = registerV1(authority);
+  assert.equal(challenge.ok, true);
+  const denied = authority.issueLaunchGrant({
+    daemonCredential: 'daemon-credential', challenge: challenge.challenge, subject,
+  });
+  assert.deepEqual(denied, { ok: false, reason: 'launcher-credential' });
+});
+
+test('identity authority: launcher grant is bound to the current server subject', () => {
+  const { authority, subject } = authorityV1();
+  const challenge = registerV1(authority);
+  const missing = authority.issueLaunchGrant({
+    launcherCredential: 'launcher-credential', challenge: challenge.challenge,
+  });
+  assert.deepEqual(missing, { ok: false, reason: 'subject' });
+  const foreign = authority.issueLaunchGrant({
+    launcherCredential: 'launcher-credential', challenge: challenge.challenge,
+    subject: { ...subject, cellId: 'Research' },
+  });
+  assert.deepEqual(foreign, { ok: false, reason: 'subject' });
+  const grant = authority.issueLaunchGrant({
+    launcherCredential: 'launcher-credential', challenge: challenge.challenge, subject,
+  });
+  assert.equal(grant.ok, true);
+  assert.equal(grant.grant.cellId, 'Dev');
+});
