@@ -6,20 +6,47 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
+const { spawn } = require('node:child_process');
+const express = require('express');
 const { createLaunchBroker, MAX_PAYLOAD } = require('../lib/fleet/launch-broker.js');
 const { createIdentityAuthority } = require('../lib/fleet/identity-authority.js');
+const { issueLaunchIdentity } = require('../lib/fleet/identity-transport.js');
+const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
+const { leaseRoutes } = require('../lib/fleet/lease-routes.js');
+
+const DAEMON = 'daemon-good';
+const LAUNCHER = 'launcher-good';
 
 function tmpdir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-function authority(dir, daemonCredential = 'daemon-good') {
+function authority(dir) {
   return createIdentityAuthority({
     dir,
-    daemonCredential,
-    launcherCredential: 'launcher-good',
+    daemonCredential: DAEMON,
+    launcherCredential: LAUNCHER,
     subjectResolver: () => true,
   });
+}
+
+function subject(overrides = {}) {
+  return {
+    ownerInstanceId: 'owner-a',
+    cellId: 'Dev',
+    incarnationId: 'incarnation-a',
+    launchEpoch: 'epoch-a',
+    ...overrides,
+  };
+}
+
+function identityArgs(overSubject = {}) {
+  return {
+    audience: 'nexuscrew-lease',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+    subject: subject(overSubject),
+  };
 }
 
 function readPayload(socketPath, nonce) {
@@ -50,65 +77,162 @@ function readPayload(socketPath, nonce) {
   });
 }
 
-test('identity_challenge_rejects_wrong_credential', async () => {
-  const home = tmpdir('nc-identity-transport-');
+test('identity_launch_grant_binds_subject', async () => {
+  const home = tmpdir('nc-identity-grant-');
   const auth = authority(path.join(home, 'identity'));
-  const broker = createLaunchBroker({
-    home,
-    identityMode: 'authority',
+  const args = identityArgs();
+  const out = issueLaunchIdentity({
     identityAuthority: auth,
-    identityDaemonCredential: 'daemon-wrong',
+    daemonCredential: DAEMON,
+    launcherCredential: LAUNCHER,
+    ...args,
   });
   try {
-    await assert.rejects(
-      broker.issue({
-        command: 'node',
-        args: [],
-        env: {},
-        identity: { audience: 'nexuscrew-launch', daemonBootId: 'boot-a', connectionId: 'connection-a' },
-      }),
-      /daemon-credential/,
-    );
+    assert.equal(out.ok, true);
+    assert.equal(out.grant.kind, 'launch-grant');
+    assert.equal(out.grant.ownerInstanceId, args.subject.ownerInstanceId);
+    assert.equal(out.grant.cellId, args.subject.cellId);
+    assert.equal(out.grant.incarnationId, args.subject.incarnationId);
+    assert.equal(out.grant.launchEpoch, args.subject.launchEpoch);
+    assert.equal(out.grant.audience, args.audience);
+    assert.equal(out.grant.daemonBootId, args.daemonBootId);
+    assert.equal(out.grant.connectionId, args.connectionId);
+    assert.equal(out.proof.kind, 'identity-proof');
+    assert.equal(out.proof.parentJti, out.grant.jti);
   } finally {
-    await broker.close();
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
 
-test('identity_challenge_travels_only_in_socket_payload', async () => {
-  const home = tmpdir('nc-identity-transport-');
+test('identity_grant_requires_launcher_credential', async () => {
+  const home = tmpdir('nc-identity-launcher-');
   const auth = authority(path.join(home, 'identity'));
-  const broker = createLaunchBroker({
-    home,
-    identityMode: 'authority',
+  const out = issueLaunchIdentity({
     identityAuthority: auth,
-    identityDaemonCredential: 'daemon-good',
+    daemonCredential: DAEMON,
+    launcherCredential: DAEMON,
+    ...identityArgs(),
   });
   try {
-    const ticket = await broker.issue({
-      command: 'node',
-      args: ['-e', 'process.exit(0)'],
-      env: { PATH: '/usr/bin' },
-      identity: { audience: 'nexuscrew-launch', daemonBootId: 'boot-a', connectionId: 'connection-a' },
+    assert.equal(out.ok, false);
+    assert.equal(out.reason, 'launcher-credential');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('identity_proof_one_shot_and_generation_scoped', async () => {
+  const home = tmpdir('nc-identity-proof-');
+  const dir = path.join(home, 'identity');
+  const first = authority(dir);
+  const out = issueLaunchIdentity({
+    identityAuthority: first,
+    daemonCredential: DAEMON,
+    launcherCredential: LAUNCHER,
+    ...identityArgs(),
+  });
+  assert.equal(out.ok, true);
+  const replay = first.issueChallengeProof({
+    launchGrant: out.grant,
+    challenge: out.challenge,
+  });
+  assert.equal(replay.ok, false);
+  assert.equal(replay.reason, 'challenge-replay');
+
+  const second = authority(dir);
+  const verified = second.verifyChallengeProof(out.proof, { audience: 'nexuscrew-lease' });
+  assert.equal(verified.ok, false);
+  assert.equal(verified.reason, 'generation');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('lease_register_authority_rejects_forged_subject', async () => {
+  const home = tmpdir('nc-identity-lease-');
+  const auth = authority(path.join(home, 'identity'));
+  const out = issueLaunchIdentity({
+    identityAuthority: auth,
+    daemonCredential: DAEMON,
+    launcherCredential: LAUNCHER,
+    ...identityArgs({ cellId: 'Dev' }),
+  });
+  const manager = createLeaseManager({ home, log: () => {} });
+  await manager.track('Dev');
+  const app = express();
+  app.use(express.json({ limit: '8kb' }));
+  app.use('/api/lease', leaseRoutes({
+    fleetP: Promise.resolve({ available: true, lease: manager, identityAuthority: auth }),
+    identityMode: 'authority',
+  }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  try {
+    const forged = { ...out.proof, cellId: 'Research' };
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/lease/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ proof: forged }),
     });
-    assert.equal(ticket.challenge, undefined, 'issue() non deve restituire la challenge al chiamante');
-    const payload = await readPayload(ticket.socketPath, ticket.nonce);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.status, 'denied');
+    assert.equal(body.reason, 'bad-proof');
+  } finally {
+    server.close();
+    manager.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('identity_grant_and_proof_never_reach_child_argv_env', async () => {
+  const home = tmpdir('nc-identity-child-');
+  const auth = authority(path.join(home, 'identity'));
+  const broker = createLaunchBroker({
+    home,
+    identityMode: 'authority',
+    identityAuthority: auth,
+    identityDaemonCredential: DAEMON,
+    identityLauncherCredential: LAUNCHER,
+  });
+  const outPath = path.join(home, 'child.json');
+  const script = 'require("fs").writeFileSync(process.argv[1], JSON.stringify({argv:process.argv, env:process.env}))';
+  try {
+    const makePayload = () => ({
+      command: process.execPath,
+      args: ['-e', script, outPath],
+      env: { PATH: '/usr/bin' },
+      supervise: { enabled: false },
+      identity: identityArgs(),
+    });
+    const inspectTicket = await broker.issue(makePayload());
+    const payload = await readPayload(inspectTicket.socketPath, inspectTicket.nonce);
     assert.ok(payload.identity);
-    assert.match(payload.identity.challenge, /^[a-f0-9]{64}$/);
-    assert.equal(payload.identity.audience, 'nexuscrew-launch');
-    assert.equal(payload.identity.daemonBootId, 'boot-a');
-    assert.equal(payload.identity.connectionId, 'connection-a');
-    assert.deepEqual(Object.keys(payload.identity).sort(), ['audience', 'challenge', 'connectionId', 'daemonBootId', 'expiresAt', 'issuedAt']);
-    const nonPayload = JSON.stringify([payload.command, ...payload.args, payload.env]);
-    assert.ok(!nonPayload.includes(payload.identity.challenge), 'la challenge non deve viaggiare in argv/env');
+    assert.equal(payload.identity.grant.kind, 'launch-grant');
+    assert.equal(payload.identity.proof.kind, 'identity-proof');
+    assert.ok(!JSON.stringify([payload.command, ...payload.args, payload.env]).includes(payload.identity.grant.proof));
+    assert.ok(!JSON.stringify([payload.command, ...payload.args, payload.env]).includes(payload.identity.proof.proof));
+
+    const childTicket = await broker.issue(makePayload());
+    const cellExec = path.join(__dirname, '..', 'lib', 'fleet', 'cell-exec.js');
+    const child = spawn(process.execPath, [cellExec, '--socket', childTicket.socketPath, '--nonce', childTicket.nonce]);
+    const code = await new Promise((resolve, reject) => {
+      child.once('exit', resolve);
+      child.once('error', reject);
+    });
+    assert.equal(code, 0);
+    const observed = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+    assert.ok(!observed.argv.includes(payload.identity.grant.proof));
+    assert.ok(!observed.argv.includes(payload.identity.proof.proof));
+    assert.equal(observed.env.NEXUSCREW_MCP_SESSION, undefined);
+    assert.equal(observed.env.NEXUSCREW_IDENTITY_GRANT, undefined);
+    assert.equal(observed.env.NEXUSCREW_IDENTITY_PROOF, undefined);
   } finally {
     await broker.close();
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
 
-test('legacy_launch_without_authority_unchanged', async () => {
-  const home = tmpdir('nc-identity-transport-legacy-');
+test('legacy_launch_without_authority_unchanged_after_grant', async () => {
+  const home = tmpdir('nc-identity-legacy-');
   const broker = createLaunchBroker({ home, identityMode: 'legacy' });
   const input = { command: 'node', args: ['-e', 'process.exit(0)'], env: { PATH: '/usr/bin' } };
   try {
