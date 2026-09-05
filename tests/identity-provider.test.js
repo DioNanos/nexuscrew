@@ -69,7 +69,15 @@ test('identity provider: introspezione negata o scaduta -> verified false, fail-
   persistIdentityChannel({
     tokenPath, session: 'cloud-Dev', cellId: 'Dev', proof: PROOF, expiresAt: 61_000,
   });
-  for (const json of [{ status: 'expired' }, { status: 'denied', reason: 'legacy-registration' }]) {
+  const liveWithoutInstanceId = {
+    status: 'live', identityMode: 'authority', cellId: 'Dev', tmuxSession: 'cloud-Dev',
+    incarnationId: PROOF.incarnationId, issuedAt: 1, expiresAt: 61_000,
+  };
+  for (const json of [
+    { status: 'expired' },
+    { status: 'denied', reason: 'legacy-registration' },
+    liveWithoutInstanceId,
+  ]) {
     const provider = createMcpIdentityProvider({
       config: { port: 4242, tokenPath }, env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
       fetchImpl: async () => ({ ok: true, status: 200, json: async () => json }),
