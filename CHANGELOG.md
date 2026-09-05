@@ -10,28 +10,19 @@ All notable changes to NexusCrew are tracked here.
 
 ## 0.9.18 — 2026-09-04
 
-### Upstream Rust 0.153.2
+- **Auto-update reports the node that is really installed.** The updater now
+  reads the version from disk instead of trusting the snapshot held by the
+  running process, and clears a stale `updaterPid` on reset; status and
+  notifications can no longer claim an update is current while the node is
+  left behind.
 
-- **New upstream capabilities.** The GPT-6-Astra model catalogue is included,
-  hook activity is visible in the TUI, and app-server supports asynchronous user
-  input with thread metadata.
-- **Smoother daily use.** Vim undo/redo and app-server reconnect improve the
-  interactive experience, while `[tui].disable_paste_burst` is documented in
-  its canonical configuration location.
-- **More context control.** Experimental context management is available for
-  evaluation alongside the upstream release changes.
+- **Codex-VL speaks Z.AI Responses directly.** The new `zai-a` and `zai-p`
+  engines use the native Z.AI Responses endpoint with catalog metadata and
+  the measured 1M context window, without the AnthMorph hop.
 
-### Codex VL fixes
-
-- **Loops stay responsive.** Failed `/loop` owner and delegate preconditions
-  report an error without terminating the TUI; `/loop` usage also lists the
-  delegate, strategy, delegation and owner commands.
-- **Vivling and fleet metadata recover cleanly.** `manage_loops` sees its jobs
-  after resume, and Vivling accepts fenced or prefixed JSON replies from any
-  provider while model metadata is resolved by engine identity.
-- **Quieter, clearer operation.** The expression planner no longer floods the
-  log database, terminal state reconciles after every terminal event, and Esc
-  interrupts a running task even during a long tool call.
+- **Fleet validation says what it rejected.** A bad managed profile now names
+  the field, value and rule that failed, and validation no longer collapses
+  a bad field into a generic rule failure.
 
 ## 0.9.17 — 2026-09-01 — "The Package Reads Like The Product"
 
