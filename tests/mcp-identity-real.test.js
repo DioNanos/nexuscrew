@@ -14,6 +14,7 @@ const { leaseRoutes } = require('../lib/fleet/lease-routes.js');
 const { notifyRoutes } = require('../lib/notify/routes.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const { persistIdentityChannel } = require('../lib/mcp/identity-provider.js');
+const { createMcpServer } = require('../lib/mcp/server.js');
 
 const LOCAL = 'a'.repeat(32);
 const CELL = 'Dev';
@@ -66,7 +67,7 @@ async function spawnMcp(t, { home, tokenPath, port, session }) {
   return { child, call, stderr: () => stderr };
 }
 
-async function makeHub(t, { identityMode = 'authority' } = {}) {
+async function makeHub(t, { identityMode = 'authority', introspectStatus = null } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-mcp-id-real-'));
   t.after(() => { try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {} });
   const tokenPath = path.join(home, 'token');
@@ -105,6 +106,11 @@ async function makeHub(t, { identityMode = 'authority' } = {}) {
     identityMode,
     localNodeId: () => LOCAL,
   }));
+  if (introspectStatus) {
+    app.post('/api/lease/introspect', (_req, res) => {
+      res.status(introspectStatus).json({ error: 'authority-down' });
+    });
+  }
   app.use('/api/lease', leaseRoutes({
     fleetP,
     identityMode,
@@ -237,4 +243,58 @@ test('mcp_nc_identity_verified_only_after_introspection', async (t) => {
   assert.equal(body.identified, true);
   assert.equal(body.ownerInstanceId, LOCAL);
   assert.ok(hub.introspects.length >= 2);
+});
+
+test('mcp_nc_identity_exposes_thread_and_verified_flag', async (t) => {
+  const hub = await makeHub(t);
+  const reg = hub.mgr.childRegister(CELL, { authority: true });
+  assert.equal(hub.persist(reg.proof), true);
+  const mcp = await spawnMcp(t, {
+    home: hub.home, tokenPath: hub.tokenPath, port: hub.port, session: SESSION,
+  });
+  const identity = await mcp.call(2, 'tools/call', { name: 'nc_identity', arguments: {} });
+  assert.equal(identity.result.isError, undefined, identity.result && identity.result.content[0].text);
+  const body = JSON.parse(identity.result.content[0].text);
+  assert.equal(body.source, 'online');
+  assert.equal(body.verified, true);
+  assert.equal(body.threadId, reg.proof.incarnationId);
+
+  const lines = [];
+  const now = Date.now();
+  const srv = createMcpServer({
+    output: { write: (s) => { for (const line of String(s).split('\n')) if (line.trim()) lines.push(JSON.parse(line)); } },
+    env: { NEXUSCREW_MCP_SESSION: SESSION },
+    config: { port: 1, tokenPath: hub.tokenPath, tmuxBin: 'tmux' },
+    identityContextProvider: async () => ({
+      version: '1', kind: 'connection-v1', verified: true, mode: 'shared',
+      bindingId: 'bind-conn', ownerInstanceId: LOCAL, cellId: CELL,
+      tmuxSession: SESSION, connectionId: 'conn-1', origin: 'daemon',
+      audience: 'nexuscrew-mcp', scopes: ['mcp:tools/call'],
+      issuedAt: now - 1000, notBefore: now - 1000, expiresAt: now + 60_000,
+    }),
+    errlog: () => {},
+  });
+  await srv.handleLine(rpc(9, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const conn = JSON.parse(lines[0].result.content[0].text);
+  assert.equal(conn.verified, true);
+  assert.equal(conn.threadId, null);
+});
+
+test('mcp_authority_unavailable_is_distinct_and_fail_closed', async (t) => {
+  const hub = await makeHub(t, { introspectStatus: 500 });
+  const reg = hub.mgr.childRegister(CELL, { authority: true });
+  assert.equal(hub.persist(reg.proof), true);
+  const mcp = await spawnMcp(t, {
+    home: hub.home, tokenPath: hub.tokenPath, port: hub.port, session: SESSION,
+  });
+  const identity = await mcp.call(2, 'tools/call', { name: 'nc_identity', arguments: {} });
+  assert.equal(identity.result.isError, true);
+  assert.match(identity.result.content[0].text, /NEXUSCREW_MCP_IDENTITY_AUTHORITY_UNAVAILABLE/);
+  assert.doesNotMatch(identity.result.content[0].text, /NEXUSCREW_MCP_IDENTITY_CONTEXT_UNVERIFIED/);
+  const notify = await mcp.call(3, 'tools/call', {
+    name: 'nc_notify', arguments: { title: 'must not emit' },
+  });
+  assert.equal(notify.result.isError, true);
+  assert.match(notify.result.content[0].text, /NEXUSCREW_MCP_IDENTITY_AUTHORITY_UNAVAILABLE/);
+  assert.equal(hub.notifies.length, 0);
 });
