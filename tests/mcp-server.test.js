@@ -589,6 +589,25 @@ test('identity context online: binding assente/non verificato e from discordante
     (error) => error.code === 'NEXUSCREW_MCP_IDENTITY_CONTEXT_MISSING');
 });
 
+test('identity context online: nc_identity usa il provider shared e non il resolver locale', async () => {
+  let calls = 0;
+  const { srv, out } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'forged-local-session' },
+    identityContextProvider: async () => {
+      calls += 1;
+      return sharedContext({ bindingId: 'binding-diagnostic', ownerInstanceId: 'a'.repeat(32) });
+    },
+  });
+  await srv.handleLine(rpc(72, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const result = out.lines[0].result;
+  assert.equal(result.isError, undefined);
+  const identity = JSON.parse(result.content[0].text);
+  assert.equal(calls, 1);
+  assert.equal(identity.source, 'online');
+  assert.equal(identity.session, 'cloud-Dev');
+  assert.equal(identity.bindingId, 'binding-diagnostic');
+});
+
 test('nc_send_cell: risolve sender e target dalla directory e restituisce receipt onesto', async () => {
   const localId = 'a'.repeat(32); const remoteId = 'b'.repeat(32);
   const messageId = '12345678-1234-1234-1234-123456789abc';
