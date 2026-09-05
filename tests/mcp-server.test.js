@@ -63,6 +63,18 @@ function makeSrv({ env = {}, responder, execFileImpl, tokenPath, idFactory, iden
   return { srv, out, calls: f.calls, dir };
 }
 
+function sharedContext(overrides = {}) {
+  const now = Date.now();
+  return {
+    version: '1', kind: 'mcp-v1', verified: true, mode: 'shared',
+    bindingId: 'binding-test', ownerInstanceId: 'a'.repeat(32), cellId: 'Dev',
+    tmuxSession: 'cloud-Dev', connectionId: 'connection-test', threadId: 'thread-test',
+    origin: 'local_tui', audience: 'nexuscrew-mcp', scopes: ['mcp:tools/call'],
+    issuedAt: now - 1000, notBefore: now - 1000, expiresAt: now + 60_000,
+    ...overrides,
+  };
+}
+
 const rpc = (id, method, params) => JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) });
 
 test('initialize: echo protocolVersion, capabilities.tools, serverInfo', async () => {
@@ -543,10 +555,7 @@ test('identity context online: ogni richiesta risolve di nuovo e deriva from', a
     env: { NEXUSCREW_MCP_SESSION: 'forged-local-session' },
     identityContextProvider: async ({ tool }) => {
       calls += 1;
-      return {
-        verified: true, mode: 'shared', bindingId: `binding-${calls}`,
-        ownerInstanceId, cellId: 'Dev', tmuxSession: 'cloud-Dev', tool,
-      };
+      return sharedContext({ bindingId: `binding-${calls}`, ownerInstanceId, tool });
     },
     responder: (call) => new URL(call.url).pathname === '/api/files'
       ? { status: 200, json: { inbox: [] } } : { status: 404, json: {} },
@@ -569,9 +578,7 @@ test('identity context online: binding assente/non verificato e from discordante
   await assert.rejects(() => unverified.srv.ctx.identityContext({ sharedRequired: true }),
     (error) => error.code === 'NEXUSCREW_MCP_IDENTITY_CONTEXT_UNVERIFIED');
 
-  const discordant = makeSrv({ identityContextProvider: async () => ({
-    verified: true, mode: 'shared', bindingId: 'binding', ownerInstanceId: 'a'.repeat(32),
-    cellId: 'Dev', tmuxSession: 'cloud-Dev',
+  const discordant = makeSrv({ identityContextProvider: async () => sharedContext({
     from: { instanceId: 'b'.repeat(32), cell: 'Dev', tmuxSession: 'cloud-Dev' },
   }) });
   await assert.rejects(() => discordant.srv.ctx.identityContext({ sharedRequired: true }),
@@ -587,10 +594,7 @@ test('nc_send_cell: risolve sender e target dalla directory e restituisce receip
   const messageId = '12345678-1234-1234-1234-123456789abc';
   const { srv, out, calls } = makeSrv({
     env: { NEXUSCREW_MCP_SESSION: 'forged-local-session' }, idFactory: () => messageId,
-    identityContextProvider: async () => ({
-      verified: true, mode: 'shared', bindingId: 'binding-send-cell',
-      ownerInstanceId: localId, cellId: 'Dev', tmuxSession: 'cloud-Dev',
-    }),
+    identityContextProvider: async () => sharedContext({ bindingId: 'binding-send-cell', ownerInstanceId: localId }),
     responder: (call) => {
       const p = new URL(call.url).pathname;
       if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
