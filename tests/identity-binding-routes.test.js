@@ -14,6 +14,7 @@ const { leaseRoutes } = require('../lib/fleet/lease-routes.js');
 const { cellsRoutes } = require('../lib/cells/routes.js');
 const { liveHostRoutes } = require('../lib/live-host/routes.js');
 const { createAsksStore } = require('../lib/notify/asks.js');
+const { createReceiptStore } = require('../lib/audio/receipt.js');
 
 const LOCAL = 'a'.repeat(32);
 const CELL = 'Dev';
@@ -154,12 +155,15 @@ async function makeWorld(t, { identityMode = 'authority' } = {}) {
       visited: [],
     }),
   };
-  const receiptStore = {
-    record: (status, opts) => ({ status, ...opts }),
-    update: (id, status, reason) => ({ id, status, reason }),
-    get: () => null,
-    find: () => null,
-  };
+  const receiptStore = createReceiptStore();
+  // Stop ha senso per un enunciato già ammesso dalla stessa origine. Il fixture
+  // lo registra qui per entrambi i mondi, senza falsare lo store di produzione.
+  receiptStore.record({
+    origin: { node: LOCAL, cell: CELL, attested: false },
+    target: LOCAL,
+    status: 'accepted',
+    utteranceId: 'stop-12345678',
+  });
   const submit = async (session, text) => {
     calls.submit.push([session, text]);
     return { submitted: true };
@@ -245,6 +249,7 @@ async function makeWorld(t, { identityMode = 'authority' } = {}) {
     notifier,
     leaseFacade,
     liveStore,
+    receiptStore,
   };
 }
 
