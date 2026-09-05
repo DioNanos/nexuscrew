@@ -10,11 +10,9 @@ All notable changes to NexusCrew are tracked here.
 
 ## 0.9.18 — 2026-09-04
 
-- **Auto-update reports the node that is really installed.** The updater now
-  reads the version from disk instead of trusting the snapshot held by the
-  running process, and clears a stale `updaterPid` on reset; status and
-  notifications can no longer claim an update is current while the node is
-  left behind.
+- **Extra models resolve by engine id first.** `extraModels` lookups try the
+  engine id before the profile name, so custom Ollama/Z.AI models attach to the
+  right engine.
 
 - **Codex-VL speaks Z.AI Responses directly.** The new `zai-a` and `zai-p`
   engines use the native Z.AI Responses endpoint with catalog metadata and
