@@ -33,6 +33,7 @@ const DIR = () => path.join(os.tmpdir(), `lh-bridge-${process.pid}-${Math.random
 const mockFleet = (cells) => Promise.resolve({
   available: true,
   status: async () => ({ available: true, cells }),
+  lease: { status: () => ({ state: 'live' }) },
 });
 
 // —— R30: verifica COMPORTAMENTALE dell'intestazione ——
