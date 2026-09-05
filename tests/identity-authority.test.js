@@ -5,7 +5,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { createIdentityAuthority } = require('../lib/fleet/identity-authority.js');
+const {
+  createIdentityAuthority,
+  CHALLENGE_TTL_MS,
+  GRANT_TTL_MS,
+} = require('../lib/fleet/identity-authority.js');
 
 function tmpdir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nc-identity-authority-'));
@@ -223,4 +227,134 @@ test('identity authority: restart fails closed for consumed and revoked proofs',
   assert.equal(replayAfterRestart.ok, false, 'a consumed proof must not survive the restart');
   const revokedAfterRestart = second.verifyChallengeProof(revokedProof, expected);
   assert.equal(revokedAfterRestart.ok, false, 'a revoked proof must not survive the restart');
+});
+
+test('identity authority: expired challenges are collected and challenge capacity is enforced', () => {
+  let now = 400_000;
+  const serviceCredential = 'fixture-service-credential';
+  const authority = createIdentityAuthority({
+    dir: tmpdir(),
+    serviceCredential,
+    now: () => now,
+    maxChallenges: 2,
+  });
+  const register = () => authority.registerDaemonChallenge({
+    serviceCredential,
+    audience: 'codex-vl-app-server',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+  });
+
+  assert.equal(register().ok, true);
+  assert.equal(register().ok, true);
+  const full = register();
+  assert.equal(full.ok, false);
+  assert.equal(full.reason, 'challenge-store-full');
+
+  now += CHALLENGE_TTL_MS + 1;
+  const afterExpiry = register();
+  assert.equal(afterExpiry.ok, true, 'expired challenges must be collected, not evicted');
+});
+
+test('identity authority: expired replay entries are collected and replay capacity is enforced', () => {
+  let now = 500_000;
+  const serviceCredential = 'fixture-service-credential';
+  const authority = createIdentityAuthority({
+    dir: tmpdir(),
+    serviceCredential,
+    now: () => now,
+    maxReplayEntries: 2,
+  });
+  const expected = {
+    audience: 'codex-vl-app-server',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+  };
+
+  function beginHandshake() {
+    const registered = authority.registerDaemonChallenge({
+      serviceCredential,
+      audience: 'codex-vl-app-server',
+      daemonBootId: 'boot-a',
+      connectionId: 'connection-a',
+    });
+    assert.equal(registered.ok, true);
+    const grant = authority.issueLaunchGrant({
+      serviceCredential,
+      ...identityArgs(registered.challenge),
+    });
+    assert.equal(grant.ok, true, JSON.stringify(grant));
+    now += 100;
+    return authority.issueChallengeProof({
+      launchGrant: grant.grant,
+      challenge: registered.challenge,
+    });
+  }
+
+  const first = beginHandshake();
+  assert.equal(first.ok, true, JSON.stringify(first));
+  assert.equal(authority.verifyChallengeProof(first.proof, expected).ok, true);
+
+  const second = beginHandshake();
+  assert.equal(second.ok, false, 'a full replay store must reject instead of evicting');
+  assert.equal(second.reason, 'replay-store-full');
+
+  now += CHALLENGE_TTL_MS + 1;
+  const third = beginHandshake();
+  assert.equal(third.ok, true, 'expired replay entries must be collected, not evicted');
+  assert.equal(authority.verifyChallengeProof(third.proof, expected).ok, true);
+});
+
+test('identity authority: revocations are bounded and expire with the proofs they cover', () => {
+  let now = 600_000;
+  const serviceCredential = 'fixture-service-credential';
+  const authority = createIdentityAuthority({
+    dir: tmpdir(),
+    serviceCredential,
+    now: () => now,
+    maxRevokeEntries: 2,
+  });
+  const expected = {
+    audience: 'codex-vl-app-server',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+  };
+
+  function unconsumedProof() {
+    const registered = authority.registerDaemonChallenge({
+      serviceCredential,
+      audience: 'codex-vl-app-server',
+      daemonBootId: 'boot-a',
+      connectionId: 'connection-a',
+    });
+    assert.equal(registered.ok, true);
+    const grant = authority.issueLaunchGrant({
+      serviceCredential,
+      ...identityArgs(registered.challenge),
+    });
+    assert.equal(grant.ok, true, JSON.stringify(grant));
+    now += 100;
+    const proof = authority.issueChallengeProof({
+      launchGrant: grant.grant,
+      challenge: registered.challenge,
+    });
+    assert.equal(proof.ok, true, JSON.stringify(proof));
+    return proof.proof;
+  }
+
+  const proof1 = unconsumedProof();
+  const proof2 = unconsumedProof();
+  const proof3 = unconsumedProof();
+
+  assert.equal(authority.revoke(proof1.parentJti), true);
+  assert.equal(authority.revoke(proof2.parentJti), true);
+  assert.equal(authority.revoke(proof3.parentJti), false, 'a full revocation store must reject instead of evicting');
+
+  assert.equal(authority.verifyChallengeProof(proof1, expected).ok, false);
+  assert.equal(authority.verifyChallengeProof(proof2, expected).ok, false);
+  assert.equal(authority.verifyChallengeProof(proof3, expected).ok, true);
+
+  now += CHALLENGE_TTL_MS + GRANT_TTL_MS + 1;
+  assert.equal(authority.revoke(proof3.parentJti), true, 'expired revocations must be collected, not evicted');
+  assert.equal(authority.verifyChallengeProof(proof3, expected).ok, false, 'an expired proof stays rejected');
 });
