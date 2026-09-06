@@ -1,0 +1,49 @@
+# NC identity contract gate (piano v3 :114-117, :222-226).
+# Node Linux, isolated suite + NC-5 subset. Nessuna credenziale, nessun nodo di produzione.
+name: identity-gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['wip/**', 'develop', 'main']
+  pull_request:
+
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: install
+        run: npm ci --omit=optional
+      - name: isolated suite
+        run: |
+          set -o pipefail
+          node tests/run-isolated.js 2>&1 | tee /tmp/nc-isolated.log | tail -n 80
+      - name: cleanup processes
+        if: always()
+        run: |
+          pkill -f 'nexuscrew mcp' || true
+          pkill -f 'tests/run-isolated' || true
+
+  nc5:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: install
+        run: npm ci --omit=optional
+      - name: NC-5 subset
+        run: |
+          set -o pipefail
+          node --test tests/identity-terminal.test.js 2>&1 | tee /tmp/nc5.log
+          grep -E 'skip|skipped|pass|fail' /tmp/nc5.log | tail -n 40
+      - name: cleanup processes
+        if: always()
+        run: pkill -f 'nexuscrew mcp' || true
