@@ -220,11 +220,29 @@ test('identity_grant_and_proof_never_reach_child_argv_env', async () => {
     });
     assert.equal(code, 0);
     const observed = JSON.parse(fs.readFileSync(outPath, 'utf8'));
-    assert.ok(!observed.argv.includes(payload.identity.grant.proof));
-    assert.ok(!observed.argv.includes(payload.identity.proof.proof));
-    assert.equal(observed.env.NEXUSCREW_MCP_SESSION, undefined);
-    assert.equal(observed.env.NEXUSCREW_IDENTITY_GRANT, undefined);
-    assert.equal(observed.env.NEXUSCREW_IDENTITY_PROOF, undefined);
+    // Copertura generale: il leak può usare un nome arbitrario, quindi il
+    // controllo per valore non si limita al materiale di questa issue payload.
+    const secretMaterial = [
+      payload.identity.challenge,
+      payload.identity.grant.proof,
+      payload.identity.proof.proof,
+      JSON.stringify(payload.identity),
+    ];
+    const childKeys = Object.keys(observed.env);
+    const childValues = childKeys.map((key) => observed.env[key]);
+    const serializedChild = JSON.stringify([observed.argv, childKeys, childValues]);
+    for (const material of secretMaterial) {
+      assert.ok(typeof material === 'string' && material.length > 0);
+      assert.ok(!observed.argv.includes(material));
+      assert.ok(!childValues.some((value) => String(value).includes(material)));
+      assert.ok(!serializedChild.includes(material));
+    }
+    for (const key of childKeys) {
+      assert.doesNotMatch(key, /^NEXUSCREW_(IDENTITY|LAUNCH|PROOF|GRANT|CHALLENGE)/);
+    }
+    // Ogni challenge e proof del contract è un token esadecimale di 64 caratteri;
+    // un leak serializzato con nome arbitrario deve restare osservabile.
+    assert.doesNotMatch(serializedChild, /[0-9a-f]{64}/i);
   } finally {
     await broker.close();
     fs.rmSync(home, { recursive: true, force: true });
