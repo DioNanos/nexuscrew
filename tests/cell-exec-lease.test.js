@@ -70,7 +70,9 @@ test('main: nessun dato di lease compare nell\'env passato allo spawn del child 
   assert.equal(Object.values(captured.env).some((v) => String(v).includes(launchEpoch)), false, 'launchEpoch assente dai valori env');
   assert.equal(Object.values(captured.env).some((v) => String(v).includes(stablePath)), false, 'stablePath assente dai valori env');
   assert.equal(Object.keys(captured.env).some((k) => /lease|capability|proof|launchepoch|stablepath/i.test(k)), false, 'nessuna chiave di lease nell\'env');
-  // spawnImpl passa solo env + stdio inherit: nessun bearer/canale extra al child
-  assert.equal(captured.stdio, 'inherit');
+  // 2b (piano CANALE_B, vincolante): stdio inherit per std/err + due pipe
+  // fd 3/4 per il canale identita; env comunque senza dati di lease (R3.1.2
+  // invariato). Nessun bearer/capability transitira' mai su queste pipe.
+  assert.deepEqual(captured.stdio, ['inherit', 'inherit', 'inherit', 'pipe', 'pipe']);
   assert.equal(typeof code, 'number');
 });
