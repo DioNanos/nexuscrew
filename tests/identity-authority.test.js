@@ -79,6 +79,116 @@ test('identity authority: daemon challenge, launch grant and child proof round-t
   assert.equal(verified.claims.cellId, 'Dev');
 });
 
+test('identity authority: challenge expiry caps proof and caller extras stay unsigned', () => {
+  let now = 125_000;
+  const serviceCredential = 'fixture-service-credential';
+  const authority = createIdentityAuthority({
+    dir: tmpdir(),
+    serviceCredential,
+    now: () => now,
+  });
+  const registered = authority.registerDaemonChallenge({
+    serviceCredential,
+    audience: 'codex-vl-app-server',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+    expiresAt: now + 10_000,
+  });
+  assert.equal(registered.ok, true);
+  const grant = authority.issueLaunchGrant({
+    serviceCredential,
+    ...identityArgs(registered.challenge),
+  });
+  assert.equal(grant.ok, true, JSON.stringify(grant));
+
+  const signedGrant = { ...grant.grant, spoofedClaim: 'caller-controlled' };
+  const capped = authority.issueChallengeProof({
+    launchGrant: signedGrant,
+    challenge: registered.challenge,
+    expiresAt: now + 30_000,
+  });
+  assert.equal(capped.ok, true, JSON.stringify(capped));
+  assert.equal(capped.proof.expiresAt, registered.expiresAt,
+    'a caller expiry after the signed grant must be capped');
+  assert.equal('spoofedClaim' in capped.proof, false,
+    'a top-level extra on the grant must not become a signed proof claim');
+
+  const secondChallenge = authority.registerDaemonChallenge({
+    serviceCredential,
+    audience: 'codex-vl-app-server',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+    expiresAt: now + 20_000,
+  });
+  const secondGrant = authority.issueLaunchGrant({
+    serviceCredential,
+    ...identityArgs(secondChallenge.challenge),
+  });
+  const shorter = authority.issueChallengeProof({
+    launchGrant: { ...secondGrant.grant, spoofedClaim: 'ignored' },
+    challenge: secondChallenge.challenge,
+    expiresAt: now + 1_000,
+  });
+  assert.equal(shorter.ok, true, JSON.stringify(shorter));
+  assert.equal(shorter.proof.expiresAt, now + 1_000,
+    'a shorter caller expiry is the effective minimum');
+});
+
+test('identity authority: an expired registered challenge cannot issue a proof', () => {
+  let now = 150_000;
+  const serviceCredential = 'fixture-service-credential';
+  const authority = createIdentityAuthority({
+    dir: tmpdir(),
+    serviceCredential,
+    now: () => now,
+  });
+  const registered = authority.registerDaemonChallenge({
+    serviceCredential,
+    audience: 'codex-vl-app-server',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+    expiresAt: now + 1_000,
+  });
+  const grant = authority.issueLaunchGrant({
+    serviceCredential,
+    ...identityArgs(registered.challenge),
+  });
+  assert.equal(grant.ok, true, JSON.stringify(grant));
+  now += 1_001;
+  assert.deepEqual(
+    authority.issueChallengeProof({ launchGrant: grant.grant, challenge: registered.challenge }),
+    { ok: false, reason: 'expired' },
+  );
+});
+
+test('identity authority: a forged proof is rejected before replay is reserved', () => {
+  let now = 175_000;
+  const serviceCredential = 'fixture-service-credential';
+  const authority = createIdentityAuthority({
+    dir: tmpdir(),
+    serviceCredential,
+    now: () => now,
+  });
+  const registered = authority.registerDaemonChallenge({
+    serviceCredential,
+    audience: 'codex-vl-app-server',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+  });
+  const grant = authority.issueLaunchGrant({
+    serviceCredential,
+    ...identityArgs(registered.challenge),
+  });
+  now += 100;
+  const issued = authority.issueChallengeProof({
+    launchGrant: grant.grant,
+    challenge: registered.challenge,
+  });
+  assert.equal(issued.ok, true, JSON.stringify(issued));
+  const forged = { ...issued.proof, cellId: 'Research' };
+  assert.deepEqual(authority.verifyChallengeProof(forged), { ok: false, reason: 'bad-proof' });
+});
+
 test('identity authority: service credential and challenge binding fail closed', () => {
   const authority = createIdentityAuthority({
     dir: tmpdir(),
@@ -350,8 +460,8 @@ test('identity authority: revocations are bounded and expire with the proofs the
   assert.equal(authority.revoke(proof2.parentJti), true);
   assert.equal(authority.revoke(proof3.parentJti), false, 'a full revocation store must reject instead of evicting');
 
-  assert.equal(authority.verifyChallengeProof(proof1, expected).ok, false);
-  assert.equal(authority.verifyChallengeProof(proof2, expected).ok, false);
+  assert.deepEqual(authority.verifyChallengeProof(proof1, expected), { ok: false, reason: 'revoked' });
+  assert.deepEqual(authority.verifyChallengeProof(proof2, expected), { ok: false, reason: 'revoked' });
   assert.equal(authority.verifyChallengeProof(proof3, expected).ok, true);
 
   now += CHALLENGE_TTL_MS + GRANT_TTL_MS + 1;
