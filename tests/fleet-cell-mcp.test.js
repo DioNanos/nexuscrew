@@ -22,8 +22,12 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const net = require('node:net');
 const { resolveManagedEngine } = require('../lib/fleet/managed.js');
 const { parseDefinitions } = require('../lib/fleet/definitions.js');
+const { main } = require('../lib/fleet/cell-exec.js');
+const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
+const { createIdentityAuthority } = require('../lib/fleet/identity-authority.js');
 
 function mondo(t, { serverUtente = ['nexuscrew', 'webfetch', 'nextcloud'], serverProgetto = null } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cellmcp-'));
@@ -134,4 +138,93 @@ test('il campo e\' validato come un identificatore, non come testo libero', () =
   for (const cattivo of [['a', 'a'], [1], ['../x'], ['con spazio'], ['mcp__gia-prefissato!'], 'nexuscrew', {}]) {
     assert.equal(parseDefinitions(defs(cattivo)), null, `deve rifiutare ${JSON.stringify(cattivo)}`);
   }
+});
+
+
+test('managed child receives identity pipes and relay through the real lease world', async (t) => {
+  const w = mondo(t);
+  const subject = {
+    ownerInstanceId: 'owner-a',
+    cellId: 'Dev',
+    incarnationId: 'incarnation-a',
+    launchEpoch: '',
+  };
+  const authority = createIdentityAuthority({
+    dir: path.join(w.home, 'authority'),
+    daemonCredential: 'daemon-credential',
+    launcherCredential: 'launcher-credential',
+    subjectResolver: (candidate) => Object.entries(subject)
+      .every(([key, value]) => candidate[key] === value),
+  });
+  const manager = createLeaseManager({
+    home: w.home,
+    log: () => {},
+    identityAuthority: authority,
+  });
+  t.after(() => manager.close());
+  const lease = await manager.track('Dev');
+  subject.launchEpoch = lease.launchEpoch;
+  assert.equal(manager.setLaunchSubject('Dev', subject), true);
+
+  const socketPath = path.join(w.home, 'lease-pair.sock');
+  const pairServer = net.createServer();
+  const connected = new Promise((resolve) => pairServer.once('connection', resolve));
+  await new Promise((resolve) => pairServer.listen(socketPath, resolve));
+  const leaseSocket = net.createConnection(socketPath);
+  const [serverSide] = await Promise.all([
+    connected,
+    new Promise((resolve) => leaseSocket.once('connect', resolve)),
+  ]);
+  assert.equal(manager.attachInitial('Dev', serverSide, { generation: 0 }), true);
+  t.after(() => {
+    try { leaseSocket.destroy(); } catch (_) {}
+    try { pairServer.close(); } catch (_) {}
+  });
+
+  const output = path.join(w.home, 'child-output.json');
+  const script = `
+    const fs = require('node:fs');
+    const challenge = ${JSON.stringify({
+      version: 1,
+      audience: 'daemon/connection-real',
+      daemonBootId: 'boot-real',
+      connectionId: 'connection-real',
+      nonce: 'f'.repeat(64),
+      issuedAt: Date.now(),
+      expiresAt: Date.now() + 15000,
+    })};
+    fs.writeSync(3, JSON.stringify({
+      jsonrpc: '2.0', id: 11, method: 'nexuscrew/identity/challengeProof',
+      params: { challenge },
+    }) + '\\n');
+    const buffer = Buffer.alloc(64 * 1024);
+    const size = fs.readSync(4, buffer, 0, buffer.length, null);
+    fs.writeFileSync(process.argv[1], JSON.stringify({
+      fd: process.env['NEXUSCREW_' + 'IDENTITY_FD'],
+      response: JSON.parse(buffer.slice(0, size).toString()),
+    }));
+  `;
+  const payload = {
+    command: process.execPath,
+    args: ['-e', script, output],
+    env: { PATH: process.env.PATH },
+    supervise: { enabled: false },
+    lease: { cellId: 'Dev', launchEpoch: lease.launchEpoch, stablePath: lease.stablePath },
+  };
+  const errors = [];
+  const code = await main(['--socket', '/unused', '--nonce', 'a'.repeat(64)], {
+    receivePayload: async () => ({ payload, socket: leaseSocket }),
+    process: new (require('node:events').EventEmitter)(),
+    writeError: (line) => errors.push(String(line)),
+  });
+  assert.equal(code, 0, errors.join(''));
+  const observed = JSON.parse(fs.readFileSync(output, 'utf8'));
+  assert.equal(observed.fd, '3:4');
+  assert.equal(observed.response.id, 11);
+  assert.equal(observed.response.result.proof.kind, 'identity-proof');
+  assert.equal(observed.response.result.proof.cellId, 'Dev');
+  assert.equal(observed.response.result.proof.incarnationId, 'incarnation-a');
+  assert.equal(observed.response.result.proof.ownerInstanceId, 'owner-a');
+  assert.ok(!JSON.stringify(payload).includes('NEXUSCREW_IDENTITY_FD'));
+  assert.ok(!errors.some((line) => line.includes(observed.response.result.proof.proof)));
 });
