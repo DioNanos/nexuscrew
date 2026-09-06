@@ -67,7 +67,7 @@ async function spawnMcp(t, { home, tokenPath, port, session }) {
   return { child, call, stderr: () => stderr };
 }
 
-async function makeHub(t, { identityMode = 'authority', introspectStatus = null } = {}) {
+async function makeHub(t, { identityMode = 'authority', introspectStatus = null, introspectIncarnationId = null } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-mcp-id-real-'));
   t.after(() => { try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {} });
   const tokenPath = path.join(home, 'token');
@@ -83,7 +83,13 @@ async function makeHub(t, { identityMode = 'authority', introspectStatus = null 
     childRecovery: (...args) => mgr.childRecovery(...args),
     childIntrospect: (proof) => {
       introspects.push(proof);
-      return mgr.childIntrospect(proof);
+      const out = mgr.childIntrospect(proof);
+      // Seam dedicato alla difesa in profondità del provider: l’autorità
+      // accetta il proof, ma risponde per un’incarnazione diversa.
+      if (out && out.status === 'live' && introspectIncarnationId) {
+        return { ...out, incarnationId: introspectIncarnationId };
+      }
+      return out;
     },
   };
   const fleetP = Promise.resolve({ available: true, lease });
@@ -222,6 +228,24 @@ test('mcp_provider_has_no_lifetime_success_cache', async (t) => {
   assert.equal(again.result.isError, true);
   assert.match(again.result.content[0].text, /NEXUSCREW_MCP_IDENTITY_CONTEXT_(MISSING|UNVERIFIED)|non verificato|non disponibile/);
   assert.ok(hub.introspects.length > afterFirst, 'il successo non resta cacheato a vita');
+});
+
+test('mcp_provider_rejects_introspected_incarnation_mismatch', async (t) => {
+  const hub = await makeHub(t, { introspectIncarnationId: 'bb'.repeat(8) });
+  const reg = hub.mgr.childRegister(CELL, { authority: true });
+  assert.equal(hub.persist(reg.proof), true);
+  const mcp = await spawnMcp(t, {
+    home: hub.home, tokenPath: hub.tokenPath, port: hub.port, session: SESSION,
+  });
+  const identity = await mcp.call(2, 'tools/call', { name: 'nc_identity', arguments: {} });
+  assert.equal(identity.result.isError, true);
+  assert.match(identity.result.content[0].text, /NEXUSCREW_MCP_IDENTITY_CONTEXT_UNVERIFIED|non verificato/);
+  const notify = await mcp.call(3, 'tools/call', {
+    name: 'nc_notify', arguments: { title: 'must not emit' },
+  });
+  assert.equal(notify.result.isError, true);
+  assert.equal(hub.notifies.length, 0);
+  assert.equal(hub.introspects.length, 2);
 });
 
 test('mcp_nc_identity_verified_only_after_introspection', async (t) => {
