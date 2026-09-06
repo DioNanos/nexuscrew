@@ -9,7 +9,7 @@ const path = require('node:path');
 const { PassThrough } = require('node:stream');
 const { createIdentityChannel, validIdentityRequest } = require('../lib/fleet/cell-exec.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
-const { startLeaseClient, identityErrorCode } = require('../lib/fleet/lease-client.js');
+const { startLeaseClient, identityErrorCode, validDaemonChallenge } = require('../lib/fleet/lease-client.js');
 const { createIdentityAuthority } = require('../lib/fleet/identity-authority.js');
 
 const CELL = 'CellA';
@@ -180,13 +180,15 @@ test('identity channel times out an unavailable hub', async () => {
     setTimeout: (fn) => { timers.push(fn); return { unref: () => {} }; },
     clearTimeout: () => {},
   });
+  const ended = new Promise((resolve) => response.once('end', resolve));
   request.write(identityRpc(5));
   assert.equal(timers.length, 1);
   timers[0]();
   const out = await reader.next();
   assert.equal(out.error.data.code, 'AUTHORITY_UNAVAILABLE');
-  assert.equal(channel.isClosed(), false);
-  channel.close();
+  // C7-bis: il canale e' terminato su timeout — fd4 EOF dopo la risposta.
+  assert.equal(channel.isClosed(), true);
+  await ended;
 });
 
 test('identity channel closes on a frame over 8 KiB', async () => {
@@ -378,6 +380,16 @@ test('authority registration and connection proof share incarnationId', async (t
 
 
 // ---- Completamento canale identita': casi mancanti dal referto parziale ----
+
+test('daemon challenge schema rejects coercible types (R4)', () => {
+  const base = challenge({ nonce: 'a'.repeat(64) });
+  assert.equal(validDaemonChallenge({ ...base, issuedAt: String(base.issuedAt) }), false, 'issuedAt stringa numerica rifiutata');
+  assert.equal(validDaemonChallenge({ ...base, expiresAt: String(base.expiresAt) }), false, 'expiresAt stringa numerica rifiutata');
+  assert.equal(validDaemonChallenge({ ...base, nonce: ['a'.repeat(64)] }), false, 'nonce array rifiutato');
+  assert.equal(validDaemonChallenge({ ...base, nonce: 0x11 }), false, 'nonce numerico rifiutato');
+  assert.equal(validDaemonChallenge({ ...base, issuedAt: base.issuedAt, expiresAt: base.expiresAt }), true, 'tipi giusti accettati');
+});
+
 
 // (a) Challenge BEN FORMATA ma non registrabile (store challenge saturo):
 // rifiuto IDENTITY_UNVERIFIED dal relay/authority, distinto dalla challenge
@@ -609,4 +621,49 @@ test('hub restart without the in-memory launch subject stays fail-closed (no pro
   assert.equal(out.ok, false, 'nessun proof dopo restart senza subject');
   assert.equal(out.proof, undefined, 'nessun proof emesso');
   assert.equal(out.reason, 'revoked');
+});
+
+test('relay caps a caller-extended challenge window at 15 seconds (R2)', async (t) => {
+  const fix = await leaseFixture(t);
+  const far = challenge({ nonce: 'e'.repeat(64), issuedAt: Date.now(), expiresAt: Date.now() + 600_000 });
+  const { raw } = relayFrame(far);
+  fix.client.write(raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, true);
+  assert.equal(out.proof.expiresAt - out.proof.issuedAt <= 15_000, true,
+    `finestra proof ${out.proof.expiresAt - out.proof.issuedAt}ms > 15000ms: cap server-owned mancante`);
+});
+
+test('relay rejects a challenge with issuedAt in the future (R2)', async (t) => {
+  const fix = await leaseFixture(t);
+  const future = challenge({ nonce: 'f'.repeat(64), issuedAt: Date.now() + 60_000, expiresAt: Date.now() + 90_000 });
+  const { raw } = relayFrame(future);
+  fix.client.write(raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, false, 'issuedAt nel futuro rifiutato');
+});
+
+test('generation transition is announced and accepted on the live lease (R1)', async (t) => {
+  const fix = await leaseFixture(t);
+  // generazione corrente del fixture: 4 (attachInitial); gen 4: ok
+  const g0 = relayFrame(challenge({ nonce: '1'.repeat(64) }), 4);
+  fix.client.write(g0.raw);
+  const ok0 = await fix.reader.next();
+  assert.equal(ok0.ok, true);
+  // transizione: annuncio di generazione sulla connessione viva (4 -> 5)
+  fix.client.write(`${JSON.stringify({ type: 'generation', generation: 5 })}\n`);
+  const ack = await fix.reader.next();
+  assert.equal(ack.type, 'generationAck', 'il server conferma la transizione di generazione');
+  assert.equal(ack.generation, 5);
+  // gen 5: ora deve passare (senza handshake resta REVOKED)
+  const g1 = relayFrame(challenge({ nonce: '2'.repeat(64) }), 5);
+  fix.client.write(g1.raw);
+  const ok1 = await fix.reader.next();
+  assert.equal(ok1.ok, true, 'relay della generazione nuova ok dopo handshake');
+  // fail-closed invariato: generazione sconosciuta -> revoked
+  const g9 = relayFrame(challenge({ nonce: '3'.repeat(64) }), 9);
+  fix.client.write(g9.raw);
+  const denied = await fix.reader.next();
+  assert.equal(denied.ok, false);
+  assert.equal(denied.reason, 'revoked');
 });
