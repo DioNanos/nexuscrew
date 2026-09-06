@@ -79,6 +79,116 @@ test('identity authority: daemon challenge, launch grant and child proof round-t
   assert.equal(verified.claims.cellId, 'Dev');
 });
 
+test('identity authority: challenge expiry caps proof and caller extras stay unsigned', () => {
+  let now = 125_000;
+  const serviceCredential = 'fixture-service-credential';
+  const authority = createIdentityAuthority({
+    dir: tmpdir(),
+    serviceCredential,
+    now: () => now,
+  });
+  const registered = authority.registerDaemonChallenge({
+    serviceCredential,
+    audience: 'codex-vl-app-server',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+    expiresAt: now + 10_000,
+  });
+  assert.equal(registered.ok, true);
+  const grant = authority.issueLaunchGrant({
+    serviceCredential,
+    ...identityArgs(registered.challenge),
+  });
+  assert.equal(grant.ok, true, JSON.stringify(grant));
+
+  const signedGrant = { ...grant.grant, spoofedClaim: 'caller-controlled' };
+  const capped = authority.issueChallengeProof({
+    launchGrant: signedGrant,
+    challenge: registered.challenge,
+    expiresAt: now + 30_000,
+  });
+  assert.equal(capped.ok, true, JSON.stringify(capped));
+  assert.equal(capped.proof.expiresAt, registered.expiresAt,
+    'a caller expiry after the signed grant must be capped');
+  assert.equal('spoofedClaim' in capped.proof, false,
+    'a top-level extra on the grant must not become a signed proof claim');
+
+  const secondChallenge = authority.registerDaemonChallenge({
+    serviceCredential,
+    audience: 'codex-vl-app-server',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+    expiresAt: now + 20_000,
+  });
+  const secondGrant = authority.issueLaunchGrant({
+    serviceCredential,
+    ...identityArgs(secondChallenge.challenge),
+  });
+  const shorter = authority.issueChallengeProof({
+    launchGrant: { ...secondGrant.grant, spoofedClaim: 'ignored' },
+    challenge: secondChallenge.challenge,
+    expiresAt: now + 1_000,
+  });
+  assert.equal(shorter.ok, true, JSON.stringify(shorter));
+  assert.equal(shorter.proof.expiresAt, now + 1_000,
+    'a shorter caller expiry is the effective minimum');
+});
+
+test('identity authority: an expired registered challenge cannot issue a proof', () => {
+  let now = 150_000;
+  const serviceCredential = 'fixture-service-credential';
+  const authority = createIdentityAuthority({
+    dir: tmpdir(),
+    serviceCredential,
+    now: () => now,
+  });
+  const registered = authority.registerDaemonChallenge({
+    serviceCredential,
+    audience: 'codex-vl-app-server',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+    expiresAt: now + 1_000,
+  });
+  const grant = authority.issueLaunchGrant({
+    serviceCredential,
+    ...identityArgs(registered.challenge),
+  });
+  assert.equal(grant.ok, true, JSON.stringify(grant));
+  now += 1_001;
+  assert.deepEqual(
+    authority.issueChallengeProof({ launchGrant: grant.grant, challenge: registered.challenge }),
+    { ok: false, reason: 'expired' },
+  );
+});
+
+test('identity authority: a forged proof is rejected before replay is reserved', () => {
+  let now = 175_000;
+  const serviceCredential = 'fixture-service-credential';
+  const authority = createIdentityAuthority({
+    dir: tmpdir(),
+    serviceCredential,
+    now: () => now,
+  });
+  const registered = authority.registerDaemonChallenge({
+    serviceCredential,
+    audience: 'codex-vl-app-server',
+    daemonBootId: 'boot-a',
+    connectionId: 'connection-a',
+  });
+  const grant = authority.issueLaunchGrant({
+    serviceCredential,
+    ...identityArgs(registered.challenge),
+  });
+  now += 100;
+  const issued = authority.issueChallengeProof({
+    launchGrant: grant.grant,
+    challenge: registered.challenge,
+  });
+  assert.equal(issued.ok, true, JSON.stringify(issued));
+  const forged = { ...issued.proof, cellId: 'Research' };
+  assert.deepEqual(authority.verifyChallengeProof(forged), { ok: false, reason: 'bad-proof' });
+});
+
 test('identity authority: service credential and challenge binding fail closed', () => {
   const authority = createIdentityAuthority({
     dir: tmpdir(),
@@ -154,6 +264,137 @@ function registerV1(authority, credential = 'daemon-credential') {
     daemonBootId: 'boot-a', connectionId: 'connection-a',
   });
 }
+
+function authorityFix3() {
+  let now = 100_000;
+  const subject = {
+    ownerInstanceId: 'owner-test', cellId: 'cell-test',
+    incarnationId: 'inc-test', launchEpoch: 'epoch-test',
+  };
+  const challenge = {
+    version: 1,
+    audience: 'daemon/conn-test',
+    daemonBootId: 'boot-test',
+    connectionId: 'conn-test',
+    nonce: 'registered-nonce',
+    issuedAt: 99_000,
+    expiresAt: 101_000,
+  };
+  const authority = createIdentityAuthority({
+    dir: tmpdir(),
+    daemonCredential: 'fixture-daemon',
+    launcherCredential: 'fixture-launcher',
+    subjectResolver: (candidate) => Object.entries(subject)
+      .every(([field, value]) => candidate[field] === value),
+    now: () => now,
+  });
+  return {
+    authority,
+    subject,
+    challenge,
+    issue: (overrides = {}) => authority.issueConnectionProof({
+      subject,
+      challenge,
+      daemonCredential: 'fixture-daemon',
+      launcherCredential: 'fixture-launcher',
+      ...overrides,
+    }),
+  };
+}
+
+test('identity authority: helper caps issuance at daemon challenge expiry', () => {
+  const { issue, challenge } = authorityFix3();
+  const issued = issue({ expiresAt: 120_000 });
+  assert.equal(issued.ok, true, JSON.stringify(issued));
+  assert.equal(issued.proof.expiresAt, challenge.expiresAt,
+    'an external expiry cannot extend the daemon challenge');
+});
+
+test('identity authority: helper rejects an expired daemon challenge', () => {
+  const { issue, challenge } = authorityFix3();
+  const issued = issue({ challenge: { ...challenge, expiresAt: 99_999 }, expiresAt: 120_000 });
+  assert.deepEqual(issued, { ok: false, reason: 'expired' });
+});
+
+test('identity authority: helper requires daemon nonce and bounded expiry input', () => {
+  const { issue, challenge } = authorityFix3();
+  const missingNonce = issue({ challenge: { ...challenge, nonce: '' } });
+  assert.deepEqual(missingNonce, { ok: false, reason: 'challenge' });
+  const missingExpiry = issue({ challenge: { ...challenge, expiresAt: undefined } });
+  assert.deepEqual(missingExpiry, { ok: false, reason: 'challenge' });
+  const invalidExternal = issue({ expiresAt: '120000' });
+  assert.deepEqual(invalidExternal, { ok: false, reason: 'challenge' });
+  const shorter = issue({ expiresAt: 100_500 });
+  assert.equal(shorter.ok, true, JSON.stringify(shorter));
+  assert.equal(shorter.proof.expiresAt, 100_500,
+    'an external expiry may only shorten the daemon challenge');
+});
+
+test('identity authority: redemption nonce must match registered challenge', () => {
+  const { authority, subject, challenge } = authorityFix3();
+  const registered = authority.registerDaemonChallenge({
+    ...challenge, challenge: challenge.nonce, daemonCredential: 'fixture-daemon',
+  });
+  assert.equal(registered.ok, true, JSON.stringify(registered));
+  const grant = authority.issueLaunchGrant({
+    subject, challenge: registered.challenge, launcherCredential: 'fixture-launcher',
+  });
+  assert.equal(grant.ok, true, JSON.stringify(grant));
+  const divergent = authority.issueChallengeProof({
+    launchGrant: grant.grant, challenge: registered.challenge, nonce: 'unregistered-nonce',
+  });
+  assert.deepEqual(divergent, { ok: false, reason: 'nonce' });
+  const bound = authority.issueChallengeProof({
+    launchGrant: grant.grant, challenge: registered.challenge, nonce: challenge.nonce,
+  });
+  assert.equal(bound.ok, true, JSON.stringify(bound));
+  assert.equal(bound.proof.nonce, challenge.nonce);
+});
+
+test('identity authority: helper rejects repeated registered challenge issuance', () => {
+  const { issue } = authorityFix3();
+  const args = { expiresAt: 101_000 };
+  const first = issue(args);
+  assert.equal(first.ok, true, JSON.stringify(first));
+  const second = issue(args);
+  assert.deepEqual(second, { ok: false, reason: 'challenge-replay' });
+});
+
+test('identity authority: signed subject tampering is rejected and extras do not alter claims', () => {
+  const { authority, subject, challenge } = authorityFix3();
+  const registered = authority.registerDaemonChallenge({
+    ...challenge, challenge: challenge.nonce, daemonCredential: 'fixture-daemon',
+  });
+  const grant = authority.issueLaunchGrant({
+    subject, challenge: registered.challenge, launcherCredential: 'fixture-launcher',
+  });
+  for (const field of Object.keys(subject)) {
+    assert.deepEqual(
+      authority.issueChallengeProof({
+        launchGrant: { ...grant.grant, [field]: 'spoof' }, challenge: registered.challenge,
+      }),
+      { ok: false, reason: 'bad-proof' },
+    );
+  }
+  const valid = authority.issueChallengeProof({
+    launchGrant: grant.grant, challenge: registered.challenge, cellId: 'spoof',
+  });
+  assert.equal(valid.ok, true, JSON.stringify(valid));
+  for (const field of Object.keys(subject)) assert.equal(valid.proof[field], subject[field]);
+});
+
+test('identity authority: duplicate helper challenge cannot bypass first-proof replay', () => {
+  const { authority, issue } = authorityFix3();
+  const first = issue({ expiresAt: 101_000 });
+  assert.equal(first.ok, true, JSON.stringify(first));
+  const second = issue({ expiresAt: 101_000 });
+  assert.deepEqual(second, { ok: false, reason: 'challenge-replay' });
+  assert.equal(authority.verifyChallengeProof(first.proof).ok, true);
+  assert.deepEqual(
+    authority.verifyChallengeProof(first.proof),
+    { ok: false, reason: 'replay' },
+  );
+});
 
 test('identity authority: daemon credential cannot choose subject or issue launcher grant', () => {
   const { authority, subject } = authorityV1();
@@ -350,8 +591,8 @@ test('identity authority: revocations are bounded and expire with the proofs the
   assert.equal(authority.revoke(proof2.parentJti), true);
   assert.equal(authority.revoke(proof3.parentJti), false, 'a full revocation store must reject instead of evicting');
 
-  assert.equal(authority.verifyChallengeProof(proof1, expected).ok, false);
-  assert.equal(authority.verifyChallengeProof(proof2, expected).ok, false);
+  assert.deepEqual(authority.verifyChallengeProof(proof1, expected), { ok: false, reason: 'revoked' });
+  assert.deepEqual(authority.verifyChallengeProof(proof2, expected), { ok: false, reason: 'revoked' });
   assert.equal(authority.verifyChallengeProof(proof3, expected).ok, true);
 
   now += CHALLENGE_TTL_MS + GRANT_TTL_MS + 1;
