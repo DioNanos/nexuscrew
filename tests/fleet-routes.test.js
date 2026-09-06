@@ -245,6 +245,36 @@ test('builtin: /define-engine invalido (env PATH) -> 400', async (t) => {
   assert.equal(r.status, 400);
 });
 
+test('builtin: /define-engine rejects reserved MCP_DEVICE in engine env', async (t) => {
+  const { base, token } = await bootBuiltin(t);
+  const def = { id: 'reserved', command: '/bin/sh', promptMode: 'send-keys', env: { MCP_DEVICE: 'poison' } };
+  const r = await fetch(`${base}/api/fleet/define-engine`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ def }),
+  });
+  assert.equal(r.status, 400);
+});
+
+test('builtin: /edit-engine rejects reserved MCP_DEVICE in envChanges', async (t) => {
+  const { base, token } = await bootBuiltin(t);
+  const r = await fetch(`${base}/api/fleet/edit-engine`, {
+    method: 'POST', headers: H(token),
+    body: JSON.stringify({ id: 'sh', patch: {}, envChanges: { set: { MCP_DEVICE: 'poison' }, remove: [] } }),
+  });
+  assert.equal(r.status, 400);
+});
+
+test('builtin: /restore-engines rejects reserved MCP_DEVICE in envKeys', async (t) => {
+  const { base, token } = await bootBuiltin(t);
+  const r = await fetch(`${base}/api/fleet/restore-engines`, {
+    method: 'POST', headers: H(token),
+    body: JSON.stringify({
+      engines: [{ id: 'new', command: '/bin/sh', promptMode: 'send-keys', envKeys: ['MCP_DEVICE'] }],
+      overwrite: false,
+    }),
+  });
+  assert.equal(r.status, 400);
+});
+
 test('builtin: define/edit/remove cell+engine funzionano (copertura nuove route)', async (t) => {
   const { base, token, dir } = await bootBuiltin(t);
   const post = (route, body) => fetch(`${base}/api/fleet/${route}`, { method: 'POST', headers: H(token), body: JSON.stringify(body) });

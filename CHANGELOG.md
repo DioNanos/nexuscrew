@@ -2,6 +2,15 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.20 — 2026-09-06
+
+- **Each cell derives its own MCP device.** `MCP_DEVICE` is set from the cell
+  identity at launch (`<cell>-agent`) and is rejected on engine define, edit
+  and restore, so an engine env cannot impersonate another cell's device.
+
+- **The 0.9.18 notes match that release.** The entry no longer lists upstream
+  Codex/VL work or an updater change that were not shipped in 0.9.18.
+
 ## 0.9.19 — 2026-09-05
 
 - **Ollama Cloud gains GLM-5.3.** `codex-vl.ollama-cloud` now includes
@@ -10,28 +19,17 @@ All notable changes to NexusCrew are tracked here.
 
 ## 0.9.18 — 2026-09-04
 
-### Upstream Rust 0.153.2
+- **Extra models resolve by engine id first.** `extraModels` lookups try the
+  engine id before the profile name, so custom Ollama/Z.AI models attach to the
+  right engine.
 
-- **New upstream capabilities.** The GPT-6-Astra model catalogue is included,
-  hook activity is visible in the TUI, and app-server supports asynchronous user
-  input with thread metadata.
-- **Smoother daily use.** Vim undo/redo and app-server reconnect improve the
-  interactive experience, while `[tui].disable_paste_burst` is documented in
-  its canonical configuration location.
-- **More context control.** Experimental context management is available for
-  evaluation alongside the upstream release changes.
+- **Codex-VL speaks Z.AI Responses directly.** The new `zai-a` and `zai-p`
+  engines use the native Z.AI Responses endpoint with catalog metadata and
+  the measured 1M context window, without the AnthMorph hop.
 
-### Codex VL fixes
-
-- **Loops stay responsive.** Failed `/loop` owner and delegate preconditions
-  report an error without terminating the TUI; `/loop` usage also lists the
-  delegate, strategy, delegation and owner commands.
-- **Vivling and fleet metadata recover cleanly.** `manage_loops` sees its jobs
-  after resume, and Vivling accepts fenced or prefixed JSON replies from any
-  provider while model metadata is resolved by engine identity.
-- **Quieter, clearer operation.** The expression planner no longer floods the
-  log database, terminal state reconciles after every terminal event, and Esc
-  interrupts a running task even during a long tool call.
+- **Fleet validation says what it rejected.** A bad managed profile now names
+  the field, value and rule that failed, and validation no longer collapses
+  a bad field into a generic rule failure.
 
 ## 0.9.17 — 2026-09-01 — "The Package Reads Like The Product"
 
