@@ -410,3 +410,120 @@ test('main: a lost generation ack leaves the new channel unusable with a visible
     'nessun canale utilizzabile per la generazione con ACK perso');
   await Promise.race([mainPromise, new Promise((r) => setTimeout(r, 12_000))]);
 });
+
+// ---- R1c chiarito: figlio REALE che legge il proof da fd4 come stream ----
+// Le pipe extra di spawn sono socketpair duplex (R1c NON confermato: il mio
+// repro precedente usava fs.readFileSync su socket, che blocca fino a EOF).
+const FD4_CHILD_SCRIPT = `
+const fs = require('node:fs');
+const net = require('node:net');
+const nonce = require('node:crypto').randomBytes(32).toString('hex');
+const now = Date.now();
+const NL = String.fromCharCode(10);
+const rpc = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'nexuscrew/identity/challengeProof', params: { challenge: { version: 1, audience: 'daemon/connection-a', daemonBootId: 'boot-a', connectionId: 'connection-a', nonce, issuedAt: now, expiresAt: now + 15000 } } }) + NL;
+fs.writeSync(3, rpc);
+const s = new net.Socket({ fd: 4, readable: true, writable: false });
+s.on('data', (d) => { process.stdout.write('GENREPLY:' + String(d).trim() + NL); process.exit(0); });
+s.on('error', () => { process.stdout.write('GENREPLY:ERR' + NL); process.exit(3); });
+setTimeout(() => { process.stdout.write('GENREPLY:TIMEOUT' + NL); process.exit(4); }, 2500).unref();
+setTimeout(() => { process.exit(4); }, 3000);
+`;
+
+test('main: a real child receives the current-generation proof on fd4, and nothing without ack (R1c)', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cell-exec-gen-'));
+  let subject = null;
+  const authority = createIdentityAuthority({
+    dir: path.join(home, 'authority'),
+    daemonCredential: 'daemon-credential',
+    launcherCredential: 'launcher-credential',
+    subjectResolver: (candidate) => !!subject
+      && Object.entries(subject).every(([key, value]) => candidate[key] === value),
+  });
+  const manager = createLeaseManager({ home, log: () => {}, identityAuthority: authority });
+  const lease = await manager.track('Dev');
+  subject = { ownerInstanceId: 'owner-a', cellId: 'Dev', incarnationId: 'incarnation-a', launchEpoch: lease.launchEpoch };
+  manager.setLaunchSubject('Dev', subject);
+  const pairPath = path.join(home, 'pair.sock');
+  const pairServer = net.createServer();
+  const connected = new Promise((resolve) => pairServer.once('connection', resolve));
+  await new Promise((resolve) => pairServer.listen(pairPath, resolve));
+  const pairClient = net.createConnection(pairPath);
+  const [pairServerSide] = await Promise.all([connected, new Promise((resolve) => pairClient.once('connect', resolve))]);
+  // dropAck attivo DALL'INIZIO: l'announce esiste solo per generazione >= 1,
+  // quindi gen0 non e' toccata; il primo announce (gen1) e' già senza ACK.
+  let dropAck = true;
+  const sow = pairServerSide.write.bind(pairServerSide);
+  pairServerSide.write = (data, ...rest) => {
+    if (dropAck && String(data).includes('"generationAck"')) return true;
+    return sow(data, ...rest);
+  };
+  t.after(() => {
+    try { manager.close(); } catch (_) {}
+    try { pairClient.destroy(); } catch (_) {}
+    try { pairServer.close(); } catch (_) {}
+    for (const child of generations) { try { child.kill('SIGKILL'); } catch (_) {} }
+  });
+  assert.equal(manager.attachInitial('Dev', pairServerSide, { generation: 0 }), true);
+
+  const generations = [];
+  const stderrCaptured = [];
+  const stdoutByGen = [];
+  const payload = {
+    command: process.execPath,
+    args: ['-e', FD4_CHILD_SCRIPT],
+    env: { HOME: '/tmp', PATH: process.env.PATH || '' },
+    lease: { cellId: 'Dev', launchEpoch: lease.launchEpoch, stablePath: lease.stablePath },
+    supervise: {
+      enabled: true, initialReadyMs: 0, restartDelayMs: 0,
+      maxRestartDelayMs: 0, resetAfterMs: 60_000, rapidWindowMs: 600_000, maxRapidRestarts: 8,
+    },
+  };
+  const seams = {
+    receivePayload: async () => ({ payload, socket: pairClient }),
+    spawn: (cmd, args, opts) => {
+      // stdout pipe: il figlio consegna la GENREPLY al test (fd1 catturato).
+      const child = realSpawn(cmd, args, { ...opts, stdio: ['inherit', 'pipe', 'inherit', 'pipe', 'pipe'] });
+      const gen = generations.length;
+      let out = '';
+      child.stdout.on('data', (chunk) => { out += String(chunk); });
+      child.on('exit', (code) => { out += 'EXIT:' + code; stdoutByGen[gen] = out; });
+      generations.push(child);
+      return child;
+    },
+    sleep: () => Promise.resolve(),
+    setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 200)),
+    clearTimeout: (t) => clearTimeout(t),
+    writeError: (message) => { stderrCaptured.push(String(message)); },
+  };
+  const mainPromise = main(['--socket', '/tmp/x', '--nonce', '0'.repeat(64)], seams);
+
+  // FASE POSITIVA (gen0): il figlio REALE riceve il proof su fd4 (stream).
+  await new Promise((resolve, reject) => {
+    const deadline = Date.now() + 8000;
+    const poll = () => {
+      if (stdoutByGen[0] && stdoutByGen[0].includes('GENREPLY:')) return resolve();
+      if (Date.now() > deadline) return reject(new Error('gen0: nessuna GENREPLY (stdout: ' + (stdoutByGen[0] || '') + ')'));
+      setTimeout(poll, 25);
+    };
+    poll();
+  });
+  assert.equal(stdoutByGen[0].includes('"cellId":"Dev"'), true, 'gen0: proof arrivato al figlio reale');
+  assert.equal(stdoutByGen[0].includes('"incarnationId":"incarnation-a"'), true, 'gen0: proof della generazione corrente (incarnation del subject)');
+
+  // FASE NEGATIVA (R1b seam): senza ACK nessun canale -> il figlio non riceve nulla.
+  // (dropAck e' attivo dall'inizio: vedi nota sul wrapper.)
+  await new Promise((resolve, reject) => {
+    const deadline = Date.now() + 8000;
+    const poll = () => {
+      if (stdoutByGen[1] && stdoutByGen[1].includes('GENREPLY:')) return resolve();
+      if (Date.now() > deadline) return reject(new Error('gen1: nessuna uscita del figlio (stdout: ' + (stdoutByGen[1] || '') + ')'));
+      setTimeout(poll, 25);
+    };
+    poll();
+  });
+  assert.equal(/GENREPLY:.+"cellId"/.test(stdoutByGen[1] || ''), false,
+    'gen1 senza ACK: nessun proof al figlio (stdout: ' + (stdoutByGen[1] || '') + ')');
+  assert.equal(stderrCaptured.some((line) => /senza identita|generazione/i.test(line)), true,
+    'diagnostica del supervisore visibile');
+  await Promise.race([mainPromise, new Promise((r) => setTimeout(r, 8000))]);
+});
