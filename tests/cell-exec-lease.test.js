@@ -8,6 +8,7 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { main, validPayload, validLease } = require('../lib/fleet/cell-exec.js');
+const { spawn: realSpawn } = require('node:child_process');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const { createIdentityAuthority } = require('../lib/fleet/identity-authority.js');
 
@@ -233,4 +234,179 @@ test('main: two supervised generations keep the identity channel working on the 
   try { pairClient.destroy(); } catch (_) {}
   try { pairServer.close(); } catch (_) {}
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+
+// ---- FIX5: R1a exit perso durante l'ACK + R1b ACK ignorato ----
+// Harness e2e con pipe fake duplex (isolamento della logica di lifecycle e
+// fail-closed dal difetto di direzione fd4 con figli reali — vedi referto
+// R1c). Lease server/client e authority sono REALI; l'ACK di generazione
+// viene ritardato/soppresso lato server con wrapper sulla write.
+
+test('main: child exit during the generation handshake is collected and never hangs (R1a)', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cell-exec-gen-'));
+  let subject = null;
+  const authority = createIdentityAuthority({
+    dir: path.join(home, 'authority'),
+    daemonCredential: 'daemon-credential',
+    launcherCredential: 'launcher-credential',
+    subjectResolver: (candidate) => !!subject
+      && Object.entries(subject).every(([key, value]) => candidate[key] === value),
+  });
+  const manager = createLeaseManager({ home, log: () => {}, identityAuthority: authority });
+  const lease = await manager.track('Dev');
+  subject = { ownerInstanceId: 'owner-a', cellId: 'Dev', incarnationId: 'incarnation-a', launchEpoch: lease.launchEpoch };
+  manager.setLaunchSubject('Dev', subject);
+  const pairPath = path.join(home, 'pair.sock');
+  const pairServer = net.createServer();
+  const connected = new Promise((resolve) => pairServer.once('connection', resolve));
+  await new Promise((resolve) => pairServer.listen(pairPath, resolve));
+  const pairClient = net.createConnection(pairPath);
+  const [pairServerSide] = await Promise.all([connected, new Promise((resolve) => pairClient.once('connect', resolve))]);
+  // Seam di test: l'ACK di generazione arriva IN RITARDO (250ms): il figlio
+  // della generazione 1 esce prima, mentre l'annuncio e' in attesa.
+  const sow = pairServerSide.write.bind(pairServerSide);
+  pairServerSide.write = (data, ...rest) => {
+    const frame = String(data);
+    if (frame.includes('"generationAck"')) {
+      setTimeout(() => sow(data, ...rest), 250);
+      return true;
+    }
+    return sow(data, ...rest);
+  };
+  t.after(() => {
+    try { manager.close(); } catch (_) {}
+    try { pairClient.destroy(); } catch (_) {}
+    try { pairServer.close(); } catch (_) {}
+    for (const child of generations) { try { child.kill(); } catch (_) {} }
+  });
+  assert.equal(manager.attachInitial('Dev', pairServerSide, { generation: 0 }), true);
+
+  const generations = [];
+  const payload = {
+    command: process.execPath,
+    args: ['-e', 'process.exit(0)'],
+    env: { HOME: '/tmp', PATH: process.env.PATH || '' },
+    lease: { cellId: 'Dev', launchEpoch: lease.launchEpoch, stablePath: lease.stablePath },
+    supervise: {
+      enabled: true, initialReadyMs: 0, restartDelayMs: 0,
+      maxRestartDelayMs: 0, resetAfterMs: 60_000, rapidWindowMs: 60_000, maxRapidRestarts: 8,
+    },
+  };
+  const seams = {
+    receivePayload: async () => ({ payload, socket: pairClient }),
+    spawn: () => {
+      // Figlio finto duplex: l'exit scatta SUBITO allo spawn (durante
+      // l'attesa dell'ACK ritardato), prima che waitChild agganci i listener.
+      const request = new PassThrough();
+      const response = new PassThrough();
+      const child = new EventEmitter();
+      child.stdio = [null, null, null, request, response];
+      child.kill = () => {};
+      child.pid = 50000 + generations.length;
+      child.exit = () => child.emit('exit', 0, null);
+      setImmediate(() => child.exit());
+      generations.push(child);
+      return child;
+    },
+    sleep: () => Promise.resolve(),
+  };
+  const mainPromise = main(['--socket', '/tmp/x', '--nonce', '0'.repeat(64)], seams);
+  const outcome = await Promise.race([
+    mainPromise.then((code) => ({ settled: true, code })),
+    new Promise((resolve) => setTimeout(() => resolve({ settled: false }), 5000)),
+  ]);
+  assert.equal(outcome.settled, true, 'il supervisore raccoglie exit durante la finestra di ACK e non resta appeso');
+});
+
+test('main: a lost generation ack leaves the new channel unusable with a visible diagnostic (R1b)', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cell-exec-gen-'));
+  let subject = null;
+  const authority = createIdentityAuthority({
+    dir: path.join(home, 'authority'),
+    daemonCredential: 'daemon-credential',
+    launcherCredential: 'launcher-credential',
+    subjectResolver: (candidate) => !!subject
+      && Object.entries(subject).every(([key, value]) => candidate[key] === value),
+  });
+  const manager = createLeaseManager({ home, log: () => {}, identityAuthority: authority });
+  const lease = await manager.track('Dev');
+  subject = { ownerInstanceId: 'owner-a', cellId: 'Dev', incarnationId: 'incarnation-a', launchEpoch: lease.launchEpoch };
+  manager.setLaunchSubject('Dev', subject);
+  const pairPath = path.join(home, 'pair.sock');
+  const pairServer = net.createServer();
+  const connected = new Promise((resolve) => pairServer.once('connection', resolve));
+  await new Promise((resolve) => pairServer.listen(pairPath, resolve));
+  const pairClient = net.createConnection(pairPath);
+  const [pairServerSide] = await Promise.all([connected, new Promise((resolve) => pairClient.once('connect', resolve))]);
+  // Seam di test: l'ACK di generazione viene SOPPRESSO (il server avanza ma
+  // la risposta si perde sul filo).
+  const sow = pairServerSide.write.bind(pairServerSide);
+  pairServerSide.write = (data, ...rest) => {
+    if (String(data).includes('"generationAck"')) return true;
+    return sow(data, ...rest);
+  };
+  t.after(() => {
+    try { manager.close(); } catch (_) {}
+    try { pairClient.destroy(); } catch (_) {}
+    try { pairServer.close(); } catch (_) {}
+    for (const child of generations) { try { child.kill(); } catch (_) {} }
+  });
+  assert.equal(manager.attachInitial('Dev', pairServerSide, { generation: 0 }), true);
+
+  const generations = [];
+  const stderrCaptured = [];
+  let lastChannel = null;
+  const payload = {
+    command: process.execPath,
+    args: ['-e', 'process.exit(0)'],
+    env: { HOME: '/tmp', PATH: process.env.PATH || '' },
+    lease: { cellId: 'Dev', launchEpoch: lease.launchEpoch, stablePath: lease.stablePath },
+    supervise: {
+      enabled: true, initialReadyMs: 0, restartDelayMs: 0,
+      maxRestartDelayMs: 0, resetAfterMs: 60_000, rapidWindowMs: 60_000, maxRapidRestarts: 8,
+    },
+  };
+  const seams = {
+    receivePayload: async () => ({ payload, socket: pairClient }),
+    spawn: () => {
+      // Figlio finto duplex con pipe che RISPONDONO: se il canale viene
+      // aperto, una richiesta su fd3 riceve risposta (ecco il rosso).
+      const request = new PassThrough();
+      const response = new PassThrough();
+      response.on('data', () => { lastChannel.used = true; });
+      const child = new EventEmitter();
+      child.stdio = [null, null, null, request, response];
+      child.kill = () => {};
+      child.pid = 50000 + generations.length;
+      child.exit = () => child.emit('exit', 0, null);
+      setImmediate(() => child.exit());
+      lastChannel = { request, response, used: false, opened: false };
+      generations.push(child);
+      return child;
+    },
+    sleep: () => Promise.resolve(),
+    // R1b: timer accorciato (4000 -> 200ms): il timeout dell'annuncio scatta
+    // mentre il figlio e' ancora vivo.
+    setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 200)),
+    clearTimeout: (t) => clearTimeout(t),
+    writeError: (message) => { stderrCaptured.push(String(message)); },
+  };
+  // Osservazione dell'apertura del canale: la createIdentityChannel non e'
+  // direttamente spiabile qui, quindi la prova e' funzionale — richiesta su
+  // fd3 con risposta = canale utilizzabile.
+  const mainPromise = main(['--socket', '/tmp/x', '--nonce', '0'.repeat(64)], seams);
+
+  // gen0: l'unico canale legittimo e' quello di generazione 0; per isolare
+  // R1b si verifica l'esito FUNZIONALE della generazione con ACK perso.
+  await Promise.race([mainPromise, new Promise((r) => setTimeout(r, 4000))]);
+  // Il canale della generazione con ACK perso non deve risultare utilizzabile:
+  // con la lib attuale il canale si apre e risponde (rosso). Dopo la fix il
+  // canale non viene aperto: nessuna risposta generata dal supervisore.
+  // L'assert funzionale e' sulla diagnostica + assenza di utilizzo.
+  assert.equal(stderrCaptured.some((line) => /senza identita|generazione/i.test(line)), true,
+    'diagnostica visibile nei log del supervisore (errore announce non inghiottito)');
+  assert.equal(lastChannel === null || lastChannel.used === false, true,
+    'nessun canale utilizzabile per la generazione con ACK perso');
+  await Promise.race([mainPromise, new Promise((r) => setTimeout(r, 12_000))]);
 });
