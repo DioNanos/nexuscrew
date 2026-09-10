@@ -667,3 +667,201 @@ test('generation transition is announced and accepted on the live lease (R1)', a
   assert.equal(denied.ok, false);
   assert.equal(denied.reason, 'revoked');
 });
+
+// ===== D-199 — canale verify (verifica online presso l'authority) =====
+
+function verifyFrame(requestId, generation, proof, v = 1) {
+  return {
+    requestId,
+    raw: `${JSON.stringify({ type: 'verify', requestId, generation, v, proof })}\n`,
+  };
+}
+
+test('verify channel relays the proof and returns the normalized claims', async (t) => {
+  const fix = await leaseFixture(t);
+  const issued = relayFrame(challenge({ nonce: 'f'.repeat(64) }));
+  fix.client.write(issued.raw);
+  const proofOk = await fix.reader.next();
+  assert.equal(proofOk.ok, true);
+  const proof = proofOk.proof;
+
+  const verify = verifyFrame('verify-1', 4, proof);
+  fix.client.write(verify.raw);
+  const out = await fix.reader.next();
+  assert.equal(out.type, 'verifyResult');
+  assert.equal(out.requestId, 'verify-1');
+  assert.equal(out.ok, true);
+  assert.equal(out.v, 1);
+  assert.equal(out.claims.cellId, CELL);
+  assert.equal(out.claims.ownerInstanceId, 'owner-a');
+  assert.equal(out.claims.incarnationId, 'incarnation-a');
+  assert.equal(out.claims.launchEpoch, fix.subject.launchEpoch);
+  assert.equal(out.claims.audience, 'daemon/connection-a');
+  assert.equal(typeof out.claims.expiresAt, 'number');
+});
+
+test('verify channel: a proof is single-use (second verify is replay)', async (t) => {
+  const fix = await leaseFixture(t);
+  const issued = relayFrame(challenge({ nonce: '7'.repeat(64) }));
+  fix.client.write(issued.raw);
+  const proofOk = await fix.reader.next();
+  assert.equal(proofOk.ok, true);
+  const proof = proofOk.proof;
+
+  const first = verifyFrame('verify-a', 4, proof);
+  fix.client.write(first.raw);
+  const firstOut = await fix.reader.next();
+  assert.equal(firstOut.ok, true);
+
+  const second = verifyFrame('verify-b', 4, proof);
+  fix.client.write(second.raw);
+  const secondOut = await fix.reader.next();
+  assert.equal(secondOut.ok, false);
+  assert.equal(secondOut.reason, 'replay');
+});
+
+test('verify channel: a revoked jti is refused', async (t) => {
+  const fix = await leaseFixture(t);
+  const issued = relayFrame(challenge({ nonce: '9'.repeat(64) }));
+  fix.client.write(issued.raw);
+  const proofOk = await fix.reader.next();
+  assert.equal(proofOk.ok, true);
+  fix.authority.revoke(proofOk.proof.jti);
+
+  const verify = verifyFrame('verify-r', 4, proofOk.proof);
+  fix.client.write(verify.raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'revoked');
+});
+
+test('verify channel: a tampered proof is bad-proof', async (t) => {
+  const fix = await leaseFixture(t);
+  const issued = relayFrame(challenge({ nonce: 'a1'.repeat(32) }));
+  fix.client.write(issued.raw);
+  const proofOk = await fix.reader.next();
+  assert.equal(proofOk.ok, true);
+  const tampered = {
+    ...proofOk.proof,
+    proof: proofOk.proof.proof.slice(0, 63) + (proofOk.proof.proof.endsWith('a') ? 'b' : 'a'),
+  };
+  const verify = verifyFrame('verify-t', 4, tampered);
+  fix.client.write(verify.raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'bad-proof');
+});
+
+test('verify channel: malformed proof is identity-unverified', async (t) => {
+  const fix = await leaseFixture(t);
+  const verify = verifyFrame('verify-m', 4, {});
+  fix.client.write(verify.raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, false);
+  // Il contratto v1 espone 'malformed' come motivo dedicato (enum chiuso).
+  assert.equal(out.reason, 'malformed');
+});
+
+test('verify channel: generation mismatch is revoked', async (t) => {
+  const fix = await leaseFixture(t);
+  const verify = verifyFrame('verify-g', 5, { kind: 'identity-proof' });
+  fix.client.write(verify.raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'revoked');
+});
+
+test('verify channel: missing authority is unavailable', async (t) => {
+  const fix = await leaseFixture(t, { withAuthority: false });
+  const verify = verifyFrame('verify-u', 4, { kind: 'identity-proof' });
+  fix.client.write(verify.raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'authority-unavailable');
+});
+
+test('identity channel relays verify requests to relayVerify', async (t) => {
+  const request = new PassThrough();
+  const response = new PassThrough();
+  const reader = lineReader(response);
+  const claims = { cellId: CELL, ownerInstanceId: 'owner-a' };
+  let observed = null;
+  const channel = createIdentityChannel({
+    request, response, generation: 2,
+    relay: async () => ({ ok: false, reason: 'identity-unverified' }),
+    relayVerify: async (requestId, proof) => {
+      observed = { requestId, proof };
+      return { ok: true, claims };
+    },
+  });
+  request.write(`${JSON.stringify({
+    jsonrpc: '2.0', id: 11, method: 'nexuscrew/identity/verify',
+    params: { v: 1, generation: 2, proof: { kind: 'identity-proof' } },
+  })}\n`);
+  const out = await reader.next();
+  assert.deepEqual(observed.proof, { kind: 'identity-proof' });
+  assert.equal(observed.requestId.startsWith('g2-v'), true);
+  assert.equal(out.result.ok, true);
+  assert.equal(out.result.v, 1);
+  assert.deepEqual(out.result.claims, claims);
+  channel.close();
+});
+
+test('identity channel: verify with a stale generation is invalid', async (t) => {
+  const request = new PassThrough();
+  const response = new PassThrough();
+  const reader = lineReader(response);
+  let relayed = false;
+  const channel = createIdentityChannel({
+    request, response, generation: 2,
+    relay: async () => ({ ok: false, reason: 'identity-unverified' }),
+    relayVerify: async () => ({ ok: true, claims: {} }),
+  });
+  request.write(`${JSON.stringify({
+    jsonrpc: '2.0', id: 12, method: 'nexuscrew/identity/verify',
+    params: { v: 1, generation: 9, proof: { kind: 'identity-proof' } },
+  })}\n`);
+  const out = await reader.next();
+  assert.equal(out.error.data.code, 'IDENTITY_UNVERIFIED');
+  assert.equal(relayed, false);
+  channel.close();
+});
+
+test('identity channel: verify without a relay is verify-unsupported', async (t) => {
+  const request = new PassThrough();
+  const response = new PassThrough();
+  const reader = lineReader(response);
+  const channel = createIdentityChannel({
+    request, response, generation: 0,
+    relay: async () => ({ ok: false, reason: 'identity-unverified' }),
+  });
+  request.write(`${JSON.stringify({
+    jsonrpc: '2.0', id: 13, method: 'nexuscrew/identity/verify',
+    params: { v: 1, generation: 0, proof: { kind: 'identity-proof' } },
+  })}\n`);
+  const out = await reader.next();
+  assert.equal(out.error.data.code, 'IDENTITY_UNVERIFIED');
+  assert.equal(out.error.message, 'verify-unsupported');
+  channel.close();
+});
+
+test('identity channel: a revoked verify closes the channel', async (t) => {
+  const request = new PassThrough();
+  const response = new PassThrough();
+  const reader = lineReader(response);
+  const ended = new Promise((resolve) => response.once('end', resolve));
+  const channel = createIdentityChannel({
+    request, response, generation: 0,
+    relay: async () => ({ ok: false, reason: 'identity-unverified' }),
+    relayVerify: async () => ({ ok: false, reason: 'revoked' }),
+  });
+  request.write(`${JSON.stringify({
+    jsonrpc: '2.0', id: 14, method: 'nexuscrew/identity/verify',
+    params: { v: 1, generation: 0, proof: { kind: 'identity-proof' } },
+  })}\n`);
+  const out = await reader.next();
+  assert.equal(out.result.ok, false);
+  assert.equal(out.result.reason, 'revoked');
+  await ended;
+  assert.equal(channel.isClosed(), true);
+});
