@@ -4,6 +4,13 @@ All notable changes to NexusCrew are tracked here.
 
 ## 0.9.21 — Unreleased
 
+- **Identity channel generation gate is fail-closed.** The per-cell supervisor
+  now inspects the resolved generation announcement before opening the identity
+  channel of a new generation: only an explicit positive acknowledgement for
+  the matching generation opens it. Refused, failed, timed-out or exited
+  announcements keep the channel closed with a specific diagnostic, so a child
+  can no longer receive identity proofs after a failed announcement.
+
 - **Catalog update.** Declare kimi-k3 in the ollama-cloud catalog
   (`openrouter-kimi-k3.json`, `managed.js`), so cells on the ollama-cloud
   engine resolve the model with the right context window and metadata
