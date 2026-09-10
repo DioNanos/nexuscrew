@@ -2,6 +2,13 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.21 — Unreleased
+
+- **Catalog update.** Declare kimi-k3 in the ollama-cloud catalog
+  (`openrouter-kimi-k3.json`, `managed.js`), so cells on the ollama-cloud
+  engine resolve the model with the right context window and metadata
+  instead of falling back to defaults.
+
 ## 0.9.20 — 2026-09-06
 
 - **Each cell derives its own MCP device.** `MCP_DEVICE` is set from the cell
