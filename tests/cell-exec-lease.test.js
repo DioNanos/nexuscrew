@@ -380,8 +380,14 @@ test('main: a lost generation ack leaves the new channel unusable with a visible
       child.kill = () => {};
       child.pid = 50000 + generations.length;
       child.exit = () => child.emit('exit', 0, null);
-      setImmediate(() => child.exit());
+      // fix 6: l'exit NON e' immediato — deve vincere l'announce (timeout
+      // 200ms via seam) cosi' la diagnostica osservata e' quella specifica
+      // dell'annuncio, non l'uscita durante l'handshake.
+      setTimeout(() => child.exit(), 600);
       lastChannel = { request, response, used: false, opened: false };
+      // Rafforzamento fix 6: scrivi UNA richiesta su fd3. Se il canale fosse
+      // stato aperto (regressione), il supervisore risponderebbe su fd4.
+      request.write(JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'identity.get', params: {} }) + '\n');
       generations.push(child);
       return child;
     },
@@ -404,10 +410,13 @@ test('main: a lost generation ack leaves the new channel unusable with a visible
   // con la lib attuale il canale si apre e risponde (rosso). Dopo la fix il
   // canale non viene aperto: nessuna risposta generata dal supervisore.
   // L'assert funzionale e' sulla diagnostica + assenza di utilizzo.
-  assert.equal(stderrCaptured.some((line) => /senza identita|generazione/i.test(line)), true,
-    'diagnostica visibile nei log del supervisore (errore announce non inghiottito)');
-  assert.equal(lastChannel === null || lastChannel.used === false, true,
-    'nessun canale utilizzabile per la generazione con ACK perso');
+  // fix 6: la diagnostica deve essere quella SPECIFICA dell'annuncio
+  // ("senza identita' (announce-failed)"), non bastare l'exit durante
+  // handshake ("figlio uscito durante l'handshake di generazione").
+  assert.equal(stderrCaptured.some((line) => /senza identita' \(announce-failed\)/.test(line)), true,
+    'diagnostica specifica dell\'annuncio fallito (ricevuto: ' + stderrCaptured.join(' | ') + ')');
+  assert.equal(lastChannel === null || (lastChannel.used === false && lastChannel.opened === false), true,
+    'nessun canale utilizzabile per la generazione con ACK perso (nessuna risposta alla richiesta fd3)');
   await Promise.race([mainPromise, new Promise((r) => setTimeout(r, 12_000))]);
 });
 
@@ -525,5 +534,127 @@ test('main: a real child receives the current-generation proof on fd4, and nothi
     'gen1 senza ACK: nessun proof al figlio (stdout: ' + (stdoutByGen[1] || '') + ')');
   assert.equal(stderrCaptured.some((line) => /senza identita|generazione/i.test(line)), true,
     'diagnostica del supervisore visibile');
+  await Promise.race([mainPromise, new Promise((r) => setTimeout(r, 8000))]);
+});
+
+// R1b fix 6: announceGeneration PUO' risolvere (non rigettare) {ok:false}
+// (lease-down, identity-unverified). Il gate del supervisore deve ispezionare
+// il valore risolto: nessun canale su ok:false, con diagnostica specifica.
+// Figlio REALE come nel test R1c (fd3/fd4 pipe, nessun EventEmitter).
+test('main: announce resolved {ok:false} (lease-down, identity-unverified) keeps the channel closed (R1b gate)', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cell-exec-gen-'));
+  let subject = null;
+  const authority = createIdentityAuthority({
+    dir: path.join(home, 'authority'),
+    daemonCredential: 'daemon-credential',
+    launcherCredential: 'launcher-credential',
+    subjectResolver: (candidate) => !!subject
+      && Object.entries(subject).every(([key, value]) => candidate[key] === value),
+  });
+  const manager = createLeaseManager({ home, log: () => {}, identityAuthority: authority });
+  const lease = await manager.track('Dev');
+  subject = { ownerInstanceId: 'owner-a', cellId: 'Dev', incarnationId: 'incarnation-a', launchEpoch: lease.launchEpoch };
+  manager.setLaunchSubject('Dev', subject);
+  const pairPath = path.join(home, 'pair.sock');
+  const pairServer = net.createServer();
+  const connected = new Promise((resolve) => pairServer.once('connection', resolve));
+  await new Promise((resolve) => pairServer.listen(pairPath, resolve));
+  const pairClient = net.createConnection(pairPath);
+  const [pairServerSide] = await Promise.all([connected, new Promise((resolve) => pairClient.once('connect', resolve))]);
+  // Wrapper sul VERO lease-client: dalla generazione 1 l'annuncio si RISOLVE
+  // negativo (prima lease-down, poi identity-unverified). Gen0 resta reale.
+  const leaseClientModule = require('../lib/fleet/lease-client.js');
+  const realStart = leaseClientModule.startLeaseClient;
+  let forceResolved = null;
+  leaseClientModule.startLeaseClient = (socket, info) => {
+    const ctl = realStart(socket, info);
+    const realAnnounce = ctl.announceGeneration.bind(ctl);
+    ctl.announceGeneration = (generation) => {
+      if (forceResolved) return Promise.resolve({ ...forceResolved, generation });
+      return realAnnounce(generation);
+    };
+    return ctl;
+  };
+  t.after(() => {
+    leaseClientModule.startLeaseClient = realStart;
+    try { manager.close(); } catch (_) {}
+    try { pairClient.destroy(); } catch (_) {}
+    try { pairServer.close(); } catch (_) {}
+    for (const child of generations) { try { child.kill('SIGKILL'); } catch (_) {} }
+  });
+  assert.equal(manager.attachInitial('Dev', pairServerSide, { generation: 0 }), true);
+
+  const generations = [];
+  const stderrCaptured = [];
+  const stdoutByGen = [];
+  const payload = {
+    command: process.execPath,
+    args: ['-e', FD4_CHILD_SCRIPT],
+    env: { HOME: '/tmp', PATH: process.env.PATH || '' },
+    lease: { cellId: 'Dev', launchEpoch: lease.launchEpoch, stablePath: lease.stablePath },
+    supervise: {
+      enabled: true, initialReadyMs: 0, restartDelayMs: 0,
+      maxRestartDelayMs: 0, resetAfterMs: 60_000, rapidWindowMs: 600_000, maxRapidRestarts: 8,
+    },
+  };
+  const seams = {
+    receivePayload: async () => ({ payload, socket: pairClient }),
+    spawn: (cmd, args, opts) => {
+      const child = realSpawn(cmd, args, { ...opts, stdio: ['inherit', 'pipe', 'inherit', 'pipe', 'pipe'] });
+      const gen = generations.length;
+      let out = '';
+      child.stdout.on('data', (chunk) => { out += String(chunk); });
+      child.on('exit', (code) => { out += 'EXIT:' + code; stdoutByGen[gen] = out; });
+      generations.push(child);
+      return child;
+    },
+    sleep: () => Promise.resolve(),
+    setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 200)),
+    clearTimeout: (t) => clearTimeout(t),
+    writeError: (message) => { stderrCaptured.push(String(message)); },
+  };
+  // Il force si attiva DALL'INIZIO: announceGeneration viene chiamata solo per
+  // generation >= 1, quindi gen0 (nessun annuncio) resta reale e il forcing e'
+  // deterministico — nessuna corsa col restart del supervisore.
+  forceResolved = { ok: false, reason: 'lease-down' };
+  const mainPromise = main(['--socket', '/tmp/x', '--nonce', '0'.repeat(64)], seams);
+
+  const waitGen = (gen, extra) => new Promise((resolve, reject) => {
+    const deadline = Date.now() + 15000;
+    const poll = () => {
+      if (stdoutByGen[gen] && stdoutByGen[gen].includes('EXIT:')) return resolve();
+      if (Date.now() > deadline) return reject(new Error('gen' + gen + ': nessuna uscita del figlio (stdout: ' + (stdoutByGen[gen] || '') + ')'));
+      setTimeout(poll, 25);
+    };
+    poll();
+  });
+
+  // FASE POSITIVA (gen0): il canale legit di generazione 0 consegna il proof.
+  await new Promise((resolve, reject) => {
+    const deadline = Date.now() + 8000;
+    const poll = () => {
+      if (stdoutByGen[0] && stdoutByGen[0].includes('GENREPLY:')) return resolve();
+      if (Date.now() > deadline) return reject(new Error('gen0: nessuna GENREPLY (stdout: ' + (stdoutByGen[0] || '') + ')'));
+      setTimeout(poll, 25);
+    };
+    poll();
+  });
+  assert.equal(stdoutByGen[0].includes('"cellId":"Dev"'), true, 'gen0: proof arrivato al figlio reale');
+
+  // FASE NEGATIVA 1 (gen1): annuncio RISOLTO {ok:false, reason:'lease-down'}.
+  await waitGen(1);
+  assert.equal(/GENREPLY:.+"cellId"/.test(stdoutByGen[1] || ''), false,
+    'gen1 con annuncio ok:false (lease-down): nessun proof al figlio (stdout: ' + (stdoutByGen[1] || '') + ')');
+  assert.equal(stderrCaptured.some((line) => /senza identita'.*announce-refused:lease-down/.test(line)), true,
+    'diagnostica specifica per il risolto negativo lease-down (ricevuto: ' + stderrCaptured.join(' | ') + ')');
+
+  // FASE NEGATIVA 2 (gen2): annuncio RISOLTO {ok:false, identity-unverified}.
+  forceResolved = { ok: false, reason: 'identity-unverified' };
+  await waitGen(2);
+  assert.equal(/GENREPLY:.+"cellId"/.test(stdoutByGen[2] || ''), false,
+    'gen2 con annuncio ok:false (identity-unverified): nessun proof al figlio (stdout: ' + (stdoutByGen[2] || '') + ')');
+  assert.equal(stderrCaptured.some((line) => /senza identita'.*announce-refused:identity-unverified/.test(line)), true,
+    'diagnostica specifica per il risolto negativo identity-unverified (ricevuto: ' + stderrCaptured.join(' | ') + ')');
+
   await Promise.race([mainPromise, new Promise((r) => setTimeout(r, 8000))]);
 });
