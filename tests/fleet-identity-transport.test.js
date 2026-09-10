@@ -237,8 +237,11 @@ test('identity_grant_and_proof_never_reach_child_argv_env', async () => {
       assert.ok(!childValues.some((value) => String(value).includes(material)));
       assert.ok(!serializedChild.includes(material));
     }
+    assert.equal(observed.env.NEXUSCREW_IDENTITY_FD, '3:4',
+      'metadata dei descrittori, non una capability');
     for (const key of childKeys) {
-      assert.doesNotMatch(key, /^NEXUSCREW_(IDENTITY|LAUNCH|PROOF|GRANT|CHALLENGE)/);
+      assert.doesNotMatch(key, /^NEXUSCREW_(LAUNCH|PROOF|GRANT|CHALLENGE)/);
+      assert.doesNotMatch(key, /^NEXUSCREW_IDENTITY(?!_FD$)/);
     }
     // Ogni challenge e proof del contract è un token esadecimale di 64 caratteri;
     // un leak serializzato con nome arbitrario deve restare osservabile.

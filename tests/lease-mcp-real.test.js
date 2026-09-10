@@ -10,6 +10,7 @@ const express = require('express');
 const { createMcpServer } = require('../lib/mcp/server.js');
 const { leaseRoutes } = require('../lib/fleet/lease-routes.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
+const net = require('node:net');
 const { createIdentityAuthority } = require('../lib/fleet/identity-authority.js');
 
 const rpc = (id, method, params) => JSON.stringify({ jsonrpc: '2.0', id, method, params });
@@ -35,8 +36,10 @@ test('MCP register attraversa HTTP e lease manager reali in authority mode', asy
   const identity = authority.issueChallengeProof({
     launchGrant: grant.grant, challenge: challenge.challenge,
   });
-  const manager = createLeaseManager({ home, log: () => {} });
-  await manager.track('Dev');
+  const manager = createLeaseManager({ home, log: () => {}, identityAuthority: authority });
+  const lease = await manager.track('Dev');
+  tuple.launchEpoch = lease.launchEpoch;
+  assert.equal(manager.setLaunchSubject('Dev', tuple), true);
   const app = express();
   app.use(express.json({ limit: '8kb' }));
   app.use('/api/lease', leaseRoutes({
@@ -63,7 +66,10 @@ test('MCP register attraversa HTTP e lease manager reali in authority mode', asy
     errlog: () => {},
   });
   try {
-    await mcp.handleLine(rpc(1, 'tools/call', {
+    await mcp.handleLine(rpc(1, 'initialize', { protocolVersion: '2025-03-26' }));
+    assert.equal(lines[0].result.serverInfo.name, 'nexuscrew');
+    lines.length = 0;
+    await mcp.handleLine(rpc(2, 'tools/call', {
       name: 'nc_lease_register', arguments: { proof: identity.proof },
     }));
     const result = lines[0].result;
@@ -71,6 +77,46 @@ test('MCP register attraversa HTTP e lease manager reali in authority mode', asy
     const body = JSON.parse(result.content[0].text);
     assert.equal(body.status, 'registered');
     assert.equal(body.proof.kind, 'child');
+
+    const socketPath = path.join(home, 'challenge-pair.sock');
+    const pairServer = net.createServer();
+    const connected = new Promise((resolve) => pairServer.once('connection', resolve));
+    await new Promise((resolve) => pairServer.listen(socketPath, resolve));
+    const challengeClient = net.createConnection(socketPath);
+    const [serverSide] = await Promise.all([
+      connected,
+      new Promise((resolve) => challengeClient.once('connect', resolve)),
+    ]);
+    assert.equal(manager.attachInitial('Dev', serverSide, { generation: 0 }), true);
+    const relayed = new Promise((resolve) => {
+      let buffer = '';
+      challengeClient.on('data', (chunk) => {
+        buffer += String(chunk);
+        const nl = buffer.indexOf('\n');
+        if (nl === -1) return;
+        resolve(JSON.parse(buffer.slice(0, nl)));
+      });
+    });
+    const now = Date.now();
+    challengeClient.write(`${JSON.stringify({
+      type: 'challengeProof',
+      requestId: 'mcp-init',
+      generation: 0,
+      challenge: {
+        version: 1,
+        audience: 'daemon/connection-real',
+        daemonBootId: 'boot-real',
+        connectionId: 'connection-real',
+        nonce: 'e'.repeat(64),
+        issuedAt: now,
+        expiresAt: now + 15000,
+      },
+    })}\n`);
+    const relay = await relayed;
+    assert.equal(relay.ok, true);
+    assert.equal(relay.proof.incarnationId, body.incarnationId);
+    challengeClient.destroy();
+    pairServer.close();
   } finally {
     manager.close();
     await new Promise((resolve) => server.close(resolve));
