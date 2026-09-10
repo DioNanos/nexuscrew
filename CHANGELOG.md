@@ -2,6 +2,13 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## Unreleased
+
+- **Fleet codex-vl app-server identity policy.** Managed `codex-vl.*` cells now
+  pass `CODEX_APP_SERVER_IDENTITY_REQUIRED=1` through the child environment so
+  the app-server daemon started by the TUI enforces the Fleet identity policy;
+  an explicit per-engine override remains authoritative.
+
 ## 0.9.21 — 2026-09-10
 
 - **Identity channel generation gate is fail-closed.** The per-cell supervisor

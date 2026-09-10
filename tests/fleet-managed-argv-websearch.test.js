@@ -122,3 +122,61 @@ test('(c) snapshot: il resto dell argv ollama-cloud e INVARIATO (solo pair in pi
     }
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
+
+const IDENTITY_REQUIRED_ENV = 'CODEX_APP_SERVER_IDENTITY_REQUIRED';
+
+test('(d) codex-vl Fleet: identity-required presente nell env, non negli argv', () => {
+  const home = tmp();
+  try {
+    withBinary(home, 'codex-vl');
+    const r = resolveManagedEngine(
+      { id: 'codex-vl.native', label: 'Codex-VL', managed: { client: 'codex-vl', provider: 'native', model: '' } },
+      { id: 'Dev' },
+      { home, env: {} },
+    );
+    assert.equal(r.ok, true, r.ok ? '' : r.reason);
+    assert.equal(r.engine.env[IDENTITY_REQUIRED_ENV], '1');
+    assert.equal(r.engine.args.includes(IDENTITY_REQUIRED_ENV), false);
+    assert.equal(r.engine.args.some((arg) => arg.includes(IDENTITY_REQUIRED_ENV)), false);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('(e) engine non codex-vl: identity-required assente', () => {
+  const home = tmp();
+  try {
+    withBinary(home, 'codex');
+    const r = resolveManagedEngine(
+      { id: 'codex.native', label: 'Codex', managed: { client: 'codex', provider: 'native', model: '' } },
+      { id: 'Dev' },
+      { home, env: { [IDENTITY_REQUIRED_ENV]: '1' } },
+    );
+    assert.equal(r.ok, true, r.ok ? '' : r.reason);
+    assert.equal(Object.prototype.hasOwnProperty.call(r.engine.env, IDENTITY_REQUIRED_ENV), false);
+    assert.equal(r.engine.args.some((arg) => arg.includes(IDENTITY_REQUIRED_ENV)), false);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('(f) override utente nella definizione Fleet: identity-required rispettato', () => {
+  const home = tmp();
+  try {
+    withBinary(home, 'codex-vl');
+    const defs = parseDefinitions({
+      schemaVersion: 1,
+      engines: [{
+        id: 'codex-vl.native', label: 'Codex-VL',
+        managed: { client: 'codex-vl', provider: 'native', model: '' },
+        env: { [IDENTITY_REQUIRED_ENV]: '0' },
+      }],
+      cells: [],
+    });
+    assert.ok(defs, 'definizione managed con override env valida');
+    const r = resolveManagedEngine(
+      defs.engines[0],
+      { id: 'Dev' },
+      { home, env: { [IDENTITY_REQUIRED_ENV]: '1' } },
+    );
+    assert.equal(r.ok, true, r.ok ? '' : r.reason);
+    assert.equal(r.engine.env[IDENTITY_REQUIRED_ENV], '0');
+    assert.equal(r.engine.args.some((arg) => arg.includes(IDENTITY_REQUIRED_ENV)), false);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});

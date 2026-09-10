@@ -425,7 +425,10 @@ test('Codex-VL OpenRouter usa Responses command-auth senza env_key e pinna Kimi 
     const secret = 'synthetic-openrouter-token';
     const r = resolveManagedEngine({ id: 'codex-vl.openrouter', label: 'OpenRouter', managed: { client: 'codex-vl', provider: 'openrouter', model: 'moonshotai/kimi-k3' } }, { id: 'Dev' }, { home, env: { OPENROUTER_API_KEY: secret } });
     assert.equal(r.ok, true);
-    assert.deepEqual(r.engine.env, { OPENROUTER_API_KEY: secret });
+    assert.deepEqual(r.engine.env, {
+      OPENROUTER_API_KEY: secret,
+      CODEX_APP_SERVER_IDENTITY_REQUIRED: '1',
+    });
     const joined = r.engine.args.join('\n');
     assert.match(joined, /model_provider="openrouter"/);
     assert.match(joined, /base_url="https:\/\/openrouter\.ai\/api\/v1"/);
@@ -490,7 +493,9 @@ test('OpenAI API usa OPENAI_API_KEY senza creare un provider compatibile', () =>
       fakeClient(home, client);
       const r = resolveManagedEngine({ id: `${client}.openai-api`, label: 'OpenAI API', managed: { client, provider: 'openai-api', model: 'gpt-5.4' } }, { id: 'Dev' }, { home, env: { OPENAI_API_KEY: 'secret' } });
       assert.equal(r.ok, true);
-      assert.deepEqual(r.engine.env, { OPENAI_API_KEY: 'secret' });
+      assert.deepEqual(r.engine.env, client === 'codex-vl'
+        ? { OPENAI_API_KEY: 'secret', CODEX_APP_SERVER_IDENTITY_REQUIRED: '1' }
+        : { OPENAI_API_KEY: 'secret' });
       assert.deepEqual(r.engine.args, ['-m', 'gpt-5.4']);
       assert.equal(JSON.stringify(r.info).includes('secret'), false);
     }
@@ -613,7 +618,7 @@ test('Codex-VL Native: standard non forza bypass; unsafe e opt-in', () => {
     const r = resolveManagedEngine({ id: 'codex-vl.native', label: 'Codex', managed }, { id: 'Dev', prompt: 'bootstrap' }, { home });
     assert.equal(r.ok, true);
     assert.equal(r.engine.command, bin);
-    assert.deepEqual(r.engine.env, {});
+    assert.deepEqual(r.engine.env, { CODEX_APP_SERVER_IDENTITY_REQUIRED: '1' });
     assert.deepEqual(r.engine.args, ['bootstrap']);
     assert.equal(r.engine.promptMode, 'managed-argv');
     const unsafe = resolveManagedEngine({ id: 'codex-vl.native', label: 'Codex', managed: { ...managed, permissionPolicy: 'unsafe' } }, { id: 'Dev', prompt: 'bootstrap' }, { home });

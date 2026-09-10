@@ -240,7 +240,10 @@ test('Codex-VL usa la wire Responses su /v1 e non propaga credenziali ambientali
       managed: { client: 'codex-vl', provider: 'opencode-go', model: 'deepseek-v4-flash' },
     }, { id: 'Dev' }, { home, env: { OPENCODE_API_KEY: value, OPENAI_API_KEY: 'must-not-propagate' } });
     assert.equal(result.ok, true);
-    assert.deepEqual(result.engine.env, { OPENCODE_API_KEY: value });
+    assert.deepEqual(result.engine.env, {
+      OPENCODE_API_KEY: value,
+      CODEX_APP_SERVER_IDENTITY_REQUIRED: '1',
+    });
     const argv = result.engine.args.join('\n');
     assert.match(argv, /model_provider="opencode_go"/);
     assert.match(argv, /base_url="https:\/\/opencode\.ai\/zen\/go\/v1"/);
