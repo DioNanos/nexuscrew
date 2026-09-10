@@ -9,6 +9,10 @@ All notable changes to NexusCrew are tracked here.
   engine resolve the model with the right context window and metadata
   instead of falling back to defaults.
 
+- **Ollama Cloud web_search disabled.** Disable the built-in web_search tool
+  for Codex/Codex-VL on Ollama Cloud (the Responses endpoint rejects it before
+  the first turn); MCP web search stays available.
+
 ## 0.9.20 — 2026-09-06
 
 - **Each cell derives its own MCP device.** `MCP_DEVICE` is set from the cell
