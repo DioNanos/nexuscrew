@@ -274,14 +274,28 @@ function colpeIn(testo, rel, payload = false) {
 // l'assunzione ha retto, non qui. Il 2026-08-15 non aveva retto: nove file
 // (poi risultati undici) erano nell'indice di github/main nonostante questa
 // esclusione locale li desse per assenti.
+// D-198: unica fonte di verita' per cio' che non appartiene al mirror pubblico:
+// la exclude-list di publish/git-surface-exclude.txt (abece6b). Il file delle
+// regole e gli strumenti di verifica sono "strumenti interni" per REGOLA
+// dichiarata: contengono i pattern vietati PER DEFINIZIONE, quindi non vengono
+// scansionati dall'albero versionato — come non finiscono nel mirror.
+function superficieEscluse() {
+  const lista = fs.readFileSync(path.join(ROOT, 'publish', 'git-surface-exclude.txt'), 'utf8');
+  return lista.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+}
+function esclusaDallaSuperficie(rel) {
+  return superficieEscluse().some((p) => (p.endsWith('/') ? rel.startsWith(p) : rel === p));
+}
+
 function tracked() {
   const { execFileSync } = require('node:child_process');
   const out = execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8' });
   return out.split('\n').filter(Boolean)
     // I documenti interni non finiscono sul mirror (per regola — vedi sopra):
     // sono esclusi per percorso, non sanificati, ed e' giusto che possano
-    // parlare liberamente SU QUESTO ramo.
-    .filter((f) => !/^(docs\/superpowers\/|test-report\/|docs\/CURRENT_STATE\.md$)/.test(f))
+    // parlare liberamente SU QUESTO ramo. L'elenco e' quello di
+    // publish/git-surface-exclude.txt (una sola fonte, D-198).
+    .filter((f) => !esclusaDallaSuperficie(f))
     .map((f) => path.join(ROOT, f));
 }
 
@@ -756,4 +770,24 @@ test('DEC3: il file dei pattern e\' escluso PER NOME (auto-accusa dichiarata), n
   // Ma e' escluso per nome: colpeIn ritorna vuoto per SELF_EXCLUDE. Non e' il
   // byte NUL a salvarlo (questa versione non ne ha uno letterale): e' il nome.
   assert.deepEqual(colpeIn(testo, SELF_EXCLUDE), []);
+});
+
+// D-198 — controfattuali del gate: (1) un file-esca con la home di chi
+// costruisce resta COLPEVOLE (l'allineamento alla exclude-list non indebolisce
+// nessun pattern); (2) il file di regole e' davvero coperto dall'elenco: se
+// qualcuno lo toglie da git-surface-exclude.txt, il gate torna a auto-accusarsi
+// (rosso), non a fingere verde.
+test('D-198: il file-esca con /home/dag/ resta rosso e la esclusion-list copre il file di regole', () => {
+  const esca = colpeIn('config: vedi /home/dag/segreti per i dettagli', 'docs/config.md');
+  assert.ok(esca.length >= 1, 'file-esca con la home di chi costruisce: DEVE essere colpevole');
+  assert.deepEqual(colpeIn('contenuto del tutto innocuo', 'docs/config.md'), []);
+  const regole = 'publish/public-surface-rules.json';
+  assert.ok(esclusaDallaSuperficie(regole), 'il file di regole e\' coperto dalla exclude-list (abece6b)');
+  const scansionati = tracked().map((f) => path.relative(ROOT, f).split(path.sep).join('/'));
+  assert.ok(!scansionati.includes(regole), 'il file di regole non fa parte dell\'albero scansionato');
+  // La lista e' load-bearing: colpeIn diretto sul file di regole lo ACCUSA
+  // (contiene i pattern per definizione). Se qualcuno lo toglie da
+  // git-surface-exclude.txt, il gate torna rosso per auto-accusa — mai verde finto.
+  assert.ok(colpeIn(fs.readFileSync(path.join(ROOT, regole), 'utf8'), regole).length >= 1,
+    'senza exclude-list il file di regole verrebbe accusato: l\'esclusione dichiarata e\' l\'unica protezione');
 });
