@@ -2,7 +2,7 @@
 
 All notable changes to NexusCrew are tracked here.
 
-## 0.9.21 — Unreleased
+## 0.9.21 — 2026-09-10
 
 - **Identity channel generation gate is fail-closed.** The per-cell supervisor
   now inspects the resolved generation announcement before opening the identity
