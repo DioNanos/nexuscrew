@@ -113,7 +113,7 @@ function parsePaneDeadState(stdout) {
 // messaggio: cosi' un rosso resta un rosso, e una macchina occupata non
 // diventa un difetto del prodotto.
 async function waitForDeadPane(socket, paneId, timeoutMs = 8000, prorogaMs = 12000, impl = {}) {
-  let deadline = Date.now() + timeoutMs;
+  let deadline = performance.now() + timeoutMs;
   let prorogato = false;
   const poll = 25;
   let last = { code: -1, dead: null, status: undefined, raw: '', stderr: '' };
@@ -131,12 +131,12 @@ async function waitForDeadPane(socket, paneId, timeoutMs = 8000, prorogaMs = 120
       return last;
     }
     await new Promise((resolve) => setTimeout(resolve, poll));
-    if (Date.now() >= deadline && !prorogato
+    if (performance.now() >= deadline && !prorogato
         && last.code === 0 && last.wellFormed && last.dead === '1') {
       prorogato = true;              // sta convergendo: aspetta ancora, una volta
-      deadline = Date.now() + prorogaMs;
+      deadline = performance.now() + prorogaMs;
     }
-  } while (Date.now() < deadline);
+  } while (performance.now() < deadline);
   let reason;
   if (last.code !== 0) {
     reason = `comando tmux fallito (code ${last.code})`;
