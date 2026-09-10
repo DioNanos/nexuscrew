@@ -2,6 +2,15 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.20 — 2026-09-06
+
+- **Each cell derives its own MCP device.** `MCP_DEVICE` is set from the cell
+  identity at launch (`<cell>-agent`) and is rejected on engine define, edit
+  and restore, so an engine env cannot impersonate another cell's device.
+
+- **The 0.9.18 notes match that release.** The entry no longer lists upstream
+  Codex/VL work or an updater change that were not shipped in 0.9.18.
+
 ## 0.9.19 — 2026-09-05
 
 - **Ollama Cloud gains GLM-5.3.** `codex-vl.ollama-cloud` now includes
