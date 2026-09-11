@@ -131,7 +131,7 @@ gia' esistente di `verify()`), mai dettagli del valore.
   ogni verifica successiva dello stesso proof → `replay`. Il bind e' one-shot.
 - **Revoca**: `authority.revoke(jti, horizon)` invalida `jti` e `parentJti`
   (orizzonte default = CHALLENGE_TTL + GRANT_TTL). Nessuna lista offline.
-- **Restart authority**: la `generation` dell'authority cambia → tutti i proof
+- **Restart authority**: la `authorityGeneration` dell'authority cambia → tutti i proof
   pre-restart falliscono con `generation` (fail-closed, gia' implementato).
 - **Compatibilita'**: standalone (Fleet OFF): nessuna challenge, `bind()` non
   raggiungibile, verify mai invocato. Fleet ON: authority irraggiungibile o
