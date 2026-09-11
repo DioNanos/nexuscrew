@@ -674,10 +674,23 @@ test('generation transition is announced and accepted on the live lease (R1)', a
 
 // ===== D-199 — canale verify (verifica online presso l'authority) =====
 
-function verifyFrame(requestId, generation, proof, v = 1) {
+function verifyFrame(requestId, generation, proof, v = 1, expected) {
   return {
     requestId,
-    raw: `${JSON.stringify({ type: 'verify', requestId, generation, v, proof })}\n`,
+    raw: `${JSON.stringify({
+      type: 'verify', requestId, generation, v, proof,
+      ...(expected ? { expected } : {}),
+    })}\n`,
+  };
+}
+
+// D-199 v1.1: tupla attesa del daemon (nonce emesso + connessione).
+function tupleFor(proof) {
+  return {
+    nonce: proof.challenge,
+    connectionId: 'connection-a',
+    daemonBootId: 'boot-a',
+    audience: 'daemon/connection-a',
   };
 }
 
@@ -868,4 +881,173 @@ test('identity channel: a revoked verify closes the channel', async (t) => {
   assert.equal(out.result.reason, 'revoked');
   await ended;
   assert.equal(channel.isClosed(), true);
+});
+
+// ===== D-199 v1.1 — claims completi + verifica legata alla challenge =====
+
+test('verify channel v1.1: claims carry every authority-owned binding field', async (t) => {
+  const fix = await leaseFixture(t);
+  const issued = relayFrame(challenge({ nonce: '4'.repeat(64) }));
+  fix.client.write(issued.raw);
+  const proofOk = await fix.reader.next();
+  assert.equal(proofOk.ok, true);
+  const proof = proofOk.proof;
+
+  const verify = verifyFrame('verify-full', 4, proof);
+  fix.client.write(verify.raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.deepEqual(Object.keys(out.claims).sort(), [
+    'audience', 'bindingId', 'cellId', 'connectionId', 'daemonBootId',
+    'expiresAt', 'generation', 'incarnationId', 'issuedAt', 'issuerOwner',
+    'launchEpoch', 'notBefore', 'origin', 'ownerInstanceId', 'scopes',
+    'tmuxSession',
+  ]);
+  // issuerOwner = ownerInstanceId (mappatura legacy), notBefore = issuedAt.
+  assert.equal(out.claims.issuerOwner, out.claims.ownerInstanceId);
+  assert.equal(out.claims.notBefore, out.claims.issuedAt);
+  assert.equal(out.claims.origin, 'local_tui');
+  // tmuxSession/bindingId/scopes arrivano dal proof firmato dell'authority.
+  assert.equal(out.claims.tmuxSession, proof.tmuxSession);
+  assert.equal(out.claims.bindingId, proof.bindingId);
+  assert.deepEqual(out.claims.scopes, proof.scopes);
+});
+
+test('verify channel v1.1: expected tuple matching the emission binds', async (t) => {
+  const fix = await leaseFixture(t);
+  const issued = relayFrame(challenge({ nonce: '5'.repeat(64) }));
+  fix.client.write(issued.raw);
+  const proofOk = await fix.reader.next();
+  assert.equal(proofOk.ok, true);
+
+  const verify = verifyFrame('verify-tuple-ok', 4, proofOk.proof, 1, tupleFor(proofOk.proof));
+  fix.client.write(verify.raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, true, JSON.stringify(out));
+});
+
+test('verify channel v1.1: expected tuple with a foreign connectionId is challenge_mismatch', async (t) => {
+  const fix = await leaseFixture(t);
+  const issued = relayFrame(challenge({ nonce: '6'.repeat(64) }));
+  fix.client.write(issued.raw);
+  const proofOk = await fix.reader.next();
+  assert.equal(proofOk.ok, true);
+  const expected = { ...tupleFor(proofOk.proof), connectionId: 'connection-other' };
+
+  const verify = verifyFrame('verify-tuple-conn', 4, proofOk.proof, 1, expected);
+  fix.client.write(verify.raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'challenge_mismatch');
+});
+
+test('verify channel v1.1: expected tuple with a nonce never issued is challenge_mismatch', async (t) => {
+  const fix = await leaseFixture(t);
+  const issued = relayFrame(challenge({ nonce: '8'.repeat(64) }));
+  fix.client.write(issued.raw);
+  const proofOk = await fix.reader.next();
+  assert.equal(proofOk.ok, true);
+  const expected = { ...tupleFor(proofOk.proof), nonce: 'd'.repeat(64) };
+
+  const verify = verifyFrame('verify-tuple-nonce', 4, proofOk.proof, 1, expected);
+  fix.client.write(verify.raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'challenge_mismatch');
+});
+
+test('verify channel v1.1: a valid proof for another challenge is challenge_mismatch', async (t) => {
+  const fix = await leaseFixture(t);
+  const issued = relayFrame(challenge({ nonce: 'c'.repeat(64) }));
+  fix.client.write(issued.raw);
+  const proofOk = await fix.reader.next();
+  assert.equal(proofOk.ok, true);
+
+  // Proof VALIDO (firma authority) ma emesso per un'altra challenge:
+  // con la tupla attesa della connessione deve essere rifiutato.
+  const otherChallenge = {
+    nonce: 'e'.repeat(64),
+    connectionId: 'connection-other',
+    daemonBootId: 'boot-other',
+    audience: 'daemon/connection-other',
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 10_000,
+  };
+  const other = fix.authority.issueConnectionProof({ subject: fix.subject, challenge: otherChallenge, generation: 4 });
+  assert.equal(other.ok, true, JSON.stringify(other));
+
+  const verify = verifyFrame('verify-cross', 4, other.proof, 1, tupleFor(proofOk.proof));
+  fix.client.write(verify.raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, false, 'un proof per altra challenge non deve legarsi');
+  assert.equal(out.reason, 'challenge_mismatch');
+});
+
+test('verify channel v1.1: malformed expected tuple is identity-unverified', async (t) => {
+  const fix = await leaseFixture(t);
+  const issued = relayFrame(challenge({ nonce: '0'.repeat(64) }));
+  fix.client.write(issued.raw);
+  const proofOk = await fix.reader.next();
+  assert.equal(proofOk.ok, true);
+
+  const bad = { nonce: 'z'.repeat(64), connectionId: 'connection-a', daemonBootId: 'boot-a' };
+  const verify = verifyFrame('verify-tuple-bad', 4, proofOk.proof, 1, bad);
+  fix.client.write(verify.raw);
+  const out = await fix.reader.next();
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'identity-unverified');
+});
+
+test('identity channel relays the expected tuple to relayVerify', async (t) => {
+  const request = new PassThrough();
+  const response = new PassThrough();
+  const reader = lineReader(response);
+  let observed = null;
+  const channel = createIdentityChannel({
+    request, response, generation: 2,
+    relay: async () => ({ ok: false, reason: 'identity-unverified' }),
+    relayVerify: async (requestId, proof, expected) => {
+      observed = { requestId, proof, expected };
+      return { ok: true, claims: { cellId: CELL } };
+    },
+  });
+  const expected = {
+    nonce: 'f'.repeat(64), connectionId: 'connection-a',
+    daemonBootId: 'boot-a', audience: 'daemon/connection-a',
+  };
+  request.write(`${JSON.stringify({
+    jsonrpc: '2.0', id: 21, method: 'nexuscrew/identity/verify',
+    params: { v: 1, generation: 2, proof: { kind: 'identity-proof' }, expected },
+  })}\n`);
+  const out = await reader.next();
+  assert.deepEqual(observed.expected, expected);
+  assert.equal(out.result.ok, true);
+  channel.close();
+});
+
+test('identity channel: verify with a malformed expected tuple is invalid request', async (t) => {
+  const request = new PassThrough();
+  const response = new PassThrough();
+  const reader = lineReader(response);
+  let relayed = false;
+  const channel = createIdentityChannel({
+    request, response, generation: 2,
+    relay: async () => ({ ok: false, reason: 'identity-unverified' }),
+    relayVerify: async () => { relayed = true; return { ok: true, claims: {} }; },
+  });
+  request.write(`${JSON.stringify({
+    jsonrpc: '2.0', id: 22, method: 'nexuscrew/identity/verify',
+    params: {
+      v: 1, generation: 2, proof: { kind: 'identity-proof' },
+      expected: { nonce: 'f'.repeat(64), connectionId: 'connection-a', extra: 1 },
+    },
+  })}\n`);
+  const out = await reader.next();
+  assert.equal(out.error.data.code, 'IDENTITY_UNVERIFIED');
+  assert.equal(relayed, false);
+  channel.close();
+});
+
+test('identityErrorCode maps challenge_mismatch to AUDIENCE_MISMATCH', () => {
+  assert.equal(identityErrorCode('challenge_mismatch'), 'AUDIENCE_MISMATCH');
 });
