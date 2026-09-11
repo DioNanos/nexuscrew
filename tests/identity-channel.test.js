@@ -299,6 +299,10 @@ test('lease relay issues from the authenticated launch subject', async (t) => {
   assert.equal(out.proof.cellId, CELL);
   assert.equal(out.proof.incarnationId, 'incarnation-a');
   assert.equal(out.proof.ownerInstanceId, 'owner-a');
+  assert.equal(out.proof.tmuxSession, 'cloud-CellA');
+  assert.equal(out.proof.bindingId, out.proof.jti);
+  assert.deepEqual(out.proof.scopes, ['thread/start']);
+  assert.equal(out.proof.generation, 4);
 });
 
 test('lease relay rejects a duplicate challenge as replay', async (t) => {

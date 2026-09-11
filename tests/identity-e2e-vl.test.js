@@ -97,26 +97,25 @@ function vlProof(challenge, rawProof, subject, { rawOverride = rawProof } = {}) 
       audience: challenge.audience,
       ownerInstanceId: subject.ownerInstanceId,
       cellId: subject.cellId,
-      tmuxSession: 'd199-test',
+      tmuxSession: rawProof.tmuxSession,
       incarnationId: subject.incarnationId,
-      launchEpoch: 'epoch-placeholder',
+      launchEpoch: rawProof.launchEpoch,
       daemonBootId: challenge.daemonBootId,
       connectionId: challenge.connectionId,
-      bindingId: 'binding-d199',
+      bindingId: rawProof.bindingId,
       origin: 'local_tui',
-      scopes: ['thread/start'],
+      scopes: rawProof.scopes,
       issuedAt: rawProof.issuedAt,
       notBefore: rawProof.issuedAt,
       expiresAt: rawProof.expiresAt,
       nonce: rawProof.nonce,
     },
-    // The outer numeric generation is the lease-channel generation. The NC
-    // raw proof carries a separate authority incarnation generation string.
-    proof: JSON.stringify({ generation: 0, proof: rawOverride }),
+    // The outer numeric generation is also signed into the NC raw proof.
+    proof: JSON.stringify({ generation: rawProof.generation, proof: rawOverride }),
   };
 }
 
-async function startHarness(t, { required = true, authorityAlive = true } = {}) {
+async function startHarness(t, { required = true, authorityAlive = true, fixture = true } = {}) {
   const home = tempDir();
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const subject = {
@@ -176,7 +175,7 @@ async function startHarness(t, { required = true, authorityAlive = true } = {}) 
       PATH: process.env.PATH || '/usr/bin:/bin',
       CODEX_HOME: codexHome,
       CODEX_APP_SERVER_DISABLE_MANAGED_CONFIG: '1',
-      D174_IDENTITY_CHALLENGE_FILE: path.join(home, 'identity-challenges.jsonl'),
+      ...(fixture ? { D174_IDENTITY_CHALLENGE_FILE: path.join(home, 'identity-challenges.jsonl') } : {}),
       RUST_LOG: 'warn',
       ...(required ? { CODEX_APP_SERVER_IDENTITY_REQUIRED: '1' } : {}),
     },
@@ -218,16 +217,21 @@ async function startHarness(t, { required = true, authorityAlive = true } = {}) 
   }
   assert.equal(initialized.error, undefined, `initialize failed: ${JSON.stringify(initialized)}`);
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialized', params: {} })}\n`);
-  const challenge = await waitForChallenge(path.join(home, 'identity-challenges.jsonl'));
-  const issued = authority.issueConnectionProof({ subject, challenge });
-  assert.equal(issued.ok, true, `authority must issue the fixture proof: ${JSON.stringify(issued)}`);
+  const challenge = fixture
+    ? await waitForChallenge(path.join(home, 'identity-challenges.jsonl'))
+    : initialized.result?.identityChallenge;
+  const issued = challenge ? authority.issueConnectionProof({ subject, challenge, generation: 0 }) : null;
+  if (fixture) {
+    assert.equal(issued.ok, true, `authority must issue the fixture proof: ${JSON.stringify(issued)}`);
+  }
   return {
     child,
     stderr: () => stderr,
     authority,
     subject,
     challenge,
-    rawProof: issued.proof,
+    initialized,
+    rawProof: issued?.proof,
     verifyCalls: () => verifyCalls,
     required,
     authorityAlive,
@@ -308,4 +312,14 @@ test('D-199 case 7 valid claims with unauthenticated proof are rejected', async 
   const result = await bindProof(harness, proofFor(harness, { raw: { proof: 'not-authenticated' } }));
   assertBindError(result, 'IdentityUnverified');
   assert.equal(harness.verifyCalls(), 1);
+});
+
+test('D-183 production path challenge binds without the test fixture', async (t) => {
+  const harness = await startHarness(t, { fixture: false });
+  if (!harness) return;
+  assert.deepEqual(Object.keys(harness.initialized.result?.identityChallenge ?? {}).sort(), [
+    'audience', 'connectionId', 'daemonBootId', 'expiresAt', 'issuedAt', 'nonce', 'version',
+  ]);
+  const result = await bindProof(harness, proofFor(harness));
+  assert.equal(result.error, undefined, `real challenge proof must bind: ${JSON.stringify(result)} stderr=${harness.stderr()}`);
 });

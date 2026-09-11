@@ -35,7 +35,37 @@ daemon (VL) --fd3/fd4 (JSON-RPC 2.0, line JSON)--> supervisore cella
   - `{"type":"verify","requestId":<int>,"generation":<int>,"v":1,"proof":{...}}`
   - `{"type":"verifyResult","requestId":<int>,"ok":true|false,"reason"?:string,"claims"?:{...},"v":1}`
 
-## 2. Richiesta `nexuscrew/identity/verify` (v1)
+## 2. Emissione `nexuscrew/identity/challengeProof` (v1)
+
+La risposta del metodo già esistente sul canale fd3/fd4 è il proof raw
+authority-owned che il client presenta al daemon dopo `initialized`:
+
+```json
+{"jsonrpc":"2.0","id":7,"result":{"proof":{
+  "kind":"identity-proof","ownerInstanceId":"…","cellId":"…",
+  "audience":"daemon/…","incarnationId":"…","launchEpoch":"…",
+  "daemonBootId":"…","connectionId":"…","challenge":"<64hex>",
+  "nonce":"<64hex>","parentJti":"<64hex>","jti":"<64hex>",
+  "issuedAt":1700000000000,"expiresAt":1700000005000,
+  "authorityGeneration":"<64hex>","generation":0,
+  "tmuxSession":"cloud-…","bindingId":"<64hex>",
+  "scopes":["thread/start"],"proof":"<64hex hmac>"
+}}}
+```
+
+`authorityGeneration` identifica l'incarnazione dell'authority e resta distinto
+da `generation`, che è la generazione numerica del supervisore/lease. I campi
+`tmuxSession` (derivato dal `cellId` canonico), `bindingId` (il `jti` authority
+generato) e `scopes` (policy authority) sono emessi e firmati dall'authority;
+non sono accettati dal body della richiesta challenge-proof. Il proof contiene
+solo dati del record di lease/subject autenticato e della generation verificata
+dal lease server.
+
+La forma è additiva nello stesso v1. Un consumer deve rifiutare il bind se uno
+dei claim richiesti dal proprio envelope non è presente o non è coerente; non
+può completarli con env, sessione tmux, MCP o placeholder locali.
+
+## 3. Richiesta `nexuscrew/identity/verify` (v1)
 
 ```json
 {"jsonrpc":"2.0","id":7,"method":"nexuscrew/identity/verify",
@@ -45,7 +75,9 @@ daemon (VL) --fd3/fd4 (JSON-RPC 2.0, line JSON)--> supervisore cella
                     "launchEpoch":"…","daemonBootId":"…","connectionId":"…",
                     "challenge":"<64hex>","nonce":"<64hex>","parentJti":"<64hex>",
                     "jti":"<64hex>","issuedAt":1700000000000,
-                    "expiresAt":1700000005000,"generation":3,
+                    "expiresAt":1700000005000,"authorityGeneration":"<64hex>",
+                    "generation":3,"tmuxSession":"cloud-…",
+                    "bindingId":"<64hex>","scopes":["thread/start"],
                     "proof":"<64hex hmac>"}}}
 ```
 
@@ -53,7 +85,7 @@ Vincoli: `v === 1`; `generation` = generazione corrente del supervisore;
 `proof` = oggetto con tutti i `PROOF_FIELDS` e `proof` hex-64. Campi extra →
 rifiuto `invalid-request` (lo schema e' chiuso).
 
-## 3. Risposta (JSON-RPC result, v1)
+## 4. Risposta (JSON-RPC result, v1)
 
 ```json
 {"jsonrpc":"2.0","id":7,
@@ -68,7 +100,7 @@ rifiuto `invalid-request` (lo schema e' chiuso).
 `proof/nonce/parentJti/jti/challenge`, che restano server-side). Il daemon
 confronta `claims` con la challenge attesa prima del bind.
 
-## 4. Errori (result `ok:false` lato lease / error JSON-RPC lato fd)
+## 5. Errori (result `ok:false` lato lease / error JSON-RPC lato fd)
 
 `reason` (enum chiusa, origine):
 
@@ -91,7 +123,7 @@ confronta `claims` con la challenge attesa prima del bind.
 Il `reason` di mismatch su un campo atteso usa il NOME DEL CAMPO (comportamento
 gia' esistente di `verify()`), mai dettagli del valore.
 
-## 5. Semantica
+## 6. Semantica
 
 - **Timeout**: 4000 ms per_attempt lato lease-client (`IDENTITY_TIMEOUT_MS`),
   invariato; il supervisore non ritenta (single-shot per `requestId`).
@@ -107,7 +139,7 @@ gia' esistente di `verify()`), mai dettagli del valore.
   del server NC: il canale D-183 chiude, il supervisore riannuncia; i verify in
   volo rispondono `revoked`/`timeout` e i bind in corso falliscono (fail-closed).
 
-## 6. Mappatura implementativa lato NC
+## 7. Mappatura implementativa lato NC
 
 | passaggio | file |
 |---|---|
