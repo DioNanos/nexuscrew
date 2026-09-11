@@ -15,7 +15,7 @@ const { createLaunchBroker } = require('../lib/fleet/launch-broker.js');
 const { createIdentityAuthority } = require('../lib/fleet/identity-authority.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 
-const CELL = 'DevWorker-d199';
+const CELL = 'e2e-cell-d199';
 const DAEMON_CREDENTIAL = 'd199-daemon-credential';
 const LAUNCHER_CREDENTIAL = 'd199-launcher-credential';
 const CELL_EXEC = path.join(__dirname, '..', 'lib', 'fleet', 'cell-exec.js');
