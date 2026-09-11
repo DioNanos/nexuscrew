@@ -824,6 +824,55 @@ test('identity channel relays verify requests to relayVerify', async (t) => {
   channel.close();
 });
 
+test('identity channel: two verifies and a later challengeProof reuse the channel', async (t) => {
+  const request = new PassThrough();
+  const response = new PassThrough();
+  const reader = lineReader(response);
+  const claims = { cellId: CELL, ownerInstanceId: 'owner-a' };
+  const proof = { kind: 'identity-proof', cellId: CELL, proof: 'f'.repeat(64) };
+  let verifyCalls = 0;
+  let relayCalls = 0;
+  const channel = createIdentityChannel({
+    request, response, generation: 2,
+    relay: async () => {
+      relayCalls += 1;
+      return { ok: true, proof };
+    },
+    relayVerify: async () => {
+      verifyCalls += 1;
+      return { ok: true, claims };
+    },
+  });
+
+  request.write(`${JSON.stringify({
+    jsonrpc: '2.0', id: 21, method: 'nexuscrew/identity/verify',
+    params: { v: 1, generation: 2, proof: { kind: 'identity-proof' } },
+  })}
+`);
+  const firstVerify = await reader.next();
+  assert.equal(firstVerify.result.ok, true);
+  assert.deepEqual(firstVerify.result.claims, claims);
+  assert.equal(verifyCalls, 1);
+
+  request.write(`${JSON.stringify({
+    jsonrpc: '2.0', id: 22, method: 'nexuscrew/identity/verify',
+    params: { v: 1, generation: 2, proof: { kind: 'identity-proof' } },
+  })}
+`);
+  const secondVerify = await reader.next();
+  assert.equal(secondVerify.result.ok, true, 'second verify must not be busy');
+  assert.deepEqual(secondVerify.result.claims, claims);
+  assert.equal(verifyCalls, 2);
+
+  request.write(identityRpc(23, challenge({ nonce: 'c'.repeat(64) })));
+  const challengeProof = await reader.next();
+  assert.deepEqual(challengeProof.result.proof, proof, 'challengeProof must be relayed after verifies');
+  assert.equal(relayCalls, 1);
+  assert.equal(channel.isClosed(), false);
+  assert.equal(channel.pendingCount(), 0);
+  channel.close();
+});
+
 test('identity channel: verify with a stale generation is invalid', async (t) => {
   const request = new PassThrough();
   const response = new PassThrough();
