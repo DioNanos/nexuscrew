@@ -151,6 +151,10 @@ gia' esistente di `verify()`), mai dettagli del valore.
 
 ## 8. Estensione v1.1 (D-199, post-audit) — claims completi e verifica legata alla challenge
 
+Il v1 escludeva `nonce` dai claims (restava server-side): il v1.1 lo
+RESTITUISCE dal record dell'authority perche' il lato VL lo confronta con
+`prepared.challenge` al commit senza fallback ai claim esterni.
+
 Estensione **additiva** del v1 (motivazione: un client v1 esistente deve
 continuare a funzionare senza modifiche; i campi nuovi sono opzionali nella
 richiesta e ignorabili — con serde di default — nella risposta). Nessun
@@ -182,7 +186,7 @@ finestra cross-challenge si chiude quando aggiornera' la richiesta.
  "result":{"ok":true,"v":1,
    "claims":{"ownerInstanceId":"…","issuerOwner":"…","cellId":"…",
              "audience":"…","incarnationId":"…","launchEpoch":"…",
-             "daemonBootId":"…","connectionId":"…",
+             "daemonBootId":"…","connectionId":"…","nonce":"<64hex>",
              "issuedAt":1700000000000,"notBefore":1700000000000,
              "expiresAt":1700000005000,"generation":3,
              "tmuxSession":"cloud-…","bindingId":"<64hex>",
@@ -195,6 +199,7 @@ nessun campo del binding puo' arrivare dai claim esterni del client.
 | campo | sorgente |
 |---|---|
 | `ownerInstanceId`, `cellId`, `audience`, `incarnationId`, `launchEpoch`, `daemonBootId`, `connectionId`, `issuedAt`, `expiresAt`, `generation` | proof firmato ri-verificato (invariato v1) |
+| `nonce` | RECORD dell'authority: il nonce della challenge per cui il proof e' stato emesso (coincide con `proof.challenge`); mai un valore di input |
 | `tmuxSession`, `bindingId`, `scopes` | proof firmato (emessi dall'authority, § 2) |
 | `issuerOwner` | = `ownerInstanceId` (mappatura legacy `remote.rs:384`) |
 | `notBefore` | = `issuedAt` (stessa finestra del proof) |
@@ -212,7 +217,10 @@ Con la tupla `expected` presente, l'authority rifiuta con
    (registro challenge, scadute escluse), oppure
 2. la tupla non coincide con i campi dell'emissione (`audience`,
    `daemonBootId`, `connectionId` del record), oppure
-3. il proof non corrisponde alla tupla (qualsiasi campo divergente).
+3. il proof non corrisponde alla tupla (qualsiasi campo divergente);
+4. la challenge di emissione non e' piu' nel registro dell'authority
+   (scaduta/sweep): il nonce dei claims non puo' essere confermato dal
+   record, quindi fail-closed anche per un proof HMAC valido.
 
 `challenge_mismatch` entra nell'enum chiusa dei reason (§ 5); lato fd il
 reason mappa su `AUDIENCE_MISMATCH` (come il mismatch challenge-side del

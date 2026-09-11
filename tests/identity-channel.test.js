@@ -900,9 +900,13 @@ test('verify channel v1.1: claims carry every authority-owned binding field', as
   assert.deepEqual(Object.keys(out.claims).sort(), [
     'audience', 'bindingId', 'cellId', 'connectionId', 'daemonBootId',
     'expiresAt', 'generation', 'incarnationId', 'issuedAt', 'issuerOwner',
-    'launchEpoch', 'notBefore', 'origin', 'ownerInstanceId', 'scopes',
-    'tmuxSession',
+    'launchEpoch', 'nonce', 'notBefore', 'origin', 'ownerInstanceId',
+    'scopes', 'tmuxSession',
   ]);
+  // Il nonce dei claims e' quello del record di emissione: coincide col
+  // nonce (e con la challenge) del proof firmato.
+  assert.equal(out.claims.nonce, proof.nonce);
+  assert.equal(out.claims.nonce, proof.challenge);
   // issuerOwner = ownerInstanceId (mappatura legacy), notBefore = issuedAt.
   assert.equal(out.claims.issuerOwner, out.claims.ownerInstanceId);
   assert.equal(out.claims.notBefore, out.claims.issuedAt);
