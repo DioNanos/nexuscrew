@@ -1,9 +1,8 @@
 'use strict';
 
-// D-199 NC ↔ VL harness.  This file deliberately does not coerce the NC
-// verify-channel challenge into the VL IdentityProof shape.  The negative
-// cases are enumerated here while the contract/wiring mismatch is being fixed
-// on the VL branch; only the transport smoke is executable at this baseline.
+// D-199 NC ↔ VL harness. The NC proof remains the authority-owned opaque
+// payload inside the VL IdentityProof; the harness only supplies the
+// non-authoritative structural claims required by the VL bind boundary.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -20,8 +19,6 @@ const CELL = 'DevWorker-d199';
 const DAEMON_CREDENTIAL = 'd199-daemon-credential';
 const LAUNCHER_CREDENTIAL = 'd199-launcher-credential';
 const CELL_EXEC = path.join(__dirname, '..', 'lib', 'fleet', 'cell-exec.js');
-const CONTRACT_BLOCK = 'NC↔VL challenge/timestamp shape and VL verifier wiring are not aligned';
-
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d199-e2e-'));
 }
@@ -76,43 +73,46 @@ async function rpc(child, id, method, params) {
   }
 }
 
-function fakeVlProof() {
-  // Shape only: the real challenge is intentionally not synthesized here.
-  // Any conversion would hide the mismatch documented in the report.
-  const issued = new Date(Date.now() - 1000).toISOString();
-  const expires = new Date(Date.now() + 60_000).toISOString();
-  const challenge = {
-    version: '1',
-    connectionId: 'connection-placeholder',
-    daemonBootId: 'boot-placeholder',
-    audience: 'daemon/placeholder',
-    nonce: 'nonce-placeholder',
-    issuedAt: issued,
-    expiresAt: expires,
-  };
+async function waitForChallenge(file) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {
+      const lines = fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean);
+      if (lines.length > 0) return JSON.parse(lines[lines.length - 1]);
+    } catch (_) {
+      // The daemon writes the fixture after initialize; keep the bounded wait.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`identity challenge fixture not written: ${file}`);
+}
+
+function vlProof(challenge, rawProof, subject, { rawOverride = rawProof } = {}) {
   return {
     version: '1',
     kind: 'connection-v1',
     challenge,
     claims: {
-      issuerOwner: 'owner-placeholder',
+      issuerOwner: subject.ownerInstanceId,
       audience: challenge.audience,
-      ownerInstanceId: 'owner-placeholder',
-      cellId: CELL,
+      ownerInstanceId: subject.ownerInstanceId,
+      cellId: subject.cellId,
       tmuxSession: 'd199-test',
-      incarnationId: 'incarnation-placeholder',
+      incarnationId: subject.incarnationId,
       launchEpoch: 'epoch-placeholder',
       daemonBootId: challenge.daemonBootId,
       connectionId: challenge.connectionId,
-      bindingId: 'binding-placeholder',
-      origin: 'localTui',
+      bindingId: 'binding-d199',
+      origin: 'local_tui',
       scopes: ['thread/start'],
-      issuedAt: issued,
-      notBefore: issued,
-      expiresAt: expires,
-      nonce: challenge.nonce,
+      issuedAt: rawProof.issuedAt,
+      notBefore: rawProof.issuedAt,
+      expiresAt: rawProof.expiresAt,
+      nonce: rawProof.nonce,
     },
-    proof: 'not-an-authenticated-proof',
+    // The outer numeric generation is the lease-channel generation. The NC
+    // raw proof carries a separate authority incarnation generation string.
+    proof: JSON.stringify({ generation: 0, proof: rawOverride }),
   };
 }
 
@@ -176,6 +176,8 @@ async function startHarness(t, { required = true, authorityAlive = true } = {}) 
       PATH: process.env.PATH || '/usr/bin:/bin',
       CODEX_HOME: codexHome,
       CODEX_APP_SERVER_DISABLE_MANAGED_CONFIG: '1',
+      D174_IDENTITY_CHALLENGE_FILE: path.join(home, 'identity-challenges.jsonl'),
+      RUST_LOG: 'warn',
       ...(required ? { CODEX_APP_SERVER_IDENTITY_REQUIRED: '1' } : {}),
     },
     supervise: { enabled: false },
@@ -216,41 +218,94 @@ async function startHarness(t, { required = true, authorityAlive = true } = {}) 
   }
   assert.equal(initialized.error, undefined, `initialize failed: ${JSON.stringify(initialized)}`);
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialized', params: {} })}\n`);
+  const challenge = await waitForChallenge(path.join(home, 'identity-challenges.jsonl'));
+  const issued = authority.issueConnectionProof({ subject, challenge });
+  assert.equal(issued.ok, true, `authority must issue the fixture proof: ${JSON.stringify(issued)}`);
   return {
     child,
+    stderr: () => stderr,
     authority,
+    subject,
+    challenge,
+    rawProof: issued.proof,
     verifyCalls: () => verifyCalls,
-    fakeProof: fakeVlProof(),
     required,
     authorityAlive,
   };
 }
 
-const NEGATIVE_CASES = [
-  ['2-forged-hmac', 'IDENTITY_UNVERIFIED', { mutate: (proof) => { proof.proof = 'f'.repeat(64); } }],
-  ['3-tampered-claims', 'IDENTITY_UNVERIFIED', { mutate: (proof) => { proof.claims.cellId = 'tampered'; } }],
-  ['4-replay', 'REPLAY', {}],
-  ['5-authority-stopped', 'IDENTITY_UNVERIFIED', { authorityAlive: false }],
-  ['6-identity-required-off', 'NO_VERIFY_CALL', { required: false }],
-  ['7-valid-claims-unauthenticated-proof', 'IDENTITY_UNVERIFIED', {}],
-];
+async function bindProof(harness, proof) {
+  return rpc(harness.child, 2, 'nexuscrew/identity/bind', { proof });
+}
 
-test('D-199 e2e harness boots real authority + lease + cell-exec + VL app-server', async (t) => {
+function assertBindError(result, expected) {
+  assert.equal(result.error?.message, `identity bind failed: ${expected}`, JSON.stringify(result));
+}
+
+function proofFor(harness, options = {}) {
+  const raw = { ...harness.rawProof, ...(options.raw || {}) };
+  return vlProof(harness.challenge, harness.rawProof, harness.subject, { rawOverride: raw });
+}
+
+test('D-199 case 1 valid proof binds through authority', async (t) => {
   const harness = await startHarness(t);
   if (!harness) return;
   assert.equal(harness.required, true);
-  const result = await rpc(harness.child, 2, 'nexuscrew/identity/bind', { proof: harness.fakeProof });
-  assert.ok(result.error, `baseline must not create an unverified privileged binding: ${JSON.stringify(result)}`);
-  assert.equal(harness.verifyCalls(), 0,
-    'baseline a9e09b4 has no verifier wiring; this is a smoke observation, not proof of authority semantics');
+  const result = await bindProof(harness, proofFor(harness));
+  assert.equal(result.error, undefined, `valid proof must bind: ${JSON.stringify(result)} stderr=${harness.stderr()}`);
+  assert.equal(harness.verifyCalls(), 1);
   harness.child.stdin.end();
   const exited = await waitForExit(harness.child);
   assert.equal(exited.signal, null);
 });
 
-for (const [name, expected, options] of NEGATIVE_CASES) {
-  test(`D-199 case ${name}`, { skip: CONTRACT_BLOCK }, async () => {
-    assert.equal(typeof expected, 'string');
-    assert.equal(typeof options, 'object');
-  });
-}
+test('D-199 case 2 forged HMAC is rejected', async (t) => {
+  const harness = await startHarness(t);
+  if (!harness) return;
+  const result = await bindProof(harness, proofFor(harness, { raw: { proof: 'f'.repeat(64) } }));
+  assertBindError(result, 'IdentityUnverified');
+  assert.equal(harness.verifyCalls(), 1);
+});
+
+test('D-199 case 3 tampered claims are rejected', async (t) => {
+  const harness = await startHarness(t);
+  if (!harness) return;
+  const result = await bindProof(harness, proofFor(harness, { raw: { cellId: 'tampered' } }));
+  assertBindError(result, 'IdentityUnverified');
+  assert.equal(harness.verifyCalls(), 1);
+});
+
+test('D-199 case 4 replay is rejected', async (t) => {
+  const harness = await startHarness(t);
+  if (!harness) return;
+  const proof = proofFor(harness);
+  const first = await bindProof(harness, proof);
+  assert.equal(first.error, undefined, JSON.stringify(first));
+  const second = await bindProof(harness, proof);
+  assertBindError(second, 'Replay');
+  assert.equal(harness.verifyCalls(), 1);
+});
+
+test('D-199 case 5 authority stopped within verify timeout is rejected', async (t) => {
+  const harness = await startHarness(t, { authorityAlive: false });
+  if (!harness) return;
+  const result = await bindProof(harness, proofFor(harness));
+  assertBindError(result, 'IdentityUnverified');
+  assert.equal(harness.verifyCalls(), 0);
+});
+
+test('D-199 case 6 identity required OFF does not call verify', async (t) => {
+  const harness = await startHarness(t, { required: false });
+  if (!harness) return;
+  const result = await bindProof(harness, proofFor(harness));
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  assert.equal(harness.verifyCalls(), 0);
+});
+
+test('D-199 case 7 valid claims with unauthenticated proof are rejected', async (t) => {
+  const harness = await startHarness(t);
+  if (!harness) return;
+  const result = await bindProof(harness, proofFor(harness, { raw: { proof: 'not-authenticated' } }));
+  assertBindError(result, 'IdentityUnverified');
+  assert.equal(harness.verifyCalls(), 1);
+});
