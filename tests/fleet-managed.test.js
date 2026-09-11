@@ -225,8 +225,13 @@ test('managed matrix: Z.AI su Claude e codex-vl (Responses nativo); Ollama Cloud
   assert.ok(normalizeManagedSpec({ client: 'claude', provider: 'ollama-cloud' }));
   assert.ok(normalizeManagedSpec({ client: 'codex-vl', provider: 'ollama-cloud' }));
   const ollama = CATALOG.find((p) => p.id === 'codex-vl.ollama-cloud');
-  assert.equal(ollama.model, 'glm-5.2');
+  // D-202: il default degli engine ollama-cloud e' deepseek-v4.1-flash.
+  assert.equal(ollama.model, 'deepseek-v4.1-flash');
   assert.ok(ollama.models.includes('deepseek-v4-pro'));
+  assert.ok(ollama.models.includes('deepseek-v4.1-flash'));
+  for (const id of ['claude.ollama-cloud', 'codex.ollama-cloud']) {
+    assert.equal(CATALOG.find((p) => p.id === id).model, 'deepseek-v4.1-flash');
+  }
 });
 
 test('Ollama Direct discovery: usa la shortlist TOP disponibile e filtra garbage', async () => {
@@ -252,6 +257,7 @@ test('Ollama Direct discovery: errore API usa la shortlist TOP di fallback', asy
     'glm-5.3-flash',
     'glm-5.3',
     'kimi-k3',
+    'deepseek-v4.1-flash',
   ]);
 });
 
