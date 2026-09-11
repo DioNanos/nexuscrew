@@ -148,3 +148,81 @@ gia' esistente di `verify()`), mai dettagli del valore.
 | client lease | `lib/fleet/lease-client.js` `verifyProof({requestId, generation, proof})` (timeout 4000 ms) |
 | relay fd3/fd4 | `lib/fleet/cell-exec.js` metodo `nexuscrew/identity/verify` in `createIdentityChannel` |
 | handle al processo | env `NEXUSCREW_IDENTITY_FD=3:4` (cell-exec.js:455, gia' presente) |
+
+## 8. Estensione v1.1 (D-199, post-audit) — claims completi e verifica legata alla challenge
+
+Estensione **additiva** del v1 (motivazione: un client v1 esistente deve
+continuare a funzionare senza modifiche; i campi nuovi sono opzionali nella
+richiesta e ignorabili — con serde di default — nella risposta). Nessun
+breaking: il daemon VL che implementa il v1.1 chiude i due bypass del binding
+riprodotti dall'audit finale; il daemon v1 (46ccf38) resta operativo e la sua
+finestra cross-challenge si chiude quando aggiornera' la richiesta.
+
+### 8.1 Richiesta verify v1.1 (fd3/fd4)
+
+```json
+{"jsonrpc":"2.0","id":7,"method":"nexuscrew/identity/verify",
+ "params":{"v":1,"generation":3,
+           "proof":{"...":"PROOF_FIELDS + proof hex-64, invariato"},
+           "expected":{"nonce":"<64hex>","connectionId":"…",
+                       "daemonBootId":"…","audience":"…"}}}
+```
+
+- `expected` e' **opzionale** in v1.1 (retro-compat) ma, se presente, ha
+  **schema chiuso**: esattamente 4 chiavi, `nonce` hex-64, gli altri tre
+  stringhe non vuote (max 200 char). Forma malformata → rifiuto
+  (`invalid request` lato fd, `identity-unverified` lato lease), senza relay.
+- La tupla e' quella attesa dal daemon per la PROPRIA connessione: proviene
+  dalla challenge ricevuta in `initialize`, mai da input del client.
+
+### 8.2 Risposta v1.1: claims completi (v1.1 superset del v1)
+
+```json
+{"jsonrpc":"2.0","id":7,
+ "result":{"ok":true,"v":1,
+   "claims":{"ownerInstanceId":"…","issuerOwner":"…","cellId":"…",
+             "audience":"…","incarnationId":"…","launchEpoch":"…",
+             "daemonBootId":"…","connectionId":"…",
+             "issuedAt":1700000000000,"notBefore":1700000000000,
+             "expiresAt":1700000005000,"generation":3,
+             "tmuxSession":"cloud-…","bindingId":"<64hex>",
+             "scopes":["thread/start"],"origin":"local_tui"}}}
+```
+
+Tutti i campi che entrano nel binding VL sono **authority-normalizzati**:
+nessun campo del binding puo' arrivare dai claim esterni del client.
+
+| campo | sorgente |
+|---|---|
+| `ownerInstanceId`, `cellId`, `audience`, `incarnationId`, `launchEpoch`, `daemonBootId`, `connectionId`, `issuedAt`, `expiresAt`, `generation` | proof firmato ri-verificato (invariato v1) |
+| `tmuxSession`, `bindingId`, `scopes` | proof firmato (emessi dall'authority, § 2) |
+| `issuerOwner` | = `ownerInstanceId` (mappatura legacy `remote.rs:384`) |
+| `notBefore` | = `issuedAt` (stessa finestra del proof) |
+| `origin` | `'local_tui'`: contesto del canale lease locale |
+
+`threadId`/`cwd`/`liveHost` non sono restituiti: opzionali lato VL e non
+richiesti da `IdentityClaims::validate()` per `origin = local_tui`.
+
+### 8.3 Nuovo reason `challenge_mismatch`
+
+Con la tupla `expected` presente, l'authority rifiuta con
+`ok:false, reason:'challenge_mismatch'` quando:
+
+1. `expected.nonce` non e' una challenge **emessa** da questa authority
+   (registro challenge, scadute escluse), oppure
+2. la tupla non coincide con i campi dell'emissione (`audience`,
+   `daemonBootId`, `connectionId` del record), oppure
+3. il proof non corrisponde alla tupla (qualsiasi campo divergente).
+
+`challenge_mismatch` entra nell'enum chiusa dei reason (§ 5); lato fd il
+reason mappa su `AUDIENCE_MISMATCH` (come il mismatch challenge-side del
+`prepare()` VL). Semantica: **fail-closed** — il daemon rifiuta il bind; un
+proof valido firmato per un'altra challenge non e' trasferibile.
+
+### 8.4 Obblighi lato VL (v1.1)
+
+- `VerifiedIdentityClaims` esteso con `tmuxSession`, `bindingId`, `scopes`,
+  `issuerOwner`, `notBefore`, `origin`: il binding si costruisce **solo** dai
+  claims verificati, nessun merge con i claim esterni del client.
+- La richiesta verify porta `expected` = tupla della challenge corrente.
+- `challenge_mismatch` → `AudienceMismatch` (rifiuto bind, fail-closed).
