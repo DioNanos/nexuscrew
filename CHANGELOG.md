@@ -2,6 +2,14 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.22 — non rilasciata
+
+- **Fleet Ollama Cloud: `deepseek-v4.1-flash`** aggiunto ai modelli dell'engine
+  (contesto dichiarato 1M → 1048576; capacità text+image, reasoning; parallel
+  tool calls non dichiarato finché non misurato su device) e promosso a
+  **modello di default dei tre engine ollama-cloud** (`claude`, `codex-vl`,
+  `codex`), al posto di `glm-5.2` (che resta disponibile in lista).
+
 ## Unreleased
 
 - **Fleet codex-vl app-server identity policy.** Managed `codex-vl.*` cells now
