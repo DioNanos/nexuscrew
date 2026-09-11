@@ -9,6 +9,9 @@ All notable changes to NexusCrew are tracked here.
   tool calls non dichiarato finché non misurato su device) e promosso a
   **modello di default dei tre engine ollama-cloud** (`claude`, `codex-vl`,
   `codex`), al posto di `glm-5.2` (che resta disponibile in lista).
+- Il tarball npm non include più gli screenshot di `docs/img/` (restano nel
+  repository GitHub, referenziati dal README): il pacchetto 0.9.21 li
+  spediva per errore mostrando nomi di ambiente interno.
 - **Fleet codex-vl app-server identity policy.** Managed `codex-vl.*` cells now
   pass `CODEX_APP_SERVER_IDENTITY_REQUIRED=1` through the child environment so
   the app-server daemon started by the TUI enforces the Fleet identity policy;
