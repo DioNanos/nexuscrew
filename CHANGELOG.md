@@ -2,6 +2,18 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.23 — 2026-09-11
+
+- **Frontend bundle ricostruito.** Il banner «new version available /
+  reload» persisteva dopo il reload perché `frontend/dist` conteneva il bundle
+  del 27/08 (versione di build 0.9.1x incorporata) mentre `dist/version.json`
+  era stato scritto a mano a 0.9.22 in prep: il confronto
+  `uiVersion !== __NC_BUILD_VERSION__` (`src/lib/sw-update.js`,
+  `reportServerVersions`) non tornava mai e la guardia anti-loop fermava il
+  ricaricamento automatico lasciando il banner. Il dist è ora ricostruito con
+  vite (`npm ci && npm run build`), quindi bundle incorporato e
+  `version.json` generato dalla build coincidono con la versione del server.
+
 ## 0.9.22 — 2026-09-11
 
 - **Fleet Ollama Cloud: `deepseek-v4.1-flash`** aggiunto ai modelli dell'engine
