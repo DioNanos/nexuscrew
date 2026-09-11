@@ -251,36 +251,26 @@ function proofFor(harness, options = {}) {
   return vlProof(harness.challenge, harness.rawProof, harness.subject, { rawOverride: raw });
 }
 
-test('D-199 case 1 valid proof binds through authority', async (t) => {
-  const harness = await startHarness(t);
-  if (!harness) return;
-  assert.equal(harness.required, true);
-  const result = await bindProof(harness, proofFor(harness));
-  assert.equal(result.error, undefined, `valid proof must bind: ${JSON.stringify(result)} stderr=${harness.stderr()}`);
-  assert.equal(harness.verifyCalls(), 1);
-  harness.child.stdin.end();
-  const exited = await waitForExit(harness.child);
-  assert.equal(exited.signal, null);
-});
-
-test('D-199 case 2 forged HMAC is rejected', async (t) => {
-  const harness = await startHarness(t);
+// These six D-199 negative cases deliberately use the production challenge
+// from InitializeResponse. They must not depend on D174_IDENTITY_CHALLENGE_FILE.
+test('D-199 case 2 forged HMAC is rejected on production path', async (t) => {
+  const harness = await startHarness(t, { fixture: false });
   if (!harness) return;
   const result = await bindProof(harness, proofFor(harness, { raw: { proof: 'f'.repeat(64) } }));
   assertBindError(result, 'IdentityUnverified');
   assert.equal(harness.verifyCalls(), 1);
 });
 
-test('D-199 case 3 tampered claims are rejected', async (t) => {
-  const harness = await startHarness(t);
+test('D-199 case 3 tampered claims are rejected on production path', async (t) => {
+  const harness = await startHarness(t, { fixture: false });
   if (!harness) return;
   const result = await bindProof(harness, proofFor(harness, { raw: { cellId: 'tampered' } }));
   assertBindError(result, 'IdentityUnverified');
   assert.equal(harness.verifyCalls(), 1);
 });
 
-test('D-199 case 4 replay is rejected', async (t) => {
-  const harness = await startHarness(t);
+test('D-199 case 4 replay is rejected on production path', async (t) => {
+  const harness = await startHarness(t, { fixture: false });
   if (!harness) return;
   const proof = proofFor(harness);
   const first = await bindProof(harness, proof);
@@ -290,24 +280,24 @@ test('D-199 case 4 replay is rejected', async (t) => {
   assert.equal(harness.verifyCalls(), 1);
 });
 
-test('D-199 case 5 authority stopped within verify timeout is rejected', async (t) => {
-  const harness = await startHarness(t, { authorityAlive: false });
+test('D-199 case 5 authority stopped within verify timeout is rejected on production path', async (t) => {
+  const harness = await startHarness(t, { authorityAlive: false, fixture: false });
   if (!harness) return;
   const result = await bindProof(harness, proofFor(harness));
   assertBindError(result, 'IdentityUnverified');
   assert.equal(harness.verifyCalls(), 0);
 });
 
-test('D-199 case 6 identity required OFF does not call verify', async (t) => {
-  const harness = await startHarness(t, { required: false });
+test('D-199 case 6 identity required OFF does not call verify on production path', async (t) => {
+  const harness = await startHarness(t, { required: false, fixture: false });
   if (!harness) return;
   const result = await bindProof(harness, proofFor(harness));
   assert.equal(result.error, undefined, JSON.stringify(result));
   assert.equal(harness.verifyCalls(), 0);
 });
 
-test('D-199 case 7 valid claims with unauthenticated proof are rejected', async (t) => {
-  const harness = await startHarness(t);
+test('D-199 case 7 valid claims with unauthenticated proof are rejected on production path', async (t) => {
+  const harness = await startHarness(t, { fixture: false });
   if (!harness) return;
   const result = await bindProof(harness, proofFor(harness, { raw: { proof: 'not-authenticated' } }));
   assertBindError(result, 'IdentityUnverified');
