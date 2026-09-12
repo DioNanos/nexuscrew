@@ -4,7 +4,7 @@
 // della documentazione: sono la matrice misurata il 2026-08-11 (25 ID live x 3
 // wire), con deepseek-v4-pro refreshato al 2026-08-13 (DeepSeek ha aggiunto la
 // Responses API il 13/08: ora 200 su tutti e tre i wire). Il delta 2026-09-12
-// (D-227) e' invece «a segnale»: piano senza crediti, aggiunte signal-only e
+// e' invece «a segnale»: piano senza crediti, aggiunte signal-only e
 // guardia sui deprecated in fondo al file. Il valore dei test sta nei controlli negativi — una coppia
 // wire/modello che il gateway rifiuta deve fallire QUI, non al primo avvio.
 
@@ -104,14 +104,14 @@ test('ogni modello misurato passa e ogni coppia wire/modello rifiutata dal gatew
   assert.ok(normalizeManagedSpec({ client: 'pi', provider: 'opencode-go', model: 'qwen3.8-flash' }), 'chat accetta qwen3.8-flash');
 });
 
-// GUARDIA deprecated (D-227): gli id rimossi il 2026-09-12 non devono
+// GUARDIA retired models (delta 2026-09-12): gli id rimossi non devono
 // tornare in nessuna lista senza una decisione esplicita. Sono
 // status=deprecated upstream e assenti dalla CLI `opencode models` 1.2.6.
 // Controfattuale: reinserire uno di questi id in una lista (e nel LIMITS)
 // deve rendere ROSSO questo test nominando la lista colpevole.
-const D227_DEPRECATED = ['glm-5', 'kimi-k2.5', 'minimax-m2.5', 'qwen3.5-plus'];
-test('D-227: gli id deprecated rimossi restano rifiutati su tutte e tre le wire', () => {
-  for (const model of D227_DEPRECATED) {
+const OPENCODE_GO_RETIRED_MODELS = ['glm-5', 'kimi-k2.5', 'minimax-m2.5', 'qwen3.5-plus'];
+test('retired OpenCode Go models never re-enter the catalog', () => {
+  for (const model of OPENCODE_GO_RETIRED_MODELS) {
     for (const client of ['claude', 'codex-vl', 'pi']) {
       assert.equal(
         normalizeManagedSpec({ client, provider: 'opencode-go', model }), null,

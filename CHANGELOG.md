@@ -4,30 +4,32 @@ All notable changes to NexusCrew are tracked here.
 
 ## 0.9.25 (unreleased)
 
-- **Catalogo Ollama Cloud aggiornato al campione misurato del 12/09.** Entrano
-  le forme nude `gemma4` e `qwen3.5` (verificate vive con 200 su
-  `/v1/chat/completions`, lista ufficiale Research: 22 vivi / 8 forme 404);
-  con contesto e capacità presi dalle schede canale (`gemma4` 128K text+image,
-  `qwen3.5` 256K text+image). Restano fuori di proposito le forme 404
-  (`gemma4:12b`/`:e4b`, `qwen3.5:27b`/`:35b`/`:122b`, `mistral-large-3` nudo,
-  `nemotron-3-super:120b`, `nemotron-3-nano:4b`) e gli id community.
-  `glm-5.3` e `deepseek-v4.1-flash` erano già in lista e non vengono duplicati.
-- **Liveness a fixture per i modelli Ollama Cloud.** Nuovo test
-  (`tests/fleet-ollama-liveness.test.js`): ogni id del catalogo deve stare nel
-  campione ufficiale misurato; se upstream toglie un id il test va rosso
-  nominandolo come «da verificare». Nessuna chiamata di rete nei test; il
-  check periodico vero resta una voce separata.
-- **Catalogo OpenCode Go aggiornato «a segnale» (401 CreditsError il 12/09).**
-  Il piano Go non generava (crediti esauriti, listing OK): le aggiunte sono
-  segnale wire, non misure e2e. Entrano `glm-5.3`, `glm-5.3-flash`,
-  `longcat-2.0`, `deepseek-v4.1-flash`, `hy4-preview` su tutte e tre le wire,
-  e `qwen3.8-flash` SOLO su Messages/Chat (Responses rifiutata, misurato).
-  Limiti nuovi dichiarati da models.dev (1M context; `hy4-preview` 1024000),
-  marcati «declared, not measured». Rimossi i deprecated `glm-5`, `kimi-k2.5`,
-  `minimax-m2.5`, `qwen3.5-plus` da liste, LIMITS e catalogo (guardia nei
-  test contro la re-introduzione). `hy3` invariato (fonte divergente su
-  output: da ricontrollare), default `deepseek-v4-flash` invariato, VISION
-  invariata (solo il vision-exp misurato con PNG).
+- **Ollama Cloud catalog refreshed against the official measured sample of
+  2026-09-12.** Bare-name `gemma4` and `qwen3.5` enter the catalog (verified
+  alive with a 200 on `/v1/chat/completions`; official measured sample:
+  22 live ids / 8 dead variants), with context and capabilities taken from
+  the channel cards (`gemma4` 128K text+image, `qwen3.5` 256K text+image).
+  The 404 variants (`gemma4:12b`/`:e4b`, `qwen3.5:27b`/`:35b`/`:122b`, bare
+  `mistral-large-3`, `nemotron-3-super:120b`, `nemotron-3-nano:4b`) and
+  community ids stay out on purpose. `glm-5.3` and `deepseek-v4.1-flash`
+  were already listed and are not duplicated.
+- **Fixture-based liveness guard for the Ollama Cloud models.** New test
+  (`tests/fleet-ollama-liveness.test.js`): every catalog id must belong to
+  the official measured sample; when upstream retires an id, the test goes
+  red naming it as "to be verified". No network calls in tests; the real
+  periodic check remains a separate item.
+- **OpenCode Go catalog refreshed signal-only (401 CreditsError on
+  2026-09-12).** The Go plan could not generate (credits exhausted, listing
+  OK): the additions are wire signals, not end-to-end measurements.
+  `glm-5.3`, `glm-5.3-flash`, `longcat-2.0`, `deepseek-v4.1-flash` and
+  `hy4-preview` enter all three wires; `qwen3.8-flash` enters Messages/Chat
+  ONLY (Responses rejected, measured). New limits declared by models.dev
+  (1M context; `hy4-preview` 1024000), marked "declared, not measured".
+  Retired `glm-5`, `kimi-k2.5`, `minimax-m2.5` and `qwen3.5-plus` are
+  removed from the lists, LIMITS and the catalog, with a test guard against
+  re-introduction. `hy3` unchanged (diverging source on its output limit:
+  to be re-checked), default `deepseek-v4-flash` unchanged, VISION
+  unchanged (only the PNG-measured vision-exp id).
 
 ## 0.9.24 — 2026-09-12
 

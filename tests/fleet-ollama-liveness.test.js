@@ -7,7 +7,7 @@
 // expires-on-0910` e' scaduta il 10/09). Il check periodico VERO richiede
 // chiamate di rete ed e' una voce separata: qui c'e' solo la guardia a
 // fixture, SENZA rete. La lista ufficiale sotto e' il campione MISURATO da
-// Research il 2026-09-12 (22 id vivi / 8 forme 404, ogni id provato con
+// campione ufficiale misurato il 2026-09-12 (22 id vivi / 8 forme 404, ogni id provato con
 // max_tokens 4-8 su /v1/chat/completions).
 //
 // Cosa fa il test: ogni id in OLLAMA_CLOUD_MODELS deve stare nella lista
@@ -20,7 +20,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { OLLAMA_CLOUD_MODELS } = require('../lib/fleet/managed.js');
 
-// MISURATO 2026-09-12 — lista viva ufficiale (Research, ~1 min, 33 id provati).
+// MEASURED 2026-09-12 — official live list (official measured sample, ~1 min, 33 ids probed).
 const UFFICIALE_2026_09_12 = Object.freeze(new Set([
   'glm-5.3', 'glm-5.3-flash', 'glm-5.2', 'glm-5.1',
   'deepseek-v4.1-flash', 'deepseek-v4-flash', 'deepseek-v4-flash:0731',
