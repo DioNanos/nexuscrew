@@ -78,7 +78,9 @@ test('D10 (fixture): un modello non dichiarato produce rosso nominando cella, en
     engines: [{ id: 'codex-vl.opencode-go', managed: { model: 'modello-inesistente' } }],
     models: [],
     cells: [
-      { id: 'Probe', engine: 'codex-vl.opencode-go', model: 'glm-5.3-flash' },
+      // qwen3.8-flash: su codex-vl.opencode-go resta FUORI di proposito
+      // (Responses rifiutata, delta 2026-09-12): il fixture deve restare rosso.
+      { id: 'Probe', engine: 'codex-vl.opencode-go', model: 'qwen3.8-flash' },
       { id: 'Ok', engine: 'codex-vl.opencode-go', model: 'deepseek-v4-pro' },
     ],
   };
@@ -88,5 +90,5 @@ test('D10 (fixture): un modello non dichiarato produce rosso nominando cella, en
   // Il default incoerente deve dare verdetto (non ReferenceError: audit
   // 0314517 R3 — ramo che prima lanciava client_ is not defined).
   assert.match(problems[0], /engine "codex-vl\.opencode-go".*"modello-inesistente"/);
-  assert.match(problems[1], /"Probe".*codex-vl\.opencode-go.*"glm-5\.3-flash"/);
+  assert.match(problems[1], /"Probe".*codex-vl\.opencode-go.*"qwen3\.8-flash"/);
 });
