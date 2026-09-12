@@ -1,9 +1,9 @@
-# Identity verify channel — v1 (D-199)
+# Identity verify channel — v1
 
 Contratto del canale di **verifica online** di un identity proof presso
 l'authority NexusCrew, per il daemon app-server (processo VL) lanciato dal
 supervisore di cella. Riferimenti: contratto identita' BC
-(`2026-09-05_D174_CONTRATTO_IDENTITA_BC.md`, clausole C2/C7/C7-bis/C8-bis),
+(clausole su chiave, replay e revoca),
 `lib/fleet/identity-authority.js` (`verify`/`verifyChallengeProof`, replay e
 revoke store), `lib/fleet/cell-lease-server.js` (canale lease UDS),
 `lib/fleet/cell-exec.js` (canale identita' fd3/fd4, JSON-RPC 2.0).
@@ -108,7 +108,7 @@ confronta `claims` con la challenge attesa prima del bind.
 |---|---|---|
 | `invalid-request` | fd gate | richiestа non conforme allo schema |
 | `identity-unverified` | fd gate/relay | canale non registrato o request malformata |
-| `verify-unsupported` | lease server | server senza metodo verify (pre-D-199) — fail-closed |
+| `verify-unsupported` | lease server | server senza metodo verify — fail-closed |
 | `revoked` | lease guard | lease non live, generazione/diversita' socket/cella |
 | `authority-unavailable` | lease guard | authority non configurata sul server |
 | `malformed` | authority | proof assente/malformato |
@@ -136,7 +136,7 @@ gia' esistente di `verify()`), mai dettagli del valore.
 - **Compatibilita'**: standalone (Fleet OFF): nessuna challenge, `bind()` non
   raggiungibile, verify mai invocato. Fleet ON: authority irraggiungibile o
   assente → `ok:false` → fail-closed (rifiuto del bind). Celle vive al restart
-  del server NC: il canale D-183 chiude, il supervisore riannuncia; i verify in
+  del server NC: il canale di lease chiude, il supervisore riannuncia; i verify in
   volo rispondono `revoked`/`timeout` e i bind in corso falliscono (fail-closed).
 
 ## 7. Mappatura implementativa lato NC
@@ -149,7 +149,7 @@ gia' esistente di `verify()`), mai dettagli del valore.
 | relay fd3/fd4 | `lib/fleet/cell-exec.js` metodo `nexuscrew/identity/verify` in `createIdentityChannel` |
 | handle al processo | env `NEXUSCREW_IDENTITY_FD=3:4` (cell-exec.js:455, gia' presente) |
 
-## 8. Estensione v1.1 (D-199, post-audit) — claims completi e verifica legata alla challenge
+## 8. Estensione v1.1 (post-audit) — claims completi e verifica legata alla challenge
 
 Il v1 escludeva `nonce` dai claims (restava server-side): il v1.1 lo
 RESTITUISCE dal record dell'authority perche' il lato VL lo confronta con

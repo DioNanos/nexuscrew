@@ -2,6 +2,30 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.24 — 2026-09-12
+
+- **Verifica dell'identità legata alla challenge, con claims completi.** La
+  verifica online di un identity proof (metodo `nexuscrew/identity/verify`, sul
+  canale di lease per cella) ora riceve dall'authority i claims che la challenge
+  ha effettivamente emesso, e il risultato è legato alla challenge stessa: una
+  risposta che non corrisponde alla challenge emessa viene rifiutata
+  (`challenge_mismatch`) invece di essere accettata. Il `nonce` torna fra i
+  claims perché il lato client lo confronta con la propria challenge al momento
+  del commit, senza fallback su claim esterni.
+
+- **Il canale serve più verifiche per connessione.** Dopo una verifica
+  conclusa il relay azzera il riferimento pendente: una seconda verifica sulla
+  stessa connessione (reconnect, resume, nuova incarnazione) non trovava più il
+  canale libero e falliva pur essendo il canale sano. Corretto, con e2e che
+  copre verifica ripetuta e challenge successiva.
+
+- **Requisito di compatibilità — la coppia versioni conta.** `codex-vl` **≥
+  0.154.0-vl.3** richiede **NexusCrew ≥ 0.9.24**: il daemon `codex-vl` con
+  identità obbligatoria e canale di verifica assente o inutilizzabile **non si
+  avvia** (fail-closed) e non può verificare l'identità contro un server che non
+  espone `verify`. Con NexusCrew 0.9.23 una cella gestita resta quindi
+  inutilizzabile; aggiornate il server prima del daemon.
+
 ## 0.9.23 — 2026-09-11
 
 - **Frontend bundle ricostruito.** Il banner «new version available /
