@@ -2,6 +2,35 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.25 (unreleased)
+
+- **Ollama Cloud catalog refreshed against the official measured sample of
+  2026-09-12.** Bare-name `gemma4` and `qwen3.5` enter the catalog (verified
+  alive with a 200 on `/v1/chat/completions`; official measured sample:
+  22 live ids / 8 dead variants), with context and capabilities taken from
+  the channel cards (`gemma4` 128K text+image, `qwen3.5` 256K text+image).
+  The 404 variants (`gemma4:12b`/`:e4b`, `qwen3.5:27b`/`:35b`/`:122b`, bare
+  `mistral-large-3`, `nemotron-3-super:120b`, `nemotron-3-nano:4b`) and
+  community ids stay out on purpose. `glm-5.3` and `deepseek-v4.1-flash`
+  were already listed and are not duplicated.
+- **Fixture-based liveness guard for the Ollama Cloud models.** New test
+  (`tests/fleet-ollama-liveness.test.js`): every catalog id must belong to
+  the official measured sample; when upstream retires an id, the test goes
+  red naming it as "to be verified". No network calls in tests; the real
+  periodic check remains a separate item.
+- **OpenCode Go catalog refreshed signal-only (401 CreditsError on
+  2026-09-12).** The Go plan could not generate (credits exhausted, listing
+  OK): the additions are wire signals, not end-to-end measurements.
+  `glm-5.3`, `glm-5.3-flash`, `longcat-2.0`, `deepseek-v4.1-flash` and
+  `hy4-preview` enter all three wires; `qwen3.8-flash` enters Messages/Chat
+  ONLY (Responses rejected, measured). New limits declared by models.dev
+  (1M context; `hy4-preview` 1024000), marked "declared, not measured".
+  Retired `glm-5`, `kimi-k2.5`, `minimax-m2.5` and `qwen3.5-plus` are
+  removed from the lists, LIMITS and the catalog, with a test guard against
+  re-introduction. `hy3` unchanged (diverging source on its output limit:
+  to be re-checked), default `deepseek-v4-flash` unchanged, VISION
+  unchanged (only the PNG-measured vision-exp id).
+
 ## 0.9.24 — 2026-09-12
 
 - **Verifica dell'identità legata alla challenge, con claims completi.** La

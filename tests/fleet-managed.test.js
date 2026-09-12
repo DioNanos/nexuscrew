@@ -258,6 +258,8 @@ test('Ollama Direct discovery: errore API usa la shortlist TOP di fallback', asy
     'glm-5.3',
     'kimi-k3',
     'deepseek-v4.1-flash',
+    // Delta 2026-09-12: bare-name forms measured alive on the cloud API.
+    'gemma4', 'qwen3.5',
   ]);
 });
 
