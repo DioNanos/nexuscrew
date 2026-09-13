@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { resolveManagedEngine } = require('../lib/fleet/managed.js');
+const { validPayload } = require('../lib/fleet/cell-exec.js');
 
 const KEY = 'CODEX_APP_SERVER_IDENTITY_REQUIRED';
 const ENGINE = { id: 'codex-vl.native', label: 'Codex-VL', managed: { client: 'codex-vl', provider: 'native', model: '' } };
@@ -149,4 +150,57 @@ test('identity required: cfg con credenziali esplicite identiche -> lancio rifiu
   assert.equal(r.engine.identityChannel, false);
   assert.match(r.engine.identityAuthorityUnavailable, /identical/);
   assert.ok(m.lines.some((l) => l.includes('identical')), m.lines);
+});
+
+// D-242: il buco era che NESSUN test alimentava `validPayload()` col payload
+// REALE prodotto dal launcher. `managed.js` (:2233) aggiunge `identityChannel`
+// e `runtime.js` (:289-296) lo mette nel payload del broker, ma la whitelist
+// di `cell-exec.js` (:114) elencava solo command/args/env/supervise/
+// restartPrompt/lease/identity: chiave ignota -> payload rifiutato ->
+// `invalid launch payload` -> CLIENT_EARLY_EXIT, la cella non nasceva.
+// Qui il payload nasce dalla STESSA risoluzione che decide il flag (managed.js)
+// e viene composto come lo compone runtime.js, poi passa al validatore vero.
+function payloadDalLauncher(engine, extra = {}) {
+  return {
+    command: '/bin/true',
+    args: [],
+    env: { PATH: '/bin' },
+    supervise: { enabled: false },
+    ...(typeof engine.identityChannel === 'boolean' ? { identityChannel: engine.identityChannel } : {}),
+    ...extra,
+  };
+}
+
+test('D-242: payload legacy prodotto dal launcher -> validPayload true', () => {
+  const r = resolve(mondo());
+  assert.equal(r.ok, true);
+  assert.equal(r.engine.identityChannel, false);
+  const payload = payloadDalLauncher(r.engine);
+  assert.equal(payload.identityChannel, false, 'il launcher mette la chiave in legacy');
+  assert.equal(validPayload(payload), true, 'il payload reale in legacy deve essere accettato');
+});
+
+test('D-242: payload authority prodotto dal launcher -> validPayload true', () => {
+  const r = resolve(mondo(), {
+    fleetIdentityMode: 'authority',
+    identityDaemonCredential: 'd'.repeat(32),
+    identityLauncherCredential: 'l'.repeat(32),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.engine.identityChannel, true);
+  assert.equal(validPayload(payloadDalLauncher(r.engine)), true);
+});
+
+test('D-242: identityChannel non booleano -> payload invalido', () => {
+  const base = { command: '/bin/true', args: [], env: { PATH: '/bin' }, supervise: { enabled: false } };
+  assert.equal(validPayload({ ...base, identityChannel: false }), true);
+  assert.equal(validPayload({ ...base, identityChannel: true }), true);
+  assert.equal(validPayload({ ...base, identityChannel: 'no' }), false, 'stringa: rifiutata');
+  assert.equal(validPayload({ ...base, identityChannel: 0 }), false, '0 non e un booleano');
+  assert.equal(validPayload({ ...base, identityChannel: null }), false);
+});
+
+test('D-242: chiamante precedente senza la chiave -> ancora accettato', () => {
+  const base = { command: '/bin/true', args: [], env: { PATH: '/bin' }, supervise: { enabled: false } };
+  assert.equal(validPayload(base), true);
 });
