@@ -263,6 +263,15 @@ What it does:
 `loadConfig` picks the credentials up automatically from the two files: they
 are never logged, echoed, or included in any API/federation payload.
 
+**Enforced at load.** The distinctness and the permissions are not conventions:
+at load time, identical credentials, credential files that are not mode `0600`,
+or an authority directory that is not mode `0700` are refused — the authority
+is not constructed, the launcher exports `CODEX_APP_SERVER_IDENTITY_REQUIRED=0`
+with a structured log naming the reason, and `nexuscrew doctor` reports the
+fault (`credentials distinct: no`, permission problems) without exposing any
+value. `nexuscrew identity provision` also refuses to ever write identical
+credentials, even with `--force`.
+
 ### 9.2 Activate
 
 Restart the NexusCrew service after provisioning. At launch, the fleet runtime
