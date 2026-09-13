@@ -2,6 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.26 — 2026-09-13
+
+- rebuilt the frontend bundle for the shipped version (the 0.9.25 package carried a 0.9.24 bundle, so the UI kept showing the update banner); the publish gate now fails when the bundle version differs from the package version.
+
 ## 0.9.25 (unreleased)
 
 - **MCP identity reads the verified binding metadata first (fail-closed).**
