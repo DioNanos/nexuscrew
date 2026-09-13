@@ -234,3 +234,48 @@ proof valido firmato per un'altra challenge non e' trasferibile.
   claims verificati, nessun merge con i claim esterni del client.
 - La richiesta verify porta `expected` = tupla della challenge corrente.
 - `challenge_mismatch` → `AudienceMismatch` (rifiuto bind, fail-closed).
+
+## 9. Provisioning (authority mode)
+
+The authority mode is opt-in and must be provisioned on the host that runs the
+NexusCrew service. Nothing ships with credentials: the launcher only exports
+`CODEX_APP_SERVER_IDENTITY_REQUIRED=1` when the mode is `authority` AND the
+authority is constructible (both credential files present, 0600, distinct).
+
+### 9.1 Provision
+
+```bash
+nexuscrew identity provision             # writes credentials + activates authority mode
+nexuscrew identity provision --no-write-config   # prints the keys, writes nothing to config
+nexuscrew identity provision --force     # regenerate both credentials (old ones invalidated)
+```
+
+What it does:
+
+1. Creates `~/.nexuscrew/identity-authority/` with mode `0700` (override the
+   directory with `--dir` or `identityAuthorityDir` in config).
+2. Writes two distinct random credentials (32 bytes, hex) as
+   `daemon.credential` and `launcher.credential`, both mode `0600`. Existing
+   files are never overwritten without `--force`.
+3. Sets `fleet.identity.mode = "authority"` in the NexusCrew config
+   (`config.json`), unless `--no-write-config` is passed.
+
+`loadConfig` picks the credentials up automatically from the two files: they
+are never logged, echoed, or included in any API/federation payload.
+
+### 9.2 Activate
+
+Restart the NexusCrew service after provisioning. At launch, the fleet runtime
+builds the authority, starts emitting launch subjects, and the cell launcher
+exports `CODEX_APP_SERVER_IDENTITY_REQUIRED=1` for codex-vl cells. Run
+`nexuscrew doctor` to confirm: the `Fleet identity authority mode` check shows
+the mode and whether the authority is constructible.
+
+### 9.3 Rollback
+
+Set `fleet.identity.mode = "legacy"` in the config (or remove the key) and
+restart the service. Cells keep working with the legacy identity variables
+(`TMUX` / `TMUX_PANE` / `NEXUSCREW_MCP_SESSION`); the launcher exports
+`CODEX_APP_SERVER_IDENTITY_REQUIRED=0`. The credential files can stay in place
+(deleted with `--force` regeneration or manually if you want the mode fully
+off).

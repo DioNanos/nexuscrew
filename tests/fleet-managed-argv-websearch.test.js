@@ -135,7 +135,7 @@ test('(d) codex-vl Fleet: identity-required presente nell env, non negli argv', 
       { home, env: {} },
     );
     assert.equal(r.ok, true, r.ok ? '' : r.reason);
-    assert.equal(r.engine.env[IDENTITY_REQUIRED_ENV], '1');
+    assert.equal(r.engine.env[IDENTITY_REQUIRED_ENV], '0', 'default: legacy mode -> REQUIRED=0');
     assert.equal(r.engine.args.includes(IDENTITY_REQUIRED_ENV), false);
     assert.equal(r.engine.args.some((arg) => arg.includes(IDENTITY_REQUIRED_ENV)), false);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }

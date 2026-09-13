@@ -267,7 +267,7 @@ test('Codex-VL usa la wire Responses su /v1 e non propaga credenziali ambientali
     assert.equal(result.ok, true);
     assert.deepEqual(result.engine.env, {
       OPENCODE_API_KEY: value,
-      CODEX_APP_SERVER_IDENTITY_REQUIRED: '1',
+      CODEX_APP_SERVER_IDENTITY_REQUIRED: '0',
     });
     const argv = result.engine.args.join('\n');
     assert.match(argv, /model_provider="opencode_go"/);

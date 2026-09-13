@@ -4,6 +4,35 @@ All notable changes to NexusCrew are tracked here.
 
 ## 0.9.25 (unreleased)
 
+- **MCP identity reads the verified binding metadata first (fail-closed).**
+  `nexuscrew mcp` now evaluates the `NEXUSCREW_VERIFIED_*` metadata delivered
+  by codex-vl >= 0.154.0-vl.3 launchers before any legacy source: version,
+  owner instance, cell, channel and the authority introspection must all be
+  coherent (source `verified-env`, verified identity in `nc_identity`), and any
+  incoherence fails closed with `NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID`
+  instead of falling back to the legacy variables. Without the metadata the
+  legacy path is unchanged.
+- **`CODEX_APP_SERVER_IDENTITY_REQUIRED=1` is exported only in authority
+  mode.** The fleet launcher now exports the flag for codex-vl cells only when
+  the fleet identity mode is `authority` and the authority is constructible;
+  otherwise it exports an explicit `0` with a structured log line naming the
+  reason. Explicit user overrides (`engine.env`, `cfg.env`) still win, with a
+  warning when they force `1` outside authority mode.
+- **`nexuscrew identity provision`.** New command that generates the two
+  distinct authority credentials (32 random bytes each, files `0600` inside a
+  `0700` directory under `~/.nexuscrew/identity-authority/`), never overwrites
+  existing credentials without `--force`, activates
+  `fleet.identity.mode = "authority"` in the config (or prints the exact keys
+  with `--no-write-config`). `loadConfig` reads the credential files
+  automatically and `nexuscrew doctor` shows the identity mode and authority
+  constructibility (no values).
+- **MCP identity remediation rewritten.** `nc_identity` and `doctor` no longer
+  recommend allowlisting `TMUX`/`TMUX_PANE`/`NEXUSCREW_MCP_SESSION` in the MCP
+  server `env_vars`: on a shared verified spawn that allowlist fails the launch
+  (the names are reserved). The two valid paths are a verified session
+  (codex-vl >= 0.154.0-vl.3 + NexusCrew >= 0.9.25 with provisioned authority)
+  or a legacy session inheriting the three variables.
+
 - **Ollama Cloud catalog refreshed against the official measured sample of
   2026-09-12.** Bare-name `gemma4` and `qwen3.5` enter the catalog (verified
   alive with a 200 on `/v1/chat/completions`; official measured sample:
