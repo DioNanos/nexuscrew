@@ -27,6 +27,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const { main } = require('../lib/fleet/cell-exec.js');
+const { identityLaunchRefusal } = require('../lib/fleet/runtime.js');
 
 const CHILD_REPORT = `
   const fs = require('node:fs');
@@ -102,4 +103,20 @@ test('payload senza il campo (caller precedenti): il canale resta quello di prim
   assert.equal(code, 0, errors.join(''));
   assert.equal(stdio.length, 5);
   assert.equal(observed.identityFd, '3:4');
+});
+
+test('rifiuto: authority costruibile, standalone o payload assente -> nessun rifiuto', () => {
+  assert.equal(identityLaunchRefusal({ identityChannel: true }), null);
+  assert.equal(identityLaunchRefusal({ identityChannel: false }), null);
+  assert.equal(identityLaunchRefusal(undefined), null);
+});
+
+test('rifiuto: authority configurata ma non costruibile -> IDENTITY_AUTHORITY_UNAVAILABLE col motivo', () => {
+  const refusal = identityLaunchRefusal({
+    identityChannel: false,
+    identityAuthorityUnavailable: 'daemon and launcher credentials are identical',
+  });
+  assert.equal(refusal.code, 'IDENTITY_AUTHORITY_UNAVAILABLE');
+  assert.equal(refusal.status, 500);
+  assert.match(refusal.message, /daemon and launcher credentials are identical/);
 });
