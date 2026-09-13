@@ -107,3 +107,182 @@ test('identity provider: persist aggiorna il canale e la sessione discordante è
   assert.equal(onDisk.proof.jti, rotated.jti);
   assert.equal((fs.statSync(identityChannelPath({ tokenPath, session: 'cloud-Dev' })).mode & 0o777), 0o600);
 });
+
+// --- C8-ter: fonte verified-env con precedenza assoluta e fail-closed -------
+
+const OWNER = 'a'.repeat(32);
+
+function verifiedEnv(overrides = {}) {
+  return {
+    NEXUSCREW_VERIFIED_ENV_VERSION: '1',
+    NEXUSCREW_VERIFIED_OWNER_INSTANCE_ID: OWNER,
+    NEXUSCREW_VERIFIED_CELL_ID: 'Dev',
+    NEXUSCREW_VERIFIED_INCARNATION_ID: PROOF.incarnationId,
+    NEXUSCREW_VERIFIED_BINDING_ID: 'binding-x',
+    NEXUSCREW_VERIFIED_ORIGIN: 'local_tui',
+    ...overrides,
+  };
+}
+
+function liveOut(overrides = {}) {
+  return {
+    status: 'live', identityMode: 'authority', instanceId: OWNER,
+    cellId: 'Dev', tmuxSession: 'cloud-Dev', incarnationId: PROOF.incarnationId,
+    issuedAt: 1, expiresAt: 61_000, ...overrides,
+  };
+}
+
+function fetchOk(out) {
+  return async () => ({ ok: true, status: 200, json: async () => out });
+}
+
+test('verified-env: metadati coerenti -> contesto verified con incarnation del binding', async () => {
+  const { tokenPath } = mondo();
+  persistIdentityChannel({
+    tokenPath, session: 'cloud-Dev', cellId: 'Dev', proof: PROOF, expiresAt: 61_000,
+  });
+  const provider = createMcpIdentityProvider({
+    config: { port: 4242, tokenPath, identityOwnerInstanceId: OWNER },
+    env: verifiedEnv(), now: () => 30_000, fetchImpl: fetchOk(liveOut()),
+  });
+  assert.ok(provider, 'metadati verified presenti: il provider deve esistere');
+  assert.equal(provider.identitySource, 'verified-env');
+  const raw = await provider({ tool: 'nc_identity' });
+  const context = normalizeIdentityContext(raw, { now: () => 30_000 });
+  assert.equal(context.cellId, 'Dev');
+  assert.equal(context.verified, true);
+  assert.equal(provider.currentProof().incarnationId, PROOF.incarnationId);
+});
+
+test('verified-env: version != 1 -> VERIFIED_ENV_INVALID, MAI la sessione legacy', async () => {
+  const { tokenPath } = mondo();
+  persistIdentityChannel({
+    tokenPath, session: 'cloud-Dev', cellId: 'Dev', proof: PROOF, expiresAt: 61_000,
+  });
+  const provider = createMcpIdentityProvider({
+    config: { port: 4242, tokenPath, identityOwnerInstanceId: OWNER },
+    env: verifiedEnv({ NEXUSCREW_VERIFIED_ENV_VERSION: '2', NEXUSCREW_MCP_SESSION: 'cloud-Dev' }),
+    now: () => 30_000, fetchImpl: fetchOk(liveOut()),
+  });
+  await assert.rejects(() => provider(), (e) => e.code === 'NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID');
+});
+
+test('verified-env: owner diverso dall istanza locale -> fail-closed', async () => {
+  const { tokenPath } = mondo();
+  persistIdentityChannel({
+    tokenPath, session: 'cloud-Dev', cellId: 'Dev', proof: PROOF, expiresAt: 61_000,
+  });
+  const provider = createMcpIdentityProvider({
+    config: { port: 4242, tokenPath, identityOwnerInstanceId: OWNER },
+    env: verifiedEnv({ NEXUSCREW_VERIFIED_OWNER_INSTANCE_ID: 'b'.repeat(32) }),
+    now: () => 30_000, fetchImpl: fetchOk(liveOut()),
+  });
+  await assert.rejects(() => provider(), (e) => e.code === 'NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID');
+});
+
+test('verified-env: cella non mappabile a nessuna sessione -> fail-closed', async () => {
+  const { tokenPath } = mondo();
+  const provider = createMcpIdentityProvider({
+    config: { port: 4242, tokenPath, identityOwnerInstanceId: OWNER },
+    env: verifiedEnv({ NEXUSCREW_VERIFIED_CELL_ID: 'no space allowed' }),
+    now: () => 30_000, fetchImpl: fetchOk(liveOut()),
+  });
+  assert.ok(provider, 'metadati presenti: il provider resta in piedi per fallire closed');
+  await assert.rejects(() => provider(), (e) => e.code === 'NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID');
+});
+
+test('verified-env: canale della sessione derivata assente -> fail-closed', async () => {
+  const { tokenPath } = mondo(); // nessun canale persistito
+  const provider = createMcpIdentityProvider({
+    config: { port: 4242, tokenPath, identityOwnerInstanceId: OWNER },
+    env: verifiedEnv(), now: () => 30_000, fetchImpl: fetchOk(liveOut()),
+  });
+  await assert.rejects(() => provider(), (e) => e.code === 'NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID');
+});
+
+test('verified-env: introspezione con incarnation mismatch -> fail-closed', async () => {
+  const { tokenPath } = mondo();
+  persistIdentityChannel({
+    tokenPath, session: 'cloud-Dev', cellId: 'Dev', proof: PROOF, expiresAt: 61_000,
+  });
+  const provider = createMcpIdentityProvider({
+    config: { port: 4242, tokenPath, identityOwnerInstanceId: OWNER },
+    env: verifiedEnv(), now: () => 30_000,
+    fetchImpl: fetchOk(liveOut({ incarnationId: 'f'.repeat(16) })),
+  });
+  await assert.rejects(() => provider(), (e) => e.code === 'NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID');
+});
+
+test('verified-env: introspezione non live (stale) -> fail-closed', async () => {
+  const { tokenPath } = mondo();
+  persistIdentityChannel({
+    tokenPath, session: 'cloud-Dev', cellId: 'Dev', proof: PROOF, expiresAt: 61_000,
+  });
+  const provider = createMcpIdentityProvider({
+    config: { port: 4242, tokenPath, identityOwnerInstanceId: OWNER },
+    env: verifiedEnv(), now: () => 30_000,
+    fetchImpl: fetchOk(liveOut({ status: 'registered' })),
+  });
+  await assert.rejects(() => provider(), (e) => e.code === 'NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID');
+});
+
+test('verified-env: authority irraggiungibile -> AUTHORITY_UNAVAILABLE (codice C9)', async () => {
+  const { tokenPath } = mondo();
+  persistIdentityChannel({
+    tokenPath, session: 'cloud-Dev', cellId: 'Dev', proof: PROOF, expiresAt: 61_000,
+  });
+  const provider = createMcpIdentityProvider({
+    config: { port: 4242, tokenPath, identityOwnerInstanceId: OWNER },
+    env: verifiedEnv(), now: () => 30_000,
+    fetchImpl: async () => { throw new Error('ECONNREFUSED'); },
+  });
+  await assert.rejects(() => provider(), (e) => e.code === 'NEXUSCREW_MCP_IDENTITY_AUTHORITY_UNAVAILABLE');
+});
+
+test('verified-env: NEXUSCREW_MCP_SESSION valido presente MAI usato come fallback', async () => {
+  const { tokenPath } = mondo();
+  // canale presente SOLO per la sessione legacy: se il codice provasse il
+  // fallback, l'introspezione live su quella sessione costruirebbe il contesto.
+  persistIdentityChannel({
+    tokenPath, session: 'cloud-Dev', cellId: 'Dev', proof: PROOF, expiresAt: 61_000,
+  });
+  const provider = createMcpIdentityProvider({
+    config: { port: 4242, tokenPath, identityOwnerInstanceId: OWNER },
+    env: verifiedEnv({
+      NEXUSCREW_VERIFIED_CELL_ID: 'Other',
+      NEXUSCREW_VERIFIED_INCARNATION_ID: 'e'.repeat(16),
+      NEXUSCREW_MCP_SESSION: 'cloud-Dev',
+    }),
+    now: () => 30_000, fetchImpl: fetchOk(liveOut()),
+  });
+  await assert.rejects(() => provider(), (e) => e.code === 'NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID');
+});
+
+test('verified-env: canale per la sessione derivata dalla cella, non dalla legacy', async () => {
+  const { tokenPath } = mondo();
+  // Due canali: quello della sessione legacy (cloud-Other) e quello della
+  // cella derivata dai metadati (cloud-Dev). L'introspezione deve usare il
+  // proof della sessione derivata, MAI quello della sessione legacy.
+  persistIdentityChannel({
+    tokenPath, session: 'cloud-Other', cellId: 'Other',
+    proof: { ...PROOF, cellId: 'Other', incarnationId: '9'.repeat(16) }, expiresAt: 61_000,
+  });
+  persistIdentityChannel({
+    tokenPath, session: 'cloud-Dev', cellId: 'Dev', proof: PROOF, expiresAt: 61_000,
+  });
+  const seenProofs = [];
+  const fetchImpl = async (url, init = {}) => {
+    seenProofs.push(JSON.parse(init.body).proof);
+    return { ok: true, status: 200, json: async () => liveOut() };
+  };
+  const provider = createMcpIdentityProvider({
+    config: { port: 4242, tokenPath, identityOwnerInstanceId: OWNER },
+    env: verifiedEnv({ NEXUSCREW_MCP_SESSION: 'cloud-Other' }),
+    now: () => 30_000, fetchImpl,
+  });
+  assert.ok(provider);
+  const raw = await provider({ tool: 'nc_identity' });
+  const context = normalizeIdentityContext(raw, { now: () => 30_000 });
+  assert.equal(context.verified, true);
+  assert.deepEqual(seenProofs, [PROOF], 'esattamente il proof del canale derivato dalla cella');
+});

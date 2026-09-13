@@ -152,7 +152,7 @@ test('Codex-VL 0.144.7 profile is Responses-only and its catalog loads in the re
     assert.equal(result.ok, true);
     assert.deepEqual(result.engine.env, {
       ALIBABA_CODE_API_KEY: value,
-      CODEX_APP_SERVER_IDENTITY_REQUIRED: '1',
+      CODEX_APP_SERVER_IDENTITY_REQUIRED: '0',
     });
     const argv = result.engine.args.join('\n');
     assert.match(argv, /model_provider="alibaba_token_plan"/);

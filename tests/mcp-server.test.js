@@ -807,9 +807,23 @@ test('nc_identity: missing (nessun TMUX/NEXUSCREW_MCP_SESSION), NESSUNA chiamata
   assert.equal(j.session, undefined); // session solo se validata
   assert.equal(j.source, 'missing');
   assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_MISSING');
-  assert.deepEqual(j.envPresence, { TMUX: false, TMUX_PANE: false, NEXUSCREW_MCP_SESSION: false });
-  assert.deepEqual(j.requiredEnvVars, ['TMUX', 'TMUX_PANE', 'NEXUSCREW_MCP_SESSION']);
-  assert.match(j.remediation, /--env-var/); // suggerimento senza valori
+  assert.deepEqual(j.envPresence, {
+    TMUX: false, TMUX_PANE: false, NEXUSCREW_MCP_SESSION: false,
+    NEXUSCREW_VERIFIED_ENV_VERSION: false, NEXUSCREW_VERIFIED_OWNER_INSTANCE_ID: false,
+    NEXUSCREW_VERIFIED_CELL_ID: false, NEXUSCREW_VERIFIED_INCARNATION_ID: false,
+    NEXUSCREW_VERIFIED_BINDING_ID: false, NEXUSCREW_VERIFIED_ORIGIN: false,
+    NEXUSCREW_VERIFIED_THREAD_ID: false,
+  });
+  assert.deepEqual(j.requiredEnvVars, [
+    'TMUX', 'TMUX_PANE', 'NEXUSCREW_MCP_SESSION',
+    'NEXUSCREW_VERIFIED_ENV_VERSION', 'NEXUSCREW_VERIFIED_OWNER_INSTANCE_ID',
+    'NEXUSCREW_VERIFIED_CELL_ID', 'NEXUSCREW_VERIFIED_INCARNATION_ID',
+    'NEXUSCREW_VERIFIED_BINDING_ID', 'NEXUSCREW_VERIFIED_ORIGIN',
+    'NEXUSCREW_VERIFIED_THREAD_ID',
+  ]);
+  // C8-ter: la remediation NON consiglia piu' l'allowlist legacy (spawn verified fallirebbe)
+  assert.doesNotMatch(j.remediation, /--env-var/);
+  assert.match(j.remediation, /identity provision/);
   assert.equal(calls.length, 0); // NESSUNA API HTTP
 });
 
@@ -821,7 +835,13 @@ test('nc_identity: invalid (NEXUSCREW_MCP_SESSION presente ma non valida) -> cod
   assert.equal(j.session, undefined);
   assert.equal(j.source, 'missing');
   assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_INVALID');
-  assert.deepEqual(j.envPresence, { TMUX: false, TMUX_PANE: false, NEXUSCREW_MCP_SESSION: true });
+  assert.deepEqual(j.envPresence, {
+    TMUX: false, TMUX_PANE: false, NEXUSCREW_MCP_SESSION: true,
+    NEXUSCREW_VERIFIED_ENV_VERSION: false, NEXUSCREW_VERIFIED_OWNER_INSTANCE_ID: false,
+    NEXUSCREW_VERIFIED_CELL_ID: false, NEXUSCREW_VERIFIED_INCARNATION_ID: false,
+    NEXUSCREW_VERIFIED_BINDING_ID: false, NEXUSCREW_VERIFIED_ORIGIN: false,
+    NEXUSCREW_VERIFIED_THREAD_ID: false,
+  });
   assert.equal(calls.length, 0);
 });
 
@@ -851,7 +871,13 @@ test('nc_identity: tmux valido (TMUX set, display-message ok) -> source tmux', a
   assert.equal(j.session, 'work-build');
   assert.equal(j.source, 'tmux');
   assert.equal(j.code, 'OK');
-  assert.deepEqual(j.envPresence, { TMUX: true, TMUX_PANE: true, NEXUSCREW_MCP_SESSION: false });
+  assert.deepEqual(j.envPresence, {
+    TMUX: true, TMUX_PANE: true, NEXUSCREW_MCP_SESSION: false,
+    NEXUSCREW_VERIFIED_ENV_VERSION: false, NEXUSCREW_VERIFIED_OWNER_INSTANCE_ID: false,
+    NEXUSCREW_VERIFIED_CELL_ID: false, NEXUSCREW_VERIFIED_INCARNATION_ID: false,
+    NEXUSCREW_VERIFIED_BINDING_ID: false, NEXUSCREW_VERIFIED_ORIGIN: false,
+    NEXUSCREW_VERIFIED_THREAD_ID: false,
+  });
   assert.equal(calls.length, 0);
 });
 
@@ -1639,4 +1665,53 @@ test('identity context online: il binding viaggia su ogni chiamata API con effet
   assert.equal(parsed.context.cellId, 'Dev');
   assert.equal(parsed.context.kind, 'mcp-v1');
   assert.equal(parsed.proof.jti, proof.jti);
+});
+
+// --- C8-ter: la fonte verified-env veto il percorso legacy -------------------
+
+test('resolveIdentity: verified-env presente -> fail-closed VERIFIED_ENV_INVALID, mai legacy', async () => {
+  // NEXUSCREW_MCP_SESSION valido accanto a metadati verified: il legacy NON
+  // deve mai vincere (non e' un fallback, e' un percorso alternativo).
+  const invalid = await resolveIdentity({
+    env: {
+      NEXUSCREW_VERIFIED_ENV_VERSION: '2',
+      NEXUSCREW_VERIFIED_CELL_ID: 'Dev',
+      NEXUSCREW_MCP_SESSION: 'cloud-Dev',
+      TMUX: '/tmp/tmux-0',
+      TMUX_PANE: '%0',
+    },
+    tmuxBin: 'tmux',
+    execFileImpl: () => { throw new Error('tmux non deve essere chiamato'); },
+  });
+  assert.equal(invalid.session, null);
+  assert.equal(invalid.source, 'verified-env');
+  assert.equal(invalid.code, 'NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID');
+  assert.equal(invalid.requiredEnvVars.includes('NEXUSCREW_VERIFIED_ENV_VERSION'), true);
+  // presence dei nomi verified: SI, ma solo booleani (mai valori)
+  assert.equal(invalid.envPresence.NEXUSCREW_VERIFIED_CELL_ID, true);
+  assert.equal(JSON.stringify(invalid).includes('configured-value'), false);
+});
+
+test('resolveIdentity: presence parziale verified -> comunque fail-closed', async () => {
+  const partial = await resolveIdentity({
+    env: { NEXUSCREW_VERIFIED_ORIGIN: 'local_tui', NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    tmuxBin: 'tmux',
+    execFileImpl: () => { throw new Error('tmux non deve essere chiamato'); },
+  });
+  assert.equal(partial.session, null);
+  assert.equal(partial.source, 'verified-env');
+  assert.equal(partial.code, 'NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID');
+});
+
+test('resolveIdentity: verified-env assente -> percorso legacy invariato', async () => {
+  const legacy = await resolveIdentity({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    tmuxBin: 'tmux',
+    execFileImpl: () => { throw new Error('nope'); },
+  });
+  assert.equal(legacy.session, 'cloud-Dev');
+  assert.equal(legacy.source, 'NEXUSCREW_MCP_SESSION');
+  assert.equal(legacy.code, 'OK');
+  assert.equal(legacy.requiredEnvVars.includes('NEXUSCREW_VERIFIED_ENV_VERSION'), true,
+    'requiredEnvVars esteso coi nomi verified');
 });
