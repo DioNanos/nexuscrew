@@ -88,3 +88,31 @@ test('identity required: override definition vince su cfg.env', () => {
   assert.equal(r.ok, true);
   assert.equal(r.engine.env[KEY], '0');
 });
+
+test('identity required: credenziali identiche nei file -> 0 con log del fault', () => {
+  const m = mondo();
+  const dir = path.join(m.home, '.nexuscrew', 'identity-authority');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(dir, 'daemon.credential'), 'uguale\n', { mode: 0o600 });
+  fs.writeFileSync(path.join(dir, 'launcher.credential'), 'uguale\n', { mode: 0o600 });
+  // Come in produzione: il runtime passa il cfg di loadConfig, che ha letto i
+  // file e registrato il fault.
+  const cfg = require('../lib/config.js').loadConfig({ home: m.home });
+  const r = resolve(m, { ...cfg, fleetIdentityMode: 'authority' });
+  assert.equal(r.ok, true);
+  assert.equal(r.engine.env[KEY], '0');
+  assert.ok((cfg.identityAuthorityFault || '').includes('identical'), cfg.identityAuthorityFault);
+  assert.ok(m.lines.some((l) => l.includes('identical')), m.lines);
+});
+
+test('identity required: cfg con credenziali esplicite identiche -> 0 con log fault', () => {
+  const m = mondo();
+  const r = resolve(m, {
+    fleetIdentityMode: 'authority',
+    identityDaemonCredential: 'stesso',
+    identityLauncherCredential: 'stesso',
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.engine.env[KEY], '0');
+  assert.ok(m.lines.some((l) => l.includes('identical')), m.lines);
+});

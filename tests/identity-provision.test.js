@@ -82,3 +82,62 @@ test('loadConfig: legge le credenziali dai file provisionati', () => {
   assert.notEqual(cfg.identityDaemonCredential, cfg.identityLauncherCredential);
   assert.ok(cfg.identityDaemonCredential.length >= 64);
 });
+
+// --- N-1/N-2: distinct enforced (provision + load) e permessi at load --------
+
+test('provision: credenziali identiche (random degenere) -> rifiuto, nulla scritto', () => {
+  const { home } = mondo();
+  const r = provisionIdentityAuthority({
+    home,
+    randomBytes: (size) => Buffer.alloc(size, 1), // entropia degenera: sempre identiche
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'IDENTICAL_CREDENTIALS');
+  assert.match(r.message, /identical/);
+  assert.equal(fs.readdirSync(defaultAuthorityDir(home)).filter((f) => f.endsWith('.credential')).length, 0,
+    'nessuna credenziale identica deve finire su disco');
+  // Anche con --force: rifiuto identico.
+  const r2 = provisionIdentityAuthority({
+    home, force: true,
+    randomBytes: (size) => Buffer.alloc(size, 1),
+  });
+  assert.equal(r2.ok, false);
+  assert.equal(r2.code, 'IDENTICAL_CREDENTIALS');
+});
+
+test('loadConfig: credenziali identiche nei file -> non caricate + fault registrato', () => {
+  const { home } = mondo();
+  const dir = defaultAuthorityDir(home);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(dir, 'daemon.credential'), 'stesso-segreto\n', { mode: 0o600 });
+  fs.writeFileSync(path.join(dir, 'launcher.credential'), 'stesso-segreto\n', { mode: 0o600 });
+  const cfg = loadConfig({ home });
+  assert.equal(cfg.identityDaemonCredential, undefined, 'credenziali identiche: non caricate');
+  assert.equal(cfg.identityLauncherCredential, undefined);
+  assert.match(cfg.identityAuthorityFault || '', /identical/);
+});
+
+test('loadConfig: file credenziale 0644 -> rifiutato con fault permessi', () => {
+  const { home } = mondo();
+  const dir = defaultAuthorityDir(home);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(dir, 'daemon.credential'), 'buono\n', { mode: 0o600 });
+  fs.writeFileSync(path.join(dir, 'launcher.credential'), 'permessi-larghi\n', { mode: 0o644 });
+  const cfg = loadConfig({ home });
+  assert.equal(cfg.identityDaemonCredential, undefined);
+  assert.equal(cfg.identityLauncherCredential, undefined);
+  assert.match(cfg.identityAuthorityFault || '', /0600/);
+});
+
+test('doctor: credenziali identiche -> credentials distinct: no e authority non costruibile', () => {
+  const { checkIdentityAuthorityMode } = require('../lib/cli/doctor.js');
+  const { home, configPath } = mondo();
+  const dir = defaultAuthorityDir(home);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(dir, 'daemon.credential'), 'stesso-segreto\n', { mode: 0o600 });
+  fs.writeFileSync(path.join(dir, 'launcher.credential'), 'stesso-segreto\n', { mode: 0o600 });
+  fs.writeFileSync(configPath, JSON.stringify({ fleet: { identity: { mode: 'authority' } } }));
+  const check = checkIdentityAuthorityMode({ home, configPath });
+  assert.equal(check.ok, false, 'authority richiesta con credenziali identiche: non costruibile');
+  assert.match(check.detail, /credentials distinct: no/);
+});
