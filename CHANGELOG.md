@@ -15,9 +15,22 @@ All notable changes to NexusCrew are tracked here.
 - **`CODEX_APP_SERVER_IDENTITY_REQUIRED=1` is exported only in authority
   mode.** The fleet launcher now exports the flag for codex-vl cells only when
   the fleet identity mode is `authority` and the authority is constructible;
-  otherwise it exports an explicit `0` with a structured log line naming the
-  reason. Explicit user overrides (`engine.env`, `cfg.env`) still win, with a
+  in legacy mode it exports an explicit `0` and names the reason in a
+  structured log line. Explicit user overrides (`engine.env`, `cfg.env`) still win, with a
   warning when they force `1` outside authority mode.
+- **Standalone cells (`CODEX_APP_SERVER_IDENTITY_REQUIRED=0`) no longer
+  receive the identity channel.** The launcher created fd 3:4 and
+  `NEXUSCREW_IDENTITY_FD` even when it had resolved the flag to `0`, so the
+  child started an identity handshake against a legacy lease server that
+  answered `revoked` and the cell died at startup. The channel decision now
+  comes from the same resolution that produces the flag.
+- **A configured but unavailable fleet identity authority now refuses
+  protected cell launches instead of silently falling back to standalone.**
+  The launch fails with `IDENTITY_AUTHORITY_UNAVAILABLE` naming the reason
+  (never a value), and `nexuscrew doctor` reports the same state.
+- **Upgrade NexusCrew before codex-vl**: `codex-vl >= 0.154.0-vl.3` with
+  `NexusCrew <= 0.9.24` fails closed in Fleet cells (the old launcher forces
+  identity without an authority).
 - **`nexuscrew identity provision`.** New command that generates the two
   distinct authority credentials (32 random bytes each, files `0600` inside a
   `0700` directory under `~/.nexuscrew/identity-authority/`), never overwrites
