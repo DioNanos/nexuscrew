@@ -35,3 +35,6 @@ tests/published-tree-is-clean.test.js
 tests/published-tree-clean-rules.json
 tests/publication-boundary.test.js
 tools/extract-payload-context.py
+
+# Gate di coerenza versione bundle (parla di come si pubblica, non del prodotto).
+tests/published-bundle-version.test.js
