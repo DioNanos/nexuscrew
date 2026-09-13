@@ -72,6 +72,11 @@
       "source": "\\bD-[0-9]{3,}\\b",
       "flags": "",
       "reason": "identificativo interno di lavoro nel pacchetto"
+    },
+    {
+      "source": "\\bN-[0-9]",
+      "flags": "",
+      "reason": "identificativo interno di rilievo (serie N- ) nel pacchetto"
     }
   ]
 }

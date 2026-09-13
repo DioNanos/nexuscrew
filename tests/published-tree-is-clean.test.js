@@ -479,6 +479,23 @@ test('nemmeno l\'albero versionato porta quelle tracce, tests inclusi', () => {
     `il mirror pubblico non deve contenere queste tracce:\n  ${colpevoli.join('\n  ')}`);
 });
 
+// B-1 (pre-publish audit): la serie `N-` dei rilievi interni era l'unica
+// famiglia di ID corti fuori dal gate — tre commenti spediti nel pacchetto la
+// portavano ("N-1: ..."). Aggiungere la regola non basta: un pattern che non
+// morde nessun sintetico resta inerte e il gate resta verde per non aver
+// cercato. Qui si esercita nei due versi: morde la sigla, lascia stare i token
+// del bundle minificato (`N1`/`N2` del QR, senza trattino) e un identificatore
+// di codice.
+test('SIGLE N- — una sigla di rilievo in un commento fa fallire il gate (payload)', () => {
+  const colpe = colpeIn('  // N-1: le due credenziali devono essere DISTINTE', 'lib/esempio.js', true);
+  assert.ok(colpe.some((c) => /serie N-/.test(c)),
+    `una sigla N-1 in un commento non fa fallire il gate: ${JSON.stringify(colpe)}`);
+  assert.deepEqual(colpeIn('var t={N1:3,N2:3,N3:40,N4:10};', 'frontend/dist/assets/index-x.js', true), [],
+    'i token N1/N2 del bundle minificato sono legittimi e non devono mordere');
+  assert.deepEqual(colpeIn('const N1 = 3;', 'lib/esempio.js', true), [],
+    'senza trattino non e\' una sigla di rilievo');
+});
+
 // R3 — provenienza dell'audit interno nel payload: le grammatiche osservate
 // (audit su <ramo>@<sha>, (audit <giro> @ <sha>), (reaudit <sha>), lease-audit-,
 // "dall'auditor", ID di rilievo) devono mordere i casi sintetici e lasciare
@@ -565,8 +582,11 @@ test('PROVENIENZA AUDIT nel dist — le grammatiche strutturali mordono anche il
 });
 
 test('R6 — tutte le grammatiche R5 strutturali mordono anche nel dist', () => {
-  assert.equal(PAYLOAD_RULE_DEFS.payloadIds.length, 2,
-    'nel ramo esente del dist restano gli ID corti e gli ID di lavoro D-xxx');
+  // Le regole del ramo esente dist: ID corti di rilievo, ID di lavoro
+  // D-xxx, serie N- dei rilievi. Il numero e' asserito apposta — aggiungere
+  // una regola senza aggiornarlo fallisce qui invece di restare inerte.
+  assert.equal(PAYLOAD_RULE_DEFS.payloadIds.length, 3,
+    'nel ramo esente del dist restano gli ID corti, gli ID di lavoro D-xxx e la serie N-');
   const casi = [
     'INVARIANTI (da revisione F2/F3)',
     'questo giro — da revisione',
