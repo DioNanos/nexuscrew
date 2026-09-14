@@ -17,6 +17,8 @@ vi.mock('./CellPanel.jsx', () => ({
 
 import CellSwitcher from './CellSwitcher.jsx';
 import { writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
+import { positionKey } from '../lib/nodes-model.js';
+import { t } from '../lib/i18n.js';
 
 const active = (cell, tmuxSession) => ({ cell, tmuxSession, active: true, tmux: true, engine: 'claude.native' });
 const off = (cell, tmuxSession) => ({ cell, tmuxSession, active: false, tmux: false, engine: 'agy.native' });
@@ -487,5 +489,95 @@ describe('CellSwitcher', () => {
     const notice = await screen.findByRole('status');
     expect(notice.textContent).toBe('status not confirmed');
     expect(screen.queryByText('this cell is no longer active')).toBeNull();
+  });
+});
+
+// The star (pin / live) on the compact selector.
+//
+// The phone selector had no star at all: a cell could be pinned from the home
+// and the desktop sidebar, not from the surface that is used on a phone. These
+// tests pin the contract of the shared star: the same cycle
+// (none -> favorite -> live -> none), the same pin key the home reads, the same
+// labels, and a tap that never selects the row underneath.
+describe('CellSwitcher — the star on every row', () => {
+  const hostNone = { local: { hostCell: null, threadStatus: 'absent' } };
+
+  it('(a) shows one star per visible row, local and federated alike', async () => {
+    const { container } = render(
+      <CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={hostNone} />,
+    );
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    expect(screen.getByRole('button', { name: 'pin to top cell-One' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'pin to top Remote' })).toBeTruthy();
+    // One per row on screen, no extra affordance invented.
+    const rows = container.querySelectorAll('.nc-cell-switcher-row');
+    expect(container.querySelectorAll('[data-cell-star]')).toHaveLength(rows.length);
+  });
+
+  it('(b) tapping the star does not select the row and does not close the selector', async () => {
+    const onClose = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} hostByRoute={hostNone} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
+
+    expect(screen.getByRole('button', { name: /^cell-One / }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: 'select a cell' }).disabled).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('(c) pinning here writes the very key the home reads, route-qualified for a remote node', async () => {
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={hostNone} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
+    expect(JSON.parse(localStorage.getItem('nc_pins'))).toEqual([positionKey([], 'cloud-cell-One')]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'pin to top Remote' }));
+    const pins = JSON.parse(localStorage.getItem('nc_pins'));
+    expect(pins).toContain(positionKey(['hub'], 'cloud-Remote'));
+    expect(pins).toContain(positionKey([], 'cloud-cell-One'));
+    // The star shows the pin it just wrote.
+    expect(screen.getByRole('button', { name: 'pin to top cell-One' }).textContent).toBe('\u2605');
+  });
+
+  it('(d) favorite -> live: the tap asks the node to designate and the star becomes live', async () => {
+    localStorage.setItem('nc_pins', JSON.stringify([positionKey([], 'cloud-cell-One')]));
+    const onDesignateCell = vi.fn().mockResolvedValue({ ok: true });
+    const props = {
+      token: 'token', current: {}, onPick: vi.fn(), onClose: vi.fn(), onDesignateCell,
+    };
+    const { rerender } = render(<CellSwitcher {...props} hostByRoute={hostNone} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
+    expect(onDesignateCell).toHaveBeenCalledWith('cell-One', []);
+
+    // The parent owns the host state: it updates it from the designation reply.
+    rerender(
+      <CellSwitcher {...props} hostByRoute={{ local: { hostCell: 'cell-One', threadStatus: 'present' } }} />,
+    );
+    expect(screen.getByRole('button', { name: `${t('host-thread-present')} cell-One` })).toBeTruthy();
+  });
+
+  it('(e) a refused designation says why, keeps the state and never opens an alert', async () => {
+    localStorage.setItem('nc_pins', JSON.stringify([positionKey([], 'cloud-cell-One')]));
+    const refusal = { data: { reason: 'live-host-not-granted' } };
+    const onDesignateCell = vi.fn().mockResolvedValue({ ok: false, error: refusal });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    render(
+      <CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+        hostByRoute={hostNone} onDesignateCell={onDesignateCell} />,
+    );
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
+
+    expect(await screen.findByText(t('live-host-not-granted'))).toBeTruthy();
+    expect(alert).not.toHaveBeenCalled();
+    // Nothing changed on the row: it is still only pinned, not live.
+    expect(screen.getByRole('button', { name: 'pin to top cell-One' })).toBeTruthy();
+    alert.mockRestore();
   });
 });
