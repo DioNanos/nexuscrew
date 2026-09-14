@@ -220,12 +220,16 @@ export function SingleView({
           <button onClick={() => zoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
           <button onClick={() => zoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
           {/* A/B del renderer senza rebuild: la scelta e' per browser, il
-              terminale si riattacca al ricaricamento della pagina. Il titolo
-              dice cosa e' stato CHIESTO e cosa sta davvero disegnando. */}
-          <button onClick={switchRenderer}
+              terminale si riattacca al ricaricamento della pagina. E' un
+              pulsante-ICONA come i suoi vicini: un'etichetta scritta (GPU/DOM)
+              allargava la barra e schiacciava il nome della cella. Il testo
+              resta nel titolo e nell'etichetta accessibile, lo stato si vede
+              dalla classe. */}
+          <button type="button" className={`nc-renderer-toggle${rendererKind === 'webgl' ? ' on' : ''}`}
+            onClick={switchRenderer} aria-pressed={rendererKind === 'webgl'}
             title={t('terminal-renderer-switch').replace('{requested}', t(rendererPref === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl')).replace('{effective}', t(rendererKind === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl'))}
             aria-label={t('terminal-renderer-switch').replace('{requested}', t(rendererPref === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl')).replace('{effective}', t(rendererKind === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl'))}>
-            {rendererKind === 'dom' ? 'DOM' : 'GPU'}
+            <Icon name="gpu" size={18} />
           </button>
           <button onClick={() => setShowComposer((v) => !v)} title={t('composer')}><Icon name="keyboard" size={20} /></button>
           <button onClick={() => setShowFiles((v) => !v)} title={t('files')}><Icon name="folder" size={20} /></button>

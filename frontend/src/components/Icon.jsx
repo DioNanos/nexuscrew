@@ -107,6 +107,15 @@ const PATHS = {
       <path d="M21 15l-5-5L5 21" />
     </>
   ),
+  // Renderer GPU: un chip (quadrato con piedini e nucleo). Vive accanto a
+  // zoomIn/zoomOut perche' nell'header stanno nella stessa fila di pulsanti.
+  gpu: (
+    <>
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+      <rect x="10" y="10" width="4" height="4" rx="1" />
+      <path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" />
+    </>
+  ),
   zoomIn: (
     <>
       <circle cx="11" cy="11" r="7" />
