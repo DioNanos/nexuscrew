@@ -24,6 +24,10 @@ function safeLocal() {
 export const DICTS = {
   it: {
     'update-available': 'nuova versione {v} disponibile',
+    'update-stale': 'interfaccia non allineata: stai eseguendo la v{browser}, il nodo serve la v{ui}. ricarica senza cache; se persiste, riavvia il nodo',
+    'reload-no-cache': 'ricarica senza cache',
+    'update-installed-restart': 'versione {v} installata: riavvia il nodo',
+    'update-dismiss': 'chiudi',
     'install-version-mismatch': 'installazione incompleta: frontend e server non coincidono (v{v})',
     'reload': 'ricarica',
     'grid-empty': 'trascina qui una sessione dalla sidebar, o doppio-clic per la vista singola',
@@ -743,6 +747,10 @@ export const DICTS = {
   },
   en: {
     'update-available': 'new version {v} available',
+    'update-stale': 'interface out of step: you are running v{browser}, the node is serving v{ui}. reload without cache; if it persists, restart the node',
+    'reload-no-cache': 'reload without cache',
+    'update-installed-restart': 'version {v} installed: restart the node',
+    'update-dismiss': 'close',
     'install-version-mismatch': 'incomplete installation: frontend and server do not match (v{v})',
     'reload': 'reload',
     'grid-empty': 'drag a session here from the sidebar, or double-click for single view',
@@ -1455,6 +1463,10 @@ export const DICTS = {
   },
   es: {
     'update-available': 'nueva versi\u00f3n {v} disponible',
+    'update-stale': 'interfaz desalineada: ejecutas la v{browser}, el nodo sirve la v{ui}. recarga sin cach\u00e9; si persiste, reinicia el nodo',
+    'reload-no-cache': 'recargar sin cach\u00e9',
+    'update-installed-restart': 'versi\u00f3n {v} instalada: reinicia el nodo',
+    'update-dismiss': 'cerrar',
     'install-version-mismatch': 'instalación incompleta: frontend y servidor no coinciden (v{v})',
     'reload': 'recargar',
     'grid-empty': 'arrastra aqu\u00ed una sesi\u00f3n desde la barra lateral, o doble clic para vista \u00fanica',

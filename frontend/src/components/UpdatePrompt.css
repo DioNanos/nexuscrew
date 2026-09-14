@@ -16,3 +16,11 @@
 }
 .nc-update-btn:hover { background: #3a9d42; }
 @media (prefers-reduced-motion: reduce) { .nc-update { transition: none; } }
+.nc-update-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0;
+  background: transparent; border: 1px solid #2e7d32; color: #d9f7c7;
+  border-radius: 7px; font: inherit; font-size: 14px; line-height: 1;
+  cursor: pointer;
+}
+.nc-update-close:hover { background: #2e7d32; color: #06120a; }
