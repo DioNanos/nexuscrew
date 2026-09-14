@@ -58,6 +58,55 @@ function setNeedRefresh(v) {
 //    versions — the guard that makes the automatic reload loop-safe;
 //  - that the user closed the banner for a given triple of versions.
 const AUTO_KEY = 'nc-auto-reload';
+// Second guard, independent of the storage: the address bar. `reloadWithoutCache`
+// reloads the same URL, and a query parameter is the one piece of state a reload
+// cannot lose — unlike sessionStorage in some Android WebViews and PWA shells,
+// which accept the write and forget it at the next load.
+const RELOAD_PARAM = 'nc-reload';
+
+function globalLocation() {
+  try { return typeof location !== 'undefined' ? location : null; } catch (_) { return null; }
+}
+
+function globalHistory() {
+  try { return typeof history !== 'undefined' ? history : null; } catch (_) { return null; }
+}
+
+// The marker a reload attempt leaves behind: the pair of versions it was made
+// for, so a different pair is not blocked by an older attempt.
+export function reloadAttemptFromUrl(locationLike) {
+  const loc = locationLike === undefined ? globalLocation() : locationLike;
+  if (!loc || typeof loc.search !== 'string') return null;
+  try { return new URLSearchParams(loc.search).get(RELOAD_PARAM); } catch (_) { return null; }
+}
+
+export function rememberReloadAttemptInUrl(marker, { location: locationLike, history: historyLike } = {}) {
+  const loc = locationLike === undefined ? globalLocation() : locationLike;
+  const hist = historyLike === undefined ? globalHistory() : historyLike;
+  if (!loc || !hist || typeof hist.replaceState !== 'function') return false;
+  try {
+    const params = new URLSearchParams(loc.search || '');
+    params.set(RELOAD_PARAM, marker);
+    hist.replaceState(hist.state ?? null, '', `${loc.pathname || '/'}?${params.toString()}${loc.hash || ''}`);
+    return true;
+  } catch (_) { return false; }
+}
+
+// Called when the versions are aligned: the marker has done its job and must not
+// survive in a link the user copies or reloads later.
+export function clearReloadAttemptInUrl({ location: locationLike, history: historyLike } = {}) {
+  const loc = locationLike === undefined ? globalLocation() : locationLike;
+  const hist = historyLike === undefined ? globalHistory() : historyLike;
+  if (!loc || !hist || typeof hist.replaceState !== 'function') return false;
+  try {
+    const params = new URLSearchParams(loc.search || '');
+    if (!params.has(RELOAD_PARAM)) return false;
+    params.delete(RELOAD_PARAM);
+    const query = params.toString();
+    hist.replaceState(hist.state ?? null, '', `${loc.pathname || '/'}${query ? `?${query}` : ''}${loc.hash || ''}`);
+    return true;
+  } catch (_) { return false; }
+}
 const DISMISS_KEY = 'nc-update-dismissed';
 
 function memoriaDiSessione() {
@@ -127,17 +176,27 @@ export function reportServerVersions(serverVersion, uiVersion, browserVersion, o
     // The attempt is recorded BEFORE the reload: the other way round, a fast
     // reload would find no marker and the automation would be unguarded.
     const marker = `${uiVersion}|${browser}`;
+    // TWO guards, and the order matters. The URL one is read first because it
+    // depends on nothing: if the address bar already carries this pair, the
+    // attempt was made and a rewrite of the store cannot change that. The store
+    // is then the second opinion — and the reason it still gates the FIRST
+    // reload is that a context without session storage (private mode, iframe)
+    // has no way to remember anything of its own.
+    const urlTried = reloadAttemptFromUrl(opts.location) === marker;
     let canReload = false;
-    if (store && store.getItem(AUTO_KEY) !== marker) {
+    if (!urlTried && store && store.getItem(AUTO_KEY) !== marker) {
       try { store.setItem(AUTO_KEY, marker); } catch (_) { /* storage denied */ }
       canReload = store.getItem(AUTO_KEY) === marker;
     }
     if (canReload) {
+      // Written before the reload, like the store marker: the next load must be
+      // able to see the attempt even if the store forgets it.
+      rememberReloadAttemptInUrl(marker, { location: opts.location, history: opts.history });
       (opts.applyImpl || reloadWithoutCache)();
       next = null; // the reload is the answer: nothing to show
     }
-    // Without a session store the attempt cannot be remembered, so it cannot be
-    // made loop-safe: the diagnostic banner is what is left, and it is honest.
+    // With no session store AND no URL the attempt cannot be remembered, so it
+    // cannot be made loop-safe: the diagnostic banner is what is left.
   }
 
   const same = JSON.stringify(next) === JSON.stringify(serverIssue);
@@ -145,8 +204,10 @@ export function reportServerVersions(serverVersion, uiVersion, browserVersion, o
   if (!same) dispatch();
 
   if (!detected) {
-    // Aligned: forget the attempt, so a later mismatch can resolve itself again.
+    // Aligned: forget the attempt, so a later mismatch can resolve itself again —
+    // in the store and in the address bar, without reloading.
     try { store && store.removeItem(AUTO_KEY); } catch (_) { /* best-effort */ }
+    clearReloadAttemptInUrl({ location: opts.location, history: opts.history });
   }
 }
 

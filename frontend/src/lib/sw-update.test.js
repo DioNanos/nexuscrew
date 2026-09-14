@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { reportServerVersions, getUpdateState, dismissUpdate } from './sw-update.js';
+import {
+  reportServerVersions, getUpdateState, dismissUpdate,
+  clearReloadAttemptInUrl,
+} from './sw-update.js';
 
 // Il ricaricamento automatico dopo un aggiornamento del nodo.
 //
@@ -15,6 +18,25 @@ import { reportServerVersions, getUpdateState, dismissUpdate } from './sw-update
 // automatico: senza quella persistenza questa scelta avrebbe portato via cio'
 // che si stava scrivendo, ed e' un prezzo che nessun aggiornamento vale.
 
+// The address bar as a browser would behave: replaceState rewrites the URL and
+// the new search string is what the next load reads.
+function fintaUrl(initial = '/') {
+  const state = { href: initial };
+  const split = () => {
+    const [beforeHash, ...rest] = state.href.split('#');
+    const [pathname, ...query] = beforeHash.split('?');
+    return { pathname, search: query.length ? `?${query.join('?')}` : '', hash: rest.length ? `#${rest.join('#')}` : '' };
+  };
+  return {
+    get search() { return split().search; },
+    get pathname() { return split().pathname; },
+    get hash() { return split().hash; },
+    get href() { return state.href; },
+    replaceCalls: [],
+    replaceState(_state, _title, url) { this.replaceCalls.push(url); state.href = url; },
+  };
+}
+
 function memoriaFinta() {
   const dati = new Map();
   return {
@@ -27,7 +49,12 @@ function memoriaFinta() {
 
 describe('reportServerVersions — ricaricamento automatico', () => {
   let store; let applyImpl;
-  beforeEach(() => { store = memoriaFinta(); applyImpl = vi.fn(); });
+  beforeEach(() => {
+    store = memoriaFinta(); applyImpl = vi.fn();
+    // Il marcatore vive nell'URL: senza pulirlo, un test eredita il
+    // tentativo del precedente (in un browser il reload lo azzera).
+    try { clearReloadAttemptInUrl(); } catch (_) { /* nessun URL in questo ambiente */ }
+  });
 
   it('un bundle piu\' vecchio del servito si ricarica DA SOLO', () => {
     reportServerVersions('0.8.53', '0.8.53', '0.8.52', { storage: store, applyImpl });
@@ -172,5 +199,53 @@ describe('reportServerVersions — a stale interface is diagnosed, never announc
     // A different triple is news again.
     reportServerVersions('0.9.26', '0.9.25', '0.9.24', { storage: store, applyImpl });
     expect(getUpdateState().needed).toBe(true);
+  });
+});
+
+// ── The storage is not the only thing that can remember an attempt.
+//
+// A store that accepts the write and loses it at the next load (sessionStorage
+// in some Android WebViews and PWA shells, ephemeral storage, quota) made the
+// guard blind: every load found no marker, so every load reloaded. "Never
+// perpetual" has to hold for that store too, so the attempt is recorded in the
+// address bar as well — the one piece of state a reload cannot lose.
+describe('reportServerVersions — a forgetting store cannot loop', () => {
+  let applyImpl;
+  beforeEach(() => { applyImpl = vi.fn(); });
+
+  it('(f) the same pair reloads once even when the store forgets it at reload', () => {
+    const url = fintaUrl('/');
+    // First load: empty store, no marker in the URL.
+    reportServerVersions('0.9.25', '0.9.25', '0.9.24', { storage: memoriaFinta(), applyImpl, location: url, history: url });
+    expect(applyImpl).toHaveBeenCalledTimes(1);
+
+    // The reload happens: a NEW store (nothing remembered) and the same address.
+    reportServerVersions('0.9.25', '0.9.25', '0.9.24', { storage: memoriaFinta(), applyImpl, location: url, history: url });
+    expect(applyImpl).toHaveBeenCalledTimes(1); // no loop
+    const s = getUpdateState();
+    expect(s.needed).toBe(true);
+    expect(s.kind).toBe('stale');
+  });
+
+  it('(g) the attempt lives in the URL, so the next load sees it without any store', () => {
+    const url = fintaUrl('/?nc-reload=0.9.25%7C0.9.24');
+    reportServerVersions('0.9.25', '0.9.25', '0.9.24', { storage: memoriaFinta(), applyImpl, location: url, history: url });
+    expect(applyImpl).not.toHaveBeenCalled();
+    expect(getUpdateState().kind).toBe('stale');
+  });
+
+  it('(h) aligned versions clean the marker out of the URL, without reloading', () => {
+    const url = fintaUrl('/?nc-reload=0.9.25%7C0.9.24');
+    reportServerVersions('0.9.26', '0.9.26', '0.9.26', { storage: memoriaFinta(), applyImpl, location: url, history: url });
+    expect(applyImpl).not.toHaveBeenCalled();
+    expect(getUpdateState().needed).toBe(false);
+    expect(url.search).toBe('');
+    expect(url.replaceCalls.length).toBe(1);
+  });
+
+  it('(i) a different pair is not blocked by a previous attempt', () => {
+    const url = fintaUrl('/?nc-reload=0.9.25%7C0.9.24');
+    reportServerVersions('0.9.26', '0.9.26', '0.9.25', { storage: memoriaFinta(), applyImpl, location: url, history: url });
+    expect(applyImpl).toHaveBeenCalledTimes(1);
   });
 });
