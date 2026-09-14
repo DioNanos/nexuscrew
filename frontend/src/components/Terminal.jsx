@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { registerTerminalWidth } from '../lib/terminal-unicode.js';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../lib/ws-client.js';
 import { copyText } from '../lib/clipboard.js';
@@ -139,12 +140,19 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   useEffect(() => {
     const term = new XTerm({
       cursorBlink: true, fontSize: fontSizeRef.current, scrollback: 1000,
+      // `term.unicode` (the width provider below) is a proposed API: xterm
+      // throws on the getter without this flag. Nothing else here uses it.
+      allowProposedApi: true,
       theme: { background: '#0a0e0a' },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(hostRef.current);
     fit.fit();
+    // Column widths must match the producer (tmux/glibc): see
+    // lib/terminal-unicode.js. Returns null and leaves the default provider in
+    // place if the flag above ever goes away — never a reason to fail here.
+    registerTerminalWidth(term);
     // xterm espone la modalita' di tracking del mouse ma NON la codifica, e
     // mandare un report SGR a un'app che ha negoziato la codifica legacy le
     // consegnerebbe byte che non sa decodificare. La 1006 si osserva quindi
