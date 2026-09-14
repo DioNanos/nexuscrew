@@ -13,6 +13,7 @@ import SettingsPanel from './components/SettingsPanel.jsx';
 import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
+import { nextRendererPreference, readRendererPreference, writeRendererPreference } from './lib/terminal-renderer.js';
 import VlSessionView from './components/VlSessionView.jsx';
 import CellPanel from './components/CellPanel.jsx';
 import {
@@ -121,6 +122,17 @@ export function SingleView({
   const [showComposer, setShowComposer] = useState(() => window.matchMedia('(pointer: coarse)').matches);
   const [filesEvent, setFilesEvent] = useState(null);
   const [fontSize, setFontSize] = useState(initialFontSize);
+  // Renderer del terminale: preferenza per browser + quello che sta disegnando
+  // davvero (il GPU puo' non essere disponibile, o perdere il contesto).
+  const [rendererPref, setRendererPref] = useState(readRendererPreference);
+  const [rendererKind, setRendererKind] = useState(() => readRendererPreference());
+  const switchRenderer = () => {
+    const next = writeRendererPreference(nextRendererPreference(readRendererPreference()));
+    setRendererPref(next);
+    // Il renderer si aggancia alla creazione del terminale: il ricaricamento e'
+    // il modo affidabile per far ripartire l'A/B con l'altro motore.
+    if (typeof window !== 'undefined') window.location.reload();
+  };
   // Titolo visibile (Tranche D): nome logico Fleet o, in fallback, il nome
   // sessione tmux. Inizializza con cellName (desktop overlay) o session.
   const [title, setTitle] = useState(cellName || session);
@@ -207,6 +219,14 @@ export function SingleView({
         <span className="nc-bar-right">
           <button onClick={() => zoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
           <button onClick={() => zoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
+          {/* A/B del renderer senza rebuild: la scelta e' per browser, il
+              terminale si riattacca al ricaricamento della pagina. Il titolo
+              dice cosa e' stato CHIESTO e cosa sta davvero disegnando. */}
+          <button onClick={switchRenderer}
+            title={t('terminal-renderer-switch').replace('{requested}', t(rendererPref === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl')).replace('{effective}', t(rendererKind === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl'))}
+            aria-label={t('terminal-renderer-switch').replace('{requested}', t(rendererPref === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl')).replace('{effective}', t(rendererKind === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl'))}>
+            {rendererKind === 'dom' ? 'DOM' : 'GPU'}
+          </button>
           <button onClick={() => setShowComposer((v) => !v)} title={t('composer')}><Icon name="keyboard" size={20} /></button>
           <button onClick={() => setShowFiles((v) => !v)} title={t('files')}><Icon name="folder" size={20} /></button>
           {panelUrl && (
@@ -218,7 +238,7 @@ export function SingleView({
         <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
           ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} onFiles={setFilesEvent} fontSize={fontSize}
           selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
-          keyboardGesture={inputPreferences.terminalKeyboardGesture} />
+          keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
         {/* D8: pannello in alternativa al terminale, overlay assoluto — il
             terminale resta montato (PTY vivo, nessun reflow al toggle).
             L'ingresso passa dal ticket: la PWA lo chiede e l'iframe punta
