@@ -6,7 +6,9 @@ import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-
 import { positionKey } from '../lib/nodes-model.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
+import { hostDesignationFailureMessage } from '../lib/host-designation.js';
 import RosterHandle from './RosterHandle.jsx';
+import CellStar from './CellStar.jsx';
 import { panelPortForRoute } from '../lib/panel-port.js';
 import { t } from '../lib/i18n.js';
 import './CellSwitcher.css';
@@ -154,7 +156,12 @@ function orderRowsByPosition(rows, rosterItems, pins, orders) {
   });
 }
 
-export default function CellSwitcher({ token, current, onPick, onClose, panelPort = 0, nodePanelPorts = {} }) {
+export default function CellSwitcher({
+  token, current, onPick, onClose, panelPort = 0, nodePanelPorts = {},
+  // Lo stato dell'host per nodo e le due azioni di designazione arrivano
+  // dalle stesse callback che usa la home: la stella qui non ha una via sua.
+  hostByRoute = {}, onDesignateCell, onClearHostCell,
+}) {
   const [snapshot, setSnapshot] = useState(readCellSwitcherSnapshot);
   const [showAll, setShowAll] = useState(false);
   const [ready, setReady] = useState(false);
@@ -176,7 +183,9 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
   const closeRef = useRef(null);
   const rows = useMemo(() => rowsFromSnapshot(snapshot), [snapshot]);
   const rosterItems = useMemo(() => rosterItemsByPosition(snapshot), [snapshot]);
-  const { pins, orders, canMoveRoster, moveRoster, stepRoster } = useRosterPreferences();
+  const {
+    pins, orders, togglePin, removePin, pinError, canMoveRoster, moveRoster, stepRoster,
+  } = useRosterPreferences();
   const orderedRows = useMemo(
     () => orderRowsByPosition(rows, rosterItems, pins, orders),
     [rows, rosterItems, pins, orders],
@@ -188,6 +197,12 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
   const selectedRow = useMemo(() => rows.find((row) => row.key === selectedKey && row.selectable), [rows, selectedKey]);
   // La riga sbirciata si RIrisolve a ogni lista: mai un fotogramma morto.
   const peekRow = useMemo(() => (peek ? rows.find((row) => row.key === peek.key) : null), [rows, peek]);
+  // Un pin che non si e' potuto scrivere non e' silenzioso nemmeno qui:
+  // la home mostra un banner ritentabile, il selettore lo dice nella
+  // propria riga di stato.
+  useEffect(() => {
+    if (pinError && pinError.message) setNotice(pinError.message);
+  }, [pinError]);
 
   useEffect(() => {
     const previousFocus = document.activeElement;
@@ -363,6 +378,26 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
                   disabled={picking === row.key} onClick={() => select(row)}>
                   <span className="nc-cell-switcher-copy"><b>{row.cellName}</b><small className="nc-cell-switcher-state">{status}</small><small>{[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}</small>{rigaDati && <small className="nc-cell-switcher-telemetry">{rigaDati}</small>}</span>
                 </button>
+                {/* La stella delle celle: pin locale -> designazione sul nodo ->
+                    clear. Stessa implementazione della home (CellStar), stesso
+                    ciclo, stesse etichette. Il tocco non seleziona la riga: la
+                    stella e' un fratello del bottone di selezione, e ferma
+                    comunque la propagazione. */}
+                <CellStar
+                  item={{ key: row.key, value: { cell: row.cellName } }}
+                  pins={pins}
+                  hostByRoute={hostByRoute}
+                  route={row.route || []}
+                  cellName={row.cellName}
+                  baseClassName="nc-cell-switcher-star"
+                  togglePin={togglePin}
+                  removePin={removePin}
+                  designate={onDesignateCell}
+                  clearHost={onClearHostCell}
+                  onOutcome={(outcome) => {
+                    if (!outcome.ok) setNotice(t(hostDesignationFailureMessage(outcome.error)));
+                  }}
+                />
               </div>
             );
           })}
