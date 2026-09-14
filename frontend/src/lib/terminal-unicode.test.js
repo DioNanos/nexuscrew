@@ -6,7 +6,7 @@ import {
 
 // The widths the terminal must use, and why they are not xterm's defaults.
 //
-// Measured case (DAG, 2026-09-13): after a wide character the glyphs on the
+// Measured case (reported 2026-09-13): after a wide character the glyphs on the
 // phone went stale until a zoom forced a repaint. The cause was a width
 // disagreement: xterm 6.0.0's default provider (UnicodeV6) answers width 1 for
 // emoji such as U+1F7E2, so the cell grid the renderer builds and the cell grid
