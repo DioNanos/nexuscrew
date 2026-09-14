@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { registerTerminalWidth } from '../lib/terminal-unicode.js';
+import { WebglAddon } from '@xterm/addon-webgl';
+import { attachRenderer, readRendererPreference } from '../lib/terminal-renderer.js';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../lib/ws-client.js';
 import { copyText } from '../lib/clipboard.js';
@@ -22,9 +24,10 @@ import './Terminal.css';
 
 // node (opzionale): sessione su nodo remoto — il WS passa dal proxy
 // /node/<name>/ws (B1); tutto il resto del protocollo e' identico.
-export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange, keyboardGesture = 'double-tap' }) {
+export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange, keyboardGesture = 'double-tap', onRendererChange }) {
   const hostRef = useRef(null);
   const apiRef = useRef(null);        // {term, fit, sock} per lo zoom senza riconnettere
+  const rendererRef = useRef(null);   // addon GPU attivo (o null quando si disegna in DOM)
   const fontSizeRef = useRef(fontSize);
   fontSizeRef.current = fontSize;
   const focusedRef = useRef(focused);
@@ -153,6 +156,15 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // lib/terminal-unicode.js. Returns null and leaves the default provider in
     // place if the flag above ever goes away — never a reason to fail here.
     registerTerminalWidth(term);
+    // GPU renderer on top of the DOM one, with the DOM as the guaranteed floor:
+    // attachRenderer never throws and reports which one is really drawing.
+    const renderer = attachRenderer(term, {
+      preference: readRendererPreference(),
+      createAddon: () => new WebglAddon(),
+      onFallback: () => { if (onRendererChange) onRendererChange('dom'); },
+    });
+    rendererRef.current = renderer;
+    if (onRendererChange) onRendererChange(renderer.kind);
     // xterm espone la modalita' di tracking del mouse ma NON la codifica, e
     // mandare un report SGR a un'app che ha negoziato la codifica legacy le
     // consegnerebbe byte che non sa decodificare. La 1006 si osserva quindi
@@ -232,7 +244,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       });
     } catch (e) {
       term.write(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`);
-      return () => term.dispose();
+      return () => {
+        try { rendererRef.current?.dispose?.(); } catch (_) { /* best effort */ }
+        rendererRef.current = null;
+        term.dispose();
+      };
     }
     apiRef.current = { term, fit, sock, setKeyboardGesture };
 
