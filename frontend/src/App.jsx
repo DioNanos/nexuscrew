@@ -340,6 +340,14 @@ export default function App() {
   }, [nodeGroups]);
   useEffect(() => {
     if (!deckStore.localNodeId) return;
+    // Self-owner deck URL: `/deck/<thisNodeId>/<name>` names a LOCAL deck under
+    // its owner-qualified id, so its layout is the one this browser saved. The
+    // local node id only arrives with the config call, hence here and not in the
+    // initial state — without this the first frame is the empty grid.
+    if (initialDeck.ownerId && initialDeck.ownerId === deckStore.localNodeId) {
+      setLayout((current) => (current.columns.some((column) => column.tiles.length)
+        ? current : loadLayout(initialDeck.name)));
+    }
     setLayout((current) => {
       const resolved = resolveLayoutForViewer(current, deckStore.localNodeId, deckOwners);
       return JSON.stringify(resolved) === JSON.stringify(current) ? current : resolved;

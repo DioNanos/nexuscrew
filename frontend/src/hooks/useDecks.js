@@ -9,7 +9,7 @@ import {
 import { addTileSmart, emptyLayout, normalize, sessions } from '../lib/grid-model.js';
 import {
   LOCAL_OWNER, NODE_ID_RE, annotateCanonicalLayout, canonicalizeLayoutForOwner,
-  deckId, parseDeckId, refWithOwner, resolveLayoutForViewer,
+  deckId, deckIdForLocalOwner, parseDeckId, refWithOwner, resolveLayoutForViewer,
 } from '../lib/deck-federation.js';
 
 const empty = (layout) => sessions(normalize(layout)).length === 0;
@@ -80,11 +80,26 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     record.layout, localNodeIdRef.current, ownersRef.current,
   ), []);
 
-  const install = useCallback((next, applyLayout = true, targetId = currentRef.current) => {
+  // ONE place that answers "which record is the current deck". The id in the URL
+  // can be the owner-qualified form of THIS node while the record carries the
+  // local id (deckIdForLocalOwner documents both), and every lookup has to know
+  // it — the load effect, the poll, saveNow and the rename/remove paths each had
+  // their own `find` and each of them could miss a self-owner deck.
+  const resolveCurrentId = useCallback(
+    () => deckIdForLocalOwner(currentRef.current, localNodeIdRef.current),
+    [],
+  );
+  const findCurrent = useCallback(
+    (records) => (Array.isArray(records) ? records : []).find((d) => d.id === resolveCurrentId()),
+    [resolveCurrentId],
+  );
+
+  const install = useCallback((next, applyLayout = true, targetId) => {
+    const wanted = targetId === undefined ? resolveCurrentId() : deckIdForLocalOwner(targetId, localNodeIdRef.current);
     const ordered = orderDeckRecords(next, loadDeckOrders());
-    const previousHadTarget = recordsRef.current.some((d) => d.id === targetId);
+    const previousHadTarget = recordsRef.current.some((d) => d.id === wanted);
     recordsRef.current = ordered; setRecords(ordered);
-    const rec = ordered.find((d) => d.id === targetId);
+    const rec = ordered.find((d) => d.id === wanted);
     if (applyLayout && rec) {
       skipRef.current = true;
       const viewed = viewLayout(rec);
@@ -162,8 +177,8 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     bootTokenRef.current = token;
     loadAll({ migrate: firstForToken }).then((next) => {
       if (cancelled) return;
-      const here = recordsRef.current.find((d) => d.id === currentRef.current);
-      const remote = next.find((d) => d.id === currentRef.current);
+      const here = findCurrent(recordsRef.current);
+      const remote = findCurrent(next);
       const changed = remote && (!here || remote.revision > here.revision
         || here.available !== remote.available || routeKey(here.ownerRoute) !== routeKey(remote.ownerRoute));
       install(next, firstForToken || (!!changed && !dirtyRef.current));
@@ -173,26 +188,27 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       if (!cancelled) { setReady(true); setError(String(e.message || e)); }
     });
     return () => { cancelled = true; };
-  }, [install, loadAll, ownersSig, token]);
+  }, [install, loadAll, ownersSig, token, findCurrent]);
 
-  const saveNow = useCallback(async (targetId = currentRef.current) => {
+  const saveNow = useCallback(async (targetId) => {
     if (!ready || !dirtyRef.current) return true;
-    const rec = recordsRef.current.find((d) => d.id === targetId);
-    if (!rec) { setError(`deck inesistente: ${targetId}`); return false; }
+    const wanted = targetId === undefined ? resolveCurrentId() : deckIdForLocalOwner(targetId, localNodeIdRef.current);
+    const rec = recordsRef.current.find((d) => d.id === wanted);
+    if (!rec) { setError(`deck inesistente: ${wanted}`); return false; }
     if (rec.available === false) { setError(`nodo owner offline: ${rec.ownerLabel}`); return false; }
     setSaveState('saving');
     try {
       const canonical = canonicalizeLayoutForOwner(normalize(layoutRef.current), rec.ownerId, rec.ownerTopology);
       const saved = await saveDeck(token, rec.name, canonical, rec.revision, rec.ownerRoute);
       const augmented = augmentDeck(saved, ownerForRecord(rec), rec.ownerTopology, rec.local, true);
-      install(recordsRef.current.map((d) => d.id === targetId ? augmented : d), false);
+      install(recordsRef.current.map((d) => d.id === wanted ? augmented : d), false);
       dirtyRef.current = false; setSaveState('saved'); setError('');
       setTimeout(() => setSaveState('idle'), 1500);
       return true;
     } catch (e) {
       setSaveState('error'); setError(String(e.message || e));
       if (e.status === 409 && e.data && e.data.current) {
-        const currentDeck = recordsRef.current.find((d) => d.id === targetId);
+        const currentDeck = recordsRef.current.find((d) => d.id === wanted);
         const replacement = augmentDeck(e.data.current, ownerForRecord(currentDeck), currentDeck.ownerTopology, currentDeck.local, true);
         install(recordsRef.current.map((d) => d.id === targetId ? replacement : d), false);
       }
@@ -213,8 +229,8 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const id = setInterval(async () => {
       try {
         const next = await loadAll();
-        const here = recordsRef.current.find((d) => d.id === currentRef.current);
-        const remote = next.find((d) => d.id === currentRef.current);
+        const here = findCurrent(recordsRef.current);
+        const remote = findCurrent(next);
         const newer = remote && (!here || remote.revision > here.revision || here.available !== remote.available);
         install(next, newer && !dirtyRef.current);
       } catch (_) {}
@@ -235,7 +251,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   };
   const rename = async (fromId, to) => {
     const deck = recordsRef.current.find((x) => x.id === fromId); if (!deck) throw new Error('deck inesistente');
-    if (fromId === currentRef.current && dirtyRef.current) {
+    if (deckIdForLocalOwner(fromId, localNodeIdRef.current) === resolveCurrentId() && dirtyRef.current) {
       const savedDirty = await saveNow(fromId);
       if (!savedDirty) throw new Error(`salvataggio di "${deck.name}" fallito: rinomina annullata`);
     }
@@ -248,7 +264,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   };
   const remove = async (id) => {
     const deck = recordsRef.current.find((x) => x.id === id); if (!deck) throw new Error('deck inesistente');
-    if (id === currentRef.current) dirtyRef.current = false;
+    if (deckIdForLocalOwner(id, localNodeIdRef.current) === resolveCurrentId()) dirtyRef.current = false;
     await deleteDeck(token, deck.name, deck.revision, deck.ownerRoute);
     const ownerKey = deck.local ? LOCAL_OWNER : deck.ownerId;
     saveDeckOrders(removeDeckOrderId(loadDeckOrders(), ownerKey, id));
@@ -281,7 +297,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   };
   const select = async (id) => {
     if (dirtyRef.current) {
-      const saved = await saveNow(currentRef.current);
+      const saved = await saveNow(resolveCurrentId());
       if (!saved) throw new Error('salvataggio del deck corrente fallito: cambio annullato');
     }
     const target = recordsRef.current.find((d) => d.id === id);

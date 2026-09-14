@@ -69,6 +69,21 @@ export function annotateCanonicalLayout(layout, deckOwnerId, ownerTopology = [])
 // Route hints remain only when an owner is temporarily unavailable; this keeps
 // the tile visibly offline instead of ever falling back to an omonymous local
 // tmux session.
+// One deck, two ids. A deck that lives on the node the browser is talking to is
+// stored and listed as `local:<name>`, but the URL that opens it in a new tab is
+// owner-qualified with that same node: `/deck/<nodeId>/<name>`, which resolves to
+// `<nodeId>:<name>`. Both ids mean the same deck, so anything that resolves "the
+// current deck" must accept the owner-qualified form of its own node — otherwise
+// the deck opens as an empty grid, because no record carries that id.
+// A DIFFERENT node's owner-qualified id is left alone on purpose: that is the
+// federated path, and its layout comes from the owner, never from here.
+export function deckIdForLocalOwner(id, localNodeId) {
+  const parsed = parseDeckId(id);
+  if (!parsed || !parsed.ownerId) return id;
+  if (!localNodeId || parsed.ownerId !== localNodeId) return id;
+  return deckId(null, parsed.name);
+}
+
 export function resolveLayoutForViewer(layout, localNodeId, viewerOwners = []) {
   const out = cloneLayout(layout);
   const byId = new Map();
