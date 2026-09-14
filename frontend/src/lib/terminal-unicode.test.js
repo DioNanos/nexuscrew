@@ -54,6 +54,45 @@ describe('terminal width provider — wcwidth', () => {
     expect(wcwidth(0x300)).toBe(0);         // combining grave
   });
 
+  it('zero-width format characters take no column, like the producer', () => {
+    const wcwidth = provider().wcwidth;
+    // glibc wcwidth = 0 for all of these (measured with libc through ctypes);
+    // xterm's default provider answers 1 for them, which shifts every emoji
+    // sequence that uses a joiner by one column per joiner.
+    for (const cp of [
+      0x200B, 0x200C, 0x200D, 0x200E, 0x200F,
+      0x2060, 0x2061, 0x2062, 0x2063, 0x2064,
+      0xFEFF, 0x1BCA0, 0x1D173, 0xE0001, 0xE0020, 0xE007F,
+      0x1160, 0x119E, 0x11FF, // Hangul medial/final jamo: glibc counts 0
+    ]) {
+      expect([cp.toString(16), wcwidth(cp)]).toEqual([cp.toString(16), 0]);
+    }
+    // Measured the other way round: these are NOT zero.
+    expect(wcwidth(0x00AD)).toBe(1);   // soft hyphen: glibc counts one column
+    expect(wcwidth(0x1F1E6)).toBe(1);  // regional indicators: one column each, so
+    expect(wcwidth(0x1F1FF)).toBe(1);  // a flag pair is two — and not four
+    expect(wcwidth(0x1100)).toBe(2);   // leading jamo stay wide
+  });
+
+  it('a joined emoji sequence occupies the columns the producer counts (6)', async () => {
+    const term = new Terminal({ allowProposedApi: true, cols: 20, rows: 3 });
+    registerTerminalWidth(term);
+    const cells = await bufferWidths(term, '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}|', 10);
+    // 2 + 0 + 2 + 0 + 2, as tmux counts it: the family, then the pipe.
+    const pipe = cells.findIndex((cell) => cell && cell.chars === '|');
+    expect(pipe).toBe(6);
+    // The joiner takes no cell of its own: the three glyphs sit in the cells
+    // the producer's columns put them in, two columns each.
+    // The joiner is absorbed into the glyph before it (no cell of its own), and
+    // the three glyphs land in the columns the producer's count puts them in.
+    expect(cells[0].chars).toContain('\u{1F468}');
+    expect(cells[0].chars).toContain('\u200D');
+    expect(cells[2].chars).toContain('\u{1F469}');
+    expect(cells[4].chars).toContain('\u{1F467}');
+    expect(cells[0].width).toBe(2);
+    term.dispose();
+  });
+
   it('declares its own version and mirrors it through charProperties', () => {
     const p = provider();
     expect(typeof p.version).toBe('string');
