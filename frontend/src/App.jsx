@@ -490,7 +490,11 @@ export default function App() {
   // serve la pagina: e' esattamente il difetto che questa funzione chiude.
   // Il fallimento NOMINA la causa (window.alert, come promptNodeRename in
   // Sidebar): il difetto peggiore non era la route sbagliata, era il silenzio.
-  const designateCellHost = useCallback(async (cellId, route = []) => {
+  // Una sola designazione, due modi di dire l'esito: la home continua a
+  // mostrare l'avviso di sistema (comportamento invariato), il selettore
+  // compatto riceve l'esito e lo mostra nella propria riga di stato — senza
+  // alert, che su un telefono e' un blocco a tutto schermo.
+  const designateCellHostOnce = useCallback(async (cellId, route = []) => {
     const key = hostRouteKey(route);
     const revision = (hostByRoute[key] && hostByRoute[key].hostRevision) || 0;
     try {
@@ -504,11 +508,17 @@ export default function App() {
           threadStatus: THREAD_STATUSES.has(r.threadStatus) ? r.threadStatus : 'unknown',
         },
       }));
+      return { ok: true };
     } catch (e) {
-      window.alert(t(hostDesignationFailureMessage(e)));
+      return { ok: false, error: e };
     }
   }, [token, hostByRoute]);
-  const clearCellHost = useCallback(async (route = []) => {
+  const designateCellHost = useCallback(async (cellId, route = []) => {
+    const outcome = await designateCellHostOnce(cellId, route);
+    if (!outcome.ok) window.alert(t(hostDesignationFailureMessage(outcome.error)));
+    return outcome.ok;
+  }, [designateCellHostOnce]);
+  const clearCellHostOnce = useCallback(async (route = []) => {
     const key = hostRouteKey(route);
     const revision = (hostByRoute[key] && hostByRoute[key].hostRevision) || 0;
     try {
@@ -517,12 +527,18 @@ export default function App() {
         ...current,
         [key]: { hostCell: r.hostCell || null, hostLease: null, hostRevision: Number.isInteger(r.revision) ? r.revision : revision, threadStatus: 'unknown' },
       }));
-      return true;
+      return { ok: true };
     } catch (e) {
-      window.alert(t(hostDesignationFailureMessage(e)));
-      return false;
+      return { ok: false, error: e };
     }
   }, [token, hostByRoute]);
+  // Versione della home: esito booleano (il pin si toglie solo a clear riuscito)
+  // e avviso di sistema che nomina la causa.
+  const clearCellHost = useCallback(async (route = []) => {
+    const outcome = await clearCellHostOnce(route);
+    if (!outcome.ok) window.alert(t(hostDesignationFailureMessage(outcome.error)));
+    return outcome.ok;
+  }, [clearCellHostOnce]);
 
   // Coerenza versione UI/server (tutte le viste).
   //
@@ -714,6 +730,7 @@ export default function App() {
         onBack={() => setSession(null)} onCellSwitcher={() => setCellSwitcherOpen(true)} cellSwitcherOpen={cellSwitcherOpen} />
       {cellSwitcherOpen && <CellSwitcher token={token} current={session}
         panelPort={panelPort} nodePanelPorts={nodePanelPorts}
+        hostByRoute={hostByRoute} onDesignateCell={designateCellHostOnce} onClearHostCell={clearCellHostOnce}
         onPick={(next) => { pickSession(next); setCellSwitcherOpen(false); }} onClose={() => setCellSwitcherOpen(false)} />}
       {settingsOverlays}
     </>;
