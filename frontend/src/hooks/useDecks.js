@@ -9,7 +9,7 @@ import {
 import { addTileSmart, emptyLayout, normalize, sessions } from '../lib/grid-model.js';
 import {
   LOCAL_OWNER, NODE_ID_RE, annotateCanonicalLayout, canonicalizeLayoutForOwner,
-  deckId, parseDeckId, refWithOwner, resolveLayoutForViewer,
+  deckId, deckIdForLocalOwner, parseDeckId, refWithOwner, resolveLayoutForViewer,
 } from '../lib/deck-federation.js';
 
 const empty = (layout) => sessions(normalize(layout)).length === 0;
@@ -82,9 +82,13 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
 
   const install = useCallback((next, applyLayout = true, targetId = currentRef.current) => {
     const ordered = orderDeckRecords(next, loadDeckOrders());
-    const previousHadTarget = recordsRef.current.some((d) => d.id === targetId);
+    // The current deck may be named by its owner-qualified URL: for a deck of
+    // THIS node that is the local record under a different id (deckIdForLocalOwner
+    // documents both forms).
+    const wanted = deckIdForLocalOwner(targetId, localNodeIdRef.current);
+    const previousHadTarget = recordsRef.current.some((d) => d.id === wanted);
     recordsRef.current = ordered; setRecords(ordered);
-    const rec = ordered.find((d) => d.id === targetId);
+    const rec = ordered.find((d) => d.id === wanted);
     if (applyLayout && rec) {
       skipRef.current = true;
       const viewed = viewLayout(rec);
