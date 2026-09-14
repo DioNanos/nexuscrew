@@ -6,7 +6,10 @@ All notable changes to NexusCrew are tracked here.
 
 - rebuilt the frontend bundle for the shipped version (the 0.9.25 package carried a 0.9.24 bundle, so the UI kept showing the update banner); the publish gate now fails when the bundle version differs from the package version.
 
-## 0.9.25 (unreleased)
+## 0.9.25 — 2026-09-13
+
+- **Deprecated on npm**: the published package shipped a 0.9.24 bundle, so the
+  UI kept announcing an update that was already running; superseded by 0.9.26.
 
 - **MCP identity reads the verified binding metadata first (fail-closed).**
   `nexuscrew mcp` now evaluates the `NEXUSCREW_VERIFIED_*` metadata delivered
