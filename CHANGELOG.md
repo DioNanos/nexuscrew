@@ -2,6 +2,14 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.27 — 2026-09-14
+
+- **The terminal counts columns the way tmux and glibc do.** Emoji and East Asian wide characters take two cells, so the glyphs after a wide character are no longer stale on phones; the terminal can also paint through a GPU (WebGL) renderer, with the DOM renderer as the floor and a GPU/DOM switch in the terminal bar to compare the two.
+- **The update banner never announces the version that is already running.** A served interface newer than the loaded bundle gets one silent, cache-bypassing reload and then a diagnostic banner (interface loaded vs interface served); a newer package on disk asks for a node restart instead of offering a reload that cannot help; a banner the user closes stays closed for the same versions; a second reload guard lives in the URL, so a storage that accepts a write and loses it at the next load cannot loop.
+- **The star (pin, then live designation) is in the compact cell selector too.** One implementation now serves the home, the desktop sidebar and the selector, with the same cycle, labels and tap target.
+- **The published entrypoint starts on Android/Termux, where `/usr/bin/env` does not exist.** `bin/nexuscrew.js` is a shell/JavaScript polyglot: it finds node next to the launcher first, then in `PATH`, and fails with a clear message and exit 127 when neither exists.
+- **The bundle version gate is line-agnostic and provable.** It works for 0.10 and beyond instead of being tied to the current release line, and it has cases that show a stale bundle failing.
+
 ## 0.9.26 — 2026-09-13
 
 - rebuilt the frontend bundle for the shipped version (the 0.9.25 package carried a 0.9.24 bundle, so the UI kept showing the update banner); the publish gate now fails when the bundle version differs from the package version.
