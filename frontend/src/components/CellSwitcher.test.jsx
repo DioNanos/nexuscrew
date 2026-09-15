@@ -612,3 +612,30 @@ describe('CellSwitcher — the explicit Live host command', () => {
     expect(onLiveHostApplied).not.toHaveBeenCalled();
   });
 });
+
+// Il comando Live host nel selettore compatto è un'ICONA: la frase non c'è più
+// (sfondava la riga), il nome accessibile resta in aria-label/title, e lo stato
+// «questa cella è l'host» si legge dalla classe e dal marker, come per la stella.
+describe('CellSwitcher — the Live host command is an icon button', () => {
+  it('keeps the accessible name and shows the host state', async () => {
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+      hostByRoute={{ local: { hostCell: 'cell-One', threadStatus: 'thread-active', hostRevision: 2 } }} />);
+    const button = await screen.findByTestId('live-host-command-cloud-cell-One');
+    expect(button.getAttribute('aria-label')).toBe(`${t('live-host-action-remove')}: cell-One`);
+    expect(button.getAttribute('title')).toBe(t('live-host-action-remove'));
+    expect(button.textContent.trim()).toBe('');
+    expect(button.querySelector('svg')).toBeTruthy();
+    expect(button.getAttribute('data-live-host-state')).toBe('host');
+    expect(button.className).toMatch(/nc-cell-switcher-host on/);
+  });
+
+  it('stays an outline when this cell is not the host', async () => {
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={{}} />);
+    const button = await screen.findByTestId('live-host-command-cloud-cell-One');
+    expect(button.getAttribute('aria-label')).toBe(`${t('live-host-action-use')}: cell-One`);
+    expect(button.textContent.trim()).toBe('');
+    expect(button.querySelector('svg')).toBeTruthy();
+    expect(button.getAttribute('data-live-host-state')).toBe('idle');
+    expect(button.className).not.toMatch(/ host on/);
+  });
+});

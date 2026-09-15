@@ -11,6 +11,7 @@ import { liveHostView } from '../lib/live-host-view.js';
 import { runLiveHostCommand } from '../lib/live-host-command.js';
 import RosterHandle from './RosterHandle.jsx';
 import CellStar from './CellStar.jsx';
+import Icon from './Icon.jsx';
 import LiveHostIndicator from './LiveHostIndicator.jsx';
 import { panelPortForRoute } from '../lib/panel-port.js';
 import { t } from '../lib/i18n.js';
@@ -428,8 +429,10 @@ export default function CellSwitcher({
                 />
                 {/* Il comando esplicito: la stella e' un pin, la designazione
                     e' una scelta del nodo e si dice con una frase. */}
-                <button type="button" className="nc-cell-switcher-act nc-cell-switcher-host"
+                <button type="button"
+                  className={`nc-cell-switcher-act nc-cell-switcher-host${hostCellFor(row.route || []) === row.cellName ? ' on' : ''}`}
                   data-testid={`live-host-command-${row.key}`}
+                  data-live-host-state={hostCellFor(row.route || []) === row.cellName ? 'host' : 'idle'}
                   disabled={liveHostBusy === row.key}
                   title={hostCellFor(row.route || []) === row.cellName ? t('live-host-action-remove') : t('live-host-action-use')}
                   aria-label={`${hostCellFor(row.route || []) === row.cellName ? t('live-host-action-remove') : t('live-host-action-use')}: ${row.cellName}`}
@@ -437,7 +440,11 @@ export default function CellSwitcher({
                     event.stopPropagation();
                     runHostCommand(row, hostCellFor(row.route || []) === row.cellName);
                   }}>
-                  {hostCellFor(row.route || []) === row.cellName ? t('live-host-action-remove') : t('live-host-action-use')}
+                  {/* Icona invece della frase: la riga del selettore compatto ha
+                      lo spazio di un pollice, non di due parole su tre righe.
+                      Il testo resta in aria-label/title (accessibilita') e nel
+                      popup cella, dove lo spazio c'e'. */}
+                  <Icon name="broadcast" size={18} />
                 </button>
               </div>
             );
