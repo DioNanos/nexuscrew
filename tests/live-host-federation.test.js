@@ -20,9 +20,16 @@ const { createLiveHostStore } = require('../lib/live-host/store.js');
 const { createLiveHostFederation } = require('../lib/live-host/federation.js');
 const fed = require('../lib/proxy/federation.js');
 const store = require('../lib/nodes/store.js');
+// The rate limit and the origin resolution are the PRODUCTION objects: a bench
+// that passes a shape the real modules never produce cannot see the defect they
+// would hide (that is exactly how the dead federated budget went unnoticed).
+const { createSpeakRateLimiter, LIMITS } = require('../lib/audio/rate-limit.js');
+const { createOriginResolver } = require('../lib/audio/origin.js');
+const { signHop, HOP_HEADER } = require('../lib/proxy/hop-proof.js');
 
 const HUB_ID = 'a'.repeat(32);
 const CLIENT_ID = 'b'.repeat(32);
+const OWNER_ID = 'c'.repeat(32);
 const HUB_TOKEN = 'hub-accepts-client';
 const CLIENT_TOKEN = 'client-local-token';
 const HOP = 'x-nexuscrew-hop';
@@ -85,19 +92,19 @@ function startOwner({ liveHostAccess = true, bridgeResult, bridgeFault = 0 } = {
     next();
   });
   app.use('/api/live-host', liveHostRoutes({
-    fleetP: mockFleet([{ cell: 'dev', active: true, tmuxSession: 'cloud-dev', engine: 'codex-vl' }]),
+    fleetP: mockFleet([{ cell: 'dev', active: true, tmuxSession: 'cell-one', engine: 'codex-vl' }]),
     store: ownerStore,
     bridge: fakeBridge,
     readonly: () => false,
-    originResolver: { hop: true },
-    federatedRate: { allow: () => true },
+    originResolver: createOriginResolver({ localNodeId: () => OWNER_ID, hopSecret: () => 'owner-hop-secret' }),
+    federatedRate: createSpeakRateLimiter(),
   }));
   return {
     app, ownerStore, seen,
     revokeLiveHostAccess: () => { gate.liveHostAccess = false; },
     setServer: (server) => {
       serverRef = server;
-      let ost = store.emptyStore('c'.repeat(32));
+      let ost = store.emptyStore(OWNER_ID);
       ost = store.addNode(ost, {
         name: 'client', nodeId: CLIENT_ID, localPort: 1, remotePort: 41821,
         token: 'client-to-owner', direction: 'inbound', shared: true,
@@ -342,4 +349,89 @@ test('federated bridge: an owner failure we cannot name becomes our own generic 
   assert.notEqual(b.json.reason, 'live-host-owner-unreachable');
   assert.equal(b.json.ownerStatus, 500);
   await Promise.all([close(ownerServer), close(client.server)]);
+});
+
+test('federated bridge: the budget is really consumed — after the limit the owner stops answering', async () => {
+  const owner = startOwner({});
+  const ownerServer = await listen(owner.app);
+  owner.setServer(ownerServer);
+  const client = await startClient({ ownerPort: ownerServer.address().port });
+  await jfetch(`${client.base}/api/route/hub/_/live-host/designate`, { method: 'POST', body: { cellId: 'dev', expectedRevision: 0 } });
+  try {
+    // The number comes from the module, never hard-coded: what is being asked
+    // here is the production limiter, not a number this bench picked.
+    const limit = LIMITS['origin-cell'];
+    const answers = [];
+    for (let i = 0; i < limit + 1; i += 1) {
+      answers.push(await jfetch(`${client.base}/api/live-host/bridge`, { method: 'POST', body: {} }));
+    }
+    for (const r of answers.slice(0, limit)) assert.equal(r.status, 200);
+    const last = answers[answers.length - 1];
+    // The client keeps its own words for a refusal it did not name (documented
+    // and audited rule) and reports the owner status it saw. What matters here:
+    // the owner answered 429 instead of resolving, so the budget was consumed.
+    assert.equal(last.json.ownerStatus, 429);
+    assert.notEqual(last.json.mode, 'tmux');
+    assert.notEqual(last.json.cell, 'local-dev');
+  } finally {
+    // A failing assertion must not leave the two servers listening: the runner
+    // would wait for handles that nobody closes.
+    await Promise.all([close(ownerServer), close(client.server)]);
+  }
+});
+
+// The owner's own answer, seen without the client's vocabulary: a federated call
+// that reaches the owner route with a hop proof the owner can verify — the shape
+// production signs for the last hop.
+const callOwnerDirect = async (port, { proof, visited, body = '{}' }) => {
+  const res = await fetch(`http://127.0.0.1:${port}/api/live-host/bridge`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      [HOP_HEADER]: proof,
+      'x-nexuscrew-visited': visited.join(','),
+    },
+    body,
+  });
+  return { status: res.status, json: await res.json().catch(() => null) };
+};
+
+test('federated bridge: on the owner the refusal after the limit is exactly 429 rate-limited with retryInMs', async () => {
+  const owner = startOwner({});
+  const ownerServer = await listen(owner.app);
+  owner.setServer(ownerServer);
+  const port = ownerServer.address().port;
+  const visited = [CLIENT_ID, OWNER_ID];
+  const proof = signHop('owner-hop-secret', { method: 'POST', path: '/api/live-host/bridge', visited });
+  try {
+    const limit = LIMITS['origin-cell'];
+    const answers = [];
+    for (let i = 0; i < limit + 1; i += 1) answers.push(await callOwnerDirect(port, { proof, visited }));
+    for (const r of answers.slice(0, limit)) assert.equal(r.status, 200);
+    const last = answers[answers.length - 1];
+    assert.equal(last.status, 429);
+    assert.equal(last.json.reason, 'rate-limited');
+    assert.ok(Number.isInteger(last.json.retryInMs) && last.json.retryInMs > 0, 'retryInMs says when to come back');
+  } finally {
+    await close(ownerServer);
+  }
+});
+
+test('federated bridge: an origin the owner cannot verify is refused, never served without a budget', async () => {
+  const owner = startOwner({});
+  const ownerServer = await listen(owner.app);
+  owner.setServer(ownerServer);
+  const port = ownerServer.address().port;
+  const visited = [CLIENT_ID, OWNER_ID];
+  try {
+    // A proof signed by someone else: signature and chain do not hold together,
+    // so there is no attested sender to count against. Falling through to the
+    // bridge would be exactly the silent hole this branch exists to close.
+    const badProof = signHop('not-the-owner-secret', { method: 'POST', path: '/api/live-host/bridge', visited });
+    const r = await callOwnerDirect(port, { proof: badProof, visited });
+    assert.equal(r.status, 403);
+    assert.equal(r.json.reason, 'live-host-origin-unverified');
+  } finally {
+    await close(ownerServer);
+  }
 });
