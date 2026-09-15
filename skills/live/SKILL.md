@@ -33,6 +33,18 @@ read from the roster and the designated cell's lease state
 (`live`/`grace`/`expired`/`none`/`unavailable`) — a designated-but-not-eligible
 host is a distinct, readable state, not an error to explain away.
 
+## The rule is per node — and the cell may live on another node
+
+One host cell **per node** is the rule, and it keeps holding when the designated
+cell belongs to a peer: the node serving the page keeps the pointer locally
+(`ownerId` plus the owner's own `revision`, and `remote: true` on `GET`) and
+forwards the bridge resolution to the owner instead of resolving it locally.
+The caller still chooses nothing — the designation is the choice, and it can now
+point off-node. An unreachable owner, or a peer that was never granted
+`liveHostAccess`, is a **named** outcome (`live-host-owner-unreachable`,
+`live-host-not-granted`), never a silent fallback to a local cell. `clear`
+removes the pointer on both sides.
+
 ## Command the node that owns the cell, not the one serving the page
 
 This is the point of the feature: **the request must reach the node whose

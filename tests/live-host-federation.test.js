@@ -7,7 +7,7 @@
 // /api/route). Il proprietario e' un server express vero con la catena
 // d'ingresso della federazione (gate liveHostAccess + prova di hop + route
 // live-host vere). L'app Live continua a non scegliere il target: sceglie la
-// designazione, che ora puo' puntare fuori nodo (contratto rev6).
+// designazione, che ora puo' puntare fuori nodo.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
