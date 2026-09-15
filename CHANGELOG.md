@@ -2,6 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.28 — 2026-09-15
+
+- **The terminal renderer toggle is an icon button** (GPU/DOM stay in the tooltip and in the accessible label), so it no longer widens the bar and squeezes the cell name on phones.
+
 ## 0.9.26 — 2026-09-13
 
 - rebuilt the frontend bundle for the shipped version (the 0.9.25 package carried a 0.9.24 bundle, so the UI kept showing the update banner); the publish gate now fails when the bundle version differs from the package version.
