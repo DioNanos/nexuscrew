@@ -7,6 +7,8 @@ import {
 } from '../lib/host-designation.js';
 import PinPersistBanner from './PinPersistBanner.jsx';
 import CellStar from './CellStar.jsx';
+import LiveHostIndicator from './LiveHostIndicator.jsx';
+import { liveHostView } from '../lib/live-host-view.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
@@ -369,6 +371,11 @@ export default function Sidebar({
 
   return (
     <aside className="nc-sidebar" style={style}>
+      {/* Live host del NODO che serve la pagina: una riga in testa, di sola
+          lettura. Il comando che lo cambia sta nelle righe delle celle. */}
+      <div className="nc-side-live-host">
+        <LiveHostIndicator view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells })} />
+      </div>
       <div className="nc-side-head">
         <button className="nc-collapse-btn" onClick={onToggleCollapse} title={t('collapse')}>⟨</button>
         <span className="nc-side-title">{t('fleet')}</span>

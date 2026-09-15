@@ -14,6 +14,7 @@ import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
 import { nextRendererPreference, readRendererPreference, writeRendererPreference } from './lib/terminal-renderer.js';
+import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import VlSessionView from './components/VlSessionView.jsx';
 import CellPanel from './components/CellPanel.jsx';
 import {
@@ -114,6 +115,9 @@ function rel(epochSec) {
 // risolve al primo ciclo. Il titolo visibile deriva sempre da `cell.cell`.
 export function SingleView({
   session, node, ownerId, cellName, token, readonly = false, panelPort = 0, onBack, onCellSwitcher, cellSwitcherOpen = false,
+  // Live host della cella aperta (gia' risolto da App per la route giusta):
+  // l'header ha spazio solo per un puntino (D-251), il testo sta nel title.
+  liveHost = null,
 }) {
   useLang(); // re-render allo switch lingua
   const [inputPreferences] = useInputPreferences();
@@ -214,6 +218,13 @@ export function SingleView({
         <button onClick={onBack} title={t('sessions')}><Icon name="chevronLeft" size={18} /><span className="nc-bar-label">{t('sessions')}</span></button>
         <span className="nc-bar-center">
           <b title={node ? `${title} · ${node}` : title}>{title}</b>
+          {liveHost && liveHost.cell && liveHost.cell === cellName ? (
+            <span className={`nc-live-host-dot ${liveHostDotClass(liveHost)} nc-live-host-dot-header`}
+              data-testid="live-host-header-dot"
+              title={t('live-host-indicator').replace('{cell}', liveHost.cell)
+                .replace('{mode}', t(liveHost.mode ? `live-host-mode-${liveHost.mode}` : 'live-host-mode-unknown'))
+                .replace('{state}', t(`live-host-state-${liveHost.state}`))} />
+          ) : null}
           {sub && <small className="nc-bar-sub">{sub}</small>}
         </span>
         <span className="nc-bar-right">
@@ -433,6 +444,21 @@ export default function App() {
   // hostLease, hostRevision}}, una voce per nodo — 'local' e' il nodo che serve
   // la pagina, tutte le altre sono le route di nodeGroups.
   const [hostByRoute, setHostByRoute] = useState({});
+  // Vista del Live host per UNA route (il nodo che possiede le celle mostrate).
+  // `ownerId` non-local per una route non vuota: quella lettura arriva da un
+  // peer, quindi il host e' di un altro nodo e la UI lo dice.
+  const liveHostViewFor = (route) => {
+    const key = hostRouteKey(route);
+    const routeCells = route.length
+      ? ((nodeGroups || []).find((g) => hostRouteKey(Array.isArray(g.route) ? g.route : []) === key) || {}).cells || []
+      : cells;
+    return liveHostView({
+      liveHost: hostByRoute[key] || null,
+      cells: routeCells,
+      localNodeId: deckStore.localNodeId,
+      ownerId: route.length ? key : deckStore.localNodeId,
+    });
+  };
   // Rif. sempre fresco a nodeGroups per il polling qui sotto: leggerlo via ref
   // (non come dependency dell'effect) evita di ricreare l'intervallo ogni volta
   // che useNodes produce un nuovo array (~4s, anche a dati invariati).
@@ -758,6 +784,7 @@ export default function App() {
     }
     return <>
       <SingleView session={session.session} node={session.node} ownerId={session.ownerId} cellName={session.cellName} token={token} readonly={roDefault}
+          liveHost={liveHostViewFor(session.node ? session.node.split('/') : [])}
         panelPort={panelPortForRoute(session.node ? session.node.split('/') : [], nodePanelPorts, panelPort)}
         onBack={() => setSession(null)} onCellSwitcher={() => setCellSwitcherOpen(true)} cellSwitcherOpen={cellSwitcherOpen} />
       {cellSwitcherOpen && <CellSwitcher token={token} current={session}
@@ -848,6 +875,7 @@ export default function App() {
             session={single.session} node={single.node} ownerId={single.ownerId}
             cellName={cellDisplayName({ session: single.session, node: single.node, ownerId: single.ownerId, cells, nodeGroups })}
             token={token} readonly={roDefault}
+            liveHost={liveHostViewFor(single.node ? single.node.split('/') : [])}
             panelPort={panelPortForRoute(single.node ? single.node.split('/') : [], nodePanelPorts, panelPort)}
             onBack={() => setSingle(null)}
           />

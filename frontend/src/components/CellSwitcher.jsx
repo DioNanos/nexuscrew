@@ -6,9 +6,11 @@ import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-
 import { positionKey } from '../lib/nodes-model.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
-import { hostDesignationFailureMessage } from '../lib/host-designation.js';
+import { hostDesignationFailureMessage, hostRouteKey } from '../lib/host-designation.js';
+import { liveHostView } from '../lib/live-host-view.js';
 import RosterHandle from './RosterHandle.jsx';
 import CellStar from './CellStar.jsx';
+import LiveHostIndicator from './LiveHostIndicator.jsx';
 import { panelPortForRoute } from '../lib/panel-port.js';
 import { t } from '../lib/i18n.js';
 import './CellSwitcher.css';
@@ -327,6 +329,10 @@ export default function CellSwitcher({
       <aside ref={dialogRef} className="nc-cell-switcher" role="dialog"
         aria-label={t('fleet-cells')} tabIndex={-1} onClick={(event) => event.stopPropagation()}>
         <div className="nc-cell-switcher-list">
+          {/* Live host di questo nodo: riga di sola lettura in testa alla lista,
+              cosi' il selettore dice chi e' l'host prima di scegliere una cella. */}
+          <LiveHostIndicator className="nc-cell-switcher-live-host"
+            view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells: snapshot.cells || [] })} />
           {!ready && <div className="nc-empty" role="status">{t('cell-switcher-refreshing')}</div>}
           {ready && visibleRows.length === 0 && <div className="nc-empty" role="status">{t('cell-switcher-empty-active')}</div>}
           {visibleRows.map((row) => {
