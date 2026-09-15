@@ -2,6 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.28 — 2026-09-15
+
+- **The terminal renderer toggle is an icon button** (GPU/DOM stay in the tooltip and in the accessible label), so it no longer widens the bar and squeezes the cell name on phones.
+
 ## 0.9.27 — 2026-09-14
 
 - **The terminal counts columns the way tmux and glibc do.** Emoji and East Asian wide characters take two cells, so the glyphs after a wide character are no longer stale on phones; the terminal can also paint through a GPU (WebGL) renderer, with the DOM renderer as the floor and a GPU/DOM switch in the terminal bar to compare the two.

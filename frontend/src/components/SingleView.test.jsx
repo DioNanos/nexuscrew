@@ -189,7 +189,7 @@ describe('SingleView — pannello per-cella (D8, panelUrl)', () => {
 describe('SingleView renderer toggle', () => {
   it('is an icon button: no visible text, title and pressed state present', async () => {
     localStorage.removeItem('nc-terminal-renderer');
-    render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
+    render(<SingleView session="cloud-cell-One" token="t" onBack={vi.fn()} />);
     const toggle = await screen.findByRole('button', { name: /terminal-renderer-switch/ });
     expect(toggle.textContent).toBe('');
     expect(toggle.getAttribute('title')).toMatch(/terminal-renderer-switch/);
@@ -198,7 +198,7 @@ describe('SingleView renderer toggle', () => {
 
   it('still flips the stored choice when pressed', async () => {
     localStorage.setItem('nc-terminal-renderer', 'webgl');
-    render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
+    render(<SingleView session="cloud-cell-One" token="t" onBack={vi.fn()} />);
     const toggle = await screen.findByRole('button', { name: /terminal-renderer-switch/ });
     fireEvent.click(toggle);
     expect(localStorage.getItem('nc-terminal-renderer')).toBe('dom');
