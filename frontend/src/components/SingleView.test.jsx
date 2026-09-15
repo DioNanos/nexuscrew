@@ -181,3 +181,26 @@ describe('SingleView — pannello per-cella (D8, panelUrl)', () => {
     expect(screen.queryByTestId('cellpanel')).toBeNull();
   });
 });
+
+// The renderer toggle in the terminal bar is an icon button, like the zoom and
+// keyboard buttons beside it. It carried the word GPU/DOM as visible text and
+// that widened the bar until it clipped the cell name; the word belongs in the
+// title and the accessible label, where it already was.
+describe('SingleView renderer toggle', () => {
+  it('is an icon button: no visible text, title and pressed state present', async () => {
+    localStorage.removeItem('nc-terminal-renderer');
+    render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
+    const toggle = await screen.findByRole('button', { name: /terminal-renderer-switch/ });
+    expect(toggle.textContent).toBe('');
+    expect(toggle.getAttribute('title')).toMatch(/terminal-renderer-switch/);
+    expect(toggle.getAttribute('aria-pressed')).toBe('true'); // webgl is the default
+  });
+
+  it('still flips the stored choice when pressed', async () => {
+    localStorage.setItem('nc-terminal-renderer', 'webgl');
+    render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
+    const toggle = await screen.findByRole('button', { name: /terminal-renderer-switch/ });
+    fireEvent.click(toggle);
+    expect(localStorage.getItem('nc-terminal-renderer')).toBe('dom');
+  });
+});
