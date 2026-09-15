@@ -2,6 +2,13 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.29 — 2026-09-15
+
+- **The Live host of a node is chosen with an explicit command.** `Use as Live host` and `Remove Live host` sit in the cell menu and in the cell selector: the star is a pin only, and a small indicator shows the current host, so the choice and its outcome stay in sight.
+- **A designated Live host that lives on another node is reached through its owner.** The bridge is forwarded to the owner node and its answer — or a named refusal — comes back as it is, with no silent fallback to a local cell; federated bridge calls are rate-limited per sending node.
+- **`nexuscrew init` does not restart a service it does not own.** Run from a HOME that does not own the running service it warns and skips the activation instead of restarting someone else's service (`--no-activate` skips the activation on purpose).
+- **A federated request whose body was already read is refused by name.** A named 502 at once, instead of waiting 30 seconds for a body that nothing will send.
+
 ## 0.9.28 — 2026-09-15
 
 - **The terminal renderer toggle is an icon button** (GPU/DOM stay in the tooltip and in the accessible label), so it no longer widens the bar and squeezes the cell name on phones.
