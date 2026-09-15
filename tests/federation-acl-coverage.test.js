@@ -37,6 +37,8 @@ const CORPUS = [
   '/vl-nodes/0123456789abcdef0123456789abcdef/events',
   '/vl-nodes/0123456789abcdef0123456789abcdef',
   '/decks/some-deck',
+  '/event-feed/cell-a',
+  '/event-feed/node/0123456789abcdef0123456789abcdef',
   ...FLEET_READ.map((alt) => `/fleet/${alt}`),
   ...FLEET_WRITE.map((alt) => `/fleet/${alt}`),
 ];
@@ -47,7 +49,10 @@ const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 // feed and the asks arrive later on purpose, and the class has to exist already
 // so F3.1 cannot serve them unclassified. They are the only ones allowed to be
 // ahead of the allowlist.
-const CLASSES_AHEAD_OF_ALLOWLIST = new Set(['event-feed', 'node-event-feed', 'ask-action']);
+// `ask-action` stays ahead of the allowlist on purpose: the federated ask
+// routes are a later stage. The event-feed classes are REAL now — the allowlist
+// and the classifier must stay aligned for them like every other resource.
+const CLASSES_AHEAD_OF_ALLOWLIST = new Set(['ask-action']);
 
 test('every (resource, method) the allowlist accepts has a class', () => {
   const missing = [];
