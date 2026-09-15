@@ -47,6 +47,17 @@ const PATHS = {
     </>
   ),
   x: <path d="M6 6l12 12M18 6 6 18" />,
+  // Il segnale che parte da un punto: usato dal comando che designa la cella
+  // ospite Live. Il punto e' pieno, le onde sono il tratto del set.
+  broadcast: (
+    <>
+      <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" />
+      <path d="M7.6 16.4a6.2 6.2 0 0 1 0-8.8" />
+      <path d="M16.4 7.6a6.2 6.2 0 0 1 0 8.8" />
+      <path d="M4.6 19.4a10.6 10.6 0 0 1 0-14.8" />
+      <path d="M19.4 4.6a10.6 10.6 0 0 1 0 14.8" />
+    </>
+  ),
   // D8: pannello grafico per-cella (monitor con base).
   monitor: (
     <>
