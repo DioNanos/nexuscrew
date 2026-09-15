@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { allowedByClass, classifyResource, CLASSES } = require('../lib/proxy/resource-acl.js');
+const { allowedResource } = require('../lib/proxy/federation.js');
 
 const SOURCE = fs.readFileSync(path.join(__dirname, '..', 'lib', 'proxy', 'federation.js'), 'utf8');
 
@@ -15,33 +16,78 @@ function literalResources() {
   return [...out];
 }
 
-// Routes whose match is a pattern rather than an equality: the concrete shapes
-// the allowlist accepts, frozen here on purpose.
-const PATTERN_RESOURCES = [
-  ['/sessions/cell-a', 'DELETE'],
-  ['/sessions/cell-a/visibility', 'PATCH'],
-  ['/vl-nodes/0123456789abcdef0123456789abcdef/commands', 'POST'],
-  ['/vl-nodes/0123456789abcdef0123456789abcdef/events', 'GET'],
-  ['/vl-nodes/0123456789abcdef0123456789abcdef', 'DELETE'],
-  ['/decks/some-deck', 'PUT'],
-  ['/panel/cell-a', 'GET'],
-  ['/panel/cell-a/assets/app.js', 'GET'],
+// The fleet family: one entry per alternative the allowlist accepts.
+const FLEET_READ = ['status', 'schema', 'definitions', 'credentials/status'];
+const FLEET_WRITE = [
+  'credentials/set', 'credentials/remove', 'up', 'down', 'restart', 'engine', 'boot',
+  'define-engine', 'edit-engine', 'remove-engine', 'define-model', 'remove-model',
+  'model-test', 'define-cell', 'edit-cell', 'remove-cell', 'restore-cells', 'restore-engines',
+];
+
+// One sample path per branch of the allowlist: the literals, plus an example for
+// every alternative of the pattern branches (with a generic cell/node id). A
+// branch nothing here represents is a branch nothing checks.
+const CORPUS = [
+  ...literalResources(),
+  '/panel/cell-a',
+  '/panel/cell-a/assets/app.js',
+  '/sessions/cell-a',
+  '/sessions/cell-a/visibility',
+  '/vl-nodes/0123456789abcdef0123456789abcdef/commands',
+  '/vl-nodes/0123456789abcdef0123456789abcdef/events',
+  '/vl-nodes/0123456789abcdef0123456789abcdef',
+  '/decks/some-deck',
+  ...FLEET_READ.map((alt) => `/fleet/${alt}`),
+  ...FLEET_WRITE.map((alt) => `/fleet/${alt}`),
 ];
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 
-test('every resource the federation allowlist accepts is classified', () => {
+// The classes whose route is designed but not yet in the allowlist: the event
+// feed and the asks arrive later on purpose, and the class has to exist already
+// so F3.1 cannot serve them unclassified. They are the only ones allowed to be
+// ahead of the allowlist.
+const CLASSES_AHEAD_OF_ALLOWLIST = new Set(['event-feed', 'node-event-feed', 'ask-action']);
+
+test('every (resource, method) the allowlist accepts has a class', () => {
   const missing = [];
-  for (const resource of literalResources()) {
-    if (!METHODS.some((method) => classifyResource(resource, method))) missing.push(resource);
+  for (const resource of CORPUS) {
+    for (const method of METHODS) {
+      if (allowedResource(resource, method) && !classifyResource(resource, method)) {
+        missing.push(`${method} ${resource}`);
+      }
+    }
   }
-  assert.deepStrictEqual(missing, [], `risorse in allowlist senza classe: ${missing.join(', ')}`);
+  assert.deepStrictEqual(missing, [], `allowlist senza classe: ${missing.join(', ')}`);
 });
 
-test('the pattern routes are classified too', () => {
-  for (const [resource, method] of PATTERN_RESOURCES) {
-    assert.ok(classifyResource(resource, method), `${resource} ${method} non classificata`);
+test('no class is broader than the allowlist', () => {
+  const wider = [];
+  for (const resource of CORPUS) {
+    for (const method of METHODS) {
+      const cls = classifyResource(resource, method);
+      if (!cls || CLASSES_AHEAD_OF_ALLOWLIST.has(cls)) continue;
+      if (!allowedResource(resource, method)) wider.push(`${method} ${resource} → ${cls}`);
+    }
   }
+  assert.deepStrictEqual(wider, [], `classi più larghe dell'allowlist: ${wider.join(', ')}`);
+});
+
+test('the corpus covers every literal the allowlist compares', () => {
+  const missing = literalResources().filter((resource) => !CORPUS.includes(resource));
+  assert.deepStrictEqual(missing, [], `letterali fuori dal corpus: ${missing.join(', ')}`);
+});
+
+test('the fleet family is classified exactly on the methods the allowlist accepts', () => {
+  for (const alt of FLEET_READ) {
+    assert.strictEqual(classifyResource(`/fleet/${alt}`, 'GET'), 'operator', `GET /fleet/${alt}`);
+  }
+  for (const alt of FLEET_WRITE) {
+    assert.strictEqual(classifyResource(`/fleet/${alt}`, 'POST'), 'operator', `POST /fleet/${alt}`);
+  }
+  // ...and on the methods it does NOT accept there is no class at all.
+  assert.strictEqual(classifyResource('/fleet/status', 'DELETE'), null);
+  assert.strictEqual(classifyResource('/fleet/restart', 'GET'), null);
 });
 
 test('a class always demands at least one grant, or explicit visibility', () => {
@@ -91,8 +137,13 @@ test('a peer with no visible cell sees no inventory, and the owner is never limi
   };
   assert.strictEqual(allowedByClass('inventory', noCells), false);
   assert.strictEqual(allowedByClass('inventory', null), true);
-  for (const [resource, method] of PATTERN_RESOURCES) {
-    assert.strictEqual(allowedByClass(classifyResource(resource, method), null), true, `${resource} ${method}`);
+  // The owner of this node is not limited by the peer gate, on any pair the
+  // allowlist accepts.
+  for (const resource of CORPUS) {
+    for (const method of METHODS) {
+      if (!allowedResource(resource, method)) continue;
+      assert.strictEqual(allowedByClass(classifyResource(resource, method), null), true, `${method} ${resource}`);
+    }
   }
 });
 
@@ -260,4 +311,20 @@ test('nexushost sees nothing of the owner, and the owner sees it only if it conc
   const conceding = await bootFederated(t, { ...USER_PEER });
   const res = await call(conceding, '/cells', 'GET');
   assert.strictEqual(res.status, 409);
+});
+
+// A full operator is not sent away with "resource-not-classified": the class
+// exists (operator) and the request moves past the gate. What happens next is
+// another check's business — only that reason must be gone.
+test('an operator is not refused with resource-not-classified on the family that used to miss a class', async (t) => {
+  const base = await bootFederated(t, { ...ADMIN_PEER });
+  for (const [resource, method] of [
+    ['/fleet/status', 'GET'],
+    ['/diagnostics/logs', 'DELETE'],
+    ['/audio/speak/status', 'POST'],
+  ]) {
+    const res = await call(base, resource, method);
+    const body = await res.json().catch(() => ({}));
+    assert.notStrictEqual(body.reason, 'resource-not-classified', `${method} ${resource}`);
+  }
 });
