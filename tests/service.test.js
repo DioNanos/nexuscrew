@@ -416,11 +416,15 @@ test('installService mac: attende la rimozione launchd prima del bootstrap', () 
     calls.push([bin, args]);
     if (args[0] === 'print') {
       printCalls += 1;
-      if (printCalls < 3) return 'loaded';
+      // The first print is the activation guard reading back WHICH plist launchd
+      // has loaded: the job is loaded from the definition just written, so
+      // activation proceeds and the unload polling below starts from call two.
+      if (printCalls === 1) return `path = ${target}\n`;
+      if (printCalls < 4) return 'loaded';
       throw new Error('service not found');
     }
     if (args[0] === 'bootstrap') {
-      assert.equal(printCalls, 3, 'bootstrap must run only after launchd no longer sees the job');
+      assert.equal(printCalls, 4, 'bootstrap must run only after launchd no longer sees the job');
     }
     return '';
   };
