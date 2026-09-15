@@ -279,20 +279,17 @@ describe('Sidebar — cella ospite Live per nodo', () => {
     ...extra,
   });
 
-  it('la stella su una cella FAVORITE remota designa con la route DI QUEL NODO (spia sulla chiamata)', () => {
-    localStorage.setItem('nc_pins', JSON.stringify(['relay:remote-cell']));
+  it('la stella su una cella FAVORITE remota pinna e non designa piu', () => {
+    localStorage.setItem('nc_pins', JSON.stringify(['relay:remote-live']));
     const onDesignateCell = vi.fn();
     render(<Sidebar
       nodeGroups={[remoteCellGroup()]}
+      hostByRoute={{ local: { hostCell: null }, relay: { hostCell: null } }}
       onDesignateCell={onDesignateCell}
       onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
     />);
     fireEvent.click(screen.getByTitle('pin to top'));
-    expect(onDesignateCell).toHaveBeenCalledWith('Remote Cell', ['relay']);
-    // controllo negativo: col difetto originale la designazione parte SENZA
-    // route (o con route vuota) e colpisce il nodo locale, non quello guardato.
-    expect(onDesignateCell).not.toHaveBeenCalledWith('Remote Cell');
-    expect(onDesignateCell).not.toHaveBeenCalledWith('Remote Cell', []);
+    expect(onDesignateCell).not.toHaveBeenCalled();
   });
 
   it('la stellina remota e\' designata SOLO quando hostByRoute[quella route] lo dice', () => {
@@ -313,7 +310,7 @@ describe('Sidebar — cella ospite Live per nodo', () => {
     expect(screen.queryByTitle('cell designated; thread absent')).toBeNull();
   });
 
-  it('con permesso: clear su una cella live remota passa la route del nodo, non locale', () => {
+  it('la stella su una cella designata non toglie la designazione: solo il pin', () => {
     localStorage.setItem('nc_pins', JSON.stringify(['relay:remote-cell']));
     const onClearHostCell = vi.fn(async () => true);
     render(<Sidebar
@@ -323,7 +320,7 @@ describe('Sidebar — cella ospite Live per nodo', () => {
       onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
     />);
     fireEvent.click(screen.getByTitle('cell designated; thread absent'));
-    expect(onClearHostCell).toHaveBeenCalledWith(['relay']);
+    expect(onClearHostCell).not.toHaveBeenCalled();
   });
 });
 

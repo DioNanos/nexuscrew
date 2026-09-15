@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import CellPeek, { formattaAttività, formattaTelemetria } from './CellPeek.jsx';
-import { apiFetch, fleetStatus, getRouteSessions } from '../lib/api.js';
+import { apiFetch, clearHostCell, designateHostCell, fleetStatus, getLiveHost, getRouteSessions } from '../lib/api.js';
 import { readCellSwitcherSnapshot, writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-view-model.js';
 import { positionKey } from '../lib/nodes-model.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
-import { hostDesignationFailureMessage } from '../lib/host-designation.js';
+import { hostDesignationFailureMessage, hostRouteKey } from '../lib/host-designation.js';
+import { liveHostView } from '../lib/live-host-view.js';
+import { runLiveHostCommand } from '../lib/live-host-command.js';
 import RosterHandle from './RosterHandle.jsx';
 import CellStar from './CellStar.jsx';
+import LiveHostIndicator from './LiveHostIndicator.jsx';
 import { panelPortForRoute } from '../lib/panel-port.js';
 import { t } from '../lib/i18n.js';
 import './CellSwitcher.css';
@@ -160,7 +163,7 @@ export default function CellSwitcher({
   token, current, onPick, onClose, panelPort = 0, nodePanelPorts = {},
   // Lo stato dell'host per nodo e le due azioni di designazione arrivano
   // dalle stesse callback che usa la home: la stella qui non ha una via sua.
-  hostByRoute = {}, onDesignateCell, onClearHostCell,
+  hostByRoute = {}, onDesignateCell, onClearHostCell, onLiveHostApplied,
 }) {
   const [snapshot, setSnapshot] = useState(readCellSwitcherSnapshot);
   const [showAll, setShowAll] = useState(false);
@@ -266,6 +269,29 @@ export default function CellSwitcher({
     return () => { alive = false; clearInterval(id); };
   }, [token]);
 
+  // Comando esplicito del Live host: una chiamata sola che legge la revisione
+  // fresca e scrive (live-host-command.js). L'esito si vede SEMPRE nella riga di
+  // stato, e `onLiveHostApplied` fa cambiare subito indicatore/puntino/stella
+  // senza aspettare il poll.
+  const [liveHostBusy, setLiveHostBusy] = useState('');
+  const liveHostApi = {
+    getLiveHost: (r) => getLiveHost(token, r),
+    designateHostCell: (id, revision, r) => designateHostCell(token, id, revision, r),
+    clearHostCell: (revision, r) => clearHostCell(token, revision, r),
+  };
+  const hostCellFor = (route) => (hostByRoute[hostRouteKey(route)] || {}).hostCell || null;
+  const runHostCommand = async (row, isHost) => {
+    setLiveHostBusy(row.key);
+    const out = await runLiveHostCommand({
+      action: isHost ? 'remove' : 'use', cellId: row.cellName, route: row.route || [], api: liveHostApi,
+    });
+    setLiveHostBusy('');
+    setNotice(t(out.messageKey).replace('{cell}', out.hostCell || row.cellName));
+    if (out.ok && onLiveHostApplied) {
+      onLiveHostApplied({ route: row.route || [], hostCell: out.hostCell, revision: out.revision });
+    }
+  };
+
   const statusFor = (row) => {
     if (row.degraded) return t('cell-degraded');
     if (!row.verified) return t('cell-switcher-not-confirmed');
@@ -327,6 +353,10 @@ export default function CellSwitcher({
       <aside ref={dialogRef} className="nc-cell-switcher" role="dialog"
         aria-label={t('fleet-cells')} tabIndex={-1} onClick={(event) => event.stopPropagation()}>
         <div className="nc-cell-switcher-list">
+          {/* Live host di questo nodo: riga di sola lettura in testa alla lista,
+              cosi' il selettore dice chi e' l'host prima di scegliere una cella. */}
+          <LiveHostIndicator className="nc-cell-switcher-live-host"
+            view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells: snapshot.cells || [] })} />
           {!ready && <div className="nc-empty" role="status">{t('cell-switcher-refreshing')}</div>}
           {ready && visibleRows.length === 0 && <div className="nc-empty" role="status">{t('cell-switcher-empty-active')}</div>}
           {visibleRows.map((row) => {
@@ -392,12 +422,23 @@ export default function CellSwitcher({
                   baseClassName="nc-cell-switcher-star"
                   togglePin={togglePin}
                   removePin={removePin}
-                  designate={onDesignateCell}
-                  clearHost={onClearHostCell}
                   onOutcome={(outcome) => {
                     if (!outcome.ok) setNotice(t(hostDesignationFailureMessage(outcome.error)));
                   }}
                 />
+                {/* Il comando esplicito: la stella e' un pin, la designazione
+                    e' una scelta del nodo e si dice con una frase. */}
+                <button type="button" className="nc-cell-switcher-act nc-cell-switcher-host"
+                  data-testid={`live-host-command-${row.key}`}
+                  disabled={liveHostBusy === row.key}
+                  title={hostCellFor(row.route || []) === row.cellName ? t('live-host-action-remove') : t('live-host-action-use')}
+                  aria-label={`${hostCellFor(row.route || []) === row.cellName ? t('live-host-action-remove') : t('live-host-action-use')}: ${row.cellName}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    runHostCommand(row, hostCellFor(row.route || []) === row.cellName);
+                  }}>
+                  {hostCellFor(row.route || []) === row.cellName ? t('live-host-action-remove') : t('live-host-action-use')}
+                </button>
               </div>
             );
           })}
@@ -418,6 +459,8 @@ export default function CellSwitcher({
             token={token}
             initialSource={peek.source}
             panelPort={panelPortForRoute(peekRow.route || [], nodePanelPorts, panelPort)}
+            liveHost={liveHostView({ liveHost: hostByRoute[hostRouteKey(peekRow.route || [])], cells: snapshot.cells || [] })}
+            onLiveHostApplied={onLiveHostApplied}
             onClose={() => setPeek(null)}
           />
         )}

@@ -308,7 +308,7 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
           <CellStar item={item} pins={pins} hostByRoute={hostByRoute} route={route} cellName={c.cell}
             baseClassName="nc-act pin"
             togglePin={togglePin} removePin={removePin}
-            designate={onDesignateCell} clearHost={onClearHostCell} />
+            />
           {canBoot && <button className={`nc-act boot${boot ? ' on' : ''}`} disabled={bootBusy.has(bootKey)}
             onClick={(event) => onBootToggle(event, c, route)} title={bootLabel} aria-label={bootLabel}>
             <Icon name="boot" size={16} />

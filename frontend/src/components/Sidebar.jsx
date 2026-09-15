@@ -7,6 +7,8 @@ import {
 } from '../lib/host-designation.js';
 import PinPersistBanner from './PinPersistBanner.jsx';
 import CellStar from './CellStar.jsx';
+import LiveHostIndicator from './LiveHostIndicator.jsx';
+import { liveHostView } from '../lib/live-host-view.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
@@ -369,6 +371,11 @@ export default function Sidebar({
 
   return (
     <aside className="nc-sidebar" style={style}>
+      {/* Live host del NODO che serve la pagina: una riga in testa, di sola
+          lettura. Il comando che lo cambia sta nelle righe delle celle. */}
+      <div className="nc-side-live-host">
+        <LiveHostIndicator view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells })} />
+      </div>
       <div className="nc-side-head">
         <button className="nc-collapse-btn" onClick={onToggleCollapse} title={t('collapse')}>⟨</button>
         <span className="nc-side-title">{t('fleet')}</span>
@@ -457,7 +464,7 @@ export default function Sidebar({
                 <CellStar item={item} pins={pins} hostByRoute={hostByRoute} route={[]} cellName={c.cell}
                   baseClassName="nc-pin"
                   togglePin={togglePin} removePin={removePin}
-                  designate={onDesignateCell} clearHost={onClearHostCell} />
+                  />
                 {onBoot && fleetCapabilities.includes('boot') && bootButton(c)}
                 <button
                   className={`nc-power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
@@ -632,8 +639,7 @@ export default function Sidebar({
                     </span>
                 <CellStar item={item} pins={pins} hostByRoute={hostByRoute} route={route} cellName={c.cell}
                   baseClassName="nc-pin"
-                  togglePin={togglePin} removePin={removePin}
-                  designate={onDesignateCell} clearHost={onClearHostCell} />
+                  togglePin={togglePin} removePin={removePin} />
                     {onBoot && (g.capabilities || []).includes('boot') && bootButton(c, g.route || [])}
                     {(g.capabilities || []).includes(c.active ? 'down' : 'up') && (
                       <button className={`nc-power${c.active ? ' on' : ''}${c.degraded ? ' warn' : ''}`}

@@ -6,19 +6,8 @@
 // which key labels it, and what a single tap does. Three copies of that is how
 // the same defect comes back on a surface nobody re-checked, so it lives here.
 import {
-  hostNextAction, hostRenderState, hostThreadTitleKey, hostRouteKey,
+  HOST_FAVORITE, hostRenderState, hostThreadTitleKey, hostRouteKey,
 } from './host-designation.js';
-
-// A caller answers either a boolean (the clear path in App.jsx) or an
-// { ok, error } outcome. Both are read here so a surface can say WHY a
-// designation failed instead of losing the reason.
-async function outcomeOf(result) {
-  let value;
-  try { value = await result; } catch (error) { return { ok: false, error }; }
-  if (value === true) return { ok: true };
-  if (value === false || value == null) return { ok: false };
-  return { ok: value.ok === true, error: value.error };
-}
 
 // The star of one row. Only `item.key` (the pin identity) and `item.value.cell`
 // (the identity the node stores as hostCell) are read, so every surface can
@@ -35,27 +24,18 @@ export function cellStarView({ item, pins, hostByRoute, route }) {
     favorite: state === 'favorite',
     filled: state !== 'none',
     titleKey: threadTitleKey || 'pin',
-    action: hostNextAction(state),
+    // The tap toggles the pin only; the host state above stays for display.
+    action: state === HOST_FAVORITE ? 'removePin' : 'addPin',
   };
 }
 
-// One tap on the star: none -> pin (local, client-owned), favorite -> ask the
-// node to designate that cell, live -> clear on the node and unpin ONLY after
-// the node answered (API first, never before). Returns the outcome for the
-// callers that need to say something about it.
-export async function applyCellStar({
-  view, itemKey, cellName, route, togglePin, removePin, designate, clearHost,
-}) {
-  if (view.action === 'addPin') { togglePin(itemKey); return { ok: true }; }
-  if (view.action === 'designate') {
-    if (!designate) return { ok: false };
-    return outcomeOf(designate(cellName, route));
-  }
-  if (view.action === 'clearAndUnpin') {
-    if (!clearHost) return { ok: false };
-    const outcome = await outcomeOf(clearHost(route));
-    if (outcome.ok) removePin(itemKey);
-    return outcome;
-  }
-  return { ok: false };
+// One tap on the star: pin, or unpin. The star is a PREFERENCE (client-owned,
+// local); it does not designate anything any more — a designation is a choice
+// about the node that deserves a sentence, a revision and a visible outcome, and
+// it lives in its own command (see live-host-command.js). The star keeps SHOWING
+// the host state (colour, title): read-only information is not an action.
+export async function applyCellStar({ view, itemKey, togglePin, removePin }) {
+  if (view.action === 'removePin') { removePin(itemKey); return { ok: true }; }
+  togglePin(itemKey);
+  return { ok: true };
 }

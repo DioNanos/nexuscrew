@@ -1,5 +1,7 @@
 import { useRef, useState } from 'react';
 import CellPopup from './CellPopup.jsx';
+import { runLiveHostCommand } from '../lib/live-host-command.js';
+import { clearHostCell, designateHostCell, getLiveHost } from '../lib/api.js';
 import Terminal from './Terminal.jsx';
 import CellPanel from './CellPanel.jsx';
 import { t } from '../lib/i18n.js';
@@ -45,7 +47,8 @@ export function formattaTelemetria(tt, tele) {
 // mai un oggetto riga salvato (il fotogramma morto del difetto trovato in R4).
 // Campi: key, cellName, subtitle, nodeLabel, node (route qualificata o ''),
 // session, route[], panelUrl, telemetry, preview, activity.
-export default function CellPeek({ row, token, initialSource = 'preview', panelPort = 0, onClose }) {
+export default function CellPeek({ row, token, initialSource = 'preview', panelPort = 0, onClose, liveHost = null, onLiveHostApplied
+}) {
   const [source, setSource] = useState(initialSource === 'panel' && !row.panelUrl ? 'preview' : initialSource);
   // Ref del terminale: il contratto della tile, così Terminal non dipende da
   // chi lo monta. takeSize={false} sotto: il popup non ruba il size-lock
@@ -55,6 +58,28 @@ export default function CellPeek({ row, token, initialSource = 'preview', panelP
   const actionRef = useRef(() => {});
   const ctrlRef = useRef(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
+  // Il comando del Live host, dentro il popup: stessa frase e stesso esito
+  // visibile del selettore, mai solo un alert.
+  const [hostStatus, setHostStatus] = useState('');
+  const [hostBusy, setHostBusy] = useState(false);
+  const isHost = !!(liveHost && liveHost.cell && liveHost.cell === row.cellName);
+  const runHostCommand = async () => {
+    setHostBusy(true);
+    const out = await runLiveHostCommand({
+      action: isHost ? 'remove' : 'use', cellId: row.cellName, route: row.route || [], token,
+      api: {
+        getLiveHost: (r) => getLiveHost(token, r),
+        designateHostCell: (id, revision, r) => designateHostCell(token, id, revision, r),
+        clearHostCell: (revision, r) => clearHostCell(token, revision, r),
+      },
+    });
+    setHostBusy(false);
+    setHostStatus(t(out.messageKey).replace('{cell}', out.hostCell || row.cellName));
+    if (out.ok && onLiveHostApplied) {
+      onLiveHostApplied({ route: row.route || [], hostCell: out.hostCell, revision: out.revision });
+    }
+  };
+
   const tabs = [
     ['preview', t('cell-peek-preview')],
     ['stream', t('cell-peek-stream')],
@@ -74,6 +99,13 @@ export default function CellPeek({ row, token, initialSource = 'preview', panelP
             className={`nc-peek-sorgente${source === id ? ' attiva' : ''}`}
             onClick={() => setSource(id)}>{label}</button>
         ))}
+      </div>
+      <div className="nc-peek-host">
+        <button type="button" className="nc-peek-host-btn" disabled={hostBusy}
+          onClick={runHostCommand}>
+          {isHost ? t('live-host-action-remove') : t('live-host-action-use')}
+        </button>
+        {hostStatus && <div className="nc-peek-notice" role="status">{hostStatus}</div>}
       </div>
       {source === 'stream' ? (
         <div className="nc-peek-stream">

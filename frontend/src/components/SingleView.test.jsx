@@ -204,3 +204,26 @@ describe('SingleView renderer toggle', () => {
     expect(localStorage.getItem('nc-terminal-renderer')).toBe('dom');
   });
 });
+
+// The Live host in the phone header is a dot and nothing else: that bar is
+// narrow, and a sentence there squeezes the cell name.
+describe('SingleView live host dot', () => {
+  const view = { cell: 'Dev', state: 'thread-active', mode: 'tmux', remote: false };
+
+  it('is shown only when the open cell is the host, and carries the text in its title', async () => {
+    const { rerender } = render(<SingleView session="cloud-cell-One" cellName="Dev" token="t" onBack={vi.fn()} liveHost={view} />);
+    const dot = screen.getByTestId('live-host-header-dot');
+    expect(dot.className).toContain('active');
+    expect(dot.getAttribute('title')).toMatch(/live-host-indicator/);
+    expect(dot.textContent).toBe('');
+
+    rerender(<SingleView session="cloud-cell-One" cellName="Dev" token="t" onBack={vi.fn()}
+      liveHost={{ ...view, cell: 'Other' }} />);
+    expect(screen.queryByTestId('live-host-header-dot')).toBeNull();
+  });
+
+  it('is not rendered when there is no designation at all', async () => {
+    render(<SingleView session="cloud-cell-One" cellName="Dev" token="t" onBack={vi.fn()} liveHost={null} />);
+    expect(screen.queryByTestId('live-host-header-dot')).toBeNull();
+  });
+});
