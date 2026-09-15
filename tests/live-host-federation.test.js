@@ -1,5 +1,5 @@
 'use strict';
-// tests/live-host-federation.test.js — F2(a): il ponte Live di un nodo CLIENT
+// tests/live-host-federation.test.js — the Live bridge of a CLIENT node
 // segue la designazione anche quando punta a una cella di un ALTRO nodo.
 //
 // Il sistema e' quello di produzione: store vero, route live-host vere, e il
@@ -45,11 +45,14 @@ const mockFleet = (cells) => Promise.resolve({
   lease: { status: () => ({ state: 'live' }) },
 });
 
-function startOwner({ liveHostAccess = true, bridgeResult } = {}) {
+function startOwner({ liveHostAccess = true, bridgeResult, bridgeFault = 0 } = {}) {
   const dir = DIR();
   const ownerStore = createLiveHostStore({ filePath: path.join(dir, 'owner-live-host.json') });
   const nodesPath = path.join(dir, 'owner-nodes.json');
   const seen = { bridgeBodies: [], hopProofs: 0 };
+  // The permission is read per request, so a test can revoke it after the
+  // designation exists and still watch the owner refuse the next forward.
+  const gate = { liveHostAccess };
   const app = express();
   let serverRef = null;
   const selfPort = () => (serverRef && serverRef.address() ? serverRef.address().port : 0);
@@ -57,7 +60,7 @@ function startOwner({ liveHostAccess = true, bridgeResult } = {}) {
   // (client) entra con il suo token di route e il gate liveHostAccess viene
   // valutato PRIMA delle route, dal proprietario.
   app.use('/federation/route', (req, res) => {
-    const ingress = { nodeId: CLIENT_ID, liveHostAccess, panelAccess: true };
+    const ingress = { nodeId: CLIENT_ID, liveHostAccess: gate.liveHostAccess, panelAccess: true };
     return fed.routeHandler({
       nodesPath, localPort: selfPort, localCredential: () => 'owner-local-token',
       ingress, readonly: () => false, hopSecret: () => 'owner-hop-secret',
@@ -67,9 +70,18 @@ function startOwner({ liveHostAccess = true, bridgeResult } = {}) {
     resolveForLive: async () => bridgeResult || { mode: 'tmux', cell: 'dev', cwd: '/w', prompt: { applied: false, reason: 'tmux-mode' } },
     threadStatus: async () => 'unknown',
   };
+  // Production mounts its JSON parsers per route, and the bridge route is one of
+  // them (lib/server.js). The observation needs the same thing to see what the
+  // client actually forwarded.
+  app.use('/api/live-host/bridge', express.json({ limit: '4kb' }));
   app.use('/api/live-host', (req, res, next) => {
     if (req.headers[HOP]) seen.hopProofs += 1;
-    if (req.path === '/bridge') seen.bridgeBodies.push(req.body || {});
+    if (req.path === '/bridge') {
+      seen.bridgeBodies.push(req.body || {});
+      // An owner that fails with something we cannot name: the client must not
+      // hand the peer's status or text through as if it had named it itself.
+      if (bridgeFault) return res.status(bridgeFault).json({ error: 'owner bridge failure' });
+    }
     next();
   });
   app.use('/api/live-host', liveHostRoutes({
@@ -82,6 +94,7 @@ function startOwner({ liveHostAccess = true, bridgeResult } = {}) {
   }));
   return {
     app, ownerStore, seen,
+    revokeLiveHostAccess: () => { gate.liveHostAccess = false; },
     setServer: (server) => {
       serverRef = server;
       let ost = store.emptyStore('c'.repeat(32));
@@ -111,7 +124,9 @@ async function startClient({ ownerPort, ownerLiveHostAccess, bridgeResult } = {}
     clearRemote: (ownerId) => clientStore.clearForOwner(ownerId),
   };
   const app = express();
-  app.use(express.json({ limit: '4kb' }));
+  // No body parser in front of the proxy: production mounts its JSON parsers per
+  // route (lib/server.js), so a forwarded POST still carries its body. The route
+  // handlers mounted here bring their own parser.
   let clientServerRef = null;
   const liveFed = createLiveHostFederation({
     localNodeId: () => CLIENT_ID,
@@ -139,7 +154,7 @@ async function startClient({ ownerPort, ownerLiveHostAccess, bridgeResult } = {}
   return { server, clientStore, base, liveFed };
 }
 
-test('F2(a) designate remota: il client registra {hostCell, ownerId, revision} e GET dichiara remote:true con lo stato del proprietario', async () => {
+test('remote designation: the client records {hostCell, ownerId, revision} and GET reports remote:true with the owner state', async () => {
   const owner = startOwner({});
   const ownerServer = await listen(owner.app);
   owner.setServer(ownerServer);
@@ -166,7 +181,7 @@ test('F2(a) designate remota: il client registra {hostCell, ownerId, revision} e
   console.log('a: closed');
 });
 
-test('F2(a) bridge: con host remoto il client inoltra al proprietario e restituisce la risposta con owner e route', async () => {
+test('federated bridge: with a remote host the client forwards to the owner and returns the answer with owner and route', async () => {
   const bridgeResult = { mode: 'tmux', cell: 'dev', cwd: '/w', prompt: { applied: false, reason: 'tmux-mode' } };
   const owner = startOwner({ bridgeResult });
   const ownerServer = await listen(owner.app);
@@ -186,23 +201,33 @@ test('F2(a) bridge: con host remoto il client inoltra al proprietario e restitui
   console.log('a: closed');
 });
 
-test('F2(a) bridge: proprietario senza liveHostAccess per il client → 403 nominato', async () => {
-  const owner = startOwner({ liveHostAccess: false });
+test('federated bridge: a revoked permission answers 403 by name and the pointer stays', async () => {
+  const owner = startOwner({});
   const ownerServer = await listen(owner.app);
   owner.setServer(ownerServer);
   const client = await startClient({ ownerPort: ownerServer.address().port });
-  await jfetch(`${client.base}/api/route/hub/_/live-host/designate`, { method: 'POST', body: { cellId: 'dev', expectedRevision: 0 } });
+  const d = await jfetch(`${client.base}/api/route/hub/_/live-host/designate`, { method: 'POST', body: { cellId: 'dev', expectedRevision: 0 } });
+  assert.equal(d.status, 200);
+  assert.equal(client.clientStore.snapshot().ownerId, HUB_ID, 'the pointer exists before the revocation');
+  // The owner changes its mind after the pointer exists: the next forward must
+  // come back with the owner's own name for the refusal, and nothing may be
+  // resolved locally in its place. Dropping the pointer is the operator's call
+  // (clear), never a side effect of a refusal.
+  owner.revokeLiveHostAccess();
   const b = await jfetch(`${client.base}/api/live-host/bridge`, { method: 'POST', body: {} });
   assert.equal(b.status, 403);
   assert.equal(b.json.reason, 'live-host-not-granted');
-  console.log('a: closing');
+  assert.notEqual(b.json.cell, 'local-dev');
+  const snap = client.clientStore.snapshot();
+  assert.equal(snap.ownerId, HUB_ID);
+  assert.equal(snap.hostCell, 'dev');
   await Promise.all([close(ownerServer), close(client.server)]);
-  console.log('a: closed');
 });
 
-test('F2(a) bridge: cella/revision del proprietario cambiata → 409 nominato', async () => {
+test('federated bridge: the owner designation moved → 409 by name', async () => {
   const owner = startOwner({});
   const ownerServer = await listen(owner.app);
+  owner.setServer(ownerServer);
   const client = await startClient({ ownerPort: ownerServer.address().port });
   await jfetch(`${client.base}/api/route/hub/_/live-host/designate`, { method: 'POST', body: { cellId: 'dev', expectedRevision: 0 } });
   await owner.ownerStore.compareAndSet(1, 'other');
@@ -214,7 +239,7 @@ test('F2(a) bridge: cella/revision del proprietario cambiata → 409 nominato', 
   console.log('a: closed');
 });
 
-test('F2(a) bridge: proprietario irraggiungibile → errore nominato, nessun fallback locale', async () => {
+test('federated bridge: unreachable owner → named error, no local fallback', async () => {
   const client = await startClient({ ownerPort: 1 });
   await client.clientStore.setRemoteDesignation({ ownerId: HUB_ID, hostCell: 'dev', revision: 3 });
   const b = await jfetch(`${client.base}/api/live-host/bridge`, { method: 'POST', body: {} });
@@ -224,7 +249,7 @@ test('F2(a) bridge: proprietario irraggiungibile → errore nominato, nessun fal
   await close(client.server);
 });
 
-test('F2(a) host locale: POST /bridge resta identico a oggi', async () => {
+test('local host: POST /bridge stays exactly what it is today', async () => {
   const client = await startClient({ ownerPort: 1 });
   await client.clientStore.compareAndSet(0, 'local-dev');
   const b = await jfetch(`${client.base}/api/live-host/bridge`, { method: 'POST', body: {} });
@@ -235,7 +260,7 @@ test('F2(a) host locale: POST /bridge resta identico a oggi', async () => {
   await close(client.server);
 });
 
-test('F2(a) GET con proprietario irraggiungibile → threadStatus unknown con reason', async () => {
+test('GET with an unreachable owner → threadStatus unknown with a reason', async () => {
   const client = await startClient({ ownerPort: 1 });
   await client.clientStore.setRemoteDesignation({ ownerId: HUB_ID, hostCell: 'dev', revision: 3 });
   console.log('a: GET start');
@@ -248,9 +273,10 @@ test('F2(a) GET con proprietario irraggiungibile → threadStatus unknown con re
   await close(client.server);
 });
 
-test('F2(a) clear remota: pulisce il proprietario e il registro locale', async () => {
+test('remote clear: removes the owner designation and the local pointer', async () => {
   const owner = startOwner({});
   const ownerServer = await listen(owner.app);
+  owner.setServer(ownerServer);
   const client = await startClient({ ownerPort: ownerServer.address().port });
   await jfetch(`${client.base}/api/route/hub/_/live-host/designate`, { method: 'POST', body: { cellId: 'dev', expectedRevision: 0 } });
   const c = await jfetch(`${client.base}/api/route/hub/_/live-host/clear`, { method: 'POST', body: { expectedRevision: 1 } });
@@ -261,12 +287,59 @@ test('F2(a) clear remota: pulisce il proprietario e il registro locale', async (
   await Promise.all([close(ownerServer), close(client.server)]);
 });
 
-test('F2(a) bridge federato: body senza expect o con campi extra → 400; expect valido ma route non federata resta 400 locale', async () => {
+test('federated bridge: a body without expect or with extra fields → 400; a valid expect on the local route stays a local 400', async () => {
   const owner = startOwner({});
   const ownerServer = await listen(owner.app);
   const client = await startClient({ ownerPort: ownerServer.address().port });
   await jfetch(`${client.base}/api/route/hub/_/live-host/designate`, { method: 'POST', body: { cellId: 'dev', expectedRevision: 0 } });
   const bad = await jfetch(`${client.base}/api/live-host/bridge`, { method: 'POST', body: { expect: { hostCell: 'dev' } } });
   assert.equal(bad.status, 400);
+  await Promise.all([close(ownerServer), close(client.server)]);
+});
+
+test('federated proxy: a body a local middleware already read is refused at once, by name', async () => {
+  const owner = startOwner({});
+  const ownerServer = await listen(owner.app);
+  owner.setServer(ownerServer);
+  // Deliberately the shape the other tests do NOT use: a body parser in front of
+  // the proxy. The forward cannot carry a body that is already gone, so it has to
+  // say so immediately instead of announcing bytes nobody will send.
+  const dir = DIR();
+  const nodesPath = path.join(dir, 'nodes.json');
+  let st = store.emptyStore(CLIENT_ID);
+  st = store.addNode(st, {
+    name: 'hub', nodeId: HUB_ID, localPort: ownerServer.address().port, remotePort: 41820,
+    token: HUB_TOKEN, acceptToken: CLIENT_TOKEN,
+    direction: 'inbound', shared: true, transport: 'inbound', visibility: 'network',
+  });
+  store.atomicWriteStore(nodesPath, st);
+  const app = express();
+  app.use(express.json({ limit: '4kb' }));
+  app.use('/api/route', (req, res) => fed.routeHandler({
+    nodesPath, localPort: () => ownerServer.address().port, localCredential: () => HUB_TOKEN,
+    ingress: null, readonly: () => false, hopSecret: () => 'hop-secret',
+  })(req, res));
+  const server = await listen(app);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const started = Date.now();
+  const r = await jfetch(`${base}/api/route/hub/_/live-host/designate`, { method: 'POST', body: { cellId: 'dev', expectedRevision: 0 } });
+  const elapsed = Date.now() - started;
+  assert.equal(r.status, 502);
+  assert.equal(r.json.reason, 'federation-body-consumed');
+  assert.ok(elapsed < 2500, `refused at once, not after the upstream timeout (took ${elapsed} ms)`);
+  await Promise.all([close(server), close(ownerServer)]);
+});
+
+test('federated bridge: an owner failure we cannot name becomes our own generic outcome', async () => {
+  const owner = startOwner({ bridgeFault: 500 });
+  const ownerServer = await listen(owner.app);
+  owner.setServer(ownerServer);
+  const client = await startClient({ ownerPort: ownerServer.address().port });
+  await jfetch(`${client.base}/api/route/hub/_/live-host/designate`, { method: 'POST', body: { cellId: 'dev', expectedRevision: 0 } });
+  const b = await jfetch(`${client.base}/api/live-host/bridge`, { method: 'POST', body: {} });
+  assert.equal(b.status, 502);
+  assert.equal(b.json.reason, 'live-host-owner-rejected');
+  assert.notEqual(b.json.reason, 'live-host-owner-unreachable');
+  assert.equal(b.json.ownerStatus, 500);
   await Promise.all([close(ownerServer), close(client.server)]);
 });
