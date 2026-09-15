@@ -340,15 +340,15 @@ describe('SessionList — nodi VL', () => {
 // bypassava tutto cio' che non e' 'local' su un togglePin semplice — la stella
 // di una cella remota non designava mai nulla, solo pinnava.
 describe('SessionList — cella ospite Live per nodo', () => {
-  it('la stella su una cella FAVORITE remota designa con la route DI QUEL NODO (spia sulla chiamata)', async () => {
-    localStorage.setItem('nc_pins', JSON.stringify(['relay:remote-live']));
+  it('la stella su una cella FAVORITE remota PINNA e non designa piu', async () => {
+    // La designazione non passa piu' dalla stella: e' un comando esplicito, con
+    // revisione fresca ed esito visibile (il selettore compatto e il popup).
     const onDesignateCell = vi.fn();
     render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()} onDesignateCell={onDesignateCell} />);
     await screen.findByText('Relay Live');
     fireEvent.click(screen.getByRole('button', { name: 'pin to top Relay Live' }));
-    expect(onDesignateCell).toHaveBeenCalledWith('Relay Live', ['relay']);
-    expect(onDesignateCell).not.toHaveBeenCalledWith('Relay Live');
-    expect(onDesignateCell).not.toHaveBeenCalledWith('Relay Live', []);
+    expect(onDesignateCell).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem('nc_pins'))).toContain('relay:remote-live');
   });
 
   it('la stellina remota e\' designata SOLO quando hostByRoute[quella route] lo dice', async () => {

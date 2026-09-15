@@ -542,42 +542,34 @@ describe('CellSwitcher — the star on every row', () => {
     expect(screen.getByRole('button', { name: 'pin to top cell-One' }).textContent).toBe('\u2605');
   });
 
-  it('(d) favorite -> live: the tap asks the node to designate and the star becomes live', async () => {
-    localStorage.setItem('nc_pins', JSON.stringify([positionKey([], 'cloud-cell-One')]));
-    const onDesignateCell = vi.fn().mockResolvedValue({ ok: true });
-    const props = {
-      token: 'token', current: {}, onPick: vi.fn(), onClose: vi.fn(), onDesignateCell,
-    };
-    const { rerender } = render(<CellSwitcher {...props} hostByRoute={hostNone} />);
+  it('(d) the star only pins and unpins: it never designates', async () => {
+    const onDesignateCell = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={hostNone} onDesignateCell={onDesignateCell} />);
     await screen.findByRole('button', { name: /^cell-One / });
 
-    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
-    expect(onDesignateCell).toHaveBeenCalledWith('cell-One', []);
+    const star = screen.getByRole('button', { name: 'pin to top cell-One' });
+    fireEvent.click(star);
+    expect(onDesignateCell).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem('nc_pins'))).toContain(positionKey([], 'cloud-cell-One'));
 
-    // The parent owns the host state: it updates it from the designation reply.
-    rerender(
-      <CellSwitcher {...props} hostByRoute={{ local: { hostCell: 'cell-One', threadStatus: 'present' } }} />,
-    );
-    expect(screen.getByRole('button', { name: `${t('host-thread-present')} cell-One` })).toBeTruthy();
+    // Second tap: the pin goes away, and still nothing is designated.
+    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
+    expect(onDesignateCell).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem('nc_pins')) || []).not.toContain(positionKey([], 'cloud-cell-One'));
   });
 
-  it('(e) a refused designation says why, keeps the state and never opens an alert', async () => {
-    localStorage.setItem('nc_pins', JSON.stringify([positionKey([], 'cloud-cell-One')]));
-    const refusal = { data: { reason: 'live-host-not-granted' } };
-    const onDesignateCell = vi.fn().mockResolvedValue({ ok: false, error: refusal });
+  it('(e) the star does not speak about the designation at all', async () => {
+    // The 403 path belongs to the explicit command now: the star is a pin, and a
+    // pin has no outcome to report beyond persistence.
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
-    render(
-      <CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
-        hostByRoute={hostNone} onDesignateCell={onDesignateCell} />,
-    );
+    const onDesignateCell = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+      hostByRoute={{ local: { hostCell: 'cell-One', threadStatus: 'absent', hostRevision: 2 } }} onDesignateCell={onDesignateCell} />);
     await screen.findByRole('button', { name: /^cell-One / });
 
-    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
-
-    expect(await screen.findByText(t('live-host-not-granted'))).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'cell designated; thread absent cell-One' }));
+    expect(onDesignateCell).not.toHaveBeenCalled();
     expect(alert).not.toHaveBeenCalled();
-    // Nothing changed on the row: it is still only pinned, not live.
-    expect(screen.getByRole('button', { name: 'pin to top cell-One' })).toBeTruthy();
     alert.mockRestore();
   });
 });

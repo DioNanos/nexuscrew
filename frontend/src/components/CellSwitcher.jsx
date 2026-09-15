@@ -398,8 +398,6 @@ export default function CellSwitcher({
                   baseClassName="nc-cell-switcher-star"
                   togglePin={togglePin}
                   removePin={removePin}
-                  designate={onDesignateCell}
-                  clearHost={onClearHostCell}
                   onOutcome={(outcome) => {
                     if (!outcome.ok) setNotice(t(hostDesignationFailureMessage(outcome.error)));
                   }}

@@ -464,7 +464,7 @@ export default function Sidebar({
                 <CellStar item={item} pins={pins} hostByRoute={hostByRoute} route={[]} cellName={c.cell}
                   baseClassName="nc-pin"
                   togglePin={togglePin} removePin={removePin}
-                  designate={onDesignateCell} clearHost={onClearHostCell} />
+                  />
                 {onBoot && fleetCapabilities.includes('boot') && bootButton(c)}
                 <button
                   className={`nc-power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
@@ -639,8 +639,7 @@ export default function Sidebar({
                     </span>
                 <CellStar item={item} pins={pins} hostByRoute={hostByRoute} route={route} cellName={c.cell}
                   baseClassName="nc-pin"
-                  togglePin={togglePin} removePin={removePin}
-                  designate={onDesignateCell} clearHost={onClearHostCell} />
+                  togglePin={togglePin} removePin={removePin} />
                     {onBoot && (g.capabilities || []).includes('boot') && bootButton(c, g.route || [])}
                     {(g.capabilities || []).includes(c.active ? 'down' : 'up') && (
                       <button className={`nc-power${c.active ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
