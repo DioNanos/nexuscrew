@@ -178,3 +178,24 @@ test('the admin preset is the only vector that grants live hosting', () => {
   assert.strictEqual(NEXUSHOST_GRANTS.liveHostAccess, false);
   assert.strictEqual(USER_GRANTS.liveHostAccess, false);
 });
+
+test('a legacy record is not configured: defaults denied are not a preset', () => {
+  // Every grant defaulted to denied, without the explicit marker.
+  const legacy = { name: 'peer-a', cellVisibility: 'all', ...Object.fromEntries(BOOLEAN_GRANTS.map((k) => [k, false])) };
+  const view = grantsOf(legacy);
+  assert.strictEqual(view.configured, false);
+  assert.strictEqual(view.label, 'unconfigured');
+  assert.deepStrictEqual(view.grants, DENIED_GRANTS);
+  // The same vector, set explicitly, is a coherent vector that denies
+  // everything — reported as such, and still granting nothing.
+  const explicit = grantsOf({ ...legacy, accessConfigured: true });
+  assert.strictEqual(explicit.configured, true);
+  assert.strictEqual(explicit.label, 'custom');
+  for (const key of BOOLEAN_GRANTS) assert.strictEqual(explicit.grants[key], false, key);
+});
+
+test('applying a preset marks the record as explicitly configured', () => {
+  const applied = applyPreset({ name: 'peer-a' }, 'nexushost');
+  assert.strictEqual(applied.accessConfigured, true);
+  assert.strictEqual(grantsOf(applied).label, 'nexushost');
+});
