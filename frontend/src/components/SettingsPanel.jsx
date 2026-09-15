@@ -64,7 +64,7 @@ function PairingQr({ value }) {
 }
 
 // --- scheda NODI ---------------------------------------------------------------
-export function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAliases, vlUnavailable = [] }) {
+export function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAliases, vlUnavailable = [], accessRevision = null }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);        // `${name}:${action}` in corso
   const [invite, setInvite] = useState(null);
@@ -226,7 +226,7 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
 
       {openNode && (
         <NodeSheet node={openNode} nodes={nodes || []} token={token} readonly={readonly}
-          refresh={refresh} onClose={() => setOpenKey(null)} />
+          refresh={refresh} onClose={() => setOpenKey(null)} peerAccessRevision={accessRevision} />
       )}
 
       {(roster || []).some((g) => !g.direct && g.instanceId) && (
@@ -1090,6 +1090,11 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   const [systemSection, setSystemSection] = useState(initialSystemSection);
   const [settings, setSettings] = useState(null);
   const [nodes, setNodes] = useState([]);
+  // Revisione CAS della policy di accesso ai peer (F3.0): arriva alla radice
+  // di /api/peers ed e' il valore che la UI rimanda a ogni scrittura di preset.
+  // `null` = server che non espone il contratto: la sezione resta nascosta,
+  // perche' una scrittura senza revisione non e' una scrittura sorvegliata.
+  const [peersAccessRevision, setPeersAccessRevision] = useState(null);
   // Owner VL federati che non hanno risposto all'ultimo refresh — visibili,
   // non un errore bloccante (design NC_UI_NODI_VL_REMOTI, invariante 1: un
   // owner muto che sparisce in silenzio si legge come "non ha nodi").
@@ -1142,6 +1147,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
     try {
       const j = await getPeers(token);
       const peers = j.peers || [];
+      setPeersAccessRevision(Number.isInteger(j.accessRevision) ? j.accessRevision : null);
       // Unione multi-owner SOLO lato presentazione (design NC_UI_NODI_VL_REMOTI,
       // 2026-08-05): la federazione di /vl-nodes/* e' stata ripristinata
       // (b0e8bd1) — un nodo VL puo' appartenere a QUALUNQUE owner autorizzato
@@ -1230,7 +1236,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
 
         <div className="nc-set-body">
           {tab === 'nodes' && <NodesTab token={token} nodes={nodes} roster={roster} settings={settings} readonly={readonly}
-            vlUnavailable={vlUnavailable}
+            vlUnavailable={vlUnavailable} accessRevision={peersAccessRevision}
             refresh={refresh} refreshAliases={() => setAliasRevision((value) => value + 1)} />}
           {tab === 'fleet' && <FleetTab token={token} readonly={readonly}
             startNewCell={startNewCell} initialLocation={initialLocation}

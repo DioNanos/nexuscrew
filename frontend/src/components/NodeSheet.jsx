@@ -3,7 +3,8 @@ import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { nodeAction, removeNode, updateNode, setNodeVisibility, sendVlNodeCommand, fleetDefinitions } from '../lib/api.js';
 import { tunnelInfo, isValidLabel } from '../lib/settings-model.js';
-import { nodeDetailModel, selectionCandidates, cellScopeGrants, cellScopeCandidates } from '../lib/node-detail.js';
+import { nodeDetailModel, selectionCandidates, cellScopeGrants, cellScopeCandidates, peerAccessModel } from '../lib/node-detail.js';
+import { PRESET_NAMES, accessMatrix } from '../lib/access-presets.js';
 import { vlNodeActions, vlCommandStatus, vlHasPrompt, vlDefaultArgs, VL_PROMPT_MAX } from '../lib/vl-node-detail.js';
 import { healthHintParts } from '../lib/roster-view-model.js';
 import AuthorizedKeysLine from './AuthorizedKeysLine.jsx';
@@ -17,7 +18,7 @@ import Icon from './Icon.jsx';
 //
 // Il foglio non decide niente da solo: il modello sta in lib/node-detail.js,
 // provato senza React. Qui restano le chiamate e la forma.
-export default function NodeSheet({ node, nodes, token, readonly, refresh, onClose }) {
+export default function NodeSheet({ node, nodes, token, readonly, refresh, onClose, peerAccessRevision = null }) {
   useLang();
   const [busy, setBusy] = useState(null);
   const [err, setErr] = useState(null);
@@ -45,6 +46,10 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   // spara. Il testo resta nel campo se l'invio fallisce (ritentabile).
   const [promptOpen, setPromptOpen] = useState(false);
   const [promptText, setPromptText] = useState('');
+  // Ruolo del peer (F3.0): il preset SCELTO ma NON ancora confermato. La
+  // matrice prima/dopo vive fra la scelta e la conferma: nessuna scritta parte
+  // mentre la selezione e' solo un'opzione guardata.
+  const [accessPreset, setAccessPreset] = useState(null);
 
   const model = useMemo(
     () => nodeDetailModel(node, nodes, { readonly, busy: !!busy }),
@@ -52,6 +57,7 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   );
   if (!model) return null;
   const { identity, reach, authority, exposure, grants, actions, canEditVisibility, canEditCellScope, cellScope } = model;
+  const peerAccess = peerAccessModel(node);
   const ti = identity.routed ? { up: reach.up, since: null } : tunnelInfo(node.tunnel, Date.now());
 
   const guard = async (key, fn) => {
@@ -142,6 +148,24 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
       ? { cellVisibility, cells: Array.isArray(cells) ? cells : (node.cells || []) }
       : { cellVisibility });
     await refresh();
+  });
+
+  // Applicazione del preset: una sola richiesta CAS con { accessRole,
+  // accessRevision }. `role` NON esiste come campo: il server lo rifiuterebbe,
+  // e mandarlo direbbe che il nome e' una decisione quando e' solo un'etichetta
+  // derivata. Un 409 non e' un errore da mostrare come guasto: qualcuno ha
+  // scritto prima di noi, quindi si ricarica e si riparte dai dati veri.
+  const applyPeerAccess = (preset) => guard(`${node.name}:access`, async () => {
+    try {
+      await updateNode(token, node.name, { accessRole: preset, accessRevision: peerAccessRevision });
+      setAccessPreset(null);
+      await refresh();
+    } catch (e) {
+      if (e && e.status === 409) {
+        setErr(t('peer-access-conflict'));
+        await refresh();
+      } else { throw e; }
+    }
   });
 
   // Le celle si chiedono una volta sola, e solo a chi apre davvero questa
@@ -440,6 +464,51 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
                 onClick={() => { setCellPicking(false); setCellQuery(''); }}>{t('cancel')}</button>
             </div>}
           </div>}
+        </SheetSection>
+      )}
+
+      {/* Ruolo del peer (F3.0): solo peer diretti, etichetta derivata, e la
+          matrice PRIMA della conferma — confermare alla cieca un vettore di
+          grant non e' una scelta, e' un affidamento. Un peer senza revisione
+          (server che non espone il contratto) non offre la sezione: un CAS
+          senza revisione non e' una scrittura sorvegliata. */}
+      {peerAccess && peerAccessRevision != null && !isVl && (
+        <SheetSection title={t('peer-access')}>
+          <small className="nc-set-hint">{t('peer-access-help')}</small>
+          <div className="nc-set-info">{t('peer-access-current')}: <b>{t(`access-label-${peerAccess.label}`)}</b></div>
+          <label className="nc-field">
+            <select value={accessPreset || ''} aria-label={t('peer-access-preset')}
+              disabled={readonly || !!busy} title={readonly ? t('settings-readonly') : undefined}
+              onChange={(e) => setAccessPreset(e.target.value || null)}>
+              <option value="">{t('peer-access-preset-none')}</option>
+              {PRESET_NAMES.map((p) => <option key={p} value={p}>{t(`access-label-${p}`)}</option>)}
+            </select>
+          </label>
+          {accessPreset && (() => {
+            const rows = accessMatrix(peerAccess.grants, accessPreset);
+            const changed = rows.filter((r) => r.changed).length;
+            return <>
+              <div className="nc-access-matrix" role="table" aria-label={t('peer-access-matrix')}>
+                {rows.map((r) => (
+                  <div key={r.key} role="row"
+                    className={`nc-access-row${r.changed ? ' changed' : ''}`}>
+                    <span role="rowheader">{t(`access-grant-${r.key}`)}</span>
+                    <span>{t(`access-value-${r.current === true ? 'yes' : r.current === false ? 'no' : String(r.current)}`)}</span>
+                    <span aria-hidden="true">→</span>
+                    <span>{t(`access-value-${r.next === true ? 'yes' : r.next === false ? 'no' : String(r.next)}`)}</span>
+                  </div>
+                ))}
+              </div>
+              <small className="nc-set-hint">
+                {changed === 0 ? t('peer-access-unchanged') : t('peer-access-changed-hint')}
+              </small>
+              <button type="button" className="nc-btn primary" disabled={readonly || !!busy}
+                title={readonly ? t('settings-readonly') : undefined}
+                onClick={() => applyPeerAccess(accessPreset)}>
+                {t('peer-access-apply')}
+              </button>
+            </>;
+          })()}
         </SheetSection>
       )}
 
