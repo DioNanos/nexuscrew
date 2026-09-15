@@ -2,9 +2,13 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-const mocks = vi.hoisted(() => ({ apiFetch: vi.fn(), fleetStatus: vi.fn(), getRouteSessions: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  apiFetch: vi.fn(), fleetStatus: vi.fn(), getRouteSessions: vi.fn(),
+  getLiveHost: vi.fn(), designateHostCell: vi.fn(), clearHostCell: vi.fn(),
+}));
 vi.mock('../lib/api.js', () => ({
   apiFetch: mocks.apiFetch, fleetStatus: mocks.fleetStatus, getRouteSessions: mocks.getRouteSessions,
+  getLiveHost: mocks.getLiveHost, designateHostCell: mocks.designateHostCell, clearHostCell: mocks.clearHostCell,
 }));
 // Le sorgenti pesanti del popup fanno rete (ws, ticket del pannello): stub
 // con traccia delle props, stesso pattern di GridTile.test.jsx.
@@ -571,5 +575,40 @@ describe('CellSwitcher — the star on every row', () => {
     expect(onDesignateCell).not.toHaveBeenCalled();
     expect(alert).not.toHaveBeenCalled();
     alert.mockRestore();
+  });
+});
+
+// The explicit command: one call that reads the revision and writes with it, and
+// an outcome the row can show. The star is a pin (see its own test); this is the
+// only way to designate, so its two outcomes — applied, refused — must both be
+// visible.
+describe('CellSwitcher — the explicit Live host command', () => {
+  it('designates with the revision the server has just reported, and says so', async () => {
+    mocks.getLiveHost.mockResolvedValue({ hostCell: null, revision: 4, eligible: true, threadStatus: 'absent' });
+    mocks.designateHostCell.mockResolvedValue({ hostCell: 'cell-One', revision: 5 });
+    const onLiveHostApplied = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+      hostByRoute={{}} onLiveHostApplied={onLiveHostApplied} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    fireEvent.click(screen.getByTestId('live-host-command-cloud-cell-One'));
+
+    await waitFor(() => expect(mocks.designateHostCell).toHaveBeenCalledWith('token', 'cell-One', 4, []));
+    expect(onLiveHostApplied).toHaveBeenCalledWith({ route: [], hostCell: 'cell-One', revision: 5 });
+    expect(await screen.findByText(`Live host: cell-One`)).toBeTruthy();
+  });
+
+  it('shows the refusal in the status line and leaves the state alone', async () => {
+    mocks.getLiveHost.mockResolvedValue({ hostCell: null, revision: 4, eligible: true, threadStatus: 'absent' });
+    mocks.designateHostCell.mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403, data: { reason: 'live-host-not-granted' } }));
+    const onLiveHostApplied = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+      hostByRoute={{}} onLiveHostApplied={onLiveHostApplied} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    fireEvent.click(screen.getByTestId('live-host-command-cloud-cell-One'));
+
+    expect(await screen.findByText(t('live-host-not-granted'))).toBeTruthy();
+    expect(onLiveHostApplied).not.toHaveBeenCalled();
   });
 });

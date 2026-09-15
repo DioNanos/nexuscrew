@@ -447,6 +447,22 @@ export default function App() {
   // Vista del Live host per UNA route (il nodo che possiede le celle mostrate).
   // `ownerId` non-local per una route non vuota: quella lettura arriva da un
   // peer, quindi il host e' di un altro nodo e la UI lo dice.
+  // Esito del comando esplicito: hostByRoute cambia SUBITO (indicatore, puntino
+  // e stella), senza aspettare il poll. Una designazione appena fatta non ha
+  // ancora un thread, quindi `threadStatus: 'absent'` e' la verita' di adesso.
+  const applyLiveHostResult = useCallback(({ route, hostCell, revision }) => {
+    const key = hostRouteKey(route);
+    setHostByRoute((current) => ({
+      ...current,
+      [key]: {
+        hostCell: hostCell || null,
+        hostLease: null,
+        hostRevision: Number.isInteger(revision) ? revision : ((current[key] || {}).hostRevision || 0),
+        threadStatus: 'absent',
+      },
+    }));
+  }, []);
+
   const liveHostViewFor = (route) => {
     const key = hostRouteKey(route);
     const routeCells = route.length
@@ -790,6 +806,7 @@ export default function App() {
       {cellSwitcherOpen && <CellSwitcher token={token} current={session}
         panelPort={panelPort} nodePanelPorts={nodePanelPorts}
         hostByRoute={hostByRoute} onDesignateCell={designateCellHostOnce} onClearHostCell={clearCellHostOnce}
+        onLiveHostApplied={applyLiveHostResult}
         onPick={(next) => { pickSession(next); setCellSwitcherOpen(false); }} onClose={() => setCellSwitcherOpen(false)} />}
       {settingsOverlays}
     </>;
