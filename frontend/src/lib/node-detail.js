@@ -176,6 +176,25 @@ export function cellScopeCandidates(node, cells, query = '') {
   return out.sort((a, b) => a.label.localeCompare(b.label));
 }
 
+// --- ruolo del peer (F3.0, preset admin/user/nexushost) -------------------
+// Il foglio mostra la sezione SOLO per un peer diretto: un peer raggiunto in
+// transito prende ordini dall'hub che lo instrada, e un nodo VL e' un device
+// con il proprio modello di comandi — nessuno dei due ha un vettore di grant
+// su QUESTA installazione. Le etichette e i valori li risolve i18n: qui c'e'
+// solo la struttura, perche' il modello si prova senza React.
+export function peerAccessModel(node) {
+  if (!node || typeof node !== 'object' || node.kind !== 'direct') return null;
+  const grants = node.access && typeof node.access === 'object' && !Array.isArray(node.access)
+    ? node.access : null;
+  return {
+    // `accessLabel` arriva derivato dal server; l'assenza (server vecchio o
+    // record senza campi) resta "unconfigured", mai un preset indovinato.
+    label: typeof node.accessLabel === 'string' ? node.accessLabel : 'unconfigured',
+    configured: node.accessConfigured === true,
+    grants,
+  };
+}
+
 // Il foglio intero, in un colpo solo. Il componente non ricalcola nulla: rende.
 export function nodeDetailModel(node, nodes, { readonly = false, busy = false } = {}) {
   const identity = nodeIdentity(node);
