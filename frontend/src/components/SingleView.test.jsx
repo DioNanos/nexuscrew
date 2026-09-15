@@ -205,8 +205,8 @@ describe('SingleView renderer toggle', () => {
   });
 });
 
-// The Live host in the phone header is a dot and nothing else: D-251 is about
-// the bar being narrow, and a sentence there squeezes the cell name.
+// The Live host in the phone header is a dot and nothing else: that bar is
+// narrow, and a sentence there squeezes the cell name.
 describe('SingleView live host dot', () => {
   const view = { cell: 'Dev', state: 'thread-active', mode: 'tmux', remote: false };
 

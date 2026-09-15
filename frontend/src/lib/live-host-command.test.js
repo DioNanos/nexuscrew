@@ -19,16 +19,16 @@ function api(overrides = {}) {
 describe('runLiveHostCommand — use', () => {
   it('reads the revision and designates with THAT one', async () => {
     const a = api();
-    const out = await runLiveHostCommand({ action: 'use', cellId: 'DevWorker', route, api: a });
+    const out = await runLiveHostCommand({ action: 'use', cellId: 'cell-two', route, api: a });
     expect(a.getLiveHost).toHaveBeenCalledWith(route);
-    expect(a.designateHostCell).toHaveBeenCalledWith('DevWorker', 7, route);
-    expect(out).toMatchObject({ ok: true, messageKey: 'live-host-designated', hostCell: 'DevWorker', revision: 8 });
+    expect(a.designateHostCell).toHaveBeenCalledWith('cell-two', 7, route);
+    expect(out).toMatchObject({ ok: true, messageKey: 'live-host-designated', hostCell: 'cell-two', revision: 8 });
   });
 
   it('a refusal names the cause and changes nothing', async () => {
     const refusal = Object.assign(new Error('forbidden'), { status: 403, data: { reason: 'live-host-not-granted' } });
     const a = api({ designateHostCell: vi.fn(async () => { throw refusal; }) });
-    const out = await runLiveHostCommand({ action: 'use', cellId: 'DevWorker', route, api: a });
+    const out = await runLiveHostCommand({ action: 'use', cellId: 'cell-two', route, api: a });
     expect(out.ok).toBe(false);
     expect(out.messageKey).toBe('live-host-not-granted');
   });
@@ -36,7 +36,7 @@ describe('runLiveHostCommand — use', () => {
   it('a stale revision is reported as such, not as a generic error', async () => {
     const conflict = Object.assign(new Error('revision superata: rileggi e riprova'), { status: 409 });
     const a = api({ designateHostCell: vi.fn(async () => { throw conflict; }) });
-    const out = await runLiveHostCommand({ action: 'use', cellId: 'DevWorker', route, api: a });
+    const out = await runLiveHostCommand({ action: 'use', cellId: 'cell-two', route, api: a });
     expect(out.messageKey).toBe('live-host-stale-revision');
   });
 
@@ -49,7 +49,7 @@ describe('runLiveHostCommand — use', () => {
 
   it('a failed reading is an outcome too, and nothing is written', async () => {
     const a = api({ getLiveHost: vi.fn(async () => { throw new Error('offline'); }) });
-    const out = await runLiveHostCommand({ action: 'use', cellId: 'DevWorker', route, api: a });
+    const out = await runLiveHostCommand({ action: 'use', cellId: 'cell-two', route, api: a });
     expect(out.ok).toBe(false);
     expect(out.messageKey).toBe('live-host-error');
     expect(a.designateHostCell).not.toHaveBeenCalled();
@@ -58,7 +58,7 @@ describe('runLiveHostCommand — use', () => {
 
 describe('runLiveHostCommand — remove', () => {
   it('clears with the fresh revision and reports it', async () => {
-    const a = api({ getLiveHost: vi.fn(async () => ({ hostCell: 'DevWorker', revision: 11 })) });
+    const a = api({ getLiveHost: vi.fn(async () => ({ hostCell: 'cell-two', revision: 11 })) });
     const out = await runLiveHostCommand({ action: 'remove', route, api: a });
     expect(a.clearHostCell).toHaveBeenCalledWith(11, route);
     expect(out).toMatchObject({ ok: true, messageKey: 'live-host-cleared', hostCell: null, revision: 12 });

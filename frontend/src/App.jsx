@@ -116,7 +116,7 @@ function rel(epochSec) {
 export function SingleView({
   session, node, ownerId, cellName, token, readonly = false, panelPort = 0, onBack, onCellSwitcher, cellSwitcherOpen = false,
   // Live host della cella aperta (gia' risolto da App per la route giusta):
-  // l'header ha spazio solo per un puntino (D-251), il testo sta nel title.
+  // the phone header has room for a dot only; the sentence lives in the title.
   liveHost = null,
 }) {
   useLang(); // re-render allo switch lingua

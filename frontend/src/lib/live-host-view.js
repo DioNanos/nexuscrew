@@ -56,7 +56,7 @@ export function liveHostIndicatorKeys(view) {
   };
 }
 
-// The dot is the only host affordance the phone header can afford (D-251): one
+// The dot is the only host affordance the phone header can afford: one
 // colour per state, and "no designation" is grey — never invisible, because a
 // grey dot says "no Live host yet", which is information.
 export function liveHostDotClass(view) {

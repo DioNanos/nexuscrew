@@ -26,8 +26,8 @@ describe('liveHostMode', () => {
 });
 
 const cells = [
-  { cell: 'Personal', engine: 'claude.native' },
-  { cell: 'DevWorker', engine: 'codex-vl.ollama-cloud' },
+  { cell: 'cell-one', engine: 'claude.native' },
+  { cell: 'cell-two', engine: 'codex-vl.ollama-cloud' },
 ];
 
 describe('liveHostView', () => {
@@ -39,27 +39,27 @@ describe('liveHostView', () => {
   });
 
   it('(2) designated on a tmux engine', () => {
-    const view = liveHostView({ liveHost: { hostCell: 'Personal', threadStatus: 'absent' }, cells });
-    expect(view.cell).toBe('Personal');
+    const view = liveHostView({ liveHost: { hostCell: 'cell-one', threadStatus: 'absent' }, cells });
+    expect(view.cell).toBe('cell-one');
     expect(view.engine).toBe('claude.native');
     expect(view.mode).toBe(LIVE_HOST_TMUX);
     expect(view.state).toBe('designated');
   });
 
   it('(3) designated on a native engine, no thread yet', () => {
-    const view = liveHostView({ liveHost: { hostCell: 'DevWorker', threadStatus: 'absent' }, cells });
+    const view = liveHostView({ liveHost: { hostCell: 'cell-two', threadStatus: 'absent' }, cells });
     expect(view.mode).toBe(LIVE_HOST_NATIVE);
     expect(view.state).toBe('designated');
   });
 
   it('(4) thread active on the designated cell', () => {
-    const view = liveHostView({ liveHost: { hostCell: 'DevWorker', threadStatus: 'active' }, cells });
+    const view = liveHostView({ liveHost: { hostCell: 'cell-two', threadStatus: 'active' }, cells });
     expect(view.state).toBe('thread-active');
   });
 
   it('(5) a host that belongs to another node', () => {
     const view = liveHostView({
-      liveHost: { hostCell: 'Personal', threadStatus: 'present' },
+      liveHost: { hostCell: 'cell-one', threadStatus: 'present' },
       cells,
       localNodeId: 'a'.repeat(32),
       ownerId: 'b'.repeat(32),
@@ -79,9 +79,9 @@ describe('liveHostView', () => {
 describe('liveHostIndicatorKeys', () => {
   it('names the mode and the state for the three shapes that matter', () => {
     expect(liveHostIndicatorKeys(liveHostView({ liveHost: { hostCell: null }, cells })).stateKey).toBe('live-host-state-none');
-    expect(liveHostIndicatorKeys(liveHostView({ liveHost: { hostCell: 'Personal', threadStatus: 'absent' }, cells })).modeKey)
+    expect(liveHostIndicatorKeys(liveHostView({ liveHost: { hostCell: 'cell-one', threadStatus: 'absent' }, cells })).modeKey)
       .toBe('live-host-mode-tmux');
-    expect(liveHostIndicatorKeys(liveHostView({ liveHost: { hostCell: 'DevWorker', threadStatus: 'active' }, cells })).stateKey)
+    expect(liveHostIndicatorKeys(liveHostView({ liveHost: { hostCell: 'cell-two', threadStatus: 'active' }, cells })).stateKey)
       .toBe('live-host-state-thread-active');
   });
 });

@@ -8,8 +8,8 @@ import { liveHostView } from '../lib/live-host-view.js';
 // and of the compact selector — never in the phone header, which has room for a
 // dot and nothing else.
 const cells = [
-  { cell: 'Personal', engine: 'claude.native' },
-  { cell: 'DevWorker', engine: 'codex-vl.ollama-cloud' },
+  { cell: 'cell-one', engine: 'claude.native' },
+  { cell: 'cell-two', engine: 'codex-vl.ollama-cloud' },
 ];
 
 function view(liveHost, extra = {}) {
@@ -20,15 +20,15 @@ describe('LiveHostIndicator', () => {
   beforeEach(() => { localStorage.setItem('nc_lang', 'en'); });
 
   it('names the cell, the mode and the state', () => {
-    render(<LiveHostIndicator view={view({ hostCell: 'Personal', threadStatus: 'absent' })} />);
+    render(<LiveHostIndicator view={view({ hostCell: 'cell-one', threadStatus: 'absent' })} />);
     const row = screen.getByTestId('live-host-indicator');
-    expect(row.textContent).toContain('Personal');
+    expect(row.textContent).toContain('cell-one');
     expect(row.textContent).toContain('tmux');
     expect(row.getAttribute('data-state')).toBe('designated');
   });
 
   it('says native for a codex-vl host and marks an active thread', () => {
-    render(<LiveHostIndicator view={view({ hostCell: 'DevWorker', threadStatus: 'active' })} />);
+    render(<LiveHostIndicator view={view({ hostCell: 'cell-two', threadStatus: 'active' })} />);
     const row = screen.getByTestId('live-host-indicator');
     expect(row.textContent).toContain('native');
     expect(row.getAttribute('data-state')).toBe('thread-active');
@@ -44,7 +44,7 @@ describe('LiveHostIndicator', () => {
 
   it('marks a host that belongs to another node', () => {
     render(<LiveHostIndicator view={view(
-      { hostCell: 'Personal', threadStatus: 'absent' },
+      { hostCell: 'cell-one', threadStatus: 'absent' },
       { localNodeId: 'a'.repeat(32), ownerId: 'b'.repeat(32) },
     )} />);
     expect(screen.getByTestId('live-host-indicator').getAttribute('data-remote')).toBe('true');

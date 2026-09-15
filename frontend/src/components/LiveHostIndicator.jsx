@@ -7,7 +7,7 @@ import './LiveHostIndicator.css';
 // that changes the host is a separate, explicit one.
 //
 // The phone header gets the same information as a dot instead (see App.jsx):
-// D-251 is about not widening that bar, and a sentence would widen it.
+// that bar must not be widened, and a sentence would widen it.
 export default function LiveHostIndicator({ view, className = '' }) {
   const { modeKey, stateKey } = liveHostIndicatorKeys(view || {});
   const hasHost = !!(view && view.cell);
