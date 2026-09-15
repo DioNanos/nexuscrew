@@ -496,7 +496,7 @@ test('dal vivo: il ticket NON si usa sull\'upgrade WebSocket — serve il cookie
 // e il frame sarebbe bianco con l'aria di funzionare.
 const listen = (srv) => new Promise((r) => srv.listen(0, '127.0.0.1', r));
 
-async function federazioneDiProva(panelPort, { panelAccess } = {}) {
+async function federazioneDiProva(panelPort, { panelAccess, peerOperatorAccess } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-panel-fed-'));
   const REMOTE_TOKEN = 'remoto-buono';
   // Token federativi nella forma richiesta dallo store (lunghi), e nodeId hex.
@@ -530,6 +530,7 @@ async function federazioneDiProva(panelPort, { panelAccess } = {}) {
     autostart: true, shared: true, visibility: 'network', nodeId: HUB_NODE_ID,
     token: REMOTE_TOKEN_OUT, acceptToken: REMOTE_ACCEPT,
     ...(panelAccess !== undefined ? { panelAccess } : {}),
+    ...(peerOperatorAccess !== undefined ? { peerOperatorAccess } : {}),
   });
   nodesStore.atomicWriteStore(remoteNodesPath, rst);
   const remoteFed = express();
@@ -584,7 +585,7 @@ async function federazioneDiProva(panelPort, { panelAccess } = {}) {
 
 test('dal vivo FEDERATO: ticket, cookie riscritto col prefisso della route, sotto-risorsa servita', async (t) => {
   const panel = await pannelloFinto();
-  const fed = await federazioneDiProva(panel.port, { panelAccess: true });
+  const fed = await federazioneDiProva(panel.port, { panelAccess: true, peerOperatorAccess: true });
   t.after(() => { panel.wss.close(); panel.server.close(); void fed.close(); });
 
   // 1. La PWA chiede il ticket per la cella A del nodo Remoto, via federata.
@@ -630,7 +631,7 @@ test('dal vivo FEDERATO: nodo che NON concede panelAccess → 403 panel-not-gran
 
 test('dal vivo FEDERATO: la WebSocket del pannello remoto attraversa l\'hub col cookie di visione', async (t) => {
   const panel = await pannelloFinto();
-  const fed = await federazioneDiProva(panel.port, { panelAccess: true });
+  const fed = await federazioneDiProva(panel.port, { panelAccess: true, peerOperatorAccess: true });
   t.after(() => { panel.wss.close(); panel.server.close(); void fed.close(); });
   // Gli upgrade dell'hub: come in server.js, le panel federate col cookie
   // transitano anche senza token (decide il nodo proprietario).
@@ -698,7 +699,7 @@ test('dal vivo FEDERATO: la WebSocket del pannello remoto attraversa l\'hub col 
 // del nodo non vale, servono ticket/cookie del proprietario) li gira verdi.
 test('DIFETTO APERTO (finché rosso): solo il transito federato — nessun ticket, nessun cookie — NON deve servire il pannello', async (t) => {
   const panel = await pannelloFinto();
-  const fed = await federazioneDiProva(panel.port, { panelAccess: true });
+  const fed = await federazioneDiProva(panel.port, { panelAccess: true, peerOperatorAccess: true });
   t.after(() => { panel.wss.close(); panel.server.close(); void fed.close(); });
   const r = await richiedi(`${fed.base}/api/route/remoto/_/panel/A/page.html`);
   assert.equal(r.status, 401, 'chi non ha né ticket né cookie non vede il pannello di un nodo remoto');
@@ -707,7 +708,7 @@ test('DIFETTO APERTO (finché rosso): solo il transito federato — nessun ticke
 
 test('DIFETTO APERTO (finché rosso): cookie FABBRICATO più il Bearer dell\'hop NON deve servire il pannello', async (t) => {
   const panel = await pannelloFinto();
-  const fed = await federazioneDiProva(panel.port, { panelAccess: true });
+  const fed = await federazioneDiProva(panel.port, { panelAccess: true, peerOperatorAccess: true });
   t.after(() => { panel.wss.close(); panel.server.close(); void fed.close(); });
   const r = await richiedi(`${fed.base}/api/route/remoto/_/panel/A/page.html`, {
     headers: { cookie: 'npanel=valore-fabbricato-senza-aver-mai-preso-un-ticket' },
@@ -728,7 +729,7 @@ test('DIFETTO APERTO (finché rosso): cookie FABBRICATO più il Bearer dell\'hop
 // dell'hop, e da solo non deve aprire nulla.
 test('DIFETTO se cade: la WebSocket federata col Bearer dell\'hop e un cookie fabbricato NON deve aprirsi', async (t) => {
   const panel = await pannelloFinto();
-  const fed = await federazioneDiProva(panel.port, { panelAccess: true });
+  const fed = await federazioneDiProva(panel.port, { panelAccess: true, peerOperatorAccess: true });
   t.after(() => { panel.wss.close(); panel.server.close(); void fed.close(); });
 
   fed.hubSrv.on('upgrade', (req, socket, head) => {

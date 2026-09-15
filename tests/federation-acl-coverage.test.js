@@ -175,3 +175,89 @@ test('an unknown resource stays a 404, whatever the ingress', async (t) => {
   const res = await call(base, '/some-new-route', 'GET');
   assert.strictEqual(res.status, 404);
 });
+
+// --- the decision is re-read on every request --------------------------------
+
+const net = require('node:net');
+
+const ADMIN_PEER = {
+  nodeId: 'e'.repeat(32), cellVisibility: 'all', eventsAccess: true, nodeEventsAccess: true,
+  askReplyAccess: true, filesReadAccess: true, liveHostAccess: true, panelAccess: true, peerOperatorAccess: true,
+};
+
+// A raw WebSocket upgrade through the federated entry point: the reply is a
+// status line, so this sees exactly what the upgrade gate decided.
+function upgradeAttempt(port, resource) {
+  return new Promise((resolve) => {
+    const socket = net.connect(port, '127.0.0.1', () => {
+      socket.write(`GET /api/route/hub/_${resource} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n`);
+    });
+    let buf = '';
+    socket.on('data', (chunk) => {
+      buf += chunk.toString('latin1');
+      if (buf.includes('\r\n')) { socket.destroy(); resolve(buf.split('\r\n')[0]); }
+    });
+    socket.on('close', () => resolve(buf.split('\r\n')[0] || ''));
+    socket.on('error', () => resolve(buf.split('\r\n')[0] || ''));
+    setTimeout(() => { socket.destroy(); resolve(buf.split('\r\n')[0] || 'closed'); }, 1500).unref();
+  });
+}
+
+test('a downgrade is effective on the very next request', async (t) => {
+  const peerGrants = { ...ADMIN_PEER };
+  const base = await bootFederated(t, peerGrants);
+  const before = [];
+  // `/decks` matters here: no specific gate of its own, so what it observes is
+  // the class decision and nothing else.
+  for (const [resource, method] of [['/decks', 'POST'], ['/live-host/designate', 'POST'], ['/panel/cell-a', 'GET']]) {
+    const res = await call(base, resource, method);
+    before.push(`${resource} ${res.status}`);
+    assert.strictEqual(res.status, 409, `${resource} doveva passare i gate prima del downgrade`);
+  }
+  // The owner takes the peer down to the limited profile.
+  Object.assign(peerGrants, {
+    liveHostAccess: false, panelAccess: false, peerOperatorAccess: false,
+    askReplyAccess: false,
+  });
+  const after = [];
+  for (const [resource, method, reason] of [
+    ['/decks', 'POST', 'grant-required:operator'],
+    ['/live-host/designate', 'POST', 'live-host-not-granted'],
+    ['/panel/cell-a', 'GET', 'panel-not-granted'],
+  ]) {
+    const res = await call(base, resource, method);
+    const body = await res.json();
+    after.push(`${resource} ${res.status}`);
+    assert.strictEqual(res.status, 403, `${resource} doveva essere negata subito dopo il downgrade`);
+    assert.strictEqual(body.reason, reason);
+  }
+  assert.ok(before.length === after.length);
+});
+
+test('an upgrade is an entry point too: a limited peer cannot open it', async (t) => {
+  const base = await bootFederated(t, { ...USER_PEER });
+  const port = Number(new URL(base).port);
+  const line = await upgradeAttempt(port, '/ws');
+  assert.match(line, / 403 /, `upgrade /ws con peer limitato: ${line}`);
+  const notGranted = await upgradeAttempt(port, '/some-new-route');
+  assert.match(notGranted, / 404 /, `upgrade su risorsa ignota: ${notGranted}`);
+});
+
+test('nexushost sees nothing of the owner, and the owner sees it only if it concedes', async (t) => {
+  const NEXUSHOST_PEER = {
+    nodeId: 'f'.repeat(32), cellVisibility: 'none', eventsAccess: false, nodeEventsAccess: false,
+    askReplyAccess: false, filesReadAccess: false, liveHostAccess: false, panelAccess: false, peerOperatorAccess: false,
+  };
+  const owner = await bootFederated(t, { ...NEXUSHOST_PEER });
+  // Only resources the federation allowlist already serves: the event feed is
+  // classified but its route arrives with the feed itself.
+  for (const [resource, method] of [['/cells', 'GET'], ['/files/download', 'GET'], ['/decks', 'POST'], ['/config', 'GET']]) {
+    const res = await call(owner, resource, method);
+    assert.strictEqual(res.status, 403, `${resource} non dovrebbe essere visibile a un nexushost`);
+  }
+  // The other direction is the peer's own concession, read on ITS gate: when it
+  // grants the owner a limited vector, the inventory is no longer blocked.
+  const conceding = await bootFederated(t, { ...USER_PEER });
+  const res = await call(conceding, '/cells', 'GET');
+  assert.strictEqual(res.status, 409);
+});
