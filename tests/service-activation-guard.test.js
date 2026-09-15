@@ -166,7 +166,7 @@ test('installService mac: an unreadable loaded job keeps the previous behaviour 
 
 test('runInit: a temporary HOME the manager does not load reports the skip instead of restarting production', () => {
   const home = tmpDir('nc-n25-init-foreign-');
-  const foreign = '/home/dag/.config/systemd/user/nexuscrew.service';
+  const foreign = '/home/tester/.config/systemd/user/nexuscrew.service';
   const { execImpl, ran } = systemdFake(foreign);
   const lines = [];
 
@@ -192,7 +192,7 @@ test('runInit: a temporary HOME the manager does not load reports the skip inste
 
 test('runInit: noActivate writes the definition and never probes or touches the manager', () => {
   const home = tmpDir('nc-n25-init-flag-');
-  const { execImpl, calls } = systemdFake('/home/dag/.config/systemd/user/nexuscrew.service');
+  const { execImpl, calls } = systemdFake('/home/tester/.config/systemd/user/nexuscrew.service');
   const lines = [];
 
   const result = runInit({
