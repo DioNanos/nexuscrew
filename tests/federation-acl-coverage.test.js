@@ -52,7 +52,7 @@ const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 // feed and the asks arrive later on purpose, and the class has to exist already
 // so F3.1 cannot serve them unclassified. They are the only ones allowed to be
 // ahead of the allowlist.
-// No class is ahead of the allowlist anymore: the federated ask routes (F3.2)
+// No class is ahead of the allowlist anymore: the federated ask routes
 // closed the last gap. From here on, every class and the allowlist must stay
 // aligned like every other resource.
 const CLASSES_AHEAD_OF_ALLOWLIST = new Set([]);

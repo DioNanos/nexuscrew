@@ -1,5 +1,5 @@
 'use strict';
-// tests/federated-asks.test.js — federated ask answer cycle (F3.2 stage a).
+// tests/federated-asks.test.js — federated ask answer cycle.
 //
 // Unit half: the durable receipt lifecycle and the shared answer service with
 // a stubbed paste. HTTP half: the federated surface over TWO REAL SERVERS —
