@@ -148,7 +148,10 @@ async function startClient({ ownerPort, ownerLiveHostAccess, bridgeResult } = {}
     readonly: () => false,
     federation: liveFed,
     originResolver: { hop: true },
-    federatedRate: { allow: () => true },
+    // The client gets the production limiter too (lib/server.js mounts the same
+    // object on both sides). A fake shape here is exactly what hid the dead
+    // branch on the owner: no bench keeps one.
+    federatedRate: createSpeakRateLimiter(),
   }));
   app.use('/api/route', (req, res) => fed.routeHandler({
     nodesPath, localPort: () => ownerPort, localCredential: () => HUB_TOKEN,
