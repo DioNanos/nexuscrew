@@ -100,6 +100,11 @@ closed PWA still shows them. Three rules keep that trustworthy:
   owner is dropped and counted; it cannot delay local alerts, and a failed
   delivery never retries the live stream that already accepted the event.
 
+An alert names the ask it belongs to only when the source event carries one:
+an imported notification does not, because the ask itself arrives as its own
+event and that event deliberately stays silent. That notification therefore
+opens the owner's feed, without an `ask=` component.
+
 ### Two PWAs on the same phone
 
 One phone can hold two installed PWAs (for example this node and an owner's).

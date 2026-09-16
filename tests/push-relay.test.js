@@ -168,3 +168,22 @@ test('the push surface is not federated', () => {
     }
   }
 });
+
+test('the per-owner view separates one chatty owner from the rest', async (t) => {
+  const { dedupPath } = fresh(t);
+  const sent = [];
+  const r = relayWith(dedupPath, sent);
+  const other = 'b'.repeat(32);
+  // One owner is silenced by its own budget; the others keep their counters.
+  for (let i = 0; i < 20; i++) {
+    r.considerImported({ type: 'notify', ownerId: OWNER, eventId: `own-${i}`, title: 't', body: 'b' });
+    r.considerImported({ type: 'notify', ownerId: other, eventId: `other-${i}`, title: 't', body: 'b' });
+  }
+  await new Promise((res) => setTimeout(res, 40));
+  const st = r.status();
+  assert.ok(st.byOwner[OWNER] && st.byOwner[other], 'both owners appear');
+  assert.ok(st.byOwner[OWNER].dropped >= 1 || st.byOwner[other].dropped >= 1, 'the budget shows up as dropped');
+  const sum = st.byOwner[OWNER].pushed + st.byOwner[other].pushed;
+  assert.equal(sum, st.counters.pushed, 'the per-owner sends add up to the global ones');
+  assert.ok(!JSON.stringify(st).includes('endpoint'), 'the local view carries no endpoint');
+});
