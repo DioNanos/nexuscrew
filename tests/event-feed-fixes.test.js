@@ -107,7 +107,7 @@ function readSse(url, headers, { maxMs = 1500 } = {}) {
 
 // --- client guards (unit, stubbed fetch) ------------------------------------
 
-function stubClient(t, responses = []) {
+function stubClient(t, responses = [], extra = {}) {
   const calls = [];
   const fetchImpl = async (url, opts = {}) => {
     calls.push({ url, opts });
@@ -127,8 +127,13 @@ function stubClient(t, responses = []) {
   st = nodesStore.updateNode(st, 'owner', { eventsReceive: true });
   nodesStore.atomicWriteStore(nodesPath, st);
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const client = createEventFeedClient({ loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30 });
-  return { client, calls };
+  const hub = [];
+  const client = createEventFeedClient({
+    loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30,
+    eventsHub: { broadcast: (e) => hub.push(e) },
+    ...extra,
+  });
+  return { client, calls, hub };
 }
 
 const sse = (chunks) => ({
@@ -249,6 +254,222 @@ test('R5: a stream that restarts from an unknown epoch also exhausts the resync'
   await new Promise((r) => setTimeout(r, 250));
   assert.equal(calls.length, before, 'the loop is stopped, not retried forever');
   client.stop();
+});
+
+// --- R3: ingress budget per FRAME -------------------------------------------
+
+// A whole round of `n` valid frames, joined in ONE chunk: the transport shape
+// that used to hide 121 frames behind a single read().
+function sseFrames(ownerId, n, epoch = 1) {
+  const out = [];
+  for (let i = 1; i <= n; i++) {
+    out.push(`id: ${epoch}:${i}\ndata: ${JSON.stringify({
+      v: 1, ownerId, eventId: `e${i}`, scope: 'node', cellId: null, hop: 1, emittedAt: 1,
+      frame: { type: 'notify', title: `n${i}` },
+    })}\n\n`);
+  }
+  return out.join('');
+}
+
+// One owner per stub URL. Each stream hands its whole round over in a single
+// chunk and exposes cancel(), so an explicit disconnect is observable.
+function stubOwners(t, defs, extra = {}) {
+  const calls = [];
+  const hub = [];
+  const readers = new Map();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfixowners-'));
+  const nodesPath = path.join(dir, 'nodes.json');
+  nodesStore.initStore(nodesPath);
+  let st = nodesStore.loadStoreStrict(nodesPath);
+  defs.forEach((d, i) => {
+    d.port = 46000 + i;
+    st = nodesStore.addNode(st, {
+      name: d.name, remotePort: 41999, localPort: d.port, nodeId: d.nodeId,
+      token: 'TOK', direction: 'outbound', shared: true, visibility: 'network',
+      ssh: `u@${d.name}`, eventsReceive: true,
+    });
+    st = nodesStore.updateNode(st, d.name, { eventsReceive: true });
+  });
+  nodesStore.atomicWriteStore(nodesPath, st);
+  const ownerAt = (url) => {
+    const m = /127\.0\.0\.1:(\d+)/.exec(url);
+    const port = m ? Number(m[1]) : 0;
+    return defs.find((d) => d.port === port) || null;
+  };
+  const fetchImpl = async (url) => {
+    calls.push({ url });
+    const d = ownerAt(url);
+    if (!d) return { ok: false, status: 404, json: async () => ({ error: 'unknown' }), text: async () => '' };
+    if (url.includes('/federation/health')) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, instanceId: d.nodeId, eventFeedV1: true }) };
+    }
+    if (url.includes('/event-feed/snapshot')) {
+      return { ok: true, status: 200, text: async () => JSON.stringify(
+        { ownerId: d.nodeId, cursor: '0:0', viewEpoch: 1, asks: [], notifications: [] }) };
+    }
+    if (url.includes('/event-feed?')) {
+      const payload = sseFrames(d.nodeId, d.frames === undefined ? 1 : d.frames);
+      const state = { cancelled: false, reads: 0 };
+      readers.set(d.nodeId, state);
+      return {
+        ok: true, status: 200,
+        body: { getReader: () => {
+          let sent = false;
+          return {
+            read: async () => {
+              state.reads += 1;
+              if (sent) return { done: true };
+              sent = true;
+              return { done: false, value: Buffer.from(payload) };
+            },
+            cancel: async () => { state.cancelled = true; },
+          };
+        } },
+        text: async () => '', json: async () => ({}),
+      };
+    }
+    return { ok: false, status: 404, json: async () => ({ error: 'unknown resource' }), text: async () => '' };
+  };
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const client = createEventFeedClient({
+    loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30,
+    eventsHub: { broadcast: (e) => hub.push(e) },
+    ...extra,
+  });
+  return { client, calls, readers, hub, ownerAt };
+}
+
+const viewOf = (client, ownerId) => client.state().views.find((v) => v.ownerId === ownerId) || null;
+const appliedFrames = (client, ownerId) => {
+  const v = viewOf(client, ownerId);
+  return v && v.cursor ? (Number(String(v.cursor).split(':')[1]) || 0) : 0;
+};
+async function waitForView(client, ownerId, pred, tries = 80) {
+  for (let i = 0; i < tries; i++) {
+    const v = viewOf(client, ownerId);
+    if (v && pred(v)) return v;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return viewOf(client, ownerId);
+}
+
+test('R3: 121 frames inside ONE chunk are cut at 120 — per FRAME, not per read', async (t) => {
+  const ownerId = 'a'.repeat(32);
+  // One round only: no interval churn, so the state after the first stream is
+  // exactly what the assertions see.
+  const { client, readers } = stubOwners(t, [{ name: 'noisy', nodeId: ownerId, frames: 121 }], { pollMs: 60000 });
+  client.start();
+  const view = await waitForView(client, ownerId, (v) => v.lastError === 'ingress-budget');
+  assert.ok(view, 'the view exists');
+  assert.equal(appliedFrames(client, ownerId), 120, 'the per-minute cap keeps the first 120 frames');
+  assert.equal(view.cursor, '1:120', 'the 121st frame is never applied: the cursor stops at 120');
+  assert.equal(view.lastError, 'ingress-budget', 'a noisy owner is disconnected by a NAMED reason');
+  assert.equal(view.ingressBlockReason, 'owner-frames', 'the reason names the window that tripped');
+  assert.ok(view.ingressBlockedUntil > Date.now(), 'the block outlives the current poll: it is durable');
+  assert.equal(readers.get(ownerId).cancelled, true, 'the reader is aborted explicitly, not left to the GC');
+  client.stop();
+});
+
+test('R3: the block is durable — the next poll never restarts before it expires', async (t) => {
+  const ownerId = 'a'.repeat(32);
+  const { client, calls } = stubOwners(t, [{ name: 'noisy', nodeId: ownerId, frames: 121 }]);
+  client.start();
+  const view = await waitForView(client, ownerId, (v) => v.lastError === 'ingress-budget');
+  assert.ok(view && view.ingressBlockedUntil > Date.now(), 'the trip arms a deadline, not a one-shot return');
+  const forOwner = () => calls.filter((c) => c.url.includes('127.0.0.1:46000/')).length;
+  const atBlock = forOwner();
+  await new Promise((r) => setTimeout(r, 400));
+  assert.ok(atBlock >= 1, 'the round really ran');
+  assert.equal(forOwner(), atBlock, 'no poll restarts for that owner before the block expires');
+  client.stop();
+});
+
+test('R3: the GLOBAL budget trips while every owner stays under its own cap', async (t) => {
+  // Five owners of 100 frames each: 100 < 120 per owner, but 500 > 480 globally.
+  // A "2x100 + 1x300" shape would be cut by the PER-OWNER cap first (321 < 480),
+  // so it can never exercise the global window.
+  const defs = ['a', 'b', 'c', 'd', 'e'].map((ch) => ({ name: `o${ch}`, nodeId: ch.repeat(32), frames: 100 }));
+  const { client } = stubOwners(t, defs, { pollMs: 60000 });
+  client.start();
+  const census = () => client.state().views.map((v) => [v.ownerId.slice(0, 1), v.ingressBlockReason || null, appliedFrames(client, v.ownerId)]);
+  let blocked = null;
+  for (let i = 0; i < 80; i++) {
+    blocked = client.state().views.find((v) => String(v.ingressBlockReason || '').startsWith('global-'));
+    if (blocked && client.state().views.length === defs.length) break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  const after = census();
+  assert.ok(blocked, 'the global window trips: ' + JSON.stringify(after));
+  const total = defs.reduce((n, d) => n + appliedFrames(client, d.nodeId), 0);
+  assert.equal(total, 480, 'the global cap stops the whole fleet at exactly 480 frames: ' + JSON.stringify(after));
+  defs.forEach((d) => {
+    assert.ok(appliedFrames(client, d.nodeId) <= 120, 'no owner is over its own per-minute cap');
+  });
+  client.stop();
+});
+
+// A transport that never delivers: after a refused snapshot nothing should be
+// requested, and an accepted one must not be hidden by a later transport error.
+const IDLE_STREAM = {
+  ok: true, status: 200,
+  body: { getReader: () => ({ read: async () => new Promise(() => {}), cancel: async () => {} }) },
+  text: async () => '', json: async () => ({}),
+};
+
+test('R2d: the snapshot element sanity covers asks too (count and size)', async (t) => {
+  const ownerId = 'a'.repeat(32);
+  const health = { ok: true, status: 200, json: async () => ({ ok: true, instanceId: ownerId, eventFeedV1: true }) };
+  const snapOf = (snap) => ({ ok: true, status: 200, text: async () => JSON.stringify({ ownerId, cursor: '1:0', viewEpoch: 1, notifications: [], ...snap }) });
+  const overCap = Array.from({ length: 101 }, (_, i) => ({ id: `ask-${i}`, question: 'q', options: [], session: 's', ts: 1 }));
+  const first = stubClient(t, [health, snapOf({ asks: overCap }), IDLE_STREAM]);
+  first.client.start();
+  const a = await waitForView(first.client, ownerId, (v) => v.lastError === 'snapshot-element-oversize');
+  assert.equal(a.lastError, 'snapshot-element-oversize', '101 asks (cap 100) are refused, not applied');
+  assert.equal(a.asks.length, 0, 'nothing is applied from a refused snapshot');
+  first.client.stop();
+
+  const huge = [{ id: 'ask-huge', question: 'q'.repeat(20 * 1024), options: [], session: 's', ts: 1 }];
+  const second = stubClient(t, [health, snapOf({ asks: huge }), IDLE_STREAM]);
+  second.client.start();
+  const b = await waitForView(second.client, ownerId, (v) => v.lastError === 'snapshot-element-oversize');
+  assert.equal(b.lastError, 'snapshot-element-oversize', 'an ask element over 16 KiB is refused');
+  assert.equal(b.asks.length, 0, 'nothing is applied from a refused snapshot');
+  second.client.stop();
+});
+
+test('R2e: an oversized fleetState element is refused too', async (t) => {
+  const ownerId = 'a'.repeat(32);
+  const { client } = stubClient(t, [
+    { ok: true, status: 200, json: async () => ({ ok: true, instanceId: ownerId, eventFeedV1: true }) },
+    { ok: true, status: 200, text: async () => JSON.stringify({
+      ownerId, cursor: '1:0', viewEpoch: 1, asks: [], notifications: [],
+      fleetState: { available: true, cells: [{ cell: 'x'.repeat(20 * 1024), active: true }] },
+    }) },
+    IDLE_STREAM,
+  ]);
+  client.start();
+  const view = await waitForView(client, ownerId, (v) => v.lastError === 'snapshot-element-oversize');
+  assert.equal(view.lastError, 'snapshot-element-oversize', 'an over-16-KiB fleetState element is refused');
+  assert.equal(view.fleetState, null, 'nothing is applied from a refused snapshot');
+  client.stop();
+});
+
+test('R4: the client keeps no per-tick console noise and logs transitions only', async (t) => {
+  const ownerId = 'a'.repeat(32);
+  const lines = [];
+  const noise = [];
+  const realError = console.error;
+  console.error = (...args) => { noise.push(args.map(String).join(' ')); };
+  try {
+    const { client } = stubOwners(t, [{ name: 'quiet', nodeId: ownerId, frames: 1 }], { log: (m) => lines.push(String(m)) });
+    client.start();
+    await new Promise((r) => setTimeout(r, 400));
+    client.stop();
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(noise.length, 0, 'no console output per poll tick: ' + noise.slice(0, 3).join(' | '));
+  assert.equal(lines.filter((l) => l.includes('retry in')).length, 0, 'a healthy round is silent');
 });
 
 test('R4: the kill switch flipped during/after the build still refuses the snapshot', async (t) => {
