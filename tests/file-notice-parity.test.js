@@ -113,6 +113,10 @@ test('file-notice: consegna locale e file-notice importato sono la STESSA classe
   // attribuito all'owner (tag e route dell'owner, mai un URL del peer).
   assert.equal(imported.hubFrames.length, 1, 'la ri-emissione produce un frame notify');
   assert.equal(imported.hubFrames[0].type, 'notify');
+  // Il file importato resta attribuito alla SUA cella: senza questo campo il
+  // relay lo contava come avviso di nodo (budget diverso) invece che della
+  // cella, che e' cio' che il produttore file dichiara.
+  assert.equal(imported.hubFrames[0].originCell, 'dev', 'il file importato conserva la cella');
   assert.equal(imported.alerts.length, 1, 'il relay manda un avviso OS');
   assert.equal(imported.alerts[0].tag, `nc:${OWNER}:ev-file-1`);
   assert.match(String(imported.alerts[0].url), /^\/#owner=/);
