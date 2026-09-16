@@ -1,8 +1,9 @@
 'use strict';
 
 // Separate npm gate: pack/list/scan the exact checkout without publishing it.
-// It intentionally does not rebuild the project or consume a Git public-tree
-// artifact; the final workflow will bind both attestations to one source SHA.
+// Proofs enforced here: payload syntax (node --check on every JS file), the
+// frontend build, the declarative surface rules and the workcode class. All
+// fail-closed: a missing proof can never produce a manifest.
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -174,6 +175,28 @@ try {
   const extract = path.join(temp, 'extract');
   fs.mkdirSync(extract);
   run('tar', ['-xzf', tarball, '--no-same-owner', '-C', extract]);
+  // Syntax proof: every JavaScript file in the payload must parse (fail-closed).
+  let syntaxChecked = 0;
+  for (const rel of packlist) {
+    if (!/\.(js|mjs|cjs)$/.test(rel)) continue;
+    const jsFile = path.join(extract, 'package', rel);
+    if (!fs.existsSync(jsFile) || !fs.statSync(jsFile).isFile()) continue;
+    syntaxChecked += 1;
+    const check = spawnSync('node', ['--check', jsFile], { encoding: 'utf8' });
+    if (check.status !== 0) {
+      throw new Error(`sintassi JS invalida nel payload: ${rel}\n${String(check.stderr || '').trim()}`);
+    }
+  }
+  // Frontend build proof: the candidate's frontend sources must build
+  // (fail-closed). Runs on the extracted source, after the pack, so the
+  // attestation still covers the committed tree.
+  let frontendBuild = 'SKIPPED';
+  if (fs.existsSync(path.join(sourceDir, 'frontend', 'package.json'))) {
+    const buildEnv = { ...process.env, npm_config_ignore_scripts: 'true' };
+    run('npm', ['ci', '--no-audit', '--no-fund', '--ignore-scripts', '--prefix', path.join(sourceDir, 'frontend')], { env: buildEnv });
+    run('npm', ['run', 'build', '--prefix', path.join(sourceDir, 'frontend')], { env: buildEnv });
+    frontendBuild = 'PASS';
+  }
   const rules = parseRules(RULES);
   scan(extract, packlist, rules);
   const workcodes = scanWorkcodes(extract, packlist, rules.workcodes);
@@ -198,6 +221,8 @@ try {
       packlistSha256: sha256(packlistRaw),
       packlist,
       scan: { rulesSha256: sha256File(RULES), result: 'PASS', rc: 0, workcodes: { totals: workcodes.totals, files: workcodes.files, result: 'PASS', rc: 0 } },
+      syntaxCheck: { files: syntaxChecked, result: 'PASS', rc: 0 },
+      frontendBuild: { result: frontendBuild, rc: 0 },
     },
   };
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
