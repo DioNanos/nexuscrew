@@ -139,7 +139,10 @@ test('crash con pending: al restart diventa delivery-unknown e BLOCCA anche il l
   const local2 = await service.answerLocal({ askId: 'abc12345', text: 'retry' });
   assert.equal(local2.ok, false);
   assert.equal(local2.code, 409);
-  assert.equal(local2.reason, 'answered', 'reconciled as delivered, the ask is closed');
+  // The durable receipt answers first: it is the terminal state the paste
+  // decision consults, and the ask is closed behind it (both are asserted).
+  assert.equal(local2.reason, 'already-delivered', 'a terminal receipt forbids the paste');
+  assert.equal(asks.store.get('abc12345').answered, true, 'reconciled as delivered, the ask is closed');
   const st2 = receipts2.statusFor('abc12345');
   assert.equal(st2.blocked, false, 'the unlock happened');
 });
@@ -443,4 +446,109 @@ test('reconciliato come consegnato: l ask e chiuso e non si incolla piu', async 
   });
   assert.equal(fed.status, 409);
   assert.equal(pasteCalls.length, before, 'still zero pastes');
+});
+
+test('una ricevuta terminale blocca il paste anche su un nuovo requestId', async (t) => {
+  const u = unit(t);
+  const { createAsksStore } = require('../lib/notify/asks.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaskterminal-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const asks = createAsksStore({ dir });
+  const id = asks.create({ question: 'q', session: 'cell-test' }).ask.id;
+  const receipts = createAskReceipts({ filePath: path.join(dir, 'receipts.json') });
+  let pastes = 0;
+  const service = createAskAnswerService({ asks, receipts, paste: async () => { pastes += 1; return true; }, onClosure: () => {} });
+  const first = await service.answerFederated({ askId: id, text: 'yes', peerId: PEER, requestId: '88888888-8888-4888-8888-888888888888' });
+  assert.equal(first.ok, true);
+  assert.equal(pastes, 1);
+  // The ask is closed AND the receipt is terminal: a different request id (a
+  // fresh attempt, not a replay) must never produce a second paste.
+  const second = await service.answerFederated({ askId: id, text: 'again', peerId: PEER, requestId: '99999999-9999-4999-8999-999999999999' });
+  assert.equal(second.code, 409);
+  assert.equal(second.reason, 'already-delivered');
+  assert.equal(pastes, 1, 'no second paste');
+  assert.equal(receipts.answerStateFor(id), 'committed');
+  void u;
+});
+
+test('mark-delivered: se la transizione dello store fallisce, il blocco resta', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaskpartial-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const filePath = path.join(dir, 'receipts.json');
+  const first = createAskReceipts({ filePath });
+  first.attempt({ peerId: PEER, askId: 'abc12345', requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', text: 'go' });
+  const receipts = createAskReceipts({ filePath }); // pending -> delivery-unknown
+  const ask = { id: 'abc12345', session: 's', question: 'q', revision: 0 };
+  const asks = {
+    get: (id) => (id === ask.id ? ask : null),
+    markReconciled: () => ({ ok: false, reason: 'unknown' }),
+    claim: () => ({ ok: true, ask: { ...ask } }),
+  };
+  let pastes = 0;
+  const service = createAskAnswerService({ asks, receipts, paste: async () => { pastes += 1; return true; }, onClosure: () => {} });
+  const out = service.reconcile({ askId: 'abc12345', decision: 'mark-delivered', expectedRevision: 0 });
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'ask-transition-failed');
+  assert.equal(receipts.isBlocked('abc12345'), true, 'the receipt still blocks');
+  assert.equal(ask.answered, undefined, 'and the ask was not half-closed');
+  const answer = await service.answerLocal({ askId: 'abc12345', text: 'x' });
+  assert.equal(answer.code, 409);
+  assert.equal(pastes, 0, 'nothing became pasteable');
+});
+
+test('mark-delivered: se la ricevuta non si scrive, l ask resta CHIUSO e non si incolla', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaskpartial2-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const filePath = path.join(dir, 'receipts.json');
+  const first = createAskReceipts({ filePath });
+  first.attempt({ peerId: PEER, askId: 'abc12345', requestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', text: 'go' });
+  const receipts = createAskReceipts({ filePath });
+  const ask = { id: 'abc12345', session: 's', question: 'q', revision: 0 };
+  const asks = {
+    get: (id) => (id === ask.id ? ask : null),
+    markReconciled: () => { ask.answered = true; ask.revision += 1; return { ok: true, ask: { ...ask } }; },
+    claim: (id) => (ask.answered ? { ok: false, reason: 'answered' } : { ok: true, ask: { ...ask } }),
+    release: () => {},
+  };
+  // The durable receipt write fails: the file becomes a directory.
+  fs.unlinkSync(filePath);
+  fs.mkdirSync(filePath);
+  let pastes = 0;
+  const service = createAskAnswerService({ asks, receipts, paste: async () => { pastes += 1; return true; }, onClosure: () => {} });
+  const out = service.reconcile({ askId: 'abc12345', decision: 'mark-delivered', expectedRevision: 0 });
+  assert.equal(out.ok, false, 'the receipt was not reconciled');
+  assert.equal(out.reason, 'persist-failed');
+  assert.equal(ask.answered, true, 'the residue is the restrictive one: the ask is closed');
+  assert.equal(receipts.isBlocked('abc12345'), true, 'and the receipt still blocks');
+  const answer = await service.answerLocal({ askId: 'abc12345', text: 'x' });
+  assert.equal(answer.code, 409);
+  assert.equal(pastes, 0, 'no paste after a partial failure');
+});
+
+test('allow-new-attempt: un fallimento parziale non chiude l ask e non fa incollare', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaskpartial3-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const filePath = path.join(dir, 'receipts.json');
+  const first = createAskReceipts({ filePath });
+  first.attempt({ peerId: PEER, askId: 'abc12345', requestId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', text: 'go' });
+  const receipts = createAskReceipts({ filePath });
+  const ask = { id: 'abc12345', session: 's', question: 'q', revision: 0 };
+  const asks = {
+    get: (id) => (id === ask.id ? ask : null),
+    markReconciled: () => { ask.revision += 1; return { ok: true, ask: { ...ask } }; },
+    claim: (id) => (ask.answered ? { ok: false, reason: 'answered' } : { ok: true, ask: { ...ask } }),
+    release: () => {},
+  };
+  fs.unlinkSync(filePath);
+  fs.mkdirSync(filePath); // the receipt write cannot land
+  let pastes = 0;
+  const service = createAskAnswerService({ asks, receipts, paste: async () => { pastes += 1; return true; }, onClosure: () => {} });
+  const out = service.reconcile({ askId: 'abc12345', decision: 'allow-new-attempt', expectedRevision: 0 });
+  assert.equal(out.ok, false);
+  assert.equal(ask.answered, undefined, 'reopening must never close the ask');
+  assert.equal(ask.dismissed, undefined, 'nor discard it');
+  assert.equal(receipts.isBlocked('abc12345'), true, 'the block is still the restrictive residue');
+  const answer = await service.answerLocal({ askId: 'abc12345', text: 'x' });
+  assert.equal(answer.code, 409);
+  assert.equal(pastes, 0);
 });
