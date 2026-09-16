@@ -93,7 +93,7 @@ the pattern to extend if this contract ever changes:
 - `'NATIVA con cella OCCUPATA...'` — the ordinary case, file found and
   applied, identity header followed by the prompt text.
 - `'BUG prefisso: un device con prefisso diverso da cloud- deve trovare
-  comunque il prompt'` — a device whose sessions are named `macair-*`: the
+  comunque il prompt'` — a device whose sessions are named `labhost-*`: the
   file is written under that exact session name, not under `cloud-`, and the
   bridge is expected to find it there. This is the test that would have
   caught the original bug — it fails against the pre-fix bridge and passes

@@ -617,14 +617,14 @@ for (const lang of TEMPLATE_LANGS) {
 // costruisce un path inventato) — e l'esito e' 'missing', cioe' "assenza
 // legittima": il difetto si maschera esattamente nel ramo che dovrebbe
 // segnalarlo. Questo test scrive il file dove la sessione del roster dice
-// DAVVERO che sta (macair-Nova, non cloud-Nova) — e' rosso finche' il ponte
+// DAVVERO che sta (labhost-Nova, non cloud-Nova) — e' rosso finche' il ponte
 // non usa cell.tmuxSession invece di ricostruire il prefisso a mano.
 test('BUG prefisso: un device con prefisso diverso da cloud- deve trovare comunque il prompt', async () => {
-  const cwd = path.join(os.tmpdir(), 'cell-prefisso-macair');
-  const cells = [{ cell: 'Nova', active: true, tmux: true, tmuxSession: 'macair-Nova', engine: 'codex-vl.native', cwd }];
+  const cwd = path.join(os.tmpdir(), 'cell-prefisso-labhost');
+  const cells = [{ cell: 'Nova', active: true, tmux: true, tmuxSession: 'labhost-Nova', engine: 'codex-vl.native', cwd }];
   const ctx = await boot({ cells });
   try {
-    const promptDir = path.join(ctx.root, 'macair-Nova');
+    const promptDir = path.join(ctx.root, 'labhost-Nova');
     fs.mkdirSync(promptDir, { recursive: true });
     fs.writeFileSync(path.join(promptDir, 'LIVE_PROMPT.md'), 'Regole Live della cella Nova su questo device.\n');
 
@@ -638,9 +638,9 @@ test('BUG prefisso: un device con prefisso diverso da cloud- deve trovare comunq
     // 'missing' — l'assenza legittima che maschera il bug.
     assert.deepEqual(b.prompt, { applied: true, source: 'LIVE_PROMPT.md' });
     const istr = ctx.daemon.seen.threadStarts[0].developerInstructions;
-    // La via ai tool porta la sessione CHE IL ROSTER DICHIARA (macair-Nova),
+    // La via ai tool porta la sessione CHE IL ROSTER DICHIARA (labhost-Nova),
     // anche quando non segue la convenzione cloud-.
-    assert.equal(sessioneDichiarataNeiTool(istr), 'macair-Nova');
+    assert.equal(sessioneDichiarataNeiTool(istr), 'labhost-Nova');
     assert.ok(istr.endsWith('Regole Live della cella Nova su questo device.'));
   } finally { await ctx.close(); }
 });
