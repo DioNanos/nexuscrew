@@ -133,7 +133,9 @@ function stubClient(t, responses = []) {
 
 const sse = (chunks) => ({
   ok: true, status: 200,
-  body: { getReader: async () => ({
+  // getReader() is SYNCHRONOUS in the standard Streams API: an async one hands
+  // back a promise and the stream throw would be masked as a transport error.
+  body: { getReader: () => ({
     read: async () => chunks.length ? { done: false, value: Buffer.from(chunks.shift()) } : { done: true },
   }) },
   text: async () => chunks.join(''),
@@ -171,16 +173,18 @@ test('R2b: a snapshot attributed to another owner is refused, never applied', as
   await new Promise((r) => setTimeout(r, 120));
   const snapCalls = calls.filter((c) => c.url.includes('/event-feed/snapshot')).length;
   assert.ok(snapCalls >= 1, 'the snapshot was requested');
+  // The marker is the sensitive probe: it must be absent from the view whatever
+  // shape the element takes, so the check is shape-agnostic on purpose.
+  const markerIn = (v) => (v.notifications || []).some((e) => JSON.stringify(e).includes('MARKER'));
   let view = null;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 40; i++) {
     view = client.state().views.find((v) => v.ownerId === 'a'.repeat(32));
-    if (view && view.lastError === 'owner-mismatch') break;
+    if (view && (view.lastError === 'owner-mismatch' || markerIn(view))) break;
     await new Promise((r) => setTimeout(r, 50));
   }
   assert.ok(view, 'the view exists');
+  assert.equal(markerIn(view), false, 'the mismatched snapshot is not applied: no marker in the view');
   assert.equal(view.lastError, 'owner-mismatch', 'the mismatched snapshot is refused with a named reason');
-  assert.equal(view.notifications.filter((e) => e.frame.title === 'MARKER').length, 0,
-    'the mismatched snapshot is not applied');
   client.stop();
 });
 
@@ -196,30 +200,54 @@ test('R2c: a snapshot body over the budget is refused without parsing elements',
   client.stop();
 });
 
-// SKIP (declared): the resync-exhausted mechanism is implemented client-side
-// (consecutiveResets >= 3 -> view.resyncExhausted, poll gate stops the loop)
-// but this harness keeps feeding fresh snapshots, so the exhaustion counter
-// never settles deterministically. The invariant is enforced in code and
-// covered by the reset-counting assertions in the round flow; re-enable once
-// the harness simulates multi-round streams deterministically.
-test.skip('R5: three consecutive resets exhaust the resync and stop the loop', async (t) => {
+// R5 — the reset streak is deterministic: every round that ends WITHOUT a
+// usable frame (a 409 reset-required from the owner, or a frame from an epoch
+// we no longer know) counts once. Past the cap the view goes to the error state
+// and the poll gate stops it; the stub answers with no real backoff timer.
+test('R5: three consecutive 409 rounds exhaust the resync and stop the loop', async (t) => {
   const ownerId = 'a'.repeat(32);
-  const resetFrame = 'id: 1:5\ndata: {"v":1,"ownerId":"' + ownerId + '","eventId":"ez","scope":"node","cellId":null,"hop":1,"emittedAt":1,"frame":{"type":"notify","title":"x"}}\n\n';
-  const snap = { ok: true, status: 200, text: async () => JSON.stringify({ ownerId, cursor: '5:0', asks: [], notifications: [], viewEpoch: 5 }) };
-  const stream = sse([resetFrame]);
-  const { client, calls } = stubClient(t, [
-    { ok: true, status: 200, json: async () => ({ ok: true, instanceId: ownerId, eventFeedV1: true }) },
-    snap, stream, snap, stream, snap, stream,
-  ]);
+  const health = { ok: true, status: 200, json: async () => ({ ok: true, instanceId: ownerId, eventFeedV1: true }) };
+  const snap = { ok: true, status: 200, text: async () => JSON.stringify({ ownerId, cursor: '5:0', viewEpoch: 5, asks: [], notifications: [] }) };
+  const reset409 = { ok: false, status: 409, json: async () => ({ error: 'cursor is too old', reason: 'reset-required' }) };
+  const { client, calls } = stubClient(t, [health, snap, reset409, snap, reset409, snap, reset409, snap]);
   client.start();
-  await new Promise((r) => setTimeout(r, 400));
-  const streamCalls = calls.filter((c) => c.url.includes('/event-feed?')).length;
-  assert.ok(streamCalls >= 3, 'each reset required a fresh stream: ' + streamCalls);
-  const view = client.state().views.find((v) => v.ownerId === ownerId);
-  assert.equal(view.stale, true, 'the exhausted view is stale');
+  let view = null;
+  for (let i = 0; i < 80; i++) {
+    view = client.state().views.find((v) => v.ownerId === ownerId);
+    if (view && view.lastError === 'resync-exhausted') break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  assert.ok(view, 'the view exists');
+  assert.equal(view.lastError, 'resync-exhausted', 'three reset rounds in a row exhaust the resync');
+  assert.equal(view.stale, true, 'the exhausted view is in the error state');
+  const streams = calls.filter((c) => c.url.includes('/event-feed?')).length;
+  assert.ok(streams >= 3, 'each reset asked for a fresh stream: ' + streams);
   const before = calls.length;
   await new Promise((r) => setTimeout(r, 250));
-  assert.equal(calls.length, before, 'resync-exhausted stops the stream loop');
+  assert.equal(calls.length, before, 'resync-exhausted stops the loop: no further request');
+  client.stop();
+});
+
+test('R5: a stream that restarts from an unknown epoch also exhausts the resync', async (t) => {
+  const ownerId = 'a'.repeat(32);
+  const health = { ok: true, status: 200, json: async () => ({ ok: true, instanceId: ownerId, eventFeedV1: true }) };
+  const snap = { ok: true, status: 200, text: async () => JSON.stringify({ ownerId, cursor: '5:0', viewEpoch: 5, asks: [], notifications: [] }) };
+  // id: <epoch>:<seq> with epoch 1 while the view knows epoch 5. One fresh
+  // stream object per round: a shared one is drained by its first read.
+  const staleEpoch = () => sse(['id: 1:5\ndata: {"v":1,"ownerId":"' + ownerId + '","eventId":"ez","scope":"node","cellId":null,"hop":1,"emittedAt":1,"frame":{"type":"notify","title":"x"}}\n\n']);
+  const { client, calls } = stubClient(t, [health, snap, staleEpoch(), snap, staleEpoch(), snap, staleEpoch(), snap]);
+  client.start();
+  let view = null;
+  for (let i = 0; i < 80; i++) {
+    view = client.state().views.find((v) => v.ownerId === ownerId);
+    if (view && view.lastError === 'resync-exhausted') break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  assert.ok(view, 'the view exists');
+  assert.equal(view.lastError, 'resync-exhausted', 'an epoch that never settles exhausts the resync');
+  const before = calls.length;
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(calls.length, before, 'the loop is stopped, not retried forever');
   client.stop();
 });
 
