@@ -37,9 +37,28 @@ function validSha(value) { return /^[0-9a-f]{40}$/i.test(value || ''); }
 function parseRules(file) {
   const defs = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (defs.version !== 1 || !Array.isArray(defs.text) || !Array.isArray(defs.path)) throw new Error('rule bundle non valido');
+  let workcodes = null;
+  if (defs.workcodes) {
+    const wc = defs.workcodes;
+    if (!wc.families || typeof wc.families !== 'object' || Array.isArray(wc.families)) {
+      throw new Error('rule bundle: workcodes.families non valido');
+    }
+    const families = Object.entries(wc.families).map(([id, def]) => {
+      if (!def || typeof def.source !== 'string') throw new Error(`rule bundle: famiglia workcode ${id} senza source`);
+      // matchAll needs the global flag; workcode families are case-sensitive by definition.
+      return { id, re: new RegExp(def.source, def.flags ? `${def.flags}g` : 'g'), reason: def.reason || `internal work code (${id})` };
+    });
+    workcodes = {
+      families,
+      allowToken: new Set(Array.isArray(wc.allowToken) ? wc.allowToken : []),
+      allowTokenRe: (Array.isArray(wc.allowTokenRe) ? wc.allowTokenRe : []).map((source) => new RegExp(source)),
+      allowPathPrefix: Array.isArray(wc.allowPathPrefix) ? wc.allowPathPrefix : [],
+    };
+  }
   return {
     text: defs.text.map(({ source, flags, reason }) => ({ re: new RegExp(source, flags || ''), reason })),
     path: defs.path.map(({ source, flags, reason }) => ({ re: new RegExp(source, flags || ''), reason })),
+    workcodes,
   };
 }
 
@@ -54,6 +73,10 @@ function safeEntries(raw) {
   return entries.sort();
 }
 
+function isBinary(blob) {
+  return blob.includes(0) || !Buffer.from(blob.toString('utf8'), 'utf8').equals(blob);
+}
+
 function scan(root, entries, rules) {
   const hits = [];
   for (const rel of entries) {
@@ -61,9 +84,8 @@ function scan(root, entries, rules) {
     if (!fs.existsSync(file) || !fs.statSync(file).isFile()) throw new Error(`path pack mancante: ${rel}`);
     for (const { re, reason } of rules.path) if (re.test(rel)) hits.push(`${rel}: ${reason}`);
     const blob = fs.readFileSync(file);
-    const binary = blob.includes(0) || !Buffer.from(blob.toString('utf8'), 'utf8').equals(blob);
     let text;
-    if (binary) {
+    if (isBinary(blob)) {
       const strings = spawnSync('strings', ['-a', '-n', '4', file], { encoding: 'utf8' });
       if (strings.error) throw new Error(`scanner binari non disponibile: ${strings.error.message}`);
       if (strings.status !== 0) throw new Error(`scanner binari exited ${strings.status}`);
@@ -72,6 +94,39 @@ function scan(root, entries, rules) {
     for (const { re, reason } of rules.text) if (re.test(text)) hits.push(`${rel}: ${reason}`);
   }
   if (hits.length) throw new Error(`contenuto/percorso vietato:\n  ${hits.join('\n  ')}`);
+}
+
+// Counts internal work codes (families defined in the rule bundle) per line,
+// reporting file:line and per-family totals. Binary files and the paths in
+// allowPathPrefix (minified frontend bundles) are excluded by definition.
+function scanWorkcodes(root, entries, workcodes) {
+  if (!workcodes) return { totals: {}, files: 0, hits: [] };
+  const totals = {};
+  for (const { id } of workcodes.families) totals[id] = 0;
+  const hits = [];
+  const hitFiles = new Set();
+  for (const rel of entries) {
+    if (workcodes.allowPathPrefix.some((prefix) => rel.startsWith(prefix))) continue;
+    const file = path.join(root, 'package', rel);
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) continue;
+    const blob = fs.readFileSync(file);
+    if (isBinary(blob)) continue;
+    const lines = blob.toString('utf8').split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      for (const { id, re } of workcodes.families) {
+        re.lastIndex = 0;
+        for (const match of lines[index].matchAll(re)) {
+          const token = match[0];
+          if (workcodes.allowToken.has(token)) continue;
+          if (workcodes.allowTokenRe.some((allow) => allow.test(token))) continue;
+          totals[id] += 1;
+          hits.push(`${id} ${rel}:${index + 1} ${token}`);
+          hitFiles.add(rel);
+        }
+      }
+    }
+  }
+  return { totals, files: hitFiles.size, hits };
 }
 
 if (!validSha(sourceSha)) fail('source SHA deve essere il commit completo (40 hex)');
@@ -109,6 +164,11 @@ try {
   run('tar', ['-xzf', tarball, '--no-same-owner', '-C', extract]);
   const rules = parseRules(RULES);
   scan(extract, packlist, rules);
+  const workcodes = scanWorkcodes(extract, packlist, rules.workcodes);
+  if (workcodes.hits.length) {
+    const summary = Object.entries(workcodes.totals).map(([id, count]) => `${id}=${count}`).join(', ');
+    throw new Error(`codici di lavorazione interni nel payload (${summary}, totale ${workcodes.hits.length} su ${workcodes.files} file):\n  ${workcodes.hits.join('\n  ')}`);
+  }
   const packlistRaw = `${packlist.join('\0')}\0`;
   const manifest = {
     schema: 1,
@@ -122,7 +182,7 @@ try {
       fileCount: packlist.length,
       packlistSha256: sha256(packlistRaw),
       packlist,
-      scan: { rulesSha256: sha256File(RULES), result: 'PASS', rc: 0 },
+      scan: { rulesSha256: sha256File(RULES), result: 'PASS', rc: 0, workcodes: { totals: workcodes.totals, files: workcodes.files, result: 'PASS', rc: 0 } },
     },
   };
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
