@@ -4,6 +4,7 @@ All notable changes to NexusCrew are tracked here.
 
 ## 0.9.30 — 2026-09-16
 
+- Internal work references removed from the published package.
 - **Paired nodes exchange a federated event feed.** A subscriber opens a snapshot and then a stream per owner, attributed to the node that emitted it: an imported event is re-emitted locally only, so it can never travel back, and what a peer may see follows its granted access instead of what it asks for.
 - **A question from another node is answered through a durable receipt.** The receipt is written before the paste, so a crash leaves an uncertain attempt that the operator reconciles explicitly instead of a blind retry: the same request replays the stored outcome, a decision is bound to the generation of the outcomes it was taken on, and a terminal outcome refuses any further paste on every path.
 - **Imported notifications ring on the phone, once per event.** A relay with its own queue and alert budget sends the OS alert, keeps a durable per-owner registry so a replay of an already-recorded event or a restart does not ring again within the registry limits (4096 ids over 24 hours); senders remain best-effort, so a single alert per phone is not universally guaranteed (provider dedup and distinct PWA origins are out of contract), and the relay can be turned off per browser.
