@@ -26,6 +26,10 @@ function Toast({ n, onClose }) {
         <b>{n.title}</b>
         {n.body && <small>{n.body}</small>}
         {n.session && <span className="nc-ntf-from">{n.session}</span>}
+        {/* Evento importato da un owner federato: il badge dice CHI lo emette
+            (verificato dal canale) e la card resta in sola lettura — nessun
+            remote answer button (federated asks). */}
+        {n.ownerId && <span className="nc-ntf-from">{t('feed-owner')}</span>}
       </div>
       <button type="button" className="nc-ntf-x" onClick={onClose} title={t('close')}>
         <Icon name="x" size={14} />
