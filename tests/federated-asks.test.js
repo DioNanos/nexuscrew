@@ -14,6 +14,7 @@ const { createServer } = require('../lib/server.js');
 const nodesStore = require('../lib/nodes/store.js');
 const { createAskReceipts } = require('../lib/notify/ask-receipts.js');
 const { createAskAnswerService } = require('../lib/notify/ask-answer-service.js');
+const { createAsksStore } = require('../lib/notify/asks.js');
 const { tmuxSessionForCell } = require('../lib/fleet/definitions.js');
 
 // --- receipts + service (unit, stubbed paste) ------------------------------
@@ -224,7 +225,23 @@ const A_ID = 'a'.repeat(32);
 const B_ID = 'b'.repeat(32);
 const SECRET = 'pairing-secret-token';
 
-function boot(t, { pasteCalls = null } = {}) {
+// Crash simulato su un server REALE: un tentativo resta `pending` su disco e al
+// boot successivo e' delivery-unknown — la sola condizione in cui un operatore
+// riconcilia davvero (un ask bloccato non accetta nuovi tentativi).
+const SEED_ID = 'fee1dead';
+function seedUnknownAsk(configDir, askId, {
+  question = 'proceed?', session = tmuxSessionForCell('dev'), requestId = '00000000-0000-4000-8000-0000000000f1',
+} = {}) {
+  // 0600: lo store degli ask rifiuta di leggere un file con permessi larghi.
+  fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({
+    asks: [{ id: askId, question, session, ts: Date.now(), revision: 0 }],
+  }), { mode: 0o600 });
+  const seeded = createAskReceipts({ filePath: path.join(configDir, 'ask-receipts.json') });
+  const out = seeded.attempt({ peerId: B_ID, askId, requestId, text: 'go' });
+  assert.equal(out.ok, true, 'seed: il tentativo pendente e scritto');
+}
+
+function boot(t, { pasteCalls = null, seed = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaskhttp-'));
   const configDir = path.join(dir, '.nexuscrew');
   fs.mkdirSync(configDir, { recursive: true });
@@ -235,6 +252,7 @@ function boot(t, { pasteCalls = null } = {}) {
     tokenPath: path.join(configDir, 'token'),
   };
   nodesStore.initStore(paths.nodesPath);
+  if (seed) seed(configDir); // seed PRIMA di createServer: le ricevute si leggono al boot
   const { server, token, watcher } = createServer({
     ...paths,
     filesRoot: path.join(dir, 'files'),
@@ -257,9 +275,9 @@ function boot(t, { pasteCalls = null } = {}) {
   }));
 }
 
-async function pair(t, preset = 'admin') {
+async function pair(t, preset = 'admin', seedB = null) {
   const pasteCalls = [];
-  const B = await boot(t, { pasteCalls });
+  const B = await boot(t, { pasteCalls, seed: seedB });
   const A = await boot(t);
   const selfA = nodesStore.loadStoreStrict(A.nodesPath).nodeId;
   const selfB = nodesStore.loadStoreStrict(B.nodesPath).nodeId;
@@ -387,8 +405,8 @@ test('gate revocato prima del claim: 403 anche per un ask esistente', async (t) 
 });
 
 test('reconcile: solo locale, decisione validata, CAS sulla revisione', async (t) => {
-  const { B } = await pair(t);
-  const { id } = await createAsk(B, tmuxSessionForCell('dev'));
+  const { B } = await pair(t, 'admin', (dir) => seedUnknownAsk(dir, SEED_ID));
+  const id = SEED_ID;
   const ask = JSON.parse(fs.readFileSync(path.join(B.configDir, 'asks.json'), 'utf8')).asks[0];
   const bad = await fetch(`${B.base}/api/asks/${id}/reconcile`, {
     method: 'POST', headers: H(B.token),
@@ -421,11 +439,19 @@ test('reconcile: solo locale, decisione validata, CAS sulla revisione', async (t
     body: JSON.stringify({ decision: 'allow-new-attempt', expectedRevision: ask.revision || 0 }),
   });
   assert.equal(replay.status, 409, 'a reconciled generation cannot be reconciled twice');
+  // E sulla generazione GIA' risolta non si finge un successo: non c'e' piu'
+  // nulla di incerto da riconciliare.
+  const again = await fetch(`${B.base}/api/asks/${id}/reconcile`, {
+    method: 'POST', headers: H(B.token),
+    body: JSON.stringify({ decision: 'allow-new-attempt', expectedRevision: (ask.revision || 0) + 1 }),
+  });
+  assert.equal(again.status, 409);
+  assert.equal((await again.json()).reason, 'nothing-to-reconcile');
 });
 
 test('reconciliato come consegnato: l ask e chiuso e non si incolla piu', async (t) => {
-  const { A, B, pasteCalls } = await pair(t);
-  const { id } = await createAsk(B, tmuxSessionForCell('dev'));
+  const { A, B, pasteCalls } = await pair(t, 'admin', (dir) => seedUnknownAsk(dir, SEED_ID));
+  const id = SEED_ID;
   const ask = JSON.parse(fs.readFileSync(path.join(B.configDir, 'asks.json'), 'utf8')).asks[0];
   const ok = await fetch(`${B.base}/api/asks/${id}/reconcile`, {
     method: 'POST', headers: H(B.token),
@@ -551,4 +577,100 @@ test('allow-new-attempt: un fallimento parziale non chiude l ask e non fa incoll
   const answer = await service.answerLocal({ askId: 'abc12345', text: 'x' });
   assert.equal(answer.code, 409);
   assert.equal(pastes, 0);
+});
+
+// --- FIX 3 (re-audit cf00c8ce): riconciliazione e paste vivo -----------------
+// Il fix e' nel punto di DECISIONE della riconciliazione: qui si prova che il
+// claim di un paste ancora in volo non viene toccato e che un "niente da
+// riconciliare" non viene presentato come successo.
+
+function realFix3(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfix3-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const asks = createAsksStore({ dir });
+  const receipts = createAskReceipts({ filePath: path.join(dir, 'ask-receipts.json') });
+  const pastes = [];
+  let release = null;
+  const service = createAskAnswerService({
+    asks, receipts,
+    paste: async () => {
+      pastes.push(1);
+      if (pastes.length === 1 && release) await new Promise((r) => { release.hang = r; });
+      return true;
+    },
+    labelPrefix: 'human',
+  });
+  return { asks, receipts, service, pastes, hook: (r) => { release = r; } };
+}
+
+test('reconcile su un paste ANCORA IN VOLO viene rifiutato: il claim non si tocca e non nasce un secondo paste', async (t) => {
+  const ctx = realFix3(t);
+  let hang = null;
+  ctx.hook({ get hang() { return hang; }, set hang(v) { hang = v; } });
+  const askId = ctx.asks.create({ question: 'domanda', session: 'cell-a' }).ask.id;
+  const inFlight = ctx.service.answerFederated({
+    askId, text: 'primo', peerId: PEER, requestId: '11111111-1111-4111-8111-111111111111',
+  });
+  await new Promise((r) => setImmediate(r)); // il paste #1 e' partito e il claim e' suo
+
+  const rec = ctx.service.reconcile({ askId, decision: 'allow-new-attempt', expectedRevision: 0 });
+  assert.equal(rec.ok, false, 'una riconciliazione su un paste vivo non e\' un successo');
+  assert.equal(rec.code, 409);
+  assert.equal(rec.reason, 'answering');
+
+  const second = await ctx.service.answerLocal({ askId, text: 'secondo' });
+  assert.equal(second.ok, false, 'il claim non e stato rilasciato dalla riconciliazione');
+  assert.equal(second.reason, 'answering');
+
+  if (typeof hang === 'function') hang();
+  const first = await inFlight;
+  assert.equal(first.ok, true, 'il paste vivo arriva comunque a termine');
+  assert.equal(ctx.pastes.length, 1, 'un solo paste: nessun doppio incollo');
+});
+
+test('reconcile senza nulla di incerto: 409 nothing-to-reconcile, mai un ok con changed 0', async (t) => {
+  const ctx = realFix3(t);
+  const askId = ctx.asks.create({ question: 'domanda', session: 'cell-a' }).ask.id;
+  const done = await ctx.service.answerFederated({
+    askId, text: 'risposta', peerId: PEER, requestId: '22222222-2222-4222-8222-222222222222',
+  });
+  assert.equal(done.ok, true);
+  const rev = ctx.asks.get(askId).revision || 0;
+  const rec = ctx.service.reconcile({ askId, decision: 'allow-new-attempt', expectedRevision: rev });
+  assert.equal(rec.ok, false, 'non c\'era alcun esito incerto da riconciliare');
+  assert.equal(rec.code, 409);
+  assert.equal(rec.reason, 'nothing-to-reconcile');
+});
+
+test('la riconciliazione e legata alla GENERAZIONE degli esiti incerti, non solo alla revisione dell ask', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfix3gen-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const filePath = path.join(dir, 'ask-receipts.json');
+  let receipts = createAskReceipts({ filePath });
+  // Due tentativi che un crash lascia pendenti: al recovery sono delivery-unknown.
+  assert.equal(receipts.attempt({ peerId: PEER, askId: 'a1', requestId: 'aaaaaaaa-1111-4111-8111-111111111111', text: 'x' }).ok, true);
+  assert.equal(receipts.attempt({ peerId: OTHER, askId: 'a1', requestId: 'bbbbbbbb-1111-4111-8111-111111111111', text: 'y' }).ok, true);
+  receipts = createAskReceipts({ filePath }); // restart
+  const read = receipts.reconcilableFor('a1');
+  assert.equal(read.count, 2);
+  assert.equal(read.live, 0);
+
+  // Una decisione presa su una generazione DIVERSA da quella letta non sblocca
+  // nulla. Nota dichiarata: un ask bloccato RIFIUTA nuovi tentativi, quindi
+  // l'insieme degli esiti incerti puo' muoversi solo con un altro crash; qui il
+  // disallineamento e' costruito a mano e il test prova l'invariante di
+  // sicurezza, non un percorso di produzione.
+  const wrongCount = receipts.reconcile('a1', 'allow-new-attempt', { count: read.count + 1, generation: read.generation });
+  assert.equal(wrongCount.ok, false);
+  assert.equal(wrongCount.reason, 'generation-changed');
+  const wrongGen = receipts.reconcile('a1', 'allow-new-attempt', { count: read.count, generation: 'deadbeefdeadbeef' });
+  assert.equal(wrongGen.ok, false);
+  assert.equal(wrongGen.reason, 'generation-changed');
+  assert.equal(receipts.isBlocked('a1'), true, 'nessuno sblocco su una generazione che nessuno ha deciso');
+
+  // Con la generazione letta davvero la riconciliazione passa e sblocca.
+  const good = receipts.reconcile('a1', 'allow-new-attempt', { count: read.count, generation: read.generation });
+  assert.equal(good.ok, true);
+  assert.equal(good.changed, 2);
+  assert.equal(receipts.isBlocked('a1'), false);
 });

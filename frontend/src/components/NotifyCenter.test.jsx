@@ -190,4 +190,49 @@ describe('federated ask cards: identity per owner and reload', () => {
     openPanel(container);
     expect(screen.getByText('remota')).toBeTruthy();
   });
+
+  it('compacts the two sources: the local snapshot that arrives LAST does not erase an imported ask', async () => {
+    let finishLocal;
+    getAsks.mockReturnValueOnce(new Promise((resolve) => { finishLocal = resolve; }));
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce({ views: [{
+      ownerId: 'ownerA', askReplyAccess: true,
+      asks: [{ id: 'rem2', question: 'remota tardiva', session: 's', options: [] }],
+    }] });
+    const { container } = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
+    // La risposta locale arriva DOPO quella del feed-state: compatta, non sostituisce.
+    await act(async () => { finishLocal({ asks: [{ id: 'loc2', session: 's', question: 'locale tardiva', options: [] }] }); });
+    openPanel(container);
+    expect(screen.getByText('remota tardiva')).toBeTruthy();
+    expect(screen.getByText('locale tardiva')).toBeTruthy();
+    expect(container.querySelectorAll('.nc-ask-card').length).toBe(2);
+  });
+
+  it('compacts the two sources: the feed-state that arrives LAST adds to the locals', async () => {
+    getAsks.mockResolvedValueOnce({ asks: [{ id: 'loc3', session: 's', question: 'locale prima', options: [] }] });
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce({ views: [{
+      ownerId: 'ownerA', askReplyAccess: true,
+      asks: [{ id: 'rem3', question: 'remota dopo', session: 's', options: [] }],
+    }] });
+    const { container } = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
+    openPanel(container);
+    await waitFor(() => expect(screen.getByText('remota dopo')).toBeTruthy());
+    expect(screen.getByText('locale prima')).toBeTruthy();
+    expect(container.querySelectorAll('.nc-ask-card').length).toBe(2);
+  });
+
+  it('lo snapshot locale resta autorevole sulle proprie card: una ask locale sparita non resta appesa', async () => {
+    let finishLocal;
+    getAsks.mockReturnValueOnce(new Promise((resolve) => { finishLocal = resolve; }));
+    const { container } = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(mocks.eventHandler).toBeTypeOf('function'));
+    act(() => mocks.eventHandler({ type: 'ask', ask: { id: 'loc4', session: 's', question: 'locale viva' } }));
+    await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
+    // Risposta altrove: la domanda locale non e' piu' aperta e deve sparire.
+    await act(async () => { finishLocal({ asks: [] }); });
+    expect(container.querySelector('.nc-ask-badge')).toBeNull();
+  });
 });
