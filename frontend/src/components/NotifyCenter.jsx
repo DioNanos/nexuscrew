@@ -183,6 +183,12 @@ export default function NotifyCenter({ token }) {
     };
   }, []);
 
+  // La chiave di una card è (ownerId, askId): gli ask importati hanno chiavi
+  // di due parti, quelli locali una. Rimuovere per solo id toglierebbe la card
+  // sbagliata quando due proprietari hanno lo stesso id di ask.
+  const keyOf = (id, ownerId) => `${ownerId || ''}:${id}`;
+  const removeAsk = (id, ownerId) => setAsks((cur) => cur.filter((a) => keyOf(a.id, a.ownerId) !== keyOf(id, ownerId)));
+
   // Fetch iniziale ask aperti + canale SSE. Entrambi best-effort: la UI resta
   // usabile anche senza il canale (gli ask ricompaiono al prossimo mount).
   useEffect(() => {
@@ -192,22 +198,18 @@ export default function NotifyCenter({ token }) {
     const close = connectEvents(token, (frame) => {
       if (frame.type === 'notify') pushToast(frame);
       else if (frame.type === 'ask' && frame.ask && frame.ask.id) {
-        setAsks((cur) => (cur.some((a) => a.id === frame.ask.id) ? cur : [...cur, frame.ask]));
+        // Two owners can legitimately use the same ask id: identity is the pair.
+        const key = keyOf(frame.ask.id, frame.ask.ownerId);
+        setAsks((cur) => (cur.some((a) => keyOf(a.id, a.ownerId) === key) ? cur : [...cur, frame.ask]));
       } else if (frame.type === 'ask-answered' && frame.id) {
-        setAsks((cur) => cur.filter((a) => a.id !== frame.id));
+        removeAsk(frame.id, frame.ownerId);
       } else if (frame.type === 'ask-dismissed' && frame.id) {
         // Un'altra UI ha scartato la domanda: la card sparisce qui senza DELETE.
-        setAsks((cur) => cur.filter((a) => a.id !== frame.id));
+        removeAsk(frame.id, frame.ownerId);
       }
     });
     return () => { cancelled = true; close(); };
   }, [token, pushToast]);
-
-  // La chiave di una card è (ownerId, askId): gli ask importati hanno chiavi
-  // di due parti, quelli locali una. Rimuovere per solo id toglierebbe la card
-  // sbagliata quando due proprietari hanno lo stesso id di ask.
-  const keyOf = (id, ownerId) => `${ownerId || ''}:${id}`;
-  const removeAsk = (id, ownerId) => setAsks((cur) => cur.filter((a) => keyOf(a.id, a.ownerId) !== keyOf(id, ownerId)));
 
   // Grant di risposta PER OWNER, dallo snapshot che il client ha del feed
   // (/api/feed-state). Assente = nessuna risposta: la card resta in lettura.
@@ -217,8 +219,23 @@ export default function NotifyCenter({ token }) {
     getFeedState(token).then((j) => {
       if (!alive) return;
       const grants = {};
-      for (const v of (j && j.views) || []) grants[v.ownerId] = v.askReplyAccess === true;
+      const imported = [];
+      for (const v of (j && j.views) || []) {
+        grants[v.ownerId] = v.askReplyAccess === true;
+        // The local endpoint only knows local asks: the federated ones live in
+        // the owner's snapshot, so a reload rebuilds them from here.
+        for (const a of v.asks || []) {
+          if (a && a.id) imported.push({ ...a, ownerId: v.ownerId, imported: true });
+        }
+      }
       setReplyGrants(grants);
+      if (imported.length) {
+        setAsks((cur) => {
+          const seen = new Set(cur.map((a) => keyOf(a.id, a.ownerId)));
+          const add = imported.filter((a) => !seen.has(keyOf(a.id, a.ownerId)));
+          return add.length ? [...cur, ...add] : cur;
+        });
+      }
     }).catch(() => {});
     return () => { alive = false; };
   }, [token]);
