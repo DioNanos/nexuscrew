@@ -162,6 +162,19 @@ export const clearDiagnosticsLogs = (t, route = []) => jsonFetch(diagnosticsPath
 export const getAsks = (t, open = true) => jsonFetch(`/api/asks${open ? '?open=1' : ''}`, t);
 export const answerAsk = (t, id, text) => jsonFetch(`/api/asks/${encodeURIComponent(id)}/answer`, t, { method: 'POST', body: { text } });
 export const dismissAsk = (t, id) => jsonFetch(`/api/asks/${encodeURIComponent(id)}`, t, { method: 'DELETE' });
+// Ask federate (owner remoto): la risposta passa dal relay del PROPRIO server,
+// che risolve la route dall'ownerId via inventario autorizzata. La chiave
+// della card è (ownerId, askId): il solo id non basta fra più proprietari.
+export const relayAskAnswer = (t, { ownerId, askId, text }) => jsonFetch('/api/asks-relay', t, {
+  method: 'POST', body: { ownerId, askId, text },
+});
+export const relayAskVerify = (t, { ownerId, askId, requestId }) => jsonFetch('/api/asks-relay', t, {
+  method: 'POST', body: { action: 'verify', ownerId, askId, requestId },
+});
+export const relayAskDismiss = (t, { ownerId, askId }) => jsonFetch('/api/asks-relay', t, {
+  method: 'POST', body: { action: 'dismiss', ownerId, askId },
+});
+export const getFeedState = (t) => jsonFetch('/api/feed-state', t);
 
 export const getDecks = (t, route = []) => jsonFetch(`${routeBase(route)}/decks`, t);
 export const createDeck = (t, name, route = []) => jsonFetch(`${routeBase(route)}/decks`, t, { method: 'POST', body: { name } });
