@@ -19,6 +19,31 @@ import './NotifyCenter.css';
 const TOAST_MS = 6000;
 const TOAST_HIGH_MS = 12000;
 
+// Identita' di una card: (ownerId, askId). Due proprietari possono usare lo
+// stesso id di ask, quindi l'id da solo non basta mai.
+const askKeyOf = (id, ownerId) => `${ownerId || ''}:${id}`;
+
+// Compattazione, mai sostituzione: due liste della stessa natura possono
+// completarsi in QUALUNQUE ordine (snapshot locale da /api/asks, ask importate
+// dal feed-state). Una chiave gia' nota resta una volta sola.
+function mergeAsks(cur, extra) {
+  const seen = new Set(cur.map((a) => askKeyOf(a.id, a.ownerId)));
+  const add = (extra || []).filter((a) => a && a.id && !seen.has(askKeyOf(a.id, a.ownerId)));
+  return add.length ? [...cur, ...add] : cur;
+}
+
+// Lo snapshot locale e' autorevole SOLO sulle proprie card: sostituisce gli ask
+// locali (una domanda risposta altrove sparisce dal reload) ma NON deve
+// cancellare le ask importate, che appartengono a un altro proprietario e
+// arrivano dal feed-state. Senza questo, una risposta locale tardiva e vuota
+// cancella una domanda remota ancora aperta.
+function applyLocalSnapshot(cur, incoming) {
+  const imported = mergeAsks([], cur.filter((a) => a.imported));
+  const seen = new Set(imported.map((a) => askKeyOf(a.id, a.ownerId)));
+  const locals = (incoming || []).filter((a) => a && a.id && !seen.has(askKeyOf(a.id, a.ownerId)));
+  return [...locals, ...imported];
+}
+
 function Toast({ n, onClose }) {
   return (
     <div className={`nc-ntf-toast${n.urgency === 'high' ? ' high' : ''}`} role="status" aria-live="polite">
@@ -186,21 +211,22 @@ export default function NotifyCenter({ token }) {
   // La chiave di una card è (ownerId, askId): gli ask importati hanno chiavi
   // di due parti, quelli locali una. Rimuovere per solo id toglierebbe la card
   // sbagliata quando due proprietari hanno lo stesso id di ask.
-  const keyOf = (id, ownerId) => `${ownerId || ''}:${id}`;
-  const removeAsk = (id, ownerId) => setAsks((cur) => cur.filter((a) => keyOf(a.id, a.ownerId) !== keyOf(id, ownerId)));
+  const removeAsk = (id, ownerId) => setAsks((cur) => cur.filter((a) => askKeyOf(a.id, a.ownerId) !== askKeyOf(id, ownerId)));
 
   // Fetch iniziale ask aperti + canale SSE. Entrambi best-effort: la UI resta
   // usabile anche senza il canale (gli ask ricompaiono al prossimo mount).
   useEffect(() => {
     if (!token) return undefined;
     let cancelled = false;
-    getAsks(token).then((j) => { if (!cancelled) setAsks(j.asks || []); }).catch(() => {});
+    // Lo snapshot locale NON sostituisce tutto lo stato: compatta con le ask
+    // importate gia' presenti (l'ordine delle due risposte non e' garantito).
+    getAsks(token).then((j) => { if (!cancelled) setAsks((cur) => applyLocalSnapshot(cur, j.asks)); }).catch(() => {});
     const close = connectEvents(token, (frame) => {
       if (frame.type === 'notify') pushToast(frame);
       else if (frame.type === 'ask' && frame.ask && frame.ask.id) {
         // Two owners can legitimately use the same ask id: identity is the pair.
-        const key = keyOf(frame.ask.id, frame.ask.ownerId);
-        setAsks((cur) => (cur.some((a) => keyOf(a.id, a.ownerId) === key) ? cur : [...cur, frame.ask]));
+        const key = askKeyOf(frame.ask.id, frame.ask.ownerId);
+        setAsks((cur) => (cur.some((a) => askKeyOf(a.id, a.ownerId) === key) ? cur : [...cur, frame.ask]));
       } else if (frame.type === 'ask-answered' && frame.id) {
         removeAsk(frame.id, frame.ownerId);
       } else if (frame.type === 'ask-dismissed' && frame.id) {
@@ -229,13 +255,7 @@ export default function NotifyCenter({ token }) {
         }
       }
       setReplyGrants(grants);
-      if (imported.length) {
-        setAsks((cur) => {
-          const seen = new Set(cur.map((a) => keyOf(a.id, a.ownerId)));
-          const add = imported.filter((a) => !seen.has(keyOf(a.id, a.ownerId)));
-          return add.length ? [...cur, ...add] : cur;
-        });
-      }
+      if (imported.length) setAsks((cur) => mergeAsks(cur, imported));
     }).catch(() => {});
     return () => { alive = false; };
   }, [token]);
@@ -263,7 +283,7 @@ export default function NotifyCenter({ token }) {
             </button>
           </div>
           <div className="nc-ask-panel-body">
-            {asks.map((a) => <AskCard key={keyOf(a.id, a.ownerId)} ask={a} token={token}
+            {asks.map((a) => <AskCard key={askKeyOf(a.id, a.ownerId)} ask={a} token={token}
               askReplyAccess={!a.ownerId || replyGrants[a.ownerId] === true}
               onAnswered={removeAsk} onDismiss={removeAsk} />)}
           </div>
