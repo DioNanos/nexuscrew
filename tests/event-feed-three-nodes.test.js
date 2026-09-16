@@ -99,7 +99,13 @@ test('three real processes: no loop, no re-export to C, relay chain refused', as
     method: 'POST', headers: H(A.token),
     body: JSON.stringify({ title: 'from A', session: tmuxSessionForCell('dev') }),
   });
-  await sleep(700); // the client loop needs a beat to snapshot + apply
+  // The client loop needs a beat to snapshot + apply: wait for the LIVE view.
+  for (let i = 0; i < 20; i++) {
+    const fs = await (await fetch(`${B.base}/api/feed-state`, { headers: H(B.token) })).json();
+    const v = (fs.views || []).find((x) => x.ownerId === idA);
+    if (v && v.stale === false && (v.notifications || []).length > 0) break;
+    await sleep(150);
+  }
 
   // B imported it: the local aggregated view attributes it to A...
   const feedState = await (await fetch(`${B.base}/api/feed-state`, { headers: H(B.token) })).json();
