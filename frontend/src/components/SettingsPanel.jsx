@@ -17,6 +17,7 @@ import NodeSheet from './NodeSheet.jsx';
 import { nodeRowSummary } from '../lib/node-summary.js';
 import { vlNodeToPeer, topologyVlOwners } from '../lib/vl-nodes-model.js';
 import { getPushState, subscribePush, unsubscribePush } from '../lib/push.js';
+import { loadPushLocal, savePushLocal } from '../lib/push-local.js';
 import Icon from './Icon.jsx';
 import FleetTab from './FleetTab.jsx';
 import { useNodes } from '../hooks/useNodes.js';
@@ -367,6 +368,7 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
 // e' bloccato dal server (403) e il bottone resta disabilitato con motivo.
 function PushRow({ token, readonly }) {
   const [state, setState] = useState('idle'); // unsupported|denied|subscribed|idle
+  const [local, setLocalChoice] = useState(() => loadPushLocal());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -385,14 +387,36 @@ function PushRow({ token, readonly }) {
       const msg = String(e.message || e);
       if (msg === 'push-denied') { setState('denied'); setErr(t('push-denied')); }
       else if (msg === 'push-unsupported') { setState('unsupported'); setErr(t('push-unsupported')); }
+      else if (msg === 'push-disabled-local') { setErr(t('push-local-disabled')); }
       else setErr(msg);
     }
     setBusy(false);
   };
 
+  // Browser-local choice: silences THIS browser only. The live UI keeps working
+  // and the owner's own push setup is never touched from here.
+  const toggleLocal = async () => {
+    const next = savePushLocal({ enabled: !(local.enabled === false) });
+    setLocalChoice(next);
+    setErr(null);
+    if (next.enabled === false && state === 'subscribed') {
+      setBusy(true);
+      try { await unsubscribePush(token); setState('idle'); } catch (_) { /* best-effort */ }
+      setBusy(false);
+    }
+  };
+
   if (state === 'unsupported') return <div className="nc-set-info">{t('push-unsupported')}</div>;
   return (
     <>
+      <div className="nc-set-row">
+        <button type="button" className="nc-btn ghost" onClick={toggleLocal} disabled={busy}>
+          {local.enabled === false ? t('push-local-on') : t('push-local-off')}
+        </button>
+        <span className="nc-set-info">
+          {local.enabled === false ? t('push-local-off-note') : t('push-local-help')}
+        </span>
+      </div>
       <div className="nc-set-row">
         <button type="button" className="nc-btn ghost" disabled={readonly || busy || state === 'denied'}
           title={readonly ? t('settings-readonly') : ''} onClick={toggle}>

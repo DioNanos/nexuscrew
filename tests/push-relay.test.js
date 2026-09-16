@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createPushRelay, createPushDedup, buildPayload } = require('../lib/notify/push-relay.js');
+const { allowedResource } = require('../lib/proxy/federation.js');
 
 const OWNER = 'a'.repeat(32);
 
@@ -125,4 +126,45 @@ test('a revoked or empty subscription set: zero sent, counter notes the failure'
     assert.equal(sent.length, 0, 'nothing was deliverable');
     assert.ok(r.status().counters.sendFailed >= 1, 'the empty delivery is visible in the counters');
   }, 20);
+});
+
+// --- the import hook of the client server -----------------------------------
+// The flattened events the feed client re-emits into the local hub are the only
+// place an imported event exists on this side: exactly one shape may ring.
+
+test('the import hook rings for a notify only, and shares the same registry', (t) => {
+  const { dedupPath } = fresh(t);
+  const sent = [];
+  const r = relayWith(dedupPath, sent);
+  const hubNotify = { type: 'notify', ownerId: OWNER, eventId: 'ev-7', title: 'from A', body: 'b', urgency: 'normal' };
+  const hubAsk = { type: 'ask', ownerId: OWNER, eventId: 'ev-8', ask: { id: 'ask-1', question: 'q' } };
+  const hubClosure = { type: 'ask-answered', ownerId: OWNER, eventId: 'ev-9', id: 'ask-1' };
+  const hubState = { type: 'feed-state', ownerId: OWNER, eventId: 'ev-10', state: { type: 'fleet-state' } };
+
+  assert.equal(r.considerImported(hubAsk), false, 'an ask card never rings');
+  assert.equal(r.considerImported(hubClosure), false, 'a closure never rings');
+  assert.equal(r.considerImported(hubState), false, 'a state frame never rings');
+  assert.equal(r.considerImported(hubNotify), true, 'the imported notify rings');
+  assert.equal(r.considerImported(hubNotify), false, 'a re-emission does not ring twice');
+  // Same registry as the envelope path: the event cannot ring again as an
+  // envelope either (nor the other way round).
+  assert.equal(r.consider(envelope(7, { eventId: 'ev-7' })), false, 'the two paths share one identity');
+  assert.equal(sent.length, 1);
+});
+
+test('a correlated ask travels in the payload, with a local-only route', () => {
+  const p = buildPayload(envelope(1, { frame: { type: 'notify', title: 'domanda', askId: 'ask-42' } }));
+  assert.equal(p.askId, 'ask-42', 'the correlated ask is named');
+  assert.ok(p.url.includes(`/#owner=${OWNER}&ask=ask-42`), 'the route opens that ask locally');
+  assert.ok(!/^https?:|^\/\//.test(p.url), 'no foreign or absolute URL is ever built');
+});
+
+test('the push surface is not federated', () => {
+  const paths = ['push/vapid', 'push/subscribe', 'push/send', 'push/status'];
+  for (const resource of paths) {
+    for (const method of ['GET', 'POST', 'DELETE']) {
+      assert.equal(allowedResource(resource, method), false, `${method} ${resource} must stay local-only`);
+      assert.equal(resource.startsWith('push/'), true);
+    }
+  }
 });
