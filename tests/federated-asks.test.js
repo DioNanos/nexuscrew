@@ -42,6 +42,16 @@ function unit(t, { pasteCalls = [], pasteOk = true } = {}) {
       a.answered = true; a.answer = text; a.revision = (a.revision || 0) + 1;
       return true;
     },
+    markReconciled: (id, decision) => {
+      asks.claimed.delete(id);
+      const a = asks.store.get(id);
+      if (!a) return { ok: false, reason: 'unknown' };
+      if (decision === 'mark-delivered' && !a.answered) {
+        a.answered = true; a.answeredReconciled = true;
+      }
+      a.revision = (a.revision || 0) + 1;
+      return { ok: true, ask: { ...a } };
+    },
     claimed: new Set(),
   };
   const receipts = createAskReceipts({ filePath });
@@ -110,19 +120,89 @@ test('crash con pending: al restart diventa delivery-unknown e BLOCCA anche il l
     get(id) { return this.store.get(id) || null; },
     claim(id) { const a = this.get(id); return a && !a.answered ? { ok: true, ask: { ...a } } : { ok: false, reason: 'answered' }; },
     release() {}, commit(id, text) { const a = this.get(id); a.answered = true; a.answer = text; return true; },
+    markReconciled(id, decision) {
+      const a = this.get(id);
+      if (decision === 'mark-delivered' && !a.answered) a.answered = true;
+      a.revision = (a.revision || 0) + 1;
+      return { ok: true, ask: { ...a } };
+    },
   };
   const service = createAskAnswerService({ asks, receipts: receipts2, paste: async () => true, onClosure: () => {} });
   const local = await service.answerLocal({ askId: 'abc12345', text: 'retry' });
   assert.equal(local.code, 409);
   assert.equal(local.reason, 'delivery-unknown-block');
-  // Reconciliation with a stale revision is refused (CAS)...
-  const bad = receipts2.reconcile('abc12345', 'mark-delivered');
-  assert.equal(bad.ok, true, 'receipt reconcile has no revision; the route CAS sits on the ask');
-  assert.equal(service.answerLocal === service.answerLocal, true);
-  // ...and after reconciliation the ask answers again.
+  // Reconciling as delivered CLOSES the ask: the paste was on the peer's side,
+  // and a second local paste must never happen.
+  const rec = await service.reconcile({ askId: 'abc12345', decision: 'mark-delivered', expectedRevision: 0 });
+  assert.equal(rec.ok, true, 'the reconcile is accepted on the current revision');
+  assert.equal(rec.revision, 1, 'the transition advanced the revision');
   const local2 = await service.answerLocal({ askId: 'abc12345', text: 'retry' });
-  assert.equal(local2.ok, true, 'reconcile unlocks the ask');
-  void bad;
+  assert.equal(local2.ok, false);
+  assert.equal(local2.code, 409);
+  assert.equal(local2.reason, 'answered', 'reconciled as delivered, the ask is closed');
+  const st2 = receipts2.statusFor('abc12345');
+  assert.equal(st2.blocked, false, 'the unlock happened');
+});
+
+test('un reconcile non persistito NON sblocca: il blocco resta e non si incolla', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaskrecfail-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const filePath = path.join(dir, 'ask-receipts.json');
+  const receipts1 = createAskReceipts({ filePath });
+  receipts1.attempt({ peerId: PEER, askId: 'abc12345', requestId: '55555555-5555-5555-5555-555555555555', text: 'go' });
+  const receipts2 = createAskReceipts({ filePath }); // pending -> delivery-unknown
+  assert.equal(receipts2.isBlocked('abc12345'), true);
+  // The durable write now fails: the receipts file is replaced by a directory,
+  // so the rename of the fresh temp file cannot land.
+  fs.unlinkSync(filePath);
+  fs.mkdirSync(filePath);
+  const pasteCalls = [];
+  const asks = { store: new Map([['abc12345', { id: 'abc12345', session: 's', question: 'q', revision: 0 }]]),
+    get(id) { return this.store.get(id) || null; },
+    claim(id) { const a = this.get(id); return a && !a.answered ? { ok: true, ask: { ...a } } : { ok: false, reason: 'answered' }; },
+    release() {},
+    commit(id, text) { const a = this.get(id); a.answered = true; a.answer = text; return true; },
+    markReconciled(id) { const a = this.get(id); a.revision = (a.revision || 0) + 1; return { ok: true, ask: { ...a } }; } };
+  const service = createAskAnswerService({ asks, receipts: receipts2, paste: async () => { pasteCalls.push(1); return true; }, onClosure: () => {} });
+  const out = await service.reconcile({ askId: 'abc12345', decision: 'allow-new-attempt', expectedRevision: 0 });
+  assert.equal(out.ok, false, 'a failed write cannot unlock');
+  assert.equal(out.reason, 'persist-failed');
+  assert.equal(receipts2.isBlocked('abc12345'), true, 'the block is still there');
+  const answer = await service.answerLocal({ askId: 'abc12345', text: 'x' });
+  assert.equal(answer.code, 409);
+  assert.equal(pasteCalls.length, 0, 'zero pastes while the outcome is unknown');
+});
+
+test('il perdente del claim non lascia una ricevuta pending', async (t) => {
+  const u = unit(t);
+  u.asks.store.set('abc12345', { id: 'abc12345', session: 's', question: 'q', revision: 0 });
+  u.asks.claimed.add('abc12345'); // someone else holds the claim
+  const r = await u.service.answerFederated({ askId: 'abc12345', text: 'go', peerId: PEER, requestId: '66666666-6666-6666-6666-666666666666' });
+  assert.equal(r.code, 409, 'the loser is refused');
+  const entry = u.receipts.get(PEER, 'abc12345', '66666666-6666-6666-6666-666666666666');
+  assert.ok(entry, 'the attempt is recorded');
+  assert.equal(entry.state, 'failed', 'finalized, never left pending');
+  assert.equal(u.receipts.isBlocked('abc12345'), false, 'no fake lock');
+});
+
+test('il dismiss non rimuove un ask con esito incerto, su nessuno dei due percorsi', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaskdismiss-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const filePath = path.join(dir, 'ask-receipts.json');
+  const first = createAskReceipts({ filePath });
+  first.attempt({ peerId: PEER, askId: 'abc12345', requestId: '77777777-7777-7777-7777-777777777777', text: 'go' });
+  const receipts = createAskReceipts({ filePath }); // pending -> delivery-unknown
+  assert.equal(receipts.isBlocked('abc12345'), true);
+  const ask = { id: 'abc12345', session: 's', question: 'q', revision: 0 };
+  const asks = {
+    get: (id) => (id === ask.id ? ask : null),
+    dismiss: () => { ask.dismissed = true; ask.revision += 1; return { ok: true, ask: { ...ask } }; },
+  };
+  const service = createAskAnswerService({ asks, receipts, paste: async () => true, onClosure: () => {} });
+  const out = service.dismiss('abc12345');
+  assert.equal(out.ok, false, 'an unknown outcome cannot be dismissed away');
+  assert.equal(out.reason, 'delivery-unknown-block');
+  assert.equal(ask.dismissed, undefined, 'the ask is still there, not dismissed');
 });
 
 test('lo status di un tentativo è scoped per peer: un altro peer non vede nulla', (t) => {
@@ -317,9 +397,50 @@ test('reconcile: solo locale, decisione validata, CAS sulla revisione', async (t
     body: JSON.stringify({ decision: 'mark-delivered', expectedRevision: (ask.revision || 0) + 5 }),
   });
   assert.equal(stale.status, 409);
+  // The CAS is MANDATORY: with no revision the route refuses to touch the state.
+  const noRev = await fetch(`${B.base}/api/asks/${id}/reconcile`, {
+    method: 'POST', headers: H(B.token),
+    body: JSON.stringify({ decision: 'mark-delivered' }),
+  });
+  assert.equal(noRev.status, 400, 'expectedRevision obbligatoria');
+  assert.equal((await noRev.json()).reason, 'revision-required');
   const ok = await fetch(`${B.base}/api/asks/${id}/reconcile`, {
     method: 'POST', headers: H(B.token),
     body: JSON.stringify({ decision: 'mark-delivered', expectedRevision: ask.revision || 0 }),
   });
   assert.equal(ok.status, 200);
+  const okBody = await ok.json();
+  assert.equal(okBody.revision, (ask.revision || 0) + 1, 'the transition advanced the revision');
+  // The token the operator used is stale from here on: a second reconcile with
+  // the same revision cannot unlock anything.
+  const replay = await fetch(`${B.base}/api/asks/${id}/reconcile`, {
+    method: 'POST', headers: H(B.token),
+    body: JSON.stringify({ decision: 'allow-new-attempt', expectedRevision: ask.revision || 0 }),
+  });
+  assert.equal(replay.status, 409, 'a reconciled generation cannot be reconciled twice');
+});
+
+test('reconciliato come consegnato: l ask e chiuso e non si incolla piu', async (t) => {
+  const { A, B, pasteCalls } = await pair(t);
+  const { id } = await createAsk(B, tmuxSessionForCell('dev'));
+  const ask = JSON.parse(fs.readFileSync(path.join(B.configDir, 'asks.json'), 'utf8')).asks[0];
+  const ok = await fetch(`${B.base}/api/asks/${id}/reconcile`, {
+    method: 'POST', headers: H(B.token),
+    body: JSON.stringify({ decision: 'mark-delivered', expectedRevision: ask.revision || 0 }),
+  });
+  assert.equal(ok.status, 200);
+  const before = pasteCalls.length;
+  const answer = await fetch(`${B.base}/api/asks/${id}/answer`, {
+    method: 'POST', headers: H(B.token),
+    body: JSON.stringify({ text: 'again' }),
+  });
+  assert.equal(answer.status, 409, 'the ask is closed: no second paste after mark-delivered');
+  assert.equal(pasteCalls.length, before, 'zero pastes');
+  // And the federated surface sees the same closure.
+  const fed = await fetch(`${A.base}/api/route/owner/_/event-feed/asks/${id}/answer`, {
+    method: 'POST', headers: H(A.token),
+    body: JSON.stringify({ text: 'again', requestId: 'aa666666-6666-6666-6666-666666666666' }),
+  });
+  assert.equal(fed.status, 409);
+  assert.equal(pasteCalls.length, before, 'still zero pastes');
 });
