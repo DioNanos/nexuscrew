@@ -4,7 +4,7 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
-- **Custom engines now list their declared models in the pickers.** A custom profile has no builtin catalog, so the model lists stayed empty even when models were declared for the engine; the engine list now joins the profile catalog with the declared models, and a pinned model always stays in the list.
+- **Custom engines now list their declared models in the pickers.** A custom profile has no builtin catalog, so the model lists stayed empty even when models were declared for the engine; the engine list now joins the profile catalog with the declared models (for `pi` custom engines the pinned model stays first in the list).
 
 ## 0.9.30 — 2026-09-16
 

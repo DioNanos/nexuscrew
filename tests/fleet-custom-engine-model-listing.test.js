@@ -1,15 +1,13 @@
 'use strict';
-// tests/fleet-custom-engine-model-listing.test.js — i modelli DICHIARATI per un
-// engine custom devono comparire nella lista che la finestra usa per il
-// selettore.
+// tests/fleet-custom-engine-model-listing.test.js — models declared for a
+// custom engine must appear in the list the UI pickers are built from.
 //
-// PERCHE' ESISTE: `status()` e `definitions()` costruivano `models` dal solo
-// catalogo builtin del profilo (`profile.models`). Un profilo custom non ha
-// catalogo, quindi la lista restava `[]` (o il solo pin per `pi`) anche con
-// due modelli dichiarati in `definitions.models[]`: il boot li accettava, il
-// selettore non li mostrava. Trovato sul Mac con quattro engine `*.macair`
-// (readback 0.9.30, 2026-09-17): la funzione giusta esisteva gia'
-// (`declaredModelsFor`), ma la vista non la chiamava.
+// WHY: `status()` and `definitions()` built `models` from the builtin catalog
+// of the profile only (`profile.models`). A custom profile has no catalog, so
+// the list stayed `[]` (or the bare pin for `pi`) even with models declared in
+// `definitions.models[]`: the launcher accepted them, the picker never showed
+// them. The right helper already existed (`declaredModelsFor`); the views did
+// not call it.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -17,23 +15,23 @@ const os = require('node:os');
 const path = require('node:path');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
 
-const DICHIARATI = ['ornith-1.5-9b', 'spark-x2.5-4b'];
+const DECLARED = ['model-b', 'model-a'];
+const BASE_URL = 'http://127.0.0.1:1234';
 
-function mondo(t) {
+function world(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-custom-listing-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 });
   fs.chmodSync(home, 0o700);
-  const cwd = path.join(home, 'Dev');
-  fs.mkdirSync(cwd);
+  fs.mkdirSync(path.join(home, 'Dev'));
   fs.mkdirSync(path.join(home, 'bin'));
   const defsPath = path.join(root, 'fleet.json');
   fs.writeFileSync(defsPath, JSON.stringify({ schemaVersion: 1, engines: [], cells: [] }));
-  const tmuxBin = path.join(home, 'bin', 'tmux-finto');
+  const tmuxBin = path.join(home, 'bin', 'tmux-fake');
   fs.writeFileSync(tmuxBin, '#!/bin/sh\nexit 0\n');
   fs.chmodSync(tmuxBin, 0o755);
-  // Il client va trovato sotto la home, altrimenti l'engine non e' descritto
-  // come configurato; qui interessa la LISTA, non il boot.
+  // The client binary must be found under the home, otherwise the engine is
+  // not described as configured; the subject here is the LIST, not the boot.
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   for (const client of ['claude', 'pi']) {
     const bin = path.join(home, '.local', 'bin', client);
@@ -44,77 +42,98 @@ function mondo(t) {
   return { home, defsPath, tmuxBin };
 }
 
-const fleetDi = (w) => createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+const fleetFor = (w) => createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
 
-async function dichiaraEngineCustom(fleet, { id, client, protocol, baseUrl }) {
+async function defineCustomEngine(fleet, { id, client, protocol, baseUrl, declare = DECLARED }) {
   await fleet.defineEngine({
     id, label: id,
     managed: {
-      client, provider: 'custom', model: DICHIARATI[1], permissionPolicy: 'standard',
-      displayName: `${client} · locale`, baseUrl, protocol, providerId: id.replace('.', '-'),
-      envKey: 'LMSTUDIO_API_KEY',
+      client, provider: 'custom', model: DECLARED[1], permissionPolicy: 'standard',
+      displayName: `${client} local`, baseUrl, protocol, providerId: id.replace('.', '-'),
+      envKey: 'LOCAL_API_KEY',
     },
   });
-  for (const m of DICHIARATI) await fleet.defineModel({ id: m, engine: id, contextWindow: 262144, maxTokens: 8192 });
+  for (const m of declare) await fleet.defineModel({ id: m, engine: id, contextWindow: 262144, maxTokens: 8192 });
 }
 
-const ordinati = (xs) => [...xs].sort();
+const engineIn = (view, id) => view.engines.find((e) => e.id === id);
 
-test('engine custom (claude): status() elenca i modelli dichiarati, non []', async (t) => {
-  const w = mondo(t);
-  const fleet = await fleetDi(w);
-  await dichiaraEngineCustom(fleet, {
-    id: 'claude.macair', client: 'claude', protocol: 'anthropic_messages', baseUrl: 'http://127.0.0.1:18134',
-  });
+test('custom engine (claude): status() lists the declared models, not []', async (t) => {
+  const w = world(t);
+  const fleet = await fleetFor(w);
+  await defineCustomEngine(fleet, { id: 'claude.local', client: 'claude', protocol: 'anthropic_messages', baseUrl: BASE_URL });
 
-  const stato = await fleet.status();
-  const engine = stato.engines.find((e) => e.id === 'claude.macair');
-  assert.ok(engine, 'l\'engine deve comparire nello status');
+  const engine = engineIn(await fleet.status(), 'claude.local');
+  assert.ok(engine, 'the engine must appear in the status');
   assert.equal(engine.kind, 'managed');
-  assert.deepEqual(ordinati(engine.models), ordinati(DICHIARATI),
-    'i modelli dichiarati per l\'engine devono essere la lista del selettore');
+  assert.deepEqual(engine.models, DECLARED, 'the models declared for the engine are the picker list, in declaration order');
 });
 
-test('engine custom (claude): definitions().managedInfo.models elenca i dichiarati', async (t) => {
-  const w = mondo(t);
-  const fleet = await fleetDi(w);
-  await dichiaraEngineCustom(fleet, {
-    id: 'claude.macair', client: 'claude', protocol: 'anthropic_messages', baseUrl: 'http://127.0.0.1:18134',
-  });
+test('custom engine (claude): definitions().managedInfo.models lists the declared models', async (t) => {
+  const w = world(t);
+  const fleet = await fleetFor(w);
+  await defineCustomEngine(fleet, { id: 'claude.local', client: 'claude', protocol: 'anthropic_messages', baseUrl: BASE_URL });
 
-  const vista = await fleet.definitions();
-  const engine = vista.engines.find((e) => e.id === 'claude.macair');
-  assert.ok(engine && engine.managedInfo, 'la vista deve descrivere l\'engine gestito');
-  assert.deepEqual(ordinati(engine.managedInfo.models), ordinati(DICHIARATI));
+  const engine = engineIn(await fleet.definitions(), 'claude.local');
+  assert.ok(engine && engine.managedInfo, 'the view must describe the managed engine');
+  assert.deepEqual(engine.managedInfo.models, DECLARED);
 });
 
-test('engine custom (pi): status() elenca i dichiarati e non solo il pin', async (t) => {
-  const w = mondo(t);
-  const fleet = await fleetDi(w);
-  await dichiaraEngineCustom(fleet, {
-    id: 'pi.macair', client: 'pi', protocol: 'openai-completions', baseUrl: 'http://127.0.0.1:18134/v1',
-  });
+test('custom engine (pi): status() lists the pin first, then the declared models', async (t) => {
+  const w = world(t);
+  const fleet = await fleetFor(w);
+  await defineCustomEngine(fleet, { id: 'pi.local', client: 'pi', protocol: 'openai-completions', baseUrl: `${BASE_URL}/v1` });
 
-  const stato = await fleet.status();
-  const engine = stato.engines.find((e) => e.id === 'pi.macair');
-  assert.ok(engine, 'l\'engine deve comparire nello status');
-  assert.deepEqual(ordinati(engine.models), ordinati(DICHIARATI));
-  assert.ok(engine.models.includes(engine.model), 'il pin resta nella lista');
+  const engine = engineIn(await fleet.status(), 'pi.local');
+  assert.ok(engine, 'the engine must appear in the status');
+  assert.equal(engine.model, DECLARED[1]);
+  assert.deepEqual(engine.models, [DECLARED[1], DECLARED[0]], 'pin first, declared models after, no duplicate');
 });
 
-test('engine custom senza dichiarazioni: la lista resta vuota (nessuna invenzione)', async (t) => {
-  const w = mondo(t);
-  const fleet = await fleetDi(w);
+test('custom engine (pi): the pin stays in the list even without declarations', async (t) => {
+  const w = world(t);
+  const fleet = await fleetFor(w);
+  await defineCustomEngine(fleet, { id: 'pi.local', client: 'pi', protocol: 'openai-completions', baseUrl: `${BASE_URL}/v1`, declare: [] });
+
+  const engine = engineIn(await fleet.status(), 'pi.local');
+  assert.deepEqual(engine.models, [DECLARED[1]]);
+});
+
+test('custom engine without declarations: the list stays empty (nothing is invented)', async (t) => {
+  const w = world(t);
+  const fleet = await fleetFor(w);
   await fleet.defineEngine({
-    id: 'claude.nudo', label: 'nudo',
+    id: 'claude.bare', label: 'bare',
     managed: {
-      client: 'claude', provider: 'custom', model: 'qualcosa', permissionPolicy: 'standard',
-      displayName: 'nudo', baseUrl: 'http://127.0.0.1:1', protocol: 'anthropic_messages',
-      providerId: 'claude-nudo', envKey: 'LMSTUDIO_API_KEY',
+      client: 'claude', provider: 'custom', model: 'anything', permissionPolicy: 'standard',
+      displayName: 'bare', baseUrl: BASE_URL, protocol: 'anthropic_messages',
+      providerId: 'claude-bare', envKey: 'LOCAL_API_KEY',
     },
   });
 
-  const stato = await fleet.status();
-  const engine = stato.engines.find((e) => e.id === 'claude.nudo');
-  assert.deepEqual(engine.models, []);
+  assert.deepEqual(engineIn(await fleet.status(), 'claude.bare').models, []);
+});
+
+test('custom engine: legacy declarations on the profile are joined after the engine ones, once', async (t) => {
+  const w = world(t);
+  const fleet = await fleetFor(w);
+  await defineCustomEngine(fleet, { id: 'claude.local', client: 'claude', protocol: 'anthropic_messages', baseUrl: BASE_URL });
+  // Same id declared on the profile too (must not duplicate) plus a profile-only id.
+  await fleet.defineModel({ id: DECLARED[0], engine: 'claude.custom', contextWindow: 262144, maxTokens: 8192 });
+  await fleet.defineModel({ id: 'legacy-only', engine: 'claude.custom', contextWindow: 262144, maxTokens: 8192 });
+
+  const expected = [...DECLARED, 'legacy-only'];
+  assert.deepEqual(engineIn(await fleet.status(), 'claude.local').models, expected);
+  assert.deepEqual(engineIn(await fleet.definitions(), 'claude.local').managedInfo.models, expected);
+});
+
+test('two custom engines of the same profile do not see each other\'s declarations', async (t) => {
+  const w = world(t);
+  const fleet = await fleetFor(w);
+  await defineCustomEngine(fleet, { id: 'claude.local', client: 'claude', protocol: 'anthropic_messages', baseUrl: BASE_URL });
+  await defineCustomEngine(fleet, { id: 'claude.other', client: 'claude', protocol: 'anthropic_messages', baseUrl: BASE_URL, declare: ['model-z'] });
+
+  const status = await fleet.status();
+  assert.deepEqual(engineIn(status, 'claude.local').models, DECLARED);
+  assert.deepEqual(engineIn(status, 'claude.other').models, ['model-z']);
 });
