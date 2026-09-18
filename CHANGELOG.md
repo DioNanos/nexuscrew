@@ -12,7 +12,7 @@ All notable changes to NexusCrew are tracked here.
 - **A question asked by a node now reaches the operator wherever they are.** The ask travels to the owner's other nodes like a notification does, is registered there as belonging to the node that asked, and is never sent back out; the answer returns to the node that owns the cell and is pasted there. One answer wins. The local relay route also parses its request body, which it never did.
 - **A model in use is refused by the engine that declares it.** Removing a model now compares against the declaring engine's keys, so an unrelated engine sharing the name no longer blocks the removal — and the rejection names the limit it hit.
 - **The doctor separates the two tmux preload outcomes.** A missing `LD_PRELOAD` support and a tmux server that is not running are reported as different causes, each with its own remedy.
-- **Up to 128 declared models per engine.** The previous cap of 64 is raised, and the ceiling is named in the rejection instead of being a silent stop.
+- **Up to 128 declared models in the fleet catalog (was 64)**; the ceiling is named in the rejection instead of a silent stop.
 
 ## 0.9.30 — 2026-09-16
 
