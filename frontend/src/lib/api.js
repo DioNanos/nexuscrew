@@ -179,6 +179,16 @@ export const getFeedState = (t) => jsonFetch('/api/feed-state', t);
 export const getDecks = (t, route = []) => jsonFetch(`${routeBase(route)}/decks`, t);
 export const createDeck = (t, name, route = []) => jsonFetch(`${routeBase(route)}/decks`, t, { method: 'POST', body: { name } });
 export const saveDeck = (t, name, layout, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PUT', body: { layout, expectedRevision } });
+
+// Flush a chiusura pagina — PUT keepalive fire-and-forget. La risposta
+// non viene letta (la pagina sta per chiudersi): serve solo a consegnare
+// l'ultima modifica quando il debounce dell'autosave non ha tempo di scadere.
+export const saveDeckKeepalive = (t, name, layout, expectedRevision, route = []) => apiFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, {
+  method: 'PUT',
+  keepalive: true,
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ layout, expectedRevision }),
+});
 export const renameDeck = (t, name, next, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PATCH', body: { name: next, expectedRevision } });
 export const deleteDeck = (t, name, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'DELETE', body: { expectedRevision } });
 

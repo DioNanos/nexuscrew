@@ -54,6 +54,25 @@ test('decks API round-trips multi-hop tiles with duplicate session names at dist
   assert.deepEqual(listed.decks[0].layout, multi);
 });
 
+test('decks API: il 409 di revisione logga name/expectedRevision/currentRevision', async (t) => {
+  const { base, token } = await boot(t); const h = H(token);
+  let r = await fetch(`${base}/api/decks`, { method: 'POST', headers: h, body: JSON.stringify({ name: 'logconf' }) });
+  assert.equal(r.status, 201);
+  r = await fetch(`${base}/api/decks/logconf`, { method: 'PUT', headers: h, body: JSON.stringify({ layout, expectedRevision: 0 }) });
+  assert.equal(r.status, 200);
+  const log = t.mock.method(console, 'log');
+  r = await fetch(`${base}/api/decks/logconf`, { method: 'PUT', headers: h, body: JSON.stringify({ layout, expectedRevision: 0 }) });
+  assert.equal(r.status, 409);
+  const lines = log.mock.calls.map((c) => c.arguments[0])
+    .filter((s) => typeof s === 'string' && s.includes('deck-revision-conflict'));
+  assert.equal(lines.length, 1);
+  const parsed = JSON.parse(lines[0]);
+  assert.deepEqual(
+    { name: parsed.name, expectedRevision: parsed.expectedRevision, currentRevision: parsed.currentRevision },
+    { name: 'logconf', expectedRevision: 0, currentRevision: 1 },
+  );
+});
+
 test('decks API: ENOENT runtime risponde 503 senza ricreare lo store', async (t) => {
   const { base, token, decksPath } = await boot(t);
   fs.unlinkSync(decksPath);
