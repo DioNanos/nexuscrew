@@ -31,6 +31,10 @@ const MAX_LABEL = 64;
 // lettura documenti che createFleetBackup ha appena prodotto (difetto
 // 0.9.16: copia a 24, backend a 100).
 export const MAX_ENGINES = 100;
+// Stessa regola degli engine: la fonte è CAPS.MAX_MODELS in
+// lib/fleet/definitions.js (modulo node-only che il bundle non può importare);
+// la copia è vigilata dal test di parità in fleet-backup-cap.test.js.
+export const MAX_MODELS = 128;
 const TOP_KEYS = new Set(['format', 'version', 'exportedAt', 'cells', 'engines', 'models']);
 // v3 portatile: la cella ammette cwdRel (home-relative) e VIETA cwd (assoluta,
 // device-specifica). Un backup v3 con cwd -> invalid-cell (fail-closed).
@@ -340,7 +344,7 @@ export function parseFleetBackup(text) {
   // l'assenza e' il caso normale per chi non li usa.
   const models = [];
   if (value.models !== undefined) {
-    if (!Array.isArray(value.models) || value.models.length > 64) {
+    if (!Array.isArray(value.models) || value.models.length > MAX_MODELS) {
       return { ok: false, error: 'invalid-model', cells: [], engines: [] };
     }
     const visti = new Set();

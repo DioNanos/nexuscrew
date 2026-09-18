@@ -38,4 +38,18 @@ describe('mergeRemoteWithLocal', () => {
     expect(keys).toEqual(['hub/x:s1']);
     expect(merged.columns.flatMap((c) => c.tiles)[0].height).toBe(4);
   });
+
+  it('conserva le larghezze di colonna del delta locale (resize)', () => {
+    const remote = { columns: [col([tile('a')]), col([tile('b')])] };
+    const local = { columns: [col([tile('a')], 1.7), col([tile('b')], 0.3)] };
+    const merged = mergeRemoteWithLocal(remote, local);
+    expect(merged.columns.map((c) => c.width)).toEqual([1.7, 0.3]);
+  });
+
+  it('le colonne solo-remote (nessuna chiave locale) tengono la larghezza remota', () => {
+    const remote = { columns: [col([tile('a')]), col([tile('new-remote')])] };
+    const local = { columns: [col([tile('a')], 1.7)] };
+    const merged = mergeRemoteWithLocal(remote, local);
+    expect(merged.columns.map((c) => c.width)).toEqual([1.7, 1]);
+  });
 });
