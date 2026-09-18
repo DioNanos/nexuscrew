@@ -82,6 +82,43 @@ announces notifications.
 Only new live notification frames are spoken. Persisted questions and previous
 events are not replayed.
 
+## Imported events and one-browser alerts
+
+Events imported from a federated owner ring the operating system too, so a
+closed PWA still shows them. Three rules keep that trustworthy:
+
+- **One alert per event.** An event already alerted never rings twice, not after
+  a replay, not after the service worker is restarted: the identity is the
+  `(owner, eventId)` pair and it is written before the send. A re-import of a
+  known event, a state refresh or an ask closure updates the UI silently.
+- **A local link only.** The notification link is always a path inside this app;
+  an absolute or foreign URL in a payload is dropped and the app root is opened
+  instead. The full text stays in the card — the system alert carries a short
+  preview.
+- **A separate budget.** Imported alerts have their own queue and their own
+  per-minute allowance, apart from local notifications. A noisy or misbehaving
+  owner is dropped and counted; it cannot delay local alerts, and a failed
+  delivery never retries the live stream that already accepted the event.
+
+An alert names the ask it belongs to only when the source event carries one:
+an imported notification does not, because the ask itself arrives as its own
+event and that event deliberately stays silent. That notification therefore
+opens the owner's feed, without an `ask=` component.
+
+### Two PWAs on the same phone
+
+One phone can hold two installed PWAs (for example this node and an owner's).
+Each browser keeps its own subscription, so both can receive alerts. If you want
+the operating system to stay quiet for one of them:
+
+1. Open **Settings → Notifications** in that PWA.
+2. Choose **silence on this browser**.
+
+This is a browser-local choice, stored on the device only: it unsubscribes that
+browser, keeps the app fully usable, and never changes the other side's push
+setup. Turning it back on requires the same button, so a device that was asked
+to stay silent does not re-subscribe itself.
+
 ## Platform notes
 
 | Platform | Expected behavior |

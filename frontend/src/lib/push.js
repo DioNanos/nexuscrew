@@ -2,6 +2,7 @@
 // del server. Tutto best-effort e feature-detected: dove push non e' supportato
 // (context non sicuro, browser vecchi) si degrada a 'unsupported' senza errori.
 import { apiFetch } from './api.js';
+import { pushLocallyDisabled } from './push-local.js';
 
 function pushSupported() {
   return typeof navigator !== 'undefined' && 'serviceWorker' in navigator
@@ -32,6 +33,9 @@ export async function getPushState() {
 
 export async function subscribePush(token) {
   if (!pushSupported()) throw new Error('push-unsupported');
+  // The browser-local choice wins over any UI affordance: a device that asked
+  // to stay silent never re-subscribes itself.
+  if (pushLocallyDisabled()) throw new Error('push-disabled-local');
   const perm = await Notification.requestPermission();
   if (perm !== 'granted') throw new Error('push-denied');
   const r = await apiFetch('/api/push/vapid', token);

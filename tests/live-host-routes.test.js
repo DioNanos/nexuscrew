@@ -22,6 +22,9 @@ const CELLS = [
 const mockFleet = (cells = CELLS) => Promise.resolve({
   available: true,
   status: async () => ({ available: true, cells }),
+  // Route tests that assert eligibility provide an explicit live lease. The
+  // no-lease fail-closed case is covered by live-host-seam.test.js.
+  lease: { status: (cellId) => ({ cellId, state: cells.some((c) => c.cell === cellId && c.active) ? 'live' : 'none' }) },
 });
 
 async function boot({ readonly = () => false, fleet = mockFleet() } = {}) {

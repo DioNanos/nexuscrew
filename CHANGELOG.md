@@ -2,6 +2,193 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## Unreleased
+
+- **Custom engines now list their declared models in the pickers.** A custom profile has no builtin catalog, so the model lists stayed empty even when models were declared for the engine; the engine list now joins the profile catalog with the declared models (for `pi` custom engines the pinned model stays first in the list).
+
+## 0.9.31 — 2026-09-18
+
+- **Deck layout edits survive with several windows open.** A save now rebases and retries instead of failing: the layout is merged per window, an in-flight save is awaited before the next one, a drag that ends with the pointer still down flushes its size, and a rejected save says so in the log instead of losing the change silently.
+- **A model in use is refused by the engine that declares it.** Removing a model now compares against the declaring engine's keys, so an unrelated engine sharing the name no longer blocks the removal — and the rejection names the limit it hit.
+- **The doctor separates the two tmux preload outcomes.** A missing `LD_PRELOAD` support and a tmux server that is not running are reported as different causes, each with its own remedy.
+- **Up to 128 declared models in the fleet catalog (was 64)**; the ceiling is named in the rejection instead of a silent stop.
+
+## 0.9.30 — 2026-09-16
+
+- Internal work references removed from the published package (enforced by the npm payload gate).
+- **Paired nodes exchange a federated event feed.** A subscriber opens a snapshot and then a stream per owner, attributed to the node that emitted it: an imported event is re-emitted locally only, so it can never travel back, and what a peer may see follows its granted access instead of what it asks for.
+- **A question from another node is answered through a durable receipt.** The receipt is written before the paste, so a crash leaves an uncertain attempt that the operator reconciles explicitly instead of a blind retry: the same request replays the stored outcome, a decision is bound to the generation of the outcomes it was taken on, and a terminal outcome refuses any further paste on every path.
+- **Imported notifications ring on the phone, once per event.** A relay with its own queue and alert budget sends the OS alert, keeps a durable per-owner registry so a replay of an already-recorded event or a restart does not ring again within the registry limits (4096 ids over 24 hours); senders remain best-effort, so a single alert per phone is not universally guaranteed (provider dedup and distinct PWA origins are out of contract), and the relay can be turned off per browser.
+- **An imported alert opens the question it came from.** The ask correlation travels from its creation to the alert payload, so the notification lands on that question instead of the owner's page alone.
+- **An imported file delivery stays inside its cell's alert budget.** The file notice keeps the cell it belongs to on the way in, and it is the same class of alert as a local one.
+
+## 0.9.29 — 2026-09-15
+
+- **The Live host of a node is chosen with an explicit command.** `Use as Live host` and `Remove Live host` sit in the cell menu and in the cell selector: the star is a pin only, and a small indicator shows the current host, so the choice and its outcome stay in sight.
+- **A designated Live host that lives on another node is reached through its owner.** The bridge is forwarded to the owner node and its answer — or a named refusal — comes back as it is, with no silent fallback to a local cell; federated bridge calls are rate-limited per sending node.
+- **`nexuscrew init` does not restart a service it does not own.** Run from a HOME that does not own the running service it warns and skips the activation instead of restarting someone else's service (`--no-activate` skips the activation on purpose).
+- **A federated request whose body was already read is refused by name.** A named 502 at once, instead of waiting 30 seconds for a body that nothing will send.
+
+## 0.9.28 — 2026-09-15
+
+- **The terminal renderer toggle is an icon button** (GPU/DOM stay in the tooltip and in the accessible label), so it no longer widens the bar and squeezes the cell name on phones.
+
+## 0.9.27 — 2026-09-14
+
+- **The terminal counts columns the way tmux and glibc do.** Emoji and East Asian wide characters take two cells, so the glyphs after a wide character are no longer stale on phones; the terminal can also paint through a GPU (WebGL) renderer, with the DOM renderer as the floor and a GPU/DOM switch in the terminal bar to compare the two.
+- **The update banner never announces the version that is already running.** A served interface newer than the loaded bundle gets one silent, cache-bypassing reload and then a diagnostic banner (interface loaded vs interface served); a newer package on disk asks for a node restart instead of offering a reload that cannot help; a banner the user closes stays closed for the same versions; a second reload guard lives in the URL, so a storage that accepts a write and loses it at the next load cannot loop.
+- **The star (pin, then live designation) is in the compact cell selector too.** One implementation now serves the home, the desktop sidebar and the selector, with the same cycle, labels and tap target.
+- **The published entrypoint starts on Android/Termux, where `/usr/bin/env` does not exist.** `bin/nexuscrew.js` is a shell/JavaScript polyglot: it finds node next to the launcher first, then in `PATH`, and fails with a clear message and exit 127 when neither exists.
+- **A deck of this node opens by its owner-qualified URL too.** A new tab on `/deck/<node>/<name>` used to show an empty grid, and the tab could not save: the two ids of the same local deck (the local one and the owner-qualified one) are now resolved in one place by every lookup.
+- **The bundle version gate is line-agnostic and provable.** It works for 0.10 and beyond instead of being tied to the current release line, and it has cases that show a stale bundle failing.
+
+## 0.9.26 — 2026-09-13
+
+- rebuilt the frontend bundle for the shipped version (the 0.9.25 package carried a 0.9.24 bundle, so the UI kept showing the update banner); the publish gate now fails when the bundle version differs from the package version.
+
+## 0.9.25 — 2026-09-13
+
+- **Deprecated on npm**: the published package shipped a 0.9.24 bundle, so the
+  UI kept announcing an update that was already running; superseded by 0.9.26.
+
+- **MCP identity reads the verified binding metadata first (fail-closed).**
+  `nexuscrew mcp` now evaluates the `NEXUSCREW_VERIFIED_*` metadata delivered
+  by codex-vl >= 0.154.0-vl.3 launchers before any legacy source: version,
+  owner instance, cell, channel and the authority introspection must all be
+  coherent (source `verified-env`, verified identity in `nc_identity`), and any
+  incoherence fails closed with `NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID`
+  instead of falling back to the legacy variables. Without the metadata the
+  legacy path is unchanged.
+- **`CODEX_APP_SERVER_IDENTITY_REQUIRED=1` is exported only in authority
+  mode.** The fleet launcher now exports the flag for codex-vl cells only when
+  the fleet identity mode is `authority` and the authority is constructible;
+  in legacy mode it exports an explicit `0` and names the reason in a
+  structured log line. Explicit user overrides (`engine.env`, `cfg.env`) still win, with a
+  warning when they force `1` outside authority mode.
+- **Standalone cells (`CODEX_APP_SERVER_IDENTITY_REQUIRED=0`) no longer
+  receive the identity channel.** The launcher created fd 3:4 and
+  `NEXUSCREW_IDENTITY_FD` even when it had resolved the flag to `0`, so the
+  child started an identity handshake against a legacy lease server that
+  answered `revoked` and the cell died at startup. The channel decision now
+  comes from the same resolution that produces the flag.
+- **A configured but unavailable fleet identity authority now refuses
+  protected cell launches instead of silently falling back to standalone.**
+  The launch fails with `IDENTITY_AUTHORITY_UNAVAILABLE` naming the reason
+  (never a value), and `nexuscrew doctor` reports the same state.
+- **Upgrade NexusCrew before codex-vl**: `codex-vl >= 0.154.0-vl.3` with
+  `NexusCrew <= 0.9.24` fails closed in Fleet cells (the old launcher forces
+  identity without an authority).
+- **`nexuscrew identity provision`.** New command that generates the two
+  distinct authority credentials (32 random bytes each, files `0600` inside a
+  `0700` directory under `~/.nexuscrew/identity-authority/`), never overwrites
+  existing credentials without `--force`, activates
+  `fleet.identity.mode = "authority"` in the config (or prints the exact keys
+  with `--no-write-config`). `loadConfig` reads the credential files
+  automatically and `nexuscrew doctor` shows the identity mode and authority
+  constructibility (no values).
+- **MCP identity remediation rewritten.** `nc_identity` and `doctor` no longer
+  recommend allowlisting `TMUX`/`TMUX_PANE`/`NEXUSCREW_MCP_SESSION` in the MCP
+  server `env_vars`: on a shared verified spawn that allowlist fails the launch
+  (the names are reserved). The two valid paths are a verified session
+  (codex-vl >= 0.154.0-vl.3 + NexusCrew >= 0.9.25 with provisioned authority)
+  or a legacy session inheriting the three variables.
+
+- **Ollama Cloud catalog refreshed against the official measured sample of
+  2026-09-12.** Bare-name `gemma4` and `qwen3.5` enter the catalog (verified
+  alive with a 200 on `/v1/chat/completions`; official measured sample:
+  22 live ids / 8 dead variants), with context and capabilities taken from
+  the channel cards (`gemma4` 128K text+image, `qwen3.5` 256K text+image).
+  The 404 variants (`gemma4:12b`/`:e4b`, `qwen3.5:27b`/`:35b`/`:122b`, bare
+  `mistral-large-3`, `nemotron-3-super:120b`, `nemotron-3-nano:4b`) and
+  community ids stay out on purpose. `glm-5.3` and `deepseek-v4.1-flash`
+  were already listed and are not duplicated.
+- **Fixture-based liveness guard for the Ollama Cloud models.** New test
+  (`tests/fleet-ollama-liveness.test.js`): every catalog id must belong to
+  the official measured sample; when upstream retires an id, the test goes
+  red naming it as "to be verified". No network calls in tests; the real
+  periodic check remains a separate item.
+- **OpenCode Go catalog refreshed signal-only (401 CreditsError on
+  2026-09-12).** The Go plan could not generate (credits exhausted, listing
+  OK): the additions are wire signals, not end-to-end measurements.
+  `glm-5.3`, `glm-5.3-flash`, `longcat-2.0`, `deepseek-v4.1-flash` and
+  `hy4-preview` enter all three wires; `qwen3.8-flash` enters Messages/Chat
+  ONLY (Responses rejected, measured). New limits declared by models.dev
+  (1M context; `hy4-preview` 1024000), marked "declared, not measured".
+  Retired `glm-5`, `kimi-k2.5`, `minimax-m2.5` and `qwen3.5-plus` are
+  removed from the lists, LIMITS and the catalog, with a test guard against
+  re-introduction. `hy3` unchanged (diverging source on its output limit:
+  to be re-checked), default `deepseek-v4-flash` unchanged, VISION
+  unchanged (only the PNG-measured vision-exp id).
+
+## 0.9.24 — 2026-09-12
+
+- **Verifica dell'identità legata alla challenge, con claims completi.** La
+  verifica online di un identity proof (metodo `nexuscrew/identity/verify`, sul
+  canale di lease per cella) ora riceve dall'authority i claims che la challenge
+  ha effettivamente emesso, e il risultato è legato alla challenge stessa: una
+  risposta che non corrisponde alla challenge emessa viene rifiutata
+  (`challenge_mismatch`) invece di essere accettata. Il `nonce` torna fra i
+  claims perché il lato client lo confronta con la propria challenge al momento
+  del commit, senza fallback su claim esterni.
+
+- **Il canale serve più verifiche per connessione.** Dopo una verifica
+  conclusa il relay azzera il riferimento pendente: una seconda verifica sulla
+  stessa connessione (reconnect, resume, nuova incarnazione) non trovava più il
+  canale libero e falliva pur essendo il canale sano. Corretto, con e2e che
+  copre verifica ripetuta e challenge successiva.
+
+- **Requisito di compatibilità — la coppia versioni conta.** `codex-vl` **≥
+  0.154.0-vl.3** richiede **NexusCrew ≥ 0.9.24**: il daemon `codex-vl` con
+  identità obbligatoria e canale di verifica assente o inutilizzabile **non si
+  avvia** (fail-closed) e non può verificare l'identità contro un server che non
+  espone `verify`. Con NexusCrew 0.9.23 una cella gestita resta quindi
+  inutilizzabile; aggiornate il server prima del daemon.
+
+## 0.9.23 — 2026-09-11
+
+- **Frontend bundle ricostruito.** Il banner «new version available /
+  reload» persisteva dopo il reload perché `frontend/dist` conteneva il bundle
+  del 27/08 (versione di build 0.9.1x incorporata) mentre `dist/version.json`
+  era stato scritto a mano a 0.9.22 in prep: il confronto
+  `uiVersion !== __NC_BUILD_VERSION__` (`src/lib/sw-update.js`,
+  `reportServerVersions`) non tornava mai e la guardia anti-loop fermava il
+  ricaricamento automatico lasciando il banner. Il dist è ora ricostruito con
+  vite (`npm ci && npm run build`), quindi bundle incorporato e
+  `version.json` generato dalla build coincidono con la versione del server.
+
+## 0.9.22 — 2026-09-11
+
+- **Fleet Ollama Cloud: `deepseek-v4.1-flash`** aggiunto ai modelli dell'engine
+  (contesto dichiarato 1M → 1048576; capacità text+image, reasoning; parallel
+  tool calls non dichiarato finché non misurato su device) e promosso a
+  **modello di default dei tre engine ollama-cloud** (`claude`, `codex-vl`,
+  `codex`), al posto di `glm-5.2` (che resta disponibile in lista).
+- Il tarball npm non include più gli screenshot di `docs/img/` (restano nel
+  repository GitHub, referenziati dal README): il pacchetto 0.9.21 li
+  spediva per errore mostrando nomi di ambiente interno.
+- **Fleet codex-vl app-server identity policy.** Managed `codex-vl.*` cells now
+  pass `CODEX_APP_SERVER_IDENTITY_REQUIRED=1` through the child environment so
+  the app-server daemon started by the TUI enforces the Fleet identity policy;
+  an explicit per-engine override remains authoritative.
+
+## 0.9.21 — 2026-09-10
+
+- **Identity channel generation gate is fail-closed.** The per-cell supervisor
+  now inspects the resolved generation announcement before opening the identity
+  channel of a new generation: only an explicit positive acknowledgement for
+  the matching generation opens it. Refused, failed, timed-out or exited
+  announcements keep the channel closed with a specific diagnostic, so a child
+  can no longer receive identity proofs after a failed announcement.
+
+- **Catalog update.** Declare kimi-k3 in the ollama-cloud catalog
+  (`openrouter-kimi-k3.json`, `managed.js`), so cells on the ollama-cloud
+  engine resolve the model with the right context window and metadata
+  instead of falling back to defaults.
+
+- **Ollama Cloud web_search disabled.** Disable the built-in web_search tool
+  for Codex/Codex-VL on Ollama Cloud (the Responses endpoint rejects it before
+  the first turn); MCP web search stays available.
+
 ## 0.9.20 — 2026-09-06
 
 - **Each cell derives its own MCP device.** `MCP_DEVICE` is set from the cell

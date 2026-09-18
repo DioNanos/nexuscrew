@@ -43,7 +43,8 @@ function makeFetch(responder) {
   return { calls, impl };
 }
 
-function makeSrv({ env = {}, responder, execFileImpl, tokenPath, idFactory, identityRetryMs } = {}) {
+function makeSrv({ env = {}, responder, execFileImpl, tokenPath, idFactory, identityRetryMs,
+  identityContextProvider } = {}) {
   const dir = tmpdir();
   const tp = tokenPath || writeToken(dir);
   const out = makeOut();
@@ -56,9 +57,22 @@ function makeSrv({ env = {}, responder, execFileImpl, tokenPath, idFactory, iden
     execFileImpl: execFileImpl || (() => { throw new Error('tmux non deve essere chiamato'); }),
     ...(idFactory ? { idFactory } : {}),
     ...(identityRetryMs !== undefined ? { identityRetryMs } : {}),
+    ...(identityContextProvider ? { identityContextProvider } : {}),
     errlog: () => {},
   });
   return { srv, out, calls: f.calls, dir };
+}
+
+function sharedContext(overrides = {}) {
+  const now = Date.now();
+  return {
+    version: '1', kind: 'mcp-v1', verified: true, mode: 'shared',
+    bindingId: 'binding-test', ownerInstanceId: 'a'.repeat(32), cellId: 'Dev',
+    tmuxSession: 'cloud-Dev', connectionId: 'connection-test', threadId: 'thread-test',
+    origin: 'local_tui', audience: 'nexuscrew-mcp', scopes: ['mcp:tools/call'],
+    issuedAt: now - 1000, notBefore: now - 1000, expiresAt: now + 60_000,
+    ...overrides,
+  };
 }
 
 const rpc = (id, method, params) => JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) });
@@ -534,11 +548,72 @@ test('commandForDiagnostics: over-redaction benigno (NODE_ENV), shape e ACL inva
   assert.equal(TOOLS.length, 23, 'registry tool (23 tool: 20 + 3 lease child 2b)');
 });
 
+test('identity context online: ogni richiesta risolve di nuovo e deriva from', async () => {
+  let calls = 0;
+  const ownerInstanceId = 'a'.repeat(32);
+  const { srv, out } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'forged-local-session' },
+    identityContextProvider: async ({ tool }) => {
+      calls += 1;
+      return sharedContext({ bindingId: `binding-${calls}`, ownerInstanceId, tool });
+    },
+    responder: (call) => new URL(call.url).pathname === '/api/files'
+      ? { status: 200, json: { inbox: [] } } : { status: 404, json: {} },
+  });
+  await srv.handleLine(rpc(70, 'tools/call', { name: 'nc_inbox', arguments: {} }));
+  await srv.handleLine(rpc(71, 'tools/call', { name: 'nc_inbox', arguments: {} }));
+  assert.equal(calls, 2, 'il successo online non resta cacheato per la vita del processo');
+  assert.equal(out.lines[0].result.isError, undefined);
+  assert.equal(out.lines[1].result.isError, undefined);
+  const context = await srv.ctx.identityContext({ tool: 'test' });
+  assert.deepEqual(context.from, { instanceId: ownerInstanceId, cell: 'Dev', tmuxSession: 'cloud-Dev' });
+  assert.equal(context.verified, true);
+});
+
+test('identity context online: binding assente/non verificato e from discordante sono fail-closed', async () => {
+  const unverified = makeSrv({ identityContextProvider: async () => ({
+    verified: false, mode: 'shared', bindingId: 'binding', ownerInstanceId: 'a'.repeat(32),
+    cellId: 'Dev', tmuxSession: 'cloud-Dev',
+  }) });
+  await assert.rejects(() => unverified.srv.ctx.identityContext({ sharedRequired: true }),
+    (error) => error.code === 'NEXUSCREW_MCP_IDENTITY_CONTEXT_UNVERIFIED');
+
+  const discordant = makeSrv({ identityContextProvider: async () => sharedContext({
+    from: { instanceId: 'b'.repeat(32), cell: 'Dev', tmuxSession: 'cloud-Dev' },
+  }) });
+  await assert.rejects(() => discordant.srv.ctx.identityContext({ sharedRequired: true }),
+    (error) => error.code === 'NEXUSCREW_MCP_IDENTITY_CONTEXT_FROM_MISMATCH');
+
+  const legacy = makeSrv({ env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' } });
+  await assert.rejects(() => legacy.srv.ctx.identityContext({ sharedRequired: true }),
+    (error) => error.code === 'NEXUSCREW_MCP_IDENTITY_CONTEXT_MISSING');
+});
+
+test('identity context online: nc_identity usa il provider shared e non il resolver locale', async () => {
+  let calls = 0;
+  const { srv, out } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'forged-local-session' },
+    identityContextProvider: async () => {
+      calls += 1;
+      return sharedContext({ bindingId: 'binding-diagnostic', ownerInstanceId: 'a'.repeat(32) });
+    },
+  });
+  await srv.handleLine(rpc(72, 'tools/call', { name: 'nc_identity', arguments: {} }));
+  const result = out.lines[0].result;
+  assert.equal(result.isError, undefined);
+  const identity = JSON.parse(result.content[0].text);
+  assert.equal(calls, 1);
+  assert.equal(identity.source, 'online');
+  assert.equal(identity.session, 'cloud-Dev');
+  assert.equal(identity.bindingId, 'binding-diagnostic');
+});
+
 test('nc_send_cell: risolve sender e target dalla directory e restituisce receipt onesto', async () => {
   const localId = 'a'.repeat(32); const remoteId = 'b'.repeat(32);
   const messageId = '12345678-1234-1234-1234-123456789abc';
   const { srv, out, calls } = makeSrv({
-    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' }, idFactory: () => messageId,
+    env: { NEXUSCREW_MCP_SESSION: 'forged-local-session' }, idFactory: () => messageId,
+    identityContextProvider: async () => sharedContext({ bindingId: 'binding-send-cell', ownerInstanceId: localId }),
     responder: (call) => {
       const p = new URL(call.url).pathname;
       if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
@@ -569,6 +644,14 @@ test('nc_send_cell: risolve sender e target dalla directory e restituisce receip
   assert.equal(new URL(post.url).pathname, '/api/route/pixel/_/cells/send');
   assert.deepEqual(post.body.from, { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev' });
   assert.deepEqual(post.body.to, { instanceId: remoteId, cell: 'Worker', tmuxSession: 'cloud-Worker' });
+});
+
+test('nc_send_cell: from client-provided viene rifiutato prima del dispatch', async () => {
+  const tool = TOOLS.find((item) => item.name === 'nc_send_cell');
+  await assert.rejects(() => tool.handler({
+    target: `${'b'.repeat(32)}:Worker`, message: 'hello',
+    from: { instanceId: 'b'.repeat(32), cell: 'Dev', tmuxSession: 'cloud-Dev' },
+  }, {}), /from e' derivato/);
 });
 
 // Una ricerca fallita deve dire QUALE delle tre cose e' andata storta, perche'
@@ -724,9 +807,23 @@ test('nc_identity: missing (nessun TMUX/NEXUSCREW_MCP_SESSION), NESSUNA chiamata
   assert.equal(j.session, undefined); // session solo se validata
   assert.equal(j.source, 'missing');
   assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_MISSING');
-  assert.deepEqual(j.envPresence, { TMUX: false, TMUX_PANE: false, NEXUSCREW_MCP_SESSION: false });
-  assert.deepEqual(j.requiredEnvVars, ['TMUX', 'TMUX_PANE', 'NEXUSCREW_MCP_SESSION']);
-  assert.match(j.remediation, /--env-var/); // suggerimento senza valori
+  assert.deepEqual(j.envPresence, {
+    TMUX: false, TMUX_PANE: false, NEXUSCREW_MCP_SESSION: false,
+    NEXUSCREW_VERIFIED_ENV_VERSION: false, NEXUSCREW_VERIFIED_OWNER_INSTANCE_ID: false,
+    NEXUSCREW_VERIFIED_CELL_ID: false, NEXUSCREW_VERIFIED_INCARNATION_ID: false,
+    NEXUSCREW_VERIFIED_BINDING_ID: false, NEXUSCREW_VERIFIED_ORIGIN: false,
+    NEXUSCREW_VERIFIED_THREAD_ID: false,
+  });
+  assert.deepEqual(j.requiredEnvVars, [
+    'TMUX', 'TMUX_PANE', 'NEXUSCREW_MCP_SESSION',
+    'NEXUSCREW_VERIFIED_ENV_VERSION', 'NEXUSCREW_VERIFIED_OWNER_INSTANCE_ID',
+    'NEXUSCREW_VERIFIED_CELL_ID', 'NEXUSCREW_VERIFIED_INCARNATION_ID',
+    'NEXUSCREW_VERIFIED_BINDING_ID', 'NEXUSCREW_VERIFIED_ORIGIN',
+    'NEXUSCREW_VERIFIED_THREAD_ID',
+  ]);
+  // C8-ter: la remediation NON consiglia piu' l'allowlist legacy (spawn verified fallirebbe)
+  assert.doesNotMatch(j.remediation, /--env-var/);
+  assert.match(j.remediation, /identity provision/);
   assert.equal(calls.length, 0); // NESSUNA API HTTP
 });
 
@@ -738,7 +835,13 @@ test('nc_identity: invalid (NEXUSCREW_MCP_SESSION presente ma non valida) -> cod
   assert.equal(j.session, undefined);
   assert.equal(j.source, 'missing');
   assert.equal(j.code, 'NEXUSCREW_MCP_IDENTITY_INVALID');
-  assert.deepEqual(j.envPresence, { TMUX: false, TMUX_PANE: false, NEXUSCREW_MCP_SESSION: true });
+  assert.deepEqual(j.envPresence, {
+    TMUX: false, TMUX_PANE: false, NEXUSCREW_MCP_SESSION: true,
+    NEXUSCREW_VERIFIED_ENV_VERSION: false, NEXUSCREW_VERIFIED_OWNER_INSTANCE_ID: false,
+    NEXUSCREW_VERIFIED_CELL_ID: false, NEXUSCREW_VERIFIED_INCARNATION_ID: false,
+    NEXUSCREW_VERIFIED_BINDING_ID: false, NEXUSCREW_VERIFIED_ORIGIN: false,
+    NEXUSCREW_VERIFIED_THREAD_ID: false,
+  });
   assert.equal(calls.length, 0);
 });
 
@@ -768,7 +871,13 @@ test('nc_identity: tmux valido (TMUX set, display-message ok) -> source tmux', a
   assert.equal(j.session, 'work-build');
   assert.equal(j.source, 'tmux');
   assert.equal(j.code, 'OK');
-  assert.deepEqual(j.envPresence, { TMUX: true, TMUX_PANE: true, NEXUSCREW_MCP_SESSION: false });
+  assert.deepEqual(j.envPresence, {
+    TMUX: true, TMUX_PANE: true, NEXUSCREW_MCP_SESSION: false,
+    NEXUSCREW_VERIFIED_ENV_VERSION: false, NEXUSCREW_VERIFIED_OWNER_INSTANCE_ID: false,
+    NEXUSCREW_VERIFIED_CELL_ID: false, NEXUSCREW_VERIFIED_INCARNATION_ID: false,
+    NEXUSCREW_VERIFIED_BINDING_ID: false, NEXUSCREW_VERIFIED_ORIGIN: false,
+    NEXUSCREW_VERIFIED_THREAD_ID: false,
+  });
   assert.equal(calls.length, 0);
 });
 
@@ -1511,4 +1620,98 @@ test('tool bloccato nomina la causa SESSION_MISMATCH (fonti discordi)', async ()
   const msg = r.content[0].text;
   assert.match(msg, /\[NEXUSCREW_MCP_IDENTITY_SESSION_MISMATCH\]/);
   assert.match(msg, /sessioni diverse/);
+});
+
+test('identity context online: provider non verificato rifiuta ogni tool senza HTTP', async () => {
+  let providerCalls = 0;
+  const { srv, out, calls } = makeSrv({
+    env: {},
+    identityContextProvider: async () => {
+      providerCalls += 1;
+      return { verified: false, mode: 'shared' };
+    },
+    responder: () => ({ status: 200, json: {} }),
+  });
+  for (let i = 0; i < TOOLS.length; i += 1) {
+    out.lines.length = 0;
+    await srv.handleLine(rpc(1000 + i, 'tools/call', { name: TOOLS[i].name, arguments: {} }));
+    const result = out.lines[0] && out.lines[0].result;
+    assert.ok(result && result.isError === true, `${TOOLS[i].name} deve rifiutare un contesto non verificato`);
+    assert.match(result.content[0].text, /non verificato/);
+  }
+  assert.equal(providerCalls, TOOLS.length, 'una introspezione per tools/call');
+  assert.equal(calls.length, 0, 'nessuna chiamata HTTP dopo il rifiuto identita');
+});
+
+test('identity context online: il binding viaggia su ogni chiamata API con effetti', async () => {
+  const proof = {
+    kind: 'child', cellId: 'Dev', incarnationId: 'ab'.repeat(8), jti: 'c'.repeat(16),
+    issuedAt: Date.now() - 1000, expiresAt: Date.now() + 60_000, proof: 'd'.repeat(64),
+  };
+  const provider = async () => sharedContext({ bindingId: 'binding-api', ownerInstanceId: 'a'.repeat(32) });
+  provider.currentProof = () => proof;
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'forged-local-session' },
+    identityContextProvider: provider,
+    responder: () => ({ status: 200, json: { inbox: [] } }),
+  });
+  await srv.handleLine(rpc(80, 'tools/call', { name: 'nc_inbox', arguments: {} }));
+  const result = out.lines[0].result;
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.length, 1);
+  const header = calls[0].headers['x-nexuscrew-identity-binding'];
+  assert.ok(header, 'header binding mancante sulla chiamata API');
+  const parsed = JSON.parse(header);
+  assert.equal(parsed.context.cellId, 'Dev');
+  assert.equal(parsed.context.kind, 'mcp-v1');
+  assert.equal(parsed.proof.jti, proof.jti);
+});
+
+// --- C8-ter: la fonte verified-env veto il percorso legacy -------------------
+
+test('resolveIdentity: verified-env presente -> fail-closed VERIFIED_ENV_INVALID, mai legacy', async () => {
+  // NEXUSCREW_MCP_SESSION valido accanto a metadati verified: il legacy NON
+  // deve mai vincere (non e' un fallback, e' un percorso alternativo).
+  const invalid = await resolveIdentity({
+    env: {
+      NEXUSCREW_VERIFIED_ENV_VERSION: '2',
+      NEXUSCREW_VERIFIED_CELL_ID: 'Dev',
+      NEXUSCREW_MCP_SESSION: 'cloud-Dev',
+      TMUX: '/tmp/tmux-0',
+      TMUX_PANE: '%0',
+    },
+    tmuxBin: 'tmux',
+    execFileImpl: () => { throw new Error('tmux non deve essere chiamato'); },
+  });
+  assert.equal(invalid.session, null);
+  assert.equal(invalid.source, 'verified-env');
+  assert.equal(invalid.code, 'NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID');
+  assert.equal(invalid.requiredEnvVars.includes('NEXUSCREW_VERIFIED_ENV_VERSION'), true);
+  // presence dei nomi verified: SI, ma solo booleani (mai valori)
+  assert.equal(invalid.envPresence.NEXUSCREW_VERIFIED_CELL_ID, true);
+  assert.equal(JSON.stringify(invalid).includes('configured-value'), false);
+});
+
+test('resolveIdentity: presence parziale verified -> comunque fail-closed', async () => {
+  const partial = await resolveIdentity({
+    env: { NEXUSCREW_VERIFIED_ORIGIN: 'local_tui', NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    tmuxBin: 'tmux',
+    execFileImpl: () => { throw new Error('tmux non deve essere chiamato'); },
+  });
+  assert.equal(partial.session, null);
+  assert.equal(partial.source, 'verified-env');
+  assert.equal(partial.code, 'NEXUSCREW_MCP_IDENTITY_VERIFIED_ENV_INVALID');
+});
+
+test('resolveIdentity: verified-env assente -> percorso legacy invariato', async () => {
+  const legacy = await resolveIdentity({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    tmuxBin: 'tmux',
+    execFileImpl: () => { throw new Error('nope'); },
+  });
+  assert.equal(legacy.session, 'cloud-Dev');
+  assert.equal(legacy.source, 'NEXUSCREW_MCP_SESSION');
+  assert.equal(legacy.code, 'OK');
+  assert.equal(legacy.requiredEnvVars.includes('NEXUSCREW_VERIFIED_ENV_VERSION'), true,
+    'requiredEnvVars esteso coi nomi verified');
 });

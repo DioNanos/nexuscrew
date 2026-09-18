@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import CellPeek, { formattaAttività, formattaTelemetria } from './CellPeek.jsx';
-import { apiFetch, fleetStatus, getRouteSessions } from '../lib/api.js';
+import { apiFetch, clearHostCell, designateHostCell, fleetStatus, getLiveHost, getRouteSessions } from '../lib/api.js';
 import { readCellSwitcherSnapshot, writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-view-model.js';
 import { positionKey } from '../lib/nodes-model.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
+import { hostDesignationFailureMessage, hostRouteKey } from '../lib/host-designation.js';
+import { liveHostView } from '../lib/live-host-view.js';
+import { runLiveHostCommand } from '../lib/live-host-command.js';
 import RosterHandle from './RosterHandle.jsx';
+import CellStar from './CellStar.jsx';
+import Icon from './Icon.jsx';
+import LiveHostIndicator from './LiveHostIndicator.jsx';
 import { panelPortForRoute } from '../lib/panel-port.js';
 import { t } from '../lib/i18n.js';
 import './CellSwitcher.css';
@@ -154,7 +160,12 @@ function orderRowsByPosition(rows, rosterItems, pins, orders) {
   });
 }
 
-export default function CellSwitcher({ token, current, onPick, onClose, panelPort = 0, nodePanelPorts = {} }) {
+export default function CellSwitcher({
+  token, current, onPick, onClose, panelPort = 0, nodePanelPorts = {},
+  // Lo stato dell'host per nodo e le due azioni di designazione arrivano
+  // dalle stesse callback che usa la home: la stella qui non ha una via sua.
+  hostByRoute = {}, onDesignateCell, onClearHostCell, onLiveHostApplied,
+}) {
   const [snapshot, setSnapshot] = useState(readCellSwitcherSnapshot);
   const [showAll, setShowAll] = useState(false);
   const [ready, setReady] = useState(false);
@@ -176,7 +187,9 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
   const closeRef = useRef(null);
   const rows = useMemo(() => rowsFromSnapshot(snapshot), [snapshot]);
   const rosterItems = useMemo(() => rosterItemsByPosition(snapshot), [snapshot]);
-  const { pins, orders, canMoveRoster, moveRoster, stepRoster } = useRosterPreferences();
+  const {
+    pins, orders, togglePin, removePin, pinError, canMoveRoster, moveRoster, stepRoster,
+  } = useRosterPreferences();
   const orderedRows = useMemo(
     () => orderRowsByPosition(rows, rosterItems, pins, orders),
     [rows, rosterItems, pins, orders],
@@ -188,6 +201,12 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
   const selectedRow = useMemo(() => rows.find((row) => row.key === selectedKey && row.selectable), [rows, selectedKey]);
   // La riga sbirciata si RIrisolve a ogni lista: mai un fotogramma morto.
   const peekRow = useMemo(() => (peek ? rows.find((row) => row.key === peek.key) : null), [rows, peek]);
+  // Un pin che non si e' potuto scrivere non e' silenzioso nemmeno qui:
+  // la home mostra un banner ritentabile, il selettore lo dice nella
+  // propria riga di stato.
+  useEffect(() => {
+    if (pinError && pinError.message) setNotice(pinError.message);
+  }, [pinError]);
 
   useEffect(() => {
     const previousFocus = document.activeElement;
@@ -251,6 +270,29 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
     return () => { alive = false; clearInterval(id); };
   }, [token]);
 
+  // Comando esplicito del Live host: una chiamata sola che legge la revisione
+  // fresca e scrive (live-host-command.js). L'esito si vede SEMPRE nella riga di
+  // stato, e `onLiveHostApplied` fa cambiare subito indicatore/puntino/stella
+  // senza aspettare il poll.
+  const [liveHostBusy, setLiveHostBusy] = useState('');
+  const liveHostApi = {
+    getLiveHost: (r) => getLiveHost(token, r),
+    designateHostCell: (id, revision, r) => designateHostCell(token, id, revision, r),
+    clearHostCell: (revision, r) => clearHostCell(token, revision, r),
+  };
+  const hostCellFor = (route) => (hostByRoute[hostRouteKey(route)] || {}).hostCell || null;
+  const runHostCommand = async (row, isHost) => {
+    setLiveHostBusy(row.key);
+    const out = await runLiveHostCommand({
+      action: isHost ? 'remove' : 'use', cellId: row.cellName, route: row.route || [], api: liveHostApi,
+    });
+    setLiveHostBusy('');
+    setNotice(t(out.messageKey).replace('{cell}', out.hostCell || row.cellName));
+    if (out.ok && onLiveHostApplied) {
+      onLiveHostApplied({ route: row.route || [], hostCell: out.hostCell, revision: out.revision });
+    }
+  };
+
   const statusFor = (row) => {
     if (row.degraded) return t('cell-degraded');
     if (!row.verified) return t('cell-switcher-not-confirmed');
@@ -312,6 +354,10 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
       <aside ref={dialogRef} className="nc-cell-switcher" role="dialog"
         aria-label={t('fleet-cells')} tabIndex={-1} onClick={(event) => event.stopPropagation()}>
         <div className="nc-cell-switcher-list">
+          {/* Live host di questo nodo: riga di sola lettura in testa alla lista,
+              cosi' il selettore dice chi e' l'host prima di scegliere una cella. */}
+          <LiveHostIndicator className="nc-cell-switcher-live-host"
+            view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells: snapshot.cells || [] })} />
           {!ready && <div className="nc-empty" role="status">{t('cell-switcher-refreshing')}</div>}
           {ready && visibleRows.length === 0 && <div className="nc-empty" role="status">{t('cell-switcher-empty-active')}</div>}
           {visibleRows.map((row) => {
@@ -363,6 +409,43 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
                   disabled={picking === row.key} onClick={() => select(row)}>
                   <span className="nc-cell-switcher-copy"><b>{row.cellName}</b><small className="nc-cell-switcher-state">{status}</small><small>{[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}</small>{rigaDati && <small className="nc-cell-switcher-telemetry">{rigaDati}</small>}</span>
                 </button>
+                {/* La stella delle celle: pin locale -> designazione sul nodo ->
+                    clear. Stessa implementazione della home (CellStar), stesso
+                    ciclo, stesse etichette. Il tocco non seleziona la riga: la
+                    stella e' un fratello del bottone di selezione, e ferma
+                    comunque la propagazione. */}
+                <CellStar
+                  item={{ key: row.key, value: { cell: row.cellName } }}
+                  pins={pins}
+                  hostByRoute={hostByRoute}
+                  route={row.route || []}
+                  cellName={row.cellName}
+                  baseClassName="nc-cell-switcher-star"
+                  togglePin={togglePin}
+                  removePin={removePin}
+                  onOutcome={(outcome) => {
+                    if (!outcome.ok) setNotice(t(hostDesignationFailureMessage(outcome.error)));
+                  }}
+                />
+                {/* Il comando esplicito: la stella e' un pin, la designazione
+                    e' una scelta del nodo e si dice con una frase. */}
+                <button type="button"
+                  className={`nc-cell-switcher-act nc-cell-switcher-host${hostCellFor(row.route || []) === row.cellName ? ' on' : ''}`}
+                  data-testid={`live-host-command-${row.key}`}
+                  data-live-host-state={hostCellFor(row.route || []) === row.cellName ? 'host' : 'idle'}
+                  disabled={liveHostBusy === row.key}
+                  title={hostCellFor(row.route || []) === row.cellName ? t('live-host-action-remove') : t('live-host-action-use')}
+                  aria-label={`${hostCellFor(row.route || []) === row.cellName ? t('live-host-action-remove') : t('live-host-action-use')}: ${row.cellName}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    runHostCommand(row, hostCellFor(row.route || []) === row.cellName);
+                  }}>
+                  {/* Icona invece della frase: la riga del selettore compatto ha
+                      lo spazio di un pollice, non di due parole su tre righe.
+                      Il testo resta in aria-label/title (accessibilita') e nel
+                      popup cella, dove lo spazio c'e'. */}
+                  <Icon name="broadcast" size={18} />
+                </button>
               </div>
             );
           })}
@@ -383,6 +466,8 @@ export default function CellSwitcher({ token, current, onPick, onClose, panelPor
             token={token}
             initialSource={peek.source}
             panelPort={panelPortForRoute(peekRow.route || [], nodePanelPorts, panelPort)}
+            liveHost={liveHostView({ liveHost: hostByRoute[hostRouteKey(peekRow.route || [])], cells: snapshot.cells || [] })}
+            onLiveHostApplied={onLiveHostApplied}
             onClose={() => setPeek(null)}
           />
         )}

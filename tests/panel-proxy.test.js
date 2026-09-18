@@ -194,7 +194,7 @@ test('federazione: con il permesso concesso il pannello prosegue oltre il gate',
   const handler = federation.routeHandler({
     nodesPath: '/percorso/che/non/esiste.json',
     localPort: 1, localCredential: () => 't',
-    ingress: { name: 'peer', panelAccess: true },
+    ingress: { name: 'peer', panelAccess: true, peerOperatorAccess: true },
   });
   const res = fakeRes();
   handler({ url: '/_/panel/Dev/vnc.html', method: 'GET', headers: {} }, res);
@@ -244,22 +244,35 @@ test('federazione: anche l\'upgrade WebSocket ha il suo gate, non solo l\'HTTP',
     socket: concesso, head: Buffer.alloc(0),
     nodesPath: '/percorso/che/non/esiste.json',
     localPort: 1, localCredential: () => 't',
-    ingress: { name: 'peer', panelAccess: true },
+    ingress: { name: 'peer', panelAccess: true, peerOperatorAccess: true },
   });
   assert.match(concesso.scritto, /503/, 'oltre il gate: si ferma sullo store assente, non sul permesso');
   assert.doesNotMatch(concesso.scritto, /403/);
 
-  // E la risorsa storica non deve essere stata toccata: /ws continua a passare
-  // il primo controllo come prima.
+  // /ws resta fuori dal gate del PANNELLO (quello vale per /panel/*), ma
+  // appartiene alla classe operatore: il peer senza quel grant viene rifiutato,
+  // quello che lo ha prosegue oltre il gate. La coppia prova che a decidere e'
+  // la classe, non un rifiuto qualsiasi.
+  const wsNegato = fakeSocket();
+  federation.forwardUpgrade({
+    req: { url: '/federation/route/_/ws', headers: {}, method: 'GET' },
+    socket: wsNegato, head: Buffer.alloc(0),
+    nodesPath: '/percorso/che/non/esiste.json',
+    localPort: 1, localCredential: () => 't',
+    ingress: { name: 'peer', panelAccess: false },
+  });
+  assert.match(wsNegato.scritto, /403/, 'peer senza operatore: /ws rifiutato dalla classe');
+
   const ws = fakeSocket();
   federation.forwardUpgrade({
     req: { url: '/federation/route/_/ws', headers: {}, method: 'GET' },
     socket: ws, head: Buffer.alloc(0),
     nodesPath: '/percorso/che/non/esiste.json',
     localPort: 1, localCredential: () => 't',
-    ingress: { name: 'peer', panelAccess: false },
+    ingress: { name: 'peer', panelAccess: false, peerOperatorAccess: true },
   });
-  assert.doesNotMatch(ws.scritto, /40[34]/, '/ws non e\' soggetto al gate del pannello');
+  assert.match(ws.scritto, /503/, 'oltre il gate: si ferma sullo store assente');
+  assert.doesNotMatch(ws.scritto, /40[34]/);
 });
 
 test('panel-proxy: gli header che un client puo\' fingere non proseguono', async () => {

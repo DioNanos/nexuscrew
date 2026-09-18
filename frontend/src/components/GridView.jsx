@@ -38,6 +38,9 @@ function quadrantOf(x, y, r) {
 export default function GridView({
   layout, onLayoutChange, token, readonly = false, sessionsAlive, focusSession, onFocus, onOpenSingle,
   decks = [], currentDeck, onSendToDeck,
+  // Fine gesto di resize (pointerup/pointercancel/blur) — la griglia
+  // chiede un salvataggio immediato invece di affidarsi al debounce.
+  onResizeEnd,
   // Roster Fleet gia' caricato (Tranche D): usato per risolvere il titolo
   // visibile di ogni tile dal campo `cell`, senza fetch per-tile.
   cells = [], nodeGroups = [],
@@ -115,7 +118,7 @@ export default function GridView({
       if (nb) { const f = snapFraction(w / (w + nb.width)); w = (f / (1 - f)) * nb.width; }
       onLayoutChange(resizeColumn(layout, ci, w));
     };
-    trackResize(move);
+    trackResize(move, onResizeEnd);
   }
 
   // --- resize altezza tile (divisore orizzontale sopra il tile ri) ---
@@ -131,7 +134,7 @@ export default function GridView({
       if (nb) { const f = snapFraction(h / (h + nb.height)); h = (f / (1 - f)) * nb.height; }
       onLayoutChange(resizeTile(layout, ci, ri, h));
     };
-    trackResize(move);
+    trackResize(move, onResizeEnd);
   }
 
   function closeTile(name) { onLayoutChange(removeTile(layout, name)); }

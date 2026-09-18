@@ -3,6 +3,7 @@ import {
   apiFetch, fleetStatus, fleetUp, fleetDown, fleetBoot, killSession, nodeAction, renameNodeLabel, setSessionTechnical,
 } from '../lib/api.js';
 import Icon from './Icon.jsx';
+import CellStar from './CellStar.jsx';
 import { sidebarItems, sidebarOrder, sidebarSearchVisible } from '../lib/sidebar-model.js';
 import PowerSheet from './PowerSheet.jsx';
 import {t,  LANGUAGES} from '../lib/i18n.js';
@@ -12,7 +13,7 @@ import RosterHandle from './RosterHandle.jsx';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
 import {
-  hostRenderState, hostNextAction, hostLeaseTitleKey, hostThreadTitleKey, hostRouteKey,
+  hostRenderState, hostLeaseTitleKey, hostThreadTitleKey, hostRouteKey,
 } from '../lib/host-designation.js';
 import PinPersistBanner from './PinPersistBanner.jsx';
 import {
@@ -58,21 +59,8 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
   } = useRosterPreferences();
   // Stato live del NODO che possiede `route` — mai quello di un altro nodo.
   const hostFor = (route) => hostByRoute[hostRouteKey(route)] || {};
-  // Ciclo stellina (parita' desktop): none -> favorite -> live -> none, per
-  // QUALUNQUE nodo (locale o remoto). `route` e' quella del nodo che possiede
-  // LA CELLA su cui si preme — mai quella (implicita) del nodo che serve la
-  // pagina, che era esattamente il difetto originale.
-  function onStarClick(item, c, state, route) {
-    const action = hostNextAction(state);
-    if (action === 'addPin') { togglePin(item.key); return; }
-    if (action === 'designate') { if (onDesignateCell) onDesignateCell(c.cell, route); return; }
-    if (action === 'clearAndUnpin') {
-      if (!onClearHostCell) return;
-      // removePin legge localStorage al momento dell'applicazione (no lost update)
-      // e segnala un fallimento di persistenza nello stato (banner ritentabile).
-      Promise.resolve(onClearHostCell(route)).then((ok) => { if (ok) removePin(item.key); });
-    }
-  }
+  // Il ciclo della stellina vive in CellStar/applyCellStar: stessa
+  // implementazione per la home, la sidebar e il selettore compatto.
   const {
     groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
   } = useNodePreferences();
@@ -317,12 +305,10 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
           </button>
           {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
           {item.fresh && session?.outbox?.count > 0 && <span className="nc-badge" title={t('new-files-outbox')}>{session.outbox.count}</span>}
-          <button className={`nc-act pin${hostThreadTitleKey(starState) ? ` ${starState}` : starState === 'favorite' ? ' on' : ''}`}
-            aria-label={`${hostThreadTitleKey(starState) ? t(hostThreadTitleKey(starState)) : t('pin')} ${c.cell}`}
-            title={hostThreadTitleKey(starState) ? t(hostThreadTitleKey(starState)) : t('pin')}
-            onClick={() => onStarClick(item, c, starState, route)}>
-            {starState === 'none' ? '\u2606' : '\u2605'}
-          </button>
+          <CellStar item={item} pins={pins} hostByRoute={hostByRoute} route={route} cellName={c.cell}
+            baseClassName="nc-act pin"
+            togglePin={togglePin} removePin={removePin}
+            />
           {canBoot && <button className={`nc-act boot${boot ? ' on' : ''}`} disabled={bootBusy.has(bootKey)}
             onClick={(event) => onBootToggle(event, c, route)} title={bootLabel} aria-label={bootLabel}>
             <Icon name="boot" size={16} />

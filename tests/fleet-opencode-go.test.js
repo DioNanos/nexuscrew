@@ -3,7 +3,9 @@
 // Profili OpenCode Go. Gli elenchi modello di questi test non sono una copia
 // della documentazione: sono la matrice misurata il 2026-08-11 (25 ID live x 3
 // wire), con deepseek-v4-pro refreshato al 2026-08-13 (DeepSeek ha aggiunto la
-// Responses API il 13/08: ora 200 su tutti e tre i wire). Il valore dei test sta nei controlli negativi — una coppia
+// Responses API il 13/08: ora 200 su tutti e tre i wire). Il delta 2026-09-12
+// e' invece «a segnale»: piano senza crediti, aggiunte signal-only e
+// guardia sui deprecated in fondo al file. Il valore dei test sta nei controlli negativi — una coppia
 // wire/modello che il gateway rifiuta deve fallire QUI, non al primo avvio.
 
 const { test } = require('node:test');
@@ -94,6 +96,29 @@ test('ogni modello misurato passa e ogni coppia wire/modello rifiutata dal gatew
       assert.equal(normalizeManagedSpec({ client, provider: 'opencode-go', model }), null, `${client} rifiuta ${model}`);
     }
   }
+  // Delta 2026-09-12: qwen3.8-flash rifiuta Responses con ModelError «format
+  // openai» (misurato sul gateway), Messages e Chat restano percorribili
+  // (signal-only: CreditsError, wire accettata).
+  assert.equal(normalizeManagedSpec({ client: 'codex-vl', provider: 'opencode-go', model: 'qwen3.8-flash' }), null, 'responses rifiuta qwen3.8-flash');
+  assert.ok(normalizeManagedSpec({ client: 'claude', provider: 'opencode-go', model: 'qwen3.8-flash' }), 'messages accetta qwen3.8-flash');
+  assert.ok(normalizeManagedSpec({ client: 'pi', provider: 'opencode-go', model: 'qwen3.8-flash' }), 'chat accetta qwen3.8-flash');
+});
+
+// GUARDIA retired models (delta 2026-09-12): gli id rimossi non devono
+// tornare in nessuna lista senza una decisione esplicita. Sono
+// status=deprecated upstream e assenti dalla CLI `opencode models` 1.2.6.
+// Controfattuale: reinserire uno di questi id in una lista (e nel LIMITS)
+// deve rendere ROSSO questo test nominando la lista colpevole.
+const OPENCODE_GO_RETIRED_MODELS = ['glm-5', 'kimi-k2.5', 'minimax-m2.5', 'qwen3.5-plus'];
+test('retired OpenCode Go models never re-enter the catalog', () => {
+  for (const model of OPENCODE_GO_RETIRED_MODELS) {
+    for (const client of ['claude', 'codex-vl', 'pi']) {
+      assert.equal(
+        normalizeManagedSpec({ client, provider: 'opencode-go', model }), null,
+        `${client} rifiuta ${model}: deprecated dal 2026-09-12, NON reinserirlo senza re-audit`,
+      );
+    }
+  }
 });
 
 test('un id nuovo resta usabile se dichiarato per quell engine, senza release', () => {
@@ -178,7 +203,7 @@ test('il contesto segue il modello, e un id fuori tabella non eredita il numero 
   try {
     // Ogni modello della wire Messages riceve il proprio limite dichiarato,
     // non quello del default: glm-5.1 non deve prendere il milione di flash.
-    const atteso = { 'deepseek-v4-flash': '1000000', 'glm-5.1': '202752', 'minimax-m2.7': '204800', 'qwen3.5-plus': '262144' };
+    const atteso = { 'deepseek-v4-flash': '1000000', 'glm-5.1': '202752', 'minimax-m2.7': '204800', 'hy4-preview': '1024000' };
     for (const [model, context] of Object.entries(atteso)) {
       const result = resolveManagedEngine({
         id: 'claude.opencode-go', label: 'OpenCode Go',
@@ -240,7 +265,10 @@ test('Codex-VL usa la wire Responses su /v1 e non propaga credenziali ambientali
       managed: { client: 'codex-vl', provider: 'opencode-go', model: 'deepseek-v4-flash' },
     }, { id: 'Dev' }, { home, env: { OPENCODE_API_KEY: value, OPENAI_API_KEY: 'must-not-propagate' } });
     assert.equal(result.ok, true);
-    assert.deepEqual(result.engine.env, { OPENCODE_API_KEY: value });
+    assert.deepEqual(result.engine.env, {
+      OPENCODE_API_KEY: value,
+      CODEX_APP_SERVER_IDENTITY_REQUIRED: '0',
+    });
     const argv = result.engine.args.join('\n');
     assert.match(argv, /model_provider="opencode_go"/);
     assert.match(argv, /base_url="https:\/\/opencode\.ai\/zen\/go\/v1"/);

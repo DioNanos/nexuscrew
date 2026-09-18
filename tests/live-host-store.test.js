@@ -17,7 +17,7 @@ function tmpStore(opts = {}) {
 
 test('snapshot iniziale legittimo: revision 0, hostCell null', () => {
   const { store, dir } = tmpStore();
-  assert.deepEqual(store.snapshot(), { revision: 0, hostCell: null });
+  assert.deepEqual(store.snapshot(), { revision: 0, hostCell: null, ownerId: null });
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -95,7 +95,7 @@ test('file garbage/corrupt -> stato iniziale legittimo, nessun crash', () => {
   fs.writeFileSync(filePath, 'not json{', { mode: 0o600 });
   fs.chmodSync(filePath, 0o600);
   const store = createLiveHostStore({ filePath });
-  assert.deepEqual(store.snapshot(), { revision: 0, hostCell: null });
+  assert.deepEqual(store.snapshot(), { revision: 0, hostCell: null, ownerId: null });
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

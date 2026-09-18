@@ -17,6 +17,7 @@ import NodeSheet from './NodeSheet.jsx';
 import { nodeRowSummary } from '../lib/node-summary.js';
 import { vlNodeToPeer, topologyVlOwners } from '../lib/vl-nodes-model.js';
 import { getPushState, subscribePush, unsubscribePush } from '../lib/push.js';
+import { loadPushLocal, savePushLocal } from '../lib/push-local.js';
 import Icon from './Icon.jsx';
 import FleetTab from './FleetTab.jsx';
 import { useNodes } from '../hooks/useNodes.js';
@@ -64,7 +65,7 @@ function PairingQr({ value }) {
 }
 
 // --- scheda NODI ---------------------------------------------------------------
-export function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAliases, vlUnavailable = [] }) {
+export function NodesTab({ token, nodes, roster, settings, readonly, refresh, refreshAliases, vlUnavailable = [], accessRevision = null }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);        // `${name}:${action}` in corso
   const [invite, setInvite] = useState(null);
@@ -226,7 +227,7 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
 
       {openNode && (
         <NodeSheet node={openNode} nodes={nodes || []} token={token} readonly={readonly}
-          refresh={refresh} onClose={() => setOpenKey(null)} />
+          refresh={refresh} onClose={() => setOpenKey(null)} peerAccessRevision={accessRevision} />
       )}
 
       {(roster || []).some((g) => !g.direct && g.instanceId) && (
@@ -367,6 +368,7 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
 // e' bloccato dal server (403) e il bottone resta disabilitato con motivo.
 function PushRow({ token, readonly }) {
   const [state, setState] = useState('idle'); // unsupported|denied|subscribed|idle
+  const [local, setLocalChoice] = useState(() => loadPushLocal());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -385,14 +387,36 @@ function PushRow({ token, readonly }) {
       const msg = String(e.message || e);
       if (msg === 'push-denied') { setState('denied'); setErr(t('push-denied')); }
       else if (msg === 'push-unsupported') { setState('unsupported'); setErr(t('push-unsupported')); }
+      else if (msg === 'push-disabled-local') { setErr(t('push-local-disabled')); }
       else setErr(msg);
     }
     setBusy(false);
   };
 
+  // Browser-local choice: silences THIS browser only. The live UI keeps working
+  // and the owner's own push setup is never touched from here.
+  const toggleLocal = async () => {
+    const next = savePushLocal({ enabled: !(local.enabled === false) });
+    setLocalChoice(next);
+    setErr(null);
+    if (next.enabled === false && state === 'subscribed') {
+      setBusy(true);
+      try { await unsubscribePush(token); setState('idle'); } catch (_) { /* best-effort */ }
+      setBusy(false);
+    }
+  };
+
   if (state === 'unsupported') return <div className="nc-set-info">{t('push-unsupported')}</div>;
   return (
     <>
+      <div className="nc-set-row">
+        <button type="button" className="nc-btn ghost" onClick={toggleLocal} disabled={busy}>
+          {local.enabled === false ? t('push-local-on') : t('push-local-off')}
+        </button>
+        <span className="nc-set-info">
+          {local.enabled === false ? t('push-local-off-note') : t('push-local-help')}
+        </span>
+      </div>
       <div className="nc-set-row">
         <button type="button" className="nc-btn ghost" disabled={readonly || busy || state === 'denied'}
           title={readonly ? t('settings-readonly') : ''} onClick={toggle}>
@@ -1090,6 +1114,11 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   const [systemSection, setSystemSection] = useState(initialSystemSection);
   const [settings, setSettings] = useState(null);
   const [nodes, setNodes] = useState([]);
+  // Revisione CAS della policy di accesso ai peer (F3.0): arriva alla radice
+  // di /api/peers ed e' il valore che la UI rimanda a ogni scrittura di preset.
+  // `null` = server che non espone il contratto: la sezione resta nascosta,
+  // perche' una scrittura senza revisione non e' una scrittura sorvegliata.
+  const [peersAccessRevision, setPeersAccessRevision] = useState(null);
   // Owner VL federati che non hanno risposto all'ultimo refresh — visibili,
   // non un errore bloccante (design NC_UI_NODI_VL_REMOTI, invariante 1: un
   // owner muto che sparisce in silenzio si legge come "non ha nodi").
@@ -1142,6 +1171,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
     try {
       const j = await getPeers(token);
       const peers = j.peers || [];
+      setPeersAccessRevision(Number.isInteger(j.accessRevision) ? j.accessRevision : null);
       // Unione multi-owner SOLO lato presentazione (design NC_UI_NODI_VL_REMOTI,
       // 2026-08-05): la federazione di /vl-nodes/* e' stata ripristinata
       // (b0e8bd1) — un nodo VL puo' appartenere a QUALUNQUE owner autorizzato
@@ -1230,7 +1260,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
 
         <div className="nc-set-body">
           {tab === 'nodes' && <NodesTab token={token} nodes={nodes} roster={roster} settings={settings} readonly={readonly}
-            vlUnavailable={vlUnavailable}
+            vlUnavailable={vlUnavailable} accessRevision={peersAccessRevision}
             refresh={refresh} refreshAliases={() => setAliasRevision((value) => value + 1)} />}
           {tab === 'fleet' && <FleetTab token={token} readonly={readonly}
             startNewCell={startNewCell} initialLocation={initialLocation}

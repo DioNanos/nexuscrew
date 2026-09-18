@@ -41,6 +41,26 @@ Termux pidfiles include process identity data. If Android reuses a PID under
 another app UID, NexusCrew removes only the stale pidfile, never signals the
 foreign process, and restarts only the configured OpenSSH supervisor.
 
+## Smoke runs and temporary prefixes
+
+The user service manager (systemd `--user`, launchd) is **per-UID, not
+per-HOME**: it resolves `nexuscrew` by name inside the namespace of the
+logged-in user. `init` writes the boot definition under the HOME it was given,
+so a run against a temporary HOME would otherwise install a definition the
+manager never loads while the activation commands still acted on the real
+installation -- restarting the production service.
+
+For a smoke run or a throwaway prefix, use one of:
+
+- `nexuscrew serve` -- start the runtime without touching the service manager;
+- `nexuscrew init --no-activate` -- write config, token and boot definitions but
+  run no service manager command at all.
+
+Without `--no-activate`, `init` reads back which definition the manager has
+loaded and skips activation with an explicit warning when that definition is not
+the one just written. `nexuscrew restart` from the owning HOME activates it
+afterwards.
+
 ## Backup and restore
 
 **Settings → Fleet** can export and restore selected cells, system prompts and

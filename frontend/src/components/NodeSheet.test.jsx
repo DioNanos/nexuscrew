@@ -613,3 +613,65 @@ describe('hint di salute — l azione che ripara il nodo', () => {
     expect(screen.queryByLabelText('Line to replace in ~/.ssh/authorized_keys on the peer')).toBeNull();
   });
 });
+
+// --- ruolo del peer (F3.0: preset admin/user/nexushost) --------------------
+describe('peer access role', () => {
+  const grants = (over = {}) => ({
+    cellVisibility: 'all', eventsAccess: true, nodeEventsAccess: true, askReplyAccess: false,
+    filesReadAccess: true, liveHostAccess: false, panelAccess: false, peerOperatorAccess: false,
+    ...over,
+  });
+  const accessPeer = (extra = {}) => ({
+    ...peer,
+    accessLabel: 'user',
+    accessConfigured: true,
+    access: grants(),
+    ...extra,
+  });
+  const renderAccess = (node, props = {}) => renderSheet(node, [node], { peerAccessRevision: 4, ...props });
+
+  it('la matrice compare PRIMA della conferma e nessuna scrittura parte da sola', () => {
+    const view = renderAccess(accessPeer());
+    // Niente sezione, niente matrice, niente chiamate finche' l'operatore non
+    // apre davvero il selettore: il foglio si apre per leggere, non per sparare.
+    fireEvent.change(screen.getByLabelText(/Preset to apply/i), { target: { value: 'nexushost' } });
+    expect(document.querySelectorAll('.nc-access-row')).toHaveLength(8);
+    expect(screen.getByRole('table', { name: /What would change/i })).toBeTruthy();
+    expect(mocks.updateNode).not.toHaveBeenCalled();
+  });
+
+  it('la conferma manda accessRole + accessRevision e MAI role', async () => {
+    const view = renderAccess(accessPeer());
+    fireEvent.change(screen.getByLabelText(/Preset to apply/i), { target: { value: 'nexushost' } });
+    fireEvent.click(screen.getByText(/Apply the preset/i));
+    await waitFor(() => expect(mocks.updateNode).toHaveBeenCalledTimes(1));
+    const [, name, body] = mocks.updateNode.mock.calls[0];
+    expect(name).toBe('portatile');
+    expect(body.accessRole).toBe('nexushost');
+    expect(body.accessRevision).toBe(4);
+    expect(Object.keys(body)).not.toContain('role');
+  });
+
+  it('su 409 dice "modificato altrove" e RICARICA invece di riprovare alla cieca', async () => {
+    mocks.updateNode.mockRejectedValueOnce(Object.assign(new Error('conflict'), { status: 409 }));
+    const view = renderAccess(accessPeer());
+    fireEvent.change(screen.getByLabelText(/Preset to apply/i), { target: { value: 'nexushost' } });
+    fireEvent.click(screen.getByText(/Apply the preset/i));
+    await waitFor(() => expect(screen.getByText(/changed elsewhere/i)).toBeTruthy());
+    await waitFor(() => expect(view.refresh).toHaveBeenCalled());
+  });
+
+  it('readonly: la sezione c\'e\' ma i comandi sono disabilitati', () => {
+    renderAccess(accessPeer(), { readonly: true });
+    expect(screen.getByText(/Peer role/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Preset to apply/i).disabled).toBe(true);
+  });
+
+  it('un peer legacy legge "not configured", mai un preset indovinato', () => {
+    renderAccess(accessPeer({ accessLabel: 'unconfigured', accessConfigured: false, access: grants({
+      cellVisibility: 'none', eventsAccess: false, nodeEventsAccess: false,
+      filesReadAccess: false,
+    }) }));
+    expect(screen.getByText(/not configured/i)).toBeTruthy();
+  });
+});

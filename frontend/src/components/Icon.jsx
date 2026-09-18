@@ -47,6 +47,17 @@ const PATHS = {
     </>
   ),
   x: <path d="M6 6l12 12M18 6 6 18" />,
+  // Il segnale che parte da un punto: usato dal comando che designa la cella
+  // ospite Live. Il punto e' pieno, le onde sono il tratto del set.
+  broadcast: (
+    <>
+      <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" />
+      <path d="M7.6 16.4a6.2 6.2 0 0 1 0-8.8" />
+      <path d="M16.4 7.6a6.2 6.2 0 0 1 0 8.8" />
+      <path d="M4.6 19.4a10.6 10.6 0 0 1 0-14.8" />
+      <path d="M19.4 4.6a10.6 10.6 0 0 1 0 14.8" />
+    </>
+  ),
   // D8: pannello grafico per-cella (monitor con base).
   monitor: (
     <>
@@ -105,6 +116,15 @@ const PATHS = {
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <circle cx="8.5" cy="8.5" r="1.5" />
       <path d="M21 15l-5-5L5 21" />
+    </>
+  ),
+  // Renderer GPU: un chip (quadrato con piedini e nucleo). Vive accanto a
+  // zoomIn/zoomOut perche' nell'header stanno nella stessa fila di pulsanti.
+  gpu: (
+    <>
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+      <rect x="10" y="10" width="4" height="4" rx="1" />
+      <path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" />
     </>
   ),
   zoomIn: (

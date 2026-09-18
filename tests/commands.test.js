@@ -1325,8 +1325,10 @@ test('doctor checkMcpIdentity: NON-FAILING (PWA-only non rompe), WARN se nessuna
   const empty = checkMcpIdentity({});
   assert.equal(empty.ok, true);
   assert.equal(empty.warn, true);
-  assert.match(empty.detail, /TMUX\/NEXUSCREW_MCP_SESSION assenti/i);
+  assert.match(empty.detail, /nessun NEXUSCREW_VERIFIED_\*/i);
   assert.match(empty.detail, /PWA-only/i);
+  assert.doesNotMatch(empty.detail, /--env-var/); // la vecchia allowlist legacy e' vietata
+  assert.match(empty.detail, /authority mode provisionato/i);
   // Identita osservabile via NEXUSCREW_MCP_SESSION -> OK, nessun warn.
   const byEnv = checkMcpIdentity({ NEXUSCREW_MCP_SESSION: 'cloud-Dev' });
   assert.equal(byEnv.ok, true);

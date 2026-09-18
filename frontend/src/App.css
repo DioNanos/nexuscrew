@@ -98,3 +98,10 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
 .nc-pin-error-retry { cursor:pointer; background:rgba(255,90,90,0.2); border:1px solid rgba(255,90,90,0.5); color:#ffb3b3; border-radius:6px; padding:2px 8px; font-size:12px; }
 .nc-pin-error-retry:hover { filter:brightness(1.2); }
 .nc-pin-error-close { cursor:pointer; background:transparent; border:none; color:#ff8a8a; font-size:16px; line-height:1; padding:0 2px; }
+
+/* Toggle del renderer (GPU/DOM): stesso ingombro dei pulsanti-icona accanto,
+   nessuna larghezza nuova. Lo stato si legge dal colore, il testo sta in
+   titolo/etichetta — una parola scritta qui allargava la barra e schiacciava
+   il nome della cella nell'header. */
+.nc-renderer-toggle { opacity: .55; }
+.nc-renderer-toggle.on { opacity: 1; color: #7fe3ff; }

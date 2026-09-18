@@ -13,6 +13,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
+const { performance } = require('node:perf_hooks');
 const path = require('node:path');
 const { parseDefinitions, tmuxSessionForCell } = require('../lib/fleet/definitions.js');
 const { migrateLegacyTmuxSessions } = require('../lib/fleet/launch.js');
@@ -112,7 +113,7 @@ function parsePaneDeadState(stdout) {
 // messaggio: cosi' un rosso resta un rosso, e una macchina occupata non
 // diventa un difetto del prodotto.
 async function waitForDeadPane(socket, paneId, timeoutMs = 8000, prorogaMs = 12000, impl = {}) {
-  let deadline = Date.now() + timeoutMs;
+  let deadline = performance.now() + timeoutMs;
   let prorogato = false;
   const poll = 25;
   let last = { code: -1, dead: null, status: undefined, raw: '', stderr: '' };
@@ -130,12 +131,12 @@ async function waitForDeadPane(socket, paneId, timeoutMs = 8000, prorogaMs = 120
       return last;
     }
     await new Promise((resolve) => setTimeout(resolve, poll));
-    if (Date.now() >= deadline && !prorogato
+    if (performance.now() >= deadline && !prorogato
         && last.code === 0 && last.wellFormed && last.dead === '1') {
       prorogato = true;              // sta convergendo: aspetta ancora, una volta
-      deadline = Date.now() + prorogaMs;
+      deadline = performance.now() + prorogaMs;
     }
-  } while (Date.now() < deadline);
+  } while (performance.now() < deadline);
   let reason;
   if (last.code !== 0) {
     reason = `comando tmux fallito (code ${last.code})`;
@@ -332,8 +333,13 @@ test('waitForDeadPane: la proroga tocca SOLO al pane gia morto con status pendin
   assert.equal(dopo.status, '0', 'la proroga lascia il tempo di convergere');
 
   // 4. morto+pending per sempre: fallisce, e il messaggio DICHIARA la proroga.
+  // Il cronometro usa performance.now(): il limite e' monotono e non risente di
+  // aggiustamenti dell'orologio da muro (Date.now) sotto carico. La tolleranza
+  // copre solo l'arrotondamento/scheduling del timer; una proroga non attesa
+  // resta molto sotto questa soglia.
+  const TIMER_TOLERANCE_MS = 25;
   s = scriptato(['1\t\t']);
-  const t0 = Date.now();
+  const t0 = performance.now();
   await assert.rejects(() => waitForDeadPane(null, '%0', 40, 70, { tmuxImpl: s.impl }),
     (e) => {
       assert.match(e.message, /proroga usata/, 'il messaggio dice che la proroga e\' stata spesa');
@@ -342,7 +348,8 @@ test('waitForDeadPane: la proroga tocca SOLO al pane gia morto con status pendin
     });
   // Qui il tempo si puo' misurare solo dal basso: la proroga ALLUNGA l'attesa,
   // e un carico alto la allunga ancora — mai la accorcia.
-  assert.ok(Date.now() - t0 >= 40 + 70 - 15, 'la proroga viene davvero attesa');
+  assert.ok(performance.now() - t0 >= 40 + 70 - TIMER_TOLERANCE_MS,
+    'la proroga viene davvero attesa');
 
   // 5. errore di tmux: nessuna proroga, la scadenza resta secca.
   s = scriptato([{ code: 1, stdout: '', stderr: 'no server' }]);

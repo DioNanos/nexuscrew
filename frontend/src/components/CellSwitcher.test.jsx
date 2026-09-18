@@ -2,9 +2,13 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-const mocks = vi.hoisted(() => ({ apiFetch: vi.fn(), fleetStatus: vi.fn(), getRouteSessions: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  apiFetch: vi.fn(), fleetStatus: vi.fn(), getRouteSessions: vi.fn(),
+  getLiveHost: vi.fn(), designateHostCell: vi.fn(), clearHostCell: vi.fn(),
+}));
 vi.mock('../lib/api.js', () => ({
   apiFetch: mocks.apiFetch, fleetStatus: mocks.fleetStatus, getRouteSessions: mocks.getRouteSessions,
+  getLiveHost: mocks.getLiveHost, designateHostCell: mocks.designateHostCell, clearHostCell: mocks.clearHostCell,
 }));
 // Le sorgenti pesanti del popup fanno rete (ws, ticket del pannello): stub
 // con traccia delle props, stesso pattern di GridTile.test.jsx.
@@ -17,6 +21,8 @@ vi.mock('./CellPanel.jsx', () => ({
 
 import CellSwitcher from './CellSwitcher.jsx';
 import { writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
+import { positionKey } from '../lib/nodes-model.js';
+import { t } from '../lib/i18n.js';
 
 const active = (cell, tmuxSession) => ({ cell, tmuxSession, active: true, tmux: true, engine: 'claude.native' });
 const off = (cell, tmuxSession) => ({ cell, tmuxSession, active: false, tmux: false, engine: 'agy.native' });
@@ -487,5 +493,149 @@ describe('CellSwitcher', () => {
     const notice = await screen.findByRole('status');
     expect(notice.textContent).toBe('status not confirmed');
     expect(screen.queryByText('this cell is no longer active')).toBeNull();
+  });
+});
+
+// The star (pin / live) on the compact selector.
+//
+// The phone selector had no star at all: a cell could be pinned from the home
+// and the desktop sidebar, not from the surface that is used on a phone. These
+// tests pin the contract of the shared star: the same cycle
+// (none -> favorite -> live -> none), the same pin key the home reads, the same
+// labels, and a tap that never selects the row underneath.
+describe('CellSwitcher — the star on every row', () => {
+  const hostNone = { local: { hostCell: null, threadStatus: 'absent' } };
+
+  it('(a) shows one star per visible row, local and federated alike', async () => {
+    const { container } = render(
+      <CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={hostNone} />,
+    );
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    expect(screen.getByRole('button', { name: 'pin to top cell-One' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'pin to top Remote' })).toBeTruthy();
+    // One per row on screen, no extra affordance invented.
+    const rows = container.querySelectorAll('.nc-cell-switcher-row');
+    expect(container.querySelectorAll('[data-cell-star]')).toHaveLength(rows.length);
+  });
+
+  it('(b) tapping the star does not select the row and does not close the selector', async () => {
+    const onClose = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} hostByRoute={hostNone} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
+
+    expect(screen.getByRole('button', { name: /^cell-One / }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: 'select a cell' }).disabled).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('(c) pinning here writes the very key the home reads, route-qualified for a remote node', async () => {
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={hostNone} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
+    expect(JSON.parse(localStorage.getItem('nc_pins'))).toEqual([positionKey([], 'cloud-cell-One')]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'pin to top Remote' }));
+    const pins = JSON.parse(localStorage.getItem('nc_pins'));
+    expect(pins).toContain(positionKey(['hub'], 'cloud-Remote'));
+    expect(pins).toContain(positionKey([], 'cloud-cell-One'));
+    // The star shows the pin it just wrote.
+    expect(screen.getByRole('button', { name: 'pin to top cell-One' }).textContent).toBe('\u2605');
+  });
+
+  it('(d) the star only pins and unpins: it never designates', async () => {
+    const onDesignateCell = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={hostNone} onDesignateCell={onDesignateCell} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    const star = screen.getByRole('button', { name: 'pin to top cell-One' });
+    fireEvent.click(star);
+    expect(onDesignateCell).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem('nc_pins'))).toContain(positionKey([], 'cloud-cell-One'));
+
+    // Second tap: the pin goes away, and still nothing is designated.
+    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
+    expect(onDesignateCell).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem('nc_pins')) || []).not.toContain(positionKey([], 'cloud-cell-One'));
+  });
+
+  it('(e) the star does not speak about the designation at all', async () => {
+    // The 403 path belongs to the explicit command now: the star is a pin, and a
+    // pin has no outcome to report beyond persistence.
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const onDesignateCell = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+      hostByRoute={{ local: { hostCell: 'cell-One', threadStatus: 'absent', hostRevision: 2 } }} onDesignateCell={onDesignateCell} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    fireEvent.click(screen.getByRole('button', { name: 'cell designated; thread absent cell-One' }));
+    expect(onDesignateCell).not.toHaveBeenCalled();
+    expect(alert).not.toHaveBeenCalled();
+    alert.mockRestore();
+  });
+});
+
+// The explicit command: one call that reads the revision and writes with it, and
+// an outcome the row can show. The star is a pin (see its own test); this is the
+// only way to designate, so its two outcomes — applied, refused — must both be
+// visible.
+describe('CellSwitcher — the explicit Live host command', () => {
+  it('designates with the revision the server has just reported, and says so', async () => {
+    mocks.getLiveHost.mockResolvedValue({ hostCell: null, revision: 4, eligible: true, threadStatus: 'absent' });
+    mocks.designateHostCell.mockResolvedValue({ hostCell: 'cell-One', revision: 5 });
+    const onLiveHostApplied = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+      hostByRoute={{}} onLiveHostApplied={onLiveHostApplied} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    fireEvent.click(screen.getByTestId('live-host-command-cloud-cell-One'));
+
+    await waitFor(() => expect(mocks.designateHostCell).toHaveBeenCalledWith('token', 'cell-One', 4, []));
+    expect(onLiveHostApplied).toHaveBeenCalledWith({ route: [], hostCell: 'cell-One', revision: 5 });
+    expect(await screen.findByText(`Live host: cell-One`)).toBeTruthy();
+  });
+
+  it('shows the refusal in the status line and leaves the state alone', async () => {
+    mocks.getLiveHost.mockResolvedValue({ hostCell: null, revision: 4, eligible: true, threadStatus: 'absent' });
+    mocks.designateHostCell.mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403, data: { reason: 'live-host-not-granted' } }));
+    const onLiveHostApplied = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+      hostByRoute={{}} onLiveHostApplied={onLiveHostApplied} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+
+    fireEvent.click(screen.getByTestId('live-host-command-cloud-cell-One'));
+
+    expect(await screen.findByText(t('live-host-not-granted'))).toBeTruthy();
+    expect(onLiveHostApplied).not.toHaveBeenCalled();
+  });
+});
+
+// Il comando Live host nel selettore compatto è un'ICONA: la frase non c'è più
+// (sfondava la riga), il nome accessibile resta in aria-label/title, e lo stato
+// «questa cella è l'host» si legge dalla classe e dal marker, come per la stella.
+describe('CellSwitcher — the Live host command is an icon button', () => {
+  it('keeps the accessible name and shows the host state', async () => {
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+      hostByRoute={{ local: { hostCell: 'cell-One', threadStatus: 'thread-active', hostRevision: 2 } }} />);
+    const button = await screen.findByTestId('live-host-command-cloud-cell-One');
+    expect(button.getAttribute('aria-label')).toBe(`${t('live-host-action-remove')}: cell-One`);
+    expect(button.getAttribute('title')).toBe(t('live-host-action-remove'));
+    expect(button.textContent.trim()).toBe('');
+    expect(button.querySelector('svg')).toBeTruthy();
+    expect(button.getAttribute('data-live-host-state')).toBe('host');
+    expect(button.className).toMatch(/nc-cell-switcher-host on/);
+  });
+
+  it('stays an outline when this cell is not the host', async () => {
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={{}} />);
+    const button = await screen.findByTestId('live-host-command-cloud-cell-One');
+    expect(button.getAttribute('aria-label')).toBe(`${t('live-host-action-use')}: cell-One`);
+    expect(button.textContent.trim()).toBe('');
+    expect(button.querySelector('svg')).toBeTruthy();
+    expect(button.getAttribute('data-live-host-state')).toBe('idle');
+    expect(button.className).not.toMatch(/ host on/);
   });
 });

@@ -3,9 +3,12 @@ import { t, LANGUAGES } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { pinRank, cmpRank } from '../lib/pins.js';
 import {
-  hostRenderState, hostNextAction, hostLeaseTitleKey, hostThreadTitleKey, hostRouteKey,
+  hostRenderState, hostLeaseTitleKey, hostThreadTitleKey, hostRouteKey,
 } from '../lib/host-designation.js';
 import PinPersistBanner from './PinPersistBanner.jsx';
+import CellStar from './CellStar.jsx';
+import LiveHostIndicator from './LiveHostIndicator.jsx';
+import { liveHostView } from '../lib/live-host-view.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
@@ -57,27 +60,8 @@ export default function Sidebar({
   // designazione e' per-nodo lato server (CAS su una sola hostCell a testa);
   // hostByRoute e' la sua controparte lato client, una voce per route.
   const hostFor = (route) => hostByRoute[hostRouteKey(route)] || {};
-  // Ciclo stellina: none -> favorite (pin) -> live (designate) -> none (clear
-  // server + remove pin). API-first: il pin si rimuove SOLO a clear riuscito,
-  // mai prima della risposta del server (nessun ottimismo locale). Vale per
-  // QUALUNQUE nodo (locale o remoto): `route` e' quella del nodo che possiede
-  // LA CELLA su cui si preme, non quella del nodo che serve la pagina — e'
-  // esattamente la distinzione che il difetto originale ignorava.
-  function handleStar(item, c, state, route) {
-    const action = hostNextAction(state);
-    if (action === 'addPin') { togglePin(item.key); return; }
-    if (action === 'designate') { if (onDesignateCell) onDesignateCell(c.cell, route); return; }
-    if (action === 'clearAndUnpin') {
-      if (!onClearHostCell) return;
-      // Rimozione idempotente (NON toggle): su uno stato server-owned senza pin
-      // locale, un toggle aggiungerebbe il pin producendo "favorite". removePin
-      // ritorna l'esito della persistenza: se fallisce lo segnaliamo (ritentabile);
-      // lo stato UI e' gia' "none" perche' hostCell e' stato chiarito dal server.
-      // removePin legge localStorage al momento dell'applicazione (no lost update)
-      // e segnala un fallimento di persistenza nello stato (banner ritentabile).
-      Promise.resolve(onClearHostCell(route)).then((ok) => { if (ok) removePin(item.key); });
-    }
-  }
+  // Il ciclo della stellina vive in CellStar/applyCellStar: stessa
+  // implementazione per la home, la sidebar e il selettore compatto.
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
   const byName = new Map((sessions || []).map((s) => [s.name, s]));
   // Ordinamento: pinnate in cima (ordine di pin), poi attivita' recente,
@@ -387,6 +371,11 @@ export default function Sidebar({
 
   return (
     <aside className="nc-sidebar" style={style}>
+      {/* Live host del NODO che serve la pagina: una riga in testa, di sola
+          lettura. Il comando che lo cambia sta nelle righe delle celle. */}
+      <div className="nc-side-live-host">
+        <LiveHostIndicator view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells })} />
+      </div>
       <div className="nc-side-head">
         <button className="nc-collapse-btn" onClick={onToggleCollapse} title={t('collapse')}>⟨</button>
         <span className="nc-side-title">{t('fleet')}</span>
@@ -472,11 +461,10 @@ export default function Sidebar({
                   <b title={c.cell}>{c.cell}</b>
                   <small title={item.subtitle}>{item.subtitle}</small>
                 </span>
-                <button
-                  className={`nc-pin${hostThreadTitleKey(starState) ? ` ${starState}` : starState === 'favorite' ? ' on' : ''}`}
-                  title={hostThreadTitleKey(starState) ? t(hostThreadTitleKey(starState)) : t('pin')}
-                  onClick={(e) => { e.stopPropagation(); handleStar(item, c, starState, []); }}
-                >{starState === 'none' ? '☆' : '★'}</button>
+                <CellStar item={item} pins={pins} hostByRoute={hostByRoute} route={[]} cellName={c.cell}
+                  baseClassName="nc-pin"
+                  togglePin={togglePin} removePin={removePin}
+                  />
                 {onBoot && fleetCapabilities.includes('boot') && bootButton(c)}
                 <button
                   className={`nc-power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
@@ -649,11 +637,9 @@ export default function Sidebar({
                       <b>{c.cell}</b>
                       <small title={item.subtitle}>{item.subtitle}</small>
                     </span>
-                    <button
-                      className={`nc-pin${hostThreadTitleKey(starState) ? ` ${starState}` : starState === 'favorite' ? ' on' : ''}`}
-                      title={hostThreadTitleKey(starState) ? t(hostThreadTitleKey(starState)) : t('pin')}
-                      onClick={(e) => { e.stopPropagation(); handleStar(item, c, starState, route); }}
-                    >{starState === 'none' ? '☆' : '★'}</button>
+                <CellStar item={item} pins={pins} hostByRoute={hostByRoute} route={route} cellName={c.cell}
+                  baseClassName="nc-pin"
+                  togglePin={togglePin} removePin={removePin} />
                     {onBoot && (g.capabilities || []).includes('boot') && bootButton(c, g.route || [])}
                     {(g.capabilities || []).includes(c.active ? 'down' : 'up') && (
                       <button className={`nc-power${c.active ? ' on' : ''}${c.degraded ? ' warn' : ''}`}

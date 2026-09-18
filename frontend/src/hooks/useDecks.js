@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  getDecks, createDeck, saveDeck, renameDeck, deleteDeck, getRouteConfig, getRouteTopology,
+  getDecks, createDeck, saveDeck, saveDeckKeepalive, renameDeck, deleteDeck, getRouteConfig, getRouteTopology,
 } from '../lib/api.js';
 import {
   loadDeckOrders, loadDecks, moveDeckInOrder, orderDeckRecords, readLayoutRaw,
   removeDeckOrderId, replaceDeckOrderId, saveDeckOrders, saveDecks, writeLayoutRaw,
 } from '../lib/deck-model.js';
-import { addTileSmart, emptyLayout, normalize, sessions } from '../lib/grid-model.js';
+import { addTileSmart, emptyLayout, mergeRemoteWithLocal, normalize, sessions } from '../lib/grid-model.js';
 import {
   LOCAL_OWNER, NODE_ID_RE, annotateCanonicalLayout, canonicalizeLayoutForOwner,
-  deckId, parseDeckId, refWithOwner, resolveLayoutForViewer,
+  deckId, deckIdForLocalOwner, parseDeckId, refWithOwner, resolveLayoutForViewer,
 } from '../lib/deck-federation.js';
 
 const empty = (layout) => sessions(normalize(layout)).length === 0;
@@ -60,6 +60,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   const [ready, setReady] = useState(false);
   const [saveState, setSaveState] = useState('idle');
   const [error, setError] = useState('');
+  const [conflict, setConflict] = useState(false);
   const [localNodeId, setLocalNodeId] = useState('');
   const recordsRef = useRef([]);
   const ownersRef = useRef([]);
@@ -80,11 +81,26 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     record.layout, localNodeIdRef.current, ownersRef.current,
   ), []);
 
-  const install = useCallback((next, applyLayout = true, targetId = currentRef.current) => {
+  // ONE place that answers "which record is the current deck". The id in the URL
+  // can be the owner-qualified form of THIS node while the record carries the
+  // local id (deckIdForLocalOwner documents both), and every lookup has to know
+  // it — the load effect, the poll, saveNow and the rename/remove paths each had
+  // their own `find` and each of them could miss a self-owner deck.
+  const resolveCurrentId = useCallback(
+    () => deckIdForLocalOwner(currentRef.current, localNodeIdRef.current),
+    [],
+  );
+  const findCurrent = useCallback(
+    (records) => (Array.isArray(records) ? records : []).find((d) => d.id === resolveCurrentId()),
+    [resolveCurrentId],
+  );
+
+  const install = useCallback((next, applyLayout = true, targetId) => {
+    const wanted = targetId === undefined ? resolveCurrentId() : deckIdForLocalOwner(targetId, localNodeIdRef.current);
     const ordered = orderDeckRecords(next, loadDeckOrders());
-    const previousHadTarget = recordsRef.current.some((d) => d.id === targetId);
+    const previousHadTarget = recordsRef.current.some((d) => d.id === wanted);
     recordsRef.current = ordered; setRecords(ordered);
-    const rec = ordered.find((d) => d.id === targetId);
+    const rec = ordered.find((d) => d.id === wanted);
     if (applyLayout && rec) {
       skipRef.current = true;
       const viewed = viewLayout(rec);
@@ -162,8 +178,8 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     bootTokenRef.current = token;
     loadAll({ migrate: firstForToken }).then((next) => {
       if (cancelled) return;
-      const here = recordsRef.current.find((d) => d.id === currentRef.current);
-      const remote = next.find((d) => d.id === currentRef.current);
+      const here = findCurrent(recordsRef.current);
+      const remote = findCurrent(next);
       const changed = remote && (!here || remote.revision > here.revision
         || here.available !== remote.available || routeKey(here.ownerRoute) !== routeKey(remote.ownerRoute));
       install(next, firstForToken || (!!changed && !dirtyRef.current));
@@ -173,32 +189,57 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       if (!cancelled) { setReady(true); setError(String(e.message || e)); }
     });
     return () => { cancelled = true; };
-  }, [install, loadAll, ownersSig, token]);
+  }, [install, loadAll, ownersSig, token, findCurrent]);
 
-  const saveNow = useCallback(async (targetId = currentRef.current) => {
+  const saveNow = useCallback(async (targetId, allowRebase = true) => {
     if (!ready || !dirtyRef.current) return true;
-    const rec = recordsRef.current.find((d) => d.id === targetId);
-    if (!rec) { setError(`deck inesistente: ${targetId}`); return false; }
+    const wanted = targetId === undefined ? resolveCurrentId() : deckIdForLocalOwner(targetId, localNodeIdRef.current);
+    const rec = recordsRef.current.find((d) => d.id === wanted);
+    if (!rec) { setError(`deck inesistente: ${wanted}`); return false; }
     if (rec.available === false) { setError(`nodo owner offline: ${rec.ownerLabel}`); return false; }
     setSaveState('saving');
     try {
       const canonical = canonicalizeLayoutForOwner(normalize(layoutRef.current), rec.ownerId, rec.ownerTopology);
       const saved = await saveDeck(token, rec.name, canonical, rec.revision, rec.ownerRoute);
       const augmented = augmentDeck(saved, ownerForRecord(rec), rec.ownerTopology, rec.local, true);
-      install(recordsRef.current.map((d) => d.id === targetId ? augmented : d), false);
-      dirtyRef.current = false; setSaveState('saved'); setError('');
+      install(recordsRef.current.map((d) => d.id === wanted ? augmented : d), false);
+      dirtyRef.current = false; setSaveState('saved'); setError(''); setConflict(false);
       setTimeout(() => setSaveState('idle'), 1500);
       return true;
     } catch (e) {
-      setSaveState('error'); setError(String(e.message || e));
-      if (e.status === 409 && e.data && e.data.current) {
-        const currentDeck = recordsRef.current.find((d) => d.id === targetId);
-        const replacement = augmentDeck(e.data.current, ownerForRecord(currentDeck), currentDeck.ownerTopology, currentDeck.local, true);
-        install(recordsRef.current.map((d) => d.id === targetId ? replacement : d), false);
+      // 409 = un'altra finestra ha salvato prima. Il ramo di recupero
+      // era codice morto (confrontava `d.id === targetId`, ma sull'autosave
+      // targetId è undefined). Rebase: il record remoto (revisione nuova) diventa
+      // la base, il layout LOCALE della finestra resta la modifica dell'utente
+      // (vince lei, decisione D2) e si ritenta UNA volta sola.
+      if (allowRebase && e.status === 409 && e.data && e.data.current) {
+        const conflicted = recordsRef.current.find((d) => d.id === wanted);
+        if (conflicted) {
+          const rebased = augmentDeck(e.data.current, ownerForRecord(conflicted), conflicted.ownerTopology, conflicted.local, true);
+          install(recordsRef.current.map((d) => d.id === wanted ? rebased : d), false);
+          dirtyRef.current = true;
+          return saveNow(wanted, false);
+        }
       }
+      setSaveState('error'); setError(String(e.message || e));
+      if (e.status === 409) setConflict(true);
       return false;
     }
   }, [ready, token, install]);
+
+  // Azione «ricarica» del conflitto irrisolvibile — riparte dal remoto
+  // e scarta la copia locale che non è riuscita a convergere.
+  const reloadCurrent = useCallback(async () => {
+    try {
+      const next = await loadAll();
+      dirtyRef.current = false;
+      setConflict(false);
+      install(next, true);
+      setError('');
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  }, [loadAll, install]);
 
   useEffect(() => {
     if (!ready) return;
@@ -208,19 +249,48 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     return () => clearTimeout(id);
   }, [layout, ready, saveNow]);
 
+  // A chiusura pagina (pagehide/beforeunload) il PUT parte con
+  // keepalive se ci sono modifiche non salvate — il debounce di 650 ms può non
+  // avere il tempo di scadere. Fire-and-forget: la pagina sta per morire.
+  useEffect(() => {
+    if (!ready) return undefined;
+    const flush = () => {
+      if (!dirtyRef.current) return;
+      const rec = recordsRef.current.find((d) => d.id === resolveCurrentId());
+      if (!rec || rec.available === false) return;
+      const canonical = canonicalizeLayoutForOwner(normalize(layoutRef.current), rec.ownerId, rec.ownerTopology);
+      saveDeckKeepalive(token, rec.name, canonical, rec.revision, rec.ownerRoute);
+    };
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
+    };
+  }, [ready, token, resolveCurrentId]);
+
   useEffect(() => {
     if (!ready) return undefined;
     const id = setInterval(async () => {
       try {
         const next = await loadAll();
-        const here = recordsRef.current.find((d) => d.id === currentRef.current);
-        const remote = next.find((d) => d.id === currentRef.current);
+        const here = findCurrent(recordsRef.current);
+        const remote = findCurrent(next);
         const newer = remote && (!here || remote.revision > here.revision || here.available !== remote.available);
+        if (newer && dirtyRef.current && remote) {
+          // La finestra è sporca e il remoto è più nuovo — merge
+          // remoto ⊕ delta locale invece di restare indietro. Il layout fuso
+          // è un cambio di layout: l'autosave lo salva con la revisione nuova.
+          const merged = mergeRemoteWithLocal(viewLayout(remote), layoutRef.current);
+          install(next, false);
+          setLayout(merged);
+          return;
+        }
         install(next, newer && !dirtyRef.current);
       } catch (_) {}
     }, 5000);
     return () => clearInterval(id);
-  }, [ready, loadAll, install]);
+  }, [ready, loadAll, install, viewLayout, setLayout]);
 
   const add = async (name, ownerId = null) => {
     const basis = ownerId === LOCAL_OWNER
@@ -235,7 +305,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   };
   const rename = async (fromId, to) => {
     const deck = recordsRef.current.find((x) => x.id === fromId); if (!deck) throw new Error('deck inesistente');
-    if (fromId === currentRef.current && dirtyRef.current) {
+    if (deckIdForLocalOwner(fromId, localNodeIdRef.current) === resolveCurrentId() && dirtyRef.current) {
       const savedDirty = await saveNow(fromId);
       if (!savedDirty) throw new Error(`salvataggio di "${deck.name}" fallito: rinomina annullata`);
     }
@@ -248,7 +318,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   };
   const remove = async (id) => {
     const deck = recordsRef.current.find((x) => x.id === id); if (!deck) throw new Error('deck inesistente');
-    if (id === currentRef.current) dirtyRef.current = false;
+    if (deckIdForLocalOwner(id, localNodeIdRef.current) === resolveCurrentId()) dirtyRef.current = false;
     await deleteDeck(token, deck.name, deck.revision, deck.ownerRoute);
     const ownerKey = deck.local ? LOCAL_OWNER : deck.ownerId;
     saveDeckOrders(removeDeckOrderId(loadDeckOrders(), ownerKey, id));
@@ -281,7 +351,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   };
   const select = async (id) => {
     if (dirtyRef.current) {
-      const saved = await saveNow(currentRef.current);
+      const saved = await saveNow(resolveCurrentId());
       if (!saved) throw new Error('salvataggio del deck corrente fallito: cambio annullato');
     }
     const target = recordsRef.current.find((d) => d.id === id);
@@ -291,7 +361,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   };
 
   return {
-    decks: records, records, localNodeId, ready, saveState, error, setError,
+    decks: records, records, localNodeId, ready, saveState, error, setError, conflict, reloadCurrent,
     saveNow, select, add, rename, remove, reorder, addTileTo,
     localMainId: deckId(null, 'main'), parseDeckId,
   };

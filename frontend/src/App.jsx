@@ -13,6 +13,8 @@ import SettingsPanel from './components/SettingsPanel.jsx';
 import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
+import { nextRendererPreference, readRendererPreference, writeRendererPreference } from './lib/terminal-renderer.js';
+import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import VlSessionView from './components/VlSessionView.jsx';
 import CellPanel from './components/CellPanel.jsx';
 import {
@@ -113,6 +115,9 @@ function rel(epochSec) {
 // risolve al primo ciclo. Il titolo visibile deriva sempre da `cell.cell`.
 export function SingleView({
   session, node, ownerId, cellName, token, readonly = false, panelPort = 0, onBack, onCellSwitcher, cellSwitcherOpen = false,
+  // Live host della cella aperta (gia' risolto da App per la route giusta):
+  // the phone header has room for a dot only; the sentence lives in the title.
+  liveHost = null,
 }) {
   useLang(); // re-render allo switch lingua
   const [inputPreferences] = useInputPreferences();
@@ -121,6 +126,17 @@ export function SingleView({
   const [showComposer, setShowComposer] = useState(() => window.matchMedia('(pointer: coarse)').matches);
   const [filesEvent, setFilesEvent] = useState(null);
   const [fontSize, setFontSize] = useState(initialFontSize);
+  // Renderer del terminale: preferenza per browser + quello che sta disegnando
+  // davvero (il GPU puo' non essere disponibile, o perdere il contesto).
+  const [rendererPref, setRendererPref] = useState(readRendererPreference);
+  const [rendererKind, setRendererKind] = useState(() => readRendererPreference());
+  const switchRenderer = () => {
+    const next = writeRendererPreference(nextRendererPreference(readRendererPreference()));
+    setRendererPref(next);
+    // Il renderer si aggancia alla creazione del terminale: il ricaricamento e'
+    // il modo affidabile per far ripartire l'A/B con l'altro motore.
+    if (typeof window !== 'undefined') window.location.reload();
+  };
   // Titolo visibile (Tranche D): nome logico Fleet o, in fallback, il nome
   // sessione tmux. Inizializza con cellName (desktop overlay) o session.
   const [title, setTitle] = useState(cellName || session);
@@ -202,11 +218,30 @@ export function SingleView({
         <button onClick={onBack} title={t('sessions')}><Icon name="chevronLeft" size={18} /><span className="nc-bar-label">{t('sessions')}</span></button>
         <span className="nc-bar-center">
           <b title={node ? `${title} · ${node}` : title}>{title}</b>
+          {liveHost && liveHost.cell && liveHost.cell === cellName ? (
+            <span className={`nc-live-host-dot ${liveHostDotClass(liveHost)} nc-live-host-dot-header`}
+              data-testid="live-host-header-dot"
+              title={t('live-host-indicator').replace('{cell}', liveHost.cell)
+                .replace('{mode}', t(liveHost.mode ? `live-host-mode-${liveHost.mode}` : 'live-host-mode-unknown'))
+                .replace('{state}', t(`live-host-state-${liveHost.state}`))} />
+          ) : null}
           {sub && <small className="nc-bar-sub">{sub}</small>}
         </span>
         <span className="nc-bar-right">
           <button onClick={() => zoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
           <button onClick={() => zoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
+          {/* A/B del renderer senza rebuild: la scelta e' per browser, il
+              terminale si riattacca al ricaricamento della pagina. E' un
+              pulsante-ICONA come i suoi vicini: un'etichetta scritta (GPU/DOM)
+              allargava la barra e schiacciava il nome della cella. Il testo
+              resta nel titolo e nell'etichetta accessibile, lo stato si vede
+              dalla classe. */}
+          <button type="button" className={`nc-renderer-toggle${rendererKind === 'webgl' ? ' on' : ''}`}
+            onClick={switchRenderer} aria-pressed={rendererKind === 'webgl'}
+            title={t('terminal-renderer-switch').replace('{requested}', t(rendererPref === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl')).replace('{effective}', t(rendererKind === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl'))}
+            aria-label={t('terminal-renderer-switch').replace('{requested}', t(rendererPref === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl')).replace('{effective}', t(rendererKind === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl'))}>
+            <Icon name="gpu" size={18} />
+          </button>
           <button onClick={() => setShowComposer((v) => !v)} title={t('composer')}><Icon name="keyboard" size={20} /></button>
           <button onClick={() => setShowFiles((v) => !v)} title={t('files')}><Icon name="folder" size={20} /></button>
           {panelUrl && (
@@ -218,7 +253,7 @@ export function SingleView({
         <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
           ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} onFiles={setFilesEvent} fontSize={fontSize}
           selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
-          keyboardGesture={inputPreferences.terminalKeyboardGesture} />
+          keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
         {/* D8: pannello in alternativa al terminale, overlay assoluto — il
             terminale resta montato (PTY vivo, nessun reflow al toggle).
             L'ingresso passa dal ticket: la PWA lo chiede e l'iframe punta
@@ -320,6 +355,14 @@ export default function App() {
   }, [nodeGroups]);
   useEffect(() => {
     if (!deckStore.localNodeId) return;
+    // Self-owner deck URL: `/deck/<thisNodeId>/<name>` names a LOCAL deck under
+    // its owner-qualified id, so its layout is the one this browser saved. The
+    // local node id only arrives with the config call, hence here and not in the
+    // initial state — without this the first frame is the empty grid.
+    if (initialDeck.ownerId && initialDeck.ownerId === deckStore.localNodeId) {
+      setLayout((current) => (current.columns.some((column) => column.tiles.length)
+        ? current : loadLayout(initialDeck.name)));
+    }
     setLayout((current) => {
       const resolved = resolveLayoutForViewer(current, deckStore.localNodeId, deckOwners);
       return JSON.stringify(resolved) === JSON.stringify(current) ? current : resolved;
@@ -401,6 +444,37 @@ export default function App() {
   // hostLease, hostRevision}}, una voce per nodo — 'local' e' il nodo che serve
   // la pagina, tutte le altre sono le route di nodeGroups.
   const [hostByRoute, setHostByRoute] = useState({});
+  // Vista del Live host per UNA route (il nodo che possiede le celle mostrate).
+  // `ownerId` non-local per una route non vuota: quella lettura arriva da un
+  // peer, quindi il host e' di un altro nodo e la UI lo dice.
+  // Esito del comando esplicito: hostByRoute cambia SUBITO (indicatore, puntino
+  // e stella), senza aspettare il poll. Una designazione appena fatta non ha
+  // ancora un thread, quindi `threadStatus: 'absent'` e' la verita' di adesso.
+  const applyLiveHostResult = useCallback(({ route, hostCell, revision }) => {
+    const key = hostRouteKey(route);
+    setHostByRoute((current) => ({
+      ...current,
+      [key]: {
+        hostCell: hostCell || null,
+        hostLease: null,
+        hostRevision: Number.isInteger(revision) ? revision : ((current[key] || {}).hostRevision || 0),
+        threadStatus: 'absent',
+      },
+    }));
+  }, []);
+
+  const liveHostViewFor = (route) => {
+    const key = hostRouteKey(route);
+    const routeCells = route.length
+      ? ((nodeGroups || []).find((g) => hostRouteKey(Array.isArray(g.route) ? g.route : []) === key) || {}).cells || []
+      : cells;
+    return liveHostView({
+      liveHost: hostByRoute[key] || null,
+      cells: routeCells,
+      localNodeId: deckStore.localNodeId,
+      ownerId: route.length ? key : deckStore.localNodeId,
+    });
+  };
   // Rif. sempre fresco a nodeGroups per il polling qui sotto: leggerlo via ref
   // (non come dependency dell'effect) evita di ricreare l'intervallo ogni volta
   // che useNodes produce un nuovo array (~4s, anche a dati invariati).
@@ -490,7 +564,11 @@ export default function App() {
   // serve la pagina: e' esattamente il difetto che questa funzione chiude.
   // Il fallimento NOMINA la causa (window.alert, come promptNodeRename in
   // Sidebar): il difetto peggiore non era la route sbagliata, era il silenzio.
-  const designateCellHost = useCallback(async (cellId, route = []) => {
+  // Una sola designazione, due modi di dire l'esito: la home continua a
+  // mostrare l'avviso di sistema (comportamento invariato), il selettore
+  // compatto riceve l'esito e lo mostra nella propria riga di stato — senza
+  // alert, che su un telefono e' un blocco a tutto schermo.
+  const designateCellHostOnce = useCallback(async (cellId, route = []) => {
     const key = hostRouteKey(route);
     const revision = (hostByRoute[key] && hostByRoute[key].hostRevision) || 0;
     try {
@@ -504,11 +582,17 @@ export default function App() {
           threadStatus: THREAD_STATUSES.has(r.threadStatus) ? r.threadStatus : 'unknown',
         },
       }));
+      return { ok: true };
     } catch (e) {
-      window.alert(t(hostDesignationFailureMessage(e)));
+      return { ok: false, error: e };
     }
   }, [token, hostByRoute]);
-  const clearCellHost = useCallback(async (route = []) => {
+  const designateCellHost = useCallback(async (cellId, route = []) => {
+    const outcome = await designateCellHostOnce(cellId, route);
+    if (!outcome.ok) window.alert(t(hostDesignationFailureMessage(outcome.error)));
+    return outcome.ok;
+  }, [designateCellHostOnce]);
+  const clearCellHostOnce = useCallback(async (route = []) => {
     const key = hostRouteKey(route);
     const revision = (hostByRoute[key] && hostByRoute[key].hostRevision) || 0;
     try {
@@ -517,12 +601,18 @@ export default function App() {
         ...current,
         [key]: { hostCell: r.hostCell || null, hostLease: null, hostRevision: Number.isInteger(r.revision) ? r.revision : revision, threadStatus: 'unknown' },
       }));
-      return true;
+      return { ok: true };
     } catch (e) {
-      window.alert(t(hostDesignationFailureMessage(e)));
-      return false;
+      return { ok: false, error: e };
     }
   }, [token, hostByRoute]);
+  // Versione della home: esito booleano (il pin si toglie solo a clear riuscito)
+  // e avviso di sistema che nomina la causa.
+  const clearCellHost = useCallback(async (route = []) => {
+    const outcome = await clearCellHostOnce(route);
+    if (!outcome.ok) window.alert(t(hostDesignationFailureMessage(outcome.error)));
+    return outcome.ok;
+  }, [clearCellHostOnce]);
 
   // Coerenza versione UI/server (tutte le viste).
   //
@@ -710,10 +800,13 @@ export default function App() {
     }
     return <>
       <SingleView session={session.session} node={session.node} ownerId={session.ownerId} cellName={session.cellName} token={token} readonly={roDefault}
+          liveHost={liveHostViewFor(session.node ? session.node.split('/') : [])}
         panelPort={panelPortForRoute(session.node ? session.node.split('/') : [], nodePanelPorts, panelPort)}
         onBack={() => setSession(null)} onCellSwitcher={() => setCellSwitcherOpen(true)} cellSwitcherOpen={cellSwitcherOpen} />
       {cellSwitcherOpen && <CellSwitcher token={token} current={session}
         panelPort={panelPort} nodePanelPorts={nodePanelPorts}
+        hostByRoute={hostByRoute} onDesignateCell={designateCellHostOnce} onClearHostCell={clearCellHostOnce}
+        onLiveHostApplied={applyLiveHostResult}
         onPick={(next) => { pickSession(next); setCellSwitcherOpen(false); }} onClose={() => setCellSwitcherOpen(false)} />}
       {settingsOverlays}
     </>;
@@ -766,12 +859,14 @@ export default function App() {
           onReorder={deckStore.reorder}
           onOpenWindow={openDeckWindow} onNavigate={selectDeck}
           saveState={deckStore.saveState} error={deckStore.error}
+          conflict={deckStore.conflict} onReloadDeck={deckStore.reloadCurrent}
           sidebarVisible={sidebarVisible}
           onToggleSidebar={!isMainDeck ? () => setSideHidden((v) => !v) : null}
         />
         <GridView
           layout={layout}
           onLayoutChange={setLayout}
+          onResizeEnd={() => { deckStore.saveNow(); }}
           token={token}
           readonly={roDefault}
           sessionsAlive={sessionsAlive}
@@ -799,6 +894,7 @@ export default function App() {
             session={single.session} node={single.node} ownerId={single.ownerId}
             cellName={cellDisplayName({ session: single.session, node: single.node, ownerId: single.ownerId, cells, nodeGroups })}
             token={token} readonly={roDefault}
+            liveHost={liveHostViewFor(single.node ? single.node.split('/') : [])}
             panelPort={panelPortForRoute(single.node ? single.node.split('/') : [], nodePanelPorts, panelPort)}
             onBack={() => setSingle(null)}
           />

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
-import { createFleetBackup, parseFleetBackup, MAX_ENGINES } from './fleet-backup.js';
+import { createFleetBackup, parseFleetBackup, MAX_ENGINES, MAX_MODELS } from './fleet-backup.js';
 
 // La fonte del cap e' il backend (CAPS.MAX_ENGINES in lib/fleet/definitions.js,
 // modulo node-only che il bundle non puo' importare). La copia frontend in
@@ -42,5 +42,42 @@ describe('fleet backup engine cap — parita\' col backend e frontiera 24/25/100
     expect(parsed.error).toBe('invalid-format');
     expect(parsed.detail).toContain('101');
     expect(parsed.detail).toContain(`cap ${MAX_ENGINES}`);
+  });
+});
+
+// Il cap dei modelli dichiarati segue la stessa regola degli engine: la fonte
+// è il backend, la copia frontend è vigilata qui prima che il bundle spedisca
+// un parse che rifiuta i propri export.
+describe('fleet backup model cap — parità col backend e frontiera 64/65/128/129', () => {
+  // I modelli dichiarati viaggiano col PROFILO dell'engine (client.provider),
+  // quindi il fixture è un engine managed: senza `managed` il create non
+  // esporterebbe nessun modello (declaredModelsFor è fail-closed).
+  const managedEngine = { ...engine(0), managed: { client: 'claude', provider: 'alibaba-token-plan' } };
+  const model = (n) => ({ id: `m-${n}`, engine: 'claude.alibaba-token-plan' });
+  const backupWithModels = (n) => createFleetBackup(
+    cells, new Set(['Ops']), [managedEngine], new Set(['eng-0']),
+    new Date('2026-08-28T00:00:00Z'),
+    Array.from({ length: n }, (_, i) => model(i)),
+  );
+
+  it('la copia frontend del cap coincide con CAPS.MAX_MODELS del backend', () => {
+    expect(MAX_MODELS).toBe(CAPS.MAX_MODELS);
+    expect(MAX_MODELS).toBe(128);
+  });
+
+  it.each([64, 65, 128])('round-trip export→parse con %i modelli dichiarati', (n) => {
+    const backup = backupWithModels(n);
+    const parsed = parseFleetBackup(JSON.stringify(backup));
+    expect(parsed.ok).toBe(true);
+    expect(parsed.models).toHaveLength(n);
+  });
+
+  it('rifiuta 129 modelli', () => {
+    const backup = backupWithModels(128);
+    const raw = JSON.parse(JSON.stringify(backup));
+    raw.models.push(model(128));
+    const parsed = parseFleetBackup(JSON.stringify(raw));
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toBe('invalid-model');
   });
 });

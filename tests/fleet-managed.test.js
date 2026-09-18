@@ -225,8 +225,13 @@ test('managed matrix: Z.AI su Claude e codex-vl (Responses nativo); Ollama Cloud
   assert.ok(normalizeManagedSpec({ client: 'claude', provider: 'ollama-cloud' }));
   assert.ok(normalizeManagedSpec({ client: 'codex-vl', provider: 'ollama-cloud' }));
   const ollama = CATALOG.find((p) => p.id === 'codex-vl.ollama-cloud');
-  assert.equal(ollama.model, 'glm-5.2');
+  // : il default degli engine ollama-cloud e' deepseek-v4.1-flash.
+  assert.equal(ollama.model, 'deepseek-v4.1-flash');
   assert.ok(ollama.models.includes('deepseek-v4-pro'));
+  assert.ok(ollama.models.includes('deepseek-v4.1-flash'));
+  for (const id of ['claude.ollama-cloud', 'codex.ollama-cloud']) {
+    assert.equal(CATALOG.find((p) => p.id === id).model, 'deepseek-v4.1-flash');
+  }
 });
 
 test('Ollama Direct discovery: usa la shortlist TOP disponibile e filtra garbage', async () => {
@@ -251,6 +256,10 @@ test('Ollama Direct discovery: errore API usa la shortlist TOP di fallback', asy
     'qwen3.5:397b', 'deepseek-v4-flash', 'mistral-large-3:675b', 'gemma4:31b',
     'glm-5.3-flash',
     'glm-5.3',
+    'kimi-k3',
+    'deepseek-v4.1-flash',
+    // Delta 2026-09-12: bare-name forms measured alive on the cloud API.
+    'gemma4', 'qwen3.5',
   ]);
 });
 
@@ -424,7 +433,10 @@ test('Codex-VL OpenRouter usa Responses command-auth senza env_key e pinna Kimi 
     const secret = 'synthetic-openrouter-token';
     const r = resolveManagedEngine({ id: 'codex-vl.openrouter', label: 'OpenRouter', managed: { client: 'codex-vl', provider: 'openrouter', model: 'moonshotai/kimi-k3' } }, { id: 'Dev' }, { home, env: { OPENROUTER_API_KEY: secret } });
     assert.equal(r.ok, true);
-    assert.deepEqual(r.engine.env, { OPENROUTER_API_KEY: secret });
+    assert.deepEqual(r.engine.env, {
+      OPENROUTER_API_KEY: secret,
+      CODEX_APP_SERVER_IDENTITY_REQUIRED: '0',
+    });
     const joined = r.engine.args.join('\n');
     assert.match(joined, /model_provider="openrouter"/);
     assert.match(joined, /base_url="https:\/\/openrouter\.ai\/api\/v1"/);
@@ -489,7 +501,9 @@ test('OpenAI API usa OPENAI_API_KEY senza creare un provider compatibile', () =>
       fakeClient(home, client);
       const r = resolveManagedEngine({ id: `${client}.openai-api`, label: 'OpenAI API', managed: { client, provider: 'openai-api', model: 'gpt-5.4' } }, { id: 'Dev' }, { home, env: { OPENAI_API_KEY: 'secret' } });
       assert.equal(r.ok, true);
-      assert.deepEqual(r.engine.env, { OPENAI_API_KEY: 'secret' });
+      assert.deepEqual(r.engine.env, client === 'codex-vl'
+        ? { OPENAI_API_KEY: 'secret', CODEX_APP_SERVER_IDENTITY_REQUIRED: '0' }
+        : { OPENAI_API_KEY: 'secret' });
       assert.deepEqual(r.engine.args, ['-m', 'gpt-5.4']);
       assert.equal(JSON.stringify(r.info).includes('secret'), false);
     }
@@ -612,7 +626,7 @@ test('Codex-VL Native: standard non forza bypass; unsafe e opt-in', () => {
     const r = resolveManagedEngine({ id: 'codex-vl.native', label: 'Codex', managed }, { id: 'Dev', prompt: 'bootstrap' }, { home });
     assert.equal(r.ok, true);
     assert.equal(r.engine.command, bin);
-    assert.deepEqual(r.engine.env, {});
+    assert.deepEqual(r.engine.env, { CODEX_APP_SERVER_IDENTITY_REQUIRED: '0' });
     assert.deepEqual(r.engine.args, ['bootstrap']);
     assert.equal(r.engine.promptMode, 'managed-argv');
     const unsafe = resolveManagedEngine({ id: 'codex-vl.native', label: 'Codex', managed: { ...managed, permissionPolicy: 'unsafe' } }, { id: 'Dev', prompt: 'bootstrap' }, { home });
@@ -1104,6 +1118,33 @@ test('launch ollama-cloud genera glm-5.3 con contesto e capacita reali (niente f
     assert.ok(entry, 'voce glm-5.3 assente dal catalogo generato');
     assert.equal(entry.context_window, 1000000, 'finestra non 1M');
     assert.deepEqual(entry.input_modalities, ['text'], 'la scheda non dichiara vision');
+    assert.equal(entry.default_reasoning_level, 'high', 'thinking non dichiarato');
+    assert.ok(entry.supported_reasoning_levels.some((l) => l.effort === 'max'), 'thinking massimo non dichiarato');
+    assert.equal(entry.supports_parallel_tool_calls, false, 'parallel deve restare conservativo');
+    assert.ok(r.engine.args.includes('model_context_window=1000000'));
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('launch ollama-cloud genera kimi-k3 con contesto 1M e vision nativa (niente fallback metadata)', async () => {
+  const home = tmp();
+  try {
+    fakeClient(home, 'codex-vl');
+    const secrets = path.join(home, 'providers.env');
+    fs.writeFileSync(secrets, 'OLLAMA_API_KEY=ollama-secret\n', { mode: 0o600 });
+    const r = resolveManagedEngine(
+      { id: 'codex-vl.ollama-cloud', label: 'Ollama', managed: { client: 'codex-vl', provider: 'ollama-cloud', model: 'kimi-k3' } },
+      { id: 'cella-kimik3' },
+      { home, providerSecretsPath: secrets, env: {} },
+    );
+    assert.equal(r.ok, true, `resolve fallito: ${r.reason}`);
+    const catArg = r.engine.args.find((a) => a.startsWith('model_catalog_json='));
+    assert.ok(catArg, 'catalogo generato assente dagli args');
+    const catPath = JSON.parse(catArg.slice('model_catalog_json='.length));
+    const cat = JSON.parse(fs.readFileSync(catPath, 'utf8'));
+    const entry = cat.models.find((m) => m.slug === 'kimi-k3');
+    assert.ok(entry, 'voce kimi-k3 assente dal catalogo generato');
+    assert.equal(entry.context_window, 1000000, 'finestra non 1M');
+    assert.deepEqual(entry.input_modalities, ['text', 'image'], 'vision dichiarata');
     assert.equal(entry.default_reasoning_level, 'high', 'thinking non dichiarato');
     assert.ok(entry.supported_reasoning_levels.some((l) => l.effort === 'max'), 'thinking massimo non dichiarato');
     assert.equal(entry.supports_parallel_tool_calls, false, 'parallel deve restare conservativo');

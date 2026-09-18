@@ -1,0 +1,79 @@
+# NC identity contract gate (piano v3 :114-117, :222-226).
+# Node Linux, isolated suite + NC-5 subset. Nessuna credenziale, nessun nodo di produzione.
+name: identity-gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['wip/**', 'develop', 'main']
+  pull_request:
+
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: install
+        run: npm ci --omit=optional
+      - name: isolated suite
+        run: |
+          set -o pipefail
+          node tests/run-isolated.js 2>&1 | tee /tmp/nc-isolated.log | tail -n 80
+      - name: cleanup processes
+        if: always()
+        run: |
+          pkill -f 'nexuscrew mcp' || true
+          pkill -f 'tests/run-isolated' || true
+
+  nc5:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: install
+        run: npm ci --omit=optional
+      - name: NC-5 subset
+        shell: bash
+        run: |
+          set -uo pipefail
+          node --test --test-reporter=tap tests/identity-terminal.test.js 2>&1 | tee /tmp/nc5.tap
+          node_rc=$?
+          set -e
+          if [ "$node_rc" -ne 0 ]; then
+            echo "NC-5 test runner exited $node_rc" >&2
+            exit "$node_rc"
+          fi
+
+          require_pass() {
+            grep -Eq "^ok [0-9]+ - $1$" /tmp/nc5.tap
+          }
+          require_skip() {
+            grep -Eq "^ok [0-9]+ - $1 # SKIP richiede VL C5/daemon/TUI \(pinnato 865fefceb5\.\.7339ffa0af; NC 760ac03\)$" /tmp/nc5.tap
+          }
+
+          require_pass tool_sees_bound_owner_and_cell
+          require_pass forged_claims_fail_before_effect
+          require_pass lease_pairing_designation_race_denies_old_binding
+
+          require_skip new_tui_b_never_reuses_a_identity
+          require_skip paired_live_preserves_host_a_origin
+          require_skip a_b_live_interleaving_isolation
+          require_skip resume_fork_and_new_incarnation_reauthorize
+          require_skip cwd_does_not_become_identity
+          require_skip stale_socket_and_restart_are_scoped
+          require_skip feature_register_contract_smoke
+
+          grep -Fx '# tests 10' /tmp/nc5.tap
+          grep -Fx '# pass 3' /tmp/nc5.tap
+          grep -Fx '# fail 0' /tmp/nc5.tap
+          grep -Fx '# skipped 7' /tmp/nc5.tap
+      - name: cleanup processes
+        if: always()
+        run: pkill -f 'nexuscrew mcp' || true

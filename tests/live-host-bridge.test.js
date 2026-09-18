@@ -33,6 +33,7 @@ const DIR = () => path.join(os.tmpdir(), `lh-bridge-${process.pid}-${Math.random
 const mockFleet = (cells) => Promise.resolve({
   available: true,
   status: async () => ({ available: true, cells }),
+  lease: { status: () => ({ state: 'live' }) },
 });
 
 // —— R30: verifica COMPORTAMENTALE dell'intestazione ——
@@ -138,6 +139,7 @@ async function boot({
   hubSnapshot = null,
   daemonOpts = {},
   slowHubMs = 0,
+  fleetOverride = null,
 } = {}) {
   const dir = DIR();
   const root = path.join(dir, 'NexusFiles');
@@ -159,7 +161,7 @@ async function boot({
     liveBridgeTimeoutMs: timeoutMs,
     filesRoot: root,
   };
-  const fleet = mockFleet(cells);
+  const fleet = fleetOverride || mockFleet(cells);
   const bridge = createLiveBridge({ cfg, fleetP: fleet, tokenGet: () => TOKEN, filesRoot: root });
 
   // readonly mutabile: il test designa a readonly OFF e poi accende il gate
@@ -206,7 +208,7 @@ async function boot({
 
   const base = `http://127.0.0.1:${port}`;
   const ctx = {
-    base, dir, root, socketPath, daemon, store, hubRequests,
+    base, dir, root, socketPath, daemon, store, hubRequests, bridge,
     setReadonly: (v) => { ro = v; },
     designate: async (cellId) => {
       const rev = (await (await fetch(`${base}/api/live-host`, { headers: H() })).json()).revision;
@@ -615,14 +617,14 @@ for (const lang of TEMPLATE_LANGS) {
 // costruisce un path inventato) — e l'esito e' 'missing', cioe' "assenza
 // legittima": il difetto si maschera esattamente nel ramo che dovrebbe
 // segnalarlo. Questo test scrive il file dove la sessione del roster dice
-// DAVVERO che sta (macair-Nova, non cloud-Nova) — e' rosso finche' il ponte
+// DAVVERO che sta (labhost-Nova, non cloud-Nova) — e' rosso finche' il ponte
 // non usa cell.tmuxSession invece di ricostruire il prefisso a mano.
 test('BUG prefisso: un device con prefisso diverso da cloud- deve trovare comunque il prompt', async () => {
-  const cwd = path.join(os.tmpdir(), 'cell-prefisso-macair');
-  const cells = [{ cell: 'Nova', active: true, tmux: true, tmuxSession: 'macair-Nova', engine: 'codex-vl.native', cwd }];
+  const cwd = path.join(os.tmpdir(), 'cell-prefisso-labhost');
+  const cells = [{ cell: 'Nova', active: true, tmux: true, tmuxSession: 'labhost-Nova', engine: 'codex-vl.native', cwd }];
   const ctx = await boot({ cells });
   try {
-    const promptDir = path.join(ctx.root, 'macair-Nova');
+    const promptDir = path.join(ctx.root, 'labhost-Nova');
     fs.mkdirSync(promptDir, { recursive: true });
     fs.writeFileSync(path.join(promptDir, 'LIVE_PROMPT.md'), 'Regole Live della cella Nova su questo device.\n');
 
@@ -636,9 +638,9 @@ test('BUG prefisso: un device con prefisso diverso da cloud- deve trovare comunq
     // 'missing' — l'assenza legittima che maschera il bug.
     assert.deepEqual(b.prompt, { applied: true, source: 'LIVE_PROMPT.md' });
     const istr = ctx.daemon.seen.threadStarts[0].developerInstructions;
-    // La via ai tool porta la sessione CHE IL ROSTER DICHIARA (macair-Nova),
+    // La via ai tool porta la sessione CHE IL ROSTER DICHIARA (labhost-Nova),
     // anche quando non segue la convenzione cloud-.
-    assert.equal(sessioneDichiarataNeiTool(istr), 'macair-Nova');
+    assert.equal(sessioneDichiarataNeiTool(istr), 'labhost-Nova');
     assert.ok(istr.endsWith('Regole Live della cella Nova su questo device.'));
   } finally { await ctx.close(); }
 });
@@ -857,4 +859,72 @@ test('hub e roster in disaccordo: tre condizioni, tre nomi distinti', async () =
     assert.equal(b.reason, 'host-cell-inactive',
       'la cella c\'e ma e spenta: si guarda la sessione, non l\'idoneita');
   } finally { await spenta.close(); }
+});
+
+// —— R4: riserva della tupla e commit atomico ——
+// Il thread ponte nasce durante una finestra in cui designazione e lease
+// possono cambiare: il ponte riserva la tupla osservata, avvia lo start
+// provvisorio e ricontrolla la stessa tupla prima di accettare il thread.
+// Se cambia, il thread resta scartato: nessun dispatch puo attraversarlo.
+
+function mutableFleet(cells) {
+  const state = { lease: { state: 'live', leaseId: 'lease-1', generation: 3 } };
+  // Promise, come mockFleet: le route live-host chiamano fleetP.catch().
+  return Promise.resolve({
+    available: true,
+    status: async () => ({ available: true, cells }),
+    lease: { status: () => state.lease },
+    _setLease: (value) => { state.lease = value; },
+  });
+}
+
+test('R4: designazione cambiata fra start provvisorio e commit → thread scartato, zero dispatch', async () => {
+  const ctx = await boot({ cells: CELLS_NATIVE('/tmp'), daemonOpts: { delayMs: 120 } });
+  try {
+    await ctx.designate('cloud-Alfa');
+    const promise = ctx.bridge.resolveForLive();
+    await aspettaEvento(() => ctx.daemon.seen.threadStarts.length === 1);
+    const changed = await ctx.designate('cloud-Beta');
+    assert.equal(changed.status, 200, 'barriera: la designazione deve cambiare davvero');
+    const out = await promise;
+    assert.equal(out.mode, 'none');
+    assert.equal(out.reason, 'designation-changed');
+    assert.equal(out.discardedThread, 'bridge-thread-0001', 'lo start provvisorio va dichiarato scartato');
+    assert.equal(ctx.daemon.seen.methods.includes('turn/start'), false);
+    assert.equal(ctx.daemon.seen.methods.includes('thread/resume'), false);
+  } finally { await ctx.close(); }
+});
+
+test('R4: lease cambiato fra start provvisorio e commit → thread scartato', async () => {
+  const fleetP = mutableFleet(CELLS_NATIVE('/tmp'));
+  const fleet = await fleetP;
+  const ctx = await boot({ cells: CELLS_NATIVE('/tmp'), fleetOverride: fleetP, daemonOpts: { delayMs: 120 } });
+  try {
+    await ctx.designate('cloud-Alfa');
+    const promise = ctx.bridge.resolveForLive();
+    await aspettaEvento(() => ctx.daemon.seen.threadStarts.length === 1);
+    fleet._setLease({ state: 'grace', leaseId: 'lease-1', generation: 3 });
+    const out = await promise;
+    assert.equal(out.mode, 'none');
+    assert.equal(out.reason, 'lease-changed');
+    assert.equal(out.discardedThread, 'bridge-thread-0001');
+    assert.equal(ctx.daemon.seen.methods.includes('turn/start'), false);
+  } finally { await ctx.close(); }
+});
+
+test('R4: tupla stabile → commit accettato; la riserva in-process serializza start concorrenti', async () => {
+  const ctx = await boot({ cells: CELLS_NATIVE('/tmp'), daemonOpts: { delayMs: 120 } });
+  try {
+    await ctx.designate('cloud-Alfa');
+    const first = ctx.bridge.resolveForLive();
+    await aspettaEvento(() => ctx.daemon.seen.threadStarts.length === 1);
+    const second = await ctx.bridge.resolveForLive();
+    const secondOut = await second;
+    assert.equal(secondOut.mode, 'none');
+    assert.equal(secondOut.reason, 'reservation-in-flight');
+    const out = await first;
+    assert.equal(out.mode, 'native');
+    assert.equal(out.threadId, 'bridge-thread-0001');
+    assert.equal(ctx.daemon.seen.threadStarts.length, 1, 'una sola start sotto riserva');
+  } finally { await ctx.close(); }
 });

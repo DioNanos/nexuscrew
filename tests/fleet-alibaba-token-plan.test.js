@@ -150,7 +150,10 @@ test('Codex-VL 0.144.7 profile is Responses-only and its catalog loads in the re
       managed: { client: 'codex-vl', provider: 'alibaba-token-plan', model: 'qwen3.8-max' },
     }, { id: 'Dev' }, { home, env: { ALIBABA_CODE_API_KEY: value, OPENAI_API_KEY: 'must-not-propagate' } });
     assert.equal(result.ok, true);
-    assert.deepEqual(result.engine.env, { ALIBABA_CODE_API_KEY: value });
+    assert.deepEqual(result.engine.env, {
+      ALIBABA_CODE_API_KEY: value,
+      CODEX_APP_SERVER_IDENTITY_REQUIRED: '0',
+    });
     const argv = result.engine.args.join('\n');
     assert.match(argv, /model_provider="alibaba_token_plan"/);
     assert.match(argv, /base_url="https:\/\/token-plan\.ap-southeast-1\.maas\.aliyuncs\.com\/compatible-mode\/v1"/);

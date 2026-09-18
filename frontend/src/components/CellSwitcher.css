@@ -94,3 +94,27 @@
 .nc-cell-switcher-peek:focus-visible {
   background: rgba(255, 255, 255, 0.06);
 }
+
+/* La stella delle celle nel selettore compatto: stesso linguaggio visivo della
+   home e della sidebar, bersaglio non piu' piccolo di 40px (e' un pollice). */
+.nc-cell-switcher-star {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 40px; min-height: 40px; padding: 0; flex: 0 0 auto;
+  background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .22);
+  color: #9aa89a; border-radius: 8px; font-size: 15px; line-height: 1; cursor: pointer;
+}
+/* Il comando che designa la cella ospite Live e' un'ICONA, non una frase: la
+   stessa scatola della stella pin (40px, stesso raggio), cosi' la riga resta su
+   una linea sola anche sullo stretto. Lo stato «questa cella e' l'host» usa lo
+   stesso accento della stella attiva; lo stato normale resta un contorno. */
+.nc-cell-switcher-act.nc-cell-switcher-host {
+  min-width: 40px; min-height: 40px; padding: 0; flex: 0 0 auto; border-radius: 8px;
+}
+.nc-cell-switcher-host.on {
+  color: #e8c547; border-color: rgba(232, 197, 71, .55); background: rgba(232, 197, 71, .08);
+}
+.nc-cell-switcher-star.on { color: #e8c547; border-color: rgba(232, 197, 71, .55); background: rgba(232, 197, 71, .08); }
+.nc-cell-switcher-star.designated { color: #c8a6ff; border-color: rgba(200, 166, 255, .6); background: rgba(200, 166, 255, .12); }
+.nc-cell-switcher-star.thread-present { color: #69b7ff; border-color: rgba(105, 183, 255, .6); background: rgba(105, 183, 255, .12); }
+.nc-cell-switcher-star.thread-active { color: #ff5a5a; border-color: rgba(255, 90, 90, .6); background: rgba(255, 90, 90, .12); }
+.nc-cell-switcher-star.thread-unknown { color: #e0b020; border-color: rgba(224, 176, 32, .6); background: rgba(224, 176, 32, .12); }

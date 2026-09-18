@@ -8,7 +8,7 @@ const path = require('node:path');
 const net = require('node:net');
 const { EventEmitter } = require('node:events');
 const { createLaunchBroker } = require('../lib/fleet/launch-broker.js');
-const { receivePayload, validPayload, main } = require('../lib/fleet/cell-exec.js');
+const { receivePayload, validPayload, main } = require('../lib/fleet/cell-exec.js');const { spawn } = require('node:child_process');
 
 test('launch broker delivers a payload once over a private Unix socket and leaves no secret file', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbroker-')); fs.chmodSync(home, 0o700);
@@ -271,4 +271,86 @@ test('launch broker revoke consuma il ticket senza attendere il TTL (cleanup su 
     broker.revoke(ticket.nonce);
     broker.revoke('nonexistent');
   } finally { await broker.close(); fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+// : percorso REALE daemon -> broker -> cell-exec, quello che lo smoke
+// run9-bis ha esercitato e che NESSUN test copriva. Il payload che il launcher
+// costruisce per una cella legacy (identityChannel:false, come lo produce
+// managed.js + runtime.js) attraversa il socket VERO del broker, viene
+// ricevuto da receivePayload VERO, validato da validPayload e infine eseguito.
+// Prima del fix si fermava a `invalid launch payload` -> la cella non nasceva.
+const CHILD_REPORT_D242 = `
+  const fs = require('node:fs');
+  const fds = {};
+  for (const fd of [3, 4]) {
+    try { const st = fs.fstatSync(fd); fds[fd] = { socket: st.isSocket(), fifo: st.isFIFO() }; }
+    catch (error) { fds[fd] = { closed: error.code }; }
+  }
+  fs.writeFileSync(process.argv[1], JSON.stringify({
+    identityFd: process.env.NEXUSCREW_IDENTITY_FD === undefined ? null : String(process.env.NEXUSCREW_IDENTITY_FD),
+    fds,
+  }));
+`;
+
+// Il payload non e' scritto a mano: ha la forma che il launcher produce davvero
+// (managed.js -> runtime.js:289-296). La superficie d'errore e' quella di
+// produzione (lib/fleet/cell-exec.js:768-770): `nexuscrew cell launch failed: ...`.
+async function launchThroughRealBroker(extraPayload = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbroker-d242-'));
+  fs.chmodSync(home, 0o700);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d242-child-'));
+  const out = path.join(dir, 'child.json');
+  const broker = createLaunchBroker({ home, launchTokenTtlMs: 15000 });
+  const errors = [];
+  let stdio = null;
+  const payload = {
+    command: process.execPath,
+    args: ['-e', CHILD_REPORT_D242, out],
+    env: { PATH: process.env.PATH },
+    supervise: { enabled: false },
+    ...extraPayload,
+  };
+  try {
+    const ticket = await broker.issue(payload);
+    const code = await main(['--socket', ticket.socketPath, '--nonce', ticket.nonce], {
+      spawn: (command, args, options) => { stdio = options.stdio; return spawn(command, args, options); },
+      process: new EventEmitter(),
+      writeError: (line) => errors.push(String(line)),
+    }).catch((error) => {
+      errors.push(`nexuscrew cell launch failed: ${error.message}`);
+      return 1;
+    });
+    const observed = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : null;
+    return { code, observed, errors, stdio };
+  } finally {
+    await broker.close();
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('percorso reale: payload legacy del launcher -> la cella nasce, nessun canale identita', async () => {
+  const { code, observed, errors, stdio } = await launchThroughRealBroker({ identityChannel: false });
+  assert.equal(code, 0, errors.join(''));
+  assert.ok(observed, `il figlio non ha mai riportato: ${errors.join('')}`);
+  assert.equal(stdio.length, 3, `nessuna pipe creata: stdio=${JSON.stringify(stdio)}`);
+  assert.equal(observed.identityFd, null);
+  assert.equal(observed.fds[3].socket === true && observed.fds[4].socket === true, false,
+    `il figlio non deve vedere la socketpair del canale: ${JSON.stringify(observed.fds)}`);
+});
+
+test('percorso reale: payload authority del launcher -> cella con fd 3:4', async () => {
+  const { code, observed, errors, stdio } = await launchThroughRealBroker({ identityChannel: true });
+  assert.equal(code, 0, errors.join(''));
+  assert.ok(observed, `il figlio non ha mai riportato: ${errors.join('')}`);
+  assert.deepEqual(stdio, ['inherit', 'inherit', 'inherit', 'pipe', 'pipe']);
+  assert.equal(observed.identityFd, '3:4');
+});
+
+test('percorso reale: payload senza la chiave (caller precedente) -> comportamento invariato', async () => {
+  const { code, observed, errors, stdio } = await launchThroughRealBroker();
+  assert.equal(code, 0, errors.join(''));
+  assert.ok(observed, `il figlio non ha mai riportato: ${errors.join('')}`);
+  assert.equal(stdio.length, 5);
+  assert.equal(observed.identityFd, '3:4');
 });
