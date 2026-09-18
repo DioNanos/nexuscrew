@@ -238,3 +238,33 @@ test('doctor: check termux-exec incluso nella suite e ok su Linux (nessuna regre
     assert.equal(r.code, 0); // off-Termux non fa fallire il doctor
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
+
+test('checkTmuxServerTermuxPreload: Permission denied = probe non verificabile, NON server assente', () => {
+  const { tmpRoot, prefix, home } = makeTermuxPrefix('libtermux-exec-ld-preload.so');
+  try {
+    const r = checkTmuxServerTermuxPreload({ PREFIX: prefix, HOME: home }, () => {
+      throw Object.assign(new Error('permission denied'), {
+        stderr: 'error connecting to /tmp/tmux-test/default (Permission denied)',
+      });
+    }, { platform: 'android', home });
+    assert.doesNotMatch(r.detail, /server tmux non attivo/);
+    assert.match(r.detail, /non verificabile/);
+    assert.match(r.detail, /Permission denied/);
+    assert.equal(r.ok, true);
+    assert.equal(r.warn, true);
+  } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
+});
+
+test('checkTmuxServerTermuxPreload: "no server running" resta server assente', () => {
+  const { tmpRoot, prefix, home } = makeTermuxPrefix('libtermux-exec-ld-preload.so');
+  try {
+    const r = checkTmuxServerTermuxPreload({ PREFIX: prefix, HOME: home }, () => {
+      throw Object.assign(new Error('no server'), {
+        stderr: 'no server running on /tmp/tmux-501/default',
+      });
+    }, { platform: 'android', home });
+    assert.match(r.detail, /server tmux non attivo/);
+    assert.equal(r.ok, true);
+    assert.equal(r.warn, true);
+  } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
+});

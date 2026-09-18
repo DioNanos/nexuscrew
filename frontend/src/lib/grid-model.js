@@ -312,6 +312,23 @@ export function mergeRemoteWithLocal(remote, local) {
       if (localByKey.has(k)) column.tiles[i] = localByKey.get(k);
     }
   }
+  // Anche le larghezze di colonna sono geometria locale: un resize tocca solo
+  // `width`, quindi il confronto per tile non basta. Ogni colonna remota che
+  // contiene almeno una tile conosciuta in locale adotta la larghezza della
+  // colonna locale che la contiene; le colonne nuove del remoto restano come
+  // arrivano.
+  const widthByKey = new Map();
+  for (const column of localNorm.columns) {
+    for (const tile of column.tiles) {
+      if (!widthByKey.has(refKey(tile))) widthByKey.set(refKey(tile), column.width);
+    }
+  }
+  for (const column of out.columns) {
+    for (const tile of column.tiles) {
+      const w = widthByKey.get(refKey(tile));
+      if (w != null) { column.width = w; break; }
+    }
+  }
   for (const [key, tile] of localByKey) {
     if (sessions(out).includes(key)) continue;
     out = addTileSmart(out, tile);
