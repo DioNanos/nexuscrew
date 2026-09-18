@@ -293,3 +293,28 @@ export function normalize(raw) {
   }
   return { columns: columns.filter((c) => c.tiles.length > 0) };
 }
+
+// D-267/F2: merge remoto ⊕ delta locale per il poll con finestra sporca.
+// Ciclo 1, senza base a tre vie: il remoto dà la struttura (colonne e tile che
+// esistono ancora), per le sessioni condivise vince la geometria LOCALE
+// (ultima modifica dell'utente, decisione D2), le tile presenti solo in locale
+// sono il delta e vengono aggiunte in coda con addTileSmart.
+export function mergeRemoteWithLocal(remote, local) {
+  let out = normalize(remote);
+  const localNorm = normalize(local);
+  const localByKey = new Map();
+  for (const column of localNorm.columns) {
+    for (const tile of column.tiles) localByKey.set(refKey(tile), tile);
+  }
+  for (const column of out.columns) {
+    for (let i = 0; i < column.tiles.length; i += 1) {
+      const k = refKey(column.tiles[i]);
+      if (localByKey.has(k)) column.tiles[i] = localByKey.get(k);
+    }
+  }
+  for (const [key, tile] of localByKey) {
+    if (sessions(out).includes(key)) continue;
+    out = addTileSmart(out, tile);
+  }
+  return out;
+}
