@@ -318,7 +318,10 @@ function alberoGithubReale() {
 
 function leggiDaGithub(rel) {
   const { execFileSync } = require('node:child_process');
-  return execFileSync('git', ['show', `github/main:${rel}`], { cwd: ROOT, encoding: 'utf8' });
+  // Il bundle dist supera il maxBuffer di default di execFileSync (1 MiB):
+  // senza budget esplicito il gate smette di leggere esattamente quando l'albero
+  // pubblico cresce. Stesso budget del verifier publish/verify-git-surface.js.
+  return execFileSync('git', ['show', `github/main:${rel}`], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 
 // I percorsi che, per la regola scritta in ROADMAP.md, non devono MAI comparire
