@@ -162,12 +162,13 @@ test('ogni origine si dichiara per quello che e\': le sei origini, una per una',
   assert.equal(info.credentialSource, 'local');
   assert.equal(info.credentialPath, '', 'lo store non e\' un file di chiavi');
 
-  // 3. providers.zsh
+  // 3. providers.zsh: e' un file anche lui, quindi porta la sua provenienza
   h = home(t);
-  keyFile(h, '.config/ai-shell/providers.zsh', `export ${CHIAVE}=da-shell\n`);
+  const shellPath = keyFile(h, '.config/ai-shell/providers.zsh', `export ${CHIAVE}=da-shell\n`);
   info = describeManaged(spec(), cfgCon(h));
   assert.equal(info.credentialSource, 'providers-shell');
-  assert.equal(info.credentialPath, '');
+  assert.equal(info.credentialPath, shellPath);
+  assert.match(info.credentialHash8, /^[0-9a-f]{8}$/);
 
   // 4. file canonico delle chiavi
   h = home(t);
@@ -316,4 +317,86 @@ test('doctor: fleet.json illeggibile non dichiara un problema che non ha visto',
   assert.equal(check.ok, true);
   assert.equal(check.warn, true);
   assert.match(check.detail, /non verificabile/);
+});
+
+// --- il confronto si estende alla SHELL -------------------------------------
+//
+// `providers.zsh` sta PIU' IN ALTO dei file di chiavi nella precedenza reale:
+// una shell stantia scavalca `ai.env` e produce lo stesso guasto del caso
+// Pixel, a parti invertite. Il confronto d'impronta vale quindi anche fra la
+// shell e i due file, con la stessa struttura.
+
+test('shell e file di chiavi con valori diversi: vince la shell, e il conflitto lo dice', (t) => {
+  const h = home(t);
+  const shell = keyFile(h, '.config/ai-shell/providers.zsh', `export ${CHIAVE}=valore-shell-stantio\n`);
+  const canonico = keyFile(h, '.config/keys/ai.env', `${CHIAVE}=valore-buono\n`);
+
+  const info = describeManaged(spec(), cfgCon(h));
+  assert.equal(info.configured, true);
+  assert.equal(info.credentialSource, 'providers-shell', 'la shell sta sopra i file: e\' lei a vincere');
+  assert.match(info.reason, /^ready \(credential PROV_TEST_KEY also defined in /);
+  assert.match(info.reason, new RegExp(canonico.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(info.reason, /with a different value\)$/);
+
+  const c = info.credentialConflict;
+  assert.ok(c, 'il conflitto fra shell e file e\' dichiarato come quello fra i due file');
+  assert.equal(c.winner.source, 'providers-shell');
+  assert.equal(c.winner.path, shell);
+  assert.equal(c.others.length, 1);
+  assert.equal(c.others[0].source, 'keys-file');
+  assert.equal(c.others[0].path, canonico);
+  assert.notEqual(c.winner.hash8, c.others[0].hash8);
+  assert.ok(!JSON.stringify(c).includes('valore-shell-stantio'));
+  assert.ok(!JSON.stringify(c).includes('valore-buono'));
+});
+
+test('shell e file di chiavi con lo STESSO valore: silenzio', (t) => {
+  const h = home(t);
+  keyFile(h, '.config/ai-shell/providers.zsh', `export ${CHIAVE}=valore-uguale\n`);
+  keyFile(h, '.config/keys/ai.env', `${CHIAVE}=valore-uguale\n`);
+  const info = describeManaged(spec(), cfgCon(h));
+  assert.equal(info.credentialSource, 'providers-shell');
+  assert.equal(info.reason, 'ready', 'la stessa chiave in due posti non e\' un problema da dire');
+  assert.equal(info.credentialConflict, null);
+});
+
+test('solo la shell: nessun conflitto, e la sorgente e\' providers-shell', (t) => {
+  const h = home(t);
+  const shell = keyFile(h, '.config/ai-shell/providers.zsh', `export ${CHIAVE}=solo-shell\n`);
+  const info = describeManaged(spec(), cfgCon(h));
+  assert.equal(info.credentialSource, 'providers-shell');
+  assert.equal(info.reason, 'ready');
+  assert.equal(info.credentialConflict, null);
+  assert.ok(shell);
+});
+
+test('un conflitto in TRE: shell, ai.env e secure/.env tutti diversi', (t) => {
+  const h = home(t);
+  const shell = keyFile(h, '.config/ai-shell/providers.zsh', `export ${CHIAVE}=tre-uno\n`);
+  const canonico = keyFile(h, '.config/keys/ai.env', `${CHIAVE}=tre-due\n`);
+  const secure = keyFile(h, '.config/secure/.env', `${CHIAVE}=tre-tre\n`);
+  const info = describeManaged(spec(), cfgCon(h));
+  assert.equal(info.credentialSource, 'providers-shell');
+  const c = info.credentialConflict;
+  assert.ok(c);
+  assert.equal(c.winner.path, shell);
+  assert.deepStrictEqual(c.others.map((o) => o.path).sort(), [canonico, secure].sort(),
+    'tutte le sorgenti in disaccordo sono nominate, non solo la prima');
+  for (const o of c.others) assert.match(o.hash8, /^[0-9a-f]{8}$/);
+  for (const v of ['tre-uno', 'tre-due', 'tre-tre']) {
+    assert.ok(!JSON.stringify(c).includes(v), 'nessun valore nel conflitto');
+  }
+});
+
+test('doctor: il conflitto con la shell finisce nella stessa sezione', async (t) => {
+  const { h, defsPath } = await fleetConMotore(t);
+  keyFile(h, '.config/ai-shell/providers.zsh', `export ${CHIAVE}=valore-shell-stantio\n`);
+  keyFile(h, '.config/keys/ai.env', `${CHIAVE}=valore-buono\n`);
+  const check = checkEngineCredentials(h, defsPath, true);
+  assert.equal(check.ok, false, 'la cella parte con la chiave della shell, che e\' quella stantia');
+  assert.match(check.detail, /from providers-shell \(/);
+  assert.match(check.detail, /valore DIVERSO/);
+  assert.match(check.detail, /ai\.env/);
+  assert.ok(!check.detail.includes('valore-shell-stantio'));
+  assert.ok(!check.detail.includes('valore-buono'));
 });

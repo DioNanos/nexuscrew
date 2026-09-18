@@ -82,11 +82,14 @@ test('secure/.env overrides ai.env, and the disagreement is reported with hashes
     fs.writeFileSync(canonical, 'API_KEY=revoked-old-value\n', { mode: 0o600 });
     fs.writeFileSync(secure, 'API_KEY=good-new-value\n', { mode: 0o600 });
 
-    const out = { blocked: [] };
-    const values = parseProviderKeyFiles({ providerKeysPath: canonical, providerSecurePath: secure }, home, out);
+    // Il conflitto e' una proprieta' della CATENA di precedenza (shell + i due
+    // file), non della sola coppia: si interroga credentialSources, che e' dove
+    // la catena si legge.
+    const values = parseProviderKeyFiles({ providerKeysPath: canonical, providerSecurePath: secure }, home);
     assert.equal(values.API_KEY, 'good-new-value', 'l\'ultimo file vince: e\' la precedenza dichiarata');
 
-    const conflicts = out.conflicts || [];
+    const sources = credentialSources({ home, providerKeysPath: canonical, providerSecurePath: secure }, home);
+    const conflicts = sources.conflicts || [];
     assert.equal(conflicts.length, 1, 'il disaccordo fra i due file va dichiarato');
     assert.equal(conflicts[0].envKey, 'API_KEY');
     assert.equal(conflicts[0].winner.path, secure);
@@ -100,8 +103,7 @@ test('secure/.env overrides ai.env, and the disagreement is reported with hashes
 
     // Stesso valore nei due file: nessun conflitto da segnalare.
     fs.writeFileSync(canonical, 'API_KEY=good-new-value\n', { mode: 0o600 });
-    const quiet = { blocked: [] };
-    parseProviderKeyFiles({ providerKeysPath: canonical, providerSecurePath: secure }, home, quiet);
+    const quiet = credentialSources({ home, providerKeysPath: canonical, providerSecurePath: secure }, home);
     assert.deepEqual(quiet.conflicts, [], 'la stessa chiave in due posti non e\' un conflitto');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
