@@ -1,5 +1,5 @@
 'use strict';
-// D-233: provisioning dell'authority mode. File 0600 in dir 0700, credenziali
+// : provisioning dell'authority mode. File 0600 in dir 0700, credenziali
 // distinte, idempotenza senza --force, config scritta o stampata. Nessun
 // valore di credenziale nei ritorni.
 const { test } = require('node:test');

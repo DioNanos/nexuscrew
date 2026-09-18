@@ -168,7 +168,7 @@ test('tmux server probes: server assente rinvia senza falso FAIL', () => {
   } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
 });
 
-test('tmux server probes: variabile assente (unknown variable) non e\' «server non attivo» (D-264)', () => {
+test('tmux server probes: variabile assente (unknown variable) non e\' «server non attivo» ()', () => {
   // Con il server ATTIVO `tmux show-environment -g LD_PRELOAD` esce 1 e
   // scrive "unknown variable" su stderr: execFileSync lo rigetta come errore
   // (come fa per "no server running") ma i due esiti non sono la stessa cosa.

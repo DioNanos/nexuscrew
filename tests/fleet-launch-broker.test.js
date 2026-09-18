@@ -273,7 +273,7 @@ test('launch broker revoke consuma il ticket senza attendere il TTL (cleanup su 
   } finally { await broker.close(); fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-// D-242: percorso REALE daemon -> broker -> cell-exec, quello che lo smoke
+// : percorso REALE daemon -> broker -> cell-exec, quello che lo smoke
 // run9-bis ha esercitato e che NESSUN test copriva. Il payload che il launcher
 // costruisce per una cella legacy (identityChannel:false, come lo produce
 // managed.js + runtime.js) attraversa il socket VERO del broker, viene
@@ -329,7 +329,7 @@ async function launchThroughRealBroker(extraPayload = {}) {
   }
 }
 
-test('D-242 percorso reale: payload legacy del launcher -> la cella nasce, nessun canale identita', async () => {
+test('percorso reale: payload legacy del launcher -> la cella nasce, nessun canale identita', async () => {
   const { code, observed, errors, stdio } = await launchThroughRealBroker({ identityChannel: false });
   assert.equal(code, 0, errors.join(''));
   assert.ok(observed, `il figlio non ha mai riportato: ${errors.join('')}`);
@@ -339,7 +339,7 @@ test('D-242 percorso reale: payload legacy del launcher -> la cella nasce, nessu
     `il figlio non deve vedere la socketpair del canale: ${JSON.stringify(observed.fds)}`);
 });
 
-test('D-242 percorso reale: payload authority del launcher -> cella con fd 3:4', async () => {
+test('percorso reale: payload authority del launcher -> cella con fd 3:4', async () => {
   const { code, observed, errors, stdio } = await launchThroughRealBroker({ identityChannel: true });
   assert.equal(code, 0, errors.join(''));
   assert.ok(observed, `il figlio non ha mai riportato: ${errors.join('')}`);
@@ -347,7 +347,7 @@ test('D-242 percorso reale: payload authority del launcher -> cella con fd 3:4',
   assert.equal(observed.identityFd, '3:4');
 });
 
-test('D-242 percorso reale: payload senza la chiave (caller precedente) -> comportamento invariato', async () => {
+test('percorso reale: payload senza la chiave (caller precedente) -> comportamento invariato', async () => {
   const { code, observed, errors, stdio } = await launchThroughRealBroker();
   assert.equal(code, 0, errors.join(''));
   assert.ok(observed, `il figlio non ha mai riportato: ${errors.join('')}`);

@@ -225,7 +225,7 @@ test('managed matrix: Z.AI su Claude e codex-vl (Responses nativo); Ollama Cloud
   assert.ok(normalizeManagedSpec({ client: 'claude', provider: 'ollama-cloud' }));
   assert.ok(normalizeManagedSpec({ client: 'codex-vl', provider: 'ollama-cloud' }));
   const ollama = CATALOG.find((p) => p.id === 'codex-vl.ollama-cloud');
-  // D-202: il default degli engine ollama-cloud e' deepseek-v4.1-flash.
+  // : il default degli engine ollama-cloud e' deepseek-v4.1-flash.
   assert.equal(ollama.model, 'deepseek-v4.1-flash');
   assert.ok(ollama.models.includes('deepseek-v4-pro'));
   assert.ok(ollama.models.includes('deepseek-v4.1-flash'));

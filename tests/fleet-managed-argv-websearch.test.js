@@ -1,5 +1,5 @@
 'use strict';
-// Regressione argv web_search (D-195): il tool built-in web_search deve essere
+// Regressione argv web_search (): il tool built-in web_search deve essere
 // disabilitato SOLO per codex/codex-vl su ollama-cloud (l'endpoint Responses
 // di Ollama lo rifiuta prima del primo turno); per ogni altro provider il
 // argv resta identico a prima della patch. Snapshot dei pair `-c` preso

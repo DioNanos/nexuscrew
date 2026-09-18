@@ -121,7 +121,7 @@ test('un engine che usa un modello dichiarato si salva; senza dichiarazione no',
   assert.ok(letto(w).engines.some((e) => e.id === 'e3'));
 });
 
-test('stesso modello su due engine: ritirarlo su uno non blocca l\'altro (D-269)', async (t) => {
+test('stesso modello su due engine: ritirarlo su uno non blocca l\'altro ()', async (t) => {
   // Il filtro "in uso" guardava managed.model su TUTTI gli engine: una
   // dichiarazione orfana su engineA veniva bloccata (409) da un engine che
   // risolveva lo stesso id dalla PROPRIA dichiarazione su engineB. Le chiavi

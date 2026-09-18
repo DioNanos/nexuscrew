@@ -152,7 +152,7 @@ test('identity required: cfg con credenziali esplicite identiche -> lancio rifiu
   assert.ok(m.lines.some((l) => l.includes('identical')), m.lines);
 });
 
-// D-242: il buco era che NESSUN test alimentava `validPayload()` col payload
+// : il buco era che NESSUN test alimentava `validPayload()` col payload
 // REALE prodotto dal launcher. `managed.js` (:2233) aggiunge `identityChannel`
 // e `runtime.js` (:289-296) lo mette nel payload del broker, ma la whitelist
 // di `cell-exec.js` (:114) elencava solo command/args/env/supervise/
@@ -171,7 +171,7 @@ function payloadDalLauncher(engine, extra = {}) {
   };
 }
 
-test('D-242: payload legacy prodotto dal launcher -> validPayload true', () => {
+test(': payload legacy prodotto dal launcher -> validPayload true', () => {
   const r = resolve(mondo());
   assert.equal(r.ok, true);
   assert.equal(r.engine.identityChannel, false);
@@ -180,7 +180,7 @@ test('D-242: payload legacy prodotto dal launcher -> validPayload true', () => {
   assert.equal(validPayload(payload), true, 'il payload reale in legacy deve essere accettato');
 });
 
-test('D-242: payload authority prodotto dal launcher -> validPayload true', () => {
+test(': payload authority prodotto dal launcher -> validPayload true', () => {
   const r = resolve(mondo(), {
     fleetIdentityMode: 'authority',
     identityDaemonCredential: 'd'.repeat(32),
@@ -191,7 +191,7 @@ test('D-242: payload authority prodotto dal launcher -> validPayload true', () =
   assert.equal(validPayload(payloadDalLauncher(r.engine)), true);
 });
 
-test('D-242: identityChannel non booleano -> payload invalido', () => {
+test(': identityChannel non booleano -> payload invalido', () => {
   const base = { command: '/bin/true', args: [], env: { PATH: '/bin' }, supervise: { enabled: false } };
   assert.equal(validPayload({ ...base, identityChannel: false }), true);
   assert.equal(validPayload({ ...base, identityChannel: true }), true);
@@ -200,7 +200,7 @@ test('D-242: identityChannel non booleano -> payload invalido', () => {
   assert.equal(validPayload({ ...base, identityChannel: null }), false);
 });
 
-test('D-242: chiamante precedente senza la chiave -> ancora accettato', () => {
+test(': chiamante precedente senza la chiave -> ancora accettato', () => {
   const base = { command: '/bin/true', args: [], env: { PATH: '/bin' }, supervise: { enabled: false } };
   assert.equal(validPayload(base), true);
 });

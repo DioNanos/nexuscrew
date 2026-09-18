@@ -1,5 +1,5 @@
 'use strict';
-// D-241 (lato NC): una cella STANDALONE deliberata non deve ricevere il canale
+// (lato NC): una cella STANDALONE deliberata non deve ricevere il canale
 // identita'. Prima il supervisore aggiungeva SEMPRE fd 3:4 +
 // NEXUSCREW_IDENTITY_FD, anche quando il launcher aveva risolto
 // CODEX_APP_SERVER_IDENTITY_REQUIRED=0: il child avviava l'handshake contro un

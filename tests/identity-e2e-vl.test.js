@@ -1,6 +1,6 @@
 'use strict';
 
-// D-199 NC ↔ VL harness. The NC proof remains the authority-owned opaque
+// NC ↔ VL harness. The NC proof remains the authority-owned opaque
 // payload inside the VL IdentityProof; the harness only supplies the
 // non-authoritative structural claims required by the VL bind boundary.
 
@@ -251,9 +251,9 @@ function proofFor(harness, options = {}) {
   return vlProof(harness.challenge, harness.rawProof, harness.subject, { rawOverride: raw });
 }
 
-// These six D-199 negative cases deliberately use the production challenge
+// These six negative cases deliberately use the production challenge
 // from InitializeResponse. They must not depend on D174_IDENTITY_CHALLENGE_FILE.
-test('D-199 case 2 forged HMAC is rejected on production path', async (t) => {
+test('case 2 forged HMAC is rejected on production path', async (t) => {
   const harness = await startHarness(t, { fixture: false });
   if (!harness) return;
   const result = await bindProof(harness, proofFor(harness, { raw: { proof: 'f'.repeat(64) } }));
@@ -261,7 +261,7 @@ test('D-199 case 2 forged HMAC is rejected on production path', async (t) => {
   assert.equal(harness.verifyCalls(), 1);
 });
 
-test('D-199 case 3 tampered claims are rejected on production path', async (t) => {
+test('case 3 tampered claims are rejected on production path', async (t) => {
   const harness = await startHarness(t, { fixture: false });
   if (!harness) return;
   const result = await bindProof(harness, proofFor(harness, { raw: { cellId: 'tampered' } }));
@@ -269,7 +269,7 @@ test('D-199 case 3 tampered claims are rejected on production path', async (t) =
   assert.equal(harness.verifyCalls(), 1);
 });
 
-test('D-199 case 4 replay is rejected on production path', async (t) => {
+test('case 4 replay is rejected on production path', async (t) => {
   const harness = await startHarness(t, { fixture: false });
   if (!harness) return;
   const proof = proofFor(harness);
@@ -280,7 +280,7 @@ test('D-199 case 4 replay is rejected on production path', async (t) => {
   assert.equal(harness.verifyCalls(), 1);
 });
 
-test('D-199 case 5 authority stopped within verify timeout is rejected on production path', async (t) => {
+test('case 5 authority stopped within verify timeout is rejected on production path', async (t) => {
   const harness = await startHarness(t, { authorityAlive: false, fixture: false });
   if (!harness) return;
   const result = await bindProof(harness, proofFor(harness));
@@ -288,7 +288,7 @@ test('D-199 case 5 authority stopped within verify timeout is rejected on produc
   assert.equal(harness.verifyCalls(), 0);
 });
 
-test('D-199 case 6 identity required OFF does not call verify on production path', async (t) => {
+test('case 6 identity required OFF does not call verify on production path', async (t) => {
   const harness = await startHarness(t, { required: false, fixture: false });
   if (!harness) return;
   const result = await bindProof(harness, proofFor(harness));
@@ -296,7 +296,7 @@ test('D-199 case 6 identity required OFF does not call verify on production path
   assert.equal(harness.verifyCalls(), 0);
 });
 
-test('D-199 case 7 valid claims with unauthenticated proof are rejected on production path', async (t) => {
+test('case 7 valid claims with unauthenticated proof are rejected on production path', async (t) => {
   const harness = await startHarness(t, { fixture: false });
   if (!harness) return;
   const result = await bindProof(harness, proofFor(harness, { raw: { proof: 'not-authenticated' } }));
@@ -304,7 +304,7 @@ test('D-199 case 7 valid claims with unauthenticated proof are rejected on produ
   assert.equal(harness.verifyCalls(), 1);
 });
 
-test('D-183 production path challenge binds without the test fixture', async (t) => {
+test('production path challenge binds without the test fixture', async (t) => {
   const harness = await startHarness(t, { fixture: false });
   if (!harness) return;
   assert.deepEqual(Object.keys(harness.initialized.result?.identityChallenge ?? {}).sort(), [
