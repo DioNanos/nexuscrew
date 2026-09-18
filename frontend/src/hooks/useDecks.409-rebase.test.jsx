@@ -15,7 +15,7 @@ import { emptyLayout } from '../lib/grid-model.js';
 
 const localId = 'a'.repeat(32);
 
-// D-267/F1-F4: finestra dirty contro un deck che un'altra finestra ha salvato.
+// Finestra dirty contro un deck che un'altra finestra ha salvato.
 // 409 = conflitto di revisione: il hook deve ribattere il layout LOCALE sulla
 // revisione remota (vince l'ultima modifica dell'utente) e ritentare UNA volta;
 // al secondo 409 l'errore deve restare visibile con l'azione di ricarica.

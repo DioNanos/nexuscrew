@@ -4,7 +4,7 @@ import { mergeRemoteWithLocal, refKey, sessions } from './grid-model.js';
 const tile = (session) => ({ session, height: 1 });
 const col = (tiles, width = 1) => ({ width, tiles });
 
-// D-267/F2: merge remoto ⊕ delta locale senza base a tre vie.
+// Merge remoto ⊕ delta locale senza base a tre vie.
 // Identità tile = refKey; il remoto dà la struttura, per le sessioni condivise
 // vince la geometria locale, le tile presenti solo in locale sono il delta.
 describe('mergeRemoteWithLocal', () => {

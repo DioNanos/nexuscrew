@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 
-// D-267/F3: il gesto di resize deve avere un "fine": a pointerup/pointercancel
+// Il gesto di resize deve avere un "fine": a pointerup/pointercancel
 // il grid chiede UN solo salvataggio (saveNow) invece di affidarsi al debounce.
 vi.mock('./GridTile.jsx', () => ({ default: () => <div data-testid="tile-stub" /> }));
 
