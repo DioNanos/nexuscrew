@@ -223,7 +223,7 @@ test('ora /notify e /asks attraversano: events e push restano locali', () => {
   const fed = require('../lib/proxy/federation.js');
   assert.equal(fed.allowedResource('/notify', 'POST'), true);
   assert.equal(fed.allowedResource('/notify', 'GET'), false);
-  // D-268: la DOMANDA (nc_ask) e' federata come la notify — e' testo che appare
+  // La DOMANDA (nc_ask) e' federata come la notify: e' testo che appare
   // sulla UI dell'owner, non un'esecuzione. Prima NON attraversava, e questo
   // test lo asseriva: era la descrizione del difetto, non un contratto da
   // difendere. Solo POST: la GET resta locale, perche' lo snapshot degli ask e'

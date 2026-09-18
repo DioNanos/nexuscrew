@@ -237,7 +237,7 @@ describe('federated ask cards: identity per owner and reload', () => {
   });
 });
 
-it('Auditor canonical identity deduplicates direct alias and feed copy',async()=>{
+it('canonical identity deduplicates the direct alias and the feed copy',async()=>{
  const owner='a'.repeat(32),question='same canonical question';
  getAsks.mockResolvedValueOnce({asks:[{id:'11111111',ownerId:owner,ownerAskId:'22222222',originNode:owner,question,session:'cloud-dev',options:[]}]});
  const {getFeedState}=await import('../lib/api.js');getFeedState.mockResolvedValueOnce({views:[{ownerId:owner,askReplyAccess:true,asks:[{id:'22222222',question,session:'cloud-dev',options:[]}]}]});
