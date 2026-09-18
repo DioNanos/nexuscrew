@@ -293,3 +293,45 @@ export function normalize(raw) {
   }
   return { columns: columns.filter((c) => c.tiles.length > 0) };
 }
+
+// Merge remoto ⊕ delta locale per il poll con finestra sporca.
+// Ciclo 1, senza base a tre vie: il remoto dà la struttura (colonne e tile che
+// esistono ancora), per le sessioni condivise vince la geometria LOCALE
+// (ultima modifica dell'utente, decisione D2), le tile presenti solo in locale
+// sono il delta e vengono aggiunte in coda con addTileSmart.
+export function mergeRemoteWithLocal(remote, local) {
+  let out = normalize(remote);
+  const localNorm = normalize(local);
+  const localByKey = new Map();
+  for (const column of localNorm.columns) {
+    for (const tile of column.tiles) localByKey.set(refKey(tile), tile);
+  }
+  for (const column of out.columns) {
+    for (let i = 0; i < column.tiles.length; i += 1) {
+      const k = refKey(column.tiles[i]);
+      if (localByKey.has(k)) column.tiles[i] = localByKey.get(k);
+    }
+  }
+  // Anche le larghezze di colonna sono geometria locale: un resize tocca solo
+  // `width`, quindi il confronto per tile non basta. Ogni colonna remota che
+  // contiene almeno una tile conosciuta in locale adotta la larghezza della
+  // colonna locale che la contiene; le colonne nuove del remoto restano come
+  // arrivano.
+  const widthByKey = new Map();
+  for (const column of localNorm.columns) {
+    for (const tile of column.tiles) {
+      if (!widthByKey.has(refKey(tile))) widthByKey.set(refKey(tile), column.width);
+    }
+  }
+  for (const column of out.columns) {
+    for (const tile of column.tiles) {
+      const w = widthByKey.get(refKey(tile));
+      if (w != null) { column.width = w; break; }
+    }
+  }
+  for (const [key, tile] of localByKey) {
+    if (sessions(out).includes(key)) continue;
+    out = addTileSmart(out, tile);
+  }
+  return out;
+}

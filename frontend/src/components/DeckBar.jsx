@@ -15,6 +15,8 @@ import './DeckBar.css';
 export default function DeckBar({
   decks = [], currentDeck = 'local:main', onCreate, onRename, onDelete, onReorder, onOpenWindow, onNavigate,
   saveState = 'idle', error = '', sidebarVisible, onToggleSidebar,
+  // Conflitto di revisione irrisolvibile — l'utente decide se ricaricare.
+  conflict = false, onReloadDeck = null,
 }) {
   useLang();
   const { isCollapsed, toggle } = useDeckBarCollapse();
@@ -179,6 +181,7 @@ export default function DeckBar({
         {saveState === 'saving' ? t('saving') : saveState === 'saved' ? t('saved') : t('deck-autosave')}
       </span>
       {(localErr || error) && <span className="nc-deck-error">{localErr || error}</span>}
+      {conflict && onReloadDeck && <button className="nc-deck-reload" onClick={onReloadDeck}>{t('reload')}</button>}
       {blockedUrl && <button className="nc-deck-fallback" onClick={() => onOpenWindow && onOpenWindow(blockedUrl)}>{t('popup-blocked')}</button>}
     </div>
   );

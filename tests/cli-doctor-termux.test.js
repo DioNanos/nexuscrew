@@ -168,6 +168,29 @@ test('tmux server probes: server assente rinvia senza falso FAIL', () => {
   } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
 });
 
+test('tmux server probes: variabile assente (unknown variable) non e\' «server non attivo» ()', () => {
+  // Con il server ATTIVO `tmux show-environment -g LD_PRELOAD` esce 1 e
+  // scrive "unknown variable" su stderr: execFileSync lo rigetta come errore
+  // (come fa per "no server running") ma i due esiti non sono la stessa cosa.
+  // L'assenza della variabile merita un WARN col rimedio, non l'esito
+  // «server non attivo».
+  const { tmpRoot, prefix, home } = makeTermuxPrefix('libtermux-exec.so');
+  try {
+    const absent = () => {
+      const err = new Error('Command failed: tmux show-environment -g LD_PRELOAD\nunknown variable');
+      err.status = 1;
+      err.stderr = 'unknown variable';
+      throw err;
+    };
+    const r = checkTmuxServerTermuxPreload({ PREFIX: prefix, HOME: home }, absent, { platform: 'termux', home });
+    assert.equal(r.ok, true, 'la variabile assente non deve fare fallire il doctor');
+    assert.equal(r.warn, true);
+    assert.doesNotMatch(r.detail, /non attivo/, 'il server e\' attivo: il messaggio non deve dire il contrario');
+    assert.match(r.detail, /unknown variable|LD_PRELOAD/);
+    assert.match(r.detail, /set-environment/, 'il rimedio deve essere azionabile');
+  } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
+});
+
 test('alternate screen doctor warning: soglia history-limit e opt-out esplicito', () => {
   const low = checkAlternateScreenHistory(false, (_bin, args) => {
     assert.deepEqual(args, ['show-options', '-g', 'history-limit']);
@@ -214,4 +237,34 @@ test('doctor: check termux-exec incluso nella suite e ok su Linux (nessuna regre
     assert.equal(termuxCheck.ok, true);
     assert.equal(r.code, 0); // off-Termux non fa fallire il doctor
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('checkTmuxServerTermuxPreload: Permission denied = probe non verificabile, NON server assente', () => {
+  const { tmpRoot, prefix, home } = makeTermuxPrefix('libtermux-exec-ld-preload.so');
+  try {
+    const r = checkTmuxServerTermuxPreload({ PREFIX: prefix, HOME: home }, () => {
+      throw Object.assign(new Error('permission denied'), {
+        stderr: 'error connecting to /tmp/tmux-test/default (Permission denied)',
+      });
+    }, { platform: 'android', home });
+    assert.doesNotMatch(r.detail, /server tmux non attivo/);
+    assert.match(r.detail, /non verificabile/);
+    assert.match(r.detail, /Permission denied/);
+    assert.equal(r.ok, true);
+    assert.equal(r.warn, true);
+  } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
+});
+
+test('checkTmuxServerTermuxPreload: "no server running" resta server assente', () => {
+  const { tmpRoot, prefix, home } = makeTermuxPrefix('libtermux-exec-ld-preload.so');
+  try {
+    const r = checkTmuxServerTermuxPreload({ PREFIX: prefix, HOME: home }, () => {
+      throw Object.assign(new Error('no server'), {
+        stderr: 'no server running on /tmp/tmux-501/default',
+      });
+    }, { platform: 'android', home });
+    assert.match(r.detail, /server tmux non attivo/);
+    assert.equal(r.ok, true);
+    assert.equal(r.warn, true);
+  } finally { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
 });

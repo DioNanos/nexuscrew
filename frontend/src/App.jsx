@@ -859,12 +859,14 @@ export default function App() {
           onReorder={deckStore.reorder}
           onOpenWindow={openDeckWindow} onNavigate={selectDeck}
           saveState={deckStore.saveState} error={deckStore.error}
+          conflict={deckStore.conflict} onReloadDeck={deckStore.reloadCurrent}
           sidebarVisible={sidebarVisible}
           onToggleSidebar={!isMainDeck ? () => setSideHidden((v) => !v) : null}
         />
         <GridView
           layout={layout}
           onLayoutChange={setLayout}
+          onResizeEnd={() => { deckStore.saveNow(); }}
           token={token}
           readonly={roDefault}
           sessionsAlive={sessionsAlive}

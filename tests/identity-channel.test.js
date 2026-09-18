@@ -672,7 +672,7 @@ test('generation transition is announced and accepted on the live lease (R1)', a
   assert.equal(denied.reason, 'revoked');
 });
 
-// ===== D-199 — canale verify (verifica online presso l'authority) =====
+// ===== — canale verify (verifica online presso l'authority) =====
 
 function verifyFrame(requestId, generation, proof, v = 1, expected) {
   return {
@@ -684,7 +684,7 @@ function verifyFrame(requestId, generation, proof, v = 1, expected) {
   };
 }
 
-// D-199 v1.1: tupla attesa del daemon (nonce emesso + connessione).
+// v1.1: tupla attesa del daemon (nonce emesso + connessione).
 function tupleFor(proof) {
   return {
     nonce: proof.challenge,
@@ -932,7 +932,7 @@ test('identity channel: a revoked verify closes the channel', async (t) => {
   assert.equal(channel.isClosed(), true);
 });
 
-// ===== D-199 v1.1 — claims completi + verifica legata alla challenge =====
+// ===== v1.1 — claims completi + verifica legata alla challenge =====
 
 test('verify channel v1.1: claims carry every authority-owned binding field', async (t) => {
   const fix = await leaseFixture(t);

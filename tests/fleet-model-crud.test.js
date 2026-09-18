@@ -120,3 +120,35 @@ test('un engine che usa un modello dichiarato si salva; senza dichiarazione no',
   await fleet.defineEngine(engine);
   assert.ok(letto(w).engines.some((e) => e.id === 'e3'));
 });
+
+test('stesso modello su due engine: ritirarlo su uno non blocca l\'altro ()', async (t) => {
+  // Il filtro "in uso" guardava managed.model su TUTTI gli engine: una
+  // dichiarazione orfana su engineA veniva bloccata (409) da un engine che
+  // risolveva lo stesso id dalla PROPRIA dichiarazione su engineB. Le chiavi
+  // di risoluzione di un engine sono {e.id, profilo}: il 409 tocca solo chi
+  // le contiene.
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineModel({ id: 'dup', engine: 'engine-a' });
+  await fleet.defineModel({ id: 'dup', engine: 'e2' });
+  await fleet.defineEngine({
+    id: 'e2', label: 'E2',
+    managed: { client: 'claude', provider: 'alibaba-token-plan', model: 'dup', permissionPolicy: 'unsafe' },
+  });
+
+  // La dichiarazione orfana su engine-a non serve a nessuno: si ritira.
+  await fleet.removeModel('dup', 'engine-a');
+  assert.deepEqual(
+    letto(w).models,
+    [{ id: 'dup', engine: 'e2' }],
+    'la dichiarazione dell\'engine che lo usa resta intatta',
+  );
+  assert.ok(letto(w).engines.some((e) => e.id === 'e2'), 'engineB non toccato');
+
+  // E il ritiro sul motore che lo USA resta bloccato via engine-id.
+  await assert.rejects(() => fleet.removeModel('dup', 'e2'), (e) => {
+    assert.equal(e.status, 409);
+    assert.match(e.message, /e2/);
+    return true;
+  });
+});
