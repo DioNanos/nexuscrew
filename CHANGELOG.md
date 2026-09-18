@@ -9,7 +9,6 @@ All notable changes to NexusCrew are tracked here.
 ## 0.9.31 — 2026-09-18
 
 - **Deck layout edits survive with several windows open.** A save now rebases and retries instead of failing: the layout is merged per window, an in-flight save is awaited before the next one, a drag that ends with the pointer still down flushes its size, and a rejected save says so in the log instead of losing the change silently.
-- **A question asked by a node now reaches the operator wherever they are.** The ask travels to the owner's other nodes like a notification does, is registered there as belonging to the node that asked, and is never sent back out; the answer returns to the node that owns the cell and is pasted there. One answer wins. The local relay route also parses its request body, which it never did.
 - **A model in use is refused by the engine that declares it.** Removing a model now compares against the declaring engine's keys, so an unrelated engine sharing the name no longer blocks the removal — and the rejection names the limit it hit.
 - **The doctor separates the two tmux preload outcomes.** A missing `LD_PRELOAD` support and a tmux server that is not running are reported as different causes, each with its own remedy.
 - **Up to 128 declared models in the fleet catalog (was 64)**; the ceiling is named in the rejection instead of a silent stop.
