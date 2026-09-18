@@ -79,13 +79,7 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false }) 
     setErr(null); setBusy(true);
     try {
       if (ask.ownerId) {
-        // `ownerAskId` esiste sugli ask ARRIVATI dalla federazione: il nostro
-        // `id` locale e' nostro, la risposta deve citare l'id con cui l'OWNER
-        // conosce la domanda, altrimenti colpirebbe un id che li' non esiste.
-        // Gli ask importati dal feed non hanno `ownerAskId`: il loro `id` E'
-        // gia' quello dell'owner, quindi il fallback li copre entrambi.
-        const ownerAskId = ask.ownerAskId || ask.id;
-        const out = await relayAskAnswer(token, { ownerId: ask.ownerId, askId: ownerAskId, text: answer });
+        const out = await relayAskAnswer(token, { ownerId: ask.ownerId, askId: ask.id, text: answer });
         // Esito incerto: la card resta con lo stato «verifica», mai un retry cieco.
         if (out && out.uncertain) { setUncertainRid(out.requestId); return; }
         onAnswered(ask.id, ask.ownerId);
@@ -106,7 +100,7 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false }) 
     try {
       if (ask.ownerId) {
         if (uncertainRid) return; // prima la verifica, poi eventualmente dismiss
-        await relayAskDismiss(token, { ownerId: ask.ownerId, askId: ask.ownerAskId || ask.id });
+        await relayAskDismiss(token, { ownerId: ask.ownerId, askId: ask.id });
         onDismiss(ask.id, ask.ownerId);
       } else {
         await dismissAsk(token, ask.id);
