@@ -182,7 +182,7 @@ test('A3: `/asks` POST attraversa, GET no, e la classe e\' operatore', () => {
 const H = (token) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
 const SECRET = 'pairing-secret-token';
 
-function boot(t) {
+function boot(t, { pasteCalls = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaskfed-http-'));
   const configDir = path.join(dir, '.nexuscrew');
   fs.mkdirSync(configDir, { recursive: true });
@@ -199,6 +199,7 @@ function boot(t) {
     port: 41999,
     fleetEnabled: false,
     sessionExistsSeam: () => true,
+    pasteSeam: pasteCalls ? (session, text) => { pasteCalls.push({ session, text }); return true; } : undefined,
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -224,6 +225,27 @@ async function pair(t, preset = 'admin') {
     acceptToken: SECRET, direction: 'inbound', shared: false, visibility: 'network',
   });
   stB = nodesStore.setPeerAccessPreset(stB, 'client', preset);
+  nodesStore.atomicWriteStore(B.nodesPath, stB);
+  const stA = nodesStore.addNode(nodesStore.loadStoreStrict(A.nodesPath), {
+    name: 'owner', remotePort: 41999, localPort: B.port, nodeId: selfB,
+    token: SECRET, direction: 'outbound', shared: true, visibility: 'network', ssh: 'u@owner',
+  });
+  nodesStore.atomicWriteStore(A.nodesPath, stA);
+  return { A, B, selfA, selfB };
+}
+
+// Come `pair()`, ma con il paste finto ANCHE sul nodo di origine: serve ai test
+// in cui e' l'owner a rispondere (senza il seam il paste vero fallisce con 502).
+async function pairWithPaste(t) {
+  const B = await boot(t, { pasteCalls: [] });
+  const A = await boot(t, { pasteCalls: [] });
+  const selfA = nodesStore.loadStoreStrict(A.nodesPath).nodeId;
+  const selfB = nodesStore.loadStoreStrict(B.nodesPath).nodeId;
+  let stB = nodesStore.addNode(nodesStore.loadStoreStrict(B.nodesPath), {
+    name: 'client', remotePort: 41999, localPort: 44777, nodeId: selfA,
+    acceptToken: SECRET, direction: 'inbound', shared: false, visibility: 'network',
+  });
+  stB = nodesStore.setPeerAccessPreset(stB, 'client', 'admin');
   nodesStore.atomicWriteStore(B.nodesPath, stB);
   const stA = nodesStore.addNode(nodesStore.loadStoreStrict(A.nodesPath), {
     name: 'owner', remotePort: 41999, localPort: B.port, nodeId: selfB,
@@ -372,4 +394,138 @@ test('A5: la card di un ask importato ha cio\' che serve a rispondere (ownerId +
   assert.equal(mine.ownerId, selfA);
   assert.equal(mine.ownerAskId, created.id);
   assert.equal(mine.ownerAskId === mine.id, false, 'il nostro id locale non e\' quello dell\'owner');
+});
+
+// --- R2: l'importato non esce dal destinatario -------------------------------
+
+test('R2: lo snapshot di B non riesporta un ask importato (un terzo peer non lo vede)', async (t) => {
+  const { A, B, selfB } = await pair(t);
+  // C raggiunge B: e' il terzo che non deve vedere la domanda A→B.
+  const C = await boot(t);
+  const selfC = nodesStore.loadStoreStrict(C.nodesPath).nodeId;
+  // B deve ACCETTARE C: senza il peer inbound su B, la lettura di C e' rifiutata.
+  let bs = nodesStore.loadStoreStrict(B.nodesPath);
+  bs = nodesStore.addNode(bs, {
+    name: 'third', nodeId: selfC, acceptToken: 'third-secret', direction: 'inbound',
+    shared: false, visibility: 'network', remotePort: 41999, localPort: 44778,
+  });
+  bs = nodesStore.setPeerAccessPreset(bs, 'third', 'admin');
+  nodesStore.atomicWriteStore(B.nodesPath, bs);
+  const cs = nodesStore.addNode(nodesStore.loadStoreStrict(C.nodesPath), {
+    name: 'middle', nodeId: selfB, token: 'third-secret', direction: 'outbound',
+    shared: true, visibility: 'network', ssh: 'u@middle', remotePort: 41999, localPort: B.port,
+  });
+  nodesStore.atomicWriteStore(C.nodesPath, cs);
+
+  const created = await (await fetch(`${A.base}/api/asks`, {
+    method: 'POST', headers: H(A.token),
+    body: JSON.stringify({ question: 'A_TO_B_ONLY', options: ['yes'], session: tmuxSessionForCell('dev'), target: selfB }),
+  })).json();
+
+  // B lo mostra a se stesso: e' il destinatario, e deve poterlo rispondere.
+  const imported = await openAsks(B, B.token);
+  assert.equal(imported.length, 1);
+  assert.equal(imported[0].ownerAskId, created.id);
+
+  // C legge lo snapshot DI B: l'ask importato non c'e'.
+  const snap = await (await fetch(`${C.base}/api/route/middle/_/event-feed/snapshot`, { headers: H(C.token) })).json();
+  assert.equal(snap.asks.length, 0, 'un ask importato non deve essere riesportato come nostro');
+  // Chi possiede la domanda continua a vederla aperta: la guardia toglie solo
+  // gli IMPORTATI, non svuota lo snapshot.
+  assert.equal((await openAsks(A, A.token)).length, 1);
+});
+
+// --- R3: chiusura dell'alias, dedup, cap ------------------------------------
+
+test('R3: la chiusura dell\'owner chiude l\'alias locale, anche dopo un reload', async (t) => {
+  const { A, B, selfB } = await pairWithPaste(t);
+  const created = await (await fetch(`${A.base}/api/asks`, {
+    method: 'POST', headers: H(A.token),
+    body: JSON.stringify({ question: 'CLOSE_ME', options: ['yes'], session: tmuxSessionForCell('dev'), target: selfB }),
+  })).json();
+
+  const before = await openAsks(B, B.token);
+  assert.equal(before.length, 1);
+  const mine = before[0];
+
+  // L'owner scarta. La chiusura viaggia sulla stessa strada dell'andata.
+  const dr = await fetch(`${A.base}/api/asks/${created.id}`, { method: 'DELETE', headers: H(A.token) });
+  assert.equal(dr.status, 200);
+  assert.equal((await openAsks(A, A.token)).length, 0);
+
+  const after = await openAsks(B, B.token);
+  assert.equal(after.length, 0, 'la chiusura dell\'owner deve chiudere l\'alias locale');
+
+  // DUREVOLE: non e' solo un frame per la UI. Rileggendo lo store dal disco
+  // l'alias risulta chiuso, quindi non ricompare a un reload.
+  const onDisk = JSON.parse(fs.readFileSync(path.join(B.configDir, 'asks.json'), 'utf8')).asks;
+  const alias = onDisk.find((a) => a.ownerAskId === created.id);
+  assert.ok(alias, 'la riga resta nello storico');
+  assert.equal(alias.dismissed, true, 'ed e\' marcata chiusa, non solo tolta dalla lista');
+
+  // La risposta dell'owner chiude allo stesso modo.
+  const created2 = await (await fetch(`${A.base}/api/asks`, {
+    method: 'POST', headers: H(A.token),
+    body: JSON.stringify({ question: 'ANSWER_ME', options: ['yes'], session: tmuxSessionForCell('dev'), target: selfB }),
+  })).json();
+  const ans = await fetch(`${A.base}/api/asks/${created2.id}/answer`, {
+    method: 'POST', headers: H(A.token), body: JSON.stringify({ text: 'yes' }),
+  });
+  assert.equal(ans.status, 200);
+  assert.equal((await openAsks(B, B.token)).length, 0, 'anche la risposta chiude l\'alias');
+});
+
+test('R3: la stessa domanda non crea due alias (dedup per identita\' canonica)', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaskdedup-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const store = createAsksStore({ dir });
+  const OWNER = 'a'.repeat(32);
+  const first = store.create({ question: 'q', session: 'cell-a', ownerId: OWNER, ownerAskId: 'deadbeef', originNode: OWNER });
+  assert.equal(first.ok, true);
+  const again = store.create({ question: 'q', session: 'cell-a', ownerId: OWNER, ownerAskId: 'deadbeef', originNode: OWNER });
+  assert.equal(again.ok, true);
+  assert.equal(again.deduped, true, 'la seconda consegna non crea un secondo alias');
+  assert.equal(again.ask.id, first.ask.id);
+  assert.equal(store.list({ open: true }).length, 1);
+
+  // La chiusura trova l'alias per la coppia canonica, non per l'id locale.
+  const closed = store.closeImported({ ownerId: OWNER, ownerAskId: 'deadbeef', outcome: 'dismissed' });
+  assert.equal(closed.changed, true);
+  assert.equal(closed.ask.id, first.ask.id);
+  assert.equal(store.list({ open: true }).length, 0);
+  // Idempotente: una seconda chiusura non cambia nulla.
+  assert.equal(store.closeImported({ ownerId: OWNER, ownerAskId: 'deadbeef', outcome: 'answered' }).changed, false);
+});
+
+test('R3: il cap degli importati e\' separato da quello dei locali', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaskcap-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const store = createAsksStore({ dir });
+  const OWNER = 'a'.repeat(32);
+  for (let i = 0; i < store.MAX_OPEN_IMPORTED; i += 1) {
+    const r = store.create({
+      question: `importata ${i}`, session: 'cell-a',
+      ownerId: OWNER, ownerAskId: i.toString(16).padStart(8, '0'), originNode: OWNER,
+    });
+    assert.equal(r.ok, true, `importata ${i}`);
+  }
+  assert.equal(store.openCount('imported'), store.MAX_OPEN_IMPORTED);
+  assert.equal(store.openCount('local'), 0);
+
+  // Il punto del difetto: cento importate bloccavano il primo ask locale.
+  const own = store.create({ question: 'la mia', options: ['si'], session: 'cell-a' });
+  assert.equal(own.ok, true, 'gli importati non devono consumare il budget dei locali');
+  assert.equal(store.openCount('local'), 1);
+
+  // Il cap degli importati resta un cap.
+  const over = store.create({
+    question: 'oltre', session: 'cell-a',
+    ownerId: OWNER, ownerAskId: 'ffffffff', originNode: OWNER,
+  });
+  assert.equal(over.ok, false);
+  assert.equal(over.reason, 'cap');
+
+  // E il cap dei locali resta quello dei locali.
+  const overLocal = store.create({ question: 'oltre locale', session: 'cell-a' });
+  assert.equal(overLocal.ok, true, 'il locale #2 e\' sotto il proprio cap');
 });
