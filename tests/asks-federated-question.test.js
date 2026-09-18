@@ -1,5 +1,5 @@
 'use strict';
-// tests/asks-federated-question.test.js — D-268 A1-A5: la DOMANDA federata.
+// tests/asks-federated-question.test.js — la DOMANDA federata (nc_ask).
 //
 // Il difetto chiuso qui: `nc_ask` esisteva solo sul nodo locale. La RISPOSTA era
 // gia' federata (ask-relay + /event-feed/asks/<id>/answer), l'ANDATA no —
