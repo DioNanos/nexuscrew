@@ -38,7 +38,7 @@ function quadrantOf(x, y, r) {
 export default function GridView({
   layout, onLayoutChange, token, readonly = false, sessionsAlive, focusSession, onFocus, onOpenSingle,
   decks = [], currentDeck, onSendToDeck,
-  // D-267/F3: fine gesto di resize (pointerup/pointercancel/blur) — la griglia
+  // Fine gesto di resize (pointerup/pointercancel/blur) — la griglia
   // chiede un salvataggio immediato invece di affidarsi al debounce.
   onResizeEnd,
   // Roster Fleet gia' caricato (Tranche D): usato per risolvere il titolo

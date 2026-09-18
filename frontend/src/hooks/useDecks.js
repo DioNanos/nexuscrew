@@ -207,7 +207,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       setTimeout(() => setSaveState('idle'), 1500);
       return true;
     } catch (e) {
-      // D-267/F1: 409 = un'altra finestra ha salvato prima. Il ramo di recupero
+      // 409 = un'altra finestra ha salvato prima. Il ramo di recupero
       // era codice morto (confrontava `d.id === targetId`, ma sull'autosave
       // targetId è undefined). Rebase: il record remoto (revisione nuova) diventa
       // la base, il layout LOCALE della finestra resta la modifica dell'utente
@@ -227,7 +227,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     }
   }, [ready, token, install]);
 
-  // D-267/F1: azione «ricarica» del conflitto irrisolvibile — riparte dal remoto
+  // Azione «ricarica» del conflitto irrisolvibile — riparte dal remoto
   // e scarta la copia locale che non è riuscita a convergere.
   const reloadCurrent = useCallback(async () => {
     try {
@@ -249,7 +249,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     return () => clearTimeout(id);
   }, [layout, ready, saveNow]);
 
-  // D-267/F3: a chiusura pagina (pagehide/beforeunload) il PUT parte con
+  // A chiusura pagina (pagehide/beforeunload) il PUT parte con
   // keepalive se ci sono modifiche non salvate — il debounce di 650 ms può non
   // avere il tempo di scadere. Fire-and-forget: la pagina sta per morire.
   useEffect(() => {
@@ -278,7 +278,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
         const remote = findCurrent(next);
         const newer = remote && (!here || remote.revision > here.revision || here.available !== remote.available);
         if (newer && dirtyRef.current && remote) {
-          // D-267/F2: la finestra è sporca e il remoto è più nuovo — merge
+          // La finestra è sporca e il remoto è più nuovo — merge
           // remoto ⊕ delta locale invece di restare indietro. Il layout fuso
           // è un cambio di layout: l'autosave lo salva con la revisione nuova.
           const merged = mergeRemoteWithLocal(viewLayout(remote), layoutRef.current);

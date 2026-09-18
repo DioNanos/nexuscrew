@@ -294,7 +294,7 @@ export function normalize(raw) {
   return { columns: columns.filter((c) => c.tiles.length > 0) };
 }
 
-// D-267/F2: merge remoto ⊕ delta locale per il poll con finestra sporca.
+// Merge remoto ⊕ delta locale per il poll con finestra sporca.
 // Ciclo 1, senza base a tre vie: il remoto dà la struttura (colonne e tile che
 // esistono ancora), per le sessioni condivise vince la geometria LOCALE
 // (ultima modifica dell'utente, decisione D2), le tile presenti solo in locale

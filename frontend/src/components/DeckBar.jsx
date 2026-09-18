@@ -15,7 +15,7 @@ import './DeckBar.css';
 export default function DeckBar({
   decks = [], currentDeck = 'local:main', onCreate, onRename, onDelete, onReorder, onOpenWindow, onNavigate,
   saveState = 'idle', error = '', sidebarVisible, onToggleSidebar,
-  // D-267/F1: conflitto di revisione irrisolvibile — l'utente decide se ricaricare.
+  // Conflitto di revisione irrisolvibile — l'utente decide se ricaricare.
   conflict = false, onReloadDeck = null,
 }) {
   useLang();
