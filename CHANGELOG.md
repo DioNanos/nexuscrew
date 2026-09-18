@@ -4,6 +4,8 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+- **An engine with its own endpoint is reported ready only if that endpoint answers.** A managed engine whose address is declared by hand used to be "ready" as soon as its binary and credential were in place: a router that was switched off looked healthy, and the mistake surfaced when the cell failed to start. NexusCrew now asks the address itself (`GET /v1/models`, 1.5 s budget, one probe per engine every 30 s) and says which host and port did not answer; an endpoint that answers with an authentication challenge counts as alive, because whether the key is the right one is the client's business, not this check's.
+- **A model can be tested on an engine with its own endpoint.** The model test used to answer "unknown profile" for any engine that is not in the public catalog — exactly the internal routers nobody watches. It now asks the engine's own address: the model is looked up in the endpoint's list, and where the list is absent or empty it falls back to a single-token completion, so "the model is there" and "the model is not there" stay distinguishable. The credential is used where the test runs and never appears in the outcome.
 - **Custom engines now list their declared models in the pickers.** A custom profile has no builtin catalog, so the model lists stayed empty even when models were declared for the engine; the engine list now joins the profile catalog with the declared models (for `pi` custom engines the pinned model stays first in the list).
 
 ## 0.9.31 — 2026-09-18
