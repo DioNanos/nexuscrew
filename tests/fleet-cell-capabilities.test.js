@@ -326,10 +326,12 @@ test('la vista segnala non materializzate le chiavi che questa fase non copre', 
     schemaVersion: 1,
     engines: [
       { id: 'e-claude', managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'unsafe' } },
+      { id: 'e-codex', managed: { client: 'codex', provider: 'native', model: '' } },
       PROFILO_ENGINE,
     ],
     cells: [
       { id: 'Cla', tmuxSession: 'work-c', cwd, engine: 'e-claude', capabilities: { mcp: ['nexuscrew'], skills: ['fleet'] } },
+      { id: 'Cdx', tmuxSession: 'work-e', cwd, engine: 'e-codex', capabilities: { mcp: ['nexuscrew'] } },
       { id: 'Alt', tmuxSession: 'work-d', cwd, engine: 'e1', capabilityProfile: 'p' },
     ],
     capabilityProfiles: { p: { mcp: ['nexuscrew'] } },
@@ -342,7 +344,116 @@ test('la vista segnala non materializzate le chiavi che questa fase non copre', 
   // skills e ondemand dichiarati? skills si, ondemand no -> solo skills.
   const chiaviCla = (cla.capabilities.unsupported || []).map((u) => u.key);
   assert.deepEqual(chiaviCla, ['skills'], 'per claude il materializzatore copre mcp; skills resta dichiarata non coperta');
+  const cdx = vista.cells.find((c) => c.id === 'Cdx');
+  const chiaviCdx = (cdx.capabilities.unsupported || []).map((u) => u.key);
+  assert.deepEqual(chiaviCdx, [], 'per codex il materializzatore copre mcp: nulla di dichiarato resta non coperto');
   const alt = vista.cells.find((c) => c.id === 'Alt');
   const chiaviAlt = (alt.capabilities.unsupported || []).map((u) => u.key);
   assert.deepEqual(chiaviAlt, ['mcp'], 'engine senza materializzatore: la chiave dichiarata esce non supportata, mai errore');
+});
+
+// --- materializzatore codex: profilo per cella (-p), config utente intatta ---
+
+const ENGINE_CODEX = { id: 'ex', managed: { client: 'codex', provider: 'native', model: '' } };
+const TOML_UTENTE = [
+  'model = "gpt-5"',
+  '',
+  '[mcp_servers.nexuscrew]',
+  'command = "nexuscrew"',
+  '',
+  '[mcp_servers.webfetch]',
+  'command = "webfetch"',
+  '',
+  '[mcp_servers.nextcloud]',
+  'command = "nextcloud"',
+  '',
+  '[[skills.config]]',
+  'name = "fleet"',
+  'enabled = true',
+  '',
+  '[[skills.config]]',
+  'name = "cellforge"',
+  'enabled = true',
+  '',
+].join('\n');
+
+function mondoCodex(t, { toml = TOML_UTENTE } = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cellcap-cdx-'));
+  fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
+  const bin = path.join(home, '.local', 'bin', 'codex');
+  fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.mkdirSync(path.join(home, '.codex'));
+  fs.writeFileSync(path.join(home, '.codex', 'config.toml'), toml, { mode: 0o600 });
+  const cwd = path.join(home, 'lavoro');
+  fs.mkdirSync(cwd);
+  t.after(() => {
+    // I test possono aver reso .codex non scrivibile (fail-closed): ripristina
+    // prima di rimuovere l'albero.
+    try { fs.chmodSync(path.join(home, '.codex'), 0o700); } catch (_) {}
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  return { home, cwd, configToml: path.join(home, '.codex', 'config.toml') };
+}
+
+function resolveCodex(w, cell) {
+  return resolveManagedEngine(ENGINE_CODEX, { id: 'Ric', cwd: w.cwd, ...cell }, {
+    home: w.home, platform: 'linux', env: {}, capabilityProfiles: {},
+  });
+}
+
+test('codex dichiarato con mcp: -p con profilo per cella che spegne i soli non concessi; config utente intatta', (t) => {
+  const w = mondoCodex(t);
+  const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew', 'webfetch'] } });
+  assert.equal(out.ok, true, out.reason);
+  const args = out.engine.args;
+  const pi = args.indexOf('-p');
+  assert.notEqual(pi, -1, '-p richiesto per le celle dichiarate');
+  assert.equal(args[pi + 1], 'nexuscrew-Ric', 'nome profilo derivato dalla cella');
+  const profilo = fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8');
+  assert.match(profilo, /\[mcp_servers\.nextcloud\]/, 'il non concesso viene spento');
+  assert.match(profilo, /enabled\s*=\s*false/);
+  assert.doesNotMatch(profilo, /\[mcp_servers\.webfetch\]/, 'il concesso non si ridichiara: eredita dal layer base');
+  assert.doesNotMatch(profilo, /\[mcp_servers\.nexuscrew\]/);
+  assert.equal(fs.readFileSync(w.configToml, 'utf8'), TOML_UTENTE, 'la config utente non e mai toccata');
+});
+
+test('codex ondemand: omit_tools_from = ["direct"] nel profilo, prima di ogni tabella TOML', (t) => {
+  const w = mondoCodex(t);
+  const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew'], ondemand: ['webfetch'] } });
+  assert.equal(out.ok, true, out.reason);
+  const profilo = fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8');
+  assert.match(profilo, /^\s*omit_tools_from\s*=\s*\["direct"\]\s*$/m, 'gli ondemand restano scopribili, non attivi');
+  const primaTabella = profilo.indexOf('omit_tools_from');
+  assert.ok(primaTabella > -1 && profilo.slice(0, primaTabella).indexOf('[') === -1, 'le chiavi root del TOML stanno PRIMA delle tabelle');
+});
+
+test('codex con solo skills: il profilo spegne le non concesse, tocca i server a mcp assente', (t) => {
+  const w = mondoCodex(t);
+  const out = resolveCodex(w, { capabilities: { skills: ['fleet'] } });
+  assert.equal(out.ok, true, out.reason);
+  const pi = out.engine.args.indexOf('-p');
+  assert.notEqual(pi, -1, 'il profilo serve anche per le skill');
+  const profilo = fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8');
+  assert.match(profilo, /\[\[skills\.config\]\]\s*\nname = "cellforge"\s*\nenabled = false/, 'la skill non concessa e spenta');
+  assert.doesNotMatch(profilo, /name = "fleet"/, 'la skill concessa non si tocca');
+  assert.doesNotMatch(profilo, /\[mcp_servers\./, 'mcp assente: nessuna riduzione per quella chiave');
+});
+
+test('codex legacy: nessun -p e nessun profilo scritto', (t) => {
+  const w = mondoCodex(t);
+  const legacy = resolveCodex(w, {});
+  const ref = resolveManagedEngine(ENGINE_CODEX, { id: 'Ric', cwd: w.cwd }, { home: w.home, platform: 'linux', env: {} });
+  assert.equal(legacy.ok && ref.ok, true);
+  assert.equal(legacy.engine.args.join(' ').includes(' -p '), false, 'nessuna flag nuova per la legacy');
+  assert.equal(fs.existsSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml')), false);
+});
+
+test('codex: scrittura profilo impossibile -> rifiuto del launch (fail-closed)', (t) => {
+  const w = mondoCodex(t);
+  const codexHome = path.join(w.home, '.codex');
+  fs.chmodSync(codexHome, 0o500);
+  t.after(() => { try { fs.chmodSync(codexHome, 0o700); } catch (_) {} });
+  const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew'] } });
+  assert.equal(out.ok, false, 'il launch non parte con la superficie sbagliata');
+  assert.match(out.mcpCellRefused || '', /profilo per cella non scrivibile/);
 });
