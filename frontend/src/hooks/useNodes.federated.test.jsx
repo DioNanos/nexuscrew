@@ -9,7 +9,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 // I dati NON sono inventati: topology e /api/vl-nodes riproducono le
 // risposte REALI misurate sull'infrastruttura viva il 2026-08-06 via proxy
 // federato (topology del telefono: owner cloud-example-com a un hop,
-// non stale; vl-nodes di VPS3: N900 online con session dichiarata).
+// non stale; vl-nodes di Node A: N900 online con session dichiarata).
 
 const PHONE_INSTANCE = '5c588d7441c73b414f0912b30305f269';
 const VPS_INSTANCE = '1f2e3d4c5b6a79880123456789abcdef';
