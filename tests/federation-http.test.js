@@ -300,7 +300,7 @@ test('scoped federation HTTP reaches sessions, fleet and owner decks, and no set
   // AMMETTE un nodo nuovo, e federata permetteva di far entrare un terzo senza
   // che l'operatore dell'hub agisse o lo sapesse.
   const invite = await fetch(`${base}/api/route/mac/_/settings/peering/invite`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ssh: 'vps3' }),
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ssh: 'node-a' }),
   });
   assert.equal(invite.status, 404, 'coniare un invito non attraversa la federazione');
   assert.equal(inviteHits, 0, 'la richiesta non deve nemmeno raggiungere il nodo di destinazione');

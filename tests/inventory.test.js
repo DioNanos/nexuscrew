@@ -13,7 +13,7 @@ const ID = 'a'.repeat(32);
 test('inventario: posizione remota con fleet mostra cells attive+inattive e unmanaged', async () => {
   const { buildNodeGroups } = await nodes();
   const g = buildNodeGroups({
-    nodes: [{ name: 'vps', label: 'VPS3', tunnel: { status: 'up' }, nodeId: ID }],
+    nodes: [{ name: 'vps', label: 'Node A', tunnel: { status: 'up' }, nodeId: ID }],
     remote: { vps: { sessions: [{ name: 'work' }, { name: 'cloud-dev' }] } },
     fleet: { vps: { available: true, capabilities: ['status', 'up', 'down', 'edit'],
       cells: [
@@ -143,10 +143,10 @@ test('inventario: client inbound privato resta fuori dalla sidebar e non accumul
 test('inventario: label umana usata quando presente (fallback a name)', async () => {
   const { buildNodeGroups } = await nodes();
   const withLabel = buildNodeGroups({
-    nodes: [{ name: 'vps', label: 'VPS3 Server', tunnel: { status: 'up' }, nodeId: ID }],
+    nodes: [{ name: 'vps', label: 'Node A Server', tunnel: { status: 'up' }, nodeId: ID }],
     remote: { vps: { sessions: [] } }, down: {},
   });
-  assert.equal(withLabel[0].label, 'VPS3 Server');
+  assert.equal(withLabel[0].label, 'Node A Server');
   const noLabel = buildNodeGroups({
     nodes: [{ name: 'vps', tunnel: { status: 'up' }, nodeId: ID }],
     remote: { vps: { sessions: [] } }, down: {},

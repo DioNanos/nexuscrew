@@ -558,13 +558,14 @@ test('READONLY (cfg): up/mutazioni 403; status/schema/capabilities ok', async ()
     await assert.rejects(() => fleet.defineEngine({ id: 'x', command: w.command, promptMode: 'flag', promptFlag: '--ps' }), (e) => e.status === 403);
     await assert.rejects(() => fleet.importCell({ tmuxSession: 'legacy', engine: 'claude' }), (e) => e.status === 403);
     await assert.rejects(() => fleet.removeCell('Dev'), (e) => e.status === 403);
+    await assert.rejects(() => fleet.editModel('m', 'p', { label: 'x' }), (e) => e.status === 403);
     const { lines } = readLog(w);
     assert.ok(!lines.some((l) => l.startsWith('new-session\t')), 'READONLY: nessun launch');
 
     // letture pure passano
     const st = await fleet.status();
     assert.equal(st.available, true);
-    assert.equal(fleet.capabilities().length, 15);
+    assert.equal(fleet.capabilities().length, 16);
     assert.ok(fleet.schema().engine.command);
   } finally { w.cleanup(); }
 });
@@ -901,7 +902,7 @@ test('capabilities e schema: superficie estesa del built-in', async () => {
   try {
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     assert.deepEqual(fleet.capabilities(),
-      ['status', 'up', 'down', 'restart', 'engine', 'boot', 'define', 'edit', 'remove', 'import', 'restore', 'schema', 'definitions', 'credentials', 'model-test']);
+      ['status', 'up', 'down', 'restart', 'engine', 'boot', 'define', 'edit', 'remove', 'import', 'restore', 'schema', 'definitions', 'credentials', 'model-test', 'edit-model']);
     const sch = fleet.schema();
     assert.equal(sch.schemaVersion, 1);
     for (const f of ['id', 'label', 'rc', 'command', 'args', 'env', 'model', 'promptMode', 'promptFlag']) {

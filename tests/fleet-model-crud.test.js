@@ -152,3 +152,67 @@ test('stesso modello su due engine: ritirarlo su uno non blocca l\'altro ()', as
     return true;
   });
 });
+
+test('edit-model: patch di contextWindow su modello dichiarato', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineModel({ id: 'bonsai', engine: PROFILO, contextWindow: 196608 });
+  await fleet.editModel('bonsai', PROFILO, { contextWindow: 131072 });
+
+  const m = letto(w).models.find((mm) => mm.id === 'bonsai');
+  assert.equal(m.contextWindow, 131072, 'la finestra dichiarata cambia');
+  assert.equal(m.engine, PROFILO, 'engine identita\' invariata');
+});
+
+test('edit-model: patch di label mantiene il resto della dichiarazione', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineModel({ id: 'm-label', engine: PROFILO, contextWindow: 131072 });
+  await fleet.editModel('m-label', PROFILO, { label: 'Bonsai 27B per la sessione' });
+
+  const m = letto(w).models.find((mm) => mm.id === 'm-label');
+  assert.equal(m.label, 'Bonsai 27B per la sessione');
+  assert.equal(m.contextWindow, 131072, 'gli altri campi non toccati');
+});
+
+test('edit-model: modello inesistente -> 404', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await assert.rejects(() => fleet.editModel('assente', PROFILO, { contextWindow: 131072 }), (e) => {
+    assert.equal(e.status, 404);
+    return true;
+  });
+});
+
+test('edit-model: campo non ammesso e valore invalido -> 400', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineModel({ id: 'm1', engine: PROFILO });
+
+  // L'identita' non si modifica: id ed engine non sono campi patchabili.
+  await assert.rejects(() => fleet.editModel('m1', PROFILO, { engine: 'altro' }), (e) => {
+    assert.equal(e.status, 400);
+    assert.match(e.message, /campo non ammesso/);
+    return true;
+  });
+  await assert.rejects(() => fleet.editModel('m1', PROFILO, { contextWindow: -5 }), (e) => {
+    assert.equal(e.status, 400);
+    assert.match(e.message, /contextWindow/);
+    return true;
+  });
+});
+
+test('edit-model: l\'engine che usa il modello resta invariato prima/dopo', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineModel({ id: 'usato', engine: PROFILO });
+  await fleet.defineEngine({
+    id: 'e2', label: 'E2',
+    managed: { client: 'claude', provider: 'alibaba-token-plan', model: 'usato', permissionPolicy: 'unsafe' },
+  });
+  const enginesPrima = JSON.stringify(letto(w).engines);
+
+  await fleet.editModel('usato', PROFILO, { contextWindow: 262144 });
+
+  assert.equal(JSON.stringify(letto(w).engines), enginesPrima, 'l\'engine che usa il modello non viene toccato');
+});

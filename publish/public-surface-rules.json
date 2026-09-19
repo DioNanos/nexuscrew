@@ -15,6 +15,11 @@
       "source": "(?:/home/dag/|~/Dev/[0-9]+_)",
       "flags": "i",
       "reason": "private workspace path"
+    },
+    {
+      "source": "\\b(?:vps3|macair|pixel9pro|mgm)\\b",
+      "flags": "i",
+      "reason": "internal node hostname"
     }
   ],
   "path": [

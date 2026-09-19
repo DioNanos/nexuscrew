@@ -125,7 +125,7 @@ test('un solo file di chiavi: nessun conflitto, e la sorgente e\' il file canoni
   assert.equal(info.credentialConflict, null);
 });
 
-// --- il symlink di VPS3: keys/ai.env -> secrets/.env -------------------------
+// --- il symlink del nodo: keys/ai.env -> secrets/.env -------------------------
 
 test('keys/ai.env come symlink verso secure/.env: una sola sorgente, nessun falso conflitto', (t) => {
   const h = home(t);

@@ -16,7 +16,7 @@ const assert = require('node:assert');
 const { createCellScope } = require('../lib/cells/scope.js');
 
 const LOCALE = 'c'.repeat(32);     // il nodo che risponde (il Pixel)
-const HUB = 'b'.repeat(32);        // chi consegna, ed e' un mio peer (VPS3)
+const HUB = 'b'.repeat(32);        // chi consegna, ed e' un mio peer (Node A)
 const ESTRANEO = 'a'.repeat(32);   // chi origina, e non e' nel mio store (l'Asus)
 
 const cellForSession = (s) => (s && s.startsWith('cloud-') ? s.slice('cloud-'.length) : null);

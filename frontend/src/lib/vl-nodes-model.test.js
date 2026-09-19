@@ -93,19 +93,19 @@ describe('vlNodeToPeer — owner (route/instanceId/label), step 3', () => {
   });
 
   it('carries a remote owner route/instanceId/label through untouched', () => {
-    const owner = { instanceId: 'b'.repeat(16), route: ['vps3'], label: 'VPS3' };
+    const owner = { instanceId: 'b'.repeat(16), route: ['node-a'], label: 'Node A' };
     const peer = vlNodeToPeer(RAW, owner);
-    expect(peer.route).toEqual(['vps3']);
+    expect(peer.route).toEqual(['node-a']);
     expect(peer.isLocal).toBe(false);
     expect(peer.ownerInstanceId).toBe('b'.repeat(16));
-    expect(peer.ownerLabel).toBe('VPS3');
+    expect(peer.ownerLabel).toBe('Node A');
   });
 
   it('does not mutate the owner.route array it was given (defensive copy)', () => {
-    const owner = { instanceId: 'b'.repeat(16), route: ['vps3'], label: 'VPS3' };
+    const owner = { instanceId: 'b'.repeat(16), route: ['node-a'], label: 'Node A' };
     const peer = vlNodeToPeer(RAW, owner);
     peer.route.push('mutated');
-    expect(owner.route).toEqual(['vps3']);
+    expect(owner.route).toEqual(['node-a']);
   });
 });
 
@@ -113,8 +113,8 @@ describe('topologyVlOwners — ports topologyOwners() semantics (lib/mcp/cells.j
   const topology = {
     nodes: [
       { instanceId: 'local-id-000000', route: [], label: 'Self', stale: false },
-      { instanceId: 'remote-a-000000', route: ['vps3'], label: 'VPS3', stale: false },
-      { instanceId: 'remote-b-000000', route: ['nova', 'vps3'], label: 'via Nova', stale: false },
+      { instanceId: 'remote-a-000000', route: ['node-a'], label: 'Node A', stale: false },
+      { instanceId: 'remote-b-000000', route: ['nova', 'node-a'], label: 'via Nova', stale: false },
       { instanceId: 'stale-c-0000000', route: ['old'], label: 'Stale', stale: true },
       { instanceId: 'remote-a-000000', route: ['dup'], label: 'Duplicate', stale: false },
     ],
@@ -134,13 +134,13 @@ describe('topologyVlOwners — ports topologyOwners() semantics (lib/mcp/cells.j
     const owners = topologyVlOwners(topology, 'local-id-000000');
     const remoteA = owners.filter((o) => o.instanceId === 'remote-a-000000');
     expect(remoteA).toHaveLength(1);
-    expect(remoteA[0].route).toEqual(['vps3']);
+    expect(remoteA[0].route).toEqual(['node-a']);
   });
 
   it('preserves the route array and label for each surviving owner', () => {
     const owners = topologyVlOwners(topology, 'local-id-000000');
     const b = owners.find((o) => o.instanceId === 'remote-b-000000');
-    expect(b.route).toEqual(['nova', 'vps3']);
+    expect(b.route).toEqual(['nova', 'node-a']);
     expect(b.label).toBe('via Nova');
   });
 
