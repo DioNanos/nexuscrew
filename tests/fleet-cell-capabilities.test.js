@@ -110,7 +110,55 @@ test('il profilo alimenta le chiavi che la cella non copre; l override sostituis
   }, 'mcp sostituito dalla cella, skills/ondemand ereditate dal profilo');
 });
 
-// --- vista definitions() ---
+test('chiave mcp assente in una cella dichiarata: l alias cell.mcp fa da filtro come sempre', (t) => {
+  const w = mondoClaude(t);
+  // La cella dichiara solo skills, ma la chiave mcp le viene dall'ALIAS
+  // legacy `cell.mcp`: chiave assente nel set = comportamento di sempre per
+  // quella chiave — argv identici a una cella legacy con lo stesso alias.
+  const dichiarata = resolveClaude(w, { mcp: ['nexuscrew'], capabilities: { skills: ['fleet'] } }, {});
+  const legacy = resolveClaude(w, { mcp: ['nexuscrew'] }, {});
+  assert.equal(dichiarata.ok, true, dichiarata.reason);
+  assert.equal(legacy.ok, true, legacy.reason);
+  assert.deepEqual(dichiarata.engine.args, legacy.engine.args, 'argv identici alla legacy: stesso deny, nessuna flag nuova');
+});
+
+// --- fail-closed: se il file per cella non si scrive, il launch NON parte ---
+
+test('dir cell-mcp non scrivibile: il launch rifiuta (fail-closed), mai parte senza la allowlist', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cellcap-ro-'));
+  const home = path.join(root, 'home');
+  fs.mkdirSync(home, { mode: 0o700 });
+  fs.chmodSync(home, 0o700);
+  const cwd = path.join(home, 'Dev');
+  fs.mkdirSync(cwd);
+  fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
+  const bin = path.join(home, '.local', 'bin', 'claude');
+  fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ mcpServers: { nexuscrew: { command: 'nexuscrew' } } }), { mode: 0o600 });
+  // La directory esiste ma e' resa non scrivibile: il writer strettisce i
+  // permessi, non li allarga — la scrittura deve fallire e il launch fermarsi.
+  const cellMcpDir = path.join(home, '.nexuscrew', 'cell-mcp');
+  fs.mkdirSync(cellMcpDir, { recursive: true });
+  fs.chmodSync(cellMcpDir, 0o500);
+  t.after(() => { fs.chmodSync(cellMcpDir, 0o700); fs.rmSync(root, { recursive: true, force: true }); });
+  const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
+  const { loadDefinitions } = require('../lib/fleet/definitions.js');
+  const defsPath = path.join(root, 'fleet.json');
+  fs.writeFileSync(defsPath, JSON.stringify({
+    schemaVersion: 1,
+    engines: [ENGINE_CLAUDE],
+    cells: [{ id: 'Ric', tmuxSession: 'work-m', cwd, engine: 'ec', capabilities: { mcp: ['nexuscrew'] } }],
+  }));
+  const launchBroker = { issue: async () => { throw new Error('nessun processo deve arrivare al broker'); }, close: async () => {} };
+  const runtime = createBuiltinRuntime({
+    cfg: { launchReadyMs: 40 }, home, defsPath, tmuxBin: '/bin/true',
+    readonly: () => false, launchBroker, boot: loadDefinitions(defsPath),
+  });
+  await assert.rejects(() => runtime.up('Ric'), (e) => e.status === 500
+    && e.fleetCode === 'MCP_CELL_FILE_UNWRITABLE'
+    && /file MCP per cella non scrivibile/.test(e.message),
+  'up deve rifiutare con il messaggio chiaro: niente cella con la superficie sbagliata');
+});
 
 test('nella vista una cella legacy dichiara legacy: true e non espone capabilities', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cellcap-'));

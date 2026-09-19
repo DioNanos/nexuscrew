@@ -42,10 +42,10 @@ test('la classe dei workcode copre la forma lettera+cifra+minuscole e resta chiu
   // taceva proprio sul caso che l'ha fatto nascere. Vista e NON classificata:
   // il gate la segnala unclosed e fallisce, che e' la protezione voluta.
   const famB = new RegExp(rules.workcodes.families.B.source, 'g');
-  const visti = [...'marker interno A2, forma nuova F1a, composta B12.3x'.matchAll(famB)].map((m) => m[0]);
-  assert.ok(visti.includes('F1a'), 'lettera+cifra+minuscola non coperta dalla famiglia B');
+  const visti = [...'marker interno A2, forma nuova X1a, composta B12.3x'.matchAll(famB)].map((m) => m[0]);
+  assert.ok(visti.includes('X1a'), 'lettera+cifra+minuscola non coperta dalla famiglia B');
   assert.ok(visti.includes('A2') && visti.includes('B12.3x'), 'le forme preesistenti restano coperte');
-  assert.equal(classificato(rules, 'F1a'), false, 'la forma nuova resta non classificata: unclosed = gate rosso');
+  assert.equal(classificato(rules, 'X1a'), false, 'la forma nuova resta non classificata: unclosed = gate rosso');
   // Chiusura sul corpus legittimo: ogni token della famiglia che il payload
   // legittimo contiene e' classificato (deny/allow), quindi la classe non si
   // apre a caso con l'estensione.
