@@ -60,6 +60,11 @@
       "source": "\\b(?:8fe514f|3134d2f|239e2e6|d6c47c6|437d29f|fa8bd90|142e272|2a05db2|dd38c83|3405df0)\\b",
       "flags": "i",
       "reason": "hash di commit privato citato dai referti interni"
+    },
+    {
+      "source": "\\b(?:vps3|macair|pixel9pro|mgm)\\b",
+      "flags": "i",
+      "reason": "hostname di nodo interno nella payload pubblicata"
     }
   ],
   "payloadIds": [

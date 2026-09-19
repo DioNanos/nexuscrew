@@ -814,3 +814,69 @@ test('D-198: il file-esca con /home/dag/ resta rosso e la esclusion-list copre i
   assert.ok(colpeIn(fs.readFileSync(path.join(ROOT, regole), 'utf8'), regole).length >= 1,
     'senza exclude-list il file di regole verrebbe accusato: l\'esclusione dichiarata e\' l\'unica protezione');
 });
+
+// HOSTNAME DI NODO INTERNO (vps3/macair/pixel9pro/mgm): la payload spedita
+// non deve dire su quale macchina gira la flotta. Il pattern e' hostname
+// intero (\b): varianti che ESTENDONO il nome (mgm12, mmmbuto) non devono
+// mordere, perche' sono parole diverse, non la macchina.
+test('HOSTNAME vps3 — positivo', () => {
+  const colpe = colpeIn('snapshot preso su vps3 durante il gate', 'lib/esempio.js', true);
+  assert.ok(colpe.length >= 1, 'vps3 nella payload NON respinto');
+});
+
+test('HOSTNAME macair — positivo', () => {
+  const colpe = colpeIn('il deck gira su macair con lo stesso config', 'lib/esempio.js', true);
+  assert.ok(colpe.length >= 1, 'macair nella payload NON respinto');
+});
+
+test('HOSTNAME pixel9pro — positivo', () => {
+  const colpe = colpeIn('recap generato su pixel9pro alle 09:00', 'lib/esempio.js', true);
+  assert.ok(colpe.length >= 1, 'pixel9pro nella payload NON respinto');
+});
+
+test('HOSTNAME mgm — positivo', () => {
+  const colpe = colpeIn('il gate termux risponde da mgm', 'lib/esempio.js', true);
+  assert.ok(colpe.length >= 1, 'mgm nella payload NON respinto');
+});
+
+test('HOSTNAME — negativo: parole che contengono o estendono i nomi non mordono', () => {
+  const casi = [
+    'il client si chiama mmmbuto e resta pubblico',
+    'il nodo di test si chiama node-a e non e\' un nodo interno',
+    'l\'id generato e\' mgm12 e non e\' la macchina',
+    'la route finisce in -958e e non cita nessuna macchina',
+  ];
+  for (const testo of casi) {
+    const colpe = colpeIn(testo, 'lib/esempio.js', true);
+    assert.equal(colpe.length, 0, `falso positivo su testo legittimo — testo: "${testo}"`);
+  }
+});
+
+test('HOSTNAME — la regola esiste in payload e superficie', () => {
+  const defs = JSON.parse(fs.readFileSync(
+    path.join(__dirname, 'published-tree-clean-rules.json'), 'utf8'));
+  const hostnamePayload = defs.payloadStructural.find((r) => r.source.includes('vps3'));
+  assert.ok(hostnamePayload, 'la regola hostname deve esistere nel payload');
+  const surface = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'publish', 'public-surface-rules.json'), 'utf8'));
+  const hostnameSurface = surface.text.find((r) => r.source.includes('vps3'));
+  assert.ok(hostnameSurface, 'la regola hostname deve esistere anche in superficie');
+  const re = new RegExp(hostnameSurface.source, hostnameSurface.flags);
+  assert.ok(re.test('gate su vps3'), 'la superficie deve respingere il hostname');
+  assert.ok(!re.test('client mmmbuto'), 'la superficie non deve mordere su mmmbuto');
+});
+
+test('HOSTNAME — le fixture con nomi di nodo stanno fuori dal pacchetto', () => {
+  // tests/ e frontend/src non sono in `files`: le fixture di test che citano
+  // nomi di nodo restano nel repository (mai nella payload), quindi le guardie
+  // di pubblicazione non le vedono e non serve rinominarle.
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  const spediti = pkg.files || [];
+  const contaminati = spediti.filter((f) => f.startsWith('tests/') || f === 'frontend/src');
+  assert.deepEqual(contaminati, [], 'nessuna directory di test deve essere spedita');
+});
+
+test('HOSTNAME — variante composta: vps3-node matcha come la macchina singola', () => {
+  const colpe = colpeIn('il deck e\' su vps3-node dietro la rete interna', 'lib/esempio.js', true);
+  assert.ok(colpe.length >= 1, 'hostname composto NON respinto');
+});
