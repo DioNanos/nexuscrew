@@ -321,6 +321,8 @@ test('la vista segnala non materializzate le chiavi che questa fase non copre', 
   fs.chmodSync(home, 0o700);
   const cwd = path.join(home, 'Dev');
   fs.mkdirSync(cwd);
+  fs.mkdirSync(path.join(home, '.codex'));
+  fs.writeFileSync(path.join(home, '.codex', 'config.toml'), '[mcp_servers.webfetch]\ncommand = "webfetch"\n', { mode: 0o600 });
   const defsPath = path.join(root, 'fleet.json');
   fs.writeFileSync(defsPath, JSON.stringify({
     schemaVersion: 1,
@@ -331,7 +333,7 @@ test('la vista segnala non materializzate le chiavi che questa fase non copre', 
     ],
     cells: [
       { id: 'Cla', tmuxSession: 'work-c', cwd, engine: 'e-claude', capabilities: { mcp: ['nexuscrew'], skills: ['fleet'] } },
-      { id: 'Cdx', tmuxSession: 'work-e', cwd, engine: 'e-codex', capabilities: { mcp: ['nexuscrew'] } },
+      { id: 'Cdx', tmuxSession: 'work-e', cwd, engine: 'e-codex', capabilities: { mcp: ['nexuscrew'], ondemand: ['webfetch', 'inesistente'] } },
       { id: 'Alt', tmuxSession: 'work-d', cwd, engine: 'e1', capabilityProfile: 'p' },
     ],
     capabilityProfiles: { p: { mcp: ['nexuscrew'] } },
@@ -345,8 +347,13 @@ test('la vista segnala non materializzate le chiavi che questa fase non copre', 
   const chiaviCla = (cla.capabilities.unsupported || []).map((u) => u.key);
   assert.deepEqual(chiaviCla, ['skills'], 'per claude il materializzatore copre mcp; skills resta dichiarata non coperta');
   const cdx = vista.cells.find((c) => c.id === 'Cdx');
-  const chiaviCdx = (cdx.capabilities.unsupported || []).map((u) => u.key);
-  assert.deepEqual(chiaviCdx, [], 'per codex il materializzatore copre mcp: nulla di dichiarato resta non coperto');
+  // webfetch esiste nella config utente del mondo? No: il mondo di QUESTO test
+  // non scrive .codex/config.toml, quindi entrambi i nomi ondemand sono ignoti
+  // e la vista li segnala; mcp e coperta dal materializzatore.
+  const vociCdx = cdx.capabilities.unsupported || [];
+  assert.deepEqual(vociCdx.filter((u) => u.key === 'ondemand').map((u) => u.name), ['inesistente'],
+    'la vista nomina i server ondemand ignorati perche non in config utente (webfetch c e, non e segnalato)');
+  assert.equal(vociCdx.some((u) => u.key === 'mcp'), false, 'mcp coperta per codex');
   const alt = vista.cells.find((c) => c.id === 'Alt');
   const chiaviAlt = (alt.capabilities.unsupported || []).map((u) => u.key);
   assert.deepEqual(chiaviAlt, ['mcp'], 'engine senza materializzatore: la chiave dichiarata esce non supportata, mai errore');
@@ -417,14 +424,62 @@ test('codex dichiarato con mcp: -p con profilo per cella che spegne i soli non c
   assert.equal(fs.readFileSync(w.configToml, 'utf8'), TOML_UTENTE, 'la config utente non e mai toccata');
 });
 
-test('codex ondemand: omit_tools_from = ["direct"] nel profilo, prima di ogni tabella TOML', (t) => {
+test('codex ondemand: omit_tools_from nella TABELLA del server, mai a root (chiave che codex ignora)', (t) => {
   const w = mondoCodex(t);
-  const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew'], ondemand: ['webfetch'] } });
+  // webfetch e CONCESSO e differito: l'ondemand presuppone la concessione.
+  const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew', 'webfetch'], ondemand: ['webfetch'] } });
   assert.equal(out.ok, true, out.reason);
   const profilo = fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8');
-  assert.match(profilo, /^\s*omit_tools_from\s*=\s*\["direct"\]\s*$/m, 'gli ondemand restano scopribili, non attivi');
-  const primaTabella = profilo.indexOf('omit_tools_from');
-  assert.ok(primaTabella > -1 && profilo.slice(0, primaTabella).indexOf('[') === -1, 'le chiavi root del TOML stanno PRIMA delle tabelle');
+  // La forma giusta: tabella del server con la chiave di differimento, senza
+  // enabled (concesso ma differito, non spento).
+  assert.match(profilo, /\[mcp_servers\.webfetch\]\s*\nomit_tools_from = \["direct"\]/,
+    'omit_tools_from va nella tabella del server');
+  assert.doesNotMatch(profilo.slice(0, profilo.indexOf('\n[')), /omit_tools_from/,
+    'a root codex la ignora in silenzio: non deve comparire prima di ogni tabella');
+  // webfetch e ondemand, non spento: la tabella non porta enabled = false.
+  const tabella = profilo.split('[mcp_servers.webfetch]')[1] || '';
+  assert.equal(tabella.includes('enabled = false'), false, 'il server ondemand resta concesso');
+  // nextcloud resta il non concesso: enabled = false, senza chiavi di differimento.
+  const tabellaOff = (profilo.split('[mcp_servers.nextcloud]')[1] || '').split('\n[')[0];
+  assert.match(tabellaOff, /enabled = false/);
+  assert.equal(tabellaOff.includes('omit_tools_from'), false, 'uno spento non prende il differimento');
+});
+
+test('codex ondemand sovrapposto a mcp: nessuna tabella duplicata per lo stesso server', (t) => {
+  const w = mondoCodex(t);
+  const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew'], ondemand: ['nextcloud', 'inesistente'] } });
+  assert.equal(out.ok, true, out.reason);
+  const profilo = fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8');
+  assert.equal((profilo.match(/\[mcp_servers\.nextcloud\]/g) || []).length, 1,
+    'TOML vieta le tabelle duplicate: enabled = false vince (volere piu restrittivo)');
+  assert.doesNotMatch(profilo, /\[mcp_servers\.inesistente\]/, 'un ondemand non noto non genera tabelle');
+});
+
+// --- il consumatore VERO decide: il profilo generato parte con codex-vl ---
+
+test('il profilo generato e accettato dal client codex-vl vero (errore atteso: auth, non parse)', { skip: !fs.existsSync(path.join(os.homedir(), '.local', 'bin', 'codex-vl')) && 'binario codex-vl non presente sul nodo' }, (t) => {
+  const w = mondoCodex(t);
+  const { writeCellCodexProfile } = require('../lib/fleet/managed.js');
+  const codexHome = path.join(w.home, '.codex');
+  // Il profilo nella forma finale: mcp con un differito, uno spento, skill.
+  writeCellCodexProfile('T', { mcp: ['nexuscrew', 'webfetch'], ondemand: ['webfetch'], skills: ['fleet'] }, codexHome);
+  // CODEX_HOME isolato: solo config minimale senza auth + il profilo generato.
+  const isolato = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cellcap-cdxhome-'));
+  fs.mkdirSync(path.join(isolato, '.codex'));
+  fs.writeFileSync(path.join(isolato, '.codex', 'config.toml'), TOML_UTENTE, { mode: 0o600 });
+  fs.copyFileSync(path.join(codexHome, 'nexuscrew-T.config.toml'), path.join(isolato, '.codex', 'nexuscrew-T.config.toml'));
+  t.after(() => fs.rmSync(isolato, { recursive: true, force: true }));
+  const { spawnSync } = require('node:child_process');
+  const r = spawnSync(path.join(os.homedir(), '.local', 'bin', 'codex-vl'),
+    ['-p', 'nexuscrew-T', 'exec', '--skip-git-repo-check', 'x'],
+    { env: { ...process.env, CODEX_HOME: isolato }, input: '', timeout: 60000, encoding: 'utf8' });
+  const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+  const parseError = /unknown field|invalid type|expected one of|unknown variant|failed to parse|error parsing/i.test(out);
+  assert.equal(parseError, false, `il profilo e stato RIFIUTATO dal client vero:\n${out.slice(0, 800)}`);
+  // Errore atteso e letterale su questo nodo: il profilo e accettato e il
+  // client arriva fino all'auth (config minimale senza credenziali).
+  const authError = /401|unauthorized|not logged in|no credentials|login required|missing bearer/i.test(out);
+  assert.ok(authError, `atteso un errore di auth (profilo accettato), trovato:\n${out.slice(0, 800)}`);
 });
 
 test('codex con solo skills: il profilo spegne le non concesse, tocca i server a mcp assente', (t) => {
