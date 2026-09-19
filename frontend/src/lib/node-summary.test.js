@@ -77,14 +77,14 @@ describe('nodeRowSummary — a VL node produces a real row, not null', () => {
 // riga deve portare l'owner, non solo lo stato.
 describe('nodeRowSummary — shows the owner for a VL node (step 3, invariant 2)', () => {
   it('prefixes the subtitle with the owner label for a remote node', () => {
-    const owner = { instanceId: 'b'.repeat(16), route: ['vps3'], label: 'VPS3' };
+    const owner = { instanceId: 'b'.repeat(16), route: ['node-a'], label: 'Node A' };
     const row = nodeRowSummary(vlNodeToPeer(RAW_ONLINE, owner));
-    expect(row.subtitle.startsWith('VPS3')).toBe(true);
+    expect(row.subtitle.startsWith('Node A')).toBe(true);
     expect(row.subtitle).toContain('nominal');
   });
 
   it('two nodes with the SAME label on different owners produce different subtitles', () => {
-    const ownerA = { instanceId: 'a'.repeat(16), route: ['vps3'], label: 'VPS3' };
+    const ownerA = { instanceId: 'a'.repeat(16), route: ['node-a'], label: 'Node A' };
     const ownerB = { instanceId: 'b'.repeat(16), route: ['nova'], label: 'NovaLNX' };
     const rowA = nodeRowSummary(vlNodeToPeer(RAW_ONLINE, ownerA));
     const rowB = nodeRowSummary(vlNodeToPeer(RAW_ONLINE, ownerB));

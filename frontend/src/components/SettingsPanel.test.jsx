@@ -492,7 +492,7 @@ describe('Settings Nodes tab — VL nodes appear in the same list (NC_UI_NODI_VL
 // portato da `readVlDirectory` (lib/mcp/tools.js).
 describe('Settings Nodes tab — VL nodes across REMOTE owners (NC_UI_NODI_VL_REMOTI)', () => {
   const remoteOwnerTopology = {
-    nodes: [{ instanceId: 'remote-vps3-000', route: ['vps3'], label: 'VPS3', stale: false }],
+    nodes: [{ instanceId: 'remote-node-a-000', route: ['node-a'], label: 'Node A', stale: false }],
   };
   const remoteVlNode = {
     nodeId: 'c'.repeat(32), label: 'VL-Node-A', cell: 'VL-cccccccc',
@@ -502,16 +502,16 @@ describe('Settings Nodes tab — VL nodes across REMOTE owners (NC_UI_NODI_VL_RE
 
   it('aggregates VL nodes from a REMOTE owner found in /api/topology, not just local', async () => {
     mocks.getTopology.mockResolvedValue(remoteOwnerTopology);
-    // Locale: nessun nodo. Remoto (vps3): un VL-Node-A.
+    // Locale: nessun nodo. Remoto (node-a): un VL-Node-A.
     mocks.getVlNodes.mockImplementation((token, route = []) => (
-      route.length ? Promise.resolve({ instanceId: 'remote-vps3-000', nodes: [remoteVlNode] })
+      route.length ? Promise.resolve({ instanceId: 'remote-node-a-000', nodes: [remoteVlNode] })
         : Promise.resolve({ nodes: [] })
     ));
     render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
     expect(await screen.findByRole('button', { name: /VL-Node-A/ })).toBeTruthy();
     // Il fetch remoto e' realmente avvenuto sulla route dell'owner, non solo
     // su quella locale.
-    await waitFor(() => expect(mocks.getVlNodes).toHaveBeenCalledWith('token', ['vps3']));
+    await waitFor(() => expect(mocks.getVlNodes).toHaveBeenCalledWith('token', ['node-a']));
   });
 
   it('a REMOTE owner that does not respond does NOT hide the rest of the list (invariant 1)', async () => {
@@ -533,7 +533,7 @@ describe('Settings Nodes tab — VL nodes across REMOTE owners (NC_UI_NODI_VL_RE
     render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
     // Un owner muto che sparisce in silenzio si legge come "non ha nodi" —
     // deve invece essere leggibile che NON ha risposto.
-    expect(await screen.findByText(/VPS3/)).toBeTruthy();
+    expect(await screen.findByText(/Node A/)).toBeTruthy();
   });
 
   it('a LOCAL VL failure keeps the step-1/2 silent-degrade behavior (not flagged as an unresponsive owner)', async () => {

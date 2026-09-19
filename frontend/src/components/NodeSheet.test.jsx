@@ -421,19 +421,19 @@ describe('NC_UI_NODI_VL_REMOTI step 3: owner remoti', () => {
   }, overrides.owner ?? {});
 
   it('shows the owner in the sheet for a remote node', () => {
-    renderSheet(vlNode({ owner: { instanceId: 'b'.repeat(16), route: ['vps3'], label: 'VPS3' } }), []);
-    expect(screen.getByText('VPS3')).toBeTruthy();
+    renderSheet(vlNode({ owner: { instanceId: 'b'.repeat(16), route: ['node-a'], label: 'Node A' } }), []);
+    expect(screen.getByText('Node A')).toBeTruthy();
   });
 
   // L'invariante piu' delicato del brief: un comando su un nodo REMOTO deve
   // essere instradato sulla route di QUELL'owner, mai su /api/vl-nodes
   // locale — sbagliare qui manda il comando al device sbagliato.
   it('sends the command to the REMOTE owner route, not to the local endpoint', async () => {
-    const remote = vlNode({ owner: { instanceId: 'b'.repeat(16), route: ['vps3'], label: 'VPS3' } });
+    const remote = vlNode({ owner: { instanceId: 'b'.repeat(16), route: ['node-a'], label: 'Node A' } });
     renderSheet(remote, []);
     fireEvent.click(screen.getByRole('button', { name: 'restart' }));
     await waitFor(() => expect(mocks.sendVlNodeCommand).toHaveBeenCalledWith(
-      'token', 'a'.repeat(32), 'restart', {}, ['vps3'],
+      'token', 'a'.repeat(32), 'restart', {}, ['node-a'],
     ));
   });
 
@@ -452,7 +452,7 @@ describe('NC_UI_NODI_VL_REMOTI step 3: owner remoti', () => {
     // distinguere, non un caso limite di nodeId duplicato.
     const nodeA = vlNodeToPeer(
       { nodeId: 'a'.repeat(32), label: 'N900', capabilities: [] },
-      { instanceId: 'a'.repeat(16), route: ['vps3'], label: 'VPS3' },
+      { instanceId: 'a'.repeat(16), route: ['node-a'], label: 'Node A' },
     );
     const nodeB = vlNodeToPeer(
       { nodeId: 'b'.repeat(32), label: 'N900', capabilities: [] },
@@ -466,7 +466,7 @@ describe('NC_UI_NODI_VL_REMOTI step 3: owner remoti', () => {
     // per owner nel sottotitolo.
     const rows = container.querySelectorAll('.nc-node-row');
     expect(rows.length).toBe(2);
-    expect(container.textContent).toContain('VPS3');
+    expect(container.textContent).toContain('Node A');
     expect(container.textContent).toContain('NovaLNX');
   });
 });

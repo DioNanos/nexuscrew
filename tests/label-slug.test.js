@@ -9,14 +9,14 @@ const store = require('../lib/nodes/store.js');
 
 const NODE_ID = 'a'.repeat(32);
 const baseNode = (over = {}) => ({
-  name: 'vps3', ssh: 'u@h', remotePort: 22, localPort: 43001, direction: 'outbound', ...over,
+  name: 'node-a', ssh: 'u@h', remotePort: 22, localPort: 43001, direction: 'outbound', ...over,
 });
 const mk = (over) => store.parseStore({ schemaVersion: 2, nodeId: NODE_ID, nodes: [baseNode(over)] });
 
 // --- toSlug -----------------------------------------------------------------
 
 test('toSlug: lowercase, diacritici ASCII, run non-alfanumerici -> single dash', () => {
-  assert.equal(store.toSlug('VPS3'), 'vps3');
+  assert.equal(store.toSlug('Node A'), 'node-a');
   assert.equal(store.toSlug('My Server!'), 'my-server');
   assert.equal(store.toSlug('café'), 'cafe');
   assert.equal(store.toSlug('  Multi   space  '), 'multi-space');
@@ -40,7 +40,7 @@ test('toSlug: rispetta il limite 32 char (NODE_NAME_RE)', () => {
 });
 
 test('toSlug: output sempre conforme a NODE_NAME_RE', () => {
-  for (const input of ['VPS3', 'Pixel 9 Pro', 'localhost', 'A.B/C', 'café', '42', '---', '']) {
+  for (const input of ['Node X', 'Pixel 9 Pro', 'localhost', 'A.B/C', 'café', '42', '---', '']) {
     const slug = store.toSlug(input);
     assert.ok(store.NODE_NAME_RE.test(slug), `"${input}" -> "${slug}" non conforme`);
   }
@@ -49,9 +49,9 @@ test('toSlug: output sempre conforme a NODE_NAME_RE', () => {
 // --- suggestNodeName --------------------------------------------------------
 
 test('suggestNodeName: slug univoco, disambigua -2/-3 su collisione', () => {
-  assert.equal(store.suggestNodeName('VPS3', []), 'vps3');
-  assert.equal(store.suggestNodeName('VPS3', ['vps3']), 'vps3-2');
-  assert.equal(store.suggestNodeName('VPS3', ['vps3', 'vps3-2']), 'vps3-3');
+  assert.equal(store.suggestNodeName('Node X', []), 'node-x');
+  assert.equal(store.suggestNodeName('Node X', ['node-x']), 'node-x-2');
+  assert.equal(store.suggestNodeName('Node X', ['node-x', 'node-x-2']), 'node-x-3');
   // input povero -> base 'node', disambiguato
   assert.equal(store.suggestNodeName('!!!', []), 'node');
   assert.equal(store.suggestNodeName('!!!', ['node']), 'node-2');
@@ -71,10 +71,10 @@ test('suggestNodeName: candidato sempre conforme a NODE_NAME_RE e <=32', () => {
 // --- label nello store ------------------------------------------------------
 
 test('parseNode: accetta label valida (display, maiuscole/spazi)', () => {
-  const s = mk({ label: 'VPS3 Server' });
+  const s = mk({ label: 'Node A Server' });
   assert.ok(s);
-  assert.equal(s.nodes[0].label, 'VPS3 Server');
-  assert.equal(s.nodes[0].name, 'vps3'); // name (slug) invariato
+  assert.equal(s.nodes[0].label, 'Node A Server');
+  assert.equal(s.nodes[0].name, 'node-a'); // name (slug) invariato
 });
 
 test('parseNode: label opzionale (backward-compat record esistenti)', () => {
@@ -92,22 +92,22 @@ test('parseNode: rifiuta label garbage (control char, >64, non-string, solo spaz
 });
 
 test('parseNode: label trimmata (spazi ai bordi normalizzati)', () => {
-  const s = mk({ label: '  VPS3  ' });
-  assert.equal(s.nodes[0].label, 'VPS3');
+  const s = mk({ label: '  Node A  ' });
+  assert.equal(s.nodes[0].label, 'Node A');
 });
 
 // --- redaction / nodeLabel --------------------------------------------------
 
 test('redactNode: espone label se presente, assente se mancante (no fallback nel JSON)', () => {
-  assert.equal(store.redactNode(mk({ label: 'VPS3' }).nodes[0]).label, 'VPS3');
+  assert.equal(store.redactNode(mk({ label: 'Node A' }).nodes[0]).label, 'Node A');
   const redNoLabel = store.redactNode(mk().nodes[0]);
   assert.equal(redNoLabel.label, undefined);
   assert.ok(!('label' in redNoLabel), 'non serializzare label mancante');
 });
 
 test('nodeLabel: ritorna label se presente, fallback a name altrimenti', () => {
-  assert.equal(store.nodeLabel(mk({ label: 'VPS3' }).nodes[0]), 'VPS3');
-  assert.equal(store.nodeLabel(mk().nodes[0]), 'vps3');
+  assert.equal(store.nodeLabel(mk({ label: 'Node A' }).nodes[0]), 'Node A');
+  assert.equal(store.nodeLabel(mk().nodes[0]), 'node-a');
   assert.equal(store.nodeLabel(null), '');
 });
 
@@ -115,10 +115,10 @@ test('nodeLabel: ritorna label se presente, fallback a name altrimenti', () => {
 
 test('updateNode: rename della label NON cambia il name (route/URL preservati)', () => {
   let s = store.addNode(store.emptyStore(NODE_ID), baseNode({ label: 'Old' }));
-  assert.equal(s.nodes[0].name, 'vps3');
+  assert.equal(s.nodes[0].name, 'node-a');
   assert.equal(s.nodes[0].label, 'Old');
-  s = store.updateNode(s, 'vps3', { label: 'Nuovo Nome' });
-  assert.equal(s.nodes[0].name, 'vps3');     // name invariato -> route stabile
+  s = store.updateNode(s, 'node-a', { label: 'Nuovo Nome' });
+  assert.equal(s.nodes[0].name, 'node-a');     // name invariato -> route stabile
   assert.equal(s.nodes[0].label, 'Nuovo Nome');
 });
 
@@ -127,7 +127,7 @@ test('updateNode: stripping della label (ritorno a fallback name) ammesso', () =
   // patch con label undefined NON rimuove (merge superficiale): si usa null/empty?
   // Contratto: updateNode mergia patch; per "rimuovere" la label non c'e' API qui,
   // ma la label vuota e' rifiutata -> il rename verso '' e' un errore esplicito.
-  assert.throws(() => store.updateNode(s, 'vps3', { label: '   ' }), /non valido/);
+  assert.throws(() => store.updateNode(s, 'node-a', { label: '   ' }), /non valido/);
   // la label resta leggibile come fallback name via nodeLabel
-  assert.equal(store.nodeLabel(store.addNode(store.emptyStore(NODE_ID), baseNode()).nodes[0]), 'vps3');
+  assert.equal(store.nodeLabel(store.addNode(store.emptyStore(NODE_ID), baseNode()).nodes[0]), 'node-a');
 });

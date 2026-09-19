@@ -9,7 +9,7 @@
 //   1. ToolArgs/ToolResult NON entrano mai, nemmeno troncati (contengono file,
 //      output di comandi, potenziali segreti);
 //   2. il ring vive in memoria ed e' limitato, cosi' l'hub non accumula la
-//      conversazione nel tempo (VPS3 e' l'host dei backup).
+//      conversazione nel tempo (Node A e' l'host dei backup).
 
 const { test } = require('node:test');
 const assert = require('node:assert');

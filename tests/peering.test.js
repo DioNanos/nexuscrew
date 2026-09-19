@@ -91,12 +91,12 @@ test('pairing v2: con Host SSH e senza name deriva sempre lo slug dalla label', 
   const p = path.join(dir, 'invites.json');
   const made = peering.createInvite({
     invitesPath: p, instanceId: 'd'.repeat(32), port: 41820,
-    label: 'VPS 3 Relay', ssh: 'vps3-relay',
+    label: 'Node A Relay', ssh: 'node-a-relay',
   });
   const parsed = peering.parsePairingUrl(made.pairingUrl);
   assert.equal(made.version, 2);
-  assert.equal(parsed.name, 'vps-3-relay');
-  assert.equal(parsed.ssh, 'vps3-relay');
+  assert.equal(parsed.name, 'node-a-relay');
+  assert.equal(parsed.ssh, 'node-a-relay');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
