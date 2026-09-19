@@ -19,16 +19,19 @@ import './NotifyCenter.css';
 const TOAST_MS = 6000;
 const TOAST_HIGH_MS = 12000;
 
-// Identita' di una card: (ownerId, askId). Due proprietari possono usare lo
-// stesso id di ask, quindi l'id da solo non basta mai.
-const askKeyOf = (id, ownerId) => `${ownerId || ''}:${id}`;
+// Identita' CANONICA di una card: (ownerId, ownerAskId). La stessa domanda
+// arriva per DUE strade — l'import diretto (che porta un id locale E
+// l'ownerAskId) e il feed dell'owner (che porta l'id dell'owner) — e deve
+// restare UNA card sola. La chiave usa l'id dell'owner quando c'e' e ricade
+// sull'id locale solo per gli ask di casa, che un ownerAskId non ce l'hanno.
+const askKeyOf = (id, ownerId, ownerAskId) => `${ownerId || ''}:${ownerAskId || id}`;
 
 // Compattazione, mai sostituzione: due liste della stessa natura possono
 // completarsi in QUALUNQUE ordine (snapshot locale da /api/asks, ask importate
 // dal feed-state). Una chiave gia' nota resta una volta sola.
 function mergeAsks(cur, extra) {
-  const seen = new Set(cur.map((a) => askKeyOf(a.id, a.ownerId)));
-  const add = (extra || []).filter((a) => a && a.id && !seen.has(askKeyOf(a.id, a.ownerId)));
+  const seen = new Set(cur.map((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId)));
+  const add = (extra || []).filter((a) => a && a.id && !seen.has(askKeyOf(a.id, a.ownerId, a.ownerAskId)));
   return add.length ? [...cur, ...add] : cur;
 }
 
@@ -39,8 +42,8 @@ function mergeAsks(cur, extra) {
 // cancella una domanda remota ancora aperta.
 function applyLocalSnapshot(cur, incoming) {
   const imported = mergeAsks([], cur.filter((a) => a.imported));
-  const seen = new Set(imported.map((a) => askKeyOf(a.id, a.ownerId)));
-  const locals = (incoming || []).filter((a) => a && a.id && !seen.has(askKeyOf(a.id, a.ownerId)));
+  const seen = new Set(imported.map((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId)));
+  const locals = (incoming || []).filter((a) => a && a.id && !seen.has(askKeyOf(a.id, a.ownerId, a.ownerAskId)));
   return [...locals, ...imported];
 }
 
@@ -79,7 +82,13 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false }) 
     setErr(null); setBusy(true);
     try {
       if (ask.ownerId) {
-        const out = await relayAskAnswer(token, { ownerId: ask.ownerId, askId: ask.id, text: answer });
+        // `ownerAskId` esiste sugli ask ARRIVATI dalla federazione: il nostro
+        // `id` locale e' nostro, la risposta deve citare l'id con cui l'OWNER
+        // conosce la domanda, altrimenti colpirebbe un id che li' non esiste.
+        // Gli ask importati dal feed non hanno `ownerAskId`: il loro `id` E'
+        // gia' quello dell'owner, quindi il fallback li copre entrambi.
+        const ownerAskId = ask.ownerAskId || ask.id;
+        const out = await relayAskAnswer(token, { ownerId: ask.ownerId, askId: ownerAskId, text: answer });
         // Esito incerto: la card resta con lo stato «verifica», mai un retry cieco.
         if (out && out.uncertain) { setUncertainRid(out.requestId); return; }
         onAnswered(ask.id, ask.ownerId);
@@ -100,7 +109,7 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false }) 
     try {
       if (ask.ownerId) {
         if (uncertainRid) return; // prima la verifica, poi eventualmente dismiss
-        await relayAskDismiss(token, { ownerId: ask.ownerId, askId: ask.id });
+        await relayAskDismiss(token, { ownerId: ask.ownerId, askId: ask.ownerAskId || ask.id });
         onDismiss(ask.id, ask.ownerId);
       } else {
         await dismissAsk(token, ask.id);

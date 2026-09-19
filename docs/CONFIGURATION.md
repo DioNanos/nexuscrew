@@ -30,6 +30,45 @@ Runtime values follow:
 defaults < config file < environment
 ```
 
+### Engine credentials
+
+A managed engine resolves its credential from the first source that has it, in
+this order:
+
+```text
+environment -> NexusCrew store -> user shell (providers.zsh)
+            -> keys files -> legacy file
+```
+
+The keys group is **two files**, read in this order:
+
+```text
+~/.config/keys/ai.env  ->  ~/.config/secure/.env
+```
+
+**The last one wins.** A value in `secure/.env` overrides the same variable in
+`ai.env`, on purpose: it is the place to put an override without touching the
+canonical file. Until now that precedence was not documented anywhere, so the
+only way to notice an override was to compare the files by hand — and an engine
+running on a revoked key looked exactly like an engine running on a good one.
+
+NexusCrew now reports the origin of the credential it resolved: the source, the
+file path, its modification time and the first 8 hex characters of the SHA-256
+of the value. **The value itself is never shown, logged or returned.** When the
+same variable is defined in more than one file with a *different* value, the
+engine stays configured but says so — in the doctor's `engine credentials`
+section, in the engine status `reason`, and in the `credentialConflict` field of
+`GET /fleet/status`.
+
+The order is fixed. An engine can change **where** it looks with
+`credentialSourcePolicy` in its managed profile:
+
+| Policy | Meaning |
+|---|---|
+| `auto` (default) | the order above |
+| `environment` | only the service environment |
+| `nexuscrew-store` | only the NexusCrew store (`~/.nexuscrew/credentials.json`) |
+
 Common overrides:
 
 | Variable | Purpose |

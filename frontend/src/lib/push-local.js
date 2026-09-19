@@ -1,5 +1,6 @@
-// Browser-local push choice, per device: one phone can keep two PWAs (the VPS3
-// one and an owner's) and the user may want OS alerts from only one of them.
+// Browser-local push choice, per device: one phone can keep two PWAs (the
+// relay-hosted one and an owner's) and the user may want OS alerts from only
+// one of them.
 // Turning this off silences the SUBSCRIPTION of this browser only: the live UI,
 // the toasts and the owner's own pushes are untouched, and nothing here is ever
 // pushed to the server as a preference.

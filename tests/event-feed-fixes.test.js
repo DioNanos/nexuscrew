@@ -107,6 +107,24 @@ function readSse(url, headers, { maxMs = 1500 } = {}) {
 
 // --- client guards (unit, stubbed fetch) ------------------------------------
 
+// Il teardown non puo' dipendere dall'ultima riga del test. Se un'asserzione
+// fallisce, il `client.stop()` in fondo al corpo non viene mai raggiunto: il
+// client resta a pollare, e la sua lettura successiva dello store trova la
+// directory temporanea gia' rimossa. Quel rifiuto atterra su un test che e'
+// finito, e il runner lo attribuisce a lui — un rosso che non dice nulla sul
+// difetto vero e che il carico della macchina rende intermittente.
+// Qui il client si ferma SEMPRE, e si lascia atterrare cio' che era in volo
+// prima di togliere la directory. Il riferimento e' una scatola perche' il
+// teardown si registra prima che il client esista (e' creato subito dopo).
+function quiesceAndRemove(t, dir, ref) {
+  t.after(async () => {
+    try { if (ref.value) ref.value.stop(); } catch (_) { /* un client gia' fermo non ferma il teardown */ }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setImmediate(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+}
+
 function stubClient(t, responses = [], extra = {}) {
   const calls = [];
   const fetchImpl = async (url, opts = {}) => {
@@ -126,13 +144,15 @@ function stubClient(t, responses = [], extra = {}) {
   });
   st = nodesStore.updateNode(st, 'owner', { eventsReceive: true });
   nodesStore.atomicWriteStore(nodesPath, st);
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const ref = { value: null };
+  quiesceAndRemove(t, dir, ref);
   const hub = [];
   const client = createEventFeedClient({
     loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30,
     eventsHub: { broadcast: (e) => hub.push(e) },
     ...extra,
   });
+  ref.value = client;
   return { client, calls, hub };
 }
 
@@ -330,12 +350,14 @@ function stubOwners(t, defs, extra = {}) {
     }
     return { ok: false, status: 404, json: async () => ({ error: 'unknown resource' }), text: async () => '' };
   };
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const ref = { value: null };
+  quiesceAndRemove(t, dir, ref);
   const client = createEventFeedClient({
     loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30,
     eventsHub: { broadcast: (e) => hub.push(e) },
     ...extra,
   });
+  ref.value = client;
   return { client, calls, readers, hub, ownerAt };
 }
 
