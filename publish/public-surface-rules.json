@@ -41,7 +41,7 @@
         "reason": "internal work code (X-NN)"
       },
       "B": {
-        "source": "\\b[A-Z]{1,4}[0-9]+(?:[.\\-][0-9]+)*\\b",
+        "source": "\\b[A-Z]{1,4}[0-9]+(?:[.\\-][0-9]+)*[a-z]{0,3}\\b",
         "reason": "internal work code (Ln.n(.n), multi-letter)"
       },
       "C": {
