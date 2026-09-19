@@ -312,22 +312,22 @@ export function mergeRemoteWithLocal(remote, local) {
       if (localByKey.has(k)) column.tiles[i] = localByKey.get(k);
     }
   }
-  // Anche le larghezze di colonna sono geometria locale: un resize tocca solo
-  // `width`, quindi il confronto per tile non basta. Ogni colonna remota che
-  // contiene almeno una tile conosciuta in locale adotta la larghezza della
-  // colonna locale che la contiene; le colonne nuove del remoto restano come
-  // arrivano.
-  const widthByKey = new Map();
+  // Le larghezze di colonna sono geometria locale SOLO a struttura invariata:
+  // una colonna remota eredita la larghezza locale quando ha lo STESSO insieme
+  // di tile di una colonna locale (il resize tocca solo `width`). Se il remoto
+  // ha ristrutturato le colonne (tile spostate, fuse o divise), la larghezza
+  // locale apparterrebbe a un'altra struttura: quella colonna tiene la
+  // larghezza del remoto, già passata dalla regola di `normalize`
+  // (`Math.max(MIN_W, …)`, grid-model.js:276).
+  const widthBySignature = new Map();
   for (const column of localNorm.columns) {
-    for (const tile of column.tiles) {
-      if (!widthByKey.has(refKey(tile))) widthByKey.set(refKey(tile), column.width);
-    }
+    const signature = column.tiles.map((t) => refKey(t)).sort().join('|');
+    if (!widthBySignature.has(signature)) widthBySignature.set(signature, column.width);
   }
   for (const column of out.columns) {
-    for (const tile of column.tiles) {
-      const w = widthByKey.get(refKey(tile));
-      if (w != null) { column.width = w; break; }
-    }
+    const signature = column.tiles.map((t) => refKey(t)).sort().join('|');
+    const w = widthBySignature.get(signature);
+    if (w != null) column.width = w;
   }
   for (const [key, tile] of localByKey) {
     if (sessions(out).includes(key)) continue;

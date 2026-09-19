@@ -65,6 +65,49 @@ test('resolution order is runtime, local store, providers.zsh, canonical files, 
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
+// L'override fra i due file di chiavi non era coperto: il test sopra passa un
+// `providerSecurePath` INESISTENTE, quindi l'ordine reale (l'ultimo vince) non
+// era mai stato provato. Qui si prova, e si prova che il conflitto sia DETTO —
+// e' il caso che sul campo si e' presentato come «la cella usa una chiave
+// revocata», dove l'unico modo di accorgersene era confrontare gli hash a mano.
+test('secure/.env overrides ai.env, and the disagreement is reported with hashes only', () => {
+  const { home } = world();
+  try {
+    const keysDir = path.join(home, '.config', 'keys');
+    const secureDir = path.join(home, '.config', 'secure');
+    fs.mkdirSync(keysDir, { recursive: true, mode: 0o700 }); fs.chmodSync(keysDir, 0o700);
+    fs.mkdirSync(secureDir, { recursive: true, mode: 0o700 }); fs.chmodSync(secureDir, 0o700);
+    const canonical = path.join(keysDir, 'ai.env');
+    const secure = path.join(secureDir, '.env');
+    fs.writeFileSync(canonical, 'API_KEY=revoked-old-value\n', { mode: 0o600 });
+    fs.writeFileSync(secure, 'API_KEY=good-new-value\n', { mode: 0o600 });
+
+    // Il conflitto e' una proprieta' della CATENA di precedenza (shell + i due
+    // file), non della sola coppia: si interroga credentialSources, che e' dove
+    // la catena si legge.
+    const values = parseProviderKeyFiles({ providerKeysPath: canonical, providerSecurePath: secure }, home);
+    assert.equal(values.API_KEY, 'good-new-value', 'l\'ultimo file vince: e\' la precedenza dichiarata');
+
+    const sources = credentialSources({ home, providerKeysPath: canonical, providerSecurePath: secure }, home);
+    const conflicts = sources.conflicts || [];
+    assert.equal(conflicts.length, 1, 'il disaccordo fra i due file va dichiarato');
+    assert.equal(conflicts[0].envKey, 'API_KEY');
+    assert.equal(conflicts[0].winner.path, secure);
+    assert.equal(conflicts[0].others[0].path, canonical);
+    assert.match(conflicts[0].winner.hash8, /^[0-9a-f]{8}$/);
+    assert.notEqual(conflicts[0].winner.hash8, conflicts[0].others[0].hash8);
+    // Il valore non entra MAI nell'esito del conflitto.
+    const serialized = JSON.stringify(conflicts);
+    assert.ok(!serialized.includes('revoked-old-value'));
+    assert.ok(!serialized.includes('good-new-value'));
+
+    // Stesso valore nei due file: nessun conflitto da segnalare.
+    fs.writeFileSync(canonical, 'API_KEY=good-new-value\n', { mode: 0o600 });
+    const quiet = credentialSources({ home, providerKeysPath: canonical, providerSecurePath: secure }, home);
+    assert.deepEqual(quiet.conflicts, [], 'la stessa chiave in due posti non e\' un conflitto');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
 test('canonical ai.env may symlink only to a safe private file in an allowed config root', () => {
   const { home } = world();
   try {

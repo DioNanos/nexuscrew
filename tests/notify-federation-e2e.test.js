@@ -219,11 +219,21 @@ test('il budget federato e\' separato: saturarlo non zittisce le celle locali', 
 
 // Il confine va DICHIARATO, non dedotto dall'assenza. Senza questo test, un
 // domani qualcuno federa /events o /asks e nessuna guardia se ne accorge.
-test('solo /notify attraversa: events, asks e push restano locali', () => {
+test('ora /notify e /asks attraversano: events e push restano locali', () => {
   const fed = require('../lib/proxy/federation.js');
   assert.equal(fed.allowedResource('/notify', 'POST'), true);
   assert.equal(fed.allowedResource('/notify', 'GET'), false);
-  for (const resource of ['/events', '/asks', '/push/subscribe', '/push/unsubscribe', '/push/vapid']) {
+  // La DOMANDA (nc_ask) e' federata come la notify: e' testo che appare
+  // sulla UI dell'owner, non un'esecuzione. Prima NON attraversava, e questo
+  // test lo asseriva: era la descrizione del difetto, non un contratto da
+  // difendere. Solo POST: la GET resta locale, perche' lo snapshot degli ask e'
+  // autorevole solo sul nodo che li possiede.
+  assert.equal(fed.allowedResource('/asks', 'POST'), true);
+  assert.equal(fed.allowedResource('/asks', 'GET'), false);
+  const r = fed.parseRoute('/vps/_/asks');
+  assert.ok(r, '/asks deve ora essere una risorsa federabile');
+  assert.equal(r.resource, '/asks');
+  for (const resource of ['/events', '/push/subscribe', '/push/unsubscribe', '/push/vapid']) {
     assert.equal(fed.parseRoute(`/vps/_${resource}`), null, `${resource} non deve attraversare la federazione`);
   }
 });
