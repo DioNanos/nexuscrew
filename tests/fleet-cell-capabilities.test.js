@@ -447,12 +447,15 @@ test('codex ondemand: omit_tools_from nella TABELLA del server, mai a root (chia
 
 test('codex ondemand sovrapposto a mcp: nessuna tabella duplicata per lo stesso server', (t) => {
   const w = mondoCodex(t);
-  const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew'], ondemand: ['nextcloud', 'inesistente'] } });
+  // Nomi tutti noti: un nome sconosciuto ora rifiuta il lancio prima di
+  // scrivere il profilo (vedi i test CAPABILITY_UNKNOWN_NAME qui sotto).
+  const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew'], ondemand: ['nextcloud', 'webfetch'] } });
   assert.equal(out.ok, true, out.reason);
   const profilo = fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8');
   assert.equal((profilo.match(/\[mcp_servers\.nextcloud\]/g) || []).length, 1,
     'TOML vieta le tabelle duplicate: enabled = false vince (volere piu restrittivo)');
-  assert.doesNotMatch(profilo, /\[mcp_servers\.inesistente\]/, 'un ondemand non noto non genera tabelle');
+  assert.doesNotMatch(profilo, /omit_tools_from/,
+    'un server spento (enabled = false) non prende anche la tabella ondemand');
 });
 
 // --- il consumatore VERO decide: il profilo generato parte con codex-vl ---
@@ -511,4 +514,63 @@ test('codex: scrittura profilo impossibile -> rifiuto del launch (fail-closed)',
   const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew'] } });
   assert.equal(out.ok, false, 'il launch non parte con la superficie sbagliata');
   assert.match(out.mcpCellRefused || '', /profilo per cella non scrivibile/);
+});
+
+// --- Nomi dangling: una capability dichiarata che il client non definisce
+// RIFIUTA il lancio (fail-closed) invece di sparire in silenzio dal file. ---
+
+test('claude: capability mcp con nome sconosciuto rifiuta il launch con CAPABILITY_UNKNOWN_NAME, nessun file scritto', (t) => {
+  const w = mondoClaude(t, { utente: ['nexuscrew'] });
+  const out = resolveClaude(w, { capabilities: { mcp: ['nexuscrew', 'inesistente'] } }, {});
+  assert.equal(out.ok, false, 'il lancio deve essere rifiutato');
+  assert.equal(out.mcpCellRefusedCode, 'CAPABILITY_UNKNOWN_NAME');
+  assert.match(out.reason, /inesistente/);
+  assert.match(out.reason, /capability mcp/);
+  assert.equal(
+    fs.existsSync(path.join(w.home, '.nexuscrew', 'cell-mcp', 'Ric.json')),
+    false,
+    'nessun file per cella scritto a metà',
+  );
+});
+
+test('codex: nome mcp non in config.toml rifiuta con CAPABILITY_UNKNOWN_NAME', (t) => {
+  const w = mondoCodex(t);
+  const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew', 'b'] } });
+  assert.equal(out.ok, false);
+  assert.equal(out.mcpCellRefusedCode, 'CAPABILITY_UNKNOWN_NAME');
+  assert.match(out.reason, /\bb\b/);
+});
+
+test('codex: nome ondemand non in config.toml rifiuta con CAPABILITY_UNKNOWN_NAME', (t) => {
+  const w = mondoCodex(t);
+  const out = resolveCodex(w, { capabilities: { ondemand: ['c'] } });
+  assert.equal(out.ok, false);
+  assert.equal(out.mcpCellRefusedCode, 'CAPABILITY_UNKNOWN_NAME');
+  assert.match(out.reason, /\bc\b/);
+});
+
+test('codex: skill non in config.toml rifiuta con CAPABILITY_UNKNOWN_NAME', (t) => {
+  const w = mondoCodex(t);
+  const out = resolveCodex(w, { capabilities: { skills: ['s2'] } });
+  assert.equal(out.ok, false);
+  assert.equal(out.mcpCellRefusedCode, 'CAPABILITY_UNKNOWN_NAME');
+  assert.match(out.reason, /s2/);
+});
+
+test('codex: nomi tutti definiti -> profilo scritto (caso positivo)', (t) => {
+  const w = mondoCodex(t);
+  const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew'], skills: ['fleet'] } });
+  assert.equal(out.ok, true, out.reason);
+  const pos = out.engine.args.indexOf('-p');
+  assert.ok(pos !== -1, 'profilo passato con -p');
+});
+
+test('codex: config.toml vuota (catalogo assente) con nomi dichiarati rifiuta; mcp vuoto resta valido', (t) => {
+  const w = mondoCodex(t, { toml: '' });
+  const out1 = resolveCodex(w, { capabilities: { mcp: ['nexuscrew'] } });
+  assert.equal(out1.ok, false);
+  assert.equal(out1.mcpCellRefusedCode, 'CAPABILITY_UNKNOWN_NAME');
+  assert.match(out1.reason, /nexuscrew/);
+  const out2 = resolveCodex(w, { capabilities: { mcp: [] } });
+  assert.equal(out2.ok, true, 'mcp: [] senza nomi deve restare valido');
 });
