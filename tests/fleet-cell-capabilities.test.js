@@ -1,6 +1,6 @@
 'use strict';
 // tests/fleet-cell-capabilities.test.js — la superficie operativa di una cella,
-// dichiarata per nome (F1a: schema, parse, vista).
+// dichiarata per nome: schema, parse, vista.
 //
 // Due regole che i test fissano prima del codice:
 //   LEGACY. Una cella senza `capabilities` e senza `capabilityProfile` e' la
@@ -163,7 +163,7 @@ test('argv di una cella legacy: nessuna flag nuova, il filtro mcp di oggi resta'
   const out = resolveManagedEngine(ENGINE, { id: 'Dev', cwd: w.cwd, mcp: ['nexuscrew'] }, { home: w.home, platform: 'linux', env: {} });
   assert.equal(out.ok, true, out.reason);
   const args = out.engine.args;
-  assert.equal(args.includes('--strict-mcp-config'), false, 'F1a non tocca il builder: legacy senza flag nuove');
+  assert.equal(args.includes('--strict-mcp-config'), false, 'nessuna flag nuova per la legacy: il builder resta quello di oggi');
   assert.equal(args.some((a) => a.startsWith('--mcp-config=')), false);
   const settings = args.find((a) => a.startsWith('--settings='));
   assert.ok(settings, 'il filtro mcp odierno resta per la legacy');
