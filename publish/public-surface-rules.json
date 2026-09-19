@@ -20,6 +20,11 @@
       "source": "\\b(?:vps3|macair|pixel9pro|mgm)\\b",
       "flags": "i",
       "reason": "internal node hostname"
+    },
+    {
+      "source": "\\b(?:browserai|devworkerp|devworkera|devworker|devauditor|forkauditor|warmaster|gameauditor|gamedev|designcreator|elnino)\\b",
+      "flags": "i",
+      "reason": "internal fleet cell name"
     }
   ],
   "path": [
