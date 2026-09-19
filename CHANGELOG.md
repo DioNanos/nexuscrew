@@ -4,7 +4,7 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
-## Unreleased
+## 0.9.33 — 2026-09-19
 
 - **A declared model can be edited without detaching its engine.** `POST /api/fleet/edit-model` patches the non-identity fields of an existing declaration (`contextWindow`, `label`, `maxTokens`, `reasoning`) with the same validation as the declaration itself; an unknown model answers 404, an unknown or invalid field answers 400, and the engine that resolves the model is left untouched — no reload, no restart. The capability is `edit-model`, and the publish guards now also refuse internal node hostnames in the shipped payload and on the public surface.
 - **Node hostnames are no longer publishable.** The payload and public-surface guards now reject the internal node hostnames as whole words (composed forms included) while leaving look-alike words alone, and the guard suite grew to 25 cases covering each name, its extensions, and the fact that test fixtures live outside the shipped package.
