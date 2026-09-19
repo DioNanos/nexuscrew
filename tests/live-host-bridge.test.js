@@ -298,7 +298,7 @@ test('engine non codex-vl: modalita\' tmux, nessuna thread ponte (JC2)', async (
 });
 
 test('NATIVA con cella OCCUPATA: thread NUOVA del ponte, cwd e prompt per-cella arrivano davvero', async () => {
-  const cwd = path.join(os.tmpdir(), 'cell-devauditor');
+  const cwd = path.join(os.tmpdir(), 'cell-alfa');
   fs.mkdirSync(cwd, { recursive: true });
   const ctx = await boot({ cells: CELLS_NATIVE(cwd) });
   try {

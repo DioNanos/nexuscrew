@@ -68,3 +68,18 @@ function classificato(rules, token) {
   return (rules.workcodes.allowTokenRe || []).some((r) => new RegExp(r.source || r).test(token));
 }
 
+
+test('la regola text dei nomi cella rifiuta i worker/auditor e lascia le etichette generiche', () => {
+  const rules = JSON.parse(fs.readFileSync(path.join(ROOT, 'publish', 'public-surface-rules.json'), 'utf8'));
+  const celle = rules.text.find((r) => r.reason === 'internal fleet cell name');
+  assert.ok(celle, 'la regola text dei nomi cella deve esistere');
+  const re = new RegExp(celle.source, celle.flags);
+  for (const nome of ['BrowserAI', 'DevWorkerP', 'devworkera', 'DevAuditor', 'ForkAuditor', 'WarMaster', 'GameAuditor', 'GameDev', 'DesignCreator', 'ElNino']) {
+    assert.ok(re.test(nome), `nome cella ${nome} deve essere rifiutato dalla superficie`);
+  }
+  for (const generica of ['SysAdmin', 'Dev', 'Research']) {
+    assert.equal(re.test(generica), false, `etichetta generica ${generica} non toccata dalla regola`);
+  }
+  const legittimo = 'le fixture usano cell-alfa e le etichette generiche cloud-Dev, cloud-SysAdmin, cloud-Research';
+  assert.equal(re.test(legittimo), false, 'il corpus legittimo resta fuori dalla regola');
+});
