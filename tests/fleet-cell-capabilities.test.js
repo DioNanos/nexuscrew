@@ -151,7 +151,10 @@ test('una cella con profilo espone capabilities.declared fuso e legacy: false', 
   const vista = await fleet.definitions();
   const cella = vista.cells.find((c) => c.id === 'Ric');
   assert.equal(cella.legacy, false);
-  assert.deepEqual(cella.capabilities, { declared: { mcp: ['nexuscrew'], skills: ['fleet'], ondemand: ['playwright'] } });
+  // engine custom: nessun materializzatore MCP in questa fase, quindi la chiave
+  // dichiarata esce anche come unsupported (con motivo), accanto alla fusione.
+  assert.deepEqual(cella.capabilities.declared, { mcp: ['nexuscrew'], skills: ['fleet'], ondemand: ['playwright'] });
+  assert.deepEqual((cella.capabilities.unsupported || []).map((u) => u.key), ['mcp', 'skills', 'ondemand']);
   assert.equal(cella.capabilityProfile, 'ricerca');
 });
 
@@ -199,4 +202,99 @@ test('lo schema dichiara capabilities/capabilityProfile della cella e capability
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+// --- materializzatore claude (MCP): strict + file per cella ---
+
+const ENGINE_CLAUDE = { id: 'ec', managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'unsafe' } };
+
+function mondoClaude(t, { utente = ['nexuscrew', 'webfetch', 'nextcloud'] } = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cellcap-mat-'));
+  fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
+  const bin = path.join(home, '.local', 'bin', 'claude');
+  fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const mcpServers = {};
+  for (const nome of utente) mcpServers[nome] = { command: nome };
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ mcpServers }), { mode: 0o600 });
+  const cwd = path.join(home, 'lavoro');
+  fs.mkdirSync(cwd);
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  return { home, cwd };
+}
+
+function resolveClaude(w, cell, capabilityProfiles) {
+  return resolveManagedEngine(ENGINE_CLAUDE, { id: 'Ric', cwd: w.cwd, ...cell }, {
+    home: w.home, platform: 'linux', env: {}, ...(capabilityProfiles ? { capabilityProfiles } : {}),
+  });
+}
+
+test('una cella non-legacy con mcp dichiarato riceve strict + file per cella, non il deny enumerato', (t) => {
+  const w = mondoClaude(t);
+  const out = resolveClaude(w, { capabilities: { mcp: ['nexuscrew', 'webfetch'] } }, {});
+  assert.equal(out.ok, true, out.reason);
+  const args = out.engine.args;
+  assert.ok(args.includes('--strict-mcp-config'), 'strict richiesto per le celle dichiarate');
+  const flag = args.find((a) => a.startsWith('--mcp-config='));
+  assert.ok(flag, 'file per cella passato con la forma con l uguale');
+  const file = flag.slice('--mcp-config='.length);
+  assert.ok(file.startsWith(path.join(w.home, '.nexuscrew', 'cell-mcp')), 'il file vive nel namespace privato');
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(Object.keys(parsed.mcpServers).sort(), ['nexuscrew', 'webfetch'], 'solo i concessi, niente nextcloud');
+  const st = fs.statSync(file);
+  assert.equal(st.mode & 0o077, 0, 'file 0600-like: nessun bit per gruppo/altri');
+  assert.equal(args.some((a) => a.startsWith('--settings=')), false, 'il deny enumerato non e piu emesso per le dichiarate');
+});
+
+test('mcp vuoto dichiarato: il file porta solo il core, che e sempre incluso', (t) => {
+  const w = mondoClaude(t, { utente: ['nexuscrew'] });
+  const out = resolveClaude(w, { capabilities: { mcp: [] } }, {});
+  assert.equal(out.ok, true, out.reason);
+  const flag = out.engine.args.find((a) => a.startsWith('--mcp-config='));
+  assert.ok(flag, 'strict anche per la cella vuota: e il caso esatto della cella non fidata');
+  const parsed = JSON.parse(fs.readFileSync(flag.slice('--mcp-config='.length), 'utf8'));
+  assert.deepEqual(Object.keys(parsed.mcpServers), ['nexuscrew'], 'il core resta, il resto no');
+});
+
+test('una cella che dichiara solo skills non riceve nessuna flag MCP nuova', (t) => {
+  const w = mondoClaude(t);
+  const out = resolveClaude(w, { capabilities: { skills: ['fleet'] } }, {});
+  assert.equal(out.ok, true, out.reason);
+  const args = out.engine.args;
+  assert.equal(args.includes('--strict-mcp-config'), false);
+  assert.equal(args.some((a) => a.startsWith('--mcp-config=')), false, 'le skill sono escluse da questa fase');
+  assert.equal(args.some((a) => a.startsWith('--settings=')), false, 'una cella dichiarata non riceve il deny enumerato');
+  assert.equal(fs.existsSync(path.join(w.home, '.nexuscrew', 'cell-mcp')), false, 'nessun file scritto senza mcp dichiarato');
+});
+
+test('la vista segnala non materializzate le chiavi che questa fase non copre', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cellcap-unsup-'));
+  const home = path.join(root, 'home');
+  fs.mkdirSync(home, { mode: 0o700 });
+  fs.chmodSync(home, 0o700);
+  const cwd = path.join(home, 'Dev');
+  fs.mkdirSync(cwd);
+  const defsPath = path.join(root, 'fleet.json');
+  fs.writeFileSync(defsPath, JSON.stringify({
+    schemaVersion: 1,
+    engines: [
+      { id: 'e-claude', managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'unsafe' } },
+      PROFILO_ENGINE,
+    ],
+    cells: [
+      { id: 'Cla', tmuxSession: 'work-c', cwd, engine: 'e-claude', capabilities: { mcp: ['nexuscrew'], skills: ['fleet'] } },
+      { id: 'Alt', tmuxSession: 'work-d', cwd, engine: 'e1', capabilityProfile: 'p' },
+    ],
+    capabilityProfiles: { p: { mcp: ['nexuscrew'] } },
+  }));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const fleet = await createBuiltinFleet({ home, fleetDefsPath: defsPath, tmuxBin: '/bin/true' });
+  const vista = await fleet.definitions();
+  const cla = vista.cells.find((c) => c.id === 'Cla');
+  // mcp dichiarato e materializzato per claude: non compare in unsupported;
+  // skills e ondemand dichiarati? skills si, ondemand no -> solo skills.
+  const chiaviCla = (cla.capabilities.unsupported || []).map((u) => u.key);
+  assert.deepEqual(chiaviCla, ['skills'], 'per claude il materializzatore copre mcp; skills resta dichiarata non coperta');
+  const alt = vista.cells.find((c) => c.id === 'Alt');
+  const chiaviAlt = (alt.capabilities.unsupported || []).map((u) => u.key);
+  assert.deepEqual(chiaviAlt, ['mcp'], 'engine senza materializzatore: la chiave dichiarata esce non supportata, mai errore');
 });
