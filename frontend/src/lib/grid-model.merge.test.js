@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { addTileStable, emptyLayout, mergeRemoteWithLocal, refKey, sessions } from './grid-model.js';
+import {
+  addTileSmart, addTileStable, emptyLayout, mergeRemoteWithLocal, moveTile, refKey, sessions, toGrid2x2,
+} from './grid-model.js';
 
 const tile = (session) => ({ session, height: 1 });
 const col = (tiles, width = 1) => ({ width, tiles });
@@ -151,5 +153,44 @@ describe('mergeRemoteWithLocal stable placement', () => {
     const merged = mergeRemoteWithLocal(remote, local);
     expect(JSON.stringify(merged)).not.toContain('unavailable');
     expect(JSON.stringify(merged)).not.toContain('"stale"');
+  });
+});
+
+// Lo stato effimero (unavailable/stale) attraversa le trasformazioni di VISTA
+// (spostare una tile, preset, aggiunte): la serializzazione lo scarta, ma
+// l'utente che muove una finestra offline non la vede tornare viva per un tick.
+describe('ephemeral availability survives view transforms', () => {
+  const offline = () => ({ session: 'cloud-Fork', height: 1, ownerId: 'f'.repeat(32), unavailable: true });
+  const staleTile = () => ({ session: 'cloud-Relay', height: 1, stale: true });
+
+  it('moveTile conserva unavailable (una tile offline spostata resta offline)', () => {
+    const layout = { columns: [col([offline()]), col([tile('altro')])] };
+    const moved = moveTile(layout, 'cloud-Fork', { col: 1, row: 1 });
+    const t = moved.columns.flatMap((c) => c.tiles).find((x) => x.session === 'cloud-Fork');
+    expect(t.unavailable).toBe(true);
+  });
+
+  it('moveTile conserva anche il badge stale', () => {
+    const layout = { columns: [col([staleTile()])] };
+    const moved = moveTile(layout, 'cloud-Relay', { col: 0, row: 0 });
+    expect(moved.columns[0].tiles[0].stale).toBe(true);
+  });
+
+  it('i preset (toGrid2x2) conservano unavailable e stale', () => {
+    const layout = { columns: [col([offline(), staleTile()])] };
+    const gridded = toGrid2x2(layout);
+    const flatTiles = gridded.columns.flatMap((c) => c.tiles);
+    expect(flatTiles.find((t) => t.session === 'cloud-Fork').unavailable).toBe(true);
+    expect(flatTiles.find((t) => t.session === 'cloud-Relay').stale).toBe(true);
+  });
+
+  it('addTileSmart su una vista con tile offline non la resuscita', () => {
+    let layout = { columns: [col([offline()])] };
+    layout = addTileSmart(layout, 'nuova');
+    const t = layout.columns.flatMap((c) => c.tiles).find((x) => x.session === 'cloud-Fork');
+    expect(t.unavailable).toBe(true);
+    // e la tile NUOVA nasce senza stato effimero
+    const fresh = layout.columns.flatMap((c) => c.tiles).find((x) => x.session === 'nuova');
+    expect(fresh.unavailable).toBeUndefined();
   });
 });

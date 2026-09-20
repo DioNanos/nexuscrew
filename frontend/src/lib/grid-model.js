@@ -132,6 +132,11 @@ export function addTileSmart(layout, ref) {
     const tile = { session: parsed.session, height: old.height || 1, fontSize: old.fontSize || TILE_FONT_DEF };
     if (parsed.node) tile.node = parsed.node;
     if (old.ownerId) tile.ownerId = old.ownerId;
+    // Lo stato di disponibilita' resta attraversando le trasformazioni di
+    // VISTA (e' effimero: le sole serializzazioni lo scartano, non l'utente
+    // che sposta o riaggiunge una finestra).
+    if (old.unavailable === true) tile.unavailable = true;
+    if (old.stale === true) tile.stale = true;
     columns[index % targetCols].tiles.push(tile);
   });
   return { columns: columns.filter((column) => column.tiles.length) };
@@ -180,6 +185,10 @@ export function moveTile(layout, ref, drop) {
   return addTile(removeTile(layout, key), key, drop, {
     fontSize: old.fontSize, height: old.height,
     ...(old.ownerId ? { ownerId: old.ownerId } : {}),
+    // Lo stato effimero di disponibilita' non si azzera spostando la tile:
+    // resta offline (o stale) fino al prossimo tick della topologia.
+    ...(old.unavailable === true ? { unavailable: true } : {}),
+    ...(old.stale === true ? { stale: true } : {}),
   });
 }
 
@@ -264,6 +273,8 @@ function rebuildTile(layout, key) {
   const out = { session: t.session, height: 1, fontSize: t.fontSize || TILE_FONT_DEF };
   if (t.node) out.node = t.node;
   if (t.ownerId) out.ownerId = t.ownerId;
+  if (t.unavailable === true) out.unavailable = true;
+  if (t.stale === true) out.stale = true;
   return out;
 }
 
