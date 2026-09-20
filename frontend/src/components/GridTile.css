@@ -37,6 +37,12 @@
   padding: 20px; color: #789a87; text-align: center; font-size: 12px;
   background: repeating-linear-gradient(135deg, #0a0e0a, #0a0e0a 12px, #0d130d 12px, #0d130d 24px);
 }
+/* Badge discreto per owner stale: la tile resta viva su route in cache. */
+.nc-tile-stale {
+  position: absolute; top: 6px; right: 8px; z-index: 4; pointer-events: none;
+  padding: 1px 6px; border-radius: 8px; font-size: 10px; letter-spacing: 0.02em;
+  color: #b8a24e; background: rgba(30, 26, 10, 0.75); border: 1px solid #4a3f1c;
+}
 
 /* Composer e file come overlay/pannello interno al tile. */
 .nc-tile-composer { flex: 0 0 auto; border-top: 1px solid #1c241c; }

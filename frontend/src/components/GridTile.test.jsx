@@ -183,3 +183,25 @@ describe('GridTile panel (D8-griglia)', () => {
     expect(ids).toEqual(['Dev', 'Fork']);
   });
 });
+
+// Badge stale (owner temporaneamente non raggiungibile, route in cache):
+// la tile resta viva e il terminale montato; il badge e' discreto e compare
+// solo quando available=true & stale=true. La tile unavailable non lo mostra.
+describe('GridTile stale badge', () => {
+  it('mostra il badge stale su tile viva con owner stale', () => {
+    renderTile({ session: 'cloud-Dev', cellName: 'Dev', available: true, stale: true });
+    expect(screen.getByText('deck-owner-stale')).toBeTruthy();
+    expect(screen.getByTestId('term')).toBeTruthy();
+  });
+
+  it('niente badge su tile viva senza owner stale', () => {
+    renderTile({ session: 'cloud-Dev', cellName: 'Dev', available: true, stale: false });
+    expect(screen.queryByText('deck-owner-stale')).toBeNull();
+  });
+
+  it('la tile unavailable mostra il messaggio definitivo, non il badge stale', () => {
+    renderTile({ session: 'cloud-Dev', cellName: 'Dev', available: false, stale: true });
+    expect(screen.getByText('deck-owner-unavailable')).toBeTruthy();
+    expect(screen.queryByText('deck-owner-stale')).toBeNull();
+  });
+});

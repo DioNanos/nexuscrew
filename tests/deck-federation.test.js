@@ -46,7 +46,12 @@ test('unknown stable owner is visible but fail-closed and never becomes a local 
   const viewed = m.resolveLayoutForViewer(canonical, A, [{ instanceId: B, route: ['stale-route'] }]);
   assert.equal(viewed.columns[0].tiles[0].ownerId, C);
   assert.equal(viewed.columns[0].tiles[0].unavailable, true);
-  assert.equal(g.normalize(viewed).columns[0].tiles[0].unavailable, true, 'ephemeral fail-closed state survives grid edits');
+  // Lo stato fail-closed sopravvive alle MODIFICHE della griglia (spostare la
+  // tile non la resuscita), ma non alla SERIALIZZAZIONE: normalize lo scarta —
+  // stato effimero, mai nel layout salvato né nel confronto dell'autosave.
+  const moved = g.moveTile(viewed, { session: 'same-name', node: 'stale-route' }, { col: 0, row: 0 });
+  assert.equal(moved.columns[0].tiles[0].unavailable, true, 'ephemeral fail-closed state survives grid edits');
+  assert.equal(g.normalize(viewed).columns[0].tiles[0].unavailable, undefined, 'ephemeral state is never serialized');
   const saved = m.canonicalizeLayoutForOwner(viewed, A, []);
   assert.equal(saved.columns[0].tiles[0].unavailable, undefined, 'ephemeral viewer state is never persisted');
 });

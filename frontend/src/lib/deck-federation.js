@@ -3,6 +3,50 @@ import { normalize, parseRef } from './grid-model.js';
 export const LOCAL_OWNER = 'local';
 export const NODE_ID_RE = /^[a-f0-9]{16,64}$/;
 
+// Isteresi di disponibilita' degli owner (stato EFFIMERO, mai persistito nel
+// deck salvato): un owner assente per UN poll non spegne la tile. La tile
+// diventa unavailable solo dopo OWNER_UNAVAILABLE_TICKS poll consecutivi senza
+// di lui; finche' resta entro l'isteresi la tile resta viva con l'ultima route
+// nota (cache in memoria) e mostra il badge stale. Map a lato del deck: il
+// contatore non vive nel layout e sopravvive ai soli render della sessione.
+export const OWNER_UNAVAILABLE_TICKS = 3;
+const ownerMisses = new Map();
+const lastOwnerRoute = new Map();
+const OWNER_STATE_MAX = 128;
+
+export function resetOwnerAvailability() {
+  ownerMisses.clear();
+  lastOwnerRoute.clear();
+}
+
+// Un tick per cambio della lista owners (il poll della topologia): aggiorna i
+// contatori di miss consecutivi e l'ultima route nota per owner.
+export function tickOwnerAvailability(owners) {
+  const present = new Set();
+  for (const owner of Array.isArray(owners) ? owners : []) {
+    if (!owner || !NODE_ID_RE.test(String(owner.instanceId || '')) || !Array.isArray(owner.route)) continue;
+    present.add(owner.instanceId);
+    lastOwnerRoute.set(owner.instanceId, [...owner.route]);
+    ownerMisses.set(owner.instanceId, 0);
+  }
+  for (const id of [...lastOwnerRoute.keys()]) {
+    if (present.has(id)) continue;
+    const misses = (ownerMisses.get(id) || 0) + 1;
+    ownerMisses.set(id, misses);
+    // oltre l'isteresi la route cache non serve piu'; il ricordo non cresce
+    if (misses > OWNER_UNAVAILABLE_TICKS + 32) {
+      ownerMisses.delete(id);
+      lastOwnerRoute.delete(id);
+    }
+  }
+  if (lastOwnerRoute.size > OWNER_STATE_MAX) {
+    for (const id of [...lastOwnerRoute.keys()].slice(0, lastOwnerRoute.size - OWNER_STATE_MAX)) {
+      ownerMisses.delete(id);
+      lastOwnerRoute.delete(id);
+    }
+  }
+}
+
 export function deckId(ownerId, name) {
   return `${ownerId && NODE_ID_RE.test(ownerId) ? ownerId : LOCAL_OWNER}:${name}`;
 }
@@ -87,22 +131,40 @@ export function deckIdForLocalOwner(id, localNodeId) {
 export function resolveLayoutForViewer(layout, localNodeId, viewerOwners = []) {
   const out = cloneLayout(layout);
   const byId = new Map();
+  const staleById = new Set();
   for (const owner of viewerOwners) {
     if (owner && NODE_ID_RE.test(String(owner.instanceId || '')) && Array.isArray(owner.route)) {
       byId.set(owner.instanceId, [...owner.route]);
+      if (owner.stale === true) staleById.add(owner.instanceId);
     }
   }
   for (const column of out.columns) {
     for (const tile of column.tiles) {
       if (!tile.ownerId) continue;
       if (tile.ownerId === localNodeId) {
-        delete tile.node; delete tile.unavailable;
+        delete tile.node; delete tile.unavailable; delete tile.stale;
       } else if (byId.has(tile.ownerId)) {
-        tile.node = routeKey(byId.get(tile.ownerId)); delete tile.unavailable;
+        // Owner presente nel poll (anche se marcato stale dal server): la tile
+        // resta viva con la route del tick; lo stato stale e' solo un badge.
+        tile.node = routeKey(byId.get(tile.ownerId));
+        delete tile.unavailable;
+        if (staleById.has(tile.ownerId)) tile.stale = true; else delete tile.stale;
       } else {
-        // Never trust a compatibility route hint once the stable owner is no
-        // longer present in the viewer's authorized topology.
-        tile.unavailable = true;
+        const misses = ownerMisses.get(tile.ownerId);
+        const cached = lastOwnerRoute.get(tile.ownerId);
+        if (cached && misses !== undefined && misses < OWNER_UNAVAILABLE_TICKS) {
+          // Isteresi: l'owner manca da meno di N poll consecutivi. La tile
+          // resta viva sull'ultima route nota e si segnala come stale.
+          tile.node = routeKey(cached);
+          delete tile.unavailable;
+          tile.stale = true;
+        } else {
+          // Mai visto in questa sessione, o assente da troppi poll: non ci si
+          // fida piu' del compatibility hint una volta che lo owner stabile non
+          // e' piu' presente nella topologia autorizzata di chi guarda.
+          tile.unavailable = true;
+          delete tile.stale;
+        }
       }
     }
   }
@@ -117,7 +179,9 @@ export function canonicalizeLayoutForOwner(layout, deckOwnerId, ownerTopology = 
   const byId = topologyIdToRoute(ownerTopology);
   for (const column of out.columns) {
     for (const tile of column.tiles) {
+      // Stato effimero: mai scritto verso l'owner.
       delete tile.unavailable;
+      delete tile.stale;
       if (!tile.ownerId) continue;
       if (tile.ownerId === deckOwnerId) delete tile.node;
       else if (byId.has(tile.ownerId)) tile.node = routeKey(byId.get(tile.ownerId));

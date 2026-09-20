@@ -179,7 +179,7 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     const alias = n.instanceId && aliases && typeof aliases[n.instanceId] === 'string' ? aliases[n.instanceId] : null;
     const base = {
       name: n.name, label: alias || originalLabel, originalLabel, alias, route: [...n.route], direct: false,
-      instanceId: n.instanceId || null, shared: true,
+      instanceId: n.instanceId || null, shared: true, stale: n.stale === true,
       tunnelStatus: null, sessions: [], cells: [], unmanaged: [], fleetAvailable: false,
       capabilities: [], engines: [], health: n.health || null, lastSeen: n.lastSeen || null,
     };
