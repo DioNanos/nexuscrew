@@ -4,6 +4,14 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.9.34 — 2026-09-19
+
+- **Cells can declare the integration surfaces they are allowed to use.** The fleet catalog now reads a closed `capabilities` declaration and optional capability profiles, validates references before a cell is accepted, and reports both the declaration and the effective configuration; undeclared surfaces keep the previous behavior. Invalid or dangling declarations are refused instead of being silently narrowed.
+- **Claude cells can get a per-cell MCP allowlist.** Declared MCP access is materialized into a private per-cell configuration that always includes the NexusCrew core server and only the explicitly granted servers, launched with strict configuration mode; unsupported features are reported instead of being granted.
+- **Codex cells can get a per-cell profile with disabled servers and skills.** Declared on-demand MCP servers, disabled servers, and omitted tools are written to a private per-cell profile without changing the user configuration; features that cannot be represented safely remain unsupported.
+- **A cell launch is refused if its per-cell integration file cannot be written.** Instead of starting the cell with a stale or broader configuration, the launch fails in preflight with a named cause (`MCP_CELL_FILE_UNWRITABLE` or `CAPABILITY_PROFILE_UNWRITABLE`).
+- **Stale peers stay listed in the cell directory with `failure: "stale"` and `lastSeen`.** A peer that has not reported recently remains visible as unavailable, so the directory no longer makes a temporarily offline node disappear.
+
 ## 0.9.33 — 2026-09-19
 
 - **A declared model can be edited without detaching its engine.** `POST /api/fleet/edit-model` patches the non-identity fields of an existing declaration (`contextWindow`, `label`, `maxTokens`, `reasoning`) with the same validation as the declaration itself; an unknown model answers 404, an unknown or invalid field answers 400, and the engine that resolves the model is left untouched — no reload, no restart. The capability is `edit-model`, and the publish guards now also refuse internal node hostnames in the shipped payload and on the public surface.

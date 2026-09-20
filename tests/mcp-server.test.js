@@ -1715,3 +1715,44 @@ test('resolveIdentity: verified-env assente -> percorso legacy invariato', async
   assert.equal(legacy.requiredEnvVars.includes('NEXUSCREW_VERIFIED_ENV_VERSION'), true,
     'requiredEnvVars esteso coi nomi verified');
 });
+
+test('nc_cells directory: owner stale = voce in unavailable (failure stale + lastSeen), gate di interrogazione resta', async () => {
+  const { readCellDirectory } = require('../lib/mcp/cells.js');
+  const localId = 'a'.repeat(32);
+  const staleId = 'b'.repeat(32);
+  const freshId = 'c'.repeat(32);
+  const interrogati = [];
+  const ctx = {
+    api: async (method, path) => {
+      if (path === '/api/config') return { instanceId: localId };
+      if (path === '/api/topology') return { nodes: [
+        { instanceId: staleId, route: ['pixel'], label: 'Pixel', stale: true, lastSeen: 1234567890 },
+        { instanceId: freshId, route: ['relay'], label: 'Relay' },
+      ] };
+      interrogati.push(path);
+      if (path === '/api/cells' || path === '/api/route/relay/_/cells') return { instanceId: localId, cells: [] };
+      throw new Error('inatteso: ' + path);
+    },
+  };
+  const dir = await readCellDirectory(ctx, null);
+  // Il gate resta: un nodo stale NON viene interrogato.
+  assert.equal(interrogati.some((p) => p.includes('pixel')), false, 'lo stale non si interroga');
+  assert.ok(interrogati.includes('/api/route/relay/_/cells'), 'il fresco viene interrogato come oggi');
+  // Ma lo stale resta VISIBILE: voce in unavailable con failure "stale" e lastSeen.
+  assert.deepEqual(dir.unavailable.find((u) => u.instanceId === staleId), {
+    instanceId: staleId, owner: 'Pixel', route: 'pixel', failure: 'stale', lastSeen: 1234567890,
+  });
+  assert.equal(dir.unavailable.some((u) => u.instanceId === freshId), false);
+  // lastSeen assente dalla topologia -> null, mai undefined.
+  const topologySenzaLastSeen = {
+    api: async (method, path) => {
+      if (path === '/api/config') return { instanceId: localId };
+      if (path === '/api/topology') return { nodes: [
+        { instanceId: staleId, route: ['pixel'], label: 'Pixel', stale: true },
+      ] };
+      throw new Error('inatteso: ' + path);
+    },
+  };
+  const dir2 = await readCellDirectory(topologySenzaLastSeen, null);
+  assert.equal(dir2.unavailable[0].lastSeen, null);
+});
