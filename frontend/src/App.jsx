@@ -28,7 +28,7 @@ import { cellDisplayName } from './lib/cell-display.js';
 import {
   MAIN_DECK, deckLocationFromPath, deckUrl, readLayoutRaw,
 } from './lib/deck-model.js';
-import { deckId, refWithOwner, resolveLayoutForViewer } from './lib/deck-federation.js';
+import { deckId, refWithOwner, resolveLayoutForViewer, tickOwnerAvailability } from './lib/deck-federation.js';
 import { hostRouteKey, hostDesignationFailureMessage } from './lib/host-designation.js';
 import { fleetReadOutcome } from './lib/fleet-read-policy.js';
 import { panelPortForRoute } from './lib/panel-port.js';
@@ -334,7 +334,7 @@ export default function App() {
   // zero nodi configurati -> [] e workspace identico a oggi.
   const nodeGroups = useNodes(token, isDesktop);
   const deckOwners = useMemo(() => (nodeGroups || []).filter((g) => g.instanceId).map((g) => ({
-    instanceId: g.instanceId, route: g.route, label: g.label, status: g.status,
+    instanceId: g.instanceId, route: g.route, label: g.label, status: g.status, stale: g.stale === true,
   })), [nodeGroups]);
   const deckStore = useDecks(token, deck, layout, setLayout, deckOwners);
   const decks = deckStore.decks;
@@ -363,11 +363,18 @@ export default function App() {
       setLayout((current) => (current.columns.some((column) => column.tiles.length)
         ? current : loadLayout(initialDeck.name)));
     }
-    setLayout((current) => {
+  }, [deckStore.localNodeId]);
+  // Overlay di disponibilita' (effimero): un tick per ogni lista owners nuova,
+  // poi la risoluzione passa da viewUpdate — un flip di disponibilita' cambia
+  // solo la vista, non lo stato sporco: nessun autosave, nessun PUT.
+  useEffect(() => {
+    if (!deckStore.localNodeId) return;
+    tickOwnerAvailability(deckOwners);
+    deckStore.viewUpdate((current) => {
       const resolved = resolveLayoutForViewer(current, deckStore.localNodeId, deckOwners);
       return JSON.stringify(resolved) === JSON.stringify(current) ? current : resolved;
     });
-  }, [deckOwners, deckStore.localNodeId]);
+  }, [deckOwners, deckStore.localNodeId, deckStore.viewUpdate]);
   const [powerCell, setPowerCell] = useState(null);
   const [bootSettlement, setBootSettlement] = useState(null);
   const bootSettlementSeq = useRef(0);

@@ -22,7 +22,7 @@ import './GridTile.css';
 // cellName (Tranche D): titolo visibile risolto dal campo Fleet `cell` (es.
 // `Dev`). node/route/tmuxSession restano identita' tecniche e non compaiono
 // nel titolo visibile; solo il tooltip porta un identificativo tecnico.
-export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, sessionAlive = alive, available = true, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0 }) {
+export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, sessionAlive = alive, available = true, stale = false, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0 }) {
   const [inputPreferences] = useInputPreferences();
   // Titolo visibile = nome logico Fleet (gestita) o nome sessione (unmanaged).
   // session (tmuxSession reale) resta l'identita' del tile per attach/drag.
@@ -113,6 +113,9 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
           />
         ) : (
           <div className="nc-tile-unavailable">{t('deck-owner-unavailable')}</div>
+        )}
+        {available && stale && (
+          <div className="nc-tile-stale" title={t('deck-owner-stale')}>{t('deck-owner-stale')}</div>
         )}
         {available && showFiles && (
           <div className="nc-tile-files" onMouseDown={(e) => e.stopPropagation()}>

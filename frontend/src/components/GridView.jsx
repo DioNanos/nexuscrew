@@ -213,6 +213,7 @@ export default function GridView({
                     focused={focusSession === key}
                     onFocus={onFocus} onClose={closeTile} onOpenSingle={onOpenSingle}
                     available={tile.unavailable !== true}
+                    stale={tile.stale === true}
                     alive={nodeOnline}
                     sessionAlive={sessionAlive}
                     fontSize={tile.fontSize}

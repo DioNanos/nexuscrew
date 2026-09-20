@@ -4,6 +4,12 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.9.35 — 2026-09-20
+
+- **Federated topology: per-hop budget; slow transitive peers are served from the last good snapshot and marked stale instead of disappearing.** A hub used to answer a topology request only after its whole fan-out completed, so a single slow child pushed the hub's answer past the caller's budget and the caller dropped the entire transitive branch. A peer request now carries its remaining budget, the hub keeps a 500 ms margin for itself, and a child that misses the hop budget is served from the last good snapshot marked `stale` with `lastSeen`; a response that arrives but fails identity binding still drops the branch. Stale owners stay addressable on their cached route in the deck and VL owner lists.
+- **Deck tiles: owners missing for a single poll no longer flip to unavailable; hysteresis of 3 polls; stale badge.** A tile whose owner is absent from one topology poll stays alive on the last known route with a discreet stale badge (en/it/es) and only becomes unavailable after 3 consecutive polls without it; when the owner returns the counter resets.
+- **Deck layout no longer reflows or re-saves when an owner is temporarily unavailable.** Availability is ephemeral view state: it is never serialized into the saved layout, never written to local storage, and never part of the comparison that decides the autosave, so a flip causes zero saves. The post-conflict reconciliation appends local-only tiles without moving existing ones, so the window order no longer changes on its own; a view-only update can no longer stall the autosave of a real edit, and moving or reshaping a tile no longer clears its offline state.
+
 ## 0.9.34 — 2026-09-19
 
 - **Cells can declare the integration surfaces they are allowed to use.** The fleet catalog now reads a closed `capabilities` declaration and optional capability profiles, validates references before a cell is accepted, and reports both the declaration and the effective configuration; undeclared surfaces keep the previous behavior. Invalid or dangling declarations are refused instead of being silently narrowed.

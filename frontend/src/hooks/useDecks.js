@@ -26,6 +26,7 @@ function cleanOwners(input) {
       route: [...owner.route],
       label: String(owner.label || owner.name || owner.route.join(' › ')),
       status: owner.status || 'offline',
+      stale: owner.stale === true,
     });
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));
@@ -105,7 +106,9 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       skipRef.current = true;
       const viewed = viewLayout(rec);
       setLayout(viewed);
-      if (rec.local) writeLayoutRaw(rec.name, viewed);
+      // localStorage per i deck locali: SOLO geometria, lo stato effimero di
+      // disponibilita' (unavailable/stale) non si persiste mai.
+      if (rec.local) writeLayoutRaw(rec.name, normalize(viewed));
     } else if (previousHadTarget && !rec) {
       // Share off / ACL withdrawal: do not leave a previously authorized deck
       // visible in memory after its owner disappears from the topology.
@@ -243,7 +246,13 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
 
   useEffect(() => {
     if (!ready) return;
-    if (skipRef.current) { skipRef.current = false; return; }
+    // Lo skip dell'aggiornamento di vista vale solo a finestra PULITA: con un
+    // edit utente pendente il debounce si riarma invece di fermarsi, cosi' un
+    // flip effimero di disponibilita' non puo' annullare né rinviare per sempre
+    // il salvataggio di una modifica vera.
+    const skip = skipRef.current && !dirtyRef.current;
+    skipRef.current = false;
+    if (skip) return;
     dirtyRef.current = true; setSaveState('saving');
     const id = setTimeout(saveNow, 650);
     return () => clearTimeout(id);
@@ -276,7 +285,11 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
         const next = await loadAll();
         const here = findCurrent(recordsRef.current);
         const remote = findCurrent(next);
-        const newer = remote && (!here || remote.revision > here.revision || here.available !== remote.available);
+        // Un flip di disponibilita' dell'owner NON e' un cambiamento di layout:
+        // non fa partire il merge (che salverebbe) ma solo il refresh della
+        // vista. Il merge serve al solo crescita di revisione.
+        const newer = Boolean(remote && here && remote.revision > here.revision);
+        const refreshed = Boolean(remote && (!here || newer || here.available !== remote.available));
         if (newer && dirtyRef.current && remote) {
           // La finestra è sporca e il remoto è più nuovo — merge
           // remoto ⊕ delta locale invece di restare indietro. Il layout fuso
@@ -286,11 +299,23 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           setLayout(merged);
           return;
         }
-        install(next, newer && !dirtyRef.current);
+        install(next, refreshed && !dirtyRef.current);
       } catch (_) {}
     }, 5000);
     return () => clearInterval(id);
   }, [ready, loadAll, install, viewLayout, setLayout]);
+
+  // Aggiornamento di VISTA (overlay di disponibilita'): cambia il layout in
+  // memoria senza marcare la finestra sporca — un flip di disponibilita' non
+  // deve mai produrre un PUT. Lo skip si arma solo se l'updater cambia davvero
+  // il riferimento, cosi' un layout invariato non lascia skip pendenti.
+  const viewUpdate = useCallback((updater) => {
+    setLayout((current) => {
+      const next = updater(current);
+      if (next !== current) skipRef.current = true;
+      return next;
+    });
+  }, []);
 
   const add = async (name, ownerId = null) => {
     const basis = ownerId === LOCAL_OWNER
@@ -362,7 +387,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
 
   return {
     decks: records, records, localNodeId, ready, saveState, error, setError, conflict, reloadCurrent,
-    saveNow, select, add, rename, remove, reorder, addTileTo,
+    saveNow, select, add, rename, remove, reorder, addTileTo, viewUpdate,
     localMainId: deckId(null, 'main'), parseDeckId,
   };
 }
