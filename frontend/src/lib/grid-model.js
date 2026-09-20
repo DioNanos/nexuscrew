@@ -132,10 +132,36 @@ export function addTileSmart(layout, ref) {
     const tile = { session: parsed.session, height: old.height || 1, fontSize: old.fontSize || TILE_FONT_DEF };
     if (parsed.node) tile.node = parsed.node;
     if (old.ownerId) tile.ownerId = old.ownerId;
-    if (old.unavailable === true) tile.unavailable = true;
     columns[index % targetCols].tiles.push(tile);
   });
   return { columns: columns.filter((column) => column.tiles.length) };
+}
+
+// Aggiunta STABILE: usata dalla riconciliazione dopo un conflitto di revisione.
+// Le tile gia' presenti non si muovono mai (nessun reflow bilanciato): la nuova
+// va in fondo alla colonna meno piena, o apre la prima colonna su griglia
+// vuota. L'ordine delle finestre esistenti resta quello che l'utente vede.
+export function addTileStable(layout, ref) {
+  const r = parseRef(ref);
+  if (!r) return layout;
+  const key = refKey(r);
+  if (!key || sessions(layout).includes(key) || sessions(layout).length >= MAX_TILES) return layout;
+  // La geometria del delta viaggia sull'oggetto tile (parseRef tiene solo
+  // l'identita'): si ripara qui come farebbe normalize.
+  const raw = ref && typeof ref === 'object' ? ref : {};
+  const props = {
+    height: Math.max(MIN_W, Number(raw.height) || 1),
+    fontSize: repairFont(raw.fontSize),
+    ...(r.ownerId ? { ownerId: r.ownerId } : {}),
+  };
+  if (!layout.columns.length) {
+    return addTile(layout, r, null, props);
+  }
+  let best = 0;
+  for (let i = 1; i < layout.columns.length; i += 1) {
+    if (layout.columns[i].tiles.length < layout.columns[best].tiles.length) best = i;
+  }
+  return addTile(layout, r, { col: best, row: layout.columns[best].tiles.length }, props);
 }
 
 export function removeTile(layout, ref) {
@@ -154,7 +180,6 @@ export function moveTile(layout, ref, drop) {
   return addTile(removeTile(layout, key), key, drop, {
     fontSize: old.fontSize, height: old.height,
     ...(old.ownerId ? { ownerId: old.ownerId } : {}),
-    ...(old.unavailable === true ? { unavailable: true } : {}),
   });
 }
 
@@ -239,7 +264,6 @@ function rebuildTile(layout, key) {
   const out = { session: t.session, height: 1, fontSize: t.fontSize || TILE_FONT_DEF };
   if (t.node) out.node = t.node;
   if (t.ownerId) out.ownerId = t.ownerId;
-  if (t.unavailable === true) out.unavailable = true;
   return out;
 }
 
@@ -282,7 +306,10 @@ export function normalize(raw) {
           const out = { session: t.session, height: Math.max(MIN_W, Number(t.height) || 1), fontSize: repairFont(t.fontSize) };
           if (t.node != null) out.node = t.node;
           if (t.ownerId != null) out.ownerId = t.ownerId;
-          if (t.unavailable === true) out.unavailable = true;
+          // `unavailable`/`stale` sono stato EFFIMERO di disponibilita': derivano
+          // dal tick della topologia e NON si copiano nel layout normalizzato:
+          // mai serializzati (nemmeno via localStorage), mai parte del confronto
+          // che decide l'autosave. Un flip di disponibilita' = zero scritture.
           return out;
         }),
     }))
@@ -331,7 +358,7 @@ export function mergeRemoteWithLocal(remote, local) {
   }
   for (const [key, tile] of localByKey) {
     if (sessions(out).includes(key)) continue;
-    out = addTileSmart(out, tile);
+    out = addTileStable(out, tile);
   }
   return out;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeRemoteWithLocal, refKey, sessions } from './grid-model.js';
+import { addTileStable, emptyLayout, mergeRemoteWithLocal, refKey, sessions } from './grid-model.js';
 
 const tile = (session) => ({ session, height: 1 });
 const col = (tiles, width = 1) => ({ width, tiles });
@@ -88,5 +88,68 @@ describe('mergeRemoteWithLocal', () => {
     const local = { columns: [col([tile('a')], 1.7)] };
     const merged = mergeRemoteWithLocal(remote, local);
     expect(merged.columns.map((c) => c.width)).toEqual([1.7, 1]);
+  });
+});
+
+// Posizioni stabili nella riconciliazione post-conflitto: le tile gia'
+// presenti conservano colonna/riga; la ridistribuzione bilanciata vale solo
+// per il click, non per il merge — l'ordine delle finestre non cambia da solo.
+describe('mergeRemoteWithLocal stable placement', () => {
+  const positionOf = (layout, session) => {
+    for (let c = 0; c < layout.columns.length; c += 1) {
+      const r = layout.columns[c].tiles.findIndex((t) => t.session === session);
+      if (r >= 0) return `${c}/${r}`;
+    }
+    return null;
+  };
+
+  it('il delta locale si aggiunge senza muovere le tile esistenti (nessun reflow)', () => {
+    const remote = { columns: [col([tile('a'), tile('b')])] };
+    const local = { columns: [col([tile('a'), tile('b'), tile('delta')])] };
+    const merged = mergeRemoteWithLocal(remote, local);
+    expect(positionOf(merged, 'a')).toBe('0/0');
+    expect(positionOf(merged, 'b')).toBe('0/1');
+    expect(positionOf(merged, 'delta')).toBe('0/2');
+  });
+
+  it('su piu\' colonne il delta va nella meno piena e le altre non si spostano', () => {
+    const remote = { columns: [col([tile('a')]), col([tile('b')])] };
+    const local = { columns: [col([tile('a')]), col([tile('b'), tile('delta')])] };
+    const merged = mergeRemoteWithLocal(remote, local);
+    expect(positionOf(merged, 'a')).toBe('0/0');
+    expect(positionOf(merged, 'b')).toBe('1/0');
+    expect(positionOf(merged, 'delta')).toBe('0/1');
+  });
+
+  it('addTileStable aggiunge in fondo alla colonna meno piena senza mai rimescolare', () => {
+    let layout = { columns: [col([tile('a'), tile('b')]), col([tile('c')])] };
+    layout = addTileStable(layout, { session: 'd' });
+    expect(positionOf(layout, 'a')).toBe('0/0');
+    expect(positionOf(layout, 'b')).toBe('0/1');
+    expect(positionOf(layout, 'c')).toBe('1/0');
+    expect(positionOf(layout, 'd')).toBe('1/1');
+  });
+
+  it('addTileStable su griglia vuota apre la prima colonna', () => {
+    const layout = addTileStable(emptyLayout(), 'solo');
+    expect(sessions(layout)).toEqual(['solo']);
+    expect(layout.columns).toHaveLength(1);
+  });
+
+  it('il merge conserva le proprieta\' per-tile del delta (fonte/ownerId/altezza)', () => {
+    const remote = { columns: [col([tile('a')])] };
+    const local = { columns: [col([tile('a')]), col([{ session: 'delta', height: 2.5, fontSize: 14 }])] };
+    const merged = mergeRemoteWithLocal(remote, local);
+    const delta = merged.columns.flatMap((c) => c.tiles).find((t) => t.session === 'delta');
+    expect(delta.height).toBe(2.5);
+    expect(delta.fontSize).toBe(14);
+  });
+
+  it('il merge scarta lo stato effimero di disponibilita\' portato dal locale', () => {
+    const remote = { columns: [col([tile('a')])] };
+    const local = { columns: [col([{ session: 'a', height: 1, unavailable: true, stale: true }])] };
+    const merged = mergeRemoteWithLocal(remote, local);
+    expect(JSON.stringify(merged)).not.toContain('unavailable');
+    expect(JSON.stringify(merged)).not.toContain('"stale"');
   });
 });
