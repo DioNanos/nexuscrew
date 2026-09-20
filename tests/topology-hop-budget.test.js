@@ -173,3 +173,59 @@ test('nc_deck: un owner stale con route viva resta una sorgente interrogabile (n
   // verifica che la sorgente sia stata raggiunta senza essere filtrata.
   assert.ok(Array.isArray(result.decks));
 });
+
+// A1: lo stato stale/lastSeen calcolato da un salto precedente deve attraversare
+// TUTTI i salti successivi — altrimenti chi guarda in fondo alla catena vede
+// "vivo" un ramo che il suo hub sa essere stale.
+test('A1: stale/lastSeen del salto precedente si propaga nella raccolta del chiamante', async () => {
+  const relayId = id('9');
+  const nodesPath = hubStore(mkDir('nc-topo-prop-'), id('8'), relayId);
+  const out = await fed.collectTopologyDetailed({
+    nodesPath, ingress: { name: 'caller', nodeId: id('c'), visibility: 'network' },
+    fetchImpl: async () => ({ ok: true, json: async () => ({
+      instanceId: relayId,
+      nodes: [
+        { instanceId: id('d'), name: 'leaf', route: ['leaf'], label: 'Leaf', stale: true, lastSeen: 1234567890 },
+        { instanceId: id('e'), name: 'live', route: ['live'], label: 'Live' },
+        { instanceId: id('f'), name: 'malformato', route: ['malformato'], label: 'Bad', stale: true, lastSeen: 'x' },
+      ],
+    }) }),
+    timeoutMs: 1500,
+  });
+  const leaf = out.nodes.find((n) => n.name === 'leaf');
+  assert.equal(leaf.stale, true, 'il flag stale del figlio sopravvive alla validazione');
+  assert.equal(leaf.lastSeen, 1234567890, 'il lastSeen originale viaggia intatto');
+  const live = out.nodes.find((n) => n.name === 'live');
+  assert.notEqual(live.stale, true, 'il nodo fresco resta fresco');
+  const bad = out.nodes.find((n) => n.name === 'malformato');
+  assert.equal(bad.stale, true);
+  assert.equal(bad.lastSeen, undefined, 'lastSeen malformato scartato, flag stale conservato');
+});
+
+test('A1: un nodo arrivato gia\' stale resta stale anche nella raccolta locale (collectLocalTopology)', async () => {
+  const relayId = id('a');
+  const dir = mkDir('nc-topo-prop-local-');
+  const nodesPath = hubStore(dir, id('7'), relayId);
+  const out = await fed.collectLocalTopology({
+    nodesPath, cachePath: path.join(dir, 'topology-cache.json'),
+    fetchImpl: async () => ({ ok: true, json: async () => ({
+      instanceId: relayId,
+      nodes: [
+        { instanceId: id('d'), name: 'leaf', route: ['leaf'], label: 'Leaf', stale: true, lastSeen: 1234567890 },
+        { instanceId: id('e'), name: 'live', route: ['live'], label: 'Live' },
+      ],
+    }) }),
+    now: 777,
+  });
+  const leaf = out.nodes.find((n) => n.name === 'leaf');
+  assert.equal(leaf.stale, true, 'il nodo arrivato stale dal peer RESTA stale');
+  assert.equal(leaf.lastSeen, 1234567890, 'lastSeen originale conservato, non sovrascritto con now');
+  const live = out.nodes.find((n) => n.name === 'live');
+  assert.equal(live.stale, false, 'il nodo visto direttamente vivo e\' stale:false');
+  assert.equal(live.lastSeen, 777);
+  // la cache su disco conserva il lastSeen originale per gli stale
+  const cache = require('../lib/nodes/topology-cache.js').loadCache(path.join(dir, 'topology-cache.json'));
+  const cachedLeaf = cache.nodes.find((x) => x.name === 'leaf');
+  assert.equal(cachedLeaf.lastSeen, 1234567890, 'la cache non riscrive il lastSeen degli stale');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
