@@ -10,7 +10,7 @@ export const FEDERATED_FETCH_TIMEOUT_MS = 8000;
 export function fetchAbortSignal(ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new DOMException('timeout', 'TimeoutError')), ms);
-  return { signal: controller.signal, cancel: () => clearTimeout(timer) };
+  return { signal: controller.signal, cancel: () => clearTimeout(timer), controller };
 }
 
 export function apiFetch(path, token, opts = {}) {
@@ -21,12 +21,18 @@ export function apiFetch(path, token, opts = {}) {
       headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` },
     });
   }
-  const { signal, cancel } = fetchAbortSignal(ms);
+  // Audit fix: `controller` è di fetchAbortSignal — qui si usa QUELLO (abort di
+  // timeout e abort esterno agiscono sullo stesso controller), mai una variabile
+  // locale inesistente.
+  const { signal, cancel, controller } = fetchAbortSignal(ms);
   const outer = opts.signal;
   const onOuterAbort = () => controller.abort(outer.reason);
   if (outer) {
-    if (outer.aborted) controller.abort(outer.reason);
-    else outer.addEventListener('abort', onOuterAbort, { once: true });
+    if (outer.aborted) {
+      controller.abort(outer.reason);
+      return Promise.reject(outer.reason instanceof Error ? outer.reason : new DOMException('aborted', 'AbortError'));
+    }
+    outer.addEventListener('abort', onOuterAbort, { once: true });
   }
   const { timeoutMs: _timeoutMs, ...rest } = opts;
   return fetch(path, {
