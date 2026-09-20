@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// D-307 audit fix: `timeoutMs` in apiFetch usa il controller di fetchAbortSignal
+// Audit fix: `timeoutMs` in apiFetch usa il controller di fetchAbortSignal
 // (fix del ReferenceError quando signal+timeoutMs arrivano insieme) e la risposta
 // tardiva DOPO il timeout non viene mai consumata: la fetch rispetta il signal.
 const { apiFetch } = await import('./api.js');
 
-describe('apiFetch timeout (D-307)', () => {
+describe('apiFetch timeout', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
