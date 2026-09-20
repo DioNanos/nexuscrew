@@ -49,7 +49,7 @@ test('la classe dei workcode copre la forma lettera+cifra+minuscole e resta chiu
   // Chiusura sul corpus legittimo: ogni token della famiglia che il payload
   // legittimo contiene e' classificato (deny/allow), quindi la classe non si
   // apre a caso con l'estensione.
-  const legittimi = 'K3, ARM64, GLM-5, UTF-8, SHA-256 e versioni come 0.9.33 non sono marker interni';
+  const legittimi = 'K3, ARM64, GLM-5, UTF-8, SHA-256 e versioni come 0.10.0 non sono marker interni';
   for (const t of [...legittimi.matchAll(new RegExp(rules.workcodes.families.B.source, 'g'))].map((m) => m[0])) {
     assert.ok(classificato(rules, t), `token legittimo ${t} non classificato: aggiungerlo a denyToken o allowToken, mai ignorarlo`);
   }
