@@ -119,9 +119,11 @@ test('peer endpoint /federation/topology: risponde entro il budget del chiamante
   );
   const elapsed = Date.now() - t0;
   assert.equal(response.status, 200);
-  // margine largo per il overhead HTTP/locale: quel che conta e' che NON
-  // aspetti il figlio fino ai suoi 1400 ms (budget per hop ~1000).
-  assert.ok(elapsed < 1350, `l'endpoint ha aspettato il figlio lento: ${elapsed} ms`);
+  // La prova del budget per hop qui e' SEMANTICA, non di wall-clock (sotto
+  // carico il tempo assoluto ondeggia): il figlio risponde solo dopo 1400 ms,
+  // quindi un ramo presente PUO' arrivare solo dallo snapshot con budget
+  // ~1000. Il timing stretto e' misurato dal test diretto sopra.
+  assert.ok(elapsed < 1400, `l'endpoint ha aspettato il figlio lento oltre il suo tempo: ${elapsed} ms`);
   const body = await response.json();
   const leaf = body.nodes.find((n) => n.name === 'leaf');
   assert.ok(leaf, 'il peer riceve anche il transitive stale');
