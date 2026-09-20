@@ -4,6 +4,10 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.9.37 — 2026-09-20
+
+- **Deck loading: local decks render immediately; remote owners load in the background with an 8 s federated fetch timeout and per-owner degradation (previous decks marked unavailable, never persisted).** A peer whose tunnel was up-but-mute kept every deck — local ones included — off the screen until the browser gave up, or forever. The federated GET forward now degrades with a 504 after a 10 s peer timeout instead of sitting for 30 s.
+
 ## 0.9.36 — 2026-09-20
 
 - **Fleet definitions: capability profiles are now preserved across cell edits (they were dropped or made the file unwritable) and exposed in the definitions view.**
