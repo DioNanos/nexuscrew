@@ -4,6 +4,10 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.9.36 — 2026-09-20
+
+- **Fleet definitions: capability profiles are now preserved across cell edits (they were dropped or made the file unwritable) and exposed in the definitions view.**
+
 ## 0.9.35 — 2026-09-20
 
 - **Federated topology: per-hop budget; slow transitive peers are served from the last good snapshot and marked stale instead of disappearing.** A hub used to answer a topology request only after its whole fan-out completed, so a single slow child pushed the hub's answer past the caller's budget and the caller dropped the entire transitive branch. A peer request now carries its remaining budget, the hub keeps a 500 ms margin for itself, and a child that misses the hop budget is served from the last good snapshot marked `stale` with `lastSeen`; a response that arrives but fails identity binding still drops the branch. Stale owners stay addressable on their cached route in the deck and VL owner lists.
