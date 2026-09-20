@@ -246,7 +246,13 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
 
   useEffect(() => {
     if (!ready) return;
-    if (skipRef.current) { skipRef.current = false; return; }
+    // Lo skip dell'aggiornamento di vista vale solo a finestra PULITA: con un
+    // edit utente pendente il debounce si riarma invece di fermarsi, cosi' un
+    // flip effimero di disponibilita' non puo' annullare né rinviare per sempre
+    // il salvataggio di una modifica vera.
+    const skip = skipRef.current && !dirtyRef.current;
+    skipRef.current = false;
+    if (skip) return;
     dirtyRef.current = true; setSaveState('saving');
     const id = setTimeout(saveNow, 650);
     return () => clearTimeout(id);
