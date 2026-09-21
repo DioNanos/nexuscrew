@@ -45,7 +45,8 @@ test('attach handshake opens pty and relays pty→ws as binary', () => {
   assert.strictEqual(openAttach.calls.length, 1);
   assert.strictEqual(openAttach.calls[0].opts.cols, 90);
   openAttach.handle.emit('data', 'hello');
-  assert.ok(ws.sent.some((b) => Buffer.from(b).toString() === 'hello'));
+  // I frame di output portano il seq nei primi 4 byte : il payload segue.
+  assert.ok(outFrames(ws).some((f) => f.text === 'hello'));
 });
 
 test('binary frame before attach closes 1002', () => {
@@ -384,11 +385,11 @@ test('resync risponde con lo snapshot dal capture-pane (nessuno svuotamento)', (
   const ws = fakeWs(); const openAttach = fakePtyFactory();
   const captures = [];
   bindWs(ws, okDeps(openAttach, {
-    capturePane: (session, tmuxBin, cb) => { captures.push({ session, tmuxBin }); cb(null, 'CAPTURE-DATA'); },
+    capturePane: (session, tmuxBin, captureLines, cb) => { captures.push({ session, tmuxBin, captureLines }); cb(null, 'CAPTURE-DATA'); },
   }));
   ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
   ws.emit('message', JSON.stringify({ type: 'resync' }), false);
-  assert.deepEqual(captures, [{ session: 'X', tmuxBin: 'tmux' }]);
+  assert.deepEqual(captures, [{ session: 'X', tmuxBin: 'tmux', captureLines: undefined }]);
   const json = ws.sent.map((s) => JSON.parse(s));
   assert.ok(json.some((m) => m.type === 'snapshot' && m.data === 'CAPTURE-DATA'),
     'lo snapshot arriva come messaggio dedicato');
@@ -397,11 +398,73 @@ test('resync risponde con lo snapshot dal capture-pane (nessuno svuotamento)', (
 test('resync con capture fallita NON chiude il canale: lo stream live continua', () => {
   const ws = fakeWs(); const openAttach = fakePtyFactory();
   bindWs(ws, okDeps(openAttach, {
-    capturePane: (session, tmuxBin, cb) => cb(new Error('tmux gone')),
+    capturePane: (session, tmuxBin, captureLines, cb) => cb(new Error('tmux gone')),
   }));
   ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
   ws.emit('message', JSON.stringify({ type: 'resync' }), false);
   assert.strictEqual(ws.closedCode, null, 'nessuna chiusura per un capture fallito');
   openAttach.handle.emit('data', 'live-after-failed-resync');
-  assert.ok(ws.sent.some((b) => Buffer.from(b).toString() === 'live-after-failed-resync'));
+  assert.ok(outFrames(ws).some((f) => f.text === 'live-after-failed-resync'));
+});
+
+// ---- ripresa per sequenza. Il bridge numera i frame di output e tiene un
+// ---- ring buffer per sessione: al ritorno il client chiede solo il mancante.
+
+// Il seq viaggia nei primi 4 byte del frame binario (big endian).
+function outFrames(ws) {
+  return ws.sent
+    .filter((b) => Buffer.isBuffer(b) || (b && b.length >= 4 && typeof b.toString === 'function' && !b.toString().startsWith('{')))
+    .map((b) => Buffer.from(b))
+    .filter((b) => b.length >= 4 && ![0x7b].includes(b[0])) // scarta i JSON testuali
+    .map((b) => ({ seq: b.readUInt32BE(0), text: b.subarray(4).toString() }));
+}
+
+test('resume dentro il buffer rimanda SOLO il mancante, senza duplicati', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory();
+  bindWs(ws, okDeps(openAttach));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  openAttach.handle.emit('data', 'AAAA'); // seq 0
+  openAttach.handle.emit('data', 'BBBB'); // seq 1
+  openAttach.handle.emit('data', 'CCCC'); // seq 2
+  const before = outFrames(ws);
+  assert.deepEqual(before.map((f) => f.text), ['AAAA', 'BBBB', 'CCCC'], 'ogni frame porta il suo seq');
+
+  ws.emit('message', JSON.stringify({ type: 'resume', seq: 0 }), false); // ho fino ad AAAA
+  const after = outFrames(ws).slice(before.length);
+  assert.deepEqual(after.map((f) => f.text), ['BBBB', 'CCCC'], 'solo i frame oltre il seq dichiarato');
+  assert.deepEqual(after.map((f) => f.seq), [1, 2], 'nessuna duplicazione: i seq ripartono da 1');
+});
+
+test('un gap oltre il buffer chiede il repaint invece di inventare il delta', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory();
+  bindWs(ws, okDeps(openAttach, { defaults: { outputRingBytes: 4 } }));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  for (const t of ['AAAA', 'BBBB', 'CCCC']) openAttach.handle.emit('data', t); // ring cap 8: restano le ultime
+  ws.emit('message', JSON.stringify({ type: 'resume', seq: 0 }), false); // il primo frame non è più in buffer
+  const json = ws.sent.map((s) => { try { return JSON.parse(s); } catch { return null; } }).filter(Boolean);
+  assert.ok(json.some((m) => m.type === 'resync-needed'), 'il bridge deve chiedere il repaint');
+});
+
+test('resume senza nulla da rimandare non manda frame e dichiara live', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory();
+  bindWs(ws, okDeps(openAttach));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  openAttach.handle.emit('data', 'AAAA');
+  const n = outFrames(ws).length;
+  ws.emit('message', JSON.stringify({ type: 'resume', seq: 0 }), false); // già aggiornato
+  assert.equal(outFrames(ws).length, n, 'nessun frame nuovo');
+  const json = ws.sent.map((s) => { try { return JSON.parse(s); } catch { return null; } }).filter(Boolean);
+  assert.ok(json.some((m) => m.type === 'link' && m.state === 'live'));
+});
+
+test('il numero di righe del resync viene dalla config del server', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory();
+  let seen;
+  bindWs(ws, okDeps(openAttach, {
+    defaults: { captureLines: 123 },
+    capturePane: (session, tmuxBin, captureLines, cb) => { seen = captureLines; cb(null, 'X'); },
+  }));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  ws.emit('message', JSON.stringify({ type: 'resync' }), false);
+  assert.equal(seen, 123, 'il capture usa il valore configurato');
 });
