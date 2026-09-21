@@ -14,7 +14,7 @@ export function wsTarget(node, token) {
   return `/api/route/${route}/_/ws?token=${encodeURIComponent(token || '')}`;
 }
 
-export function openTerminalSocket({ session, node, token, cols, rows, readonly = false, takeSize, focused, onData, onExit, onFiles, onSnapshot, onLink, retryBaseMs = 250, retryStableMs = 5000, onRetryScheduled, pingMs = 5000, deadMs = 10000 }) {
+export function openTerminalSocket({ session, node, token, cols, rows, readonly = false, takeSize, focused, onData, onExit, onFiles, onSnapshot, onLink, retryBaseMs = 250, retryStableMs = 5000, onRetryScheduled, pingMs = 5000, deadMs = 10000, queuedInputBytes = 4096, onQueued }) {
   // Fail-closed on the "localhost-only" invariant. The token travels in clear only
   // when the origin is loopback (inside the SSH/VPN tunnel); otherwise serve over HTTPS.
   const isLocal = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname);
@@ -42,6 +42,19 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
   let lastSeenAt = 0;
   // S2: ultimo seq di OUTPUT ricevuto. Al ritorno si chiede solo il mancante.
   let lastSeq = null;
+  // S4: i tasti digitati mentre il canale è giù non si perdono — si accodano
+  // entro un cap e partono IN ORDINE al ritorno.
+  const queuedLimit = Math.max(1, Number(queuedInputBytes) || 4096);
+  let pendingInput = [];
+  let pendingBytes = 0;
+  const notifyQueued = () => { if (typeof onQueued === 'function') { try { onQueued(pendingBytes); } catch (_) { /* best effort */ } } };
+  const flushPendingInput = () => {
+    if (!ws || ws.readyState !== 1 || !pendingInput.length) return;
+    const queue = pendingInput;
+    pendingInput = []; pendingBytes = 0;
+    for (const chunk of queue) { try { ws.send(chunk); } catch (_) { /* il canale è caduto di nuovo: il resto è perso come prima */ } }
+    notifyQueued();
+  };
   const stopLiveness = () => {
     if (livenessTimer) { clearInterval(livenessTimer); livenessTimer = null; }
   };
@@ -95,13 +108,13 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
       if (takeSize !== undefined) frame.takeSize = takeSize;
       current.send(JSON.stringify(frame));
       if (wantFocus !== undefined) current.send(JSON.stringify({ type: 'focus', on: !!wantFocus }));
-      // Riconnessione dopo una caduta: il buffer del client potrebbe essere
-      // rimasto indietro — chiede il resync (il server ridipinge dal pane).
       // Riconnessione dopo una caduta: se sappiamo DOVE eravamo fermi si chiede
       // il solo tratto mancante; altrimenti il repaint dal pane.
       if (dropped) {
         current.send(JSON.stringify(lastSeq === null ? { type: 'resync' } : { type: 'resume', seq: lastSeq }));
       }
+      // La coda parte DOPO l'attach: il server deve sapere chi sta parlando.
+      flushPendingInput();
       startLiveness(current);
     };
     current.onmessage = (ev) => {
@@ -151,14 +164,16 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
   connect();
   return {
     sendInput: (data) => {
-      if (!ws || ws.readyState !== 1) return false;
-      try {
-        ws.send(typeof data === 'string' ? new TextEncoder().encode(data) : data);
-        return true;
-      } catch (_) {
-        try { ws.close(); } catch (_) {}
-        return false;
+      const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+      if (ws && ws.readyState === 1) {
+        try { ws.send(bytes); return true; } catch (_) { try { ws.close(); } catch (_) {} }
       }
+      // Canale giù: si accoda entro il cap. Oltre il cap si RIFIUTA — meglio un
+      // no esplicito che perdere in silenzio ciò che l'utente ha digitato.
+      if (pendingBytes + bytes.length > queuedLimit) return false;
+      pendingInput.push(bytes); pendingBytes += bytes.length;
+      notifyQueued();
+      return true;
     },
     isReady: () => !!ws && ws.readyState === 1,
     resize: (c, r) => { cols = c; rows = r; if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols: c, rows: r })); },

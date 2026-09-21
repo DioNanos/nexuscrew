@@ -47,6 +47,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   // intatto durante la riconnessione. L'overlay compare DOPO un secondo di
   // caduta (S5): un blip non deve farlo lampeggiare.
   const [linkOverlay, setLinkOverlay] = useState(false);
+  // Byte digitati e accodati mentre il canale è giù: l'overlay lo DICHIARA,
+  // così chi scrive sa che nulla è andato perso (S4).
+  const [queuedBytes, setQueuedBytes] = useState(0);
   const droppedAtRef = useRef(null);
   const overlayTimerRef = useRef(null);
   // Lo snapshot puo' sopravvivere alla propria evidenziazione: xterm la butta
@@ -270,6 +273,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         },
         // Stato del canale per l'overlay «riconnessione…»: il buffer resta
         // al suo posto mentre il ws si ristabilisce.
+        onQueued: (bytes) => setQueuedBytes(bytes),
         onLink: (state) => {
           if (overlayTimerRef.current) { clearTimeout(overlayTimerRef.current); overlayTimerRef.current = null; }
           if (state === 'live') {
@@ -1117,7 +1121,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
     <div className="nc-terminal-host" ref={hostRef} />
     {linkOverlay && (
-      <div className="nc-terminal-link-overlay">riconnessione…</div>
+      <div className="nc-terminal-link-overlay">
+        riconnessione…{queuedBytes > 0 ? ` (${queuedBytes} byte in coda)` : ''}
+      </div>
     )}
     {touchSelectionCaret && <div className="nc-touch-selection-caret" style={touchSelectionCaret} aria-hidden="true" />}
     {selRange && handleGeom && uiPolicy.handles && ['start', 'end'].map((which) => (handleGeom[which].visible && (
