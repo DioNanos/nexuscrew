@@ -184,9 +184,27 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   // Merge in background di UN owner (mai persistito: install salva solo
   // le locali; nessun reflow — applyLayout false — la deck corrente si aggiorna
   // al prossimo giro di vista).
+  //
+  // SOSTITUZIONE IN POSIZIONE. L'ordine della rail È l'ordine di questo array
+  // (la DeckBar non ordina, e l'utente può riordinarla a mano): appendere in
+  // coda le deck appena arrivate farebbe saltare in fondo il gruppo di un
+  // owner a ogni risposta, e con più owner che rispondono a tempi diversi la
+  // rail si rimescolerebbe di continuo. Qui ogni deck esistente viene
+  // rimpiazzata ALLO STESSO INDICE (stesso id), le deck nuove si accodano e
+  // quelle che l'owner non elenca più spariscono (revoca confermata).
+  // L'ordine relativo degli altri owner non cambia mai.
   const mergeOwner = useCallback((owner, mine) => {
-    const others = recordsRef.current.filter((d) => d.local || d.ownerId !== owner.instanceId);
-    install([...others, ...mine], false);
+    const replacements = new Map(mine.map((d) => [d.id, d]));
+    const placed = new Set();
+    const out = [];
+    for (const record of recordsRef.current) {
+      if (record.local || record.ownerId !== owner.instanceId) { out.push(record); continue; }
+      const fresh = replacements.get(record.id);
+      if (!fresh) continue; // non più elencata dall'owner: revoca confermata
+      out.push(fresh); placed.add(record.id);
+    }
+    for (const record of mine) if (!placed.has(record.id)) out.push(record); // nuove: in coda
+    install(out, false);
   }, [install]);
 
   const loadOwnerDecks = useCallback(async (owner) => {
