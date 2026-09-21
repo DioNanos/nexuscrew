@@ -114,13 +114,68 @@ test('la cella concessa resta attaccabile', async (t) => {
   assert.notEqual(code, 4404, 'una cella concessa non deve risultare inesistente');
 });
 
-test('un peer senza restrizioni attacca come prima', async (t) => {
+test('un peer senza operator: il rifiuto e\' indistinguibile da sessione inesistente', async (t) => {
   const { root, rootPort } = await pair(t, {});
-  assert.notEqual(await attach(rootPort, root.token, 'cloud-Dev'), 4404);
+  // Il class gate dell'upgrade /ws chiude 4404 come il bridge: nessuna
+  // informazione su esistenza o stato della risorsa.
+  assert.equal(await attach(rootPort, root.token, 'cloud-Dev'), 4404);
 });
 
 test('scope none: nessuna sessione e\' attaccabile', async (t) => {
   const { root, rootPort } = await pair(t, { cellVisibility: 'none', peerOperatorAccess: true });
   assert.equal(await attach(rootPort, root.token, 'cloud-Dev'), 4404);
   assert.equal(await attach(rootPort, root.token, 'cloud-Research'), 4404);
+});
+
+// D-311: il rifiuto fuori scope sull'upgrade deve essere INDISTINGUABILE da
+// «sessione inesistente»: stessi byte sul socket (status line dell'upgrade e
+// frame di close), altrimenti la risposta rivela lo stato della risorsa.
+const net = require('node:net');
+const nodeCrypto = require('node:crypto');
+
+function attachRawBytes(rootPort, token, session, { sendAttach = true } = {}) {
+  return new Promise((resolve) => {
+    const key = nodeCrypto.randomBytes(16).toString('base64');
+    const sock = net.connect(rootPort, '127.0.0.1', () => {
+      sock.write(`GET /api/route/mac/_/ws?token=${encodeURIComponent(token)} HTTP/1.1\r\nHost: 127.0.0.1:${rootPort}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+    });
+    let buf = Buffer.alloc(0); let statusLine = null; let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      try { sock.destroy(); } catch (_) { /* gia' chiuso */ }
+      resolve({ statusLine: statusLine || '', rest: buf });
+    };
+    sock.on('data', (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
+      if (statusLine === null) {
+        const sep = buf.indexOf('\r\n\r\n');
+        if (sep >= 0) {
+          statusLine = buf.subarray(0, buf.indexOf('\r\n')).toString();
+          buf = buf.subarray(sep + 4);
+          if (sendAttach) {
+            const payload = Buffer.from(JSON.stringify({ type: 'attach', session, token, cols: 80, rows: 24 }));
+            const mask = nodeCrypto.randomBytes(4);
+            const masked = Buffer.from(payload.map((b, i) => b ^ mask[i % 4]));
+            sock.write(Buffer.concat([Buffer.from([0x81, 0x80 | payload.length]), mask, masked]));
+          }
+          setTimeout(finish, 250);
+        }
+      }
+    });
+    sock.on('error', () => finish());
+    setTimeout(finish, 2000);
+  });
+}
+
+test('il rifiuto fuori scope e\' indistinguibile da una sessione inesistente (stessi byte)', async (t) => {
+  const openPeer = await pair(t, { peerOperatorAccess: true }); // operatore concesso: sessione INESISTENTE -> bridge 4404
+  const noAccess = await pair(t, {});                            // operatore NON concesso: class gate -> stesso esito
+  const inesistente = await attachRawBytes(openPeer.rootPort, openPeer.root.token, 'cloud-NONEXISTENTE', { sendAttach: true });
+  const fuoriScope = await attachRawBytes(noAccess.rootPort, noAccess.root.token, 'cloud-Dev', { sendAttach: false });
+  assert.equal(inesistente.statusLine, fuoriScope.statusLine, 'stessa status line dell\'upgrade');
+  assert.ok(inesistente.rest.equals(fuoriScope.rest), 'stessi byte dopo l\'handshake (frame di close)');
+  const tail = fuoriScope.rest.subarray(fuoriScope.rest.length - 17);
+  assert.equal(tail.readUInt16BE(0), 4404, 'il frame di close e\' 4404');
+  assert.equal(tail.subarray(2).toString(), 'no such session', 'stesso reason del percorso locale');
 });
