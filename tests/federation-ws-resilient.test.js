@@ -22,7 +22,6 @@ const federation = require('../lib/proxy/federation.js');
 const store = require('../lib/nodes/store.js');
 
 const PEER_ID = 'b'.repeat(32);
-const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 function bootStore(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncws-resilient-'));
@@ -73,21 +72,37 @@ async function openBrowserPair(t, startForwarding) {
   return { client, seen: await outcome };
 }
 
-// Accumula i byte visti dal "browser" e vi cerca 101 + frame di close WS.
+// Scorre i frame WebSocket (dal server, non mascherati) cercando il close:
+// prima del close possono arrivare altri frame (il messaggio d'errore JSON).
+function scanForClose(frame) {
+  let off = 0;
+  while (off + 2 <= frame.length) {
+    const opcode = frame[off] & 0x0f;
+    const masked = (frame[off + 1] & 0x80) !== 0;
+    let len = frame[off + 1] & 0x7f;
+    let cursor = off + 2;
+    if (len === 126) { if (cursor + 2 > frame.length) return null; len = frame.readUInt16BE(cursor); cursor += 2; } else if (len === 127) return null;
+    if (masked) return null; // server->client non maschera
+    if (cursor + len > frame.length) return null;
+    if (opcode === 0x8) {
+      const payload = frame.subarray(cursor, cursor + len);
+      return payload.length >= 2 ? payload.readUInt16BE(0) : 1005;
+    }
+    off = cursor + len;
+  }
+  return null;
+}
+
+// Accumula i byte visti dal "browser" e vi cerca 101 + il frame di close WS.
 function watchClient(client) {
   const seen = { got101: false, closeCode: null, raw: Buffer.alloc(0), done: false };
   const tryParse = () => {
     if (seen.done) return;
     const headerEnd = seen.raw.indexOf('\r\n\r\n');
     if (headerEnd >= 0) seen.got101 = seen.raw.slice(0, headerEnd).toString('latin1').startsWith('HTTP/1.1 101');
-    const frame = headerEnd >= 0 ? seen.raw.slice(headerEnd + 4) : Buffer.alloc(0);
-    if (frame.length >= 4 && frame[0] === 0x88) {
-      const len = frame[1] & 0x7f;
-      if (frame.length >= 2 + len) {
-        seen.closeCode = frame.readUInt16BE(2);
-        seen.done = true;
-      }
-    }
+    if (headerEnd < 0) return;
+    const code = scanForClose(seen.raw.subarray(headerEnd + 4));
+    if (code !== null) { seen.closeCode = code; seen.done = true; }
   };
   client.on('data', (chunk) => { seen.raw = Buffer.concat([seen.raw, chunk]); tryParse(); });
   client.on('end', () => { seen.done = true; });
@@ -116,11 +131,11 @@ test('hop morto PRIMA dell\'handshake: il client riceve 101 + close 4402 leggibi
 test('hop morto DOPO lo stream: frame di close 4402, non TCP troncata', async (t) => {
   const { nodesPath } = bootStore(t);
   const key = makeBrowserKey();
-  const accept = crypto.createHash('sha1').update(key + WS_GUID).digest('base64');
-  // Upstream che completa l'handshake e poi MUORE senza close (destroy).
+  // Il proxy federato e' una pipe trasparente e non valida l'accept: al test
+  // basta che l'upstream completi l'handshake e poi muoia senza close.
   const upstream = net.createServer((sock) => {
     sock.once('data', () => {
-      sock.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+      sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: dummy\r\n\r\n');
       setTimeout(() => sock.destroy(), 30);
     });
     sock.on('error', () => {});
