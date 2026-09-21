@@ -57,13 +57,13 @@ function link(a, b, { visibility = 'network', aVisibility = 'network' } = {}) {
   let stA = nodesStore.loadStoreStrict(a.paths.nodesPath);
   stA = nodesStore.addNode(stA, {
     name: 'peer-b', ssh: 'user@peer-b', remotePort: 41999, localPort: b.port,
-    nodeId: b.nodeId, token: PEER_TOKEN, direction: 'outbound', shared: true, visibility: aVisibility,
+    nodeId: b.nodeId, token: PEER_TOKEN, direction: 'outbound', shared: true, visibility: aVisibility, peerOperatorAccess: true,
   });
   nodesStore.atomicWriteStore(a.paths.nodesPath, stA);
   let stB = nodesStore.loadStoreStrict(b.paths.nodesPath);
   stB = nodesStore.addNode(stB, {
     name: 'peer-a', remotePort: 41999, localPort: a.port,
-    nodeId: a.nodeId, acceptToken: PEER_TOKEN, direction: 'inbound', shared: true, visibility,
+    nodeId: a.nodeId, acceptToken: PEER_TOKEN, direction: 'inbound', shared: true, visibility, peerOperatorAccess: true,
   });
   nodesStore.atomicWriteStore(b.paths.nodesPath, stB);
 }

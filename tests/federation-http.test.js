@@ -31,7 +31,7 @@ test('reverse pool: hub assegna lease, prova MAC senza bearer e committa solo la
   st = store.addNode(st, {
     name: 'pixel', remotePort: 41820, localPort: 44003,
     direction: 'inbound', transport: 'inbound', autostart: true, shared: true,
-    visibility: 'network', nodeId: 'b'.repeat(32), token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
+    visibility: 'network', peerOperatorAccess: true, nodeId: 'b'.repeat(32), token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
     reversePool: store.reversePoolDefault(44003, { verification: 'verified', generation: 3 }),
   });
   store.atomicWriteStore(nodesPath, st);
@@ -73,7 +73,7 @@ test('reverse pool: MAC non valida quarantina una candidate e invalida il pool i
   st = store.addNode(st, {
     name: 'pixel', remotePort: 41820, localPort: 44003,
     direction: 'inbound', transport: 'inbound', autostart: true, shared: true,
-    visibility: 'network', nodeId: 'b'.repeat(32), token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
+    visibility: 'network', peerOperatorAccess: true, nodeId: 'b'.repeat(32), token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
     reversePool: store.reversePoolDefault(44003, { verification: 'verified', generation: 3 }),
   });
   store.atomicWriteStore(nodesPath, st);
@@ -106,7 +106,7 @@ test('reverse pool: stato autenticato riconcilia e lease abbandonata torna pront
   st = store.addNode(st, {
     name: 'pixel', remotePort: 41820, localPort: 44003,
     direction: 'inbound', transport: 'inbound', autostart: true, shared: true,
-    visibility: 'network', nodeId: 'b'.repeat(32), token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
+    visibility: 'network', peerOperatorAccess: true, nodeId: 'b'.repeat(32), token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
     reversePool: store.reversePoolDefault(44003, { verification: 'verified', generation: 3 }),
   });
   store.atomicWriteStore(nodesPath, st);
@@ -142,7 +142,7 @@ test('hub Share OFF gates topology immediately while the old reverse port still 
   st = store.addNode(st, {
     name: 'pixel', remotePort: 41820, localPort: reverse.address().port,
     direction: 'inbound', transport: 'inbound', autostart: true,
-    shared: true, visibility: 'network', nodeId: 'b'.repeat(32),
+    shared: true, visibility: 'network', peerOperatorAccess: true, nodeId: 'b'.repeat(32),
     token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
   });
   store.atomicWriteStore(nodesPath, st);
@@ -176,7 +176,7 @@ test('reverse-status controlla solo la porta assegnata al peer autenticato', asy
   st = store.addNode(st, {
     name: 'pixel', remotePort: 41820, localPort: blocker.address().port,
     direction: 'inbound', transport: 'inbound', autostart: true, shared: false,
-    visibility: 'network', nodeId: 'b'.repeat(32), token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
+    visibility: 'network', peerOperatorAccess: true, nodeId: 'b'.repeat(32), token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
   });
   store.atomicWriteStore(nodesPath, st);
   const app = express();
@@ -210,7 +210,7 @@ test('reverse-status accetta il listener gia verificato del peer autenticato', a
   st = store.addNode(st, {
     name: 'pixel', remotePort: 41820, localPort: reverseServer.address().port,
     direction: 'inbound', transport: 'inbound', autostart: true, shared: false,
-    visibility: 'network', nodeId: peerId, token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
+    visibility: 'network', peerOperatorAccess: true, nodeId: peerId, token: 'hub-to-pixel', acceptToken: 'pixel-to-hub',
   });
   store.atomicWriteStore(nodesPath, st);
   const app = express();
@@ -229,7 +229,7 @@ test('scoped federation HTTP reaches sessions, fleet and owner decks, and no set
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fed-http-'));
   const destNodes = path.join(dir, 'dest.json');
   let ds = store.emptyStore('d'.repeat(32));
-  ds = store.addNode(ds, { name: 'relay', remotePort: 41820, localPort: 44001, direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', nodeId: 'a'.repeat(32), token: 'dest-to-relay', acceptToken: 'relay-to-dest' });
+  ds = store.addNode(ds, { name: 'relay', remotePort: 41820, localPort: 44001, direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', peerOperatorAccess: true, nodeId: 'a'.repeat(32), token: 'dest-to-relay', acceptToken: 'relay-to-dest' });
   store.atomicWriteStore(destNodes, ds);
 
   let sessionHits = 0; let fleetHits = 0; let deckHits = 0; let inviteHits = 0; let forbiddenHits = 0; let deleteHits = 0; let seen = null;
@@ -275,7 +275,7 @@ test('scoped federation HTTP reaches sessions, fleet and owner decks, and no set
 
   const relayNodes = path.join(dir, 'relay.json');
   let rs = store.emptyStore('a'.repeat(32));
-  rs = store.addNode(rs, { name: 'mac', ssh: 'mac', remotePort: 41820, localPort: destServer.address().port, direction: 'outbound', transport: 'ssh', autostart: true, visibility: 'network', nodeId: 'd'.repeat(32), token: 'relay-to-dest', acceptToken: 'dest-to-relay' });
+  rs = store.addNode(rs, { name: 'mac', ssh: 'mac', remotePort: 41820, localPort: destServer.address().port, direction: 'outbound', transport: 'ssh', autostart: true, visibility: 'network', peerOperatorAccess: true, nodeId: 'd'.repeat(32), token: 'relay-to-dest', acceptToken: 'dest-to-relay' });
   store.atomicWriteStore(relayNodes, rs);
   const relay = express();
   relay.use('/api/route', fed.localRouter({ nodesPath: relayNodes, localPort: 1, localCredential: () => 'unused' }));
@@ -357,7 +357,7 @@ test('server-controlled visited IDs reject an HTTP federation cycle', async (t) 
   const reserve = async () => { const s = await listen((_q, r) => r.end()); const p = s.address().port; await close(s); return p; };
   const aPort = await reserve(); const bPort = await reserve(); const cPort = await reserve();
   const aPath = path.join(dir, 'a.json'); const bPath = path.join(dir, 'b.json'); const cPath = path.join(dir, 'c.json');
-  const node = (name, port, nodeId, token, acceptToken) => ({ name, ssh: name, remotePort: port, localPort: port, direction: 'outbound', transport: 'ssh', autostart: false, shared: true, visibility: 'network', nodeId, token, acceptToken });
+  const node = (name, port, nodeId, token, acceptToken) => ({ name, ssh: name, remotePort: port, localPort: port, direction: 'outbound', transport: 'ssh', autostart: false, shared: true, visibility: 'network', peerOperatorAccess: true, nodeId, token, acceptToken });
   let a = store.emptyStore('a'.repeat(32));
   a = store.addNode(a, node('b', bPort, 'b'.repeat(32), 'a-to-b', 'b-to-a'));
   a = store.addNode(a, node('c', cPort, 'c'.repeat(32), 'a-to-c', 'c-to-a'));
@@ -403,14 +403,14 @@ test('federated WebSocket uses scoped hop auth and reaches destination PTY gate'
   const destPort = await portFor(); const rootPort = await portFor();
   const destNodes = path.join(dir, 'dest-nodes.json');
   let ds = store.emptyStore('d'.repeat(32));
-  ds = store.addNode(ds, { name: 'root', remotePort: rootPort, localPort: 44001, direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', nodeId: 'a'.repeat(32), token: 'dest-to-root', acceptToken: 'root-to-dest' });
+  ds = store.addNode(ds, { name: 'root', remotePort: rootPort, localPort: 44001, direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', peerOperatorAccess: true, nodeId: 'a'.repeat(32), token: 'dest-to-root', acceptToken: 'root-to-dest' });
   store.atomicWriteStore(destNodes, ds);
   const dest = createServer({ home: dir, nodesPath: destNodes, tokenPath: path.join(dir, 'dest.token'), filesRoot: path.join(dir, 'dest-files'), fleetEnabled: false, port: destPort });
   await new Promise((resolve) => dest.server.listen(destPort, '127.0.0.1', resolve));
 
   const rootNodes = path.join(dir, 'root-nodes.json');
   let rs = store.emptyStore('a'.repeat(32));
-  rs = store.addNode(rs, { name: 'mac', ssh: 'mac', remotePort: destPort, localPort: destPort, direction: 'outbound', transport: 'ssh', autostart: false, visibility: 'network', nodeId: 'd'.repeat(32), token: 'root-to-dest', acceptToken: 'dest-to-root' });
+  rs = store.addNode(rs, { name: 'mac', ssh: 'mac', remotePort: destPort, localPort: destPort, direction: 'outbound', transport: 'ssh', autostart: false, visibility: 'network', peerOperatorAccess: true, nodeId: 'd'.repeat(32), token: 'root-to-dest', acceptToken: 'dest-to-root' });
   store.atomicWriteStore(rootNodes, rs);
   const root = createServer({ home: dir, nodesPath: rootNodes, tokenPath: path.join(dir, 'root.token'), filesRoot: path.join(dir, 'root-files'), fleetEnabled: false, port: rootPort });
   await new Promise((resolve) => root.server.listen(rootPort, '127.0.0.1', resolve));
@@ -439,7 +439,7 @@ test('main-token rotation closes an active federated raw WebSocket', async (t) =
   const upstreamPort = upstreamHttp.address().port;
   const nodesPath = path.join(dir, 'nodes.json');
   let st = store.emptyStore('a'.repeat(32));
-  st = store.addNode(st, { name: 'peer', ssh: 'peer', remotePort: upstreamPort, localPort: upstreamPort, direction: 'outbound', transport: 'ssh', autostart: false, visibility: 'network', nodeId: 'b'.repeat(32), token: 'peer-scope', acceptToken: 'back-scope' });
+  st = store.addNode(st, { name: 'peer', ssh: 'peer', remotePort: upstreamPort, localPort: upstreamPort, direction: 'outbound', transport: 'ssh', autostart: false, visibility: 'network', peerOperatorAccess: true, nodeId: 'b'.repeat(32), token: 'peer-scope', acceptToken: 'back-scope' });
   store.atomicWriteStore(nodesPath, st);
   const root = createServer({ home: dir, nodesPath, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, port: 0 });
   await new Promise((resolve) => root.server.listen(0, '127.0.0.1', resolve));
