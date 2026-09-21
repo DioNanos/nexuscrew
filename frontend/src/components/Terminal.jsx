@@ -9,6 +9,7 @@ import { openTerminalSocket } from '../lib/ws-client.js';
 import {
   LINK_OVERLAY_DELAY_MS, boundaryNoticeLine, overlayAfterDrop, scrollRestorePlan,
 } from '../lib/link-overlay.js';
+import { terminalRuntimeConfig } from '../lib/terminal-runtime-config.js';
 import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, copyShortcutHint, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
@@ -289,7 +290,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
           overlayTimerRef.current = setTimeout(() => {
             overlayTimerRef.current = null;
             setLinkOverlay(true);
-          }, LINK_OVERLAY_DELAY_MS);
+          }, terminalRuntimeConfig().overlayDelayMs || LINK_OVERLAY_DELAY_MS);
         },
       });
     } catch (e) {

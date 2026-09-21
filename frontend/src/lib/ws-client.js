@@ -8,6 +8,8 @@
 // token LOCALE in query — e' il canale di auth dell'upgrade verso il proxy
 // (il browser non puo' settare Authorization su un WS); il proxy lo strippa
 // prima di inoltrare e inietta lui il token remoto (contratto §4b(2)).
+import { terminalRuntimeConfig } from './terminal-runtime-config.js';
+
 export function wsTarget(node, token, attachId = null, session = null) {
   if (!node) return '/ws';
   const route = String(node).split('/').map(encodeURIComponent).join('/');
@@ -43,7 +45,18 @@ export function attachIdFor(session, node, storage = null) {
   } catch (_) { return null; }
 }
 
-export function openTerminalSocket({ session, node, token, cols, rows, readonly = false, takeSize, focused, onData, onExit, onFiles, onSnapshot, onLink, retryBaseMs = 250, retryStableMs = 5000, onRetryScheduled, pingMs = 5000, deadMs = 10000, queuedInputBytes = 4096, onQueued }) {
+export function openTerminalSocket({
+  session, node, token, cols, rows, readonly = false, takeSize, focused, onData, onExit, onFiles, onSnapshot, onLink,
+  // I default vengono dalla config del server (terminale); i test possono
+  // sempre forzarli passandoli esplicitamente.
+  retryBaseMs, retryMaxMs, retryStableMs = 5000, onRetryScheduled, pingMs, deadMs, queuedInputBytes, onQueued,
+}) {
+  const runtime = terminalRuntimeConfig();
+  const baseMs = retryBaseMs === undefined ? runtime.retryBaseMs : retryBaseMs;
+  const maxMs = retryMaxMs === undefined ? runtime.retryMaxMs : retryMaxMs;
+  const pingMsCfg = pingMs === undefined ? runtime.pingMs : pingMs;
+  const deadMsCfg = deadMs === undefined ? runtime.deadMs : deadMs;
+  const queueBytes = queuedInputBytes === undefined ? runtime.queuedInputBytes : queuedInputBytes;
   // Fail-closed on the "localhost-only" invariant. The token travels in clear only
   // when the origin is loopback (inside the SSH/VPN tunnel); otherwise serve over HTTPS.
   const isLocal = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname);
@@ -74,7 +87,7 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
   let lastSeq = null;
   // i tasti digitati mentre il canale è giù non si perdono — si accodano
   // entro un cap e partono IN ORDINE al ritorno.
-  const queuedLimit = Math.max(1, Number(queuedInputBytes) || 4096);
+  const queuedLimit = Math.max(1, Number(queueBytes) || 4096);
   let pendingInput = [];
   let pendingBytes = 0;
   const notifyQueued = () => { if (typeof onQueued === 'function') { try { onQueued(pendingBytes); } catch (_) { /* best effort */ } } };
@@ -91,8 +104,8 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
   const startLiveness = (current) => {
     stopLiveness();
     lastSeenAt = Date.now();
-    const pingEvery = Math.max(1, Number(pingMs) || 5000);
-    const silentBudget = Math.max(1, Number(deadMs) || 10000);
+    const pingEvery = Math.max(1, Number(pingMsCfg) || 5000);
+    const silentBudget = Math.max(1, Number(deadMsCfg) || 10000);
     livenessTimer = setInterval(() => {
       if (ws !== current || stopped || terminalEnded) { stopLiveness(); return; }
       if (Date.now() - lastSeenAt > silentBudget) {
@@ -111,7 +124,7 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
   let wantFocus = focused;
   const scheduleReconnect = () => {
     if (stopped || terminalEnded || retryTimer) return;
-    const delay = Math.min(5000, Math.max(0, retryBaseMs) * (2 ** Math.min(retryAttempt++, 5)));
+    const delay = Math.min(maxMs, Math.max(0, baseMs) * (2 ** Math.min(retryAttempt++, 5)));
     if (typeof onRetryScheduled === 'function') onRetryScheduled(delay);
     retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
   };

@@ -385,11 +385,11 @@ test('resync risponde con lo snapshot dal capture-pane (nessuno svuotamento)', (
   const ws = fakeWs(); const openAttach = fakePtyFactory();
   const captures = [];
   bindWs(ws, okDeps(openAttach, {
-    capturePane: (session, tmuxBin, cb) => { captures.push({ session, tmuxBin }); cb(null, 'CAPTURE-DATA'); },
+    capturePane: (session, tmuxBin, captureLines, cb) => { captures.push({ session, tmuxBin, captureLines }); cb(null, 'CAPTURE-DATA'); },
   }));
   ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
   ws.emit('message', JSON.stringify({ type: 'resync' }), false);
-  assert.deepEqual(captures, [{ session: 'X', tmuxBin: 'tmux' }]);
+  assert.deepEqual(captures, [{ session: 'X', tmuxBin: 'tmux', captureLines: undefined }]);
   const json = ws.sent.map((s) => JSON.parse(s));
   assert.ok(json.some((m) => m.type === 'snapshot' && m.data === 'CAPTURE-DATA'),
     'lo snapshot arriva come messaggio dedicato');
@@ -398,7 +398,7 @@ test('resync risponde con lo snapshot dal capture-pane (nessuno svuotamento)', (
 test('resync con capture fallita NON chiude il canale: lo stream live continua', () => {
   const ws = fakeWs(); const openAttach = fakePtyFactory();
   bindWs(ws, okDeps(openAttach, {
-    capturePane: (session, tmuxBin, cb) => cb(new Error('tmux gone')),
+    capturePane: (session, tmuxBin, captureLines, cb) => cb(new Error('tmux gone')),
   }));
   ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
   ws.emit('message', JSON.stringify({ type: 'resync' }), false);
@@ -455,4 +455,16 @@ test('resume senza nulla da rimandare non manda frame e dichiara live', () => {
   assert.equal(outFrames(ws).length, n, 'nessun frame nuovo');
   const json = ws.sent.map((s) => { try { return JSON.parse(s); } catch { return null; } }).filter(Boolean);
   assert.ok(json.some((m) => m.type === 'link' && m.state === 'live'));
+});
+
+test('il numero di righe del resync viene dalla config del server', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory();
+  let seen;
+  bindWs(ws, okDeps(openAttach, {
+    defaults: { captureLines: 123 },
+    capturePane: (session, tmuxBin, captureLines, cb) => { seen = captureLines; cb(null, 'X'); },
+  }));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  ws.emit('message', JSON.stringify({ type: 'resync' }), false);
+  assert.equal(seen, 123, 'il capture usa il valore configurato');
 });

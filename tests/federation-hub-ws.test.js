@@ -248,7 +248,7 @@ test('ring: l\'overflow non consegna mai un frame a meta\' (nessun 1002)', async
   assert.ok(b.state.messages.some((m) => m.data === 'ULTIMA'), 'e lo stream live riprende');
 });
 
-test('F7: se l\'upstream muore mentre il client e\' attaccato, il client lo sa subito', async (t) => {
+test('se l\'upstream muore mentre il client e\' attaccato, il client lo sa subito', async (t) => {
   const { nodesPath } = bootStore(t);
   const { port, state } = await realUpstream(t);
   const hubAttaches = federation.createHubAttachStore({ graceMs: 3000, maxAttaches: 8, ringBytes: 4096 });
@@ -284,4 +284,47 @@ test('vale anche per il client ripreso', async (t) => {
   state.sockets[0].terminate(); // l'upstream muore DOPO la ripresa, senza frame
   await waitFor(() => b.state.codes.length > 0, 800);
   assert.equal(b.state.codes[0], 4402, `anche il ripreso deve ricevere 4402: ${JSON.stringify(b.state.codes)}`);
+});
+
+// Frame di testo costruito a mano (server->client, non mascherato): serve per
+// spezzarlo in due chunk TCP, cosa che un WebSocket vero non permette.
+function textFrame(text) {
+  const payload = Buffer.from(text, 'utf8');
+  return Buffer.concat([Buffer.from([0x81, payload.length]), payload]);
+}
+
+test('un frame spezzato in due chunk durante la grazia arriva intero', async (t) => {
+  const { nodesPath } = bootStore(t);
+  const { port, state } = await realUpstream(t);
+  // Ring PICCOLO: cosi' l'eviction entra in gioco e il caso vero (un chunk
+  // parziale scartato, che farebbe partire il replay a meta' frame) si vede.
+  const hubAttaches = federation.createHubAttachStore({ graceMs: 3000, maxAttaches: 8, ringBytes: 8 });
+  const proxyPort = await proxyFor(t, { nodesPath, port, hubAttaches, url: query() });
+
+  const a = connectClient(t, proxyPort);
+  await waitFor(() => a.ws.readyState === WebSocket.OPEN);
+  await waitFor(() => state.sockets.length === 1);
+  a.ws.terminate();
+  await waitFor(() => hubAttaches.get(ATTACH_ID) && hubAttaches.get(ATTACH_ID).socket === null, 3000);
+
+  // Durante la grazia l'upstream manda UN frame, spezzato in due scritture TCP.
+  const raw = state.sockets[0]._socket;
+  const frame = textFrame('SPEZZATO-IN-DUE-PARTI-MOLTO-LUNGHE');
+  raw.write(frame.subarray(0, 3)); // header + 1 byte del payload: chunk PARZIALE
+  await wait(60);
+  raw.write(frame.subarray(3));
+  await wait(80);
+  // Il ring (30 B) e' piu' piccolo del frame (32 B): l'eviction deve scartare
+  // il FRAME piu' vecchio, non il primo chunk — altrimenti il replay partirebbe
+  // da 29 byte a meta' frame.
+
+  const b = connectClient(t, proxyPort);
+  await waitFor(() => b.ws.readyState === WebSocket.OPEN);
+  await wait(300);
+  assert.equal(b.state.codes.filter((c) => c === 1002).length, 0, 'nessun 1002: il replay non parte a meta\' frame');
+  const replays = b.state.messages.map((m) => m.data);
+  assert.ok(replays.includes('SPEZZATO-IN-DUE-PARTI-MOLTO-LUNGHE'),
+    `il messaggio spezzato deve arrivare INTERO: ${JSON.stringify(replays)}`);
+  assert.ok(replays.every((d) => d === 'SPEZZATO-IN-DUE-PARTI-MOLTO-LUNGHE'),
+    `nessun messaggio spurio dal replay a meta' frame: ${JSON.stringify(replays)}`);
 });

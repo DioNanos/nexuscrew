@@ -34,6 +34,7 @@ import { fleetReadOutcome } from './lib/fleet-read-policy.js';
 import { panelPortForRoute } from './lib/panel-port.js';
 import {t} from './lib/i18n.js';
 import { useLang } from './hooks/useLang.js';
+import { setTerminalRuntimeConfig } from './lib/terminal-runtime-config.js';
 import { useNodes } from './hooks/useNodes.js';
 import { useDecks } from './hooks/useDecks.js';
 import { useInputPreferences } from './hooks/useInputPreferences.js';
@@ -434,6 +435,9 @@ export default function App() {
         localNameDefault: s.localName || '',
       });
       setRoDefault(!!c.readonlyDefault);
+      // I parametri del terminale vivono nella config del server: il client li
+      // usa da qui (backoff, liveness, coda, ritardo dell'overlay).
+      setTerminalRuntimeConfig(c.terminal);
       setPanelPort(Number.isInteger(c.panelPort) ? c.panelPort : 0);
       setNodePanelPorts(c.nodePanelPorts && typeof c.nodePanelPorts === 'object' && !Array.isArray(c.nodePanelPorts)
         ? c.nodePanelPorts : {});
