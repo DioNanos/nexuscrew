@@ -12,7 +12,7 @@ export function wsTarget(node, token, attachId = null, session = null) {
   if (!node) return '/ws';
   const route = String(node).split('/').map(encodeURIComponent).join('/');
   let url = `/api/route/${route}/_/ws?token=${encodeURIComponent(token || '')}`;
-  // S3: l'attachId (e la sessione che identifica) viaggia SOLO nella query —
+  // l'attachId (e la sessione che identifica) viaggia SOLO nella query —
   // il proxy non de-maschera i frame, quindi non puo' leggerlo dall'attach.
   if (attachId) {
     url += `&attachId=${encodeURIComponent(attachId)}`;
@@ -21,9 +21,9 @@ export function wsTarget(node, token, attachId = null, session = null) {
   return url;
 }
 
-// S3: 128 bit CASUALI, stabili per (session,node) dentro la SCHEDA. In
+// 128 bit CASUALI, stabili per (session,node) dentro la SCHEDA. In
 // sessionStorage e mai su disco; se lo storage e' negato non si inventa un id
-// (senza id il proxy fa una attach nuova, come prima di S3).
+// (senza id il proxy fa una attach nuova, come prima di ).
 export function attachIdFor(session, node, storage = null) {
   const store = storage === null ? (typeof sessionStorage !== 'undefined' ? sessionStorage : null) : storage;
   if (!store) return null;
@@ -61,16 +61,16 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
   // Una caduta GIA' subita: la prossima apertura e' una riconnessione e
   // chiede il resync del buffer (repaint dal capture-pane del server).
   let dropped = false;
-  // Liveness (S1): il tunnel che muore senza FIN non produce nessun close TCP
+  // Liveness : il tunnel che muore senza FIN non produce nessun close TCP
   // — il browser resta convinto di essere connesso e lo schermo si gela. Un
   // ping applicativo a cadenza e un budget di silenzio rendono la caduta
   // OSSERVABILE: nessun dato e nessun pong entro il budget = chiusura nostra,
   // che avvia il backoff.
   let livenessTimer = null;
   let lastSeenAt = 0;
-  // S2: ultimo seq di OUTPUT ricevuto. Al ritorno si chiede solo il mancante.
+  // ultimo seq di OUTPUT ricevuto. Al ritorno si chiede solo il mancante.
   let lastSeq = null;
-  // S4: i tasti digitati mentre il canale è giù non si perdono — si accodano
+  // i tasti digitati mentre il canale è giù non si perdono — si accodano
   // entro un cap e partono IN ORDINE al ritorno.
   const queuedLimit = Math.max(1, Number(queuedInputBytes) || 4096);
   let pendingInput = [];

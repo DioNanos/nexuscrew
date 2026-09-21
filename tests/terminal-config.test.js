@@ -1,5 +1,5 @@
 'use strict';
-// tests/terminal-config.test.js — S6: i parametri del terminale vivono nella
+// tests/terminal-config.test.js — i parametri del terminale vivono nella
 // config del server, con i default documentati; sovrascriverne UNO non deve
 // azzerare gli altri (il merge superficiale della config non basta per una
 // sotto-mappa).
@@ -19,21 +19,21 @@ const EXPECTED = {
   overlayDelayMs: 1000,
 };
 
-test('S6: i default del terminale sono quelli documentati', () => {
+test('i default del terminale sono quelli documentati', () => {
   const t = config.resolveTerminal();
   for (const [key, value] of Object.entries(EXPECTED)) {
     assert.equal(t[key], value, `${key} deve valere ${value}`);
   }
 });
 
-test('S6: la config del server espone i parametri del terminale', () => {
+test('la config del server espone i parametri del terminale', () => {
   const d = config.baseDefaults();
   assert.ok(d.terminal && typeof d.terminal === 'object', 'baseDefaults deve avere la sezione terminal');
   assert.equal(d.terminal.outputRingBytes, EXPECTED.outputRingBytes);
   assert.equal(d.terminal.hubGraceMs, EXPECTED.hubGraceMs);
 });
 
-test('S6: sovrascrivere un parametro NON azzera gli altri (merge profondo)', () => {
+test('sovrascrivere un parametro NON azzera gli altri (merge profondo)', () => {
   const t = config.resolveTerminal({ terminal: { pingMs: 111 } });
   assert.equal(t.pingMs, 111, 'il valore richiesto vince');
   assert.equal(t.deadMs, EXPECTED.deadMs, 'gli altri restano ai default');

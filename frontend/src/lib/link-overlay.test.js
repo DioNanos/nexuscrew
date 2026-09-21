@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-// S5 — l'overlay «riconnessione…» è un'informazione, non un riflesso: una
+// l'overlay «riconnessione…» è un'informazione, non un riflesso: una
 // caduta che si risolve in meno del ritardo non deve farlo comparire, o ogni
 // jitter della rete farebbe lampeggiare il terminale. La regola è pura e vive
 // qui per essere verificabile senza montare xterm.
@@ -9,7 +9,7 @@ import {
   LINK_OVERLAY_DELAY_MS, boundaryNoticeLine, overlayAfterDrop, scrollRestorePlan,
 } from './link-overlay.js';
 
-describe('S5: overlay di riconnessione solo dopo il ritardo', () => {
+describe('overlay di riconnessione solo dopo il ritardo', () => {
   it('una caduta più breve del ritardo NON mostra l\'overlay', () => {
     expect(overlayAfterDrop(1000, 1000 + LINK_OVERLAY_DELAY_MS - 1)).toBe(false);
   });
@@ -28,7 +28,7 @@ describe('S5: overlay di riconnessione solo dopo il ritardo', () => {
   });
 });
 
-describe('S5: lo scroll dell\'utente non viene strappato dal repaint', () => {
+describe('lo scroll dell\'utente non viene strappato dal repaint', () => {
   it('chi era in fondo resta in fondo', () => {
     // viewportY === baseY: l'utente segue l\'output, il repaint lo riporta lì.
     const plan = scrollRestorePlan({ viewportY: 120, baseY: 120 }, { baseY: 40 });
@@ -49,7 +49,7 @@ describe('S5: lo scroll dell\'utente non viene strappato dal repaint', () => {
   });
 });
 
-describe('S5: riga di confine discreta al ripristino', () => {
+describe('riga di confine discreta al ripristino', () => {
   it('si scrive solo se l\'overlay era stato mostrato', () => {
     expect(boundaryNoticeLine(true)).toBeTruthy();
     expect(boundaryNoticeLine(false)).toBe('');

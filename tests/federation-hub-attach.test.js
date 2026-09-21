@@ -1,5 +1,5 @@
 'use strict';
-// tests/federation-hub-attach.test.js — S3: l'hub tiene viva l'attach federata
+// tests/federation-hub-attach.test.js — l'hub tiene viva l'attach federata
 // quando il client cade, così chi torna con la STESSA identità riprende senza
 // riaprire l'upstream. Vincoli: aggancio solo con stesso token (hash), stessa
 // route e stessa sessione; cap 8; grazia; niente de-mascheramento dei frame.
@@ -98,7 +98,7 @@ const waitFor = async (fn, ms = 1500) => {
 // Testo visibile al browser (dopo l'handshake), senza header.
 const bodyOf = (seen) => seen.raw.slice(seen.raw.indexOf('\r\n\r\n') + 4);
 
-test('S3 hub: caduta e ritorno con la STESSA identità riprendono la stessa upstream', async (t) => {
+test('hub: caduta e ritorno con la STESSA identità riprendono la stessa upstream', async (t) => {
   const { nodesPath } = bootStore(t);
   const { port, state } = await fakeUpstream(t);
   const hubAttaches = federation.createHubAttachStore({ graceMs: 500, maxAttaches: 8, ringBytes: 4096 });
@@ -125,7 +125,7 @@ test('S3 hub: caduta e ritorno con la STESSA identità riprendono la stessa upst
   assert.ok(bodyOf(b.seen).includes('DOPO'), 'e lo stream live riprende');
 });
 
-test('S3 hub: token diverso con lo stesso attachId NON aggancia (attach nuova)', async (t) => {
+test('hub: token diverso con lo stesso attachId NON aggancia (attach nuova)', async (t) => {
   const { nodesPath } = bootStore(t);
   const { port, state } = await fakeUpstream(t);
   const hubAttaches = federation.createHubAttachStore({ graceMs: 500, maxAttaches: 8, ringBytes: 4096 });
@@ -141,7 +141,7 @@ test('S3 hub: token diverso con lo stesso attachId NON aggancia (attach nuova)',
   assert.equal(state.sockets[0].destroyed, false, 'e la bufferizzata resta al suo timer');
 });
 
-test('S3 hub: una sessione diversa con lo stesso attachId NON aggancia', async (t) => {
+test('hub: una sessione diversa con lo stesso attachId NON aggancia', async (t) => {
   const { nodesPath } = bootStore(t);
   const { port, state } = await fakeUpstream(t);
   const hubAttaches = federation.createHubAttachStore({ graceMs: 500, maxAttaches: 8, ringBytes: 4096 });
@@ -156,7 +156,7 @@ test('S3 hub: una sessione diversa con lo stesso attachId NON aggancia', async (
   assert.equal(state.connections, 2, 'sessione diversa: attach nuova');
 });
 
-test('S3 hub: attachId ignoto fa una attach nuova', async (t) => {
+test('hub: attachId ignoto fa una attach nuova', async (t) => {
   const { nodesPath } = bootStore(t);
   const { port, state } = await fakeUpstream(t);
   const hubAttaches = federation.createHubAttachStore({ graceMs: 500, maxAttaches: 8, ringBytes: 4096 });
@@ -169,7 +169,7 @@ test('S3 hub: attachId ignoto fa una attach nuova', async (t) => {
   assert.equal(state.connections, 2, 'id mai visto: attach nuova, non aggancio');
 });
 
-test('S3 hub: oltre la grazia l\'upstream viene distrutta', async (t) => {
+test('hub: oltre la grazia l\'upstream viene distrutta', async (t) => {
   const { nodesPath } = bootStore(t);
   const { port, state } = await fakeUpstream(t);
   const hubAttaches = federation.createHubAttachStore({ graceMs: 120, maxAttaches: 8, ringBytes: 4096 });
@@ -185,7 +185,7 @@ test('S3 hub: oltre la grazia l\'upstream viene distrutta', async (t) => {
   assert.equal(state.connections, 2, 'e il ritorno è una attach nuova');
 });
 
-test('S3 hub: oltre il cap di 8 attach in grazia si chiude la più vecchia', async (t) => {
+test('hub: oltre il cap di 8 attach in grazia si chiude la più vecchia', async (t) => {
   // Proprietà dello STORE: il cap chiude la più vecchia invece di rifiutare la
   // nuova. Verificata direttamente (l'harness a 8 coppie reali misurava il
   // rumore delle porte, non la regola).

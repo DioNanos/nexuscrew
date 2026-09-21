@@ -1,5 +1,5 @@
 'use strict';
-// tests/ws-attachid.test.js — S3: l'attachId è 128 bit CASUALI per (session,node),
+// tests/ws-attachid.test.js — l'attachId è 128 bit CASUALI per (session,node),
 // tenuto in sessionStorage (per scheda, mai su disco) e stabile fra riconnessioni.
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -43,7 +43,7 @@ async function withFakeWs(storage, fn) {
 
 const attachIdOf = (url) => new URL(url).searchParams.get('attachId');
 
-test('S3 client: l\'URL di upgrade porta un attachId di 128 bit casuali', async () => {
+test('client: l\'URL di upgrade porta un attachId di 128 bit casuali', async () => {
   await withFakeWs(fakeSessionStorage(), async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?aid=${Date.now()}`);
     const socket = openTerminalSocket({ session: 'work-build', node: 'hub/peer', token: 't', cols: 80, rows: 24, retryBaseMs: 1 });
@@ -55,7 +55,7 @@ test('S3 client: l\'URL di upgrade porta un attachId di 128 bit casuali', async 
   });
 });
 
-test('S3 client: lo stesso (session,node) riusa lo stesso attachId; un altro no', async () => {
+test('client: lo stesso (session,node) riusa lo stesso attachId; un altro no', async () => {
   await withFakeWs(fakeSessionStorage(), async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?stable=${Date.now()}`);
     const a = openTerminalSocket({ session: 'work-build', node: 'hub/peer', token: 't', cols: 80, rows: 24, retryBaseMs: 1 });
@@ -75,7 +75,7 @@ test('S3 client: lo stesso (session,node) riusa lo stesso attachId; un altro no'
   });
 });
 
-test('S3 client: senza sessionStorage non si inventa un id (nessun aggancio)', async () => {
+test('client: senza sessionStorage non si inventa un id (nessun aggancio)', async () => {
   await withFakeWs(null, async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?nostorage=${Date.now()}`);
     const socket = openTerminalSocket({ session: 'work-build', node: 'hub/peer', token: 't', cols: 80, rows: 24, retryBaseMs: 1 });

@@ -1,4 +1,4 @@
-// S5 — resa della riconnessione: regole PURE, così sono verificabili senza
+// resa della riconnessione: regole PURE, così sono verificabili senza
 // montare xterm. Il componente le usa e resta sottile.
 
 // L'overlay non è un riflesso: sotto questa soglia la caduta è un blip e

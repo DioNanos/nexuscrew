@@ -1,5 +1,5 @@
 'use strict';
-// tests/ws-input-queue.test.js — S4: i tasti digitati mentre il canale è giù non
+// tests/ws-input-queue.test.js — i tasti digitati mentre il canale è giù non
 // si perdono: si accodano (cap 4 KB) e partono in ordine al ritorno.
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -32,7 +32,7 @@ async function withFakeWs(fn) {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-test('S4: i tasti digitati da disconnesso partono in ordine al ritorno', async () => {
+test('i tasti digitati da disconnesso partono in ordine al ritorno', async () => {
   await withFakeWs(async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?q=${Date.now()}`);
     const socket = openTerminalSocket({ session: 'work-build', token: 't', cols: 80, rows: 24, retryBaseMs: 1 });
@@ -54,7 +54,7 @@ test('S4: i tasti digitati da disconnesso partono in ordine al ritorno', async (
   });
 });
 
-test('S4: oltre il cap l\'input viene rifiutato, non accodato in silenzio', async () => {
+test('oltre il cap l\'input viene rifiutato, non accodato in silenzio', async () => {
   await withFakeWs(async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?cap=${Date.now()}`);
     const socket = openTerminalSocket({
@@ -71,7 +71,7 @@ test('S4: oltre il cap l\'input viene rifiutato, non accodato in silenzio', asyn
   });
 });
 
-test('S4: la coda si svuota davvero (nessun doppio invio al ritorno successivo)', async () => {
+test('la coda si svuota davvero (nessun doppio invio al ritorno successivo)', async () => {
   await withFakeWs(async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?once=${Date.now()}`);
     const socket = openTerminalSocket({ session: 'work-build', token: 't', cols: 80, rows: 24, retryBaseMs: 1 });

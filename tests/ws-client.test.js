@@ -148,7 +148,7 @@ test('ws client marks a terminal exit final until GridTile creates the next gene
   }
 });
 
-// Il contratto della consegna (aggiornato con S4): ONLINE il byte parte subito;
+// Il contratto della consegna (aggiornato con ): ONLINE il byte parte subito;
 // OFFLINE non si perde — si accoda (true) e parte in ordine al ritorno. Il
 // `false` resta per il solo caso in cui la coda e' piena.
 test('ws client: online consegna subito, offline accoda (la coda piena rifiuta)', async () => {

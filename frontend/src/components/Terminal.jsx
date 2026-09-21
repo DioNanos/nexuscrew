@@ -45,10 +45,10 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   const [touchSelectionCaret, setTouchSelectionCaret] = useState(null);
   // Stato del canale ws: muove solo l'overlay, il buffer xterm resta montato e
   // intatto durante la riconnessione. L'overlay compare DOPO un secondo di
-  // caduta (S5): un blip non deve farlo lampeggiare.
+  // caduta : un blip non deve farlo lampeggiare.
   const [linkOverlay, setLinkOverlay] = useState(false);
   // Byte digitati e accodati mentre il canale è giù: l'overlay lo DICHIARA,
-  // così chi scrive sa che nulla è andato perso (S4).
+  // così chi scrive sa che nulla è andato perso .
   const [queuedBytes, setQueuedBytes] = useState(0);
   const droppedAtRef = useRef(null);
   const overlayTimerRef = useRef(null);

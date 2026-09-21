@@ -1,5 +1,5 @@
 'use strict';
-// tests/ws-resume.test.js — S2 lato client: i frame di output portano il seq e
+// tests/ws-resume.test.js — lato client: i frame di output portano il seq e
 // al ritorno si chiede SOLO il tratto mancante.
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -40,7 +40,7 @@ function outFrame(seq, text) {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-test('S2 client: il seq viene letto dall\'header e il payload arriva integro', async () => {
+test('client: il seq viene letto dall\'header e il payload arriva integro', async () => {
   await withFakeWs(async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?seq=${Date.now()}`);
     const chunks = [];
@@ -56,7 +56,7 @@ test('S2 client: il seq viene letto dall\'header e il payload arriva integro', a
   });
 });
 
-test('S2 client: al riconnect chiede la ripresa dall\'ultimo seq ricevuto', async () => {
+test('client: al riconnect chiede la ripresa dall\'ultimo seq ricevuto', async () => {
   await withFakeWs(async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?resume=${Date.now()}`);
     const socket = openTerminalSocket({ session: 'work-build', token: 't', cols: 80, rows: 24, retryBaseMs: 1 });
@@ -75,7 +75,7 @@ test('S2 client: al riconnect chiede la ripresa dall\'ultimo seq ricevuto', asyn
   });
 });
 
-test('S2 client: resync-needed fa chiedere il repaint dal pane', async () => {
+test('client: resync-needed fa chiedere il repaint dal pane', async () => {
   await withFakeWs(async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?need=${Date.now()}`);
     const socket = openTerminalSocket({ session: 'work-build', token: 't', cols: 80, rows: 24, retryBaseMs: 1 });

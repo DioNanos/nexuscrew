@@ -1,5 +1,5 @@
 'use strict';
-// tests/ws-liveness.test.js — S1: il client terminale si accorge da solo di una
+// tests/ws-liveness.test.js — il client terminale si accorge da solo di una
 // connessione MEZZO-APERTA.
 //
 // Un tunnel che muore senza FIN non produce nessun close TCP: il browser resta
@@ -36,7 +36,7 @@ async function withFakeWs(fn) {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-test('S1: il client manda ping applicativi a cadenza', async () => {
+test('il client manda ping applicativi a cadenza', async () => {
   await withFakeWs(async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?ping=${Date.now()}`);
     const socket = openTerminalSocket({
@@ -51,7 +51,7 @@ test('S1: il client manda ping applicativi a cadenza', async () => {
   });
 });
 
-test('S1: senza dati ne\' pong il client chiude e riconnette da solo', async () => {
+test('senza dati ne\' pong il client chiude e riconnette da solo', async () => {
   await withFakeWs(async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?dead=${Date.now()}`);
     const socket = openTerminalSocket({
@@ -67,7 +67,7 @@ test('S1: senza dati ne\' pong il client chiude e riconnette da solo', async () 
   });
 });
 
-test('S1: con i pong che arrivano NON riconnette', async () => {
+test('con i pong che arrivano NON riconnette', async () => {
   await withFakeWs(async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?alive=${Date.now()}`);
     const socket = openTerminalSocket({
