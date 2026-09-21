@@ -2,7 +2,13 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const { openAttach } = require('../lib/pty/attach.js');
+const { loadPty } = require('../lib/pty/provider.js');
 const { runAction } = require('../lib/tmux/actions.js');
+
+// Skip CONTATO quando il PTY prebuilt non c'e' (es. CI con --omit=optional):
+// un rosso invisibile nel tail non e' un gate, e' rumore.
+let ptyAvailable = true;
+try { loadPty(); } catch (_) { ptyAvailable = false; }
 
 const S = 'nc_smoke_' + process.pid;
 const KEEPER = `${S}_keeper`;
@@ -19,7 +25,8 @@ after(() => {
   try { execFileSync('tmux', ['kill-session', '-t', KEEPER]); } catch (_) {}
 });
 
-test('attach streams real tmux bytes and forwards input', { timeout: 15000 }, async () => {
+test('attach streams real tmux bytes and forwards input', { timeout: 15000 }, async (t) => {
+  if (!ptyAvailable) return t.skip('no real PTY provider');
   // Use a minimal shell: the user's interactive zsh/theme may still be
   // initializing after the 500 ms settle and swallow the first command.
   execFileSync('tmux', ['new-session', '-d', '-s', S, '-x', '80', '-y', '24', 'sh']);
@@ -43,7 +50,8 @@ test('attach streams real tmux bytes and forwards input', { timeout: 15000 }, as
 // client USATO piu' di recente comanda la geometria. Un client piccolo puo'
 // restringere la finestra mentre lo usi, ma tornare a usare il client grande
 // DEVE riportarla grande. (Sostituisce il vecchio gate ignore-size.)
-test('window-size latest: usare di nuovo il client grande riporta la size grande', { timeout: 15000 }, async () => {
+test('window-size latest: usare di nuovo il client grande riporta la size grande', { timeout: 15000 }, async (t) => {
+  if (!ptyAvailable) return t.skip('no real PTY provider');
   const wsz = () => execFileSync('tmux',
     ['display-message', '-p', '-t', S, '#{window_width}x#{window_height}']).toString().trim();
   execFileSync('tmux', ['new-session', '-d', '-s', S, '-x', '100', '-y', '30']);
@@ -78,7 +86,8 @@ const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Due attach deck concorrenti (takeSize:false → ignore-size) sulla STESSA sessione
 // NON devono contendere la geometria: la finestra resta di dimensione dell'owner.
-test('size policy: due deck ignore-size non restringono la sessione', { timeout: 15000 }, async () => {
+test('size policy: due deck ignore-size non restringono la sessione', { timeout: 15000 }, async (t) => {
+  if (!ptyAvailable) return t.skip('no real PTY provider');
   const S = 'nxc-b3-test-noncontend-' + process.pid;
   execFileSync('tmux', ['new-session', '-d', '-s', S, '-x', '120', '-y', '40']);
   execFileSync('tmux', ['set-option', '-t', `=${S}:`, 'window-size', 'latest']);
@@ -101,7 +110,8 @@ test('size policy: due deck ignore-size non restringono la sessione', { timeout:
 // Promozione runtime del size-owner via focus: promote() (=refresh-client -f
 // '!ignore-size') rende owner il tile col focus; spostare il focus (demote+promote)
 // sposta la geometria. Verifica reale della transizione size-owner (§7 advisory b).
-test('size policy: il focus promuove il size-owner (transizione stabile)', { timeout: 15000 }, async () => {
+test('size policy: il focus promuove il size-owner (transizione stabile)', { timeout: 15000 }, async (t) => {
+  if (!ptyAvailable) return t.skip('no real PTY provider');
   const S = 'nxc-b3-test-focus-' + process.pid;
   execFileSync('tmux', ['new-session', '-d', '-s', S, '-x', '120', '-y', '40']);
   execFileSync('tmux', ['set-option', '-t', `=${S}:`, 'window-size', 'latest']);
@@ -123,7 +133,8 @@ test('size policy: il focus promuove il size-owner (transizione stabile)', { tim
 
 // Gate: the server-side window nav actually changes window
 // (where `M-p` as a key sequence inside the PTY would fail).
-test('server-side prev-window action changes the active window', { timeout: 10000 }, async () => {
+test('server-side prev-window action changes the active window', { timeout: 10000 }, async (t) => {
+  if (!ptyAvailable) return t.skip('no real PTY provider');
   const winIdx = () => execFileSync('tmux',
     ['display-message', '-p', '-t', S, '#{window_index}']).toString().trim();
   execFileSync('tmux', ['new-session', '-d', '-s', S, '-x', '80', '-y', '24']);

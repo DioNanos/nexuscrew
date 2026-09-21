@@ -23,6 +23,16 @@ jobs:
         run: |
           set -o pipefail
           node tests/run-isolated.js 2>&1 | tee /tmp/nc-isolated.log | tail -n 80
+      - name: log intero e riepilogo (sempre, anche in fallimento)
+        if: always()
+        run: |
+          grep -E '^# (tests|pass|fail|cancelled)' /tmp/nc-isolated.log >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-log
+          path: /tmp/nc-isolated.log
+          if-no-files-found: warn
       - name: cleanup processes
         if: always()
         run: |
