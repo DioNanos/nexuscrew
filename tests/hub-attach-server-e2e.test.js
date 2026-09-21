@@ -50,13 +50,35 @@ async function bootUpstream(t) {
   return { port: wss.address().port, state };
 }
 
+const PEER_B_ID = 'e'.repeat(32);
+const PEER_B_TOKEN = 'peer-b-token-abcdefghijklmnopqrstuvwxyz0123';
+
 function addPeer(nodesPath, upstreamPort) {
   let st = nodesStore.loadStoreStrict(nodesPath);
   st = nodesStore.addNode(st, {
     name: 'peer-a', ssh: 'user@peer-a', remotePort: upstreamPort, localPort: upstreamPort, nodeId: PEER_ID,
     direction: 'outbound', shared: true, visibility: 'network', token: 'PEER-TOKEN', peerOperatorAccess: true,
   });
+  // L'ingress federato: un peer diverso da quello di destinazione (canTransit
+  // non ammette che un peer transiti verso se stesso).
+  st = nodesStore.addNode(st, {
+    name: 'peer-b', remotePort: 41998, localPort: 44998, nodeId: PEER_B_ID,
+    acceptToken: PEER_B_TOKEN, direction: 'inbound', shared: true, visibility: 'network', peerOperatorAccess: true,
+  });
   nodesStore.atomicWriteStore(nodesPath, st);
+}
+
+// Upgrade sul percorso FEDERATO: Bearer = acceptToken di un peer e catena
+// visited, come lo costruisce il proxy di un altro nodo.
+function openInboundFederatedWs(t, { port, attachId = ATTACH_ID, session = 'work-build' }) {
+  const url = `ws://127.0.0.1:${port}/federation/route/peer-a/_/ws?attachId=${attachId}&attachSession=${encodeURIComponent(session)}`;
+  const ws = new WebSocket(url, { headers: { authorization: `Bearer ${PEER_B_TOKEN}`, 'x-nexuscrew-visited': PEER_B_ID } });
+  ws.on('error', () => {});
+  const state = { messages: [], codes: [] };
+  ws.on('message', (d, isBinary) => state.messages.push({ data: d.toString(), isBinary }));
+  ws.on('close', (code) => state.codes.push(code));
+  t.after(() => { try { ws.terminate(); } catch (_) { /* idem */ } });
+  return { ws, state };
 }
 
 function openFederatedWs(t, { port, token, attachId = ATTACH_ID, session = 'work-build' }) {
@@ -124,4 +146,21 @@ test('server vero: un\'identita\' diversa NON aggancia (attach nuova)', async (t
   await waitFor(() => b.ws.readyState === WebSocket.OPEN);
   await waitFor(() => state.connections === 2, 2500);
   assert.equal(state.connections, 2, 'identita\' diversa: attach nuova');
+});
+
+test('server vero: anche l\'ingresso FEDERATO usa lo store (ramo /federation/route)', async (t) => {
+  const { nodesPath, port } = await bootHub(t);
+  const { port: upstreamPort, state } = await bootUpstream(t);
+  addPeer(nodesPath, upstreamPort);
+
+  const a = openInboundFederatedWs(t, { port });
+  assert.ok(await waitFor(() => a.ws.readyState === WebSocket.OPEN, 6000), 'il primo client federato deve aprire');
+  assert.ok(await waitFor(() => state.connections === 1, 6000), 'la prima attach federata arriva all\'upstream');
+  a.ws.terminate();
+  await wait(400);
+
+  const b = openInboundFederatedWs(t, { port });
+  assert.ok(await waitFor(() => b.ws.readyState === WebSocket.OPEN, 6000), 'il ritorno federato deve aprire');
+  await waitFor(() => state.connections === 2, 1500);
+  assert.equal(state.connections, 1, 'anche sul percorso federato si riprende la stessa attach');
 });

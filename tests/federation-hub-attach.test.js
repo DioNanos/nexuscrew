@@ -110,7 +110,10 @@ test('hub: caduta e ritorno con la STESSA identità riprendono la stessa upstrea
 
   // Il client cade: l'hub NON deve distruggere l'upstream.
   a.client.destroy();
-  await wait(250);
+  // Attesa su CONDIZIONE, non su sleep: la chiusura del socket non e'
+  // istantanea e sotto carico un tempo fisso produce un rosso casuale.
+  assert.ok(await waitFor(() => hubAttaches.get(ATTACH_ID) && hubAttaches.get(ATTACH_ID).socket === null, 5000),
+    'il record deve entrare in grazia');
   assert.equal(state.sockets[0].destroyed, false, 'upstream trattenuta in grazia');
   state.sockets[0].write('DURANTE-LA-CADUTA');
   await wait(40);
@@ -130,10 +133,14 @@ test('hub: token diverso con lo stesso attachId NON aggancia (attach nuova)', as
   const { port, state } = await fakeUpstream(t);
   const hubAttaches = federation.createHubAttachStore({ graceMs: 500, maxAttaches: 8, ringBytes: 4096 });
 
+  const id = ATTACH_ID;
   const a = await openBrowser(t, { nodesPath, port, req: upgradeReq({ token: 'TOK' }), hubAttaches });
   await waitFor(() => bodyOf(a.seen).includes('101'));
   a.client.destroy();
-  await wait(250);
+  // Attesa su CONDIZIONE, non su sleep: la chiusura del socket non e'
+  // istantanea e sotto carico un tempo fisso produce un rosso casuale.
+  assert.ok(await waitFor(() => hubAttaches.get(ATTACH_ID) && hubAttaches.get(ATTACH_ID).socket === null, 5000),
+    'il record deve entrare in grazia');
 
   await openBrowser(t, { nodesPath, port, req: upgradeReq({ token: 'ALTRO' }), hubAttaches });
   await waitFor(() => state.connections === 2);
@@ -146,10 +153,14 @@ test('hub: una sessione diversa con lo stesso attachId NON aggancia', async (t) 
   const { port, state } = await fakeUpstream(t);
   const hubAttaches = federation.createHubAttachStore({ graceMs: 500, maxAttaches: 8, ringBytes: 4096 });
 
+  const id = ATTACH_ID;
   const a = await openBrowser(t, { nodesPath, port, req: upgradeReq({ session: 'work-build' }), hubAttaches });
   await waitFor(() => bodyOf(a.seen).includes('101'));
   a.client.destroy();
-  await wait(250);
+  // Attesa su CONDIZIONE, non su sleep: la chiusura del socket non e'
+  // istantanea e sotto carico un tempo fisso produce un rosso casuale.
+  assert.ok(await waitFor(() => hubAttaches.get(ATTACH_ID) && hubAttaches.get(ATTACH_ID).socket === null, 5000),
+    'il record deve entrare in grazia');
 
   await openBrowser(t, { nodesPath, port, req: upgradeReq({ session: 'altra-sessione' }), hubAttaches });
   await waitFor(() => state.connections === 2);
