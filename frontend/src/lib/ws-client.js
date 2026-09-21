@@ -40,6 +40,8 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
   // che avvia il backoff.
   let livenessTimer = null;
   let lastSeenAt = 0;
+  // S2: ultimo seq di OUTPUT ricevuto. Al ritorno si chiede solo il mancante.
+  let lastSeq = null;
   const stopLiveness = () => {
     if (livenessTimer) { clearInterval(livenessTimer); livenessTimer = null; }
   };
@@ -95,7 +97,11 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
       if (wantFocus !== undefined) current.send(JSON.stringify({ type: 'focus', on: !!wantFocus }));
       // Riconnessione dopo una caduta: il buffer del client potrebbe essere
       // rimasto indietro — chiede il resync (il server ridipinge dal pane).
-      if (dropped) current.send(JSON.stringify({ type: 'resync' }));
+      // Riconnessione dopo una caduta: se sappiamo DOVE eravamo fermi si chiede
+      // il solo tratto mancante; altrimenti il repaint dal pane.
+      if (dropped) {
+        current.send(JSON.stringify(lastSeq === null ? { type: 'resync' } : { type: 'resume', seq: lastSeq }));
+      }
       startLiveness(current);
     };
     current.onmessage = (ev) => {
@@ -110,8 +116,21 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
         if (msg.type === 'files' && onFiles) onFiles(msg);
         if (msg.type === 'snapshot' && onSnapshot) onSnapshot(typeof msg.data === 'string' ? msg.data : '');
         if (msg.type === 'link' && onLink) onLink(msg.state === 'live' ? 'live' : 'reconnecting');
-      } else if (onData) {
-        onData(new Uint8Array(ev.data));
+        // Il ring non copre il buco: l'unica via onesta e' ridipingere dal pane.
+        if (msg.type === 'resync-needed') { try { current.send(JSON.stringify({ type: 'resync' })); } catch (_) { /* morto */ } }
+      } else {
+        // Frame di output: [seq 4 byte BE][payload]. Il seq serve alla ripresa;
+        // al terminale va SOLO il payload, o i 4 byte comparirebbero a schermo.
+        // Il seq è informazione di PROTOCOLLO: si registra anche quando il
+        // chiamante non ha passato onData.
+        let payload = new Uint8Array(ev.data);
+        try {
+          if (ev.data && ev.data.byteLength >= 4) {
+            lastSeq = new DataView(ev.data).getUint32(0);
+            payload = new Uint8Array(ev.data, 4);
+          }
+        } catch (_) { /* frame non incapsulato: passa com'e' */ }
+        if (onData) onData(payload);
       }
     };
     current.onerror = () => { if (ws === current) try { current.close(); } catch (_) {} };
