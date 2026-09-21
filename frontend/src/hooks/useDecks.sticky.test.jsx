@@ -118,7 +118,7 @@ describe('useDecks: lista sticky (le deck non spariscono per un blip)', () => {
   });
 });
 
-// F1 (audit DevAuditor): la deck di un owner UNPAIRATO deve avere una via di
+// F1 (audit indipendente): la deck di un owner UNPAIRATO deve avere una via di
 // rimozione. Il blip resta un blip, ma un'assenza che supera la grazia non e'
 // piu' un blip: e' un fatto, e le sue deck sloggano.
 
