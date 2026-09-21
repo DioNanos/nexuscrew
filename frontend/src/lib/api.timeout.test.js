@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import assert from 'node:assert';
 
 // Audit fix: `timeoutMs` in apiFetch usa il controller di fetchAbortSignal
 // (fix del ReferenceError quando signal+timeoutMs arrivano insieme) e la risposta
@@ -46,5 +47,26 @@ describe('apiFetch timeout', () => {
     await expect(p).rejects.toMatchObject({ name: 'TimeoutError' });
     // La risposta tardiva (timer cancellato all'abort) non arriva mai: nessun
     // consumo post-timeout, nessun crash.
+  });
+});
+
+describe('apiFetch abort esterno (D-311 passo 0)', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it('abort esterno DOPO l’avvio: il fetch riceve il reason esterno, non il timeout', async () => {
+    const reasons = [];
+    const fetchStub = vi.fn((_url, opts = {}) => new Promise((_res, rej) => {
+      if (opts.signal) opts.signal.addEventListener('abort', () => rej(opts.signal.reason), { once: true });
+    }));
+    vi.stubGlobal('fetch', fetchStub);
+    const outer = new AbortController();
+    const p = apiFetch('/api/decks', 't', { timeoutMs: 8000, signal: outer.signal });
+    p.catch((e) => reasons.push({ name: e.name, message: e.message }));
+    await vi.advanceTimersByTimeAsync(100);
+    outer.abort(new DOMException('operatore', 'AbortError'));
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(8000); // il timeout non deve mai vincere
+    assert.deepEqual(reasons, [{ name: 'AbortError', message: 'operatore' }]);
   });
 });

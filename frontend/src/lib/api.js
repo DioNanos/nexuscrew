@@ -29,6 +29,7 @@ export function apiFetch(path, token, opts = {}) {
   const onOuterAbort = () => controller.abort(outer.reason);
   if (outer) {
     if (outer.aborted) {
+      cancel();
       controller.abort(outer.reason);
       return Promise.reject(outer.reason instanceof Error ? outer.reason : new DOMException('aborted', 'AbortError'));
     }
