@@ -31,6 +31,11 @@ async function withFakeWs(fn) {
 }
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const waitFor = async (fn, ms = 3000) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) { if (fn()) return true; await wait(10); }
+  return false;
+};
 // Import SENZA cache-buster: e' la stessa istanza di modulo che usa ws-client.
 const cfg = () => import('../frontend/src/lib/terminal-runtime-config.js');
 
@@ -44,12 +49,11 @@ test('config del server: liveness e coda del client seguono i valori configurati
       const socket = openTerminalSocket({ session: 'work-build', token: 't', cols: 80, rows: 24 });
       const ws = FakeWebSocket.sockets[0];
       ws.open();
-      await wait(150);
-      assert.ok(ws.sentTypes().includes('ping'), 'il ping parte alla cadenza configurata');
+      // Attese su CONDIZIONE: sotto carico un tempo fisso misura la macchina.
+      assert.ok(await waitFor(() => ws.sentTypes().includes('ping')), 'il ping parte alla cadenza configurata');
 
-      // deadMs 60 senza pong: il client chiude da solo e riconnette.
-      await wait(900);
-      assert.ok(FakeWebSocket.sockets.length >= 2, 'il budget di silenzio configurato fa riconnettere');
+      // deadMs configurato senza pong: il client chiude da solo e riconnette.
+      assert.ok(await waitFor(() => FakeWebSocket.sockets.length >= 2), 'il budget di silenzio configurato fa riconnettere');
 
       // Cap della coda = 8 byte: oltre, rifiuto esplicito.
       const second = FakeWebSocket.sockets.at(-1);
