@@ -14,7 +14,7 @@ export function wsTarget(node, token) {
   return `/api/route/${route}/_/ws?token=${encodeURIComponent(token || '')}`;
 }
 
-export function openTerminalSocket({ session, node, token, cols, rows, readonly = false, takeSize, focused, onData, onExit, onFiles, onSnapshot, onLink, retryBaseMs = 250, retryStableMs = 5000, onRetryScheduled }) {
+export function openTerminalSocket({ session, node, token, cols, rows, readonly = false, takeSize, focused, onData, onExit, onFiles, onSnapshot, onLink, retryBaseMs = 250, retryStableMs = 5000, onRetryScheduled, pingMs = 5000, deadMs = 10000 }) {
   // Fail-closed on the "localhost-only" invariant. The token travels in clear only
   // when the origin is loopback (inside the SSH/VPN tunnel); otherwise serve over HTTPS.
   const isLocal = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname);
@@ -33,6 +33,34 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
   // Una caduta GIA' subita: la prossima apertura e' una riconnessione e
   // chiede il resync del buffer (repaint dal capture-pane del server).
   let dropped = false;
+  // Liveness (S1): il tunnel che muore senza FIN non produce nessun close TCP
+  // — il browser resta convinto di essere connesso e lo schermo si gela. Un
+  // ping applicativo a cadenza e un budget di silenzio rendono la caduta
+  // OSSERVABILE: nessun dato e nessun pong entro il budget = chiusura nostra,
+  // che avvia il backoff.
+  let livenessTimer = null;
+  let lastSeenAt = 0;
+  const stopLiveness = () => {
+    if (livenessTimer) { clearInterval(livenessTimer); livenessTimer = null; }
+  };
+  const startLiveness = (current) => {
+    stopLiveness();
+    lastSeenAt = Date.now();
+    const pingEvery = Math.max(1, Number(pingMs) || 5000);
+    const silentBudget = Math.max(1, Number(deadMs) || 10000);
+    livenessTimer = setInterval(() => {
+      if (ws !== current || stopped || terminalEnded) { stopLiveness(); return; }
+      if (Date.now() - lastSeenAt > silentBudget) {
+        stopLiveness();
+        try { current.close(4000, 'liveness timeout'); } catch (_) { /* già morto */ }
+        return;
+      }
+      if (current.readyState === 1) {
+        try { current.send(JSON.stringify({ type: 'ping', t: Date.now() })); } catch (_) { /* idem */ }
+      }
+    }, pingEvery);
+    if (typeof livenessTimer.unref === 'function') livenessTimer.unref();
+  };
   // Focus/size-owner: lo stato desiderato viene ricordato e (ri)mandato all'apertura
   // — cosi' un tile gia' focato al connect promuove appena il WS e' pronto.
   let wantFocus = focused;
@@ -68,9 +96,11 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
       // Riconnessione dopo una caduta: il buffer del client potrebbe essere
       // rimasto indietro — chiede il resync (il server ridipinge dal pane).
       if (dropped) current.send(JSON.stringify({ type: 'resync' }));
+      startLiveness(current);
     };
     current.onmessage = (ev) => {
       if (ws !== current || stopped) return;
+      lastSeenAt = Date.now(); // qualunque byte (dati o pong) prova che il canale vive
       if (typeof ev.data === 'string') {
         let msg; try { msg = JSON.parse(ev.data); } catch { return; }
         if (msg.type === 'attached' && typeof msg.reconnectToken === 'string' && msg.reconnectToken) {
@@ -86,6 +116,7 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
     };
     current.onerror = () => { if (ws === current) try { current.close(); } catch (_) {} };
     current.onclose = (ev) => {
+      stopLiveness();
       if (ws !== current || stopped || terminalEnded) return;
       if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
       // Terminali SOLO per ciò che richiede un'azione dell'utente (auth/acl/
@@ -117,6 +148,7 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
     focus: (on) => { wantFocus = on; if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'focus', on: !!on })); },
     close: () => {
       stopped = true;
+      stopLiveness();
       if (retryTimer) clearTimeout(retryTimer);
       if (stableTimer) clearTimeout(stableTimer);
       retryTimer = null;
