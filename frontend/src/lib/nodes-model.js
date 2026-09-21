@@ -115,7 +115,7 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     const up = tunnelStatus === 'up';
     const base = {
       name: n.name, label: n.label || n.name, originalLabel: n.label || n.name, alias: null, route, direct: true,
-      instanceId: n.nodeId || null, shared: n.shared === true,
+      instanceId: n.nodeId || null, shared: n.shared === true, stale: n.stale === true,
       tunnelStatus, sessions: [], cells: [], unmanaged: [],
       fleetAvailable: false, capabilities: [], engines: [], health: n.health || null,
       direction: n.direction || 'outbound', roles: n.roles || null, rolesKnown: n.rolesKnown === true,

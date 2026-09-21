@@ -4,6 +4,13 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.9.39 — 2026-09-21
+
+- **Deck rail and terminals stay put across topology blips and reconnects.** The owner list and the remote decks are now sticky state: a failed or empty poll never clears them, and an owner missing from a confirmed answer stays in the rail as stale until it is removed explicitly or a long grace expires. The deck refresh keeps the previous data (marked as a late update) instead of emptying the list, and a confirmed answer without the deck — or an explicit refusal — is what removes it. The last good deck list is cached so a page reload does not start from an empty rail.
+- **A terminal no longer disappears when its owner becomes unreachable.** The tile keeps the terminal mounted and shows a translucent reconnecting overlay above the intact buffer, so the open content is never destroyed by an availability flip.
+- **Resilient terminal stream.** Only auth/ACL/session closes are terminal now (4401/4403/4404); a network drop, a service restart or a clean close reconnects with backoff without clearing the buffer. On reconnect the client asks for a resync and the bridge repaints the screen from a real `tmux capture-pane` (scrollback capped at 2000 lines), so the buffer is never left blank.
+- **A dead federated hop is reported instead of silently truncated.** The WebSocket proxy completes the handshake when needed and closes with a readable 4402 instead of leaving the browser with a mute 1006.
+
 ## 0.9.38 — 2026-09-21
 
 - **Deck rail: remote decks no longer flicker offline on every refresh; a topology status blip no longer restarts the deck reload.** The periodic reload used to republish every remote deck as unavailable while the background per-owner fetches were still in flight, so the rail cycled offline→online every few seconds; a peer that refuses quickly still degrades, and only its own decks.

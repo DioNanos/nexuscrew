@@ -15,6 +15,52 @@ import {
 } from '../lib/peer-backoff.js';
 
 const POLL_MS = 4000;
+// Grazia di rimozione per un owner che manca da risposte CONFERMATE: sotto
+// questa eta' resta in lista come stale, sopra sparisce. Dieci minuti copre
+// un riavvio di servizio (o di nodo) senza tenere in vita i fantasmi.
+// Esportata: useDecks la usa come STESSA soglia per sloggiare le deck di un
+// owner scaduto (un solo numero, non due grazie divergenti).
+export const OWNER_GRACE_MS = 10 * 60 * 1000;
+const STICKY_OWNERS_KEY = 'nc-sticky-owners-v1';
+
+function readStickyOwners() {
+  try {
+    const raw = localStorage.getItem(STICKY_OWNERS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.topology)) return null;
+    return parsed;
+  } catch (_) { return null; }
+}
+function writeStickyOwners(snapshot) {
+  // Best-effort: quota superata o modalita' privata non devono rompere il poll.
+  try { localStorage.setItem(STICKY_OWNERS_KEY, JSON.stringify(snapshot)); } catch (_) { /* cache opzionale */ }
+}
+
+// Stato sticky degli owner: l'ultimo stato buono sopravvive a un fetch
+// fallito, a una risposta vuota e a un'assenza breve. Il merge segna
+// `stale` ciò che NON arriva dalla risposta confermata e rimuove solo
+// dopo la grazia — la lista non si svuota mai per un blip.
+function mergeStickyOwners(map, fetchOk, fresh, keyOf, now) {
+  if (!fetchOk) {
+    for (const entry of map.values()) entry.data = { ...entry.data, stale: true };
+    return map;
+  }
+  const present = new Map(fresh.map((e) => [keyOf(e), e]));
+  for (const [key, entry] of map) {
+    if (present.has(key)) {
+      entry.data = present.get(key);
+      entry.missingSince = null;
+      present.delete(key);
+    } else {
+      entry.missingSince ??= now;
+      if (now - entry.missingSince > OWNER_GRACE_MS) map.delete(key);
+      else entry.data = { ...entry.data, stale: true };
+    }
+  }
+  for (const [key, freshEntry] of present) map.set(key, { data: freshEntry, missingSince: null });
+  return map;
+}
 
 export function useNodes(token, enabled = true, refreshKey = 0) {
   const [groups, setGroups] = useState([]);
@@ -29,18 +75,49 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
   useEffect(() => {
     if (!enabled || !token) { setGroups([]); return undefined; }
     let alive = true;
+    // Owner sticky, ripristinati dal localStorage per ripartire pieni al
+    // reload della pagina invece che con la lista vuota.
+    const sticky = { instanceId: '', nodes: new Map(), topology: new Map() };
+    const persisted = readStickyOwners();
+    if (persisted) {
+      sticky.instanceId = persisted.instanceId || '';
+      for (const n of persisted.nodes) sticky.nodes.set(n.name, { data: n, missingSince: null });
+      for (const t of persisted.topology) sticky.topology.set(t.route.join('/'), { data: t, missingSince: null });
+    }
 
     async function poll() {
       const pollStart = Date.now();
       let nodes = []; let topology = []; let aliases = {}; let localInstanceId = '';
+      let nodesOk = false; let topologyOk = false;
       await Promise.all([
-        getNodes(token).then((j) => { nodes = Array.isArray(j.nodes) ? j.nodes : []; }).catch(() => {}),
-        getTopology(token).then((j) => { topology = Array.isArray(j.nodes) ? j.nodes : []; }).catch(() => {}),
+        getNodes(token).then((j) => { nodes = Array.isArray(j.nodes) ? j.nodes : []; nodesOk = true; }).catch(() => {}),
+        getTopology(token).then((j) => { topology = Array.isArray(j.nodes) ? j.nodes : []; topologyOk = true; }).catch(() => {}),
         getNodeAliases(token).then((j) => { aliases = j && typeof j.aliasesByInstanceId === 'object' ? j.aliasesByInstanceId : {}; }).catch(() => {}),
         apiFetch('/api/config', token).then((r) => r.json())
           .then((j) => { localInstanceId = j && typeof j.instanceId === 'string' ? j.instanceId : ''; }).catch(() => {}),
       ]);
       if (!alive) return;
+      // Sticky: un fetch fallito/vuoto non azzera l'elenco owner; chi manca
+      // da una risposta confermata resta come stale finché non scade la grazia.
+      if (localInstanceId && sticky.instanceId !== localInstanceId) {
+        // localStorage di un ALTRO nodo locale: la cache non e' nostra.
+        sticky.instanceId = localInstanceId;
+        sticky.nodes.clear(); sticky.topology.clear();
+      } else if (localInstanceId) {
+        sticky.instanceId = localInstanceId;
+      }
+      mergeStickyOwners(sticky.nodes, nodesOk, nodes, (n) => n && n.name, pollStart);
+      mergeStickyOwners(sticky.topology, topologyOk, topology, (t) => (Array.isArray(t && t.route) ? t.route.join('/') : ''), pollStart);
+      nodes = [...sticky.nodes.values()].map((e) => e.data);
+      topology = [...sticky.topology.values()].map((e) => e.data);
+      if (nodesOk || topologyOk) {
+        writeStickyOwners({
+          instanceId: sticky.instanceId,
+          savedAt: pollStart,
+          nodes: [...sticky.nodes.values()].map((e) => e.data),
+          topology: [...sticky.topology.values()].map((e) => e.data),
+        });
+      }
       // Nodi VL nella stessa lista della sidebar (VL_NODES_IN_SIDEBAR):
       // owner locale + owner federati vivi dalla topology gia' pollata —
       // stessa semantica multi-owner di SettingsPanel (readVlDirectory).

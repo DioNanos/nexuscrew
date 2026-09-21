@@ -10,6 +10,13 @@ function fakeWs() {
   ws.close = (code) => { ws.closedCode = code; ws.emit('__closed', code); };
   return ws;
 }
+// Il reconnectToken vive nel messaggio 'attached' — non e' detto che sia
+// l'ULTIMO inviato (dopo l'attach possono esserci altri messaggi di stato).
+function attachedTokenOf(ws) {
+  const frame = ws.sent.map((s) => { try { return JSON.parse(s); } catch { return null; } })
+    .find((m) => m && m.type === 'attached');
+  return frame ? frame.reconnectToken : undefined;
+}
 function fakePtyFactory() {
   const calls = []; const ptys = []; const handle = new EventEmitter();
   const fac = (session, opts) => {
@@ -167,7 +174,7 @@ test('pty grace: reconnect dello stesso client riusa il PTY senza nuovo attach',
   bindWs(ws1, okDeps(openAttach, { ptyGrace: grace }));
   ws1.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't', takeSize: true }), false);
   const firstPty = openAttach.ptys[0];
-  const reconnectToken = JSON.parse(ws1.sent.at(-1)).reconnectToken;
+  const reconnectToken = attachedTokenOf(ws1);
   ws1.emit('close');
   assert.equal(firstPty.killed, undefined, 'la caduta transitoria non uccide il PTY');
   assert.equal(grace.size(), 1, 'il PTY entra nella finestra di grazia');
@@ -260,7 +267,7 @@ test('pty grace: exit durante la grazia viene consegnato al client di ritorno', 
   const grace = createPtyGraceStore({ graceMs: 1000, randomBytes: () => Buffer.alloc(32, 10) });
   bindWs(ws1, okDeps(openAttach, { ptyGrace: grace, isValidSession: () => true }));
   ws1.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
-  const reconnectToken = JSON.parse(ws1.sent.at(-1)).reconnectToken;
+  const reconnectToken = attachedTokenOf(ws1);
   ws1.emit('close');
   openAttach.handle.emit('exit', { exitCode: 23 });
 
@@ -281,7 +288,7 @@ test('pty grace: capability valida fuori scope non riprende un PTY vivo', () => 
   const grace = createPtyGraceStore({ graceMs: 1000, randomBytes: () => Buffer.alloc(32, 12) });
   bindWs(ws1, okDeps(openAttach, { ptyGrace: grace, isValidSession: () => true }));
   ws1.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
-  const reconnectToken = JSON.parse(ws1.sent.at(-1)).reconnectToken;
+  const reconnectToken = attachedTokenOf(ws1);
   ws1.emit('close');
 
   bindWs(ws2, okDeps(openAttach, { ptyGrace: grace, isValidSession: () => false }));
@@ -298,7 +305,7 @@ test('pty grace: un attach read-only resta read-only al reconnect', () => {
   const grace = createPtyGraceStore({ graceMs: 1000, randomBytes: () => Buffer.alloc(32, 11) });
   bindWs(ws1, okDeps(openAttach, { ptyGrace: grace }));
   ws1.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't', readonly: true }), false);
-  const reconnectToken = JSON.parse(ws1.sent.at(-1)).reconnectToken;
+  const reconnectToken = attachedTokenOf(ws1);
   ws1.emit('close');
   bindWs(ws2, okDeps(openAttach, { ptyGrace: grace }));
   ws2.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't', reconnectToken, readonly: false }), false);
@@ -360,4 +367,41 @@ test('client close pulito = notice, pty exit = PTY_EXIT senza conteggio caduta',
   assert.ok(exit && exit.meta.exitCode === 3 && exit.level === 'notice');
   ws2.emit('close', 1000);
   assert.equal(diag2.calls.filter((c) => c.code === 'WS_CLIENT_CLOSE').length, 0, 'il close post-exit non genera seconda riga');
+});
+
+// ---- Streaming resiliente: stato del link dopo l'attach e resync con
+// ---- capture-pane quando il client torna dopo una caduta.
+
+test('attach confermato dichiara il link live', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory();
+  bindWs(ws, okDeps(openAttach));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  const json = ws.sent.map((s) => JSON.parse(s));
+  assert.ok(json.some((m) => m.type === 'link' && m.state === 'live'), 'link live dopo attach');
+});
+
+test('resync risponde con lo snapshot dal capture-pane (nessuno svuotamento)', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory();
+  const captures = [];
+  bindWs(ws, okDeps(openAttach, {
+    capturePane: (session, tmuxBin, cb) => { captures.push({ session, tmuxBin }); cb(null, 'CAPTURE-DATA'); },
+  }));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  ws.emit('message', JSON.stringify({ type: 'resync' }), false);
+  assert.deepEqual(captures, [{ session: 'X', tmuxBin: 'tmux' }]);
+  const json = ws.sent.map((s) => JSON.parse(s));
+  assert.ok(json.some((m) => m.type === 'snapshot' && m.data === 'CAPTURE-DATA'),
+    'lo snapshot arriva come messaggio dedicato');
+});
+
+test('resync con capture fallita NON chiude il canale: lo stream live continua', () => {
+  const ws = fakeWs(); const openAttach = fakePtyFactory();
+  bindWs(ws, okDeps(openAttach, {
+    capturePane: (session, tmuxBin, cb) => cb(new Error('tmux gone')),
+  }));
+  ws.emit('message', JSON.stringify({ type: 'attach', session: 'X', token: 't' }), false);
+  ws.emit('message', JSON.stringify({ type: 'resync' }), false);
+  assert.strictEqual(ws.closedCode, null, 'nessuna chiusura per un capture fallito');
+  openAttach.handle.emit('data', 'live-after-failed-resync');
+  assert.ok(ws.sent.some((b) => Buffer.from(b).toString() === 'live-after-failed-resync'));
 });

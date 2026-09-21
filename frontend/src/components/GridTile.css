@@ -35,7 +35,9 @@
 .nc-tile-unavailable {
   position: absolute; inset: 0; display: grid; place-items: center;
   padding: 20px; color: #789a87; text-align: center; font-size: 12px;
-  background: repeating-linear-gradient(135deg, #0a0e0a, #0a0e0a 12px, #0d130d 12px, #0d130d 24px);
+  /* Traslucido: il buffer del terminale resta VISIBILE sotto l'overlay —
+     l'indisponibilità rallenta la lettura, non cancella il contenuto. */
+  background: repeating-linear-gradient(135deg, rgba(10, 14, 10, 0.82), rgba(10, 14, 10, 0.82) 12px, rgba(13, 19, 13, 0.82) 12px, rgba(13, 19, 13, 0.82) 24px);
 }
 /* Badge discreto per owner stale: la tile resta viva su route in cache. */
 .nc-tile-stale {
