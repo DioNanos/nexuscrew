@@ -247,3 +247,41 @@ test('ring: l\'overflow non consegna mai un frame a meta\' (nessun 1002)', async
   await waitFor(() => b.state.messages.some((m) => m.data === 'ULTIMA'));
   assert.ok(b.state.messages.some((m) => m.data === 'ULTIMA'), 'e lo stream live riprende');
 });
+
+test('F7: se l\'upstream muore mentre il client e\' attaccato, il client lo sa subito', async (t) => {
+  const { nodesPath } = bootStore(t);
+  const { port, state } = await realUpstream(t);
+  const hubAttaches = federation.createHubAttachStore({ graceMs: 3000, maxAttaches: 8, ringBytes: 4096 });
+  const proxyPort = await proxyFor(t, { nodesPath, port, hubAttaches, url: query() });
+
+  const a = connectClient(t, proxyPort);
+  await waitFor(() => a.ws.readyState === WebSocket.OPEN);
+  await waitFor(() => state.sockets.length === 1);
+
+  // L'upstream muore in modo BRUTALE (tunnel caduto, nessun frame di close):
+  // e' il caso in cui il browser resterebbe appeso senza il 4402.
+  state.sockets[0].terminate();
+  await waitFor(() => a.state.codes.length > 0, 800);
+  assert.equal(a.state.codes[0], 4402, `il client deve ricevere 4402, non restare appeso: ${JSON.stringify(a.state.codes)}`);
+});
+
+test('F7: vale anche per il client ripreso', async (t) => {
+  const { nodesPath } = bootStore(t);
+  const { port, state } = await realUpstream(t);
+  const hubAttaches = federation.createHubAttachStore({ graceMs: 3000, maxAttaches: 8, ringBytes: 4096 });
+  const proxyPort = await proxyFor(t, { nodesPath, port, hubAttaches, url: query() });
+
+  const a = connectClient(t, proxyPort);
+  await waitFor(() => a.ws.readyState === WebSocket.OPEN);
+  await waitFor(() => state.sockets.length === 1);
+  a.ws.terminate();
+  await wait(80);
+
+  const b = connectClient(t, proxyPort);
+  await waitFor(() => b.ws.readyState === WebSocket.OPEN);
+  assert.equal(state.connections, 1, 'ripreso sulla stessa attach');
+
+  state.sockets[0].terminate(); // l'upstream muore DOPO la ripresa, senza frame
+  await waitFor(() => b.state.codes.length > 0, 800);
+  assert.equal(b.state.codes[0], 4402, `anche il ripreso deve ricevere 4402: ${JSON.stringify(b.state.codes)}`);
+});
