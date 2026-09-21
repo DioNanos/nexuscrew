@@ -199,9 +199,14 @@ describe('GridTile stale badge', () => {
     expect(screen.queryByText('deck-owner-stale')).toBeNull();
   });
 
-  it('la tile unavailable mostra il messaggio definitivo, non il badge stale', () => {
+  it('la tile unavailable mostra l\'overlay di riconnessione col motivo nel title, non il badge stale', () => {
     renderTile({ session: 'cloud-Dev', cellName: 'Dev', available: false, stale: true });
-    expect(screen.getByText('deck-owner-unavailable')).toBeTruthy();
+    // Contratto nuovo: il terminale resta montato e l'overlay dice che si sta
+    // riconnettando; il motivo definitivo (non condiviso/irraggiungibile)
+    // vive nel title dell'overlay, il badge stale resta disattivato.
+    expect(screen.getByText('deck-owner-reconnecting')).toBeTruthy();
+    const overlay = screen.getByText('deck-owner-reconnecting').closest('.nc-tile-unavailable');
+    expect(overlay.title).toBe('deck-owner-unavailable');
     expect(screen.queryByText('deck-owner-stale')).toBeNull();
   });
 });

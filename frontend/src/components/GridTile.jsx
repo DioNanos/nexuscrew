@@ -103,16 +103,20 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
       </div>
 
       <div className="nc-tile-body">
-        {available ? (
-          <Terminal
-            key={`${tileKey}:${terminalGeneration}`}
-            session={session} node={node} token={token} readonly={readonly} takeSize={false} focused={focused}
-            sendRef={sendRef} composerRef={composerRef} actionRef={actionRef} ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
-            onFiles={setFilesEvent} fontSize={fontSize}
-            keyboardGesture={inputPreferences.terminalKeyboardGesture}
-          />
-        ) : (
-          <div className="nc-tile-unavailable">{t('deck-owner-unavailable')}</div>
+        {/* Il terminale resta SEMPRE montato: la disponibilità dell'owner non
+            è un motivo per distruggere il buffer xterm. L'indisponibilità è
+            un overlay SOPRA il contenuto, mai un sostituto. */}
+        <Terminal
+          key={`${tileKey}:${terminalGeneration}`}
+          session={session} node={node} token={token} readonly={readonly} takeSize={false} focused={focused}
+          sendRef={sendRef} composerRef={composerRef} actionRef={actionRef} ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
+          onFiles={setFilesEvent} fontSize={fontSize}
+          keyboardGesture={inputPreferences.terminalKeyboardGesture}
+        />
+        {!available && (
+          <div className="nc-tile-unavailable" title={t('deck-owner-unavailable')}>
+            {t('deck-owner-reconnecting')}
+          </div>
         )}
         {available && stale && (
           <div className="nc-tile-stale" title={t('deck-owner-stale')}>{t('deck-owner-stale')}</div>
