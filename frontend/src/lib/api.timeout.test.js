@@ -50,7 +50,7 @@ describe('apiFetch timeout', () => {
   });
 });
 
-describe('apiFetch abort esterno (D-311 passo 0)', () => {
+describe('apiFetch abort esterno', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 

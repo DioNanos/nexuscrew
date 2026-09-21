@@ -111,7 +111,7 @@ test('scope none: nessuna sessione e\' attaccabile', async (t) => {
   assert.equal(await attach(rootPort, root.token, 'cloud-Research'), 4404);
 });
 
-// D-311: il rifiuto fuori scope sull'upgrade deve essere INDISTINGUABILE da
+// Il rifiuto fuori scope sull'upgrade deve essere INDISTINGUABILE da
 // «sessione inesistente»: stessi byte sul socket (status line dell'upgrade e
 // frame di close), altrimenti la risposta rivela lo stato della risorsa.
 const net = require('node:net');
