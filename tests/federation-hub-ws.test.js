@@ -265,7 +265,7 @@ test('F7: se l\'upstream muore mentre il client e\' attaccato, il client lo sa s
   assert.equal(a.state.codes[0], 4402, `il client deve ricevere 4402, non restare appeso: ${JSON.stringify(a.state.codes)}`);
 });
 
-test('F7: vale anche per il client ripreso', async (t) => {
+test('vale anche per il client ripreso', async (t) => {
   const { nodesPath } = bootStore(t);
   const { port, state } = await realUpstream(t);
   const hubAttaches = federation.createHubAttachStore({ graceMs: 3000, maxAttaches: 8, ringBytes: 4096 });
