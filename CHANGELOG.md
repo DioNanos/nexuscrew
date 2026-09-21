@@ -4,6 +4,10 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.9.38 — 2026-09-21
+
+- **Deck rail: remote decks no longer flicker offline on every refresh; a topology status blip no longer restarts the deck reload.** The periodic reload used to republish every remote deck as unavailable while the background per-owner fetches were still in flight, so the rail cycled offline→online every few seconds; a peer that refuses quickly still degrades, and only its own decks.
+
 ## 0.9.37 — 2026-09-20
 
 - **Federated WebSocket attach: a peer that is out of scope, or that has no operator grant, is now closed exactly like a non-existent session (close code 4404) instead of being rejected with a raw HTTP response (which the client saw as 1006).** The refusal is completed as a WebSocket handshake first, so it no longer reveals whether the resource exists. Read-only and transit rejections are unchanged, and a non-upgrade request keeps the previous class refusal.

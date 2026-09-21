@@ -72,7 +72,12 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   const skipRef = useRef(true);
   const bootTokenRef = useRef('');
   const owners = useMemo(() => cleanOwners(remoteOwners), [remoteOwners]);
-  const ownersSig = owners.map((o) => `${o.instanceId}:${routeKey(o.route)}:${o.status}:${o.label}`).join('|');
+  // Firma degli owner per sola identità (instanceId + route): un blip di
+  // status/label dalla topologia non deve rilanciare il caricamento completo
+  // — i canali legittimi restano la presenza di nuovi owner e il refresh
+  // periodico. status/label freschi arrivano comunque via ownersRef a ogni
+  // render per il loop di reload dentro loadAll.
+  const ownersSig = owners.map((o) => `${o.instanceId}:${routeKey(o.route)}`).join('|');
   ownersRef.current = owners;
   layoutRef.current = layout;
   currentRef.current = current;
@@ -184,11 +189,27 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const previousRemote = recordsRef.current.filter((d) => !d.local && known.has(d.ownerId))
       .map((d) => {
         const owner = known.get(d.ownerId);
-        return { ...d, available: false, ownerRoute: [...owner.route], ownerLabel: owner.label };
+        // Owner che verrà ricaricato in background: la disponibilità resta
+        // quella già nota finché il reload non la aggiorna — un refresh non
+        // deve far lampeggiare offline la rail. Owner non-up (nessun reload
+        // in arrivo): degrado esplicito, come prima.
+        const reloading = owner.status === 'up';
+        return {
+          ...d,
+          available: reloading ? d.available !== false : false,
+          ownerRoute: [...owner.route],
+          ownerLabel: owner.label,
+        };
       });
-    for (const owner of known.values()) {
-      if (owner.status === 'up') loadOwnerDecks(owner);
-    }
+    // I reload per owner partono un macrotask DOPO il return: il chiamante
+    // installa prima l'elenco (con la disponibilità mantenuta), così il
+    // degrado di un owner che rifiuta subito non viene calpestato
+    // dall'install dell'elenco fresh.
+    setTimeout(() => {
+      for (const owner of known.values()) {
+        if (owner.status === 'up') loadOwnerDecks(owner);
+      }
+    }, 0);
     return [...localRecords, ...previousRemote];
   }, [token, migrateLocal, loadOwnerDecks, ownersSig]);
 
