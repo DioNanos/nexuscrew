@@ -18,7 +18,9 @@ const POLL_MS = 4000;
 // Grazia di rimozione per un owner che manca da risposte CONFERMATE: sotto
 // questa eta' resta in lista come stale, sopra sparisce. Dieci minuti copre
 // un riavvio di servizio (o di nodo) senza tenere in vita i fantasmi.
-const OWNER_GRACE_MS = 10 * 60 * 1000;
+// Esportata: useDecks la usa come STESSA soglia per sloggiare le deck di un
+// owner scaduto (un solo numero, non due grazie divergenti).
+export const OWNER_GRACE_MS = 10 * 60 * 1000;
 const STICKY_OWNERS_KEY = 'nc-sticky-owners-v1';
 
 function readStickyOwners() {

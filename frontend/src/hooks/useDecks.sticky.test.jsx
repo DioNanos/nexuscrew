@@ -117,3 +117,45 @@ describe('useDecks: lista sticky (le deck non spariscono per un blip)', () => {
     expect(state().ids).not.toContain(remoteId);
   });
 });
+
+// F1 (audit DevAuditor): la deck di un owner UNPAIRATO deve avere una via di
+// rimozione. Il blip resta un blip, ma un'assenza che supera la grazia non e'
+// piu' un blip: e' un fatto, e le sue deck sloggano.
+
+describe('useDecks: la grazia di rimozione e la cache per instanceId (F1)', () => {
+  it('owner scaduto dalla grazia: le sue deck spariscono (il blip no)', async () => {
+    const view = render(<Probe owners={[owner]} />);
+    await tick(0);
+    expect(state().ids).toContain(remoteId);
+
+    // L'owner sparisce: prima della grazia resta (blip), come già garantito.
+    view.rerender(<Probe owners={[]} />);
+    await tick(50);
+    expect(state().ids).toContain(remoteId);
+
+    // Passata la grazia, il poll successivo lo rimuove: nessuna perpetuità.
+    await tick(10 * 60 * 1000 + 5600);
+    expect(state().ids).not.toContain(remoteId);
+  });
+
+  it('la cache di un altro instanceId non viene caricata al cambio di nodo', async () => {
+    // Il codice precedente leggeva la cache da una chiave SENZA instanceId: la
+    // lista scritta da un nodo compariva al reload di un ALTRO nodo, come se
+    // le sue deck fossero nostre.
+    const view = render(<Probe owners={[owner]} />);
+    await tick(0);
+    expect(state().ids).toContain(remoteId); // la lista del primo nodo e' in cache
+
+    // Lo stesso browser ora parla con un ALTRO nodo locale (reload), e il
+    // refresh dell'owner fallisce: l'unica fonte possibile e' la cache.
+    mocks.getRouteConfig.mockResolvedValue({ instanceId: 'c'.repeat(32) });
+    mocks.getDecks.mockImplementation(async (_token, route = []) => {
+      if (route.length) throw new Error('fetch failed');
+      return { decks: [{ name: 'main', revision: 1, layout: emptyLayout() }] };
+    });
+    view.unmount();
+    render(<Probe owners={[owner]} />);
+    await tick(0);
+    expect(state().ids).not.toContain(remoteId);
+  });
+});
