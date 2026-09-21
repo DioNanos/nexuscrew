@@ -6,6 +6,10 @@ All notable changes to NexusCrew are tracked here.
 
 ## 0.9.37 — 2026-09-20
 
+- **Federated WebSocket attach: a peer that is out of scope, or that has no operator grant, is now closed exactly like a non-existent session (close code 4404) instead of being rejected with a raw HTTP response (which the client saw as 1006).** The refusal is completed as a WebSocket handshake first, so it no longer reveals whether the resource exists. Read-only and transit rejections are unchanged, and a non-upgrade request keeps the previous class refusal.
+- **Stability: the vl-node broker poll and the endpoint readiness probe keep their timers referenced while a waiter is pending.** With an unreferenced timer and no other handle, the event loop could drain before the deadline: the promise was never settled and the test file hung. Timers now live at most for their own timeout, and pending broker waiters are settled immediately when the server closes, so shutdown stays prompt.
+- **Frontend: aborting a request that has a timeout now cancels the timer and reaches the fetch.** A late response after the timeout is never consumed.
+- **CI: the isolated suite log is uploaded as an artifact and its counts summarized on the run page.** The attach smoke tests are skipped with a declared reason when no PTY provider is installed, instead of failing invisibly in a truncated log.
 - **Deck loading: local decks render immediately; remote owners load in the background with an 8 s federated fetch timeout and per-owner degradation (previous decks marked unavailable, never persisted).** A peer whose tunnel was up-but-mute kept every deck — local ones included — off the screen until the browser gave up, or forever. The federated GET forward now degrades with a 504 after a 10 s peer timeout instead of sitting for 30 s.
 
 ## 0.9.36 — 2026-09-20
