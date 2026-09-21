@@ -8,10 +8,37 @@
 // token LOCALE in query — e' il canale di auth dell'upgrade verso il proxy
 // (il browser non puo' settare Authorization su un WS); il proxy lo strippa
 // prima di inoltrare e inietta lui il token remoto (contratto §4b(2)).
-export function wsTarget(node, token) {
+export function wsTarget(node, token, attachId = null, session = null) {
   if (!node) return '/ws';
   const route = String(node).split('/').map(encodeURIComponent).join('/');
-  return `/api/route/${route}/_/ws?token=${encodeURIComponent(token || '')}`;
+  let url = `/api/route/${route}/_/ws?token=${encodeURIComponent(token || '')}`;
+  // S3: l'attachId (e la sessione che identifica) viaggia SOLO nella query —
+  // il proxy non de-maschera i frame, quindi non puo' leggerlo dall'attach.
+  if (attachId) {
+    url += `&attachId=${encodeURIComponent(attachId)}`;
+    if (session) url += `&attachSession=${encodeURIComponent(session)}`;
+  }
+  return url;
+}
+
+// S3: 128 bit CASUALI, stabili per (session,node) dentro la SCHEDA. In
+// sessionStorage e mai su disco; se lo storage e' negato non si inventa un id
+// (senza id il proxy fa una attach nuova, come prima di S3).
+export function attachIdFor(session, node, storage = null) {
+  const store = storage === null ? (typeof sessionStorage !== 'undefined' ? sessionStorage : null) : storage;
+  if (!store) return null;
+  const key = `nc-attach:${node || 'local'}:${String(session || '')}`;
+  try {
+    const existing = store.getItem(key);
+    if (typeof existing === 'string' && /^[0-9a-f]{32}$/.test(existing)) return existing;
+    const bytes = new Uint8Array(16);
+    const c = globalThis.crypto;
+    if (c && typeof c.getRandomValues === 'function') c.getRandomValues(bytes);
+    else for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+    const id = Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+    store.setItem(key, id);
+    return id;
+  } catch (_) { return null; }
 }
 
 export function openTerminalSocket({ session, node, token, cols, rows, readonly = false, takeSize, focused, onData, onExit, onFiles, onSnapshot, onLink, retryBaseMs = 250, retryStableMs = 5000, onRetryScheduled, pingMs = 5000, deadMs = 10000, queuedInputBytes = 4096, onQueued }) {
@@ -22,7 +49,8 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
     throw new Error('nexuscrew: ws:// rifiutato su origine non-locale e non-TLS (apri via tunnel su localhost o servi in HTTPS)');
   }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const url = `${proto}://${location.host}${wsTarget(node, token)}`;
+  const attachId = attachIdFor(session, node);
+  const url = `${proto}://${location.host}${wsTarget(node, token, attachId, session)}`;
   let ws = null;
   let stopped = false;
   let terminalEnded = false;
