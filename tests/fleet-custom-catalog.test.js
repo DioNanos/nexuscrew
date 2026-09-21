@@ -108,7 +108,14 @@ test('D2 end-to-end: parseDefinitions -> extraModelsFrom -> resolveManagedEngine
 // la passa a composeModelProvider REALE (il pacchetto Pi installato sulla
 // macchina, non una copia), e verifica sul modello che Pi produce la stessa
 // operazione che il suo consumatore (read.js) esegue davvero.
+// Il test ESEGUE il file .ts generato con import dinamico: il type-stripping
+// nativo esiste solo da Node 22. Sotto quella soglia lo skip e' DICHIARATO
+// (contato, non un rosso invisibile): la copertura di quel passo sul runtime
+// minimo resta un buco noto, non nascosto.
+const NODE_MAJOR = Number(process.versions.node.split('.')[0]);
+
 test('D2 end-to-end: Pi custom — Pi VERO carica l\'estensione e il modello supera il consumo reale (read.js)', async (t) => {
+  if (NODE_MAJOR < 22) return t.skip('type-stripping requires Node >= 22');
   // requirePiComposer distingue "Pi non installato" (skip legittimo, motivato)
   // da "Pi c'e' ma la guardia non riesce a caricarlo" (throw: il test FALLISCE,
   // mai un pass/skip silenzioso su una guardia rotta).
