@@ -7,6 +7,8 @@ import {
   removeDeckOrderId, replaceDeckOrderId, saveDeckOrders, saveDecks, writeLayoutRaw,
 } from '../lib/deck-model.js';
 import { addTileSmart, emptyLayout, mergeRemoteWithLocal, normalize, sessions } from '../lib/grid-model.js';
+// Stessa soglia di useNodes: un owner scaduto e' un fatto, non un blip.
+import { OWNER_GRACE_MS } from './useNodes.js';
 import {
   LOCAL_OWNER, NODE_ID_RE, annotateCanonicalLayout, canonicalizeLayoutForOwner,
   deckId, deckIdForLocalOwner, parseDeckId, refWithOwner, resolveLayoutForViewer,
@@ -14,6 +16,28 @@ import {
 
 const empty = (layout) => sessions(normalize(layout)).length === 0;
 const routeKey = (route) => (Array.isArray(route) ? route.join('/') : '');
+
+// Cache dell'ultima lista deck (locale + remote): al reload della pagina la
+// rail riparte piena, non vuota. Best-effort, mai critica. La chiave porta
+// l'instanceId LOCALE del nodo: una cache scritta da un altro hub non e' mai
+// la nostra lista, e senza il suffisso sarebbe servita a chiunque al reload.
+const DECKS_CACHE_PREFIX = 'nc-decks-cache-v1';
+const decksCacheKey = (instanceId) => `${DECKS_CACHE_PREFIX}:${instanceId}`;
+function readCachedRecords(instanceId) {
+  if (!instanceId) return [];
+  try {
+    const raw = localStorage.getItem(decksCacheKey(instanceId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.every((d) => d && typeof d.id === 'string' && typeof d.name === 'string')
+      ? parsed
+      : [];
+  } catch (_) { return []; }
+}
+function writeCachedRecords(instanceId, records) {
+  if (!instanceId) return;
+  try { localStorage.setItem(decksCacheKey(instanceId), JSON.stringify(records)); } catch (_) { /* quota/private */ }
+}
 
 function cleanOwners(input) {
   const seen = new Set(); const out = [];
@@ -65,6 +89,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   const [localNodeId, setLocalNodeId] = useState('');
   const recordsRef = useRef([]);
   const ownersRef = useRef([]);
+  // Da quando un owner manca dalle risposte confermate: passata la grazia le
+  // sue deck sloggano (rimozione confermata), sotto restano come blip. Stessa
+  // soglia di useNodes, cosi' non esistono due grazie divergenti.
+  const ownerMissingRef = useRef(new Map());
   const localNodeIdRef = useRef('');
   const currentRef = useRef(current);
   const layoutRef = useRef(layout);
@@ -106,6 +134,13 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const ordered = orderDeckRecords(next, loadDeckOrders());
     const previousHadTarget = recordsRef.current.some((d) => d.id === wanted);
     recordsRef.current = ordered; setRecords(ordered);
+    // Cache dell'ultima lista conosciuta (senza i flag effimeri del refresh
+    // fallito): al reload la rail riparte da qui, non dal vuoto. Chiave legata
+    // all'instanceId locale: nessun altro hub puo' servirsi di questa lista.
+    writeCachedRecords(localNodeIdRef.current, ordered.map((d) => {
+      if (!d.refreshFailedAt) return d;
+      const cached = { ...d }; delete cached.refreshFailedAt; return cached;
+    }));
     const rec = ordered.find((d) => d.id === wanted);
     if (applyLayout && rec) {
       skipRef.current = true;
@@ -161,11 +196,25 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
         getRouteTopology(token, owner.route).catch(() => ({ nodes: [] })),
       ]);
       mergeOwner(owner, remoteStore.decks.map((deck) => augmentDeck(deck, owner, remoteTopology.nodes, false, true)));
-    } catch (_) {
-      // Degrado per owner (timeout federato o errore): le sue deck precedenti
-      // con available:false. Mai persistite, mai un reflow.
+    } catch (e) {
+      // Negazione CONFERMATA (403/404): revoca ACL o rotta dichiarata morta
+      // dall'owner — le sue deck sloggano, come una lista senza di loro.
+      if (e && (e.status === 403 || e.status === 404)) {
+        mergeOwner(owner, []);
+        return;
+      }
+      // Degrado per owner (timeout federato o errore di rete): le sue deck
+      // precedenti restano con available:false e l'istante del refresh
+      // fallito. Mai un reflow, mai una rimozione.
       const previous = recordsRef.current.filter((d) => !d.local && d.ownerId === owner.instanceId)
-        .map((d) => ({ ...d, available: false, ownerRoute: [...owner.route], ownerLabel: owner.label }));
+        .map((d) => ({
+          ...d,
+          available: false,
+          stale: true,
+          refreshFailedAt: Date.now(),
+          ownerRoute: [...owner.route],
+          ownerLabel: owner.label,
+        }));
       mergeOwner(owner, previous);
     }
   }, [token, mergeOwner]);
@@ -183,24 +232,42 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const localRecords = localStore.decks.map((deck) => augmentDeck(deck, localOwner, localTopologyResult.nodes, true, true));
     // Le deck LOCALI escono subito. Gli owner remoti (up) si caricano in
     // BACKGROUND con il timeout federato di getDecks; chi non risponde degrada
-    // a available:false per-owner senza bloccare nessuno. Gli owner non-up
-    // mantengono le loro deck precedenti degradate (come prima).
+    // a available:false per-owner senza bloccare nessuno. Le deck remote sono
+    // STATO STICKY: l'owner assente dalla topologia (blip/purge) NON perde le
+    // sue deck — restano come stale/available:false finché l'owner non
+    // risponde (lista nuova, anche senza di loro) o nega (403/404).
     const known = new Map(ownersRef.current.map((o) => [o.instanceId, o]));
-    const previousRemote = recordsRef.current.filter((d) => !d.local && known.has(d.ownerId))
-      .map((d) => {
-        const owner = known.get(d.ownerId);
-        // Owner che verrà ricaricato in background: la disponibilità resta
-        // quella già nota finché il reload non la aggiorna — un refresh non
-        // deve far lampeggiare offline la rail. Owner non-up (nessun reload
-        // in arrivo): degrado esplicito, come prima.
-        const reloading = owner.status === 'up';
-        return {
-          ...d,
-          available: reloading ? d.available !== false : false,
-          ownerRoute: [...owner.route],
-          ownerLabel: owner.label,
-        };
-      });
+    // Alla prima load (o dopo un reload) recordsRef e' vuota: la base sono le
+    // deck in cache PER QUESTO instanceId, mai quelle di un altro nodo.
+    const base = recordsRef.current.length ? recordsRef.current : readCachedRecords(nodeId);
+    const missing = ownerMissingRef.current;
+    const now = Date.now();
+    const previousRemote = base.filter((d) => !d.local).flatMap((d) => {
+      const owner = known.get(d.ownerId);
+      if (!owner) {
+        // L'owner manca da una risposta confermata. Sotto la grazia e' un
+        // blip (la deck resta, degradata); oltre, l'assenza e' un fatto: le
+        // sue deck sloggano — la rimozione confermata che il blip non deve
+        // poter mascherare per sempre.
+        const since = missing.get(d.ownerId);
+        if (since === undefined) { missing.set(d.ownerId, now); return [{ ...d, available: false, stale: true }]; }
+        if (now - since > OWNER_GRACE_MS) return [];
+        return [{ ...d, available: false, stale: true }];
+      }
+      missing.delete(d.ownerId);
+      // Owner che verrà ricaricato in background: la disponibilità resta
+      // quella già nota finché il reload non la aggiorna — un refresh non
+      // deve far lampeggiare offline la rail. Owner non-up (nessun reload
+      // in arrivo): degrado esplicito, come prima.
+      const reloading = owner.status === 'up';
+      return [{
+        ...d,
+        available: reloading ? d.available !== false : false,
+        stale: owner.stale === true,
+        ownerRoute: [...owner.route],
+        ownerLabel: owner.label,
+      }];
+    });
     // I reload per owner partono un macrotask DOPO il return: il chiamante
     // installa prima l'elenco (con la disponibilità mantenuta), così il
     // degrado di un owner che rifiuta subito non viene calpestato

@@ -40,6 +40,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   const [copyState, setCopyState] = useState('');
   const [uploadState, setUploadState] = useState(null);
   const [touchSelectionCaret, setTouchSelectionCaret] = useState(null);
+  // Stato del canale ws ('live' | 'reconnecting'): muove solo l'overlay, il
+  // buffer xterm resta montato e intatto durante la riconnessione.
+  const [linkState, setLinkState] = useState('live');
   // Lo snapshot puo' sopravvivere alla propria evidenziazione: xterm la butta
   // a ogni input verso l'applicazione e a ogni resize di righe (sul telefono
   // basta la tastiera virtuale). In quel caso il testo resta copiabile ma non
@@ -241,6 +244,15 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         cols: term.cols, rows: term.rows,
         onData: (bytes) => term.write(dec.decode(bytes)),
         onExit: () => term.write('\r\n\x1b[33m[sessione finita]\x1b[0m\r\n'),
+        // Resync post-riconnessione: il ridipintura dal capture-pane del
+        // server sostituisce il buffer in UNA battuta (reset+write nello
+        // stesso turno di rendering: l'utente non vede mai lo schermo vuoto).
+        onSnapshot: (text) => {
+          try { term.reset(); term.write(text); } catch (_) { /* buffer non pronto: lo stream live continua */ }
+        },
+        // Stato del canale per l'overlay «riconnessione…»: il buffer resta
+        // al suo posto mentre il ws si ristabilisce.
+        onLink: (state) => setLinkState(state),
       });
     } catch (e) {
       term.write(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`);
@@ -1069,6 +1081,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
 
   return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
     <div className="nc-terminal-host" ref={hostRef} />
+    {linkState !== 'live' && (
+      <div className="nc-terminal-link-overlay">riconnessione…</div>
+    )}
     {touchSelectionCaret && <div className="nc-touch-selection-caret" style={touchSelectionCaret} aria-hidden="true" />}
     {selRange && handleGeom && uiPolicy.handles && ['start', 'end'].map((which) => (handleGeom[which].visible && (
       <div

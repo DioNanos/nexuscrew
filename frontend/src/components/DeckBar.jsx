@@ -121,7 +121,7 @@ export default function DeckBar({
                             onStep={(delta) => stepDeck(group, d, delta)} />
                           <button
                             className="nc-deck-open"
-                            title={d.available === false ? `${d.ownerLabel} offline` : d.id === currentDeck ? t('deck-current') : `${d.ownerLabel} · ${d.name}`}
+                            title={d.available === false ? `${d.ownerLabel} offline${d.refreshFailedAt ? ' · aggiornamento in ritardo' : ''}` : d.id === currentDeck ? t('deck-current') : `${d.ownerLabel} · ${d.name}`}
                             disabled={busy || d.available === false}
                             onClick={() => navigate(d)}
                           >{d.name}{d.id === currentDeck ? ' •' : ''}</button>
