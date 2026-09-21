@@ -4,6 +4,10 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+## 0.9.40 — 2026-09-21
+
+- **Deck rail keeps its order while owners answer at different times.** A background owner refresh used to rebuild the list by appending that owner's decks, so with several owners answering at different moments each group jumped to the end on every answer and the rail visibly reshuffled. The merge now replaces each deck in place (same id, same index), appends only genuinely new decks, and still drops the ones the owner no longer lists.
+
 ## 0.9.39 — 2026-09-21
 
 - **Deck rail and terminals stay put across topology blips and reconnects.** The owner list and the remote decks are now sticky state: a failed or empty poll never clears them, and an owner missing from a confirmed answer stays in the rail as stale until it is removed explicitly or a long grace expires. The deck refresh keeps the previous data (marked as a late update) instead of emptying the list, and a confirmed answer without the deck — or an explicit refusal — is what removes it. The last good deck list is cached so a page reload does not start from an empty rail.
