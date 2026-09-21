@@ -81,7 +81,7 @@ test('l\'attach federato porta la provenienza fino al nodo che possiede la sessi
   federation.forwardUpgrade({
     req, socket: client, head: null, nodesPath,
     localPort, localCredential: () => 'LOCAL-TOKEN',
-    ingress: { nodeId: PEER_ID, visibility: 'network', shared: true },
+    ingress: { nodeId: PEER_ID, visibility: 'network', shared: true, peerOperatorAccess: true },
     hopSecret: () => hopSecret,
   });
 

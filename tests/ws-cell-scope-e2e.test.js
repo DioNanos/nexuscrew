@@ -99,7 +99,7 @@ async function pair(t, destPeerExtra) {
 }
 
 test('un peer con scope ristretto non puo\' attaccarsi a una cella non concessa', async (t) => {
-  const { root, rootPort } = await pair(t, { cellVisibility: 'selected', cells: ['Research'] });
+  const { root, rootPort } = await pair(t, { cellVisibility: 'selected', cells: ['Research'], peerOperatorAccess: true });
   // Fuori scope: deve chiudersi come se la sessione non esistesse. Dire "esiste
   // ma non puoi" rivelerebbe proprio cio' che lo scope nasconde.
   assert.equal(await attach(rootPort, root.token, 'cloud-Dev'), 4404);
@@ -120,7 +120,7 @@ test('un peer senza restrizioni attacca come prima', async (t) => {
 });
 
 test('scope none: nessuna sessione e\' attaccabile', async (t) => {
-  const { root, rootPort } = await pair(t, { cellVisibility: 'none' });
+  const { root, rootPort } = await pair(t, { cellVisibility: 'none', peerOperatorAccess: true });
   assert.equal(await attach(rootPort, root.token, 'cloud-Dev'), 4404);
   assert.equal(await attach(rootPort, root.token, 'cloud-Research'), 4404);
 });
