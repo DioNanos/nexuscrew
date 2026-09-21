@@ -61,9 +61,15 @@ async function openBrowserPair(t, startForwarding) {
   let serverSock = null;
   const srv = net.createServer((sock) => { serverSock = sock; sock.on('error', () => {}); });
   await new Promise((res) => srv.listen(0, '127.0.0.1', res));
-  t.after(() => srv.close());
+  // srv.close() NON chiude le connessioni gia' aperte: senza distruggere
+  // entrambi i capi il processo del file resta vivo e il gate si appende.
+  t.after(() => {
+    try { srv.close(); } catch (_) { /* gia' chiuso */ }
+    try { serverSock?.destroy(); } catch (_) { /* idem */ }
+  });
   const client = net.connect(srv.address().port, '127.0.0.1');
   client.on('error', () => {});
+  t.after(() => { try { client.destroy(); } catch (_) { /* idem */ } });
   const outcome = watchClient(client);
   await new Promise((res) => {
     const i = setInterval(() => { if (serverSock) { clearInterval(i); res(); } }, 5);
@@ -133,7 +139,9 @@ test('hop morto DOPO lo stream: frame di close 4402, non TCP troncata', async (t
   const key = makeBrowserKey();
   // Il proxy federato e' una pipe trasparente e non valida l'accept: al test
   // basta che l'upstream completi l'handshake e poi muoia senza close.
+  const upstreamSocks = [];
   const upstream = net.createServer((sock) => {
+    upstreamSocks.push(sock);
     sock.once('data', () => {
       sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: dummy\r\n\r\n');
       setTimeout(() => sock.destroy(), 30);
@@ -141,7 +149,12 @@ test('hop morto DOPO lo stream: frame di close 4402, non TCP troncata', async (t
     sock.on('error', () => {});
   });
   await new Promise((res) => upstream.listen(0, '127.0.0.1', res));
-  t.after(() => upstream.close());
+  // Come sopra: chiudere il server non basta, i capi vanno distrutti o il
+  // processo del file non esce.
+  t.after(() => {
+    for (const sock of upstreamSocks) { try { sock.destroy(); } catch (_) { /* idem */ } }
+    try { upstream.close(); } catch (_) { /* idem */ }
+  });
 
   const { seen } = await openBrowserPair(t, (sock) => {
     federation.forwardUpgrade({
