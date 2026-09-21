@@ -1,8 +1,48 @@
 // fetch con Bearer: tutte le /api del server lo richiedono.
+
+// un tunnel federato «su a metà» (socket aperto, nessuna risposta) non
+// genera MAI un errore da solo: senza timeout la fetch pende fino al limite del
+// browser (~300 s) e la UI resta senza dati. Le fetch verso ROUTE FEDERATE
+// (route non vuota) prendono questo default; le locali no (il server risponde
+// sempre, anche solo per un errore).
+export const FEDERATED_FETCH_TIMEOUT_MS = 8000;
+
+export function fetchAbortSignal(ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException('timeout', 'TimeoutError')), ms);
+  return { signal: controller.signal, cancel: () => clearTimeout(timer), controller };
+}
+
 export function apiFetch(path, token, opts = {}) {
+  const ms = Number(opts.timeoutMs);
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return fetch(path, {
+      ...opts,
+      headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` },
+    });
+  }
+  // Audit fix: `controller` è di fetchAbortSignal — qui si usa QUELLO (abort di
+  // timeout e abort esterno agiscono sullo stesso controller), mai una variabile
+  // locale inesistente.
+  const { signal, cancel, controller } = fetchAbortSignal(ms);
+  const outer = opts.signal;
+  const onOuterAbort = () => controller.abort(outer.reason);
+  if (outer) {
+    if (outer.aborted) {
+      cancel();
+      controller.abort(outer.reason);
+      return Promise.reject(outer.reason instanceof Error ? outer.reason : new DOMException('aborted', 'AbortError'));
+    }
+    outer.addEventListener('abort', onOuterAbort, { once: true });
+  }
+  const { timeoutMs: _timeoutMs, ...rest } = opts;
   return fetch(path, {
-    ...opts,
-    headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` },
+    ...rest,
+    signal,
+    headers: { ...(rest.headers || {}), Authorization: `Bearer ${token}` },
+  }).finally(() => {
+    cancel();
+    if (outer) outer.removeEventListener('abort', onOuterAbort);
   });
 }
 
@@ -16,6 +56,7 @@ async function jsonFetch(path, token, opts = {}) {
     method: opts.method || 'GET',
     headers: { 'content-type': 'application/json' },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
+    timeoutMs: opts.timeoutMs,
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.status = r.status; e.data = j; throw e; }
@@ -176,7 +217,9 @@ export const relayAskDismiss = (t, { ownerId, askId }) => jsonFetch('/api/asks-r
 });
 export const getFeedState = (t) => jsonFetch('/api/feed-state', t);
 
-export const getDecks = (t, route = []) => jsonFetch(`${routeBase(route)}/decks`, t);
+// Le deck di un owner REMOTO passano dal proxy federato: timeout di default
+// (senza, un tunnel «su a metà» teneva la UI senza decks per minuti.
+export const getDecks = (t, route = []) => jsonFetch(`${routeBase(route)}/decks`, t, route.length ? { timeoutMs: FEDERATED_FETCH_TIMEOUT_MS } : {});
 export const createDeck = (t, name, route = []) => jsonFetch(`${routeBase(route)}/decks`, t, { method: 'POST', body: { name } });
 export const saveDeck = (t, name, layout, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PUT', body: { layout, expectedRevision } });
 

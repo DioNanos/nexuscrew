@@ -32,7 +32,7 @@ async function boot(t, tag, peerName, peerPort, peerId, creds) {
   let st = { schemaVersion: 2, nodeId: tag === 'A' ? NODE_ID_A : NODE_ID_B, nodes: [] };
   st = store.addNode(st, {
     name: peerName, ssh: 'peer@127.0.0.1', remotePort: 41820, localPort: peerPort || 41820,
-    direction: 'outbound', transport: 'auto', autostart: false, visibility: 'network',
+    direction: 'outbound', transport: 'auto', autostart: false, visibility: 'network', peerOperatorAccess: true,
     nodeId: peerId, token: creds.token, acceptToken: creds.acceptToken,
   });
   store.atomicWriteStore(nodesPath, st);
@@ -123,7 +123,7 @@ test('hub con peer inbound: usa la reversePort, vede il client e non ne possiede
   stB = store.removeNode(stB, 'a');
   stB = store.addNode(stB, {
     name: 'a', remotePort: 41820, localPort: A.port,
-    direction: 'inbound', transport: 'inbound', autostart: true, shared: true, visibility: 'network',
+    direction: 'inbound', transport: 'inbound', autostart: true, shared: true, visibility: 'network', peerOperatorAccess: true,
     nodeId: NODE_ID_A, token: CRED_A, acceptToken: CRED_B,
   });
   store.atomicWriteStore(B.nodesPath, stB);

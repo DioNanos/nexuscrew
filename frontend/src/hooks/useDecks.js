@@ -141,6 +141,30 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     return st;
   }, [token]);
 
+  // Merge in background di UN owner (mai persistito: install salva solo
+  // le locali; nessun reflow — applyLayout false — la deck corrente si aggiorna
+  // al prossimo giro di vista).
+  const mergeOwner = useCallback((owner, mine) => {
+    const others = recordsRef.current.filter((d) => d.local || d.ownerId !== owner.instanceId);
+    install([...others, ...mine], false);
+  }, [install]);
+
+  const loadOwnerDecks = useCallback(async (owner) => {
+    try {
+      const [remoteStore, remoteTopology] = await Promise.all([
+        getDecks(token, owner.route),
+        getRouteTopology(token, owner.route).catch(() => ({ nodes: [] })),
+      ]);
+      mergeOwner(owner, remoteStore.decks.map((deck) => augmentDeck(deck, owner, remoteTopology.nodes, false, true)));
+    } catch (_) {
+      // Degrado per owner (timeout federato o errore): le sue deck precedenti
+      // con available:false. Mai persistite, mai un reflow.
+      const previous = recordsRef.current.filter((d) => !d.local && d.ownerId === owner.instanceId)
+        .map((d) => ({ ...d, available: false, ownerRoute: [...owner.route], ownerLabel: owner.label }));
+      mergeOwner(owner, previous);
+    }
+  }, [token, mergeOwner]);
+
   const loadAll = useCallback(async ({ migrate = false } = {}) => {
     const config = await getRouteConfig(token, []);
     const nodeId = NODE_ID_RE.test(String(config.instanceId || '')) ? config.instanceId : '';
@@ -151,28 +175,22 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       getRouteTopology(token, []).catch(() => ({ nodes: [] })),
     ]);
     const localOwner = { instanceId: nodeId, route: [], label: 'Local' };
-    const next = localStore.decks.map((deck) => augmentDeck(deck, localOwner, localTopologyResult.nodes, true, true));
-    const previous = recordsRef.current;
-    await Promise.all(ownersRef.current.map(async (owner) => {
-      if (owner.status !== 'up') {
-        next.push(...previous.filter((d) => !d.local && d.ownerId === owner.instanceId)
-          .map((d) => ({ ...d, ownerRoute: [...owner.route], ownerLabel: owner.label, available: false })));
-        return;
-      }
-      try {
-        const [remoteStore, remoteTopology] = await Promise.all([
-          getDecks(token, owner.route),
-          getRouteTopology(token, owner.route).catch(() => ({ nodes: [] })),
-        ]);
-        next.push(...remoteStore.decks.map((deck) => augmentDeck(deck, owner, remoteTopology.nodes, false, true)));
-      } catch (_) {
-        next.push(...previous.filter((d) => !d.local && d.ownerId === owner.instanceId)
-          .map((d) => ({ ...d, ownerRoute: [...owner.route], ownerLabel: owner.label, available: false })));
-      }
-    }));
-    next.sort((a, b) => (a.local === b.local ? a.ownerLabel.localeCompare(b.ownerLabel) || (a.name === 'main' ? -1 : b.name === 'main' ? 1 : a.name.localeCompare(b.name)) : a.local ? -1 : 1));
-    return next;
-  }, [token, migrateLocal, ownersSig]);
+    const localRecords = localStore.decks.map((deck) => augmentDeck(deck, localOwner, localTopologyResult.nodes, true, true));
+    // Le deck LOCALI escono subito. Gli owner remoti (up) si caricano in
+    // BACKGROUND con il timeout federato di getDecks; chi non risponde degrada
+    // a available:false per-owner senza bloccare nessuno. Gli owner non-up
+    // mantengono le loro deck precedenti degradate (come prima).
+    const known = new Map(ownersRef.current.map((o) => [o.instanceId, o]));
+    const previousRemote = recordsRef.current.filter((d) => !d.local && known.has(d.ownerId))
+      .map((d) => {
+        const owner = known.get(d.ownerId);
+        return { ...d, available: false, ownerRoute: [...owner.route], ownerLabel: owner.label };
+      });
+    for (const owner of known.values()) {
+      if (owner.status === 'up') loadOwnerDecks(owner);
+    }
+    return [...localRecords, ...previousRemote];
+  }, [token, migrateLocal, loadOwnerDecks, ownersSig]);
 
   useEffect(() => {
     if (!token) return;

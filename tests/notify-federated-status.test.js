@@ -23,6 +23,11 @@ function setup(t, { ui = 0, push = 0 } = {}) {
   const notifier = {
     emit: async (frame) => { emitted.push(frame); return { ui, push }; },
     emitRaw: () => 0,
+    // La via federata NON usa emit: chiama deliverOnly (consegna locale che
+    // non rientra nel publisher; lib/notify/routes.js:309,492) e ne legge il
+    // ritorno per l'etichetta (`delivered.ui + delivered.push`). Stesso
+    // contratto di emit, stessa forma di ritorno.
+    deliverOnly: async (frame) => { emitted.push(frame); return { ui, push }; },
   };
   const app = express();
   app.use('/api', notifyRoutes({

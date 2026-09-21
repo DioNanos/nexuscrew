@@ -10,7 +10,7 @@ const fed = require('../lib/proxy/federation.js');
 function peer(name, id, over = {}) {
   return { name, ssh: name, remotePort: 41820, localPort: 43001, nodeId: id,
     token: `to-${name}`, acceptToken: `from-${name}`, direction: 'outbound',
-    transport: 'auto', autostart: true, shared: true, visibility: 'network', roles: { client: true, node: false }, ...over };
+    transport: 'auto', autostart: true, shared: true, visibility: 'network', peerOperatorAccess: true, roles: { client: true, node: false }, ...over };
 }
 
 test('federation route parser has an explicit capability allowlist and hop cap', () => {
@@ -101,7 +101,7 @@ test('relay ACL is symmetric and peer credentials identify only their peer', () 
   const p = path.join(dir, 'nodes.json');
   let st = store.emptyStore('f'.repeat(32));
   st = store.addNode(st, peer('pixel', 'a'.repeat(32)));
-  st = store.addNode(st, peer('mac', 'b'.repeat(32), { visibility: 'relay-only', localPort: 43002 }));
+  st = store.addNode(st, peer('mac', 'b'.repeat(32), { visibility: 'relay-only', peerOperatorAccess: true, localPort: 43002 }));
   store.atomicWriteStore(p, st);
   assert.equal(fed.peerFromToken(p, 'from-pixel').name, 'pixel');
   assert.equal(fed.peerFromToken(p, 'wrong'), null);
@@ -297,7 +297,7 @@ test('federated raw WS rejects a server-tracked instance cycle before dialing', 
   fed.forwardUpgrade({
     req: { url: '/federation/route/_/ws', headers: { 'x-nexuscrew-visited': 'a'.repeat(32) } },
     socket: { end: (s) => { response = s; } }, head: Buffer.alloc(0), nodesPath: p,
-    localPort: 1, localCredential: () => 'local', ingress: { name: 'peer' },
+    localPort: 1, localCredential: () => 'local', ingress: { name: 'peer', peerOperatorAccess: true },
   });
   assert.match(response, /^HTTP\/1\.1 409/);
   fs.rmSync(dir, { recursive: true, force: true });

@@ -139,8 +139,10 @@ test("D9b: ogni id offerto su una wire OpenCode Go ha i suoi limiti, e LIMITS no
     ...OPENCODE_GO_CHAT_MODELS,
   ]);
   const problems = [
-    ...[...union.difference(limits)].map((id) => `"${id}" e' offerto su una wire OpenCode Go ma NON e' in OPENCODE_GO_LIMITS (contesto omesso, il client ricade sul default suo)`),
-    ...[...limits.difference(union)].map((id) => `"${id}" e' in OPENCODE_GO_LIMITS ma non e' offerto su nessuna wire (voce morta)`),
+    // `Set.prototype.difference` esiste solo da Node 22: la stessa differenza
+    // si scrive con filter, senza alzare il runtime minimo dichiarato.
+    ...[...union].filter((id) => !limits.has(id)).map((id) => `"${id}" e' offerto su una wire OpenCode Go ma NON e' in OPENCODE_GO_LIMITS (contesto omesso, il client ricade sul default suo)`),
+    ...[...limits].filter((id) => !union.has(id)).map((id) => `"${id}" e' in OPENCODE_GO_LIMITS ma non e' offerto su nessuna wire (voce morta)`),
   ];
   assert.deepEqual(problems, [], `divergenza wire-union <-> OPENCODE_GO_LIMITS:\n  ${problems.join('\n  ')}`);
 });
