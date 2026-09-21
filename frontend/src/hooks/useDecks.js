@@ -15,6 +15,23 @@ import {
 const empty = (layout) => sessions(normalize(layout)).length === 0;
 const routeKey = (route) => (Array.isArray(route) ? route.join('/') : '');
 
+// Cache dell'ultima lista deck (locale + remote): al reload della pagina la
+// rail riparte piena, non vuota. Best-effort, mai critica.
+const DECKS_CACHE_KEY = 'nc-decks-cache-v1';
+function readCachedRecords() {
+  try {
+    const raw = localStorage.getItem(DECKS_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.every((d) => d && typeof d.id === 'string' && typeof d.name === 'string')
+      ? parsed
+      : [];
+  } catch (_) { return []; }
+}
+function writeCachedRecords(records) {
+  try { localStorage.setItem(DECKS_CACHE_KEY, JSON.stringify(records)); } catch (_) { /* quota/private: opzionale */ }
+}
+
 function cleanOwners(input) {
   const seen = new Set(); const out = [];
   for (const owner of Array.isArray(input) ? input : []) {
@@ -57,7 +74,7 @@ function augmentDeck(deck, owner, topology, local = false, available = true) {
 }
 
 export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
-  const [records, setRecords] = useState([]);
+  const [records, setRecords] = useState(() => readCachedRecords());
   const [ready, setReady] = useState(false);
   const [saveState, setSaveState] = useState('idle');
   const [error, setError] = useState('');
@@ -106,6 +123,12 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const ordered = orderDeckRecords(next, loadDeckOrders());
     const previousHadTarget = recordsRef.current.some((d) => d.id === wanted);
     recordsRef.current = ordered; setRecords(ordered);
+    // Cache dell'ultima lista conosciuta (senza i flag effimeri del refresh
+    // fallito): al reload la rail riparte da qui, non dal vuoto.
+    writeCachedRecords(ordered.map((d) => {
+      if (!d.refreshFailedAt) return d;
+      const cached = { ...d }; delete cached.refreshFailedAt; return cached;
+    }));
     const rec = ordered.find((d) => d.id === wanted);
     if (applyLayout && rec) {
       skipRef.current = true;
@@ -161,11 +184,25 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
         getRouteTopology(token, owner.route).catch(() => ({ nodes: [] })),
       ]);
       mergeOwner(owner, remoteStore.decks.map((deck) => augmentDeck(deck, owner, remoteTopology.nodes, false, true)));
-    } catch (_) {
-      // Degrado per owner (timeout federato o errore): le sue deck precedenti
-      // con available:false. Mai persistite, mai un reflow.
+    } catch (e) {
+      // Negazione CONFERMATA (403/404): revoca ACL o rotta dichiarata morta
+      // dall'owner — le sue deck sloggano, come una lista senza di loro.
+      if (e && (e.status === 403 || e.status === 404)) {
+        mergeOwner(owner, []);
+        return;
+      }
+      // Degrado per owner (timeout federato o errore di rete): le sue deck
+      // precedenti restano con available:false e l'istante del refresh
+      // fallito. Mai un reflow, mai una rimozione.
       const previous = recordsRef.current.filter((d) => !d.local && d.ownerId === owner.instanceId)
-        .map((d) => ({ ...d, available: false, ownerRoute: [...owner.route], ownerLabel: owner.label }));
+        .map((d) => ({
+          ...d,
+          available: false,
+          stale: true,
+          refreshFailedAt: Date.now(),
+          ownerRoute: [...owner.route],
+          ownerLabel: owner.label,
+        }));
       mergeOwner(owner, previous);
     }
   }, [token, mergeOwner]);
@@ -183,12 +220,18 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const localRecords = localStore.decks.map((deck) => augmentDeck(deck, localOwner, localTopologyResult.nodes, true, true));
     // Le deck LOCALI escono subito. Gli owner remoti (up) si caricano in
     // BACKGROUND con il timeout federato di getDecks; chi non risponde degrada
-    // a available:false per-owner senza bloccare nessuno. Gli owner non-up
-    // mantengono le loro deck precedenti degradate (come prima).
+    // a available:false per-owner senza bloccare nessuno. Le deck remote sono
+    // STATO STICKY: l'owner assente dalla topologia (blip/purge) NON perde le
+    // sue deck — restano come stale/available:false finché l'owner non
+    // risponde (lista nuova, anche senza di loro) o nega (403/404).
     const known = new Map(ownersRef.current.map((o) => [o.instanceId, o]));
-    const previousRemote = recordsRef.current.filter((d) => !d.local && known.has(d.ownerId))
+    const previousRemote = recordsRef.current.filter((d) => !d.local)
       .map((d) => {
         const owner = known.get(d.ownerId);
+        if (!owner) {
+          // Blip di topologia: nessuna informazione nuova, solo il degrado.
+          return { ...d, available: false, stale: true };
+        }
         // Owner che verrà ricaricato in background: la disponibilità resta
         // quella già nota finché il reload non la aggiorna — un refresh non
         // deve far lampeggiare offline la rail. Owner non-up (nessun reload
@@ -197,6 +240,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
         return {
           ...d,
           available: reloading ? d.available !== false : false,
+          stale: owner.stale === true,
           ownerRoute: [...owner.route],
           ownerLabel: owner.label,
         };

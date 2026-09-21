@@ -44,18 +44,28 @@ beforeEach(() => {
 });
 
 describe('useDecks authorization withdrawal', () => {
-  it('drops remote records and the active layout when the owner leaves authorized topology', async () => {
+  it('drops remote records and the active layout when the owner CONFIRMS the deck is gone (answer without it)', async () => {
+    // Contratto sticky: l'owner assente dalla topologia (blip) NON slogga le
+    // sue deck (visto in useDecks.sticky.test.jsx). La revoca vera si vede
+    // quando l'owner RISPONDE e la risposta non contiene più la deck.
     const owner = { instanceId: pixelId, route: ['hub', 'pixel'], label: 'Pixel', status: 'up' };
     const view = render(<Probe owners={[owner]} />);
     await waitFor(() => expect(JSON.parse(screen.getByTestId('state').textContent).ids).toContain(remoteId));
 
-    view.rerender(<Probe owners={[]} />);
+    mocks.getDecks.mockImplementation(async (_token, route = []) => ({
+      decks: route.length
+        ? []
+        : [{ name: 'main', revision: 1, layout: emptyLayout() }],
+    }));
+    view.rerender(<Probe owners={[owner]} />);
+    // Il refresh arriva dal poll periodico (ownersSig invariato: nessun reload
+    // immediato) — dentro la finestra del waitFor esteso.
     await waitFor(() => {
       const state = JSON.parse(screen.getByTestId('state').textContent);
       expect(state.ids).not.toContain(remoteId);
       expect(state.error).toContain('non più condiviso');
       expect(state.sessions).toEqual([]);
-    });
+    }, { timeout: 6500 });
   });
 });
 
