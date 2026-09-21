@@ -13,7 +13,7 @@ const state = vi.hoisted(() => ({
   topologyOk: true,
   nodesResp: { nodes: [{ name: 'vps', nodeId: 'aaaa', tunnel: { status: 'up' }, paired: true }] },
   topologyResp: {
-    nodes: [{ name: 'mgm', route: ['hub', 'mgm-958e'], instanceId: 'bbbb', label: 'MGM', stale: false }],
+    nodes: [{ name: 'peer2', route: ['hub', 'peer2'], instanceId: 'bbbb', label: 'Peer2', stale: false }],
   },
   sessionsOk: true,
 }));
@@ -48,7 +48,7 @@ describe('useNodes: stato sticky degli owner (lista che non svuota)', () => {
     state.sessionsOk = true;
     state.nodesResp = { nodes: [{ name: 'vps', nodeId: 'aaaa', tunnel: { status: 'up' }, paired: true }] };
     state.topologyResp = {
-      nodes: [{ name: 'mgm', route: ['hub', 'mgm-958e'], instanceId: 'bbbb', label: 'MGM', stale: false }],
+      nodes: [{ name: 'peer2', route: ['hub', 'peer2'], instanceId: 'bbbb', label: 'Peer2', stale: false }],
     };
     localStorage.clear();
     vi.useFakeTimers();
@@ -59,7 +59,7 @@ describe('useNodes: stato sticky degli owner (lista che non svuota)', () => {
     const { result } = renderHook(() => useNodes('token', true, 0));
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(findGroup(result.current, 'vps')).toBeTruthy();
-    expect(findGroup(result.current, 'mgm')).toBeTruthy();
+    expect(findGroup(result.current, 'peer2')).toBeTruthy();
 
     // Ciclo successivo: entrambi i fetch falliscono.
     state.nodesOk = false;
@@ -67,11 +67,11 @@ describe('useNodes: stato sticky degli owner (lista che non svuota)', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
 
     const vps = findGroup(result.current, 'vps');
-    const mgm = findGroup(result.current, 'mgm');
+    const peerB = findGroup(result.current, 'peer2');
     expect(vps).toBeTruthy();
-    expect(mgm).toBeTruthy();
+    expect(peerB).toBeTruthy();
     expect(vps.stale).toBe(true);
-    expect(mgm.stale).toBe(true);
+    expect(peerB.stale).toBe(true);
   });
 
   it('una risposta vuota confermata NON azzera gli owner noti', async () => {
@@ -84,33 +84,33 @@ describe('useNodes: stato sticky degli owner (lista che non svuota)', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
 
     expect(findGroup(result.current, 'vps')).toBeTruthy();
-    expect(findGroup(result.current, 'mgm')).toBeTruthy();
+    expect(findGroup(result.current, 'peer2')).toBeTruthy();
   });
 
   it('owner assente da una risposta confermata resta stale, non sparisce', async () => {
     const { result } = renderHook(() => useNodes('token', true, 0));
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(findGroup(result.current, 'mgm')).toBeTruthy();
+    expect(findGroup(result.current, 'peer2')).toBeTruthy();
 
     // Risposta CONFERMATA senza l'owner federato (blip/purge lato hub).
     state.topologyResp = { nodes: [] };
     await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
 
-    const mgm = findGroup(result.current, 'mgm');
-    expect(mgm).toBeTruthy();
-    expect(mgm.stale).toBe(true);
+    const peerB = findGroup(result.current, 'peer2');
+    expect(peerB).toBeTruthy();
+    expect(peerB.stale).toBe(true);
   });
 
   it('dopo la grazia di 10 minuti di assenza confermata l\'owner sparisce', async () => {
     const { result } = renderHook(() => useNodes('token', true, 0));
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(findGroup(result.current, 'mgm')).toBeTruthy();
+    expect(findGroup(result.current, 'peer2')).toBeTruthy();
 
     state.topologyResp = { nodes: [] };
     // Un ciclo lo marca stale, poi la grazia scade e il successivo lo rimuove.
     await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
-    expect(findGroup(result.current, 'mgm')).toBeTruthy();
+    expect(findGroup(result.current, 'peer2')).toBeTruthy();
     await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 4000); });
-    expect(findGroup(result.current, 'mgm')).toBeFalsy();
+    expect(findGroup(result.current, 'peer2')).toBeFalsy();
   });
 });
