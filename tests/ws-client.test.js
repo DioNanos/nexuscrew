@@ -148,7 +148,10 @@ test('ws client marks a terminal exit final until GridTile creates the next gene
   }
 });
 
-test('ws client rende osservabile la consegna: false offline, true quando OPEN', async () => {
+// Il contratto della consegna (aggiornato con ): ONLINE il byte parte subito;
+// OFFLINE non si perde — si accoda (true) e parte in ordine al ritorno. Il
+// `false` resta per il solo caso in cui la coda e' piena.
+test('ws client: online consegna subito, offline accoda (la coda piena rifiuta)', async () => {
   const oldWs = globalThis.WebSocket;
   const oldLocation = globalThis.location;
   try {
@@ -160,13 +163,13 @@ test('ws client rende osservabile la consegna: false offline, true quando OPEN',
     const ws = FakeWebSocket.sockets[0];
 
     assert.equal(socket.isReady(), false);
-    assert.equal(socket.sendInput('non perdere'), false);
+    assert.equal(socket.sendInput('non perdere'), true, 'offline accoda');
     ws.open();
     assert.equal(socket.isReady(), true);
-    assert.equal(socket.sendInput('x'.repeat(3000)), true);
+    assert.equal(socket.sendInput('x'.repeat(3000)), true, 'online consegna');
     assert.equal(Buffer.from(ws.sent.at(-1)).toString(), 'x'.repeat(3000));
     ws.readyState = 3;
-    assert.equal(socket.sendInput('offline di nuovo'), false);
+    assert.equal(socket.sendInput('offline di nuovo'), true, 'offline accoda ancora');
     socket.close();
   } finally {
     if (oldWs === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = oldWs;

@@ -6,6 +6,10 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { attachRenderer, readRendererPreference } from '../lib/terminal-renderer.js';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket } from '../lib/ws-client.js';
+import {
+  LINK_OVERLAY_DELAY_MS, boundaryNoticeLine, overlayAfterDrop, scrollRestorePlan,
+} from '../lib/link-overlay.js';
+import { terminalRuntimeConfig } from '../lib/terminal-runtime-config.js';
 import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, copyShortcutHint, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
@@ -40,9 +44,15 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
   const [copyState, setCopyState] = useState('');
   const [uploadState, setUploadState] = useState(null);
   const [touchSelectionCaret, setTouchSelectionCaret] = useState(null);
-  // Stato del canale ws ('live' | 'reconnecting'): muove solo l'overlay, il
-  // buffer xterm resta montato e intatto durante la riconnessione.
-  const [linkState, setLinkState] = useState('live');
+  // Stato del canale ws: muove solo l'overlay, il buffer xterm resta montato e
+  // intatto durante la riconnessione. L'overlay compare DOPO un secondo di
+  // caduta : un blip non deve farlo lampeggiare.
+  const [linkOverlay, setLinkOverlay] = useState(false);
+  // Byte digitati e accodati mentre il canale è giù: l'overlay lo DICHIARA,
+  // così chi scrive sa che nulla è andato perso .
+  const [queuedBytes, setQueuedBytes] = useState(0);
+  const droppedAtRef = useRef(null);
+  const overlayTimerRef = useRef(null);
   // Lo snapshot puo' sopravvivere alla propria evidenziazione: xterm la butta
   // a ogni input verso l'applicazione e a ogni resize di righe (sul telefono
   // basta la tastiera virtuale). In quel caso il testo resta copiabile ma non
@@ -248,11 +258,40 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         // server sostituisce il buffer in UNA battuta (reset+write nello
         // stesso turno di rendering: l'utente non vede mai lo schermo vuoto).
         onSnapshot: (text) => {
-          try { term.reset(); term.write(text); } catch (_) { /* buffer non pronto: lo stream live continua */ }
+          try {
+            // Il repaint non deve strappare chi stava leggendo indietro.
+            const active = term.buffer && term.buffer.active;
+            const plan = scrollRestorePlan(
+              { viewportY: active ? active.viewportY : 0, baseY: active ? active.baseY : 0 },
+              { baseY: active ? active.baseY : 0 },
+            );
+            term.reset();
+            term.write(text);
+            if (!plan.atBottom && plan.line !== null && typeof term.scrollToLine === 'function') {
+              term.scrollToLine(plan.line);
+            }
+          } catch (_) { /* buffer non pronto: lo stream live continua */ }
         },
         // Stato del canale per l'overlay «riconnessione…»: il buffer resta
         // al suo posto mentre il ws si ristabilisce.
-        onLink: (state) => setLinkState(state),
+        onQueued: (bytes) => setQueuedBytes(bytes),
+        onLink: (state) => {
+          if (overlayTimerRef.current) { clearTimeout(overlayTimerRef.current); overlayTimerRef.current = null; }
+          if (state === 'live') {
+            const wasVisible = droppedAtRef.current !== null && overlayAfterDrop(droppedAtRef.current, Date.now());
+            droppedAtRef.current = null;
+            setLinkOverlay(false);
+            // Riga di confine SOLO se l'overlay era stato mostrato: chi non ha
+            // visto nulla non deve trovarsi una riga in più nel buffer.
+            if (wasVisible) { try { term.write(boundaryNoticeLine(true)); } catch (_) { /* buffer morto */ } }
+            return;
+          }
+          if (droppedAtRef.current === null) droppedAtRef.current = Date.now();
+          overlayTimerRef.current = setTimeout(() => {
+            overlayTimerRef.current = null;
+            setLinkOverlay(true);
+          }, terminalRuntimeConfig().overlayDelayMs || LINK_OVERLAY_DELAY_MS);
+        },
       });
     } catch (e) {
       term.write(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`);
@@ -960,6 +999,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
 
     return () => {
       apiRef.current = null;
+      if (overlayTimerRef.current) { clearTimeout(overlayTimerRef.current); overlayTimerRef.current = null; }
       if (sendRef) sendRef.current = () => false;
       if (composerRef) composerRef.current = () => false;
       if (actionRef) actionRef.current = () => false;
@@ -1081,8 +1121,10 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
 
   return <div className={`nc-terminal${selectionMode ? ' selecting' : ''}`}>
     <div className="nc-terminal-host" ref={hostRef} />
-    {linkState !== 'live' && (
-      <div className="nc-terminal-link-overlay">riconnessione…</div>
+    {linkOverlay && (
+      <div className="nc-terminal-link-overlay">
+        riconnessione…{queuedBytes > 0 ? ` (${queuedBytes} byte in coda)` : ''}
+      </div>
     )}
     {touchSelectionCaret && <div className="nc-touch-selection-caret" style={touchSelectionCaret} aria-hidden="true" />}
     {selRange && handleGeom && uiPolicy.handles && ['start', 'end'].map((which) => (handleGeom[which].visible && (
