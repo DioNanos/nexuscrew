@@ -163,14 +163,25 @@ test('protocollo: un record ANCORA ATTACCATO non si lascia rubare (attach nuova)
   const proxyPort = await proxyFor(t, { nodesPath, port, hubAttaches, url: query() });
 
   const a = connectClient(t, proxyPort);
-  await waitFor(() => a.ws.readyState === WebSocket.OPEN);
-  await waitFor(() => state.connections === 1);
-  // A e' ANCORA connesso: un secondo upgrade con la stessa identita' non deve
-  // prendersi il suo stream.
+  // Ogni attesa e' ASSERITA: sotto carico un waitFor che scade in silenzio
+  // faceva fallire l'assert dopo, per un motivo che non era quello in prova.
+  assert.ok(await waitFor(() => a.ws.readyState === WebSocket.OPEN, 6000), 'il primo client deve aprire');
+  assert.ok(await waitFor(() => state.connections === 1, 6000), 'la prima attach deve arrivare all\'upstream');
+  assert.ok(await waitFor(() => state.sockets.length === 1, 3000), 'il socket dell\'upstream deve esserci');
+
+  // A e' VIVO in modo OSSERVABILE (non per un sleep): l'upstream gli manda un
+  // messaggio e lui lo riceve. Solo cosi' «record attaccato» e' un fatto, non
+  // un'assunzione di timing.
+  state.sockets[0].send('VIVO');
+  assert.ok(await waitFor(() => a.state.messages.some((m) => m.data === 'VIVO'), 3000),
+    'il primo client deve essere vivo e servito');
+
+  // Un secondo upgrade con la STESSA identita' non deve prendersi il suo stream.
   const b = connectClient(t, proxyPort);
-  await waitFor(() => state.connections === 2, 6000);
+  assert.ok(await waitFor(() => state.connections === 2, 6000),
+    `record attaccato: attach nuova, non furto (connessioni upstream = ${state.connections})`);
   assert.equal(state.connections, 2, 'record attaccato: attach nuova, non furto');
-  assert.equal(b.ws.readyState, WebSocket.OPEN, 'il secondo client e\' comunque servito');
+  assert.ok(await waitFor(() => b.ws.readyState === WebSocket.OPEN, 3000), 'il secondo client e\' comunque servito');
 });
 
 test('protocollo: identita\' diversa fa una attach nuova', async (t) => {
