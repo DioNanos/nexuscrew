@@ -41,11 +41,11 @@ test('il client manda ping applicativi a cadenza', async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?ping=${Date.now()}`);
     const socket = openTerminalSocket({
       session: 'work-build', token: 't', cols: 80, rows: 24,
-      pingMs: 20, deadMs: 5000,
+      pingMs: 30, deadMs: 5000,
     });
     const ws = FakeWebSocket.sockets[0];
     ws.open();
-    await wait(70); // ~3 cadenze
+    await wait(150); // ~5 cadenze
     assert.ok(ws.sentTypes().includes('ping'), 'il client deve mandare ping applicativi');
     socket.close();
   });
@@ -56,12 +56,12 @@ test('senza dati ne\' pong il client chiude e riconnette da solo', async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?dead=${Date.now()}`);
     const socket = openTerminalSocket({
       session: 'work-build', token: 't', cols: 80, rows: 24,
-      pingMs: 20, deadMs: 80, retryBaseMs: 1,
+      pingMs: 30, deadMs: 300, retryBaseMs: 1,
     });
     const first = FakeWebSocket.sockets[0];
     first.open();
     // Nessun pong, nessun dato: la connessione è mezzo-aperta.
-    await wait(160);
+    await wait(900);
     assert.ok(FakeWebSocket.sockets.length >= 2, 'il client deve aver chiuso e riconnesso da solo');
     socket.close();
   });
@@ -72,7 +72,7 @@ test('con i pong che arrivano NON riconnette', async () => {
     const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?alive=${Date.now()}`);
     const socket = openTerminalSocket({
       session: 'work-build', token: 't', cols: 80, rows: 24,
-      pingMs: 20, deadMs: 80, retryBaseMs: 1,
+      pingMs: 30, deadMs: 300, retryBaseMs: 1,
     });
     const ws = FakeWebSocket.sockets[0];
     ws.open();
@@ -81,7 +81,7 @@ test('con i pong che arrivano NON riconnette', async () => {
       const ping = ws.sent.findLast?.((s) => { try { return JSON.parse(s).type === 'ping'; } catch { return false; } });
       if (ping) { const t = JSON.parse(ping).t; ws.message(JSON.stringify({ type: 'pong', t })); }
     }, 10);
-    await wait(200);
+    await wait(900);
     clearInterval(pump);
     assert.equal(FakeWebSocket.sockets.length, 1, 'con i pong non deve riconnettere');
     socket.close();

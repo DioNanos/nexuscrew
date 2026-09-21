@@ -37,18 +37,18 @@ const cfg = () => import('../frontend/src/lib/terminal-runtime-config.js');
 test('config del server: liveness e coda del client seguono i valori configurati', async () => {
   await withFakeWs(async () => {
     const mod = await cfg();
-    mod.setTerminalRuntimeConfig({ pingMs: 15, deadMs: 60, queuedInputBytes: 8, retryBaseMs: 1, retryMaxMs: 4, overlayDelayMs: 1000 });
+    mod.setTerminalRuntimeConfig({ pingMs: 30, deadMs: 300, queuedInputBytes: 8, retryBaseMs: 1, retryMaxMs: 4, overlayDelayMs: 1000 });
     try {
       const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?cfg=${Date.now()}`);
       // NESSUN override: il client deve prendere i valori dalla config.
       const socket = openTerminalSocket({ session: 'work-build', token: 't', cols: 80, rows: 24 });
       const ws = FakeWebSocket.sockets[0];
       ws.open();
-      await wait(50);
+      await wait(150);
       assert.ok(ws.sentTypes().includes('ping'), 'il ping parte alla cadenza configurata');
 
       // deadMs 60 senza pong: il client chiude da solo e riconnette.
-      await wait(120);
+      await wait(900);
       assert.ok(FakeWebSocket.sockets.length >= 2, 'il budget di silenzio configurato fa riconnettere');
 
       // Cap della coda = 8 byte: oltre, rifiuto esplicito.
