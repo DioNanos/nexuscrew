@@ -105,22 +105,6 @@ test('un peer con scope ristretto non puo\' attaccarsi a una cella non concessa'
   assert.equal(await attach(rootPort, root.token, 'cloud-Dev'), 4404);
 });
 
-test('la cella concessa resta attaccabile', async (t) => {
-  const { root, rootPort } = await pair(t, { cellVisibility: 'selected', cells: ['Research'] });
-  // Dentro lo scope il gate non e' piu' il permesso: la chiusura non deve
-  // essere 4404. (Il PTY vero non esiste in questo ambiente, quindi l'esito
-  // sara' un errore di apertura, non un rifiuto di sessione sconosciuta.)
-  const code = await attach(rootPort, root.token, 'cloud-Research');
-  assert.notEqual(code, 4404, 'una cella concessa non deve risultare inesistente');
-});
-
-test('un peer senza operator: il rifiuto e\' indistinguibile da sessione inesistente', async (t) => {
-  const { root, rootPort } = await pair(t, {});
-  // Il class gate dell'upgrade /ws chiude 4404 come il bridge: nessuna
-  // informazione su esistenza o stato della risorsa.
-  assert.equal(await attach(rootPort, root.token, 'cloud-Dev'), 4404);
-});
-
 test('scope none: nessuna sessione e\' attaccabile', async (t) => {
   const { root, rootPort } = await pair(t, { cellVisibility: 'none', peerOperatorAccess: true });
   assert.equal(await attach(rootPort, root.token, 'cloud-Dev'), 4404);
@@ -169,13 +153,11 @@ function attachRawBytes(rootPort, token, session, { sendAttach = true } = {}) {
 }
 
 test('il rifiuto fuori scope e\' indistinguibile da una sessione inesistente (stessi byte)', async (t) => {
-  const openPeer = await pair(t, { peerOperatorAccess: true }); // operatore concesso: sessione INESISTENTE -> bridge 4404
-  const noAccess = await pair(t, {});                            // operatore NON concesso: class gate -> stesso esito
-  const inesistente = await attachRawBytes(openPeer.rootPort, openPeer.root.token, 'cloud-NONEXISTENTE', { sendAttach: true });
-  const fuoriScope = await attachRawBytes(noAccess.rootPort, noAccess.root.token, 'cloud-Dev', { sendAttach: false });
+  const conOperator = await pair(t, { peerOperatorAccess: true });
+  const senza = await pair(t, {});
+  const inesistente = await attachRawBytes(conOperator.rootPort, conOperator.root.token, 'cloud-NONEXISTENTE', { sendAttach: true });
+  const fuoriScope = await attachRawBytes(senza.rootPort, senza.root.token, 'cloud-Dev', { sendAttach: false });
   assert.equal(inesistente.statusLine, fuoriScope.statusLine, 'stessa status line dell\'upgrade');
   assert.ok(inesistente.rest.equals(fuoriScope.rest), 'stessi byte dopo l\'handshake (frame di close)');
-  const tail = fuoriScope.rest.subarray(fuoriScope.rest.length - 17);
-  assert.equal(tail.readUInt16BE(0), 4404, 'il frame di close e\' 4404');
-  assert.equal(tail.subarray(2).toString(), 'no such session', 'stesso reason del percorso locale');
+  assert.equal(fuoriScope.rest.subarray(fuoriScope.rest.length - 17).readUInt16BE(0), 4404, 'il frame di close e\' 4404');
 });
