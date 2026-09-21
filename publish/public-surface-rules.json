@@ -150,6 +150,7 @@
       "ARM64",
       "BM25",
       "C0",
+      "E914",
       "GLM-5",
       "GPL-3",
       "K3",
@@ -172,6 +173,6 @@
     "allowPathPrefix": [
       "frontend/dist/"
     ],
-    "note": "Class derived from the measured inventory (sweepB 87/8/5) plus B7/C2 (real contract occurrences; lines with URL-encoding are excluded) and V1/Z0/Z0-9 (out of scope: protocol constants and live character-class regexes). Unmatched tokens outside both lists fail the gate (fail-closed)."
+    "note": "Class derived from the measured inventory (sweepB 87/8/5) plus B7/C2 (real contract occurrences; lines with URL-encoding are excluded) and V1/Z0/Z0-9 (out of scope: protocol constants and live character-class regexes). Unmatched tokens outside both lists fail the gate (fail-closed). E914 is a hex fragment of the RFC 6455 WebSocket GUID (258EAFA5-E914-47DA-95CA-C5AB0DC85B11), a public protocol constant used to write the 101 of the federated resume; classified as allowed because it carries no internal name and no secret."
   }
 }
