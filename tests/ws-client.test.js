@@ -173,3 +173,111 @@ test('ws client rende osservabile la consegna: false offline, true quando OPEN',
     if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
   }
 });
+
+// ---- Streaming resiliente: resync al riconnect, chiusure terminali solo
+// ---- auth/acl/sessione, stato del link per l'overlay.
+
+test('ws client alla riconnessione chiede il resync e consegna lo snapshot', async () => {
+  const oldWs = globalThis.WebSocket;
+  const oldLocation = globalThis.location;
+  try {
+    FakeWebSocket.sockets = [];
+    globalThis.WebSocket = FakeWebSocket;
+    globalThis.location = { hostname: '127.0.0.1', protocol: 'http:', host: '127.0.0.1:41820' };
+    const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?resync=${Date.now()}`);
+    const snapshots = [];
+    const socket = openTerminalSocket({
+      session: 'work-build', token: 't', cols: 80, rows: 24, retryBaseMs: 1,
+      onSnapshot: (data) => snapshots.push(data),
+    });
+    const first = FakeWebSocket.sockets[0];
+    first.open();
+    first.message(JSON.stringify({ type: 'attached', reconnectToken: 'cap' }));
+    first.end(1006);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const second = FakeWebSocket.sockets[1];
+    assert.ok(second, 'riconnesso');
+    second.open();
+    const sentTypes = second.sent.map((s) => JSON.parse(s).type);
+    assert.ok(sentTypes.includes('resync'), 'il riconnect chiede il resync');
+    second.message(JSON.stringify({ type: 'snapshot', data: 'REPAINT-DAL-CAPTURE' }));
+    assert.deepEqual(snapshots, ['REPAINT-DAL-CAPTURE']);
+    socket.close();
+  } finally {
+    if (oldWs === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = oldWs;
+    if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
+  }
+});
+
+test('ws client riconnette anche su close 1000 pulito (solo 4401/4403/4404 sono terminali)', async () => {
+  const oldWs = globalThis.WebSocket;
+  const oldLocation = globalThis.location;
+  try {
+    FakeWebSocket.sockets = [];
+    globalThis.WebSocket = FakeWebSocket;
+    globalThis.location = { hostname: '127.0.0.1', protocol: 'http:', host: '127.0.0.1:41820' };
+    const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?c1000=${Date.now()}`);
+    const socket = openTerminalSocket({ session: 'work-build', token: 't', cols: 80, rows: 24, retryBaseMs: 1 });
+    const first = FakeWebSocket.sockets[0];
+    first.open();
+    first.end(1000); // riavvio del servizio con chiusura pulita, senza 'exit'
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(FakeWebSocket.sockets[1], 'riconnette dopo 1000');
+    socket.close();
+  } finally {
+    if (oldWs === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = oldWs;
+    if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
+  }
+});
+
+test('ws client NON riconnette su 4401/4403/4404 (auth/acl/sessione)', async () => {
+  const oldWs = globalThis.WebSocket;
+  const oldLocation = globalThis.location;
+  try {
+    for (const code of [4401, 4403, 4404]) {
+      FakeWebSocket.sockets = [];
+      globalThis.WebSocket = FakeWebSocket;
+      globalThis.location = { hostname: '127.0.0.1', protocol: 'http:', host: '127.0.0.1:41820' };
+      const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?term${code}=${Date.now()}`);
+      const socket = openTerminalSocket({ session: 'work-build', token: 't', cols: 80, rows: 24, retryBaseMs: 1 });
+      const first = FakeWebSocket.sockets[0];
+      first.open();
+      first.end(code);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.equal(FakeWebSocket.sockets.length, 1, `nessun reconnect dopo ${code}`);
+      socket.close();
+    }
+  } finally {
+    if (oldWs === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = oldWs;
+    if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
+  }
+});
+
+test('ws client segnala lo stato del link (reconnecting/live) per l\'overlay', async () => {
+  const oldWs = globalThis.WebSocket;
+  const oldLocation = globalThis.location;
+  try {
+    FakeWebSocket.sockets = [];
+    globalThis.WebSocket = FakeWebSocket;
+    globalThis.location = { hostname: '127.0.0.1', protocol: 'http:', host: '127.0.0.1:41820' };
+    const { openTerminalSocket } = await import(`../frontend/src/lib/ws-client.js?link=${Date.now()}`);
+    const linkStates = [];
+    const socket = openTerminalSocket({
+      session: 'work-build', token: 't', cols: 80, rows: 24, retryBaseMs: 1,
+      onLink: (state) => linkStates.push(state),
+    });
+    const first = FakeWebSocket.sockets[0];
+    first.open();
+    first.end(1006);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(linkStates.includes('reconnecting'), 'la caduta viene segnala come reconnecting');
+    const second = FakeWebSocket.sockets[1];
+    second.open();
+    second.message(JSON.stringify({ type: 'link', state: 'live' }));
+    assert.ok(linkStates.includes('live'), 'il live dichiarato dal server arriva all\'overlay');
+    socket.close();
+  } finally {
+    if (oldWs === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = oldWs;
+    if (oldLocation === undefined) delete globalThis.location; else globalThis.location = oldLocation;
+  }
+});

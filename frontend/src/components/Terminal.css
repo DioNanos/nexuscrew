@@ -96,3 +96,12 @@
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px;
 }
 .nc-upload-state.error { border-color:#a44; color:#fbb; }
+
+/* Overlay di riconnessione del canale ws: SOPRA il buffer intatto, mai al
+   suo posto — il contenuto resta leggibile mentre il link si ristabilisce. */
+.nc-terminal-link-overlay {
+  position: absolute; inset: 0; z-index: 5; display: grid; place-items: start center;
+  padding-top: 14px; pointer-events: none;
+  font-size: 11px; letter-spacing: 0.04em; color: #b8a24e;
+  background: linear-gradient(rgba(10, 14, 10, 0.35), rgba(10, 14, 10, 0.15) 40%, transparent 70%);
+}

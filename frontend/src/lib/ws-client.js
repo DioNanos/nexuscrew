@@ -14,7 +14,7 @@ export function wsTarget(node, token) {
   return `/api/route/${route}/_/ws?token=${encodeURIComponent(token || '')}`;
 }
 
-export function openTerminalSocket({ session, node, token, cols, rows, readonly = false, takeSize, focused, onData, onExit, onFiles, retryBaseMs = 250, retryStableMs = 5000, onRetryScheduled }) {
+export function openTerminalSocket({ session, node, token, cols, rows, readonly = false, takeSize, focused, onData, onExit, onFiles, onSnapshot, onLink, retryBaseMs = 250, retryStableMs = 5000, onRetryScheduled }) {
   // Fail-closed on the "localhost-only" invariant. The token travels in clear only
   // when the origin is loopback (inside the SSH/VPN tunnel); otherwise serve over HTTPS.
   const isLocal = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname);
@@ -30,6 +30,9 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
   let stableTimer = null;
   let retryAttempt = 0;
   let reconnectToken = null;
+  // Una caduta GIA' subita: la prossima apertura e' una riconnessione e
+  // chiede il resync del buffer (repaint dal capture-pane del server).
+  let dropped = false;
   // Focus/size-owner: lo stato desiderato viene ricordato e (ri)mandato all'apertura
   // — cosi' un tile gia' focato al connect promuove appena il WS e' pronto.
   let wantFocus = focused;
@@ -62,6 +65,9 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
       if (takeSize !== undefined) frame.takeSize = takeSize;
       current.send(JSON.stringify(frame));
       if (wantFocus !== undefined) current.send(JSON.stringify({ type: 'focus', on: !!wantFocus }));
+      // Riconnessione dopo una caduta: il buffer del client potrebbe essere
+      // rimasto indietro — chiede il resync (il server ridipinge dal pane).
+      if (dropped) current.send(JSON.stringify({ type: 'resync' }));
     };
     current.onmessage = (ev) => {
       if (ws !== current || stopped) return;
@@ -72,6 +78,8 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
         }
         if (msg.type === 'exit') { terminalEnded = true; if (onExit) onExit(msg.code); }
         if (msg.type === 'files' && onFiles) onFiles(msg);
+        if (msg.type === 'snapshot' && onSnapshot) onSnapshot(typeof msg.data === 'string' ? msg.data : '');
+        if (msg.type === 'link' && onLink) onLink(msg.state === 'live' ? 'live' : 'reconnecting');
       } else if (onData) {
         onData(new Uint8Array(ev.data));
       }
@@ -80,9 +88,13 @@ export function openTerminalSocket({ session, node, token, cols, rows, readonly 
     current.onclose = (ev) => {
       if (ws !== current || stopped || terminalEnded) return;
       if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
-      // Protocol/auth/session failures need user action; transient network,
-      // service restart and backpressure closes are reconnectable.
-      if ([1000, 1002, 4401, 4404].includes(ev?.code)) return;
+      // Terminali SOLO per ciò che richiede un'azione dell'utente (auth/acl/
+      // sessione inesistente). Tutto il resto — drop di rete (1006), riavvio
+      // del servizio (1000/1002), backpressure — riconnette in backoff senza
+      // svuotare il buffer del client.
+      if ([4401, 4403, 4404].includes(ev?.code)) return;
+      dropped = true;
+      if (onLink) onLink('reconnecting');
       scheduleReconnect();
     };
   };
