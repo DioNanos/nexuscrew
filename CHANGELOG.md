@@ -6,6 +6,7 @@ All notable changes to NexusCrew are tracked here.
 
 ## 0.9.37 — 2026-09-20
 
+- **Imported file notices now carry the file name as body when no caption is given, matching local delivery.** The two paths built the same alert from different code; without a caption the imported one reached the operator with no body while the local one named the file.
 - **Deck loading: local decks render immediately; remote owners load in the background with an 8 s federated fetch timeout and per-owner degradation (previous decks marked unavailable, never persisted).** A peer whose tunnel was up-but-mute kept every deck — local ones included — off the screen until the browser gave up, or forever. The federated GET forward now degrades with a 504 after a 10 s peer timeout instead of sitting for 30 s.
 
 ## 0.9.36 — 2026-09-20
