@@ -480,7 +480,7 @@ const TOML_UTENTE_D343 = [
   '',
   '[mcp_servers.nexuscrew]',
   'command = "nexuscrew"',
-  'args = ["mcp", "serve"]',
+  'args = ["mcp", "--token=sk-TEST-SEGRETO-args"]',
   'env = { NEXUSCREW_TEST_SECRET = "sk-TEST-SEGRETO-stdio" }',
   '',
   '[mcp_servers.web]',
@@ -501,7 +501,7 @@ const TOML_UTENTE_D343 = [
   '',
 ].join('\n');
 
-test('d343 spenti stdio+http e nome quotato: minimo per la validita, mai env/headers/credenziali', (t) => {
+test('d343 spenti stdio+http e nome quotato: solo command/url, mai args/env/headers/credenziali', (t) => {
   const w = mondoCodex(t, { toml: TOML_UTENTE_D343 });
   // Nomi quotati non sono dichiarabili (la validazione delle capability
   // enumerata con la regex dei soli nomi li rifiuta, residuo dichiarato):
@@ -510,8 +510,8 @@ test('d343 spenti stdio+http e nome quotato: minimo per la validita, mai env/hea
   assert.equal(out.ok, true, out.reason);
   const doc = toml.parse(fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8'));
   assert.deepEqual(doc.mcp_servers.nexuscrew,
-    { command: 'nexuscrew', args: ['mcp', 'serve'], enabled: false },
-    'spento stdio: command+args, MAI env (porta segreti)');
+    { command: 'nexuscrew', enabled: false },
+    'spento stdio: solo command — MAI args (un token puo stare in args) ne env');
   assert.deepEqual(doc.mcp_servers.web,
     { url: 'http://127.0.0.1:3939/mcp', enabled: false },
     'spento http: solo url, MAI headers/token (portano credenziali)');
@@ -521,7 +521,7 @@ test('d343 spenti stdio+http e nome quotato: minimo per la validita, mai env/hea
   // Nessun campo oltre il minimo che soddisfa la validazione del client.
   for (const tabella of Object.values(doc.mcp_servers)) {
     for (const k of Object.keys(tabella)) {
-      assert.ok(['command', 'args', 'url', 'enabled'].includes(k),
+      assert.ok(['command', 'url', 'enabled'].includes(k),
         `chiave inattesa nella tabella ridotta: ${k}`);
     }
   }
@@ -532,8 +532,10 @@ test('d343 segreto in uno spento: nessuna fuga nel profilo derivato', (t) => {
   const out = resolveCodex(w, { capabilities: { mcp: [] } });
   assert.equal(out.ok, true, out.reason);
   const profilo = fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8');
+  assert.equal(profilo.includes('sk-TEST-SEGRETO-args'), false,
+    'un segreto in args dello stdio spento e finito nel profilo');
   assert.equal(profilo.includes('sk-TEST-SEGRETO-stdio'), false,
-    'un segreto dello stdio spento e finito nel profilo');
+    'un segreto in env dello stdio spento e finito nel profilo');
   assert.equal(profilo.includes('sk-TEST-SEGRETO-http'), false,
     'un segreto (Authorization) dello http spento e finito nel profilo');
   assert.equal(profilo.includes('WEB_TOKEN'), false,
@@ -553,8 +555,8 @@ test('d343 misto: on-demand + spenti (http e nome quotato implicito) + skill nel
   assert.equal(out.ok, true, out.reason);
   const doc = toml.parse(fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8'));
   assert.deepEqual(doc.mcp_servers.nexuscrew,
-    { command: 'nexuscrew', args: ['mcp', 'serve'], env: { NEXUSCREW_TEST_SECRET: 'sk-TEST-SEGRETO-stdio' }, omit_tools_from: ['direct'] },
-    'on-demand (concesso): definizione INTEGRALE del layer base + differimento, segreto incluso perche gli compete');
+    { command: 'nexuscrew', args: ['mcp', '--token=sk-TEST-SEGRETO-args'], env: { NEXUSCREW_TEST_SECRET: 'sk-TEST-SEGRETO-stdio' }, omit_tools_from: ['direct'] },
+    'on-demand (concesso): definizione INTEGRALE del layer base + differimento, segreti inclusi perche gli competono');
   assert.equal(doc.mcp_servers.web.enabled, false, 'http non concesso: spento');
   assert.deepEqual(doc.mcp_servers['srv.quote.test'],
     { command: '/bin/echo', enabled: false },
