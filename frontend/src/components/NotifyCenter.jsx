@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
-import { getAsks, answerAsk, dismissAsk, relayAskAnswer, relayAskDismiss, relayAskVerify, getFeedState } from '../lib/api.js';
+import { getAsks, answerAsk, dismissAsk, relayAskAnswer, relayAskDismiss, relayAskVerify, getFeedState, getAskRelayState } from '../lib/api.js';
+import { mergeRemoteNotices, toRemoteNotice, normalizeTs, boundedByTs } from '../lib/remote-notices.js';
 import { connectEvents } from '../lib/events.js';
 import { useNotificationSpeech } from '../hooks/useNotificationSpeech.js';
 import {
@@ -66,15 +67,18 @@ function Toast({ n, onClose }) {
   );
 }
 
-function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false }) {
+function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, initialUncertainRid = null }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [dismissing, setDismissing] = useState(false);
   // Esito incerto (owner remoto): il requestId è ciò che permette di verificare
   // SENZA ripetere il paste. Finché non è risolto, nessun nuovo invio.
-  const [uncertainRid, setUncertainRid] = useState(null);
+  const [uncertainRid, setUncertainRid] = useState(initialUncertainRid);
   const [verifying, setVerifying] = useState(false);
+  // Blocco precedente: il nuovo requestId non ha ricevuta. Senza ID originale
+  // resta solo la riconciliazione con l'owner: nessun reinvio cieco.
+  const [blockedOriginal, setBlockedOriginal] = useState(false);
 
   const send = async (value) => {
     const answer = String(value || '').trim();
@@ -90,7 +94,13 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false }) 
         const ownerAskId = ask.ownerAskId || ask.id;
         const out = await relayAskAnswer(token, { ownerId: ask.ownerId, askId: ownerAskId, text: answer });
         // Esito incerto: la card resta con lo stato «verifica», mai un retry cieco.
-        if (out && out.uncertain) { setUncertainRid(out.requestId); return; }
+        if (out && out.uncertain) {
+          // Blocco precedente: il nuovo requestId non ha ricevuta — la verifica
+          // possibile è solo sull'ID originale autorizzato, se noto.
+          setUncertainRid(out.originalRequestId || null);
+          setBlockedOriginal(!out.originalRequestId);
+          return;
+        }
         onAnswered(ask.id, ask.ownerId);
       } else {
         await answerAsk(token, ask.id, answer);
@@ -132,18 +142,19 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false }) 
       {ask.ownerId && askReplyAccess === false && (
         <small className="nc-set-hint">{t('ask-remote-readonly')}</small>
       )}
-      {uncertainRid && <>
+      {(uncertainRid || blockedOriginal) && <>
         <div className="nc-err">{t('ask-uncertain')}</div>
+        {blockedOriginal && !uncertainRid && <div className="nc-err">{t('ask-reconcile')}</div>}
         <button type="button" className="nc-btn ghost" disabled={verifying}
           onClick={async () => {
             setVerifying(true);
             try {
-              const out = await relayAskVerify(token, { ownerId: ask.ownerId, askId: ask.id, requestId: uncertainRid });
+              const out = await relayAskVerify(token, { ownerId: ask.ownerId, askId: ask.ownerAskId || ask.id, requestId: uncertainRid });
               if (out && (out.state === 'committed' || out.state === 'failed')) onDismiss(ask.id, ask.ownerId);
             } finally { setVerifying(false); }
           }}>{t('ask-verify')}</button>
       </>}
-      {(!ask.ownerId || askReplyAccess === true) && <>
+      {(!ask.ownerId || askReplyAccess === true) && !uncertainRid && !blockedOriginal && <>
         {Array.isArray(ask.options) && ask.options.length > 0 && (
           <div className="nc-ask-opts">
             {ask.options.map((o) => (
@@ -162,8 +173,6 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false }) 
     </div>
   );
 }
-
-const MAX_REMOTE_NOTICES = 50;
 
 export default function NotifyCenter({ token }) {
   const [lang] = useLang(); // re-render allo switch lingua
@@ -241,14 +250,9 @@ export default function NotifyCenter({ token }) {
       if (frame.type === 'notify' && frame.ownerId && frame.eventId) {
         // Importato live: entra nella lista consultabile (dedup con l'arretrato
         // per (ownerId,eventId)); nessun toast/speaker aggiuntivo per la card.
-        const key = frame.ownerId + '|' + String(frame.eventId);
-        setRemoteNotices((cur) => (cur.some((n) => n.key === key) ? cur : [...cur, {
-          key, ownerId: String(frame.ownerId), eventId: String(frame.eventId),
-          title: typeof frame.title === 'string' ? frame.title : '',
-          body: typeof frame.body === 'string' ? frame.body : '',
-          urgency: frame.urgency === 'high' ? 'high' : 'normal',
-          ts: Number.isFinite(frame.ts) ? frame.ts : Date.now(),
-        }].slice(-MAX_REMOTE_NOTICES)));
+        const card = toRemoteNotice(frame, frame.ownerId);
+        if (!card) return;
+        setRemoteNotices((cur) => boundedByTs(mergeRemoteNotices(cur, [card], null)));
       }
       if (frame.type === 'notify') pushToast(frame);
       else if (frame.type === 'ask' && frame.ask && frame.ask.id) {
@@ -264,6 +268,25 @@ export default function NotifyCenter({ token }) {
     });
     return () => { cancelled = true; close(); };
   }, [token, pushToast]);
+
+  // Riconciliazione dopo refresh: gli esiti incerti noti al relay locale
+  // ricostruiscono lo stato «verifica» delle card importate, senza reinvii.
+  const [uncertainByOwnerAsk, setUncertainByOwnerAsk] = useState({});
+  useEffect(() => {
+    if (!token) return undefined;
+    let alive = true;
+    getAskRelayState(token).then((j) => {
+      if (!alive) return;
+      const map = {};
+      for (const a of (j && j.attempts) || []) {
+        if (a && a.state === 'uncertain' && a.ownerId && a.askId && a.requestId) {
+          map[a.ownerId + '|' + a.askId] = a.requestId;
+        }
+      }
+      setUncertainByOwnerAsk(map);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [token]);
 
   // Grant di risposta PER OWNER, dallo snapshot che il client ha del feed
   // (/api/feed-state). Assente = nessuna risposta: la card resta in lettura.
@@ -287,16 +310,8 @@ export default function NotifyCenter({ token }) {
         // Arretrato notifiche importate: solo il tipo notificatorio, dedup su
         // (ownerId,eventId), testo come stringa (React fa l'escaping).
         for (const n of v.notifications || []) {
-          if (!n || n.type !== 'notify' || !n.eventId) continue;
-          const title = typeof n.title === 'string' ? n.title : '';
-          const body = typeof n.body === 'string' ? n.body : '';
-          if (!title && !body) continue;
-          const key = v.ownerId + '|' + String(n.eventId);
-          notices.set(key, {
-            key, ownerId: v.ownerId, eventId: String(n.eventId), title, body,
-            urgency: n.urgency === 'high' ? 'high' : 'normal',
-            ts: Number.isFinite(n.ts) ? n.ts : (Date.parse(n.ts) || 0),
-          });
+          const card = toRemoteNotice(n, v.ownerId);
+          if (card) notices.set(card.key, card);
         }
       }
       setReplyGrants(grants);
@@ -304,10 +319,11 @@ export default function NotifyCenter({ token }) {
       // Rebuild dall'arretrato: le card di una view revocata cadono qui; le
       // card arrivate via SSE di un owner ancora attivo restano (dedup per key).
       setRemoteNotices((cur) => {
-        const merged = new Map();
-        for (const c of cur) if (keepOwners.has(c.ownerId)) merged.set(c.key, c);
-        for (const c of notices.values()) merged.set(c.key, c);
-        return [...merged.values()].slice(-MAX_REMOTE_NOTICES);
+        const merged = [];
+        for (const c of cur) if (keepOwners.has(c.ownerId)) merged.push(c);
+        for (const c of notices.values()) merged.push({ ...c, key: c.key });
+        console.log('DBG-M2 merged:', merged.length, merged.map((c) => c.key).join(','));
+        return boundedByTs(merged);
       });
     }).catch(() => {});
     return () => { alive = false; };
@@ -338,6 +354,7 @@ export default function NotifyCenter({ token }) {
           <div className="nc-ask-panel-body">
             {asks.map((a) => <AskCard key={askKeyOf(a.id, a.ownerId)} ask={a} token={token}
               askReplyAccess={!a.ownerId || replyGrants[a.ownerId] === true}
+              initialUncertainRid={a.ownerId ? (uncertainByOwnerAsk[a.ownerId + '|' + (a.ownerAskId || a.id)] || null) : null}
               onAnswered={removeAsk} onDismiss={removeAsk} />)}
             {remoteNotices.length > 0 && (
               <div className="nc-remote-notices">
