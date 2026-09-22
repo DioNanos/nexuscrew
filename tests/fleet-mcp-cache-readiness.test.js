@@ -1,5 +1,5 @@
 'use strict';
-// D-342 — adattatore readiness MCP dalla cache client (versionato 2.1.280).
+// Adattatore readiness MCP dalla cache client (versionato 2.1.280).
 // Copre: encoding cwd, boot stamp, stati per-server sul SOLO boot corrente
 // (mai log vecchi), tolleranza a righe malformate/schema variabile (error
 // senza debug), attesa bounded con deadline composta e cancellazione.
@@ -36,7 +36,7 @@ test('bootStampOf riproduce lo stamp dei boot file del client ed ordina come il 
 
 test('encodeCwdForCache sostituisce ogni non-alfanumerico (forma misurata 2.1.280)', () => {
   assert.strictEqual(encodeCwdForCache('/tmp/d342-gateb/cwd-p2'), '-tmp-d342-gateb-cwd-p2');
-  assert.strictEqual(encodeCwdForCache('/home/tester/Dev/.worktrees/DevWorkerA'), '-home-tester-Dev--worktrees-DevWorkerA');
+  assert.strictEqual(encodeCwdForCache('/home/tester/Dev/.worktrees/WorkerX'), '-home-tester-Dev--worktrees-WorkerX');
 });
 
 test('readinessNow: ready/failed/pending sul boot corrente, record error senza debug = failed', () => {

@@ -1,6 +1,6 @@
 'use strict';
-// D-342 — gate readiness MCP in deliverBootstrapPrompt (claude.*).
-// Casi R6: consegna con MCP pronti; degradato visibile a budget esaurito;
+// Gate readiness MCP in deliverBootstrapPrompt (claude.*).
+// Casi del contratto: consegna con MCP pronti; degradato visibile a budget esaurito;
 // cancellazione durante l'attesa MCP (zero paste); composer non pronto a
 // timeout resta bloccante (il gate MCP non bypassa mai il composer).
 const { test } = require('node:test');
@@ -61,7 +61,7 @@ test('budget esaurito con pending: consegna DEGRADATO VISIBILE con elenco bounde
   assert.deepStrictEqual(result.mcp.pending, ['lento', 'ko-server']);
 });
 
-test('cancel durante attesa MCP: esito cancelled, ZERO paste (R6 at-most-once)', async () => {
+test('cancel durante attesa MCP: esito cancelled, ZERO paste (at-most-once)', async () => {
   const s = seams({ captures: ['❯'] });
   let pasteChiamate = 0;
   const result = await deliverBootstrapPrompt({
@@ -119,7 +119,7 @@ test('parseMcpListOption: formato bounded, nomi validati, duplicati e spazzatura
   assert.deepStrictEqual(parseMcpListOption(''), { failed: [], pending: [] });
   assert.deepStrictEqual(parseMcpListOption(null), { failed: [], pending: [] });
 });
-// --- cell-exec: gate MCP nel payload (casi R6) ---
+// --- cell-exec: gate MCP nel payload (casi del contratto) ---
 
 function cellExecSeams({ deliverResult, waitResult, optsCatturati }) {
   const setOptions = [];
