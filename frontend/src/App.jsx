@@ -318,6 +318,11 @@ export default function App() {
 
   // desktop workspace state
   const [dSessions, setDSessions] = useState([]);
+  // Autorevolezza e istante dell'ultima lettura LOCALE: il nodo locale non ha
+  // un gruppo in nodeGroups, quindi porta con se' gli stessi due dati che i
+  // gruppi remoti espongono come sessionsAvailable / verifiedAt.
+  const [localVerified, setLocalVerified] = useState(true);
+  const [localSessionsAt, setLocalSessionsAt] = useState(null);
   const [cells, setCells] = useState([]);
   const [fleetCapabilities, setFleetCapabilities] = useState([]);
   // R27: lettura fleet non riuscita → lista esposta = ultima nota (stale)
@@ -495,8 +500,17 @@ export default function App() {
     try {
       const r = await apiFetch('/api/sessions', token);
       const j = await r.json();
-      if (!j.error) setDSessions(j.sessions || []);
-    } catch (_) { /* best-effort */ }
+      // La lettura LOCALE e' autorevole solo quando ha risposto davvero: un
+      // errore non svuota la lista (l'ultima nota resta) e non la promuove
+      // nemmeno a prova di assenza — la marca non verificata, come i peer.
+      if (!j.error) {
+        setDSessions(j.sessions || []);
+        setLocalVerified(true);
+        setLocalSessionsAt(Date.now());
+      } else {
+        setLocalVerified(false);
+      }
+    } catch (_) { setLocalVerified(false); }
     // R27: stessa policy pura della home mobile (lib/fleet-read-policy.js) —
     // un fallimento di lettura NON svuota la lista: non e' «zero celle»,
     // resta l'ultima nota con l'indicatore stale in sidebar.
@@ -655,6 +669,17 @@ export default function App() {
     ...dSessions.map((s) => s.name),
     ...nodeGroups.flatMap((g) => g.sessions.map((s) => s.key)),
   ]);
+  // Identita' delle sessioni LOCALI (refKey -> `created` di tmux), per il
+  // secondo trigger di generazione: un cambio di identita' fra due letture
+  // autorevoli. Le sessioni remote portano `created` dentro il gruppo, quindi
+  // non passano di qui.
+  const localIdentities = useMemo(() => {
+    const mappa = new Map();
+    for (const s of dSessions) {
+      if (s && typeof s.name === 'string' && Number.isFinite(s.created)) mappa.set(s.name, s.created);
+    }
+    return mappa;
+  }, [dSessions]);
   const activeSessions = sessions(layout); // refKeys dei tile aperti
 
   // --- actions ---
@@ -881,6 +906,9 @@ export default function App() {
           token={token}
           readonly={roDefault}
           sessionsAlive={sessionsAlive}
+          localVerified={localVerified}
+          localIdentities={localIdentities}
+          localVerifiedAt={localSessionsAt}
           focusSession={gridFocus}
           onFocus={setGridFocus}
           onOpenSingle={openSingle}

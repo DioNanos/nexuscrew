@@ -6,7 +6,7 @@ import {
 } from '../lib/grid-model.js';
 import { cellDisplayName, findManagedCell } from '../lib/cell-display.js';
 import { panelPortForRoute } from '../lib/panel-port.js';
-import { sessionPresenceForTile } from '../lib/terminal-lifecycle.js';
+import { tileLifecycle } from '../lib/terminal-lifecycle.js';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import './GridView.css';
@@ -37,6 +37,10 @@ function quadrantOf(x, y, r) {
 // nuova colonna {col}. Divisori pointer ridimensionano i pesi (live).
 export default function GridView({
   layout, onLayoutChange, token, readonly = false, sessionsAlive, focusSession, onFocus, onOpenSingle,
+  // Il nodo LOCALE non ha un gruppo in nodeGroups: la sua autorevolezza e il
+  // suo istante di lettura viaggiano come props, con la stessa semantica dei
+  // gruppi remoti (verifiedAt). localIdentities: refKey -> `created`.
+  localVerified = true, localIdentities = null, localVerifiedAt = null,
   decks = [], currentDeck, onSendToDeck,
   // Fine gesto di resize (pointerup/pointercancel/blur) — la griglia
   // chiede un salvataggio immediato invece di affidarsi al debounce.
@@ -49,6 +53,10 @@ export default function GridView({
   panelPort = 0, nodePanelPorts = {},
 }) {
   useLang();                                         // re-render allo switch lingua
+  // Un solo orologio per l'intero render: il tetto del «non verificato» si
+  // misura in secondi, e la griglia si ridisegna a ogni giro di poll (4 s),
+  // quindi un istante letto qui e' fresco abbastanza da farlo scattare.
+  const nowMs = Date.now();
   const [drag, setDrag] = useState(null);            // {col} | {col,row,quadrant}
   const gridRef = useRef(null);
   const colRefs = useRef([]);
@@ -175,10 +183,20 @@ export default function GridView({
               const tnodes = [];
               const key = refKey(tile);
               const nodeGroup = nodeGroupForTile(tile.node, nodeGroups);
-              const nodeOnline = tile.unavailable !== true
-                && (tile.node ? nodeGroup?.status === 'up' : (!sessionsAlive || sessionsAlive.has(key)));
+              // Un solo calcolo di stato per tile, da cui derivano sia il
+              // pallino di testa sia la decisione sulla generazione: due
+              // letture divergenti della stessa cosa erano il difetto.
+              const presenza = tileLifecycle({
+                tileKey: key, node: tile.node, nodeGroups, sessionsAlive,
+                localVerified, localIdentita: localIdentities ? localIdentities.get(key) : null,
+                lastVerifiedAt: tile.node ? (nodeGroup?.verifiedAt ?? null) : localVerifiedAt,
+                nowMs,
+              });
+              const nodeOnline = tile.unavailable !== true && (
+                tile.node ? nodeGroup?.status === 'up' : presenza.owner === 'ok'
+              );
               const sessionAlive = tile.unavailable !== true
-                && sessionPresenceForTile({ tileKey: key, node: tile.node, nodeGroups, sessionsAlive });
+                && presenza.presenza !== 'assente-verificata';
               // Cella Fleet gestita per questo tile (route + ownerId + tmuxSession),
               // risolta una sola volta: titolo visibile e pannello per-cella
               // condividono lo stesso lookup, mai due fonti divergenti.
@@ -216,6 +234,7 @@ export default function GridView({
                     stale={tile.stale === true}
                     alive={nodeOnline}
                     sessionAlive={sessionAlive}
+                    presence={presenza}
                     fontSize={tile.fontSize}
                     onZoom={(delta) => onLayoutChange(zoomTile(layout, ci, ri, delta))}
                     decks={decks} currentDeck={currentDeck} onSendToDeck={onSendToDeck}
