@@ -28,7 +28,20 @@ export function rel(epochSec, nowSec = Math.floor(Date.now() / 1000)) {
 
 // Etichetta di stato di un gruppo nodo degradato (design §7: mai spinner).
 // Usa rel() per i "down since" / "visto ... fa".
+// La lista sessioni di questa posizione e' una LETTURA o una supposizione?
+// Un gruppo «up» con la lettura delle sessioni caduta non lo e': l'inventario
+// delle celle puo' essere completo mentre l'elenco tmux e' degradato, ed e'
+// esattamente il caso in cui il gruppo si dichiara parziale. Tutto cio' che
+// deriva dalla sessione — attivita', anteprima, stato acceso — in quel caso
+// non e' un dato verificato, e non va presentato come tale.
+export function sessionsAuthoritative(g) {
+  const gruppo = g || {};
+  if (gruppo.status !== 'up') return false;
+  return gruppo.sessionsAvailable !== false;
+}
+
 export function nodeStateLabel(g) {
+  if (g.status === 'up' && !sessionsAuthoritative(g)) return t('node-sessions-unverified');
   if (g.status === 'passive') return t('node-passive');
   if (g.status === 'down') {
     return g.downSince ? t('tunnel-down-since').replace('{t}', rel(g.downSince)) : t('tunnel-down');
@@ -104,14 +117,25 @@ export function hasFreshOutput(session, key, storage = globalThis.localStorage) 
 // configurato (con fallback all'engine); da accesa usa il segnale esplicito
 // derivato dal pane_title tmux. Un peer precedente al nuovo contratto non viene
 // marcato come working: conserva il preview come fallback compatibile.
-export function cellRuntime(cell, session = {}) {
+export function cellRuntime(cell, session = {}, { autorevole = true } = {}) {
   const c = cell || {};
+  const engine = `${c.engine || ''}${c.key ? `·${c.key}` : ''}`;
+  const startup = [engine, c.model && c.model !== engine ? c.model : ''].filter(Boolean).join(' · ');
   if (!c.tmux) {
-    const engine = `${c.engine || ''}${c.key ? `·${c.key}` : ''}`;
-    const startup = [engine, c.model && c.model !== engine ? c.model : ''].filter(Boolean).join(' · ');
     return {
       working: false,
       subtitle: String(startup || t('cell-off')).trim(),
+    };
+  }
+  if (!autorevole) {
+    // La cella risulta accesa nell'inventario Fleet, ma lo stato della sua
+    // sessione tmux non e' stato letto: si mostra quel che si sa (il motore
+    // configurato) e si dichiara il resto non verificato. Mai «accesa» per
+    // inerzia, mai un'attivita' dedotta da un elenco che non e' una lettura.
+    return {
+      working: false,
+      unverified: true,
+      subtitle: [t('cell-unverified'), startup].filter(Boolean).join(' · '),
     };
   }
   if (session.working === true) {
@@ -145,16 +169,17 @@ function cellSearchText(cell, session) {
 // manuale, live, fresh, attivita', label, key), quindi l'ordinamento qui non
 // cambia il risultato finale — la sidebar pre-ordina per pinRank prima di
 // chiamare, la home passa l'ordine naturale.
-export function buildLocalRoster(cells, unmanaged, byName, storage = globalThis.localStorage) {
+export function buildLocalRoster(cells, unmanaged, byName, storage = globalThis.localStorage, { autorevole = true } = {}) {
   return [
     ...(Array.isArray(cells) ? cells : []).map((c) => {
       const session = byName.get(c.tmuxSession) || {};
       const key = positionKey([], c.tmuxSession);
-      const runtime = cellRuntime(c, session);
+      const runtime = cellRuntime(c, session, { autorevole });
       return {
         type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
         fresh: hasFreshOutput(session, key, storage), activity: session.activity || 0,
         working: runtime.working, subtitle: runtime.subtitle,
+        unverified: runtime.unverified === true,
         searchText: cellSearchText(c, session),
       };
     }),
@@ -176,12 +201,13 @@ export function buildLocalRoster(cells, unmanaged, byName, storage = globalThis.
 export function buildRemoteRoster(group, storage = globalThis.localStorage) {
   const g = group || {};
   const route = Array.isArray(g.route) ? g.route : [];
+  const autorevole = sessionsAuthoritative(g);
   const remoteByName = new Map((g.sessions || []).map((s) => [s.name, s]));
   const rawItems = [
     ...(g.cells || []).map((c) => {
       const session = remoteByName.get(c.tmuxSession) || {};
       const key = positionKey(route, c.tmuxSession || c.cell);
-      const runtime = cellRuntime(c, session);
+      const runtime = cellRuntime(c, session, { autorevole });
       return {
         // preserved: cella di un elenco fermo (nodo non raggiungibile) — non
         // e' "live" nemmeno se l'ultima sessione tmux era attiva: drag, click,
@@ -189,6 +215,7 @@ export function buildRemoteRoster(group, storage = globalThis.localStorage) {
         type: 'cell', value: c, key, label: c.cell, live: !!c.tmux && !c.preserved,
         fresh: hasFreshOutput(session, key, storage), activity: session.activity || c.activity || 0,
         working: runtime.working, subtitle: runtime.subtitle,
+        unverified: runtime.unverified === true,
         searchText: cellSearchText(c, session),
       };
     }),

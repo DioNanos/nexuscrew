@@ -315,7 +315,7 @@ export default function Sidebar({
                   key={`nodo-vl-${nodeRoute}-${g.name}`}
                   type="button"
                   className="nc-mini-dot"
-                  onMouseEnter={(e) => showTip(e, `${g.label || g.name}: ${g.status === 'up' ? t('no-sessions-short') : nodeStateLabel(g)}`)}
+                  onMouseEnter={(e) => showTip(e, `${g.label || g.name}: ${nodeStateLabel(g) || t('no-sessions-short')}`)}
                   onMouseLeave={hideTip}
                 ><span className={`nc-dot${g.status === 'up' ? ' on' : ' warn'}`} /></button>
               )])
@@ -536,9 +536,8 @@ export default function Sidebar({
                 <b>{g.label || g.name}</b>
                 <small>
                   {' · '}
-                  {g.status === 'up'
-                    ? [t('node-sessions').replace('{n}', String(g.sessions.length)), fleetNotice].filter(Boolean).join(' · ')
-                    : nodeStateLabel(g)}
+                  {nodeStateLabel(g)
+                    || [t('node-sessions').replace('{n}', String(g.sessions.length)), fleetNotice].filter(Boolean).join(' · ')}
                 </small>
               </div>
               {g.status === 'up' && groupView.open && (
