@@ -101,9 +101,11 @@ export function hasFreshOutput(session, key, storage = globalThis.localStorage) 
 }
 
 // Riga di stato condivisa da mobile e desktop. Da spenta mostra il modello
-// configurato (con fallback all'engine); da accesa usa il segnale esplicito
-// derivato dal pane_title tmux. Un peer precedente al nuovo contratto non viene
-// marcato come working: conserva il preview come fallback compatibile.
+// configurato (con fallback all'engine); da accesa usa lo stato che la cella
+// PUBBLICA (gli hook), e solo in mancanza di quello il segnale derivato dal
+// pane_title tmux — che resta un indizio, quindi lo si dichiara incerto. Un
+// peer precedente al nuovo contratto non viene marcato come working: conserva
+// il preview come fallback compatibile.
 export function cellRuntime(cell, session = {}) {
   const c = cell || {};
   if (!c.tmux) {
@@ -134,7 +136,7 @@ export function cellRuntime(cell, session = {}) {
     return { working: false, stato: 'ferma', subtitle: t('cell-stopped') };
   }
   // Nessun canale affidabile — cella non-Claude, oppure dato assente o scaduto.
-  // Il titolo del pane resta un INDIZIO, non una prova (rilievo R7): se lo
+  // Il titolo del pane resta un INDIZIO, non una prova: se lo
   // mostra come «al lavoro» lo dice incerto, e «ferma» NON lo afferma mai.
   if (session.working === true) {
     const detail = String(session.status || '').trim();

@@ -39,7 +39,7 @@ describe('nodeStateLabel: peer non raggiungibile per causa (R21)', () => {
 });
 
 // Lo stato della cella dagli hook vince sul titolo del pane.
-// Il titolo NON prova nulla (rilievo R7: `✳` sta sia su una cella al lavoro sia
+// Il titolo NON prova nulla (`✳` sta sia su una cella al lavoro sia
 // su una ferma), quindi dove non c'e' il canale lo stato e' dichiarato INCERTO
 // e non si afferma mai «ferma» da un silenzio.
 describe('cellRuntime: tre stati dagli hook + incerto dove il titolo non prova', () => {
