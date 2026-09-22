@@ -31,6 +31,21 @@ function binarioOk() {
   }
 }
 
+// Stato di un server nell'output di `codex -p <profilo> mcp list` (righe
+// «nome command args env cwd <enabled|disabled> auth»). Con un profilo
+// inesistente la riga mostra `enabled`: l'asserzione su questo output
+// discrimina davvero il profilo selezionato, non solo l'exit code.
+function statoServerDaMcpList(output, nome) {
+  for (const riga of String(output).split('\n')) {
+    const t = riga.trim().split(/\s+/);
+    if (t[0] === nome) {
+      const stato = t.find((x) => x === 'enabled' || x === 'disabled');
+      if (stato) return stato;
+    }
+  }
+  return null;
+}
+
 // RPC reale contro app-server: initialize, poi config/batchWrite del model
 // (stesso edit che la TUI invia da /model: keyPath model, mergeStrategy
 // replace, reloadUserConfig).
@@ -155,10 +170,25 @@ for (const [nome, spec] of Object.entries(SCENARI)) {
     assert.equal(doc.model, MODEL_SCRITTO, 'la write non e arrivata sul file');
     assert.deepEqual(doc.mcp_servers, toml.parse(profilo).mcp_servers, 'le tabelle MCP sono mutate durante la write');
     if (nome === 'misto') {
-      // La selezione -p carica il profilo in merge nel client vero.
+      // La selezione -p carica il profilo in merge nel client vero E riduce:
+      // gli spenti risultano disabled, non e sufficiente l'exit 0 (che viene
+      // anche con un profilo inesistente).
       const lista = spawnSync(BIN, ['-p', 'nexuscrew-T', 'mcp', 'list'],
         { env: { ...process.env, CODEX_HOME: home }, encoding: 'utf8', timeout: 60000 });
       assert.equal(lista.status, 0, `mcp list con -p fallito: ${(lista.stderr || '').slice(0, 300)}`);
+      for (const spento of Object.keys(toml.parse(profilo).mcp_servers)) {
+        assert.equal(statoServerDaMcpList(lista.stdout, spento), 'disabled',
+          `${spento} dovrebbe risultare disabled col profilo giusto`);
+      }
+      // Discriminante: con un profilo INESISTENTE nessuna riduzione — la
+      // stessa asserzione qui sopra fallirebbe.
+      const senza = spawnSync(BIN, ['-p', 'nexuscrew-INESISTENTE', 'mcp', 'list'],
+        { env: { ...process.env, CODEX_HOME: home }, encoding: 'utf8', timeout: 60000 });
+      assert.equal(senza.status, 0);
+      for (const nome2 of Object.keys(toml.parse(profilo).mcp_servers)) {
+        assert.equal(statoServerDaMcpList(senza.stdout, nome2), 'enabled',
+          `${nome2} col profilo inesistente resta enabled: la riduzione viene dal profilo`);
+      }
     }
   });
 }
