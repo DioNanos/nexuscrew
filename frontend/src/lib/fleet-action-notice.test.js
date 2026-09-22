@@ -96,3 +96,24 @@ describe('upActionNotice', () => {
     expect(n.code).toBe('VL_PROMPT_DEGRADED');
   });
 });
+
+describe('upActionNotice — avvio degradato MCP (claude gestite)', () => {
+  it('readinessDegraded + mcpDegraded -> testo i18n locale con elenco bounded dei server', () => {
+    const res = {
+      ok: true, cell: 'Dev', session: 'work-claude',
+      readinessDegraded: true,
+      mcpDegraded: { failed: ['ko-server'], pending: ['lento', 'spia'] },
+    };
+    const n = upActionNotice(res);
+    expect(n.code).toBe('READINESS_DEGRADED');
+    expect(n.text).toContain('ko-server');
+    expect(n.text).toContain('lento');
+    expect(n.text).toContain('spia');
+  });
+
+  it('readinessDegraded senza mcpDegraded -> notice generica di prontezza (contratto vl invariato)', () => {
+    const n = upActionNotice({ ok: true, cell: 'Dev', readinessDegraded: true });
+    expect(n.code).toBe('READINESS_DEGRADED');
+    expect(n.text).not.toContain('MCP');
+  });
+});
