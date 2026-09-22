@@ -4,6 +4,9 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+- **Claude cells start their work only with their tools connected.** The bootstrap prompt of every managed Claude engine no longer travels on the command line — where the first turn began before the MCP servers finished connecting and the cell answered without any tool, forever — but through the supervised delivery the Kimi engines already use: the cell composer must be ready (never a login, trust or permission dialog) and the MCP servers materialized for the cell must be connected, read per-server from the client's own connection logs for the current generation only (older generations never unlock a new one). If the connect budget runs out, the cell still starts but visibly degraded, with the pending and failed servers listed instead of a silent partial start. Delivery stays at-most-once per generation, cancellation stops the wait before a respawn, and the Kimi contract is unchanged.
+- **The MCP connection log format is a versioned adapter.** The readiness reader declares the client version it was measured on, reads every line tolerantly (variable schema, malformed rows ignored), and a future client change degrades to a visible pending instead of crashing or guessing.
+
 ## 0.9.40 — 2026-09-21
 
 - **Deck rail keeps its order while owners answer at different times.** A background owner refresh used to rebuild the list by appending that owner's decks, so with several owners answering at different moments each group jumped to the end on every answer and the rail visibly reshuffled. The merge now replaces each deck in place (same id, same index), appends only genuinely new decks, and still drops the ones the owner no longer lists.
