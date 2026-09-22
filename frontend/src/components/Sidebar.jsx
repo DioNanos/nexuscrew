@@ -418,7 +418,7 @@ export default function Sidebar({
             const leaseKey = hostLeaseTitleKey(starState, host.hostLease ?? null);
             const baseTitle = c.degraded
               ? t('cell-degraded')
-              : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
+              : item.subtitle || (c.tmux ? t('cell-idle') : t('cell-off'));
             const title = leaseKey ? `${baseTitle} · ${t(leaseKey)}` : baseTitle;
             // Cella con tmux vivo = sessione a tutti gli effetti: draggabile
             // nella griglia, click = tile, doppio click = vista singola.
@@ -604,7 +604,7 @@ export default function Sidebar({
                 const dot = c.degraded ? 'warn' : c.tmux && !g.cellsPreserved ? 'on' : '';
                 const baseTitle = g.cellsPreserved
                   ? `${t('fleet-stale')}`
-                  : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
+                  : item.subtitle || (c.tmux ? t('cell-idle') : t('cell-off'));
                 const cardTitle = leaseKey ? `${baseTitle} · ${t(leaseKey)}` : baseTitle;
                 return (
                   <div

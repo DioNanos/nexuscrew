@@ -283,7 +283,7 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
       const leaseKey = hostLeaseTitleKey(starState, host.hostLease ?? null);
       const baseStateTitle = c.degraded
         ? t('cell-degraded')
-        : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
+        : item.subtitle || (c.tmux ? t('cell-idle') : t('cell-off'));
       const stateTitle = leaseKey ? `${baseStateTitle} · ${t(leaseKey)}` : baseStateTitle;
       const canPower = route.length === 0 || (group?.capabilities || []).includes(c.active ? 'down' : 'up');
       const canBoot = route.length === 0

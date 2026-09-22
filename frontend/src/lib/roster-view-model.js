@@ -114,20 +114,44 @@ export function cellRuntime(cell, session = {}) {
       subtitle: String(startup || t('cell-off')).trim(),
     };
   }
-  if (session.working === true) {
-    const label = t('cell-working');
+  // Lo stato pubblicato dagli hook (D-340) VINCE sul titolo: e' l'unico
+  // segnale che DICE cosa sta facendo la cella invece di indovinarlo. Tre
+  // stati, e «attesa permesso» reso come lavoro con la sua etichetta — la
+  // cella non e' ferma, e' bloccata su una richiesta.
+  const stato = session.attivita && typeof session.attivita === 'object'
+    ? session.attivita.stato : null;
+  if (stato === 'lavora' || stato === 'attesa') {
+    const label = t(stato === 'attesa' ? 'cell-permission' : 'cell-working');
     const detail = String(session.status || '').trim();
     const generic = !detail || /^working(?:\.{3}|…)?$/i.test(detail);
     return {
       working: true,
-      subtitle: generic ? label : `${label} · ${detail}`,
+      stato,
+      subtitle: stato === 'lavora' && !generic ? `${label} · ${detail}` : label,
+    };
+  }
+  if (stato === 'ferma') {
+    return { working: false, stato: 'ferma', subtitle: t('cell-stopped') };
+  }
+  // Nessun canale affidabile — cella non-Claude, oppure dato assente o scaduto.
+  // Il titolo del pane resta un INDIZIO, non una prova (rilievo R7): se lo
+  // mostra come «al lavoro» lo dice incerto, e «ferma» NON lo afferma mai.
+  if (session.working === true) {
+    const detail = String(session.status || '').trim();
+    return {
+      working: true,
+      stato: 'ignoto',
+      subtitle: detail ? `${t('cell-unknown')} · ${detail}` : t('cell-unknown'),
     };
   }
   if (session.working === false) {
-    return { working: false, subtitle: t('cell-idle') };
+    return { working: false, stato: 'ignoto', subtitle: t('cell-unknown') };
   }
+  // Ne' working ne' idle dichiarati (peer precedente al contratto): `tmux vivo`
+  // e' l'unica cosa che si sa, e non afferma nulla sul turno.
   return {
     working: false,
+    stato: 'ignoto',
     subtitle: String(session.preview || c.preview || t('cell-on')).trim(),
   };
 }
