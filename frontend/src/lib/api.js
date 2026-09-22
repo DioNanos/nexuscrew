@@ -212,6 +212,7 @@ export const relayAskAnswer = (t, { ownerId, askId, text }) => jsonFetch('/api/a
 export const relayAskVerify = (t, { ownerId, askId, requestId }) => jsonFetch('/api/asks-relay', t, {
   method: 'POST', body: { action: 'verify', ownerId, askId, requestId },
 });
+export const getAskRelayState = (t) => jsonFetch('/api/asks-relay/state', t);
 export const relayAskDismiss = (t, { ownerId, askId }) => jsonFetch('/api/asks-relay', t, {
   method: 'POST', body: { action: 'dismiss', ownerId, askId },
 });

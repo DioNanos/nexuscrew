@@ -16,6 +16,7 @@ vi.mock('../lib/api.js', () => ({
   dismissAsk: vi.fn(() => Promise.resolve({})),
   // The feed-state read feeds the per-owner reply grants (empty = read-only).
   getFeedState: vi.fn(() => Promise.resolve({ views: [] })),
+  getAskRelayState: vi.fn(() => Promise.resolve({ attempts: [] })),
   relayAskAnswer: vi.fn(() => Promise.resolve({ status: 'committed' })),
   relayAskDismiss: vi.fn(() => Promise.resolve({ dismissed: true })),
   relayAskVerify: vi.fn(() => Promise.resolve({ state: 'committed' })),
@@ -234,5 +235,104 @@ describe('federated ask cards: identity per owner and reload', () => {
     // Risposta altrove: la domanda locale non e' piu' aperta e deve sparire.
     await act(async () => { finishLocal({ asks: [] }); });
     expect(container.querySelector('.nc-ask-badge')).toBeNull();
+  });
+});
+
+describe('NotifyCenter — arretrato notifiche importate (lista consultabile silenziosa)', () => {
+  const REMOTE = {
+    views: [{
+      ownerId: 'nodeX', askReplyAccess: false, stale: false,
+      notifications: [
+        { type: 'notify', eventId: 'e1', title: 'Titolo arretrato', body: 'Corpo arretrato', urgency: 'normal', ts: 1700000000000 },
+        { type: 'fleet-state', eventId: 'e2', title: 'non ammesso' },
+      ],
+      asks: [],
+    }],
+  };
+
+  it('arretrato dallo snapshot: lista consultabile, silenziosa (niente toast/TTS), tipi non ammessi filtrati', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce(REMOTE);
+    render(<NotifyCenter token="token" />);
+    const badge = await screen.findByTitle('questions from the cells');
+    act(() => badge.click());
+    expect(await screen.findByText('Titolo arretrato')).toBeTruthy();
+    expect(screen.getByText('Corpo arretrato')).toBeTruthy();
+    expect(screen.queryByText('non ammesso')).toBeNull();
+    expect(mocks.speaker.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('dedup unica snapshot+SSE per (ownerId,eventId): la card non si duplica', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce(REMOTE);
+    render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(mocks.eventHandler).toBeTypeOf('function'));
+    act(() => mocks.eventHandler({ type: 'notify', ownerId: 'nodeX', eventId: 'e1', title: 'Titolo arretrato', body: 'x', urgency: 'normal' }));
+    await screen.findAllByText('Titolo arretrato');
+    expect(screen.getAllByText('Titolo arretrato').length).toBe(1);
+  });
+
+  it('view revocata: le sue card spariscono al feed-state successivo', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce(REMOTE);
+    const { rerender } = render(<NotifyCenter token="token" />);
+    const badge = await screen.findByTitle('questions from the cells');
+    act(() => badge.click());
+    await screen.findByText('Titolo arretrato');
+    const api = await import('../lib/api.js');
+    api.getFeedState.mockResolvedValueOnce({ views: [] });
+    rerender(<NotifyCenter token="token-b" />);
+    await waitFor(() => expect(screen.queryByText('Titolo arretrato')).toBeNull());
+  });
+});
+
+describe('arretrato: dedup che discrimina e cap per ts', () => {
+  const viewWith = (notices) => ({
+    views: [{ ownerId: 'nodeX', askReplyAccess: false, stale: false, notifications: notices, asks: [] }],
+  });
+  const mk = (eventId, ts) => ({ type: 'notify', eventId, title: 'T ' + eventId, urgency: 'normal', ts });
+
+  it('dedup: snapshot arriva DOPO l SSE della stessa (ownerId,eventId) -> una card sola', async () => {
+    let resolveFeed;
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockImplementationOnce(() => new Promise((r) => { resolveFeed = r; }));
+    render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(mocks.eventHandler).toBeTypeOf('function'));
+    act(() => mocks.eventHandler({ type: 'notify', ownerId: 'nodeX', eventId: 'e9', title: 'T e9', urgency: 'normal' }));
+    const badge = await screen.findByTitle('questions from the cells');
+    act(() => badge.click());
+    expect(document.querySelectorAll('.nc-remote-notice').length).toBe(1);
+    act(() => mocks.eventHandler({ type: 'notify', ownerId: 'nodeX', eventId: 'e9', title: 'T e9', urgency: 'normal' }));
+    expect(document.querySelectorAll('.nc-remote-notice').length).toBe(1);
+    resolveFeed(viewWith([mk('e9', 5)]));
+    await waitFor(() => expect(document.querySelectorAll('.nc-remote-notice').length).toBe(1));
+  });
+
+  it('dedup: snapshot arriva PRIMA e l SSE dopo -> una card sola', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce(viewWith([mk('e7', 3)]));
+    render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(mocks.eventHandler).toBeTypeOf('function'));
+    const badge = await screen.findByTitle('questions from the cells');
+    act(() => badge.click());
+    await screen.findByText('T e7');
+    act(() => mocks.eventHandler({ type: 'notify', ownerId: 'nodeX', eventId: 'e7', title: 'T e7', urgency: 'normal' }));
+    await waitFor(() => expect(document.querySelectorAll('.nc-remote-notice').length).toBe(1));
+  });
+
+  it('cap 50: tiene le piu recenti per ts, non le ultime inserite', async () => {
+    const notices = [];
+    for (let i = 0; i < 55; i += 1) notices.push(mk('e' + i, 1000 + i));
+    notices.unshift(mk('prima-ts-alto', 99999));
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce(viewWith(notices));
+    render(<NotifyCenter token="token" />);
+    const badge = await screen.findByTitle('questions from the cells');
+    act(() => badge.click());
+    expect(await screen.findByText('T prima-ts-alto')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('T e0')).toBeNull());
+    expect(screen.getByText('T e6')).toBeTruthy();
+    expect(screen.queryByText('T e5')).toBeNull();
+    expect(document.querySelectorAll('.nc-remote-notice').length).toBe(50);
   });
 });

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
-import { getAsks, answerAsk, dismissAsk, relayAskAnswer, relayAskDismiss, relayAskVerify, getFeedState } from '../lib/api.js';
+import { getAsks, answerAsk, dismissAsk, relayAskAnswer, relayAskDismiss, relayAskVerify, getFeedState, getAskRelayState } from '../lib/api.js';
+import { mergeRemoteNotices, toRemoteNotice, normalizeTs, boundedByTs } from '../lib/remote-notices.js';
 import { connectEvents } from '../lib/events.js';
 import { useNotificationSpeech } from '../hooks/useNotificationSpeech.js';
 import {
@@ -66,15 +67,18 @@ function Toast({ n, onClose }) {
   );
 }
 
-function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false }) {
+function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, initialUncertainRid = null }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [dismissing, setDismissing] = useState(false);
   // Esito incerto (owner remoto): il requestId è ciò che permette di verificare
   // SENZA ripetere il paste. Finché non è risolto, nessun nuovo invio.
-  const [uncertainRid, setUncertainRid] = useState(null);
+  const [uncertainRid, setUncertainRid] = useState(initialUncertainRid);
   const [verifying, setVerifying] = useState(false);
+  // Blocco precedente: il nuovo requestId non ha ricevuta. Senza ID originale
+  // resta solo la riconciliazione con l'owner: nessun reinvio cieco.
+  const [blockedOriginal, setBlockedOriginal] = useState(false);
 
   const send = async (value) => {
     const answer = String(value || '').trim();
@@ -90,7 +94,13 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false }) 
         const ownerAskId = ask.ownerAskId || ask.id;
         const out = await relayAskAnswer(token, { ownerId: ask.ownerId, askId: ownerAskId, text: answer });
         // Esito incerto: la card resta con lo stato «verifica», mai un retry cieco.
-        if (out && out.uncertain) { setUncertainRid(out.requestId); return; }
+        if (out && out.uncertain) {
+          // Blocco precedente: il nuovo requestId non ha ricevuta — la verifica
+          // possibile è solo sull'ID originale autorizzato, se noto.
+          setUncertainRid(out.originalRequestId || null);
+          setBlockedOriginal(!out.originalRequestId);
+          return;
+        }
         onAnswered(ask.id, ask.ownerId);
       } else {
         await answerAsk(token, ask.id, answer);
@@ -132,18 +142,19 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false }) 
       {ask.ownerId && askReplyAccess === false && (
         <small className="nc-set-hint">{t('ask-remote-readonly')}</small>
       )}
-      {uncertainRid && <>
+      {(uncertainRid || blockedOriginal) && <>
         <div className="nc-err">{t('ask-uncertain')}</div>
+        {blockedOriginal && !uncertainRid && <div className="nc-err">{t('ask-reconcile')}</div>}
         <button type="button" className="nc-btn ghost" disabled={verifying}
           onClick={async () => {
             setVerifying(true);
             try {
-              const out = await relayAskVerify(token, { ownerId: ask.ownerId, askId: ask.id, requestId: uncertainRid });
+              const out = await relayAskVerify(token, { ownerId: ask.ownerId, askId: ask.ownerAskId || ask.id, requestId: uncertainRid });
               if (out && (out.state === 'committed' || out.state === 'failed')) onDismiss(ask.id, ask.ownerId);
             } finally { setVerifying(false); }
           }}>{t('ask-verify')}</button>
       </>}
-      {(!ask.ownerId || askReplyAccess === true) && <>
+      {(!ask.ownerId || askReplyAccess === true) && !uncertainRid && !blockedOriginal && <>
         {Array.isArray(ask.options) && ask.options.length > 0 && (
           <div className="nc-ask-opts">
             {ask.options.map((o) => (
@@ -168,6 +179,11 @@ export default function NotifyCenter({ token }) {
   const [speechEnabled] = useNotificationSpeech();
   const [toasts, setToasts] = useState([]);
   const [asks, setAsks] = useState([]);
+  // Arretrato di notifiche IMPORTATE dai feed remoti: lista consultabile e
+  // SILENZIOSA (mai toast/TTS/push per queste card; il live resta com'era).
+  // Dedup unica snapshot+SSE per (ownerId,eventId); bounded; una view revocata
+  // fa sparire le sue card al prossimo feed-state.
+  const [remoteNotices, setRemoteNotices] = useState([]);
   // Deep-link push (#ask=<id>): il pannello parte aperto.
   const [panelOpen, setPanelOpen] = useState(() => {
     try { return /(?:^|[#&])ask=/.test(location.hash); } catch (_) { return false; }
@@ -231,6 +247,13 @@ export default function NotifyCenter({ token }) {
     // importate gia' presenti (l'ordine delle due risposte non e' garantito).
     getAsks(token).then((j) => { if (!cancelled) setAsks((cur) => applyLocalSnapshot(cur, j.asks)); }).catch(() => {});
     const close = connectEvents(token, (frame) => {
+      if (frame.type === 'notify' && frame.ownerId && frame.eventId) {
+        // Importato live: entra nella lista consultabile (dedup con l'arretrato
+        // per (ownerId,eventId)); nessun toast/speaker aggiuntivo per la card.
+        const card = toRemoteNotice(frame, frame.ownerId);
+        if (!card) return;
+        setRemoteNotices((cur) => boundedByTs(mergeRemoteNotices(cur, [card], null)));
+      }
       if (frame.type === 'notify') pushToast(frame);
       else if (frame.type === 'ask' && frame.ask && frame.ask.id) {
         // Two owners can legitimately use the same ask id: identity is the pair.
@@ -246,6 +269,25 @@ export default function NotifyCenter({ token }) {
     return () => { cancelled = true; close(); };
   }, [token, pushToast]);
 
+  // Riconciliazione dopo refresh: gli esiti incerti noti al relay locale
+  // ricostruiscono lo stato «verifica» delle card importate, senza reinvii.
+  const [uncertainByOwnerAsk, setUncertainByOwnerAsk] = useState({});
+  useEffect(() => {
+    if (!token) return undefined;
+    let alive = true;
+    getAskRelayState(token).then((j) => {
+      if (!alive) return;
+      const map = {};
+      for (const a of (j && j.attempts) || []) {
+        if (a && a.state === 'uncertain' && a.ownerId && a.askId && a.requestId) {
+          map[a.ownerId + '|' + a.askId] = a.requestId;
+        }
+      }
+      setUncertainByOwnerAsk(map);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [token]);
+
   // Grant di risposta PER OWNER, dallo snapshot che il client ha del feed
   // (/api/feed-state). Assente = nessuna risposta: la card resta in lettura.
   const [replyGrants, setReplyGrants] = useState({});
@@ -255,16 +297,34 @@ export default function NotifyCenter({ token }) {
       if (!alive) return;
       const grants = {};
       const imported = [];
+      const notices = new Map();
+      const keepOwners = new Set();
       for (const v of (j && j.views) || []) {
         grants[v.ownerId] = v.askReplyAccess === true;
+        keepOwners.add(v.ownerId);
         // The local endpoint only knows local asks: the federated ones live in
         // the owner's snapshot, so a reload rebuilds them from here.
         for (const a of v.asks || []) {
           if (a && a.id) imported.push({ ...a, ownerId: v.ownerId, imported: true });
         }
+        // Arretrato notifiche importate: solo il tipo notificatorio, dedup su
+        // (ownerId,eventId), testo come stringa (React fa l'escaping).
+        for (const n of v.notifications || []) {
+          const card = toRemoteNotice(n, v.ownerId);
+          if (card) notices.set(card.key, card);
+        }
       }
       setReplyGrants(grants);
       if (imported.length) setAsks((cur) => mergeAsks(cur, imported));
+      // Rebuild dall'arretrato: le card di una view revocata cadono qui; le
+      // card arrivate via SSE di un owner ancora attivo restano (dedup per key).
+      setRemoteNotices((cur) => {
+        const merged = [];
+        for (const c of cur) if (keepOwners.has(c.ownerId)) merged.push(c);
+        for (const c of notices.values()) merged.push({ ...c, key: c.key });
+        console.log('DBG-M2 merged:', merged.length, merged.map((c) => c.key).join(','));
+        return boundedByTs(merged);
+      });
     }).catch(() => {});
     return () => { alive = false; };
   }, [token]);
@@ -276,13 +336,13 @@ export default function NotifyCenter({ token }) {
           {toasts.map((n) => <Toast key={n.key} n={n} onClose={() => dropToast(n.key)} />)}
         </div>
       )}
-      {asks.length > 0 && !panelOpen && (
+      {(asks.length > 0 || remoteNotices.length > 0) && !panelOpen && (
         <button type="button" className="nc-ask-badge" onClick={() => setPanelOpen(true)}
           title={t('asks-title')}>
-          ? <span className="nc-ask-count">{asks.length}</span>
+          ? <span className="nc-ask-count">{asks.length + remoteNotices.length}</span>
         </button>
       )}
-      {asks.length > 0 && panelOpen && (
+      {(asks.length > 0 || remoteNotices.length > 0) && panelOpen && (
         <div className="nc-ask-panel">
           <div className="nc-ask-panel-head">
             <b>{t('asks-title')}</b>
@@ -294,7 +354,22 @@ export default function NotifyCenter({ token }) {
           <div className="nc-ask-panel-body">
             {asks.map((a) => <AskCard key={askKeyOf(a.id, a.ownerId)} ask={a} token={token}
               askReplyAccess={!a.ownerId || replyGrants[a.ownerId] === true}
+              initialUncertainRid={a.ownerId ? (uncertainByOwnerAsk[a.ownerId + '|' + (a.ownerAskId || a.id)] || null) : null}
               onAnswered={removeAsk} onDismiss={removeAsk} />)}
+            {remoteNotices.length > 0 && (
+              <div className="nc-remote-notices">
+                <div className="nc-remote-notices-head"><b>{t('remote-notices-title')}</b></div>
+                {remoteNotices.map((n) => (
+                  <div key={n.key} className={'nc-remote-notice' + (n.urgency === 'high' ? ' nc-remote-notice-high' : '')}>
+                    {n.title ? <b>{n.title}</b> : null}
+                    {n.body ? <div>{n.body}</div> : null}
+                    <div className="nc-remote-notice-meta">
+                      {n.ownerId.slice(0, 8)} · {new Date(n.ts || Date.now()).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
