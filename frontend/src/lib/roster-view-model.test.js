@@ -104,6 +104,9 @@ describe('cellRuntime: tre stati dagli hook + incerto dove il titolo non prova',
       expect(t(chiave)).not.toBe(chiave);
     }
     expect(new Set([t('cell-stopped'), t('cell-permission'), t('cell-unknown'), t('cell-idle')]).size).toBe(4);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Un gruppo «up» con la lettura delle sessioni caduta non e' una posizione
 // verificata: l'inventario delle celle puo' essere completo mentre l'elenco
@@ -138,10 +141,12 @@ describe('autorevolezza della lettura: chi puo\' dire cosa', () => {
 
   it('la cella non si dichiara accesa se lo stato della sua sessione non e\' stato letto', () => {
     const cella = { cell: 'Alfa', tmux: true, engine: 'claude', model: 'm1', key: 'k', tmuxSession: 'cloud-Alfa' };
-    // lettura autorevole, sessione assente dal campione: il fallback di prima
+    // lettura autorevole, sessione assente dal campione: si mostra quel che
+    // c'e' — nessuno stato del turno, ma nemmeno una dichiarazione di non
+    // verificato, che qui non avrebbe motivo di esistere.
     const prima = cellRuntime(cella, {});
-    expect(prima.stato).toBeUndefined();
-    expect(prima.subtitle).toBeTruthy();
+    expect(prima.stato).toBe('ignoto');
+    expect(prima.subtitle).not.toContain(t('cell-unknown'));
 
     const dopo = cellRuntime(cella, {}, { autorevole: false });
     expect(dopo.stato).toBe('ignoto');
