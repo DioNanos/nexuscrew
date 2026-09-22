@@ -71,10 +71,23 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
   // noto durante i giri saltati — incluso il motivo per cui si salta.
   const backoffRef = useRef({});
   const peerCacheRef = useRef({ remote: {}, fleet: {} });
+  // Il token con cui la cache e' stata riempita, e il giro in volo.
+  const cacheTokenRef = useRef(null);
+  const inFlightRef = useRef(false);
 
   useEffect(() => {
     if (!enabled || !token) { setGroups([]); return undefined; }
     let alive = true;
+    // Cache e backoff sono legati al TOKEN che li ha riempiti: un token
+    // diverso e' un'altra sessione, e i suoi dati non sono i nostri. Senza
+    // questo, dopo un cambio di token la UI mostrerebbe l'elenco dell'utente
+    // precedente come se fosse una lettura corrente.
+    if (cacheTokenRef.current !== token) {
+      cacheTokenRef.current = token;
+      backoffRef.current = {};
+      peerCacheRef.current = { remote: {}, fleet: {} };
+      downRef.current = {};
+    }
     // Owner sticky, ripristinati dal localStorage per ripartire pieni al
     // reload della pagina invece che con la lista vuota.
     const sticky = { instanceId: '', nodes: new Map(), topology: new Map() };
@@ -85,7 +98,19 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       for (const t of persisted.topology) sticky.topology.set(t.route.join('/'), { data: t, missingSince: null });
     }
 
+    // Round ORDINATI per costruzione: un giro non parte mentre il precedente e'
+    // ancora in volo, quindi non ci sono due round da riordinare. Le fetch
+    // federate hanno timeout fino a 8 s contro un poll di 4 s: la
+    // sovrapposizione non e' un'ipotesi, e senza questa guardia una risposta
+    // vecchia puo' atterrare dopo una nuova e sovrascriverla — il peer finito
+    // in backoff per un timeout riapparirebbe vivo, e viceversa.
     async function poll() {
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+      try { await pollOnce(); } finally { inFlightRef.current = false; }
+    }
+
+    async function pollOnce() {
       const pollStart = Date.now();
       let nodes = []; let topology = []; let aliases = {}; let localInstanceId = '';
       let nodesOk = false; let topologyOk = false;
@@ -100,9 +125,14 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       // Sticky: un fetch fallito/vuoto non azzera l'elenco owner; chi manca
       // da una risposta confermata resta come stale finché non scade la grazia.
       if (localInstanceId && sticky.instanceId !== localInstanceId) {
-        // localStorage di un ALTRO nodo locale: la cache non e' nostra.
+        // localStorage di un ALTRO nodo locale: la cache non e' nostra. E lo
+        // stesso vale per le risposte dei peer, che sono indicizzate per
+        // ROTTA: un'altra istanza puo' riusare la stessa rotta, e in quel caso
+        // l'elenco di prima e' il residuo di un nodo diverso.
         sticky.instanceId = localInstanceId;
         sticky.nodes.clear(); sticky.topology.clear();
+        backoffRef.current = {};
+        peerCacheRef.current = { remote: {}, fleet: {} };
       } else if (localInstanceId) {
         sticky.instanceId = localInstanceId;
       }
@@ -171,12 +201,19 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       // nodo: ogni posizione mostra celle Fleet + tmux unmanaged (inventario Hydra).
       await Promise.all(routes.map(async (route) => {
         const key = route.join('/');
+        const cachedRemote = peerCacheRef.current.remote[key] || null;
         if (!shouldPollPeer(backoffRef.current, key, pollStart)) {
           // R21: il peer in backoff NON si interroga — chi guarda gli ALTRI
-          // peer non deve essere intasato dal suo rumore. Resta l'ultimo
-          // stato noto, con la causa che l'ha prodotto.
-          const cached = peerCacheRef.current.remote[key];
-          if (cached) remote[key] = cached;
+          // peer non deve essere intasato dal suo rumore. E non interrogarlo
+          // significa che la sua lista NON e' verificata, non che sia vuota:
+          // l'ultimo dato buono resta come elenco fermo, con l'istante in cui
+          // e' stato letto DAVVERO.
+          const stato = backoffRef.current[key];
+          remote[key] = {
+            error: 'unreachable',
+            cause: (stato && stato.cause) || null,
+            lastGoodAt: cachedRemote ? cachedRemote.at : null,
+          };
           // Il backoff rende la lettura Fleet NON VERIFICABILE, non vuota.
           // Conserviamo la risposta precedente soltanto come elenco fermo;
           // available:false impedisce di presentarla come dato aggiornato.
@@ -186,14 +223,24 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
         }
         let sessionsOk = false;
         try {
-          remote[key] = await getRouteSessions(token, route);
+          const payload = await getRouteSessions(token, route);
           sessionsOk = true;
-          peerCacheRef.current.remote[key] = remote[key];
+          // L'istante viaggia col payload: e' l'ora della LETTURA, non del
+          // render, e serve al tetto del «non verificato» quando piu' tardi
+          // questa risposta sara' l'ultima buona rimasta.
+          remote[key] = { ...payload, at: pollStart };
+          peerCacheRef.current.remote[key] = { payload, at: pollStart };
         } catch (e) {
           // R21: la causa distingue 502 (peer assente), 403 (peer nega),
           // 404 (rotta inesistente): tre azioni diverse per chi guarda.
-          remote[key] = { error: 'unreachable', cause: classifyPeerFailure(e) };
-          peerCacheRef.current.remote[key] = remote[key];
+          // Il tentativo fallito NON cancella l'ultima lettura buona: la
+          // marca soltanto come non verificata. Ultimo dato buono e ultimo
+          // tentativo sono due cose diverse e restano separate.
+          remote[key] = {
+            error: 'unreachable',
+            cause: classifyPeerFailure(e),
+            lastGoodAt: cachedRemote ? cachedRemote.at : null,
+          };
         }
         const previousFleet = peerCacheRef.current.fleet[key] || null;
         try {

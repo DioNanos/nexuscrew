@@ -28,7 +28,24 @@ export function rel(epochSec, nowSec = Math.floor(Date.now() / 1000)) {
 
 // Etichetta di stato di un gruppo nodo degradato (design §7: mai spinner).
 // Usa rel() per i "down since" / "visto ... fa".
+// La lista sessioni di questa posizione e' una LETTURA o una supposizione?
+// Un gruppo «up» con la lettura delle sessioni caduta non lo e': l'inventario
+// delle celle puo' essere completo mentre l'elenco tmux e' degradato, ed e'
+// esattamente il caso in cui il gruppo si dichiara parziale. Tutto cio' che
+// deriva dalla sessione — attivita', anteprima, stato acceso — in quel caso
+// non e' un dato verificato, e non va presentato come tale.
+export function sessionsAuthoritative(g) {
+  const gruppo = g || {};
+  // Il degrado si dichiara, non si deduce da un campo mancante: un gruppo
+  // costruito senza `status` (forma parziale, test, chiamante che passa solo
+  // cio' che gli serve) non sta affermando che la lettura e' caduta.
+  if (gruppo.sessionsAvailable === false) return false;
+  if (typeof gruppo.status === 'string' && gruppo.status !== 'up') return false;
+  return true;
+}
+
 export function nodeStateLabel(g) {
+  if (g.status === 'up' && !sessionsAuthoritative(g)) return t('node-sessions-unverified');
   if (g.status === 'passive') return t('node-passive');
   if (g.status === 'down') {
     return g.downSince ? t('tunnel-down-since').replace('{t}', rel(g.downSince)) : t('tunnel-down');
@@ -103,14 +120,17 @@ export function hasFreshOutput(session, key, storage = globalThis.localStorage) 
 // Riga di stato condivisa da mobile e desktop. Da spenta mostra il modello
 // configurato (con fallback all'engine); da accesa usa lo stato che la cella
 // PUBBLICA (gli hook), e solo in mancanza di quello il segnale derivato dal
-// pane_title tmux — che resta un indizio, quindi lo si dichiara incerto. Un
-// peer precedente al nuovo contratto non viene marcato come working: conserva
-// il preview come fallback compatibile.
-export function cellRuntime(cell, session = {}) {
+// pane_title tmux — che resta un indizio.
+//
+// UN contratto, un campo: `stato`. Cio' che la riga SA non e' un secondo
+// campo accanto al primo — due rappresentazioni dello stesso fatto sono due
+// fonti che possono divergere, ed e' il difetto che questo file ha gia'
+// pagato una volta.
+export function cellRuntime(cell, session = {}, { autorevole = true } = {}) {
   const c = cell || {};
+  const engine = `${c.engine || ''}${c.key ? `·${c.key}` : ''}`;
+  const startup = [engine, c.model && c.model !== engine ? c.model : ''].filter(Boolean).join(' · ');
   if (!c.tmux) {
-    const engine = `${c.engine || ''}${c.key ? `·${c.key}` : ''}`;
-    const startup = [engine, c.model && c.model !== engine ? c.model : ''].filter(Boolean).join(' · ');
     return {
       working: false,
       subtitle: String(startup || t('cell-off')).trim(),
@@ -136,6 +156,19 @@ export function cellRuntime(cell, session = {}) {
     return { working: false, stato: 'ferma', subtitle: t('cell-stopped') };
   }
   // Nessun canale affidabile — cella non-Claude, oppure dato assente o scaduto.
+  // E qui c'e' un caso che non e' un dettaglio: la cella risulta accesa
+  // nell'inventario ma la sua SESSIONE non e' stata letta (elenco tmux
+  // degradato, peer in backoff, nodo giu'). In quel caso non si mostra
+  // l'anteprima come se fosse un dato, e non si dice «accesa» per inerzia: si
+  // dice che il dato non e' verificato, e si mostra quel che si sa davvero —
+  // il motore configurato, che e' un dato Fleet e c'e'.
+  if (!autorevole) {
+    return {
+      working: false,
+      stato: 'ignoto',
+      subtitle: [t('cell-unknown'), startup].filter(Boolean).join(' · '),
+    };
+  }
   // Il titolo del pane resta un INDIZIO, non una prova: se lo
   // mostra come «al lavoro» lo dice incerto, e «ferma» NON lo afferma mai.
   if (session.working === true) {
@@ -173,16 +206,16 @@ function cellSearchText(cell, session) {
 // manuale, live, fresh, attivita', label, key), quindi l'ordinamento qui non
 // cambia il risultato finale — la sidebar pre-ordina per pinRank prima di
 // chiamare, la home passa l'ordine naturale.
-export function buildLocalRoster(cells, unmanaged, byName, storage = globalThis.localStorage) {
+export function buildLocalRoster(cells, unmanaged, byName, storage = globalThis.localStorage, { autorevole = true } = {}) {
   return [
     ...(Array.isArray(cells) ? cells : []).map((c) => {
       const session = byName.get(c.tmuxSession) || {};
       const key = positionKey([], c.tmuxSession);
-      const runtime = cellRuntime(c, session);
+      const runtime = cellRuntime(c, session, { autorevole });
       return {
         type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
         fresh: hasFreshOutput(session, key, storage), activity: session.activity || 0,
-        working: runtime.working, subtitle: runtime.subtitle,
+        working: runtime.working, stato: runtime.stato, subtitle: runtime.subtitle,
         searchText: cellSearchText(c, session),
       };
     }),
@@ -204,19 +237,20 @@ export function buildLocalRoster(cells, unmanaged, byName, storage = globalThis.
 export function buildRemoteRoster(group, storage = globalThis.localStorage) {
   const g = group || {};
   const route = Array.isArray(g.route) ? g.route : [];
+  const autorevole = sessionsAuthoritative(g);
   const remoteByName = new Map((g.sessions || []).map((s) => [s.name, s]));
   const rawItems = [
     ...(g.cells || []).map((c) => {
       const session = remoteByName.get(c.tmuxSession) || {};
       const key = positionKey(route, c.tmuxSession || c.cell);
-      const runtime = cellRuntime(c, session);
+      const runtime = cellRuntime(c, session, { autorevole });
       return {
         // preserved: cella di un elenco fermo (nodo non raggiungibile) — non
         // e' "live" nemmeno se l'ultima sessione tmux era attiva: drag, click,
         // filtri "attive" devono trattarla come spenta.
         type: 'cell', value: c, key, label: c.cell, live: !!c.tmux && !c.preserved,
         fresh: hasFreshOutput(session, key, storage), activity: session.activity || c.activity || 0,
-        working: runtime.working, subtitle: runtime.subtitle,
+        working: runtime.working, stato: runtime.stato, subtitle: runtime.subtitle,
         searchText: cellSearchText(c, session),
       };
     }),

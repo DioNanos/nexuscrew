@@ -7,7 +7,7 @@ import CellPopup from './CellPopup.jsx';
 import Icon from './Icon.jsx';
 import { t } from '../lib/i18n.js';
 import { TILE_FONT_DEF } from '../lib/grid-model.js';
-import { nextTerminalGeneration } from '../lib/terminal-lifecycle.js';
+import { advanceTileRuntime, initialTileRuntime, PRESENZA } from '../lib/terminal-lifecycle.js';
 import { useInputPreferences } from '../hooks/useInputPreferences.js';
 import './GridTile.css';
 
@@ -22,7 +22,7 @@ import './GridTile.css';
 // cellName (Tranche D): titolo visibile risolto dal campo Fleet `cell` (es.
 // `Dev`). node/route/tmuxSession restano identita' tecniche e non compaiono
 // nel titolo visibile; solo il tooltip porta un identificativo tecnico.
-export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, sessionAlive = alive, available = true, stale = false, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0 }) {
+export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, sessionAlive = alive, available = true, stale = false, presence = null, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0 }) {
   const [inputPreferences] = useInputPreferences();
   // Titolo visibile = nome logico Fleet (gestita) o nome sessione (unmanaged).
   // session (tmuxSession reale) resta l'identita' del tile per attach/drag.
@@ -41,20 +41,25 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
   const [showPanel, setShowPanel] = useState(false);
   const [filesEvent, setFilesEvent] = useState(null);
   const [terminalGeneration, setTerminalGeneration] = useState(0);
-  const previousSessionAlive = useRef(sessionAlive);
+  const runtimeRef = useRef(initialTileRuntime());
   const tileKey = node ? `${node}:${session}` : session;
   const deckTargets = decks.filter((deck) => deck.id !== currentDeck && deck.available !== false);
 
-  // `alive` is the node-health indicator. Only a real session disappearance
-  // may create a new xterm/socket generation; a node health flap must not
-  // destroy the existing terminal and trigger another full redraw.
+  // `alive` is the node-health indicator. Solo due cose possono creare una
+  // nuova generazione xterm/socket: un'assenza VERIFICATA seguita dal ritorno,
+  // oppure un cambio di identita' verificato fra due letture autorevoli. Un
+  // nodo che ondeggia, una lettura caduta, un owner che sparisce dalla
+  // topologia non distruggono il buffer: lo stato lo decide `tileLifecycle`,
+  // qui si applica soltanto.
+  const presenzaStato = presence ? presence.presenza : (sessionAlive ? PRESENZA.PRESENTE : PRESENZA.ASSENTE);
+  const presenzaIdentita = presence ? (presence.identita ?? null) : null;
   useEffect(() => {
-    const wasSessionAlive = previousSessionAlive.current;
-    if (!wasSessionAlive && sessionAlive) {
-      setTerminalGeneration((value) => nextTerminalGeneration(wasSessionAlive, sessionAlive, value));
-    }
-    previousSessionAlive.current = sessionAlive;
-  }, [sessionAlive]);
+    const esito = advanceTileRuntime(runtimeRef.current, {
+      presenza: presenzaStato, identita: presenzaIdentita,
+    });
+    runtimeRef.current = esito.runtime;
+    if (esito.generazione) setTerminalGeneration((value) => value + esito.generazione);
+  }, [presenzaStato, presenzaIdentita]);
 
   return (
     <div
@@ -103,6 +108,14 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
       </div>
 
       <div className="nc-tile-body">
+        {/* Il dato è vecchio: lo si DICHIARA e basta. Il terminale non si
+            tocca — è proprio quando non si sa più niente della sessione che
+            distruggere il buffer sarebbe il danno peggiore. */}
+        {presence && presence.oltreIlTetto === true && (
+          <div className="nc-tile-unverified" role="status" data-causa={presence.causa || ''}>
+            {t('tile-unverified')}
+          </div>
+        )}
         {/* Il terminale resta SEMPRE montato: la disponibilità dell'owner non
             è un motivo per distruggere il buffer xterm. L'indisponibilità è
             un overlay SOPRA il contenuto, mai un sostituto. */}

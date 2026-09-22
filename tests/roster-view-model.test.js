@@ -184,7 +184,8 @@ test('buildLocalRoster normalizes cells and unmanaged with route-qualified local
   // Active cell: activity/preview from the matched session, fresh via seen-marker.
   assert.deepEqual(items[0], {
     type: 'cell', value: cells[0], key: positionKey([], 'local-live'), label: 'Live Cell',
-    live: true, fresh: true, activity: 20, working: true, subtitle: `${t('cell-unknown')} · Implement activity UI`,
+    live: true, fresh: true, activity: 20, working: true, stato: 'ignoto',
+    subtitle: `${t('cell-unknown')} · Implement activity UI`,
     searchText: 'claude K1 p-live Implement activity UI',
   });
   // Off cell: no matching session -> blank fresh/preview, key is the bare tmuxSession
@@ -232,7 +233,7 @@ test('buildRemoteRoster qualifies keys with the node route and falls back to cel
   // Active remote cell: activity/preview from the matched session.
   assert.deepEqual(rawItems[0], {
     type: 'cell', value: group.cells[0], key: positionKey(['relay'], 'remote-live'), label: 'Relay Live',
-    live: true, fresh: false, activity: 30, working: false, subtitle: t('cell-unknown'),
+    live: true, fresh: false, activity: 30, working: false, stato: 'ignoto', subtitle: t('cell-unknown'),
     searchText: 'glm G1 rp-live',
   });
   // Orphan cell (no matching session): falls back to the cell's own activity/preview.
