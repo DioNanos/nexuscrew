@@ -15,5 +15,11 @@ export function sessionPresenceForTile({ tileKey, node, nodeGroups, sessionsAliv
     ? nodeGroups.find((candidate) => Array.isArray(candidate?.route) && candidate.route.join('/') === node)
     : null;
   if (group && group.status !== 'up') return true;
+  // E nemmeno una lista che l'owner STESSO dichiara non leggibile: quando la
+  // lettura delle sessioni cade ma l'inventario risponde, il gruppo esce «up»
+  // con la lista vuota e si marca parziale. Quella lista non e' autorevole, e
+  // prenderla per prova di assenza ricrea il terminale — cioe' esattamente il
+  // buffer vuoto che questa funzione esiste per evitare.
+  if (group && group.inventoryPartial === true) return true;
   return !sessionsAlive || sessionsAlive.has(tileKey);
 }
