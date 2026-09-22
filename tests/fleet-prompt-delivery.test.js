@@ -954,8 +954,8 @@ test('regression: claude.native/codex/pi/agy conservano prompt su argv; solo kim
       { id: 'claude.native', managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'standard' } },
       cell, { home, env: {} },
     );
-    assert.equal(claude.engine.promptMode, 'managed-argv');
-    assert.ok(claude.engine.args.includes('bootstrap'), 'claude.native: argv invariato');
+    assert.equal(claude.engine.promptMode, 'send-keys');
+    assert.equal(claude.engine.args.includes('bootstrap'), false, 'D-342: claude.native mai prompt su argv');
     const codex = resolveManagedEngine(
       { id: 'codex.native', managed: { client: 'codex', provider: 'native', model: '', permissionPolicy: 'standard' } },
       cell, { home, env: {} },

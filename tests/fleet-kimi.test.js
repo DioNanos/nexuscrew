@@ -83,12 +83,15 @@ test('kimi prompt: MAI su argv (kimi -p e non-interattivo); promptMode send-keys
     assert.equal(r.engine.promptMode, 'send-keys');
     assert.deepEqual(r.engine.args, [], 'prompt assente da argv');
     assert.equal(r.engine.args.includes('you are dev'), false);
-    // gli altri client managed conservano managed-argv
+    // D-342: anche le claude.* sono in consegna classificata (mai prompt argv)
     const claude = resolveManagedEngine(
       { id: 'claude.native', managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'standard' } },
       { id: 'claude.native', prompt: 'p' }, { home, env: {} },
     );
-    if (claude.ok) assert.equal(claude.engine.promptMode, 'managed-argv');
+    if (claude.ok) {
+      assert.equal(claude.engine.promptMode, 'send-keys');
+      assert.equal(claude.engine.args.includes('p'), false, 'prompt assente da argv anche per claude');
+    }
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
