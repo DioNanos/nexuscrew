@@ -236,3 +236,51 @@ describe('federated ask cards: identity per owner and reload', () => {
     expect(container.querySelector('.nc-ask-badge')).toBeNull();
   });
 });
+
+describe('NotifyCenter — arretrato notifiche importate (lista consultabile silenziosa)', () => {
+  const REMOTE = {
+    views: [{
+      ownerId: 'nodeX', askReplyAccess: false, stale: false,
+      notifications: [
+        { type: 'notify', eventId: 'e1', title: 'Titolo arretrato', body: 'Corpo arretrato', urgency: 'normal', ts: 1700000000000 },
+        { type: 'fleet-state', eventId: 'e2', title: 'non ammesso' },
+      ],
+      asks: [],
+    }],
+  };
+
+  it('arretrato dallo snapshot: lista consultabile, silenziosa (niente toast/TTS), tipi non ammessi filtrati', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce(REMOTE);
+    render(<NotifyCenter token="token" />);
+    const badge = await screen.findByTitle('questions from the cells');
+    act(() => badge.click());
+    expect(await screen.findByText('Titolo arretrato')).toBeTruthy();
+    expect(screen.getByText('Corpo arretrato')).toBeTruthy();
+    expect(screen.queryByText('non ammesso')).toBeNull();
+    expect(mocks.speaker.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('dedup unica snapshot+SSE per (ownerId,eventId): la card non si duplica', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce(REMOTE);
+    render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(mocks.eventHandler).toBeTypeOf('function'));
+    act(() => mocks.eventHandler({ type: 'notify', ownerId: 'nodeX', eventId: 'e1', title: 'Titolo arretrato', body: 'x', urgency: 'normal' }));
+    await screen.findAllByText('Titolo arretrato');
+    expect(screen.getAllByText('Titolo arretrato').length).toBe(1);
+  });
+
+  it('view revocata: le sue card spariscono al feed-state successivo', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce(REMOTE);
+    const { rerender } = render(<NotifyCenter token="token" />);
+    const badge = await screen.findByTitle('questions from the cells');
+    act(() => badge.click());
+    await screen.findByText('Titolo arretrato');
+    const api = await import('../lib/api.js');
+    api.getFeedState.mockResolvedValueOnce({ views: [] });
+    rerender(<NotifyCenter token="token-b" />);
+    await waitFor(() => expect(screen.queryByText('Titolo arretrato')).toBeNull());
+  });
+});

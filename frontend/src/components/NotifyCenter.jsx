@@ -163,11 +163,18 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false }) 
   );
 }
 
+const MAX_REMOTE_NOTICES = 50;
+
 export default function NotifyCenter({ token }) {
   const [lang] = useLang(); // re-render allo switch lingua
   const [speechEnabled] = useNotificationSpeech();
   const [toasts, setToasts] = useState([]);
   const [asks, setAsks] = useState([]);
+  // Arretrato di notifiche IMPORTATE dai feed remoti: lista consultabile e
+  // SILENZIOSA (mai toast/TTS/push per queste card; il live resta com'era).
+  // Dedup unica snapshot+SSE per (ownerId,eventId); bounded; una view revocata
+  // fa sparire le sue card al prossimo feed-state.
+  const [remoteNotices, setRemoteNotices] = useState([]);
   // Deep-link push (#ask=<id>): il pannello parte aperto.
   const [panelOpen, setPanelOpen] = useState(() => {
     try { return /(?:^|[#&])ask=/.test(location.hash); } catch (_) { return false; }
@@ -231,6 +238,18 @@ export default function NotifyCenter({ token }) {
     // importate gia' presenti (l'ordine delle due risposte non e' garantito).
     getAsks(token).then((j) => { if (!cancelled) setAsks((cur) => applyLocalSnapshot(cur, j.asks)); }).catch(() => {});
     const close = connectEvents(token, (frame) => {
+      if (frame.type === 'notify' && frame.ownerId && frame.eventId) {
+        // Importato live: entra nella lista consultabile (dedup con l'arretrato
+        // per (ownerId,eventId)); nessun toast/speaker aggiuntivo per la card.
+        const key = frame.ownerId + '|' + String(frame.eventId);
+        setRemoteNotices((cur) => (cur.some((n) => n.key === key) ? cur : [...cur, {
+          key, ownerId: String(frame.ownerId), eventId: String(frame.eventId),
+          title: typeof frame.title === 'string' ? frame.title : '',
+          body: typeof frame.body === 'string' ? frame.body : '',
+          urgency: frame.urgency === 'high' ? 'high' : 'normal',
+          ts: Number.isFinite(frame.ts) ? frame.ts : Date.now(),
+        }].slice(-MAX_REMOTE_NOTICES)));
+      }
       if (frame.type === 'notify') pushToast(frame);
       else if (frame.type === 'ask' && frame.ask && frame.ask.id) {
         // Two owners can legitimately use the same ask id: identity is the pair.
@@ -255,16 +274,41 @@ export default function NotifyCenter({ token }) {
       if (!alive) return;
       const grants = {};
       const imported = [];
+      const notices = new Map();
+      const keepOwners = new Set();
       for (const v of (j && j.views) || []) {
         grants[v.ownerId] = v.askReplyAccess === true;
+        keepOwners.add(v.ownerId);
         // The local endpoint only knows local asks: the federated ones live in
         // the owner's snapshot, so a reload rebuilds them from here.
         for (const a of v.asks || []) {
           if (a && a.id) imported.push({ ...a, ownerId: v.ownerId, imported: true });
         }
+        // Arretrato notifiche importate: solo il tipo notificatorio, dedup su
+        // (ownerId,eventId), testo come stringa (React fa l'escaping).
+        for (const n of v.notifications || []) {
+          if (!n || n.type !== 'notify' || !n.eventId) continue;
+          const title = typeof n.title === 'string' ? n.title : '';
+          const body = typeof n.body === 'string' ? n.body : '';
+          if (!title && !body) continue;
+          const key = v.ownerId + '|' + String(n.eventId);
+          notices.set(key, {
+            key, ownerId: v.ownerId, eventId: String(n.eventId), title, body,
+            urgency: n.urgency === 'high' ? 'high' : 'normal',
+            ts: Number.isFinite(n.ts) ? n.ts : (Date.parse(n.ts) || 0),
+          });
+        }
       }
       setReplyGrants(grants);
       if (imported.length) setAsks((cur) => mergeAsks(cur, imported));
+      // Rebuild dall'arretrato: le card di una view revocata cadono qui; le
+      // card arrivate via SSE di un owner ancora attivo restano (dedup per key).
+      setRemoteNotices((cur) => {
+        const merged = new Map();
+        for (const c of cur) if (keepOwners.has(c.ownerId)) merged.set(c.key, c);
+        for (const c of notices.values()) merged.set(c.key, c);
+        return [...merged.values()].slice(-MAX_REMOTE_NOTICES);
+      });
     }).catch(() => {});
     return () => { alive = false; };
   }, [token]);
@@ -276,13 +320,13 @@ export default function NotifyCenter({ token }) {
           {toasts.map((n) => <Toast key={n.key} n={n} onClose={() => dropToast(n.key)} />)}
         </div>
       )}
-      {asks.length > 0 && !panelOpen && (
+      {(asks.length > 0 || remoteNotices.length > 0) && !panelOpen && (
         <button type="button" className="nc-ask-badge" onClick={() => setPanelOpen(true)}
           title={t('asks-title')}>
-          ? <span className="nc-ask-count">{asks.length}</span>
+          ? <span className="nc-ask-count">{asks.length + remoteNotices.length}</span>
         </button>
       )}
-      {asks.length > 0 && panelOpen && (
+      {(asks.length > 0 || remoteNotices.length > 0) && panelOpen && (
         <div className="nc-ask-panel">
           <div className="nc-ask-panel-head">
             <b>{t('asks-title')}</b>
@@ -295,6 +339,20 @@ export default function NotifyCenter({ token }) {
             {asks.map((a) => <AskCard key={askKeyOf(a.id, a.ownerId)} ask={a} token={token}
               askReplyAccess={!a.ownerId || replyGrants[a.ownerId] === true}
               onAnswered={removeAsk} onDismiss={removeAsk} />)}
+            {remoteNotices.length > 0 && (
+              <div className="nc-remote-notices">
+                <div className="nc-remote-notices-head"><b>{t('remote-notices-title')}</b></div>
+                {remoteNotices.map((n) => (
+                  <div key={n.key} className={'nc-remote-notice' + (n.urgency === 'high' ? ' nc-remote-notice-high' : '')}>
+                    {n.title ? <b>{n.title}</b> : null}
+                    {n.body ? <div>{n.body}</div> : null}
+                    <div className="nc-remote-notice-meta">
+                      {n.ownerId.slice(0, 8)} · {new Date(n.ts || Date.now()).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
