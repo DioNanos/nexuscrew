@@ -49,7 +49,7 @@ function settingsDi(args) {
   return trovati.length ? JSON.parse(trovati[0].slice('--settings='.length)) : null;
 }
 
-// --- il confronto prima/dopo (il test chiesto da Dev) ----------------------
+// --- il confronto prima/dopo ----------------------------------------------
 
 test('strict: stesso argv, deny identico, solo la chiave hooks in piu', (t) => {
   const m = mondo(t);

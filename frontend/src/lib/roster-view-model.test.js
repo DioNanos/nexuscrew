@@ -38,7 +38,7 @@ describe('nodeStateLabel: peer non raggiungibile per causa (R21)', () => {
   });
 });
 
-// D-340 — lo stato della cella dagli hook vince sul titolo del pane.
+// Lo stato della cella dagli hook vince sul titolo del pane.
 // Il titolo NON prova nulla (rilievo R7: `✳` sta sia su una cella al lavoro sia
 // su una ferma), quindi dove non c'e' il canale lo stato e' dichiarato INCERTO
 // e non si afferma mai «ferma» da un silenzio.

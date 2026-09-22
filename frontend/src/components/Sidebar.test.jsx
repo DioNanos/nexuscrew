@@ -217,10 +217,10 @@ describe('Sidebar session identity', () => {
       name: 'cell-working', activity: 3, windows: 1,
       working: false, status: '', paneTitle: 'Dev', preview: 'gpt-5.6-sol',
     }]} />);
-    // D-340: la cella qui e' `codex.responses`, che NON ha il canale degli hook.
+    // La cella qui e' `codex.responses`, che NON ha il canale degli hook.
     // Il titolo dice «non al lavoro», ma il titolo non prova nulla (R7): lo
     // stato e' dichiarato INCERTO, non «idle». Prima si affermava «idle» da un
-    // segnale che non lo dimostra, ed e' il difetto che D-340 chiude.
+    // segnale che non lo dimostra.
     const idleRow = screen.getByText('Working Cell').closest('[data-roster-key]');
     expect(within(idleRow).getByText('unverified')).toBeTruthy();
     expect(within(idleRow).queryByText('idle')).toBeNull();

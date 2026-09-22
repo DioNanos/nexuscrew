@@ -114,7 +114,7 @@ export function cellRuntime(cell, session = {}) {
       subtitle: String(startup || t('cell-off')).trim(),
     };
   }
-  // Lo stato pubblicato dagli hook (D-340) VINCE sul titolo: e' l'unico
+  // Lo stato pubblicato dagli hook VINCE sul titolo: e' l'unico
   // segnale che DICE cosa sta facendo la cella invece di indovinarlo. Tre
   // stati, e «attesa permesso» reso come lavoro con la sua etichetta — la
   // cella non e' ferma, e' bloccata su una richiesta.
@@ -138,10 +138,12 @@ export function cellRuntime(cell, session = {}) {
   // mostra come «al lavoro» lo dice incerto, e «ferma» NON lo afferma mai.
   if (session.working === true) {
     const detail = String(session.status || '').trim();
+    // Uno status generico («Working...») non aggiunge nulla all'etichetta.
+    const generic = !detail || /^working(?:\.{3}|…)?$/i.test(detail);
     return {
       working: true,
       stato: 'ignoto',
-      subtitle: detail ? `${t('cell-unknown')} · ${detail}` : t('cell-unknown'),
+      subtitle: generic ? t('cell-unknown') : `${t('cell-unknown')} · ${detail}`,
     };
   }
   if (session.working === false) {

@@ -155,7 +155,7 @@ describe('mobile roster parity', () => {
       ...fixture.sessions.slice(1),
     ];
     await user.click(screen.getByTitle('refresh'));
-    // D-340: senza il canale degli hook il titolo non prova lo stato fermo, e
+    // Senza il canale degli hook il titolo non prova lo stato fermo, e
     // la riga lo dice incerto invece di affermare «idle».
     await waitFor(() => expect(within(workingRow).getByText('unverified')).toBeTruthy());
     expect(within(workingRow).queryByText('idle')).toBeNull();
