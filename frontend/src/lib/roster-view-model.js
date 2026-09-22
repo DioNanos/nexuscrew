@@ -36,8 +36,12 @@ export function rel(epochSec, nowSec = Math.floor(Date.now() / 1000)) {
 // non e' un dato verificato, e non va presentato come tale.
 export function sessionsAuthoritative(g) {
   const gruppo = g || {};
-  if (gruppo.status !== 'up') return false;
-  return gruppo.sessionsAvailable !== false;
+  // Il degrado si dichiara, non si deduce da un campo mancante: un gruppo
+  // costruito senza `status` (forma parziale, test, chiamante che passa solo
+  // cio' che gli serve) non sta affermando che la lettura e' caduta.
+  if (gruppo.sessionsAvailable === false) return false;
+  if (typeof gruppo.status === 'string' && gruppo.status !== 'up') return false;
+  return true;
 }
 
 export function nodeStateLabel(g) {
