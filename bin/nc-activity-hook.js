@@ -12,7 +12,7 @@
 // Uso (il launcher lo compone):
 //   node nc-activity-hook.js --event <Evento> --dir <dirSessione> [--gen <id>]
 
-const { scriviStato } = require('../lib/files/activity.js');
+const { scriviStato, daRegistrare } = require('../lib/files/activity.js');
 
 function argomento(nome) {
   const i = process.argv.indexOf(`--${nome}`);
@@ -40,6 +40,13 @@ function main() {
 
   const sessionId = typeof payload.session_id === 'string' ? payload.session_id : null;
   const tipo = typeof payload.notification_type === 'string' ? payload.notification_type : null;
+
+  // Chi non e' registrabile NON tocca il file: una notifica di tipo diverso da
+  // `permission_prompt` sovrascriverebbe uno stato fresco e legittimo con un
+  // evento che il lettore non sa mappare, e la cella diventerebbe «non
+  // verificata» mentre sta lavorando. `SessionEnd` invece si scrive: e' cosi'
+  // che il dato di una sessione morta viene invalidato.
+  if (!daRegistrare(evento, tipo)) return;
 
   scriviStato(dir, { evento, tipo, sessionId, generazione });
 }

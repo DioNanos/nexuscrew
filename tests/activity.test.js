@@ -53,6 +53,88 @@ test('SessionEnd non afferma ferma: la sessione non esiste piu', () => {
   assert.equal(statoDaEvento(null), null);
 });
 
+// --- cosa si scrive e cosa no ---------------------------------------------
+
+test('daRegistrare: una Notification di tipo non misurato NON tocca il file', () => {
+  const { daRegistrare } = require('../lib/files/activity.js');
+  // Se la scrivesse, sovrascriverebbe un «lavora» fresco con un evento che il
+  // lettore non sa mappare: la cella diventerebbe «non verificata» mentre
+  // lavora. Il tipo `idle_prompt` esiste — misurato nel Gate A.
+  assert.equal(daRegistrare('Notification', 'idle_prompt'), false);
+  assert.equal(daRegistrare('Notification'), false);
+  assert.equal(daRegistrare('Notification', 'permission_prompt'), true);
+  assert.equal(daRegistrare('EventoInventato'), false);
+  assert.equal(daRegistrare(''), false);
+  assert.equal(daRegistrare(null), false);
+});
+
+test('daRegistrare: SessionEnd si scrive — e cosi che il dato viene invalidato', () => {
+  const { daRegistrare } = require('../lib/files/activity.js');
+  // Non dichiara uno stato, ma se non lo si scrivesse resterebbe in giro il
+  // «lavora» di una sessione che non esiste piu' per tutta la finestra.
+  assert.equal(daRegistrare('SessionEnd'), true);
+  for (const evento of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'SubagentStop', 'Stop', 'PermissionRequest']) {
+    assert.equal(daRegistrare(evento), true, evento);
+  }
+  assert.equal(daRegistrare('StopFailure'), false, 'non emesso su 2.1.280');
+});
+
+test('un SessionEnd scritto invalida lo stato precedente', () => {
+  const root = tmpRoot();
+  scriviStato(dirSessione(root), { evento: 'UserPromptSubmit' });
+  assert.equal(leggiAttivita(root, SESSIONE).stato, 'lavora');
+  scriviStato(dirSessione(root), { evento: 'SessionEnd' });
+  assert.equal(leggiAttivita(root, SESSIONE), null, 'la sessione non esiste piu: non «ferma»');
+});
+
+// --- lo script hook, eseguito davvero -------------------------------------
+//
+// Le regole sopra valgono se lo script le applica. Qui lo si esegue come lo
+// esegue il client: processo figlio, payload su stdin, nessun output atteso.
+
+const { spawnSync } = require('node:child_process');
+const SCRIPT = path.join(__dirname, '..', 'bin', 'nc-activity-hook.js');
+
+function eseguiHook(dir, evento, payload) {
+  return spawnSync(process.execPath, [SCRIPT, '--event', evento, '--dir', dir],
+    { input: JSON.stringify(payload), encoding: 'utf8' });
+}
+
+test('lo script hook: scrive l\'evento mappato, tace, ed esce 0', () => {
+  const root = tmpRoot();
+  const dir = dirSessione(root);
+  const r = eseguiHook(dir, 'UserPromptSubmit', { session_id: 's1', prompt: 'testo del prompt' });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '', 'un hook che stampa puo alterare il turno');
+  assert.equal(r.stderr, '', 'nemmeno su stderr');
+  assert.equal(leggiAttivita(root, SESSIONE).stato, 'lavora');
+  const raw = JSON.parse(fs.readFileSync(path.join(dir, NOME_FILE), 'utf8'));
+  assert.equal(raw.session_id, 's1');
+  assert.equal(JSON.stringify(raw).includes('testo del prompt'), false, 'il payload non finisce nel file');
+});
+
+test('lo script hook: una Notification non-permesso NON tocca il file', () => {
+  const root = tmpRoot();
+  const dir = dirSessione(root);
+  eseguiHook(dir, 'UserPromptSubmit', {});
+  const prima = fs.readFileSync(path.join(dir, NOME_FILE), 'utf8');
+  const r = eseguiHook(dir, 'Notification', { notification_type: 'idle_prompt' });
+  assert.equal(r.status, 0);
+  assert.equal(fs.readFileSync(path.join(dir, NOME_FILE), 'utf8'), prima,
+    'lo stato non e stato riscritto: la cella resta «al lavoro»');
+  // e con il tipo giusto, invece, scrive.
+  eseguiHook(dir, 'Notification', { notification_type: 'permission_prompt' });
+  assert.equal(leggiAttivita(root, SESSIONE).stato, 'attesa');
+});
+
+test('lo script hook: senza --event o senza --dir non scrive nulla', () => {
+  const root = tmpRoot();
+  const dir = dirSessione(root);
+  assert.equal(spawnSync(process.execPath, [SCRIPT, '--dir', dir], { input: '{}' }).status, 0);
+  assert.equal(spawnSync(process.execPath, [SCRIPT, '--event', 'Stop'], { input: '{}' }).status, 0);
+  assert.equal(fs.existsSync(path.join(dir, NOME_FILE)), false);
+});
+
 // --- lettura: transizioni -------------------------------------------------
 
 test('ogni transizione scrive uno stato leggibile', () => {
