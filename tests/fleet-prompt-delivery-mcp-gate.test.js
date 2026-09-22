@@ -1,6 +1,6 @@
 'use strict';
-// D-342 — gate readiness MCP in deliverBootstrapPrompt (claude.*).
-// Casi R6: consegna con MCP pronti; degradato visibile a budget esaurito;
+// Gate readiness MCP in deliverBootstrapPrompt (claude.*).
+// Casi del contratto: consegna con MCP pronti; degradato visibile a budget esaurito;
 // cancellazione durante l'attesa MCP (zero paste); composer non pronto a
 // timeout resta bloccante (il gate MCP non bypassa mai il composer).
 const { test } = require('node:test');
@@ -61,7 +61,7 @@ test('budget esaurito con pending: consegna DEGRADATO VISIBILE con elenco bounde
   assert.deepStrictEqual(result.mcp.pending, ['lento', 'ko-server']);
 });
 
-test('cancel durante attesa MCP: esito cancelled, ZERO paste (R6 at-most-once)', async () => {
+test('cancel durante attesa MCP: esito cancelled, ZERO paste (at-most-once)', async () => {
   const s = seams({ captures: ['❯'] });
   let pasteChiamate = 0;
   const result = await deliverBootstrapPrompt({
@@ -119,7 +119,7 @@ test('parseMcpListOption: formato bounded, nomi validati, duplicati e spazzatura
   assert.deepStrictEqual(parseMcpListOption(''), { failed: [], pending: [] });
   assert.deepStrictEqual(parseMcpListOption(null), { failed: [], pending: [] });
 });
-// --- cell-exec: gate MCP nel payload (casi R6) ---
+// --- cell-exec: gate MCP nel payload (casi del contratto) ---
 
 function cellExecSeams({ deliverResult, waitResult, optsCatturati }) {
   const setOptions = [];
@@ -230,4 +230,51 @@ test('validRestartPrompt: accetta client claude con mcpReadiness; rifiuta attesa
   assert.strictEqual(validRestartPrompt({
     tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', client: 'altro', readyWaitMs: 1000,
   }), false, 'solo kimi/claude sono classified');
+});
+
+// --- runtime: gate anche per celle claude legacy (config nota meno negati) ---
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { buildMcpReadinessPayload, cellMcpExpectedServers } = require('../lib/fleet/runtime.js');
+
+function legacyHome(t) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'd342-legacy-home-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const cfg = { mcpServers: { nexuscrew: { command: 'x' }, memory: { command: 'y' } } };
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify(cfg));
+  return home;
+}
+
+test('runtime legacy: senza cell.mcp l atteso e la config nota (tutti i server enumerabili)', (t) => {
+  const home = legacyHome(t);
+  const cell = { id: 'Dev' };
+  const p = buildMcpReadinessPayload(cell, '/tmp/cella-legacy', home, {});
+  assert.deepStrictEqual(p.expectedServers, ['memory', 'nexuscrew']);
+  assert.strictEqual(p.budgetMs, 20000);
+  assert.strictEqual(p.cwd, '/tmp/cella-legacy');
+});
+
+test('runtime legacy: con cell.mcp parziale l atteso e l intersezione voluti/noti', (t) => {
+  const home = legacyHome(t);
+  const cell = { id: 'Dev', mcp: ['nexuscrew', 'inesistente'] };
+  const p = buildMcpReadinessPayload(cell, '/tmp/cella-legacy', home, {});
+  assert.deepStrictEqual(p.expectedServers, ['nexuscrew'], 'server non enumerabile non e atteso');
+});
+
+test('runtime legacy: config nota assente -> nessun gate (payload undefined)', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'd342-empty-home-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const p = buildMcpReadinessPayload({ id: 'Dev' }, '/tmp/cella-legacy', home, {});
+  assert.strictEqual(p, undefined);
+});
+
+test('runtime: il materializzato cell-mcp vince sempre sulla config legacy', (t) => {
+  const home = legacyHome(t);
+  const dir = path.join(home, '.nexuscrew', 'cell-mcp');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'Dev.json'), JSON.stringify({ mcpServers: { soloquesto: { command: 'z' } } }));
+  assert.deepStrictEqual(cellMcpExpectedServers(home, 'Dev'), ['soloquesto']);
+  const p = buildMcpReadinessPayload({ id: 'Dev' }, '/tmp/cella-strict', home, {});
+  assert.deepStrictEqual(p.expectedServers, ['soloquesto']);
 });
