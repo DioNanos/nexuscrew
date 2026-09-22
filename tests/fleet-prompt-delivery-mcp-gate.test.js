@@ -16,6 +16,9 @@ function seams({ captures, pasteOk = true, enterOk = true } = {}) {
     captureImpl: async () => (n < captures.length ? captures[n++] : captures[captures.length - 1]),
     tmuxExecImpl: async (bin, args) => {
       order.push(args.join(' '));
+      if (args[0] === 'list-panes') {
+        return { err: null, stdout: '%0\n', stderr: '', code: 0 };
+      }
       if (args[0] === 'load-buffer' || args[0] === 'paste-buffer') {
         return { err: pasteOk ? null : new Error('paste ko'), stdout: '', stderr: '', code: pasteOk ? 0 : 1 };
       }
@@ -62,6 +65,7 @@ test('cancel durante attesa MCP: esito cancelled, ZERO paste (R6 at-most-once)',
   const result = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
     readyWaitMs: 100, pollMs: 10, settleMs: 0,
+    isCancelled: () => true,
     captureImpl: s.captureImpl,
     tmuxExecImpl: async (bin, args) => {
       if (args[0] === 'load-buffer' || args[0] === 'paste-buffer') pasteChiamate += 1;
