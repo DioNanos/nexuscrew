@@ -70,3 +70,16 @@
   font: inherit; font-size: 13px;
 }
 .nc-ask-card .nc-err { color: var(--error); font-size: 12px; }
+
+/* Notifiche importate dai feed remoti: lista consultabile in sola lettura,
+   coerente con le card domanda (stessa base, meno azioni). */
+.nc-remote-notices { display: flex; flex-direction: column; gap: 8px; }
+.nc-remote-notices-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-tertiary); }
+.nc-remote-notice {
+  background: var(--bg-tertiary); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 6px;
+}
+.nc-remote-notice b { font-size: 13px; word-break: break-word; }
+.nc-remote-notice div { font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+.nc-remote-notice-meta { color: var(--text-tertiary); font-size: 11px; }
+.nc-remote-notice-high { border-color: var(--error); }
