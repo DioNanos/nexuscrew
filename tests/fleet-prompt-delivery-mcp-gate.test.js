@@ -16,8 +16,9 @@ function seams({ captures, pasteOk = true, enterOk = true } = {}) {
     captureImpl: async () => (n < captures.length ? captures[n++] : captures[captures.length - 1]),
     tmuxExecImpl: async (bin, args) => {
       order.push(args.join(' '));
-      if (args[0] === 'list-panes') {
-        return { err: null, stdout: '%0\n', stderr: '', code: 0 };
+      if (args[0] === 'display-message') {
+        // resolveSessionPane: '#{session_name}\t#{pane_dead}\t#{pane_id}'
+        return { err: null, stdout: 'sess\t0\t%0\n', stderr: '', code: 0 };
       }
       if (args[0] === 'load-buffer' || args[0] === 'paste-buffer') {
         return { err: pasteOk ? null : new Error('paste ko'), stdout: '', stderr: '', code: pasteOk ? 0 : 1 };
