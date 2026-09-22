@@ -40,7 +40,7 @@ test('SubagentStop NON chiude il turno: resta lavora (il padre lavora ancora)', 
 });
 
 test('Notification di tipo non misurato non autorizza transizioni', () => {
-  assert.equal(statoDaEvento('Notification', 'idle_prompt'), null);
+  assert.equal(statoDaEvento('Notification', 'idle_prompt'), null, 'esempio: solo permission_prompt e misurato');
   assert.equal(statoDaEvento('Notification'), null);
   assert.equal(statoDaEvento('Notification', null), null);
 });
@@ -59,8 +59,12 @@ test('daRegistrare: una Notification di tipo non misurato NON tocca il file', ()
   const { daRegistrare } = require('../lib/files/activity.js');
   // Se la scrivesse, sovrascriverebbe un «lavora» fresco con un evento che il
   // lettore non sa mappare: la cella diventerebbe «non verificata» mentre
-  // lavora. Il tipo `idle_prompt` esiste — misurato nel Gate A.
+  // lavora. Il tipo qui sotto e' un ESEMPIO, non una misura: di
+  // `notification_type` e' stato osservato un solo valore
+  // (`permission_prompt`). La regola non dipende da quale sia l'altro tipo —
+  // e' che tutto cio' che non e' quello misurato non tocca il file.
   assert.equal(daRegistrare('Notification', 'idle_prompt'), false);
+  assert.equal(daRegistrare('Notification', 'qualunque_altro_tipo'), false);
   assert.equal(daRegistrare('Notification'), false);
   assert.equal(daRegistrare('Notification', 'permission_prompt'), true);
   assert.equal(daRegistrare('EventoInventato'), false);
@@ -94,6 +98,7 @@ test('un SessionEnd scritto invalida lo stato precedente', () => {
 
 const { spawnSync } = require('node:child_process');
 const SCRIPT = path.join(__dirname, '..', 'bin', 'nc-activity-hook.js');
+const { spawn } = require('node:child_process');
 
 function eseguiHook(dir, evento, payload) {
   return spawnSync(process.execPath, [SCRIPT, '--event', evento, '--dir', dir],
@@ -113,7 +118,7 @@ test('lo script hook: scrive l\'evento mappato, tace, ed esce 0', () => {
   assert.equal(JSON.stringify(raw).includes('testo del prompt'), false, 'il payload non finisce nel file');
 });
 
-test('lo script hook: una Notification non-permesso NON tocca il file', () => {
+test('lo script hook: una Notification di altro tipo NON tocca il file', () => {
   const root = tmpRoot();
   const dir = dirSessione(root);
   eseguiHook(dir, 'UserPromptSubmit', {});
@@ -202,15 +207,84 @@ test('stato di una generazione precedente viene scartato', () => {
 
 // --- scrittura concorrente ------------------------------------------------
 
-test('scritture concorrenti: il lettore non vede mai un file a meta', async () => {
+test('scritture in sequenza: il lettore non vede mai un file a meta', async () => {
   const root = tmpRoot();
   const eventi = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'UserPromptSubmit'];
   await Promise.all(eventi.map((evento) => Promise.resolve().then(
     () => scriviStato(dirSessione(root), { evento }))));
   const letto = leggiAttivita(root, SESSIONE);
-  assert.ok(letto, 'il file resta leggibile dopo scritture concorrenti');
+  assert.ok(letto, 'il file resta leggibile');
   assert.ok(['lavora', 'ferma'].includes(letto.stato));
   assert.equal(fs.readdirSync(dirSessione(root)).filter((f) => f.endsWith('.tmp')).length, 0,
+    'nessun temporaneo lasciato indietro');
+});
+
+test('un evento PIU VECCHIO non sovrascrive uno piu recente', () => {
+  // Due hook possono arrivare invertiti: il processo di un evento piu vecchio
+  // puo' essere schedulato dopo quello di uno piu recente. Lo stato pubblicato
+  // deve restare quello dell'evento piu recente, o la cella torna indietro.
+  const root = tmpRoot();
+  const dir = dirSessione(root);
+  const ora = 1_700_000_000_000;
+  scriviStato(dir, { evento: 'Stop', ora });
+  scriviStato(dir, { evento: 'UserPromptSubmit', ora: ora - 5000 });
+  const letto = leggiAttivita(root, SESSIONE, ora);
+  assert.equal(letto.stato, 'ferma', 'lo Stop piu recente resta');
+  assert.equal(letto.ts, ora, 'il ts non torna indietro');
+});
+
+test('un lock ORFANO non blocca le scritture per sempre', () => {
+  // Il lock introduce un guasto proprio: un processo ucciso dentro la sezione
+  // critica lo lascia dietro. Se non fosse scavalcabile, la cella smetterebbe
+  // di aggiornare lo stato — un guasto peggiore di quello che il lock ripara.
+  const root = tmpRoot();
+  const dir = dirSessione(root);
+  fs.mkdirSync(dir, { recursive: true });
+  const lock = path.join(dir, `${NOME_FILE}.lock`);
+  fs.writeFileSync(lock, '');
+  const vecchio = new Date(Date.now() - 5000);
+  fs.utimesSync(lock, vecchio, vecchio);
+  assert.equal(scriviStato(dir, { evento: 'Stop' }), true, 'si scrive lo stesso');
+  assert.equal(leggiAttivita(root, SESSIONE).stato, 'ferma');
+  assert.equal(fs.existsSync(lock), false, 'il lock orfano e stato rimosso');
+});
+
+test('scritture concorrenti VERE: nessuna persa, vince il ts piu alto', async () => {
+  // Processi figli con partenza a barriera: e' la forma in cui la concorrenza
+  // accade davvero (un processo per hook). Le chiamate nello stesso thread non
+  // la esercitano, perche' `scriviStato` e' sincrono.
+  const root = tmpRoot();
+  const dir = dirSessione(root);
+  const base = 1_700_000_000_000;
+  const N = 8;
+  const barriera = path.join(root, 'via');
+  const figli = [];
+  for (let i = 0; i < N; i += 1) {
+    figli.push(spawn(process.execPath, [
+      path.join(__dirname, 'fixtures', 'activity-concurrent-writer.js'),
+      dir, 'UserPromptSubmit', String(base + i * 1000), barriera, path.join(root, `ready-${i}`),
+    ], { stdio: ['ignore', 'pipe', 'ignore'] }));
+  }
+  // Fase 1: tutti schierati. Senza questa, il tempo di spawn scaglionerebbe le
+  // scritture e il caso peggiore non verrebbe mai raggiunto.
+  const scadenza = Date.now() + 20000;
+  while (Array.from({ length: N }, (_, i) => fs.existsSync(path.join(root, `ready-${i}`))).includes(false)) {
+    if (Date.now() > scadenza) throw new Error('i figli non si sono schierati in tempo');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  fs.writeFileSync(barriera, 'via'); // fase 2: partenza simultanea
+  const esiti = await Promise.all(figli.map((p) => new Promise((res) => {
+    let out = '';
+    p.stdout.on('data', (d) => { out += d; });
+    p.on('close', () => res(out));
+  })));
+  assert.deepEqual(esiti, Array(N).fill('ok'),
+    'nessuna scrittura persa: ogni hook deve risultare registrato');
+  // `ora` esplicito: i ts del test sono sintetici e senza questo il lettore li
+  // vedrebbe scaduti (il che non c'entra con la concorrenza).
+  const letto = leggiAttivita(root, SESSIONE, base + N * 1000);
+  assert.equal(letto.ts, base + (N - 1) * 1000, 'lo stato finale e quello dell evento piu recente');
+  assert.equal(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp')).length, 0,
     'nessun temporaneo lasciato indietro');
 });
 
