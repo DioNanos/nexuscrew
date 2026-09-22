@@ -19,10 +19,10 @@ const NODES = {
   nodes: [{ name: 'vps', nodeId: 'aaaa', tunnel: { status: 'up' }, paired: true }],
 };
 
-const calls = vi.hoisted(() => ({ sessions: 0, okTimes: 1, pending: [], hang: false }));
+const calls = vi.hoisted(() => ({ sessions: 0, okTimes: 1, pending: [], hang: false, instanceId: 'local' }));
 
 vi.mock('../lib/api.js', () => ({
-  apiFetch: vi.fn(async () => ({ json: async () => ({ instanceId: 'local', version: 'test' }) })),
+  apiFetch: vi.fn(async () => ({ json: async () => ({ instanceId: calls.instanceId, version: 'test' }) })),
   getNodes: vi.fn(async () => NODES),
   getTopology: vi.fn(async () => ({ nodes: [] })),
   getNodeAliases: vi.fn(async () => ({ aliasesByInstanceId: {} })),
@@ -55,6 +55,7 @@ describe('useNodes: round, cache e token', () => {
     calls.okTimes = 1;
     calls.pending = [];
     calls.hang = false;
+    calls.instanceId = 'local';
     vi.useFakeTimers();
   });
   afterEach(() => { vi.useRealTimers(); });
@@ -128,5 +129,29 @@ describe('useNodes: round, cache e token', () => {
     rerender({ t: 'due' });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(calls.sessions).toBe(3);
+  });
+
+  it('un\'altra istanza locale butta la cache: la rotta puo\' essere la stessa', async () => {
+    // Le risposte dei peer sono indicizzate per ROTTA, e un'altra istanza puo'
+    // riusare la stessa rotta. Il residuo di quel nodo non e' un dato nostro —
+    // e si vede dal backoff: senza la pulizia il peer resta «morto» per il
+    // ritardo accumulato da un'altra istanza e il giro successivo lo salta.
+    calls.okTimes = 0; // il peer non risponde mai
+    renderHook(() => useNodes('token', true, 0));
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });      // giro 1: fail
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });   // giro 2: fail
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });   // giro 3: saltato
+    expect(calls.sessions).toBe(2);
+
+    // Il nodo locale cambia identita': il giro che lo scopre e' il quarto.
+    calls.instanceId = 'altra';
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });   // giro 4
+    expect(calls.sessions).toBe(3);
+
+    // giro 5: il backoff riparte da ZERO per la nuova istanza, quindi si
+    // interroga. Col residuo di prima sarebbe ancora saltato.
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(calls.sessions).toBe(4);
   });
 });

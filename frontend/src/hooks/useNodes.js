@@ -125,9 +125,14 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       // Sticky: un fetch fallito/vuoto non azzera l'elenco owner; chi manca
       // da una risposta confermata resta come stale finché non scade la grazia.
       if (localInstanceId && sticky.instanceId !== localInstanceId) {
-        // localStorage di un ALTRO nodo locale: la cache non e' nostra.
+        // localStorage di un ALTRO nodo locale: la cache non e' nostra. E lo
+        // stesso vale per le risposte dei peer, che sono indicizzate per
+        // ROTTA: un'altra istanza puo' riusare la stessa rotta, e in quel caso
+        // l'elenco di prima e' il residuo di un nodo diverso.
         sticky.instanceId = localInstanceId;
         sticky.nodes.clear(); sticky.topology.clear();
+        backoffRef.current = {};
+        peerCacheRef.current = { remote: {}, fleet: {} };
       } else if (localInstanceId) {
         sticky.instanceId = localInstanceId;
       }
