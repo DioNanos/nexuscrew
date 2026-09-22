@@ -57,6 +57,35 @@ test('list: capture fallback cannot mark a non-Pi transcript as working', async 
   assert.equal(body.sessions[0].preview, 'claude-model footer');
 });
 
+test('list: pubblica lo stato di attivita della cella; assente = non verificato, mai «ferma»', async (t) => {
+  process.env.FAKE_TMUX_ACTIVITY_MODE = 'quoted-working';
+  t.after(() => { delete process.env.FAKE_TMUX_ACTIVITY_MODE; });
+  const { base, token, dir } = await boot(t);
+  const leggi = async () => (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
+  const primo = await leggi();
+  const nome = primo.sessions[0].name;
+  assert.equal(primo.sessions[0].attivita, null, 'nessun file -> null, non «ferma»');
+
+  const dirSessione = path.join(dir, 'files', nome);
+  fs.mkdirSync(dirSessione, { recursive: true });
+  const scrivi = (dato) => fs.writeFileSync(path.join(dirSessione, 'activity.json'), JSON.stringify(dato));
+
+  scrivi({ event: 'UserPromptSubmit', ts: Date.now(), session_id: 's1' });
+  const lavoro = await leggi();
+  assert.equal(lavoro.sessions[0].attivita.stato, 'lavora');
+  assert.equal(lavoro.sessions[0].attivita.sessionId, 's1');
+  // Il campo storico non si muove: gli altri consumatori di `working` non
+  // cambiano comportamento per questa aggiunta.
+  assert.equal(lavoro.sessions[0].working, primo.sessions[0].working);
+
+  scrivi({ event: 'Stop', ts: Date.now() });
+  assert.equal((await leggi()).sessions[0].attivita.stato, 'ferma');
+
+  // Un dato vecchio oltre la finestra non diventa «ferma»: sparisce.
+  scrivi({ event: 'Stop', ts: Date.now() - 6 * 60 * 1000 });
+  assert.equal((await leggi()).sessions[0].attivita, null, 'scaduto -> non verificato');
+});
+
 test('create: 201 con preset shell, 400 nome/preset invalidi', async (t) => {
   const { base, token } = await boot(t);
   const home = os.homedir();
