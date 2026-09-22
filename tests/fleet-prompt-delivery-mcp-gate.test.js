@@ -145,7 +145,7 @@ function cellExecSeams({ deliverResult, waitResult, optsCatturati }) {
   };
 }
 
-test('cell-exec: claude.* riceve mcpWait con deadline composta (spawn + budget DAG)', async () => {
+test('cell-exec: claude.* riceve mcpWait con deadline composta (spawn + budget approvato)', async () => {
   const optsCatturati = [];
   const t0 = 1_700_000_000_000;
   const s = cellExecSeams({

@@ -36,7 +36,7 @@ test('bootStampOf riproduce lo stamp dei boot file del client ed ordina come il 
 
 test('encodeCwdForCache sostituisce ogni non-alfanumerico (forma misurata 2.1.280)', () => {
   assert.strictEqual(encodeCwdForCache('/tmp/d342-gateb/cwd-p2'), '-tmp-d342-gateb-cwd-p2');
-  assert.strictEqual(encodeCwdForCache('/home/dag/Dev/.worktrees/DevWorkerA'), '-home-dag-Dev--worktrees-DevWorkerA');
+  assert.strictEqual(encodeCwdForCache('/home/tester/Dev/.worktrees/DevWorkerA'), '-home-tester-Dev--worktrees-DevWorkerA');
 });
 
 test('readinessNow: ready/failed/pending sul boot corrente, record error senza debug = failed', () => {
