@@ -46,7 +46,17 @@ function boot(t) {
     pasteSeam: () => true,
   });
   return new Promise((res) => server.listen(0, '127.0.0.1', () => {
-    t.after(() => { server.close(); if (watcher) watcher.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+    t.after(() => {
+      // `server.close()` smette di accettare ma NON chiude le connessioni gia'
+      // aperte: finche' quelle restano vive il processo del file non esce, e il
+      // gate isolato si appende (nessun avanzamento per 300 s) invece di
+      // fallire. Le due chiamate qui sotto le chiudono, e il file esce da solo.
+      try { server.close(); } catch (_) { /* gia' chiuso */ }
+      try { server.closeAllConnections(); } catch (_) { /* runtime senza l'API */ }
+      try { server.closeIdleConnections(); } catch (_) { /* idem */ }
+      if (watcher) watcher.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
     res({ base: `http://127.0.0.1:${server.address().port}`, token, configDir });
   }));
 }
