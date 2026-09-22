@@ -7,6 +7,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const { deliverBootstrapPrompt } = require('../lib/fleet/prompt-delivery.js');
+const { startGenerationPrompt, validRestartPrompt } = require('../lib/fleet/cell-exec.js');
 
 function seams({ captures, pasteOk = true, enterOk = true } = {}) {
   const order = [];
@@ -117,4 +118,116 @@ test('parseMcpListOption: formato bounded, nomi validati, duplicati e spazzatura
   assert.deepStrictEqual(parseMcpListOption('weird=x|failed=../etc;;'), { failed: [], pending: [] });
   assert.deepStrictEqual(parseMcpListOption(''), { failed: [], pending: [] });
   assert.deepStrictEqual(parseMcpListOption(null), { failed: [], pending: [] });
+});
+// --- cell-exec: gate MCP nel payload (casi R6) ---
+
+function cellExecSeams({ deliverResult, waitResult, optsCatturati }) {
+  const setOptions = [];
+  const waitCalls = [];
+  return {
+    setOptions,
+    waitCalls,
+    deliverBootstrapPrompt: async (opts) => {
+      optsCatturati.push(opts);
+      // come la deliver vera: il gate MCP viene atteso PRIMA del paste
+      if (opts.mcpWait) await opts.mcpWait({ isCancelled: () => false });
+      return deliverResult;
+    },
+    waitMcpReadiness: async (args) => {
+      waitCalls.push(args);
+      return waitResult;
+    },
+    tmuxExec: async (bin, args) => {
+      if (args[0] === 'set-option') setOptions.push(`${args[4]}=${args[5]}`);
+      if (args[0] === 'display-message') return { err: null, stdout: 'sess\t0\t%0\n', stderr: '', code: 0 };
+      return { err: null, stdout: '', stderr: '', code: 0 };
+    },
+  };
+}
+
+test('cell-exec: claude.* riceve mcpWait con deadline composta (spawn + budget DAG)', async () => {
+  const optsCatturati = [];
+  const t0 = 1_700_000_000_000;
+  const s = cellExecSeams({
+    deliverResult: { delivered: true, state: 'submitted', notReady: '', attempts: 1, mcp: { state: 'ready', ready: ['a'], failed: [], pending: [] } },
+    waitResult: { state: 'ready', ready: ['a'], failed: [], pending: [] },
+    optsCatturati,
+  });
+  const ctl = startGenerationPrompt(
+    {
+      tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'bootstrap', client: 'claude',
+      readyMs: 5, readyWaitMs: 1000,
+      mcpReadiness: { cwd: '/tmp/cella', expectedServers: ['nexuscrew', 'memory'], budgetMs: 20000 },
+    },
+    0, { exited: false },
+    { ...s, nowImpl: () => t0, sleepImpl: async () => {} },
+  );
+  await ctl.settled;
+  assert.strictEqual(optsCatturati.length, 1);
+  assert.strictEqual(typeof optsCatturati[0].mcpWait, 'function', 'la deliver riceve il gate MCP');
+  const waitArg = s.waitCalls[0];
+  assert.ok(waitArg, 'il gate deve passare dall adattatore waitMcpReadiness');
+  assert.deepStrictEqual(waitArg.params.expectedServers, ['nexuscrew', 'memory']);
+  assert.strictEqual(waitArg.params.cwd, '/tmp/cella');
+  assert.strictEqual(waitArg.params.notBeforeMs, t0, 'notBefore = avvio della GENERAZIONE corrente');
+  assert.strictEqual(waitArg.deadlineMs, t0 + 20000, 'deadline composta = spawn + budget');
+});
+
+test('cell-exec: avvio degradato visibile -> @nc_delivery con :mcpdegraded e @nc_mcp_list bounded', async () => {
+  const optsCatturati = [];
+  const s = cellExecSeams({
+    deliverResult: { delivered: true, state: 'submitted', notReady: '', attempts: 1, mcp: { state: 'degraded', ready: ['a'], failed: ['ko-server'], pending: ['lento'] } },
+    waitResult: { state: 'degraded', ready: ['a'], failed: ['ko-server'], pending: ['lento'] },
+    optsCatturati,
+  });
+  const ctl = startGenerationPrompt(
+    {
+      tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'bootstrap', client: 'claude',
+      readyMs: 5, readyWaitMs: 1000,
+      mcpReadiness: { cwd: '/tmp/cella', expectedServers: ['a', 'lento', 'ko-server'], budgetMs: 20000 },
+    },
+    0, { exited: false }, s,
+  );
+  await ctl.settled;
+  const delivery = s.setOptions.filter((v) => v.startsWith('@nc_delivery=')).pop();
+  assert.ok(delivery && delivery.includes('submitted:mcpdegraded'), `esito degradato visibile (${delivery})`);
+  const list = s.setOptions.find((v) => v.startsWith('@nc_mcp_list='));
+  assert.ok(list.includes('failed=ko-server') && list.includes('pending=lento'), `elenco bounded (${list})`);
+});
+
+test('cell-exec: kimi invariato — nessun mcpWait, nessun @nc_mcp_list (contratto 0.8.47 preservato)', async () => {
+  const optsCatturati = [];
+  const s = cellExecSeams({
+    deliverResult: { delivered: true, state: 'submitted', notReady: '', attempts: 1 },
+    waitResult: { state: 'ready', ready: [], failed: [], pending: [] },
+    optsCatturati,
+  });
+  const ctl = startGenerationPrompt(
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'bootstrap', client: 'kimi', readyMs: 5, readyWaitMs: 1000 },
+    0, { exited: false }, s,
+  );
+  await ctl.settled;
+  assert.strictEqual(optsCatturati.length, 1);
+  assert.strictEqual(optsCatturati[0].mcpWait, undefined, 'kimi: nessun gate MCP');
+  assert.strictEqual(s.waitCalls.length, 0);
+  assert.ok(!s.setOptions.some((v) => v.startsWith('@nc_mcp_list=')));
+  assert.ok(s.setOptions.some((v) => v === '@nc_delivery=submitted'), 'esito senza segmento mcp');
+});
+
+test('validRestartPrompt: accetta client claude con mcpReadiness; rifiuta attesa vuota o campi extra', () => {
+  assert.strictEqual(validRestartPrompt({
+    tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 10, client: 'claude', readyWaitMs: 1000,
+    mcpReadiness: { cwd: '/tmp/cella', expectedServers: ['nexuscrew'], budgetMs: 20000 },
+  }), true);
+  assert.strictEqual(validRestartPrompt({
+    tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', client: 'claude',
+    mcpReadiness: { cwd: '/tmp/cella', expectedServers: [] },
+  }), false, 'attesa vuota: niente gate, il payload non la deve nemmeno portare');
+  assert.strictEqual(validRestartPrompt({
+    tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', client: 'claude',
+    mcpReadiness: { cwd: '/tmp/cella', expectedServers: ['x'], extra: 1 },
+  }), false);
+  assert.strictEqual(validRestartPrompt({
+    tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', client: 'altro', readyWaitMs: 1000,
+  }), false, 'solo kimi/claude sono classified');
 });
