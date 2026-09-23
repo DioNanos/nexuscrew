@@ -119,7 +119,7 @@ describe('Sidebar session identity', () => {
     expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('anteprima dal nodo remoto');
   });
 
-  it('toggles boot from local and routed desktop rows without using power', async () => {
+  it('toggles boot from the actions menu of local and routed rows without using power', async () => {
     const onBoot = vi.fn(async () => {}); const onPower = vi.fn();
     const onBootSettlementApplied = vi.fn();
     const props = {
@@ -138,25 +138,44 @@ describe('Sidebar session identity', () => {
       onAddTile: vi.fn(),
       onSettings: vi.fn(),
     };
+    const openMenuFor = async (cellName) => {
+      // Un menu già aperto rimane tale (fireEvent.click non emette pointerdown,
+      // così la chiusura fuori-bersaglio non parte): il click sul trigger è un
+      // TOGGLE — prima lo chiudo con Escape, poi riapro pulito.
+      fireEvent.keyDown(document, { key: 'Escape' });
+      fireEvent.click(screen.getByRole('button', { name: `Cell actions: ${cellName}` }));
+      const menu = screen.getByRole('menu');
+      await waitFor(() => expect(within(menu).getByRole('menuitemcheckbox', { name: 'Boot at startup' })).toBeTruthy());
+      return menu;
+    };
     const { rerender } = render(<Sidebar {...props} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'enable at boot Local Cell' }));
+    // Il boot vive nel menu ⋯ come interruttore; il tondo è sparito.
+    expect(screen.queryByRole('button', { name: 'enable at boot Local Cell' })).toBeNull();
+    let menu = await openMenuFor('Local Cell');
+    expect(within(menu).getByRole('menuitemcheckbox', { name: 'Boot at startup' }).getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(within(menu).getByRole('menuitemcheckbox', { name: 'Boot at startup' }));
     await waitFor(() => expect(onBoot).toHaveBeenCalledWith('Local Cell', true, []));
-    expect(screen.getByRole('button', { name: 'disable at boot Local Cell' }).classList.contains('on')).toBe(true);
+    menu = await openMenuFor('Local Cell');
+    expect(within(menu).getByRole('menuitemcheckbox', { name: 'Boot at startup' }).getAttribute('aria-checked')).toBe('true');
     fireEvent.click(screen.getAllByRole('button', { name: 'power off' })[0]);
     expect(onPower).toHaveBeenLastCalledWith(expect.objectContaining({ cell: 'Local Cell', boot: true }));
 
     // PowerSheet conferma il valore opposto prima del poll: l'evento del
     // genitore deve sostituire subito l'override del toggle diretto.
     rerender(<Sidebar {...props} bootSettlement={{ id: 1, cell: 'Local Cell', route: [], enabled: false }} />);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'enable at boot Local Cell' })).toBeTruthy());
+    onBoot.mockClear();
+    menu = await openMenuFor('Local Cell');
+    expect(within(menu).getByRole('menuitemcheckbox', { name: 'Boot at startup' }).getAttribute('aria-checked')).toBe('false');
     expect(onBootSettlementApplied).toHaveBeenCalledWith(1);
     fireEvent.click(screen.getAllByRole('button', { name: 'power off' })[0]);
     expect(onPower).toHaveBeenLastCalledWith(expect.objectContaining({ cell: 'Local Cell', boot: false }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'disable at boot Remote Cell' }));
+    menu = await openMenuFor('Remote Cell');
+    fireEvent.click(within(menu).getByRole('menuitemcheckbox', { name: 'Boot at startup' }));
     await waitFor(() => expect(onBoot).toHaveBeenCalledWith('Remote Cell', false, ['relay']));
-    expect(screen.getByRole('button', { name: 'enable at boot Remote Cell' }).classList.contains('on')).toBe(false);
+    menu = await openMenuFor('Remote Cell');
+    expect(within(menu).getByRole('menuitemcheckbox', { name: 'Boot at startup' }).getAttribute('aria-checked')).toBe('false');
     fireEvent.click(screen.getAllByRole('button', { name: 'power off' })[1]);
     expect(onPower).toHaveBeenLastCalledWith(expect.objectContaining({
       cell: 'Remote Cell', boot: false, route: ['relay'],
@@ -272,10 +291,10 @@ describe('Sidebar session identity', () => {
   });
 });
 
-// --- Live per nodo (0.9.1 seconda meta'): la stella deve comandare il nodo
-// GIUSTO — spia sulla chiamata, non solo "la funzione non esplode". Prima del
-// fix la sezione remota non aveva affatto la stellina live (solo togglePin);
-// il difetto e' quindi doppio: nessuna azione E nessuna lettura per route.
+// --- Live per nodo (0.9.1 seconda meta'): la designazione deve comandare il
+// nodo GIUSTO — spia sulla chiamata, non solo "la funzione non esplode".
+// Il pin vive nella voce del menu ⋯ e lo stato Live si legge sul
+// BOLLINO della riga; i criteri del nodo giusto restano gli stessi.
 describe('Sidebar — cella ospite Live per nodo', () => {
   const remoteCellGroup = (extra = {}) => ({
     name: 'relay', label: 'Relay', route: ['relay'], instanceId: 'd'.repeat(32), status: 'up',
@@ -284,7 +303,7 @@ describe('Sidebar — cella ospite Live per nodo', () => {
     ...extra,
   });
 
-  it('la stella su una cella FAVORITE remota pinna e non designa piu', () => {
+  it('la voce PIN del menu su una cella remota pinna e non designa piu', () => {
     localStorage.setItem('nc_pins', JSON.stringify(['relay:remote-live']));
     const onDesignateCell = vi.fn();
     render(<Sidebar
@@ -293,29 +312,35 @@ describe('Sidebar — cella ospite Live per nodo', () => {
       onDesignateCell={onDesignateCell}
       onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
     />);
-    fireEvent.click(screen.getByTitle('pin to top'));
+    fireEvent.click(screen.getByRole('button', { name: 'Cell actions: Remote Cell' }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Pin to top' }));
     expect(onDesignateCell).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem('nc_pins'))).toContain('relay:remote-cell');
   });
 
-  it('la stellina remota e\' designata SOLO quando hostByRoute[quella route] lo dice', () => {
+  it('il bollino LIVE compare SOLO quando hostByRoute[quella route] lo dice', () => {
     render(<Sidebar
       nodeGroups={[remoteCellGroup()]}
       hostByRoute={{ local: { hostCell: null }, relay: { hostCell: 'Remote Cell', threadStatus: 'absent', hostRevision: 3 } }}
       onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
     />);
-    expect(screen.getByTitle('cell designated; thread absent')).toBeTruthy();
+    const riga = screen.getByText('Remote Cell').closest('[data-roster-key]');
+    expect(within(riga).getByText('LIVE')).toBeTruthy();
   });
 
-  it('NEGATIVA: un hostCell locale con lo stesso nome non accende la stella di un nodo diverso', () => {
+  it('NEGATIVA: un hostCell locale con lo stesso nome non accende il bollino di un nodo diverso', () => {
     render(<Sidebar
       nodeGroups={[remoteCellGroup()]}
       hostByRoute={{ local: { hostCell: 'Remote Cell' } }} // solo locale, MAI 'relay'
       onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
     />);
-    expect(screen.queryByTitle('cell designated; thread absent')).toBeNull();
+    // La striscia Live in testa mostra il nome dell'host LOCALE: la riga remota
+    // si prende per chiave roster, non per testo ambiguo.
+    const riga = document.querySelector('.nc-cell');
+    expect(within(riga).queryByText('LIVE')).toBeNull();
   });
 
-  it('la stella su una cella designata non toglie la designazione: solo il pin', () => {
+  it('la voce PIN su una cella designata non toglie la designazione: solo il pin', () => {
     localStorage.setItem('nc_pins', JSON.stringify(['relay:remote-cell']));
     const onClearHostCell = vi.fn(async () => true);
     render(<Sidebar
@@ -324,7 +349,8 @@ describe('Sidebar — cella ospite Live per nodo', () => {
       onClearHostCell={onClearHostCell}
       onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
     />);
-    fireEvent.click(screen.getByTitle('cell designated; thread absent'));
+    fireEvent.click(screen.getByRole('button', { name: 'Cell actions: Remote Cell' }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Pin to top' }));
     expect(onClearHostCell).not.toHaveBeenCalled();
   });
 });
@@ -402,5 +428,77 @@ describe('Sidebar — nodi VL', () => {
     expect(screen.queryByText(/1 sessions?/)).toBeNull();
     expect(screen.queryByText('ollama')).toBeNull();
     expect(screen.getByText(/offline/i)).toBeTruthy();
+  });
+});
+
+describe('Sidebar e la lettura locale non riuscita', () => {
+  // Una cella accesa nella quale la sessione non e' stata letta: l'anteprima
+  // non e' un dato, e «accesa» per inerzia non e' una prova. La rail deve
+  // dichiarare INCERTO lo stato, come fa il roster mobile quando la sua
+  // lettura fallisce — invece di presentare come autorevole un dato che non
+  // ha potuto verificare.
+  const props = (extra = {}) => ({
+    cells: [{ cell: 'Local Worker', tmuxSession: 'local-worker', tmux: true, active: true, engine: 'claude.native' }],
+    sessions: [{ name: 'local-worker', preview: 'anteprima locale' }],
+    nodeGroups: [],
+    onPick: vi.fn(), onAddTile: vi.fn(), onSettings: vi.fn(),
+    ...extra,
+  });
+
+  it('dichiara non verificato lo stato quando la lettura locale e fallita', () => {
+    render(<Sidebar {...props({ localVerified: false })} />);
+    const row = screen.getByText('Local Worker').closest('[data-roster-key]');
+    // Regex, non uguaglianza: in questo ramo l'etichetta accoda il motore
+    // configurato («unverified · claude.native»), che e' un dato Fleet e resta.
+    expect(within(row).getByText(/unverified/)).toBeTruthy();
+  });
+
+  it('non dichiara non verificato quando la lettura locale e riuscita', () => {
+    render(<Sidebar {...props({ localVerified: true })} />);
+    const row = screen.getByText('Local Worker').closest('[data-roster-key]');
+    expect(within(row).queryByText(/unverified/)).toBeNull();
+  });
+});
+
+// --- outbox della riga remota: la sessione è quella DEL SUO nodo -------------
+// Un nome tmux non è unico nella federazione: il badge dei nuovi file letto
+// dalle sessioni LOCALI attribuirebbe all'omonima remota i file di qui (o
+// sparirebbe se l'omonima non esiste). La lettura giusta è g.sessions.
+describe('Sidebar — badge outbox della riga remota', () => {
+  const gruppoRemota = (sessioneRemota) => ({
+    name: 'relay', label: 'Relay', route: ['relay'], instanceId: 'd'.repeat(32), status: 'up',
+    sessions: sessioneRemota ? [sessioneRemota] : [], unmanaged: [], capabilities: [], engines: [],
+    cells: [{ cell: 'Dev', tmuxSession: 'host-Dev', tmux: true, active: true }],
+  });
+  const propsCon = (sessions) => ({
+    cells: [],
+    sessions,
+    nodeGroups: [gruppoRemota({ name: 'host-Dev', outbox: { count: 2, latest: 1700000000000 } })],
+    onPick: vi.fn(), onAddTile: vi.fn(), onSettings: vi.fn(),
+  });
+
+  it('omonima locale con 7 file, remota con 2: la riga remota mostra 2', async () => {
+    render(<Sidebar {...propsCon([{ name: 'host-Dev', outbox: { count: 7, latest: 1700000000000 } }])} />);
+    const riga = screen.getByText('Dev').closest('[data-roster-key]');
+    await waitFor(() => expect(within(riga).getByText('2')).toBeTruthy());
+    expect(within(riga).queryByText('7')).toBeNull();
+  });
+
+  it('senza omonima locale: il badge remota mostra comunque i SUOI file', async () => {
+    render(<Sidebar {...propsCon([])} />);
+    const riga = screen.getByText('Dev').closest('[data-roster-key]');
+    await waitFor(() => expect(within(riga).getByText('2')).toBeTruthy());
+  });
+
+  it('NEGATIVO: remota senza sessione → nessun badge nella riga, anche se la locale ne ha uno', () => {
+    render(<Sidebar
+      cells={[]}
+      sessions={[{ name: 'host-Dev', outbox: { count: 7, latest: 1700000000000 } }]}
+      nodeGroups={[gruppoRemota(null)]}
+      onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
+    />);
+    const riga = screen.getByText('Dev').closest('[data-roster-key]');
+    expect(within(riga).queryByText('7')).toBeNull();
+    expect(within(riga).queryByText('2')).toBeNull();
   });
 });

@@ -6,8 +6,6 @@ import {
   hostRenderState, hostLeaseTitleKey, hostThreadTitleKey, hostRouteKey,
 } from '../lib/host-designation.js';
 import PinPersistBanner from './PinPersistBanner.jsx';
-import CellStar from './CellStar.jsx';
-import LiveHostIndicator from './LiveHostIndicator.jsx';
 import { liveHostView } from '../lib/live-host-view.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
@@ -18,6 +16,11 @@ import {
 import { OWNER_ID_RE } from '../lib/grid-model.js';
 import Icon from './Icon.jsx';
 import CellPeek from './CellPeek.jsx';
+import { CellActionsPopover, cellActionsItems, cellActionsState } from './CellActions.jsx';
+import { applyCellStar, cellStarView } from '../lib/cell-star.js';
+import { runLiveHostCommand } from '../lib/live-host-command.js';
+import { liveHostDotClass } from '../lib/live-host-view.js';
+import PeekCloud from './PeekCloud.jsx';
 import RosterHandle from './RosterHandle.jsx';
 import './Sidebar.css';
 
@@ -36,6 +39,10 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 export default function Sidebar({
   sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onBoot, onNodePower, onKill, onVisibility, onNew,
   onNodeRename, onSettings, onBootError, localNodeId, fleetCapabilities = [], fleetStale = false, fleetOff = null, bootSettlement = null,
+  // Esito dell'ultima lettura locale: stesso asse del roster mobile
+  // (SessionList), che lo riceve dalla propria fetch. Il default `true` tiene
+  // il comportamento di prima per chi non lo passa.
+  localVerified = true,
   hostByRoute = {}, onDesignateCell, onClearHostCell,
   onBootSettlementApplied, onOpenVlSession,
   // Il popup di sbirciata porta tre sorgenti: flusso e pannello chiedono il
@@ -60,7 +67,7 @@ export default function Sidebar({
   // designazione e' per-nodo lato server (CAS su una sola hostCell a testa);
   // hostByRoute e' la sua controparte lato client, una voce per route.
   const hostFor = (route) => hostByRoute[hostRouteKey(route)] || {};
-  // Il ciclo della stellina vive in CellStar/applyCellStar: stessa
+  // Il ciclo del pin vive in cell-star.js (applyCellStar/cellStarView): stessa
   // implementazione per la home, la sidebar e il selettore compatto.
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
   const byName = new Map((sessions || []).map((s) => [s.name, s]));
@@ -82,6 +89,25 @@ export default function Sidebar({
   // R4 e chiuso lì. La chiave si ri-risolve a ogni render sulle righe correnti.
   const [peekKey, setPeekKey] = useState(null);
   const [peekSource, setPeekSource] = useState('preview');
+  // Nuvola al passaggio: CHIAVE del pallino che l'ha chiamata — mai
+  // la riga salvata, stessa regola del peek — più rettangolo del pallino e
+  // sorgente corrente. Una sola nuvola, e mai mentre il popup è aperto.
+  const [cloud, setCloud] = useState(null); // {itemKey, routeKey, anchorRect, source}
+  const cloudTimerRef = useRef(null);
+  const cloudChiudiRef = useRef(null);
+  const peekKeyRef = useRef(null);
+  useEffect(() => { peekKeyRef.current = peekKey; }, [peekKey]);
+  useEffect(() => () => {
+    clearTimeout(cloudTimerRef.current); clearTimeout(cloudChiudiRef.current);
+  }, []);
+  // Menu azioni (⋯): contesto della riga aperta (chiave + capability boot +
+  // preserved, letti al momento dell'apertura) e rettangolo del trigger.
+  const [menuCtx, setMenuCtx] = useState(null);
+  const [menuRect, setMenuRect] = useState(null);
+  const [menuBusy, setMenuBusy] = useState(false);
+  // Esito dell'ultimo comando Live dato dal menu: la striscia lo dice, come il
+  // popup lo dice nella sua notice (stessa frase, altro posto).
+  const [liveNotice, setLiveNotice] = useState(null);
   // Costruisce la riga-contratto di CellPeek da un item della sidebar.
   // CellPeek vuole: key, cellName, subtitle, nodeLabel, node, session, route,
   // panelUrl, telemetry, preview, activity. Le sorgenti flusso/pannello usano
@@ -117,15 +143,42 @@ export default function Sidebar({
   };
   const openPeek = (item, c, route = [], nodeLabel = '', source = 'preview') => (event) => {
     if (event) { event.stopPropagation(); }
+    setCloud(null); // una sbirciata alla volta: il popup chiude la nuvola
     setPeekSource(source);
     setPeekKey(item.key);
     // UN solo popup: chiudo l'overlay esterno (switcher) se è aperto.
     if (typeof onPeekOpen === 'function') onPeekOpen();
   };
+  // La nuvola apre dopo una piccola attesa sul pallino: il gesto che c'era
+  // (clic) resta identico, il passaggio È l'anteprima. Uscendo dal pallino
+  // c'è un tempo di grazia per raggiungerla; entrando in lei si resta.
+  const startCloud = (item, routeKey, el) => {
+    if (!el) return;
+    clearTimeout(cloudChiudiRef.current);
+    clearTimeout(cloudTimerRef.current);
+    cloudTimerRef.current = setTimeout(() => {
+      if (peekKeyRef.current) return; // popup già aperto: la nuvola non sale
+      setCloud({ itemKey: item.key, routeKey: routeKey || '', anchorRect: el.getBoundingClientRect(), source: 'stream' });
+    }, 300);
+  };
+  const scheduleCloudClose = () => {
+    clearTimeout(cloudTimerRef.current);
+    clearTimeout(cloudChiudiRef.current);
+    cloudChiudiRef.current = setTimeout(() => setCloud(null), 150);
+  };
+  const keepCloud = () => clearTimeout(cloudChiudiRef.current);
+  const closeCloud = () => setCloud(null);
+  // Menu azioni (⋯): contesto congelato all'apertura, riga fresca cercata per
+  // chiave alla render — come il peek. Il toggle del trigger riapre/chiude.
+  const openMenu = (itemKey, routeKey, el, canBoot, preserved) => {
+    if (menuCtx && menuCtx.itemKey === itemKey) { setMenuCtx(null); return; }
+    setMenuCtx({ itemKey, routeKey: routeKey || '', canBoot: !!canBoot, preserved: !!preserved });
+    setMenuRect(el ? el.getBoundingClientRect() : null);
+  };
   // Se un overlay esterno si apre (switcher), il peek della sidebar si chiude:
   // due popup fissi sovrapposti sono il difetto che questa riga toglie.
   useEffect(() => { if (overlayOpen) { setPeekKey(null); setPeekSource('preview'); } }, [overlayOpen]);
-  const localRawItems = buildLocalRoster(sortedCells, others, byName);
+  const localRawItems = buildLocalRoster(sortedCells, others, byName, undefined, { autorevole: localVerified });
   const localItems = sidebarItems(localRawItems, pins, viewFor('local').filter, sidebarOrder(orders, 'local'));
   const preferredNodeGroups = preferredGroups(nodeGroups || []);
   const remoteRosters = preferredNodeGroups.map((g) => {
@@ -146,6 +199,37 @@ export default function Sidebar({
     ...remoteRosters.flatMap(({ items, nodeRoute, g }) => (items || []).map((it) => ({ ...it, nodeRoute, nodeLabel: g.label || g.name }))),
   ].filter((it) => it.type === 'cell');
   const peekItem = peekKey ? allCellItems.find((it) => it.key === peekKey) : null;
+  // La nuvola al passaggio: riga RI-cercata per chiave a ogni render (stessa
+  // regola del peek — mai un fotogramma morto); se la cella sparisce, non si
+  // rende. Comune a espansa e mini-rail: il pallino è lo stesso gesto.
+  const renderCloud = () => {
+    if (!cloud) return null;
+    const it = allCellItems.find((x) => x.key === cloud.itemKey);
+    if (!it) return null;
+    const c = it.value;
+    const gruppo = it.nodeRoute
+      ? (nodeGroups.find((g) => (g.route || [g.name]).join('/') === it.nodeRoute) || {})
+      : null;
+    const route = it.nodeRoute ? (gruppo.route || [it.nodeRoute]) : [];
+    return (
+      <PeekCloud
+        row={peekRowFromItem(it, c, route, it.nodeLabel || '', gruppo && gruppo.sessions)}
+        token={token}
+        anchorRect={cloud.anchorRect}
+        source={cloud.source}
+        onSourceChange={(id) => setCloud((cur) => (cur ? { ...cur, source: id } : cur))}
+        onExpand={(source) => {
+          setCloud(null);
+          setPeekSource(source);
+          setPeekKey(it.key);
+          if (typeof onPeekOpen === 'function') onPeekOpen();
+        }}
+        onClose={closeCloud}
+        onMouseEnter={keepCloud}
+        onMouseLeave={scheduleCloudClose}
+      />
+    );
+  };
   const pickOwned = (session, node, ownerId) => onPick && onPick({
     session,
     ...(node ? { node } : {}),
@@ -193,10 +277,11 @@ export default function Sidebar({
     const key = bootCellKey(c.cell, route);
     return Object.prototype.hasOwnProperty.call(bootOverrides, key) ? bootOverrides[key] : !!c.boot;
   };
-  const toggleBoot = async (event, c, route = []) => {
-    event.stopPropagation();
+  const toggleBoot = async (event, c, route = [], nextForzato) => {
+    if (event) event.stopPropagation();
     if (!onBoot) return;
-    const key = bootCellKey(c.cell, route); const enabled = !bootEnabled(c, route);
+    const key = bootCellKey(c.cell, route);
+    const enabled = typeof nextForzato === 'boolean' ? nextForzato : !bootEnabled(c, route);
     setBootOverrides((current) => ({ ...current, [key]: enabled }));
     setBootBusy((current) => new Set(current).add(key));
     try {
@@ -218,6 +303,32 @@ export default function Sidebar({
       </button>
     );
   };
+  // I gesti del menu azioni (⋯) di una riga: la LOGICA è dov'è già — pin via
+  // cell-star, Live via runLiveHostCommand (esito nella striscia), boot via la
+  // STESSA toggleBoot dei tondi (stesso override, stesso rollback, stesso
+  // settlement), guarda dal vivo via il peek con la sorgente Flusso.
+  const cellActionHandlers = (item, c, route) => ({
+    onToggleLive: async () => {
+      const stato = cellActionsState({ item, cellName: c.cell, route, pins, hostByRoute });
+      setMenuBusy(true);
+      const out = await runLiveHostCommand({
+        action: stato.isLive ? 'remove' : 'use', cellId: c.cell, route, token,
+      });
+      setMenuBusy(false);
+      setLiveNotice({ messageKey: out.messageKey, ok: out.ok, cell: out.hostCell || c.cell });
+    },
+    onTogglePin: () => applyCellStar({
+      view: cellStarView({ item, pins, hostByRoute, route }),
+      itemKey: item.key, togglePin, removePin,
+    }),
+    onToggleBoot: (next) => toggleBoot(null, c, route, next),
+    onWatchLive: () => {
+      setCloud(null);
+      setPeekSource('stream');
+      setPeekKey(item.key);
+      if (typeof onPeekOpen === 'function') onPeekOpen();
+    },
+  });
   // Tooltip mini via JS (position:fixed): il ::after CSS veniva CLIPPATO
   // dall'overflow della sidebar da 48px.
   const [tip, setTip] = useState(null); // {text, y}
@@ -275,11 +386,11 @@ export default function Sidebar({
                 key={item.key}
                 type="button"
                 className={`nc-mini-dot${active.has(c.tmuxSession) ? ' active' : ''}`}
-                onMouseEnter={(e) => showTip(e, `${c.cell}: ${item.subtitle}`)}
-                onMouseLeave={hideTip}
+                onMouseEnter={(e) => { if (live) startCloud(item, '', e.currentTarget); else showTip(e, `${c.cell}: ${item.subtitle}`); }}
+                onMouseLeave={() => { if (live) scheduleCloudClose(); else hideTip(); }}
                 draggable={live}
                 onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', c.tmuxSession) : undefined}
-                onClick={live ? () => onAddTile && onAddTile(c.tmuxSession) : () => onPower && onPower(c)}
+                onClick={live ? () => { setCloud(null); if (onAddTile) onAddTile(c.tmuxSession); } : () => onPower && onPower(c)}
                 onDoubleClick={live ? () => pickOwned(c.tmuxSession, '', localNodeId) : undefined}
               ><span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} /></button>
             );
@@ -327,11 +438,11 @@ export default function Sidebar({
                   key={item.key}
                   type="button"
                   className={`nc-mini-dot${active.has(item.key) ? ' active' : ''}`}
-                  onMouseEnter={(e) => showTip(e, `${g.label || nodeRoute}: ${c.cell} · ${item.subtitle}`)}
-                  onMouseLeave={hideTip}
+                  onMouseEnter={(e) => { if (live) startCloud(item, nodeRoute, e.currentTarget); else showTip(e, `${g.label || nodeRoute}: ${c.cell} · ${item.subtitle}`); }}
+                  onMouseLeave={() => { if (live) scheduleCloudClose(); else hideTip(); }}
                   draggable={live}
                   onDragStart={live ? (e) => e.dataTransfer.setData('text/nc-session', item.key) : undefined}
-                  onClick={live ? () => onAddTile && onAddTile(item.key) : () => onPower && onPower({ ...c, route: g.route, availableEngines: g.engines || [] })}
+                  onClick={live ? () => { setCloud(null); if (onAddTile) onAddTile(item.key); } : () => onPower && onPower({ ...c, route: g.route, availableEngines: g.engines || [] })}
                   onDoubleClick={live ? () => pickOwned(c.tmuxSession, nodeRoute, g.instanceId) : undefined}
                 ><span className={`nc-dot ${c.degraded ? 'warn' : live ? `on${item.working ? ' working' : ''}` : ''}`} /></button>
               );
@@ -358,6 +469,7 @@ export default function Sidebar({
               ><span className={`nc-dot${g.status === 'passive' ? '' : ' warn'}`} /></button>
             )]))}
         </div></div>
+        {renderCloud()}
         {tip && <div className="nc-mini-tip" style={{ top: tip.y }}>{tip.text}</div>}
       </aside>
     );
@@ -374,7 +486,9 @@ export default function Sidebar({
       {/* Live host del NODO che serve la pagina: una riga in testa, di sola
           lettura. Il comando che lo cambia sta nelle righe delle celle. */}
       <div className="nc-side-live-host">
-        <LiveHostIndicator view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells })} />
+        {/* Striscia Live: il testo intero resta nel tooltip; l'esito
+            dell'ultimo comando Live dal menu arriva qui, come la notice del popup. */}
+        <LiveStrip view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells })} notice={liveNotice} />
       </div>
       <div className="nc-side-head">
         <button className="nc-collapse-btn" onClick={onToggleCollapse} title={t('collapse')}>⟨</button>
@@ -453,19 +567,29 @@ export default function Sidebar({
                     title={t('cell-peek')}
                     aria-label={`${t('cell-peek')}: ${c.cell}`}
                     onClick={openPeek(item, c, [], '')}
+                    onMouseEnter={(e) => startCloud(item, '', e.currentTarget)}
+                    onMouseLeave={scheduleCloudClose}
                   ><span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} /></button>
                 ) : (
                   <span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} />
                 )}
                 <span className="nc-cell-main">
-                  <b title={c.cell}>{c.cell}</b>
+                  <b title={c.cell}>{c.cell}{cellActionsState({ item, cellName: c.cell, route: [], pins, hostByRoute }).isLive && <span className="nc-live-bollino">LIVE</span>}</b>
                   <small title={item.subtitle}>{item.subtitle}</small>
                 </span>
-                <CellStar item={item} pins={pins} hostByRoute={hostByRoute} route={[]} cellName={c.cell}
-                  baseClassName="nc-pin"
-                  togglePin={togglePin} removePin={removePin}
-                  />
-                {onBoot && fleetCapabilities.includes('boot') && bootButton(c)}
+                {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
+                {item.fresh && (byName.get(c.tmuxSession) || {}).outbox?.count > 0
+                  ? <span className="nc-badge" title={t('new-files-outbox')}>{byName.get(c.tmuxSession).outbox.count}</span>
+                  : null}
+                <button
+                  type="button"
+                  className="nc-cellmenu"
+                  title={`${t('cell-actions-open')}: ${c.cell}`}
+                  aria-label={`${t('cell-actions-open')}: ${c.cell}`}
+                  aria-haspopup="menu"
+                  aria-expanded={menuCtx && menuCtx.itemKey === item.key ? 'true' : 'false'}
+                  onClick={(e) => { e.stopPropagation(); openMenu(item.key, '', e.currentTarget, fleetCapabilities.includes('boot') && !!onBoot, false); }}
+                ><span aria-hidden="true">⋯</span></button>
                 <button
                   className={`nc-power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
                   onClick={(e) => { e.stopPropagation(); onPower && onPower({ ...c, boot: bootEnabled(c) }); }}
@@ -601,6 +725,11 @@ export default function Sidebar({
                 // drag, click e peek restano azioni da nodo vivo.
                 const live = !!c.tmux && !g.cellsPreserved;
                 const dot = c.degraded ? 'warn' : c.tmux && !g.cellsPreserved ? 'on' : '';
+                // L'outbox della riga remota è quello della sessione DEL SUO
+                // nodo: le sessioni locali (byName) parlano di un'altra cella
+                // che porta lo stesso nome — il conteggio non si attribuisce
+                // attraversando i nodi.
+                const sessioneNodo = (g.sessions || []).find((s) => s && s.name === c.tmuxSession) || null;
                 const baseTitle = g.cellsPreserved
                   ? `${t('fleet-stale')}`
                   : item.subtitle || (c.tmux ? t('cell-idle') : t('cell-off'));
@@ -628,18 +757,29 @@ export default function Sidebar({
                         title={t('cell-peek')}
                         aria-label={`${t('cell-peek')}: ${c.cell}`}
                         onClick={openPeek(item, c, g.route || [g.name], g.label || g.name)}
+                        onMouseEnter={(e) => startCloud(item, nodeRoute, e.currentTarget)}
+                        onMouseLeave={scheduleCloudClose}
                       ><span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} /></button>
                     ) : (
                       <span className={`nc-dot ${dot}${item.working ? ' working' : ''}`} />
                     )}
                     <span className="nc-card-main">
-                      <b>{c.cell}</b>
+                      <b>{c.cell}{cellActionsState({ item, cellName: c.cell, route, pins, hostByRoute }).isLive && <span className="nc-live-bollino">LIVE</span>}</b>
                       <small title={item.subtitle}>{item.subtitle}</small>
                     </span>
-                <CellStar item={item} pins={pins} hostByRoute={hostByRoute} route={route} cellName={c.cell}
-                  baseClassName="nc-pin"
-                  togglePin={togglePin} removePin={removePin} />
-                    {onBoot && (g.capabilities || []).includes('boot') && bootButton(c, g.route || [])}
+                    {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
+                    {item.fresh && (sessioneNodo || {}).outbox?.count > 0
+                      ? <span className="nc-badge" title={t('new-files-outbox')}>{sessioneNodo.outbox.count}</span>
+                      : null}
+                    <button
+                      type="button"
+                      className="nc-cellmenu"
+                      title={`${t('cell-actions-open')}: ${c.cell}`}
+                      aria-label={`${t('cell-actions-open')}: ${c.cell}`}
+                      aria-haspopup="menu"
+                      aria-expanded={menuCtx && menuCtx.itemKey === item.key ? 'true' : 'false'}
+                      onClick={(e) => { e.stopPropagation(); openMenu(item.key, nodeRoute, e.currentTarget, onBoot && (g.capabilities || []).includes('boot'), !!g.cellsPreserved); }}
+                    ><span aria-hidden="true">⋯</span></button>
                     {(g.capabilities || []).includes(c.active ? 'down' : 'up') && (
                       <button className={`nc-power${c.active ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
                         onClick={(e) => {
@@ -730,7 +870,55 @@ export default function Sidebar({
           />
         );
       })()}
+      {/* La nuvola al passaggio: guscio ancorato condiviso da espansa e mini. */}
+      {renderCloud()}
+      {/* Il menu azioni: riga fresca per chiave, contesto congelato all'apertura. */}
+      {menuCtx && (() => {
+        const it = allCellItems.find((x) => x.key === menuCtx.itemKey);
+        if (!it) return null;
+        const c = it.value;
+        const gruppo = menuCtx.routeKey
+          ? (nodeGroups.find((g) => (g.route || [g.name]).join('/') === menuCtx.routeKey) || {})
+          : null;
+        const route = menuCtx.routeKey ? (gruppo.route || [menuCtx.routeKey]) : [];
+        const live = menuCtx.preserved ? false : !!c.tmux;
+        const stato = cellActionsState({ item: it, cellName: c.cell, route, pins, hostByRoute });
+        const items = cellActionsItems({
+          ...stato, canBoot: menuCtx.canBoot, boot: bootEnabled(c, route), alive: live,
+          handlers: cellActionHandlers(it, c, route),
+        });
+        return (
+          <CellActionsPopover anchorRect={menuRect} items={items} busy={menuBusy}
+            onClose={() => setMenuCtx(null)} />
+        );
+      })()}
     </aside>
+  );
+}
+
+// La striscia Live: al posto della riga di testo, una striscia
+// compatta — pallino (stesso colore del registro Live) + nome della cella.
+// La frase intera resta nel tooltip; l'esito dell'ultimo comando Live dato
+// dal menu arriva qui, dove l'occhio già guarda.
+function LiveStrip({ view, notice }) {
+  const hasHost = !!(view && view.cell);
+  const frase = hasHost
+    ? t('live-host-indicator')
+      .replace('{cell}', view.cell)
+      .replace('{mode}', t(view.mode ? `live-host-mode-${view.mode}` : 'live-host-mode-unknown'))
+      .replace('{state}', t(`live-host-state-${view.state || 'none'}`))
+    : t('live-host-indicator-none');
+  return (
+    <div className="nc-live-strip" data-state={view && view.state ? view.state : 'none'}
+      title={notice ? `${frase} · ${t(notice.messageKey)}` : frase}>
+      <span className={`nc-live-strip-dot ${liveHostDotClass(view || {})}`} aria-hidden="true" />
+      <span className="nc-live-strip-testo">{hasHost ? view.cell : frase}</span>
+      {notice && (
+        <span className={`nc-live-strip-notice${notice.ok ? ' ok' : ' ko'}`} role="status">
+          {t(notice.messageKey).replace('{cell}', notice.cell || view.cell || '')}
+        </span>
+      )}
+    </div>
   );
 }
 

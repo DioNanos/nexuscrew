@@ -738,3 +738,116 @@ test('redazione: sweep di TUTTI gli endpoint con token noti -> mai in risposta',
     assert.ok(!/"token"\s*:/.test(text), `chiave "token" in risposta: ${where}`);
   }
 });
+
+// --- AIDesktop: la spunta che governa il container e il tasto ----------------
+// Nessun docker vero: il finto binario registra gli argv e risponde per il
+// caso. La chiave esplicita comanda; assente, il default si deriva dal
+// container SOLO nella lettura esplicita (mai nel percorso caldo).
+const aiDesktopMod = require('../lib/fleet/ai-desktop.js');
+
+function fintoDockerRoute(dir, comportamento) {
+  const bin = path.join(dir, `docker-${comportamento}`);
+  const registro = path.join(dir, `registro-${comportamento}`);
+  fs.writeFileSync(bin, [
+    '#!/bin/sh',
+    'echo "$@" >> ' + JSON.stringify(registro),
+    'if [ "$1" = "inspect" ]; then echo true; exit 0; fi',
+    'if [ "' + comportamento + '" = "falla" ]; then echo "boom" >&2; exit 1; fi',
+    'exit 0',
+  ].join('\n'), { mode: 0o755 });
+  return { bin, registro };
+}
+
+test('ai-desktop GET: default derivato dal container quando la chiave è assente', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-aidesk-route-'));
+  const { bin } = fintoDockerRoute(dir, 'registra');
+  const { base, token } = await boot(t, {}, { aiDesktopDockerBin: bin });
+  const r = await fetch(`${base}/api/settings/ai-desktop`, { headers: H(token) });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.desired, true, 'container in esecuzione + chiave assente = spunta ON derivata');
+  assert.equal(j.explicit, false);
+  assert.equal(j.running, true);
+});
+
+test('ai-desktop GET: la chiave esplicita comanda anche se il container sta al contrario', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-aidesk-route-'));
+  const { bin, registro } = fintoDockerRoute(dir, 'falla');
+  const { base, token, configPath } = await boot(t, {}, { aiDesktopDockerBin: bin });
+  fs.writeFileSync(configPath, JSON.stringify({ aiDesktop: false }));
+  const r = await fetch(`${base}/api/settings/ai-desktop`, { headers: H(token) });
+  const j = await r.json();
+  assert.equal(j.desired, false, 'chiave esplicita false: la spunta è OFF');
+  assert.equal(j.explicit, true);
+  assert.equal(j.running, true, 'l\'inspect del finto risponde true: la verità sta nel finto, non nel config');
+  assert.ok(fs.existsSync(registro), 'inspect passato dal finto (registra = log + inspect true)');
+});
+
+test('ai-desktop POST start: esito vero, chiave salvata, argv vettoriali', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-aidesk-route-'));
+  const { bin, registro } = fintoDockerRoute(dir, 'registra');
+  const { base, token, configPath } = await boot(t, {}, { aiDesktopDockerBin: bin });
+  const r = await fetch(`${base}/api/settings/ai-desktop`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ enabled: true }),
+  });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.ok, true);
+  assert.equal(j.desired, true);
+  assert.equal(j.running, true);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).aiDesktop, true);
+  assert.equal(fs.readFileSync(registro, 'utf8').trim(), 'start ai-desktop');
+});
+
+test('ai-desktop POST stop: stesso contratto al contrario', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-aidesk-route-'));
+  const { bin, registro } = fintoDockerRoute(dir, 'registra');
+  const { base, token, configPath } = await boot(t, {}, { aiDesktopDockerBin: bin });
+  const r = await fetch(`${base}/api/settings/ai-desktop`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ enabled: false }),
+  });
+  assert.equal(r.status, 200);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).aiDesktop, false);
+  assert.equal(fs.readFileSync(registro, 'utf8').trim(), 'stop ai-desktop');
+});
+
+test('ai-desktop POST con docker che fallisce: 500 con la causa, chiave comunque salvata', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-aidesk-route-'));
+  const { bin } = fintoDockerRoute(dir, 'falla');
+  const { base, token, configPath } = await boot(t, {}, { aiDesktopDockerBin: bin });
+  const r = await fetch(`${base}/api/settings/ai-desktop`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ enabled: true }),
+  });
+  assert.equal(r.status, 500);
+  const j = await r.json();
+  assert.match(j.error, /boom/);
+  assert.equal(j.desired, true);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).aiDesktop, true,
+    'la spunta dice COSA si vuole: il salvataggio non si ritira per un esito negativo');
+});
+
+test('ai-desktop NEGATIVO: body senza enabled o con enabled non boolean → 400', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-aidesk-route-'));
+  const { bin } = fintoDockerRoute(dir, 'registra');
+  const { base, token } = await boot(t, {}, { aiDesktopDockerBin: bin });
+  const r1 = await fetch(`${base}/api/settings/ai-desktop`, { method: 'POST', headers: H(token), body: '{}' });
+  assert.equal(r1.status, 400);
+  const r2 = await fetch(`${base}/api/settings/ai-desktop`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ enabled: 'sì' }),
+  });
+  assert.equal(r2.status, 400);
+});
+
+test('ai-desktop NEGATIVO: la chiave in POST /config accetta solo boolean', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-aidesk-route-'));
+  const { bin } = fintoDockerRoute(dir, 'registra');
+  const { base, token } = await boot(t, {}, { aiDesktopDockerBin: bin });
+  const okR = await fetch(`${base}/api/settings/config`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ aiDesktop: true }),
+  });
+  assert.equal(okR.status, 200);
+  const koR = await fetch(`${base}/api/settings/config`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ aiDesktop: 'forse' }),
+  });
+  assert.equal(koR.status, 400);
+});

@@ -322,7 +322,6 @@ export default function NotifyCenter({ token }) {
         const merged = [];
         for (const c of cur) if (keepOwners.has(c.ownerId)) merged.push(c);
         for (const c of notices.values()) merged.push({ ...c, key: c.key });
-        console.log('DBG-M2 merged:', merged.length, merged.map((c) => c.key).join(','));
         return boundedByTs(merged);
       });
     }).catch(() => {});

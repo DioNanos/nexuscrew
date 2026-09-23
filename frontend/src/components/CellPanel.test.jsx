@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // L'i18n è mockato con le traduzioni italiane REALI delle cause nuove: il test
 // verifica che il messaggio dica la causa GIUSTA (nonGranted dice «concedere
@@ -20,12 +20,13 @@ vi.mock('../lib/i18n.js', () => ({
 // i casi danno gli esiti classificati che il vero modulo produce.
 vi.mock('../lib/api.js', () => ({
   requestPanelTicket: vi.fn(),
+  setAiDesktop: vi.fn(),
   routeBase: (route) => Array.isArray(route) && route.length
     ? `/api/route/${route.map(encodeURIComponent).join('/')}/_` : '',
 }));
 
 import CellPanel from './CellPanel.jsx';
-import { requestPanelTicket } from '../lib/api.js';
+import { requestPanelTicket, setAiDesktop } from '../lib/api.js';
 
 const ticketOk = (ticket = 'TK-1234567890') => requestPanelTicket.mockResolvedValue({ ok: true, ticket });
 
@@ -308,5 +309,83 @@ describe('CellPanel — origin separata (panelPort)', () => {
     await waitFor(() => { expect(requestPanelTicket).toHaveBeenCalledTimes(1); });
     rerender(<CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={['Pixel']} token="t" title="A" />);
     await waitFor(() => { expect(requestPanelTicket).toHaveBeenCalledTimes(2); });
+  });
+});
+// --- pannello morto vs pagina vuota: il postMessage è fidato a tre condizioni
+describe('CellPanel — «non raggiungibile» al posto della pagina bianca', () => {
+  beforeEach(() => { requestPanelTicket.mockReset(); setAiDesktop.mockReset(); });
+
+  // Il messaggio fidato passa per TRE guardie: source = il frame attivo,
+  // origin = l'origine del frame (il frame vive su porta separata quando la
+  // porta pannello è nota), e il tipo atteso. Ogni guardia ha il suo negativo.
+  // Il dispatch va dentro act: fuori da act React 18 non applica l'update, e
+  // il test vedrebbe il frame ancora montato (falso negativo).
+  const dalFrame = (container, { origine = window.location.origin, source = null, data = { type: 'nc-panel-unreachable' } } = {}) => {
+    const iframe = container.querySelector('iframe');
+    const src = source === null ? (iframe && iframe.contentWindow) : source;
+    act(() => { window.dispatchEvent(new MessageEvent('message', { data, origin: origine, source: src })); });
+  };
+
+  const apriFrame = async (panelUrl, route = [], panelPort = 0) => {
+    ticketOk();
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl={panelUrl} route={route} panelPort={panelPort} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    return container;
+  };
+
+  it('il postMessage del frame (porta pannello separata) porta a «non raggiungibile»', async () => {
+    const container = await apriFrame('https://127.0.0.1:6901/vnc.html', [], 41821);
+    dalFrame(container, { origine: 'http://127.0.0.1:41821' });
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(screen.getByRole('status').textContent).toContain('panel-unreachable');
+  });
+
+  it('desktop LOCALE: Avvia comanda il container; se fallisce NON riparte e la causa si vede', async () => {
+    setAiDesktop.mockRejectedValueOnce(Object.assign(new Error('boom di docker'), { data: { error: 'boom di docker' } }));
+    const container = await apriFrame('https://127.0.0.1:6901/vnc.html');
+    dalFrame(container);
+    fireEvent.click(screen.getByRole('button', { name: 'panel-start-desktop' }));
+    await waitFor(() => { expect(setAiDesktop).toHaveBeenCalledWith('t', true); });
+    expect(screen.getByRole('status').textContent).toContain('boom di docker');
+    expect(container.querySelector('iframe')).toBeNull();
+    // al secondo tentativo riuscito il frame riparte da un biglietto nuovo
+    setAiDesktop.mockResolvedValueOnce({ ok: true, desired: true, running: true });
+    fireEvent.click(screen.getByRole('button', { name: 'panel-start-desktop' }));
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+  });
+
+  it('NEGATIVO: messaggio da un ALTRA sorgente (non il frame attivo) è ignorato', async () => {
+    const container = await apriFrame('https://127.0.0.1:6901/vnc.html');
+    dalFrame(container, { source: window });
+    expect(container.querySelector('iframe')).toBeTruthy();
+  });
+
+  it('NEGATIVO: messaggio da una ALTRA origine è ignorato', async () => {
+    const container = await apriFrame('https://127.0.0.1:6901/vnc.html', [], 41821);
+    dalFrame(container, { origine: 'https:// impersono-il-pannello.example' });
+    expect(container.querySelector('iframe')).toBeTruthy();
+  });
+
+  it('NEGATIVO: pannello remota (route non vuota) → «non raggiungibile» MA niente Avvia', async () => {
+    const container = await apriFrame('https://127.0.0.1:6901/vnc.html', ['Pixel'], 41821);
+    dalFrame(container, { origine: 'http://127.0.0.1:41821' });
+    expect(screen.getByRole('status').textContent).toContain('panel-unreachable');
+    expect(screen.queryByRole('button', { name: 'panel-start-desktop' })).toBeNull();
+  });
+
+  it('NEGATIVO: pannello NON desktop → niente Avvia', async () => {
+    const container = await apriFrame('http://127.0.0.1:6900/');
+    dalFrame(container);
+    expect(screen.getByRole('status').textContent).toContain('panel-unreachable');
+    expect(screen.queryByRole('button', { name: 'panel-start-desktop' })).toBeNull();
+  });
+
+  it('NEGATIVO: tipo di messaggio diverso da quello atteso → stato invariato', async () => {
+    const container = await apriFrame('http://127.0.0.1:6900/');
+    dalFrame(container, { data: { type: 'altra-roba' } });
+    expect(container.querySelector('iframe')).toBeTruthy();
+    expect(screen.queryByRole('status').textContent).not.toContain('panel-unreachable');
   });
 });

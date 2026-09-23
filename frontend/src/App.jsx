@@ -15,6 +15,7 @@ import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
 import { nextRendererPreference, readRendererPreference, writeRendererPreference } from './lib/terminal-renderer.js';
 import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
+import { createPollGuard } from './lib/poll-guard.js';
 import VlSessionView from './components/VlSessionView.jsx';
 import CellPanel from './components/CellPanel.jsx';
 import {
@@ -496,40 +497,78 @@ export default function App() {
   // che useNodes produce un nuovo array (~4s, anche a dati invariati).
   const nodeGroupsRef = useRef(nodeGroups);
   useEffect(() => { nodeGroupsRef.current = nodeGroups; }, [nodeGroups]);
+  // Guardia di non-sovrapposizione sui due poll del desktop. Il periodo e' 4 s
+  // e da qui in poi ogni giro ha un tetto di POLL_TIMEOUT_MS: il tetto limita
+  // quanto DURA un giro, non impedisce che due coesistano — un tick parte
+  // comunque ogni 4 s, e senza guardia la risposta piu' VECCHIA puo' atterrare
+  // dopo la piu' nuova, riportando la lista a un esito superato. Stesso rimedio
+  // di useNodes.js.
+  const loadGuardRef = useRef(null);
+  if (!loadGuardRef.current) loadGuardRef.current = createPollGuard();
+  const pollGuardRef = useRef(null);
+  if (!pollGuardRef.current) pollGuardRef.current = createPollGuard();
+  // Tetto di tempo per RICHIESTA, non per giro: e' il massimo che una singola
+  // lettura del poll puo' restare appesa. Un giro ne fa DUE in sequenza
+  // (sessioni, poi flotta), quindi puo' durare fino a circa il doppio di
+  // questo valore e sforare il periodo di 4 s — ed e' esattamente il caso che
+  // la guardia copre, saltando i tick che arrivano nel frattempo. Serve
+  // perche' una connessione aperta che non risponde non produce mai un
+  // errore: senza tetto il `finally` che libera la guardia non scatterebbe e
+  // il poll resterebbe fermo fino al limite del browser (~300 s), senza che
+  // nessun tick possa recuperare.
+  const POLL_TIMEOUT_MS = 3500;
   const poll = useCallback(async () => {
+    const guard = pollGuardRef.current;
+    const turno = guard.begin();
+    // Un giro e' gia' in volo: il tick si SALTA, non si accoda.
+    if (turno === null) return;
     try {
-      const r = await apiFetch('/api/sessions', token);
-      const j = await r.json();
-      // La lettura LOCALE e' autorevole solo quando ha risposto davvero: un
-      // errore non svuota la lista (l'ultima nota resta) e non la promuove
-      // nemmeno a prova di assenza — la marca non verificata, come i peer.
-      if (!j.error) {
-        setDSessions(j.sessions || []);
-        setLocalVerified(true);
-        setLocalSessionsAt(Date.now());
+      try {
+        const r = await apiFetch('/api/sessions', token, { timeoutMs: POLL_TIMEOUT_MS });
+        const j = await r.json();
+        // La lettura LOCALE e' autorevole solo quando ha risposto davvero: un
+        // errore non svuota la lista (l'ultima nota resta) e non la promuove
+        // nemmeno a prova di assenza — la marca non verificata, come i peer.
+        // La guardia si controlla PRIMA di ogni scrittura: un esito di un giro
+        // superato (cleanup dell'effetto, cambio token) non aggiorna niente,
+        // nemmeno lo stato delle sessioni — che e' la prima cosa che si scrive.
+        if (!guard.isCurrent(turno)) return;
+        if (!j.error) {
+          setDSessions(j.sessions || []);
+          setLocalVerified(true);
+          setLocalSessionsAt(Date.now());
+        } else {
+          setLocalVerified(false);
+        }
+      } catch (_) { if (guard.isCurrent(turno)) setLocalVerified(false); }
+      // R27: stessa policy pura della home mobile (lib/fleet-read-policy.js) —
+      // un fallimento di lettura NON svuota la lista: non e' «zero celle»,
+      // resta l'ultima nota con l'indicatore stale in sidebar.
+      let fs = null; let fleetError = null;
+      try { fs = await fleetStatus(token, undefined, { timeoutMs: POLL_TIMEOUT_MS }); } catch (e) { fleetError = e; }
+      // Seconda riga di difesa: se fra la partenza e qui la guardia e' stata
+      // superata, questo esito non e' piu' quello da applicare.
+      if (!guard.isCurrent(turno)) return;
+      const fleet = fleetReadOutcome({ fs, error: fleetError });
+      if (fleet.kind === 'data') {
+        setCells(fleet.cells);
+        setFleetCapabilities(fleet.capabilities);
+        setFleetStale(false);
+        setFleetOff(null);
+      } else if (fleet.kind === 'stale') {
+        setFleetStale(true);
+        setFleetOff(null);
       } else {
-        setLocalVerified(false);
+        setCells([]);
+        setFleetCapabilities([]);
+        setFleetStale(false);
+        setFleetOff(fleet.reason || '');
       }
-    } catch (_) { setLocalVerified(false); }
-    // R27: stessa policy pura della home mobile (lib/fleet-read-policy.js) —
-    // un fallimento di lettura NON svuota la lista: non e' «zero celle»,
-    // resta l'ultima nota con l'indicatore stale in sidebar.
-    let fs = null; let fleetError = null;
-    try { fs = await fleetStatus(token); } catch (e) { fleetError = e; }
-    const fleet = fleetReadOutcome({ fs, error: fleetError });
-    if (fleet.kind === 'data') {
-      setCells(fleet.cells);
-      setFleetCapabilities(fleet.capabilities);
-      setFleetStale(false);
-      setFleetOff(null);
-    } else if (fleet.kind === 'stale') {
-      setFleetStale(true);
-      setFleetOff(null);
-    } else {
-      setCells([]);
-      setFleetCapabilities([]);
-      setFleetStale(false);
-      setFleetOff(fleet.reason || '');
+    } finally {
+      // Sempre, anche sul percorso d'errore: senza questo il primo fallimento
+      // lascerebbe la guardia chiusa e il poll non ripartirebbe mai. Chiude
+      // solo se questo e' ancora il giro corrente (vedi poll-guard.js).
+      guard.end(turno);
     }
   }, [token]);
   // hostByRoute e' server-owned e vale per DESKTOP e MOBILE: polling separato dal
@@ -540,13 +579,19 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      const guard = loadGuardRef.current;
+      const turno = guard.begin();
+      // Un giro e' gia' in volo: il tick si SALTA. La lettura host passa dai
+      // peer e puo' durare piu' del periodo di poll.
+      if (turno === null) return;
+      try {
       const routes = [[], ...(nodeGroupsRef.current || [])
         .filter((g) => g.kind !== 'vl' && g.status === 'up')
         .map((g) => (Array.isArray(g.route) && g.route.length ? g.route : [g.name]))];
       const entries = await Promise.all(routes.map(async (route) => {
         const key = hostRouteKey(route);
         try {
-          const h = await getLiveHost(token, route);
+          const h = await getLiveHost(token, route, { timeoutMs: POLL_TIMEOUT_MS });
           return [key, {
             hostCell: h && typeof h.hostCell === 'string' ? h.hostCell : null,
             hostLease: h && h.host && typeof h.host.lease === 'string' ? h.host.lease : null,
@@ -556,6 +601,7 @@ export default function App() {
         } catch (_) { return [key, { error: true }]; }
       }));
       if (cancelled) return;
+      if (!guard.isCurrent(turno)) return;
       setHostByRoute((current) => {
         let changed = false; const next = { ...current };
         for (const entry of entries) {
@@ -568,10 +614,20 @@ export default function App() {
         }
         return changed ? next : current;
       });
+      } finally {
+        guard.end(turno);
+      }
     };
     load();
     const id = setInterval(load, 4000);
-    return () => { cancelled = true; clearInterval(id); };
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      // Il giro in volo non e' piu' quello corrente: se atterra, non scrive.
+      // E la guardia e' libera, cosi' il prossimo effetto parte subito invece
+      // di farsi saltare il primo tick.
+      loadGuardRef.current.reset();
+    };
   }, [token]);
 
   // Polling sessions + flotta (solo desktop: su mobile pensa SessionList).
@@ -579,7 +635,12 @@ export default function App() {
     if (!isDesktop) return;
     poll();
     const id = setInterval(poll, 4000);
-    return () => clearInterval(id);
+    return () => {
+      clearInterval(id);
+      // Stessa ragione del poll host: senza invalidazione la risposta del giro
+      // vecchio resterebbe «corrente» e potrebbe scrivere cells/fleetStale.
+      pollGuardRef.current.reset();
+    };
   }, [isDesktop, poll]);
   // Designazione cella ospite: API-first. designate imposta hostByRoute[route]
   // riflettendo la risposta del server (mai ottimismo pre-response); clear
@@ -829,6 +890,7 @@ export default function App() {
       return (
         <>
           <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession}
+            panelPort={panelPort} nodePanelPorts={nodePanelPorts}
             hostByRoute={hostByRoute} onDesignateCell={designateCellHost} onClearHostCell={clearCellHost} />
           {settingsOverlays}
         </>
@@ -856,6 +918,9 @@ export default function App() {
         <Sidebar
           sessions={dSessions}
           cells={cells}
+          // La rail dichiara il degrado come fa il roster mobile: senza questo
+          // l'ultima lettura locale fallita resta presentata come autorevole.
+          localVerified={localVerified}
           activeSessions={activeSessions}
           nodeGroups={nodeGroups}
           token={token}

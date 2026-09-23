@@ -10,6 +10,7 @@ function fakeRes() {
     status(code) { this.statusCode = code; return this; },
     json(obj) { this.body = obj; this.headersSent = true; return this; },
     writeHead(code, headers) { this.statusCode = code; this.headers = headers; this.headersSent = true; },
+    end(chunk) { if (chunk !== undefined) this.written.push(chunk); this.headersSent = true; },
     destroy() { this.destroyed = true; },
   };
   return res;
@@ -332,4 +333,33 @@ test('panel-proxy: un peer non puo\' rientrare dal canale del proprietario', () 
     assert.equal(res.statusCode, 403, `${url}: la catena ha un canale suo, non passa da qui`);
     assert.match(res.body.error, /local-only/);
   }
+});
+
+// --- pannello morto: la pagina che si annuncia al padre ---------------------
+// Il 502 di un target morto deve arrivare a chi monta il frame come PAGINA
+// (l'iframe spara `load` anche sulle risposte d'errore): la pagina porta un
+// messaggio FISSO, senza dati, con targetOrigin '*' perché il padre può vivere
+// su un'origine diversa (porta pannello separata). La fiducia sta nel
+// ricevitore, non nel mittente.
+test('panel-proxy: target morto → pagina HTML che annuncia l\'errore, nessun JSON', async () => {
+  const proxy = createPanelProxy({
+    resolveCellPanel: async () => PANEL,
+    requestImpl: () => { throw new Error('connessione rifiutata'); },
+  });
+  const res = fakeRes();
+  await proxy(fakeReq('/api/panel/Dev/vnc.html'), res);
+  assert.equal(res.statusCode, 502);
+  assert.match(res.headers['content-type'], /text\/html/);
+  const corpo = String(res.written.join(''));
+  assert.match(corpo, /nc-panel-unreachable/);
+  assert.match(corpo, /"nc-panel-unreachable"\},"\*"\)/, 'targetOrigin * : il padre puo\' avere un\'altra origine');
+  assert.doesNotMatch(corpo, /127\.0\.0\.1|6901|\/home\//, 'nessun dato sensibile nella pagina');
+});
+
+test('NEGATIVO: il 502 per cella senza pannello resta JSON (nessuna pagina per un non-errore)', async () => {
+  const proxy = createPanelProxy({ resolveCellPanel: async () => '', requestImpl: () => { throw new Error('non deve partire'); } });
+  const res = fakeRes();
+  await proxy(fakeReq('/api/panel/Dev/'), res);
+  assert.equal(res.statusCode, 404);
+  assert.ok(res.body, 'cella senza pannello: risposta JSON, non pagina');
 });

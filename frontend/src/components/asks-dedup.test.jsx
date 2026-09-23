@@ -244,6 +244,5 @@ it('canonical identity deduplicates the direct alias and the feed copy',async()=
  const {getFeedState}=await import('../lib/api.js');getFeedState.mockResolvedValueOnce({views:[{ownerId:owner,askReplyAccess:true,asks:[{id:'22222222',question,session:'cloud-dev',options:[]}]}]});
  const {container}=render(<NotifyCenter token="token"/>);await waitFor(()=>expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
  await act(async()=>{});act(()=>container.querySelector('.nc-ask-badge').click());
- console.log('CANONICAL_UI_CARD_COUNT',container.querySelectorAll('.nc-ask-card').length);
  expect(container.querySelectorAll('.nc-ask-card').length).toBe(1);
 });

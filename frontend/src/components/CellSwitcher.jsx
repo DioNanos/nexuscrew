@@ -6,12 +6,12 @@ import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-
 import { positionKey } from '../lib/nodes-model.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
-import { hostDesignationFailureMessage, hostRouteKey } from '../lib/host-designation.js';
+import { hostRouteKey } from '../lib/host-designation.js';
 import { liveHostView } from '../lib/live-host-view.js';
 import { runLiveHostCommand } from '../lib/live-host-command.js';
 import RosterHandle from './RosterHandle.jsx';
-import CellStar from './CellStar.jsx';
-import Icon from './Icon.jsx';
+import { CellActionsSheet, cellActionsItems, cellActionsState } from './CellActions.jsx';
+import { applyCellStar, cellStarView } from '../lib/cell-star.js';
 import LiveHostIndicator from './LiveHostIndicator.jsx';
 import { panelPortForRoute } from '../lib/panel-port.js';
 import { t } from '../lib/i18n.js';
@@ -165,6 +165,10 @@ export default function CellSwitcher({
   // Lo stato dell'host per nodo e le due azioni di designazione arrivano
   // dalle stesse callback che usa la home: la stella qui non ha una via sua.
   hostByRoute = {}, onDesignateCell, onClearHostCell, onLiveHostApplied,
+  // L'intervallo del poll e' un parametro, non una costante letta dal modulo:
+  // in produzione e' POLL_MS, nei test e' corto, cosi' nessun assert dipende da
+  // un timer da 4 secondi che sotto carico puo' sforare il budget del waitFor.
+  pollMs = POLL_MS,
 }) {
   const [snapshot, setSnapshot] = useState(readCellSwitcherSnapshot);
   const [showAll, setShowAll] = useState(false);
@@ -181,7 +185,13 @@ export default function CellSwitcher({
   // si chiude da sé. `source` è la sorgente aperta: anteprima, streaming o
   // pannello.
   const [peek, setPeek] = useState(null);
-  const [selectedKey, setSelectedKey] = useState('');
+  // Il foglio azioni di una riga (⋯): contesto congelato all'apertura — la riga
+  // che l'operatore ha toccato, non quella che il poll ha cambiato sotto le dita.
+  const [menuRow, setMenuRow] = useState(null);
+  // Riordino come MODALITA', con lo stesso pulsante della home mobile: le
+  // maniglie compaiono solo quando la si accende, e senza modalita' la riga
+  // resta un bersaglio d'apertura.
+  const [reorderMode, setReorderMode] = useState(false);
   const [picking, setPicking] = useState('');
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
@@ -198,9 +208,14 @@ export default function CellSwitcher({
     () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || (row.degraded && row.active))),
     [orderedRows, showAll],
   );
-  const selectedRow = useMemo(() => rows.find((row) => row.key === selectedKey && row.selectable), [rows, selectedKey]);
   // La riga sbirciata si RIrisolve a ogni lista: mai un fotogramma morto.
   const peekRow = useMemo(() => (peek ? rows.find((row) => row.key === peek.key) : null), [rows, peek]);
+  // La riga del foglio si ri-risolve allo stesso modo: se la cella non c'e' piu'
+  // il foglio non si rende (e la sua chiave si azzera da sola, sotto).
+  const menuResolved = useMemo(
+    () => (menuRow ? rows.find((row) => row.key === menuRow.key) : null), [rows, menuRow],
+  );
+  const menuApertoFoglio = !!(menuRow && menuResolved);
   // Un pin che non si e' potuto scrivere non e' silenzioso nemmeno qui:
   // la home mostra un banner ritentabile, il selettore lo dice nella
   // propria riga di stato.
@@ -211,13 +226,18 @@ export default function CellSwitcher({
   useEffect(() => {
     const previousFocus = document.activeElement;
     closeRef.current?.focus();
-    const onKeyDown = (event) => { if (event.key === 'Escape') onClose(); };
+    const onKeyDown = (event) => {
+      // Con il foglio azioni aperto l'Escape chiude il FOGLIO, che ascolta sullo
+      // stesso documento: senza questa guardia si chiuderebbero tutti e due, e
+      // l'operatore perderebbe il selettore mentre sta scegliendo.
+      if (event.key === 'Escape' && !menuApertoFoglio) onClose();
+    };
     document.addEventListener('keydown', onKeyDown);
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       previousFocus?.focus?.();
     };
-  }, [onClose]);
+  }, [onClose, menuApertoFoglio]);
 
   useEffect(() => {
     let alive = true;
@@ -266,9 +286,9 @@ export default function CellSwitcher({
       inFlight = false;
     };
     refresh();
-    const id = setInterval(refresh, POLL_MS);
+    const id = setInterval(refresh, pollMs);
     return () => { alive = false; clearInterval(id); };
-  }, [token]);
+  }, [token, pollMs]);
 
   // Comando esplicito del Live host: una chiamata sola che legge la revisione
   // fresca e scrive (live-host-command.js). L'esito si vede SEMPRE nella riga di
@@ -300,35 +320,23 @@ export default function CellSwitcher({
     return row.working ? t('cell-working') : t('cell-idle');
   };
 
-  const select = (row) => {
+  // Il tocco della riga APRE la cella, e lo fa solo dopo il ricontrollo fresco:
+  // una cella puo' morire tra il poll e il tocco, e un attach stantio non si
+  // tenta mai. R27 #4: il ricontrollo ha TRE esiti, non due — «verificata
+  // spenta» e' l'unico che puo' dirsi «non piu' attiva». Se la lettura non e'
+  // riuscita (rete, timeout, 502: fresh false o eccezione) la cella NON e' stata
+  // trovata spenta: dire il contrario faceva riavviare celle che stavano
+  // lavorando (stessa famiglia di vl-events-stale e della tri-partizione in
+  // fleet-read-policy.js). Una riga non selezionabile non si apre: lo dice e
+  // basta, con la frase che la sua verifica autorizza.
+  const open = async (row) => {
     setNotice('');
     if (!row.selectable) {
-      // R27 #4: «non più attiva» è una frase VERIFICATA. Se l'ultimo poll non
-      // ha potuto leggere (verified false), la riga non lo sa: dice «stato non
-      // confermato», che non induce a riavviare una cella che magari lavora.
       setNotice(row.verified ? t('cell-switcher-not-active') : t('cell-switcher-not-confirmed'));
       return;
     }
-    setSelectedKey(row.key);
-  };
-
-  const pick = async () => {
-    const row = selectedRow;
-    if (!row) {
-      setNotice(t('cell-switcher-select'));
-      return;
-    }
-    setNotice('');
     setPicking(row.key);
     try {
-      // Una cella puo' morire tra il poll e il tocco: ricontrolla la posizione
-      // prima di cambiare vista, cosi' non si tenta mai un attach stantio.
-      // R27 #4: il ricontrollo ha TRE esiti, non due — «verificata spenta» e'
-      // l'unico che puo' dirsi «non più attiva». Se la lettura non e'
-      // riuscita (rete, timeout, 502: fresh false o eccezione) la cella NON
-      // e' stata trovata spenta: dire il contrario faceva riavviare celle
-      // che stavano lavorando (stessa famiglia di vl-events-stale e della
-      // tri-partizione in fleet-read-policy.js).
       const latest = await readPosition(token, row.route);
       const cell = (latest.cells || []).find((entry) => entry?.cell === row.cellName
         && entry?.tmuxSession === row.session);
@@ -349,10 +357,38 @@ export default function CellSwitcher({
     }
   };
 
+  // Le azioni della riga, nel foglio (⋯): il pin e la Live. La logica resta
+  // dov'e' gia' — pin via cell-star.js, Live via runLiveHostCommand, con la
+  // stessa revisione letta-e-scritta e lo stesso esito nella riga di stato. Una
+  // voce senza handler non compare: qui non si passa nessun gesto di boot, che
+  // su questa superficie non esiste, e la voce non c'e'.
+  const cellActionHandlers = (row) => ({
+    onToggleLive: () => runHostCommand(row, hostCellFor(row.route || []) === row.cellName),
+    onTogglePin: () => applyCellStar({
+      view: cellStarView({
+        item: { key: row.key, value: { cell: row.cellName } },
+        pins, hostByRoute, route: row.route || [],
+      }),
+      itemKey: row.key, togglePin, removePin,
+    }),
+  });
+
   return (
     <div className="nc-cell-switcher-backdrop" onClick={onClose}>
       <aside ref={dialogRef} className="nc-cell-switcher" role="dialog"
         aria-label={t('fleet-cells')} tabIndex={-1} onClick={(event) => event.stopPropagation()}>
+        <div className="nc-cell-switcher-controls">
+          <b>{t('fleet-cells')}</b>
+          <button type="button" className={`nc-cell-switcher-reorder${reorderMode ? ' on' : ''}`}
+            aria-pressed={reorderMode} title={t('reorder-help')} aria-label={t('reorder')}
+            onClick={() => { setNotice(''); setReorderMode((value) => !value); }}>↕</button>
+          <button type="button" className="nc-cell-switcher-filter" aria-pressed={showAll}
+            onClick={() => { setNotice(''); setShowAll((value) => !value); }}>
+            {showAll ? t('cell-switcher-show-active') : t('cell-switcher-show-all')}
+          </button>
+          <button ref={closeRef} type="button" className="nc-cell-switcher-close" aria-label={t('cell-switcher-close')}
+            title={t('cell-switcher-close')} onClick={onClose}>×</button>
+        </div>
         <div className="nc-cell-switcher-list">
           {/* Live host di questo nodo: riga di sola lettura in testa alla lista,
               cosi' il selettore dice chi e' l'host prima di scegliere una cella. */}
@@ -362,7 +398,7 @@ export default function CellSwitcher({
           {ready && visibleRows.length === 0 && <div className="nc-empty" role="status">{t('cell-switcher-empty-active')}</div>}
           {visibleRows.map((row) => {
             const currentRow = current?.session === row.session && (current?.node || '') === row.node;
-            const selected = selectedKey === row.key;
+            const menuAperto = !!menuRow && menuRow.key === row.key;
             const status = statusFor(row);
             // Vuota per le celle che non pubblicano telemetria: niente campo,
             // la riga resta esattamente com'era (il «dove supportato» richiesto).
@@ -373,79 +409,44 @@ export default function CellSwitcher({
             const rawItems = rosterItems.get(position)
               || rows.filter((candidate) => (candidate.node || 'local') === position);
             return (
-              <div key={row.key} className={`nc-cell-switcher-row${currentRow ? ' current' : ''}${selected ? ' selected' : ''}${row.selectable ? '' : ' off'}`}
+              <div key={row.key} className={`nc-cell-switcher-row${currentRow ? ' current' : ''}${row.selectable ? '' : ' off'}`}
                 data-roster-key={row.key} data-position={position}>
-                <RosterHandle position={position} itemKey={row.key} label={row.cellName}
+                {/* Riordino a MODALITA', come nella home mobile: senza modalita'
+                    la maniglia non esiste nel DOM, e la riga e' solo un bersaglio. */}
+                {reorderMode && <RosterHandle position={position} itemKey={row.key} label={row.cellName}
                   canMove={canMoveRoster}
                   onMove={(source, target) => moveRoster(position, source, target, rawItems)}
-                  onStep={(delta) => stepRoster(position, row.key, delta, rawItems)} />
-                {/* Il pallino era uno span DENTRO il bottone di selezione: cliccarlo
-                    cambiava cella. Ora è un bottone suo e apre il popup — guardare
-                    una cella senza andarci, che è tutto il punto. Il resto della
-                    riga continua a selezionare, invariato. Apre su ANTEPRIMA;
-                    streaming e pannello si scelgono dentro, o dai bottoni stretti. */}
+                  onStep={(delta) => stepRoster(position, row.key, delta, rawItems)} />}
+                {/* Il pallino (44 px) e' «Guarda dal vivo»: apre la finestra
+                    della cella direttamente dal Flusso — su telefono la nuvola
+                    al passaggio non esiste, e guardare non e' andare: la riga
+                    non si apre per questo. */}
                 <button type="button" className="nc-cell-switcher-peek"
-                  title={t('cell-peek')} aria-label={`${t('cell-peek')}: ${row.cellName}`}
-                  onClick={(event) => { event.stopPropagation(); setPeek({ key: row.key, source: 'preview' }); }}>
+                  title={t('cell-actions-watch')} aria-label={`${t('cell-actions-watch')}: ${row.cellName}`}
+                  onClick={(event) => { event.stopPropagation(); setPeek({ key: row.key, source: 'stream' }); }}>
                   <span className={`nc-cell-switcher-dot${row.degraded ? ' warn' : row.live ? ` on${row.working ? ' working' : ''}` : ''}`} />
                 </button>
-                {/* Stretto (mobile): il puntino è un bersaglio troppo piccolo per
-                    tre azioni — controlli veri e distinti, che aprono direttamente
-                    la sorgente. `stopPropagation` anche qui: guardare non è
-                    selezionare, su nessuno schermo. Sul largo restano nascosti e
-                    il puntino resta il selettore. */}
-                <span className="nc-cell-switcher-acts">
-                  <button type="button" className="nc-cell-switcher-act"
-                    title={t('cell-peek-stream')} aria-label={`${t('cell-peek-stream')}: ${row.cellName}`}
-                    onClick={(event) => { event.stopPropagation(); setPeek({ key: row.key, source: 'stream' }); }}>▶</button>
-                  {row.panelUrl && (
-                    <button type="button" className="nc-cell-switcher-act"
-                      title={t('cell-peek-panel')} aria-label={`${t('cell-peek-panel')}: ${row.cellName}`}
-                      onClick={(event) => { event.stopPropagation(); setPeek({ key: row.key, source: 'panel' }); }}>▣</button>
-                  )}
-                </span>
+                {/* Il tocco della riga APRE, e il ricontrollo fresco lo precede
+                    sempre: una cella puo' morire tra il poll e il dito. */}
                 <button type="button" className="nc-cell-switcher-row-select"
-                  aria-current={currentRow ? 'true' : undefined} aria-pressed={selected} aria-disabled={!row.selectable}
-                  disabled={picking === row.key} onClick={() => select(row)}>
-                  <span className="nc-cell-switcher-copy"><b>{row.cellName}</b><small className="nc-cell-switcher-state">{status}</small><small>{[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}</small>{rigaDati && <small className="nc-cell-switcher-telemetry">{rigaDati}</small>}</span>
+                  aria-current={currentRow ? 'true' : undefined} aria-disabled={!row.selectable}
+                  disabled={picking === row.key} onClick={() => open(row)}>
+                  <span className="nc-cell-switcher-copy">
+                    <b>{row.cellName}</b>
+                    {currentRow && <span className="nc-cell-switcher-here">{t('cell-switcher-here')}</span>}
+                    <small className="nc-cell-switcher-state">{status}</small>
+                    <small>{[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}</small>
+                    {rigaDati && <small className="nc-cell-switcher-telemetry">{rigaDati}</small>}
+                  </span>
                 </button>
-                {/* La stella delle celle: pin locale -> designazione sul nodo ->
-                    clear. Stessa implementazione della home (CellStar), stesso
-                    ciclo, stesse etichette. Il tocco non seleziona la riga: la
-                    stella e' un fratello del bottone di selezione, e ferma
-                    comunque la propagazione. */}
-                <CellStar
-                  item={{ key: row.key, value: { cell: row.cellName } }}
-                  pins={pins}
-                  hostByRoute={hostByRoute}
-                  route={row.route || []}
-                  cellName={row.cellName}
-                  baseClassName="nc-cell-switcher-star"
-                  togglePin={togglePin}
-                  removePin={removePin}
-                  onOutcome={(outcome) => {
-                    if (!outcome.ok) setNotice(t(hostDesignationFailureMessage(outcome.error)));
-                  }}
-                />
-                {/* Il comando esplicito: la stella e' un pin, la designazione
-                    e' una scelta del nodo e si dice con una frase. */}
-                <button type="button"
-                  className={`nc-cell-switcher-act nc-cell-switcher-host${hostCellFor(row.route || []) === row.cellName ? ' on' : ''}`}
-                  data-testid={`live-host-command-${row.key}`}
-                  data-live-host-state={hostCellFor(row.route || []) === row.cellName ? 'host' : 'idle'}
-                  disabled={liveHostBusy === row.key}
-                  title={hostCellFor(row.route || []) === row.cellName ? t('live-host-action-remove') : t('live-host-action-use')}
-                  aria-label={`${hostCellFor(row.route || []) === row.cellName ? t('live-host-action-remove') : t('live-host-action-use')}: ${row.cellName}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    runHostCommand(row, hostCellFor(row.route || []) === row.cellName);
-                  }}>
-                  {/* Icona invece della frase: la riga del selettore compatto ha
-                      lo spazio di un pollice, non di due parole su tre righe.
-                      Il testo resta in aria-label/title (accessibilita') e nel
-                      popup cella, dove lo spazio c'e'. */}
-                  <Icon name="broadcast" size={18} />
-                </button>
+                {/* Le azioni della riga in un foglio dal basso: il pin e la Live.
+                    Non stanno piu' in fila come stella e comando: la riga resta
+                    pallino + testo + ⋯, come il disegno approvato. */}
+                <button type="button" className={`nc-cell-switcher-menu${menuAperto ? ' on' : ''}`}
+                  title={`${t('cell-actions-open')}: ${row.cellName}`}
+                  aria-label={`${t('cell-actions-open')}: ${row.cellName}`}
+                  aria-haspopup="menu" aria-expanded={menuAperto ? 'true' : 'false'}
+                  onClick={(event) => { event.stopPropagation(); setMenuRow({ key: row.key }); }}>⋯</button>
               </div>
             );
           })}
@@ -471,20 +472,24 @@ export default function CellSwitcher({
             onClose={() => setPeek(null)}
           />
         )}
-        <div className="nc-cell-switcher-actions">
-          <button type="button" className="nc-cell-switcher-open" disabled={!selectedRow || !!picking} onClick={pick}>
-            {selectedRow ? `${t('cell-switcher-open')}: ${selectedRow.cellName}` : t('cell-switcher-select')}
-          </button>
-        </div>
-        <div className="nc-cell-switcher-controls">
-          <b>{t('fleet-cells')}</b>
-          <button type="button" className="nc-cell-switcher-filter" aria-pressed={showAll}
-            onClick={() => { setNotice(''); setShowAll((value) => !value); }}>
-            {showAll ? t('cell-switcher-show-active') : t('cell-switcher-show-all')}
-          </button>
-          <button ref={closeRef} type="button" className="nc-cell-switcher-close" aria-label={t('cell-switcher-close')}
-            title={t('cell-switcher-close')} onClick={onClose}>×</button>
-        </div>
+        {/* Le azioni della riga, dal basso. Il contenuto e' di CellActions
+            (fase 1): qui si passano solo gli handler, e una voce senza handler
+            non compare — e' il suo contratto. Se la cella e' sparita dalla
+            lista aggiornata il foglio si chiude da se', come il popup. */}
+        {menuApertoFoglio && (() => {
+          const row = menuResolved;
+          const items = cellActionsItems({
+            ...cellActionsState({
+              item: { key: row.key, value: { cell: row.cellName } },
+              cellName: row.cellName, route: row.route || [], pins, hostByRoute,
+            }),
+            canBoot: false,
+            alive: row.selectable,
+            handlers: cellActionHandlers(row),
+          });
+          return <CellActionsSheet cellName={row.cellName} items={items}
+            busy={liveHostBusy === row.key} onClose={() => setMenuRow(null)} />;
+        })()}
       </aside>
     </div>
   );

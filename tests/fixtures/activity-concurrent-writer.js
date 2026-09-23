@@ -10,12 +10,15 @@
 // Senza la fase 1 il ritardo di spawn scaglionerebbe le scritture da solo, e il
 // test non proverebbe niente.
 //
-// Uso: node activity-concurrent-writer.js <dir> <evento> <ts> <barriera> <ready>
+// Uso: node activity-concurrent-writer.js <dir> <evento> <ts> <barriera> <ready> <gen>
+//
+// La generazione c'e' perche' senza di essa l'evento non e' leggibile: e' il
+// lancio che lega lo stato al client che l'ha prodotto.
 
 const fs = require('node:fs');
 const { scriviStato } = require('../../lib/files/activity.js');
 
-const [dir, evento, ts, barriera, ready] = process.argv.slice(2);
+const [dir, evento, ts, barriera, ready, generazione] = process.argv.slice(2);
 
 fs.writeFileSync(ready, '');
 
@@ -26,5 +29,5 @@ while (!fs.existsSync(barriera)) {
   if (Date.now() > scadenza) { process.stdout.write('timeout'); process.exit(0); }
 }
 
-const ok = scriviStato(dir, { evento, ora: Number(ts) });
+const ok = scriviStato(dir, { evento, ora: Number(ts), generazione });
 process.stdout.write(ok ? 'ok' : 'persa');

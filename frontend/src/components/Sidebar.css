@@ -92,7 +92,11 @@
 }
 .nc-cell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .nc-cell-main b { font-size: 13px; color: #d8ffe8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-.nc-cell-main small { font-size: 11px; opacity: .6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+/* Lo stato è contenuto, non decorazione — due righe da 12px, leggibile. */
+.nc-cell-main small {
+  font-size: 12px; opacity: .75;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
 /* Azioni card: stesso design delle .nc-act mobile (desktop = mobile). */
 .nc-power, .nc-boot {
   flex: 0 0 auto; width: 28px; height: 28px; padding: 0;
@@ -128,7 +132,13 @@
   font-size: 11px; opacity: .55;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.nc-rel { flex: 0 0 auto; font-size: 10px; opacity: .45; }
+.nc-rel { flex: 0 0 auto; font-size: 11px; opacity: .7; }
+.nc-badge {
+  flex: 0 0 auto;
+  background: #2e7d32; color: #fff;
+  border-radius: 10px; padding: 1px 8px;
+  font-size: 12px; line-height: 18px;
+}
 .nc-menu {
   flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -215,3 +225,66 @@
 .nc-roster-handle:active, .nc-roster-handle.active { cursor: grabbing; }
 .nc-side-card.nc-roster-dragging, .nc-cell.nc-roster-dragging { opacity: .62; }
 .nc-side-card.nc-roster-over, .nc-cell.nc-roster-over { outline: 2px solid rgba(0,204,102,.72); outline-offset: 2px; }
+
+/* Maniglia al passaggio, bollino host, menu azioni, striscia Live ---------- */
+
+/* Maniglia roster: solo al passaggio (o focus da tastiera) sulla riga cella.
+   Lo spazio resta occupato: nessun scatto di layout quando compare. */
+.nc-cell > .nc-roster-handle { opacity: 0; pointer-events: none; }
+.nc-cell:hover > .nc-roster-handle,
+.nc-cell:focus-within > .nc-roster-handle { opacity: 1; pointer-events: auto; }
+
+/* Bollino LIVE: la cella che È l'host Live lo dice sulla riga, in una parola. */
+.nc-live-bollino {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  line-height: 14px;
+  vertical-align: 1px;
+  color: #00cc66;
+  background: rgba(0, 204, 102, 0.12);
+  border: 1px solid rgba(0, 204, 102, 0.45);
+}
+
+/* Trigger del menu azioni (⋯): stesso tondo dei fratelli, gli azionabili
+   secondari vivono qui dentro invece che in fila sulla riga. */
+.nc-cellmenu {
+  flex: 0 0 auto; width: 28px; height: 28px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.22);
+  color: #9aa89a; cursor: pointer; border-radius: 50%;
+  font-size: 14px; line-height: 1;
+}
+.nc-cellmenu:hover, .nc-cellmenu[aria-expanded="true"] { filter: brightness(1.25); }
+
+/* Striscia Live in testa alla sidebar: pallino del registro Live + nome cella.
+   La frase intera (modalità, stato, lease) resta nel tooltip. */
+.nc-live-strip {
+  display: flex; align-items: center; gap: 7px;
+  min-height: 22px; padding: 2px 10px;
+  overflow: hidden;
+}
+.nc-live-strip-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #355; }
+.nc-live-strip-dot.active { background: #00cc66; box-shadow: 0 0 6px #00cc6688; }
+.nc-live-strip-dot.designated, .nc-live-strip-dot.present { background: #00cc66; box-shadow: 0 0 6px #00cc6688; }
+.nc-live-strip-dot.active { animation: nc-live-strip-pulse 1.6s ease-in-out infinite; }
+@keyframes nc-live-strip-pulse {
+  0%, 100% { box-shadow: 0 0 4px #00cc6688; }
+  50% { box-shadow: 0 0 9px #00cc66cc; }
+}
+.nc-live-strip-dot.unknown { background: #e0b020; box-shadow: 0 0 6px #e0b02088; }
+.nc-live-strip-testo {
+  flex: 0 1 auto; min-width: 0;
+  font-size: 11px; font-weight: 700; letter-spacing: .3px;
+  color: #d8ffe8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nc-live-strip-notice {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nc-live-strip-notice.ok { color: #00cc66; }
+.nc-live-strip-notice.ko { color: #e0b020; }

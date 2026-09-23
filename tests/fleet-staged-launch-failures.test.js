@@ -26,6 +26,12 @@ function world() {
   });
   const stageFile = path.join(root, 'stage');
   const idsFile = path.join(root, 'ids');
+  // Marcatore di sessione NATA: il fake risponde a list-sessions con lo stato
+  // vero del server (prima di new-session non c'e' nessuna sessione). Un fake
+  // che risponde «vivo» sempre descriverebbe uno stato impossibile — sessione
+  // esistente E new-session che la crea — e la guardia in testa a up() lo
+  // fermerebbe prima dello stadio che questi test vogliono raggiungere.
+  const natoFile = path.join(root, 'nato');
   const log = path.join(root, 'tmux.log');
   fs.writeFileSync(stageFile, '');
   fs.writeFileSync(idsFile, '$5\t@7\t%9\n');
@@ -39,15 +45,15 @@ const stage = fs.readFileSync(${JSON.stringify(stageFile)}, 'utf8').trim();
 const log = ${JSON.stringify(log)};
 fs.appendFileSync(log, JSON.stringify(args) + '\\n');
 const fail = (name) => { if (stage === name) { process.stderr.write('synthetic ' + name + ' failure\\n'); process.exit(1); } };
-if (args[0] === 'new-session') { fail('new-session'); process.stdout.write(fs.readFileSync(${JSON.stringify(idsFile)}, 'utf8')); process.exit(0); }
+if (args[0] === 'new-session') { fail('new-session'); fs.writeFileSync(${JSON.stringify(natoFile)}, '1'); process.stdout.write(fs.readFileSync(${JSON.stringify(idsFile)}, 'utf8')); process.exit(0); }
 if (args[0] === 'set-option') { fail('set-option'); process.exit(0); }
 if (args[0] === 'respawn-pane') { fail('respawn-pane'); process.exit(0); }
 if (args[0] === 'display-message') {
   if (args[args.length - 1] === '#{session_id}') { process.stdout.write('$5\\n'); process.exit(0); }
   fail('readiness'); process.stdout.write('0\\t\\t%9\\n'); process.exit(0);
 }
-if (args[0] === 'list-sessions') { process.stdout.write('$5\\twork-build\\n'); process.exit(0); }
-if (args[0] === 'kill-session') { process.exit(0); }
+if (args[0] === 'list-sessions') { if (fs.existsSync(${JSON.stringify(natoFile)})) process.stdout.write('$5\\twork-build\\n'); process.exit(0); }
+if (args[0] === 'kill-session') { try { fs.unlinkSync(${JSON.stringify(natoFile)}); } catch (_) {} process.exit(0); }
 process.exit(0);
 `, { mode: 0o755 });
   fs.chmodSync(tmuxBin, 0o755);

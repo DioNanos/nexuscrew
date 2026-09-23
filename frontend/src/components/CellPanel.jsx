@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
-import { requestPanelTicket, routeBase } from '../lib/api.js';
+import { requestPanelTicket, routeBase, setAiDesktop } from '../lib/api.js';
+import { DESKTOP_PANEL_PORT } from '../lib/panel-port.js';
 import './CellPanel.css';
 
 // D8 — pannello per-cella, L'INGRESSO. Il vecchio flusso metteva il `panelUrl`
@@ -132,24 +133,84 @@ export default function CellPanel({
   // verde sul frame bianco — lo stesso silenzio del difetto, nel test). Il
   // ref lega entrambi, per simmetria e perché load resti deterministicamente
   // osservato comunque.
+  const frameRef = useRef(null);
   const legaFrame = useCallback((el) => {
     if (!el) return;
+    frameRef.current = el;
     el.onload = onFrameLoad;
     el.onerror = onFrameError;
   }, [onFrameLoad, onFrameError]);
 
   useEffect(() => { apri(); }, [apri]);
 
-  const msg = (key, azioni = true) => (
+  // Il pannello del desktop grafico: la porta KasmVNC del container. Solo per
+  // lui «non raggiungibile» ha anche l'azione «Avvia» — gli altri pannelli non
+  // hanno un container da riaccendere. E solo per il pannello del nodo
+  // LOCALE: una cella remota non riceve comandi che accendono container di un
+  // altro nodo.
+  const isDesktop = useMemo(() => {
+    try { return Number(new URL(panelUrl).port) === DESKTOP_PANEL_PORT; } catch (_) { return false; }
+  }, [panelUrl]);
+  const isDesktopLocale = isDesktop && rotta.length === 0;
+  const [avvioBusy, setAvvioBusy] = useState(false);
+  const [avvioErrore, setAvvioErrore] = useState('');
+  // Il proxy, quando il pannello non risponde, serve una PAGINA (non un JSON
+  // invisibile) che annuncia sé stessa col postMessage: il frame che avrebbe
+  // finito in «loaded» su una risposta 502 arriva invece qui, dove la causa ha
+  // un nome e l'azione giusta. Il mittente è fidato a TRE condizioni, perché
+  // qualunque frame della pagina potrebbe impersonare l'errore: è il frame
+  // ATTIVO (source), naviga alla SUA origine dichiarata, e porta il tipo
+  // atteso — il testo del messaggio è fisso, il contenuto non è fiducia.
+  useEffect(() => {
+    const onMessage = (event) => {
+      const frameEl = frameRef.current;
+      if (!frameEl || !frameEl.contentWindow || event.source !== frameEl.contentWindow) return;
+      let origine = null;
+      try { origine = new URL(frameUrl, window.location.href).origin; } catch (_) { return; }
+      if (!origine || event.origin !== origine) return;
+      if (!event.data || event.data.type !== 'nc-panel-unreachable') return;
+      setState((s) => (s === 'ready' || s === 'loaded' ? 'unreachable' : s));
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [frameUrl]);
+  // «Avvia»: spegnere il desktop è una spunta in Impostazioni, riaccenderlo da
+  // qui è la stessa decisione un click prima. L'errore del POST si mostra, non
+  // si scarta: riprovare alla cieca ripromette lo stesso fallimento. Poi il
+  // frame riparte da un biglietto nuovo.
+  const avviaDesktop = useCallback(async () => {
+    if (!token || avvioBusy) return;
+    setAvvioBusy(true); setAvvioErrore('');
+    // Se l'avvio non riesce NON si riparte: riaprire subito mostrerebbe di
+    // nuovo «non raggiungibile» cancellando la causa del fallimento, e chi
+    // guarda crederebbe che il click non abbia fatto nulla.
+    let fallito = false;
+    try {
+      const j = await setAiDesktop(token, true);
+      if (j && j.ok === false) { setAvvioErrore(j.error || 'comando fallito'); fallito = true; }
+    } catch (e) { setAvvioErrore(String((e && e.message) || e)); fallito = true; }
+    setAvvioBusy(false);
+    if (!fallito) apri();
+  }, [token, avvioBusy, apri]);
+
+  const msg = (key, azioni = true, extra = null) => (
     <div className="nc-cellpanel nc-cellpanel-msg" role="status">
       <span>{t(key)}</span>
       {azioni && (
         <span className="nc-cellpanel-actions">
+          {extra}
           <button type="button" title={t('panel-retry')} onClick={() => apri()}>{t('panel-retry')}</button>
         </span>
       )}
     </div>
   );
+
+  // Per il desktop LOCALE, «non raggiungibile» e «frame fallito» hanno anche
+  // l'azione di riaccendere il container (la spunta di Impostazioni, un click
+  // prima); per una cella remota resta solo Riprova.
+  const bottoneAvvia = isDesktopLocale ? (
+    <button type="button" disabled={avvioBusy} onClick={avviaDesktop}>{t('panel-start-desktop')}</button>
+  ) : null;
 
   if (state === 'none' || state === 'no-panel') return msg('panel-none', false);
   if (state === 'requesting') {
@@ -177,12 +238,22 @@ export default function CellPanel({
   if (state === 'unauthorized') return msg('panel-unauthorized', false);
   if (state === 'denied') return msg('panel-denied');
   if (state === 'timeout') return msg('panel-timeout');
-  if (state === 'unreachable') return msg('panel-unreachable');
+  if (state === 'unreachable') {
+    return (
+      <div className="nc-cellpanel nc-cellpanel-msg" role="status">
+        <span>{t('panel-unreachable')}{avvioErrore ? ` — ${avvioErrore}` : ''}</span>
+        <span className="nc-cellpanel-actions">
+          {bottoneAvvia}
+          <button type="button" title={t('panel-retry')} onClick={() => apri()}>{t('panel-retry')}</button>
+        </span>
+      </div>
+    );
+  }
   // R20: il consumo del biglietto è fallito a livello di risorsa: il frame è
   // bianco e prima NESSUNO stato lo diceva. Ora ha nome e azione (biglietto
   // nuovo), come `denied` — ma la causa è diversa: `denied` è l'EMISSIONE
   // rifiutata, questa è la navigazione del frame fallita DOPO un biglietto ok.
-  if (state === 'frame-error') return msg('panel-frame-error');
+  if (state === 'frame-error') return msg('panel-frame-error', true, bottoneAvvia);
   // ready | loaded: il frame resta montato. L'hint visibile dice «montato,
   // carico in corso» e sparisce al load — la distinzione fra i due stati non
   // resta chiusa nel componente: chi guarda la vede. data-frame-state la

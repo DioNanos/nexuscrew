@@ -14,6 +14,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { parseDefinitions } = require('../lib/fleet/definitions.js');
 const { resolveManagedEngine } = require('../lib/fleet/managed.js');
+const { EVENTI_CODEX } = require('../lib/fleet/codex-hooks.js');
+const { leggiAttivita, scriviStato, scriviGenerazione, NOME_GENERAZIONE } = require('../lib/files/activity.js');
 
 const ENGINE_CLAUDE = { id: 'ec', managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'unsafe' } };
 
@@ -118,22 +120,134 @@ test('cella senza sessione tmux: nessun hook (non c\'e dove scrivere)', (t) => {
   assert.equal(r.engine.args.some((a) => a.includes('nc-activity-hook')), false);
 });
 
-test('motori non-Claude: nessun hook, restano senza canale', (t) => {
+test('motori senza canale: pi, shell e un codex non provato non prendono hook', (t) => {
   const m = mondo(t);
   // Il binario del client deve esistere, o la risoluzione si ferma prima
   // (fail-closed sul client assente) e il test non proverebbe nulla sugli hook.
-  fs.writeFileSync(path.join(m.home, '.local', 'bin', 'codex-vl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  // `codex-vl` risponde con una versione NON provata: il gate non inietta.
+  fs.writeFileSync(path.join(m.home, '.local', 'bin', 'codex-vl'), '#!/bin/sh\necho "codex-cli 9.9.9"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(m.home, '.local', 'bin', 'pi'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const defs = parseDefinitions({
     schemaVersion: 1,
-    engines: [{ id: 'ev', label: 'VL', managed: { client: 'codex-vl', provider: 'ollama-cloud', model: 'deepseek-v4.1-flash' } }],
-    cells: [{ id: 'Dev', cwd: m.cwd, engine: 'ev', tmuxSession: 'cloud-Dev' }],
+    engines: [
+      { id: 'ev', label: 'VL', managed: { client: 'codex-vl', provider: 'ollama-cloud', model: 'deepseek-v4.1-flash' } },
+      { id: 'ep', label: 'Pi', managed: { client: 'pi', provider: 'openrouter', model: 'openai/gpt-5', permissionPolicy: 'standard' } },
+      { id: 'es', label: 'Shell', managed: { client: 'shell', provider: 'local', model: '', permissionPolicy: 'standard' } },
+    ],
+    cells: [
+      { id: 'Dev', cwd: m.cwd, engine: 'ev', tmuxSession: 'cloud-Dev' },
+      { id: 'Pi', cwd: m.cwd, engine: 'ep', tmuxSession: 'cloud-Pi' },
+      { id: 'Sh', cwd: m.cwd, engine: 'es', tmuxSession: 'cloud-Sh' },
+    ],
+  });
+  assert.ok(defs, 'documento valido');
+  const cfg = { home: m.home, env: { OLLAMA_API_KEY: 'k', OPENAI_API_KEY: 'k' }, filesRoot: m.filesRoot, activityGeneration: 'gen-1' };
+  for (const [nome, indice] of [['codex-vl non provato', 0], ['pi', 1], ['shell', 2]]) {
+    const r = resolveManagedEngine(defs.engines[indice], defs.cells[indice], cfg);
+    assert.equal(r.ok, true, r.reason);
+    assert.equal(r.engine.args.some((a) => a.includes('nc-activity-hook')), false, `${nome}: nessun canale`);
+  }
+});
+
+// --- il gate di versione guarda il binario della CELLA, non il PATH --------
+//
+// Il gate esegue il binario RISOLTO per la cella — lo stesso che finisce in
+// argv — non il nome del client cercato nel PATH del processo. Sono due
+// eseguibili diversi appena la cella ne sceglie un altro, ed e' esattamente il
+// caso che la guardia deve distinguere: la guardia esiste per non far fermare
+// una cella su un dialogo di revisione, e una guardia che ne guarda un altro
+// da' il via libera sbagliato.
+
+function binarioFinto(m, client, corpo) {
+  fs.writeFileSync(path.join(m.home, '.local', 'bin', client), corpo, { mode: 0o755 });
+}
+
+function risolviCodex(m, client, provider, extra = {}) {
+  const defs = parseDefinitions({
+    schemaVersion: 1,
+    engines: [{ id: 'ex', label: 'X', managed: { client, provider, model: 'deepseek-v4.1-flash' } }],
+    cells: [{ id: 'Dev', cwd: m.cwd, engine: 'ex', tmuxSession: 'cloud-Dev' }],
   });
   assert.ok(defs, 'documento valido');
   const r = resolveManagedEngine(defs.engines[0], defs.cells[0],
-    { home: m.home, env: { OLLAMA_API_KEY: 'k' }, filesRoot: m.filesRoot, activityGeneration: 'gen-1' });
+    { home: m.home, env: { OLLAMA_API_KEY: 'k', OPENAI_API_KEY: 'k' }, filesRoot: m.filesRoot, activityGeneration: 'gen-1', ...extra });
   assert.equal(r.ok, true, r.reason);
-  assert.equal(r.activityDir, null);
-  assert.equal(r.engine.args.some((a) => a.includes('nc-activity-hook')), false);
+  return r;
+}
+
+const hookDi = (r) => r.engine.args.filter((a) => a.includes('nc-activity-hook'));
+
+test('versione NON provata nel binario della cella: nessun hook', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 9.9.9"\n');
+  assert.equal(hookDi(risolviCodex(m, 'codex', 'openai-api')).length, 0);
+});
+
+test('versione provata nel binario della cella: un hook per evento', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 0.156.1"\n');
+  assert.equal(hookDi(risolviCodex(m, 'codex', 'openai-api')).length, EVENTI_CODEX.length);
+});
+
+test('codex-vl con la sua versione provata: hook presenti', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex-vl', '#!/bin/sh\necho "codex-cli 0.155.1"\n');
+  assert.equal(hookDi(risolviCodex(m, 'codex-vl', 'ollama-cloud')).length, EVENTI_CODEX.length);
+});
+
+test('binario che esce senza output: versione non determinabile, nessun hook', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\nexit 0\n');
+  assert.equal(hookDi(risolviCodex(m, 'codex', 'openai-api')).length, 0);
+});
+
+// --- la generazione va pubblicata anche per codex -------------------------
+//
+// Il launcher scrive `activity.gen` solo se `activityDir` e' valorizzato. Se
+// per codex restava null, sul disco rimaneva la generazione di un lancio
+// precedente e il lettore scartava TUTTI gli eventi nuovi (generazioni
+// diverse): la cella sarebbe rimasta «non verificata» per sempre, senza che
+// niente lo dicesse.
+
+test('cella codex provata: activityDir valorizzato, e la generazione nuova fa leggere gli eventi', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 0.156.1"\n');
+  const r = risolviCodex(m, 'codex', 'openai-api');
+  assert.equal(hookDi(r).length, EVENTI_CODEX.length);
+  assert.notEqual(r.activityDir, null, 'la generazione va pubblicata anche per codex');
+  assert.equal(r.activityDir, path.join(m.filesRoot, 'cloud-Dev'));
+
+  // Il launcher pubblica la generazione (runtime.js) e poi l'evento arriva.
+  scriviGenerazione(r.activityDir, 'gen-1');
+  scriviStato(r.activityDir, { evento: 'UserPromptSubmit', generazione: 'gen-1' });
+  const letto = leggiAttivita(m.filesRoot, 'cloud-Dev');
+  assert.ok(letto, 'l\'evento scritto con la generazione corrente si legge');
+  assert.equal(letto.stato, 'lavora');
+
+  // E la generazione conta: con quella di un lancio precedente l'evento e'
+  // scartato. E' la barriera fra lanci, non un'ipotesi.
+  scriviGenerazione(r.activityDir, 'gen-vecchia');
+  assert.equal(leggiAttivita(m.filesRoot, 'cloud-Dev'), null, 'generazione diversa = evento di un altro lancio');
+});
+
+test('cella codex NON provata: nessun hook e nessuna generazione da pubblicare', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 9.9.9"\n');
+  const r = risolviCodex(m, 'codex', 'openai-api');
+  assert.equal(hookDi(r).length, 0);
+  assert.equal(r.activityDir, null, 'nel fail-closed non c\'e\' niente da pubblicare');
+});
+
+// --- portabilita': dove la chiave di fiducia non e' quella che generiamo --
+
+test('su win32 e su termux nessun hook, anche con la versione provata', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 0.156.1"\n');
+  for (const [nome, extra] of [['win32', { platform: 'win32' }], ['termux', { platform: 'android' }]]) {
+    const r = risolviCodex(m, 'codex', 'openai-api', extra);
+    assert.equal(hookDi(r).length, 0, `${nome}: nessun hook`);
+    assert.equal(r.activityDir, null, `${nome}: nessuna generazione pubblicata`);
+  }
 });
 
 // --- il comando degli hook ------------------------------------------------
@@ -185,12 +299,63 @@ test('con gli hook attivi il ramo strict resta fail-closed su una capability sco
   assert.equal(r.mcpCellRefusedCode, 'CAPABILITY_UNKNOWN_NAME');
 });
 
-test('la risoluzione non scrive nulla: la generazione la scrive il launcher', (t) => {
+test('la risoluzione NON scrive la generazione: la mette negli argv e nel canale', (t) => {
+  // La scrittura di `activity.gen` e' di `cell-exec`, che gira DENTRO la
+  // sessione tmux creata — quindi solo per chi vince la new-session — e la fa
+  // PRIMA di avviare il client. Qui si verifica l'altra meta': la risoluzione
+  // non tocca il disco, e mette la generazione dove cell-exec la trovera'.
   const m = mondo(t);
-  resolveManagedEngine(ENGINE_CLAUDE, { id: 'Dev', cwd: m.cwd, engine: 'ec', tmuxSession: 'cloud-Dev' },
-    { home: m.home, env: {}, filesRoot: m.filesRoot, activityGeneration: 'gen-1' });
+  const cell = { id: 'Dev', cwd: m.cwd, engine: 'ec', tmuxSession: 'cloud-Dev' };
+  const r = resolveManagedEngine(ENGINE_CLAUDE, cell, {
+    home: m.home, env: {}, filesRoot: m.filesRoot, activityGeneration: 'gen-1',
+  });
   assert.equal(fs.existsSync(path.join(m.filesRoot, 'cloud-Dev')), false,
-    'resolve decide gli argomenti, non tocca il disco: la directory la crea il launcher');
+    'la risoluzione NON crea nemmeno la directory della sessione');
+  assert.equal(r.activityDir, path.join(m.filesRoot, 'cloud-Dev'),
+    'il canale c\'e\': dice a cell-exec DOVE scrivere, e viaggia nel payload');
+  const hooks = settingsDi(r.engine.args).hooks;
+  assert.ok(hooks, 'gli hook ci sono');
+  assert.match(JSON.stringify(hooks), /--gen 'gen-1'/,
+    'la generazione viaggia negli argv: e\' quella che cell-exec scrivera\' su disco');
+
+  // Il seam della vecchia pubblicazione non esiste piu'. Passarlo non deve
+  // cambiare niente e — soprattutto — NON deve scrivere: una scrittura nascosta
+  // qui rimetterebbe il difetto (la generazione del perdente sul disco).
+  let chiamato = false;
+  const conSeam = resolveManagedEngine(ENGINE_CLAUDE, cell, {
+    home: m.home, env: {}, filesRoot: m.filesRoot, activityGeneration: 'gen-2',
+    pubblicaGenerazione: () => { chiamato = true; return true; },
+  });
+  assert.equal(chiamato, false, 'il seam non viene piu\' chiamato');
+  assert.equal(fs.existsSync(path.join(m.filesRoot, 'cloud-Dev')), false, 'e non si scrive');
+  assert.ok(settingsDi(conSeam.engine.args).hooks);
+});
+
+test('gli hook si iniettano lo stesso: la scrittura non puo\' piu\' farli saltare', (t) => {
+  // Prima la generazione si pubblicava qui, e se la scrittura falliva NON si
+  // iniettavano gli hook: era il modo di non illudere nessuno. Il disegno nuovo
+  // toglie quella scrittura dalla risoluzione, quindi non c'e' piu' un esito da
+  // leggere: gli hook si iniettano sempre, e se la scrittura fallira' lo dira'
+  // `cell-exec` (log + client avviato lo stesso, stato «non verificato» — vedi
+  // tests/fleet-cell-exec.test.js).
+  const m = mondo(t);
+  const cell = { id: 'Dev', cwd: m.cwd, engine: 'ec', tmuxSession: 'cloud-Dev' };
+  const r = resolveManagedEngine(ENGINE_CLAUDE, cell, {
+    home: m.home, env: {}, filesRoot: m.filesRoot, activityGeneration: 'gen-1',
+  });
+  assert.ok(r.ok, 'la cella si risolve');
+  assert.ok((settingsDi(r.engine.args) || {}).hooks, 'gli hook ci sono');
+  assert.equal(r.activityDir, path.join(m.filesRoot, 'cloud-Dev'), 'e il canale pure');
+});
+
+test('vale anche per codex: hook e canale, nessuna scrittura dalla risoluzione', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 0.156.1"\n');
+  const r = risolviCodex(m, 'codex', 'openai-api');
+  assert.ok(hookDi(r).length > 0, 'versione provata: gli hook ci sono');
+  assert.equal(r.activityDir, path.join(m.filesRoot, 'cloud-Dev'));
+  assert.equal(fs.existsSync(path.join(m.filesRoot, 'cloud-Dev', NOME_GENERAZIONE)), false,
+    'e niente su disco');
 });
 
 // --- il documento parla di celle reali ------------------------------------

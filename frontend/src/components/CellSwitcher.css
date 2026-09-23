@@ -17,8 +17,15 @@
   background: #0a0e0a; color: #cfe;
 }
 .nc-cell-switcher-row.current { border-color: #2e7d32; background: #14200f; }
-.nc-cell-switcher-row.selected { border-color: #79d9ff; background: #112637; box-shadow: 0 0 0 2px #79d9ff33; }
-.nc-cell-switcher-row.off { opacity: .48; }
+/* Una riga spenta si attenua, ma NON con l'opacità sul contenitore: quella si
+   moltiplica su tutto quello che c'è dentro, testo di stato compreso, e lo
+   portava a .48 — sotto la soglia di leggibilità. Si attenuano i testi che
+   devono attenuarsi (nome, sottotitolo, pallino); il testo di stato resta
+   quello che è, perché è l'informazione che si viene a leggere. */
+.nc-cell-switcher-row.off .nc-cell-switcher-copy b,
+.nc-cell-switcher-row.off .nc-cell-switcher-copy small:not(.nc-cell-switcher-state),
+.nc-cell-switcher-row.off .nc-cell-switcher-dot,
+.nc-cell-switcher-row.off .nc-cell-switcher-menu { opacity: .55; }
 .nc-cell-switcher-row-select {
   min-width: 0; min-height: 44px; flex: 1 1 auto; display: flex; align-items: center; gap: 10px;
   padding: 8px 4px 8px 0; border: 0; background: transparent; color: #cfe; text-align: left;
@@ -31,7 +38,11 @@
 }
 .nc-cell-switcher .nc-roster-handle.active,
 .nc-cell-switcher .nc-roster-handle:focus-visible { color: #bfffd8; border-color: rgba(0,204,102,.45); background: rgba(0,204,102,.12); }
-.nc-cell-switcher-row.nc-roster-dragging { opacity: .62; }
+/* Anche in trascinamento l'attenuazione sta sui testi, non sul contenitore:
+   sulla riga che si sta spostando il testo di stato resterebbe altrimenti al
+   .62 del contenitore, sotto la soglia di leggibilità. */
+.nc-cell-switcher-row.nc-roster-dragging .nc-cell-switcher-copy b,
+.nc-cell-switcher-row.nc-roster-dragging .nc-cell-switcher-copy small:not(.nc-cell-switcher-state) { opacity: .7; }
 .nc-cell-switcher-row.nc-roster-over { outline: 2px solid rgba(0,204,102,.72); outline-offset: 2px; }
 .nc-cell-switcher-dot { flex: 0 0 9px; width: 9px; height: 9px; border-radius: 50%; background: #355; }
 .nc-cell-switcher-dot.on { background: #00cc66; box-shadow: 0 0 6px #00cc6688; }
@@ -40,31 +51,24 @@
 .nc-cell-switcher-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .nc-cell-switcher-copy b, .nc-cell-switcher-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nc-cell-switcher-copy b { color: #d8ffe8; font-size: 14px; }
-.nc-cell-switcher-copy small { opacity: .62; font-size: 11px; }
-.nc-cell-switcher-copy .nc-cell-switcher-state { opacity: .88; color: #d8ffe8; }
+.nc-cell-switcher-copy small { opacity: .62; font-size: 13px; }
+/* Il testo di stato ha la sua misura DICHIARATA (12 px), non ereditata dal
+   sottotitolo: è l'informazione che si viene a leggere, e non deve dipendere
+   dalla riga accanto. */
+.nc-cell-switcher-copy .nc-cell-switcher-state { opacity: .88; color: #d8ffe8; font-size: 12px; }
 /* Telemetria (contesto libero · tier usati) nella RIGA dello switcher: la
    regola generica del popup vive in CellPeek.css (componente condiviso). */
 .nc-cell-switcher-copy .nc-cell-switcher-telemetry { color: #9fd8c2; }
 
 /* Controlli diretti per lo stretto: sul telefono il puntino è un bersaglio
-   troppo piccolo per tre azioni. Sul largo restano nascosti e il puntino
-   resta il selettore — sono la stessa azione, con un bersaglio onesto. */
-.nc-cell-switcher-acts { display: none; gap: 4px; }
-.nc-cell-switcher-act {
-  display: none; border: 1px solid rgba(216, 255, 232, .25); background: rgba(216, 255, 232, .06);
-  color: #d8ffe8; border-radius: 6px; min-width: 34px; min-height: 34px; font-size: 14px;
-}
-@media (max-width: 640px) {
-  .nc-cell-switcher-acts { display: inline-flex; }
-  .nc-cell-switcher-act { display: inline-flex; align-items: center; justify-content: center; }
-}
+   troppo piccolo per tre azioni: ora il puntino e' l'unico gesto del
+   guardare (apre il Flusso), e le azioni della riga stanno nel foglio. */
 
 /* Le sorgenti del popup: anteprima, flusso, pannello. Stessa barra, stesso
    gesto; la sorgente attiva e' l'unica scura. */
 .nc-cell-switcher-notice { color: #ffd36b; font-size: 12px; }
-.nc-cell-switcher-actions { display: flex; min-width: 0; }
-.nc-cell-switcher-open { min-width: 0; min-height: 44px; width: 100%; padding: 0 12px; border: 1px solid #79d9ff; border-radius: 9px; background: #16445e; color: #effcff; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nc-cell-switcher-open:disabled { border-color: #2b3c2b; background: #14200f; color: #8fa898; opacity: .7; }
+/* Il bottone «apri cella» non c'e' piu': la riga stessa apre, dopo il
+   ricontrollo fresco, e il selettore non ha piu' uno stato «scelto». */
 .nc-cell-switcher-controls { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .nc-cell-switcher-controls b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d8ffe8; font-size: 14px; }
 .nc-cell-switcher-controls button { min-width: 44px; min-height: 44px; border: 1px solid #2b3c2b; border-radius: 9px; background: #14200f; color: #cfe; }
@@ -95,26 +99,21 @@
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* La stella delle celle nel selettore compatto: stesso linguaggio visivo della
-   home e della sidebar, bersaglio non piu' piccolo di 40px (e' un pollice). */
-.nc-cell-switcher-star {
+/* Le azioni della riga (⋯): lo stesso tondo da 44 px dei fratelli nella home.
+   Stella e comando Live non stanno piu' in fila — vivono nel foglio. */
+.nc-cell-switcher-menu {
   display: inline-flex; align-items: center; justify-content: center;
-  min-width: 40px; min-height: 40px; padding: 0; flex: 0 0 auto;
+  min-width: 44px; min-height: 44px; padding: 0; flex: 0 0 auto;
   background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .22);
-  color: #9aa89a; border-radius: 8px; font-size: 15px; line-height: 1; cursor: pointer;
+  color: #9aa89a; border-radius: 50%; font-size: 18px; line-height: 1; cursor: pointer;
 }
-/* Il comando che designa la cella ospite Live e' un'ICONA, non una frase: la
-   stessa scatola della stella pin (40px, stesso raggio), cosi' la riga resta su
-   una linea sola anche sullo stretto. Lo stato «questa cella e' l'host» usa lo
-   stesso accento della stella attiva; lo stato normale resta un contorno. */
-.nc-cell-switcher-act.nc-cell-switcher-host {
-  min-width: 40px; min-height: 40px; padding: 0; flex: 0 0 auto; border-radius: 8px;
+.nc-cell-switcher-menu.on { color: #bfffd8; border-color: rgba(0, 204, 102, .55); background: rgba(0, 204, 102, .12); }
+
+/* «SEI QUI»: la cella in cui si sta lavorando, detta in parole. La riga lo
+   diceva solo col bordo; chi arriva da un'altra schermata non lo sa leggere. */
+.nc-cell-switcher-here {
+  flex: 0 0 auto; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid rgba(0, 204, 102, .55); background: rgba(0, 204, 102, .12);
+  color: #bfffd8; font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
 }
-.nc-cell-switcher-host.on {
-  color: #e8c547; border-color: rgba(232, 197, 71, .55); background: rgba(232, 197, 71, .08);
-}
-.nc-cell-switcher-star.on { color: #e8c547; border-color: rgba(232, 197, 71, .55); background: rgba(232, 197, 71, .08); }
-.nc-cell-switcher-star.designated { color: #c8a6ff; border-color: rgba(200, 166, 255, .6); background: rgba(200, 166, 255, .12); }
-.nc-cell-switcher-star.thread-present { color: #69b7ff; border-color: rgba(105, 183, 255, .6); background: rgba(105, 183, 255, .12); }
-.nc-cell-switcher-star.thread-active { color: #ff5a5a; border-color: rgba(255, 90, 90, .6); background: rgba(255, 90, 90, .12); }
-.nc-cell-switcher-star.thread-unknown { color: #e0b020; border-color: rgba(224, 176, 32, .6); background: rgba(224, 176, 32, .12); }
+.nc-cell-switcher-reorder.on { color: #bfffd8; border-color: rgba(0, 204, 102, .55); background: rgba(0, 204, 102, .12); }
