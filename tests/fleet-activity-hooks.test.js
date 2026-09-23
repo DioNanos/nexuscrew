@@ -14,6 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { parseDefinitions } = require('../lib/fleet/definitions.js');
 const { resolveManagedEngine } = require('../lib/fleet/managed.js');
+const { EVENTI_CODEX } = require('../lib/fleet/codex-hooks.js');
 
 const ENGINE_CLAUDE = { id: 'ec', managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'unsafe' } };
 
@@ -118,22 +119,85 @@ test('cella senza sessione tmux: nessun hook (non c\'e dove scrivere)', (t) => {
   assert.equal(r.engine.args.some((a) => a.includes('nc-activity-hook')), false);
 });
 
-test('motori non-Claude: nessun hook, restano senza canale', (t) => {
+test('motori senza canale: pi, shell e un codex non provato non prendono hook', (t) => {
   const m = mondo(t);
   // Il binario del client deve esistere, o la risoluzione si ferma prima
   // (fail-closed sul client assente) e il test non proverebbe nulla sugli hook.
-  fs.writeFileSync(path.join(m.home, '.local', 'bin', 'codex-vl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  // `codex-vl` risponde con una versione NON provata: il gate non inietta.
+  fs.writeFileSync(path.join(m.home, '.local', 'bin', 'codex-vl'), '#!/bin/sh\necho "codex-cli 9.9.9"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(m.home, '.local', 'bin', 'pi'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const defs = parseDefinitions({
     schemaVersion: 1,
-    engines: [{ id: 'ev', label: 'VL', managed: { client: 'codex-vl', provider: 'ollama-cloud', model: 'deepseek-v4.1-flash' } }],
-    cells: [{ id: 'Dev', cwd: m.cwd, engine: 'ev', tmuxSession: 'cloud-Dev' }],
+    engines: [
+      { id: 'ev', label: 'VL', managed: { client: 'codex-vl', provider: 'ollama-cloud', model: 'deepseek-v4.1-flash' } },
+      { id: 'ep', label: 'Pi', managed: { client: 'pi', provider: 'openrouter', model: 'openai/gpt-5', permissionPolicy: 'standard' } },
+      { id: 'es', label: 'Shell', managed: { client: 'shell', provider: 'local', model: '', permissionPolicy: 'standard' } },
+    ],
+    cells: [
+      { id: 'Dev', cwd: m.cwd, engine: 'ev', tmuxSession: 'cloud-Dev' },
+      { id: 'Pi', cwd: m.cwd, engine: 'ep', tmuxSession: 'cloud-Pi' },
+      { id: 'Sh', cwd: m.cwd, engine: 'es', tmuxSession: 'cloud-Sh' },
+    ],
+  });
+  assert.ok(defs, 'documento valido');
+  const cfg = { home: m.home, env: { OLLAMA_API_KEY: 'k', OPENAI_API_KEY: 'k' }, filesRoot: m.filesRoot, activityGeneration: 'gen-1' };
+  for (const [nome, indice] of [['codex-vl non provato', 0], ['pi', 1], ['shell', 2]]) {
+    const r = resolveManagedEngine(defs.engines[indice], defs.cells[indice], cfg);
+    assert.equal(r.ok, true, r.reason);
+    assert.equal(r.engine.args.some((a) => a.includes('nc-activity-hook')), false, `${nome}: nessun canale`);
+  }
+});
+
+// --- il gate di versione guarda il binario della CELLA, non il PATH --------
+//
+// Il gate esegue il binario RISOLTO per la cella — lo stesso che finisce in
+// argv — non il nome del client cercato nel PATH del processo. Sono due
+// eseguibili diversi appena la cella ne sceglie un altro, ed e' esattamente il
+// caso che la guardia deve distinguere: la guardia esiste per non far fermare
+// una cella su un dialogo di revisione, e una guardia che ne guarda un altro
+// da' il via libera sbagliato.
+
+function binarioFinto(m, client, corpo) {
+  fs.writeFileSync(path.join(m.home, '.local', 'bin', client), corpo, { mode: 0o755 });
+}
+
+function risolviCodex(m, client, provider) {
+  const defs = parseDefinitions({
+    schemaVersion: 1,
+    engines: [{ id: 'ex', label: 'X', managed: { client, provider, model: 'deepseek-v4.1-flash' } }],
+    cells: [{ id: 'Dev', cwd: m.cwd, engine: 'ex', tmuxSession: 'cloud-Dev' }],
   });
   assert.ok(defs, 'documento valido');
   const r = resolveManagedEngine(defs.engines[0], defs.cells[0],
-    { home: m.home, env: { OLLAMA_API_KEY: 'k' }, filesRoot: m.filesRoot, activityGeneration: 'gen-1' });
+    { home: m.home, env: { OLLAMA_API_KEY: 'k', OPENAI_API_KEY: 'k' }, filesRoot: m.filesRoot, activityGeneration: 'gen-1' });
   assert.equal(r.ok, true, r.reason);
-  assert.equal(r.activityDir, null);
-  assert.equal(r.engine.args.some((a) => a.includes('nc-activity-hook')), false);
+  return r;
+}
+
+const hookDi = (r) => r.engine.args.filter((a) => a.includes('nc-activity-hook'));
+
+test('versione NON provata nel binario della cella: nessun hook', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 9.9.9"\n');
+  assert.equal(hookDi(risolviCodex(m, 'codex', 'openai-api')).length, 0);
+});
+
+test('versione provata nel binario della cella: un hook per evento', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 0.156.1"\n');
+  assert.equal(hookDi(risolviCodex(m, 'codex', 'openai-api')).length, EVENTI_CODEX.length);
+});
+
+test('codex-vl con la sua versione provata: hook presenti', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex-vl', '#!/bin/sh\necho "codex-cli 0.155.1"\n');
+  assert.equal(hookDi(risolviCodex(m, 'codex-vl', 'ollama-cloud')).length, EVENTI_CODEX.length);
+});
+
+test('binario che esce senza output: versione non determinabile, nessun hook', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\nexit 0\n');
+  assert.equal(hookDi(risolviCodex(m, 'codex', 'openai-api')).length, 0);
 });
 
 // --- il comando degli hook ------------------------------------------------

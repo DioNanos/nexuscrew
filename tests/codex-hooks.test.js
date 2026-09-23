@@ -126,29 +126,46 @@ test('gli argomenti coprono tutti gli eventi con la loro definizione', () => {
 // che non parte ma una cella BLOCCATA su un dialogo che nessuno vede.
 
 test('la guardia accetta le versioni provate', () => {
-  const cfg = { codexVersionProbe: (bin) => (bin === 'codex' ? 'codex-cli 0.156.1' : 'codex-cli 0.155.1') };
-  assert.deepStrictEqual(gateVersione('codex', 'codex', cfg), { ok: true, versione: '0.156.1' });
-  assert.deepStrictEqual(gateVersione('codex-vl', 'codex-vl', cfg), { ok: true, versione: '0.155.1' });
+  const cfg = { codexVersionProbe: (bin) => (bin.endsWith('codex') ? 'codex-cli 0.156.1' : 'codex-cli 0.155.1') };
+  assert.deepStrictEqual(gateVersione('codex', '/tmp/finto/bin/codex', cfg), { ok: true, versione: '0.156.1' });
+  assert.deepStrictEqual(gateVersione('codex-vl', '/tmp/finto/bin/codex-vl', cfg), { ok: true, versione: '0.155.1' });
+});
+
+test('il client sceglie l\'elenco, il binario e\' cio\' che si esegue', () => {
+  // Il probe riceve il SECONDO argomento. Se il gate eseguisse il nome del
+  // client — che e' il difetto chiuso qui — questa asserzione cadrebbe.
+  let visto = null;
+  const cfg = { codexVersionProbe: (bin) => { visto = bin; return 'codex-cli 0.156.1'; } };
+  assert.deepStrictEqual(gateVersione('codex', '/tmp/altrove/codex', cfg), { ok: true, versione: '0.156.1' });
+  assert.strictEqual(visto, '/tmp/altrove/codex');
 });
 
 test('una versione non provata NON inietta, e lo dice', () => {
-  const g = gateVersione('codex', 'codex', { codexVersionProbe: () => 'codex-cli 0.157.0' });
+  const g = gateVersione('codex', '/tmp/finto/bin/codex', { codexVersionProbe: () => 'codex-cli 0.157.0' });
   assert.strictEqual(g.ok, false);
   assert.match(g.reason, /non provata/);
 });
 
 test('una versione non determinabile NON inietta, e lo dice', () => {
-  const g = gateVersione('codex', 'codex', { codexVersionProbe: () => null });
+  const g = gateVersione('codex', '/tmp/finto/bin/codex', { codexVersionProbe: () => null });
   assert.strictEqual(g.ok, false);
   assert.match(g.reason, /non determinabile/);
 });
 
+test('un binario non risolto NON inietta, e lo dice', () => {
+  // Nessun binario risolto per la cella: non c'e' niente da interrogare, e
+  // non si inietta — il fail-closed della guardia vale anche qui.
+  const g = gateVersione('codex', '', {});
+  assert.strictEqual(g.ok, false);
+  assert.match(g.reason, /non risolto/);
+});
+
 test('un output non riconoscibile NON inietta', () => {
-  const g = gateVersione('codex', 'codex', { codexVersionProbe: () => 'comando sconosciuto' });
+  const g = gateVersione('codex', '/tmp/finto/bin/codex', { codexVersionProbe: () => 'comando sconosciuto' });
   assert.strictEqual(g.ok, false);
   assert.match(g.reason, /non riconosciuta/);
 });
 
 test('un client non gestito NON inietta', () => {
-  assert.strictEqual(gateVersione('pi', 'pi', {}).ok, false);
+  assert.strictEqual(gateVersione('pi', '/tmp/finto/bin/pi', {}).ok, false);
 });
