@@ -165,14 +165,40 @@ test('Notification permission_prompt -> attesa', () => {
   assert.equal(leggiAttivita(root, SESSIONE).stato, 'attesa');
 });
 
-// --- la scadenza: scaduto NON e' idle -------------------------------------
+// --- la scadenza: scaduto NON e' idle, ma non per tutti --------------------
 
-test('nessun evento oltre la finestra -> null, mai idle', () => {
+test('«ferma» NON scade con l\'eta: un turno finito resta finito', () => {
   const root = tmpRoot();
   const ora = 1_700_000_000_000;
   scriviStato(dirSessione(root), { evento: 'Stop', ora });
   assert.equal(leggiAttivita(root, SESSIONE, ora + MASSIMA_ETA_MS - 1).stato, 'ferma');
-  assert.equal(leggiAttivita(root, SESSIONE, ora + MASSIMA_ETA_MS + 1), null);
+  assert.equal(leggiAttivita(root, SESSIONE, ora + MASSIMA_ETA_MS + 1).stato, 'ferma',
+    'oltre la finestra resta «ferma»: non è un dato che deve verificare altro');
+  // E un'ora dopo, ancora: la finestra non lo riguarda.
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 60 * 60 * 1000).stato, 'ferma');
+});
+
+test('Interrupt vecchio: stesso contratto di Stop', () => {
+  const root = tmpRoot();
+  const ora = 1_700_000_000_000;
+  scriviStato(dirSessione(root), { evento: 'Interrupt', ora });
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 60 * 60 * 1000).stato, 'ferma');
+});
+
+test('Stop vecchio ma di un\'ALTRA generazione: null — è un altro lancio', () => {
+  const root = tmpRoot();
+  const ora = 1_700_000_000_000;
+  scriviGenerazione(dirSessione(root), 'gen-corrente');
+  scriviStato(dirSessione(root), { evento: 'Stop', generazione: 'gen-vecchia', ora });
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 1000), null,
+    'la fine del processo invalida con la generazione, non con l\'eta');
+});
+
+test('un evento di LAVORO vecchio sei minuti -> null: il Ctrl-C resta coperto', () => {
+  const root = tmpRoot();
+  const ora = 1_700_000_000_000;
+  scriviStato(dirSessione(root), { evento: 'PreToolUse', ora });
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 6 * 60 * 1000), null);
 });
 
 test('un ts nel futuro oltre la tolleranza non resta fresco per sempre', () => {
