@@ -315,7 +315,7 @@ export default function Sidebar({
                   key={`nodo-vl-${nodeRoute}-${g.name}`}
                   type="button"
                   className="nc-mini-dot"
-                  onMouseEnter={(e) => showTip(e, `${g.label || g.name}: ${g.status === 'up' ? t('no-sessions-short') : nodeStateLabel(g)}`)}
+                  onMouseEnter={(e) => showTip(e, `${g.label || g.name}: ${nodeStateLabel(g) || t('no-sessions-short')}`)}
                   onMouseLeave={hideTip}
                 ><span className={`nc-dot${g.status === 'up' ? ' on' : ' warn'}`} /></button>
               )])
@@ -418,7 +418,7 @@ export default function Sidebar({
             const leaseKey = hostLeaseTitleKey(starState, host.hostLease ?? null);
             const baseTitle = c.degraded
               ? t('cell-degraded')
-              : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
+              : item.subtitle || (c.tmux ? t('cell-idle') : t('cell-off'));
             const title = leaseKey ? `${baseTitle} · ${t(leaseKey)}` : baseTitle;
             // Cella con tmux vivo = sessione a tutti gli effetti: draggabile
             // nella griglia, click = tile, doppio click = vista singola.
@@ -536,9 +536,8 @@ export default function Sidebar({
                 <b>{g.label || g.name}</b>
                 <small>
                   {' · '}
-                  {g.status === 'up'
-                    ? [t('node-sessions').replace('{n}', String(g.sessions.length)), fleetNotice].filter(Boolean).join(' · ')
-                    : nodeStateLabel(g)}
+                  {nodeStateLabel(g)
+                    || [t('node-sessions').replace('{n}', String(g.sessions.length)), fleetNotice].filter(Boolean).join(' · ')}
                 </small>
               </div>
               {g.status === 'up' && groupView.open && (
@@ -604,7 +603,7 @@ export default function Sidebar({
                 const dot = c.degraded ? 'warn' : c.tmux && !g.cellsPreserved ? 'on' : '';
                 const baseTitle = g.cellsPreserved
                   ? `${t('fleet-stale')}`
-                  : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
+                  : item.subtitle || (c.tmux ? t('cell-idle') : t('cell-off'));
                 const cardTitle = leaseKey ? `${baseTitle} · ${t(leaseKey)}` : baseTitle;
                 return (
                   <div

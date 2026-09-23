@@ -28,12 +28,16 @@ test('terminal generation is anti-flap: only false -> true remounts', async () =
 
 test('GridTile wires the tested transition to the same tile key', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'components', 'GridTile.jsx'), 'utf8');
-  assert.match(source, /const wasSessionAlive = previousSessionAlive\.current/);
-  assert.match(source, /nextTerminalGeneration\(wasSessionAlive, sessionAlive, value\)/);
+  // Il ciclo di vita del terminale passa da UN solo punto: il modello a stati.
+  // La generazione non nasce da un confronto booleano scritto a mano nel
+  // componente, ma dall'esito del modello che i test sopra esercitano.
+  assert.match(source, /advanceTileRuntime\(runtimeRef\.current/);
+  assert.match(source, /if \(esito\.generazione\) setTerminalGeneration/);
   assert.match(source, /key=\{`\$\{tileKey\}:\$\{terminalGeneration\}`\}/);
   assert.doesNotMatch(source, /key=\{`\$\{tileKey\}:\$\{alive/,
     'turning off must preserve the ended transcript until restart');
-  assert.match(source, /previousSessionAlive/);
+  // La salute del nodo non e' il ciclo di vita della sessione: `alive` puo'
+  // cambiare quanto vuole senza toccare la generazione.
   assert.doesNotMatch(source, /previousAlive\.current/,
     'node health must not be used as the terminal session lifecycle');
 });

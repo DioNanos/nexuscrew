@@ -103,6 +103,16 @@ function fleetInventoryKnown(f, state) {
 // Ogni gruppo up porta: sessions (tutte le tmux, retro-compat), cells (Fleet,
 // con engine/model/active/boot), unmanaged (tmux non-cell), fleetAvailable,
 // capabilities. Zero nodi -> [] (UI identica a oggi).
+// Istante dell'ultima lettura AUTOREVOLE delle sessioni per questa posizione:
+// quella appena arrivata se ha risposto, altrimenti l'ultima buona che il
+// chiamante ha conservato. Non si rinnova quando il dato viene dalla cache —
+// e' esattamente il punto: il tetto del «non verificato» misura da quanto non
+// si sa, non da quanto si e' guardato.
+function sessionsVerifiedAt(available, r) {
+  const at = available ? (r && r.at) : (r && r.lastGoodAt);
+  return Number.isFinite(at) ? at : null;
+}
+
 export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases } = {}) {
   const out = [];
   const directRoutes = new Set();
@@ -168,6 +178,7 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
       engines: (f && f.engines) || [],
       fleetProvider: (f && f.provider) || null,
       sessionsAvailable, inventoryPartial: !sessionsAvailable,
+      verifiedAt: sessionsVerifiedAt(sessionsAvailable, r),
     });
   }
   for (const n of Array.isArray(topology) ? topology : []) {
@@ -212,6 +223,7 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
       engines: (f && f.engines) || [],
       fleetProvider: (f && f.provider) || null, lastSeen: n.lastSeen || null,
       sessionsAvailable, inventoryPartial: !sessionsAvailable,
+      verifiedAt: sessionsVerifiedAt(sessionsAvailable, r),
     });
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));

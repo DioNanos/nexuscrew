@@ -155,7 +155,10 @@ describe('mobile roster parity', () => {
       ...fixture.sessions.slice(1),
     ];
     await user.click(screen.getByTitle('refresh'));
-    await waitFor(() => expect(within(workingRow).getByText('idle')).toBeTruthy());
+    // Senza il canale degli hook il titolo non prova lo stato fermo, e
+    // la riga lo dice incerto invece di affermare «idle».
+    await waitFor(() => expect(within(workingRow).getByText('unverified')).toBeTruthy());
+    expect(within(workingRow).queryByText('idle')).toBeNull();
     expect(workingRow.querySelector('.dot').classList.contains('working')).toBe(false);
     expect(workingRow.querySelector('.dot').classList.contains('on')).toBe(true);
   });

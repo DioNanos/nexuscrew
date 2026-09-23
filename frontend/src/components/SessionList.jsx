@@ -38,6 +38,9 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
   const nodeGroups = useNodes(token);
   const [sessions, setSessions] = useState(null); // null = primo load
   const [err, setErr] = useState(null);
+  // La lettura LOCALE delle sessioni e' riuscita? Una caduta non e' «zero
+  // sessioni»: e' un dato non verificato, e il roster deve dirlo.
+  const [localReadOk, setLocalReadOk] = useState(true);
   const [q, setQ] = useState('');
   const [version, setVersion] = useState('');
   const [endpoint, setEndpoint] = useState({ bind: '127.0.0.1', port: '' });
@@ -94,9 +97,9 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
     try {
       const r = await apiFetch('/api/sessions', token);
       const j = await r.json();
-      if (j.error) { setErr(j.error); setSessions([]); }
-      else { setErr(null); setSessions(j.sessions || []); }
-    } catch (e) { setErr(String(e)); setSessions([]); }
+      if (j.error) { setErr(j.error); setSessions([]); setLocalReadOk(false); }
+      else { setErr(null); setSessions(j.sessions || []); setLocalReadOk(true); }
+    } catch (e) { setErr(String(e)); setSessions([]); setLocalReadOk(false); }
     // flotta nello stesso interval del polling sessioni (4s). R27: la
     // decisione e' la policy pura condivisa col desktop — un fallimento di
     // lettura NON svuota la lista (non e' «zero celle»), resta l'ultima nota
@@ -227,7 +230,7 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
     [sessions, cellSessions],
   );
   const localRawItems = useMemo(
-    () => buildLocalRoster(cells, unmanaged, byName),
+    () => buildLocalRoster(cells, unmanaged, byName, undefined, { autorevole: localReadOk }),
     [cells, unmanaged, byName],
   );
 
@@ -283,7 +286,7 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
       const leaseKey = hostLeaseTitleKey(starState, host.hostLease ?? null);
       const baseStateTitle = c.degraded
         ? t('cell-degraded')
-        : item.working ? item.subtitle : c.tmux ? t('cell-idle') : t('cell-off');
+        : item.subtitle || (c.tmux ? t('cell-idle') : t('cell-off'));
       const stateTitle = leaseKey ? `${baseStateTitle} · ${t(leaseKey)}` : baseStateTitle;
       const canPower = route.length === 0 || (group?.capabilities || []).includes(c.active ? 'down' : 'up');
       const canBoot = route.length === 0
@@ -406,7 +409,7 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
           ? t('fleet-stale') : g.fleetState === 'disabled' ? t('fleet-off') : '';
         const dotClass = g.fleetState === 'stale'
           ? 'warn' : hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
-        const dotTitle = [g.health ? healthTitle(g.health) : (g.status === 'up' ? '' : nodeStateLabel(g)), fleetNotice]
+        const dotTitle = [g.health ? healthTitle(g.health) : nodeStateLabel(g), fleetNotice]
           .filter(Boolean).join(' · ');
         const route = g.route && g.route.length ? g.route : [g.name];
         const routeKey = route.join('/');
@@ -421,7 +424,7 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
               data-node-order-key={nodeKey(g)}>
               <MobilePositionHeader label={g.label || g.name} count={g.sessions.length} state={groupView}
                 dotClass={dotClass} dotTitle={dotTitle}
-                detail={g.status === 'up' ? '' : nodeStateLabel(g)}
+                detail={nodeStateLabel(g)}
                 onToggle={() => updateView(routeKey, { open: !groupView.open })}
                 onFilter={(filter) => updateView(routeKey, { filter })} />
               {g.status === 'up' && groupView.open && g.sessions.map((vs) => (
@@ -465,7 +468,9 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
           data-node-order-key={nodeKey(g)}>
               <MobilePositionHeader label={g.label || g.name} count={items.length} state={groupView}
                 dotClass={dotClass} dotTitle={dotTitle}
-                detail={g.status === 'up' ? fleetNotice : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
+                detail={g.status === 'up'
+                  ? [nodeStateLabel(g), fleetNotice].filter(Boolean).join(' · ')
+                  : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
             onToggle={() => updateView(routeKey, { open: !groupView.open })}
             onFilter={(filter) => updateView(routeKey, { filter })}
             onRename={g.direct ? () => promptNodeRename(g) : null} action={nodeActions} />

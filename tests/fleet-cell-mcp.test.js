@@ -116,12 +116,15 @@ test('il LOCAL SCOPE entra nel complemento: stesso file, ramo diverso', (t) => {
 
 test('UN SOLO token con l\'uguale, e niente lo segue che possa essere inghiottito', (t) => {
   // Stessa trappola di `--mcp-config`: nella forma spaziata il client consuma i
-  // posizionali successivi, e il prompt della cella e' accodato in fondo.
+  // posizionali successivi, e il prompt della cella era accodato in fondo.
+  // Dalla consegna classificata (kimi.* e tutte le claude.*) il prompt non
+  // torna piu' in argv: il rischio inghiottimento e' annullato alla radice e
+  // il token resta comunque nella forma unita.
   const w = mondo(t);
   const { args } = settingsDi(w, { mcp: ['nexuscrew'], prompt: 'sei un auditor' });
   assert.ok(!args.includes('--settings'), `mai passato spaziato: ${JSON.stringify(args)}`);
   assert.equal(args.filter((a) => a.startsWith('--settings=')).length, 1);
-  assert.ok(args.includes('sei un auditor'), 'il prompt sopravvive come proprio argomento');
+  assert.equal(args.includes('sei un auditor'), false, 'claude: consegna classificata, prompt mai su argv');
 });
 
 test('il campo e\' validato come un identificatore, non come testo libero', () => {

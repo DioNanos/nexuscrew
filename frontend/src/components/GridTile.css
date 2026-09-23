@@ -56,3 +56,12 @@
 /* maniglia di drag: l'header si afferra (i bottoni restano bottoni) */
 .nc-tile-head { cursor: grab; }
 .nc-tile-head:active { cursor: grabbing; }
+
+/* Dato non verificato: una striscia SOPRA il terminale, non un overlay.
+   Il riquadro non si ricrea e il buffer resta leggibile per intero — quello
+   che manca e' l'aggiornamento, non la sessione. */
+.nc-tile-unverified {
+  flex: 0 0 auto; padding: 2px 8px; font-size: 11px; line-height: 1.6;
+  color: #d8c07a; background: rgba(48, 40, 12, 0.9);
+  border-bottom: 1px solid #4a3f1c; text-align: center;
+}

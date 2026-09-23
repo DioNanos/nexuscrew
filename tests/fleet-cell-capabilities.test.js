@@ -14,6 +14,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const toml = require('smol-toml');
 const { parseDefinitions, effectiveCapabilities } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
 const { resolveManagedEngine } = require('../lib/fleet/managed.js');
@@ -424,25 +425,34 @@ test('codex dichiarato con mcp: -p con profilo per cella che spegne i soli non c
   assert.equal(fs.readFileSync(w.configToml, 'utf8'), TOML_UTENTE, 'la config utente non e mai toccata');
 });
 
-test('codex ondemand: omit_tools_from nella TABELLA del server, mai a root (chiave che codex ignora)', (t) => {
+test('codex ondemand: definizione base + omit_tools_from nella TABELLA del server, mai a root (chiave che codex ignora)', (t) => {
   const w = mondoCodex(t);
   // webfetch e CONCESSO e differito: l'ondemand presuppone la concessione.
   const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew', 'webfetch'], ondemand: ['webfetch'] } });
   assert.equal(out.ok, true, out.reason);
   const profilo = fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8');
-  // La forma giusta: tabella del server con la chiave di differimento, senza
-  // enabled (concesso ma differito, non spento).
-  assert.match(profilo, /\[mcp_servers\.webfetch\]\s*\nomit_tools_from = \["direct"\]/,
-    'omit_tools_from va nella tabella del server');
-  assert.doesNotMatch(profilo.slice(0, profilo.indexOf('\n[')), /omit_tools_from/,
-    'a root codex la ignora in silenzio: non deve comparire prima di ogni tabella');
-  // webfetch e ondemand, non spento: la tabella non porta enabled = false.
-  const tabella = profilo.split('[mcp_servers.webfetch]')[1] || '';
-  assert.equal(tabella.includes('enabled = false'), false, 'il server ondemand resta concesso');
-  // nextcloud resta il non concesso: enabled = false, senza chiavi di differimento.
-  const tabellaOff = (profilo.split('[mcp_servers.nextcloud]')[1] || '').split('\n[')[0];
-  assert.match(tabellaOff, /enabled = false/);
-  assert.equal(tabellaOff.includes('omit_tools_from'), false, 'uno spento non prende il differimento');
+  // La forma giusta (D-343): la tabella e' valida anche da sola — definizione
+  // del layer base copiata + chiave di differimento — senza enabled (concesso
+  // ma differito, non spento).
+  const doc = toml.parse(profilo);
+  assert.deepEqual(doc.mcp_servers.webfetch, { command: 'webfetch', omit_tools_from: ['direct'] },
+    'la tabella ondemand porta il trasporto copiato e omit_tools_from, non enabled');
+  assert.equal(doc.omit_tools_from, undefined, 'a root codex la ignora in silenzio: non deve comparire a root');
+  // nextcloud resta il non concesso: spento, con il trasporto copiato, senza
+  // chiavi di differimento.
+  assert.equal(doc.mcp_servers.nextcloud.enabled, false, 'il non concesso resta spento');
+  assert.equal(doc.mcp_servers.nextcloud.command, 'nextcloud', 'lo spento porta il trasporto copiato');
+  assert.equal(doc.mcp_servers.nextcloud.omit_tools_from, undefined, 'uno spento non prende il differimento');
+  // Nessun allargamento: ogni chiave emessa esiste nel layer base oppure e'
+  // una chiave di riduzione (enabled / omit_tools_from).
+  const base = toml.parse(TOML_UTENTE);
+  for (const [nome, tabella] of Object.entries(doc.mcp_servers)) {
+    for (const k of Object.keys(tabella)) {
+      assert.ok(k in base.mcp_servers[nome] || k === 'enabled' || k === 'omit_tools_from',
+        `chiave ${k} non presente nel layer base per ${nome}: allargamento`);
+    }
+  }
+  assert.equal(fs.readFileSync(w.configToml, 'utf8'), TOML_UTENTE, 'la config utente non e mai toccata');
 });
 
 test('codex ondemand sovrapposto a mcp: nessuna tabella duplicata per lo stesso server', (t) => {
@@ -456,6 +466,130 @@ test('codex ondemand sovrapposto a mcp: nessuna tabella duplicata per lo stesso 
     'TOML vieta le tabelle duplicate: enabled = false vince (volere piu restrittivo)');
   assert.doesNotMatch(profilo, /omit_tools_from/,
     'un server spento (enabled = false) non prende anche la tabella ondemand');
+});
+
+// --- D-343: OGNI tabella MCP emessa e' valida anche da sola ---
+// Il write path del client (config/batchWrite) valida il layer attivo da
+// solo prima del documento fuso: una tabella ridotta senza trasporto rompe
+// il salvataggio di /model. Il trasporto si COPIA dal layer base con parse
+// TOML strutturato; copiarlo non avvia gli spenti (connection manager itera
+// solo sugli enabled).
+
+const TOML_UTENTE_D343 = [
+  'model = "gpt-5"',
+  '',
+  '[mcp_servers.nexuscrew]',
+  'command = "nexuscrew"',
+  'args = ["mcp", "--token=sk-TEST-SEGRETO-args"]',
+  'env = { NEXUSCREW_TEST_SECRET = "sk-TEST-SEGRETO-stdio" }',
+  '',
+  '[mcp_servers.web]',
+  'url = "http://127.0.0.1:3939/mcp"',
+  'bearer_token_env_var = "WEB_TOKEN"',
+  'http_headers = { Authorization = "Bearer sk-TEST-SEGRETO-http" }',
+  '',
+  '[mcp_servers."srv.quote.test"]',
+  'command = "/bin/echo"',
+  '',
+  '[[skills.config]]',
+  'name = "fleet"',
+  'enabled = true',
+  '',
+  '[[skills.config]]',
+  'name = "cellforge"',
+  'enabled = true',
+  '',
+].join('\n');
+
+test('d343 spenti stdio+http e nome quotato: solo command/url, mai args/env/headers/credenziali', (t) => {
+  const w = mondoCodex(t, { toml: TOML_UTENTE_D343 });
+  // Nomi quotati non sono dichiarabili (la validazione delle capability
+  // enumerata con la regex dei soli nomi li rifiuta, residuo dichiarato):
+  // la riduzione passa per via implicita, mcp: [] spegne tutto.
+  const out = resolveCodex(w, { capabilities: { mcp: [] } });
+  assert.equal(out.ok, true, out.reason);
+  const doc = toml.parse(fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8'));
+  assert.deepEqual(doc.mcp_servers.nexuscrew,
+    { command: 'nexuscrew', enabled: false },
+    'spento stdio: solo command — MAI args (un token puo stare in args) ne env');
+  assert.deepEqual(doc.mcp_servers.web,
+    { url: 'http://127.0.0.1:3939/mcp', enabled: false },
+    'spento http: solo url, MAI headers/token (portano credenziali)');
+  assert.deepEqual(doc.mcp_servers['srv.quote.test'],
+    { command: '/bin/echo', enabled: false },
+    'nome quotato: la tabella esce quotata e con il minimo stdio');
+  // Nessun campo oltre il minimo che soddisfa la validazione del client.
+  for (const tabella of Object.values(doc.mcp_servers)) {
+    for (const k of Object.keys(tabella)) {
+      assert.ok(['command', 'url', 'enabled'].includes(k),
+        `chiave inattesa nella tabella ridotta: ${k}`);
+    }
+  }
+});
+
+test('d343 segreto in uno spento: nessuna fuga nel profilo derivato', (t) => {
+  const w = mondoCodex(t, { toml: TOML_UTENTE_D343 });
+  const out = resolveCodex(w, { capabilities: { mcp: [] } });
+  assert.equal(out.ok, true, out.reason);
+  const profilo = fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8');
+  assert.equal(profilo.includes('sk-TEST-SEGRETO-args'), false,
+    'un segreto in args dello stdio spento e finito nel profilo');
+  assert.equal(profilo.includes('sk-TEST-SEGRETO-stdio'), false,
+    'un segreto in env dello stdio spento e finito nel profilo');
+  assert.equal(profilo.includes('sk-TEST-SEGRETO-http'), false,
+    'un segreto (Authorization) dello http spento e finito nel profilo');
+  assert.equal(profilo.includes('WEB_TOKEN'), false,
+    'il riferimento credenziali dello spento e finito nel profilo');
+  // La config utente resta l'unica copia dei segreti.
+  assert.equal(fs.readFileSync(w.configToml, 'utf8'), TOML_UTENTE_D343);
+});
+
+test('d343 misto: on-demand + spenti (http e nome quotato implicito) + skill nello stesso profilo', (t) => {
+  const w = mondoCodex(t, { toml: TOML_UTENTE_D343 });
+  // Il nome quotato non e' dichiarabile (residuo dichiarato): resta spento
+  // per via implicita; nexuscrew e concesso e differito; web e web-quotato
+  // cadono tra gli spenti.
+  const out = resolveCodex(w, {
+    capabilities: { mcp: ['nexuscrew'], ondemand: ['nexuscrew'], skills: ['fleet'] },
+  });
+  assert.equal(out.ok, true, out.reason);
+  const doc = toml.parse(fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8'));
+  assert.deepEqual(doc.mcp_servers.nexuscrew,
+    { command: 'nexuscrew', args: ['mcp', '--token=sk-TEST-SEGRETO-args'], env: { NEXUSCREW_TEST_SECRET: 'sk-TEST-SEGRETO-stdio' }, omit_tools_from: ['direct'] },
+    'on-demand (concesso): definizione INTEGRALE del layer base + differimento, segreti inclusi perche gli competono');
+  assert.equal(doc.mcp_servers.web.enabled, false, 'http non concesso: spento');
+  assert.deepEqual(doc.mcp_servers['srv.quote.test'],
+    { command: '/bin/echo', enabled: false },
+    'nome quotato non dichiarabile: spento implicito con trasporto copiato');
+  assert.deepEqual(doc.skills.config, [{ name: 'cellforge', enabled: false }],
+    'skill non concessa spenta, quella concessa intoccata');
+  // TOML vieta i duplicati: ogni server una sola tabella.
+  const nomi = Object.keys(doc.mcp_servers);
+  assert.equal(new Set(nomi).size, nomi.length, 'nessuna tabella duplicata');
+});
+
+test('d343 config utente non parseabile: rifiuto fail-closed, nessun profilo che non riduce', (t) => {
+  const w = mondoCodex(t, { toml: 'model = "gpt-5"\n[mcp_servers.rotto\ncommand = "x"\n' });
+  const out = resolveCodex(w, { capabilities: { mcp: [] } });
+  assert.equal(out.ok, false, 'una config utente invalida non produce piu un profilo vuoto (fail-open)');
+  assert.equal(out.mcpCellRefusedCode, 'CAPABILITY_PROFILE_UNWRITABLE');
+  assert.match(out.mcpCellRefused || '', /non parseabile come TOML/);
+});
+
+test('d343 server senza trasporto riconoscibile: rifiuto, mai placeholder fittizio', (t) => {
+  const w = mondoCodex(t, { toml: 'model = "gpt-5"\n[mcp_servers.fantasma]\nstartup_timeout_sec = 5\n' });
+  const out = resolveCodex(w, { capabilities: { mcp: [] } });
+  assert.equal(out.ok, false);
+  assert.match(out.mcpCellRefused || '', /senza trasporto riconoscibile/);
+});
+
+test('d343 skill-only: parse strutturato non cambia il contratto skills', (t) => {
+  const w = mondoCodex(t, { toml: TOML_UTENTE_D343 });
+  const out = resolveCodex(w, { capabilities: { skills: ['fleet'] } });
+  assert.equal(out.ok, true, out.reason);
+  const doc = toml.parse(fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8'));
+  assert.deepEqual(doc.skills.config, [{ name: 'cellforge', enabled: false }]);
+  assert.equal(doc.mcp_servers, undefined, 'mcp assente: nessuna riduzione per quella chiave');
 });
 
 // --- il consumatore VERO decide: il profilo generato parte con codex-vl ---

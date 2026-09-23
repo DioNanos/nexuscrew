@@ -116,26 +116,46 @@ test('cellRuntime exposes one shared off, idle, working and legacy contract', as
     { working: false, subtitle: 'codex.responses' },
     'off cells fall back to the startup engine when model is provider-default',
   );
+  // Dallo stato pubblicato dagli hook: tre stati, e il titolo non li scavalca.
+  assert.deepEqual(
+    cellRuntime({ tmux: true }, { attivita: { stato: 'lavora' }, working: false, status: 'Implement activity UI' }),
+    { working: true, stato: 'lavora', subtitle: `${t('cell-working')} · Implement activity UI` },
+    'lo stato degli hook vince sul titolo',
+  );
+  assert.deepEqual(
+    cellRuntime({ tmux: true }, { attivita: { stato: 'attesa' } }),
+    { working: true, stato: 'attesa', subtitle: t('cell-permission') },
+  );
+  assert.deepEqual(
+    cellRuntime({ tmux: true }, { attivita: { stato: 'ferma' }, working: true }),
+    { working: false, stato: 'ferma', subtitle: t('cell-stopped') },
+  );
+  assert.deepEqual(
+    cellRuntime({ tmux: true }, { attivita: { stato: 'lavora' }, status: '' }),
+    { working: true, stato: 'lavora', subtitle: t('cell-working') },
+  );
+  // Senza il canale il titolo resta un INDIZIO, dichiarato incerto: mai «idle»
+  // affermato da un segnale che non lo dimostra.
   assert.deepEqual(
     cellRuntime({ tmux: true }, { working: false, paneTitle: 'Dev' }),
-    { working: false, subtitle: t('cell-idle') },
+    { working: false, stato: 'ignoto', subtitle: t('cell-unknown') },
   );
   assert.deepEqual(
     cellRuntime({ tmux: true }, { working: true, status: 'Implement activity UI' }),
-    { working: true, subtitle: `${t('cell-working')} · Implement activity UI` },
+    { working: true, stato: 'ignoto', subtitle: `${t('cell-unknown')} · Implement activity UI` },
   );
   assert.deepEqual(
     cellRuntime({ tmux: true }, { working: true, status: '' }),
-    { working: true, subtitle: t('cell-working') },
+    { working: true, stato: 'ignoto', subtitle: t('cell-unknown') },
   );
   assert.deepEqual(
     cellRuntime({ tmux: true }, { working: true, status: 'Working...' }),
-    { working: true, subtitle: t('cell-working') },
+    { working: true, stato: 'ignoto', subtitle: t('cell-unknown') },
     'Pi generic status is localized without a duplicated label',
   );
   assert.deepEqual(
     cellRuntime({ tmux: true }, { preview: 'older peer preview' }),
-    { working: false, subtitle: 'older peer preview' },
+    { working: false, stato: 'ignoto', subtitle: 'older peer preview' },
     'older peers without an explicit boolean keep their preview and never fake working',
   );
 });
@@ -164,7 +184,8 @@ test('buildLocalRoster normalizes cells and unmanaged with route-qualified local
   // Active cell: activity/preview from the matched session, fresh via seen-marker.
   assert.deepEqual(items[0], {
     type: 'cell', value: cells[0], key: positionKey([], 'local-live'), label: 'Live Cell',
-    live: true, fresh: true, activity: 20, working: true, subtitle: `${t('cell-working')} · Implement activity UI`,
+    live: true, fresh: true, activity: 20, working: true, stato: 'ignoto',
+    subtitle: `${t('cell-unknown')} · Implement activity UI`,
     searchText: 'claude K1 p-live Implement activity UI',
   });
   // Off cell: no matching session -> blank fresh/preview, key is the bare tmuxSession
@@ -212,7 +233,7 @@ test('buildRemoteRoster qualifies keys with the node route and falls back to cel
   // Active remote cell: activity/preview from the matched session.
   assert.deepEqual(rawItems[0], {
     type: 'cell', value: group.cells[0], key: positionKey(['relay'], 'remote-live'), label: 'Relay Live',
-    live: true, fresh: false, activity: 30, working: false, subtitle: t('cell-idle'),
+    live: true, fresh: false, activity: 30, working: false, stato: 'ignoto', subtitle: t('cell-unknown'),
     searchText: 'glm G1 rp-live',
   });
   // Orphan cell (no matching session): falls back to the cell's own activity/preview.

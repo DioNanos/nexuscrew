@@ -1,6 +1,6 @@
 {
   "name": "@mmmbuto/nexuscrew",
-  "version": "0.9.40",
+  "version": "0.9.41",
   "description": "Faithful browser tmux client — attach to live sessions over a real PTY, localhost-only, mobile-easy",
   "main": "lib/server.js",
   "bin": {
@@ -45,15 +45,16 @@
     "express": "^4.21.0",
     "multer": "^2.2.0",
     "qrcode-terminal": "^0.12.0",
+    "smol-toml": "1.9.0",
     "web-push": "^3.6.7",
     "ws": "^8.18.0"
   },
   "optionalDependencies": {
-    "@mmmbuto/node-pty-android-arm64": "^1.1.2",
     "@lydell/node-pty-darwin-arm64": "^1.2.0-beta.14",
     "@lydell/node-pty-darwin-x64": "^1.2.0-beta.14",
     "@lydell/node-pty-linux-arm64": "^1.2.0-beta.12",
-    "@lydell/node-pty-linux-x64": "^1.2.0-beta.12"
+    "@lydell/node-pty-linux-x64": "^1.2.0-beta.12",
+    "@mmmbuto/node-pty-android-arm64": "^1.1.2"
   },
   "engines": {
     "node": ">=18"

@@ -44,6 +44,17 @@ export function upActionNotice(result) {
   // per actionRequired, e' sempre i18n locale. actionRequired vince: chiede
   // un'azione precisa nel terminale ed e' piu' specifico del degrado.
   if (result && typeof result === 'object' && result.readinessDegraded === true) {
+    // Degrado MCP (celle claude gestite): la notice porta l'elenco bounded dei
+    // server non pronti accanto al testo i18n locale del degrado.
+    if (result.mcpDegraded && typeof result.mcpDegraded === 'object') {
+      const elenco = [
+        ...(Array.isArray(result.mcpDegraded.failed) ? result.mcpDegraded.failed : []),
+        ...(Array.isArray(result.mcpDegraded.pending) ? result.mcpDegraded.pending : []),
+      ].filter((s) => typeof s === 'string' && s).slice(0, 16);
+      if (elenco.length) {
+        return { code: 'READINESS_DEGRADED', recovery: null, text: t('fleet-mcp-degraded') + ' ' + elenco.join(', ') };
+      }
+    }
     return { code: 'READINESS_DEGRADED', recovery: null, text: t('fleet-readiness-degraded') };
   }
   return null;

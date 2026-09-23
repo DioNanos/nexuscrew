@@ -91,8 +91,9 @@ test('UN SOLO token: nella forma spaziata il flag si mangia il prompt della cell
   assert.ok(!out.engine.args.includes('--mcp-config'),
     `il flag non va mai passato spaziato: ${JSON.stringify(out.engine.args)}`);
   assert.equal(out.engine.args.filter((a) => a.startsWith('--mcp-config=')).length, 1);
-  // E il prompt sopravvive come proprio argomento.
-  assert.ok(out.engine.args.includes('sei un auditor'), JSON.stringify(out.engine.args));
+  // Con la consegna classificata il prompt non e' piu' un posizionale
+  // dell'argv delle claude.*: l'inghiottimento e' annullato alla radice.
+  assert.equal(out.engine.args.includes('sei un auditor'), false, JSON.stringify(out.engine.args));
 });
 
 test('vale anche per il profilo Kimi', (t) => {
