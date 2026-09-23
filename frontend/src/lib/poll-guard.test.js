@@ -20,8 +20,8 @@ describe('createPollGuard', () => {
 
   it('torna disponibile dopo la chiusura del giro', () => {
     const guard = createPollGuard();
-    guard.begin();
-    guard.end();
+    const token = guard.begin();
+    guard.end(token);
     expect(guard.begin()).not.toBeNull();
   });
 
@@ -37,7 +37,7 @@ describe('createPollGuard', () => {
     } catch (_) {
       // il chiamante reale chiude in `finally`
     } finally {
-      guard.end();
+      guard.end(token);
     }
     expect(guard.isCurrent(token)).toBe(true); // nessun successore: e l ultimo
     expect(guard.begin()).not.toBeNull();      // e la guardia non e bloccata
@@ -49,7 +49,7 @@ describe('createPollGuard', () => {
   it('scarta l esito di un giro superato da uno piu nuovo', () => {
     const guard = createPollGuard();
     const vecchio = guard.begin();
-    guard.end();
+    guard.end(vecchio);
     const nuovo = guard.begin();
     expect(guard.isCurrent(nuovo)).toBe(true);
     expect(guard.isCurrent(vecchio)).toBe(false);
@@ -60,5 +60,79 @@ describe('createPollGuard', () => {
     guard.begin();
     expect(guard.isCurrent(null)).toBe(false);
     expect(guard.isCurrent(999)).toBe(false);
+  });
+
+  // --- il ciclo di vita dell'effetto --------------------------------------
+  //
+  // Il cleanup di un effetto cancellava solo l'intervallo: la guardia restava
+  // com'era, quindi il giro vecchio era ancora «corrente» e il nuovo effetto
+  // si faceva saltare il primo tick. `reset()` chiude quella finestra.
+
+  it('reset invalida il giro in corso e libera la guardia', () => {
+    const guard = createPollGuard();
+    const vecchio = guard.begin();
+    guard.reset();
+    expect(guard.isCurrent(vecchio)).toBe(false);
+    expect(guard.begin()).not.toBeNull();
+  });
+
+  it('end di un giro superato non libera la guardia del giro nuovo', () => {
+    const guard = createPollGuard();
+    const vecchio = guard.begin();
+    guard.reset();
+    const nuovo = guard.begin();
+    // Il giro vecchio atterra DOPO che il nuovo e' partito: la bandierina
+    // `inFlight` appartiene al nuovo, e azzerarla qui farebbe partire un terzo
+    // giro in parallelo al secondo.
+    guard.end(vecchio);
+    expect(guard.begin()).toBeNull();
+    guard.end(nuovo);
+    expect(guard.begin()).not.toBeNull();
+  });
+
+  it('risposta differita del giro vecchio dopo il cleanup: non scrive, e il nuovo giro parte', async () => {
+    const guard = createPollGuard();
+    const scritte = [];
+    let atterraVecchia;
+    const rispostaVecchia = new Promise((resolve) => { atterraVecchia = resolve; });
+
+    // Effetto 1: giro in volo, esito applicato solo se ancora corrente.
+    const t1 = guard.begin();
+    const giroVecchio = rispostaVecchia.then(() => {
+      if (!guard.isCurrent(t1)) return;
+      scritte.push('vecchia');
+    });
+
+    // Cleanup dell'effetto (cambio token, StrictMode) e nuovo effetto.
+    guard.reset();
+    const t2 = guard.begin();
+    expect(t2).not.toBeNull();
+
+    // Effetto 2: risponde subito.
+    await Promise.resolve().then(() => {
+      if (!guard.isCurrent(t2)) return;
+      scritte.push('nuova');
+    });
+
+    // Solo ORA atterra la risposta vecchia.
+    atterraVecchia();
+    await giroVecchio;
+
+    expect(scritte).toEqual(['nuova']);
+    // E il giro vecchio, atterrando, non ha liberato la guardia del nuovo.
+    expect(guard.begin()).toBeNull();
+  });
+
+  it('un giro che scade (fetch che non risponde) libera la guardia: il tick successivo parte', async () => {
+    const guard = createPollGuard();
+    const token = guard.begin();
+    try {
+      await Promise.reject(new Error('timeout'));
+    } catch (_) {
+      // come il catch di App.jsx
+    } finally {
+      guard.end(token);
+    }
+    expect(guard.begin()).not.toBeNull();
   });
 });

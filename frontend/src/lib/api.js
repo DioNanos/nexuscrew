@@ -87,7 +87,7 @@ export async function requestPanelTicket(t, route, cellId, { signal } = {}) {
   return { ok: false, cause: 'denied' };
 }
 
-export const fleetStatus = (t, route) => jsonFetch(fleetPath(route, 'status'), t);
+export const fleetStatus = (t, route, opts) => jsonFetch(fleetPath(route, 'status'), t, opts);
 export const fleetUp = (t, b, route) => jsonFetch(fleetPath(route, 'up'), t, { method: 'POST', body: b });
 export const fleetDown = (t, b, route) => jsonFetch(fleetPath(route, 'down'), t, { method: 'POST', body: b });
 export const fleetEngine = (t, b, route) => jsonFetch(fleetPath(route, 'engine'), t, { method: 'POST', body: b });
@@ -243,6 +243,6 @@ export const deleteDeck = (t, name, expectedRevision, route = []) => jsonFetch(`
 // proxy nega /api/live-host li' (local-only); solo /api/route, allowlistata
 // punto per punto, puo' attraversarla. jsonFetch propaga l'errore su !ok, cosi'
 // il caller API-first resta sullo stato precedente senza toccare hostCell.
-export const getLiveHost = (t, route = []) => jsonFetch(`${routeBase(route)}/live-host`, t);
+export const getLiveHost = (t, route = [], opts) => jsonFetch(`${routeBase(route)}/live-host`, t, opts);
 export const designateHostCell = (t, cellId, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/live-host/designate`, t, { method: 'POST', body: { cellId, expectedRevision } });
 export const clearHostCell = (t, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/live-host/clear`, t, { method: 'POST', body: { expectedRevision } });

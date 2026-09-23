@@ -1,10 +1,10 @@
 // Guardia di non-sovrapposizione per i poll del desktop.
 //
-// Perche' serve: il poll parte ogni 4 s, ma una lettura federata puo' durare
-// fino al timeout di rete (8 s, api.js). Senza guardia due giri stanno in volo
-// insieme, e la risposta piu' VECCHIA puo' atterrare dopo la piu' nuova:
-// l'ultima lista nota «torna indietro», e la rail lampeggia perche' riceve due
-// esiti diversi della stessa interrogazione.
+// Perche' serve: il poll parte ogni 4 s e ogni giro ha un tetto di tempo sotto
+// il periodo (App.jsx). Il tetto limita quanto DURA un giro, non impedisce che
+// due coesistano: un tick parte comunque ogni 4 s. Senza guardia la risposta
+// piu' VECCHIA puo' atterrare dopo la piu' nuova — l'ultima lista nota «torna
+// indietro», e la rail riceve due esiti diversi della stessa interrogazione.
 //
 // Lo stesso rimedio e' gia' in uso in useNodes.js (`inFlightRef`): qui e'
 // estratto in una funzione pura perche' e' verificabile senza montare il
@@ -30,8 +30,30 @@ export function createPollGuard() {
       seq += 1;
       return seq;
     },
-    /** Chiude il giro. Va chiamato SEMPRE, anche sul percorso d'errore. */
-    end() {
+    /**
+     * Chiude il giro aperto da `begin()`.
+     *
+     * Va chiamato SEMPRE, anche sul percorso d'errore — ma chiude solo se il
+     * giro e' ANCORA quello corrente. Se nel frattempo la guardia e' stata
+     * invalidata o un giro nuovo e' partito, `inFlight` appartiene a
+     * quest'ultimo: azzerarlo qui lascierebbe partire un terzo giro in
+     * parallelo al secondo, che e' la sovrapposizione che la guardia evita.
+     */
+    end(token) {
+      if (token === seq) inFlight = false;
+    },
+    /**
+     * Invalida il giro in corso e libera la guardia: chi ha un token vecchio
+     * non e' piu' `isCurrent`, e il prossimo `begin()` parte subito invece di
+     * essere saltato.
+     *
+     * Serve al cleanup di un effetto. Senza, cambiando `token` o sotto
+     * `StrictMode` (setup→cleanup→setup) il giro vecchio resta in volo, il
+     * nuovo `begin()` viene saltato, e la risposta vecchia atterra su una
+     * guardia che la considera ancora corrente.
+     */
+    reset() {
+      seq += 1;
       inFlight = false;
     },
     /** L'esito di questo token e' ancora quello da applicare? */
