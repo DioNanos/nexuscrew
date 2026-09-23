@@ -15,6 +15,7 @@ const path = require('node:path');
 const { parseDefinitions } = require('../lib/fleet/definitions.js');
 const { resolveManagedEngine } = require('../lib/fleet/managed.js');
 const { EVENTI_CODEX } = require('../lib/fleet/codex-hooks.js');
+const { leggiAttivita, scriviStato, scriviGenerazione } = require('../lib/files/activity.js');
 
 const ENGINE_CLAUDE = { id: 'ec', managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'unsafe' } };
 
@@ -161,7 +162,7 @@ function binarioFinto(m, client, corpo) {
   fs.writeFileSync(path.join(m.home, '.local', 'bin', client), corpo, { mode: 0o755 });
 }
 
-function risolviCodex(m, client, provider) {
+function risolviCodex(m, client, provider, extra = {}) {
   const defs = parseDefinitions({
     schemaVersion: 1,
     engines: [{ id: 'ex', label: 'X', managed: { client, provider, model: 'deepseek-v4.1-flash' } }],
@@ -169,7 +170,7 @@ function risolviCodex(m, client, provider) {
   });
   assert.ok(defs, 'documento valido');
   const r = resolveManagedEngine(defs.engines[0], defs.cells[0],
-    { home: m.home, env: { OLLAMA_API_KEY: 'k', OPENAI_API_KEY: 'k' }, filesRoot: m.filesRoot, activityGeneration: 'gen-1' });
+    { home: m.home, env: { OLLAMA_API_KEY: 'k', OPENAI_API_KEY: 'k' }, filesRoot: m.filesRoot, activityGeneration: 'gen-1', ...extra });
   assert.equal(r.ok, true, r.reason);
   return r;
 }
@@ -198,6 +199,55 @@ test('binario che esce senza output: versione non determinabile, nessun hook', (
   const m = mondo(t);
   binarioFinto(m, 'codex', '#!/bin/sh\nexit 0\n');
   assert.equal(hookDi(risolviCodex(m, 'codex', 'openai-api')).length, 0);
+});
+
+// --- la generazione va pubblicata anche per codex -------------------------
+//
+// Il launcher scrive `activity.gen` solo se `activityDir` e' valorizzato. Se
+// per codex restava null, sul disco rimaneva la generazione di un lancio
+// precedente e il lettore scartava TUTTI gli eventi nuovi (generazioni
+// diverse): la cella sarebbe rimasta «non verificata» per sempre, senza che
+// niente lo dicesse.
+
+test('cella codex provata: activityDir valorizzato, e la generazione nuova fa leggere gli eventi', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 0.156.1"\n');
+  const r = risolviCodex(m, 'codex', 'openai-api');
+  assert.equal(hookDi(r).length, EVENTI_CODEX.length);
+  assert.notEqual(r.activityDir, null, 'la generazione va pubblicata anche per codex');
+  assert.equal(r.activityDir, path.join(m.filesRoot, 'cloud-Dev'));
+
+  // Il launcher pubblica la generazione (runtime.js) e poi l'evento arriva.
+  scriviGenerazione(r.activityDir, 'gen-1');
+  scriviStato(r.activityDir, { evento: 'UserPromptSubmit', generazione: 'gen-1' });
+  const letto = leggiAttivita(m.filesRoot, 'cloud-Dev');
+  assert.ok(letto, 'l\'evento scritto con la generazione corrente si legge');
+  assert.equal(letto.stato, 'lavora');
+
+  // E la generazione conta: con quella di un lancio precedente l'evento e'
+  // scartato. E' la barriera fra lanci, non un'ipotesi.
+  scriviGenerazione(r.activityDir, 'gen-vecchia');
+  assert.equal(leggiAttivita(m.filesRoot, 'cloud-Dev'), null, 'generazione diversa = evento di un altro lancio');
+});
+
+test('cella codex NON provata: nessun hook e nessuna generazione da pubblicare', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 9.9.9"\n');
+  const r = risolviCodex(m, 'codex', 'openai-api');
+  assert.equal(hookDi(r).length, 0);
+  assert.equal(r.activityDir, null, 'nel fail-closed non c\'e\' niente da pubblicare');
+});
+
+// --- portabilita': dove la chiave di fiducia non e' quella che generiamo --
+
+test('su win32 e su termux nessun hook, anche con la versione provata', (t) => {
+  const m = mondo(t);
+  binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 0.156.1"\n');
+  for (const [nome, extra] of [['win32', { platform: 'win32' }], ['termux', { platform: 'android' }]]) {
+    const r = risolviCodex(m, 'codex', 'openai-api', extra);
+    assert.equal(hookDi(r).length, 0, `${nome}: nessun hook`);
+    assert.equal(r.activityDir, null, `${nome}: nessuna generazione pubblicata`);
+  }
 });
 
 // --- il comando degli hook ------------------------------------------------

@@ -12,6 +12,7 @@ const {
   jsonCanonico,
   etichetta,
   gateVersione,
+  gatePiattaforma,
   EVENTI_CODEX,
 } = require('../lib/fleet/codex-hooks.js');
 
@@ -168,4 +169,26 @@ test('un output non riconoscibile NON inietta', () => {
 
 test('un client non gestito NON inietta', () => {
   assert.strictEqual(gateVersione('pi', '/tmp/finto/bin/pi', {}).ok, false);
+});
+
+// La chiave di fiducia e il quoting degli hook sono Unix: dove il client ne
+// calcola una diversa, iniettare aprirebbe il dialogo che la guardia evita.
+
+test('il gate di piattaforma: linux e darwin si\', win32 e termux no', () => {
+  assert.strictEqual(gatePiattaforma({ platform: 'linux', env: {} }).ok, true);
+  assert.strictEqual(gatePiattaforma({ platform: 'darwin', env: {} }).ok, true);
+
+  const win = gatePiattaforma({ platform: 'win32', env: {} });
+  assert.strictEqual(win.ok, false);
+  assert.match(win.reason, /win32/);
+
+  const android = gatePiattaforma({ platform: 'android', env: {} });
+  assert.strictEqual(android.ok, false);
+  assert.match(android.reason, /termux/);
+
+  // Termux si riconosce anche dal layout, non solo da `process.platform`:
+  // e' lo stesso criterio che usa il launcher.
+  const daPrefisso = gatePiattaforma({ platform: 'linux', env: { PREFIX: '/data/data/com.termux/files/usr' } });
+  assert.strictEqual(daPrefisso.ok, false);
+  assert.match(daPrefisso.reason, /termux/);
 });
