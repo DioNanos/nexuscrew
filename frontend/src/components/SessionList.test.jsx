@@ -30,6 +30,10 @@ vi.mock('../lib/api.js', () => ({
 
 vi.mock('../hooks/useNodes.js', () => ({ useNodes: () => fixture.nodes }));
 vi.mock('../hooks/useLang.js', () => ({ useLang: () => ['en', vi.fn()] }));
+// Le sorgenti pesanti della finestra di anteprima fanno rete (ws, ticket del
+// pannello): stub con traccia delle props, stesso pattern di CellSwitcher.
+vi.mock('./Terminal.jsx', () => ({ default: (props) => <div data-testid="peek-term" data-session={props.session} data-node={props.node || ''} /> }));
+vi.mock('./CellPanel.jsx', () => ({ default: (props) => <div data-testid="peek-panel" data-cell={props.cellId} /> }));
 
 import SessionList from './SessionList.jsx';
 import { designateHostCell, fleetBoot, fleetDown, fleetStatus, fleetUp, getLiveHost, renameNodeLabel, setSessionTechnical } from '../lib/api.js';
@@ -112,24 +116,35 @@ describe('mobile roster parity', () => {
     expect(document.querySelector('.nc-home-sub').textContent).not.toContain('1 attached');
   });
 
-  it('toggles boot directly without invoking power and supports routed cells', async () => {
+  it('toggles boot from the actions sheet without invoking power and supports routed cells', async () => {
     const user = userEvent.setup();
     fixture.cells[0].boot = false;
     fixture.nodes[0].capabilities = ['up', 'down', 'boot'];
     fixture.nodes[0].cells[0].boot = true;
     renderRoster();
 
-    await user.click(await screen.findByRole('button', { name: 'enable at boot Live Cell' }));
+    // L'avvio al boot NON è un tondo in riga: la voce vive nel foglio, ed è lì
+    // che si legge anche il suo stato (aria-checked).
+    await screen.findByText('Live Cell');
+    expect(screen.queryByRole('button', { name: /at boot .*Live Cell/ })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Cell actions: Live Cell' }));
+    const primo = await screen.findByTestId('cell-actions-sheet');
+    expect(within(primo).getByRole('menuitemcheckbox', { name: 'Boot at startup' })
+      .getAttribute('aria-checked')).toBe('false');
+    await user.click(within(primo).getByRole('menuitemcheckbox', { name: 'Boot at startup' }));
     expect(fleetBoot).toHaveBeenCalledWith('test-token', { cell: 'Live Cell', enabled: true }, []);
     expect(fleetUp).not.toHaveBeenCalled();
     expect(fleetDown).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'disable at boot Live Cell' }).classList.contains('on')).toBe(true);
 
-    await user.click(screen.getByRole('button', { name: 'disable at boot Relay Live' }));
+    // Riga remota: la preferenza è route-qualificata, e lo stato letto è il suo.
+    await user.click(screen.getByRole('button', { name: 'Cell actions: Relay Live' }));
+    const secondo = await screen.findByTestId('cell-actions-sheet');
+    expect(within(secondo).getByRole('menuitemcheckbox', { name: 'Boot at startup' })
+      .getAttribute('aria-checked')).toBe('true');
+    await user.click(within(secondo).getByRole('menuitemcheckbox', { name: 'Boot at startup' }));
     expect(fleetBoot).toHaveBeenCalledWith('test-token', { cell: 'Relay Live', enabled: false }, ['relay']);
     expect(fleetUp).not.toHaveBeenCalled();
     expect(fleetDown).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'enable at boot Relay Live' }).classList.contains('on')).toBe(false);
 
     await user.click(screen.getByRole('button', { name: 'power off Relay Live' }));
     expect(screen.getByRole('checkbox', { name: 'also remove from boot' }).checked).toBe(false);
@@ -190,7 +205,11 @@ describe('mobile roster parity', () => {
     await screen.findByText('Relay Live');
     const relay = document.querySelector('[data-position="relay"]');
 
-    await user.click(within(relay).getByRole('button', { name: /^pin to top Relay Off$/ }));
+    // Il pin non è più un tondo in riga: si pinna dal foglio, e la chiave
+    // resta route-qualificata.
+    await user.click(within(relay).getByRole('button', { name: 'Cell actions: Relay Off' }));
+    await user.click(within(await screen.findByTestId('cell-actions-sheet'))
+      .getByRole('menuitem', { name: 'Pin to top' }));
     expect(JSON.parse(localStorage.getItem('nc_pins'))).toContain('relay:remote-off');
     const ordered = [...relay.querySelectorAll('[data-roster-key]')].map((node) => node.dataset.rosterKey);
     expect(ordered[0]).toBe('relay:remote-off');
@@ -355,31 +374,44 @@ describe('SessionList — nodi VL', () => {
 // bypassava tutto cio' che non e' 'local' su un togglePin semplice — la stella
 // di una cella remota non designava mai nulla, solo pinnava.
 describe('SessionList — cella ospite Live per nodo', () => {
-  it('la stella su una cella FAVORITE remota PINNA e non designa piu', async () => {
+  it('il pin su una cella FAVORITE remota PINNA e non designa piu', async () => {
     // La designazione non passa piu' dalla stella: e' un comando esplicito, con
     // revisione fresca ed esito visibile (il selettore compatto e il popup).
+    const user = userEvent.setup();
     const onDesignateCell = vi.fn();
     render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()} onDesignateCell={onDesignateCell} />);
     await screen.findByText('Relay Live');
-    fireEvent.click(screen.getByRole('button', { name: 'pin to top Relay Live' }));
+    await user.click(screen.getByRole('button', { name: 'Cell actions: Relay Live' }));
+    await user.click(within(await screen.findByTestId('cell-actions-sheet'))
+      .getByRole('menuitem', { name: 'Pin to top' }));
     expect(onDesignateCell).not.toHaveBeenCalled();
     expect(JSON.parse(localStorage.getItem('nc_pins'))).toContain('relay:remote-live');
   });
 
-  it('la stellina remota e\' designata SOLO quando hostByRoute[quella route] lo dice', async () => {
+  it('la Live di un nodo remoto e\' offerta SOLO quando hostByRoute[quella route] lo dice', async () => {
+    const user = userEvent.setup();
     render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()}
       hostByRoute={{ local: { hostCell: null }, relay: { hostCell: 'Relay Live', threadStatus: 'absent' } }} />);
     await screen.findByText('Relay Live');
-    expect(screen.getByRole('button', { name: 'cell designated; thread absent Relay Live' })).toBeTruthy();
+    // E' l'ospite: il foglio offre di TOGLIERE la Live. La stessa riga letta da
+    // un'altra route non lo direbbe, quindi la voce e' la prova della route.
+    await user.click(screen.getByRole('button', { name: 'Cell actions: Relay Live' }));
+    const foglio = await screen.findByTestId('cell-actions-sheet');
+    expect(within(foglio).getByRole('menuitem', { name: 'Remove Live' })).toBeTruthy();
+    expect(within(foglio).queryByRole('menuitem', { name: 'Assign Live' })).toBeNull();
   });
 
-  it('NEGATIVA: un hostCell locale con lo stesso nome non accende la stella di un nodo diverso', async () => {
+  it('NEGATIVA: un hostCell locale con lo stesso nome non rende ospite una cella di un nodo diverso', async () => {
+    const user = userEvent.setup();
     render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()}
       hostByRoute={{ local: { hostCell: 'Relay Live' } }} />);
     // Il nome della cella va cercato NELLA RIGA: la striscia in testa nomina a
     // sua volta l'ospite designato, e con questo host i due testi coincidono.
     await screen.findByText('Relay Live', { selector: '.nc-mcard-nome b' });
-    expect(screen.queryByRole('button', { name: 'cell designated; thread absent Relay Live' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Cell actions: Relay Live' }));
+    const foglio = await screen.findByTestId('cell-actions-sheet');
+    expect(within(foglio).getByRole('menuitem', { name: 'Assign Live' })).toBeTruthy();
+    expect(within(foglio).queryByRole('menuitem', { name: 'Remove Live' })).toBeNull();
   });
 });
 
@@ -579,18 +611,75 @@ describe('M2 — foglio azioni, bollino LIVE, striscia, riordino a modalità', (
     expect(notice.textContent).toContain('Live Cell');
   });
 
-  it('CONTROLLO NEGATIVO: una voce senza handler NON compare — «Guarda dal vivo» non è su questa superficie', async () => {
-    // Il suo gesto è la sorgente Flusso della nuvola, che è della sidebar (2a).
-    // Il contratto di CellActions è che un handler assente è una voce ASSENTE,
-    // non una voce morta: qui lo si verifica dalla parte del chiamante.
+  it('la riga ha SOLO ⋯ e power: pin e avvio al boot vivono nel foglio', async () => {
+    renderRoster();
+    await screen.findByText('Live Cell');
+    const riga = screen.getByText('Live Cell').closest('.nc-mcard');
+    const etichette = [...riga.querySelectorAll('.nc-act')].map((n) => n.getAttribute('aria-label'));
+    // CONTROLLO NEGATIVO: stella e tondo del boot non sono bersagli di riga —
+    // se uno dei due tornasse in fila, questo assert cade e nient'altro.
+    expect(etichette.filter((l) => /pin to top|favorite|designated|at boot/i.test(l || ''))).toEqual([]);
+    expect(riga.querySelectorAll('.nc-act')).toHaveLength(2);
+    expect(riga.querySelector('.nc-act.cellmenu')).toBeTruthy();
+    expect(riga.querySelector('.nc-act.power')).toBeTruthy();
+  });
+
+  it('«Guarda dal vivo» apre la finestra della cella sulla sorgente Flusso', async () => {
     const user = userEvent.setup();
     renderRoster();
     await screen.findByText('Live Cell');
     await user.click(screen.getByRole('button', { name: 'Cell actions: Live Cell' }));
+    await user.click(within(await screen.findByTestId('cell-actions-sheet'))
+      .getByRole('menuitem', { name: 'Watch live' }));
+
+    // Il foglio si chiude, la finestra si apre sulla cella scelta e si entra
+    // dal Flusso: e' la sorgente che su telefono non ha alternative.
+    expect(screen.queryByTestId('cell-actions-sheet')).toBeNull();
+    const term = await screen.findByTestId('peek-term');
+    expect(term.getAttribute('data-session')).toBe('local-live');
+    expect(term.getAttribute('data-node')).toBe('');
+    expect(screen.getByRole('tab', { name: 'Stream' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('la finestra di una riga REMOTA guarda la sessione di QUELLA route, mai l\'omonima locale', async () => {
+    const user = userEvent.setup();
+    // Una sessione locale con lo STESSO nome di quella remota, ma un'altra
+    // anteprima: se la riga leggesse la tabella locale, mostrerebbe quella.
+    fixture.sessions = [...fixture.sessions,
+      session('remote-live', 99, { preview: 'anteprima della locale omonima' })];
+    fixture.nodes[0].sessions = [
+      session('remote-live', 30, { preview: 'anteprima del nodo relay' }),
+      session('remote-shell', 15),
+    ];
+    renderRoster();
+    await screen.findByText('Relay Live');
+    await user.click(screen.getByRole('button', { name: 'Cell actions: Relay Live' }));
+    await user.click(within(await screen.findByTestId('cell-actions-sheet'))
+      .getByRole('menuitem', { name: 'Watch live' }));
+
+    const term = await screen.findByTestId('peek-term');
+    expect(term.getAttribute('data-session')).toBe('remote-live');
+    expect(term.getAttribute('data-node')).toBe('relay');
+    // La riga della finestra è costruita dalle sessioni DEL NODO: la sorgente
+    // Anteprima — stessa riga, altro tab — lo dice senza ambiguità.
+    await user.click(screen.getByRole('tab', { name: 'Preview' }));
+    expect(document.querySelector('.nc-peek-testo').textContent).toBe('anteprima del nodo relay');
+    expect(document.querySelector('.nc-peek-testo').textContent)
+      .not.toBe('anteprima della locale omonima');
+  });
+
+  it('CONTROLLO NEGATIVO: su una cella SPENTA «Guarda dal vivo» non compare', async () => {
+    // Non c'e' niente da guardare: un handler assente e' una voce ASSENTE, non
+    // una voce morta. E le voci che hanno un gesto ci sono: la lista non e'
+    // vuota per caso.
+    const user = userEvent.setup();
+    renderRoster();
+    await screen.findByText('Off Cell');
+    await user.click(screen.getByRole('button', { name: 'Cell actions: Off Cell' }));
     const foglio = await screen.findByTestId('cell-actions-sheet');
     expect(within(foglio).queryByRole('menuitem', { name: 'Watch live' })).toBeNull();
-    // e le voci che hanno un gesto ci sono: la lista non è vuota per caso
-    expect(within(foglio).getByRole('menuitem', { name: 'Assign Live' })).toBeTruthy();
+    expect(within(foglio).getByRole('menuitem', { name: 'Pin to top' })).toBeTruthy();
+    expect(screen.queryByTestId('peek-term')).toBeNull();
   });
 
   it('bollino LIVE solo dove la cella È l\'ospite di quella route', async () => {

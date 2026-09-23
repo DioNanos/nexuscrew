@@ -3,7 +3,8 @@ import {
   apiFetch, fleetStatus, fleetUp, fleetDown, fleetBoot, killSession, nodeAction, renameNodeLabel, setSessionTechnical,
 } from '../lib/api.js';
 import Icon from './Icon.jsx';
-import CellStar from './CellStar.jsx';
+import CellPeek from './CellPeek.jsx';
+import { panelPortForRoute } from '../lib/panel-port.js';
 import { sidebarItems, sidebarOrder, sidebarSearchVisible } from '../lib/sidebar-model.js';
 import PowerSheet from './PowerSheet.jsx';
 import {t,  LANGUAGES} from '../lib/i18n.js';
@@ -36,7 +37,10 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 // apertura, filtro, pin e ordine hanno quindi un solo contratto condiviso
 // (hook useRosterPreferences + model roster-view-model).
 
-export default function SessionList({ onPick, token, onSettings, onOpenVlSession, hostByRoute = {}, onDesignateCell, onClearHostCell }) {
+export default function SessionList({
+  onPick, token, onSettings, onOpenVlSession, hostByRoute = {}, onDesignateCell, onClearHostCell,
+  panelPort = 0, nodePanelPorts = null,
+}) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   // Gruppi per-nodo remoto (B2): zero nodi configurati -> [] e home identica.
   const nodeGroups = useNodes(token);
@@ -68,6 +72,12 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
   const [menuBusy, setMenuBusy] = useState(false);
   // Esito dell'ultimo comando Live: vive nella striscia, dove l'occhio guarda.
   const [liveNotice, setLiveNotice] = useState(null);
+  // «Guarda dal vivo» (dal foglio): la finestra di anteprima di una cella, la
+  // STESSA CellPeek che aprono sidebar e selettore — qui si sceglie la cella e
+  // si entra direttamente dalla sorgente Flusso, che su telefono è l'unica
+  // sorgente vera (la nuvola al passaggio non esiste senza puntatore).
+  const [peekKey, setPeekKey] = useState(null);
+  const [peekSource, setPeekSource] = useState('preview');
   // Riordino come MODALITA': le maniglie compaiono solo quando la si accende
   // dall'intestazione. Senza, la riga è un bersaglio d'apertura e basta.
   const [reorderMode, setReorderMode] = useState(false);
@@ -82,7 +92,6 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
     groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
   } = useNodePreferences();
   const preferredNodeGroups = preferredGroups(nodeGroups);
-
   // La vista singola mobile smonta questa lista: conserva solo l'ultimo
   // snapshot già disponibile per l'apertura immediata del CellSwitcher.
   useEffect(() => {
@@ -189,13 +198,15 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
 
   // I gesti del menu azioni (⋯) di una cella: la LOGICA resta dov'è già — pin
   // via cell-star.js, Live via runLiveHostCommand (l'esito arriva nella
-  // striscia), boot via la STESSA onBootToggle del tondo, quindi stesso
+  // striscia), boot via la STESSA onBootToggle del power, quindi stesso
   // override ottimistico e stesso rollback. Qui non si duplica niente.
   //
-  // «Guarda dal vivo» non compare su questa superficie: il suo gesto è aprire
-  // la sorgente Flusso della nuvola, che è della sidebar (fase 2a). Il
-  // contratto di CellActions è che un handler assente è una voce ASSENTE, non
-  // una voce morta: quindi non si passa onWatchLive e la voce non c'è.
+  // «Guarda dal vivo» apre la finestra di anteprima — la STESSA CellPeek di
+  // sidebar e selettore, col suo guscio CellPopup che sullo stretto diventa
+  // foglio — entrando direttamente dalla sorgente Flusso: su telefono la nuvola
+  // al passaggio non esiste, e senza questa voce la Live di una cella non
+  // sarebbe raggiungibile. La voce compare solo su una cella VIVA (`alive`):
+  // su una spenta non si passa onWatchLive e la voce non c'è.
   const cellActionHandlers = (item, c, route) => ({
     onToggleLive: async () => {
       const stato = cellActionsState({ item, cellName: c.cell, route, pins, hostByRoute });
@@ -211,6 +222,10 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
       itemKey: item.key, togglePin, removePin,
     }),
     onToggleBoot: (next) => onBootToggle(null, c, route, next),
+    onWatchLive: () => {
+      setPeekSource('stream');
+      setPeekKey(item.key);
+    },
   });
 
   async function onFleetConfirm(payload) {
@@ -275,6 +290,63 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
     [cells, unmanaged, byName],
   );
 
+  // Le righe-cella di TUTTE le posizioni, per chiave: serve a RI-RISOLVERE la
+  // cella della sbirciata a ogni render (mai un oggetto riga congelato) e a
+  // prenderne le sessioni DALLA SUA route. Un tmuxSession non è unico nella
+  // federazione: per una cella remota la tabella locale risponderebbe con
+  // l'omonima, e la finestra mostrerebbe l'anteprima di un'ALTRA cella creduta
+  // la propria. Route vuota = locale, ed è già il criterio con cui il roster
+  // decide dove guardare.
+  const cellItemsByKey = useMemo(() => {
+    const map = new Map();
+    for (const item of localRawItems) {
+      if (item.type === 'cell') {
+        map.set(item.key, { item, route: [], nodeLabel: '', sessions: sessions || [], cells });
+      }
+    }
+    for (const g of preferredNodeGroups) {
+      const route = Array.isArray(g.route) ? g.route : [];
+      // Stesso criterio di rowsFromSnapshot e della sidebar: un device VL non
+      // è una posizione fleet e le sue celle appartengono all'owner.
+      if (!route.length || g.kind === 'vl') continue;
+      const { rawItems } = buildRemoteRoster(g);
+      for (const item of rawItems) {
+        if (item.type === 'cell') {
+          map.set(item.key, {
+            item, route, nodeLabel: g.label || g.name || '',
+            sessions: g.sessions || [], cells: g.cells || [],
+          });
+        }
+      }
+    }
+    return map;
+  }, [localRawItems, preferredNodeGroups, sessions, cells]);
+
+  const peekRow = useMemo(() => {
+    if (!peekKey) return null;
+    const trovata = cellItemsByKey.get(peekKey);
+    // Cella sparita dalla lista aggiornata: nessun popup, come in R4.
+    if (!trovata) return null;
+    const c = trovata.item.value;
+    const s = (trovata.sessions || []).find((entry) => entry.name === c.tmuxSession) || {};
+    return {
+      row: {
+        key: trovata.item.key,
+        cellName: c.cell,
+        subtitle: trovata.item.subtitle || '',
+        nodeLabel: trovata.nodeLabel,
+        node: trovata.route.length ? trovata.route.join('/') : '',
+        session: c.tmuxSession,
+        route: trovata.route,
+        panelUrl: c.panelUrl || '',
+        telemetry: s.telemetry || null,
+        preview: s.preview || c.preview || '',
+        activity: s.activity || c.activity || 0,
+      },
+      cells: trovata.cells || [],
+    };
+  }, [peekKey, cellItemsByKey]);
+
   const localView = viewFor('local');
   const localItems = useMemo(
     () => sidebarItems(localRawItems, pins, localView.filter, sidebarOrder(orders, 'local'))
@@ -333,8 +405,7 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
       const canBoot = route.length === 0
         ? fleetCapabilities.includes('boot')
         : (group?.capabilities || []).includes('boot');
-      const boot = bootEnabled(c, route); const bootKey = bootCellKey(c.cell, route);
-      const bootLabel = `${t(boot ? 'boot-disable' : 'boot-enable')} ${c.cell}`;
+      const boot = bootEnabled(c, route);
       // Lo stato delle azioni della cella, una volta sola: il bollino LIVE della
       // riga e il foglio (all'apertura) leggono la stessa derivazione pura.
       const azioni = cellActionsState({ item, cellName: c.cell, route, pins, hostByRoute });
@@ -362,17 +433,11 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
           </button>
           {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
           {item.fresh && session?.outbox?.count > 0 && <span className="nc-badge" title={t('new-files-outbox')}>{session.outbox.count}</span>}
-          <CellStar item={item} pins={pins} hostByRoute={hostByRoute} route={route} cellName={c.cell}
-            baseClassName="nc-act pin"
-            togglePin={togglePin} removePin={removePin}
-            />
-          {canBoot && <button className={`nc-act boot${boot ? ' on' : ''}`} disabled={bootBusy.has(bootKey)}
-            onClick={(event) => onBootToggle(event, c, route)} title={bootLabel} aria-label={bootLabel}>
-            <Icon name="boot" size={16} />
-          </button>}
-          {/* ⋯ = le azioni della cella in un foglio dal basso. Non sostituisce i
-              tondi (sono bersagli diretti che funzionano in un tocco): li
-              raccoglie, e aggiunge quelle che in fila non ci stanno (la Live). */}
+          {/* Le azioni della cella: ⋯ e power, 44 px ciascuno. Pin e avvio al
+              boot NON stanno nella riga — vivono nel foglio, che è l'unico
+              posto dove si vedono anche il loro stato e le voci che in fila non
+              ci starebbero (la Live). La riga resta un bersaglio d'apertura,
+              con due comandi diretti: le azioni e l'alimentazione. */}
           <button type="button" className={`nc-act cellmenu${menuAperto ? ' on' : ''}`}
             title={menuLabel} aria-label={menuLabel}
             aria-haspopup="menu" aria-expanded={menuAperto ? 'true' : 'false'}
@@ -571,9 +636,28 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
         <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : []} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
       )}
 
+      {/* La finestra di anteprima, una per volta: `peekRow` si ri-risolve per
+          chiave a ogni render, e se la cella è sparita dalla lista aggiornata
+          non si rende niente (mai un fotogramma morto). La sorgente è
+          controllata: «Guarda dal vivo» entra dal Flusso. */}
+      {peekRow && (
+        <CellPeek
+          row={peekRow.row}
+          token={token}
+          initialSource={peekSource}
+          panelPort={panelPortForRoute(peekRow.row.route || [], nodePanelPorts, panelPort)}
+          liveHost={liveHostView({
+            liveHost: hostByRoute[hostRouteKey(peekRow.row.route || [])],
+            cells: peekRow.cells,
+          })}
+          onClose={() => { setPeekKey(null); setPeekSource('preview'); }}
+        />
+      )}
+
       {/* Le azioni della cella toccata, dal basso. Il contenuto è di
           CellActions (fase 1): qui si passano solo gli handler, e una voce
-          senza handler non compare — è il suo contratto. */}
+          senza handler non compare — è il suo contratto. Il busy copre anche
+          l'avvio al boot in volo: un comando per volta sulla stessa cella. */}
       {menuCell && (() => {
         const { item, cell: c, route = [], canBoot } = menuCell;
         const stato = cellActionsState({ item, cellName: c.cell, route, pins, hostByRoute });
@@ -581,7 +665,8 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
           ...stato, canBoot, boot: bootEnabled(c, route), alive: !!c.tmux,
           handlers: cellActionHandlers(item, c, route),
         });
-        return <CellActionsSheet cellName={c.cell} items={items} busy={menuBusy}
+        return <CellActionsSheet cellName={c.cell} items={items}
+          busy={menuBusy || bootBusy.has(bootCellKey(c.cell, route))}
           onClose={() => setMenuCell(null)} />;
       })()}
     </div>
