@@ -49,7 +49,12 @@ export function formattaTelemetria(tt, tele) {
 // seconda copia sarebbe il difetto che torna in una superficie non ricontrollata.
 // La sorgente è CONTROLLATA (source + onSourceChange): chi dà il guscio decide
 // da dove si apre e con che default.
-export function CellPeekBody({ row, token, panelPort = 0, liveHost = null, onLiveHostApplied, source, onSourceChange }) {
+export function CellPeekBody({ row, token, panelPort = 0, liveHost = null, onLiveHostApplied, source, onSourceChange,
+  // Il guscio decide anche COME si vede: l'anteprima del selettore passa lo
+  // stesso fontSize del terminale principale e la apre in sola lettura; il
+  // popup libero non passa nulla e resta com'era.
+  fontSize, readOnly = false,
+}) {
   const setSource = (id) => onSourceChange && onSourceChange(id);
   // Ref del terminale: il contratto della tile, così Terminal non dipende da
   // chi lo monta. takeSize={false} sotto: il guscio non ruba il size-lock
@@ -109,9 +114,9 @@ export function CellPeekBody({ row, token, panelPort = 0, liveHost = null, onLiv
           <Terminal
             key={`peek:${row.key}`}
             session={row.session} node={row.node || undefined} token={token}
-            readonly={false} takeSize={false} focused
+            readonly={readOnly} takeSize={false} focused
             sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
-            ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
+            ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} fontSize={fontSize}
           />
         </div>
       ) : source === 'panel' ? (

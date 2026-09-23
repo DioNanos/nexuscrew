@@ -12,7 +12,10 @@ vi.mock('../lib/api.js', () => ({
 }));
 // Le sorgenti pesanti del popup fanno rete (ws, ticket del pannello): stub
 // con traccia delle props, stesso pattern di GridTile.test.jsx.
-vi.mock('./Terminal.jsx', () => ({ default: (props) => <div data-testid="peek-term" data-session={props.session} /> }));
+vi.mock('./Terminal.jsx', () => ({ default: (props) => (
+  <div data-testid="peek-term" data-session={props.session}
+    data-fontsize={props.fontSize} data-readonly={String(!!props.readonly)} />
+) }));
 vi.mock('./CellPanel.jsx', () => ({
   default: (props) => (
     <div data-testid="peek-panel" data-cell={props.cellId} data-panel-port={props.panelPort} data-route={JSON.stringify(props.route)} />
@@ -64,14 +67,18 @@ beforeEach(() => {
   });
 });
 
-// La finestra di una cella si apre dal pallino, sulla sorgente Flusso: le altre
-// due sorgenti sono tab della STESSA finestra — un posto solo, tre sorgenti.
+// L'anteprima di una cella si apre col PRIMO tocco della riga: le altre due
+// sorgenti sono tab dello STESSO pannello — un posto solo, tre sorgenti.
+const toccaRiga = async (cellName) => {
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(`^${cellName} `) }));
+  await screen.findByTestId('cell-switcher-anteprima');
+};
 const apriAnteprima = async (cellName) => {
-  fireEvent.click(await screen.findByRole('button', { name: `Watch live: ${cellName}` }));
+  await toccaRiga(cellName);
   fireEvent.click(await screen.findByRole('tab', { name: 'Preview' }));
 };
 const apriPannello = async (cellName) => {
-  fireEvent.click(await screen.findByRole('button', { name: `Watch live: ${cellName}` }));
+  await toccaRiga(cellName);
   fireEvent.click(await screen.findByRole('tab', { name: 'Panel' }));
 };
 
@@ -101,8 +108,11 @@ describe('CellSwitcher', () => {
       expect(mocks.getRouteSessions).toHaveBeenCalledWith('token', ['alerts']);
     });
 
-    // Il tocco della riga APRE, e il ricontrollo fresco lo precede: nessuno
-    // stato «scelto» in mezzo, nessun bottone d'apertura separato.
+    // Il PRIMO tocco seleziona (anteprima in alto, riga blu col badge del
+    // gesto); il SECONDO sulla stessa riga apre, e il ricontrollo fresco lo
+    // precede: nessun attach stantio.
+    fireEvent.click(remote);
+    expect(remote.getAttribute('data-selected')).toBe('true');
     fireEvent.click(remote);
     await waitFor(() => expect(onPick).toHaveBeenCalledWith({ session: 'cloud-Remote', node: 'hub', cellName: 'Remote' }));
     expect(onClose).toHaveBeenCalledOnce();
@@ -273,25 +283,28 @@ describe('CellSwitcher', () => {
     render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
     await apriAnteprima('cell-One');
     await waitFor(() => expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('frame-ultimo'));
-    // La cella muore sotto il popup: la chiave non risolve più niente e il
-    // popup si chiude da sé. L'alternativa — l'anteprima di un'altra cella
-    // creduta la propria — è il difetto che questo test tiene chiuso.
+    // La cella muore sotto l'anteprima: la chiave non risolve più niente e
+    // l'anteprima si chiude da sé. L'alternativa — il contenuto di un'altra
+    // cella creduta la propria — è il difetto che questo test tiene chiuso.
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [] }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'cell-One' })).toBeNull(), { timeout: 4000 });
+    await waitFor(() => expect(screen.queryByTestId('cell-switcher-anteprima')).toBeNull(), { timeout: 4000 });
   });
 
-  it('il pallino apre il FLUSSO di quella cella e non la apre: guardare non e\' andare', async () => {
+  it('il primo tocco apre il FLUSSO in anteprima e non apre la cella: guardare non e\' andare', async () => {
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
       sessions: [{ name: 'cloud-cell-One', activity: 0 }],
     }) });
     const onPick = vi.fn(); const onClose = vi.fn();
     render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={onPick} onClose={onClose} />);
-    await screen.findByRole('button', { name: /^cell-One / });
-    fireEvent.click(screen.getByRole('button', { name: 'Watch live: cell-One' }));
+    const riga = await screen.findByRole('button', { name: /^cell-One / });
+    fireEvent.click(riga);
     const term = await screen.findByTestId('peek-term');
     expect(term.getAttribute('data-session')).toBe('cloud-cell-One');
     expect(screen.getByRole('tab', { name: 'Stream' }).getAttribute('aria-selected')).toBe('true');
+    // La riga e' SELEZIONATA, col badge che dice il gesto.
+    expect(riga.getAttribute('data-selected')).toBe('true');
+    expect(riga.textContent).toContain('2 taps = open');
     // Guardare non è andare: nessuna cella aperta, il selettore resta aperto.
     expect(onPick).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
@@ -540,10 +553,11 @@ describe('CellSwitcher', () => {
     const onPick = vi.fn();
     render(<Switcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
     const remote = await screen.findByRole('button', { name: /^Remote / });
-    // La verifica del tocco parte adesso e fallisce (502): la lettura non è
-    // riuscita, la cella NON è stata trovata spenta.
+    // La verifica del SECONDO tocco parte adesso e fallisce (502): la lettura
+    // non è riuscita, la cella NON è stata trovata spenta.
     mocks.fleetStatus.mockImplementation(async () => { throw new Error('HTTP 502'); });
-    fireEvent.click(remote);
+    fireEvent.click(remote); // primo tocco: seleziona
+    fireEvent.click(remote); // secondo tocco: apre con la verifica
     expect(await screen.findByText('Could not verify: try again shortly.')).toBeTruthy();
     expect(screen.queryByText('this cell is no longer active')).toBeNull();
     expect(onPick).not.toHaveBeenCalled();
@@ -559,7 +573,8 @@ describe('CellSwitcher', () => {
       ? { available: true, cells: [off('Remote', 'cloud-Remote')] }
       : { available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
     mocks.getRouteSessions.mockResolvedValue({ sessions: [] });
-    fireEvent.click(remote);
+    fireEvent.click(remote); // primo tocco: seleziona
+    fireEvent.click(remote); // secondo tocco: la verifica dice spenta
     expect(await screen.findByText('this cell is no longer active')).toBeTruthy();
     expect(onPick).not.toHaveBeenCalled();
   });

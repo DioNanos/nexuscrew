@@ -16,6 +16,7 @@ import CellSwitcher from './components/CellSwitcher.jsx';
 import { CellActionsPopover, CellActionsSheet } from './components/CellActions.jsx';
 import { cellRuntime } from './lib/roster-view-model.js';
 import { nextRendererPreference, readRendererPreference, writeRendererPreference } from './lib/terminal-renderer.js';
+import { readFontSize, writeFontSize } from './lib/terminal-fontsize.js';
 import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import { createPollGuard } from './lib/poll-guard.js';
 import VlSessionView from './components/VlSessionView.jsx';
@@ -46,8 +47,6 @@ import { parseBootstrapHash } from './lib/fragment.js';
 import { useDesktop } from './lib/desktop.js';
 import './App.css';
 
-const FONT_MIN = 9;
-const FONT_MAX = 24;
 const SIDE_W_KEY = 'nc_side_w';
 const SIDE_MIN_KEY = 'nc_side_min';
 const SIDE_W_DEF = 240;
@@ -56,11 +55,6 @@ const THREAD_STATUSES = new Set(['absent', 'present', 'active', 'unknown']);
 function loadSideW() {
   const v = Number(localStorage.getItem(SIDE_W_KEY));
   return v >= 180 && v <= 480 ? v : SIDE_W_DEF;
-}
-
-function initialFontSize() {
-  const v = Number(localStorage.getItem('nc_fontsize'));
-  return v >= FONT_MIN && v <= FONT_MAX ? v : 13;
 }
 
 // Bootstrap dal fragment: legge token (#token=) e pairing (#pair=) dalla hash
@@ -189,7 +183,7 @@ export function SingleView({
   // Su touch il composer è aperto di default (l'IME Gboard corrompe l'input in xterm).
   const [showComposer, setShowComposer] = useState(() => window.matchMedia('(pointer: coarse)').matches);
   const [filesEvent, setFilesEvent] = useState(null);
-  const [fontSize, setFontSize] = useState(initialFontSize);
+  const [fontSize, setFontSize] = useState(readFontSize);
   // Renderer del terminale: preferenza per browser + quello che sta disegnando
   // davvero (il GPU puo' non essere disponibile, o perdere il contesto).
   const [rendererPref, setRendererPref] = useState(readRendererPreference);
@@ -214,11 +208,13 @@ export function SingleView({
   const [panelUrl, setPanelUrl] = useState('');
   const [panelCellId, setPanelCellId] = useState('');
   const [showPanel, setShowPanel] = useState(false);
-  const zoom = (delta) => setFontSize((v) => {
-    const next = Math.max(FONT_MIN, Math.min(FONT_MAX, v + delta));
-    localStorage.setItem('nc_fontsize', String(next));
-    return next;
-  });
+  const zoom = (delta) => setFontSize((v) => writeFontSize(v + delta));
+  // Lo zoom dell'anteprima del selettore scrive lo stesso nc_fontsize: quando
+  // il foglio si chiude, il terminale principale rilegge il valore UNO che
+  // adesso c'e'. Due superfici, un numero.
+  useEffect(() => {
+    if (!cellSwitcherOpen) setFontSize(readFontSize());
+  }, [cellSwitcherOpen]);
   const sendRef = useRef(() => {});
   const composerRef = useRef(() => false);
   const actionRef = useRef(() => {});
@@ -268,9 +264,8 @@ export function SingleView({
       setPanelCellId(typeof cell?.cell === 'string' ? cell.cell : '');
       // il centro porta motore E stato, come il design. La parola esce
       // dal contratto `stato` della cella; senza canale resta il solo motore.
-      const motore = `${cell.engine}${cell.key ? `·${cell.key}` : ''}`;
       let txt = '';
-      if (cell) txt = [motore, parolaStatoCella(cell, sess)].filter(Boolean).join(' · ');
+      if (cell) txt = [`${cell.engine}${cell.key ? `·${cell.key}` : ''}`, parolaStatoCella(cell, sess)].filter(Boolean).join(' · ');
       else if (sess) txt = sess.attached ? `attached · ${rel(sess.activity)}` : (sess.activity ? rel(sess.activity) : '');
       setSub(txt);
     }

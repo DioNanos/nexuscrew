@@ -2,7 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // geometria e stato della RIGA della lista celle (CellSwitcher).
 //
@@ -11,8 +11,9 @@ import { render, screen, waitFor } from '@testing-library/react';
 // fonte (mai «idle» e «stopped» insieme) e non ripete piu' il nodeLabel, che
 // sale una volta sola nell'intestazione del gruppo.
 //
-// Cosa NON presidia: il gesto di apertura (per decisione di DAG il tocco
-// seleziona, il secondo apre: fuori da questo mandato) e la cascata CSS reale.
+// Cosa NON presidia: la cascata CSS reale (jsdom non la calcola). Il gesto di
+// apertura — un tocco seleziona, il secondo apre — e' presidiato qui sotto
+// nel suo describe.
 
 const mocks = vi.hoisted(() => ({
   apiFetch: vi.fn(), fleetStatus: vi.fn(), getRouteSessions: vi.fn(),
@@ -22,7 +23,10 @@ vi.mock('../lib/api.js', () => ({
   apiFetch: mocks.apiFetch, fleetStatus: mocks.fleetStatus, getRouteSessions: mocks.getRouteSessions,
   getLiveHost: mocks.getLiveHost, designateHostCell: mocks.designateHostCell, clearHostCell: mocks.clearHostCell,
 }));
-vi.mock('./Terminal.jsx', () => ({ default: (props) => <div data-testid="peek-term" data-session={props.session} /> }));
+vi.mock('./Terminal.jsx', () => ({ default: (props) => (
+  <div data-testid="peek-term" data-session={props.session}
+    data-fontsize={props.fontSize} data-readonly={String(!!props.readonly)} />
+) }));
 vi.mock('./CellPanel.jsx', () => ({
   default: (props) => (
     <div data-testid="peek-panel" data-cell={props.cellId} data-panel-port={props.panelPort} data-route={JSON.stringify(props.route)} />
@@ -107,6 +111,100 @@ describe('il nodeLabel sale nell\'intestazione del gruppo', () => {
     const teste = [...document.querySelectorAll('.nc-cell-switcher-position')];
     expect(teste).toHaveLength(1);
     expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', 'VPSCloud'));
+  });
+});
+
+describe('il gesto della lista: un tocco seleziona, il secondo apre', () => {
+  // Due celle locali vive: il gesto si prova su tutte e due (selezione,
+  // spostamento, apertura).
+  const sessioni = () => ([
+    { name: 'cloud-cell-One', activity: Date.now() - 60000, working: false },
+    { name: 'cloud-cell-Two', activity: Date.now() - 60000, working: false },
+  ]);
+  beforeEach(() => {
+    writeCellSwitcherSnapshot({
+      sessions: sessioni(),
+      cells: [active('cell-One', 'cloud-cell-One'), active('cell-Two', 'cloud-cell-Two')],
+      localFresh: true, nodeGroups: [],
+    });
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: sessioni() }) });
+    mocks.fleetStatus.mockImplementation(async () => ({
+      available: true,
+      cells: [active('cell-One', 'cloud-cell-One'), active('cell-Two', 'cloud-cell-Two')],
+    }));
+  });
+
+  it('senza selezione, la riga d\'aiuto dice il gesto', async () => {
+    render(<Switcher />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    expect(screen.getByText(t('cell-switcher-tap-hint'))).toBeTruthy();
+  });
+
+  it('primo tocco: seleziona la riga e apre l\'anteprima, NON apre la cella', async () => {
+    const onPick = vi.fn();
+    render(<Switcher onPick={onPick} />);
+    const riga = await screen.findByRole('button', { name: /^cell-One / });
+    expect(screen.queryByTestId('cell-switcher-anteprima')).toBeNull();
+    fireEvent.click(riga);
+    expect(await screen.findByTestId('cell-switcher-anteprima')).toBeTruthy();
+    expect(riga.getAttribute('data-selected')).toBe('true');
+    expect(riga.textContent).toContain(t('cell-switcher-two-taps'));
+    expect(onPick).not.toHaveBeenCalled();
+    // col gesto in corso, la riga d'aiuto non serve piu'.
+    expect(screen.queryByText(t('cell-switcher-tap-hint'))).toBeNull();
+  });
+
+  it('secondo tocco sulla STESSA riga: apre, col ricontrollo fresco', async () => {
+    const onPick = vi.fn(); const onClose = vi.fn();
+    render(<Switcher onPick={onPick} onClose={onClose} />);
+    const riga = await screen.findByRole('button', { name: /^cell-One / });
+    fireEvent.click(riga);
+    fireEvent.click(riga);
+    await waitFor(() => expect(onPick).toHaveBeenCalledWith({ session: 'cloud-cell-One', cellName: 'cell-One' }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('tocco su un\'ALTRA riga: la selezione si sposta, non si apre niente', async () => {
+    const onPick = vi.fn();
+    render(<Switcher onPick={onPick} />);
+    const una = await screen.findByRole('button', { name: /^cell-One / });
+    const due = screen.getByRole('button', { name: /^cell-Two / });
+    fireEvent.click(una);
+    expect(await screen.findByTestId('cell-switcher-anteprima')).toBeTruthy();
+    fireEvent.click(due);
+    expect(una.getAttribute('data-selected')).toBeNull();
+    expect(due.getAttribute('data-selected')).toBe('true');
+    // l'anteprima ora e' dell'ALTRA cella
+    const term = screen.getByTestId('peek-term');
+    expect(term.getAttribute('data-session')).toBe('cloud-cell-Two');
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it('uno scroll non e\' un tocco: il dito che si muove non seleziona e non apre', async () => {
+    const onPick = vi.fn();
+    render(<Switcher onPick={onPick} />);
+    const riga = await screen.findByRole('button', { name: /^cell-One / });
+    // Il dito scende lungo la lista e MOLLA sopra la riga: e' uno scroll, il
+    // click che ne segue non conta.
+    fireEvent.pointerDown(riga, { clientX: 20, clientY: 100 });
+    fireEvent.pointerMove(riga, { clientX: 20, clientY: 240 });
+    fireEvent.click(riga, { clientX: 20, clientY: 240 });
+    expect(screen.queryByTestId('cell-switcher-anteprima')).toBeNull();
+    expect(riga.getAttribute('data-selected')).toBeNull();
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it('l\'anteprima usa lo stesso font del terminale principale (nc_fontsize), in sola lettura', async () => {
+    localStorage.setItem('nc_fontsize', '17');
+    render(<Switcher />);
+    fireEvent.click(await screen.findByRole('button', { name: /^cell-One / }));
+    const term = await screen.findByTestId('peek-term');
+    expect(term.getAttribute('data-fontsize')).toBe('17');
+    expect(term.getAttribute('data-readonly')).toBe('true');
+    // Il + dell'anteprima muove lo STESSO valore: la chiave e' una sola.
+    fireEvent.click(screen.getByTitle(t('zoom-in')));
+    expect((await screen.findByTestId('cell-switcher-fontsize')).textContent).toBe('18 px');
+    expect(localStorage.getItem('nc_fontsize')).toBe('18');
   });
 });
 

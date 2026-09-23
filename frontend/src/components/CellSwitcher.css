@@ -92,9 +92,9 @@
 @keyframes nc-cell-switcher-pulse { 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .nc-cell-switcher-dot.working { animation: none; } }
 
-/* Il pallino è un bersaglio, non una decorazione: cliccandolo si apre
-   l'anteprima. Su schermo tattile serve area piena, altrimenti si finisce per
-   sbaglio sul bottone accanto — che invece cambia cella. */
+/* Il pallino mostra lo STATO della cella e nient'altro: guardare dal vivo e'
+   il primo tocco della riga, che apre l'anteprima in alto. L'area resta piena,
+   cosi' lo stato si legge anche col dito grosso. */
 .nc-cell-switcher-peek {
   flex: 0 0 auto;
   display: flex;
@@ -103,15 +103,7 @@
   min-width: 44px;
   min-height: 44px;
   padding: 0;
-  border: 0;
   border-radius: 8px;
-  background: transparent;
-  cursor: pointer;
-}
-
-.nc-cell-switcher-peek:hover,
-.nc-cell-switcher-peek:focus-visible {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 /* Le azioni della riga (⋯): lo stesso tondo da 44 px dei fratelli nella home.
@@ -132,3 +124,55 @@
   color: #bfffd8; font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
 }
 .nc-cell-switcher-reorder.on { color: #bfffd8; border-color: rgba(0, 204, 102, .55); background: rgba(0, 204, 102, .12); }
+
+/* ── Il gesto: un tocco seleziona, il secondo apre ── */
+
+/* La riga selezionata dal primo tocco: bordo e sfondo blu, come la tavola
+   approvata. La selezione e' un fatto VISIVO prima che logico: chi tocca
+   deve vedere DOVE e' finito il dito. */
+.nc-cell-switcher-row.selected { border-color: #4f9cff; background: #10233c; }
+
+/* «2 tocchi = apri»: dice il gesto mentre lo si sta facendo, nella riga
+   stessa che lo aspetta. */
+.nc-cell-switcher-taptwo {
+  flex: 0 0 auto; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid rgba(79, 156, 255, .6); background: rgba(79, 156, 255, .16);
+  color: #cfe4ff; font-size: 10px; letter-spacing: .04em;
+}
+
+/* La riga d'aiuto: dice il gesto finché non c'e' un'anteprima aperta a
+   dirlo da sola. */
+.nc-cell-switcher-hint { padding: 0 4px; font-size: 11px; opacity: .6; }
+
+/* L'anteprima della riga selezionata: la meta' alta dello schermo, al posto
+   del terminale oscurato dal velo. Il foglio lista resta sotto e scorre. */
+.nc-cell-switcher-anteprima {
+  position: absolute; left: 0; right: 0; top: 0; height: 50%;
+  box-sizing: border-box; padding: 8px 10px 6px;
+  display: flex; flex-direction: column; gap: 6px;
+  background: #0a0e0a; border-bottom: 1px solid #243;
+  overflow: hidden;
+}
+.nc-cell-switcher-anteprima-testa {
+  display: flex; align-items: baseline; gap: 8px; flex: 0 0 auto; min-width: 0;
+}
+.nc-cell-switcher-anteprima-testa b { color: #cfe4ff; }
+.nc-cell-switcher-anteprima-testa small { opacity: .55; font-size: 11px; }
+.nc-cell-switcher-anteprima-zoom {
+  margin-left: auto; display: flex; align-items: center; gap: 6px;
+  font-size: 11px; flex: 0 0 auto;
+}
+.nc-cell-switcher-anteprima-zoom button {
+  min-width: 30px; min-height: 30px; padding: 0; border-radius: 6px;
+  border: 1px solid rgba(216, 255, 232, .25); background: transparent; color: #d8ffe8;
+  font-size: 15px; cursor: pointer;
+}
+
+/* Nel pannello l'anteprima RIEMPIE lo spazio che c'e': il min-height del
+   popup libero qui farebbe uscire il terminale dal bordo. */
+.nc-cell-switcher-anteprima .nc-peek-stream { min-height: 0; flex: 1 1 auto; }
+.nc-cell-switcher-anteprima .nc-peek-testo { flex: 1 1 auto; overflow-y: auto; }
+
+/* Col foglio ridotto sotto l'anteprima, la lista tiene la sua meta' e
+   scorre li'. */
+.nc-cell-switcher.with-anteprima { max-height: 50vh; max-height: min(50dvh, 460px); }
