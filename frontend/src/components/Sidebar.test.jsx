@@ -459,3 +459,46 @@ describe('Sidebar e la lettura locale non riuscita', () => {
     expect(within(row).queryByText(/unverified/)).toBeNull();
   });
 });
+
+// --- outbox della riga remota: la sessione è quella DEL SUO nodo -------------
+// Un nome tmux non è unico nella federazione: il badge dei nuovi file letto
+// dalle sessioni LOCALI attribuirebbe all'omonima remota i file di qui (o
+// sparirebbe se l'omonima non esiste). La lettura giusta è g.sessions.
+describe('Sidebar — badge outbox della riga remota', () => {
+  const gruppoRemota = (sessioneRemota) => ({
+    name: 'relay', label: 'Relay', route: ['relay'], instanceId: 'd'.repeat(32), status: 'up',
+    sessions: sessioneRemota ? [sessioneRemota] : [], unmanaged: [], capabilities: [], engines: [],
+    cells: [{ cell: 'Dev', tmuxSession: 'host-Dev', tmux: true, active: true }],
+  });
+  const propsCon = (sessions) => ({
+    cells: [],
+    sessions,
+    nodeGroups: [gruppoRemota({ name: 'host-Dev', outbox: { count: 2, latest: 1700000000000 } })],
+    onPick: vi.fn(), onAddTile: vi.fn(), onSettings: vi.fn(),
+  });
+
+  it('omonima locale con 7 file, remota con 2: la riga remota mostra 2', async () => {
+    render(<Sidebar {...propsCon([{ name: 'host-Dev', outbox: { count: 7, latest: 1700000000000 } }])} />);
+    const riga = screen.getByText('Dev').closest('[data-roster-key]');
+    await waitFor(() => expect(within(riga).getByText('2')).toBeTruthy());
+    expect(within(riga).queryByText('7')).toBeNull();
+  });
+
+  it('senza omonima locale: il badge remota mostra comunque i SUOI file', async () => {
+    render(<Sidebar {...propsCon([])} />);
+    const riga = screen.getByText('Dev').closest('[data-roster-key]');
+    await waitFor(() => expect(within(riga).getByText('2')).toBeTruthy());
+  });
+
+  it('NEGATIVO: remota senza sessione → nessun badge nella riga, anche se la locale ne ha uno', () => {
+    render(<Sidebar
+      cells={[]}
+      sessions={[{ name: 'host-Dev', outbox: { count: 7, latest: 1700000000000 } }]}
+      nodeGroups={[gruppoRemota(null)]}
+      onPick={vi.fn()} onAddTile={vi.fn()} onSettings={vi.fn()}
+    />);
+    const riga = screen.getByText('Dev').closest('[data-roster-key]');
+    expect(within(riga).queryByText('7')).toBeNull();
+    expect(within(riga).queryByText('2')).toBeNull();
+  });
+});

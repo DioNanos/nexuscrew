@@ -725,6 +725,11 @@ export default function Sidebar({
                 // drag, click e peek restano azioni da nodo vivo.
                 const live = !!c.tmux && !g.cellsPreserved;
                 const dot = c.degraded ? 'warn' : c.tmux && !g.cellsPreserved ? 'on' : '';
+                // L'outbox della riga remota è quello della sessione DEL SUO
+                // nodo: le sessioni locali (byName) parlano di un'altra cella
+                // che porta lo stesso nome — il conteggio non si attribuisce
+                // attraversando i nodi.
+                const sessioneNodo = (g.sessions || []).find((s) => s && s.name === c.tmuxSession) || null;
                 const baseTitle = g.cellsPreserved
                   ? `${t('fleet-stale')}`
                   : item.subtitle || (c.tmux ? t('cell-idle') : t('cell-off'));
@@ -763,8 +768,8 @@ export default function Sidebar({
                       <small title={item.subtitle}>{item.subtitle}</small>
                     </span>
                     {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
-                    {item.fresh && (byName.get(c.tmuxSession) || {}).outbox?.count > 0
-                      ? <span className="nc-badge" title={t('new-files-outbox')}>{byName.get(c.tmuxSession).outbox.count}</span>
+                    {item.fresh && (sessioneNodo || {}).outbox?.count > 0
+                      ? <span className="nc-badge" title={t('new-files-outbox')}>{sessioneNodo.outbox.count}</span>
                       : null}
                     <button
                       type="button"
