@@ -507,12 +507,15 @@ export default function App() {
   if (!loadGuardRef.current) loadGuardRef.current = createPollGuard();
   const pollGuardRef = useRef(null);
   if (!pollGuardRef.current) pollGuardRef.current = createPollGuard();
-  // Tetto di tempo per giro: DEVE stare sotto il periodo di poll (4 s). Una
-  // connessione che resta aperta senza rispondere non produce mai un errore, e
-  // senza tetto il `finally` che libera la guardia non scatterebbe: il poll
-  // resterebbe fermo fino al limite del browser (~300 s) e nessun tick
-  // potrebbe recuperare. Le letture locali non hanno il default di 8 s che
-  // api.js applica alle route federate — che e' il doppio del periodo.
+  // Tetto di tempo per RICHIESTA, non per giro: e' il massimo che una singola
+  // lettura del poll puo' restare appesa. Un giro ne fa DUE in sequenza
+  // (sessioni, poi flotta), quindi puo' durare fino a circa il doppio di
+  // questo valore e sforare il periodo di 4 s — ed e' esattamente il caso che
+  // la guardia copre, saltando i tick che arrivano nel frattempo. Serve
+  // perche' una connessione aperta che non risponde non produce mai un
+  // errore: senza tetto il `finally` che libera la guardia non scatterebbe e
+  // il poll resterebbe fermo fino al limite del browser (~300 s), senza che
+  // nessun tick possa recuperare.
   const POLL_TIMEOUT_MS = 3500;
   const poll = useCallback(async () => {
     const guard = pollGuardRef.current;

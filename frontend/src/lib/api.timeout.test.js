@@ -75,4 +75,3 @@ describe('apiFetch abort esterno', () => {
 // `api.body-timeout.test.js`, che gira in ambiente `node`: in jsdom il body di
 // una `fetch` non si comporta come in Node (rigetta subito con un TypeError
 // invece di restare in attesa), quindi li' il test non proverebbe niente.
-

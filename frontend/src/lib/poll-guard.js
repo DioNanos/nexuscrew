@@ -1,10 +1,11 @@
 // Guardia di non-sovrapposizione per i poll del desktop.
 //
-// Perche' serve: il poll parte ogni 4 s e ogni giro ha un tetto di tempo sotto
-// il periodo (App.jsx). Il tetto limita quanto DURA un giro, non impedisce che
-// due coesistano: un tick parte comunque ogni 4 s. Senza guardia la risposta
-// piu' VECCHIA puo' atterrare dopo la piu' nuova — l'ultima lista nota «torna
-// indietro», e la rail riceve due esiti diversi della stessa interrogazione.
+// Perche' serve: il poll parte ogni 4 s e ogni RICHIESTA ha un tetto di tempo
+// (App.jsx). Il tetto limita quanto DURA una richiesta, non il giro intero —
+// che ne fa due in sequenza — e non impedisce che due giri coesistano: un tick
+// parte comunque ogni 4 s. Senza guardia la risposta piu' VECCHIA puo' atterrare
+// dopo la piu' nuova — l'ultima lista nota «torna indietro», e la rail riceve
+// due esiti diversi della stessa interrogazione.
 //
 // Lo stesso rimedio e' gia' in uso in useNodes.js (`inFlightRef`): qui e'
 // estratto in una funzione pura perche' e' verificabile senza montare il
