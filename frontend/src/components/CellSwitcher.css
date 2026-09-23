@@ -17,8 +17,15 @@
   background: #0a0e0a; color: #cfe;
 }
 .nc-cell-switcher-row.current { border-color: #2e7d32; background: #14200f; }
-.nc-cell-switcher-row.selected { border-color: #79d9ff; background: #112637; box-shadow: 0 0 0 2px #79d9ff33; }
-.nc-cell-switcher-row.off { opacity: .48; }
+/* Una riga spenta si attenua, ma NON con l'opacità sul contenitore: quella si
+   moltiplica su tutto quello che c'è dentro, testo di stato compreso, e lo
+   portava a .48 — sotto la soglia di leggibilità. Si attenuano i testi che
+   devono attenuarsi (nome, sottotitolo, pallino); il testo di stato resta
+   quello che è, perché è l'informazione che si viene a leggere. */
+.nc-cell-switcher-row.off .nc-cell-switcher-copy b,
+.nc-cell-switcher-row.off .nc-cell-switcher-copy small:not(.nc-cell-switcher-state),
+.nc-cell-switcher-row.off .nc-cell-switcher-dot,
+.nc-cell-switcher-row.off .nc-cell-switcher-menu { opacity: .55; }
 .nc-cell-switcher-row-select {
   min-width: 0; min-height: 44px; flex: 1 1 auto; display: flex; align-items: center; gap: 10px;
   padding: 8px 4px 8px 0; border: 0; background: transparent; color: #cfe; text-align: left;
@@ -31,7 +38,11 @@
 }
 .nc-cell-switcher .nc-roster-handle.active,
 .nc-cell-switcher .nc-roster-handle:focus-visible { color: #bfffd8; border-color: rgba(0,204,102,.45); background: rgba(0,204,102,.12); }
-.nc-cell-switcher-row.nc-roster-dragging { opacity: .62; }
+/* Anche in trascinamento l'attenuazione sta sui testi, non sul contenitore:
+   sulla riga che si sta spostando il testo di stato resterebbe altrimenti al
+   .62 del contenitore, sotto la soglia di leggibilità. */
+.nc-cell-switcher-row.nc-roster-dragging .nc-cell-switcher-copy b,
+.nc-cell-switcher-row.nc-roster-dragging .nc-cell-switcher-copy small:not(.nc-cell-switcher-state) { opacity: .7; }
 .nc-cell-switcher-row.nc-roster-over { outline: 2px solid rgba(0,204,102,.72); outline-offset: 2px; }
 .nc-cell-switcher-dot { flex: 0 0 9px; width: 9px; height: 9px; border-radius: 50%; background: #355; }
 .nc-cell-switcher-dot.on { background: #00cc66; box-shadow: 0 0 6px #00cc6688; }
@@ -40,8 +51,11 @@
 .nc-cell-switcher-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .nc-cell-switcher-copy b, .nc-cell-switcher-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nc-cell-switcher-copy b { color: #d8ffe8; font-size: 14px; }
-.nc-cell-switcher-copy small { opacity: .62; font-size: 11px; }
-.nc-cell-switcher-copy .nc-cell-switcher-state { opacity: .88; color: #d8ffe8; }
+.nc-cell-switcher-copy small { opacity: .62; font-size: 13px; }
+/* Il testo di stato ha la sua misura DICHIARATA (12 px), non ereditata dal
+   sottotitolo: è l'informazione che si viene a leggere, e non deve dipendere
+   dalla riga accanto. */
+.nc-cell-switcher-copy .nc-cell-switcher-state { opacity: .88; color: #d8ffe8; font-size: 12px; }
 /* Telemetria (contesto libero · tier usati) nella RIGA dello switcher: la
    regola generica del popup vive in CellPeek.css (componente condiviso). */
 .nc-cell-switcher-copy .nc-cell-switcher-telemetry { color: #9fd8c2; }
