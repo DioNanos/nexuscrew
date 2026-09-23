@@ -274,7 +274,8 @@ test('due up concorrenti: UN vincitore, e sul disco la generazione del VINCITORE
   });
   assert.equal(code, 1, 'il client non parte (spawn finto), ma la scrittura e\' avvenuta');
 
-  const suDisco = fs.readFileSync(w.genPath, 'utf8');
+  // La prima riga: la seconda e' il segno dell'uscita, che questo supervisore dichiara.
+  const suDisco = fs.readFileSync(w.genPath, 'utf8').split('\n')[0];
   assert.equal(suDisco, genVincitore, 'sul disco la generazione del VINCITORE');
   assert.notEqual(suDisco, genPerdente, 'mai quella del perdente');
 });

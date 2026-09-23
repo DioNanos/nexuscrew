@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const {
   leggiAttivita, scriviStato, scriviGenerazione, statoDaEvento, daRegistrare,
-  NOME_FILE, NOME_GENERAZIONE, MASSIMA_ETA_MS, FUTURO_TOLLERATO_MS, USCITA,
+  NOME_FILE, NOME_GENERAZIONE, MASSIMA_ETA_MS, FUTURO_TOLLERATO_MS, USCITA, AVVIO,
 } = require('../lib/files/activity.js');
 
 const SESSIONE = 'cloud-Prova';
@@ -21,6 +21,23 @@ function dirSessione(root) {
 function scriviFile(root, contenuto) {
   fs.mkdirSync(dirSessione(root), { recursive: true });
   fs.writeFileSync(path.join(dirSessione(root), NOME_FILE), contenuto);
+}
+
+const GEN = 'gen-1';
+
+// Una cella LANCIATA dal supervisore NUOVO: generazione su disco COL SEGNO
+// dell'uscita. Serve a quasi tutti i casi da qui in giu': con il disegno nuovo
+// un evento senza generazione non e' leggibile — non e' legato ad alcun lancio —
+// e «ferma» non scade solo dove il supervisore garantisce l'invalidazione.
+function lanciata(root, { garantita = true, gen = GEN } = {}) {
+  assert.equal(scriviGenerazione(dirSessione(root), gen, { uscitaGarantita: garantita }), true,
+    'il lancio scrive la generazione');
+  return gen;
+}
+
+// Un evento DI QUEL lancio: la generazione e' sempre quella.
+function evento(root, nome, extra = {}) {
+  return scriviStato(dirSessione(root), { evento: nome, generazione: GEN, ...extra });
 }
 
 // --- mappa evento -> stato (la matrice MISURATA nel Gate A) ----------------
@@ -85,9 +102,10 @@ test('daRegistrare: SessionEnd si scrive — e cosi che il dato viene invalidato
 
 test('un SessionEnd scritto invalida lo stato precedente', () => {
   const root = tmpRoot();
-  scriviStato(dirSessione(root), { evento: 'UserPromptSubmit' });
+  lanciata(root);
+  evento(root, 'UserPromptSubmit');
   assert.equal(leggiAttivita(root, SESSIONE).stato, 'lavora');
-  scriviStato(dirSessione(root), { evento: 'SessionEnd' });
+  evento(root, 'SessionEnd');
   assert.equal(leggiAttivita(root, SESSIONE), null, 'la sessione non esiste piu: non «ferma»');
 });
 
@@ -100,14 +118,18 @@ const { spawnSync } = require('node:child_process');
 const SCRIPT = path.join(__dirname, '..', 'bin', 'nc-activity-hook.js');
 const { spawn } = require('node:child_process');
 
-function eseguiHook(dir, evento, payload) {
-  return spawnSync(process.execPath, [SCRIPT, '--event', evento, '--dir', dir],
+function eseguiHook(dir, nomeEvento, payload) {
+  // `--gen` c'e': in produzione il comando dell'hook lo porta (cell-exec lo
+  // costruisce dalla generazione del payload), ed e' la generazione che rende
+  // leggibile l'evento.
+  return spawnSync(process.execPath, [SCRIPT, '--event', nomeEvento, '--dir', dir, '--gen', GEN],
     { input: JSON.stringify(payload), encoding: 'utf8' });
 }
 
 test('lo script hook: scrive l\'evento mappato, tace, ed esce 0', () => {
   const root = tmpRoot();
   const dir = dirSessione(root);
+  lanciata(root);
   const r = eseguiHook(dir, 'UserPromptSubmit', { session_id: 's1', prompt: 'testo del prompt' });
   assert.equal(r.status, 0);
   assert.equal(r.stdout, '', 'un hook che stampa puo alterare il turno');
@@ -121,6 +143,7 @@ test('lo script hook: scrive l\'evento mappato, tace, ed esce 0', () => {
 test('lo script hook: una Notification di altro tipo NON tocca il file', () => {
   const root = tmpRoot();
   const dir = dirSessione(root);
+  lanciata(root);
   eseguiHook(dir, 'UserPromptSubmit', {});
   const prima = fs.readFileSync(path.join(dir, NOME_FILE), 'utf8');
   const r = eseguiHook(dir, 'Notification', { notification_type: 'idle_prompt' });
@@ -152,16 +175,18 @@ test('ogni transizione scrive uno stato leggibile', () => {
     ['PermissionRequest', 'attesa'],
     ['Stop', 'ferma'],
   ];
-  for (const [evento, atteso] of casi) {
-    scriviStato(dirSessione(root), { evento, sessionId: 's1' });
+  lanciata(root);
+  for (const [nome, atteso] of casi) {
+    evento(root, nome, { sessionId: 's1' });
     const letto = leggiAttivita(root, SESSIONE);
-    assert.equal(letto && letto.stato, atteso, `evento ${evento}`);
+    assert.equal(letto && letto.stato, atteso, `evento ${nome}`);
   }
 });
 
 test('Notification permission_prompt -> attesa', () => {
   const root = tmpRoot();
-  scriviStato(dirSessione(root), { evento: 'Notification', tipo: 'permission_prompt' });
+  lanciata(root);
+  evento(root, 'Notification', { tipo: 'permission_prompt' });
   assert.equal(leggiAttivita(root, SESSIONE).stato, 'attesa');
 });
 
@@ -170,7 +195,8 @@ test('Notification permission_prompt -> attesa', () => {
 test('«ferma» NON scade con l\'eta: un turno finito resta finito', () => {
   const root = tmpRoot();
   const ora = 1_700_000_000_000;
-  scriviStato(dirSessione(root), { evento: 'Stop', ora });
+  lanciata(root);
+  evento(root, 'Stop', { ora });
   assert.equal(leggiAttivita(root, SESSIONE, ora + MASSIMA_ETA_MS - 1).stato, 'ferma');
   assert.equal(leggiAttivita(root, SESSIONE, ora + MASSIMA_ETA_MS + 1).stato, 'ferma',
     'oltre la finestra resta «ferma»: non è un dato che deve verificare altro');
@@ -181,7 +207,8 @@ test('«ferma» NON scade con l\'eta: un turno finito resta finito', () => {
 test('Interrupt vecchio: stesso contratto di Stop', () => {
   const root = tmpRoot();
   const ora = 1_700_000_000_000;
-  scriviStato(dirSessione(root), { evento: 'Interrupt', ora });
+  lanciata(root);
+  evento(root, 'Interrupt', { ora });
   assert.equal(leggiAttivita(root, SESSIONE, ora + 60 * 60 * 1000).stato, 'ferma');
 });
 
@@ -204,7 +231,8 @@ test('un evento di LAVORO vecchio sei minuti -> null: il Ctrl-C resta coperto', 
 test('un ts nel futuro oltre la tolleranza non resta fresco per sempre', () => {
   const root = tmpRoot();
   const ora = 1_700_000_000_000;
-  scriviStato(dirSessione(root), { evento: 'UserPromptSubmit', ora });
+  lanciata(root);
+  evento(root, 'UserPromptSubmit', { ora });
   assert.equal(leggiAttivita(root, SESSIONE, ora - 1000).stato, 'lavora', 'skew piccolo tollerato');
   assert.equal(leggiAttivita(root, SESSIONE, ora - FUTURO_TOLLERATO_MS - 1000), null);
 });
@@ -213,7 +241,8 @@ test('il caso Ctrl-C: nessun evento nuovo -> il dato scade invece di mentire', (
   const root = tmpRoot();
   const ora = 1_700_000_000_000;
   // Un turno partito e mai chiuso: misurato, Ctrl-C non emette alcun evento.
-  scriviStato(dirSessione(root), { evento: 'UserPromptSubmit', ora });
+  lanciata(root);
+  evento(root, 'UserPromptSubmit', { ora });
   assert.equal(leggiAttivita(root, SESSIONE, ora + 1000).stato, 'lavora');
   assert.equal(leggiAttivita(root, SESSIONE, ora + MASSIMA_ETA_MS + 1), null,
     'non «ferma»: non verificato');
@@ -221,26 +250,30 @@ test('il caso Ctrl-C: nessun evento nuovo -> il dato scade invece di mentire', (
 
 // --- generazione ----------------------------------------------------------
 
-test('la generazione decide: mismatch E assenza vengono scartati quando il launcher ne dichiara una', () => {
+test("la generazione decide: senza generazione niente stato, e il mismatch e' un altro lancio", () => {
   const root = tmpRoot();
-  // Formato storico, il launcher NON dichiara una generazione: il file vale
-  // com'e'. E' il caso che la trasformazione di questo test deve CONSERVARE.
-  scriviStato(dirSessione(root), { evento: 'UserPromptSubmit', generazione: 'gen-vecchia' });
-  assert.equal(leggiAttivita(root, SESSIONE).stato, 'lavora', 'senza generazione dichiarata vale');
+  const dir = dirSessione(root);
 
-  scriviGenerazione(dirSessione(root), 'gen-nuova');
-  // Mismatch: lo stato appartiene a un lancio precedente della stessa cella.
-  assert.equal(leggiAttivita(root, SESSIONE), null, 'la generazione corrente e gen-nuova');
+  // 1. Nessuna generazione su disco: niente da leggere, nemmeno se l'evento ne
+  //    dichiara una. Non c'e' piu' il formato «storico» senza generazione: un
+  //    evento che non e' legato a un lancio non e' invalidabile da nessuno, e
+  //    con «ferma» che non scade resterebbe vero per sempre.
+  scriviStato(dir, { evento: 'UserPromptSubmit', generazione: 'gen-1' });
+  assert.equal(leggiAttivita(root, SESSIONE), null, 'senza activity.gen non si legge');
 
-  // ASSENZA di generazione: con `activity.gen` sul disco il file non e' legato
-  // ad alcun lancio. Finche' ogni stato scadeva il caso era coperto dalla
-  // finestra; ora che «ferma» non scade piu', un vecchio `Stop` senza
-  // generazione resterebbe vero attraverso tutti i lanci successivi.
-  scriviStato(dirSessione(root), { evento: 'Stop' });
-  assert.equal(leggiAttivita(root, SESSIONE), null,
-    'senza generazione, ma con activity.gen dichiarata: scartato');
+  // 2. Generazione su disco, evento di un ALTRO lancio: scartato. La fine del
+  //    processo invalida con la generazione, non con l'eta'.
+  scriviGenerazione(dir, 'gen-nuova', { uscitaGarantita: true });
+  assert.equal(leggiAttivita(root, SESSIONE), null, "mismatch: e' un altro lancio");
 
-  scriviStato(dirSessione(root), { evento: 'Stop', generazione: 'gen-nuova' });
+  // 3. Un evento SENZA generazione non vale mai, nemmeno con la generazione su
+  //    disco: gli hook la scrivono da D-340, e un evento che non la porta non
+  //    ha nessuno che possa invalidarlo.
+  scriviStato(dir, { evento: 'Stop' });
+  assert.equal(leggiAttivita(root, SESSIONE), null, 'evento senza generazione: scartato');
+
+  // 4. Lo stesso evento con la generazione giusta si legge.
+  scriviStato(dir, { evento: 'Stop', generazione: 'gen-nuova' });
   assert.equal(leggiAttivita(root, SESSIONE).stato, 'ferma');
 });
 
@@ -275,9 +308,10 @@ test('l\'uscita non dichiara uno stato e non e\' registrabile dagli hook', () =>
 
 test('scritture in sequenza: il lettore non vede mai un file a meta', async () => {
   const root = tmpRoot();
+  lanciata(root);
   const eventi = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'UserPromptSubmit'];
-  await Promise.all(eventi.map((evento) => Promise.resolve().then(
-    () => scriviStato(dirSessione(root), { evento }))));
+  await Promise.all(eventi.map((nome) => Promise.resolve().then(
+    () => evento(root, nome))));
   const letto = leggiAttivita(root, SESSIONE);
   assert.ok(letto, 'il file resta leggibile');
   assert.ok(['lavora', 'ferma'].includes(letto.stato));
@@ -292,8 +326,9 @@ test('un evento PIU VECCHIO non sovrascrive uno piu recente', () => {
   const root = tmpRoot();
   const dir = dirSessione(root);
   const ora = 1_700_000_000_000;
-  scriviStato(dir, { evento: 'Stop', ora });
-  scriviStato(dir, { evento: 'UserPromptSubmit', ora: ora - 5000 });
+  lanciata(root);
+  evento(root, 'Stop', { ora });
+  evento(root, 'UserPromptSubmit', { ora: ora - 5000 });
   const letto = leggiAttivita(root, SESSIONE, ora);
   assert.equal(letto.stato, 'ferma', 'lo Stop piu recente resta');
   assert.equal(letto.ts, ora, 'il ts non torna indietro');
@@ -310,7 +345,8 @@ test('un lock ORFANO non blocca le scritture per sempre', () => {
   fs.writeFileSync(lock, '');
   const vecchio = new Date(Date.now() - 5000);
   fs.utimesSync(lock, vecchio, vecchio);
-  assert.equal(scriviStato(dir, { evento: 'Stop' }), true, 'si scrive lo stesso');
+  lanciata(root);
+  assert.equal(evento(root, 'Stop'), true, 'si scrive lo stesso');
   assert.equal(leggiAttivita(root, SESSIONE).stato, 'ferma');
   assert.equal(fs.existsSync(lock), false, 'il lock orfano e stato rimosso');
 });
@@ -322,13 +358,14 @@ test('scritture concorrenti VERE: vince il ts piu alto, ogni chiamata sa il prop
   const root = tmpRoot();
   const dir = dirSessione(root);
   const base = 1_700_000_000_000;
+  lanciata(root);
   const N = 8;
   const barriera = path.join(root, 'via');
   const figli = [];
   for (let i = 0; i < N; i += 1) {
     figli.push(spawn(process.execPath, [
       path.join(__dirname, 'fixtures', 'activity-concurrent-writer.js'),
-      dir, 'UserPromptSubmit', String(base + i * 1000), barriera, path.join(root, `ready-${i}`),
+      dir, 'UserPromptSubmit', String(base + i * 1000), barriera, path.join(root, `ready-${i}`), GEN,
     ], { stdio: ['ignore', 'pipe', 'ignore'] }));
   }
   // Fase 1: tutti schierati. Senza questa, il tempo di spawn scaglionerebbe le
@@ -411,10 +448,11 @@ test('ClientExit vince su uno Stop nel futuro tollerato: la lettura diventa null
 test('un hook più vecchio dello stato pubblicato viene SCARTATO: scriviStato risponde false', () => {
   const root = tmpRoot();
   const T0 = 1_700_000_000_000;
-  assert.equal(scriviStato(dirSessione(root), { evento: 'Stop', ora: T0 }), true);
+  lanciata(root);
+  assert.equal(evento(root, 'Stop', { ora: T0 }), true);
   // Un PreToolUse in ritardo di un giro non riporta indietro lo stato, e chi
   // chiama se ne accorge: false, non un true di cortesia.
-  assert.equal(scriviStato(dirSessione(root), { evento: 'PreToolUse', ora: T0 - 5_000 }), false);
+  assert.equal(evento(root, 'PreToolUse', { ora: T0 - 5_000 }), false);
   const letto = leggiAttivita(root, SESSIONE, T0);
   assert.equal(letto.stato, 'ferma', 'lo stato pubblicato resta quello piu\' recente');
   assert.equal(letto.ts, T0);
@@ -423,8 +461,9 @@ test('un hook più vecchio dello stato pubblicato viene SCARTATO: scriviStato ri
 test('NEGATIVO: ClientExit con ts ordinato non sposta nulla: scritto con il suo ts', () => {
   const root = tmpRoot();
   const T0 = 1_700_000_000_000;
-  assert.equal(scriviStato(dirSessione(root), { evento: 'UserPromptSubmit', ora: T0 }), true);
-  assert.equal(scriviStato(dirSessione(root), { evento: USCITA, ora: T0 + 1_000 }), true);
+  lanciata(root);
+  assert.equal(evento(root, 'UserPromptSubmit', { ora: T0 }), true);
+  assert.equal(evento(root, USCITA, { ora: T0 + 1_000 }), true);
   assert.equal(leggiAttivita(root, SESSIONE, T0 + 2_000), null);
   const raw = JSON.parse(fs.readFileSync(path.join(dirSessione(root), NOME_FILE), 'utf8'));
   assert.equal(raw.ts, T0 + 1_000, 'il ts del file è quello dell\'uscita, non ripubblicato in avanti');
@@ -433,8 +472,9 @@ test('NEGATIVO: ClientExit con ts ordinato non sposta nulla: scritto con il suo 
 test('NEGATIVO: un evento più RECENTE dello stato pubblicato vince e risponde true', () => {
   const root = tmpRoot();
   const T0 = 1_700_000_000_000;
-  assert.equal(scriviStato(dirSessione(root), { evento: 'Stop', ora: T0 }), true);
-  assert.equal(scriviStato(dirSessione(root), { evento: 'SessionStart', ora: T0 + 5_000 }), true,
+  lanciata(root);
+  assert.equal(evento(root, 'Stop', { ora: T0 }), true);
+  assert.equal(evento(root, 'SessionStart', { ora: T0 + 5_000 }), true,
     'l\'ordine vale in entrambe le direzioni: il piu\' recente scrive');
   const letto = leggiAttivita(root, SESSIONE, T0 + 6_000);
   assert.equal(letto.stato, 'ferma');
@@ -451,4 +491,59 @@ test('NEGATIVO: un hook DOPO l\'uscita rinnova lo stato — l\'uscita non blocca
   // la nuova attivita' deve valere — l'uscita invalida il passato, non il futuro.
   assert.equal(scriviStato(dirSessione(root), { evento: 'UserPromptSubmit', generazione: 'g1', ora: T0 + 120_000 }), true);
   assert.equal(leggiAttivita(root, SESSIONE, T0 + 130_000).stato, 'lavora');
+});
+
+// --- i due riproduttori dell'audit, e la compatibilita' col supervisore vecchio
+
+test("riproduttore: un `Stop` SENZA generazione mentre il lancio sta partendo → null", () => {
+  // E' il caso dell'audit. Durante lo spawn arriva l'ultimo evento di un client
+  // che non dichiara la generazione: non deve essere letto. Non e' legato ad
+  // alcun lancio, nessuno puo' invalidarlo, e con «ferma» che non scade
+  // resterebbe vero per sempre su una cella appena partita.
+  const root = tmpRoot();
+  const dir = dirSessione(root);
+  scriviGenerazione(dir, GEN, { uscitaGarantita: true }); // il lancio ha pubblicato la sua generazione
+  scriviStato(dir, { evento: 'Stop', ora: Date.now() });  // hook di un client che non la dichiara
+  assert.equal(leggiAttivita(root, SESSIONE), null, 'senza generazione non si legge, mai');
+});
+
+test("riproduttore: supervisore VECCHIO (senza il segno dell'uscita), `Stop` di 60 minuti → null", () => {
+  // 0.9.41 e 0.9.42-dev.0 non dichiarano l'uscita del client: su un loro lancio
+  // la non scadenza di «ferma» non e' garantita da niente, quindi deve tornare a
+  // scadere come prima — «non verificato», non «ferma» per ore.
+  const root = tmpRoot();
+  const ora = 1_700_000_000_000;
+  lanciata(root, { garantita: false });
+  evento(root, 'Stop', { ora });
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 1000).stato, 'ferma', 'fresco si legge');
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 60 * 60 * 1000), null,
+    'senza la garanzia dell uscita, «ferma» scade come nella 0.9.41');
+});
+
+test("supervisore NUOVO (col segno dell'uscita): lo stesso `Stop` di 60 minuti resta «ferma»", () => {
+  const root = tmpRoot();
+  const ora = 1_700_000_000_000;
+  lanciata(root);
+  evento(root, 'Stop', { ora });
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 60 * 60 * 1000).stato, 'ferma',
+    'la non scadenza vale dove l invalidazione e garantita');
+});
+
+test("l'evento di LANCIO invalida lo stato precedente: stesso lancio, e si legge null", () => {
+  // Isola la regola dell'evento di lancio: generazione IDENTICA su disco e
+  // nell'evento, quindi non e' il mismatch a produrre il null — e' la mappa
+  // dell'evento. E' quello che rende innocuo un «ferma» lasciato dal client
+  // precedente quando cell-exec fa partire il lancio.
+  const root = tmpRoot();
+  const ora = 1_700_000_000_000;
+  lanciata(root);
+  evento(root, 'Stop', { ora });
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 1000).stato, 'ferma');
+  evento(root, AVVIO, { ora: ora + 2000 });
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 3000), null,
+    'il lancio invalida quello che c era, senza cambiare la generazione');
+  // e un hook che arriva DOPO il lancio rinnova lo stato: il lancio invalida il
+  // passato, non il futuro.
+  evento(root, 'UserPromptSubmit', { ora: ora + 4000 });
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 5000).stato, 'lavora');
 });

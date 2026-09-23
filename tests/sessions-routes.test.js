@@ -68,7 +68,13 @@ test('list: pubblica lo stato di attivita della cella; assente = non verificato,
 
   const dirSessione = path.join(dir, 'files', nome);
   fs.mkdirSync(dirSessione, { recursive: true });
-  const scrivi = (dato) => fs.writeFileSync(path.join(dirSessione, 'activity.json'), JSON.stringify(dato));
+  // La cella e' LANCIATA: generazione su disco col segno dell'uscita, ed eventi
+  // che la dichiarano. Un evento senza generazione non e' leggibile — non e'
+  // legato ad alcun lancio — quindi il fixture deve partire da un lancio vero.
+  const GEN = 'gen-1';
+  fs.writeFileSync(path.join(dirSessione, 'activity.gen'), `${GEN}\nexit:1`);
+  const scrivi = (dato) => fs.writeFileSync(path.join(dirSessione, 'activity.json'),
+    JSON.stringify({ generation: GEN, ...dato }));
 
   scrivi({ event: 'UserPromptSubmit', ts: Date.now(), session_id: 's1' });
   const lavoro = await leggi();

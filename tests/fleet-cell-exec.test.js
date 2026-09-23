@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { sanitizeSpawnError, main } = require('../lib/fleet/cell-exec.js');
-const { scriviStato, scriviGenerazione, leggiAttivita } = require('../lib/files/activity.js');
+const { scriviStato, scriviGenerazione, leggiAttivita, AVVIO } = require('../lib/files/activity.js');
 
 // Fake child_process spawn result: an EventEmitter that understands the
 // `.once(event, fn)` / `.kill(signal)` surface main() uses, plus an async
@@ -234,6 +234,52 @@ function payloadCon(dir, generation) {
   };
 }
 
+test("cell-exec: invalida lo stato del client precedente e dichiara la garanzia dell'uscita", async (t) => {
+  const dir = activityDir(t);
+  const gen = 'c'.repeat(16);
+  // Lo stato lasciato dal client precedente: un «ferma» dell'ultimo turno.
+  scriviGenerazione(dir, 'gen-vecchia');
+  scriviStato(dir, { evento: 'Stop', generazione: 'gen-vecchia', ora: Date.now() });
+  assert.equal(leggiAttivita(path.dirname(dir), path.basename(dir)).stato, 'ferma', 'prima del lancio si leggeva');
+
+  const child = fakeChild();
+  let statoAlloSpawn = null;
+  const code = await main(['--socket', '/tmp/nc-nope', '--nonce', 'c'.repeat(64)], {
+    receivePayload: async () => payloadCon(dir, gen),
+    spawn: () => {
+      // Lo stato COME E' AL MOMENTO DELLO SPAWN: piu' tardi arriverebbe anche
+      // l'uscita del client finto (spawn fallito), che lo sovrascriverebbe e
+      // nasconderebbe proprio cio' che questo test deve provare.
+      try { statoAlloSpawn = JSON.parse(fs.readFileSync(path.join(dir, 'activity.json'), 'utf8')); } catch (_) {}
+      queueMicrotask(() => child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })));
+      return child;
+    },
+    stderrWrite: () => {},
+  });
+  assert.equal(code, 1);
+  assert.ok(statoAlloSpawn, 'lo stato e stato scritto prima dello spawn');
+  assert.equal(statoAlloSpawn.event, AVVIO, 'al momento dello spawn lo stato e quello del LANCIO');
+  assert.equal(statoAlloSpawn.generation, gen, 'e porta la generazione nuova');
+
+  // 1. Lo stato precedente e' INVALIDATO: l'evento di lancio porta la
+  //    generazione nuova e il lettore lo mappa a null. Senza, il «ferma» di
+  //    prima sarebbe sopravvissuto al lancio — per sempre, se nessun hook lo
+  //    rinnova.
+  assert.equal(leggiAttivita(path.dirname(dir), path.basename(dir)), null,
+    'dopo il lancio lo stato del client precedente non e leggibile');
+  const stato = JSON.parse(fs.readFileSync(path.join(dir, 'activity.json'), 'utf8'));
+  // L'evento scritto e' quello del lancio; in questo test arriva subito dopo
+  // anche l'uscita (lo spawn finto fallisce, e il supervisore la dichiara).
+  // Entrambi invalidano, ed e' quello che conta: la generazione e' la NUOVA.
+  assert.ok([AVVIO, 'ClientExit'].includes(stato.event), `evento: ${stato.event}`);
+  assert.equal(stato.generation, gen, 'l invalidazione porta la generazione del lancio');
+
+  // 2. Il file di generazione porta il SEGNO: e' quello che autorizza il lettore
+  //    a non far scadere «ferma», perche' questo supervisore garantisce
+  //    l'evento di uscita.
+  assert.equal(fs.readFileSync(path.join(dir, 'activity.gen'), 'utf8'), `${gen}\nexit:1`);
+});
+
 test('cell-exec: scrive activity.gen con la generazione del payload, PRIMA dello spawn', async (t) => {
   const dir = activityDir(t);
   const gen = 'a'.repeat(16);
@@ -245,6 +291,9 @@ test('cell-exec: scrive activity.gen con la generazione del payload, PRIMA dello
       // L'ordine e' il punto: quando il client parte, la generazione e' GIA' su
       // disco. Un hook che scrive una generazione non ancora pubblicata
       // produrrebbe eventi scartati al primo istante di vita del client.
+      // Il file porta la generazione E il segno dell'uscita (questo
+      // supervisore garantisce ClientExit): l'ordine e' il punto, il contenuto
+      // lo verifica il test qui sotto.
       lettoAlloSpawn = fs.readFileSync(path.join(dir, 'activity.gen'), 'utf8');
       queueMicrotask(() => child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })));
       return child;
@@ -252,8 +301,8 @@ test('cell-exec: scrive activity.gen con la generazione del payload, PRIMA dello
     stderrWrite: () => {},
   });
   assert.equal(code, 1, 'il client non parte (spawn finto): il giro si chiude');
-  assert.equal(lettoAlloSpawn, gen, 'la generazione era su disco PRIMA dello spawn');
-  assert.equal(fs.readFileSync(path.join(dir, 'activity.gen'), 'utf8'), gen);
+  assert.equal(lettoAlloSpawn.split('\n')[0], gen, 'la generazione era su disco PRIMA dello spawn');
+  assert.equal(fs.readFileSync(path.join(dir, 'activity.gen'), 'utf8'), `${gen}\nexit:1`);
 });
 
 test("cell-exec: se la scrittura fallisce, log + il client parte lo stesso (stato «non verificato»)", async (t) => {
