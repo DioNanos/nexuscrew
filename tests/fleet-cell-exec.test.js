@@ -211,3 +211,71 @@ test('main: l\'uscita si dichiara anche quando il child non e\' mai partito', as
   assert.equal(code, 1);
   assert.equal(leggiAttivita(root, sessione, T0 + 3000), null);
 });
+
+// --- la generazione di attivita' la scrive CHI VINCE ------------------------
+//
+// `cell-exec` gira DENTRO la sessione tmux appena creata: chi perde la corsa
+// sulla new-session non arriva mai qui. Prima questa scrittura stava nella
+// risoluzione dello spec, che gira per tutti — anche per chi stava per perdere:
+// sul disco restava la generazione del perdente e ogni evento del vincitore
+// veniva scartato al lettore.
+
+function activityDir(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-exec-gen-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function payloadCon(dir, generation) {
+  return {
+    command: '/home/tester/bin/client', args: [], env: {},
+    supervise: { enabled: false },
+    activity: { dir, generation },
+  };
+}
+
+test('cell-exec: scrive activity.gen con la generazione del payload, PRIMA dello spawn', async (t) => {
+  const dir = activityDir(t);
+  const gen = 'a'.repeat(16);
+  let lettoAlloSpawn = null;
+  const child = fakeChild();
+  const code = await main(['--socket', '/tmp/nc-nope', '--nonce', 'e'.repeat(64)], {
+    receivePayload: async () => payloadCon(dir, gen),
+    spawn: () => {
+      // L'ordine e' il punto: quando il client parte, la generazione e' GIA' su
+      // disco. Un hook che scrive una generazione non ancora pubblicata
+      // produrrebbe eventi scartati al primo istante di vita del client.
+      lettoAlloSpawn = fs.readFileSync(path.join(dir, 'activity.gen'), 'utf8');
+      queueMicrotask(() => child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })));
+      return child;
+    },
+    stderrWrite: () => {},
+  });
+  assert.equal(code, 1, 'il client non parte (spawn finto): il giro si chiude');
+  assert.equal(lettoAlloSpawn, gen, 'la generazione era su disco PRIMA dello spawn');
+  assert.equal(fs.readFileSync(path.join(dir, 'activity.gen'), 'utf8'), gen);
+});
+
+test("cell-exec: se la scrittura fallisce, log + il client parte lo stesso (stato «non verificato»)", async (t) => {
+  const dir = activityDir(t);
+  // La directory esiste ma la scrittura non puo' riuscire: `activity.gen` come
+  // DIRECTORY. La scrittura atomica (tmp + rename) fallisce.
+  fs.mkdirSync(path.join(dir, 'activity.gen'));
+  let stderr = '';
+  let partito = false;
+  const child = fakeChild();
+  const code = await main(['--socket', '/tmp/nc-nope', '--nonce', 'f'.repeat(64)], {
+    receivePayload: async () => payloadCon(dir, 'b'.repeat(16)),
+    spawn: () => { partito = true; queueMicrotask(() => child.emit('exit', 0)); return child; },
+    stderrWrite: (s) => { stderr += s; },
+  });
+  assert.equal(partito, true, 'il client parte lo stesso: una scrittura fallita non blocca la cella');
+  assert.match(stderr, /generazione di attivita' non pubblicata/);
+  // e lo stato NON e' «ferma»: la generazione non c'e', quindi gli eventi del
+  // client verranno scartati al lettore. E' l'esito sicuro, non un silenzio.
+  assert.equal(leggiAttivita(path.dirname(dir), path.basename(dir)), null);
+});
+
+// Il caso «nessun canale di attivita' nel payload» e' gia' coperto sopra
+// (`main: senza canale di attivita' nel payload non si scrive nulla`): non lo
+// duplico qui.

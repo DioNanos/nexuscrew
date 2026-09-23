@@ -299,55 +299,63 @@ test('con gli hook attivi il ramo strict resta fail-closed su una capability sco
   assert.equal(r.mcpCellRefusedCode, 'CAPABILITY_UNKNOWN_NAME');
 });
 
-test('la generazione la PUBBLICA la risoluzione, col seam del launcher: prima degli argv', (t) => {
+test('la risoluzione NON scrive la generazione: la mette negli argv e nel canale', (t) => {
+  // La scrittura di `activity.gen` e' di `cell-exec`, che gira DENTRO la
+  // sessione tmux creata — quindi solo per chi vince la new-session — e la fa
+  // PRIMA di avviare il client. Qui si verifica l'altra meta': la risoluzione
+  // non tocca il disco, e mette la generazione dove cell-exec la trovera'.
   const m = mondo(t);
   const cell = { id: 'Dev', cwd: m.cwd, engine: 'ec', tmuxSession: 'cloud-Dev' };
-  const base = { home: m.home, env: {}, filesRoot: m.filesRoot, activityGeneration: 'gen-1' };
-  // Senza seam la risoluzione non tocca il disco: decide gli argomenti.
-  const senzaSeam = resolveManagedEngine(ENGINE_CLAUDE, cell, base);
-  assert.equal(fs.existsSync(path.join(m.filesRoot, 'cloud-Dev')), false,
-    'senza seam nessuna scrittura');
-  assert.ok(settingsDi(senzaSeam.engine.args).hooks, 'gli hook restano');
-
-  // Col seam la generazione si scrive DENTRO la risoluzione, cioe' prima che
-  // gli argv esistano: e' la scrittura a decidere se gli hook si iniettano.
-  const chiamate = [];
-  const r = resolveManagedEngine(ENGINE_CLAUDE, cell, {
-    ...base, activityGeneration: 'gen-2',
-    pubblicaGenerazione: (dir, generazione) => {
-      chiamate.push([dir, generazione]);
-      return scriviGenerazione(dir, generazione);
-    },
-  });
-  assert.deepEqual(chiamate, [[path.join(m.filesRoot, 'cloud-Dev'), 'gen-2']]);
-  assert.equal(fs.readFileSync(path.join(r.activityDir, NOME_GENERAZIONE), 'utf8'), 'gen-2');
-  assert.ok(settingsDi(r.engine.args).hooks, 'pubblicata: gli hook ci sono');
-});
-
-test('generazione non pubblicabile: NESSUN hook e una riga di log, mai uno stato senza lancio', (t) => {
-  // Se `activity.gen` non si scrive, gli eventi della cella porterebbero una
-  // generazione che il launcher non ha dichiarato: nessuno potrebbe invalidarli,
-  // e con «ferma» che non scade resterebbero veri per sempre. Meglio «non
-  // verificato» — e dirlo nel log, perche' e' un degrado, non un silenzio.
-  const m = mondo(t);
-  const cell = { id: 'Dev', cwd: m.cwd, engine: 'ec', tmuxSession: 'cloud-Dev' };
-  const log = [];
   const r = resolveManagedEngine(ENGINE_CLAUDE, cell, {
     home: m.home, env: {}, filesRoot: m.filesRoot, activityGeneration: 'gen-1',
-    pubblicaGenerazione: () => false, log: (messaggio) => log.push(messaggio),
   });
-  assert.equal((settingsDi(r.engine.args) || {}).hooks, undefined, 'nessun hook');
-  assert.equal(r.activityDir, null, 'e nessun canale verso il supervisore');
-  assert.equal(log.length, 1, 'il degrado si dichiara una volta sola');
-  assert.match(log[0], /generazione non pubblicata/);
+  assert.equal(fs.existsSync(path.join(m.filesRoot, 'cloud-Dev')), false,
+    'la risoluzione NON crea nemmeno la directory della sessione');
+  assert.equal(r.activityDir, path.join(m.filesRoot, 'cloud-Dev'),
+    'il canale c\'e\': dice a cell-exec DOVE scrivere, e viaggia nel payload');
+  const hooks = settingsDi(r.engine.args).hooks;
+  assert.ok(hooks, 'gli hook ci sono');
+  assert.match(JSON.stringify(hooks), /--gen 'gen-1'/,
+    'la generazione viaggia negli argv: e\' quella che cell-exec scrivera\' su disco');
+
+  // Il seam della vecchia pubblicazione non esiste piu'. Passarlo non deve
+  // cambiare niente e — soprattutto — NON deve scrivere: una scrittura nascosta
+  // qui rimetterebbe il difetto (la generazione del perdente sul disco).
+  let chiamato = false;
+  const conSeam = resolveManagedEngine(ENGINE_CLAUDE, cell, {
+    home: m.home, env: {}, filesRoot: m.filesRoot, activityGeneration: 'gen-2',
+    pubblicaGenerazione: () => { chiamato = true; return true; },
+  });
+  assert.equal(chiamato, false, 'il seam non viene piu\' chiamato');
+  assert.equal(fs.existsSync(path.join(m.filesRoot, 'cloud-Dev')), false, 'e non si scrive');
+  assert.ok(settingsDi(conSeam.engine.args).hooks);
 });
 
-test('generazione non pubblicabile: nessun hook nemmeno per codex', (t) => {
+test('gli hook si iniettano lo stesso: la scrittura non puo\' piu\' farli saltare', (t) => {
+  // Prima la generazione si pubblicava qui, e se la scrittura falliva NON si
+  // iniettavano gli hook: era il modo di non illudere nessuno. Il disegno nuovo
+  // toglie quella scrittura dalla risoluzione, quindi non c'e' piu' un esito da
+  // leggere: gli hook si iniettano sempre, e se la scrittura fallira' lo dira'
+  // `cell-exec` (log + client avviato lo stesso, stato «non verificato» — vedi
+  // tests/fleet-cell-exec.test.js).
+  const m = mondo(t);
+  const cell = { id: 'Dev', cwd: m.cwd, engine: 'ec', tmuxSession: 'cloud-Dev' };
+  const r = resolveManagedEngine(ENGINE_CLAUDE, cell, {
+    home: m.home, env: {}, filesRoot: m.filesRoot, activityGeneration: 'gen-1',
+  });
+  assert.ok(r.ok, 'la cella si risolve');
+  assert.ok((settingsDi(r.engine.args) || {}).hooks, 'gli hook ci sono');
+  assert.equal(r.activityDir, path.join(m.filesRoot, 'cloud-Dev'), 'e il canale pure');
+});
+
+test('vale anche per codex: hook e canale, nessuna scrittura dalla risoluzione', (t) => {
   const m = mondo(t);
   binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 0.156.1"\n');
-  const r = risolviCodex(m, 'codex', 'openai-api', { pubblicaGenerazione: () => false });
-  assert.equal(hookDi(r).length, 0, 'versione provata, ma nessuna generazione: niente hook');
-  assert.equal(r.activityDir, null);
+  const r = risolviCodex(m, 'codex', 'openai-api');
+  assert.ok(hookDi(r).length > 0, 'versione provata: gli hook ci sono');
+  assert.equal(r.activityDir, path.join(m.filesRoot, 'cloud-Dev'));
+  assert.equal(fs.existsSync(path.join(m.filesRoot, 'cloud-Dev', NOME_GENERAZIONE)), false,
+    'e niente su disco');
 });
 
 // --- il documento parla di celle reali ------------------------------------
