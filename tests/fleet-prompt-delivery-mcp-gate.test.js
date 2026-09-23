@@ -127,6 +127,12 @@ function cellExecSeams({ deliverResult, waitResult, optsCatturati }) {
   return {
     setOptions,
     waitCalls,
+    // Il timer di consegna del prodotto e' unref'd (non deve tenere vivo il
+    // supervisor): nel test lo scatto avviene in microtask, cosi' la promise
+    // del test si risolve senza dipendere dal timer sullo scheduler reale
+    // (su node <= 22 l'event loop si svuota prima e il runner cancella).
+    setTimeout: (fn) => { queueMicrotask(() => { try { fn(); } catch (_) {} }); return { unref() {}, ref() {} }; },
+    clearTimeout: () => {},
     deliverBootstrapPrompt: async (opts) => {
       optsCatturati.push(opts);
       // come la deliver vera: il gate MCP viene atteso PRIMA del paste
