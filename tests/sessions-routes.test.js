@@ -99,6 +99,50 @@ test('list: pubblica lo stato di attivita della cella; assente = non verificato,
   assert.equal((await leggi()).sessions[0].attivita.stato, 'ferma', '«ferma» non scade');
 });
 
+test('list: pane MORTO con un «ferma» exit:1 → null (il supervisore non c\'e\' piu\')', async (t) => {
+  // Con `remain-on-exit` la sessione sopravvive al suo processo: un supervisore
+  // ucciso (SIGKILL, OOM) lascia la sessione «attiva» con un pane morto. Lo
+  // `Stop` con `exit:1` scritto prima resterebbe «ferma» per sempre — ma non
+  // c'e' nessun client a cui quello stato si riferisca. Pane morto = non
+  // verificato, come se lo stato non ci fosse.
+  process.env.FAKE_TMUX_ACTIVITY_MODE = 'dead-pane';
+  t.after(() => { delete process.env.FAKE_TMUX_ACTIVITY_MODE; });
+  const { base, token, dir } = await boot(t);
+  const primo = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
+  const nome = primo.sessions[0].name;
+  assert.equal(primo.sessions[0].attivita, null, 'pane morto: niente stato, nemmeno prima di scriverne uno');
+
+  const dirSessione = path.join(dir, 'files', nome);
+  fs.mkdirSync(dirSessione, { recursive: true });
+  const GEN = 'gen-1';
+  fs.writeFileSync(path.join(dirSessione, 'activity.gen'), `${GEN}\nexit:1`);
+  fs.writeFileSync(path.join(dirSessione, 'activity.json'),
+    JSON.stringify({ event: 'Stop', ts: Date.now(), generation: GEN }));
+
+  const dopo = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
+  assert.equal(dopo.sessions[0].attivita, null,
+    'col pane morto uno Stop exit:1 NON deve leggersi: sarebbe «ferma» per sempre');
+});
+
+test('list: pane VIVO con lo stesso «ferma» exit:1 → ferma', async (t) => {
+  // La controprova: lo stesso stato, stessa generazione, stesso segno — letto
+  // quando il processo della cella c'e' davvero.
+  process.env.FAKE_TMUX_ACTIVITY_MODE = 'quoted-working';
+  t.after(() => { delete process.env.FAKE_TMUX_ACTIVITY_MODE; });
+  const { base, token, dir } = await boot(t);
+  const primo = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
+  const nome = primo.sessions[0].name;
+  const dirSessione = path.join(dir, 'files', nome);
+  fs.mkdirSync(dirSessione, { recursive: true });
+  const GEN = 'gen-1';
+  fs.writeFileSync(path.join(dirSessione, 'activity.gen'), `${GEN}\nexit:1`);
+  fs.writeFileSync(path.join(dirSessione, 'activity.json'),
+    JSON.stringify({ event: 'Stop', ts: Date.now(), generation: GEN }));
+
+  const dopo = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
+  assert.equal(dopo.sessions[0].attivita.stato, 'ferma', 'pane vivo: lo stato si legge');
+});
+
 test('create: 201 con preset shell, 400 nome/preset invalidi', async (t) => {
   const { base, token } = await boot(t);
   const home = os.homedir();

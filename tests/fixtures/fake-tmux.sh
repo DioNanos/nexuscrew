@@ -18,10 +18,15 @@ case "$1" in
     case "$*" in *"=ghost"*) exit 1 ;; esac
     exit 0 ;;
   list-sessions)
+    # 9 campi: l'ottavo e' `#{pane_dead}` (il formato di list.js lo chiede), il
+    # nono e' il titolo. `dead-pane` modella la sessione che sopravvive al suo
+    # processo (remain-on-exit): la cella NON e' viva.
     if [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "pi-working" ]; then
-      printf 'pi-cell\t0\t1\t1718380800\t1751990000\tnode\t\tπ - project\n'
+      printf 'pi-cell\t0\t1\t1718380800\t1751990000\tnode\t\t0\tπ - project\n'
     elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "quoted-working" ]; then
-      printf 'claude-idle\t0\t1\t1718380800\t1751990000\tnode\t\tDev\n'
+      printf 'claude-idle\t0\t1\t1718380800\t1751990000\tnode\t\t0\tDev\n'
+    elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "dead-pane" ]; then
+      printf 'claude-dead\t0\t1\t1718380800\t1751990000\tnode\t\t1\tDev\n'
     fi
     exit 0 ;;
   capture-pane)
