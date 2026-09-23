@@ -27,9 +27,13 @@ export function apiFetch(path, token, opts = {}) {
   const { signal, cancel, controller } = fetchAbortSignal(ms);
   const outer = opts.signal;
   const onOuterAbort = () => controller.abort(outer.reason);
+  const cleanup = () => {
+    cancel();
+    if (outer) outer.removeEventListener('abort', onOuterAbort);
+  };
   if (outer) {
     if (outer.aborted) {
-      cancel();
+      cleanup();
       controller.abort(outer.reason);
       return Promise.reject(outer.reason instanceof Error ? outer.reason : new DOMException('aborted', 'AbortError'));
     }
@@ -40,10 +44,16 @@ export function apiFetch(path, token, opts = {}) {
     ...rest,
     signal,
     headers: { ...(rest.headers || {}), Authorization: `Bearer ${token}` },
-  }).finally(() => {
-    cancel();
-    if (outer) outer.removeEventListener('abort', onOuterAbort);
-  });
+  }).then((r) => {
+    // La scadenza NON si cancella qui. `fetch` risolve quando arrivano gli
+    // HEADER, e il body puo' restare aperto e incompleto: se il timer morisse
+    // a questo punto, un body che non arriva mai non verrebbe mai abortito —
+    // la lettura penderebbe fino al limite del browser e chi aspetta il body
+    // (il poll) resterebbe occupato. Il cleanup lo fa chi CONSUMA il body,
+    // in `finally` (`jsonFetch`), tramite `__cleanupTimeout`.
+    r.__cleanupTimeout = cleanup;
+    return r;
+  }, (e) => { cleanup(); throw e; });
 }
 
 export const seenKey = (session) => `nc_seen_${session}`;
@@ -58,7 +68,21 @@ async function jsonFetch(path, token, opts = {}) {
     body: opts.body ? JSON.stringify(opts.body) : undefined,
     timeoutMs: opts.timeoutMs,
   });
-  const j = await r.json().catch(() => ({}));
+  let j;
+  try {
+    try {
+      j = await r.json();
+    } catch (e) {
+      // Un body che non arriva entro il tetto non e' «nessun JSON»: e' una
+      // lettura FALLITA, e chi chiama deve vederla come tale invece di
+      // ricevere un oggetto vuoto che sembra una risposta valida.
+      if (e && (e.name === 'AbortError' || e.name === 'TimeoutError')) throw e;
+      j = {};
+    }
+  } finally {
+    // Dopo il body, non prima: e' il body che la scadenza deve coprire.
+    if (typeof r.__cleanupTimeout === 'function') r.__cleanupTimeout();
+  }
   if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.status = r.status; e.data = j; throw e; }
   return j;
 }
