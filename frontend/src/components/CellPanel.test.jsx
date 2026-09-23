@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // L'i18n è mockato con le traduzioni italiane REALI delle cause nuove: il test
 // verifica che il messaggio dica la causa GIUSTA (nonGranted dice «concedere
@@ -20,12 +20,13 @@ vi.mock('../lib/i18n.js', () => ({
 // i casi danno gli esiti classificati che il vero modulo produce.
 vi.mock('../lib/api.js', () => ({
   requestPanelTicket: vi.fn(),
+  setAiDesktop: vi.fn(),
   routeBase: (route) => Array.isArray(route) && route.length
     ? `/api/route/${route.map(encodeURIComponent).join('/')}/_` : '',
 }));
 
 import CellPanel from './CellPanel.jsx';
-import { requestPanelTicket } from '../lib/api.js';
+import { requestPanelTicket, setAiDesktop } from '../lib/api.js';
 
 const ticketOk = (ticket = 'TK-1234567890') => requestPanelTicket.mockResolvedValue({ ok: true, ticket });
 
@@ -308,5 +309,52 @@ describe('CellPanel — origin separata (panelPort)', () => {
     await waitFor(() => { expect(requestPanelTicket).toHaveBeenCalledTimes(1); });
     rerender(<CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={['Pixel']} token="t" title="A" />);
     await waitFor(() => { expect(requestPanelTicket).toHaveBeenCalledTimes(2); });
+  });
+});
+// --- pannello morto vs pagina vuota: il proxy annuncia il 502 col postMessage
+describe('CellPanel — «non raggiungibile» al posto della pagina bianca', () => {
+  beforeEach(() => { requestPanelTicket.mockReset(); setAiDesktop.mockReset(); });
+
+  const apriFrame = async (panelUrl) => {
+    ticketOk();
+    const { container } = render(
+      <CellPanel cellId="A" panelUrl={panelUrl} route={[]} token="t" title="A" />,
+    );
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+    return container;
+  };
+
+  it('il postMessage del proxy porta il frame da loaded a «non raggiungibile»', async () => {
+    const container = await apriFrame('https://127.0.0.1:6901/vnc.html');
+    // prima del messaggio il frame è montato (stato ready/loaded), nessun rosso
+    expect(container.querySelector('iframe')).toBeTruthy();
+    act(() => { window.dispatchEvent(new MessageEvent('message', { data: { type: 'nc-panel-unreachable' } })); });
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(screen.getByRole('status').textContent).toContain('panel-unreachable');
+  });
+
+  it('desktop: «non raggiungibile» porta anche l\'azione Avvia (che comanda il container)', async () => {
+    setAiDesktop.mockResolvedValue({ ok: true });
+    const container = await apriFrame('https://127.0.0.1:6901/vnc.html');
+    act(() => { window.dispatchEvent(new MessageEvent('message', { data: { type: 'nc-panel-unreachable' } })); });
+    const avvia = screen.getByRole('button', { name: 'panel-start-desktop' });
+    fireEvent.click(avvia);
+    await waitFor(() => { expect(setAiDesktop).toHaveBeenCalledWith('t', true); });
+    // dopo l'avvio il frame riparte (biglietto nuovo)
+    await waitFor(() => { expect(container.querySelector('iframe')).toBeTruthy(); });
+  });
+
+  it('NEGATIVO: un pannello che NON è il desktop non ha l\'azione Avvia', async () => {
+    const container = await apriFrame('http://127.0.0.1:6900/');
+    act(() => { window.dispatchEvent(new MessageEvent('message', { data: { type: 'nc-panel-unreachable' } })); });
+    expect(screen.getByRole('status').textContent).toContain('panel-unreachable');
+    expect(screen.queryByRole('button', { name: 'panel-start-desktop' })).toBeNull();
+  });
+
+  it('NEGATIVO: messaggi estranei o in stato requesting non cambiano nulla', async () => {
+    const container = await apriFrame('https://127.0.0.1:6901/vnc.html');
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'altra-roba' } }));
+    window.dispatchEvent(new MessageEvent('message', { data: undefined }));
+    expect(container.querySelector('iframe')).toBeTruthy(); // resta montato
   });
 });

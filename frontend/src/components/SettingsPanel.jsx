@@ -5,6 +5,7 @@ import { useLang } from '../hooks/useLang.js';
 import {
   apiFetch, getSettings, getPeers, getVlNodes, getTopology, saveConfig, rotateToken,
   setNodeShare, regenService, createPeerInvite,
+  getAiDesktop, setAiDesktop,
   saveNodeAlias, deleteNodeAlias,
   checkNpmUpdate, applyNpmUpdate,
   getDiagnosticsStatus, getDiagnosticsLogs, setDiagnosticsVerbose, clearDiagnosticsLogs,
@@ -914,6 +915,9 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
   const [updateView, setUpdateView] = useState(null);
   const [autoUpdate, setAutoUpdate] = useState(true);
   const [alternateScreen, setAlternateScreen] = useState(false);
+  // Il desktop grafico: spunta + stato reale del container. Il GET è su
+  // chiamata esplicita (quando la scheda si apre), mai nel percorso caldo.
+  const [aiDesktopView, setAiDesktopView] = useState(null); // {desired, running, exists}
 
   useEffect(() => {
     setUpdateView((settings && settings.update) || null);
@@ -955,6 +959,30 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
     try {
       await saveConfig(token, { alternateScreen: enabled });
       setAlternateScreen(enabled);
+      if (refresh) await refresh();
+    } catch (e) { setErr(String(e.message || e)); }
+    setBusy(false);
+  };
+
+  // La spunta del desktop: il POST salva la chiave E comanda il container, e
+  // la risposta porta l'esito VERO — il badge (running) si aggiorna da quella.
+  // Spegnere con il desktop acceso chiude le sessioni del container: si chiede.
+  const refreshAiDesktop = useCallback(async () => {
+    if (!token) return;
+    try { setAiDesktopView(await getAiDesktop(token)); } catch (_) { setAiDesktopView(null); }
+  }, [token]);
+  useEffect(() => { refreshAiDesktop(); }, [refreshAiDesktop]);
+
+  const toggleAiDesktop = async (enabled) => {
+    setErr(null); setNote(null); setBusy(true);
+    try {
+      if (!enabled && aiDesktopView && aiDesktopView.running && !window.confirm(t('ai-desktop-confirm-stop'))) {
+        setBusy(false);
+        return;
+      }
+      const j = await setAiDesktop(token, enabled);
+      if (j && j.ok === false) setErr(j.error || 'comando fallito');
+      await refreshAiDesktop();
       if (refresh) await refresh();
     } catch (e) { setErr(String(e.message || e)); }
     setBusy(false);
@@ -1049,6 +1077,21 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
               )}
             </div>
             {updateView && updateView.lastError && <div className="nc-err">{updateView.lastError}</div>}
+          </div>
+        </section>
+
+        <section className="nc-system-group">
+          <h3>{t('ai-desktop-title')}</h3>
+          <div className="nc-set-form">
+            <label className="nc-check">
+              <input type="checkbox" aria-label={t('ai-desktop')} disabled={readonly || busy}
+                checked={!!(aiDesktopView && aiDesktopView.desired)}
+                onChange={(e) => toggleAiDesktop(e.target.checked)} />
+              <span><b>{t('ai-desktop')}</b><small>{t('ai-desktop-help')}</small></span>
+            </label>
+            {aiDesktopView && !aiDesktopView.desired && aiDesktopView.running && (
+              <div className="nc-set-info">{t('ai-desktop-stop-pending')}</div>
+            )}
           </div>
         </section>
 

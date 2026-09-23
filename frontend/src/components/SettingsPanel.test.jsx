@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   apiFetch: vi.fn(),
   getDiagnosticsStatus: vi.fn(),
   getDiagnosticsLogs: vi.fn(),
+  getAiDesktop: vi.fn(),
+  setAiDesktop: vi.fn(),
 }));
 
 vi.mock('../lib/api.js', async (importOriginal) => ({
@@ -39,6 +41,8 @@ vi.mock('../lib/api.js', async (importOriginal) => ({
   apiFetch: mocks.apiFetch,
   getDiagnosticsStatus: mocks.getDiagnosticsStatus,
   getDiagnosticsLogs: mocks.getDiagnosticsLogs,
+  getAiDesktop: mocks.getAiDesktop,
+  setAiDesktop: mocks.setAiDesktop,
 }));
 vi.mock('./PairingCard.jsx', () => ({ default: () => null }));
 vi.mock('../hooks/useNodes.js', () => ({ useNodes: () => [] }));
@@ -587,5 +591,52 @@ describe('R31 — «mai controllato» non è «up to date»', () => {
     renderSystemTab(CONTROLLATO);
     await waitFor(() => expect(document.body.textContent).toContain('up to date'));
     expect(document.body.textContent).not.toContain('never checked');
+  });
+});
+
+// --- la spunta del desktop grafico: tre stati e la conferma prima dello stop --
+describe('spunta desktop grafico (SystemTab)', () => {
+  const wanted = (desired, running) => {
+    mocks.getSettings.mockResolvedValue({ version: '1', platform: 'linux', port: 41820 });
+    mocks.getAiDesktop.mockResolvedValue({ desired, running, exists: true });
+    return render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem('nc_lang', 'en');
+    mocks.getAiDesktop.mockReset();
+    mocks.setAiDesktop.mockReset();
+  });
+
+  it('ON con container in esecuzione: spunta attiva', async () => {
+    wanted(true, true);
+    await waitFor(() => expect(screen.getByLabelText('Graphical desktop enabled').checked).toBe(true));
+  });
+
+  it('ON con container giù: spunta resta attiva, lo stato dice che non gira', async () => {
+    wanted(true, false);
+    await waitFor(() => expect(screen.getByLabelText('Graphical desktop enabled').checked).toBe(true));
+    expect(document.body.textContent).toContain('Graphical desktop enabled');
+  });
+
+  it('OFF: spunta spenta, e riaccenderla comanda il container (setAiDesktop true)', async () => {
+    mocks.setAiDesktop.mockResolvedValue({ ok: true, desired: true, running: true });
+    const { rerender } = wanted(false, false);
+    const spunta = screen.getByLabelText('Graphical desktop enabled');
+    await waitFor(() => expect(spunta.checked).toBe(false));
+    fireEvent.click(spunta);
+    await waitFor(() => expect(mocks.setAiDesktop).toHaveBeenCalledWith('token', true));
+    rerender(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+  });
+
+  it('spegnere con il desktop acceso chiede conferma; negata → nessun comando', async () => {
+    const conferma = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    wanted(true, true);
+    const spunta = await screen.findByLabelText('Graphical desktop enabled');
+    fireEvent.click(spunta); // spunta attiva → click = spegnere
+    expect(conferma).toHaveBeenCalled();
+    expect(mocks.setAiDesktop).not.toHaveBeenCalled();
+    conferma.mockRestore();
   });
 });

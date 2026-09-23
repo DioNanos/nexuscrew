@@ -177,6 +177,11 @@ export const getRouteTopology = (t, route) => jsonFetch(`${routeBase(route)}/top
 // verifica il Bearer e inietta LUI il token remoto — mai visto dal browser).
 export const getNodeSessions = (t, name) => jsonFetch(`/node/${encodeURIComponent(name)}/api/sessions`, t);
 export const saveConfig = (t, b) => jsonFetch('/api/settings/config', t, { method: 'POST', body: b });
+// La spunta del desktop grafico: GET porta lo stato (desired/running/exists),
+// POST {enabled} salva la chiave ED esegue start o stop — l'esito è quello
+// VERO del comando: 500 con la causa se docker risponde male.
+export const getAiDesktop = (t) => jsonFetch('/api/settings/ai-desktop', t);
+export const setAiDesktop = (t, enabled) => jsonFetch('/api/settings/ai-desktop', t, { method: 'POST', body: { enabled } });
 export const rotateToken = (t) => jsonFetch('/api/settings/token/rotate', t, { method: 'POST' });
 export const addNode = (t, b) => jsonFetch('/api/settings/nodes', t, { method: 'POST', body: b });
 export const pairNode = (t, b) => jsonFetch('/api/settings/nodes/pair', t, { method: 'POST', body: b });

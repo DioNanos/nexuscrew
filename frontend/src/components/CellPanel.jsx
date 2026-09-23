@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
-import { requestPanelTicket, routeBase } from '../lib/api.js';
+import { requestPanelTicket, routeBase, setAiDesktop } from '../lib/api.js';
+import { DESKTOP_PANEL_PORT } from '../lib/panel-port.js';
 import './CellPanel.css';
 
 // D8 — pannello per-cella, L'INGRESSO. Il vecchio flusso metteva il `panelUrl`
@@ -140,16 +141,53 @@ export default function CellPanel({
 
   useEffect(() => { apri(); }, [apri]);
 
-  const msg = (key, azioni = true) => (
+  // Il pannello del desktop grafico: la porta KasmVNC del container. Solo per
+  // lui «non raggiungibile» ha anche l'azione «Avvia» — gli altri pannelli non
+  // hanno un container da riaccendere.
+  const isDesktop = useMemo(() => {
+    try { return Number(new URL(panelUrl).port) === DESKTOP_PANEL_PORT; } catch (_) { return false; }
+  }, [panelUrl]);
+  const [avvioBusy, setAvvioBusy] = useState(false);
+  // Il proxy, quando il pannello non risponde, serve una PAGINA (non un JSON
+  // invisibile) che annuncia sé stessa col postMessage: il frame che avrebbe
+  // finito in «loaded» su una risposta 502 arriva invece qui, dove la causa ha
+  // un nome e l'azione giusta.
+  useEffect(() => {
+    const onMessage = (event) => {
+      if (!event.data || event.data.type !== 'nc-panel-unreachable') return;
+      setState((s) => (s === 'ready' || s === 'loaded' ? 'unreachable' : s));
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+  // «Avvia»: spegnere il desktop è una spunta in Impostazioni, riaccenderlo da
+  // qui è la stessa decisione un click prima. Poi il frame riparte da un
+  // biglietto nuovo.
+  const avviaDesktop = useCallback(async () => {
+    if (!token || avvioBusy) return;
+    setAvvioBusy(true);
+    try { await setAiDesktop(token, true); } catch (_) { /* lo dice il retry */ }
+    setAvvioBusy(false);
+    apri();
+  }, [token, avvioBusy, apri]);
+
+  const msg = (key, azioni = true, extra = null) => (
     <div className="nc-cellpanel nc-cellpanel-msg" role="status">
       <span>{t(key)}</span>
       {azioni && (
         <span className="nc-cellpanel-actions">
+          {extra}
           <button type="button" title={t('panel-retry')} onClick={() => apri()}>{t('panel-retry')}</button>
         </span>
       )}
     </div>
   );
+
+  // Per il desktop, «non raggiungibile» e «frame fallito» hanno anche l'azione
+  // di riaccendere il container (la spunta di Impostazioni, un click prima).
+  const bottoneAvvia = isDesktop ? (
+    <button type="button" disabled={avvioBusy} onClick={avviaDesktop}>{t('panel-start-desktop')}</button>
+  ) : null;
 
   if (state === 'none' || state === 'no-panel') return msg('panel-none', false);
   if (state === 'requesting') {
@@ -177,12 +215,12 @@ export default function CellPanel({
   if (state === 'unauthorized') return msg('panel-unauthorized', false);
   if (state === 'denied') return msg('panel-denied');
   if (state === 'timeout') return msg('panel-timeout');
-  if (state === 'unreachable') return msg('panel-unreachable');
+  if (state === 'unreachable') return msg('panel-unreachable', true, bottoneAvvia);
   // R20: il consumo del biglietto è fallito a livello di risorsa: il frame è
   // bianco e prima NESSUNO stato lo diceva. Ora ha nome e azione (biglietto
   // nuovo), come `denied` — ma la causa è diversa: `denied` è l'EMISSIONE
   // rifiutata, questa è la navigazione del frame fallita DOPO un biglietto ok.
-  if (state === 'frame-error') return msg('panel-frame-error');
+  if (state === 'frame-error') return msg('panel-frame-error', true, bottoneAvvia);
   // ready | loaded: il frame resta montato. L'hint visibile dice «montato,
   // carico in corso» e sparisce al load — la distinzione fra i due stati non
   // resta chiusa nel componente: chi guarda la vede. data-frame-state la

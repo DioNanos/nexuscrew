@@ -19,3 +19,9 @@ export function panelPortForRoute(route, nodePanelPorts, localPanelPort) {
   const mappa = nodePanelPorts && typeof nodePanelPorts === 'object' ? nodePanelPorts : {};
   return nome ? prima(mappa[nome]) : 0;
 }
+
+// La porta KasmVNC del container del desktop grafico: e' la porta che
+// l'engine desktop.local precompila nel suo panelUrl, e il modo in cui il
+// frontend riconosce che un pannello e' QUELLO governato dalla spunta in
+// Impostazioni (avvio/stop del container, stato «non raggiungibile»).
+export const DESKTOP_PANEL_PORT = 6901;
