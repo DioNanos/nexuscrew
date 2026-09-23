@@ -3,19 +3,17 @@ const assert = require('node:assert');
 const { FMT, parsePaneTitle, parseSessions, isNoTmuxServerError } = require('../lib/tmux/list.js');
 
 test('parseSessions maps tab-separated tmux output', () => {
-  // Nove campi: l'ottavo e' `#{pane_dead}` (la sessione puo' sopravvivere al suo
-  // processo: remain-on-exit), il nono e' il titolo.
-  const raw = 'claude_dev\t1\t3\t1718380800\t1751990000\tclaude\t\t0\t⠐ Implement activity UI\nidle_box\t0\t1\t1718384400\t1718390000\tbash\ttechnical\t1\tDev\n';
+  const raw = 'claude_dev\t1\t3\t1718380800\t1751990000\tclaude\t\t⠐ Implement activity UI\nidle_box\t0\t1\t1718384400\t1718390000\tbash\ttechnical\tDev\n';
   const out = parseSessions(raw);
   assert.deepStrictEqual(out, [
     {
       name: 'claude_dev', attached: true, windows: 3, created: 1718380800,
-      activity: 1751990000, cmd: 'claude', technical: false, paneDead: false,
+      activity: 1751990000, cmd: 'claude', technical: false,
       paneTitle: '⠐ Implement activity UI', working: true, status: 'Implement activity UI',
     },
     {
       name: 'idle_box', attached: false, windows: 1, created: 1718384400,
-      activity: 1718390000, cmd: 'bash', technical: true, paneDead: true,
+      activity: 1718390000, cmd: 'bash', technical: true,
       paneTitle: 'Dev', working: false, status: '',
     },
   ]);

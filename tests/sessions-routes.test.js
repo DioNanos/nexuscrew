@@ -99,34 +99,30 @@ test('list: pubblica lo stato di attivita della cella; assente = non verificato,
   assert.equal((await leggi()).sessions[0].attivita.stato, 'ferma', '«ferma» non scade');
 });
 
-test('list: pane MORTO con un «ferma» exit:1 → null (il supervisore non c\'e\' piu\')', async (t) => {
-  // Con `remain-on-exit` la sessione sopravvive al suo processo: un supervisore
-  // ucciso (SIGKILL, OOM) lascia la sessione «attiva» con un pane morto. Lo
-  // `Stop` con `exit:1` scritto prima resterebbe «ferma» per sempre — ma non
-  // c'e' nessun client a cui quello stato si riferisca. Pane morto = non
-  // verificato, come se lo stato non ci fosse.
-  process.env.FAKE_TMUX_ACTIVITY_MODE = 'dead-pane';
+test('list: SUPERVISORE MORTO con una seconda finestra viva → null', async (t) => {
+  // Il caso misurato con tmux vero: `#{pane_dead}` della SESSIONE riguarda il
+  // pane attivo, quindi con una seconda finestra viva selezionata direbbe
+  // «vivo» anche col supervisore morto — e lo `Stop` con `exit:1` di un'ora
+  // prima tornerebbe «ferma». La verita' e' il pane MARCATO al lancio.
+  process.env.FAKE_TMUX_ACTIVITY_MODE = 'dead-supervisor';
   t.after(() => { delete process.env.FAKE_TMUX_ACTIVITY_MODE; });
   const { base, token, dir } = await boot(t);
   const primo = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
   const nome = primo.sessions[0].name;
-  assert.equal(primo.sessions[0].attivita, null, 'pane morto: niente stato, nemmeno prima di scriverne uno');
 
   const dirSessione = path.join(dir, 'files', nome);
   fs.mkdirSync(dirSessione, { recursive: true });
   const GEN = 'gen-1';
   fs.writeFileSync(path.join(dirSessione, 'activity.gen'), `${GEN}\nexit:1`);
   fs.writeFileSync(path.join(dirSessione, 'activity.json'),
-    JSON.stringify({ event: 'Stop', ts: Date.now(), generation: GEN }));
+    JSON.stringify({ event: 'Stop', ts: Date.now() - 60 * 60 * 1000, generation: GEN }));
 
   const dopo = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
   assert.equal(dopo.sessions[0].attivita, null,
-    'col pane morto uno Stop exit:1 NON deve leggersi: sarebbe «ferma» per sempre');
+    'supervisore morto: nessuno stato, nemmeno con una seconda finestra viva');
 });
 
-test('list: pane VIVO con lo stesso «ferma» exit:1 → ferma', async (t) => {
-  // La controprova: lo stesso stato, stessa generazione, stesso segno — letto
-  // quando il processo della cella c'e' davvero.
+test('list: supervisore VIVO con lo stesso «ferma» exit:1 → ferma', async (t) => {
   process.env.FAKE_TMUX_ACTIVITY_MODE = 'quoted-working';
   t.after(() => { delete process.env.FAKE_TMUX_ACTIVITY_MODE; });
   const { base, token, dir } = await boot(t);
@@ -140,7 +136,28 @@ test('list: pane VIVO con lo stesso «ferma» exit:1 → ferma', async (t) => {
     JSON.stringify({ event: 'Stop', ts: Date.now(), generation: GEN }));
 
   const dopo = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
-  assert.equal(dopo.sessions[0].attivita.stato, 'ferma', 'pane vivo: lo stato si legge');
+  assert.equal(dopo.sessions[0].attivita.stato, 'ferma', 'pane del supervisore vivo: lo stato si legge');
+});
+
+test('list: sessione SENZA marcatore (lanciata prima di questa versione) → null', async (t) => {
+  // Non si sa quale dei suoi pani sia il supervisore, quindi non si afferma
+  // niente: «non verificato». E' la regola: meglio nessuno stato che uno stato
+  // di cui non si sa dire il supervisore.
+  process.env.FAKE_TMUX_ACTIVITY_MODE = 'unmarked';
+  t.after(() => { delete process.env.FAKE_TMUX_ACTIVITY_MODE; });
+  const { base, token, dir } = await boot(t);
+  const primo = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
+  const nome = primo.sessions[0].name;
+  const dirSessione = path.join(dir, 'files', nome);
+  fs.mkdirSync(dirSessione, { recursive: true });
+  const GEN = 'gen-1';
+  // Il file di una cella VECCHIA: una riga sola, senza il segno dell'uscita.
+  fs.writeFileSync(path.join(dirSessione, 'activity.gen'), GEN);
+  fs.writeFileSync(path.join(dirSessione, 'activity.json'),
+    JSON.stringify({ event: 'Stop', ts: Date.now(), generation: GEN }));
+
+  const dopo = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
+  assert.equal(dopo.sessions[0].attivita, null, 'senza marcatore: non verificato');
 });
 
 test('create: 201 con preset shell, 400 nome/preset invalidi', async (t) => {

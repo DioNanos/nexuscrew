@@ -547,3 +547,18 @@ test("l'evento di LANCIO invalida lo stato precedente: stesso lancio, e si legge
   evento(root, 'UserPromptSubmit', { ora: ora + 4000 });
   assert.equal(leggiAttivita(root, SESSIONE, ora + 5000).stato, 'lavora');
 });
+
+test('cella lanciata PRIMA di questa versione (una riga, senza marcatore): «ferma» scade a 5 minuti', () => {
+  // Le celle gia' in esecuzione quando si aggiorna non hanno ne' il marcatore
+  // sul pane ne' il segno `exit:1` nel file: per loro la non scadenza non e'
+  // garantita da niente, quindi «ferma» torna a scadere come nella 0.9.41 —
+  // «non verificato» invece di «ferma» per ore. E' la ragione per cui il
+  // passaggio non lascia celle bloccate su uno stato vecchio.
+  const root = tmpRoot();
+  const ora = 1_700_000_000_000;
+  scriviGenerazione(dirSessione(root), 'gen-di-una-versione-vecchia');   // una riga
+  scriviStato(dirSessione(root), { evento: 'Stop', generazione: 'gen-di-una-versione-vecchia', ora });
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 1000).stato, 'ferma', 'fresco si legge');
+  assert.equal(leggiAttivita(root, SESSIONE, ora + MASSIMA_ETA_MS + 1), null,
+    'oltre la finestra: non verificato, non «ferma» per sempre');
+});
