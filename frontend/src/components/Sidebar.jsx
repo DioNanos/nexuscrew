@@ -36,6 +36,10 @@ const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'l
 export default function Sidebar({
   sessions = [], cells = [], activeSessions = [], nodeGroups = [], onPick, onAddTile, onPower, onBoot, onNodePower, onKill, onVisibility, onNew,
   onNodeRename, onSettings, onBootError, localNodeId, fleetCapabilities = [], fleetStale = false, fleetOff = null, bootSettlement = null,
+  // Esito dell'ultima lettura locale: stesso asse del roster mobile
+  // (SessionList), che lo riceve dalla propria fetch. Il default `true` tiene
+  // il comportamento di prima per chi non lo passa.
+  localVerified = true,
   hostByRoute = {}, onDesignateCell, onClearHostCell,
   onBootSettlementApplied, onOpenVlSession,
   // Il popup di sbirciata porta tre sorgenti: flusso e pannello chiedono il
@@ -125,7 +129,7 @@ export default function Sidebar({
   // Se un overlay esterno si apre (switcher), il peek della sidebar si chiude:
   // due popup fissi sovrapposti sono il difetto che questa riga toglie.
   useEffect(() => { if (overlayOpen) { setPeekKey(null); setPeekSource('preview'); } }, [overlayOpen]);
-  const localRawItems = buildLocalRoster(sortedCells, others, byName);
+  const localRawItems = buildLocalRoster(sortedCells, others, byName, undefined, { autorevole: localVerified });
   const localItems = sidebarItems(localRawItems, pins, viewFor('local').filter, sidebarOrder(orders, 'local'));
   const preferredNodeGroups = preferredGroups(nodeGroups || []);
   const remoteRosters = preferredNodeGroups.map((g) => {
