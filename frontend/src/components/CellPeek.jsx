@@ -43,22 +43,23 @@ export function formattaTelemetria(tt, tele) {
   return parti.join(' · ');
 }
 
-// La riga che il popup mostra, RI-risolta per CHIAVE a ogni render dal padre:
-// mai un oggetto riga salvato (il fotogramma morto del difetto trovato in R4).
-// Campi: key, cellName, subtitle, nodeLabel, node (route qualificata o ''),
-// session, route[], panelUrl, telemetry, preview, activity.
-export default function CellPeek({ row, token, initialSource = 'preview', panelPort = 0, onClose, liveHost = null, onLiveHostApplied
-}) {
-  const [source, setSource] = useState(initialSource === 'panel' && !row.panelUrl ? 'preview' : initialSource);
+// Il CORPO della sbirciata (tab + sorgente), senza il guscio: CellPeek lo
+// monta nella CellPopup libera, la nuvola al passaggio (PeekCloud) lo monta
+// ancorata al pallino. Un solo posto per le tre sorgenti, come sopra: una
+// seconda copia sarebbe il difetto che torna in una superficie non ricontrollata.
+// La sorgente è CONTROLLATA (source + onSourceChange): chi dà il guscio decide
+// da dove si apre e con che default.
+export function CellPeekBody({ row, token, panelPort = 0, liveHost = null, onLiveHostApplied, source, onSourceChange }) {
+  const setSource = (id) => onSourceChange && onSourceChange(id);
   // Ref del terminale: il contratto della tile, così Terminal non dipende da
-  // chi lo monta. takeSize={false} sotto: il popup non ruba il size-lock
+  // chi lo monta. takeSize={false} sotto: il guscio non ruba il size-lock
   // della sessione a chi sta sotto.
   const sendRef = useRef(() => {});
   const composerRef = useRef(() => false);
   const actionRef = useRef(() => {});
   const ctrlRef = useRef(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
-  // Il comando del Live host, dentro il popup: stessa frase e stesso esito
+  // Il comando del Live host, dentro la sbirciata: stessa frase e stesso esito
   // visibile del selettore, mai solo un alert.
   const [hostStatus, setHostStatus] = useState('');
   const [hostBusy, setHostBusy] = useState(false);
@@ -86,11 +87,7 @@ export default function CellPeek({ row, token, initialSource = 'preview', panelP
     ...(row.panelUrl ? [['panel', t('cell-peek-panel')]] : []),
   ];
   return (
-    <CellPopup
-      title={row.cellName}
-      subtitle={[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}
-      onClose={onClose}
-    >
+    <>
       {/* Le tre sorgenti in un contenitore solo: chi apre decide COSA
           guardare, il contenitore decide COME si chiude. */}
       <div className="nc-peek-sorgenti" role="tablist">
@@ -133,6 +130,28 @@ export default function CellPeek({ row, token, initialSource = 'preview', panelP
             && <small className="nc-cell-switcher-telemetry">{[formattaAttività(t, row.activity), formattaTelemetria(t, row.telemetry)].filter(Boolean).join(' · ')}</small>}
         </>
       )}
+    </>
+  );
+}
+
+// La riga che il popup mostra, RI-risolta per CHIAVE a ogni render dal padre:
+// mai un oggetto riga salvato (il fotogramma morto del difetto trovato in R4).
+// Campi: key, cellName, subtitle, nodeLabel, node (route qualificata o ''),
+// session, route[], panelUrl, telemetry, preview, activity.
+export default function CellPeek({ row, token, initialSource = 'preview', panelPort = 0, onClose, liveHost = null, onLiveHostApplied
+}) {
+  const [source, setSource] = useState(initialSource === 'panel' && !row.panelUrl ? 'preview' : initialSource);
+  return (
+    <CellPopup
+      title={row.cellName}
+      subtitle={[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}
+      onClose={onClose}
+    >
+      <CellPeekBody
+        row={row} token={token} panelPort={panelPort}
+        liveHost={liveHost} onLiveHostApplied={onLiveHostApplied}
+        source={source} onSourceChange={setSource}
+      />
     </CellPopup>
   );
 }
