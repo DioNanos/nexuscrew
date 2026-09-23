@@ -16,6 +16,10 @@ import {
   hostRenderState, hostLeaseTitleKey, hostThreadTitleKey, hostRouteKey,
 } from '../lib/host-designation.js';
 import PinPersistBanner from './PinPersistBanner.jsx';
+import { CellActionsSheet, cellActionsItems, cellActionsState } from './CellActions.jsx';
+import { applyCellStar, cellStarView } from '../lib/cell-star.js';
+import { runLiveHostCommand } from '../lib/live-host-command.js';
+import { liveHostView, liveHostDotClass } from '../lib/live-host-view.js';
 import {
   rel, nodeStateLabel, healthDot, healthTitle, buildLocalRoster, buildRemoteRoster,
 } from '../lib/roster-view-model.js';
@@ -57,6 +61,16 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
   const [bootBusy, setBootBusy] = useState(new Set());
   const [powerCell, setPowerCell] = useState(null);
   const [nodeBusy, setNodeBusy] = useState(null);
+  // Menu azioni cella (⋯): contesto CONGELATO all'apertura. Il foglio mostra la
+  // cella che l'operatore ha toccato, non una riga che nel frattempo il poll ha
+  // cambiato sotto le dita.
+  const [menuCell, setMenuCell] = useState(null);
+  const [menuBusy, setMenuBusy] = useState(false);
+  // Esito dell'ultimo comando Live: vive nella striscia, dove l'occhio guarda.
+  const [liveNotice, setLiveNotice] = useState(null);
+  // Riordino come MODALITA': le maniglie compaiono solo quando la si accende
+  // dall'intestazione. Senza, la riga è un bersaglio d'apertura e basta.
+  const [reorderMode, setReorderMode] = useState(false);
   const {
     pins, orders, togglePin, removePin, pinError, retryPinPersist, clearPinError, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
@@ -153,9 +167,10 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
     return Object.prototype.hasOwnProperty.call(bootOverrides, key) ? bootOverrides[key] : !!c.boot;
   }
 
-  async function onBootToggle(event, c, route = []) {
-    event.stopPropagation();
-    const key = bootCellKey(c.cell, route); const enabled = !bootEnabled(c, route);
+  async function onBootToggle(event, c, route = [], nextForzato) {
+    if (event) event.stopPropagation();
+    const key = bootCellKey(c.cell, route);
+    const enabled = typeof nextForzato === 'boolean' ? nextForzato : !bootEnabled(c, route);
     setBootChoice(c.cell, route, enabled);
     setBootBusy((current) => new Set(current).add(key));
     try {
@@ -171,6 +186,32 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
       setBootBusy((current) => { const next = new Set(current); next.delete(key); return next; });
     }
   }
+
+  // I gesti del menu azioni (⋯) di una cella: la LOGICA resta dov'è già — pin
+  // via cell-star.js, Live via runLiveHostCommand (l'esito arriva nella
+  // striscia), boot via la STESSA onBootToggle del tondo, quindi stesso
+  // override ottimistico e stesso rollback. Qui non si duplica niente.
+  //
+  // «Guarda dal vivo» non compare su questa superficie: il suo gesto è aprire
+  // la sorgente Flusso della nuvola, che è della sidebar (fase 2a). Il
+  // contratto di CellActions è che un handler assente è una voce ASSENTE, non
+  // una voce morta: quindi non si passa onWatchLive e la voce non c'è.
+  const cellActionHandlers = (item, c, route) => ({
+    onToggleLive: async () => {
+      const stato = cellActionsState({ item, cellName: c.cell, route, pins, hostByRoute });
+      setMenuBusy(true);
+      const out = await runLiveHostCommand({
+        action: stato.isLive ? 'remove' : 'use', cellId: c.cell, route, token,
+      });
+      setMenuBusy(false);
+      setLiveNotice({ messageKey: out.messageKey, ok: out.ok, cell: out.hostCell || c.cell });
+    },
+    onTogglePin: () => applyCellStar({
+      view: cellStarView({ item, pins, hostByRoute, route }),
+      itemKey: item.key, togglePin, removePin,
+    }),
+    onToggleBoot: (next) => onBootToggle(null, c, route, next),
+  });
 
   async function onFleetConfirm(payload) {
     if (!powerCell) return;
@@ -294,17 +335,30 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
         : (group?.capabilities || []).includes('boot');
       const boot = bootEnabled(c, route); const bootKey = bootCellKey(c.cell, route);
       const bootLabel = `${t(boot ? 'boot-disable' : 'boot-enable')} ${c.cell}`;
+      // Lo stato delle azioni della cella, una volta sola: il bollino LIVE della
+      // riga e il foglio (all'apertura) leggono la stessa derivazione pura.
+      const azioni = cellActionsState({ item, cellName: c.cell, route, pins, hostByRoute });
+      const menuAperto = !!menuCell && menuCell.itemKey === item.key;
+      const menuLabel = `${t('cell-actions-open')}: ${c.cell}`;
       return (
         <div key={item.key} className="nc-mcard" data-roster-key={item.key} data-position={position}>
-          <RosterHandle position={position} itemKey={item.key} label={c.cell}
+          {reorderMode && <RosterHandle position={position} itemKey={item.key} label={c.cell}
             canMove={canMove}
             onMove={(source, target) => moveRoster(position, source, target, rawItems)}
-            onStep={(delta) => stepRoster(position, item.key, delta, rawItems)} />
+            onStep={(delta) => stepRoster(position, item.key, delta, rawItems)} />}
           <button className="nc-mcard-main"
             onClick={() => c.tmux && pickOwned(c.tmuxSession, c.cell)}
             title={stateTitle} aria-label={`${c.cell}, ${stateTitle}`}>
             <span className={`dot ${c.degraded ? 'warn' : c.tmux ? `on${item.working ? ' working' : ''}` : ''}`} />
-            <span className="nc-mcard-text"><b>{c.cell}</b><small title={item.subtitle}>{item.subtitle}</small></span>
+            <span className="nc-mcard-text">
+              {/* Il bollino è un FRATELLO del nome, non un suo figlio: il nome
+                  resta il testo esatto della cella per chi legge e per i test. */}
+              <span className="nc-mcard-nome">
+                <b>{c.cell}</b>
+                {azioni.isLive && <span className="nc-m-live">LIVE</span>}
+              </span>
+              <small title={item.subtitle}>{item.subtitle}</small>
+            </span>
           </button>
           {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
           {item.fresh && session?.outbox?.count > 0 && <span className="nc-badge" title={t('new-files-outbox')}>{session.outbox.count}</span>}
@@ -316,6 +370,13 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
             onClick={(event) => onBootToggle(event, c, route)} title={bootLabel} aria-label={bootLabel}>
             <Icon name="boot" size={16} />
           </button>}
+          {/* ⋯ = le azioni della cella in un foglio dal basso. Non sostituisce i
+              tondi (sono bersagli diretti che funzionano in un tocco): li
+              raccoglie, e aggiunge quelle che in fila non ci stanno (la Live). */}
+          <button type="button" className={`nc-act cellmenu${menuAperto ? ' on' : ''}`}
+            title={menuLabel} aria-label={menuLabel}
+            aria-haspopup="menu" aria-expanded={menuAperto ? 'true' : 'false'}
+            onClick={() => setMenuCell({ itemKey: item.key, item, cell: c, route, canBoot })}>⋯</button>
           {canPower && <button className={`nc-act power${c.tmux ? ' on' : ''}${c.degraded ? ' warn' : ''}`}
             onClick={() => setPowerCell(route.length
               ? { ...c, boot, route, availableEngines: group?.engines || [] }
@@ -365,12 +426,18 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
           {t('fleet-tmux')} · {total} {t('sessions')}{attached > 0 && ` · ${attached} attached`}
         </div>
         <span className="nc-head-actions">
+          {/* Il riordino è una MODALITA', non un gesto sempre armato: la si
+              accende qui e le maniglie compaiono sulle righe. Spenta, la riga
+              è solo un bersaglio d'apertura. */}
+          <button className={`nc-refresh${reorderMode ? ' on' : ''}`} onClick={() => setReorderMode((v) => !v)}
+            aria-pressed={reorderMode} title={t('reorder-help')} aria-label={t('reorder')}>↕</button>
           <button className="nc-refresh" onClick={() => onSettings('nodes', false)} title={t('settings')}><Icon name="gear" size={18} /></button>
           <button className="nc-refresh" onClick={refresh} title={t('refresh')}><Icon name="refresh" size={18} /></button>
         </span>
       </header>
 
       <main className="nc-home-scroll">
+      <LiveStripMobile view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells })} notice={liveNotice} />
       <PinPersistBanner pinError={pinError} onRetry={retryPinPersist} onDismiss={clearPinError} />
       {rosterTotal > 8 && (
         <input
@@ -502,6 +569,47 @@ export default function SessionList({ onPick, token, onSettings, onOpenVlSession
 
       {powerCell && (
         <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : []} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
+      )}
+
+      {/* Le azioni della cella toccata, dal basso. Il contenuto è di
+          CellActions (fase 1): qui si passano solo gli handler, e una voce
+          senza handler non compare — è il suo contratto. */}
+      {menuCell && (() => {
+        const { item, cell: c, route = [], canBoot } = menuCell;
+        const stato = cellActionsState({ item, cellName: c.cell, route, pins, hostByRoute });
+        const items = cellActionsItems({
+          ...stato, canBoot, boot: bootEnabled(c, route), alive: !!c.tmux,
+          handlers: cellActionHandlers(item, c, route),
+        });
+        return <CellActionsSheet cellName={c.cell} items={items} busy={menuBusy}
+          onClose={() => setMenuCell(null)} />;
+      })()}
+    </div>
+  );
+}
+
+// La striscia Live (mobile): chi è la cella ospite della Live su QUESTO nodo,
+// in una riga che sta in cima alla lista. La frase intera resta nel tooltip e
+// l'esito dell'ultimo comando Live — dato dal foglio azioni — arriva qui, dove
+// l'occhio sta già guardando. Presentazione mobile della stessa vista pura che
+// la sidebar desktop usa: nessuna logica nuova, solo un'altra forma.
+function LiveStripMobile({ view, notice }) {
+  const hasHost = !!(view && view.cell);
+  const frase = hasHost
+    ? t('live-host-indicator')
+      .replace('{cell}', view.cell)
+      .replace('{mode}', t(view.mode ? `live-host-mode-${view.mode}` : 'live-host-mode-unknown'))
+      .replace('{state}', t(`live-host-state-${view.state || 'none'}`))
+    : t('live-host-indicator-none');
+  return (
+    <div className="nc-m-live-strip" data-state={view && view.state ? view.state : 'none'}
+      title={notice ? `${frase} · ${t(notice.messageKey)}` : frase}>
+      <span className={`nc-m-live-dot ${liveHostDotClass(view || {})}`} aria-hidden="true" />
+      <span className="nc-m-live-testo">{hasHost ? view.cell : frase}</span>
+      {notice && (
+        <span className={`nc-m-live-notice${notice.ok ? ' ok' : ' ko'}`} role="status">
+          {t(notice.messageKey).replace('{cell}', notice.cell || view.cell || '')}
+        </span>
       )}
     </div>
   );

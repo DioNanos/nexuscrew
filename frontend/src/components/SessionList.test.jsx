@@ -21,13 +21,18 @@ vi.mock('../lib/api.js', () => ({
   nodeAction: vi.fn(async () => ({})),
   renameNodeLabel: vi.fn(async () => ({})),
   setSessionTechnical: vi.fn(async () => ({})),
+  // Il comando Live vive in live-host-command.js e legge/scrive per revisione:
+  // qui il mock è la sua controparte server (CAS: la revisione cambia a ogni scrittura).
+  getLiveHost: vi.fn(async () => ({ revision: 3, hostCell: null, threadStatus: null })),
+  designateHostCell: vi.fn(async () => ({ revision: 4, hostCell: 'Live Cell' })),
+  clearHostCell: vi.fn(async () => ({ revision: 5, hostCell: null })),
 }));
 
 vi.mock('../hooks/useNodes.js', () => ({ useNodes: () => fixture.nodes }));
 vi.mock('../hooks/useLang.js', () => ({ useLang: () => ['en', vi.fn()] }));
 
 import SessionList from './SessionList.jsx';
-import { fleetBoot, fleetDown, fleetStatus, fleetUp, renameNodeLabel, setSessionTechnical } from '../lib/api.js';
+import { designateHostCell, fleetBoot, fleetDown, fleetStatus, fleetUp, getLiveHost, renameNodeLabel, setSessionTechnical } from '../lib/api.js';
 import { readCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 
 function cell(cell, tmuxSession, live, engine = 'claude.native') {
@@ -242,6 +247,9 @@ describe('mobile roster parity', () => {
     const local = document.querySelector('[data-position="local"]');
     const before = [...local.querySelectorAll(':scope > [data-roster-key], :scope > * > [data-roster-key]')]
       .map((node) => node.dataset.rosterKey);
+    // M2: il riordino si accende dall'intestazione (modalità). Il gesto e la
+    // persistenza sono gli stessi di prima: cambia solo quando la maniglia c'è.
+    await user.click(screen.getByRole('button', { name: 'reorder' }));
     const handle = screen.getByRole('button', { name: 'reorder Off Cell' });
     handle.focus();
     await user.keyboard('{ArrowUp}');
@@ -268,6 +276,7 @@ describe('mobile roster parity', () => {
   it.each(['mouse', 'touch'])('reorders from the dedicated handle with a %s pointer', async (pointerType) => {
     renderRoster();
     await screen.findByText('Off Cell');
+    fireEvent.click(screen.getByRole('button', { name: 'reorder' }));
     const source = screen.getByRole('button', { name: 'reorder Off Cell' });
     const target = screen.getByText('Live Cell').closest('[data-roster-key]');
     const previous = document.elementFromPoint;
@@ -295,6 +304,9 @@ describe('mobile roster parity', () => {
     await waitFor(() => expect(renameNodeLabel).toHaveBeenCalledWith('test-token', 'relay', 'Hub personale'));
     expect(localStorage.getItem('nc_node_aliases_v1')).toBeNull();
 
+    // Anche l'ordine dei NODI passa dalla stessa modalità (una sola maniglia
+    // armata per volta, non due modelli di riordino diversi).
+    await user.click(screen.getByRole('button', { name: 'reorder' }));
     const pixelHandle = screen.getByRole('button', { name: 'reorder Pixel' });
     pixelHandle.focus();
     await user.keyboard('{ArrowUp}');
@@ -364,7 +376,9 @@ describe('SessionList — cella ospite Live per nodo', () => {
   it('NEGATIVA: un hostCell locale con lo stesso nome non accende la stella di un nodo diverso', async () => {
     render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()}
       hostByRoute={{ local: { hostCell: 'Relay Live' } }} />);
-    await screen.findByText('Relay Live');
+    // Il nome della cella va cercato NELLA RIGA: la striscia in testa nomina a
+    // sua volta l'ospite designato, e con questo host i due testi coincidono.
+    await screen.findByText('Relay Live', { selector: '.nc-mcard-nome b' });
     expect(screen.queryByRole('button', { name: 'cell designated; thread absent Relay Live' })).toBeNull();
   });
 });
@@ -453,5 +467,172 @@ describe('R27 — tre esiti: non letto, spento per scelta, dato vivo', () => {
     fireEvent.click(screen.getByRole('button', { name: 'refresh' }));
     await screen.findByText('New Cell');
     expect(screen.queryByText(STALE_EN)).toBeNull();
+  });
+});
+
+// Badge, rel e stato di una riga REMOTA: da dove vengono?
+// L'audit della parte desktop ha trovato che la sidebar leggeva le sessioni
+// LOCALI per nome, quindi un'omonima locale dava il conteggio sbagliato a una
+// riga di un altro nodo. Qui si fissa il contratto opposto: i tre dati di una
+// riga remota vengono dalle sessioni di QUELLA route, e l'omonima locale — che
+// esiste davvero, con numeri suoi — non li tocca.
+describe('righe remote route-qualified: mai dall\'omonima locale', () => {
+  it('badge, rel e stato vengono dalle sessioni della route', async () => {
+    const adesso = Math.floor(Date.now() / 1000);
+    // La riga LOCALE 'remote-live' è un tmux non gestito (nessuna cella la
+    // rivendica): esiste, si chiama come la remota, e ha numeri tutti suoi.
+    fixture.sessions = [
+      session('local-live', 20),
+      session('remote-live', 1, { outbox: { count: 77, latest: 1 }, preview: 'anteprima LOCALE' }),
+    ];
+    fixture.nodes[0].sessions = [
+      session('remote-live', adesso, { outbox: { count: 2, latest: adesso }, preview: 'anteprima REMOTA' }),
+      session('remote-shell', 15),
+    ];
+    renderRoster();
+    await screen.findByText('anteprima REMOTA');
+
+    const remota = screen.getByText('anteprima REMOTA').closest('.nc-mcard');
+    // badge outbox: il conteggio della sessione di quella route
+    expect(within(remota).getByText('2', { selector: '.nc-badge' })).toBeTruthy();
+    expect(within(remota).queryByText('77')).toBeNull();
+    // rel attività: quella della route (adesso → «ora»), non quella dell'omonima (1 → anni)
+    expect(within(remota).getByText('ora', { selector: '.nc-rel' })).toBeTruthy();
+    // stato: il sottotitolo della route
+    expect(within(remota).queryByText(/LOCALE/)).toBeNull();
+  });
+
+  it('NEGATIVO dell\'omonima locale: la riga locale porta i SUOI numeri, e restano tali', async () => {
+    const adesso = Math.floor(Date.now() / 1000);
+    fixture.sessions = [
+      session('local-live', 20),
+      session('remote-live', 1, { outbox: { count: 77, latest: 1 }, preview: 'anteprima LOCALE' }),
+    ];
+    fixture.nodes[0].sessions = [
+      session('remote-live', adesso, { outbox: { count: 2, latest: adesso }, preview: 'anteprima REMOTA' }),
+      session('remote-shell', 15),
+    ];
+    renderRoster();
+    await screen.findByText('anteprima LOCALE');
+
+    // La riga omonima LOCALE mostra il suo 77 e non il 2 della remota: i due
+    // conteggi convivono senza incrociarsi, che è esattamente ciò che il difetto
+    // della sidebar non faceva.
+    const locale = screen.getByText('anteprima LOCALE').closest('.nc-mcard');
+    expect(within(locale).getByText('77', { selector: '.nc-badge' })).toBeTruthy();
+    expect(within(locale).queryByText('2', { selector: '.nc-badge' })).toBeNull();
+  });
+});
+
+// M2 — le azioni della cella in un foglio dal basso, il bollino LIVE, la
+// striscia in testa e il riordino come MODALITA'. La riga continua a fare
+// quello che faceva (tocco = apre, i tondi restano tondi): il foglio RACCOGLIE
+// le azioni e aggiunge quella che in fila non ci sta, la Live.
+describe('M2 — foglio azioni, bollino LIVE, striscia, riordino a modalità', () => {
+  function renderConHost(hostByRoute = {}) {
+    return render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()} hostByRoute={hostByRoute} />);
+  }
+
+  it('il ⋯ apre il foglio della cella e da lì «fissa in cima» pinna e chiude', async () => {
+    const user = userEvent.setup();
+    renderRoster();
+    await screen.findByText('Off Cell');
+    expect(screen.queryByTestId('cell-actions-sheet')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Cell actions: Off Cell' }));
+    const foglio = await screen.findByTestId('cell-actions-sheet');
+    expect(within(foglio).getByText('Actions for Off Cell')).toBeTruthy();
+
+    await user.click(within(foglio).getByRole('menuitem', { name: 'Pin to top' }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('nc_pins'))).toContain('local-off'));
+    expect(screen.queryByTestId('cell-actions-sheet')).toBeNull();
+  });
+
+  it('l\'avvio al boot dal foglio resta un INTERRUTTORE: preferenza, mai un power', async () => {
+    const user = userEvent.setup();
+    renderRoster();
+    await screen.findByText('Live Cell');
+    await user.click(screen.getByRole('button', { name: 'Cell actions: Live Cell' }));
+    const foglio = await screen.findByTestId('cell-actions-sheet');
+    await user.click(within(foglio).getByRole('menuitemcheckbox', { name: 'Boot at startup' }));
+
+    await waitFor(() => expect(fleetBoot).toHaveBeenCalledWith('test-token', { cell: 'Live Cell', enabled: true }, []));
+    expect(fleetUp).not.toHaveBeenCalled();
+    expect(fleetDown).not.toHaveBeenCalled();
+  });
+
+  it('«assegna la Live» dal foglio scrive per revisione e l\'esito arriva nella striscia', async () => {
+    const user = userEvent.setup();
+    renderRoster();
+    await screen.findByText('Live Cell');
+    await user.click(screen.getByRole('button', { name: 'Cell actions: Live Cell' }));
+    const foglio = await screen.findByTestId('cell-actions-sheet');
+    await user.click(within(foglio).getByRole('menuitem', { name: 'Assign Live' }));
+
+    // La revisione si legge E si scrive con quella: un GET prima non è cortesia,
+    // è il contratto dello store (compare-and-swap). Il token è il primo argomento
+    // di ogni chiamata API, quindi entra nell'assert.
+    await waitFor(() => expect(designateHostCell).toHaveBeenCalledWith('test-token', 'Live Cell', 3, []));
+    expect(getLiveHost).toHaveBeenCalledWith('test-token', []);
+    const notice = await waitFor(() => document.querySelector('.nc-m-live-notice'));
+    expect(notice.classList.contains('ok')).toBe(true);
+    expect(notice.textContent).toContain('Live Cell');
+  });
+
+  it('CONTROLLO NEGATIVO: una voce senza handler NON compare — «Guarda dal vivo» non è su questa superficie', async () => {
+    // Il suo gesto è la sorgente Flusso della nuvola, che è della sidebar (2a).
+    // Il contratto di CellActions è che un handler assente è una voce ASSENTE,
+    // non una voce morta: qui lo si verifica dalla parte del chiamante.
+    const user = userEvent.setup();
+    renderRoster();
+    await screen.findByText('Live Cell');
+    await user.click(screen.getByRole('button', { name: 'Cell actions: Live Cell' }));
+    const foglio = await screen.findByTestId('cell-actions-sheet');
+    expect(within(foglio).queryByRole('menuitem', { name: 'Watch live' })).toBeNull();
+    // e le voci che hanno un gesto ci sono: la lista non è vuota per caso
+    expect(within(foglio).getByRole('menuitem', { name: 'Assign Live' })).toBeTruthy();
+  });
+
+  it('bollino LIVE solo dove la cella È l\'ospite di quella route', async () => {
+    renderConHost({ relay: { hostCell: 'Relay Live', threadStatus: 'absent' } });
+    await screen.findByText('Relay Live');
+    const ospite = screen.getByText('Relay Live').closest('.nc-mcard');
+    expect(within(ospite).getByText('LIVE')).toBeTruthy();
+    // CONTROLLO NEGATIVO: nessun'altra cella lo prende. E il nome della cella
+    // resta il testo ESATTO del suo elemento (il bollino è un fratello, non un
+    // figlio): se fosse annidato dentro <b>, questo findByText non troverebbe.
+    const altra = screen.getByText('Live Cell').closest('.nc-mcard');
+    expect(within(altra).queryByText('LIVE')).toBeNull();
+  });
+
+  it('la striscia in testa dice chi è l\'ospite del nodo, e lo dice quando non c\'è', async () => {
+    const { unmount } = renderConHost({ local: { hostCell: 'Live Cell', threadStatus: 'absent' } });
+    await screen.findByText('Live Cell');
+    const strip = document.querySelector('.nc-m-live-strip');
+    expect(strip.textContent).toContain('Live Cell');
+    expect(strip.getAttribute('data-state')).toBe('designated');
+    unmount();
+
+    renderConHost();
+    await screen.findByText('Live Cell');
+    const vuota = document.querySelector('.nc-m-live-strip');
+    expect(vuota.textContent).toContain('Live host: no cell designated');
+    expect(vuota.getAttribute('data-state')).toBe('none');
+  });
+
+  it('il riordino è una MODALITA\': spenta non ci sono maniglie, accesa compaiono', async () => {
+    const user = userEvent.setup();
+    renderRoster();
+    await screen.findByText('Off Cell');
+    expect(screen.queryByRole('button', { name: 'reorder Off Cell' })).toBeNull();
+
+    const toggle = screen.getByRole('button', { name: 'reorder' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    await user.click(toggle);
+    expect(screen.getByRole('button', { name: 'reorder Off Cell' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'reorder' }).getAttribute('aria-pressed')).toBe('true');
+
+    await user.click(screen.getByRole('button', { name: 'reorder' }));
+    expect(screen.queryByRole('button', { name: 'reorder Off Cell' })).toBeNull();
   });
 });
