@@ -102,9 +102,17 @@
 }
 .nc-mcard-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .nc-mcard-text b { font-size: 14px; color: #d8ffe8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Il nome e il bollino LIVE stanno su una riga sola, il nome per primo: il
+   bollino non deve mai spingere fuori il nome della cella. */
+.nc-mcard-nome { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.nc-mcard-nome b { min-width: 0; }
+/* Stato su DUE righe a 13 px (prima 12 px troncati a una): su un telefono la
+   differenza fra «sta lavorando» e «in attesa» sta nella seconda riga, e a
+   12 px non si legge. L'opacità sale da .6: leggibilità, non decorazione. */
 .nc-mcard-text small {
-  font-size: 12px; opacity: .6;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; opacity: .78; line-height: 1.3;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 .dot.warn { background: #e0b020; box-shadow: 0 0 6px #e0b02088; }
 
@@ -210,8 +218,8 @@
 .nc-fleet-stale { color: #e8c547; }
 /* R27 rev3: il fleet e' spento — zero celle e' la verita', indicatore neutro */
 .nc-fleet-off { color: #b0b8ad; }
-.nc-act.boot.on { color: #69b7ff; border-color: rgba(105,183,255,.58); background: rgba(105,183,255,.10); }
-.nc-act.boot:disabled { cursor: wait; opacity: .55; }
+/* .nc-act.boot non c'e' piu': l'avvio al boot e' una voce del foglio, e nella
+   riga della cella restano due bersagli soli, ⋯ e power. */
 .nc-act.pin.on { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.08); }
 .nc-act.pin.designated { color: #c8a6ff; border-color: rgba(200,166,255,0.6); background: rgba(200,166,255,0.12); }
 .nc-act.pin.thread-present { color: #69b7ff; border-color: rgba(105,183,255,0.6); background: rgba(105,183,255,0.12); }
@@ -236,4 +244,53 @@
   .nc-mobile-position-head { gap: 5px; }
   .nc-mobile-position-filter { max-width: 92px; padding-left: 7px; }
   .nc-mcard { padding: 10px 9px; gap: 5px; }
+}
+
+/* --- Menu azioni della cella, bollino LIVE, striscia, riordino a modalità -- */
+
+/* Bollino LIVE sulla riga della cella ospite: una parola, come in sidebar.
+   Più grande del bollino desktop (9 px): qui si legge a un braccio di distanza. */
+.nc-m-live {
+  flex: 0 0 auto;
+  padding: 0 6px; border-radius: 6px;
+  font-size: 10px; font-weight: 700; letter-spacing: .5px; line-height: 16px;
+  color: #00cc66; background: rgba(0, 204, 102, .12);
+  border: 1px solid rgba(0, 204, 102, .45);
+}
+
+/* Trigger del foglio azioni (⋯). Stesso tondo dei fratelli (.nc-act = 44 px):
+   è un bersaglio diretto, non un ripiego. */
+.nc-act.cellmenu { font-size: 18px; line-height: 1; }
+.nc-act.cellmenu.on {
+  color: #bfffd8; border-color: rgba(0, 204, 102, .55); background: rgba(0, 204, 102, .12);
+}
+
+/* Striscia Live in testa: chi è l'ospite Live di questo nodo, e l'esito
+   dell'ultimo comando. Stessa vista pura della sidebar, forma mobile. */
+.nc-m-live-strip {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 36px; padding: 6px 10px;
+  border: 1px solid #1c2b20; border-radius: 10px; background: #0b120b;
+  overflow: hidden;
+}
+.nc-m-live-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #355; }
+.nc-m-live-dot.active,
+.nc-m-live-dot.designated,
+.nc-m-live-dot.present { background: #00cc66; box-shadow: 0 0 6px #00cc6688; }
+.nc-m-live-dot.unknown { background: #e0b020; box-shadow: 0 0 6px #e0b02088; }
+.nc-m-live-testo {
+  flex: 0 1 auto; min-width: 0;
+  font-size: 13px; font-weight: 700; letter-spacing: .3px; color: #d8ffe8;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nc-m-live-notice {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nc-m-live-notice.ok { color: #00cc66; }
+.nc-m-live-notice.ko { color: #e0b020; }
+
+/* Modalità riordino accesa: il pulsante lo dice, non solo la maniglia. */
+.nc-refresh.on {
+  color: #bfffd8; border-color: rgba(0, 204, 102, .55); background: rgba(0, 204, 102, .12);
 }

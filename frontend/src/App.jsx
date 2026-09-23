@@ -890,6 +890,7 @@ export default function App() {
       return (
         <>
           <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession}
+            panelPort={panelPort} nodePanelPorts={nodePanelPorts}
             hostByRoute={hostByRoute} onDesignateCell={designateCellHost} onClearHostCell={clearCellHost} />
           {settingsOverlays}
         </>

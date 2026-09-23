@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 const mocks = vi.hoisted(() => ({
   apiFetch: vi.fn(), fleetStatus: vi.fn(), getRouteSessions: vi.fn(),
@@ -64,39 +64,53 @@ beforeEach(() => {
   });
 });
 
+// La finestra di una cella si apre dal pallino, sulla sorgente Flusso: le altre
+// due sorgenti sono tab della STESSA finestra — un posto solo, tre sorgenti.
+const apriAnteprima = async (cellName) => {
+  fireEvent.click(await screen.findByRole('button', { name: `Watch live: ${cellName}` }));
+  fireEvent.click(await screen.findByRole('tab', { name: 'Preview' }));
+};
+const apriPannello = async (cellName) => {
+  fireEvent.click(await screen.findByRole('button', { name: `Watch live: ${cellName}` }));
+  fireEvent.click(await screen.findByRole('tab', { name: 'Panel' }));
+};
+
+// Il selettore rilegge le posizioni a intervalli (in produzione 4 s). Nei test
+// l'intervallo e' corto: nessun assert dipende da un timer lungo, che sotto
+// carico puo' sforare il budget del waitFor. Era questa la sorgente del flake.
+const Switcher = (props) => <CellSwitcher pollMs={20} {...props} />;
+
 describe('CellSwitcher', () => {
-  it('uses fresh local and route-qualified fleet data, keeps degraded visible and requires explicit opening', async () => {
+  it('uses fresh local and route-qualified fleet data, keeps degraded visible and opens after the fresh re-check', async () => {
     const onPick = vi.fn(); const onClose = vi.fn();
-    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={onPick} onClose={onClose} />);
+    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={onPick} onClose={onClose} />);
 
     const dialog = await screen.findByRole('dialog', { name: 'Cells / cloud sessions' });
     expect(dialog.getAttribute('aria-modal')).toBeNull();
     expect(screen.getByRole('button', { name: /^cell-One / }).getAttribute('aria-current')).toBe('true');
+    expect(screen.getByText('you are here')).toBeTruthy();
     const remote = screen.getByRole('button', { name: /^Remote / });
     expect(remote).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Degraded / }).getAttribute('aria-disabled')).toBe('true');
     expect(screen.queryByRole('button', { name: /^cell-Three / })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Stale Cell / })).toBeNull();
     expect(screen.getByRole('button', { name: 'close cell switcher' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'select a cell' }).disabled).toBe(true);
     await waitFor(() => {
       expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['hub']);
       expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['stale']);
       expect(mocks.getRouteSessions).toHaveBeenCalledWith('token', ['alerts']);
     });
 
+    // Il tocco della riga APRE, e il ricontrollo fresco lo precede: nessuno
+    // stato «scelto» in mezzo, nessun bottone d'apertura separato.
     fireEvent.click(remote);
-    expect(remote.getAttribute('aria-pressed')).toBe('true');
-    expect(onPick).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'open cell: Remote' }));
     await waitFor(() => expect(onPick).toHaveBeenCalledWith({ session: 'cloud-Remote', node: 'hub', cellName: 'Remote' }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('exposes the full inventory deliberately and refuses an off target with an explicit status', async () => {
     const onPick = vi.fn();
-    render(<CellSwitcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-One / });
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
     const research = screen.getByRole('button', { name: /^cell-Three / });
@@ -125,7 +139,7 @@ describe('CellSwitcher', () => {
       };
     });
     mocks.getRouteSessions.mockResolvedValue({ sessions: [] });
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-One / });
     await waitFor(() => expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['hub']));
     expect(screen.queryByRole('button', { name: /^Ghost Off / })).toBeNull();
@@ -154,7 +168,7 @@ describe('CellSwitcher', () => {
         sessions: localCells.filter((c) => c.active).map((c) => ({ name: c.tmuxSession, activity: 1 })),
       }),
     });
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-One / });
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
     for (const cell of localCells) {
@@ -192,7 +206,7 @@ describe('CellSwitcher', () => {
       ? { available: true, cells: vpsCells }
       : { available: true, cells: [] }));
 
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-One / });
     for (const cell of vpsCells) {
       expect(screen.getAllByRole('button', { name: new RegExp(`^${cell.cell} `) })).toHaveLength(1);
@@ -214,7 +228,7 @@ describe('CellSwitcher', () => {
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
       sessions: [{ name: 'cloud-cell-One', activity: 10, working: true, telemetry }],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
     // Il verso è scritto DENTRO ogni etichetta: «free» sul contesto E «used»
     // su ogni tier. Un tier senza il suo verso prenderebbe per contagio il
     // «free» del vicino e la riga direbbe il contrario del vero.
@@ -223,7 +237,7 @@ describe('CellSwitcher', () => {
 
   it('no telemetry, no field: cells that do not publish it keep the row exactly as it was', async () => {
     // Nessuna sessione porta telemetria (celle non-Claude: assenza legittima).
-    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-One / });
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
     await screen.findByRole('button', { name: /^cell-Three / });
@@ -237,8 +251,8 @@ describe('CellSwitcher', () => {
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
       sessions: [{ name: 'cloud-cell-One', activity: 0, preview: 'frame-uno' }],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Peek without switching cell: cell-One' }));
+    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    await apriAnteprima('cell-One');
     // Il pre del popup è il contenuto della sorgente; la preview compare
     // anche nello subtitle della riga, quindi si mira al selettore preciso.
     await waitFor(() => expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('frame-uno'));
@@ -248,7 +262,7 @@ describe('CellSwitcher', () => {
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
       sessions: [{ name: 'cloud-cell-One', activity: 0, preview: 'frame-due-fresca' }],
     }) });
-    await waitFor(() => expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('frame-due-fresca'), { timeout: 6000 });
+    await waitFor(() => expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('frame-due-fresca'), { timeout: 4000 });
   });
 
   it('a cell that disappears from the updated list closes the popup instead of showing its dead frame', async () => {
@@ -256,29 +270,31 @@ describe('CellSwitcher', () => {
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
       sessions: [{ name: 'cloud-cell-One', activity: 0, preview: 'frame-ultimo' }],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Peek without switching cell: cell-One' }));
+    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    await apriAnteprima('cell-One');
     await waitFor(() => expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('frame-ultimo'));
     // La cella muore sotto il popup: la chiave non risolve più niente e il
     // popup si chiude da sé. L'alternativa — l'anteprima di un'altra cella
     // creduta la propria — è il difetto che questo test tiene chiuso.
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [] }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'cell-One' })).toBeNull(), { timeout: 6000 });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'cell-One' })).toBeNull(), { timeout: 4000 });
   });
 
-  it('streaming is a source of the popup: opened from the row, of that cell, and it never selects it', async () => {
+  it('il pallino apre il FLUSSO di quella cella e non la apre: guardare non e\' andare', async () => {
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
       sessions: [{ name: 'cloud-cell-One', activity: 0 }],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    const onPick = vi.fn(); const onClose = vi.fn();
+    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={onPick} onClose={onClose} />);
     await screen.findByRole('button', { name: /^cell-One / });
-    fireEvent.click(screen.getByRole('button', { name: 'Stream: cell-One' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Watch live: cell-One' }));
     const term = await screen.findByTestId('peek-term');
     expect(term.getAttribute('data-session')).toBe('cloud-cell-One');
-    // Guardare non è selezionare: nessuna riga premuta, l'apertura resta chiusa.
-    expect(screen.getByRole('button', { name: /^cell-One / }).getAttribute('aria-pressed')).not.toBe('true');
-    expect(screen.getByRole('button', { name: 'select a cell' }).disabled).toBe(true);
+    expect(screen.getByRole('tab', { name: 'Stream' }).getAttribute('aria-selected')).toBe('true');
+    // Guardare non è andare: nessuna cella aperta, il selettore resta aperto.
+    expect(onPick).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('the AIDesktop panel is reachable from the list when the cell publishes a panelUrl', async () => {
@@ -288,9 +304,9 @@ describe('CellSwitcher', () => {
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
       sessions: [{ name: 'cloud-cell-One', activity: 0 }],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-One / });
-    fireEvent.click(screen.getByRole('button', { name: 'Panel: cell-One' }));
+    await apriPannello('cell-One');
     const panel = await screen.findByTestId('peek-panel');
     expect(panel.getAttribute('data-cell')).toBe('cell-One');
   });
@@ -307,10 +323,10 @@ describe('CellSwitcher', () => {
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
       sessions: [{ name: 'cloud-cell-One', activity: 0 }],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()}
+    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()}
       panelPort={41821} nodePanelPorts={{}} />);
     await screen.findByRole('button', { name: /^cell-One / });
-    fireEvent.click(screen.getByRole('button', { name: 'Panel: cell-One' }));
+    await apriPannello('cell-One');
     const panel = await screen.findByTestId('peek-panel');
     expect(panel.dataset.panelPort).toBe('41821');
   });
@@ -330,10 +346,10 @@ describe('CellSwitcher', () => {
     // Porta LOCALE deliberatamente diversa dalla porta negoziata per 'hub':
     // se il frame prendesse quella locale sarebbe l'origine SBAGLIATA per
     // una cella remota, non un fallback innocuo.
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
       panelPort={9999} nodePanelPorts={{ hub: 41821 }} />);
     await screen.findByRole('button', { name: /^Remote / });
-    fireEvent.click(screen.getByRole('button', { name: 'Panel: Remote' }));
+    await apriPannello('Remote');
     const panel = await screen.findByTestId('peek-panel');
     expect(panel.dataset.panelPort).toBe('41821');
     expect(panel.dataset.panelPort).not.toBe('9999');
@@ -354,10 +370,10 @@ describe('CellSwitcher', () => {
     // 'unpaired' non e' nella mappa negoziata (peer accoppiato prima che il
     // pairing negoziasse la porta pannello): questa e' esattamente la guardia
     // di lib/panel-port.js che non va regredita.
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
       panelPort={9999} nodePanelPorts={{ hub: 41821 }} />);
     await screen.findByRole('button', { name: /^Remote / });
-    fireEvent.click(screen.getByRole('button', { name: 'Panel: Remote' }));
+    await apriPannello('Remote');
     const panel = await screen.findByTestId('peek-panel');
     expect(panel.dataset.panelPort).toBe('0');
   });
@@ -372,18 +388,87 @@ describe('CellSwitcher', () => {
         { name: 'cloud-cell-Three', activity: Date.now() - 2 * 60 * 60 * 1000 },
       ],
     }) });
-    render(<CellSwitcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-One / });
     // Fresca: l'età c'è, con la sua etichetta. Stantia (2h): oltre soglia il
     // campo sparisce — un valore morto che sembra fresco è peggio di nessuno.
-    await waitFor(() => expect(screen.getByText(/activity \d+m/)).toBeTruthy(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByText(/activity \d+m/)).toBeTruthy(), { timeout: 4000 });
     expect(screen.queryByText(/activity \d+h/)).toBeNull();
     expect(document.querySelectorAll('.nc-cell-switcher-telemetry').length).toBe(1);
   });
 
+  it('attività, telemetria e stato di una riga REMOTA vengono dalle sessioni di QUELLA route, mai dall\'omonima locale', async () => {
+    // Una sessione LOCALE che si chiama come quella remota, con numeri diversi e
+    // piu' vecchi: se la riga leggesse la tabella locale mostrerebbe l'altra
+    // cella — stato «in attesa» e nessuna attività, perche' stantia.
+    const vecchia = Date.now() - 3 * 60 * 60 * 1000;
+    const fresca = Date.now() - 90 * 1000;
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
+      sessions: [{ name: 'cloud-Remote', activity: vecchia, working: false }],
+    }) });
+    mocks.getRouteSessions.mockResolvedValue({
+      sessions: [{ name: 'cloud-Remote', activity: fresca, working: true }],
+    });
+    mocks.fleetStatus.mockImplementation(async (_token, r = []) => (r.length
+      ? { available: true, cells: [active('Remote', 'cloud-Remote')] }
+      : { available: true, cells: [] }));
+    writeCellSwitcherSnapshot({
+      sessions: [], cells: [],
+      nodeGroups: [{
+        route: ['hub'], label: 'Hub', switcherFresh: true,
+        sessions: [{ name: 'cloud-Remote', activity: fresca, working: true }],
+        cells: [active('Remote', 'cloud-Remote')],
+      }],
+    });
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    const riga = await screen.findByRole('button', { name: /^Remote / });
+    await waitFor(() => expect(riga.querySelector('.nc-cell-switcher-telemetry')?.textContent)
+      .toMatch(/activity \d+m/));
+    expect(riga.querySelector('.nc-cell-switcher-state').textContent).toBe(t('cell-working'));
+    // L'omonima locale non ha lasciato traccia: e' la riga remota a parlare.
+    expect(riga.querySelector('.nc-cell-switcher-telemetry').textContent).not.toMatch(/\dh/);
+  });
+
+  it('l\'intestazione sta in alto, e il riordino e\' una modalita\'', async () => {
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    // Titolo, riordino, filtro e chiudi PRIMA della lista: erano in fondo.
+    const aside = document.querySelector('.nc-cell-switcher');
+    expect(aside.firstElementChild.className).toContain('nc-cell-switcher-controls');
+    expect(screen.getByRole('button', { name: 'all' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'close cell switcher' })).toBeTruthy();
+
+    // Spenta, le maniglie non esistono nel DOM; accesa, compaiono.
+    const riordino = screen.getByRole('button', { name: 'reorder' });
+    expect(riordino.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.queryByRole('button', { name: 'reorder cell-One' })).toBeNull();
+    fireEvent.click(riordino);
+    expect(riordino.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'reorder cell-One' })).toBeTruthy();
+  });
+
+  it('con il foglio aperto l\'Escape chiude il FOGLIO, non il selettore', async () => {
+    // Il guscio del foglio ascolta il keydown sullo STESSO documento: senza la
+    // guardia, un Escape chiuderebbe tutte e due le cose e l'operatore
+    // perderebbe il selettore mentre stava scegliendo.
+    const onClose = vi.fn();
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} />);
+    await screen.findByRole('button', { name: 'Cell actions: cell-One' });
+    fireEvent.click(screen.getByRole('button', { name: 'Cell actions: cell-One' }));
+    expect(await screen.findByTestId('cell-actions-sheet')).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('cell-actions-sheet')).toBeNull());
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Il selettore e' ancora li': il secondo Escape chiude lui.
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it('closes on Escape without trapping focus', () => {
     const onClose = vi.fn();
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} />);
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} />);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -405,9 +490,13 @@ describe('CellSwitcher', () => {
     mocks.fleetStatus.mockResolvedValue({
       available: true, cells: [active('cell-One', 'cloud-cell-One'), off('cell-Three', 'cloud-cell-Three')],
     });
-    const first = render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    const first = render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-One / });
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    // Riordino a MODALITA', come nella home mobile: la maniglia esiste solo a
+    // modalita' accesa, e il gesto — trascinamento, tastiera, stessa chiave
+    // condivisa — non cambia.
+    fireEvent.click(screen.getByRole('button', { name: 'reorder' }));
     const researchHandle = screen.getByRole('button', { name: 'reorder cell-Three' });
     const devRow = screen.getByRole('button', { name: /^cell-One / }).closest('[data-roster-key]');
     const previous = document.elementFromPoint;
@@ -438,7 +527,7 @@ describe('CellSwitcher', () => {
     mocks.fleetStatus.mockResolvedValue({
       available: true, cells: [active('cell-One', 'cloud-cell-One'), active('cell-Three', 'cloud-cell-Three')],
     });
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-Three / });
     expect([...document.querySelectorAll('.nc-cell-switcher-row[data-position="local"]')]
       .map((row) => row.dataset.rosterKey)).toEqual(['cloud-cell-Three', 'cloud-cell-One']);
@@ -447,32 +536,30 @@ describe('CellSwitcher', () => {
   // R27 #4: «questa cella non è più attiva» detto quando è la VERIFICA a
   // fallire (rete, timeout, 502) induce a riavviare una cella che stava
   // lavorando. «Non ho potuto verificare» non autorizza «verificato spenta».
-  it('open with a failed status check says unverifiable, not "no longer active"', async () => {
+  it('aprire con la verifica fallita dice «non ho potuto verificare», non «non è più attiva»', async () => {
     const onPick = vi.fn();
-    render(<CellSwitcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
     const remote = await screen.findByRole('button', { name: /^Remote / });
-    fireEvent.click(remote);
-    // La verifica del pick parte adesso e fallisce (502): la lettura non è
+    // La verifica del tocco parte adesso e fallisce (502): la lettura non è
     // riuscita, la cella NON è stata trovata spenta.
     mocks.fleetStatus.mockImplementation(async () => { throw new Error('HTTP 502'); });
-    fireEvent.click(screen.getByRole('button', { name: 'open cell: Remote' }));
+    fireEvent.click(remote);
     expect(await screen.findByText('Could not verify: try again shortly.')).toBeTruthy();
     expect(screen.queryByText('this cell is no longer active')).toBeNull();
     expect(onPick).not.toHaveBeenCalled();
   });
 
-  it('open with a VERIFIED dead cell still says no longer active', async () => {
+  it('aprire una cella VERIFICATA spenta dice ancora «non è più attiva»', async () => {
     const onPick = vi.fn();
-    render(<CellSwitcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
     const remote = await screen.findByRole('button', { name: /^Remote / });
-    fireEvent.click(remote);
     // Lettura riuscita (fresh) e la cella risulta davvero spenta: qui
     // «non più attiva» è la verità e deve restare.
     mocks.fleetStatus.mockImplementation(async (_t, r = []) => (r.length
       ? { available: true, cells: [off('Remote', 'cloud-Remote')] }
       : { available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
     mocks.getRouteSessions.mockResolvedValue({ sessions: [] });
-    fireEvent.click(screen.getByRole('button', { name: 'open cell: Remote' }));
+    fireEvent.click(remote);
     expect(await screen.findByText('this cell is no longer active')).toBeTruthy();
     expect(onPick).not.toHaveBeenCalled();
   });
@@ -482,7 +569,7 @@ describe('CellSwitcher', () => {
     // snapshot noto) come «status not confirmed» — cliccarle non può dire
     // «non più attiva», perché nessuno ha potuto leggerle.
     mocks.fleetStatus.mockImplementation(async () => { throw new Error('HTTP 502'); });
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: 'all' });
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
     const dev = await screen.findByRole('button', { name: /^cell-One / });
@@ -496,146 +583,143 @@ describe('CellSwitcher', () => {
   });
 });
 
-// The star (pin / live) on the compact selector.
+// Il pin (la stella) nel selettore compatto.
 //
-// The phone selector had no star at all: a cell could be pinned from the home
-// and the desktop sidebar, not from the surface that is used on a phone. These
-// tests pin the contract of the shared star: the same cycle
-// (none -> favorite -> live -> none), the same pin key the home reads, the same
-// labels, and a tap that never selects the row underneath.
-describe('CellSwitcher — the star on every row', () => {
+// Il telefono non aveva una stella: una cella si pinnava dalla home e dalla
+// sidebar desktop, non dalla superficie che si usa col pollice. Ora il pin e'
+// una VOCE del foglio azioni — la riga resta pallino + testo + ⋯ — e questi
+// test ne fissano il contratto: lo stesso ciclo, la stessa chiave di pin che la
+// home legge, e un tocco che non apre la cella sotto.
+describe('CellSwitcher — il pin nel foglio azioni', () => {
   const hostNone = { local: { hostCell: null, threadStatus: 'absent' } };
+  const apriFoglio = async (cellName) => {
+    fireEvent.click(await screen.findByRole('button', { name: `Cell actions: ${cellName}` }));
+    return screen.findByTestId('cell-actions-sheet');
+  };
 
-  it('(a) shows one star per visible row, local and federated alike', async () => {
+  it('(a) in fila non c\'e\' piu\': il pin e\' una voce del foglio, su locale e federata', async () => {
     const { container } = render(
       <CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={hostNone} />,
     );
     await screen.findByRole('button', { name: /^cell-One / });
 
-    expect(screen.getByRole('button', { name: 'pin to top cell-One' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'pin to top Remote' })).toBeTruthy();
-    // One per row on screen, no extra affordance invented.
+    // CONTROLLO NEGATIVO: nessuna stella in fila, su nessuna riga.
+    expect(screen.queryByRole('button', { name: 'pin to top cell-One' })).toBeNull();
+    expect(container.querySelectorAll('[data-cell-star]')).toHaveLength(0);
     const rows = container.querySelectorAll('.nc-cell-switcher-row');
-    expect(container.querySelectorAll('[data-cell-star]')).toHaveLength(rows.length);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const nome of ['cell-One', 'Remote']) {
+      const foglio = await apriFoglio(nome);
+      expect(within(foglio).getByRole('menuitem', { name: 'Pin to top' })).toBeTruthy();
+      fireEvent.click(within(foglio).getByRole('button', { name: 'close' }));
+    }
   });
 
-  it('(b) tapping the star does not select the row and does not close the selector', async () => {
-    const onClose = vi.fn();
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} hostByRoute={hostNone} />);
+  it('(b) il tocco della voce pinna e non apre la cella sotto', async () => {
+    const onPick = vi.fn(); const onClose = vi.fn();
+    render(<Switcher token="token" current={{}} onPick={onPick} onClose={onClose} hostByRoute={hostNone} />);
     await screen.findByRole('button', { name: /^cell-One / });
 
-    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
+    const foglio = await apriFoglio('cell-One');
+    fireEvent.click(within(foglio).getByRole('menuitem', { name: 'Pin to top' }));
 
-    expect(screen.getByRole('button', { name: /^cell-One / }).getAttribute('aria-pressed')).toBe('false');
-    expect(screen.getByRole('button', { name: 'select a cell' }).disabled).toBe(true);
+    expect(JSON.parse(localStorage.getItem('nc_pins'))).toContain(positionKey([], 'cloud-cell-One'));
+    expect(onPick).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('cell-actions-sheet')).toBeNull();
   });
 
-  it('(c) pinning here writes the very key the home reads, route-qualified for a remote node', async () => {
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={hostNone} />);
+  it('(c) pinna la stessa chiave che legge la home, route-qualificata per un nodo remoto', async () => {
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={hostNone} />);
     await screen.findByRole('button', { name: /^cell-One / });
 
-    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
+    const primo = await apriFoglio('cell-One');
+    fireEvent.click(within(primo).getByRole('menuitem', { name: 'Pin to top' }));
     expect(JSON.parse(localStorage.getItem('nc_pins'))).toEqual([positionKey([], 'cloud-cell-One')]);
 
-    fireEvent.click(screen.getByRole('button', { name: 'pin to top Remote' }));
+    const secondo = await apriFoglio('Remote');
+    fireEvent.click(within(secondo).getByRole('menuitem', { name: 'Pin to top' }));
     const pins = JSON.parse(localStorage.getItem('nc_pins'));
     expect(pins).toContain(positionKey(['hub'], 'cloud-Remote'));
     expect(pins).toContain(positionKey([], 'cloud-cell-One'));
-    // The star shows the pin it just wrote.
-    expect(screen.getByRole('button', { name: 'pin to top cell-One' }).textContent).toBe('\u2605');
+
+    // Il foglio DICE il pin che ha appena scritto: la voce si chiama «togli».
+    const terzo = await apriFoglio('cell-One');
+    expect(within(terzo).getByRole('menuitem', { name: 'Unpin from top' })).toBeTruthy();
   });
 
-  it('(d) the star only pins and unpins: it never designates', async () => {
+  it('(d) pinna e basta: non designa mai', async () => {
     const onDesignateCell = vi.fn();
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={hostNone} onDesignateCell={onDesignateCell} />);
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={hostNone} onDesignateCell={onDesignateCell} />);
     await screen.findByRole('button', { name: /^cell-One / });
 
-    const star = screen.getByRole('button', { name: 'pin to top cell-One' });
-    fireEvent.click(star);
+    const primo = await apriFoglio('cell-One');
+    fireEvent.click(within(primo).getByRole('menuitem', { name: 'Pin to top' }));
     expect(onDesignateCell).not.toHaveBeenCalled();
     expect(JSON.parse(localStorage.getItem('nc_pins'))).toContain(positionKey([], 'cloud-cell-One'));
 
-    // Second tap: the pin goes away, and still nothing is designated.
-    fireEvent.click(screen.getByRole('button', { name: 'pin to top cell-One' }));
+    // Secondo tocco: il pin va via, e non e' stato designato niente.
+    const secondo = await apriFoglio('cell-One');
+    fireEvent.click(within(secondo).getByRole('menuitem', { name: 'Unpin from top' }));
     expect(onDesignateCell).not.toHaveBeenCalled();
     expect(JSON.parse(localStorage.getItem('nc_pins')) || []).not.toContain(positionKey([], 'cloud-cell-One'));
   });
 
-  it('(e) the star does not speak about the designation at all', async () => {
-    // The 403 path belongs to the explicit command now: the star is a pin, and a
-    // pin has no outcome to report beyond persistence.
+  it('(e) la voce del pin non parla della designazione: quella e\' la voce Live', async () => {
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
     const onDesignateCell = vi.fn();
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
       hostByRoute={{ local: { hostCell: 'cell-One', threadStatus: 'absent', hostRevision: 2 } }} onDesignateCell={onDesignateCell} />);
     await screen.findByRole('button', { name: /^cell-One / });
 
-    fireEvent.click(screen.getByRole('button', { name: 'cell designated; thread absent cell-One' }));
+    const foglio = await apriFoglio('cell-One');
+    // La cella E' l'ospite: il foglio lo dice con la voce Live (che offre di
+    // toglierla), e il pin resta un pin.
+    expect(within(foglio).getByRole('menuitem', { name: 'Remove Live' })).toBeTruthy();
+    fireEvent.click(within(foglio).getByRole('menuitem', { name: 'Pin to top' }));
     expect(onDesignateCell).not.toHaveBeenCalled();
     expect(alert).not.toHaveBeenCalled();
     alert.mockRestore();
   });
 });
 
-// The explicit command: one call that reads the revision and writes with it, and
-// an outcome the row can show. The star is a pin (see its own test); this is the
-// only way to designate, so its two outcomes — applied, refused — must both be
-// visible.
-describe('CellSwitcher — the explicit Live host command', () => {
-  it('designates with the revision the server has just reported, and says so', async () => {
+// Il comando Live esplicito: una chiamata sola che legge la revisione e scrive
+// con quella, e un esito che la riga di stato mostra. Ora la voce sta nel foglio
+// azioni: gli esiti — applicato, rifiutato — devono restare visibili tutti e due.
+describe('CellSwitcher — il comando Live esplicito', () => {
+  const apriFoglio = async (cellName) => {
+    fireEvent.click(await screen.findByRole('button', { name: `Cell actions: ${cellName}` }));
+    return screen.findByTestId('cell-actions-sheet');
+  };
+
+  it('designa con la revisione che il server ha appena detto, e lo dice', async () => {
     mocks.getLiveHost.mockResolvedValue({ hostCell: null, revision: 4, eligible: true, threadStatus: 'absent' });
     mocks.designateHostCell.mockResolvedValue({ hostCell: 'cell-One', revision: 5 });
     const onLiveHostApplied = vi.fn();
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
       hostByRoute={{}} onLiveHostApplied={onLiveHostApplied} />);
     await screen.findByRole('button', { name: /^cell-One / });
 
-    fireEvent.click(screen.getByTestId('live-host-command-cloud-cell-One'));
+    const foglio = await apriFoglio('cell-One');
+    fireEvent.click(within(foglio).getByRole('menuitem', { name: 'Assign Live' }));
 
     await waitFor(() => expect(mocks.designateHostCell).toHaveBeenCalledWith('token', 'cell-One', 4, []));
     expect(onLiveHostApplied).toHaveBeenCalledWith({ route: [], hostCell: 'cell-One', revision: 5 });
     expect(await screen.findByText(`Live host: cell-One`)).toBeTruthy();
   });
 
-  it('shows the refusal in the status line and leaves the state alone', async () => {
+  it('mostra il rifiuto nella riga di stato e lascia lo stato com\'era', async () => {
     mocks.getLiveHost.mockResolvedValue({ hostCell: null, revision: 4, eligible: true, threadStatus: 'absent' });
     mocks.designateHostCell.mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403, data: { reason: 'live-host-not-granted' } }));
     const onLiveHostApplied = vi.fn();
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
       hostByRoute={{}} onLiveHostApplied={onLiveHostApplied} />);
     await screen.findByRole('button', { name: /^cell-One / });
 
-    fireEvent.click(screen.getByTestId('live-host-command-cloud-cell-One'));
+    const foglio = await apriFoglio('cell-One');
+    fireEvent.click(within(foglio).getByRole('menuitem', { name: 'Assign Live' }));
 
     expect(await screen.findByText(t('live-host-not-granted'))).toBeTruthy();
     expect(onLiveHostApplied).not.toHaveBeenCalled();
-  });
-});
-
-// Il comando Live host nel selettore compatto è un'ICONA: la frase non c'è più
-// (sfondava la riga), il nome accessibile resta in aria-label/title, e lo stato
-// «questa cella è l'host» si legge dalla classe e dal marker, come per la stella.
-describe('CellSwitcher — the Live host command is an icon button', () => {
-  it('keeps the accessible name and shows the host state', async () => {
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
-      hostByRoute={{ local: { hostCell: 'cell-One', threadStatus: 'thread-active', hostRevision: 2 } }} />);
-    const button = await screen.findByTestId('live-host-command-cloud-cell-One');
-    expect(button.getAttribute('aria-label')).toBe(`${t('live-host-action-remove')}: cell-One`);
-    expect(button.getAttribute('title')).toBe(t('live-host-action-remove'));
-    expect(button.textContent.trim()).toBe('');
-    expect(button.querySelector('svg')).toBeTruthy();
-    expect(button.getAttribute('data-live-host-state')).toBe('host');
-    expect(button.className).toMatch(/nc-cell-switcher-host on/);
-  });
-
-  it('stays an outline when this cell is not the host', async () => {
-    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} hostByRoute={{}} />);
-    const button = await screen.findByTestId('live-host-command-cloud-cell-One');
-    expect(button.getAttribute('aria-label')).toBe(`${t('live-host-action-use')}: cell-One`);
-    expect(button.textContent.trim()).toBe('');
-    expect(button.querySelector('svg')).toBeTruthy();
-    expect(button.getAttribute('data-live-host-state')).toBe('idle');
-    expect(button.className).not.toMatch(/ host on/);
   });
 });
