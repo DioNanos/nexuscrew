@@ -24,23 +24,32 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 const { scriviGenerazione, scriviStato } = require('../lib/files/activity.js');
 
 const REV_0941 = '55f8a9a'; // il punto di rilascio della 0.9.41 sulla linea di lavoro
 const SESSIONE = 'cloud-Dev';
 
-// Il modulo della 0.9.41, preso da git e caricato davvero. Non e' una copia
-// scritta a mano: se il lettore vecchio cambiasse, cambierebbe questo test.
-function lettoreVecchio(t) {
-  const sorgente = execFileSync('git', ['show', `${REV_0941}:lib/files/activity.js`],
-    { cwd: path.join(__dirname, '..'), encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-0941-reader-'));
-  const file = path.join(dir, 'activity-0941.js');
-  fs.writeFileSync(file, sorgente);
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return require(file);
+// Il modulo della 0.9.41, caricato davvero: la copia ESATTA di quello che la
+// 0.9.41 ha pubblicato, in `tests/fixtures/activity-0941.js` (l'intestazione del
+// fixture dice da quale revisione viene).
+//
+// PERCHE' NON DA GIT: la storia del repository pubblico e' schiacciata a un
+// commit per release, quindi `55f8a9a` la' non esiste e il test moriva con
+// «Command failed: git show» — la CI della 0.9.42 e' diventata rossa per questo,
+// non per il codice. Un guardiano deve poter girare anche dove la storia non
+// c'e'.
+function lettoreVecchio() {
+  return require('./fixtures/activity-0941.js');
 }
+
+test('il fixture dichiara da quale revisione viene (la sua provenienza e\' verificabile)', () => {
+  // Il valore di quel file e' che sia la copia ESATTA del lettore pubblicato
+  // nella 0.9.41: se la provenienza non e' scritta, nessuno puo' ricontrollarla.
+  const testa = fs.readFileSync(path.join(__dirname, 'fixtures', 'activity-0941.js'), 'utf8')
+    .split('\n').slice(0, 16).join('\n');
+  assert.match(testa, new RegExp(REV_0941), 'la revisione di provenienza sta nel fixture');
+  assert.match(testa, /git show 55f8a9a:lib\/files\/activity\.js/, 'con il comando per ricontrollarla');
+});
 
 function cella(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-genfile-'));
@@ -49,7 +58,7 @@ function cella(t) {
 }
 
 test('il file di generazione NUOVO non viene frainteso dal lettore della 0.9.41', (t) => {
-  const vecchio = lettoreVecchio(t);
+  const vecchio = lettoreVecchio();
   const { root, dir } = cella(t);
   assert.equal(vecchio.leggiAttivita(root, SESSIONE), null, 'niente su disco: null');
 
@@ -70,7 +79,7 @@ test('il file di generazione NUOVO non viene frainteso dal lettore della 0.9.41'
 test('il formato STORICO (una riga) resta leggibile dal lettore della 0.9.41', (t) => {
   // La controprova: la differenza fra i due formati e' SOLO la seconda riga, e
   // un lancio senza il segno dell'uscita resta compatibile con la 0.9.41.
-  const vecchio = lettoreVecchio(t);
+  const vecchio = lettoreVecchio();
   const { root, dir } = cella(t);
   const gen = 'b'.repeat(16);
   assert.equal(scriviGenerazione(dir, gen), true, 'senza `uscitaGarantita`: una riga');
