@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import CellPeek, { formattaAttività, formattaTelemetria } from './CellPeek.jsx';
 import { apiFetch, clearHostCell, designateHostCell, fleetStatus, getLiveHost, getRouteSessions } from '../lib/api.js';
 import { readCellSwitcherSnapshot, writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
@@ -396,7 +396,7 @@ export default function CellSwitcher({
             view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells: snapshot.cells || [] })} />
           {!ready && <div className="nc-empty" role="status">{t('cell-switcher-refreshing')}</div>}
           {ready && visibleRows.length === 0 && <div className="nc-empty" role="status">{t('cell-switcher-empty-active')}</div>}
-          {visibleRows.map((row) => {
+          {visibleRows.map((row, indice) => {
             const currentRow = current?.session === row.session && (current?.node || '') === row.node;
             const menuAperto = !!menuRow && menuRow.key === row.key;
             const status = statusFor(row);
@@ -406,10 +406,20 @@ export default function CellSwitcher({
             const telemetry = formattaTelemetria(t, row.telemetry);
             const rigaDati = [attività, telemetry].filter(Boolean).join(' · ');
             const position = row.node || 'local';
+            // l'etichetta del nodo sale UNA volta, in testa al suo
+            // gruppo, invece di ripetersi su ogni riga.
+            const precedente = indice > 0 ? (visibleRows[indice - 1].node || 'local') : null;
+            const apreGruppo = position !== precedente;
             const rawItems = rosterItems.get(position)
               || rows.filter((candidate) => (candidate.node || 'local') === position);
             return (
-              <div key={row.key} className={`nc-cell-switcher-row${currentRow ? ' current' : ''}${row.selectable ? '' : ' off'}`}
+              <Fragment key={row.key}>
+              {apreGruppo && (
+                <div className="nc-cell-switcher-position">
+                  {t('cell-switcher-group').replace('{node}', row.nodeLabel || t('cell-switcher-group-local'))}
+                </div>
+              )}
+              <div className={`nc-cell-switcher-row${currentRow ? ' current' : ''}${row.selectable ? '' : ' off'}`}
                 data-roster-key={row.key} data-position={position}>
                 {/* Riordino a MODALITA', come nella home mobile: senza modalita'
                     la maniglia non esiste nel DOM, e la riga e' solo un bersaglio. */}
@@ -434,9 +444,16 @@ export default function CellSwitcher({
                   <span className="nc-cell-switcher-copy">
                     <b>{row.cellName}</b>
                     {currentRow && <span className="nc-cell-switcher-here">{t('cell-switcher-here')}</span>}
-                    <small className="nc-cell-switcher-state">{status}</small>
-                    <small>{[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}</small>
-                    {rigaDati && <small className="nc-cell-switcher-telemetry">{rigaDati}</small>}
+                    {/* UNA riga di stato: la parola (una sola fonte, il poll
+                        che ha confermato la cella) e il tempo dall'ultima
+                        attivita'. La telemetria, se c'e', entra QUI con
+                        l'ellissi: non aggiunge una terza riga. Il vecchio
+                        sottotitolo dell'hook non e' piu' una seconda
+                        rappresentazione dello stesso fatto. */}
+                    <span className="nc-cell-switcher-stateline">
+                      <small className="nc-cell-switcher-state">{status}</small>
+                      {rigaDati && <small className="nc-cell-switcher-telemetry">{rigaDati}</small>}
+                    </span>
                   </span>
                 </button>
                 {/* Le azioni della riga in un foglio dal basso: il pin e la Live.
@@ -448,6 +465,7 @@ export default function CellSwitcher({
                   aria-haspopup="menu" aria-expanded={menuAperto ? 'true' : 'false'}
                   onClick={(event) => { event.stopPropagation(); setMenuRow({ key: row.key }); }}>⋯</button>
               </div>
+              </Fragment>
             );
           })}
         </div>

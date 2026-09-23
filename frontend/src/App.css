@@ -58,7 +58,15 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
   font-size: 13px; font-weight: 600; color: #d8ffe8;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
 }
-.nc-bar-sub { font-size: 10px; opacity: .55; }
+/* il sottotitolo ha il contratto del titolo (tronca con ellissi).
+   Senza, a 412 px usciva sotto i pulsanti a destra. */
+.nc-bar-sub {
+  font-size: 10px; opacity: .55; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Il ⋯ della barra: stesso tondo dei suoi vicini, glifo centrato. */
+.nc-bar-menu { font-size: 18px; line-height: 1; }
 
 /* Transizione slide-in della vista singola (transform 0.2s). */
 .nc-app { animation: nc-slide-in 0.2s ease-out; }
