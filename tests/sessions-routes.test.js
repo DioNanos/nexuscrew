@@ -139,10 +139,10 @@ test('list: supervisore VIVO con lo stesso «ferma» exit:1 → ferma', async (t
   assert.equal(dopo.sessions[0].attivita.stato, 'ferma', 'pane del supervisore vivo: lo stato si legge');
 });
 
-test('list: sessione SENZA marcatore (lanciata prima di questa versione) → null', async (t) => {
-  // Non si sa quale dei suoi pani sia il supervisore, quindi non si afferma
-  // niente: «non verificato». E' la regola: meglio nessuno stato che uno stato
-  // di cui non si sa dire il supervisore.
+test('list: senza marcatore, con `exit:1` nel file (lancio nuovo, marcatura fallita) → null', async (t) => {
+  // Un lancio NUOVO in cui la marcatura del pane non e' riuscita: il file porta
+  // il segno, quindi il suo `Stop` non scadrebbe mai — e nessuno garantisce il
+  // supervisore. Non si legge.
   process.env.FAKE_TMUX_ACTIVITY_MODE = 'unmarked';
   t.after(() => { delete process.env.FAKE_TMUX_ACTIVITY_MODE; });
   const { base, token, dir } = await boot(t);
@@ -151,13 +151,38 @@ test('list: sessione SENZA marcatore (lanciata prima di questa versione) → nul
   const dirSessione = path.join(dir, 'files', nome);
   fs.mkdirSync(dirSessione, { recursive: true });
   const GEN = 'gen-1';
-  // Il file di una cella VECCHIA: una riga sola, senza il segno dell'uscita.
-  fs.writeFileSync(path.join(dirSessione, 'activity.gen'), GEN);
+  fs.writeFileSync(path.join(dirSessione, 'activity.gen'), `${GEN}\nexit:1`);
   fs.writeFileSync(path.join(dirSessione, 'activity.json'),
     JSON.stringify({ event: 'Stop', ts: Date.now(), generation: GEN }));
 
   const dopo = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
-  assert.equal(dopo.sessions[0].attivita, null, 'senza marcatore: non verificato');
+  assert.equal(dopo.sessions[0].attivita, null, 'con exit:1 e nessun marcatore: non si legge');
+});
+
+test('list: senza marcatore e SENZA `exit:1` (lancio vecchio) → decide il lettore, 5 minuti', async (t) => {
+  // E' la regola che evita la regressione: dopo un aggiornamento, su ogni nodo,
+  // le celle vive non devono diventare tutte «non verificate». Un lancio VECCHIO
+  // non ha nessuna non-scadenza da proteggere: si legge, e il lettore fa
+  // scadere `Stop` a cinque minuti. Il caso peggiore dura cinque minuti.
+  process.env.FAKE_TMUX_ACTIVITY_MODE = 'unmarked';
+  t.after(() => { delete process.env.FAKE_TMUX_ACTIVITY_MODE; });
+  const { base, token, dir } = await boot(t);
+  const primo = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
+  const nome = primo.sessions[0].name;
+  const dirSessione = path.join(dir, 'files', nome);
+  fs.mkdirSync(dirSessione, { recursive: true });
+  const GEN = 'gen-1';
+  fs.writeFileSync(path.join(dirSessione, 'activity.gen'), GEN);   // una riga: lancio vecchio
+  const scrivi = (ts) => fs.writeFileSync(path.join(dirSessione, 'activity.json'),
+    JSON.stringify({ event: 'Stop', ts, generation: GEN }));
+
+  scrivi(Date.now());
+  const fresco = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
+  assert.equal(fresco.sessions[0].attivita.stato, 'ferma', 'fresco: si legge');
+
+  scrivi(Date.now() - 60 * 60 * 1000);
+  const vecchio = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
+  assert.equal(vecchio.sessions[0].attivita, null, 'dopo un\'ora: scaduto, non «ferma» per sempre');
 });
 
 test('create: 201 con preset shell, 400 nome/preset invalidi', async (t) => {

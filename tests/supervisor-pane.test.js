@@ -8,7 +8,7 @@
 // «ferma».
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { PANES_FMT, parsePanes, sessioniSenzaSupervisore } = require('../lib/tmux/supervisor-pane.js');
+const { PANES_FMT, parsePanes, statiSupervisore, senzaSupervisore } = require('../lib/tmux/supervisor-pane.js');
 
 test('il formato chiede il pane, il suo pane_dead e il marcatore', () => {
   assert.match(PANES_FMT, /#\{session_name\}/);
@@ -25,38 +25,46 @@ test('parsePanes legge quattro campi, con righe vuote ignorate', () => {
   ]);
 });
 
-test('SUPERVISORE MORTO con una seconda finestra VIVA: la sessione e senza supervisore', () => {
+test('SUPERVISORE MORTO con una seconda finestra VIVA: stato morto', () => {
   // E' il caso misurato: il pane marcato e' morto, l'altro pane e' vivo. Se si
   // guardasse il pane attivo della sessione, questa cella sembrerebbe viva.
-  const morte = sessioniSenzaSupervisore('cloud-Dev\t%1\t1\t1\ncloud-Dev\t%2\t0\t\n');
-  assert.ok(morte.has('cloud-Dev'), 'il pane del supervisore e morto');
+  const stati = statiSupervisore('cloud-Dev\t%1\t1\t1\ncloud-Dev\t%2\t0\t\n');
+  assert.equal(stati.get('cloud-Dev'), 'morto');
 });
 
-test('supervisore VIVO: la sessione non entra fra quelle senza supervisore', () => {
-  assert.equal(sessioniSenzaSupervisore('cloud-Dev\t%1\t0\t1\n').has('cloud-Dev'), false);
-  // anche con altre finestre attorno
-  assert.equal(sessioniSenzaSupervisore('cloud-Dev\t%1\t0\t1\ncloud-Dev\t%2\t1\t\n').has('cloud-Dev'), false,
-    'un pane NON marcato e morto non conta: il supervisore e quello marcato');
+test('supervisore VIVO: stato vivo (un pane non marcato e morto non conta)', () => {
+  assert.equal(statiSupervisore('cloud-Dev\t%1\t0\t1\n').get('cloud-Dev'), 'vivo');
+  assert.equal(statiSupervisore('cloud-Dev\t%1\t0\t1\ncloud-Dev\t%2\t1\t\n').get('cloud-Dev'), 'vivo',
+    'il supervisore e il pane MARCATO');
 });
 
-test('NESSUN marcatore (cella lanciata prima di questa versione): senza supervisore', () => {
-  // Non si sa quale dei suoi pani sia il supervisore, quindi non si afferma
-  // niente sul suo stato: la sessione entra qui e la UI dice «non verificato».
-  assert.equal(sessioniSenzaSupervisore('cloud-Dev\t%1\t0\t\n').has('cloud-Dev'), true);
-  assert.equal(sessioniSenzaSupervisore('cloud-Dev\t%1\t0\t\ncloud-Dev\t%2\t0\t\n').has('cloud-Dev'), true,
-    'due pani vivi e nessun marcatore restano non identificabili');
+test('NESSUN marcatore: stato assente (non si sa quale pane sia il supervisore)', () => {
+  assert.equal(statiSupervisore('cloud-Dev\t%1\t0\t\n').get('cloud-Dev'), 'assente');
+  assert.equal(statiSupervisore('cloud-Dev\t%1\t0\t\ncloud-Dev\t%2\t0\t\n').get('cloud-Dev'), 'assente');
+});
+
+test('LA DECISIONE: morto sempre; assente solo se il file dichiara la garanzia dell\'uscita', () => {
+  assert.equal(senzaSupervisore('morto', false), true, 'supervisore morto: non si legge, qualunque file');
+  assert.equal(senzaSupervisore('morto', true), true);
+  assert.equal(senzaSupervisore('vivo', true), false, 'supervisore vivo: si legge');
+  assert.equal(senzaSupervisore('vivo', false), false);
+  // Il caso che distingue due lanci diversi senza marcatore: con `exit:1` il
+  // `Stop` non scadrebbe e nessuno garantisce il supervisore -> non si legge;
+  // senza, vale il lettore, che fa scadere tutto a 5 minuti.
+  assert.equal(senzaSupervisore('assente', true), true, 'lancio nuovo con marcatura fallita');
+  assert.equal(senzaSupervisore('assente', false), false, 'lancio VECCHIO: decide il lettore, 5 minuti');
 });
 
 test('sessioni diverse si contano separatamente', () => {
-  const morte = sessioniSenzaSupervisore([
+  const stati = statiSupervisore([
     'cloud-A\t%1\t1\t1',   // supervisore morto
     'cloud-B\t%2\t0\t1',   // supervisore vivo
     'cloud-C\t%3\t0\t',    // nessun marcatore
   ].join('\n'));
-  assert.deepEqual([...morte].sort(), ['cloud-A', 'cloud-C']);
+  assert.deepEqual([...stati.entries()].sort(), [['cloud-A', 'morto'], ['cloud-B', 'vivo'], ['cloud-C', 'assente']]);
 });
 
-test('uscita vuota o senza server: nessuna sessione, nessuna morte', () => {
-  assert.deepEqual([...sessioniSenzaSupervisore('')], []);
-  assert.deepEqual([...sessioniSenzaSupervisore('\n')], []);
+test('uscita vuota o senza server: nessuna sessione', () => {
+  assert.equal(statiSupervisore('').size, 0);
+  assert.equal(statiSupervisore('\n').size, 0);
 });

@@ -17,7 +17,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { PANES_FMT, NC_SUPERVISOR_OPT, sessioniSenzaSupervisore } = require('../lib/tmux/supervisor-pane.js');
+const { PANES_FMT, NC_SUPERVISOR_OPT, statiSupervisore } = require('../lib/tmux/supervisor-pane.js');
 
 function tmuxDisponibile() {
   const r = spawnSync('tmux', ['-V'], { encoding: 'utf8' });
@@ -52,28 +52,43 @@ test('tmux vero: supervisore morto + seconda finestra viva → sessione senza su
   // La sessione della cella: la prima finestra e' il supervisore, la seconda una
   // finestra che l'operatore puo' aprire e selezionare (il caso misurato).
   tmux(['new-session', '-d', '-s', 'cloud-Prova', '-x', '80', '-y', '24', 'sh', '-c', 'sleep 300']);
-  tmux(['set-option', '-t', 'cloud-Prova', 'remain-on-exit', 'on']);
+
+  // Il pane del supervisore e' quello della finestra appena creata. Si prende
+  // per ID, non per indice: gli indici di finestra dipendono dalla config di
+  // tmux (`base-index`), e fidarsi dell'ordine di un elenco rendeva questo test
+  // verde una volta e rosso la successiva.
+  const paneSupervisore = tmux(['list-panes', '-t', 'cloud-Prova', '-F', '#{pane_id}']).trim().split('\n')[0];
+
+  // `remain-on-exit` sulla SUA finestra (come la runtime fa sulla cella: e'
+  // quello che fa sopravvivere il pane al processo), poi la seconda finestra —
+  // quella che l'operatore puo' aprire e selezionare — e il suo pane.
+  tmux(['set-option', '-w', '-t', paneSupervisore, 'remain-on-exit', 'on']);
   tmux(['new-window', '-t', 'cloud-Prova']);
+  const paneAltraFinestra = tmux(['list-panes', '-t', 'cloud-Prova', '-F', '#{pane_id}']).trim().split('\n')[0];
 
-  // Il pane del supervisore e' quello della PRIMA finestra: lo si marca come fa
-  // la runtime al lancio, e poi lo si uccide (simula SIGKILL/OOM del supervisore).
-  // : TUTTI i pani della sessione, non solo quelli della finestra attiva.
-  const pani = tmux(['list-panes', '-s', '-t', 'cloud-Prova', '-F', '#{window_index}\t#{pane_id}']).trim().split('\n');
-  const primoPane = pani[0].split('\t')[1];
-  tmux(['set-option', '-p', '-t', primoPane, NC_SUPERVISOR_OPT, '1']);
-  // Uccide il pane del supervisore: e' cio' che fa SIGKILL/OOM al processo che
-  // ci gira dentro (il pane resta, morto, per remain-on-exit).
-  server.tmux(['kill-pane', '-t', primoPane]);
+  // Lo si marca come fa la runtime al lancio, e poi si uccide il PROCESSO che
+  // ci gira dentro con SIGKILL — che e' cosa fa OOM. NON `kill-pane`: quello
+  // distrugge il pane, e non modella niente (provato: col pane distrutto la
+  // sessione restava con la sola seconda finestra). Con remain-on-exit il pane
+  // resta, morto.
+  tmux(['set-option', '-p', '-t', paneSupervisore, NC_SUPERVISOR_OPT, '1']);
+  const pid = Number(tmux(['display-message', '-p', '-t', paneSupervisore, '#{pane_pid}']).trim());
+  assert.ok(Number.isInteger(pid) && pid > 0, `pane_pid non letto: ${pid}`);
+  process.kill(pid, 'SIGKILL');
+  // tmux se ne accorge in un istante: si aspetta il pane morto, non un tempo.
+  for (let i = 0; i < 100; i += 1) {
+    if (tmux(['list-panes', '-a', '-F', '#{pane_id} #{pane_dead}']).includes(`${paneSupervisore} 1`)) break;
+    spawnSync('sleep', ['0.05']);
+  }
 
-  // Con remain-on-exit il pane resta, morto. E si seleziona l'ALTRA finestra:
-  // e' lì che il campo della sessione direbbe «vivo».
-  const viva = pani[1].split('\t')[1];
-  tmux(['select-pane', '-t', viva]);
+  // E si seleziona l'ALTRA finestra: e' lì che il campo della sessione direbbe
+  // «vivo».
+  tmux(['select-pane', '-t', paneAltraFinestra]);
 
   const elenco = tmux(['list-panes', '-a', '-F', PANES_FMT]);
-  const morte = sessioniSenzaSupervisore(elenco);
-  assert.ok(morte.has('cloud-Prova'),
-    `il supervisore e' morto ma la sessione non risulta senza supervisore:\n${elenco}`);
+  const stati = statiSupervisore(elenco);
+  assert.equal(stati.get('cloud-Prova'), 'morto',
+    `il supervisore e' morto ma la sessione non risulta tale:\n${elenco}`);
   // La prova che il campo della SESSIONE avrebbe mentito: il pane attivo e' vivo.
   const paneAttivoMorto = tmux(['display-message', '-p', '-t', 'cloud-Prova', '#{pane_dead}']).trim();
   assert.equal(paneAttivoMorto, '0', 'il pane attivo della sessione e vivo: e proprio per questo il suo pane_dead non basta');
@@ -84,6 +99,6 @@ test('tmux vero: supervisore vivo → la sessione NON e senza supervisore', { sk
   tmux(['new-session', '-d', '-s', 'cloud-Viva', '-x', '80', '-y', '24', 'sh', '-c', 'sleep 300']);
   const pane = tmux(['list-panes', '-t', 'cloud-Viva', '-F', '#{pane_id}']).trim();
   tmux(['set-option', '-p', '-t', pane, NC_SUPERVISOR_OPT, '1']);
-  const morte = sessioniSenzaSupervisore(tmux(['list-panes', '-a', '-F', PANES_FMT]));
-  assert.equal(morte.has('cloud-Viva'), false);
+  const stati = statiSupervisore(tmux(['list-panes', '-a', '-F', PANES_FMT]));
+  assert.equal(stati.get('cloud-Viva'), 'vivo');
 });
