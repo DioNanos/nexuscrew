@@ -222,13 +222,18 @@ export default function CellSwitcher({
   useEffect(() => {
     const previousFocus = document.activeElement;
     closeRef.current?.focus();
-    const onKeyDown = (event) => { if (event.key === 'Escape') onClose(); };
+    const onKeyDown = (event) => {
+      // Con il foglio azioni aperto l'Escape chiude il FOGLIO, che ascolta sullo
+      // stesso documento: senza questa guardia si chiuderebbero tutti e due, e
+      // l'operatore perderebbe il selettore mentre sta scegliendo.
+      if (event.key === 'Escape' && !menuApertoFoglio) onClose();
+    };
     document.addEventListener('keydown', onKeyDown);
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       previousFocus?.focus?.();
     };
-  }, [onClose]);
+  }, [onClose, menuApertoFoglio]);
 
   useEffect(() => {
     let alive = true;

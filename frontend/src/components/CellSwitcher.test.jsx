@@ -442,6 +442,25 @@ describe('CellSwitcher', () => {
     expect(screen.getByRole('button', { name: 'reorder cell-One' })).toBeTruthy();
   });
 
+  it('con il foglio aperto l\'Escape chiude il FOGLIO, non il selettore', async () => {
+    // Il guscio del foglio ascolta il keydown sullo STESSO documento: senza la
+    // guardia, un Escape chiuderebbe tutte e due le cose e l'operatore
+    // perderebbe il selettore mentre stava scegliendo.
+    const onClose = vi.fn();
+    render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} />);
+    await screen.findByRole('button', { name: 'Cell actions: cell-One' });
+    fireEvent.click(screen.getByRole('button', { name: 'Cell actions: cell-One' }));
+    expect(await screen.findByTestId('cell-actions-sheet')).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('cell-actions-sheet')).toBeNull());
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Il selettore e' ancora li': il secondo Escape chiude lui.
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it('closes on Escape without trapping focus', () => {
     const onClose = vi.fn();
     render(<CellSwitcher token="token" current={{}} onPick={vi.fn()} onClose={onClose} />);
