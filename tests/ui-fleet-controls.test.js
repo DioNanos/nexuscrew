@@ -89,11 +89,15 @@ test('Fleet inventory negotiates dedicated import/remove capabilities', () => {
   assert.match(inventory, /!readonly && !pos\.readonly/);
 });
 
-// Le card gestite espongono SOLO il power condiviso: engine/model/policy vivono
-// nel PowerSheet di start/stop, non in un gear per-cella che riapre le Impostazioni
-// globali. Delete/terminate restano nelle Impostazioni; le sessioni unmanaged
-// mantengono il menu ⋯.
-test('managed cards expose only power, never a per-cell settings icon or ⋯ menu', () => {
+// Le card gestite espongono il power condiviso e il foglio azioni della cella:
+// engine/model/policy vivono nel PowerSheet di start/stop, mai in un gear
+// per-cella che riapre le Impostazioni globali. Delete/terminate restano nelle
+// Impostazioni; le sessioni unmanaged mantengono il loro menu ⋯.
+//
+// Il ⋯ della card gestita NON riapre le Impostazioni: apre il foglio azioni
+// della CELLA (Live, pin, avvio al boot, guarda dal vivo) — il divieto che resta
+// e' quello vero, e vale per tutti e due i rami.
+test('managed cards expose the power and the cell actions sheet, never a per-cell settings icon', () => {
   const mobile = read('SessionList.jsx');
   const sidebar = read('Sidebar.jsx');
   const roster = mobile.split('function renderRosterItem')[1] || '';
@@ -103,9 +107,12 @@ test('managed cards expose only power, never a per-cell settings icon or ⋯ men
   assert.doesNotMatch(mobile, /onSettings\('fleet', false/);
   assert.doesNotMatch(sidebar, /onSettings && onSettings\('fleet', false/);
   assert.match(sidebar, /onPower && onPower\(c\)/);
-  // il glifo ⋯ (nc-menu) appare nel ramo unmanaged, non nel ramo cella.
+  // il glifo ⋯ c'e' in entrambi i rami, e nel ramo cella apre il foglio azioni:
+  // se sparisse, o se portasse alle Impostazioni, questa e' la guardia.
   assert.match(unmanagedBlock, /⋯/);
-  assert.doesNotMatch(cellBlock, /⋯/, 'la card di una cella gestita non ha il menu ⋯');
+  assert.match(cellBlock, /⋯/);
+  assert.match(cellBlock, /setMenuCell\(/);
+  assert.doesNotMatch(cellBlock, /onSettings/);
 });
 
 // Flusso "Importa come cella": le sessioni unmanaged nella inventory (Settings)
