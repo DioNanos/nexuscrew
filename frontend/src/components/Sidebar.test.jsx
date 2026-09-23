@@ -150,7 +150,7 @@ describe('Sidebar session identity', () => {
     };
     const { rerender } = render(<Sidebar {...props} />);
 
-    // D-349/D2: il boot vive nel menu ⋯ come interruttore; il tondo è sparito.
+    // Il boot vive nel menu ⋯ come interruttore; il tondo è sparito.
     expect(screen.queryByRole('button', { name: 'enable at boot Local Cell' })).toBeNull();
     let menu = await openMenuFor('Local Cell');
     expect(within(menu).getByRole('menuitemcheckbox', { name: 'Boot at startup' }).getAttribute('aria-checked')).toBe('false');
@@ -293,7 +293,7 @@ describe('Sidebar session identity', () => {
 
 // --- Live per nodo (0.9.1 seconda meta'): la designazione deve comandare il
 // nodo GIUSTO — spia sulla chiamata, non solo "la funzione non esplode".
-// D-349/D2: il pin vive nella voce del menu ⋯ e lo stato Live si legge sul
+// Il pin vive nella voce del menu ⋯ e lo stato Live si legge sul
 // BOLLINO della riga; i criteri del nodo giusto restano gli stessi.
 describe('Sidebar — cella ospite Live per nodo', () => {
   const remoteCellGroup = (extra = {}) => ({

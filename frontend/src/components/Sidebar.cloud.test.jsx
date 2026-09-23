@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
-// D-349 FASE 2a: la nuvola al passaggio (N2) e il menu azioni (⋯) nella
+// La nuvola al passaggio e il menu azioni (⋯) nella
 // sidebar. I gesti che c'erano restano: clic riga = riquadro, doppio clic =
 // vista singola, trascina, clic sul pallino della mini-rail — le non-regressioni
 // vivono in Sidebar.test.jsx; qui si verifica il nuovo senza rompere il vecchio.
@@ -64,7 +64,7 @@ const apriNuvola = async () => {
   return { cloud: screen.getByTestId('peek-cloud'), dot };
 };
 
-describe('Nuvola al passaggio sul pallino (D-350/N2)', () => {
+describe('Nuvola al passaggio sul pallino', () => {
   it('sale dopo ~300 ms sul pallino, già in sorgente Live, col nome della cella', async () => {
     render(<Sidebar {...aliveProps()} />);
     const dot = dotEspanso();

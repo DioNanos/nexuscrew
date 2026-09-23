@@ -92,7 +92,7 @@
 }
 .nc-cell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .nc-cell-main b { font-size: 13px; color: #d8ffe8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-/* D-349/D2: lo stato è contenuto, non decorazione — due righe da 12px, leggibile. */
+/* Lo stato è contenuto, non decorazione — due righe da 12px, leggibile. */
 .nc-cell-main small {
   font-size: 12px; opacity: .75;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
@@ -226,7 +226,7 @@
 .nc-side-card.nc-roster-dragging, .nc-cell.nc-roster-dragging { opacity: .62; }
 .nc-side-card.nc-roster-over, .nc-cell.nc-roster-over { outline: 2px solid rgba(0,204,102,.72); outline-offset: 2px; }
 
-/* --- D-349/D2 + D-350/N2 ------------------------------------------------- */
+/* Maniglia al passaggio, bollino host, menu azioni, striscia Live ---------- */
 
 /* Maniglia roster: solo al passaggio (o focus da tastiera) sulla riga cella.
    Lo spazio resta occupato: nessun scatto di layout quando compare. */

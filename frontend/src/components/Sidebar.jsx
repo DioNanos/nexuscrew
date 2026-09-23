@@ -6,7 +6,6 @@ import {
   hostRenderState, hostLeaseTitleKey, hostThreadTitleKey, hostRouteKey,
 } from '../lib/host-designation.js';
 import PinPersistBanner from './PinPersistBanner.jsx';
-import CellStar from './CellStar.jsx';
 import { liveHostView } from '../lib/live-host-view.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
@@ -68,7 +67,7 @@ export default function Sidebar({
   // designazione e' per-nodo lato server (CAS su una sola hostCell a testa);
   // hostByRoute e' la sua controparte lato client, una voce per route.
   const hostFor = (route) => hostByRoute[hostRouteKey(route)] || {};
-  // Il ciclo della stellina vive in CellStar/applyCellStar: stessa
+  // Il ciclo del pin vive in cell-star.js (applyCellStar/cellStarView): stessa
   // implementazione per la home, la sidebar e il selettore compatto.
   const cellSessions = new Set((cells || []).map((c) => c.tmuxSession));
   const byName = new Map((sessions || []).map((s) => [s.name, s]));
@@ -90,7 +89,7 @@ export default function Sidebar({
   // R4 e chiuso lì. La chiave si ri-risolve a ogni render sulle righe correnti.
   const [peekKey, setPeekKey] = useState(null);
   const [peekSource, setPeekSource] = useState('preview');
-  // Nuvola al passaggio (D-350/N2): CHIAVE del pallino che l'ha chiamata — mai
+  // Nuvola al passaggio: CHIAVE del pallino che l'ha chiamata — mai
   // la riga salvata, stessa regola del peek — più rettangolo del pallino e
   // sorgente corrente. Una sola nuvola, e mai mentre il popup è aperto.
   const [cloud, setCloud] = useState(null); // {itemKey, routeKey, anchorRect, source}
@@ -487,7 +486,7 @@ export default function Sidebar({
       {/* Live host del NODO che serve la pagina: una riga in testa, di sola
           lettura. Il comando che lo cambia sta nelle righe delle celle. */}
       <div className="nc-side-live-host">
-        {/* Striscia Live (D-349/D2): il testo intero resta nel tooltip; l'esito
+        {/* Striscia Live: il testo intero resta nel tooltip; l'esito
             dell'ultimo comando Live dal menu arriva qui, come la notice del popup. */}
         <LiveStrip view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells })} notice={liveNotice} />
       </div>
@@ -892,7 +891,7 @@ export default function Sidebar({
   );
 }
 
-// La striscia Live (D-349/D2): al posto della riga di testo, una striscia
+// La striscia Live: al posto della riga di testo, una striscia
 // compatta — pallino (stesso colore del registro Live) + nome della cella.
 // La frase intera resta nel tooltip; l'esito dell'ultimo comando Live dato
 // dal menu arriva qui, dove l'occhio già guarda.
