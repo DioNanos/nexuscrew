@@ -65,6 +65,11 @@
       "source": "\\b(?:vps3|macair|pixel9pro|mgm)\\b",
       "flags": "i",
       "reason": "hostname di nodo interno nella payload pubblicata"
+    },
+    {
+      "source": "\\bDBG-",
+      "flags": "",
+      "reason": "marcatore di debug lasciato nel sorgente o nel bundle (DBG-, DBG-M2, ...)"
     }
   ],
   "payloadIds": [

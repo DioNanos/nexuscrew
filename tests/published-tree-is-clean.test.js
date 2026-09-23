@@ -584,6 +584,26 @@ test('PROVENIENZA AUDIT nel dist — le grammatiche strutturali mordono anche il
     'hex di colore del bundle non e\' provenienza di audit');
 });
 
+// Un marcatore di debug non e' una questione di stile: "DBG-M2 merged:" e'
+// rimasto dentro il bundle di una release pubblicata, con le chiavi delle
+// notifiche remote stampate in console. La regola deve mordere il SORGENTE del
+// payload E il BUNDLE — che e' cio' che l'utente scarica davvero — e non deve
+// prendere i simboli legittimi del minificato che cominciano per quelle
+// lettere.
+test('DBG- — un marcatore di debug nel payload e nel bundle fa fallire il gate', () => {
+  const nelSorgente = colpeIn('  const a = 1; // DBG-merged: keys', 'lib/esempio.js', true);
+  assert.ok(nelSorgente.some((c) => /marcatore di debug/.test(c)),
+    `un marcatore di debug in un file del payload non fa fallire il gate: ${JSON.stringify(nelSorgente)}`);
+  const nelBundle = colpeIn('console.log("DBG-M2 merged:", e.length)', 'frontend/dist/assets/index-x.js', true);
+  assert.ok(nelBundle.some((c) => /marcatore di debug/.test(c)),
+    `il bundle del dist non e' coperto dalla regola: ${JSON.stringify(nelBundle)}`);
+  // Controprova: senza trattino non e' un marcatore. Il bundle minificato e'
+  // pieno di simboli che cominciano per quelle lettere, e una regola che li
+  // prendesse renderebbe il gate inutilizzabile su un dist legittimo.
+  assert.deepEqual(colpeIn('var DBGCOUNT=3,DBGMODE=1;', 'frontend/dist/assets/index-x.js', true), [],
+    'senza trattino non e\' un marcatore di debug');
+});
+
 test('R6 — tutte le grammatiche R5 strutturali mordono anche nel dist', () => {
   // Le regole del ramo esente dist: ID corti di rilievo, ID di lavoro
   // D-xxx, serie N- dei rilievi. Il numero e' asserito apposta — aggiungere
