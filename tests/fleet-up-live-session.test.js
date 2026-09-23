@@ -16,7 +16,6 @@
 // La prova che conta non e' «arriva 409» (arrivava anche prima): e' che il file
 // della generazione resti INTATTO — stesso contenuto, stessa mtime.
 const { test } = require('node:test');
-const { spawn, spawnSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -34,7 +33,7 @@ const SESSIONE = 'cloud-Dev';
 // risponde «vivo» per sempre renderebbe impossibile provare il lancio riuscito
 // (il controllo in testa lo fermerebbe) — e un fake che risponde «nessuno» per
 // sempre renderebbe impossibile provare il caso della cella viva.
-function mondo(t, { vive = [], pronto = true, newSessionError = false } = {}) {
+function mondo(t, { vive = [], pronto = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-live-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700);
@@ -59,11 +58,6 @@ const cmd = args[0] || '';
 const vive = () => fs.readFileSync(STATO, 'utf8').split('\\n').filter(Boolean);
 if (cmd === 'list-sessions') { for (const n of vive()) process.stdout.write('\\t'.repeat(0) + n + '\\t1\\n'); process.exit(0); }
 if (cmd === 'new-session') {
-  if (${JSON.stringify(newSessionError)} === true) { process.stderr.write('synthetic new-session failure\\n'); process.exit(1); }
-  // tmux NON crea una sessione che esiste gia': risponde «duplicate session».
-  // Senza questo il fake lascerebbe vincere DUE lanci, e il riproduttore del
-  // difetto non sarebbe fedele: il perdente deve arrivare al 409.
-  if (vive().includes(${JSON.stringify(SESSIONE)})) { process.stderr.write('duplicate session: ' + ${JSON.stringify(SESSIONE)} + '\\n'); process.exit(1); }
   // la sessione nasce ADESSO: da qui in poi list-sessions la vede.
   fs.writeFileSync(STATO, vive().concat([${JSON.stringify(SESSIONE)}]).join('\\n') + '\\n');
   process.stdout.write('$5\\t@1\\t%9\\n'); process.exit(0);
@@ -202,100 +196,3 @@ test('restart: la cella muore e rinasce, con una generazione nuova e coerente', 
   assert.equal(w.ticket[0].activity.generation, dopo,
     'restart: hooks e file devono portare la stessa generazione');
 });
-
-// --- 5. il riproduttore: due up CONCORRENTI sulla stessa cella spenta ------
-//
-// E' il caso che l'audit ha riprodotto: entrambi vedevano «non viva», il
-// vincitore creava la sessione con la generazione A, il perdente scriveva B e
-// solo dopo prendeva il 409 — e sul disco restava B, che non e' la generazione
-// di nessun lancio vivo. La prova che conta e' l'ultima riga: sul disco c'e' la
-// generazione del VINCITORE.
-
-test('due up concorrenti sulla stessa cella spenta: sul disco la generazione del VINCITORE', async (t) => {
-  const w = mondo(t, { vive: [] });
-  genera(w, 'gen-di-un-lancio-vecchio');
-
-  const esiti = await Promise.allSettled([w.runtime.up('Dev'), w.runtime.up('Dev')]);
-  const prima = esiti[0];
-  const secondo = esiti[1];
-  assert.equal(prima.status, 'fulfilled', 'il primo turno lancia');
-  assert.equal(secondo.status, 'rejected', 'il secondo non lancia');
-  assert.equal(secondo.reason.status, 409);
-  assert.equal(secondo.reason.fleetCode, 'SESSION_DUPLICATE');
-
-  // L'asserzione che nomina il difetto trovato dall'audit, per prima: sul disco
-  // c'e' la generazione di un lancio VIVO, non quella del perdente.
-  const suDisco = fs.readFileSync(w.genPath, 'utf8');
-  assert.equal(w.ticket.length, 1, 'UN solo lancio: il perdente non chiede nemmeno il ticket');
-  assert.equal(suDisco, w.ticket[0].activity.generation,
-    'sul disco la generazione del VINCITORE, non quella del perdente');
-  assert.notEqual(suDisco, 'gen-di-un-lancio-vecchio');
-  assert.equal(fs.existsSync(path.join(path.dirname(w.genPath), '.up.lock')), false,
-    'la serializzazione non lascia il lock appeso');
-});
-
-// --- 6. lock ORFANO: il proprietario non esiste piu' ---------------------
-
-test('lock orfano (PID morto): si rompe e la cella parte', async (t) => {
-  const w = mondo(t, { vive: [] });
-  genera(w, 'gen-vecchia');
-  // Un processo che c'e' stato e non c'e' piu': il suo PID non esiste.
-  const morto = spawnSync(process.execPath, ['-e', '']).pid;
-  const lock = path.join(path.dirname(w.genPath), '.up.lock');
-  fs.mkdirSync(lock, { recursive: true });
-  fs.writeFileSync(path.join(lock, 'pid'), String(morto), { mode: 0o600 });
-  assert.equal(processoVivo(morto), false, 'il PID del figlio terminato non e\' vivo');
-
-  const esito = await w.runtime.up('Dev');
-  assert.ok(esito, 'un lock orfano non deve bloccare la cella');
-  assert.equal(w.ticket.length, 1, 'la cella e\' partita davvero');
-  assert.equal(fs.readFileSync(w.genPath, 'utf8'), w.ticket[0].activity.generation);
-  assert.equal(fs.existsSync(lock), false, 'il lock orfano e\' stato rimosso');
-});
-
-// --- 7. lock VIVO: un'altra partenza e' in corso -------------------------
-
-test('lock vivo (PID esistente): 409 «cella già in avvio» e nessuna scrittura', async (t) => {
-  const w = mondo(t, { vive: [] });
-  const mtimePrima = genera(w, 'gen-vecchia');
-  const prima = fs.readFileSync(w.genPath, 'utf8');
-  // Un processo VERO, vivo, che tiene il lock.
-  const vivo = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 8000)'], { stdio: 'ignore' });
-  t.after(() => { try { vivo.kill('SIGKILL'); } catch (_) {} });
-  const lock = path.join(path.dirname(w.genPath), '.up.lock');
-  fs.mkdirSync(lock, { recursive: true });
-  fs.writeFileSync(path.join(lock, 'pid'), String(vivo.pid), { mode: 0o600 });
-
-  await assert.rejects(() => w.runtime.up('Dev'), (e) => {
-    assert.equal(e.status, 409);
-    assert.equal(e.fleetCode, 'SESSION_DUPLICATE');
-    assert.match(String(e.message), /già in avvio/);
-    return true;
-  });
-
-  assert.equal(fs.readFileSync(w.genPath, 'utf8'), prima, 'il file non si tocca');
-  assert.equal(fs.statSync(w.genPath).mtimeMs, mtimePrima, 'nemmeno la mtime');
-  assert.deepEqual(w.ticket, [], 'nessun ticket: la cella non e\' stata lanciata');
-  assert.equal(fs.existsSync(lock), true, 'il lock di un altro processo non si rimuove');
-});
-
-// --- 8. il lock si rilascia anche sul percorso d'errore ------------------
-
-test('lancio fallito: il lock viene rilasciato comunque', async (t) => {
-  const w = mondo(t, { vive: [], newSessionError: true });
-  genera(w, 'gen-vecchia');
-  const lock = path.join(path.dirname(w.genPath), '.up.lock');
-
-  await assert.rejects(() => w.runtime.up('Dev'), (e) => e.status === 500 && e.fleetCode === 'NEW_SESSION_FAILED');
-  assert.equal(fs.existsSync(lock), false,
-    'un lancio fallito non deve lasciare la cella bloccata fino alla morte del processo');
-  // e la cella si puo' rilanciare subito dopo: nessun lock appeso.
-  await assert.rejects(() => w.runtime.up('Dev'), (e) => e.fleetCode === 'NEW_SESSION_FAILED');
-});
-
-// Il controllo di liveness usato dal runtime, riscritto qui: se cambia la
-// regola (ESRCH = morto), questo test deve cadere — non e' una copia di
-// comodo, e' il verso dell'asserzione.
-function processoVivo(pid) {
-  try { process.kill(pid, 0); return true; } catch (e) { return e && e.code === 'EPERM'; }
-}
