@@ -165,6 +165,10 @@ export default function CellSwitcher({
   // Lo stato dell'host per nodo e le due azioni di designazione arrivano
   // dalle stesse callback che usa la home: la stella qui non ha una via sua.
   hostByRoute = {}, onDesignateCell, onClearHostCell, onLiveHostApplied,
+  // L'intervallo del poll e' un parametro, non una costante letta dal modulo:
+  // in produzione e' POLL_MS, nei test e' corto, cosi' nessun assert dipende da
+  // un timer da 4 secondi che sotto carico puo' sforare il budget del waitFor.
+  pollMs = POLL_MS,
 }) {
   const [snapshot, setSnapshot] = useState(readCellSwitcherSnapshot);
   const [showAll, setShowAll] = useState(false);
@@ -181,12 +185,12 @@ export default function CellSwitcher({
   // si chiude da sé. `source` è la sorgente aperta: anteprima, streaming o
   // pannello.
   const [peek, setPeek] = useState(null);
-  // Il foglio azioni di una riga (⋯): contesto congelato all'apertura, come in
-  // M2 — la riga che l'operatore ha toccato, non quella che il poll ha cambiato
-  // sotto le dita.
+  // Il foglio azioni di una riga (⋯): contesto congelato all'apertura — la riga
+  // che l'operatore ha toccato, non quella che il poll ha cambiato sotto le dita.
   const [menuRow, setMenuRow] = useState(null);
-  // Riordino come MODALITA' (come M2): le maniglie compaiono solo quando la si
-  // accende, e senza modalita' la riga resta un bersaglio d'apertura.
+  // Riordino come MODALITA', con lo stesso pulsante della home mobile: le
+  // maniglie compaiono solo quando la si accende, e senza modalita' la riga
+  // resta un bersaglio d'apertura.
   const [reorderMode, setReorderMode] = useState(false);
   const [picking, setPicking] = useState('');
   const dialogRef = useRef(null);
@@ -282,9 +286,9 @@ export default function CellSwitcher({
       inFlight = false;
     };
     refresh();
-    const id = setInterval(refresh, POLL_MS);
+    const id = setInterval(refresh, pollMs);
     return () => { alive = false; clearInterval(id); };
-  }, [token]);
+  }, [token, pollMs]);
 
   // Comando esplicito del Live host: una chiamata sola che legge la revisione
   // fresca e scrive (live-host-command.js). L'esito si vede SEMPRE nella riga di
@@ -407,8 +411,8 @@ export default function CellSwitcher({
             return (
               <div key={row.key} className={`nc-cell-switcher-row${currentRow ? ' current' : ''}${row.selectable ? '' : ' off'}`}
                 data-roster-key={row.key} data-position={position}>
-                {/* Riordino a MODALITA' (come M2): senza modalita' la maniglia
-                    non esiste nel DOM, e la riga e' solo un bersaglio. */}
+                {/* Riordino a MODALITA', come nella home mobile: senza modalita'
+                    la maniglia non esiste nel DOM, e la riga e' solo un bersaglio. */}
                 {reorderMode && <RosterHandle position={position} itemKey={row.key} label={row.cellName}
                   canMove={canMoveRoster}
                   onMove={(source, target) => moveRoster(position, source, target, rawItems)}
