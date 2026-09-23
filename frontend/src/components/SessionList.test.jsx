@@ -266,7 +266,7 @@ describe('mobile roster parity', () => {
     const local = document.querySelector('[data-position="local"]');
     const before = [...local.querySelectorAll(':scope > [data-roster-key], :scope > * > [data-roster-key]')]
       .map((node) => node.dataset.rosterKey);
-    // M2: il riordino si accende dall'intestazione (modalità). Il gesto e la
+    // Il riordino si accende dall'intestazione (modalità). Il gesto e la
     // persistenza sono gli stessi di prima: cambia solo quando la maniglia c'è.
     await user.click(screen.getByRole('button', { name: 'reorder' }));
     const handle = screen.getByRole('button', { name: 'reorder Off Cell' });
@@ -556,11 +556,11 @@ describe('righe remote route-qualified: mai dall\'omonima locale', () => {
   });
 });
 
-// M2 — le azioni della cella in un foglio dal basso, il bollino LIVE, la
-// striscia in testa e il riordino come MODALITA'. La riga continua a fare
-// quello che faceva (tocco = apre, i tondi restano tondi): il foglio RACCOGLIE
-// le azioni e aggiunge quella che in fila non ci sta, la Live.
-describe('M2 — foglio azioni, bollino LIVE, striscia, riordino a modalità', () => {
+// Le azioni della cella in un foglio dal basso, il bollino LIVE, la striscia in
+// testa e il riordino come MODALITA'. La riga della cella resta un bersaglio
+// d'apertura con due comandi diretti soli, ⋯ e power: il foglio RACCOGLIE le
+// altre — Live, pin, avvio al boot — e aggiunge quella che in fila non ci sta.
+describe('foglio azioni, bollino LIVE, striscia, riordino a modalità', () => {
   function renderConHost(hostByRoute = {}) {
     return render(<SessionList token="test-token" onPick={vi.fn()} onSettings={vi.fn()} hostByRoute={hostByRoute} />);
   }
