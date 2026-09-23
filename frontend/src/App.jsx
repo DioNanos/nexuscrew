@@ -15,6 +15,7 @@ import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
 import { nextRendererPreference, readRendererPreference, writeRendererPreference } from './lib/terminal-renderer.js';
 import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
+import { createPollGuard } from './lib/poll-guard.js';
 import VlSessionView from './components/VlSessionView.jsx';
 import CellPanel from './components/CellPanel.jsx';
 import {
@@ -496,40 +497,62 @@ export default function App() {
   // che useNodes produce un nuovo array (~4s, anche a dati invariati).
   const nodeGroupsRef = useRef(nodeGroups);
   useEffect(() => { nodeGroupsRef.current = nodeGroups; }, [nodeGroups]);
+  // Guardia di non-sovrapposizione sui due poll del desktop. Il periodo e' 4 s
+  // (sotto), ma una lettura federata puo' durare fino a 8 s (api.js): senza
+  // guardia due giri stanno in volo insieme e la risposta piu' VECCHIA puo'
+  // atterrare dopo la piu' nuova, riportando la lista a un esito superato —
+  // e' la corsa che fa lampeggiare la rail. Stesso rimedio di useNodes.js.
+  const loadGuardRef = useRef(null);
+  if (!loadGuardRef.current) loadGuardRef.current = createPollGuard();
+  const pollGuardRef = useRef(null);
+  if (!pollGuardRef.current) pollGuardRef.current = createPollGuard();
   const poll = useCallback(async () => {
+    const guard = pollGuardRef.current;
+    const turno = guard.begin();
+    // Un giro e' gia' in volo: il tick si SALTA, non si accoda.
+    if (turno === null) return;
     try {
-      const r = await apiFetch('/api/sessions', token);
-      const j = await r.json();
-      // La lettura LOCALE e' autorevole solo quando ha risposto davvero: un
-      // errore non svuota la lista (l'ultima nota resta) e non la promuove
-      // nemmeno a prova di assenza — la marca non verificata, come i peer.
-      if (!j.error) {
-        setDSessions(j.sessions || []);
-        setLocalVerified(true);
-        setLocalSessionsAt(Date.now());
+      try {
+        const r = await apiFetch('/api/sessions', token);
+        const j = await r.json();
+        // La lettura LOCALE e' autorevole solo quando ha risposto davvero: un
+        // errore non svuota la lista (l'ultima nota resta) e non la promuove
+        // nemmeno a prova di assenza — la marca non verificata, come i peer.
+        if (!j.error) {
+          setDSessions(j.sessions || []);
+          setLocalVerified(true);
+          setLocalSessionsAt(Date.now());
+        } else {
+          setLocalVerified(false);
+        }
+      } catch (_) { setLocalVerified(false); }
+      // R27: stessa policy pura della home mobile (lib/fleet-read-policy.js) —
+      // un fallimento di lettura NON svuota la lista: non e' «zero celle»,
+      // resta l'ultima nota con l'indicatore stale in sidebar.
+      let fs = null; let fleetError = null;
+      try { fs = await fleetStatus(token); } catch (e) { fleetError = e; }
+      // Seconda riga di difesa: se fra la partenza e qui la guardia e' stata
+      // superata, questo esito non e' piu' quello da applicare.
+      if (!guard.isCurrent(turno)) return;
+      const fleet = fleetReadOutcome({ fs, error: fleetError });
+      if (fleet.kind === 'data') {
+        setCells(fleet.cells);
+        setFleetCapabilities(fleet.capabilities);
+        setFleetStale(false);
+        setFleetOff(null);
+      } else if (fleet.kind === 'stale') {
+        setFleetStale(true);
+        setFleetOff(null);
       } else {
-        setLocalVerified(false);
+        setCells([]);
+        setFleetCapabilities([]);
+        setFleetStale(false);
+        setFleetOff(fleet.reason || '');
       }
-    } catch (_) { setLocalVerified(false); }
-    // R27: stessa policy pura della home mobile (lib/fleet-read-policy.js) —
-    // un fallimento di lettura NON svuota la lista: non e' «zero celle»,
-    // resta l'ultima nota con l'indicatore stale in sidebar.
-    let fs = null; let fleetError = null;
-    try { fs = await fleetStatus(token); } catch (e) { fleetError = e; }
-    const fleet = fleetReadOutcome({ fs, error: fleetError });
-    if (fleet.kind === 'data') {
-      setCells(fleet.cells);
-      setFleetCapabilities(fleet.capabilities);
-      setFleetStale(false);
-      setFleetOff(null);
-    } else if (fleet.kind === 'stale') {
-      setFleetStale(true);
-      setFleetOff(null);
-    } else {
-      setCells([]);
-      setFleetCapabilities([]);
-      setFleetStale(false);
-      setFleetOff(fleet.reason || '');
+    } finally {
+      // Sempre, anche sul percorso d'errore: senza questo il primo fallimento
+      // lascerebbe la guardia chiusa e il poll non ripartirebbe mai.
+      guard.end();
     }
   }, [token]);
   // hostByRoute e' server-owned e vale per DESKTOP e MOBILE: polling separato dal
@@ -540,6 +563,12 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      const guard = loadGuardRef.current;
+      const turno = guard.begin();
+      // Un giro e' gia' in volo: il tick si SALTA. La lettura host passa dai
+      // peer e puo' durare piu' del periodo di poll.
+      if (turno === null) return;
+      try {
       const routes = [[], ...(nodeGroupsRef.current || [])
         .filter((g) => g.kind !== 'vl' && g.status === 'up')
         .map((g) => (Array.isArray(g.route) && g.route.length ? g.route : [g.name]))];
@@ -568,6 +597,9 @@ export default function App() {
         }
         return changed ? next : current;
       });
+      } finally {
+        guard.end();
+      }
     };
     load();
     const id = setInterval(load, 4000);
@@ -856,6 +888,9 @@ export default function App() {
         <Sidebar
           sessions={dSessions}
           cells={cells}
+          // La rail dichiara il degrado come fa il roster mobile: senza questo
+          // l'ultima lettura locale fallita resta presentata come autorevole.
+          localVerified={localVerified}
           activeSessions={activeSessions}
           nodeGroups={nodeGroups}
           token={token}
