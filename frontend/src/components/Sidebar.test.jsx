@@ -404,3 +404,32 @@ describe('Sidebar — nodi VL', () => {
     expect(screen.getByText(/offline/i)).toBeTruthy();
   });
 });
+
+describe('Sidebar e la lettura locale non riuscita', () => {
+  // Una cella accesa nella quale la sessione non e' stata letta: l'anteprima
+  // non e' un dato, e «accesa» per inerzia non e' una prova. La rail deve
+  // dichiarare INCERTO lo stato, come fa il roster mobile quando la sua
+  // lettura fallisce — invece di presentare come autorevole un dato che non
+  // ha potuto verificare.
+  const props = (extra = {}) => ({
+    cells: [{ cell: 'Local Worker', tmuxSession: 'local-worker', tmux: true, active: true, engine: 'claude.native' }],
+    sessions: [{ name: 'local-worker', preview: 'anteprima locale' }],
+    nodeGroups: [],
+    onPick: vi.fn(), onAddTile: vi.fn(), onSettings: vi.fn(),
+    ...extra,
+  });
+
+  it('dichiara non verificato lo stato quando la lettura locale e fallita', () => {
+    render(<Sidebar {...props({ localVerified: false })} />);
+    const row = screen.getByText('Local Worker').closest('[data-roster-key]');
+    // Regex, non uguaglianza: in questo ramo l'etichetta accoda il motore
+    // configurato («unverified · claude.native»), che e' un dato Fleet e resta.
+    expect(within(row).getByText(/unverified/)).toBeTruthy();
+  });
+
+  it('non dichiara non verificato quando la lettura locale e riuscita', () => {
+    render(<Sidebar {...props({ localVerified: true })} />);
+    const row = screen.getByText('Local Worker').closest('[data-roster-key]');
+    expect(within(row).queryByText(/unverified/)).toBeNull();
+  });
+});
