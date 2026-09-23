@@ -6,8 +6,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  leggiAttivita, scriviStato, scriviGenerazione, statoDaEvento,
-  NOME_FILE, NOME_GENERAZIONE, MASSIMA_ETA_MS, FUTURO_TOLLERATO_MS,
+  leggiAttivita, scriviStato, scriviGenerazione, statoDaEvento, daRegistrare,
+  NOME_FILE, NOME_GENERAZIONE, MASSIMA_ETA_MS, FUTURO_TOLLERATO_MS, USCITA,
 } = require('../lib/files/activity.js');
 
 const SESSIONE = 'cloud-Prova';
@@ -221,14 +221,54 @@ test('il caso Ctrl-C: nessun evento nuovo -> il dato scade invece di mentire', (
 
 // --- generazione ----------------------------------------------------------
 
-test('stato di una generazione precedente viene scartato', () => {
+test('la generazione decide: mismatch E assenza vengono scartati quando il launcher ne dichiara una', () => {
   const root = tmpRoot();
+  // Formato storico, il launcher NON dichiara una generazione: il file vale
+  // com'e'. E' il caso che la trasformazione di questo test deve CONSERVARE.
   scriviStato(dirSessione(root), { evento: 'UserPromptSubmit', generazione: 'gen-vecchia' });
   assert.equal(leggiAttivita(root, SESSIONE).stato, 'lavora', 'senza generazione dichiarata vale');
+
   scriviGenerazione(dirSessione(root), 'gen-nuova');
+  // Mismatch: lo stato appartiene a un lancio precedente della stessa cella.
   assert.equal(leggiAttivita(root, SESSIONE), null, 'la generazione corrente e gen-nuova');
+
+  // ASSENZA di generazione: con `activity.gen` sul disco il file non e' legato
+  // ad alcun lancio. Finche' ogni stato scadeva il caso era coperto dalla
+  // finestra; ora che «ferma» non scade piu', un vecchio `Stop` senza
+  // generazione resterebbe vero attraverso tutti i lanci successivi.
+  scriviStato(dirSessione(root), { evento: 'Stop' });
+  assert.equal(leggiAttivita(root, SESSIONE), null,
+    'senza generazione, ma con activity.gen dichiarata: scartato');
+
   scriviStato(dirSessione(root), { evento: 'Stop', generazione: 'gen-nuova' });
   assert.equal(leggiAttivita(root, SESSIONE).stato, 'ferma');
+});
+
+// --- l'uscita del client: il riavvio INTERNO del supervisore --------------
+//
+// Il supervisore riavvia il client dentro lo STESSO lancio (cell-exec.js), quindi
+// `activity.gen` non cambia: la regola 3 non puo' accorgersi che il client
+// precedente e' morto. E' l'evento di uscita a dirlo.
+
+test('l\'uscita del client invalida «ferma»: il riavvio interno non eredita lo stato', () => {
+  const root = tmpRoot();
+  const ora = 1_700_000_000_000;
+  scriviGenerazione(dirSessione(root), 'gen-1');
+  scriviStato(dirSessione(root), { evento: 'Stop', generazione: 'gen-1', ora });
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 1000).stato, 'ferma');
+
+  scriviStato(dirSessione(root), { evento: USCITA, generazione: 'gen-1', ora: ora + 2000 });
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 3000), null,
+    'client morto = non verificato, mai «ferma» durante il backoff');
+  assert.equal(leggiAttivita(root, SESSIONE, ora + 60 * 60 * 1000), null,
+    'e non torna «ferma» col passare del tempo');
+});
+
+test('l\'uscita non dichiara uno stato e non e\' registrabile dagli hook', () => {
+  // Non e' una transizione: invalida. E non la scrive lo script degli hook —
+  // la scrive il supervisore, che e' l'unico a sapere quando il client esce.
+  assert.equal(statoDaEvento(USCITA), null);
+  assert.equal(daRegistrare(USCITA), false);
 });
 
 // --- scrittura concorrente ------------------------------------------------

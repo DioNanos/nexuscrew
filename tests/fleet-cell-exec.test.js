@@ -3,7 +3,11 @@
 const { EventEmitter } = require('node:events');
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { sanitizeSpawnError, main } = require('../lib/fleet/cell-exec.js');
+const { scriviStato, scriviGenerazione, leggiAttivita } = require('../lib/files/activity.js');
 
 // Fake child_process spawn result: an EventEmitter that understands the
 // `.once(event, fn)` / `.kill(signal)` surface main() uses, plus an async
@@ -138,4 +142,72 @@ test('main: broker payload env reaches the child, including MCP_DEVICE', async (
   });
   assert.equal(code, 0);
   assert.equal(capturedEnv.MCP_DEVICE, 'dev-agent');
+});
+
+// --- uscita del client: il riavvio INTERNO non eredita lo stato ------------
+//
+// Il supervisore riavvia il client dentro lo STESSO lancio, quindi `activity.gen`
+// non cambia: la generazione non puo' accorgersi che il client precedente e'
+// morto. Senza questa dichiarazione uno `Stop` dell'ultimo turno resterebbe
+// «ferma» per tutto il backoff — e per sempre, ora che «ferma» non scade —
+// mentre il client e' morto e il prossimo non e' pronto.
+
+const T0 = 1_700_000_000_000;
+
+function conAttivita(t, { activity = true, supervise = { enabled: false } } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cell-exit-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const sessione = 'cloud-Dev';
+  const dir = path.join(root, sessione);
+  scriviGenerazione(dir, 'gen-1');
+  scriviStato(dir, { evento: 'Stop', generazione: 'gen-1', ora: T0 });
+  const child = fakeChild();
+  const spawnStub = () => { queueMicrotask(() => child.emit('exit', 0, null)); return child; };
+  const payload = {
+    command: '/bin/true', args: [], env: {},
+    supervise,
+    ...(activity ? { activity: { dir, generation: 'gen-1' } } : {}),
+  };
+  return { root, sessione, dir, main: () => main(['--socket', '/tmp/nc-x', '--nonce', 'e'.repeat(64)], {
+    receivePayload: async () => payload, spawn: spawnStub, stderrWrite: () => {}, now: () => T0 + 2000,
+  }) };
+}
+
+test('main: il client esce -> lo stato del turno precedente non e\' piu\' verificabile', async (t) => {
+  const c = conAttivita(t);
+  assert.equal(leggiAttivita(c.root, c.sessione, T0 + 1000).stato, 'ferma', 'prima dell\'uscita: ferma');
+  assert.equal(await c.main(), 0);
+  assert.equal(leggiAttivita(c.root, c.sessione, T0 + 3000), null,
+    'il client e\' uscito: non verificato, non «ferma»');
+  assert.equal(leggiAttivita(c.root, c.sessione, T0 + 60 * 60 * 1000), null,
+    'e non torna «ferma» col tempo');
+});
+
+test('main: senza canale di attivita\' nel payload non si scrive nulla', async (t) => {
+  const c = conAttivita(t, { activity: false });
+  assert.equal(await c.main(), 0);
+  assert.equal(leggiAttivita(c.root, c.sessione, T0 + 3000).stato, 'ferma',
+    'nessun hook iniettato = nessuno stato da invalidare');
+});
+
+test('main: l\'uscita si dichiara anche quando il child non e\' mai partito', async (t) => {
+  // Un errore di spawn e' un'uscita come le altre: il client non c'e', quindi
+  // il «ferma» dell'ultimo turno non e' piu' verificabile.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cell-exit-err-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const sessione = 'cloud-Dev';
+  const dir = path.join(root, sessione);
+  scriviGenerazione(dir, 'gen-1');
+  scriviStato(dir, { evento: 'Stop', generazione: 'gen-1', ora: T0 });
+  const child = fakeChild();
+  const code = await main(['--socket', '/tmp/nc-x', '--nonce', 'f'.repeat(64)], {
+    receivePayload: async () => ({
+      command: '/bin/true', args: [], env: {},
+      activity: { dir, generation: 'gen-1' },
+    }),
+    spawn: () => { queueMicrotask(() => child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }))); return child; },
+    stderrWrite: () => {}, now: () => T0 + 2000,
+  });
+  assert.equal(code, 1);
+  assert.equal(leggiAttivita(root, sessione, T0 + 3000), null);
 });
