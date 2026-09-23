@@ -1,0 +1,122 @@
+/* CellActions: il menu delle azioni di una cella e i suoi due gusci.
+   Stesso linguaggio delle liste (Sidebar/SessionList): scuro, bordo sottile,
+   verde per lo stato attivo. Il foglio mobile porta bersagli da 44 px. */
+
+.nc-cellactions {
+  display: flex;
+  flex-direction: column;
+  min-width: 210px;
+  padding: 4px;
+  gap: 2px;
+}
+
+.nc-cellactions-voce {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: #d8ffe8;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.nc-cellactions-voce:hover { background: rgba(255, 255, 255, 0.07); }
+.nc-cellactions-voce:disabled { opacity: 0.55; cursor: wait; }
+.nc-cellactions-voce.on { color: #00cc66; }
+
+.nc-cellactions-testo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Interruttore del boot: la forma dice lo stato, come il tondo ma in fila. */
+.nc-cellactions-toggle {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 17px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.14);
+  position: relative;
+  transition: background 120ms ease;
+}
+
+.nc-cellactions-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #9aa89a;
+  transition: left 120ms ease, background 120ms ease;
+}
+
+.nc-cellactions-toggle.on { background: rgba(0, 204, 102, 0.45); }
+.nc-cellactions-toggle.on::after { left: 15px; background: #00cc66; }
+
+/* Guscio desktop: popover ancorato al trigger, sopra tutto il resto della
+   sidebar ma sotto i popup fissi (peek/switcher). */
+.nc-cellactions-popover {
+  position: fixed;
+  z-index: 55;
+  background: #0e140e;
+  border: 1px solid #1c241c;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+/* Guscio mobile: foglio dal basso con velo. */
+.nc-cellactions-velo {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.nc-cellactions-foglio {
+  width: 100%;
+  max-height: 70vh;
+  overflow: auto;
+  background: #0e140e;
+  border-top: 1px solid #1c241c;
+  border-radius: 14px 14px 0 0;
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+}
+
+.nc-cellactions-testa {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.nc-cellactions-titolo {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #d8ffe8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-cellactions-chiudi {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  color: #9aa89a;
+  cursor: pointer;
+}
