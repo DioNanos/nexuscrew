@@ -476,6 +476,10 @@ export default function App() {
   const [pairDefaults, setPairDefaults] = useState({
     deviceDefault: '', localNodeId: '', localNameDefault: '',
   });
+  // Il nome del NOSTRO nodo (es. VPSCloud), per l'intestazione del gruppo
+  // locale nella lista delle celle: il gruppo locale si chiama come il nodo,
+  // non «locale».
+  const [localNodeLabel, setLocalNodeLabel] = useState('');
   // READONLY del server (da /api/config): l'attach dei terminali deve essere
   // read-only quando il server lo e' (coerenza col gate server §4b(6) + il
   // banner settings che lo dichiara). Default false finche' non arriva la config.
@@ -512,6 +516,7 @@ export default function App() {
         localNodeId: s.nodeId || '',
         localNameDefault: s.localName || '',
       });
+      setLocalNodeLabel(s.deviceName || '');
       setRoDefault(!!c.readonlyDefault);
       // I parametri del terminale vivono nella config del server: il client li
       // usa da qui (backoff, liveness, coda, ritardo dell'overlay).
@@ -973,7 +978,7 @@ export default function App() {
           liveHost={liveHostViewFor(session.node ? session.node.split('/') : [])}
         panelPort={panelPortForRoute(session.node ? session.node.split('/') : [], nodePanelPorts, panelPort)}
         onBack={() => setSession(null)} onCellSwitcher={() => setCellSwitcherOpen(true)} cellSwitcherOpen={cellSwitcherOpen} />
-      {cellSwitcherOpen && <CellSwitcher token={token} current={session}
+      {cellSwitcherOpen && <CellSwitcher token={token} current={session} localNodeLabel={localNodeLabel}
         panelPort={panelPort} nodePanelPorts={nodePanelPorts}
         hostByRoute={hostByRoute} onDesignateCell={designateCellHostOnce} onClearHostCell={clearCellHostOnce}
         onLiveHostApplied={applyLiveHostResult}

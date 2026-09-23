@@ -163,6 +163,9 @@ function orderRowsByPosition(rows, rosterItems, pins, orders) {
 
 export default function CellSwitcher({
   token, current, onPick, onClose, panelPort = 0, nodePanelPorts = {},
+  // Il nome del nodo LOCALE (es. VPSCloud): il gruppo delle celle locali si
+  // chiama come il nodo, come i gruppi remoti col loro nodeLabel.
+  localNodeLabel = '',
   // Lo stato dell'host per nodo e le due azioni di designazione arrivano
   // dalle stesse callback che usa la home: la stella qui non ha una via sua.
   hostByRoute = {}, onDesignateCell, onClearHostCell, onLiveHostApplied,
@@ -484,7 +487,8 @@ export default function CellSwitcher({
               <Fragment key={row.key}>
               {apreGruppo && (
                 <div className="nc-cell-switcher-position">
-                  {t('cell-switcher-group').replace('{node}', row.nodeLabel || t('cell-switcher-group-local'))}
+                  {t('cell-switcher-group').replace('{node}',
+                    row.nodeLabel || localNodeLabel || t('cell-switcher-group-local'))}
                 </div>
               )}
               <div className={`nc-cell-switcher-row${currentRow ? ' current' : ''}${selectedKey === row.key ? ' selected' : ''}${row.selectable ? '' : ' off'}`}

@@ -83,6 +83,39 @@ describe('la riga ha uno stato solo', () => {
 });
 
 describe('il nodeLabel sale nell\'intestazione del gruppo', () => {
+  it('il gruppo LOCALE si chiama come il nodo (localNodeLabel), non «locale»', async () => {
+    writeCellSwitcherSnapshot({
+      sessions: [{ name: 'cloud-cell-One', activity: Date.now() - 60000, working: false }],
+      cells: [active('cell-One', 'cloud-cell-One')],
+      localFresh: true, nodeGroups: [],
+    });
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
+      sessions: [{ name: 'cloud-cell-One', activity: Date.now() - 60000, working: false }],
+    }) });
+    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
+    render(<Switcher localNodeLabel="VPSCloud" />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    const teste = [...document.querySelectorAll('.nc-cell-switcher-position')];
+    expect(teste).toHaveLength(1);
+    expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', 'VPSCloud'));
+  });
+
+  it('senza localNodeLabel il gruppo locale resta «locale»', async () => {
+    writeCellSwitcherSnapshot({
+      sessions: [{ name: 'cloud-cell-One', activity: Date.now() - 60000, working: false }],
+      cells: [active('cell-One', 'cloud-cell-One')],
+      localFresh: true, nodeGroups: [],
+    });
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
+      sessions: [{ name: 'cloud-cell-One', activity: Date.now() - 60000, working: false }],
+    }) });
+    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
+    render(<Switcher />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    const teste = [...document.querySelectorAll('.nc-cell-switcher-position')];
+    expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', t('cell-switcher-group-local')));
+  });
+
   it('VPSCloud compare una volta in testa, non su ogni riga', async () => {
     writeCellSwitcherSnapshot({
       sessions: [],
