@@ -315,7 +315,7 @@ test('un lock ORFANO non blocca le scritture per sempre', () => {
   assert.equal(fs.existsSync(lock), false, 'il lock orfano e stato rimosso');
 });
 
-test('scritture concorrenti VERE: nessuna persa, vince il ts piu alto', async () => {
+test('scritture concorrenti VERE: vince il ts piu alto, ogni chiamata sa il proprio esito', async () => {
   // Processi figli con partenza a barriera: e' la forma in cui la concorrenza
   // accade davvero (un processo per hook). Le chiamate nello stesso thread non
   // la esercitano, perche' `scriviStato` e' sincrono.
@@ -344,8 +344,13 @@ test('scritture concorrenti VERE: nessuna persa, vince il ts piu alto', async ()
     p.stdout.on('data', (d) => { out += d; });
     p.on('close', () => res(out));
   })));
-  assert.deepEqual(esiti, Array(N).fill('ok'),
-    'nessuna scrittura persa: ogni hook deve risultare registrato');
+  // Contratto: `true` = scritto; `false` = scartato davanti a un ts piu'
+  // avanzato, e chi chiama LO SA. Nessun processo tace e nessuno inventa un
+  // terzo esito.
+  assert.ok(esiti.every((e) => e === 'ok' || e === 'persa'),
+    `ogni scrittore riporta il proprio esito: ${JSON.stringify(esiti)}`);
+  // Il piu' recente non puo' mai perdere: nessun concorrente ha un ts maggiore.
+  assert.equal(esiti[N - 1], 'ok', 'chi scrive lo stato piu recente deve trovare il deposito libero di rivali');
   // `ora` esplicito: i ts del test sono sintetici e senza questo il lettore li
   // vedrebbe scaduti (il che non c'entra con la concorrenza).
   const letto = leggiAttivita(root, SESSIONE, base + N * 1000);
@@ -379,4 +384,71 @@ test('il contratto del file non contiene il payload dell hook', () => {
   assert.deepEqual(Object.keys(raw).sort(), ['event', 'generation', 'session_id', 'ts']);
   const gen = fs.readFileSync(path.join(dirSessione(root), NOME_GENERAZIONE), 'utf8');
   assert.equal(gen, 'g1');
+});
+
+// --- uscita del client contro uno stato nel futuro tollerato ----------------
+// Uno Stop con ts nel futuro ammesso dal lettore (+2 min) restava pubblicato
+// anche quando il client era morto: l'uscita scritta dal supervisore aveva un
+// ts piu' vecchio e lo scrittore la scartava — dicendo però che andasse bene.
+// L'uscita del client è autorevole: vince sull'ordine, e lo scarto di un
+// evento è un esito (false), non un successo.
+
+test('ClientExit vince su uno Stop nel futuro tollerato: la lettura diventa null, subito e dopo un\'ora', () => {
+  const root = tmpRoot();
+  const T0 = 1_700_000_000_000;
+  scriviGenerazione(dirSessione(root), 'g1');
+  assert.equal(scriviStato(dirSessione(root), { evento: 'Stop', generazione: 'g1', ora: T0 + 60_000 }), true);
+  assert.equal(leggiAttivita(root, SESSIONE, T0).stato, 'ferma',
+    'il futuro tollerato ammette lo Stop: «ferma» finché il client vive');
+  assert.equal(scriviStato(dirSessione(root), { evento: USCITA, generazione: 'g1', ora: T0 }), true,
+    'l\'uscita del client è scritta, non scartata');
+  assert.equal(leggiAttivita(root, SESSIONE, T0), null,
+    'a T0 il client non c\'è più: nessuno «ferma»');
+  assert.equal(leggiAttivita(root, SESSIONE, T0 + 60 * 60 * 1000), null,
+    'a T0+1h resta null: il non-scadere di «ferma» non la rianima');
+});
+
+test('un hook più vecchio dello stato pubblicato viene SCARTATO: scriviStato risponde false', () => {
+  const root = tmpRoot();
+  const T0 = 1_700_000_000_000;
+  assert.equal(scriviStato(dirSessione(root), { evento: 'Stop', ora: T0 }), true);
+  // Un PreToolUse in ritardo di un giro non riporta indietro lo stato, e chi
+  // chiama se ne accorge: false, non un true di cortesia.
+  assert.equal(scriviStato(dirSessione(root), { evento: 'PreToolUse', ora: T0 - 5_000 }), false);
+  const letto = leggiAttivita(root, SESSIONE, T0);
+  assert.equal(letto.stato, 'ferma', 'lo stato pubblicato resta quello piu\' recente');
+  assert.equal(letto.ts, T0);
+});
+
+test('NEGATIVO: ClientExit con ts ordinato non sposta nulla: scritto con il suo ts', () => {
+  const root = tmpRoot();
+  const T0 = 1_700_000_000_000;
+  assert.equal(scriviStato(dirSessione(root), { evento: 'UserPromptSubmit', ora: T0 }), true);
+  assert.equal(scriviStato(dirSessione(root), { evento: USCITA, ora: T0 + 1_000 }), true);
+  assert.equal(leggiAttivita(root, SESSIONE, T0 + 2_000), null);
+  const raw = JSON.parse(fs.readFileSync(path.join(dirSessione(root), NOME_FILE), 'utf8'));
+  assert.equal(raw.ts, T0 + 1_000, 'il ts del file è quello dell\'uscita, non ripubblicato in avanti');
+});
+
+test('NEGATIVO: un evento più RECENTE dello stato pubblicato vince e risponde true', () => {
+  const root = tmpRoot();
+  const T0 = 1_700_000_000_000;
+  assert.equal(scriviStato(dirSessione(root), { evento: 'Stop', ora: T0 }), true);
+  assert.equal(scriviStato(dirSessione(root), { evento: 'SessionStart', ora: T0 + 5_000 }), true,
+    'l\'ordine vale in entrambe le direzioni: il piu\' recente scrive');
+  const letto = leggiAttivita(root, SESSIONE, T0 + 6_000);
+  assert.equal(letto.stato, 'ferma');
+  assert.equal(letto.ts, T0 + 5_000);
+});
+
+test('NEGATIVO: un hook DOPO l\'uscita rinnova lo stato — l\'uscita non blocca per sempre', () => {
+  const root = tmpRoot();
+  const T0 = 1_700_000_000_000;
+  scriviGenerazione(dirSessione(root), 'g1');
+  assert.equal(scriviStato(dirSessione(root), { evento: 'Stop', generazione: 'g1', ora: T0 + 60_000 }), true);
+  assert.equal(scriviStato(dirSessione(root), { evento: USCITA, generazione: 'g1', ora: T0 }), true);
+  // Un client rientrato (stesso lancio) emette hook con ts reali successivi:
+  // la nuova attivita' deve valere — l'uscita invalida il passato, non il futuro.
+  assert.equal(scriviStato(dirSessione(root), { evento: 'UserPromptSubmit', generazione: 'g1', ora: T0 + 120_000 }), true);
+  assert.equal(leggiAttivita(root, SESSIONE, T0 + 130_000).stato, 'lavora');
 });
