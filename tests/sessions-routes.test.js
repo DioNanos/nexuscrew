@@ -81,9 +81,16 @@ test('list: pubblica lo stato di attivita della cella; assente = non verificato,
   scrivi({ event: 'Stop', ts: Date.now() });
   assert.equal((await leggi()).sessions[0].attivita.stato, 'ferma');
 
-  // Un dato vecchio oltre la finestra non diventa «ferma»: sparisce.
-  scrivi({ event: 'Stop', ts: Date.now() - 6 * 60 * 1000 });
+  // Un dato di LAVORO vecchio oltre la finestra non diventa «ferma»: sparisce.
+  // È la copertura del Ctrl-C, che non emette alcun evento e lascerebbe
+  // «lavora» per sempre.
+  scrivi({ event: 'UserPromptSubmit', ts: Date.now() - 6 * 60 * 1000 });
   assert.equal((await leggi()).sessions[0].attivita, null, 'scaduto -> non verificato');
+
+  // «Ferma» invece NON scade con l'età: un turno finito resta finito, e la
+  // fine del processo è già coperta dalla generazione, non da una finestra.
+  scrivi({ event: 'Stop', ts: Date.now() - 6 * 60 * 1000 });
+  assert.equal((await leggi()).sessions[0].attivita.stato, 'ferma', '«ferma» non scade');
 });
 
 test('create: 201 con preset shell, 400 nome/preset invalidi', async (t) => {
