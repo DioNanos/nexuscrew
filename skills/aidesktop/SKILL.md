@@ -91,6 +91,12 @@ project actually owns is the two added lines below and their reasons. It also
 means no registry to host, nothing to keep patched on your behalf, and a
 recipe you can read before you run it.
 
+The recipe needs a host that runs Docker with Compose v2 — see the
+dependencies at the end. On a platform without Docker, Android/Termux
+included, the container cannot build there: the `panelUrl` mechanics earlier
+in this skill still apply to any loopback web UI that node can reach, and the
+recipe simply runs on a different host.
+
 Build it yourself from [`docker/`](docker/):
 
 ```bash
