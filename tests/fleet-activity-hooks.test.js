@@ -24,7 +24,7 @@ const ENGINE_CLAUDE = { id: 'ec', managed: { client: 'claude', provider: 'native
 const EVENTI = ['Notification', 'PermissionRequest', 'PostToolUse', 'PreToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'SubagentStop', 'UserPromptSubmit'];
 
 function mondo(t, { utente = ['nexuscrew', 'webfetch', 'nextcloud'] } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d340-hook-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cell-home-'));
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const bin = path.join(home, '.local', 'bin', 'claude');
   fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });

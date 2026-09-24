@@ -85,7 +85,7 @@ function batchWriteRpc(codexHome) {
         resolve({ risposta: risposta.get(2), stderr: stderr.join('') });
       }
     }, 40);
-    scrivi({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'nexuscrew-gate-d343', version: '0.0.0' } } });
+    scrivi({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'nexuscrew-gate-batchwrite', version: '0.0.0' } } });
     setTimeout(() => {
       clearInterval(poll);
       child.kill('SIGKILL');
@@ -134,8 +134,8 @@ const SCENARI = {
   },
 };
 
-test('d343 gate: la forma vecchia (enabled=false senza trasporto) riproduce l\'errore di produzione', { skip: !binarioOk() && 'binario codex-vl non disponibile' }, async (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d343-negctrl-'));
+test('gate: la forma vecchia (enabled=false senza trasporto) riproduce l\'errore di produzione', { skip: !binarioOk() && 'binario codex-vl non disponibile' }, async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-batchwrite-negctrl-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const appHome = path.join(home, 'app');
   fs.mkdirSync(appHome);
@@ -150,8 +150,8 @@ test('d343 gate: la forma vecchia (enabled=false senza trasporto) riproduce l\'e
 });
 
 for (const [nome, spec] of Object.entries(SCENARI)) {
-  test(`d343 gate: batchWrite reale accetta il profilo generato (${nome})`, { skip: !binarioOk() && 'binario codex-vl non disponibile' }, async (t) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), `nc-d343-gate-${nome}-`));
+  test(`gate: batchWrite reale accetta il profilo generato (${nome})`, { skip: !binarioOk() && 'binario codex-vl non disponibile' }, async (t) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), `nc-batchwrite-gate-${nome}-`));
     t.after(() => fs.rmSync(home, { recursive: true, force: true }));
     // Il profilo lo genera il generatore VERO con le capability dello scenario.
     fs.writeFileSync(path.join(home, 'config.toml'), spec.config, { mode: 0o600 });

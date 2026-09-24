@@ -501,7 +501,7 @@ const TOML_UTENTE_CON_MCP_E_SKILLS = [
   '',
 ].join('\n');
 
-test('d343 spenti stdio+http e nome quotato: solo command/url, mai args/env/headers/credenziali', (t) => {
+test('spenti stdio+http e nome quotato: solo command/url, mai args/env/headers/credenziali', (t) => {
   const w = mondoCodex(t, { toml: TOML_UTENTE_CON_MCP_E_SKILLS });
   // Nomi quotati non sono dichiarabili (la validazione delle capability
   // enumerata con la regex dei soli nomi li rifiuta, residuo dichiarato):
@@ -527,7 +527,7 @@ test('d343 spenti stdio+http e nome quotato: solo command/url, mai args/env/head
   }
 });
 
-test('d343 segreto in uno spento: nessuna fuga nel profilo derivato', (t) => {
+test('segreto in uno spento: nessuna fuga nel profilo derivato', (t) => {
   const w = mondoCodex(t, { toml: TOML_UTENTE_CON_MCP_E_SKILLS });
   const out = resolveCodex(w, { capabilities: { mcp: [] } });
   assert.equal(out.ok, true, out.reason);
@@ -544,7 +544,7 @@ test('d343 segreto in uno spento: nessuna fuga nel profilo derivato', (t) => {
   assert.equal(fs.readFileSync(w.configToml, 'utf8'), TOML_UTENTE_CON_MCP_E_SKILLS);
 });
 
-test('d343 misto: on-demand + spenti (http e nome quotato implicito) + skill nello stesso profilo', (t) => {
+test('misto: on-demand + spenti (http e nome quotato implicito) + skill nello stesso profilo', (t) => {
   const w = mondoCodex(t, { toml: TOML_UTENTE_CON_MCP_E_SKILLS });
   // Il nome quotato non e' dichiarabile (residuo dichiarato): resta spento
   // per via implicita; nexuscrew e concesso e differito; web e web-quotato
@@ -568,7 +568,7 @@ test('d343 misto: on-demand + spenti (http e nome quotato implicito) + skill nel
   assert.equal(new Set(nomi).size, nomi.length, 'nessuna tabella duplicata');
 });
 
-test('d343 config utente non parseabile: rifiuto fail-closed, nessun profilo che non riduce', (t) => {
+test('config utente non parseabile: rifiuto fail-closed, nessun profilo che non riduce', (t) => {
   const w = mondoCodex(t, { toml: 'model = "gpt-5"\n[mcp_servers.rotto\ncommand = "x"\n' });
   const out = resolveCodex(w, { capabilities: { mcp: [] } });
   assert.equal(out.ok, false, 'una config utente invalida non produce piu un profilo vuoto (fail-open)');
@@ -576,14 +576,14 @@ test('d343 config utente non parseabile: rifiuto fail-closed, nessun profilo che
   assert.match(out.mcpCellRefused || '', /non parseabile come TOML/);
 });
 
-test('d343 server senza trasporto riconoscibile: rifiuto, mai placeholder fittizio', (t) => {
+test('server senza trasporto riconoscibile: rifiuto, mai placeholder fittizio', (t) => {
   const w = mondoCodex(t, { toml: 'model = "gpt-5"\n[mcp_servers.fantasma]\nstartup_timeout_sec = 5\n' });
   const out = resolveCodex(w, { capabilities: { mcp: [] } });
   assert.equal(out.ok, false);
   assert.match(out.mcpCellRefused || '', /senza trasporto riconoscibile/);
 });
 
-test('d343 skill-only: parse strutturato non cambia il contratto skills', (t) => {
+test('skill-only: parse strutturato non cambia il contratto skills', (t) => {
   const w = mondoCodex(t, { toml: TOML_UTENTE_CON_MCP_E_SKILLS });
   const out = resolveCodex(w, { capabilities: { skills: ['fleet'] } });
   assert.equal(out.ok, true, out.reason);
