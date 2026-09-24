@@ -24,6 +24,10 @@ docs/superpowers/
 # Stato di lavoro corrente della cella, non del prodotto.
 docs/CURRENT_STATE.md
 
+# Contratti di design interni: utili a chi sviluppa, non descrivono il prodotto.
+docs/STATUSLINE_TELEMETRY.md
+docs/identity/verify-channel-v1.md
+
 # Referti di audit: nominano chi ha auditato e con che verdetto.
 test-report/
 
