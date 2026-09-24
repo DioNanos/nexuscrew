@@ -190,7 +190,7 @@ export default function CellSwitcher({
   const [selectedKey, setSelectedKey] = useState(null);
   // La sorgente dell'anteprima è CONTROLLATA, come vuole CellPeekBody: di
   // default il flusso, le altre due sorgenti sono le sue tab.
-  // L'anteprima è NUDA (tavola D356SelSopra): una sorgente sola, il flusso —
+  // L'anteprima è NUDA (tavola approvata): una sorgente sola, il flusso —
   // niente tab né comando Live (le azioni vivono nel foglio della riga), quindi
   // non c'e' piu' uno stato della sorgente da tenere.
   const ANTEPRIMA_SOURCE = 'stream';

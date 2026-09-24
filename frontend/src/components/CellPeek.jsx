@@ -57,7 +57,7 @@ export function CellPeekBody({ row, token, panelPort = 0, liveHost = null, onLiv
   // ...e DECIDE se c'e' il chrome attorno alle sorgenti: l'anteprima del
   // selettore mobile e' nuda — niente tab (una sorgente sola, il flusso) e
   // niente comando Live (le azioni vivono nel foglio della riga). La tavola
-  // D356SelSopra non li ha.
+  // la tavola approvata non li ha.
   chrome = true,
 }) {
   const setSource = (id) => onSourceChange && onSourceChange(id);

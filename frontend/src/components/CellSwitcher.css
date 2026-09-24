@@ -62,7 +62,7 @@
 .nc-cell-switcher-copy b, .nc-cell-switcher-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nc-cell-switcher-copy b { color: #d8ffe8; font-size: 14px; }
 /* Prima riga: nome e badge sulla STESSA riga, i badge a larghezza del loro
-   contenuto — un badge che va a capo da solo e' il difetto D-356 di partenza. */
+   contenuto — un badge che va a capo da solo e' il difetto di partenza. */
 .nc-cell-switcher-nameline { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .nc-cell-switcher-nameline b { flex: 0 1 auto; min-width: 0; }
 .nc-cell-switcher-copy small { opacity: .62; font-size: 13px; }

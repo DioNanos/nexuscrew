@@ -71,7 +71,7 @@ describe('CellPeekBody — il corpo della sbirciata (tab + sorgenti)', () => {
     expect(panel.dataset.panelPort).toBe('41821');
   });
 
-  it('chrome=false: il corpo è NUDO — niente tab, niente comando Live host, solo la sorgente (D-356)', () => {
+  it('chrome=false: il corpo è NUDO — niente tab, niente comando Live host, solo la sorgente', () => {
     render(<CellPeekBody row={row({ panelUrl: 'https://panel.example' })} token="token"
       source="stream" chrome={false} panelPort={41821} />);
     expect(screen.getByTestId('peek-term').getAttribute('data-session')).toBe('cloud-cell-One');

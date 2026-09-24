@@ -68,7 +68,7 @@ beforeEach(() => {
 });
 
 // L'anteprima di una cella si apre col PRIMO tocco della riga. L'anteprima è
-// NUDA (D-356): una sorgente sola, il flusso — niente tab né comando Live.
+// NUDA: una sorgente sola, il flusso — niente tab né comando Live.
 const toccaRiga = async (cellName) => {
   fireEvent.click(await screen.findByRole('button', { name: new RegExp(`^${cellName} `) }));
   await screen.findByTestId('cell-switcher-anteprima');
@@ -248,7 +248,7 @@ describe('CellSwitcher', () => {
     expect(screen.queryByText(/%/)).toBeNull();
   });
 
-  it('l\'anteprima del selettore è NUDA: flusso vivo, nessuna tab, nessun comando Live (D-356)', async () => {
+  it('l\'anteprima del selettore è NUDA: flusso vivo, nessuna tab, nessun comando Live', async () => {
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [
       { ...active('cell-One', 'cloud-cell-One'), panelUrl: 'https://panel.example' },
     ] }));
@@ -259,7 +259,7 @@ describe('CellSwitcher', () => {
     await toccaRiga('cell-One');
     // Il corpo dell'anteprima è il flusso della sessione: il terminale c'è, e
     // dell'attorno (tab delle sorgenti, comando Live host) non c'è niente —
-    // la tavola D356SelSopra non li ha. Le sorgenti restano nel popup libero
+    // la tavola approvata non li ha. Le sorgenti restano nel popup libero
     // e nella nuvola; le azioni vivono nel foglio della riga.
     const term = await screen.findByTestId('peek-term');
     expect(term.getAttribute('data-session')).toBe('cloud-cell-One');
@@ -303,7 +303,7 @@ describe('CellSwitcher', () => {
   });
 
   // I quattro test del pannello (raggiungibilità dall'elenco + origin P0)
-  // sono stati ricollocati: con l'anteprima nuda (D-356) il pannello non è
+  // sono stati ricollocati: con l'anteprima nuda il pannello non è
   // più raggiungibile dal selettore. Le guardie P0 sulla porta stanno in
   // src/lib/panel-port.test.js; il contratto CellPeekBody→CellPanel in
   // CellPeekBody.test.jsx.
