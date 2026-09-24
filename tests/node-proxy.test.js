@@ -41,9 +41,9 @@ function makeUpstream(respond) {
 }
 
 // App proxy: requireToken(LOCAL) DAVANTI al router (auth locale prima del resolve).
-function makeProxyApp({ resolveNode, readonly }) {
+function makeProxyApp({ resolveNode, readonly, ...rest }) {
   const app = express();
-  app.use('/node', requireToken(LOCAL), createNodeProxy({ resolveNode, readonly }));
+  app.use('/node', requireToken(LOCAL), createNodeProxy({ resolveNode, readonly, ...rest }));
   return app;
 }
 
@@ -249,6 +249,27 @@ test('(g) nodo irraggiungibile -> 502 JSON {error}, non hang', async (t) => {
   const r = await fetch(`${base}/node/vps/x`, { headers: auth });
   assert.strictEqual(r.status, 502);
   const body = await r.json();
+  assert.ok(typeof body.error === 'string' && body.error.length > 0);
+  assert.strictEqual(body.cause, undefined, 'connessione rifiutata non è attesa: nessun cause');
+});
+
+// --- upstream lento: il 502 di attesa porta `cause: upstream-timeout` -------
+// Il nodo remoto può essere ancora al lavoro (es. avvio cella oltre il tetto):
+// quel 502 NON è un nodo morto, e il client lo tratta come attesa in corso.
+test('upstream muto oltre il tetto -> 502 {error, cause: "upstream-timeout"}', async (t) => {
+  const silent = http.createServer(() => { /* accetta e non risponde mai */ });
+  await listen(silent);
+  const app = makeProxyApp({
+    resolveNode: () => ({ localPort: silent.address().port, token: REMOTE }),
+    proxyTimeoutMs: 100,
+  });
+  const srv = await listen(http.createServer(app));
+  t.after(() => { srv.close(); silent.close(); });
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const r = await fetch(`${base}/node/vps/api/fleet/up`, { method: 'POST', headers: auth });
+  assert.strictEqual(r.status, 502);
+  const body = await r.json();
+  assert.strictEqual(body.cause, 'upstream-timeout');
   assert.ok(typeof body.error === 'string' && body.error.length > 0);
 });
 
