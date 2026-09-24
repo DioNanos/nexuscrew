@@ -106,3 +106,44 @@ describe('federated ask cards', () => {
     await waitFor(() => expect(screen.getByText(/not granted/i)).toBeTruthy());
   });
 });
+
+describe('federated ask cards — l\'hint distingue il feed non importato dal grant negato', () => {
+  // Owner senza view nel feed-state: la card esiste ma la sottoscrizione no.
+  const absent = 'c'.repeat(32);
+
+  it('view dell\'owner assente: hint di ricezione da attivare, non il grant negato', async () => {
+    mocks.getAsks.mockResolvedValue({ asks: [remoteAsk({ ownerId: absent })] });
+    await renderCenter();
+    await waitFor(() => expect(screen.getByText(/not receiving this node/i)).toBeTruthy());
+    expect(screen.queryByText(/read-only/i)).toBeNull();
+    expect(screen.queryByText(/^send$/i)).toBeNull();
+  });
+
+  it('view stale o in errore: stesso hint di ricezione da attivare', async () => {
+    mocks.getAsks.mockResolvedValue({ asks: [remoteAsk()] });
+    mocks.getFeedState.mockResolvedValue({
+      views: [{ ownerId: owner, stale: true, lastError: 'boom', askReplyAccess: false }],
+    });
+    await renderCenter();
+    await waitFor(() => expect(screen.getByText(/not receiving this node/i)).toBeTruthy());
+    expect(screen.queryByText(/read-only/i)).toBeNull();
+    expect(screen.queryByText(/^send$/i)).toBeNull();
+  });
+
+  it('view viva con grant negato: resta il messaggio del grant, mai quello della ricezione', async () => {
+    mocks.getAsks.mockResolvedValue({ asks: [remoteAsk({ ownerId: other })] });
+    await renderCenter();
+    await waitFor(() => expect(screen.getByText(/read-only/i)).toBeTruthy());
+    expect(screen.queryByText(/not receiving this node/i)).toBeNull();
+  });
+
+  it('mutazione: i due hint non sono intercambiabili, ciascuno al proprio posto', async () => {
+    mocks.getAsks.mockResolvedValue({ asks: [remoteAsk({ ownerId: absent }), remoteAsk({ id: 'def67890', ownerId: other })] });
+    await renderCenter();
+    const noFeed = await screen.findAllByText(/not receiving this node/i);
+    const readonly = await screen.findAllByText(/read-only/i);
+    expect(noFeed).toHaveLength(1);
+    expect(readonly).toHaveLength(1);
+    expect(noFeed[0].textContent).not.toBe(readonly[0].textContent);
+  });
+});

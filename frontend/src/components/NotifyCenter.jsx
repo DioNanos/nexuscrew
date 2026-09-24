@@ -27,6 +27,17 @@ const TOAST_HIGH_MS = 12000;
 // sull'id locale solo per gli ask di casa, che un ownerAskId non ce l'hanno.
 const askKeyOf = (id, ownerId, ownerAskId) => `${ownerId || ''}:${ownerAskId || id}`;
 
+// Stato della view del feed di un owner, dalla stessa lettura che decide i
+// grant: 'missing' (nessuna sottoscrizione — la card può essere arrivata via
+// push), 'degraded' (sottoscritta ma stale o in errore) o 'live'. Distingue
+// SOLO il messaggio della card in sola lettura: i permessi di risposta restano
+// decisi dal grant (askReplyAccess), mai da qui.
+const feedViewStateOf = (health, ownerId) => {
+  const h = health && health[ownerId];
+  if (!h) return 'missing';
+  return (h.stale === true || h.error === true) ? 'degraded' : 'live';
+};
+
 // Compattazione, mai sostituzione: due liste della stessa natura possono
 // completarsi in QUALUNQUE ordine (snapshot locale da /api/asks, ask importate
 // dal feed-state). Una chiave gia' nota resta una volta sola.
@@ -67,7 +78,7 @@ function Toast({ n, onClose }) {
   );
 }
 
-function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, initialUncertainRid = null }) {
+function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, feedViewState = 'live', initialUncertainRid = null }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -140,7 +151,13 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, in
       </div>
       <div className="nc-ask-q">{ask.question}</div>
       {ask.ownerId && askReplyAccess === false && (
-        <small className="nc-set-hint">{t('ask-remote-readonly')}</small>
+        <small className="nc-set-hint">
+          {/* Due cause, stesso divieto: view assente o in errore → la risposta
+              non parte perché questo nodo non importa il feed dell'owner (da
+              attivare); view viva → è l'owner a non concederla. Il testo dice
+              quale delle due è; i permessi non cambiano in nessun caso. */}
+          {t(feedViewState === 'live' ? 'ask-remote-readonly' : 'ask-remote-no-feed')}
+        </small>
       )}
       {(uncertainRid || blockedOriginal) && <>
         <div className="nc-err">{t('ask-uncertain')}</div>
@@ -290,17 +307,22 @@ export default function NotifyCenter({ token }) {
 
   // Grant di risposta PER OWNER, dallo snapshot che il client ha del feed
   // (/api/feed-state). Assente = nessuna risposta: la card resta in lettura.
+  // Accanto ai grant si conserva lo STATO di ogni view (stale/errore): serve a
+  // distinguere «feed dell'owner non importato» da «grant negato» nel testo.
   const [replyGrants, setReplyGrants] = useState({});
+  const [viewHealth, setViewHealth] = useState({});
   useEffect(() => {
     let alive = true;
     getFeedState(token).then((j) => {
       if (!alive) return;
       const grants = {};
+      const health = {};
       const imported = [];
       const notices = new Map();
       const keepOwners = new Set();
       for (const v of (j && j.views) || []) {
         grants[v.ownerId] = v.askReplyAccess === true;
+        health[v.ownerId] = { stale: v.stale === true, error: !!v.lastError };
         keepOwners.add(v.ownerId);
         // The local endpoint only knows local asks: the federated ones live in
         // the owner's snapshot, so a reload rebuilds them from here.
@@ -315,6 +337,7 @@ export default function NotifyCenter({ token }) {
         }
       }
       setReplyGrants(grants);
+      setViewHealth(health);
       if (imported.length) setAsks((cur) => mergeAsks(cur, imported));
       // Rebuild dall'arretrato: le card di una view revocata cadono qui; le
       // card arrivate via SSE di un owner ancora attivo restano (dedup per key).
@@ -353,6 +376,7 @@ export default function NotifyCenter({ token }) {
           <div className="nc-ask-panel-body">
             {asks.map((a) => <AskCard key={askKeyOf(a.id, a.ownerId)} ask={a} token={token}
               askReplyAccess={!a.ownerId || replyGrants[a.ownerId] === true}
+              feedViewState={a.ownerId ? feedViewStateOf(viewHealth, a.ownerId) : 'live'}
               initialUncertainRid={a.ownerId ? (uncertainByOwnerAsk[a.ownerId + '|' + (a.ownerAskId || a.id)] || null) : null}
               onAnswered={removeAsk} onDismiss={removeAsk} />)}
             {remoteNotices.length > 0 && (
