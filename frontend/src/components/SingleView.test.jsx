@@ -123,12 +123,25 @@ describe('SingleView title (Tranche D)', () => {
   });
 });
 
+// Le azioni che prima stavano in fila nella barra (tastiera, file, pannello,
+// renderer) adesso vivono nel menu ⋯. Il test apre il menu e poi agisce sulla
+// voce, cercandola per `data-cellaction`: col sottotitolo il testo accessibile
+// non e' la sola etichetta.
+async function apriMenuBarra() {
+  fireEvent.click(screen.getByTitle('bar-menu-open'));
+  await screen.findByRole('menu');
+  return screen.getByRole('menu');
+}
+const voceMenu = (menu, id) => [...menu.querySelectorAll('[data-cellaction]')]
+  .find((v) => v.dataset.cellaction === id);
+
 describe('SingleView — pannello per-cella (D8, panelUrl)', () => {
-  it('opt-in totale: cella senza panelUrl → nessun bottone, nessun pannello', async () => {
+  it('opt-in totale: cella senza panelUrl → nessuna voce nel menu, nessun pannello', async () => {
     // fixture.cells (beforeEach) non ha panelUrl.
     render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
     await screen.findByText('claude.native·A'); // fleetStatus già consumato
-    expect(screen.queryByTitle('panel')).toBeNull();
+    const menu = await apriMenuBarra();
+    expect(voceMenu(menu, 'panel')).toBeUndefined();
     expect(screen.queryByTestId('cellpanel')).toBeNull();
   });
 
@@ -136,14 +149,17 @@ describe('SingleView — pannello per-cella (D8, panelUrl)', () => {
     fixture.cells = [{ cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'claude.native', key: 'A', panelUrl: '' }];
     render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
     await screen.findByText('claude.native·A');
-    expect(screen.queryByTitle('panel')).toBeNull();
+    const menu = await apriMenuBarra();
+    expect(voceMenu(menu, 'panel')).toBeUndefined();
     expect(screen.queryByTestId('cellpanel')).toBeNull();
   });
 
   it('cella con panelUrl: pannello chiuso finché non aperto, poi coordinate esatte per il ticket (LOCALE)', async () => {
     fixture.cells = [{ cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'claude.native', key: 'A', panelUrl: 'https://127.0.0.1:6901' }];
     render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
-    const btn = await screen.findByTitle('panel');
+    await screen.findByText('claude.native·A'); // il poll ha pubblicato panelUrl
+    const menu = await apriMenuBarra();
+    const btn = voceMenu(menu, 'panel');
     // Chiuso prima del click: nessun pannello (comportamento terminale intatto).
     expect(screen.queryByTestId('cellpanel')).toBeNull();
     fireEvent.click(btn);
@@ -156,25 +172,30 @@ describe('SingleView — pannello per-cella (D8, panelUrl)', () => {
     expect(panel.getAttribute('data-panelurl')).toBe('https://127.0.0.1:6901');
     expect(panel.getAttribute('data-route')).toBe('');
     expect(panel.getAttribute('data-token')).toBe('t');
-    // Il bottone dichiara lo stato (aria-pressed) e il pannello si chiude di nuovo.
-    expect(btn.getAttribute('aria-pressed')).toBe('true');
-    fireEvent.click(btn);
+    // La voce dichiara lo stato (aria-checked) e il pannello si chiude di nuovo:
+    // il menu chiude dopo ogni azione, la seconda pressione parte riaprendolo.
+    const menu2 = await apriMenuBarra();
+    expect(voceMenu(menu2, 'panel').getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(voceMenu(menu2, 'panel'));
     expect(screen.queryByTestId('cellpanel')).toBeNull();
   });
 
   it('cella REMOTA: le coordinate portano la via federata del nodo che la possiede', async () => {
     fixture.cells = [{ cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'claude.native', key: 'A', panelUrl: 'https://127.0.0.1:6901' }];
     render(<SingleView session="cloud-Dev" node="Pixel" token="t" onBack={vi.fn()} />);
-    fireEvent.click(await screen.findByTitle('panel'));
+    await screen.findByText('claude.native·A');
+    const menu = await apriMenuBarra();
+    fireEvent.click(voceMenu(menu, 'panel'));
     const panel = screen.getByTestId('cellpanel');
     expect(panel.getAttribute('data-route')).toBe('Pixel', 'il ticket e l\'iframe passano da /api/route/Pixel/_');
   });
 
   it('cambio sessione resetta il pannello (nessun leakage fra celle)', async () => {
-    const { rerender } = render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
     fixture.cells = [{ cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'claude.native', key: 'A', panelUrl: 'https://127.0.0.1:6901' }];
-    await screen.findByTitle('panel');
-    fireEvent.click(screen.getByTitle('panel'));
+    const { rerender } = render(<SingleView session="cloud-Dev" token="t" onBack={vi.fn()} />);
+    await screen.findByText('claude.native·A');
+    const menu = await apriMenuBarra();
+    fireEvent.click(voceMenu(menu, 'panel'));
     expect(screen.getByTestId('cellpanel')).toBeTruthy();
     // Switch di cella nella stessa posizione React: il pannello si richiude.
     rerender(<SingleView session="cloud-Fork" token="t" onBack={vi.fn()} />);
@@ -182,25 +203,33 @@ describe('SingleView — pannello per-cella (D8, panelUrl)', () => {
   });
 });
 
-// The renderer toggle in the terminal bar is an icon button, like the zoom and
-// keyboard buttons beside it. It carried the word GPU/DOM as visible text and
-// that widened the bar until it clipped the cell name; the word belongs in the
-// title and the accessible label, where it already was.
+// The renderer toggle lives in the bar's ⋯ menu with the other three actions:
+// it is a labeled voice with a switch (menuitemcheckbox), not an icon button
+// in a row. The GPU/DOM word belongs in the voice's label, where there is
+// room for it.
 describe('SingleView renderer toggle', () => {
-  it('is an icon button: no visible text, title and pressed state present', async () => {
+  it('is a menu voice: label and pressed state present', async () => {
     localStorage.removeItem('nc-terminal-renderer');
     render(<SingleView session="cloud-cell-One" token="t" onBack={vi.fn()} />);
-    const toggle = await screen.findByRole('button', { name: /terminal-renderer-switch/ });
-    expect(toggle.textContent).toBe('');
-    expect(toggle.getAttribute('title')).toMatch(/terminal-renderer-switch/);
-    expect(toggle.getAttribute('aria-pressed')).toBe('true'); // webgl is the default
+    const menu = await apriMenuBarra();
+    const toggle = voceMenu(menu, 'renderer');
+    expect(toggle.getAttribute('role')).toBe('menuitemcheckbox');
+    expect(toggle.getAttribute('aria-checked')).toBe('true'); // webgl is the default
+    expect(toggle.textContent).toContain('bar-menu-renderer');
   });
 
   it('still flips the stored choice when pressed', async () => {
     localStorage.setItem('nc-terminal-renderer', 'webgl');
+    // switchRenderer scrive la preferenza e POI ricarica la pagina: in jsdom la
+    // navigazione e' "not implemented" e sporcherebbe l'output. Si sostituisce
+    // il solo metodo.
+    const ricarica = vi.fn();
+    try {
+      Object.defineProperty(window.location, 'reload', { configurable: true, value: ricarica });
+    } catch (_) { /* location non ridefinibile in questo jsdom: si prosegue */ }
     render(<SingleView session="cloud-cell-One" token="t" onBack={vi.fn()} />);
-    const toggle = await screen.findByRole('button', { name: /terminal-renderer-switch/ });
-    fireEvent.click(toggle);
+    const menu = await apriMenuBarra();
+    fireEvent.click(voceMenu(menu, 'renderer'));
     expect(localStorage.getItem('nc-terminal-renderer')).toBe('dom');
   });
 });

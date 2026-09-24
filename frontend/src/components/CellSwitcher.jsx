@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import CellPeek, { formattaAttività, formattaTelemetria } from './CellPeek.jsx';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { CellPeekBody, formattaAttività, formattaTelemetria } from './CellPeek.jsx';
 import { apiFetch, clearHostCell, designateHostCell, fleetStatus, getLiveHost, getRouteSessions } from '../lib/api.js';
 import { readCellSwitcherSnapshot, writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-view-model.js';
@@ -12,8 +12,9 @@ import { runLiveHostCommand } from '../lib/live-host-command.js';
 import RosterHandle from './RosterHandle.jsx';
 import { CellActionsSheet, cellActionsItems, cellActionsState } from './CellActions.jsx';
 import { applyCellStar, cellStarView } from '../lib/cell-star.js';
-import LiveHostIndicator from './LiveHostIndicator.jsx';
+import { liveHostIndicatorKeys } from '../lib/live-host-view.js';
 import { panelPortForRoute } from '../lib/panel-port.js';
+import { readFontSize, writeFontSize } from '../lib/terminal-fontsize.js';
 import { t } from '../lib/i18n.js';
 import './CellSwitcher.css';
 
@@ -162,6 +163,9 @@ function orderRowsByPosition(rows, rosterItems, pins, orders) {
 
 export default function CellSwitcher({
   token, current, onPick, onClose, panelPort = 0, nodePanelPorts = {},
+  // Il nome del nodo LOCALE (es. VPSCloud): il gruppo delle celle locali si
+  // chiama come il nodo, come i gruppi remoti col loro nodeLabel.
+  localNodeLabel = '',
   // Lo stato dell'host per nodo e le due azioni di designazione arrivano
   // dalle stesse callback che usa la home: la stella qui non ha una via sua.
   hostByRoute = {}, onDesignateCell, onClearHostCell, onLiveHostApplied,
@@ -174,17 +178,26 @@ export default function CellSwitcher({
   const [showAll, setShowAll] = useState(false);
   const [ready, setReady] = useState(false);
   const [notice, setNotice] = useState('');
-  // La cella che si sta SBIRCIANDO. È distinta da quella selezionata: aprire
-  // il popup non cambia dove sei — è la differenza fra guardare e andare.
-  // Il popup tiene una CHIAVE, mai la riga: la lista si aggiorna sotto ogni
-  // 4s e una riga salvata sarebbe un fotogramma morto — il popup che mostra
-  // il contenuto della cella sbagliata (o quello stantio di una cella andata)
-  // è esattamente il difetto che questo stato non deve permettere. A ogni
-  // render la chiave si RIrisolve sulle righe correnti: o la cella c'è ancora
-  // e il popup mostra il presente di QUELLA cella, o non c'è più e il popup
-  // si chiude da sé. `source` è la sorgente aperta: anteprima, streaming o
-  // pannello.
-  const [peek, setPeek] = useState(null);
+  // La riga SELEZIONATA dal primo tocco: il gesto dell'operatore. Un tocco
+  // seleziona e apre l'anteprima in alto; il secondo tocco sulla STESSA riga
+  // apre. Come per il foglio azioni, lo stato tiene una CHIAVE, mai la riga:
+  // la lista si aggiorna sotto ogni 4s e una riga salvata sarebbe un
+  // fotogramma morto — l'anteprima del contenuto di una cella sbagliata (o
+  // di una andata) è esattamente il difetto che questo stato non deve
+  // permettere. A ogni render la chiave si RIrisolve sulle righe correnti:
+  // o la cella c'è ancora e l'anteprima mostra il presente di QUELLA cella,
+  // o non c'è più e la selezione si chiude da sé.
+  const [selectedKey, setSelectedKey] = useState(null);
+  // La sorgente dell'anteprima è CONTROLLATA, come vuole CellPeekBody: di
+  // default il flusso, le altre due sorgenti sono le sue tab.
+  // L'anteprima è NUDA (tavola D356SelSopra): una sorgente sola, il flusso —
+  // niente tab né comando Live (le azioni vivono nel foglio della riga), quindi
+  // non c'e' piu' uno stato della sorgente da tenere.
+  const ANTEPRIMA_SOURCE = 'stream';
+  // Il font dell'anteprima è lo stesso del terminale principale: nc_fontsize.
+  // I suoi − e + passano dallo stesso modulo, così il valore resta uno solo.
+  const [fontSize, setFontSize] = useState(readFontSize);
+  const zoom = (delta) => setFontSize((v) => writeFontSize(v + delta));
   // Il foglio azioni di una riga (⋯): contesto congelato all'apertura — la riga
   // che l'operatore ha toccato, non quella che il poll ha cambiato sotto le dita.
   const [menuRow, setMenuRow] = useState(null);
@@ -208,8 +221,11 @@ export default function CellSwitcher({
     () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || (row.degraded && row.active))),
     [orderedRows, showAll],
   );
-  // La riga sbirciata si RIrisolve a ogni lista: mai un fotogramma morto.
-  const peekRow = useMemo(() => (peek ? rows.find((row) => row.key === peek.key) : null), [rows, peek]);
+  // La riga selezionata si RIrisolve a ogni lista: mai un fotogramma morto.
+  const selectedRow = useMemo(
+    () => (selectedKey ? rows.find((row) => row.key === selectedKey) : null),
+    [rows, selectedKey],
+  );
   // La riga del foglio si ri-risolve allo stesso modo: se la cella non c'e' piu'
   // il foglio non si rende (e la sua chiave si azzera da sola, sotto).
   const menuResolved = useMemo(
@@ -357,6 +373,27 @@ export default function CellSwitcher({
     }
   };
 
+  // Il GESTO della lista: un tocco seleziona la riga e apre l'anteprima in
+  // alto; il secondo tocco sulla STESSA riga apre, col ricontrollo fresco che
+  // c'e' gia' in open(). Un tocco su un'altra riga sposta lì la selezione.
+  const tocca = (row) => {
+    // Una riga non selezionabile non si sceglie: lo dice e basta, come prima.
+    if (!row.selectable) { open(row); return; }
+    if (selectedKey === row.key) { open(row); return; }
+    setSelectedKey(row.key);
+  };
+
+  // Uno scroll NON e' un tocco: il dito che si muove per far scorrere la
+  // lista non seleziona e non apre. Il tocco conta solo senza movimento
+  // (soglia piccola: il tremore del polpastrello non e' uno scroll).
+  const tapRef = useRef(null);
+  const toccoVale = (event) => {
+    const inizio = tapRef.current;
+    tapRef.current = null;
+    if (!inizio) return true; // niente pointerdown registrato: invio da tastiera
+    return Math.hypot(event.clientX - inizio.x, event.clientY - inizio.y) <= 8;
+  };
+
   // Le azioni della riga, nel foglio (⋯): il pin e la Live. La logica resta
   // dov'e' gia' — pin via cell-star.js, Live via runLiveHostCommand, con la
   // stessa revisione letta-e-scritta e lo stesso esito nella riga di stato. Una
@@ -375,28 +412,83 @@ export default function CellSwitcher({
 
   return (
     <div className="nc-cell-switcher-backdrop" onClick={onClose}>
-      <aside ref={dialogRef} className="nc-cell-switcher" role="dialog"
+      {/* L'anteprima della riga selezionata: la metà alta dello schermo, al
+          posto del terminale oscurato. Sola lettura, stesso font del terminale
+          principale. Il corpo è CellPeekBody — le tre sorgenti hanno un posto
+          solo — qui aperto sul flusso. Il foglio lista resta sotto e scorre. */}
+      {selectedRow && (
+        <div className="nc-cell-switcher-anteprima" data-testid="cell-switcher-anteprima"
+          onClick={(event) => event.stopPropagation()}>
+          <div className="nc-cell-switcher-anteprima-testa">
+            <b>{t('cell-switcher-preview-word')} {selectedRow.cellName}</b>
+            <small>{t('cell-switcher-preview-readonly')}</small>
+            <span className="nc-cell-switcher-anteprima-zoom">
+              <button type="button" onClick={() => zoom(-1)} title={t('zoom-out')}
+                aria-label={t('zoom-out')}>−</button>
+              <span data-testid="cell-switcher-fontsize">{fontSize} px</span>
+              <button type="button" onClick={() => zoom(+1)} title={t('zoom-in')}
+                aria-label={t('zoom-in')}>+</button>
+            </span>
+          </div>
+          <CellPeekBody
+            row={selectedRow}
+            token={token}
+            source={ANTEPRIMA_SOURCE}
+            chrome={false}
+            panelPort={panelPortForRoute(selectedRow.route || [], nodePanelPorts, panelPort)}
+            liveHost={liveHostView({ liveHost: hostByRoute[hostRouteKey(selectedRow.route || [])], cells: snapshot.cells || [] })}
+            onLiveHostApplied={onLiveHostApplied}
+            fontSize={fontSize}
+            readOnly
+          />
+        </div>
+      )}
+      <aside ref={dialogRef} className={`nc-cell-switcher${selectedRow ? ' with-anteprima' : ''}`} role="dialog"
         aria-label={t('fleet-cells')} tabIndex={-1} onClick={(event) => event.stopPropagation()}>
+        {/* Intestazione come la tavola: «Celle» + il nome del nodo in piccolo,
+            la pillola Attive|Tutte, il riordino e la chiusura come icone
+            compatte — niente più titolo-lungo che tronca né quadratoni. */}
         <div className="nc-cell-switcher-controls">
-          <b>{t('fleet-cells')}</b>
+          <b>{t('cell-switcher-title')}</b>
+          {localNodeLabel && <small className="nc-cell-switcher-node">{localNodeLabel}</small>}
+          <div className="nc-cell-switcher-filter" role="group" aria-label={t('cell-switcher-filter')}>
+            <button type="button" className={!showAll ? 'on' : ''} aria-pressed={!showAll}
+              onClick={() => { setNotice(''); setShowAll(false); }}>{t('cell-switcher-show-active')}</button>
+            <button type="button" className={showAll ? 'on' : ''} aria-pressed={showAll}
+              onClick={() => { setNotice(''); setShowAll(true); }}>{t('cell-switcher-show-all')}</button>
+          </div>
           <button type="button" className={`nc-cell-switcher-reorder${reorderMode ? ' on' : ''}`}
             aria-pressed={reorderMode} title={t('reorder-help')} aria-label={t('reorder')}
             onClick={() => { setNotice(''); setReorderMode((value) => !value); }}>↕</button>
-          <button type="button" className="nc-cell-switcher-filter" aria-pressed={showAll}
-            onClick={() => { setNotice(''); setShowAll((value) => !value); }}>
-            {showAll ? t('cell-switcher-show-active') : t('cell-switcher-show-all')}
-          </button>
           <button ref={closeRef} type="button" className="nc-cell-switcher-close" aria-label={t('cell-switcher-close')}
             title={t('cell-switcher-close')} onClick={onClose}>×</button>
         </div>
+        {/* Senza selezione, la riga che dice il gesto: si vede finché non c'e'
+            un'anteprima aperta a dirlo da sola. Testo statico, non un annuncio
+            di stato: il role="status" resta del notice, che è l'esito. */}
+        {!selectedRow && (
+          <div className="nc-cell-switcher-hint">{t('cell-switcher-tap-hint')}</div>
+        )}
         <div className="nc-cell-switcher-list">
-          {/* Live host di questo nodo: riga di sola lettura in testa alla lista,
-              cosi' il selettore dice chi e' l'host prima di scegliere una cella. */}
-          <LiveHostIndicator className="nc-cell-switcher-live-host"
-            view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells: snapshot.cells || [] })} />
+          {/* Live host di questo nodo: striscia compatta come la tavola, dice
+              chi e' l'host (e in che modalità) prima di scegliere una cella.
+              Sola lettura: il comando Live sta nel foglio azioni della riga.
+              Senza host designato non c'e' striscia — niente riga spesa. */}
+          {(() => {
+            const hostView = liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells: snapshot.cells || [] });
+            if (!hostView || !hostView.cell) return null;
+            const { modeKey } = liveHostIndicatorKeys(hostView);
+            return (
+              <div className="nc-cell-switcher-live-strip" data-testid="cell-switcher-live-strip">
+                {t('cell-switcher-live-strip')
+                  .replace('{cell}', hostView.cell)
+                  .replace('{mode}', t(modeKey || 'live-host-mode-unknown'))}
+              </div>
+            );
+          })()}
           {!ready && <div className="nc-empty" role="status">{t('cell-switcher-refreshing')}</div>}
           {ready && visibleRows.length === 0 && <div className="nc-empty" role="status">{t('cell-switcher-empty-active')}</div>}
-          {visibleRows.map((row) => {
+          {visibleRows.map((row, indice) => {
             const currentRow = current?.session === row.session && (current?.node || '') === row.node;
             const menuAperto = !!menuRow && menuRow.key === row.key;
             const status = statusFor(row);
@@ -406,10 +498,21 @@ export default function CellSwitcher({
             const telemetry = formattaTelemetria(t, row.telemetry);
             const rigaDati = [attività, telemetry].filter(Boolean).join(' · ');
             const position = row.node || 'local';
+            // l'etichetta del nodo sale UNA volta, in testa al suo
+            // gruppo, invece di ripetersi su ogni riga.
+            const precedente = indice > 0 ? (visibleRows[indice - 1].node || 'local') : null;
+            const apreGruppo = position !== precedente;
             const rawItems = rosterItems.get(position)
               || rows.filter((candidate) => (candidate.node || 'local') === position);
             return (
-              <div key={row.key} className={`nc-cell-switcher-row${currentRow ? ' current' : ''}${row.selectable ? '' : ' off'}`}
+              <Fragment key={row.key}>
+              {apreGruppo && (
+                <div className="nc-cell-switcher-position">
+                  {t('cell-switcher-group').replace('{node}',
+                    row.nodeLabel || localNodeLabel || t('cell-switcher-group-local'))}
+                </div>
+              )}
+              <div className={`nc-cell-switcher-row${currentRow ? ' current' : ''}${selectedKey === row.key ? ' selected' : ''}${row.selectable ? '' : ' off'}`}
                 data-roster-key={row.key} data-position={position}>
                 {/* Riordino a MODALITA', come nella home mobile: senza modalita'
                     la maniglia non esiste nel DOM, e la riga e' solo un bersaglio. */}
@@ -417,26 +520,39 @@ export default function CellSwitcher({
                   canMove={canMoveRoster}
                   onMove={(source, target) => moveRoster(position, source, target, rawItems)}
                   onStep={(delta) => stepRoster(position, row.key, delta, rawItems)} />}
-                {/* Il pallino (44 px) e' «Guarda dal vivo»: apre la finestra
-                    della cella direttamente dal Flusso — su telefono la nuvola
-                    al passaggio non esiste, e guardare non e' andare: la riga
-                    non si apre per questo. */}
-                <button type="button" className="nc-cell-switcher-peek"
-                  title={t('cell-actions-watch')} aria-label={`${t('cell-actions-watch')}: ${row.cellName}`}
-                  onClick={(event) => { event.stopPropagation(); setPeek({ key: row.key, source: 'stream' }); }}>
+                {/* Il pallino (44 px) mostra lo STATO e nient'altro: guardare
+                    dal vivo adesso e' il primo tocco della riga, che apre
+                    l'anteprima in alto in sola lettura. Il gesto e' sulla
+                    riga intera, un solo bersaglio. */}
+                <span className="nc-cell-switcher-peek">
                   <span className={`nc-cell-switcher-dot${row.degraded ? ' warn' : row.live ? ` on${row.working ? ' working' : ''}` : ''}`} />
-                </button>
-                {/* Il tocco della riga APRE, e il ricontrollo fresco lo precede
-                    sempre: una cella puo' morire tra il poll e il dito. */}
+                </span>
+                {/* Il tocco della riga SELEZIONA e apre l'anteprima; il secondo
+                    tocco sulla stessa riga APRE, e il ricontrollo fresco lo
+                    precede sempre: una cella puo' morire tra il poll e il dito.
+                    Uno scroll non conta: il tocco vale solo senza movimento. */}
                 <button type="button" className="nc-cell-switcher-row-select"
                   aria-current={currentRow ? 'true' : undefined} aria-disabled={!row.selectable}
-                  disabled={picking === row.key} onClick={() => open(row)}>
+                  data-selected={selectedKey === row.key ? 'true' : undefined}
+                  disabled={picking === row.key}
+                  onPointerDown={(event) => { tapRef.current = { x: event.clientX, y: event.clientY }; }}
+                  onClick={(event) => { if (!toccoVale(event)) return; tocca(row); }}>
                   <span className="nc-cell-switcher-copy">
-                    <b>{row.cellName}</b>
-                    {currentRow && <span className="nc-cell-switcher-here">{t('cell-switcher-here')}</span>}
-                    <small className="nc-cell-switcher-state">{status}</small>
-                    <small>{[row.nodeLabel, row.subtitle].filter(Boolean).join(' · ')}</small>
-                    {rigaDati && <small className="nc-cell-switcher-telemetry">{rigaDati}</small>}
+                    <span className="nc-cell-switcher-nameline">
+                      <b>{row.cellName}</b>
+                      {currentRow && <span className="nc-cell-switcher-here">{t('cell-switcher-here')}</span>}
+                      {selectedKey === row.key && <span className="nc-cell-switcher-taptwo">{t('cell-switcher-two-taps')}</span>}
+                    </span>
+                    {/* UNA riga di stato: la parola (una sola fonte, il poll
+                        che ha confermato la cella) e il tempo dall'ultima
+                        attivita'. La telemetria, se c'e', entra QUI con
+                        l'ellissi: non aggiunge una terza riga. Il vecchio
+                        sottotitolo dell'hook non e' piu' una seconda
+                        rappresentazione dello stesso fatto. */}
+                    <span className="nc-cell-switcher-stateline">
+                      <small className="nc-cell-switcher-state">{status}</small>
+                      {rigaDati && <small className="nc-cell-switcher-telemetry">{rigaDati}</small>}
+                    </span>
                   </span>
                 </button>
                 {/* Le azioni della riga in un foglio dal basso: il pin e la Live.
@@ -448,30 +564,11 @@ export default function CellSwitcher({
                   aria-haspopup="menu" aria-expanded={menuAperto ? 'true' : 'false'}
                   onClick={(event) => { event.stopPropagation(); setMenuRow({ key: row.key }); }}>⋯</button>
               </div>
+              </Fragment>
             );
           })}
         </div>
         {notice && <div className="nc-cell-switcher-notice" role="status">{notice}</div>}
-        {/* `peek && peekRow`: se la lista aggiornata non ha più la cella, il
-            popup si chiude da sé. Mostrare il contenuto di una riga morta —
-            l'anteprima di un'ALTRA cella creduta la propria — è peggio di non
-            vedere niente. La sorgente panel ricade su anteprima se la cella
-            ha perso panelUrl: stesso principio, sul contratto della sorgente. */}
-        {/* `peek && peekRow`: se la lista aggiornata non ha più la cella, il
-            popup si chiude da sé — mai il fotogramma morto di una riga salvata.
-            Il contenuto a tre sorgenti è CellPeek, condiviso con la Sidebar:
-            un posto solo, la terza copia non nasce. */}
-        {peek && peekRow && (
-          <CellPeek
-            row={peekRow}
-            token={token}
-            initialSource={peek.source}
-            panelPort={panelPortForRoute(peekRow.route || [], nodePanelPorts, panelPort)}
-            liveHost={liveHostView({ liveHost: hostByRoute[hostRouteKey(peekRow.route || [])], cells: snapshot.cells || [] })}
-            onLiveHostApplied={onLiveHostApplied}
-            onClose={() => setPeek(null)}
-          />
-        )}
         {/* Le azioni della riga, dal basso. Il contenuto e' di CellActions
             (fase 1): qui si passano solo gli handler, e una voce senza handler
             non compare — e' il suo contratto. Se la cella e' sparita dalla
