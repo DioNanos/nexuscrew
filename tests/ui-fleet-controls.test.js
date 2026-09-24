@@ -36,14 +36,17 @@ test('mobile Fleet footer aligns metadata and language controls without overlap'
 });
 
 // Launch editor CONDIVISO: "Avvia" dalla lista celle e dalla card inventory apre
-// lo STESSO PowerSheet (non fleetUp diretto). fleetUp resta, ma nel confirm.
+// lo STESSO PowerSheet (non fleetUp diretto). Il confirm passa dal percorso
+// condiviso (runFleetPowerAction) che inoltra engine/model/policy e mappa gli
+// esiti: fleetUp non esiste più inline in questo componente.
 test('managed Fleet start opens the shared launch PowerSheet (no direct fleetUp on start)', () => {
   const fleet = read('FleetTab.jsx');
   assert.match(fleet, /onPower\(/);
   // il bottone Start della lista celle principali chiama onPower, non fleetUp diretto
   assert.match(fleet, /!isOn && caps\.includes\('up'\)[\s\S]*?onPower\(/);
-  // fleetUp sopravvive (nel confirm del PowerSheet) e inoltra engine/model/policy
-  assert.match(fleet, /fleetUp\(token, \{[\s\S]*cell: id[\s\S]*permissionPolicy/);
+  // il confirm delega al percorso condiviso, che inoltra engine/model/policy
+  assert.match(fleet, /runFleetPowerAction\(\{ token, powerCell: target, payload/);
+  assert.doesNotMatch(fleet, /fleetUp\(/);
 });
 
 // PowerSheet è ora il launch editor: per cella OFF manda engine+modello+policy+boot
@@ -74,9 +77,11 @@ test('PowerSheet is the shared launch editor (engine/model/policy for OFF, stop 
 test('Fleet settings preserves the clicked Hydra route for power actions', () => {
   const fleet = read('FleetTab.jsx');
   assert.match(fleet, /Array\.isArray\(c\?\.route\) \? c\.route : route/);
-  assert.match(fleet, /const actionRoute = Array\.isArray\(powerCell\.route\)/);
-  assert.match(fleet, /fleetUp\(token,[\s\S]*?actionRoute\)/);
-  assert.match(fleet, /fleetDown\(token,[\s\S]*?actionRoute\)/);
+  // la route del click vive nel powerCell: il confirm la passa al percorso
+  // condiviso, che la usa per l'azione (vedere i test di fleet-action-notice).
+  assert.match(fleet, /const target = \{ \.\.\.powerCell, cell: powerCell\.cell \|\| powerCell\.id \};/);
+  assert.match(fleet, /runFleetPowerAction\(\{ token, powerCell: target, payload/);
+  assert.match(fleet, /fleetDown\(token, \{ cell: c\.id \}, route\)/);
   assert.match(fleet, /<PowerSheet[\s\S]*?Array\.isArray\(powerCell\.route\)/);
 });
 

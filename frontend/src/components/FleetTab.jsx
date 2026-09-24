@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
-import { upActionNotice } from '../lib/fleet-action-notice.js';
+import { runFleetPowerAction } from '../lib/fleet-action-notice.js';
 import {
   fleetStatus, fleetDefinitions, fleetDefineEngine, fleetEditEngine, fleetRemoveEngine,
-  fleetDefineCell, fleetEditCell, fleetRemoveCell, fleetRestart, fleetUp, fleetDown,
+  fleetDefineCell, fleetEditCell, fleetRemoveCell, fleetRestart, fleetDown,
   fleetImportCell,
   fleetRestoreCells, fleetRestoreEngines,
   fleetCredentialStatus, fleetSetCredential, fleetRemoveCredential,
@@ -220,20 +220,14 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   });
   const onFleetConfirm = async (payload) => {
     if (!powerCell) return;
-    const id = powerCell.cell || powerCell.id;
-    const actionRoute = Array.isArray(powerCell.route) ? powerCell.route : route;
-    if (payload.action === 'up') {
-      const res = await fleetUp(token, {
-        cell: id, boot: !!payload.boot,
-        ...(payload.engine ? { engine: payload.engine } : {}),
-        ...(payload.model !== undefined ? { model: payload.model } : {}),
-        ...(payload.permissionPolicy ? { permissionPolicy: payload.permissionPolicy } : {}),
-      }, actionRoute);
-      // 0.8.47: TUI in consenso/auth/onboarding -> recovery esplicita (bounded).
-      const notice = upActionNotice(res);
-      if (notice) setNote(notice.text);
-    } else {
-      await fleetDown(token, { cell: id, boot: !!payload.boot }, actionRoute);
+    // Stesso percorso del roster: esiti benigni (timeout client, route lenta,
+    // sessione già attiva) come nota, errori veri nel foglio.
+    const target = { ...powerCell, cell: powerCell.cell || powerCell.id };
+    try {
+      await runFleetPowerAction({ token, powerCell: target, payload, onNotice: setNote });
+    } catch (e) {
+      setErr(String((e && e.message) || e));
+      throw e;
     }
   };
 
@@ -317,7 +311,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
         : <>{locationPicker}<div className="nc-set-info">{err ? t('fleet-editor-load-error') : t('fleet-editor-unavailable')}{!err && status.reason ? ` ${status.reason}` : ''}</div></>}
       {err && <div className="nc-err">{err}</div>}
       {importEdit && <FleetModal onClose={() => setImportEdit(null)} label={t('import-as-cell')} error={err}><ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} /></FleetModal>}
-      {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { await refresh(); } }} onClose={() => setPowerCell(null)} />}
+      {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { refresh(); } }} onClose={() => setPowerCell(null)} />}
     </div>
   );
   return (
@@ -413,7 +407,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
         </div>
       </FleetModal>}
       {importEdit && <FleetModal onClose={() => setImportEdit(null)} label={t('import-as-cell')} error={err}><ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} /></FleetModal>}
-      {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { await refresh(); } }} onClose={() => setPowerCell(null)} />}
+      {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { refresh(); } }} onClose={() => setPowerCell(null)} />}
     </div>
   );
 }
