@@ -1,12 +1,12 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-// Il tasto del pannello nell'intestazione della vista singola nasce e muore
-// col `panelUrl` che il fleetStatus pubblica per la cella: la spunta OFF del
-// desktop taglia il campo lato server, quindi il tasto — e la sorgente
-// Pannello — spariscono senza un `if` nel frontend. Qui si verifica la
-// resa: niente panelUrl pubblicato = niente tasto, con lo stesso mock del
+// La voce Pannello del menu ⋯ della barra nasce e muore col `panelUrl` che il
+// fleetStatus pubblica per la cella: la spunta OFF del desktop taglia il campo
+// lato server, quindi la voce — e la sorgente Pannello — spariscono senza un
+// `if` nel frontend. Qui si verifica la resa aprendo il menu: niente panelUrl
+// pubblicato = niente voce (non una voce spenta), con lo stesso mock del
 // trasporto che usano i test del selettore.
 const mocks = vi.hoisted(() => ({ fleetStatus: vi.fn() }));
 
@@ -35,6 +35,20 @@ vi.mock('./lib/api.js', () => ({
 }));
 
 import { SingleView } from './App.jsx';
+import { t } from './lib/i18n.js';
+
+// Il menu ⋯ della barra: si apre dal tasto e restituisce le sue voci
+// (le azioni non stanno piu' in fila nella barra).
+async function apriMenu() {
+  fireEvent.click(screen.getByTitle(t('bar-menu-open')));
+  await waitFor(() => { expect(screen.getByRole('menu')).toBeTruthy(); });
+  return screen.getByRole('menu');
+}
+
+// La voce si cerca per `data-cellaction`, non per testo: col sottotitolo il
+// testo accessibile non e' la sola etichetta.
+const voce = (menu, id) => [...menu.querySelectorAll('[data-cellaction]')]
+  .find((v) => v.dataset.cellaction === id);
 
 const cella = (panelUrl) => ({
   cell: 'AIDesktopCell', tmuxSession: 'cloud-AIDesktopCell',
@@ -52,17 +66,22 @@ beforeEach(() => {
   }));
 });
 
-describe('Tasto del pannello nell\'header della vista singola', () => {
-  it('con il pannello pubblicato il tasto c\'è', async () => {
+describe('Voce Pannello nel menu ⋯ della vista singola', () => {
+  it('con il pannello pubblicato la voce c\'è, nel menu', async () => {
     render(<SingleView session="cloud-AIDesktopCell" cellName="AIDesktopCell" token="t" onBack={vi.fn()} />);
-    await waitFor(() => { expect(screen.getByTitle('panel')).toBeTruthy(); });
+    const menu = await apriMenu();
+    expect(voce(menu, 'panel')).toBeTruthy();
   });
 
-  it('OFF: panelUrl tagliato dal fleetStatus → il tasto NON c\'è più', async () => {
+  it('OFF: panelUrl tagliato dal fleetStatus → la voce NON c\'è più', async () => {
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [cella('')] }));
     render(<SingleView session="cloud-AIDesktopCell" cellName="AIDesktopCell" token="t" onBack={vi.fn()} />);
     await waitFor(() => { expect(mocks.fleetStatus).toHaveBeenCalled(); });
     // un giro di stabilizzazione: il poll interna può ancora non aver girato
-    await waitFor(() => { expect(screen.queryByTitle('panel')).toBeNull(); });
+    await waitFor(() => { expect(screen.getByTitle(t('bar-menu-open'))).toBeTruthy(); });
+    const menu = await apriMenu();
+    expect(voce(menu, 'panel')).toBeUndefined();
+    // non e' una voce spenta che occupa posto: restano le altre tre.
+    expect(menu.querySelectorAll('[data-cellaction]')).toHaveLength(3);
   });
 });

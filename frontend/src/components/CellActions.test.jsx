@@ -5,6 +5,7 @@ import {
   cellActionsItems, cellActionsState,
 } from './CellActions.jsx';
 import { hostRouteKey } from '../lib/host-designation.js';
+import { t } from '../lib/i18n.js';
 
 // Il menu condiviso delle azioni cella: una voce tolta (capability assente,
 // cella spenta, handler non passato) NON compare — il controllo negativo è
@@ -100,6 +101,31 @@ describe('CellActionsMenu', () => {
     expect(boot.getAttribute('aria-checked')).toBe('true');
     expect(boot.disabled).toBe(true);
     expect(container.querySelector('[role="menu"]').getAttribute('aria-busy')).toBe('true');
+    cleanup();
+  });
+});
+
+describe('sottoriga opzionale della voce', () => {
+  // La sottoriga e' OPZIONALE e additiva: chi non la passa rende esattamente
+  // come prima (nessuna regressione sui chiamanti esistenti).
+  const voce = (id, extra) => ({
+    id, kind: 'action', on: false, labelKey: 'panel', run: () => {}, ...extra,
+  });
+
+  it('con descKey la sottoriga c\'è, in piccolo sotto l\'etichetta', () => {
+    const { container } = render(<CellActionsMenu items={[voce('a', { descKey: 'composer' })]} />);
+    const bottone = container.querySelector('[data-cellaction="a"]');
+    expect(bottone.querySelector('.nc-cellactions-desc').textContent).toBe(t('composer'));
+    // L'etichetta resta quella di sempre.
+    expect(bottone.textContent.startsWith(t('panel'))).toBe(true);
+    cleanup();
+  });
+
+  it('senza descKey la voce rende come oggi: nessuna sottoriga', () => {
+    const { container } = render(<CellActionsMenu items={[voce('b')]} />);
+    const bottone = container.querySelector('[data-cellaction="b"]');
+    expect(bottone.querySelector('.nc-cellactions-desc')).toBeNull();
+    expect(bottone.querySelector('.nc-cellactions-testo').textContent).toBe(t('panel'));
     cleanup();
   });
 });

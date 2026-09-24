@@ -49,7 +49,17 @@ export function formattaTelemetria(tt, tele) {
 // seconda copia sarebbe il difetto che torna in una superficie non ricontrollata.
 // La sorgente è CONTROLLATA (source + onSourceChange): chi dà il guscio decide
 // da dove si apre e con che default.
-export function CellPeekBody({ row, token, panelPort = 0, liveHost = null, onLiveHostApplied, source, onSourceChange }) {
+export function CellPeekBody({ row, token, panelPort = 0, liveHost = null, onLiveHostApplied, source, onSourceChange,
+  // Il guscio decide anche COME si vede: l'anteprima del selettore passa lo
+  // stesso fontSize del terminale principale e la apre in sola lettura; il
+  // popup libero non passa nulla e resta com'era.
+  fontSize, readOnly = false,
+  // ...e DECIDE se c'e' il chrome attorno alle sorgenti: l'anteprima del
+  // selettore mobile e' nuda — una sorgente sola (il flusso), niente tab e
+  // niente comando Live: le altre sorgenti vivono nei gusci con tab, le
+  // azioni nel foglio della riga.
+  chrome = true,
+}) {
   const setSource = (id) => onSourceChange && onSourceChange(id);
   // Ref del terminale: il contratto della tile, così Terminal non dipende da
   // chi lo monta. takeSize={false} sotto: il guscio non ruba il size-lock
@@ -89,29 +99,34 @@ export function CellPeekBody({ row, token, panelPort = 0, liveHost = null, onLiv
   return (
     <>
       {/* Le tre sorgenti in un contenitore solo: chi apre decide COSA
-          guardare, il contenitore decide COME si chiude. */}
-      <div className="nc-peek-sorgenti" role="tablist">
-        {tabs.map(([id, label]) => (
-          <button key={id} type="button" role="tab" aria-selected={source === id}
-            className={`nc-peek-sorgente${source === id ? ' attiva' : ''}`}
-            onClick={() => setSource(id)}>{label}</button>
-        ))}
-      </div>
-      <div className="nc-peek-host">
-        <button type="button" className="nc-peek-host-btn" disabled={hostBusy}
-          onClick={runHostCommand}>
-          {isHost ? t('live-host-action-remove') : t('live-host-action-use')}
-        </button>
-        {hostStatus && <div className="nc-peek-notice" role="status">{hostStatus}</div>}
-      </div>
+          guardare, il contenitore decide COME si chiude. Nell'anteprima nuda
+          (chrome=false) tab e comando Live non ci sono proprio. */}
+      {chrome && (
+        <div className="nc-peek-sorgenti" role="tablist">
+          {tabs.map(([id, label]) => (
+            <button key={id} type="button" role="tab" aria-selected={source === id}
+              className={`nc-peek-sorgente${source === id ? ' attiva' : ''}`}
+              onClick={() => setSource(id)}>{label}</button>
+          ))}
+        </div>
+      )}
+      {chrome && (
+        <div className="nc-peek-host">
+          <button type="button" className="nc-peek-host-btn" disabled={hostBusy}
+            onClick={runHostCommand}>
+            {isHost ? t('live-host-action-remove') : t('live-host-action-use')}
+          </button>
+          {hostStatus && <div className="nc-peek-notice" role="status">{hostStatus}</div>}
+        </div>
+      )}
       {source === 'stream' ? (
         <div className="nc-peek-stream">
           <Terminal
             key={`peek:${row.key}`}
             session={row.session} node={row.node || undefined} token={token}
-            readonly={false} takeSize={false} focused
+            readonly={readOnly} takeSize={false} focused
             sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
-            ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
+            ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} fontSize={fontSize}
           />
         </div>
       ) : source === 'panel' ? (

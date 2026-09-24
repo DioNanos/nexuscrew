@@ -130,6 +130,15 @@ test('la guardia accetta le versioni provate', () => {
   const cfg = { codexVersionProbe: (bin) => (bin.endsWith('codex') ? 'codex-cli 0.156.1' : 'codex-cli 0.155.1') };
   assert.deepStrictEqual(gateVersione('codex', '/tmp/finto/bin/codex', cfg), { ok: true, versione: '0.156.1' });
   assert.deepStrictEqual(gateVersione('codex-vl', '/tmp/finto/bin/codex-vl', cfg), { ok: true, versione: '0.155.1' });
+  // Anche 0.156.1 del fork e' provata (il binario del merge recente stampa
+  // «codex-cli 0.156.1», misurato sul gate del binario): accettata uguale.
+  const vl156 = { codexVersionProbe: () => 'codex-cli 0.156.1' };
+  assert.deepStrictEqual(gateVersione('codex-vl', '/tmp/finto/bin/codex-vl', vl156), { ok: true, versione: '0.156.1' });
+  // E una versione qualunque del fork resta fuori: la fiducia e' per hash
+  // esatto, mai per prefisso.
+  const g = gateVersione('codex-vl', '/tmp/finto/bin/codex-vl', { codexVersionProbe: () => 'codex-cli 0.9.9' });
+  assert.strictEqual(g.ok, false);
+  assert.match(g.reason, /non provata/);
 });
 
 test('il client sceglie l\'elenco, il binario e\' cio\' che si esegue', () => {
