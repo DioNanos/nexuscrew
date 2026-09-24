@@ -60,6 +60,13 @@ test('dispatch: help -> code 0, stampa HELP', () => {
   const long = [];
   assert.equal(dispatch(['--help'], { log: (m) => long.push(m) }).code, 0);
   assert.ok(long.join('\n').includes('nexuscrew show'));
+  // I quattro comandi runtime sono elencati: ometterli li rendeva invisibili a
+  // chi legge solo l'help, pur essendo avviabili dalla CLI.
+  const help = logs.join('\n');
+  for (const cmd of ['nexuscrew serve', 'nexuscrew mcp', 'nexuscrew fleet-boot',
+    'nexuscrew identity provision']) {
+    assert.ok(help.includes(cmd), `l'help deve elencare "${cmd}"`);
+  }
   const version = [];
   assert.equal(dispatch(['--version'], { log: (m) => version.push(m) }).code, 0);
   assert.equal(version[0], require('../package.json').version);

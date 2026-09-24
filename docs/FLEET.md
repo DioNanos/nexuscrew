@@ -25,6 +25,8 @@ Clean installations include these base adapters:
 - Claude Code
 - Codex
 - Codex-VL
+- Grok on Linux and macOS
+- VL
 - Pi
 - Agy on Linux and macOS
 - Kimi Code CLI
@@ -42,6 +44,16 @@ has no interactive prompt flag (`kimi -p` is non-interactive and skips the
 TUI) — so it is injected with bracketed paste after the session is ready.
 This engine is distinct from the Claude Code "Kimi Code" provider below,
 which remains the managed K3 path with an isolated Claude configuration.
+
+VL (`vl.native`) wraps the local Vivling runtime: NexusCrew never reads or
+copies its credentials, and the model chosen in the UI travels separately from
+the runtime's own configuration. Remote variants (Anthropic, custom endpoint)
+exist in the catalog but are never seeded: a cell that needs a key or an
+endpoint would fail at its first start.
+
+Activity hooks are injected only into CLI versions that have been verified
+against them. On any other version no hook is installed and the cell runs
+without them — a declared limitation, not a failure.
 
 ### Bootstrap prompt delivery (Kimi engines)
 

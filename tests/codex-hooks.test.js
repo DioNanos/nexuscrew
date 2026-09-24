@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
+const crypto = require('node:crypto');
 
 const {
   hashHook,
@@ -22,11 +23,25 @@ const {
 // fiducia non combacia piu' e il client riapre il dialogo di revisione.
 
 test('hashHook riproduce l\'hash della prova isolata su TUI', () => {
+  // Il path in questo comando e' quello della misura originale su una TUI
+  // reale: NON va aggiornato, altrimenti l'hash atteso non vale piu'.
   const comando = 'printf cli-ran >> /tmp/d348-step0-15985qqx/cli-probe';
   assert.strictEqual(
     hashHook('SessionStart', comando),
     'sha256:1c196e4a186c6ba4bfd1f4a9c86e2ea8f43d0f13527f93c70001134a70e47d4b',
   );
+});
+
+// Lo stesso calcolo, bloccato anche sulla FORMA: la canonicalizzazione qui
+// sotto e' scritta a mano di proposito, cosi' il test non dipende da
+// `ordinaChiavi`. Se i campi o il loro ordine cambiano, questo atteso non
+// combacia piu' — mentre il test sopra resta l'oracolo misurato.
+test('hashHook: il digest e\' quello del JSON canonico dell\'identita dell\'hook', () => {
+  const comando = 'printf cli-ran >> /tmp/nc-hook-probe-step0/cli-probe';
+  const canonico = '{"event_name":"session_start","hooks":[{"async":false,"command":'
+    + JSON.stringify(comando) + ',"timeout":600,"type":"command"}]}';
+  const atteso = `sha256:${crypto.createHash('sha256').update(canonico, 'utf8').digest('hex')}`;
+  assert.strictEqual(hashHook('SessionStart', comando), atteso);
 });
 
 test('l\'hash cambia col comando: e\' cio\' che invalida la fiducia', () => {
