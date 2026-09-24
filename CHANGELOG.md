@@ -2,6 +2,14 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.45 — 2026-09-24
+
+- **The start and stop window cannot hang any more.** A start or a stop had no client-side deadline: a slow node kept the sheet busy with its buttons disabled, and the only way out was to reload the page. The action now has a 60-second cap, **Cancel** stays active while it works, and the primary button says what it is doing — "starting…" or "stopping…" — so the state of the action is never ambiguous. When the cap expires the sheet closes and the outcome arrives as a notice, because the server may still be completing the start and the roster tells the truth a moment later. (commits 6e8cdb2, 0f82958)
+- **A cell that is already running is not an error.** Starting a cell that was up answered with a conflict the sheet presented as a failure, with the buttons disabled, while the cell was simply already there. That answer now closes the sheet with a notice saying the cell is already running. A stop on a cell that is already down was never an error, and it is not treated as one. (commit e682efc)
+- **A slow start on a remote node is reported as in progress, not as a failure.** The federated proxy answered the same way for a node it cannot reach and for one that is answering slowly, so a remote node that took longer than the proxy budget looked dead. The waiting case now carries its own cause and reaches the operator as a start in progress to be checked, while a genuinely unreachable node stays an error. (commit e682efc)
+- **Outcome notices stay visible.** The notices reporting a degraded or failed outcome were written to a surface that the following refresh cleared about a hundred milliseconds later, so they were never actually read. They now live on their own notice surface with a ten-second life, independent of the refresh, and the notices that already existed use it too. (commits 806e5f6, a2117e8)
+- **One behaviour wherever the action is offered.** The start and stop flow is a single shared handler for the mobile roster, the desktop sidebar and Settings → Fleet, which used to duplicate the confirmation three times; the settings sheet no longer waits for a refresh before closing after a successful start. (commits 0f82958, f87f515)
+
 ## 0.9.44 — 2026-09-24
 
 - **The documentation says what the runtime does.** The adapter list in the README and in the Fleet guide now names every engine a clean installation ships — Grok and VL are in the catalog and were missing from that list, so a new user had no way to learn they existed. The tmux version stops being a requirement nobody verifies: `doctor` checks that tmux is present, not which version it is, and the guide now says that instead of promising a check that does not run. The skills table also gains the one skill the package carries that the table did not mention. (commits 951ebc1, a58893b)
