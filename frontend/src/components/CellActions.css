@@ -31,6 +31,15 @@
 
 .nc-cellactions-testo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Sottoriga OPZIONALE della voce: sotto l'etichetta, piccola e
+   attenuata. `display: block` perche' il genitore e' a una riga sola
+   (`white-space: nowrap`): la sottoriga scende da sola, e una voce che non la
+   passa resta identica a prima. */
+.nc-cellactions-desc {
+  display: block; font-size: 11px; opacity: .62; white-space: normal;
+  overflow: hidden; text-overflow: ellipsis;
+}
+
 /* Interruttore del boot: la forma dice lo stato, come il tondo ma in fila. */
 .nc-cellactions-toggle {
   flex: 0 0 auto;

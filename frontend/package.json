@@ -1,6 +1,6 @@
 {
   "name": "nexuscrew-frontend",
-  "version": "0.9.42",
+  "version": "0.9.43",
   "type": "module",
   "scripts": {
     "dev": "vite",

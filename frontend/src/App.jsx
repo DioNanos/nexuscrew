@@ -13,7 +13,10 @@ import SettingsPanel from './components/SettingsPanel.jsx';
 import Wizard from './components/Wizard.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
+import { CellActionsPopover, CellActionsSheet } from './components/CellActions.jsx';
+import { cellRuntime } from './lib/roster-view-model.js';
 import { nextRendererPreference, readRendererPreference, writeRendererPreference } from './lib/terminal-renderer.js';
+import { readFontSize, writeFontSize } from './lib/terminal-fontsize.js';
 import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import { createPollGuard } from './lib/poll-guard.js';
 import VlSessionView from './components/VlSessionView.jsx';
@@ -44,8 +47,6 @@ import { parseBootstrapHash } from './lib/fragment.js';
 import { useDesktop } from './lib/desktop.js';
 import './App.css';
 
-const FONT_MIN = 9;
-const FONT_MAX = 24;
 const SIDE_W_KEY = 'nc_side_w';
 const SIDE_MIN_KEY = 'nc_side_min';
 const SIDE_W_DEF = 240;
@@ -54,11 +55,6 @@ const THREAD_STATUSES = new Set(['absent', 'present', 'active', 'unknown']);
 function loadSideW() {
   const v = Number(localStorage.getItem(SIDE_W_KEY));
   return v >= 180 && v <= 480 ? v : SIDE_W_DEF;
-}
-
-function initialFontSize() {
-  const v = Number(localStorage.getItem('nc_fontsize'));
-  return v >= FONT_MIN && v <= FONT_MAX ? v : 13;
 }
 
 // Bootstrap dal fragment: legge token (#token=) e pairing (#pair=) dalla hash
@@ -115,6 +111,61 @@ function rel(epochSec) {
 // cellName (opzionale, Tranche D): titolo logico Fleet gia' risolto dal roster
 // (desktop overlay). Se assente (mobile), la lookup fleetStatus esistente lo
 // risolve al primo ciclo. Il titolo visibile deriva sempre da `cell.cell`.
+// le quattro azioni della barra alta, raccolte nel menu ⋯.
+//
+// Sono le STESSE azioni di prima, con lo stesso stato vero: qui si decide solo
+// l'ordine e quali compaiono. Una voce che non ha il suo handler non c'e' — e'
+// il contratto di CellActionsMenu, gli stessi item delle azioni cella.
+export function barActionsItems({
+  showComposer, showFiles, showPanel, hasPanel, rendererKind, handlers = {},
+} = {}) {
+  const items = [];
+  if (typeof handlers.onToggleComposer === 'function') {
+    items.push({
+      id: 'keyboard', kind: 'switch', on: !!showComposer,
+      labelKey: 'bar-menu-keyboard', descKey: 'bar-menu-keyboard-desc',
+      run: handlers.onToggleComposer,
+    });
+  }
+  if (typeof handlers.onToggleFiles === 'function') {
+    items.push({
+      id: 'files', kind: 'switch', on: !!showFiles,
+      labelKey: 'bar-menu-files', descKey: 'bar-menu-files-desc',
+      run: handlers.onToggleFiles,
+    });
+  }
+  // Il pannello esiste solo se la cella ne pubblica uno: la voce SPARISCE, non
+  // resta spenta.
+  if (hasPanel && typeof handlers.onTogglePanel === 'function') {
+    items.push({
+      id: 'panel', kind: 'switch', on: !!showPanel,
+      labelKey: 'bar-menu-panel', descKey: 'bar-menu-panel-desc',
+      run: handlers.onTogglePanel,
+    });
+  }
+  if (typeof handlers.onSwitchRenderer === 'function') {
+    items.push({
+      id: 'renderer', kind: 'switch', on: rendererKind === 'webgl',
+      labelKey: 'bar-menu-renderer', descKey: 'bar-menu-renderer-desc',
+      run: handlers.onSwitchRenderer,
+    });
+  }
+  return items;
+}
+
+// La parola di stato del centro della barra. Esce dal contratto `stato` della
+// cella (roster-view-model.js), non da una derivazione nuova, e «ferma» si dice
+// «in attesa» — la stessa parola che usa la lista per la stessa cosa. Senza un
+// canale affidabile non si afferma nulla: il centro resta il solo motore.
+function parolaStatoCella(cell, session) {
+  if (!cell || !cell.tmux) return '';
+  const rt = cellRuntime(cell, session || {});
+  if (rt.stato === 'lavora') return t('cell-working');
+  if (rt.stato === 'attesa') return t('cell-permission');
+  if (rt.stato === 'ferma') return t('cell-idle');
+  return '';
+}
+
 export function SingleView({
   session, node, ownerId, cellName, token, readonly = false, panelPort = 0, onBack, onCellSwitcher, cellSwitcherOpen = false,
   // Live host della cella aperta (gia' risolto da App per la route giusta):
@@ -123,11 +174,16 @@ export function SingleView({
 }) {
   useLang(); // re-render allo switch lingua
   const [inputPreferences] = useInputPreferences();
+  const isDesktop = useDesktop();
   const [showFiles, setShowFiles] = useState(false);
+  // Il menu ⋯ della barra: aperto/chiuso, piu' il rettangolo del trigger per il
+  // popover desktop (il foglio mobile non ne ha bisogno).
+  const [showBarMenu, setShowBarMenu] = useState(false);
+  const [barMenuRect, setBarMenuRect] = useState(null);
   // Su touch il composer è aperto di default (l'IME Gboard corrompe l'input in xterm).
   const [showComposer, setShowComposer] = useState(() => window.matchMedia('(pointer: coarse)').matches);
   const [filesEvent, setFilesEvent] = useState(null);
-  const [fontSize, setFontSize] = useState(initialFontSize);
+  const [fontSize, setFontSize] = useState(readFontSize);
   // Renderer del terminale: preferenza per browser + quello che sta disegnando
   // davvero (il GPU puo' non essere disponibile, o perdere il contesto).
   const [rendererPref, setRendererPref] = useState(readRendererPreference);
@@ -152,11 +208,13 @@ export function SingleView({
   const [panelUrl, setPanelUrl] = useState('');
   const [panelCellId, setPanelCellId] = useState('');
   const [showPanel, setShowPanel] = useState(false);
-  const zoom = (delta) => setFontSize((v) => {
-    const next = Math.max(FONT_MIN, Math.min(FONT_MAX, v + delta));
-    localStorage.setItem('nc_fontsize', String(next));
-    return next;
-  });
+  const zoom = (delta) => setFontSize((v) => writeFontSize(v + delta));
+  // Lo zoom dell'anteprima del selettore scrive lo stesso nc_fontsize: quando
+  // il foglio si chiude, il terminale principale rilegge il valore UNO che
+  // adesso c'e'. Due superfici, un numero.
+  useEffect(() => {
+    if (!cellSwitcherOpen) setFontSize(readFontSize());
+  }, [cellSwitcherOpen]);
   const sendRef = useRef(() => {});
   const composerRef = useRef(() => false);
   const actionRef = useRef(() => {});
@@ -204,8 +262,10 @@ export function SingleView({
       // cui si chiede il ticket di visione sul nodo che la possiede.
       setPanelUrl(typeof cell?.panelUrl === 'string' ? cell.panelUrl.trim() : '');
       setPanelCellId(typeof cell?.cell === 'string' ? cell.cell : '');
+      // il centro porta motore E stato, come il design. La parola esce
+      // dal contratto `stato` della cella; senza canale resta il solo motore.
       let txt = '';
-      if (cell) txt = `${cell.engine}${cell.key ? `·${cell.key}` : ''}`;
+      if (cell) txt = [`${cell.engine}${cell.key ? `·${cell.key}` : ''}`, parolaStatoCella(cell, sess)].filter(Boolean).join(' · ');
       else if (sess) txt = sess.attached ? `attached · ${rel(sess.activity)}` : (sess.activity ? rel(sess.activity) : '');
       setSub(txt);
     }
@@ -213,6 +273,18 @@ export function SingleView({
     const id = setInterval(load, 4000);
     return () => { alive = false; clearInterval(id); };
   }, [session, node, token]);
+
+  // le quattro azioni della barra, nello stesso contratto delle azioni
+  // cella. Gli handler sono gli stessi setter di prima: cambia solo dove stanno.
+  const barItems = barActionsItems({
+    showComposer, showFiles, showPanel, hasPanel: !!panelUrl, rendererKind,
+    handlers: {
+      onToggleComposer: () => setShowComposer((v) => !v),
+      onToggleFiles: () => setShowFiles((v) => !v),
+      onTogglePanel: () => setShowPanel((v) => !v),
+      onSwitchRenderer: switchRenderer,
+    },
+  });
 
   return (
     <div className="nc-app">
@@ -232,23 +304,15 @@ export function SingleView({
         <span className="nc-bar-right">
           <button onClick={() => zoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
           <button onClick={() => zoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
-          {/* A/B del renderer senza rebuild: la scelta e' per browser, il
-              terminale si riattacca al ricaricamento della pagina. E' un
-              pulsante-ICONA come i suoi vicini: un'etichetta scritta (GPU/DOM)
-              allargava la barra e schiacciava il nome della cella. Il testo
-              resta nel titolo e nell'etichetta accessibile, lo stato si vede
-              dalla classe. */}
-          <button type="button" className={`nc-renderer-toggle${rendererKind === 'webgl' ? ' on' : ''}`}
-            onClick={switchRenderer} aria-pressed={rendererKind === 'webgl'}
-            title={t('terminal-renderer-switch').replace('{requested}', t(rendererPref === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl')).replace('{effective}', t(rendererKind === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl'))}
-            aria-label={t('terminal-renderer-switch').replace('{requested}', t(rendererPref === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl')).replace('{effective}', t(rendererKind === 'dom' ? 'terminal-renderer-dom' : 'terminal-renderer-webgl'))}>
-            <Icon name="gpu" size={18} />
-          </button>
-          <button onClick={() => setShowComposer((v) => !v)} title={t('composer')}><Icon name="keyboard" size={20} /></button>
-          <button onClick={() => setShowFiles((v) => !v)} title={t('files')}><Icon name="folder" size={20} /></button>
-          {panelUrl && (
-            <button onClick={() => setShowPanel((v) => !v)} title={t('panel')} aria-pressed={showPanel}><Icon name="monitor" size={20} /></button>
-          )}
+          {/* Le altre quattro azioni stanno nel menu: la barra resta
+              indietro + centro + − + + + ⋯, come il design. */}
+          <button type="button" className={`nc-bar-menu${showBarMenu ? ' on' : ''}`}
+            title={t('bar-menu-open')} aria-label={t('bar-menu-open')}
+            aria-haspopup="menu" aria-expanded={showBarMenu ? 'true' : 'false'}
+            onClick={(event) => {
+              if (!showBarMenu) setBarMenuRect(event.currentTarget.getBoundingClientRect());
+              setShowBarMenu((v) => !v);
+            }}>⋯</button>
         </span>
       </header>
       <div className="nc-termwrap">
@@ -283,6 +347,14 @@ export function SingleView({
       {showFiles && (
         <FilesPanel session={session} node={node} token={token} filesEvent={filesEvent} onClose={() => setShowFiles(false)} />
       )}
+      {/* le quattro azioni della barra. Su mobile un foglio dal basso, su
+          desktop un popover ancorato al ⋯: gli stessi due gusci delle azioni
+          cella, nessun menu nuovo. */}
+      {showBarMenu && (isDesktop ? (
+        <CellActionsPopover anchorRect={barMenuRect} items={barItems} onClose={() => setShowBarMenu(false)} />
+      ) : (
+        <CellActionsSheet cellName={title} items={barItems} onClose={() => setShowBarMenu(false)} />
+      ))}
     </div>
   );
 }
@@ -404,6 +476,10 @@ export default function App() {
   const [pairDefaults, setPairDefaults] = useState({
     deviceDefault: '', localNodeId: '', localNameDefault: '',
   });
+  // Il nome del NOSTRO nodo (es. VPSCloud), per l'intestazione del gruppo
+  // locale nella lista delle celle: il gruppo locale si chiama come il nodo,
+  // non «locale».
+  const [localNodeLabel, setLocalNodeLabel] = useState('');
   // READONLY del server (da /api/config): l'attach dei terminali deve essere
   // read-only quando il server lo e' (coerenza col gate server §4b(6) + il
   // banner settings che lo dichiara). Default false finche' non arriva la config.
@@ -440,6 +516,7 @@ export default function App() {
         localNodeId: s.nodeId || '',
         localNameDefault: s.localName || '',
       });
+      setLocalNodeLabel(s.deviceName || '');
       setRoDefault(!!c.readonlyDefault);
       // I parametri del terminale vivono nella config del server: il client li
       // usa da qui (backoff, liveness, coda, ritardo dell'overlay).
@@ -901,7 +978,7 @@ export default function App() {
           liveHost={liveHostViewFor(session.node ? session.node.split('/') : [])}
         panelPort={panelPortForRoute(session.node ? session.node.split('/') : [], nodePanelPorts, panelPort)}
         onBack={() => setSession(null)} onCellSwitcher={() => setCellSwitcherOpen(true)} cellSwitcherOpen={cellSwitcherOpen} />
-      {cellSwitcherOpen && <CellSwitcher token={token} current={session}
+      {cellSwitcherOpen && <CellSwitcher token={token} current={session} localNodeLabel={localNodeLabel}
         panelPort={panelPort} nodePanelPorts={nodePanelPorts}
         hostByRoute={hostByRoute} onDesignateCell={designateCellHostOnce} onClearHostCell={clearCellHostOnce}
         onLiveHostApplied={applyLiveHostResult}

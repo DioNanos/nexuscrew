@@ -56,23 +56,29 @@ export function cellActionsItems({ isLive, pinned, canBoot, boot, alive, handler
 export function CellActionsMenu({ items = [], busy = false, onRun }) {
   return (
     <div className="nc-cellactions" role="menu" aria-busy={busy || undefined}>
-      {items.map((entry) => (
-        <button
-          key={entry.id}
-          type="button"
-          role={entry.kind === 'switch' ? 'menuitemcheckbox' : 'menuitem'}
-          aria-checked={entry.kind === 'switch' ? (entry.on ? 'true' : 'false') : undefined}
-          className={`nc-cellactions-voce${entry.on ? ' on' : ''}`}
-          disabled={busy}
-          data-cellaction={entry.id}
-          onClick={(event) => { event.stopPropagation(); onRun ? onRun(entry) : entry.run(); }}
-        >
-          {entry.kind === 'switch'
-            ? <span className={`nc-cellactions-toggle${entry.on ? ' on' : ''}`} aria-hidden="true" />
-            : null}
-          <span className="nc-cellactions-testo">{t(entry.labelKey)}</span>
-        </button>
-      ))}
+      {items.map((entry) => {
+        // La sottoriga e' OPZIONALE: chi non la passa rende il DOM di prima,
+        // parola per parola. `descText` per un testo gia' risolto, `descKey`
+        // per una chiave i18n.
+        const desc = entry.descKey ? t(entry.descKey) : entry.descText;
+        return (
+          <button
+            key={entry.id}
+            type="button"
+            role={entry.kind === 'switch' ? 'menuitemcheckbox' : 'menuitem'}
+            aria-checked={entry.kind === 'switch' ? (entry.on ? 'true' : 'false') : undefined}
+            className={`nc-cellactions-voce${entry.on ? ' on' : ''}`}
+            disabled={busy}
+            data-cellaction={entry.id}
+            onClick={(event) => { event.stopPropagation(); onRun ? onRun(entry) : entry.run(); }}
+          >
+            {entry.kind === 'switch'
+              ? <span className={`nc-cellactions-toggle${entry.on ? ' on' : ''}`} aria-hidden="true" />
+              : null}
+            <span className="nc-cellactions-testo">{t(entry.labelKey)}{desc ? <small className="nc-cellactions-desc">{desc}</small> : null}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
