@@ -14,7 +14,7 @@ const {
 } = require('../lib/fleet/mcp-cache-readiness.js');
 
 function tmpRoot(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'd342-mcp-cache-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-mcp-cache-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -35,7 +35,7 @@ test('bootStampOf riproduce lo stamp dei boot file del client ed ordina come il 
 });
 
 test('encodeCwdForCache sostituisce ogni non-alfanumerico (forma misurata 2.1.280)', () => {
-  assert.strictEqual(encodeCwdForCache('/tmp/d342-gateb/cwd-p2'), '-tmp-d342-gateb-cwd-p2');
+  assert.strictEqual(encodeCwdForCache('/tmp/nc-gateb/cwd-p2'), '-tmp-nc-gateb-cwd-p2');
   assert.strictEqual(encodeCwdForCache('/home/tester/Dev/.worktrees/WorkerX'), '-home-tester-Dev--worktrees-WorkerX');
 });
 

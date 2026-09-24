@@ -267,8 +267,8 @@ test("la generazione decide: senza generazione niente stato, e il mismatch e' un
   assert.equal(leggiAttivita(root, SESSIONE), null, "mismatch: e' un altro lancio");
 
   // 3. Un evento SENZA generazione non vale mai, nemmeno con la generazione su
-  //    disco: gli hook la scrivono da D-340, e un evento che non la porta non
-  //    ha nessuno che possa invalidarlo.
+  //    disco: gli hook di attivita' la scrivono, e un evento che non la porta
+  //    non ha nessuno che possa invalidarlo.
   scriviStato(dir, { evento: 'Stop' });
   assert.equal(leggiAttivita(root, SESSIONE), null, 'evento senza generazione: scartato');
 

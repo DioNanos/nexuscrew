@@ -22,11 +22,11 @@ import { createPollGuard } from './lib/poll-guard.js';
 import VlSessionView from './components/VlSessionView.jsx';
 import CellPanel from './components/CellPanel.jsx';
 import {
-  apiFetch, fleetStatus, fleetUp, fleetDown, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
+  apiFetch, fleetStatus, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
   getLiveHost, designateHostCell, clearHostCell,
 } from './lib/api.js';
 import { isValidLabel } from './lib/settings-model.js';
-import { upActionNotice } from './lib/fleet-action-notice.js';
+import { runFleetPowerAction } from './lib/fleet-action-notice.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
 import { cellDisplayName } from './lib/cell-display.js';
 import {
@@ -850,24 +850,21 @@ export default function App() {
     if (!powerCell) return;
     const { cell } = powerCell;
     const route = Array.isArray(powerCell.route) ? powerCell.route : [];
-    if (payload.action === 'up') {
-      const res = await fleetUp(token, {
-        cell, boot: !!payload.boot,
-        ...(payload.engine ? { engine: payload.engine } : {}),
-        ...(payload.model !== undefined ? { model: payload.model } : {}),
-        ...(payload.permissionPolicy ? { permissionPolicy: payload.permissionPolicy } : {}),
-      }, route);
-      // 0.8.47: TUI in consenso/auth/onboarding -> sessione viva, prompt saltato,
-      // recovery esplicita per l'operatore (catalogo server, bounded).
-      const notice = upActionNotice(res);
-      if (notice) deckStore.setError(notice.text);
-    } else {
-      await fleetDown(token, { cell, boot: !!payload.boot }, route);
+    // Stesso percorso del roster mobile: esiti benigni (timeout client,
+    // sessione già attiva) come notice del deck, errori veri nel foglio.
+    let benign = null;
+    try {
+      benign = await runFleetPowerAction({ token, powerCell, payload, onNotice: (text) => deckStore.setError(text) });
+    } catch (e) {
+      deckStore.setError(String((e && e.message) || e));
+      throw e;
     }
-    const enabled = payload.action === 'up'
-      ? !!payload.boot
-      : (payload.boot ? false : !!powerCell.boot);
-    setBootSettlement({ id: ++bootSettlementSeq.current, cell, route, enabled });
+    if (!benign) {
+      const enabled = payload.action === 'up'
+        ? !!payload.boot
+        : (payload.boot ? false : !!powerCell.boot);
+      setBootSettlement({ id: ++bootSettlementSeq.current, cell, route, enabled });
+    }
     poll();
   };
   const onBootSettlementApplied = useCallback((id) => {

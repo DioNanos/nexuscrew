@@ -9,6 +9,7 @@
 // Qualunque payload fuori enum -> null (niente rendering di testo remoto).
 
 import { t } from './i18n.js';
+import { fleetDown, fleetUp } from './api.js';
 
 const ACTION_CODES = ['KIMI_AUTH_ACTION_REQUIRED', 'CLIENT_INTERACTION_REQUIRED'];
 const RECOVERY_SLUGS = [
@@ -58,4 +59,70 @@ export function upActionNotice(result) {
     return { code: 'READINESS_DEGRADED', recovery: null, text: t('fleet-readiness-degraded') };
   }
   return null;
+}
+
+// Esiti di alimentazione che il foglio NON deve trattare come errori. Tre
+// famiglie:
+// - timeout client (FLEET_ACTION_TIMEOUT_MS in api.js): l'azione può
+//   completare sul server dopo la chiusura del foglio — l'esito reale arriva
+//   dal roster;
+// - 502 «upstream-timeout» del proxy federato (PROXY_TIMEOUT_MS): la cella
+//   remota può essere ancora in avvio mentre il proxy ha già risposto;
+// - 409 SESSION_DUPLICATE su 'up' (preflight del runtime: la sessione esiste
+//   già). La cella è viva, non serve rilanciare.
+// 'down' non ha il 409: è idempotente per progetto (la kill di una sessione
+// assente non è errore) e risolve sempre con ok.
+export function fleetActionErrorNotice(error, action) {
+  if (!error) return null;
+  // Due facce della stessa attesa: il timeout client (FLEET_ACTION_TIMEOUT_MS)
+  // e il 502 «upstream-timeout» del proxy federato (PROXY_TIMEOUT_MS, 30 s),
+  // che su una cella remota arriva PRIMA del tetto client mentre il nodo
+  // remoto può essere ancora al lavoro. Entrambe: il foglio si chiude, la
+  // notice avvisa, l'esito reale arriva dal roster.
+  const slowRoute = error.status === 502
+    && error.data && error.data.cause === 'upstream-timeout';
+  if (error.name === 'TimeoutError' || slowRoute) {
+    return {
+      code: 'FLEET_ACTION_TIMEOUT',
+      recovery: null,
+      text: t(action === 'down' ? 'fleet-down-slow' : 'fleet-up-slow'),
+    };
+  }
+  if (error.status === 409
+    && action === 'up'
+    && error.data && error.data.code === 'SESSION_DUPLICATE') {
+    return { code: 'FLEET_SESSION_DUPLICATE', recovery: null, text: t('fleet-up-duplicate') };
+  }
+  return null;
+}
+
+// Percorso comune del confermo del foglio di alimentazione, mobile e desktop:
+// lancia l'azione, mostra le notice di esito e mappa gli esiti benigni.
+// Ritorna { benign } quando l'esito è benigno (il chiamante non tocca il flag
+// di boot: l'esito reale non è noto, o non è cambiato nulla) e undefined per
+// l'esito pieno. Gli errori veri vengono rilanciati: restano nel foglio, che
+// li mostra con i pulsanti riabilitati.
+export async function runFleetPowerAction({ token, powerCell, payload, onNotice, fleetApi }) {
+  const api = fleetApi || { fleetUp, fleetDown };
+  const { cell } = powerCell;
+  const route = Array.isArray(powerCell.route) ? powerCell.route : [];
+  try {
+    if (payload.action === 'up') {
+      const res = await api.fleetUp(token, {
+        cell, boot: !!payload.boot,
+        ...(payload.engine ? { engine: payload.engine } : {}),
+        ...(payload.model !== undefined ? { model: payload.model } : {}),
+        ...(payload.permissionPolicy ? { permissionPolicy: payload.permissionPolicy } : {}),
+      }, route);
+      const notice = upActionNotice(res);
+      if (notice) onNotice(notice.text);
+    } else {
+      await api.fleetDown(token, { cell, boot: !!payload.boot }, route);
+    }
+    return undefined;
+  } catch (e) {
+    const benign = fleetActionErrorNotice(e, payload.action);
+    if (benign) { onNotice(benign.text); return { benign: benign.code }; }
+    throw e;
+  }
 }

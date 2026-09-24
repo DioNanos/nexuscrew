@@ -245,7 +245,7 @@ const path = require('node:path');
 const { buildMcpReadinessPayload, cellMcpExpectedServers } = require('../lib/fleet/runtime.js');
 
 function legacyHome(t) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'd342-legacy-home-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-legacy-home-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const cfg = { mcpServers: { nexuscrew: { command: 'x' }, memory: { command: 'y' } } };
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify(cfg));
@@ -269,7 +269,7 @@ test('runtime legacy: con cell.mcp parziale l atteso e l intersezione voluti/not
 });
 
 test('runtime legacy: config nota assente -> nessun gate (payload undefined)', (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'd342-empty-home-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-empty-home-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const p = buildMcpReadinessPayload({ id: 'Dev' }, '/tmp/cella-legacy', home, {});
   assert.strictEqual(p, undefined);

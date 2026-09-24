@@ -48,6 +48,9 @@
         "msa_index_batch",
         "msa_search",
         "msa_fetch_doc",
+        "msa_list_collections",
+        "msa_stats",
+        "msa_manifest",
         "msa_remember",
         "msa_forget",
         "msa_interleave_round"
@@ -72,7 +75,9 @@
         "cell_result",
         "cell_list",
         "cell_send",
-        "cell_ask"
+        "cell_ask",
+        "cell_await",
+        "cell_inbox"
       ]
     },
     {

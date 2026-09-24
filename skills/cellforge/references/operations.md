@@ -66,10 +66,13 @@ operation or it does not, and the set is reported in `capabilities` from
 501  not supported by this fleet provider
 ```
 
-So the honest sequence is: read `capabilities`, and if the one you need
-(`define`, `edit`, `remove`, `restore`, `definitions`, `schema`) is missing,
-**say so to the user** rather than retrying. A `501` here is a statement about
-the provider, not about your payload — do not start rewriting the body.
+So the honest sequence is: read `capabilities`, and if the one you need is
+missing, **say so to the user** rather than retrying. The set varies by
+provider; the built-in one reports `status`, `up`, `down`, `restart`, `engine`,
+`boot`, `define`, `edit`, `remove`, `import`, `restore`, `schema`,
+`definitions`, `credentials`, `model-test` and `edit-model`. A `501` here is a
+statement about the provider, not about your payload — do not start rewriting
+the body.
 
 Separately, a provider in read-only mode refuses writes with `403`. Two
 different refusals with two different meanings: `501` says "this provider can

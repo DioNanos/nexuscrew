@@ -185,9 +185,15 @@ export default function PowerSheet({ cell, token, route = [], onConfirm, onClose
         {err && <div className="nc-err">{err}</div>}
 
         <div className="nc-sheet-actions">
-          <button type="button" className="nc-btn ghost" onClick={onClose} disabled={busy}>{t('cancel')}</button>
+          {/* Cancel resta sempre attivo: chiude il foglio e l'azione continua
+              in background — l'esito arriva come notice del roster, non come
+              errore nel foglio. L'unico pulsante disabilitato durante il
+              lavoro è il primario, che mostra cosa sta facendo. */}
+          <button type="button" className="nc-btn ghost" onClick={onClose}>{t('cancel')}</button>
           <button type="submit" className="nc-btn primary" disabled={busy}>
-            {isOn ? t('power-off') : t('save-and-start')}
+            {busy
+              ? (isOn ? t('power-stopping') : t('power-starting'))
+              : (isOn ? t('power-off') : t('save-and-start'))}
           </button>
         </div>
       </form>

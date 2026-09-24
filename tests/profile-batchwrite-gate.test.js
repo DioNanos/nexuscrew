@@ -1,5 +1,5 @@
 'use strict';
-// tests/profile-batchwrite-gate.test.js — gate D-343: il profilo per cella
+// tests/profile-batchwrite-gate.test.js — il profilo per cella supera la write
 // supera la write REALE del client (config/batchWrite, il percorso della TUI
 // che salva /model) su CODEX_HOME isolato, mai ~/.codex.
 //
@@ -20,7 +20,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const toml = require('smol-toml');
 const { writeCellCodexProfile } = require('../lib/fleet/managed.js');
 
-const BIN = process.env.NC_D343_CODEX_BIN || 'codex-vl';
+const BIN = process.env.NC_TEST_CODEX_BIN || 'codex-vl';
 const MODEL_SCRITTO = 'gpt-5.1-codex';
 
 function binarioOk() {
@@ -85,7 +85,7 @@ function batchWriteRpc(codexHome) {
         resolve({ risposta: risposta.get(2), stderr: stderr.join('') });
       }
     }, 40);
-    scrivi({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'nexuscrew-gate-d343', version: '0.0.0' } } });
+    scrivi({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'nexuscrew-gate-batchwrite', version: '0.0.0' } } });
     setTimeout(() => {
       clearInterval(poll);
       child.kill('SIGKILL');
@@ -134,8 +134,8 @@ const SCENARI = {
   },
 };
 
-test('d343 gate: la forma vecchia (enabled=false senza trasporto) riproduce l\'errore di produzione', { skip: !binarioOk() && 'binario codex-vl non disponibile' }, async (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d343-negctrl-'));
+test('gate: la forma vecchia (enabled=false senza trasporto) riproduce l\'errore di produzione', { skip: !binarioOk() && 'binario codex-vl non disponibile' }, async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-batchwrite-negctrl-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const appHome = path.join(home, 'app');
   fs.mkdirSync(appHome);
@@ -150,8 +150,8 @@ test('d343 gate: la forma vecchia (enabled=false senza trasporto) riproduce l\'e
 });
 
 for (const [nome, spec] of Object.entries(SCENARI)) {
-  test(`d343 gate: batchWrite reale accetta il profilo generato (${nome})`, { skip: !binarioOk() && 'binario codex-vl non disponibile' }, async (t) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), `nc-d343-gate-${nome}-`));
+  test(`gate: batchWrite reale accetta il profilo generato (${nome})`, { skip: !binarioOk() && 'binario codex-vl non disponibile' }, async (t) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), `nc-batchwrite-gate-${nome}-`));
     t.after(() => fs.rmSync(home, { recursive: true, force: true }));
     // Il profilo lo genera il generatore VERO con le capability dello scenario.
     fs.writeFileSync(path.join(home, 'config.toml'), spec.config, { mode: 0o600 });

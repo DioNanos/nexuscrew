@@ -45,7 +45,7 @@ includes either is refused. Everything else is patchable.
 | `mcp` | no | **names only**, up to 64, each matching `[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}` |
 | `label`, `tmuxSession` | varies | display label ≤64 chars; session name ≤64 chars, immutable |
 
-Ceilings on the document as a whole: **32 cells**, **24 engines**. These are not
+Ceilings on the document as a whole: **32 cells**, **100 engines**. These are not
 close to most installs, but a restore that silently dropped entries would be
 worse than one that fails, so a document over the cap is rejected rather than
 truncated.

@@ -5,9 +5,12 @@
 ## Requirements
 
 - Node.js 18 or newer
-- tmux 3.4 or newer
+- tmux (3.4 or newer recommended)
 - OpenSSH client (`ssh`)
 - Linux x64/ARM64, macOS x64/ARM64, or Android ARM64 through Termux
+
+`nexuscrew doctor` checks that tmux is present on the PATH; it does not check
+its version.
 
 NexusCrew ships scriptless PTY prebuilds for the supported targets. A normal
 global install does not need a compiler or native install-script approval.

@@ -31,6 +31,7 @@ When the client exposes the NexusCrew MCP server, use these tools directly:
 | Check or stop a group utterance you started | `nc_speak_group_status`, `nc_speak_group_stop` |
 | Read who the caller is, without a session or token | `nc_identity` |
 | Read why a local Fleet cell failed to start | `nc_cell_diagnostics` |
+| Register, renew or recover this cell's Live lease | `nc_lease_register`, `nc_lease_refresh`, `nc_lease_recovery` |
 
 Apply these rules:
 
@@ -49,6 +50,27 @@ Apply these rules:
 - `nc_identity` answers "who am I to this bridge" with non-sensitive data only, and works without a tmux session or a token. Use it when a tool refuses you and you are not sure which caller the server sees, instead of guessing from the environment.
 - `nc_cell_diagnostics` returns the redacted shell command and the last bounded spawn or start failure for one local Fleet cell. Use it when a cell will not come up, before reading state files.
 - Do not treat an MCP notification as a substitute for the final response required by the active client.
+
+### Live lease registration (`nc_lease_*`)
+
+A cell can hold a **Live lease registration** on the node: it registers once,
+then keeps the registration alive by presenting the proof it received. Three
+tools, one job each — their return values do not overlap:
+
+- `nc_lease_register {proof?}` — registers this cell under its own incarnation
+  and returns the first child proof. It can answer `{status:"pending"}` with a
+  `retryAfterMs` when the node is not tracking the cell yet: wait that long
+  and call it again rather than spinning.
+- `nc_lease_refresh {proof}` — renews a live registration. Pass the last
+  received proof object back unchanged. Answers `{status:"live"}` with a new
+  proof; it is never pending, and `{status:"no-registration"}` means
+  `nc_lease_register` is the next call, not a retry.
+- `nc_lease_recovery {proof}` — resumes the registration after a gap, keeping
+  the same incarnation; a proof that expired recently is still accepted. Every
+  attempt counts toward a cap — past it, register again.
+
+Use them only when your runtime asks this cell to hold a Live lease. Treat
+each status literally, and pass proofs through verbatim.
 
 The MCP server is the stdio command `nexuscrew mcp` and must be registered in the host AI client. If the `nc_*` tools are not exposed, report that the bridge is not configured in that session and use the fallback flows below where applicable.
 
@@ -82,8 +104,13 @@ Per session, NexusCrew watches `<root>/<session>/{inbox,outbox}` (root = `$NEXUS
 When `nc_send_file` is unavailable, deliver with the helper (resolves the current tmux session, timestamps, never overwrites):
 
 ```bash
-bin/nc-deliver report.pdf chart.png      # → ~/NexusFiles/<session>/outbox/
+"$(npm root -g)/@mmmbuto/nexuscrew/skills/nexuscrew-agent/bin/nc-deliver" report.pdf chart.png
+# → ~/NexusFiles/<session>/outbox/
 ```
+
+The helpers ship inside the npm package and are **not linked on `PATH`** — the
+only global command is `nexuscrew` — so address them under the global package
+root; `npm root -g` prints that root for the Node installation in use.
 
 Don't hand-craft the path from a guessed session name — use `nc-deliver`, or derive the session with `tmux display-message -p '#S'`.
 
@@ -96,9 +123,10 @@ non-Fleet sessions; it must not bypass federation visibility or routing ACLs.
 `tmux send-keys 'msg' Enter` is **not** reliable: a TUI's paste-burst detector swallows the Enter and the message just sits in the composer, while exit code is still 0. Use the helper:
 
 ```bash
-bin/nc-send <session> "text"              # paste + submit
-bin/nc-send <session> --file prompt.txt   # from a file
-bin/nc-send <session> --no-submit "text"  # leave in composer, no Enter
+NC_SEND="$(npm root -g)/@mmmbuto/nexuscrew/skills/nexuscrew-agent/bin/nc-send"
+"$NC_SEND" <session> "text"              # paste + submit
+"$NC_SEND" <session> --file prompt.txt   # from a file
+"$NC_SEND" <session> --no-submit "text"  # leave in composer, no Enter
 ```
 
 It does: `load-buffer` → `paste-buffer -p` (bracketed paste) → burst-flush (`C-e`) → `Enter`. **Verify it landed** — never trust the exit code:
@@ -173,8 +201,11 @@ work. The setting is also applied to windows created later in that session.
 ## Dependencies
 
 **Bundled (installed with the package):** the `nexuscrew` CLI, `lib/`, these
-skills, and the `bin/nc-send` / `bin/nc-deliver` helpers arrive with
+skills, and the `nc-send` / `nc-deliver` helpers arrive with
 `npm install -g @mmmbuto/nexuscrew` (Node.js >= 18 required by `engines`).
+Only `nexuscrew` is linked on `PATH`; the helpers live inside the package at
+`skills/nexuscrew-agent/bin/` — reach them through `npm root -g` as shown in
+File exchange above.
 
 **External (you must provide):**
 

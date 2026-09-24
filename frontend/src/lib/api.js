@@ -112,8 +112,17 @@ export async function requestPanelTicket(t, route, cellId, { signal } = {}) {
 }
 
 export const fleetStatus = (t, route, opts) => jsonFetch(fleetPath(route, 'status'), t, opts);
-export const fleetUp = (t, b, route) => jsonFetch(fleetPath(route, 'up'), t, { method: 'POST', body: b });
-export const fleetDown = (t, b, route) => jsonFetch(fleetPath(route, 'down'), t, { method: 'POST', body: b });
+
+// Tetto d'attesa client per le azioni di alimentazione. Con i default del
+// server il lancio più lungo (celle claude.*) attende il report di consegna
+// ~37,5 s; i tempi però sono configurabili (reportWaitMs fino a 150 s), quindi
+// un'installazione lenta può superare questo tetto. In quel caso NON è un
+// errore: il foglio si chiude, la notice avvisa che l'avvio è ancora in corso
+// e l'esito reale arriva dal roster con il refresh.
+export const FLEET_ACTION_TIMEOUT_MS = 60000;
+
+export const fleetUp = (t, b, route) => jsonFetch(fleetPath(route, 'up'), t, { method: 'POST', body: b, timeoutMs: FLEET_ACTION_TIMEOUT_MS });
+export const fleetDown = (t, b, route) => jsonFetch(fleetPath(route, 'down'), t, { method: 'POST', body: b, timeoutMs: FLEET_ACTION_TIMEOUT_MS });
 export const fleetEngine = (t, b, route) => jsonFetch(fleetPath(route, 'engine'), t, { method: 'POST', body: b });
 export const fleetBoot = (t, b, route) => jsonFetch(fleetPath(route, 'boot'), t, { method: 'POST', body: b });
 export const fleetRestart = (t, cell, route) => jsonFetch(fleetPath(route, 'restart'), t, { method: 'POST', body: { cell } });

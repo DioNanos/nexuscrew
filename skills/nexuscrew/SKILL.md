@@ -46,9 +46,12 @@ Through the MCP bridge, when the tools are exposed in your session:
 | tell the human something, or ask | `nc_notify`, `nc_ask` | `nexuscrew-agent` |
 | read runtime state, identity, decks | `nc_status`, `nc_identity`, `nc_deck` | `nexuscrew-agent` |
 | find and message another cell | `nc_cells` then `nc_send_cell` | `nexuscrew-agent` |
+| manage a paired VL micro-device | `nc_vl_nodes`, then `nc_vl_command` (plus `nc_vl_invite` / `nc_vl_revoke`) | `nexuscrew-agent` |
 | speak on a node or audio group | `nc_speak`, `nc_speak_group` | `nexuscrew-agent` |
+| check or stop an utterance you started | `nc_speak_status`, `nc_speak_stop`, `nc_speak_group_status`, `nc_speak_group_stop` | `nexuscrew-agent` |
 | hand a file to the human | `nc_send_file`, `nc_inbox` | `nexuscrew-agent` |
 | find out why a cell will not start | `nc_cell_diagnostics` | `nexuscrew-agent` |
+| register, renew or recover this cell's Live lease | `nc_lease_register`, `nc_lease_refresh`, `nc_lease_recovery` | `nexuscrew-agent` |
 | keep state across sessions | Memory MCP | `memory` |
 | index and retrieve documents | MSA MCP | `vl-msa` |
 | delegate bounded work to workers | Crew MCP | `crew` |

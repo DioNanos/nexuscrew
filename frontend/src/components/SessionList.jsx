@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  apiFetch, fleetStatus, fleetUp, fleetDown, fleetBoot, killSession, nodeAction, renameNodeLabel, setSessionTechnical,
+  apiFetch, fleetStatus, fleetBoot, killSession, nodeAction, renameNodeLabel, setSessionTechnical,
 } from '../lib/api.js';
 import Icon from './Icon.jsx';
 import CellPeek from './CellPeek.jsx';
@@ -26,7 +26,8 @@ import {
 } from '../lib/roster-view-model.js';
 import { OWNER_ID_RE } from '../lib/grid-model.js';
 import { isValidLabel } from '../lib/settings-model.js';
-import { upActionNotice } from '../lib/fleet-action-notice.js';
+import { runFleetPowerAction } from '../lib/fleet-action-notice.js';
+import useActionNotice from '../hooks/useActionNotice.js';
 import { fleetReadOutcome } from '../lib/fleet-read-policy.js';
 import { writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import './SessionList.css';
@@ -64,6 +65,9 @@ export default function SessionList({
   const [bootOverrides, setBootOverrides] = useState({});
   const [bootBusy, setBootBusy] = useState(new Set());
   const [powerCell, setPowerCell] = useState(null);
+  // Notice d'azione del roster: superficie propria con auto-clear, NON l'errore
+  // di lettura che il refresh azzera a ogni ciclo riuscito.
+  const { notice: actionNotice, showActionNotice } = useActionNotice();
   const [nodeBusy, setNodeBusy] = useState(null);
   // Menu azioni cella (⋯): contesto CONGELATO all'apertura. Il foglio mostra la
   // cella che l'operatore ha toccato, non una riga che nel frattempo il poll ha
@@ -230,25 +234,41 @@ export default function SessionList({
 
   async function onFleetConfirm(payload) {
     if (!powerCell) return;
-    const { cell } = powerCell;
-    const route = Array.isArray(powerCell.route) ? powerCell.route : [];
-    if (payload.action === 'up') {
-      const res = await fleetUp(token, {
-        cell, boot: !!payload.boot,
-        ...(payload.engine ? { engine: payload.engine } : {}),
-        ...(payload.model !== undefined ? { model: payload.model } : {}),
-        ...(payload.permissionPolicy ? { permissionPolicy: payload.permissionPolicy } : {}),
-      }, route);
-      // 0.8.47: TUI in consenso/auth/onboarding -> recovery esplicita (bounded).
-      const notice = upActionNotice(res);
-      if (notice) setErr(notice.text);
-      setBootChoice(cell, route, !!payload.boot);
-    } else {
-      await fleetDown(token, { cell, boot: !!payload.boot }, route);
-      if (payload.boot) setBootChoice(cell, route, false);
+    // Esiti benigni (timeout client, sessione già attiva) chiudono il foglio
+    // con una notice sul roster; gli errori veri restano nel foglio. Se il
+    // foglio è già stato chiuso con cancel, ogni esito — buono o cattivo —
+    // arriva comunque come notice: l'azione continua in background.
+    let benign = null;
+    try {
+      benign = await runFleetPowerAction({ token, powerCell, payload, onNotice: showActionNotice });
+    } catch (e) {
+      showActionNotice(String((e && e.message) || e));
+      throw e;
+    }
+    if (!benign) {
+      const { cell } = powerCell;
+      const route = Array.isArray(powerCell.route) ? powerCell.route : [];
+      if (payload.action === 'up') setBootChoice(cell, route, !!payload.boot);
+      else if (payload.boot) setBootChoice(cell, route, false);
     }
     refresh();
   }
+
+  // Stato fresco per il foglio di alimentazione: la copia presa all'apertura
+  // può restare indietro rispetto all'inventario (cella che parte mentre il
+  // foglio è aperto). Lo stato arriva dall'inventario corrente, per id,
+  // locale e remoto.
+  const powerCellLive = useMemo(() => {
+    if (!powerCell) return null;
+    const rk = (Array.isArray(powerCell.route) ? powerCell.route : []).join('/');
+    const pool = [
+      ...cells,
+      ...nodeGroups.flatMap((g) => (g.cells || []).map((c) => ({ ...c, route: g.route || [g.name] }))),
+    ];
+    const live = pool.find((c) => c.cell === powerCell.cell
+      && (Array.isArray(c.route) ? c.route.join('/') : '') === rk);
+    return live ? { ...powerCell, active: !!live.active } : powerCell;
+  }, [powerCell, cells, nodeGroups]);
 
   async function onKill(name, route = []) {
     try { await killSession(token, name, route); } catch (_) { return; }
@@ -512,6 +532,7 @@ export default function SessionList({
       )}
 
       {err && <div className="nc-err">{err}</div>}
+      {actionNotice && <div className="nc-notice" role="status">{actionNotice}</div>}
       {fleetStale && <div className="nc-set-hint nc-fleet-stale" role="status">{t('fleet-stale')}</div>}
       {fleetOff !== null && (
         <div className="nc-set-hint nc-fleet-off" role="status">
@@ -632,8 +653,8 @@ export default function SessionList({
 
       <button className="nc-fab" onClick={() => onSettings('fleet', true)} title={t('fleet-new-cell')} aria-label={t('fleet-new-cell')}>+</button>
 
-      {powerCell && (
-        <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : []} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
+      {powerCellLive && (
+        <PowerSheet cell={powerCellLive} token={token} route={Array.isArray(powerCellLive.route) ? powerCellLive.route : []} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
       )}
 
       {/* La finestra di anteprima, una per volta: `peekRow` si ri-risolve per
