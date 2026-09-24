@@ -55,9 +55,9 @@ export function CellPeekBody({ row, token, panelPort = 0, liveHost = null, onLiv
   // popup libero non passa nulla e resta com'era.
   fontSize, readOnly = false,
   // ...e DECIDE se c'e' il chrome attorno alle sorgenti: l'anteprima del
-  // selettore mobile e' nuda — niente tab (una sorgente sola, il flusso) e
-  // niente comando Live (le azioni vivono nel foglio della riga). La tavola
-  // la tavola approvata non li ha.
+  // selettore mobile e' nuda — una sorgente sola (il flusso), niente tab e
+  // niente comando Live: le altre sorgenti vivono nei gusci con tab, le
+  // azioni nel foglio della riga.
   chrome = true,
 }) {
   const setSource = (id) => onSourceChange && onSourceChange(id);

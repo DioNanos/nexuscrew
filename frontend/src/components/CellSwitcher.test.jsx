@@ -258,9 +258,9 @@ describe('CellSwitcher', () => {
     render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
     await toccaRiga('cell-One');
     // Il corpo dell'anteprima è il flusso della sessione: il terminale c'è, e
-    // dell'attorno (tab delle sorgenti, comando Live host) non c'è niente —
-    // la tavola approvata non li ha. Le sorgenti restano nel popup libero
-    // e nella nuvola; le azioni vivono nel foglio della riga.
+    // dell'attorno (tab delle sorgenti, comando Live host) non c'è niente.
+    // Le sorgenti restano nel popup libero e nella nuvola; le azioni vivono
+    // nel foglio della riga.
     const term = await screen.findByTestId('peek-term');
     expect(term.getAttribute('data-session')).toBe('cloud-cell-One');
     expect(screen.queryAllByRole('tab')).toHaveLength(0);

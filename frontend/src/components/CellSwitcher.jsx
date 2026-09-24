@@ -190,9 +190,9 @@ export default function CellSwitcher({
   const [selectedKey, setSelectedKey] = useState(null);
   // La sorgente dell'anteprima è CONTROLLATA, come vuole CellPeekBody: di
   // default il flusso, le altre due sorgenti sono le sue tab.
-  // L'anteprima è NUDA (tavola approvata): una sorgente sola, il flusso —
-  // niente tab né comando Live (le azioni vivono nel foglio della riga), quindi
-  // non c'e' piu' uno stato della sorgente da tenere.
+  // L'anteprima è NUDA: una sorgente sola, il flusso — niente tab né comando
+  // Live (le azioni vivono nel foglio della riga), quindi non c'e' piu' uno
+  // stato della sorgente da tenere.
   const ANTEPRIMA_SOURCE = 'stream';
   // Il font dell'anteprima è lo stesso del terminale principale: nc_fontsize.
   // I suoi − e + passano dallo stesso modulo, così il valore resta uno solo.
@@ -222,10 +222,20 @@ export default function CellSwitcher({
     [orderedRows, showAll],
   );
   // La riga selezionata si RIrisolve a ogni lista: mai un fotogramma morto.
+  // E si ririsolve sulla lista VISTA e selezionabile: la riga che il filtro
+  // attivo ha tolto, o la cella fermata, chiude l'anteprima come una riga
+  // sparita — e la chiave si azzera con lei, così il ritorno della cella
+  // ricomincia dal gesto (prima il tocco che seleziona, poi quello che apre)
+  // invece di riaprirsi da solo su una selezione che non c'è più.
   const selectedRow = useMemo(
-    () => (selectedKey ? rows.find((row) => row.key === selectedKey) : null),
-    [rows, selectedKey],
+    () => (selectedKey ? visibleRows.find((row) => row.key === selectedKey && row.selectable) : null),
+    [visibleRows, selectedKey],
   );
+  useEffect(() => {
+    if (selectedKey && !visibleRows.some((row) => row.key === selectedKey && row.selectable)) {
+      setSelectedKey(null);
+    }
+  }, [visibleRows, selectedKey]);
   // La riga del foglio si ri-risolve allo stesso modo: se la cella non c'e' piu'
   // il foglio non si rende (e la sua chiave si azzera da sola, sotto).
   const menuResolved = useMemo(
@@ -384,14 +394,43 @@ export default function CellSwitcher({
   };
 
   // Uno scroll NON e' un tocco: il dito che si muove per far scorrere la
-  // lista non seleziona e non apre. Il tocco conta solo senza movimento
-  // (soglia piccola: il tremore del polpastrello non e' uno scroll).
+  // lista non seleziona e non apre. Il gesto segue UN puntatore per id: un
+  // secondo dito mentre il gesto e' aperto, un cancel o uno spostamento
+  // oltre la soglia lo invalidano — e lo spostamento conta nel suo MASSIMO
+  // durante il gesto, anche se il dito torna al punto di partenza. Invio e
+  // Spazio (click senza gesto di puntatore) sono l'attivazione da tastiera:
+  // la stessa logica del tocco, e un gesto finito male non la consuma.
   const tapRef = useRef(null);
+  const SOGLIA_TAP = 8;
+  const toccoDown = (event) => {
+    const cur = tapRef.current;
+    if (cur && cur.state === 'open' && cur.id !== event.pointerId) {
+      cur.state = 'invalid'; // due dita non sono un tap
+      return;
+    }
+    tapRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY, maxDelta: 0, state: 'open' };
+  };
+  const toccoMove = (event) => {
+    const cur = tapRef.current;
+    if (!cur || cur.state !== 'open' || cur.id !== event.pointerId) return;
+    cur.maxDelta = Math.max(cur.maxDelta, Math.hypot(event.clientX - cur.x, event.clientY - cur.y));
+    if (cur.maxDelta > SOGLIA_TAP) cur.state = 'invalid';
+  };
+  const toccoUp = (event) => {
+    const cur = tapRef.current;
+    if (!cur || cur.id !== event.pointerId || cur.state !== 'open') return;
+    cur.state = cur.maxDelta <= SOGLIA_TAP ? 'tap' : 'invalid';
+  };
+  const toccoCancel = (event) => {
+    const cur = tapRef.current;
+    if (cur && cur.id === event.pointerId) cur.state = 'invalid';
+  };
   const toccoVale = (event) => {
-    const inizio = tapRef.current;
-    tapRef.current = null;
-    if (!inizio) return true; // niente pointerdown registrato: invio da tastiera
-    return Math.hypot(event.clientX - inizio.x, event.clientY - inizio.y) <= 8;
+    const cur = tapRef.current;
+    tapRef.current = null; // il gesto, buono o cattivo, si consuma qui
+    if (!cur || event.detail === 0) return true; // tastiera: nessun gesto da consumare
+    if (cur.state === 'invalid') return false; // due dita, cancel, o scroll
+    return Math.hypot(event.clientX - cur.x, event.clientY - cur.y) <= SOGLIA_TAP;
   };
 
   // Le azioni della riga, nel foglio (⋯): il pin e la Live. La logica resta
@@ -445,8 +484,8 @@ export default function CellSwitcher({
       )}
       <aside ref={dialogRef} className={`nc-cell-switcher${selectedRow ? ' with-anteprima' : ''}`} role="dialog"
         aria-label={t('fleet-cells')} tabIndex={-1} onClick={(event) => event.stopPropagation()}>
-        {/* Intestazione come la tavola: «Celle» + il nome del nodo in piccolo,
-            la pillola Attive|Tutte, il riordino e la chiusura come icone
+        {/* Intestazione compatta: «Celle» + il nome del nodo in piccolo, la
+            pillola Attive|Tutte, il riordino e la chiusura come icone
             compatte — niente più titolo-lungo che tronca né quadratoni. */}
         <div className="nc-cell-switcher-controls">
           <b>{t('cell-switcher-title')}</b>
@@ -470,10 +509,10 @@ export default function CellSwitcher({
           <div className="nc-cell-switcher-hint">{t('cell-switcher-tap-hint')}</div>
         )}
         <div className="nc-cell-switcher-list">
-          {/* Live host di questo nodo: striscia compatta come la tavola, dice
-              chi e' l'host (e in che modalità) prima di scegliere una cella.
-              Sola lettura: il comando Live sta nel foglio azioni della riga.
-              Senza host designato non c'e' striscia — niente riga spesa. */}
+          {/* Live host di questo nodo: striscia compatta, dice chi e' l'host
+              (e in che modalità) prima di scegliere una cella. Sola lettura:
+              il comando Live sta nel foglio azioni della riga. Senza host
+              designato non c'e' striscia — niente riga spesa. */}
           {(() => {
             const hostView = liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells: snapshot.cells || [] });
             if (!hostView || !hostView.cell) return null;
@@ -535,7 +574,8 @@ export default function CellSwitcher({
                   aria-current={currentRow ? 'true' : undefined} aria-disabled={!row.selectable}
                   data-selected={selectedKey === row.key ? 'true' : undefined}
                   disabled={picking === row.key}
-                  onPointerDown={(event) => { tapRef.current = { x: event.clientX, y: event.clientY }; }}
+                  onPointerDown={toccoDown} onPointerMove={toccoMove}
+                  onPointerUp={toccoUp} onPointerCancel={toccoCancel}
                   onClick={(event) => { if (!toccoVale(event)) return; tocca(row); }}>
                   <span className="nc-cell-switcher-copy">
                     <span className="nc-cell-switcher-nameline">

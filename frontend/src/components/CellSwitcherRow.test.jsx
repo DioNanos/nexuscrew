@@ -218,10 +218,12 @@ describe('il gesto della lista: un tocco seleziona, il secondo apre', () => {
     render(<Switcher onPick={onPick} />);
     const riga = await screen.findByRole('button', { name: /^cell-One / });
     // Il dito scende lungo la lista e MOLLA sopra la riga: e' uno scroll, il
-    // click che ne segue non conta.
+    // click che ne segue non conta. Il click di un puntatore vero porta
+    // detail>=1: detail 0 e' l'attivazione da tastiera, un'altra cosa.
     fireEvent.pointerDown(riga, { clientX: 20, clientY: 100 });
     fireEvent.pointerMove(riga, { clientX: 20, clientY: 240 });
-    fireEvent.click(riga, { clientX: 20, clientY: 240 });
+    fireEvent.pointerUp(riga, { clientX: 20, clientY: 240 });
+    fireEvent.click(riga, { clientX: 20, clientY: 240, detail: 1 });
     expect(screen.queryByTestId('cell-switcher-anteprima')).toBeNull();
     expect(riga.getAttribute('data-selected')).toBeNull();
     expect(onPick).not.toHaveBeenCalled();

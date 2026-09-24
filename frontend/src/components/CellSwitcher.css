@@ -79,16 +79,16 @@
    regola generica del popup vive in CellPeek.css (componente condiviso). */
 .nc-cell-switcher-copy .nc-cell-switcher-telemetry { color: #9fd8c2; }
 
-/* Controlli diretti per lo stretto: sul telefono il puntino è un bersaglio
-   troppo piccolo per tre azioni: ora il puntino e' l'unico gesto del
-   guardare (apre il Flusso), e le azioni della riga stanno nel foglio. */
+/* Controlli diretti per lo stretto: sul telefono il pallino è un bersaglio
+   troppo piccolo per tre azioni: il pallino mostra solo lo stato, guardare
+   dal vivo e' il primo tocco della riga, e le azioni stanno nel foglio. */
 
 /* Le sorgenti del popup: anteprima, flusso, pannello. Stessa barra, stesso
    gesto; la sorgente attiva e' l'unica scura. */
 .nc-cell-switcher-notice { color: #ffd36b; font-size: 12px; }
 /* Il bottone «apri cella» non c'e' piu': la riga stessa apre, dopo il
    ricontrollo fresco, e il selettore non ha piu' uno stato «scelto». */
-/* Intestazione come la tavola: «Celle» + nodo in piccolo a sinistra, pillola
+/* Intestazione compatta: «Celle» + nodo in piccolo a sinistra, pillola
    Attive|Tutte e icone compatte a destra. Il titolo non tronca più nulla. */
 .nc-cell-switcher-controls { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .nc-cell-switcher-controls b { flex: 0 0 auto; color: #d8ffe8; font-size: 15px; white-space: nowrap; }
@@ -119,8 +119,8 @@
   border-radius: 8px;
 }
 
-/* Le azioni della riga (⋯): come la tavola, l'icona senza cerchio pieno —
-   solo un bordo sottile. Il bersaglio resta 44 px: il dito non legge il CSS. */
+/* Le azioni della riga (⋯): icona nuda, senza cerchio pieno — solo un bordo
+   sottile. Il bersaglio resta 44 px: il dito non legge il CSS. */
 .nc-cell-switcher-menu {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 44px; min-height: 44px; padding: 0; flex: 0 0 auto;
@@ -140,9 +140,9 @@
 
 /* ── Il gesto: un tocco seleziona, il secondo apre ── */
 
-/* La riga selezionata dal primo tocco: bordo e sfondo blu, come la tavola
-   approvata. La selezione e' un fatto VISIVO prima che logico: chi tocca
-   deve vedere DOVE e' finito il dito. */
+/* La riga selezionata dal primo tocco: bordo e sfondo blu. La selezione e'
+   un fatto VISIVO prima che logico: chi tocca deve vedere DOVE e' finito
+   il dito. */
 .nc-cell-switcher-row.selected { border-color: #4f9cff; background: #10233c; }
 
 /* «2 tocchi = apri»: dice il gesto mentre lo si sta facendo, nella riga
@@ -153,8 +153,8 @@
   color: #cfe4ff; font-size: 10px; letter-spacing: .04em; white-space: nowrap;
 }
 
-/* Il Live host del nodo: striscia viola come la tavola — una riga sola, chi
-   e' l'host e in che modalità. Compare solo con un host designato. */
+/* Il Live host del nodo: striscia viola, una riga sola — chi e' l'host e in
+   che modalità. Compare solo con un host designato. */
 .nc-cell-switcher-live-strip {
   display: flex; align-items: center; flex: 0 0 auto;
   padding: 5px 10px; border-radius: 999px;
