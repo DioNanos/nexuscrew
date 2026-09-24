@@ -54,6 +54,11 @@ export function CellPeekBody({ row, token, panelPort = 0, liveHost = null, onLiv
   // stesso fontSize del terminale principale e la apre in sola lettura; il
   // popup libero non passa nulla e resta com'era.
   fontSize, readOnly = false,
+  // ...e DECIDE se c'e' il chrome attorno alle sorgenti: l'anteprima del
+  // selettore mobile e' nuda — niente tab (una sorgente sola, il flusso) e
+  // niente comando Live (le azioni vivono nel foglio della riga). La tavola
+  // D356SelSopra non li ha.
+  chrome = true,
 }) {
   const setSource = (id) => onSourceChange && onSourceChange(id);
   // Ref del terminale: il contratto della tile, così Terminal non dipende da
@@ -94,21 +99,26 @@ export function CellPeekBody({ row, token, panelPort = 0, liveHost = null, onLiv
   return (
     <>
       {/* Le tre sorgenti in un contenitore solo: chi apre decide COSA
-          guardare, il contenitore decide COME si chiude. */}
-      <div className="nc-peek-sorgenti" role="tablist">
-        {tabs.map(([id, label]) => (
-          <button key={id} type="button" role="tab" aria-selected={source === id}
-            className={`nc-peek-sorgente${source === id ? ' attiva' : ''}`}
-            onClick={() => setSource(id)}>{label}</button>
-        ))}
-      </div>
-      <div className="nc-peek-host">
-        <button type="button" className="nc-peek-host-btn" disabled={hostBusy}
-          onClick={runHostCommand}>
-          {isHost ? t('live-host-action-remove') : t('live-host-action-use')}
-        </button>
-        {hostStatus && <div className="nc-peek-notice" role="status">{hostStatus}</div>}
-      </div>
+          guardare, il contenitore decide COME si chiude. Nell'anteprima nuda
+          (chrome=false) tab e comando Live non ci sono proprio. */}
+      {chrome && (
+        <div className="nc-peek-sorgenti" role="tablist">
+          {tabs.map(([id, label]) => (
+            <button key={id} type="button" role="tab" aria-selected={source === id}
+              className={`nc-peek-sorgente${source === id ? ' attiva' : ''}`}
+              onClick={() => setSource(id)}>{label}</button>
+          ))}
+        </div>
+      )}
+      {chrome && (
+        <div className="nc-peek-host">
+          <button type="button" className="nc-peek-host-btn" disabled={hostBusy}
+            onClick={runHostCommand}>
+            {isHost ? t('live-host-action-remove') : t('live-host-action-use')}
+          </button>
+          {hostStatus && <div className="nc-peek-notice" role="status">{hostStatus}</div>}
+        </div>
+      )}
       {source === 'stream' ? (
         <div className="nc-peek-stream">
           <Terminal

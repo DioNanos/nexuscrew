@@ -12,7 +12,7 @@ import { runLiveHostCommand } from '../lib/live-host-command.js';
 import RosterHandle from './RosterHandle.jsx';
 import { CellActionsSheet, cellActionsItems, cellActionsState } from './CellActions.jsx';
 import { applyCellStar, cellStarView } from '../lib/cell-star.js';
-import LiveHostIndicator from './LiveHostIndicator.jsx';
+import { liveHostIndicatorKeys } from '../lib/live-host-view.js';
 import { panelPortForRoute } from '../lib/panel-port.js';
 import { readFontSize, writeFontSize } from '../lib/terminal-fontsize.js';
 import { t } from '../lib/i18n.js';
@@ -190,7 +190,10 @@ export default function CellSwitcher({
   const [selectedKey, setSelectedKey] = useState(null);
   // La sorgente dell'anteprima è CONTROLLATA, come vuole CellPeekBody: di
   // default il flusso, le altre due sorgenti sono le sue tab.
-  const [anteprimaSource, setAnteprimaSource] = useState('stream');
+  // L'anteprima è NUDA (tavola D356SelSopra): una sorgente sola, il flusso —
+  // niente tab né comando Live (le azioni vivono nel foglio della riga), quindi
+  // non c'e' piu' uno stato della sorgente da tenere.
+  const ANTEPRIMA_SOURCE = 'stream';
   // Il font dell'anteprima è lo stesso del terminale principale: nc_fontsize.
   // I suoi − e + passano dallo stesso modulo, così il valore resta uno solo.
   const [fontSize, setFontSize] = useState(readFontSize);
@@ -430,8 +433,8 @@ export default function CellSwitcher({
           <CellPeekBody
             row={selectedRow}
             token={token}
-            source={anteprimaSource}
-            onSourceChange={setAnteprimaSource}
+            source={ANTEPRIMA_SOURCE}
+            chrome={false}
             panelPort={panelPortForRoute(selectedRow.route || [], nodePanelPorts, panelPort)}
             liveHost={liveHostView({ liveHost: hostByRoute[hostRouteKey(selectedRow.route || [])], cells: snapshot.cells || [] })}
             onLiveHostApplied={onLiveHostApplied}
@@ -442,15 +445,21 @@ export default function CellSwitcher({
       )}
       <aside ref={dialogRef} className={`nc-cell-switcher${selectedRow ? ' with-anteprima' : ''}`} role="dialog"
         aria-label={t('fleet-cells')} tabIndex={-1} onClick={(event) => event.stopPropagation()}>
+        {/* Intestazione come la tavola: «Celle» + il nome del nodo in piccolo,
+            la pillola Attive|Tutte, il riordino e la chiusura come icone
+            compatte — niente più titolo-lungo che tronca né quadratoni. */}
         <div className="nc-cell-switcher-controls">
-          <b>{t('fleet-cells')}</b>
+          <b>{t('cell-switcher-title')}</b>
+          {localNodeLabel && <small className="nc-cell-switcher-node">{localNodeLabel}</small>}
+          <div className="nc-cell-switcher-filter" role="group" aria-label={t('cell-switcher-filter')}>
+            <button type="button" className={!showAll ? 'on' : ''} aria-pressed={!showAll}
+              onClick={() => { setNotice(''); setShowAll(false); }}>{t('cell-switcher-show-active')}</button>
+            <button type="button" className={showAll ? 'on' : ''} aria-pressed={showAll}
+              onClick={() => { setNotice(''); setShowAll(true); }}>{t('cell-switcher-show-all')}</button>
+          </div>
           <button type="button" className={`nc-cell-switcher-reorder${reorderMode ? ' on' : ''}`}
             aria-pressed={reorderMode} title={t('reorder-help')} aria-label={t('reorder')}
             onClick={() => { setNotice(''); setReorderMode((value) => !value); }}>↕</button>
-          <button type="button" className="nc-cell-switcher-filter" aria-pressed={showAll}
-            onClick={() => { setNotice(''); setShowAll((value) => !value); }}>
-            {showAll ? t('cell-switcher-show-active') : t('cell-switcher-show-all')}
-          </button>
           <button ref={closeRef} type="button" className="nc-cell-switcher-close" aria-label={t('cell-switcher-close')}
             title={t('cell-switcher-close')} onClick={onClose}>×</button>
         </div>
@@ -461,10 +470,22 @@ export default function CellSwitcher({
           <div className="nc-cell-switcher-hint">{t('cell-switcher-tap-hint')}</div>
         )}
         <div className="nc-cell-switcher-list">
-          {/* Live host di questo nodo: riga di sola lettura in testa alla lista,
-              cosi' il selettore dice chi e' l'host prima di scegliere una cella. */}
-          <LiveHostIndicator className="nc-cell-switcher-live-host"
-            view={liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells: snapshot.cells || [] })} />
+          {/* Live host di questo nodo: striscia compatta come la tavola, dice
+              chi e' l'host (e in che modalità) prima di scegliere una cella.
+              Sola lettura: il comando Live sta nel foglio azioni della riga.
+              Senza host designato non c'e' striscia — niente riga spesa. */}
+          {(() => {
+            const hostView = liveHostView({ liveHost: hostByRoute[hostRouteKey([])], cells: snapshot.cells || [] });
+            if (!hostView || !hostView.cell) return null;
+            const { modeKey } = liveHostIndicatorKeys(hostView);
+            return (
+              <div className="nc-cell-switcher-live-strip" data-testid="cell-switcher-live-strip">
+                {t('cell-switcher-live-strip')
+                  .replace('{cell}', hostView.cell)
+                  .replace('{mode}', t(modeKey || 'live-host-mode-unknown'))}
+              </div>
+            );
+          })()}
           {!ready && <div className="nc-empty" role="status">{t('cell-switcher-refreshing')}</div>}
           {ready && visibleRows.length === 0 && <div className="nc-empty" role="status">{t('cell-switcher-empty-active')}</div>}
           {visibleRows.map((row, indice) => {
@@ -517,9 +538,11 @@ export default function CellSwitcher({
                   onPointerDown={(event) => { tapRef.current = { x: event.clientX, y: event.clientY }; }}
                   onClick={(event) => { if (!toccoVale(event)) return; tocca(row); }}>
                   <span className="nc-cell-switcher-copy">
-                    <b>{row.cellName}</b>
-                    {currentRow && <span className="nc-cell-switcher-here">{t('cell-switcher-here')}</span>}
-                    {selectedKey === row.key && <span className="nc-cell-switcher-taptwo">{t('cell-switcher-two-taps')}</span>}
+                    <span className="nc-cell-switcher-nameline">
+                      <b>{row.cellName}</b>
+                      {currentRow && <span className="nc-cell-switcher-here">{t('cell-switcher-here')}</span>}
+                      {selectedKey === row.key && <span className="nc-cell-switcher-taptwo">{t('cell-switcher-two-taps')}</span>}
+                    </span>
                     {/* UNA riga di stato: la parola (una sola fonte, il poll
                         che ha confermato la cella) e il tempo dall'ultima
                         attivita'. La telemetria, se c'e', entra QUI con

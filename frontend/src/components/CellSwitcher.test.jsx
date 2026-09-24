@@ -67,19 +67,11 @@ beforeEach(() => {
   });
 });
 
-// L'anteprima di una cella si apre col PRIMO tocco della riga: le altre due
-// sorgenti sono tab dello STESSO pannello — un posto solo, tre sorgenti.
+// L'anteprima di una cella si apre col PRIMO tocco della riga. L'anteprima è
+// NUDA (D-356): una sorgente sola, il flusso — niente tab né comando Live.
 const toccaRiga = async (cellName) => {
   fireEvent.click(await screen.findByRole('button', { name: new RegExp(`^${cellName} `) }));
   await screen.findByTestId('cell-switcher-anteprima');
-};
-const apriAnteprima = async (cellName) => {
-  await toccaRiga(cellName);
-  fireEvent.click(await screen.findByRole('tab', { name: 'Preview' }));
-};
-const apriPannello = async (cellName) => {
-  await toccaRiga(cellName);
-  fireEvent.click(await screen.findByRole('tab', { name: 'Panel' }));
 };
 
 // Il selettore rilegge le posizioni a intervalli (in produzione 4 s). Nei test
@@ -256,33 +248,34 @@ describe('CellSwitcher', () => {
     expect(screen.queryByText(/%/)).toBeNull();
   });
 
-  it('the popup shows the CURRENT content of the peeked cell, never a saved frame of it', async () => {
-    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
+  it('l\'anteprima del selettore è NUDA: flusso vivo, nessuna tab, nessun comando Live (D-356)', async () => {
+    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [
+      { ...active('cell-One', 'cloud-cell-One'), panelUrl: 'https://panel.example' },
+    ] }));
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
       sessions: [{ name: 'cloud-cell-One', activity: 0, preview: 'frame-uno' }],
     }) });
     render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
-    await apriAnteprima('cell-One');
-    // Il pre del popup è il contenuto della sorgente; la preview compare
-    // anche nello subtitle della riga, quindi si mira al selettore preciso.
-    await waitFor(() => expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('frame-uno'));
-    // La lista si aggiorna sotto (poll): la STESSA cella ha una preview nuova.
-    // Il popup tiene una chiave e ri-risolve la riga: deve mostrare il
-    // presente di quella cella, non il fotogramma di quando è stata aperta.
-    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
-      sessions: [{ name: 'cloud-cell-One', activity: 0, preview: 'frame-due-fresca' }],
-    }) });
-    await waitFor(() => expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('frame-due-fresca'), { timeout: 4000 });
+    await toccaRiga('cell-One');
+    // Il corpo dell'anteprima è il flusso della sessione: il terminale c'è, e
+    // dell'attorno (tab delle sorgenti, comando Live host) non c'è niente —
+    // la tavola D356SelSopra non li ha. Le sorgenti restano nel popup libero
+    // e nella nuvola; le azioni vivono nel foglio della riga.
+    const term = await screen.findByTestId('peek-term');
+    expect(term.getAttribute('data-session')).toBe('cloud-cell-One');
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    expect(document.querySelector('.nc-peek-sorgenti')).toBeNull();
+    expect(document.querySelector('.nc-peek-host')).toBeNull();
   });
 
-  it('a cell that disappears from the updated list closes the popup instead of showing its dead frame', async () => {
+  it('a cell that disappears from the updated list closes the preview instead of showing its dead frame', async () => {
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
     mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
-      sessions: [{ name: 'cloud-cell-One', activity: 0, preview: 'frame-ultimo' }],
+      sessions: [{ name: 'cloud-cell-One', activity: 0 }],
     }) });
     render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
-    await apriAnteprima('cell-One');
-    await waitFor(() => expect(document.querySelector('.nc-peek-testo')?.textContent).toBe('frame-ultimo'));
+    await toccaRiga('cell-One');
+    await screen.findByTestId('peek-term');
     // La cella muore sotto l'anteprima: la chiave non risolve più niente e
     // l'anteprima si chiude da sé. L'alternativa — il contenuto di un'altra
     // cella creduta la propria — è il difetto che questo test tiene chiuso.
@@ -301,7 +294,6 @@ describe('CellSwitcher', () => {
     fireEvent.click(riga);
     const term = await screen.findByTestId('peek-term');
     expect(term.getAttribute('data-session')).toBe('cloud-cell-One');
-    expect(screen.getByRole('tab', { name: 'Stream' }).getAttribute('aria-selected')).toBe('true');
     // La riga e' SELEZIONATA, col badge che dice il gesto.
     expect(riga.getAttribute('data-selected')).toBe('true');
     expect(riga.textContent).toContain('2 taps = open');
@@ -310,86 +302,11 @@ describe('CellSwitcher', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('the AIDesktop panel is reachable from the list when the cell publishes a panelUrl', async () => {
-    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [
-      { ...active('cell-One', 'cloud-cell-One'), panelUrl: 'https://panel.example' },
-    ] }));
-    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
-      sessions: [{ name: 'cloud-cell-One', activity: 0 }],
-    }) });
-    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: /^cell-One / });
-    await apriPannello('cell-One');
-    const panel = await screen.findByTestId('peek-panel');
-    expect(panel.getAttribute('data-cell')).toBe('cell-One');
-  });
-
-  // P0 sicurezza: con una porta nota il frame va su un origin SEPARATO dal
-  // control plane — e' quella separazione a impedire al JS del pannello di
-  // raggiungere il token dell'operatore. Passare 0 (o un valore sbagliato)
-  // ricade su un path relativo, cioe' SAME-ORIGIN col control plane: il
-  // difetto chiuso in 0.9.1, riaperto in questo ingresso.
-  it('panel origin: a LOCAL cell panel uses the node\'s own panel port, never 0 when one is configured', async () => {
-    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [
-      { ...active('cell-One', 'cloud-cell-One'), panelUrl: 'https://panel.example' },
-    ] }));
-    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({
-      sessions: [{ name: 'cloud-cell-One', activity: 0 }],
-    }) });
-    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()}
-      panelPort={41821} nodePanelPorts={{}} />);
-    await screen.findByRole('button', { name: /^cell-One / });
-    await apriPannello('cell-One');
-    const panel = await screen.findByTestId('peek-panel');
-    expect(panel.dataset.panelPort).toBe('41821');
-  });
-
-  it('panel origin: a REMOTE cell with a negotiated port for its route gets that port, never the local one', async () => {
-    writeCellSwitcherSnapshot({
-      sessions: [], cells: [],
-      nodeGroups: [{
-        route: ['hub'], label: 'Hub', sessions: [{ name: 'cloud-Remote', activity: 0 }],
-        cells: [{ ...active('Remote', 'cloud-Remote'), panelUrl: 'https://panel.example' }],
-      }],
-    });
-    mocks.fleetStatus.mockImplementation(async (_token, r = []) => (r.length
-      ? { available: true, cells: [{ ...active('Remote', 'cloud-Remote'), panelUrl: 'https://panel.example' }] }
-      : { available: true, cells: [] }));
-    mocks.getRouteSessions.mockResolvedValue({ sessions: [{ name: 'cloud-Remote', activity: 0 }] });
-    // Porta LOCALE deliberatamente diversa dalla porta negoziata per 'hub':
-    // se il frame prendesse quella locale sarebbe l'origine SBAGLIATA per
-    // una cella remota, non un fallback innocuo.
-    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
-      panelPort={9999} nodePanelPorts={{ hub: 41821 }} />);
-    await screen.findByRole('button', { name: /^Remote / });
-    await apriPannello('Remote');
-    const panel = await screen.findByTestId('peek-panel');
-    expect(panel.dataset.panelPort).toBe('41821');
-    expect(panel.dataset.panelPort).not.toBe('9999');
-  });
-
-  it('panel origin — no regression: a REMOTE cell whose route has NO negotiated port stays at 0, never borrows the local one', async () => {
-    writeCellSwitcherSnapshot({
-      sessions: [], cells: [],
-      nodeGroups: [{
-        route: ['unpaired'], label: 'Unpaired', sessions: [{ name: 'cloud-Remote', activity: 0 }],
-        cells: [{ ...active('Remote', 'cloud-Remote'), panelUrl: 'https://panel.example' }],
-      }],
-    });
-    mocks.fleetStatus.mockImplementation(async (_token, r = []) => (r.length
-      ? { available: true, cells: [{ ...active('Remote', 'cloud-Remote'), panelUrl: 'https://panel.example' }] }
-      : { available: true, cells: [] }));
-    mocks.getRouteSessions.mockResolvedValue({ sessions: [{ name: 'cloud-Remote', activity: 0 }] });
-    // 'unpaired' non e' nella mappa negoziata (peer accoppiato prima che il
-    // pairing negoziasse la porta pannello): questa e' esattamente la guardia
-    // di lib/panel-port.js che non va regredita.
-    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
-      panelPort={9999} nodePanelPorts={{ hub: 41821 }} />);
-    await screen.findByRole('button', { name: /^Remote / });
-    await apriPannello('Remote');
-    const panel = await screen.findByTestId('peek-panel');
-    expect(panel.dataset.panelPort).toBe('0');
-  });
+  // I quattro test del pannello (raggiungibilità dall'elenco + origin P0)
+  // sono stati ricollocati: con l'anteprima nuda (D-356) il pannello non è
+  // più raggiungibile dal selettore. Le guardie P0 sulla porta stanno in
+  // src/lib/panel-port.test.js; il contratto CellPeekBody→CellPanel in
+  // CellPeekBody.test.jsx.
 
   it('the row renders what the cell is doing: fresh activity as its age, stale or absent as nothing', async () => {
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [
