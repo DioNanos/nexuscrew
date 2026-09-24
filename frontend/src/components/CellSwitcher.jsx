@@ -394,21 +394,32 @@ export default function CellSwitcher({
   };
 
   // Uno scroll NON e' un tocco: il dito che si muove per far scorrere la
-  // lista non seleziona e non apre. Il gesto segue UN puntatore per id: un
-  // secondo dito mentre il gesto e' aperto, un cancel o uno spostamento
-  // oltre la soglia lo invalidano — e lo spostamento conta nel suo MASSIMO
-  // durante il gesto, anche se il dito torna al punto di partenza. Invio e
-  // Spazio (click senza gesto di puntatore) sono l'attivazione da tastiera:
-  // la stessa logica del tocco, e un gesto finito male non la consuma.
+  // lista non seleziona e non apre. Il gesto segue UN puntatore PRIMARIO per
+  // id E per riga: un secondo dito mentre il gesto e' aperto, un cancel o uno
+  // spostamento oltre la soglia lo invalidano — e lo spostamento conta nel
+  // suo MASSIMO durante il gesto, anche se il dito torna al punto di
+  // partenza. Invio e Spazio (click senza gesto di puntatore) sono
+  // l'attivazione da tastiera: la stessa logica del tocco, e un gesto finito
+  // male non la consuma. Un click di puntatore senza gesto registrato non
+  // e' tastiera: non provato, non vale.
   const tapRef = useRef(null);
   const SOGLIA_TAP = 8;
   const toccoDown = (event) => {
     const cur = tapRef.current;
-    if (cur && cur.state === 'open' && cur.id !== event.pointerId) {
-      cur.state = 'invalid'; // due dita non sono un tap
+    // Un puntatore non primario non apre MAI un gesto: se il gesto e' aperto
+    // lo invalida (due dita), se non c'e' non succede niente.
+    if (event.isPrimary === false) {
+      if (cur && cur.state === 'open') cur.state = 'invalid';
       return;
     }
-    tapRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY, maxDelta: 0, state: 'open' };
+    if (cur && cur.state === 'open' && (cur.id !== event.pointerId || cur.row !== event.currentTarget)) {
+      cur.state = 'invalid'; // due dita, o un dito che cambia bersaglio
+      return;
+    }
+    tapRef.current = {
+      id: event.pointerId, row: event.currentTarget,
+      x: event.clientX, y: event.clientY, maxDelta: 0, state: 'open',
+    };
   };
   const toccoMove = (event) => {
     const cur = tapRef.current;
@@ -428,8 +439,12 @@ export default function CellSwitcher({
   const toccoVale = (event) => {
     const cur = tapRef.current;
     tapRef.current = null; // il gesto, buono o cattivo, si consuma qui
-    if (!cur || event.detail === 0) return true; // tastiera: nessun gesto da consumare
+    if (event.detail === 0) return true; // tastiera: Invio/Spazio, sempre valida
+    if (!cur) return false; // click di puntatore senza gesto: non provato
     if (cur.state === 'invalid') return false; // due dita, cancel, o scroll
+    // Il gesto appartiene alla riga dove e' nato: il click che lo conclude
+    // arriva su quella riga, non su un'altra.
+    if (cur.row !== event.currentTarget) return false;
     return Math.hypot(event.clientX - cur.x, event.clientY - cur.y) <= SOGLIA_TAP;
   };
 

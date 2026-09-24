@@ -86,6 +86,27 @@ describe('CellSwitcher — i bordi del gesto e della selezione', () => {
     expect(pick).not.toHaveBeenCalled();
   });
 
+  it('il gesto appartiene alla riga dove è nato: un click su un\'altra riga non lo conclude', async () => {
+    render(<CellSwitcher token="t" onClose={() => {}} onPick={() => {}} />);
+    const una = await screen.findByRole('button', { name: /^cell-One / });
+    const due = await screen.findByRole('button', { name: /^cell-Two / });
+    rowPointer(una, 'pointerdown', 20, 100);
+    // Il click arriva sull'ALTRA riga, in un punto vicino al punto di partenza:
+    // senza la riga nel gesto, la sola distanza non basterebbe a scartarlo.
+    fireEvent.click(due, { clientX: 22, clientY: 102, detail: 1 });
+    expect(due.getAttribute('data-selected')).toBeNull();
+    expect(screen.queryByTestId('peek-term')).toBeNull();
+  });
+
+  it('solo il puntatore primario apre il gesto: un down secondario non seleziona', async () => {
+    render(<CellSwitcher token="t" onClose={() => {}} onPick={() => {}} />);
+    const riga = await screen.findByRole('button', { name: /^cell-One / });
+    rowPointer(riga, 'pointerdown', 20, 100, { id: 2, primary: false });
+    fireEvent.click(riga, { clientX: 20, clientY: 100, detail: 1 });
+    expect(screen.queryByTestId('peek-term')).toBeNull();
+    expect(riga.getAttribute('data-selected')).toBeNull();
+  });
+
   it('lo spostamento conta nel suo MASSIMO: il dito che torna non è un tap', async () => {
     render(<CellSwitcher token="t" onClose={() => {}} onPick={() => {}} />);
     const riga = await screen.findByRole('button', { name: /^cell-One / });
