@@ -431,7 +431,7 @@ test('codex ondemand: definizione base + omit_tools_from nella TABELLA del serve
   const out = resolveCodex(w, { capabilities: { mcp: ['nexuscrew', 'webfetch'], ondemand: ['webfetch'] } });
   assert.equal(out.ok, true, out.reason);
   const profilo = fs.readFileSync(path.join(w.home, '.codex', 'nexuscrew-Ric.config.toml'), 'utf8');
-  // La forma giusta (D-343): la tabella e' valida anche da sola — definizione
+  // La forma giusta: la tabella e' valida anche da sola — definizione
   // del layer base copiata + chiave di differimento — senza enabled (concesso
   // ma differito, non spento).
   const doc = toml.parse(profilo);
@@ -468,7 +468,7 @@ test('codex ondemand sovrapposto a mcp: nessuna tabella duplicata per lo stesso 
     'un server spento (enabled = false) non prende anche la tabella ondemand');
 });
 
-// --- D-343: OGNI tabella MCP emessa e' valida anche da sola ---
+// --- OGNI tabella MCP emessa e' valida anche da sola ---
 // Il write path del client (config/batchWrite) valida il layer attivo da
 // solo prima del documento fuso: una tabella ridotta senza trasporto rompe
 // il salvataggio di /model. Il trasporto si COPIA dal layer base con parse

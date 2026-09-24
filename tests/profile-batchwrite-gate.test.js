@@ -1,5 +1,5 @@
 'use strict';
-// tests/profile-batchwrite-gate.test.js — gate D-343: il profilo per cella
+// tests/profile-batchwrite-gate.test.js — il profilo per cella supera la write
 // supera la write REALE del client (config/batchWrite, il percorso della TUI
 // che salva /model) su CODEX_HOME isolato, mai ~/.codex.
 //

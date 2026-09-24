@@ -30,6 +30,17 @@ cells.
 | `nc_speak_group` | Start a local named primary/failover or explicit fan-out group |
 | `nc_speak_group_status` | Read a caller-scoped per-endpoint group receipt |
 | `nc_speak_group_stop` | Stop a group and prevent untried failover candidates |
+| `nc_lease_register` | Register the caller with the node's Live lease and get a first proof |
+| `nc_lease_refresh` | Renew a live lease registration and receive a fresh proof |
+| `nc_lease_recovery` | Resume a lease registration after a gap, same incarnation |
+
+The three `nc_lease_*` tools keep a cell registered with the node's Live
+lease. Only `nc_lease_register` can answer `pending` (the supervisor has not
+tracked the cell yet); `nc_lease_refresh` renews a registration that is still
+live and never returns a pending state; `nc_lease_recovery` resumes the same
+incarnation from a recently expired proof, and each presentation counts as an
+attempt. Refresh and recovery are authorized by the signed proof, and they act
+on the caller's own session.
 
 Cell delivery uses bracketed paste followed by a separate Enter. A `submitted`
 receipt confirms transport to the target TUI, not acceptance or completion by

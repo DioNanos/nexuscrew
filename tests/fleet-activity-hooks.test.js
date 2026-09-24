@@ -1,5 +1,5 @@
 'use strict';
-// tests/fleet-activity-hooks.test.js — D-340: gli hook di attivita' iniettati
+// tests/fleet-activity-hooks.test.js — gli hook di attivita' iniettati
 // nella settings della cella.
 //
 // Il test che conta e' il primo: NESSUNA CELLA DEVE PARTIRE CON UNA SUPERFICIE
