@@ -294,3 +294,7 @@
 .nc-refresh.on {
   color: #bfffd8; border-color: rgba(0, 204, 102, .55); background: rgba(0, 204, 102, .12);
 }
+
+/* Notice d'azione (avvio in corso, degradi, sessione già attiva): informativa,
+   si cancella da sola e sopravvive ai refresh del roster. */
+.nc-notice { color: #8c8; font-size: 13px; padding: 4px 2px; }
