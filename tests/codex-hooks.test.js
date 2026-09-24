@@ -17,17 +17,27 @@ const {
   EVENTI_CODEX,
 } = require('../lib/fleet/codex-hooks.js');
 
-// L'hash e' la chiave di fiducia dell'hook: se il calcolo devia, il client non
-// riconosce l'handler e riapre il dialogo di revisione. La forma canonica qui
-// sotto — chiavi ordinate, `event_name` in snake_case, timeout dell'evento — e'
-// quella del client, ed e' stata validata sul valore misurato una volta su una
-// TUI reale.
+// I valori attesi qui non sono inventati: vengono dal JSON canonico e dalla
+// normalizzazione letti nel sorgente di codex, e il caso SessionStart e' lo
+// STESSO comando di una prova isolata su TUI reale — se il calcolo devia, la
+// fiducia non combacia piu' e il client riapre il dialogo di revisione.
 
+test('hashHook riproduce l\'hash della prova isolata su TUI', () => {
+  // Il path in questo comando e' quello della misura originale su una TUI
+  // reale: NON va aggiornato, altrimenti l'hash atteso non vale piu'.
+  const comando = 'printf cli-ran >> /tmp/d348-step0-15985qqx/cli-probe';
+  assert.strictEqual(
+    hashHook('SessionStart', comando),
+    'sha256:1c196e4a186c6ba4bfd1f4a9c86e2ea8f43d0f13527f93c70001134a70e47d4b',
+  );
+});
+
+// Lo stesso calcolo, bloccato anche sulla FORMA: la canonicalizzazione qui
+// sotto e' scritta a mano di proposito, cosi' il test non dipende da
+// `ordinaChiavi`. Se i campi o il loro ordine cambiano, questo atteso non
+// combacia piu' — mentre il test sopra resta l'oracolo misurato.
 test('hashHook: il digest e\' quello del JSON canonico dell\'identita dell\'hook', () => {
   const comando = 'printf cli-ran >> /tmp/nc-hook-probe-step0/cli-probe';
-  // La canonicalizzazione e' scritta qui a mano di proposito: cosi' il test
-  // blocca la FORMA, non solo un numero. Se `ordinaChiavi` o i campi cambiano,
-  // questo atteso non combacia piu'.
   const canonico = '{"event_name":"session_start","hooks":[{"async":false,"command":'
     + JSON.stringify(comando) + ',"timeout":600,"type":"command"}]}';
   const atteso = `sha256:${crypto.createHash('sha256').update(canonico, 'utf8').digest('hex')}`;
