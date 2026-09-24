@@ -14,8 +14,10 @@ stay yours, and your infrastructure stays under your control.
 > **Reading this as an AI agent?** Start with
 > **[`skills/nexuscrew`](skills/nexuscrew/SKILL.md)**. It is the entry point:
 > what the system is, what you can actually do through it, which companion
-> skill covers which capability, where the trust boundaries are, and the rules
-> that hold across all of them. Every other NexusCrew skill assumes it.
+> skill covers which capability, where the trust boundaries are, and the
+> operational rules that hold across all of them — which tool to reach for and
+> in what order, and what not to do. Every other NexusCrew skill assumes it,
+> and this README alone does not replace it.
 
 <p align="center">
   <img src="docs/img/fleet-deck-desktop.png" width="960" alt="NexusCrew desktop deck with multiple live tmux sessions">
@@ -55,7 +57,7 @@ opens the authenticated PWA.
 
 | Platform | Prerequisites |
 |---|---|
-| Linux | Node.js 18+, tmux 3.4+, OpenSSH |
+| Linux | Node.js 18+, tmux (3.4+ recommended), OpenSSH |
 | macOS | `brew install node tmux` |
 | Android / Termux | `pkg install nodejs-lts tmux openssh` |
 
@@ -72,7 +74,7 @@ install-script approval.
 | **Live terminals** | Attach to real tmux sessions through a real PTY, WebSocket and xterm.js. |
 | **Persistent workspaces** | Arrange sessions into decks with saved layouts, ordering, pins and per-cell drafts. |
 | **Multi-node Fleet** | See and control authorized cells across Linux, macOS and Android nodes. |
-| **AI-ready cells** | Launch Claude Code, Codex, Codex-VL, Pi, Agy, Kimi Code CLI or a trusted shell with explicit providers and policies. |
+| **AI-ready cells** | Launch Claude Code, Codex, Codex-VL, Grok, VL, Pi, Agy, Kimi Code CLI or a trusted shell with explicit providers and policies. |
 | **Mobile-native control** | Scroll tmux history, use terminal keys, dictate prompts and move files from a phone. |
 | **Operator alerts** | Receive visual, push, browser speech and opt-in node-native Audio Share TTS. |
 
@@ -153,7 +155,8 @@ The repository also includes [MCP companion guidance](MCP_COMPANIONS.md) and
 the machine-readable [`mcp-companions.json`](mcp-companions.json).
 
 Portable skills ship with the package, and
-[`nexuscrew`](skills/nexuscrew/SKILL.md) is the one to read first:
+[`nexuscrew`](skills/nexuscrew/SKILL.md) is the one to read first — the
+operational rules (which tool, in what order, what not to do) live there:
 
 | Skill | Covers |
 |---|---|
@@ -161,6 +164,7 @@ Portable skills ship with the package, and
 | [`nexuscrew-agent`](skills/nexuscrew-agent/SKILL.md) | Talking to the human, runtime discovery, delivery to cells |
 | [`live`](skills/live/SKILL.md) | Designating and permitting a node's Live host cell |
 | [`aidesktop`](skills/aidesktop/SKILL.md) | A cell's web panel, and the AI Desktop container recipe |
+| [`cellforge`](skills/cellforge/SKILL.md) | Creating, changing and auditing a cell's definition |
 | [`memory`](skills/memory/SKILL.md) | Persistent agent state |
 | [`vl-msa`](skills/vl-msa/SKILL.md) | Searchable document memory |
 | [`crew`](skills/crew/SKILL.md) | Bounded worker delegation |

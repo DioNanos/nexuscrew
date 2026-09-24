@@ -41,7 +41,8 @@ environment-variable name, never its value. The default model is
 - The bundled qwen3.8 catalog pins context `983616`, effective context `95%`,
   reasoning levels `low/high/xhigh` with `xhigh` default, parallel tools off,
   text+image input and original image detail.
-- Offline compatibility target: `codex-vl 0.144.7`.
+- Offline compatibility target: `codex-vl 0.144.7` — the version this profile
+  is verified against, not a rolling latest.
 
 ## Pi
 
@@ -53,7 +54,8 @@ environment-variable name, never its value. The default model is
   path preserves `reasoning_content` in replayed assistant/tool turns.
 - `qwen3.8-max` is reasoning-enabled, accepts text+image, uses context
   `983616`, and launches with `--thinking xhigh`.
-- Offline compatibility target: `pi 0.80.10`.
+- Offline compatibility target: `pi 0.80.10` — the version this extension is
+  verified against, not a rolling latest.
 
 ## Verification boundary
 
