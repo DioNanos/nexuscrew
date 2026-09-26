@@ -1,18 +1,11 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import {
-  refKeyOf, isSameRef, toggleSideRef,
+  isSameRef, toggleSideRef,
   readSavedDual, writeSavedDual, clearSavedDual,
   DUAL_MIN_W, clampWeight,
 } from './dual-view.js';
 
-describe('refKeyOf / isSameRef', () => {
-  it('locale = solo nome sessione, remoto = nodo:sessione (forma tileKey)', () => {
-    expect(refKeyOf({ session: 'cloud-Dev' })).toBe('cloud-Dev');
-    expect(refKeyOf({ session: 'cloud-Dev', node: 'Pixel' })).toBe('Pixel:cloud-Dev');
-    expect(refKeyOf(null)).toBe('');
-    expect(refKeyOf({})).toBe('');
-  });
-
+describe('isSameRef', () => {
   it('uguaglianza per sessione+nodo, il nodo assente conta come locale', () => {
     expect(isSameRef({ session: 'a' }, { session: 'a' })).toBe(true);
     expect(isSameRef({ session: 'a', node: 'x' }, { session: 'a', node: 'x' })).toBe(true);

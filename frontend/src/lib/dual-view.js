@@ -6,13 +6,6 @@
 
 const STORAGE_KEY = 'nc_dual_side';
 
-// Chiave stabile di un ref cella {session, node?}: stessa forma di tileKey
-// (GridTile.jsx:45) — nodo qualificato + sessione, locale = solo nome.
-export function refKeyOf(ref) {
-  if (!ref || !ref.session) return '';
-  return ref.node ? `${ref.node}:${ref.session}` : ref.session;
-}
-
 export function isSameRef(a, b) {
   if (!a || !b) return false;
   return a.session === b.session && (a.node || '') === (b.node || '');
