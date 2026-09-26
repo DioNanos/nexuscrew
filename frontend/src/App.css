@@ -113,3 +113,27 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
    il nome della cella nell'header. */
 .nc-renderer-toggle { opacity: .55; }
 .nc-renderer-toggle.on { opacity: 1; color: #7fe3ff; }
+
+/* Doppia vista nella singola mobile: due pannelli sopra/sotto con maniglia,
+   focus al tocco (bordo verde + matita sulla striscia). Solo classi nuove:
+   nessuna regola esistente cambia, il desktop non le incontra mai. */
+.nc-dual { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.nc-dual-pane { position: relative; display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  border: 2px solid #243; border-radius: 6px; overflow: hidden; background: #0a0e0a; }
+.nc-dual-pane.foco { border-color: #7ee787; }
+.nc-dual-pane:not(.foco) .nc-dual-strip { opacity: .6; }
+.nc-dual-strip { flex: 0 0 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+  background: #0e140e; border-bottom: 1px solid #1c241c; min-width: 0; }
+.nc-dual-strip b { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-weight: 600; color: #d8ffe8; }
+.nc-dual-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #333; }
+.nc-dual-dot.on { background: #2e7d32; }
+.nc-dual-matita { flex: 0 0 auto; font-size: 12px; line-height: 1; color: #7ee787; }
+.nc-dual-tasti { display: flex; gap: 2px; flex: 0 0 auto; }
+.nc-dual-tasti button { background: none; border: 0; color: #9fd; font-size: 14px; line-height: 1;
+  min-height: 22px; min-width: 24px; padding: 0 3px; border-radius: 4px; }
+.nc-dual-body { position: relative; flex: 1; min-height: 0; }
+.nc-dual-handle { flex: 0 0 12px; position: relative; cursor: row-resize; touch-action: none; }
+.nc-dual-handle::after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 36px; height: 3px; border-radius: 2px; background: #243; }
+.nc-dual-handle:hover::after { background: #1c3a1c; }
