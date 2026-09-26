@@ -656,7 +656,7 @@ describe('CellSwitcher — il comando Live esplicito', () => {
   });
 });
 
-// Il tasto della doppia vista (D373): affianca la riga, o la toglie se è già
+// Il tasto della doppia vista: affianca la riga, o la toglie se è già
 // affiancata. Tre stati (disabilitato sulla cella aperta, vuoto sulle righe
 // selezionabili, disabilitato sulle non raggiungibili), nessun effetto sulla
 // riga al di là del toggle, e NIENTE tasto senza `onToggleSide` — desktop e

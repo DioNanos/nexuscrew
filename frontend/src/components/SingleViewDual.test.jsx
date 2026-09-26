@@ -27,8 +27,14 @@ vi.mock('../lib/api.js', () => ({
 vi.mock('./Terminal.jsx', () => ({
   default: function TermSpia({ session, composerRef, sendRef, actionRef, focused, readonly, takeSize }) {
     const spia = spie.perSessione[session]
-      || (spie.perSessione[session] = { pastes: [], keys: [], actions: [], props: {} });
+      || (spie.perSessione[session] = { pastes: [], keys: [], actions: [], props: {}, socket: 0 });
     spia.props = { focused, readonly, takeSize };
+    // Replica il contratto di connessione del vero terminale: l'effetto che
+    // crea e distrugge terminale+socket dipende da queste props (lo stesso
+    // elenco di Terminal.jsx). Se una cambia, la "connessione" riparte.
+    React.useEffect(() => {
+      spia.socket += 1;
+    }, [session, readonly, takeSize]);
     composerRef.current = async (text) => { spia.pastes.push(text); return true; };
     sendRef.current = (seq) => { spia.keys.push(seq); return true; };
     actionRef.current = (name) => { spia.actions.push(name); return true; };
@@ -140,21 +146,44 @@ describe('doppia vista: l’input va solo alla cella col focus', () => {
     expect(spie.perSessione['cloud-Dev'].actions).toEqual([]);
   });
 
-  it('il size-lock resta alla cella aperta; il focus governa focused/readonly', async () => {
+  it('il size-lock resta alla cella aperta; il focus non tocca readonly', async () => {
     monta();
     await waitFor(() => {
       expect(spie.perSessione['cloud-Dev'].props.takeSize).toBe(true);
       expect(spie.perSessione['cloud-Fork'].props.takeSize).toBe(false);
     });
     expect(spie.perSessione['cloud-Dev'].props.focused).toBe(true);
-    expect(spie.perSessione['cloud-Dev'].props.readonly).toBe(false);
-    expect(spie.perSessione['cloud-Fork'].props.readonly).toBe(true);
-    // focus alla seconda: l’input la raggiunge, ma il size-lock non si muove
+    // focus alla seconda: l'input la raggiunge, ma il size-lock non si muove
     fireEvent.pointerDown(screen.getByTestId('pane-side'));
     expect(spie.perSessione['cloud-Fork'].props.focused).toBe(true);
-    expect(spie.perSessione['cloud-Fork'].props.readonly).toBe(false);
-    expect(spie.perSessione['cloud-Dev'].props.readonly).toBe(true);
+    expect(spie.perSessione['cloud-Dev'].props.focused).toBe(false);
     expect(spie.perSessione['cloud-Dev'].props.takeSize).toBe(true);
+    expect(spie.perSessione['cloud-Fork'].props.takeSize).toBe(false);
+  });
+
+  it('tre cambi di focus non ricreano terminali né connessioni; l’invio segue sempre il focus', async () => {
+    monta();
+    await waitFor(() => {
+      expect(spie.perSessione['cloud-Dev'].socket).toBe(1);
+      expect(spie.perSessione['cloud-Fork'].socket).toBe(1);
+    });
+    await apriComposer();
+    // cambio 1 → side
+    fireEvent.pointerDown(screen.getByTestId('pane-side'));
+    fireEvent.click(screen.getByTestId('invio'));
+    // cambio 2 → aperta
+    fireEvent.pointerDown(screen.getByTestId('pane-main'));
+    fireEvent.click(screen.getByTestId('invio'));
+    // cambio 3 → side
+    fireEvent.pointerDown(screen.getByTestId('pane-side'));
+    fireEvent.click(screen.getByTestId('invio'));
+    // gli invii sono andati tutti e soli al pannello col focus di quel momento
+    expect(spie.perSessione['cloud-Fork'].pastes).toEqual(['ping', 'ping']);
+    expect(spie.perSessione['cloud-Dev'].pastes).toEqual(['ping']);
+    // nessuna riconnessione: due terminali, due connessioni, fermi
+    expect(spie.perSessione['cloud-Dev'].socket).toBe(1);
+    expect(spie.perSessione['cloud-Fork'].socket).toBe(1);
+    expect(screen.getAllByTestId('term')).toHaveLength(2);
   });
 });
 

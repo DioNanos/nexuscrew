@@ -406,7 +406,11 @@ export function SingleView({
         {!focusSide && <span className="nc-dual-matita" aria-hidden="true" title={t('dual-focus')}>✎</span>}
       </div>
       <div className="nc-dual-body">
-        <Terminal session={session} node={node} token={token} readonly={readonly || focusSide} takeSize focused={!focusSide}
+        {/* readonly fisso: l'effetto di Terminal che crea terminale+socket lo
+            ha nelle dipendenze — farlo dipendere dal focus ricostruirebbe i
+            due terminali a ogni tocco. L'input diretto segue comunque il
+            focus (focused → sock.focus) e i ref instradano barra e tasti. */}
+        <Terminal session={session} node={node} token={token} readonly={readonly} takeSize focused={!focusSide}
           sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
           ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
           onFiles={(ev) => setFiles({ source: 'main', ev })} fontSize={fontSize}
@@ -434,7 +438,7 @@ export function SingleView({
       <div className="nc-dual-body">
         {/* takeSize={false}: il size-lock resta alla cella aperta, come per i
             tile della griglia — la seconda non si contende le misure. */}
-        <Terminal session={side.session} node={side.node} token={token} readonly={readonly || !focusSide} takeSize={false} focused={focusSide}
+        <Terminal session={side.session} node={side.node} token={token} readonly={readonly} takeSize={false} focused={focusSide}
           sendRef={sideSendRef} composerRef={sideComposerRef} actionRef={sideActionRef}
           ctrlRef={sideCtrlRef} setCtrlArmed={setCtrlArmed}
           onFiles={(ev) => setFiles({ source: 'side', ev })} fontSize={fontSize}

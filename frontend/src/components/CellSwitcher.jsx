@@ -170,7 +170,7 @@ export default function CellSwitcher({
   // dalle stesse callback che usa la home: la stella qui non ha una via sua.
   hostByRoute = {}, onDesignateCell, onClearHostCell, onLiveHostApplied,
   // La chiave della riga AFFIANCATA nella doppia vista e il suo toggle
-  // (D373). Lo stato resta a chi ospita la lista (per dispositivo, in
+  //. Lo stato resta a chi ospita la lista (per dispositivo, in
   // localStorage): qui il componente è senza memoria. Senza `onToggleSide`
   // il tasto non esiste nel DOM: desktop e liste senza doppia vista restano
   // identiche al pixel e al nodo.
@@ -617,7 +617,7 @@ export default function CellSwitcher({
                     </span>
                   </span>
                 </button>
-                {/* Il tasto della doppia vista (D373): affianca la riga al lato
+                {/* Il tasto della doppia vista: affianca la riga al lato
                     B, o la toglie se lo è già. Tre stati: sulla cella aperta e
                     sulle righe non selezionabili è disabilitato; sulla riga
                     affiancata è premuto (e la riga si "spegne" in css); sulle

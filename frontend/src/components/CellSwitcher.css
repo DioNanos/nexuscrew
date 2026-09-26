@@ -129,7 +129,7 @@
 }
 .nc-cell-switcher-menu.on { color: #bfffd8; border-color: rgba(0, 204, 102, .55); background: rgba(0, 204, 102, .12); }
 
-/* Il tasto della doppia vista (D373): stesso abito del menu (icona a tratto,
+/* Il tasto della doppia vista: stesso abito del menu (icona a tratto,
    bordo sottile, bersaglio 44 px). Spento quando è disabilitato (cella aperta
    o riga non selezionabile); premuto — il verde dell'handle attivo — sulla
    riga già affiancata. L'icona è un rettangolo diviso in due, a tratto: il
