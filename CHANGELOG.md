@@ -2,6 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.46 — 2026-09-27
+
+- **Doppia vista su telefono: una seconda cella sotto quella aperta, affiancata dalla lista rapida con un tasto; la barra scrive nella cella col focus.**
+
 ## 0.9.45 — 2026-09-24
 
 - **The start and stop window cannot hang any more.** A start or a stop had no client-side deadline: a slow node kept the sheet busy with its buttons disabled, and the only way out was to reload the page. The action now has a 60-second cap, **Cancel** stays active while it works, and the primary button says what it is doing — "starting…" or "stopping…" — so the state of the action is never ambiguous. When the cap expires the sheet closes and the outcome arrives as a notice, because the server may still be completing the start and the roster tells the truth a moment later. (commits 6e8cdb2, 0f82958)
