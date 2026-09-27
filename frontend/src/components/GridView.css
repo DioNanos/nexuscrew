@@ -173,3 +173,9 @@
 .nc-float-snap { position: fixed; z-index: 60; pointer-events: none; opacity: 0.6; }
 .nc-float-snap.v { top: 0; bottom: 0; border-left: 1px dashed #7ee787; }
 .nc-float-snap.h { left: 0; right: 0; border-top: 1px dashed #7ee787; }
+
+/* Linee degli agganci VISIBILI durante tutto il gesto (design
+   Desktop-Ridimensiona): non solo al momento dello snap. */
+.nc-gesture-ghost { position: absolute; z-index: 40; pointer-events: none; background: rgba(0, 204, 102, .18); }
+.nc-gesture-ghost.v { top: 0; bottom: 0; width: 2px; }
+.nc-gesture-ghost.h { height: 2px; }

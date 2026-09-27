@@ -192,16 +192,21 @@ export default function GridView({
     e.preventDefault(); e.stopPropagation();
     try { if (e.currentTarget.setPointerCapture && e.pointerId != null) e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* best-effort */ }
     const gridPx = (gridRef.current && gridRef.current.clientWidth) || 0;
+    // D2 — le coordinate della guida sono RELATIVE alla griglia: il rect dei
+    // col è in coordinate viewport e senza sottrarre l'origine della griglia
+    // la linea scattava della larghezza di sidebar + barra deck.
+    const gRect = gridRef.current ? gridRef.current.getBoundingClientRect() : null;
+    const originLeft = gRect ? gRect.left : 0;
     const ra = colRefs.current[ci] ? colRefs.current[ci].getBoundingClientRect() : null;
     const rb = colRefs.current[ci + 1] ? colRefs.current[ci + 1].getBoundingClientRect() : null;
-    const coupleLeft = ra && rb && rb.right > ra.left ? ra.left : 0; // jsdom: rect piatti -> coppia da 0
+    const coupleLeft = ra && rb && rb.right > ra.left ? ra.left - (gRect ? gRect.left : 0) : 0; // jsdom: rect piatti -> coppia da 0
     const startX = Number.isFinite(e.clientX) ? e.clientX : 0;
     const sumW = layout.columns[ci].width + (layout.columns[ci + 1]?.width || 0);
     const sumTot = layout.columns.reduce((s, c) => s + c.width, 0);
     const couplePx = (ra && rb && rb.right > ra.left) ? (rb.right - ra.left) : gridPx * (sumW / (sumTot || 1));
     const minPx = Math.min(MIN_COL_PX, couplePx / 2);
     const liveOf = (ev) => {
-      const x = Number.isFinite(ev.clientX) ? ev.clientX : startX;
+      const x = (Number.isFinite(ev.clientX) ? ev.clientX : startX) - originLeft;
       let border = Math.max(minPx, Math.min(couplePx - minPx, x - coupleLeft));
       let snapped = false;
       if (!ev.altKey) {
@@ -243,8 +248,14 @@ export default function GridView({
     try { if (e.currentTarget.setPointerCapture && e.pointerId != null) e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* best-effort */ }
     const colEl = colRefs.current[ci];
     const gridPx = (colEl && colEl.clientHeight) || (gridRef.current && gridRef.current.clientHeight) || 0;
+    // D2/D3 — come per la colonna: coordinate RELATIVE alla griglia, e la
+    // guida di riga copre la sola colonna (D3: attraversava tutta la griglia).
+    const gRect = gridRef.current ? gridRef.current.getBoundingClientRect() : null;
+    const originTop = gRect ? gRect.top : 0;
     const rr = colEl ? colEl.getBoundingClientRect() : null;
-    const coupleTop = rr && rr.height > 0 ? rr.top : 0;
+    const coupleTop = rr && rr.height > 0 ? rr.top - originTop : 0;
+    const colLeft = rr ? rr.left - (gRect ? gRect.left : 0) : 0;
+    const colWidth = rr && rr.width > 0 ? rr.width : ((colEl && colEl.clientWidth) || 0);
     const startY = Number.isFinite(e.clientY) ? e.clientY : 0;
     const tiles = layout.columns[ci].tiles;
     const sumH = tiles[ri].height + (tiles[ri + 1]?.height || 0);
@@ -252,7 +263,7 @@ export default function GridView({
     const couplePx = rr && rr.height > 0 ? gridPx * (sumH / (sumTot || 1)) : gridPx * (sumH / (sumTot || 1));
     const minPx = Math.min(MIN_ROW_PX, couplePx / 2);
     const liveOf = (ev) => {
-      const y = Number.isFinite(ev.clientY) ? ev.clientY : startY;
+      const y = (Number.isFinite(ev.clientY) ? ev.clientY : startY) - originTop;
       let border = Math.max(minPx, Math.min(couplePx - minPx, y - coupleTop));
       let snapped = false;
       if (!ev.altKey) {
@@ -263,7 +274,7 @@ export default function GridView({
       return { border, snapped, alt: ev.altKey === true };
     };
     setGesture({
-      kind: 'row', ci, ri, coupleTop, couplePx, live: liveOf(e),
+      kind: 'row', ci, ri, coupleTop, couplePx, colLeft, colWidth, live: liveOf(e),
       pxOther: (colEl && colEl.clientWidth) || (gridRef.current && gridRef.current.clientWidth) || 0,
       fsA: tiles[ri].fontSize || TILE_FONT_DEF,
       fsB: tiles[ri + 1].fontSize || TILE_FONT_DEF,
@@ -388,7 +399,7 @@ export default function GridView({
 
   return (
     <div
-      className={`nc-grid${gesture ? ' gesturing' : ''}`}
+      className={`nc-grid${gesture || floatGesture ? ' gesturing' : ''}`}
       ref={gridRef}
       onDragOver={(e) => {
         if (isFileTransfer(e.dataTransfer)) { e.preventDefault(); setDrag(null); return; }
@@ -542,13 +553,23 @@ export default function GridView({
           mouse 1:1 — tratteggiata quando è agganciata a 1/3 1/2 2/3 — e badge
           con le misure in px dei due lati della coppia. */}
       {gesture && <div className={`nc-gesture-shield ${gesture.kind === 'col' ? 'col' : 'row'}`} data-testid="nc-gesture-shield" />}
+      {/* Le linee degli agganci restano visibili DURANTE il gesto (design
+          Desktop-Ridimensiona), non solo al momento dello snap. */}
+      {gesture && gesture.kind === 'col' && SNAP_POINTS.map((s) => (
+        <div key={`ghost-v-${s}`} className="nc-gesture-ghost v"
+          style={{ left: gesture.coupleLeft + s * gesture.couplePx }} />
+      ))}
+      {gesture && gesture.kind === 'row' && SNAP_POINTS.map((s) => (
+        <div key={`ghost-h-${s}`} className="nc-gesture-ghost h"
+          style={{ top: gesture.coupleTop + s * gesture.couplePx, left: gesture.colLeft, width: gesture.colWidth }} />
+      ))}
       {gesture && gesture.kind === 'col' && (
         <div className={`nc-gesture-guide v${gesture.live.snapped ? ' snap' : ''}`} data-testid="nc-gesture-guide"
           style={{ left: gesture.coupleLeft + gesture.live.border }} />
       )}
       {gesture && gesture.kind === 'row' && (
         <div className={`nc-gesture-guide h${gesture.live.snapped ? ' snap' : ''}`} data-testid="nc-gesture-guide"
-          style={{ top: gesture.coupleTop + gesture.live.border }} />
+          style={{ top: gesture.coupleTop + gesture.live.border, left: gesture.colLeft, width: gesture.colWidth }} />
       )}
       {gesture && (
         <div className="nc-gesture-badge" data-testid="nc-gesture-badge"
@@ -559,9 +580,14 @@ export default function GridView({
             const px = lato === 0 ? gesture.live.border : gesture.couplePx - gesture.live.border;
             const charW = Math.max(1, fs * 0.6);
             const rowH = Math.max(1, fs * 1.2);
+            // D4 — sempre COLONNE×RIGHE: nel resize di riga la larghezza è
+            // quella della colonna (pxOther) e l'altezza è il confine (px).
+            const misure = gesture.kind === 'col'
+              ? `${Math.round(px / charW)}×${Math.round(gesture.pxOther / rowH)}`
+              : `${Math.round(gesture.pxOther / charW)}×${Math.round(px / rowH)}`;
             return (
               <span key={lato} className="nc-gesture-chip">
-                {`${Math.round(px / charW)}×${Math.round(gesture.pxOther / rowH)}`}
+                {misure}
               </span>
             );
           })}

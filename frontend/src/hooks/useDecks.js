@@ -8,6 +8,7 @@ import {
 } from '../lib/deck-model.js';
 import {
   addTileSmart, emptyLayout, mergeRemoteWithLocal, normalize, sessions, stripFloating, materializeFloating,
+  fondeFloating,
 } from '../lib/grid-model.js';
 // Stessa soglia di useNodes: un owner scaduto e' un fatto, non un blip.
 import { OWNER_GRACE_MS } from './useNodes.js';
@@ -450,8 +451,14 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           // La finestra è sporca e il remoto è più nuovo — merge
           // remoto ⊕ delta locale invece di restare indietro. Il layout fuso
           // è un cambio di layout: l'autosave lo salva con la revisione nuova.
+          // Fix F2: le flottanti del record REMOTO entrano nel fonduto
+          // (remote ∪ locale, vince lo sporco locale) — altrimenti il PUT
+          // dopo il merge le cancellava.
           const { grid: localGrid, floating: localFloat } = stripFloating(layoutRef.current);
-          const merged = materializeFloating(mergeRemoteWithLocal(viewLayout(remote), localGrid), localFloat);
+          const merged = materializeFloating(
+            mergeRemoteWithLocal(viewLayout(remote), localGrid),
+            fondeFloating(remote.floating, localFloat),
+          );
           install(next, false);
           setLayout(merged);
           return;
@@ -531,6 +538,15 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const record = augmentDeck(saved, ownerForRecord(deck), deck.ownerTopology, deck.local, true);
     install(recordsRef.current.map((x) => x.id === targetId ? record : x), false); return record;
   };
+  // La vista di un record CON le flottanti materializzate: la stessa
+  // espressione dell'install (translateFloating per le ref dei nodi remoti).
+  const vistaMaterializzata = useCallback((record) => materializeFloating(
+    viewLayout(record),
+    translateFloating(record.floating, (l) => resolveLayoutForViewer(
+      l, localNodeIdRef.current, ownersRef.current,
+    )),
+  ), [viewLayout]);
+
   const select = async (id) => {
     if (dirtyRef.current) {
       const saved = await saveNow(resolveCurrentId());
@@ -539,12 +555,14 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const target = recordsRef.current.find((d) => d.id === id);
     if (!target) throw new Error(`deck inesistente: ${id}`);
     dirtyRef.current = false; skipRef.current = true;
-    return viewLayout(target);
+    // Fix F1: le flottanti del record ENTANO nella vista materializzate —
+    // ritornare solo viewLayout le cancellava al primo autosave.
+    return vistaMaterializzata(target);
   };
 
   return {
     decks: records, records, localNodeId, ready, saveState, error, setError, conflict, reloadCurrent,
-    saveNow, select, add, rename, remove, reorder, addTileTo, viewUpdate,
+    saveNow, select, add, rename, remove, reorder, addTileTo, viewUpdate, vistaMaterializzata,
     localMainId: deckId(null, 'main'), parseDeckId,
   };
 }

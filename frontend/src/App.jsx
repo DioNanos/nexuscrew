@@ -305,7 +305,30 @@ export function SingleView({
   // col focus. Larghezza colonna ≈ 0,6 em del font (stima del terminale:
   // non esiste una misura condivisa in Terminal.jsx). L'altra cella resta
   // MONTATA e nascosta: mai smontata, nessun terminale ricreato.
-  const pxColonna = Math.max(1, fontSize) * 0.6;
+  // D5 — larghezza REALE del carattere monospace alla dimensione corrente,
+  // misurata sul DOM (span nascosto): la stima 0,6 em sbagliava le colonne
+  // reali del terminale (il font monospace varia per piattaforma). Se il DOM
+  // non misura (test/jsdom), fallback alla stima 0,6 em.
+  const misuratoreColonne = useMemo(() => {
+    const cache = new Map();
+    return (fs) => {
+      if (cache.has(fs)) return cache.get(fs);
+      let px = fs * 0.6;
+      try {
+        const span = document.createElement('span');
+        span.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-family:courier-new,courier,monospace;';
+        span.style.fontSize = `${fs}px`;
+        span.textContent = '0'.repeat(20);
+        document.body.appendChild(span);
+        const w = span.getBoundingClientRect().width;
+        document.body.removeChild(span);
+        if (Number.isFinite(w) && w > 0) px = w / 20;
+      } catch (_) { /* misura impossibile: stima */ }
+      cache.set(fs, px);
+      return px;
+    };
+  }, []);
+  const pxColonna = misuratoreColonne(Math.max(1, fontSize));
   const sommaPesi = Math.max(0.01, weights.main + weights.side);
   const larghezzaBox = dualBoxRef.current?.clientWidth || window.innerWidth;
   const celleStrette = (larghezzaBox * (Math.min(weights.main, weights.side) / sommaPesi)) / pxColonna;
@@ -1266,7 +1289,11 @@ export default function App() {
   const onRenameDeck = async (from, to) => {
     const saved = await deckStore.rename(from, to);
     if (from === deck) {
-      setDeck(saved.id); setLayout(resolveLayoutForViewer(saved.layout, deckStore.localNodeId, deckOwners)); setGridFocus(null); setSingle(null);
+      setDeck(saved.id);
+      // Fix F1: anche qui le flottanti del record rientrano materializzate —
+      // installare solo il layout le cancellava al prossimo autosave.
+      setLayout(deckStore.vistaMaterializzata(saved));
+      setGridFocus(null); setSingle(null);
       try { history.replaceState(null, '', deckUrl(saved, null)); } catch (_) {}
     }
   };

@@ -395,6 +395,19 @@ export function stripFloating(layout) {
 
 // Record -> vista: la griglia resta, gli staccati rientrano con addTileStable
 // (colonna meno piena, mai reflow degli altri) + il loro flag float.
+// Unione delle flottanti remote (record) e locali (sporco): per la stessa
+// ref vince la LOCALE, tetto MAX_FLOATING. Fix F2: senza questa fusione il
+// poll con locale sporco cancellava le flottanti aggiunte da un'altra
+// finestra.
+export function fondeFloating(remoteFloating, localFloating) {
+  const fuse = new Map((Array.isArray(remoteFloating) ? remoteFloating : [])
+    .map((f) => [refKey(f), f]));
+  for (const f of (Array.isArray(localFloating) ? localFloating : [])) {
+    fuse.set(refKey(f), f);
+  }
+  return [...fuse.values()].slice(0, MAX_FLOATING);
+}
+
 export function materializeFloating(grid, floating) {
   let out = grid;
   for (const f of Array.isArray(floating) ? floating : []) {
@@ -403,9 +416,21 @@ export function materializeFloating(grid, floating) {
     if (f.ownerId) ref.ownerId = f.ownerId;
     const key = refKey(ref);
     if (!key || sessions(out).includes(key)) continue;
-    out = addTileStable(out, { ...ref, fontSize: f.fontSize });
-    const hit = trovaTile(out, key);
-    if (hit) hit.tile.float = clampFloatGeom(f);
+    // Le flottanti NON contano contro il tetto della griglia: il server le
+    // tiene in un campo del record a parte (9 della griglia + fino a 6
+    // flottanti), e la vista le rende position:fixed — aggiungerle con
+    // addTileStable le farebbe sparire oltre il nono tile (F3).
+    const l = clone(out);
+    if (!l.columns.length) l.columns.push({ width: 1, tiles: [] });
+    let best = 0;
+    for (let i = 1; i < l.columns.length; i += 1) {
+      if (l.columns[i].tiles.length < l.columns[best].tiles.length) best = i;
+    }
+    const tile = { session: ref.session, height: 1, fontSize: f.fontSize || TILE_FONT_DEF, float: clampFloatGeom(f) };
+    if (ref.node) tile.node = ref.node;
+    if (ref.ownerId) tile.ownerId = ref.ownerId;
+    l.columns[best].tiles.push(tile);
+    out = l;
   }
   return out;
 }
@@ -500,6 +525,11 @@ export function normalize(raw) {
           const out = { session: t.session, height: Math.max(MIN_W, Number(t.height) || 1), fontSize: repairFont(t.fontSize) };
           if (t.node != null) out.node = t.node;
           if (t.ownerId != null) out.ownerId = t.ownerId;
+          // Il flag `float` è VISTA STABILE (finestra staccata): normalize non
+          // lo scarta, altrimenti il primo passaggio di
+          // resolveLayoutForViewer/cloneLayout lo spegne e la finestra torna
+          // da sola nella griglia (D1).
+          if (t.float) out.float = clampFloatGeom(t.float);
           // `unavailable`/`stale` sono stato EFFIMERO di disponibilita': derivano
           // dal tick della topologia e NON si copiano nel layout normalizzato:
           // mai serializzati (nemmeno via localStorage), mai parte del confronto

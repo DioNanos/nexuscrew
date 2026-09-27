@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 // `floating` a livello record. Materializzazione = load.
 import {
   detachTile, reattachTile, updateFloatGeom, floatingRefs, stripFloating, materializeFloating,
+  addTileSmart, normalize,
 } from './grid-model.js';
 
 const vista = () => ({
@@ -80,5 +81,61 @@ describe('stripFloating / materializeFloating — record e ritorno', () => {
     const a = again.columns.flatMap((c) => c.tiles).find((t) => t.session === 'a');
     expect(a.node).toBe('peer');
     expect(a.ownerId).toBe('abcd1234abcd1234');
+  });
+});
+
+
+// Fix audit 0.9.51 (DevWorkerP): il flag float è VISTA STABILE — normalize
+// non lo scarta (D1) — e le flottanti NON contano contro il tetto di 9 tile
+// della griglia (F3): il server le tiene in un campo del record a parte.
+describe('grid-model — flottanti e normalize', () => {
+  const grigliaPiena = () => ({
+    columns: Array.from({ length: 3 }, (_, c) => ({
+      width: 1,
+      tiles: Array.from({ length: 3 }, (_, r) => ({ session: `cell-${c}-${r}`, height: 1, fontSize: 11 })),
+    })),
+  });
+
+  it('normalize conserva il flag float con la geometria clampata (D1)', () => {
+    const layout = {
+      columns: [{ width: 1, tiles: [
+        { session: 'dev', height: 1, fontSize: 11 },
+        { session: 'fork', height: 1, fontSize: 11, float: { x: 0.4, y: 9, w: 0.5, h: 0.5 } },
+      ] }],
+    };
+    const out = normalize(layout);
+    const fork = out.columns[0].tiles.find((t) => t.session === 'fork');
+    // clamp: l'origine rientra nello schermo (y = 1 - h = 0.5)
+    expect(fork.float).toEqual({ x: 0.4, y: 0.5, w: 0.5, h: 0.5 });
+  });
+
+  it('normalize senza flag non inventa float', () => {
+    const out = normalize({ columns: [{ width: 1, tiles: [{ session: 'dev', height: 1, fontSize: 11 }] }] });
+    expect(out.columns[0].tiles[0].float).toBeUndefined();
+  });
+
+  it('le flottanti materializzano anche con la griglia piena: 9 della griglia + flottante (F3)', () => {
+    const visto = materializeFloating(grigliaPiena(), [
+      { session: 'fl', x: 0.6, y: 0.1, w: 0.4, h: 0.4, fontSize: 11 },
+    ]);
+    const tiles = visto.columns.flatMap((c) => c.tiles);
+    expect(tiles).toHaveLength(10);
+    const fl = tiles.find((t) => t.session === 'fl');
+    expect(fl.float).toEqual({ x: 0.6, y: 0.1, w: 0.4, h: 0.4 });
+  });
+
+  it('il tetto della griglia resta 9 per le aperture normali (addTileSmart)', () => {
+    let layout = grigliaPiena();
+    layout = addTileSmart(layout, { session: 'extra' });
+    expect(layout.columns.flatMap((c) => c.tiles)).toHaveLength(9);
+  });
+
+  it('stripFloating separa di nuovo: griglia pura + lista con geometria', () => {
+    const visto = materializeFloating(grigliaPiena(), [
+      { session: 'fl', x: 0.6, y: 0.1, w: 0.4, h: 0.4, fontSize: 11 },
+    ]);
+    const { grid, floating } = stripFloating(visto);
+    expect(floating).toEqual([{ session: 'fl', x: 0.6, y: 0.1, w: 0.4, h: 0.4, fontSize: 11 }]);
+    expect(grid.columns.flatMap((c) => c.tiles)).toHaveLength(9);
   });
 });

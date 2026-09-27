@@ -98,3 +98,19 @@ test('geometria oltre il bordo viene clampata DENTRO (0..1), non rifiutata', asy
   assert.ok(d.floating[0].x + d.floating[0].w <= 1.0000001, 'x+w clampato dentro lo schermo');
   assert.ok(d.floating[0].y + d.floating[0].h <= 1.0000001, 'y+h clampato dentro lo schermo');
 });
+
+// F4 (audit 0.9.51): il campo nuova generazione accetta solo NUMERI veri.
+// Stringhe numeriche e null non si coercitono più in silenzio: il record
+// pubblico non deve mai contenere tipi inventati da una conversione.
+test('parseFloating rifiuta geometria e font non numerici (stringhe e null)', () => {
+  const layoutOk = decksStore.parseLayout({ columns: [{ width: 1, tiles: [{ session: 'dev', height: 1, fontSize: 11 }] }] });
+  const casi = [
+    [{ session: 'fl', x: '0.2', y: 0.2, w: 0.4, h: 0.4, fontSize: 11 }],
+    [{ session: 'fl', x: 0.2, y: null, w: 0.4, h: 0.4, fontSize: 11 }],
+    [{ session: 'fl', x: 0.2, y: 0.2, w: '0.4', h: 0.4, fontSize: 11 }],
+    [{ session: 'fl', x: 0.2, y: 0.2, w: 0.4, h: 0.4, fontSize: '11' }],
+  ];
+  for (const f of casi) {
+    assert.equal(decksStore.parseFloating(f, layoutOk), null, JSON.stringify(f));
+  }
+});
