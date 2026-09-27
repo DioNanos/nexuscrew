@@ -252,7 +252,19 @@ export function SingleView({
   // side.* di un oggetto che non c'e' piu'.
   const focaLaSide = !!side && focusSide;
   const [sideOnTop, setSideOnTop] = useState(false);
-  const [weights, setWeights] = useState({ main: 1, side: 1 });
+  // Pesi SEPARATI per orientamento (NC_ORIZZONTALE, design approvato): in
+  // orizzontale i pannelli si affiancano e il confine è verticale. Ogni
+  // disposizione ricorda le sue proporzioni per la sessione, in memoria —
+  // niente storage: tornando in verticale si ritrovano le altezze di prima.
+  const [pesi, setPesi] = useState({ v: { main: 1, side: 1 }, h: { main: 1, side: 1 } });
+  const [orizzontale, setOrizzontale] = useState(() => window.matchMedia('(orientation: landscape)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(orientation: landscape)');
+    const ruota = (e) => setOrizzontale(e.matches);
+    mq.addEventListener('change', ruota);
+    return () => mq.removeEventListener('change', ruota);
+  }, []);
+  const weights = orizzontale ? pesi.h : pesi.v;
   const weightsRef = useRef(weights);
   weightsRef.current = weights;
   const [sideInfo, setSideInfo] = useState(null); // {title, present} dal nodo della side
@@ -284,10 +296,20 @@ export function SingleView({
   useEffect(() => {
     setFocusSide(false);
     setSideOnTop(false);
-    setWeights({ main: 1, side: 1 });
+    setPesi({ v: { main: 1, side: 1 }, h: { main: 1, side: 1 } });
     setSideInfo(null);
     setFiles((cur) => (cur && cur.source === 'side' ? null : cur));
   }, [sideKey]);
+  // Soglia del design (NC_ORIZZONTALE): in orizzontale, se la cella PIÙ
+  // STRETTA scende sotto ~40 colonne al font corrente, si vede solo la cella
+  // col focus. Larghezza colonna ≈ 0,6 em del font (stima del terminale:
+  // non esiste una misura condivisa in Terminal.jsx). L'altra cella resta
+  // MONTATA e nascosta: mai smontata, nessun terminale ricreato.
+  const pxColonna = Math.max(1, fontSize) * 0.6;
+  const sommaPesi = Math.max(0.01, weights.main + weights.side);
+  const larghezzaBox = dualBoxRef.current?.clientWidth || window.innerWidth;
+  const celleStrette = (larghezzaBox * (Math.min(weights.main, weights.side) / sommaPesi)) / pxColonna;
+  const stretto = orizzontale && celleStrette < 40;
   const zoom = (delta) => setFontSize((v) => writeFontSize(v + delta));
   // Lo zoom dell'anteprima del selettore scrive lo stesso nc_fontsize: quando
   // il foglio si chiude, il terminale principale rilegge il valore UNO che
@@ -415,14 +437,43 @@ export function SingleView({
     },
   });
 
-  // Maniglia delle altezze: stesso schema del drag della griglia (pointermove
-  // fino a up/cancel/blur su window). Il confine SEGUE IL DITO in entrambe
-  // le disposizioni: «su» restringe il pannello superiore, quale cella stia
-  // sopra; il minimo 0.2 non lascia collassare nessuno.
+  // Maniglia delle altezze/larghezze: stesso schema del drag della griglia
+  // (pointermove fino a up/cancel/blur su window). Il confine SEGUE IL DITO
+  // in entrambe le disposizioni: «su» restringe il pannello superiore e
+  // «sinistra» quello a sinistra, quale cella stia in quella posizione; il
+  // minimo 0.2 non lascia collassare nessuno. Ogni orientamento scrive i
+  // SUOI pesi.
   const startDualResize = (startEvent) => {
     startEvent.preventDefault();
     const box = dualBoxRef.current;
     if (!box) return;
+    const scrivi = (main, side) => setPesi((cur) => ({
+      ...cur,
+      [orizzontale ? 'h' : 'v']: { main, side },
+    }));
+    if (orizzontale) {
+      const startX = startEvent.clientX;
+      const partenza = weightsRef.current;
+      const totale = box.clientWidth || 1;
+      const verso = sideOnTop ? -1 : 1;
+      const muovi = (ev) => {
+        const somma = partenza.main + partenza.side;
+        const dm = ((ev.clientX - startX) / totale) * somma * verso;
+        const main = clampWeight(partenza.main + dm);
+        scrivi(main, clampWeight(somma - main));
+      };
+      const su = () => {
+        window.removeEventListener('pointermove', muovi);
+        window.removeEventListener('pointerup', su);
+        window.removeEventListener('pointercancel', su);
+        window.removeEventListener('blur', su);
+      };
+      window.addEventListener('pointermove', muovi);
+      window.addEventListener('pointerup', su);
+      window.addEventListener('pointercancel', su);
+      window.addEventListener('blur', su);
+      return;
+    }
     const startY = startEvent.clientY;
     const partenza = weightsRef.current;
     const totale = box.clientHeight || 1;
@@ -431,7 +482,7 @@ export function SingleView({
       const somma = partenza.main + partenza.side;
       const dm = ((ev.clientY - startY) / totale) * somma * verso;
       const main = clampWeight(partenza.main + dm);
-      setWeights({ main, side: clampWeight(somma - main) });
+      scrivi(main, clampWeight(somma - main));
     };
     const su = () => {
       window.removeEventListener('pointermove', muovi);
@@ -447,13 +498,31 @@ export function SingleView({
 
   // I pannelli si CREANO solo con la seconda presente: le espressioni JSX
   // (side.session nelle strisce) si valutano a ogni render anche senza dual.
+  // In stretto il pannello SENZA focus si NASCONDE (display:none): resta
+  // montato — mai un terminale ricreato — e nella striscia della cella
+  // visibile sta il tasto-icona per passare all'altra (pallino = suo stato).
   const panePrincipale = side && (
-    <div key="pane-main" className={`nc-dual-pane${focaLaSide ? '' : ' foco'}`} data-testid="pane-main"
+    <div key="pane-main"
+      className={`nc-dual-pane${focaLaSide ? '' : ' foco'}${stretto && focaLaSide ? ' nascosto' : ''}`}
+      data-testid="pane-main"
       style={{ flexGrow: weights.main }} onPointerDown={() => foca(false)}>
       <div className="nc-dual-strip">
         <span className={`nc-dual-dot${mainPresent ? ' on' : ''}`} aria-hidden="true" />
         <b>{title}</b>
         {!focaLaSide && <span className="nc-dual-matita" aria-hidden="true" title={t('dual-focus')}>✎</span>}
+        {stretto && (
+          <button type="button" className="nc-dual-alt"
+            title={t('dual-go-to').replace('{cell}', sideInfo?.title || side.session)}
+            aria-label={t('dual-go-to').replace('{cell}', sideInfo?.title || side.session)}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); foca(!focaLaSide); }}>
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">
+              <rect x="3.5" y="6" width="17" height="12" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <rect x="3.5" y="6" width="8.5" height="12" fill="currentColor" />
+            </svg>
+            <span className={`nc-dual-dot${sideInfo?.present ? ' on' : ''}`} aria-hidden="true" />
+          </button>
+        )}
       </div>
       <div className="nc-dual-body">
         {/* readonly fisso: l'effetto di Terminal che crea terminale+socket lo
@@ -470,7 +539,9 @@ export function SingleView({
     </div>
   );
   const paneSecondario = side && (
-    <div key="pane-side" className={`nc-dual-pane${focaLaSide ? ' foco' : ''}`} data-testid="pane-side"
+    <div key="pane-side"
+      className={`nc-dual-pane${focaLaSide ? ' foco' : ''}${stretto && !focaLaSide ? ' nascosto' : ''}`}
+      data-testid="pane-side"
       style={{ flexGrow: weights.side }} onPointerDown={() => foca(true)}>
       <div className="nc-dual-strip">
         <span className={`nc-dual-dot${sideInfo?.present ? ' on' : ''}`} aria-hidden="true" />
@@ -479,11 +550,24 @@ export function SingleView({
         <span className="nc-dual-tasti">
           <button type="button" title={t('dual-swap')} aria-label={t('dual-swap')}
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); setSideOnTop((v) => !v); }}>⇅</button>
+            onClick={(e) => { e.stopPropagation(); setSideOnTop((v) => !v); }}>{orizzontale ? '⇆' : '⇅'}</button>
           <button type="button" title={t('dual-close')} aria-label={t('dual-close')}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onSideClose?.(); }}>✕</button>
         </span>
+        {stretto && (
+          <button type="button" className="nc-dual-alt"
+            title={t('dual-go-to').replace('{cell}', title)}
+            aria-label={t('dual-go-to').replace('{cell}', title)}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); foca(!focaLaSide); }}>
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">
+              <rect x="3.5" y="6" width="17" height="12" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <rect x="12" y="6" width="8.5" height="12" fill="currentColor" />
+            </svg>
+            <span className={`nc-dual-dot${mainPresent ? ' on' : ''}`} aria-hidden="true" />
+          </button>
+        )}
       </div>
       <div className="nc-dual-body">
         {/* takeSize={false}: il size-lock resta alla cella aperta, come per i
@@ -498,7 +582,8 @@ export function SingleView({
     </div>
   );
   const maniglia = (
-    <div key="dual-handle" className="nc-dual-handle" data-testid="dual-handle" role="separator" aria-orientation="horizontal"
+    <div key="dual-handle" className="nc-dual-handle" data-testid="dual-handle" role="separator"
+      aria-orientation={orizzontale ? 'vertical' : 'horizontal'}
       onPointerDown={startDualResize} />
   );
 
@@ -545,8 +630,13 @@ export function SingleView({
       </header>
       <div className="nc-termwrap">
         {side ? (
-          <div className="nc-dual" ref={dualBoxRef}>
-            {sideOnTop ? [paneSecondario, maniglia, panePrincipale] : [panePrincipale, maniglia, paneSecondario]}
+          <div className={`nc-dual${orizzontale ? ' row' : ''}`} ref={dualBoxRef}>
+            {/* ENTRAMBI i pannelli restano sempre nel DOM (in stretto il non
+                visibile è display:none: mai un terminale smontato); la
+                maniglia sparisce solo in stretto, dove non serve. */}
+            {stretto
+              ? (sideOnTop ? [paneSecondario, panePrincipale] : [panePrincipale, paneSecondario])
+              : (sideOnTop ? [paneSecondario, maniglia, panePrincipale] : [panePrincipale, maniglia, paneSecondario])}
           </div>
         ) : (
           <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}

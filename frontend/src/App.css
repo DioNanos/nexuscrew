@@ -142,3 +142,20 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
    dei deck — mai dentro .nc-deckbar, così non copre i chip. Testo contenuto
    (ellipsis); il testo intero sta nel `title` dell'elemento. Scade da solo. */
 .nc-deck-notice { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; }
+
+/* Orizzontale (NC_ORIZZONTALE): i pannelli si AFFIANCANO e la maniglia
+   diventa verticale — il confine segue il dito su clientX. */
+.nc-dual.row { flex-direction: row; }
+.nc-dual.row .nc-dual-handle { cursor: col-resize; }
+.nc-dual.row .nc-dual-handle::after { width: 3px; height: 36px; }
+
+/* Stretto (poche colonne al font corrente): si vede solo la cella col
+   focus. L'altra è display:none — MONTATA, mai ricreata — e nella striscia
+   della cella visibile sta il tasto-icona per passarle (rettangolo diviso,
+   metà piena, col pallino di stato dell'altra). */
+.nc-dual-pane.nascosto { display: none; }
+.nc-dual-alt {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: none; border: 0; color: #9fd; cursor: pointer;
+  min-height: 22px; min-width: 24px; padding: 0 3px; border-radius: 4px;
+}
