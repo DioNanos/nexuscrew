@@ -140,3 +140,35 @@
   display: flex; align-items: center; justify-content: center;
   color: #cfe; opacity: .4; font-size: 13px; text-align: center; padding: 20px;
 }
+
+/* --- Finestre flottanti (NC_FLOTTANTE) ------------------------------------- */
+/* Lo slot flottante: position:fixed con geometria in % del viewport (dal
+   flag float del tile). Bordo verde quando ha il focus, ombra come il
+   design. Il tile resta montato: è lo stesso albero, solo fuori dal flusso. */
+.nc-tile-slot.nc-float {
+  display: flex; flex-direction: column;
+  border: 1px solid #243; border-radius: 8px;
+  background: #0a0e0a;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.65);
+  overflow: hidden;
+}
+.nc-tile-slot.nc-float > .nc-tile.focused { border: 2px solid #7ee787; border-radius: 8px; }
+.nc-tile-slot.nc-float > .nc-tile { flex: 1 1 auto; min-height: 0; }
+/* ridotta a barra titolo */
+.nc-tile-slot.nc-float-mini .nc-tile-body,
+.nc-tile-slot.nc-float-mini .nc-float-rz { display: none; }
+/* colonna i cui tile sono TUTTI flottanti: non occupa spazio (i figli sono
+   fixed e restano visibili: l'overflow non li clippa senza containing block) */
+.nc-col.nc-col-emptyfloat { flex: 0 0 0; min-width: 0; }
+/* maniglie di resize della finestra: bordi e angolo SE */
+.nc-float-rz { position: absolute; z-index: 5; }
+.nc-float-rz.n { left: 8px; right: 8px; top: -3px; height: 7px; cursor: ns-resize; }
+.nc-float-rz.s { left: 8px; right: 8px; bottom: -3px; height: 7px; cursor: ns-resize; }
+.nc-float-rz.w { top: 8px; bottom: 8px; left: -3px; width: 7px; cursor: ew-resize; }
+.nc-float-rz.e { top: 8px; bottom: 8px; right: -3px; width: 7px; cursor: ew-resize; }
+.nc-float-rz.se { right: -2px; bottom: -2px; width: 16px; height: 16px; cursor: nwse-resize;
+  border-right: 2px solid #7ee787; border-bottom: 2px solid #7ee787; border-radius: 0 0 6px 0; }
+/* guide di aggancio (bordi schermo / altre finestre) durante lo spostamento */
+.nc-float-snap { position: fixed; z-index: 60; pointer-events: none; opacity: 0.6; }
+.nc-float-snap.v { top: 0; bottom: 0; border-left: 1px dashed #7ee787; }
+.nc-float-snap.h { left: 0; right: 0; border-top: 1px dashed #7ee787; }

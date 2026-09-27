@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import GridTile from './GridTile.jsx';
 import {
   addTile, moveTile, removeTile, sessions, resizeColumnCouple, resizeTileCouple, swapTiles,
+  detachTile, reattachTile, updateFloatGeom, MAX_FLOATING,
   dropForQuadrant, zoomTile, refKey, MIN_COL_PX, MIN_ROW_PX, SNAP_POINTS, SNAP_PX, TILE_FONT_DEF,
 } from '../lib/grid-model.js';
 import { cellDisplayName, findManagedCell } from '../lib/cell-display.js';
@@ -34,6 +35,20 @@ function quadrantOf(x, y, r) {
   return fy < 0.5 ? 'top' : 'bottom';
 }
 
+// Geometria/font del tile flottante con quella key (o null).
+function floatGeomOf(layout, key) {
+  for (const c of layout.columns) {
+    for (const t of c.tiles) if (refKey(t) === key) return t.float || null;
+  }
+  return null;
+}
+function floatFontOf(layout, key) {
+  for (const c of layout.columns) {
+    for (const t of c.tiles) if (refKey(t) === key) return t.fontSize || null;
+  }
+  return null;
+}
+
 // Griglia a colonne (flex). width/height dei tile = pesi flex (flex-grow).
 // DnD nativo: drop su un tile -> split {col,row}; drop su gap/area vuota ->
 // nuova colonna {col}. Divisori pointer ridimensionano i pesi (live).
@@ -62,6 +77,11 @@ export default function GridView({
   const [drag, setDrag] = useState(null);            // {col} | {col,row,quadrant} (+ from/ghost durante lo spostamento)
   const [gesture, setGesture] = useState(null);      // resize a coppia: anteprima live, applicata UNA volta al rilascio
   const gestureRef = useRef(null); gestureRef.current = gesture; // il done del gesto legge il live aggiornato
+  // Finestre flottanti: z-order/focus/minimizzazione per dispositivo (vista,
+  // non documento: non viaggiano nel deck). floatGesture = drag/resize attivo.
+  const [floatUi, setFloatUi] = useState({ z: {}, next: 1, focus: null, mini: {} });
+  const [floatGesture, setFloatGesture] = useState(null);
+  const floatGestureRef = useRef(null); floatGestureRef.current = floatGesture;
   const gridRef = useRef(null);
   const colRefs = useRef([]);
   const cleanupRef = useRef(null);                   // cleanup del drag-resize attivo
@@ -88,13 +108,18 @@ export default function GridView({
   useEffect(() => () => { if (cleanupRef.current) cleanupRef.current(); }, []);
 
   // Esc durante lo spostamento: l'anteprima sparisce e un eventuale drop
-  // tardivo non fa nulla (drag null -> onDrop ritorna subito).
+  // tardivo non fa nulla (drag null -> onDrop ritorna subito). Esc durante un
+  // gesto flottante lo ANNULLA: chiude i listener col cancel, nessun commit.
   useEffect(() => {
-    if (!drag) return undefined;
-    const esc = (e) => { if (e.key === 'Escape') setDrag(null); };
+    if (!drag && !floatGesture) return undefined;
+    const esc = (e) => {
+      if (e.key !== 'Escape') return;
+      setDrag(null);
+      if (floatGesture && cleanupRef.current) cleanupRef.current();
+    };
     window.addEventListener('keydown', esc);
     return () => { window.removeEventListener('keydown', esc); };
-  }, [drag]);
+  }, [drag, floatGesture]);
 
   // F2 audit: drag abortito (esce dalla griglia / dragend senza drop) non
   // deve lasciare l'anteprima appesa.
@@ -106,6 +131,7 @@ export default function GridView({
   }, []);
 
   const ncols = layout.columns.length;
+  const floatingKeys = layout.columns.flatMap((c) => c.tiles).filter((t) => t.float).map((t) => refKey(t));
 
   const isNewCol = (ci) => drag && drag.col === ci && drag.row === undefined;
   const isEnd = !!drag && drag.col === ncols;
@@ -241,6 +267,102 @@ export default function GridView({
 
   function closeTile(name) { onLayoutChange(removeTile(layout, name)); }
 
+  // --- finestre flottanti -----------------------------------------------------
+  const DEF_FLOAT = { x: 0.45, y: 0.12, w: 0.42, h: 0.6 };
+  const SNAP_FLT_PX = 8;
+
+  function promoteFloat(key) {
+    setFloatUi((u) => ({ ...u, z: { ...u.z, [key]: u.next }, next: u.next + 1, focus: key }));
+    if (onFocus) onFocus(key);
+  }
+
+  function toggleMinimize(key) {
+    setFloatUi((u) => ({ ...u, mini: { ...u.mini, [key]: !u.mini[key] } }));
+  }
+
+  function detachHere(key) {
+    if (floatingKeys.length >= MAX_FLOATING) return;
+    onLayoutChange(detachTile(layout, key, DEF_FLOAT));
+  }
+
+  // punti di aggancio: bordi schermo + bordi delle ALTRRE flottanti
+  function snapAxis(v, others) {
+    const win = [0, 1];
+    let snapped = false;
+    let best = v;
+    for (const target of [...win, ...others]) {
+      if (Math.abs(v - target) <= SNAP_FLT_PX / window.innerWidth) { best = target; snapped = true; break; }
+    }
+    return { v: Math.max(0, Math.min(1, best)), snapped };
+  }
+
+  function startFloatMove(e, key) {
+    e.preventDefault(); e.stopPropagation();
+    try { if (e.currentTarget.setPointerCapture && e.pointerId != null) e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* best-effort */ }
+    const g0 = floatGeomOf(layout, key);
+    if (!g0) return;
+    const startX = Number.isFinite(e.clientX) ? e.clientX : 0;
+    const startY = Number.isFinite(e.clientY) ? e.clientY : 0;
+    const others = (floatingKeys.filter((k) => k !== key)
+      .map((k) => floatGeomOf(layout, k))).filter(Boolean);
+    const xEdges = others.flatMap((g) => [g.x, g.x + g.w]);
+    const yEdges = others.flatMap((g) => [g.y, g.y + g.h]);
+    const liveOf = (ev) => {
+      const dx = (Number.isFinite(ev.clientX) ? ev.clientX : startX) - startX;
+      const dy = (Number.isFinite(ev.clientY) ? ev.clientY : startY) - startY;
+      const sx = snapAxis(g0.x + dx / Math.max(1, window.innerWidth), xEdges);
+      const sy = snapAxis(g0.y + dy / Math.max(1, window.innerHeight), yEdges);
+      return { x: sx.v, y: sy.v, w: g0.w, h: g0.h, snappedX: sx.snapped, snappedY: sy.snapped };
+    };
+    setFloatGesture({ key, kind: 'move', live: liveOf(e) });
+    trackResize(
+      (ev) => setFloatGesture((g) => (g ? { ...g, live: liveOf(ev) } : g)),
+      () => {
+        const live = floatGestureRef.current?.live;
+        setFloatGesture(null);
+        if (live) onLayoutChange(updateFloatGeom(layout, key, live));
+      },
+      () => setFloatGesture(null),
+    );
+  }
+
+  function startFloatResize(e, key, dir) {
+    e.preventDefault(); e.stopPropagation();
+    try { if (e.currentTarget.setPointerCapture && e.pointerId != null) e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* best-effort */ }
+    const g0 = floatGeomOf(layout, key);
+    if (!g0) return;
+    const startX = Number.isFinite(e.clientX) ? e.clientX : 0;
+    const startY = Number.isFinite(e.clientY) ? e.clientY : 0;
+    const W = Math.max(1, window.innerWidth);
+    const H = Math.max(1, window.innerHeight);
+    const fs = floatFontOf(layout, key) || TILE_FONT_DEF;
+    const charW = Math.max(1, fs * 0.6);
+    const rowH = Math.max(1, fs * 1.2);
+    const liveOf = (ev) => {
+      const dx = ((Number.isFinite(ev.clientX) ? ev.clientX : startX) - startX) / W;
+      const dy = ((Number.isFinite(ev.clientY) ? ev.clientY : startY) - startY) / H;
+      let { x, y, w, h } = g0;
+      if (dir.includes('e')) w = g0.w + dx;
+      if (dir.includes('s')) h = g0.h + dy;
+      if (dir.includes('w')) { x = g0.x + dx; w = g0.w - dx; }
+      if (dir.includes('n')) { y = g0.y + dy; h = g0.h - dy; }
+      w = Math.max(0.05, Math.min(1 - x, w));
+      h = Math.max(0.05, Math.min(1 - y, h));
+      return { x, y, w, h };
+    };
+    setFloatGesture({ key, kind: 'resize', dir, live: liveOf(e), badge: true });
+    trackResize(
+      (ev) => setFloatGesture((g) => (g ? { ...g, live: liveOf(ev) } : g)),
+      () => {
+        const live = floatGestureRef.current?.live;
+        setFloatGesture(null);
+        if (live) onLayoutChange(updateFloatGeom(layout, key, live));
+        if (onResizeEnd) onResizeEnd(); // il terminale si ridimensiona al rilascio
+      },
+      () => setFloatGesture(null),
+    );
+  }
+
   return (
     <div
       className={`nc-grid${gesture ? ' gesturing' : ''}`}
@@ -264,7 +386,7 @@ export default function GridView({
         nodes.push(
           <div
             key={`c${ci}`}
-            className={`nc-col${isNewCol(ci) ? ' drop-newcol' : ''}`}
+            className={`nc-col${isNewCol(ci) ? ' drop-newcol' : ''}${col.tiles.length && col.tiles.every((t) => t.float) ? ' nc-col-emptyfloat' : ''}`}
             ref={(el) => { colRefs.current[ci] = el; }}
             style={{ flexGrow: col.width, flexBasis: 0 }}
             onDragOver={(e) => {
@@ -308,11 +430,19 @@ export default function GridView({
               // opzionale e gia' validato a monte, si consuma senza ri-validare.
               const panelUrl = typeof managedCell?.panelUrl === 'string' ? managedCell.panelUrl.trim() : '';
               const panelCellId = typeof managedCell?.cell === 'string' ? managedCell.cell : '';
+              const fl = tile.float || null;
+              const flMini = !!(fl && floatUi.mini[key]);
               tnodes.push(
                 <div
                   key={key}
-                  className={`nc-tile-slot${dropClass(ci, ri)}${drag && drag.from === key ? ' nc-tile-source' : ''}`}
-                  style={{ flexGrow: tile.height, flexBasis: 0 }}
+                  className={`nc-tile-slot${dropClass(ci, ri)}${drag && drag.from === key ? ' nc-tile-source' : ''}${fl ? ' nc-float' : ''}${flMini ? ' nc-float-mini' : ''}`}
+                  style={fl ? {
+                    position: 'fixed',
+                    left: `${fl.x * 100}%`, top: `${fl.y * 100}%`,
+                    width: `${fl.w * 100}%`, height: flMini ? 'auto' : `${fl.h * 100}%`,
+                    zIndex: 20 + (floatUi.z[key] || 0),
+                  } : { flexGrow: tile.height, flexBasis: 0 }}
+                  onPointerDown={fl ? () => promoteFloat(key) : undefined}
                   onDragOver={(e) => {
                     if (!isSessionTransfer(e.dataTransfer)) return;
                     e.preventDefault(); e.stopPropagation();
@@ -326,7 +456,13 @@ export default function GridView({
                     session={tile.session} node={tile.node} ownerId={tile.ownerId} cellName={cellName} token={token} readonly={readonly}
                     focused={focusSession === key}
                     onFocus={onFocus} onClose={closeTile} onOpenSingle={onOpenSingle}
-                    onDragTileStart={(k) => setDrag((d) => (d ? { ...d, from: k } : { from: k }))}
+                    floating={!!fl} minimized={flMini}
+                    takeSize={!!fl && focusSession === key}
+                    onDetach={fl ? undefined : detachHere}
+                    onReattach={fl ? (k) => onLayoutChange(reattachTile(layout, k)) : undefined}
+                    onToggleMinimize={fl ? toggleMinimize : undefined}
+                    onFloatDragStart={fl ? (e) => startFloatMove(e, key) : undefined}
+                    onDragTileStart={fl ? undefined : (k) => setDrag((d) => (d ? { ...d, from: k } : { from: k }))}
                     available={tile.unavailable !== true}
                     stale={tile.stale === true}
                     alive={nodeOnline}
@@ -338,6 +474,10 @@ export default function GridView({
                     panelUrl={panelUrl} panelCellId={panelCellId}
                     panelPort={panelPortForRoute(tile.node ? tile.node.split('/') : [], nodePanelPorts, panelPort)}
                   />
+                  {fl && !flMini && ['n', 's', 'e', 'w', 'se'].map((dir) => (
+                    <div key={`rz-${dir}`} className={`nc-float-rz ${dir}`} data-testid={`float-resize-${dir}`}
+                      onPointerDown={(e) => startFloatResize(e, key, dir)} />
+                  ))}
                 </div>,
               );
               if (ri < col.tiles.length - 1) {
@@ -394,6 +534,30 @@ export default function GridView({
             );
           })}
         </div>
+      )}
+
+      {/* Gesto flottante attivo: la finestra segue il live (1:1), guide
+          tratteggiate agli agganci, badge colonne×righe nel resize. Scudo
+          condiviso col resize di griglia: niente gesti persi sugli iframe. */}
+      {floatGesture && (
+        <>
+          <div className={`nc-gesture-shield ${floatGesture.kind === 'resize' ? 'row' : 'col'}`} data-testid="nc-gesture-shield" />
+          {floatGesture.live.snappedX && <div className="nc-float-snap v" style={{ left: `${floatGesture.live.x * 100}%` }} />}
+          {floatGesture.live.snappedY && <div className="nc-float-snap h" style={{ top: `${floatGesture.live.y * 100}%` }} />}
+          {floatGesture.kind === 'resize' && (() => {
+            const fs = floatFontOf(layout, floatGesture.key) || TILE_FONT_DEF;
+            const charW = Math.max(1, fs * 0.6);
+            const rowH = Math.max(1, fs * 1.2);
+            return (
+              <div className="nc-gesture-badge" data-testid="nc-gesture-badge"
+                style={{ left: `${(floatGesture.live.x + floatGesture.live.w / 2) * 100}%`, top: `${(floatGesture.live.y + floatGesture.live.h) * 100}%` }}>
+                <span className="nc-gesture-chip">
+                  {`${Math.round((floatGesture.live.w * window.innerWidth) / charW)}×${Math.round((floatGesture.live.h * window.innerHeight) / rowH)}`}
+                </span>
+              </div>
+            );
+          })()}
+        </>
       )}
 
       {/* Spostamento: copia semitrasparente che segue il mouse. */}

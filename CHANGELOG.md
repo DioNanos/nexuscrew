@@ -2,6 +2,12 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## Unreleased
+
+- **Desktop: spostare e ridimensionare le finestre non è più rozzo.** Il bordo tra due finestre segue il mouse, cambiano solo le due vicine, le misure del terminale compaiono mentre trascini e si aggancia a un terzo, metà e due terzi (Alt per non agganciare); doppio clic sulla maniglia per dividere a metà. Per spostare una finestra c'è una copia che segue il mouse e, sulla finestra di arrivo, il centro la scambia di posto; Esc annulla.
+- **Desktop: finestre staccate.** Il tastino nella barra del titolo stacca una finestra dalla griglia e la fa flottare sopra le altre: si sposta dal titolo, si ridimensiona da bordi e angolo, si aggancia ai bordi dello schermo e alle altre finestre, si riduce e si rimette nella griglia. Il terminale non si ricollega quando la stacchi o la riattacchi.
+- Le finestre staccate si salvano nel deck accanto alla griglia: un nodo o un client di versione precedente che salva quel deck vede la griglia e non le cancella. Unico limite: su un deck che appartiene a un nodo non ancora aggiornato le finestre staccate non si salvano (la griglia sì, intatta) e al ricaricamento tornano nella griglia. Aggiorna anche i nodi che possiedono deck condivisi.
+
 ## 0.9.50 — 2026-09-27
 
 - **Nome del dispositivo: si prende dal nome dell'host e, quando l'host non ne ha uno (per esempio Android, dove è "localhost"), lo chiede nel primo avvio o al primo accesso; resta salvato, compare nella vista locale e nei nuovi collegamenti. I nodi già collegati non cambiano nome.**

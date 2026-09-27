@@ -6,7 +6,9 @@ import {
   loadDeckOrders, loadDecks, moveDeckInOrder, orderDeckRecords, readLayoutRaw,
   removeDeckOrderId, replaceDeckOrderId, saveDeckOrders, saveDecks, writeLayoutRaw,
 } from '../lib/deck-model.js';
-import { addTileSmart, emptyLayout, mergeRemoteWithLocal, normalize, sessions } from '../lib/grid-model.js';
+import {
+  addTileSmart, emptyLayout, mergeRemoteWithLocal, normalize, sessions, stripFloating, materializeFloating,
+} from '../lib/grid-model.js';
 // Stessa soglia di useNodes: un owner scaduto e' un fatto, non un blip.
 import { OWNER_GRACE_MS } from './useNodes.js';
 import {
@@ -15,6 +17,26 @@ import {
 } from '../lib/deck-federation.js';
 
 const empty = (layout) => sessions(normalize(layout)).length === 0;
+
+// Finestre flottanti del record: stesse coordinate dei tile della griglia.
+// Ogni flottante passa, da sola, per la STESSA traduzione owner<->viewer dei
+// tile (resolveLayoutForViewer al caricamento, canonicalizeLayoutForOwner al
+// salvataggio): una flottante remota non viene mai salvata con la route del
+// viewer. La geometria non si tocca; una ref che la traduzione scarta sparisce.
+function translateFloating(floating, translate) {
+  if (!Array.isArray(floating)) return [];
+  return floating.flatMap((f) => {
+    const tile = { session: f.session, height: 1, fontSize: f.fontSize };
+    if (f.node) tile.node = f.node;
+    if (f.ownerId) tile.ownerId = f.ownerId;
+    const t = translate({ columns: [{ width: 1, tiles: [tile] }] }).columns[0]?.tiles[0];
+    if (!t) return [];
+    const out = { session: t.session, x: f.x, y: f.y, w: f.w, h: f.h, fontSize: f.fontSize };
+    if (t.node) out.node = t.node;
+    if (t.ownerId) out.ownerId = t.ownerId;
+    return [out];
+  });
+}
 const routeKey = (route) => (Array.isArray(route) ? route.join('/') : '');
 
 // Cache dell'ultima lista deck (locale + remote): al reload della pagina la
@@ -144,7 +166,11 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const rec = ordered.find((d) => d.id === wanted);
     if (applyLayout && rec) {
       skipRef.current = true;
-      const viewed = viewLayout(rec);
+      // La vista materializza anche le finestre staccate (campo record
+      // `floating`): rientrano in griglia con il loro flag, pronte a flottare.
+      const viewed = materializeFloating(viewLayout(rec), translateFloating(rec.floating, (l) => resolveLayoutForViewer(
+        l, localNodeIdRef.current, ownersRef.current,
+      )));
       setLayout(viewed);
       // localStorage per i deck locali: SOLO geometria, lo stato effimero di
       // disponibilita' (unavailable/stale) non si persiste mai.
@@ -326,8 +352,12 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     if (rec.available === false) { setError(`nodo owner offline: ${rec.ownerLabel}`); return false; }
     setSaveState('saving');
     try {
-      const canonical = canonicalizeLayoutForOwner(normalize(layoutRef.current), rec.ownerId, rec.ownerTopology);
-      const saved = await saveDeck(token, rec.name, canonical, rec.revision, rec.ownerRoute);
+      // La vista tiene gli staccati nelle columns col flag `float`: prima
+      // del PUT si separano (griglia pura + lista `floating` a livello record).
+      const { grid: gridOnly, floating: floatingView } = stripFloating(layoutRef.current);
+      const canonical = canonicalizeLayoutForOwner(normalize(gridOnly), rec.ownerId, rec.ownerTopology);
+      const floatingWin = translateFloating(floatingView, (l) => canonicalizeLayoutForOwner(l, rec.ownerId, rec.ownerTopology));
+      const saved = await saveDeck(token, rec.name, canonical, rec.revision, rec.ownerRoute, floatingWin);
       const augmented = augmentDeck(saved, ownerForRecord(rec), rec.ownerTopology, rec.local, true);
       install(recordsRef.current.map((d) => d.id === wanted ? augmented : d), false);
       dirtyRef.current = false; setSaveState('saved'); setError(''); setConflict(false);
@@ -391,8 +421,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       if (!dirtyRef.current) return;
       const rec = recordsRef.current.find((d) => d.id === resolveCurrentId());
       if (!rec || rec.available === false) return;
-      const canonical = canonicalizeLayoutForOwner(normalize(layoutRef.current), rec.ownerId, rec.ownerTopology);
-      saveDeckKeepalive(token, rec.name, canonical, rec.revision, rec.ownerRoute);
+      const { grid: gridOnly, floating: floatingView } = stripFloating(layoutRef.current);
+      const canonical = canonicalizeLayoutForOwner(normalize(gridOnly), rec.ownerId, rec.ownerTopology);
+      const floatingWin = translateFloating(floatingView, (l) => canonicalizeLayoutForOwner(l, rec.ownerId, rec.ownerTopology));
+      saveDeckKeepalive(token, rec.name, canonical, rec.revision, rec.ownerRoute, floatingWin);
     };
     window.addEventListener('pagehide', flush);
     window.addEventListener('beforeunload', flush);
@@ -418,7 +450,8 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           // La finestra è sporca e il remoto è più nuovo — merge
           // remoto ⊕ delta locale invece di restare indietro. Il layout fuso
           // è un cambio di layout: l'autosave lo salva con la revisione nuova.
-          const merged = mergeRemoteWithLocal(viewLayout(remote), layoutRef.current);
+          const { grid: localGrid, floating: localFloat } = stripFloating(layoutRef.current);
+          const merged = materializeFloating(mergeRemoteWithLocal(viewLayout(remote), localGrid), localFloat);
           install(next, false);
           setLayout(merged);
           return;

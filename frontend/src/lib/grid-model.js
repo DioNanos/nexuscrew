@@ -309,6 +309,107 @@ export function swapTiles(layout, keyA, keyB) {
   return l;
 }
 
+// --- NC_FLOTTANTE: finestre staccate -----------------------------------------
+// La VISTA tiene lo staccato nelle columns con un flag `float` (geometria in
+// FRAZIONI di schermo, 0..1): il GridTile resta alla stessa posizione
+// dell'albero — reso position:fixed dal CSS — e il terminale non si ricrea
+// mai. La SERIALIZZAZIONE (record del deck) sposta gli staccati FUORI: griglia
+// pura + lista `floating` a livello record (validata dal server).
+export const MAX_FLOATING = 6;
+
+const clampFloatGeom = (g) => {
+  let { x, y, w, h } = g;
+  w = Math.max(0.05, Math.min(1, Number(w) || 0.3));
+  h = Math.max(0.05, Math.min(1, Number(h) || 0.3));
+  x = Math.max(0, Math.min(1 - w, Number(x) || 0));
+  y = Math.max(0, Math.min(1 - h, Number(y) || 0));
+  return { x, y, w, h };
+};
+
+function trovaTile(l, key) {
+  for (const c of l.columns) {
+    for (let i = 0; i < c.tiles.length; i += 1) if (refKey(c.tiles[i]) === key) return { tile: c.tiles[i] };
+  }
+  return null;
+}
+
+// Stacca: mette il flag float (clampato). Oltre MAX_FLOATING non fa nulla
+// (ritorna lo stesso riferimento: nessun salvataggio inutile).
+export function detachTile(layout, ref, geom) {
+  const l = clone(layout);
+  const key = refKey(ref);
+  if (floatingRefs(l).length >= MAX_FLOATING) return layout;
+  const hit = trovaTile(l, key);
+  if (!hit || hit.tile.float) return layout;
+  hit.tile.float = clampFloatGeom(geom || {});
+  return l;
+}
+
+// Riattacca: toglie il flag. Il tile non si è mai mosso dall'albero: torna
+// nel flusso della griglia ESATTAMENTE dov'era (design: «dov'era»).
+export function reattachTile(layout, ref) {
+  const l = clone(layout);
+  const hit = trovaTile(l, refKey(ref));
+  if (!hit || !hit.tile.float) return layout;
+  delete hit.tile.float;
+  return l;
+}
+
+// Sposta/ridimensiona una flottante (drag dal titolo, resize dal bordo):
+// aggiorna solo la geometria del flag, clampata dentro lo schermo.
+export function updateFloatGeom(layout, ref, geom) {
+  const l = clone(layout);
+  const hit = trovaTile(l, refKey(ref));
+  if (!hit || !hit.tile.float) return layout;
+  hit.tile.float = clampFloatGeom(geom);
+  return l;
+}
+
+// refKey di tutti gli staccati (in ordine di griglia).
+export function floatingRefs(layout) {
+  return layout.columns.flatMap((c) => c.tiles).filter((t) => t.float).map((t) => refKey(t));
+}
+
+// Vista -> record: griglia SENZA staccati (le colonne che restano vuote
+// spariscono: il formato del server non le ammette) + lista floating con i
+// soli campi del record (nessun height: la geometria è nel float).
+export function stripFloating(layout) {
+  const floating = [];
+  const columns = [];
+  for (const c of layout.columns) {
+    const tiles = [];
+    for (const t of c.tiles) {
+      if (t.float) {
+        const f = { session: t.session, ...t.float, fontSize: t.fontSize };
+        if (t.node) f.node = t.node;
+        if (t.ownerId) f.ownerId = t.ownerId;
+        floating.push(f);
+      } else {
+        tiles.push(t);
+      }
+    }
+    if (tiles.length) columns.push({ width: c.width, tiles });
+  }
+  return { grid: { columns }, floating };
+}
+
+// Record -> vista: la griglia resta, gli staccati rientrano con addTileStable
+// (colonna meno piena, mai reflow degli altri) + il loro flag float.
+export function materializeFloating(grid, floating) {
+  let out = grid;
+  for (const f of Array.isArray(floating) ? floating : []) {
+    const ref = { session: f.session };
+    if (f.node) ref.node = f.node;
+    if (f.ownerId) ref.ownerId = f.ownerId;
+    const key = refKey(ref);
+    if (!key || sessions(out).includes(key)) continue;
+    out = addTileStable(out, { ...ref, fontSize: f.fontSize });
+    const hit = trovaTile(out, key);
+    if (hit) hit.tile.float = clampFloatGeom(f);
+  }
+  return out;
+}
+
 // Zoom font di un singolo tile: delta relativo con clamp ai bound.
 // Indici invalidi → layout invariato (stesso riferimento).
 export function zoomTile(layout, colIdx, rowIdx, delta) {
