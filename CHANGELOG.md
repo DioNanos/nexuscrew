@@ -2,6 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.50 — 2026-09-27
+
+- **Nome del dispositivo: si prende dal nome dell'host e, quando l'host non ne ha uno (per esempio Android, dove è "localhost"), lo chiede nel primo avvio o al primo accesso; resta salvato, compare nella vista locale e nei nuovi collegamenti. I nodi già collegati non cambiano nome.**
+
 ## 0.9.49 — 2026-09-27
 
 - **Desktop: l'esito dell'avvio o riavvio di una cella non resta più fisso in rosso nella barra dei deck: compare su una riga sua sotto la barra e sparisce dopo 10 secondi; gli errori veri restano nel foglio della cella finché non lo chiudi.**
