@@ -331,7 +331,14 @@ export function SingleView({
   const pxColonna = misuratoreColonne(Math.max(1, fontSize));
   const sommaPesi = Math.max(0.01, weights.main + weights.side);
   const larghezzaBox = dualBoxRef.current?.clientWidth || window.innerWidth;
-  const celleStrette = (larghezzaBox * (Math.min(weights.main, weights.side) / sommaPesi)) / pxColonna;
+  // Larghezza UTILE della cella più stretta, quella in cui il terminale
+  // conta davvero le colonne: il box meno la maniglia (12 px,
+  // .nc-dual-handle) diviso per peso, meno bordi del pannello (2+2 px),
+  // padding di .nc-terminal-host (4+4 px) e barra di scorrimento di xterm
+  // (14 px). In orizzontale i pannelli hanno base 0 (sotto), quindi la loro
+  // larghezza reale segue i pesi: soglia e terminale contano le stesse colonne.
+  const larghezzaUtile = Math.max(0, larghezzaBox - 12) * (Math.min(weights.main, weights.side) / sommaPesi) - 26;
+  const celleStrette = larghezzaUtile / pxColonna;
   const stretto = orizzontale && celleStrette < 40;
   const zoom = (delta) => setFontSize((v) => writeFontSize(v + delta));
   // Lo zoom dell'anteprima del selettore scrive lo stesso nc_fontsize: quando
@@ -528,7 +535,7 @@ export function SingleView({
     <div key="pane-main"
       className={`nc-dual-pane${focaLaSide ? '' : ' foco'}${stretto && focaLaSide ? ' nascosto' : ''}`}
       data-testid="pane-main"
-      style={{ flexGrow: weights.main }} onPointerDown={() => foca(false)}>
+      style={{ flexGrow: weights.main, flexBasis: orizzontale ? 0 : undefined }} onPointerDown={() => foca(false)}>
       <div className="nc-dual-strip">
         <span className={`nc-dual-dot${mainPresent ? ' on' : ''}`} aria-hidden="true" />
         <b>{title}</b>
@@ -565,7 +572,7 @@ export function SingleView({
     <div key="pane-side"
       className={`nc-dual-pane${focaLaSide ? ' foco' : ''}${stretto && !focaLaSide ? ' nascosto' : ''}`}
       data-testid="pane-side"
-      style={{ flexGrow: weights.side }} onPointerDown={() => foca(true)}>
+      style={{ flexGrow: weights.side, flexBasis: orizzontale ? 0 : undefined }} onPointerDown={() => foca(true)}>
       <div className="nc-dual-strip">
         <span className={`nc-dual-dot${sideInfo?.present ? ' on' : ''}`} aria-hidden="true" />
         <b>{sideInfo ? sideInfo.title : side.session}</b>

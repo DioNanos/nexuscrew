@@ -157,6 +157,45 @@ describe('doppia vista in orizzontale', () => {
     expect(vista).toBeTruthy();
   });
 
+  // Soglia di «stretto» e maniglia calcolano la larghezza dai PESI: in
+  // orizzontale i pannelli devono dividersi il box solo per peso (base 0),
+  // non per contenuto — con la base automatica la striscia più ricca allarga
+  // il suo pannello e la cella stretta resta sotto soglia senza scattare.
+  // In verticale resta la disposizione di prima.
+  it('in orizzontale i pannelli si dividono per peso (base 0); in verticale base invariata', async () => {
+    monta();
+    await screen.findByTestId('pane-side');
+    expect(screen.getByTestId('pane-main').style.flexBasis).toBe('');
+    expect(screen.getByTestId('pane-side').style.flexBasis).toBe('');
+
+    ruota(true);
+    await waitFor(() => { expect(document.querySelector('.nc-dual').className).toContain('row'); });
+    expect(screen.getByTestId('pane-main').style.flexBasis).toBe('0px');
+    expect(screen.getByTestId('pane-side').style.flexBasis).toBe('0px');
+
+    ruota(false);
+    await waitFor(() => { expect(document.querySelector('.nc-dual').className).not.toContain('row'); });
+    expect(screen.getByTestId('pane-main').style.flexBasis).toBe('');
+  });
+
+  it('stretto sulla larghezza utile: box meno maniglia e bordi, non il box intero', async () => {
+    // 820 px, pesi 1:1, font 17 (0,6 em = 10,2 px). Col box intero:
+    // 820 / 2 / 10,2 = 40,2 colonne, NON stretto. Larghezza utile:
+    // (820 − 12) / 2 − 26 (bordi, padding, barra di xterm) = 378 px
+    // → 37 colonne: stretto, come le colonne vere del terminale.
+    localStorage.setItem('nc_fontsize', '17');
+    const prima = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 820 });
+    try {
+      ruota(true);
+      monta();
+      await screen.findByTestId('pane-main');
+      await waitFor(() => { expect(screen.getByTestId('pane-side').className).toContain('nascosto'); });
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: prima });
+    }
+  });
+
   it('i pesi sono separati: il drag in orizzontale non tocca le altezze del verticale', async () => {
     monta();
     await screen.findByTestId('pane-side');
