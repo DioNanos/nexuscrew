@@ -113,13 +113,34 @@ function rel(epochSec) {
 // cellName (opzionale, Tranche D): titolo logico Fleet gia' risolto dal roster
 // (desktop overlay). Se assente (mobile), la lookup fleetStatus esistente lo
 // risolve al primo ciclo. Il titolo visibile deriva sempre da `cell.cell`.
+// L'impostazione del TASTO file della barra (vista singola mobile): per
+// dispositivo, in localStorage. Spenta di default — nessun client esistente
+// vede nulla di nuovo finché l'operatore non la accende — e il tasto resta
+// visibile a ogni avvio finché lei la spegne. L'impostazione dice solo se il
+// tasto ESISTE: lo stato del pannello resta in `files`.
+const BAR_FILES_TASTO = 'nc_bar_files_button';
+
+export function leggiFilesTasto() {
+  try { return localStorage.getItem(BAR_FILES_TASTO) === 'on'; } catch (_) { return false; }
+}
+
+function scriviFilesTasto(on) {
+  try { localStorage.setItem(BAR_FILES_TASTO, on ? 'on' : 'off'); } catch (_) { /* private mode */ }
+}
+
 // le quattro azioni della barra alta, raccolte nel menu ⋯.
 //
 // Sono le STESSE azioni di prima, con lo stesso stato vero: qui si decide solo
 // l'ordine e quali compaiono. Una voce che non ha il suo handler non c'e' — e'
 // il contratto di CellActionsMenu, gli stessi item delle azioni cella.
 export function barActionsItems({
-  showComposer, showFiles, showPanel, hasPanel, rendererKind, handlers = {},
+  showComposer, showFiles, showPanel, hasPanel, rendererKind,
+  // Su mobile la voce «files» è l'IMPOSTAZIONE del tasto in barra — accenderla
+  // mostra il tasto, spegnerlo lo toglie: NON apre la lista. `filesSetting` è
+  // il valore di quell'impostazione; null è la modalità desktop, dove la voce
+  // resta lo switch che apre e chiude la lista com'era.
+  filesSetting = null,
+  handlers = {},
 } = {}) {
   const items = [];
   if (typeof handlers.onToggleComposer === 'function') {
@@ -130,9 +151,13 @@ export function barActionsItems({
     });
   }
   if (typeof handlers.onToggleFiles === 'function') {
-    items.push({
+    items.push(filesSetting === null ? {
       id: 'files', kind: 'switch', on: !!showFiles,
       labelKey: 'bar-menu-files', descKey: 'bar-menu-files-desc',
+      run: handlers.onToggleFiles,
+    } : {
+      id: 'files', kind: 'switch', on: !!filesSetting,
+      labelKey: 'bar-menu-files', descKey: 'bar-menu-files-setting-desc',
       run: handlers.onToggleFiles,
     });
   }
@@ -355,12 +380,19 @@ export function SingleView({
   // le quattro azioni della barra, nello stesso contratto delle azioni
   // cella. Gli handler sono gli stessi setter di prima: cambia solo dove stanno.
   // Con la doppia vista, la lista file riguarda la cella col focus.
+  // NC mobile — la voce «files» del menu è l'IMPOSTAZIONE del tasto in barra
+  // (mostra/nasconde, per dispositivo in localStorage): non apre più la lista.
+  // Il tasto, quando c'è, fa ciò che faceva la voce: apre/chiude la lista
+  // della cella col focus. Il desktop resta com'era, voce = lista.
   const cellaFoca = focusSide ? 'side' : 'main';
+  const [filesTasto, setFilesTasto] = useState(leggiFilesTasto);
+  const apriChiudiFiles = () => setFiles((cur) => (cur && cur.source === cellaFoca ? null : { source: cellaFoca, ev: null }));
   const barItems = barActionsItems({
     showComposer, showFiles: files?.source === cellaFoca, showPanel, hasPanel: !!panelUrl, rendererKind,
+    filesSetting: isDesktop ? null : filesTasto,
     handlers: {
       onToggleComposer: () => setShowComposer((v) => !v),
-      onToggleFiles: () => setFiles((cur) => (cur && cur.source === cellaFoca ? null : { source: cellaFoca, ev: null })),
+      onToggleFiles: isDesktop ? apriChiudiFiles : () => setFilesTasto((on) => { scriviFilesTasto(!on); return !on; }),
       onTogglePanel: () => setShowPanel((v) => !v),
       onSwitchRenderer: switchRenderer,
     },
@@ -470,6 +502,18 @@ export function SingleView({
         <span className="nc-bar-right">
           <button onClick={() => zoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
           <button onClick={() => zoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
+          {/* Il tasto dei file (solo mobile, solo con l'impostazione accesa):
+              apre e chiude la lista della cella col focus — la stessa apriChiudiFiles
+              del menu di prima — e RESTA in barra finché l'impostazione lo dice,
+              a pannello aperto o chiuso: aria-pressed dice lo stato del pannello.
+              Ordine del design: − + [cartella] ⋯. Il desktop non lo vede. */}
+          {!isDesktop && filesTasto && (
+            <button type="button" onClick={apriChiudiFiles}
+              title={t('bar-menu-files')} aria-label={t('bar-menu-files')}
+              aria-pressed={files?.source === cellaFoca ? 'true' : 'false'}>
+              <Icon name="folder" size={18} />
+            </button>
+          )}
           {/* Le altre quattro azioni stanno nel menu: la barra resta
               indietro + centro + − + + + ⋯, come il design. */}
           <button type="button" className={`nc-bar-menu${showBarMenu ? ' on' : ''}`}

@@ -19,7 +19,9 @@ const mocks = vi.hoisted(() => ({ fleetStatus: vi.fn() }));
 
 vi.mock('./components/Terminal.jsx', () => ({ default: () => null }));
 vi.mock('./components/KeyBar.jsx', () => ({ default: () => null }));
-vi.mock('./components/FilesPanel.jsx', () => ({ default: () => null }));
+vi.mock('./components/FilesPanel.jsx', () => ({ default: (props) => (
+  <div data-testid="files-panel" data-session={props.session} data-node={props.node || ''} />
+) }));
 vi.mock('./components/ComposerBar.jsx', () => ({ default: () => null }));
 vi.mock('./components/CellPanel.jsx', () => ({ default: () => null }));
 vi.mock('./components/CellSwitcher.jsx', () => ({ default: () => null }));
@@ -41,7 +43,7 @@ vi.mock('./lib/api.js', () => ({
   getLiveHost: vi.fn(), designateHostCell: vi.fn(), clearHostCell: vi.fn(),
 }));
 
-import { SingleView } from './App.jsx';
+import { SingleView, leggiFilesTasto } from './App.jsx';
 import { t } from './lib/i18n.js';
 
 const cella = (panelUrl) => ({
@@ -179,5 +181,112 @@ describe('contratto CSS del sottotitolo della barra', () => {
     expect(r).toMatch(/white-space:\s*nowrap/);
     expect(r).toMatch(/overflow:\s*hidden/);
     expect(r).toMatch(/max-width:\s*100%/);
+  });
+});
+
+// Il tasto dei file della barra (mobile): è un'IMPOSTAZIONE per dispositivo.
+// La voce «Cell files» del menu accende/spegne il TASTO, non apre la lista;
+// il tasto, quando c'è, apre e chiude la lista della cella col focus e resta
+// in barra finché l'impostazione lo dice. Desktop: nulla di nuovo.
+describe('tasto file della barra (impostazione mobile)', () => {
+  const tastoFiles = () => screen.queryByTitle(t('bar-menu-files'));
+  const ordineBarra = () =>
+    [...document.querySelectorAll('.nc-bar-right button')].map((b) => b.getAttribute('title'));
+
+  it('senza impostazione il tasto non esiste e la voce del menu NON apre la lista', async () => {
+    apri();
+    await waitFor(() => { expect(screen.getByTitle(t('bar-menu-open'))).toBeTruthy(); });
+    expect(tastoFiles()).toBeNull();
+    expect(screen.queryByTestId('files-panel')).toBeNull();
+
+    const menu = await apriMenu();
+    const voceFiles = within(menu).getAllByRole('menuitemcheckbox').find((v) => v.dataset.cellaction === 'files');
+    expect(voceFiles.getAttribute('aria-checked')).toBe('false');
+    expect(voceFiles.querySelector('.nc-cellactions-desc').textContent)
+      .toBe(t('bar-menu-files-setting-desc'));
+    fireEvent.click(voceFiles);
+
+    // accendere l'impostazione mostra il TASTO, non il pannello
+    expect(screen.queryByTestId('files-panel')).toBeNull();
+    await waitFor(() => { expect(tastoFiles()).toBeTruthy(); });
+    expect(leggiFilesTasto()).toBe(true);
+  });
+
+  it('con l\'impostazione accesa il tasto apre e chiude la lista della cella col focus', async () => {
+    localStorage.setItem('nc_bar_files_button', 'on');
+    apri();
+    const tasto = await waitFor(() => { const b = tastoFiles(); expect(b).toBeTruthy(); return b; });
+    expect(tasto.getAttribute('aria-pressed')).toBe('false');
+
+    fireEvent.click(tasto);
+    const pannello = await screen.findByTestId('files-panel');
+    expect(pannello.dataset.session).toBe('cloud-AIDesktopCell');
+    expect(tastoFiles().getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(tastoFiles());
+    expect(screen.queryByTestId('files-panel')).toBeNull();
+    expect(tastoFiles().getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('l\'impostazione persiste: il tasto resta dopo il rimontaggio, e torna via spegnendola', async () => {
+    localStorage.setItem('nc_bar_files_button', 'on');
+    const prima = apri();
+    await waitFor(() => { expect(tastoFiles()).toBeTruthy(); });
+    prima.unmount();
+
+    const dopo = apri();
+    await waitFor(() => { expect(tastoFiles()).toBeTruthy(); });
+    dopo.unmount();
+
+    localStorage.setItem('nc_bar_files_button', 'off');
+    apri();
+    await waitFor(() => { expect(screen.getByTitle(t('bar-menu-open'))).toBeTruthy(); });
+    expect(tastoFiles()).toBeNull();
+  });
+
+  it('ordine dei tasti in barra: −, +, cartella (se attiva), ⋯ — nessun altro posto', async () => {
+    localStorage.setItem('nc_bar_files_button', 'on');
+    apri();
+    await waitFor(() => { expect(tastoFiles()).toBeTruthy(); });
+    expect(ordineBarra()).toEqual([
+      t('zoom-out'), t('zoom-in'), t('bar-menu-files'), t('bar-menu-open'),
+    ]);
+  });
+
+  it('in doppia vista il tasto serve la cella col focus', async () => {
+    localStorage.setItem('nc_bar_files_button', 'on');
+    render(<SingleView session="cloud-AIDesktopCell" cellName="AIDesktopCell" token="t" onBack={vi.fn()}
+      side={{ session: 'cloud-SideCell' }} onSideClose={vi.fn()} onSideGone={vi.fn()} />);
+    const tasto = await waitFor(() => { const b = tastoFiles(); expect(b).toBeTruthy(); return b; });
+
+    // focus sulla cella principale (default): la lista è la sua
+    fireEvent.click(tasto);
+    expect((await screen.findByTestId('files-panel')).dataset.session).toBe('cloud-AIDesktopCell');
+    fireEvent.click(tastoFiles());
+    expect(screen.queryByTestId('files-panel')).toBeNull();
+
+    // il tocco sul pannello secondario sposta il focus: la lista diventa la sua
+    fireEvent.pointerDown(screen.getByTestId('pane-side'));
+    fireEvent.click(tastoFiles());
+    expect((await screen.findByTestId('files-panel')).dataset.session).toBe('cloud-SideCell');
+  });
+
+  it('desktop: nessun tasto nuovo anche con l\'impostazione accesa, e la voce apre la lista come prima', async () => {
+    const veroMatchMedia = window.matchMedia;
+    window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+    try {
+      localStorage.setItem('nc_bar_files_button', 'on');
+      apri();
+      await waitFor(() => { expect(screen.getByTitle(t('bar-menu-open'))).toBeTruthy(); });
+      expect(tastoFiles()).toBeNull();
+
+      const menu = await apriMenu();
+      const voceFiles = within(menu).getAllByRole('menuitemcheckbox').find((v) => v.dataset.cellaction === 'files');
+      expect(voceFiles.querySelector('.nc-cellactions-desc').textContent).toBe(t('bar-menu-files-desc'));
+      fireEvent.click(voceFiles);
+      expect(await screen.findByTestId('files-panel')).toBeTruthy();
+    } finally {
+      window.matchMedia = veroMatchMedia;
+    }
   });
 });
