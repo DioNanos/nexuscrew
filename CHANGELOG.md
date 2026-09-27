@@ -2,8 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
-## Unreleased
+## 0.9.51 — 2026-09-27
 
+- **Mobile: la maniglia della doppia vista segue il dito.** Il confine tra le due celle si muove come lo trascini, senza inversione di verso.
+- **Mobile: la doppia vista si usa anche con il telefono in orizzontale.** Ruotando, le due celle si affiancano sinistra/destra con la maniglia verticale e ogni disposizione ricorda le sue proporzioni; se la cella più stretta scende sotto ~40 colonne al font corrente si vede solo quella col focus — l'altra resta montata e nascosta, con il tasto per passarle — e il tasto di scambio diventa ⇆. Nessun terminale viene ricreato ruotando o cambiando disposizione.
 - **Desktop: spostare e ridimensionare le finestre non è più rozzo.** Il bordo tra due finestre segue il mouse, cambiano solo le due vicine, le misure del terminale compaiono mentre trascini e si aggancia a un terzo, metà e due terzi (Alt per non agganciare); doppio clic sulla maniglia per dividere a metà. Per spostare una finestra c'è una copia che segue il mouse e, sulla finestra di arrivo, il centro la scambia di posto; Esc annulla.
 - **Desktop: finestre staccate.** Il tastino nella barra del titolo stacca una finestra dalla griglia e la fa flottare sopra le altre: si sposta dal titolo, si ridimensiona da bordi e angolo, si aggancia ai bordi dello schermo e alle altre finestre, si riduce e si rimette nella griglia. Staccata, la finestra dà le sue misure alla sessione: per questo il terminale si ricollega una volta quando la stacchi e una quando la riattacchi; spostarla, ridimensionarla o passare da una finestra all'altra non lo ricollega.
 - Le finestre staccate si salvano nel deck accanto alla griglia: un nodo o un client di versione precedente che salva quel deck vede la griglia e non le cancella. Unico limite: su un deck che appartiene a un nodo non ancora aggiornato le finestre staccate non si salvano (la griglia sì, intatta) e al ricaricamento tornano nella griglia. Aggiorna anche i nodi che possiedono deck condivisi.
