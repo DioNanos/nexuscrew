@@ -381,7 +381,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     return () => { cancelled = true; };
   }, [install, loadAll, ownersSig, token, findCurrent]);
 
-  const saveNow = useCallback(async (targetId, allowRebase = true) => {
+  // Un salvataggio alla volta: chi arriva mentre un PUT è in volo ne aspetta
+  // la risposta e riparte solo se la vista è ancora sporca.
+  const voloRef = useRef(null);
+  const salva = useCallback(async (targetId, allowRebase = true) => {
     if (!ready || !dirtyRef.current) return true;
     const wanted = targetId === undefined ? resolveCurrentId() : deckIdForLocalOwner(targetId, localNodeIdRef.current);
     const rec = recordsRef.current.find((d) => d.id === wanted);
@@ -391,13 +394,21 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     try {
       // La vista tiene gli staccati nelle columns col flag `float`: prima
       // del PUT si separano (griglia pura + lista `floating` a livello record).
-      const { grid: gridOnly, floating: floatingView } = stripFloating(layoutRef.current);
+      // `inviato` = la vista che parte col PUT: alla risposta si confronta con
+      // quella di allora, per sapere se l'utente ha cambiato qualcosa.
+      const inviato = layoutRef.current;
+      const { grid: gridOnly, floating: floatingView } = stripFloating(inviato);
       const canonical = canonicalizeLayoutForOwner(normalize(gridOnly), rec.ownerId, rec.ownerTopology);
       const floatingWin = translateFloating(floatingView, (l) => canonicalizeLayoutForOwner(l, rec.ownerId, rec.ownerTopology));
       const saved = await saveDeck(token, rec.name, canonical, rec.revision, rec.ownerRoute, floatingPerPut(floatingWin, rec));
       const augmented = augmentDeck(saved, ownerForRecord(rec), rec.ownerTopology, rec.local, true);
       install(recordsRef.current.map((d) => d.id === wanted ? augmented : d), false);
-      dirtyRef.current = false; setSaveState('saved'); setError(''); setConflict(false);
+      setError(''); setConflict(false);
+      // Alla risposta la vista non si tocca. Se è cambiata mentre il PUT era
+      // in volo resta sporca: base = la risposta appena installata, e
+      // l'autosave armato dalla modifica la salva.
+      if (layoutRef.current !== inviato) return true;
+      dirtyRef.current = false; setSaveState('saved');
       setTimeout(() => setSaveState('idle'), 1500);
       return true;
     } catch (e) {
@@ -417,13 +428,18 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           // riguarda le finestre staccate
           const fusa = vistaFusa(conflicted, rebased, layoutRef.current, (localGrid) => localGrid,
             localNodeIdRef.current, ownersRef.current);
-          layoutRef.current = fusa;
+          // La vista fusa si mostra PRIMA del ritentativo, e solo se il merge
+          // ha cambiato qualcosa (senza flottanti non cambia nulla: la vista
+          // resta quella, come nella 0.9.50). Una modifica fatta mentre il
+          // ritentativo è in volo si appoggia su di lei; alla risposta la vista
+          // non si tocca più.
+          if (JSON.stringify(fusa) !== JSON.stringify(layoutRef.current)) {
+            layoutRef.current = fusa;
+            skipRef.current = true; setLayout(fusa);
+          }
           install(recordsRef.current.map((d) => d.id === wanted ? rebased : d), false);
           dirtyRef.current = true;
-          const ok = await saveNow(wanted, false);
-          // la vista mostra il risultato fuso, senza un altro autosave
-          if (ok) { skipRef.current = true; setLayout(fusa); }
-          return ok;
+          return salva(wanted, false);
         }
       }
       setSaveState('error'); setError(String(e.message || e));
@@ -431,6 +447,17 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       return false;
     }
   }, [ready, token, install, setLayout]);
+
+  const saveNow = useCallback(async (targetId, allowRebase = true) => {
+    if (!ready || !dirtyRef.current) return true;
+    while (voloRef.current) {
+      try { await voloRef.current; } catch (_) { /* l'esito lo gestisce chi l'ha avviato */ }
+      if (!dirtyRef.current) return true;
+    }
+    const volo = salva(targetId, allowRebase);
+    voloRef.current = volo;
+    try { return await volo; } finally { if (voloRef.current === volo) voloRef.current = null; }
+  }, [ready, salva]);
 
   // Azione «ricarica» del conflitto irrisolvibile — riparte dal remoto
   // e scarta la copia locale che non è riuscita a convergere.
@@ -486,7 +513,11 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     if (!ready) return undefined;
     const id = setInterval(async () => {
       try {
+        // una vista cambiata mentre il poll era in volo conta come sporca:
+        // la risposta non la sovrascrive
+        const vistaPrima = layoutRef.current;
         const next = await loadAll();
+        const sporca = dirtyRef.current || layoutRef.current !== vistaPrima;
         const here = findCurrent(recordsRef.current);
         const remote = findCurrent(next);
         // Un flip di disponibilita' dell'owner NON e' un cambiamento di layout:
@@ -494,7 +525,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
         // vista. Il merge serve al solo crescita di revisione.
         const newer = Boolean(remote && here && remote.revision > here.revision);
         const refreshed = Boolean(remote && (!here || newer || here.available !== remote.available));
-        if (newer && dirtyRef.current && remote) {
+        if (newer && sporca && remote) {
           // La finestra è sporca e il remoto è più nuovo — merge
           // remoto ⊕ delta locale invece di restare indietro. Il layout fuso
           // è un cambio di layout: l'autosave lo salva con la revisione nuova.
@@ -508,7 +539,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           setLayout(merged);
           return;
         }
-        install(next, refreshed && !dirtyRef.current);
+        install(next, refreshed && !sporca);
       } catch (_) {}
     }, 5000);
     return () => clearInterval(id);
@@ -548,7 +579,9 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const record = augmentDeck(saved, ownerForRecord(fresh), fresh.ownerTopology, fresh.local, true);
     const ownerKey = fresh.local ? LOCAL_OWNER : fresh.ownerId;
     saveDeckOrders(replaceDeckOrderId(loadDeckOrders(), ownerKey, fromId, record.id));
-    install(recordsRef.current.map((x) => x.id === fromId ? record : x), false); return record;
+    // Target = l'id NUOVO: col vecchio, rinominare il deck corrente sembrava
+    // una revoca (record sparito) e la vista veniva svuotata.
+    install(recordsRef.current.map((x) => x.id === fromId ? record : x), false, record.id); return record;
   };
   const remove = async (id) => {
     const deck = recordsRef.current.find((x) => x.id === id); if (!deck) throw new Error('deck inesistente');
@@ -593,7 +626,9 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   ), [viewLayout]);
 
   const select = async (id) => {
-    if (dirtyRef.current) {
+    // Si salva finché resta qualcosa: una modifica fatta mentre il
+    // salvataggio di uscita è in volo appartiene ancora al deck di partenza.
+    for (let giro = 0; giro < 3 && dirtyRef.current; giro += 1) {
       const saved = await saveNow(resolveCurrentId());
       if (!saved) throw new Error('salvataggio del deck corrente fallito: cambio annullato');
     }

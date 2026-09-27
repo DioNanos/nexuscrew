@@ -32,10 +32,12 @@ function Probe({ start = 'uno' }) {
     const next = await value.select(id);
     setCurrent(id); setLayout(next);
   };
+  // come App.onRenameDeck: la vista del record solo se è ancora quella del clic
   const rinomina = async (from, to) => {
+    const prima = layout;
     const saved = await value.rename(`local:${from}`, to);
     setCurrent(saved.id);
-    setLayout(value.vistaMaterializzata(saved));
+    setLayout((cur) => (cur === prima ? value.vistaMaterializzata(saved) : cur));
   };
   return (
     <div>
@@ -502,5 +504,101 @@ describe('useDecks — staccata/riattaccata altrove mentre qui si fa altro', () 
     fireEvent.click(screen.getByRole('button', { name: 'stacca-b' }));
     await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
     expect(ultimoPut()[5].map((f) => f.session)).toEqual(['b']);
+  });
+});
+
+// Risposta di un PUT (primo o ritentativo dopo 409) mentre l'utente ha già
+// cambiato la vista: la vista si tocca solo se non è cambiata da quando il PUT
+// è partito; altrimenti resta la sua, la base diventa la risposta del server e
+// l'autosave riparte. Stessa regola per il cambio deck e la rinomina.
+describe('useDecks — modifiche fatte mentre un salvataggio è in volo', () => {
+  const differito = () => { let res; const p = new Promise((a) => { res = a; }); return { p, res }; };
+  const rec = (rev, layout, floating) => ({ name: 'uno', revision: rev, layout, ...(floating ? { floating } : {}) });
+  const eco = (_t, name, layout, revision, _route, floating) => ({ name, revision: revision + 1, layout, ...(floating && floating.length ? { floating } : {}) });
+  const fontA = (call) => call[2].columns[0].tiles.find((t) => t.session === 'a').fontSize;
+
+  it('409, flottante spostata durante il ritentativo in volo: resta dove l\'hai messa e si risalva', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [{ name: 'main', revision: 1, layout: emptyLayout() }, rec(1, griglia('a'), [flottante])] });
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s).sort()).toEqual(['a', 'fl']));
+    const retry = differito();
+    mocks.saveDeck
+      .mockRejectedValueOnce(Object.assign(new Error('conflitto'), { status: 409, data: { current: rec(2, griglia('a'), [{ ...flottante, x: 0.05 }]) } }))
+      .mockImplementationOnce(() => retry.p);
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    const inviato = mocks.saveDeck.mock.calls[1];
+    fireEvent.click(screen.getByRole('button', { name: 'sposta' })); // x 0.1 mentre il ritentativo è in volo
+    await act(async () => { retry.res(eco(...inviato)); });
+    expect(stato().tiles.find((t) => t.s === 'fl').f.x).toBe(0.1);
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(3), { timeout: 4000 });
+    expect(ultimoPut()[3]).toBe(3);
+    expect(ultimoPut()[5][0].x).toBe(0.1);
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(stato().tiles.find((t) => t.s === 'fl').f.x).toBe(0.1);
+  });
+
+  it('primo PUT in volo, flottante spostata nel frattempo: la vista la tiene e parte un secondo PUT', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [{ name: 'main', revision: 1, layout: emptyLayout() }, rec(1, griglia('a'), [flottante])] });
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s).sort()).toEqual(['a', 'fl']));
+    const primo = differito();
+    mocks.saveDeck.mockImplementationOnce(() => primo.p);
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(1), { timeout: 4000 });
+    fireEvent.click(screen.getByRole('button', { name: 'sposta' }));
+    await act(async () => { primo.res(eco(...mocks.saveDeck.mock.calls[0])); });
+    expect(stato().tiles.find((t) => t.s === 'fl').f.x).toBe(0.1);
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    expect(ultimoPut()[3]).toBe(2);
+    expect(ultimoPut()[5][0].x).toBe(0.1);
+  });
+
+  it('solo griglia (come nella 0.9.50): zoom durante il PUT in volo → un secondo PUT lo salva', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [{ name: 'main', revision: 1, layout: emptyLayout() }, rec(1, griglia('a'))] });
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    const primo = differito();
+    mocks.saveDeck.mockImplementationOnce(() => primo.p);
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(1), { timeout: 4000 });
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await act(async () => { primo.res(eco(...mocks.saveDeck.mock.calls[0])); });
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    expect(fontA(mocks.saveDeck.mock.calls[0])).toBe(12);
+    expect(fontA(ultimoPut())).toBe(13);
+    expect(ultimoPut()[3]).toBe(2);
+  });
+
+  it('rinomina con la PATCH in volo e uno zoom nel frattempo: la vista tiene lo zoom e lo salva sul deck rinominato', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [{ name: 'main', revision: 1, layout: emptyLayout() }, { ...rec(1, griglia('a')), name: 'due' }] });
+    const patch = differito();
+    mocks.renameDeck.mockImplementationOnce(() => patch.p);
+    render(<Probe start="due" />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'rinomina' }));
+    await waitFor(() => expect(mocks.renameDeck).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await act(async () => { patch.res({ name: 'tre', revision: 2, layout: griglia('a') }); });
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(1), { timeout: 4000 });
+    const [, nome, , rev] = ultimoPut();
+    expect([nome, rev, fontA(ultimoPut())]).toEqual(['tre', 2, 12]);
+  });
+
+  it('cambio deck: uno zoom durante il salvataggio di uscita finisce sul deck di partenza', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [{ name: 'main', revision: 1, layout: emptyLayout() }, rec(1, griglia('a')), { name: 'due', revision: 1, layout: griglia('b') }] });
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    const uscita = differito();
+    mocks.saveDeck.mockImplementationOnce(() => uscita.p);
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    fireEvent.click(screen.getByRole('button', { name: 'seleziona' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(1), { timeout: 4000 });
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' })); // ancora su «uno», il salvataggio è in volo
+    await act(async () => { uscita.res(eco(...mocks.saveDeck.mock.calls[0])); });
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['b']), { timeout: 4000 });
+    const suUno = mocks.saveDeck.mock.calls.filter((c) => c[1] === 'uno');
+    expect(suUno.length).toBe(2);
+    expect(fontA(suUno[1])).toBe(13);
   });
 });
