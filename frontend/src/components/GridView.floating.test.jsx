@@ -4,8 +4,9 @@ import { fireEvent, render, waitFor } from '@testing-library/react';
 
 // NC_FLOTTANTE — la finestra staccata è lo STESSO tile nella stessa posizione
 // dell'albero (flag float + position:fixed): staccare e riattaccare NON deve
-// ricreare il terminale. Gesti 1:1 con commit UNA volta al rilascio, clic =
-// primo piano + focus (e takeSize promosso), – riduce, × chiude, Esc annulla.
+// smontare il tile. Gesti 1:1 con commit UNA volta al rilascio, clic = primo
+// piano + focus (takeSize fisso: il focus non riconnette, vedi
+// GridView.focus-reconnect.test.jsx), – riduce, × chiude, Esc annulla.
 const spie = { perSessione: {}, focus: [] };
 
 vi.mock('./GridTile.jsx', () => ({
@@ -149,7 +150,7 @@ describe('GridView finestre flottanti', () => {
     expect(onResizeEnd).toHaveBeenCalledTimes(1);
   });
 
-  it('clic = primo piano + focus, e takeSize solo alla flottante a fuoco', async () => {
+  it('clic = primo piano + focus; takeSize fisso per ogni flottante, indipendente dal focus', async () => {
     spie.perSessione = {};
     const layout = due();
     layout.columns[0].tiles[0].float = { x: 0.1, y: 0.1, w: 0.3, h: 0.3 };
@@ -164,8 +165,10 @@ describe('GridView finestre flottanti', () => {
     await waitFor(() => expect(Number(slotB.style.zIndex)).toBeGreaterThan(zA));
     // il focus percorso App: la prop focusSession arriva al giro dopo
     view.rerender(<GridView layout={layout} onLayoutChange={vi.fn()} onResizeEnd={vi.fn()} onFocus={onFocus} focusSession="b" />);
+    // takeSize non segue il focus (cambiarlo ricreerebbe il terminale): vero per
+    // entrambe le flottanti, prima e dopo il cambio di focus
     await waitFor(() => expect(spie.perSessione.b.props.takeSize).toBe(true));
-    expect(spie.perSessione.a.props.takeSize).toBe(false);
+    expect(spie.perSessione.a.props.takeSize).toBe(true);
   });
 
   it('– riduce a barra titolo e il ripristino la riapre; × chiude', async () => {

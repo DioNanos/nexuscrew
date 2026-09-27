@@ -482,7 +482,11 @@ export default function GridView({
                     focused={focusSession === key}
                     onFocus={onFocus} onClose={closeTile} onOpenSingle={onOpenSingle}
                     floating={!!fl} minimized={flMini}
-                    takeSize={!!fl && focusSession === key}
+                    // takeSize è un'opzione di attach del PTY ed è nelle dipendenze
+                    // dell'effetto che crea terminale+socket: se seguisse il focus,
+                    // ogni clic ricreerebbe la connessione. Fisso finché la finestra
+                    // è staccata; cambia (e riconnette) solo a stacca/riattacca.
+                    takeSize={!!fl}
                     onDetach={fl ? undefined : detachHere}
                     onReattach={fl ? (k) => onLayoutChange(reattachTile(layout, k)) : undefined}
                     onToggleMinimize={fl ? toggleMinimize : undefined}

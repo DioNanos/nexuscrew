@@ -14,8 +14,9 @@ import './GridTile.css';
 // Un tile della griglia. Ogni tile ha i PROPRI ref (audit F6: mai condivisi
 // tra tile — altrimenti l'input di uno finirebbe nel PTY di un altro).
 // takeSize: false per i tile in griglia (il size-lock sta alla vista singola:
-// 3 tile non si contendono la geometria tmux); TRUE per la finestra flottante
-// a fuoco (promozione al clic): chi c'e' davanti decide le misure della sessione.
+// 3 tile non si contendono la geometria tmux); TRUE per ogni finestra staccata,
+// fisso finche' resta staccata. E' un'opzione di attach del PTY: cambiarlo
+// riconnette il terminale, quindi non segue MAI il focus (solo stacca/riattacca).
 // node (opzionale, B2): il tile porta con se' il nodo remoto — terminale via
 // WS proxy, files/composer via HTTP proxy. Identita' del tile = refKey
 // "node:session" (drag, focus, close), locale = solo nome (retrocompatibile).

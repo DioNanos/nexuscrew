@@ -312,8 +312,8 @@ export function swapTiles(layout, keyA, keyB) {
 // --- NC_FLOTTANTE: finestre staccate -----------------------------------------
 // La VISTA tiene lo staccato nelle columns con un flag `float` (geometria in
 // FRAZIONI di schermo, 0..1): il GridTile resta alla stessa posizione
-// dell'albero — reso position:fixed dal CSS — e il terminale non si ricrea
-// mai. La SERIALIZZAZIONE (record del deck) sposta gli staccati FUORI: griglia
+// dell'albero — reso position:fixed dal CSS — e non si smonta mai (il
+// terminale si riconnette solo a stacca/riattacca, per takeSize). La SERIALIZZAZIONE (record del deck) sposta gli staccati FUORI: griglia
 // pura + lista `floating` a livello record (validata dal server).
 export const MAX_FLOATING = 6;
 

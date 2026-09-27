@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 // NC_FLOTTANTE — la VISTA tiene le finestre staccate nelle columns con un
 // flag `float` (geometria in frazioni di schermo): così il GridTile resta
-// alla stessa posizione dell'albero e il terminale non si ricrea mai. La
+// alla stessa posizione dell'albero e non si smonta mai. La
 // SERIALIZZAZZIONE (record del deck) le sposta fuori: griglia pura + lista
 // `floating` a livello record. Materializzazione = load.
 import {
