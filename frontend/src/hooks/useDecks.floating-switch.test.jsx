@@ -14,8 +14,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../lib/api.js', () => mocks);
 
-import { useDecks } from './useDecks.js';
-import { emptyLayout, reattachTile, updateFloatGeom, zoomTile } from '../lib/grid-model.js';
+import { useDecks, flottantiDelMerge } from './useDecks.js';
+import { emptyLayout, reattachTile, removeTile, updateFloatGeom, zoomTile } from '../lib/grid-model.js';
 
 const localId = 'a'.repeat(32);
 const griglia = (sessione) => ({ columns: [{ width: 1, tiles: [{ session: sessione, height: 1, fontSize: 11 }] }] });
@@ -44,6 +44,7 @@ function Probe({ start = 'uno' }) {
       <button type="button" onClick={() => setLayout((l) => updateFloatGeom(l, 'fl', { x: 0.1, y: 0.1, w: 0.4, h: 0.5 }))}>sposta</button>
       <button type="button" onClick={() => setLayout((l) => zoomTile(l, 0, 0, 1))}>zoom</button>
       <button type="button" onClick={() => setLayout((l) => reattachTile(l, 'fl'))}>riattacca</button>
+      <button type="button" onClick={() => setLayout((l) => removeTile(l, 'fl'))}>chiudi</button>
       <pre data-testid="probe">{JSON.stringify({
         ready: value.ready,
         tiles: layout.columns.flatMap((c) => c.tiles.map((t) => ({ s: t.session, f: t.float || null }))),
@@ -175,5 +176,92 @@ describe('useDecks — il campo floating solo quando serve', () => {
     const [, , layout, , , floating] = ultimoPut();
     expect(layout.columns.flatMap((c) => c.tiles.map((t) => t.session)).sort()).toEqual(['a', 'fl']);
     expect(floating).toEqual([]);
+  });
+});
+
+// Merge del poll a TRE vie per le flottanti: base = il record su cui questa
+// finestra ha lavorato, remoto = il record nuovo, locale = la vista sporca.
+// Una flottante tolta qui non risorge dal remoto; una tolta altrove e non
+// toccata qui sparisce; una spostata qui resta (vince la modifica locale).
+describe('useDecks — rimozione di una flottante e merge del poll', () => {
+  const recordUno = (rev, tiles, floating) => ({ decks: [
+    { name: 'main', revision: 1, layout: emptyLayout() },
+    { name: 'uno', revision: rev, layout: { columns: [{ width: 1, tiles: tiles.map((t) => ({ session: t, height: 1, fontSize: 11 })) }] }, ...(floating ? { floating } : {}) },
+  ] });
+
+  it('chiusa qui con la finestra sporca, remoto più nuovo che la ha ancora: non risorge', async () => {
+    let rev = 1;
+    mocks.getDecks.mockImplementation(async () => (rev === 1 ? recordUno(1, ['a'], [flottante]) : recordUno(2, ['a', 'nuova'], [flottante])));
+    mocks.saveDeck.mockRejectedValue(networkDown());
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s).sort()).toEqual(['a', 'fl']));
+    fireEvent.click(screen.getByRole('button', { name: 'chiudi' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalled(), { timeout: 4000 });
+    rev = 2;
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toContain('nuova'), { timeout: 9000 });
+    expect(stato().tiles.map((t) => t.s)).not.toContain('fl');
+    const prima = mocks.saveDeck.mock.calls.length;
+    await waitFor(() => expect(mocks.saveDeck.mock.calls.length).toBeGreaterThan(prima), { timeout: 4000 });
+    expect(ultimoPut()[5]).toEqual([]);
+  }, 20000);
+
+  it('due client: l\'altro la toglie, questa (sporca per altro) non l\'ha toccata: sparisce', async () => {
+    let rev = 1;
+    mocks.getDecks.mockImplementation(async () => (rev === 1 ? recordUno(1, ['a'], [flottante]) : recordUno(2, ['a'])));
+    mocks.saveDeck.mockRejectedValue(networkDown());
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s).sort()).toEqual(['a', 'fl']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalled(), { timeout: 4000 });
+    rev = 2;
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).not.toContain('fl'), { timeout: 9000 });
+    const prima = mocks.saveDeck.mock.calls.length;
+    await waitFor(() => expect(mocks.saveDeck.mock.calls.length).toBeGreaterThan(prima), { timeout: 4000 });
+    expect(ultimoPut()[3]).toBe(2);
+    expect(ultimoPut()[5]).toBeUndefined(); // né la vista né il record nuovo ne hanno
+  }, 20000);
+
+  it('due client: l\'altro la toglie, questa l\'aveva spostata: resta (vince la modifica locale)', async () => {
+    let rev = 1;
+    mocks.getDecks.mockImplementation(async () => (rev === 1 ? recordUno(1, ['a'], [flottante]) : recordUno(2, ['a'])));
+    mocks.saveDeck.mockRejectedValue(networkDown());
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s).sort()).toEqual(['a', 'fl']));
+    fireEvent.click(screen.getByRole('button', { name: 'sposta' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalled(), { timeout: 4000 });
+    rev = 2;
+    const prima = mocks.saveDeck.mock.calls.length;
+    await waitFor(() => expect(mocks.saveDeck.mock.calls.length).toBeGreaterThan(prima), { timeout: 12000 });
+    expect(ultimoPut()[3]).toBe(2);
+    expect(ultimoPut()[5]).toEqual([{ ...flottante, x: 0.1, y: 0.1 }]);
+  }, 20000);
+});
+
+// Deck federato: il record porta le flottanti nelle coordinate dell'OWNER,
+// la vista in quelle del VIEWER. Il merge deve lavorare in un solo sistema:
+// altrimenti la stessa finestra compare due volte e una si attacca alla
+// sessione locale omonima. (Nel hook, oggi, il ramo di merge del poll non si
+// raggiunge per un deck federato: i record dell'owner arrivano da
+// loadOwnerDecks senza passare di li'. Si prova la funzione del merge.)
+describe('flottantiDelMerge — deck federato', () => {
+  const pixelId = 'b'.repeat(32);
+  const localNodeId = 'a'.repeat(32);
+  const owners = [{ instanceId: pixelId, route: ['hub', 'pixel'], label: 'Pixel', status: 'up' }];
+  const inOwner = { session: 'dev', x: 0.5, y: 0.2, w: 0.4, h: 0.5, fontSize: 11, ownerId: pixelId };
+  const inViewer = { session: 'dev', node: 'hub/pixel', ownerId: pixelId, x: 0.5, y: 0.2, w: 0.4, h: 0.5, fontSize: 11 };
+
+  it('stessa finestra da record (owner) e vista (viewer): una sola, sul nodo owner', () => {
+    const out = flottantiDelMerge({ floating: [inOwner] }, { floating: [inOwner] }, [inViewer], localNodeId, owners);
+    expect(out).toEqual([inViewer]);
+  });
+
+  it('flottante aggiunta sull\'owner: entra in coordinate viewer, mai come sessione locale', () => {
+    const out = flottantiDelMerge({ floating: [] }, { floating: [inOwner] }, [], localNodeId, owners);
+    expect(out).toHaveLength(1);
+    expect(out[0].node).toBe('hub/pixel');
+  });
+
+  it('tolta qui (c\'era nella base): non risorge dal remoto', () => {
+    expect(flottantiDelMerge({ floating: [inOwner] }, { floating: [inOwner] }, [], localNodeId, owners)).toEqual([]);
   });
 });

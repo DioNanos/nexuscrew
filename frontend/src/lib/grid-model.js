@@ -395,17 +395,32 @@ export function stripFloating(layout) {
 
 // Record -> vista: la griglia resta, gli staccati rientrano con addTileStable
 // (colonna meno piena, mai reflow degli altri) + il loro flag float.
-// Unione delle flottanti remote (record) e locali (sporco): per la stessa
-// ref vince la LOCALE, tetto MAX_FLOATING. Senza questa fusione il
-// poll con locale sporco cancellava le flottanti aggiunte da un'altra
-// finestra.
-export function fondeFloating(remoteFloating, localFloating) {
-  const fuse = new Map((Array.isArray(remoteFloating) ? remoteFloating : [])
-    .map((f) => [refKey(f), f]));
-  for (const f of (Array.isArray(localFloating) ? localFloating : [])) {
-    fuse.set(refKey(f), f);
+// Flottanti nel merge del poll, a TRE vie, tutte nelle STESSE coordinate:
+// base = il record su cui la finestra sporca ha lavorato, remote = il record
+// nuovo, local = la vista sporca. Vince la vista locale; una flottante tolta
+// da una parte e non toccata dall'altra resta tolta; una aggiunta da una
+// parte entra. Un'unione semplice non sapeva esprimere la cancellazione: la
+// finestra chiusa qui risorgeva dal remoto. Tetto MAX_FLOATING.
+const stessaGeometria = (a, b) => ['x', 'y', 'w', 'h', 'fontSize']
+  .every((k) => Math.abs((Number(a[k]) || 0) - (Number(b[k]) || 0)) < 1e-9);
+export function fondeFloating(baseFloating, remoteFloating, localFloating) {
+  const perChiave = (list) => new Map((Array.isArray(list) ? list : [])
+    .map((f) => [refKey(f), f]).filter(([k]) => k));
+  const base = perChiave(baseFloating);
+  const remote = perChiave(remoteFloating);
+  const local = perChiave(localFloating);
+  const out = [];
+  for (const [k, f] of local) {
+    // tolta altrove e qui intatta: resta tolta
+    if (!remote.has(k) && base.has(k) && stessaGeometria(f, base.get(k))) continue;
+    out.push(f);
   }
-  return [...fuse.values()].slice(0, MAX_FLOATING);
+  for (const [k, f] of remote) {
+    // gia' presa dalla vista, oppure tolta qui (c'era nella base)
+    if (local.has(k) || base.has(k)) continue;
+    out.push(f);
+  }
+  return out.slice(0, MAX_FLOATING);
 }
 
 export function materializeFloating(grid, floating) {

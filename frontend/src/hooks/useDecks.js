@@ -45,6 +45,17 @@ function floatingPerPut(floatingWin, rec) {
   if (floatingWin.length) return floatingWin;
   return Array.isArray(rec.floating) && rec.floating.length ? [] : undefined;
 }
+// Flottanti del merge del poll: base (il record su cui la vista ha lavorato)
+// e remoto arrivano in coordinate OWNER, la vista in coordinate VIEWER. Tutto
+// passa prima nelle coordinate del viewer, poi il merge a tre vie: mai la
+// stessa finestra due volte, mai una ref remota attaccata alla sessione
+// locale omonima.
+export function flottantiDelMerge(base, remote, localFloat, localNodeId, owners) {
+  const versoViewer = (record) => translateFloating(record && record.floating, (l) => resolveLayoutForViewer(
+    l, localNodeId, owners,
+  ));
+  return fondeFloating(versoViewer(base), versoViewer(remote), localFloat);
+}
 const routeKey = (route) => (Array.isArray(route) ? route.join('/') : '');
 
 // Cache dell'ultima lista deck (locale + remote): al reload della pagina la
@@ -464,7 +475,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           const { grid: localGrid, floating: localFloat } = stripFloating(layoutRef.current);
           const merged = materializeFloating(
             mergeRemoteWithLocal(viewLayout(remote), localGrid),
-            fondeFloating(remote.floating, localFloat),
+            flottantiDelMerge(here, remote, localFloat, localNodeIdRef.current, ownersRef.current),
           );
           install(next, false);
           setLayout(merged);

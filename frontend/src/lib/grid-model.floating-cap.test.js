@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 // ogni passaggio che la ripulisce — normalize, e la risoluzione per il viewer
 // che il tick di disponibilità applica alla vista corrente — deve contare il
 // tetto della griglia sulle sole tile di griglia.
-import { materializeFloating, normalize, stripFloating, MAX_FLOATING } from './grid-model.js';
+import { fondeFloating, materializeFloating, normalize, stripFloating, MAX_FLOATING } from './grid-model.js';
 import { resolveLayoutForViewer } from './deck-federation.js';
 
 const grigliaPiena = () => ({
@@ -47,5 +47,30 @@ describe('tetto della vista con griglia piena e flottanti', () => {
     expect(tiles.filter((t) => t.float)).toHaveLength(MAX_FLOATING);
     // il taglio segue l'ordine delle colonne, come prima: fuori l'ultima scandita
     expect(nomi(out)).not.toContain('cell-2-2');
+  });
+});
+
+// Merge del poll a tre vie: base = record su cui la vista ha lavorato.
+describe('fondeFloating a tre vie', () => {
+  const f = (session, x = 0.1) => ({ session, x, y: 0.1, w: 0.3, h: 0.3, fontSize: 11 });
+  const nomi = (l) => l.map((x) => x.session).sort();
+  it('tolta qui, il remoto la ha ancora: resta tolta', () => {
+    expect(fondeFloating([f('a')], [f('a')], [])).toEqual([]);
+  });
+  it('tolta altrove, qui intatta: resta tolta', () => {
+    expect(fondeFloating([f('a')], [], [f('a')])).toEqual([]);
+  });
+  it('tolta altrove, qui spostata: resta (vince la modifica locale)', () => {
+    expect(fondeFloating([f('a')], [], [f('a', 0.4)])).toEqual([f('a', 0.4)]);
+  });
+  it('aggiunta altrove: entra; aggiunta qui: resta', () => {
+    expect(nomi(fondeFloating([], [f('r')], [f('l')]))).toEqual(['l', 'r']);
+  });
+  it('presente ovunque: vince la geometria locale', () => {
+    expect(fondeFloating([f('a')], [f('a', 0.2)], [f('a', 0.3)])).toEqual([f('a', 0.3)]);
+  });
+  it('tetto MAX_FLOATING', () => {
+    const tante = Array.from({ length: MAX_FLOATING + 3 }, (_, i) => f(`r${i}`));
+    expect(fondeFloating([], tante, [])).toHaveLength(MAX_FLOATING);
   });
 });
