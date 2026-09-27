@@ -231,6 +231,12 @@ export function SingleView({
   const dualBoxRef = useRef(null);
   // I file caduti/aperti riguardano il pannello di origine, non la vista.
   const [files, setFiles] = useState(null); // {source:'main'|'side', ev} | null
+  // Stabili per contratto: onFiles sta nelle dipendenze dell'effetto del
+  // terminale che crea e distrugge socket (stesso elenco di Terminal.jsx):
+  // una funzione nuova a ogni render farebbe ripartire la connessione,
+  // svuotando e ridisegnando il terminale a ogni ciclo di poll.
+  const onFilesCella = useCallback((ev) => setFiles({ source: 'main', ev }), []);
+  const onFilesSide = useCallback((ev) => setFiles({ source: 'side', ev }), []);
   const foca = (secondario) => {
     setFocusSide(secondario);
     setCtrlArmed((secondario ? sideCtrlRef : ctrlRef).current);
@@ -413,7 +419,7 @@ export function SingleView({
         <Terminal session={session} node={node} token={token} readonly={readonly} takeSize focused={!focusSide}
           sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
           ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
-          onFiles={(ev) => setFiles({ source: 'main', ev })} fontSize={fontSize}
+          onFiles={onFilesCella} fontSize={fontSize}
           selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
           keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
       </div>
@@ -441,7 +447,7 @@ export function SingleView({
         <Terminal session={side.session} node={side.node} token={token} readonly={readonly} takeSize={false} focused={focusSide}
           sendRef={sideSendRef} composerRef={sideComposerRef} actionRef={sideActionRef}
           ctrlRef={sideCtrlRef} setCtrlArmed={setCtrlArmed}
-          onFiles={(ev) => setFiles({ source: 'side', ev })} fontSize={fontSize}
+          onFiles={onFilesSide} fontSize={fontSize}
           selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
           keyboardGesture={inputPreferences.terminalKeyboardGesture} />
       </div>
@@ -488,7 +494,7 @@ export function SingleView({
           </div>
         ) : (
           <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
-            ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} onFiles={(ev) => setFiles({ source: 'main', ev })} fontSize={fontSize}
+            ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} onFiles={onFilesCella} fontSize={fontSize}
             selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
             keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
         )}
