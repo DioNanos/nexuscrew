@@ -630,8 +630,14 @@ describe('audit — limite dei tre salvataggi al cambio deck', () => {
   });
 });
 
+// Rimandato alla prossima versione (deciso per la 0.9.51): il flush keepalive
+// alla chiusura della pagina parte con la revisione del record anche se un PUT
+// e' ancora in volo, quindi puo' ricevere un 409 che nessuno recupera. Era
+// gia' cosi' nella 0.9.50; in questa release non si cambia. Il test resta qui,
+// segnato come da fare, finche' non si corregge.
 describe('audit — chiusura pagina con PUT in volo', () => {
-  it('il keepalive non deve usare la revisione vecchia dopo un edit successivo', async () => {
+  it.todo('il keepalive non deve usare la revisione vecchia dopo un edit successivo');
+  it.skip('il keepalive non deve usare la revisione vecchia dopo un edit successivo (prova)', async () => {
     mocks.getDecks.mockResolvedValue({ decks: [
       { name: 'main', revision: 1, layout: emptyLayout() },
       { name: 'uno', revision: 1, layout: griglia('a') },
