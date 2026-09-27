@@ -137,3 +137,8 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
 .nc-dual-handle::after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   width: 36px; height: 3px; border-radius: 2px; background: #243; }
 .nc-dual-handle:hover::after { background: #1c3a1c; }
+
+/* L'avviso delle azioni cella (avvio/riavvio/stop): riga SUA sotto la barra
+   dei deck — mai dentro .nc-deckbar, così non copre i chip. Testo contenuto
+   (ellipsis); il testo intero sta nel `title` dell'elemento. Scade da solo. */
+.nc-deck-notice { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; }

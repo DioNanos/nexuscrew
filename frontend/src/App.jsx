@@ -27,6 +27,7 @@ import {
 } from './lib/api.js';
 import { isValidLabel } from './lib/settings-model.js';
 import { runFleetPowerAction } from './lib/fleet-action-notice.js';
+import useActionNotice from './hooks/useActionNotice.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
 import { cellDisplayName } from './lib/cell-display.js';
 import { isSameRef, toggleSideRef, readSavedDual, writeSavedDual, clearSavedDual, clampWeight } from './lib/dual-view.js';
@@ -670,6 +671,12 @@ export default function App() {
     instanceId: g.instanceId, route: g.route, label: g.label, status: g.status, stale: g.stale === true,
   })), [nodeGroups]);
   const deckStore = useDecks(token, deck, layout, setLayout, deckOwners);
+  // L'avviso delle azioni cella (avvio/riavvio/stop): notice a scadenza su una
+  // riga SUA sotto la barra dei deck — stessa meccanica del roster mobile
+  // (useActionNotice, auto-clear 10 s). NON passa da deckStore.setError: la
+  // barra deck resta per gli errori di deck, e niente messaggi che non si
+  // tolgono più.
+  const { notice: deckActionNotice, showActionNotice: mostraAvvisoDeck } = useActionNotice();
   const decks = deckStore.decks;
   // 0.8.8 salvava le celle remote come route:<cell-id> anziché usare la vera
   // tmuxSession route:cloud-<id>. Ripara una volta i deck esistenti, ma solo se
@@ -1105,14 +1112,12 @@ export default function App() {
     const { cell } = powerCell;
     const route = Array.isArray(powerCell.route) ? powerCell.route : [];
     // Stesso percorso del roster mobile: esiti benigni (timeout client,
-    // sessione già attiva) come notice del deck, errori veri nel foglio.
-    let benign = null;
-    try {
-      benign = await runFleetPowerAction({ token, powerCell, payload, onNotice: (text) => deckStore.setError(text) });
-    } catch (e) {
-      deckStore.setError(String((e && e.message) || e));
-      throw e;
-    }
+    // sessione già attiva) come notice a SCADENZA su una riga sua sotto la
+    // barra — mai dentro la barra, dove il messaggio copriva i chip e non
+    // si toglieva più. Gli errori veri vengono rilanciati: restano nel foglio,
+    // che li mostra coi pulsanti riabilitati. La barra deck parla solo di
+    // deck: il suo errore resta quello di caricamento/salvataggio/owner.
+    const benign = await runFleetPowerAction({ token, powerCell, payload, onNotice: mostraAvvisoDeck });
     if (!benign) {
       const enabled = payload.action === 'up'
         ? !!payload.boot
@@ -1295,6 +1300,12 @@ export default function App() {
           sidebarVisible={sidebarVisible}
           onToggleSidebar={!isMainDeck ? () => setSideHidden((v) => !v) : null}
         />
+        {/* L'avviso delle azioni cella: riga SUA sotto la barra — mai dentro
+            .nc-deckbar, così non copre i chip. Il testo intero sta nel title
+            se la riga lo tronca, e scade da solo (useActionNotice). */}
+        {deckActionNotice && (
+          <div className="nc-notice nc-deck-notice" role="status" title={deckActionNotice}>{deckActionNotice}</div>
+        )}
         <GridView
           layout={layout}
           onLayoutChange={setLayout}
