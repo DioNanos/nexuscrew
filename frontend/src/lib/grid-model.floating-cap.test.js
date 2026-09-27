@@ -69,6 +69,10 @@ describe('fondeFloating a tre vie', () => {
   it('presente ovunque: vince la geometria locale', () => {
     expect(fondeFloating([f('a')], [f('a', 0.2)], [f('a', 0.3)])).toEqual([f('a', 0.3)]);
   });
+  it('audit: se la vista locale non ha mosso la flottante, conserva lo spostamento remoto', () => {
+    expect(fondeFloating([f('a', 0.1)], [f('a', 0.2)], [f('a', 0.1)]))
+      .toEqual([f('a', 0.2)]);
+  });
   it('tetto MAX_FLOATING', () => {
     const tante = Array.from({ length: MAX_FLOATING + 3 }, (_, i) => f(`r${i}`));
     expect(fondeFloating([], tante, [])).toHaveLength(MAX_FLOATING);

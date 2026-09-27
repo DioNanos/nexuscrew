@@ -59,6 +59,26 @@ function misura(view, w = 800, h = 600) {
 }
 
 describe('GridView gesto resize a coppia', () => {
+  it('audit: il divisore tra seconda e terza riga segue la sua coppia', async () => {
+    const layout = { columns: [{ width: 1, tiles: [
+      { session: 'a', height: 1 }, { session: 'b', height: 1 }, { session: 'c', height: 1 },
+    ] }] };
+    const { view, onLayoutChange } = montaGrid(layout);
+    const grid = misura(view, 800, 600);
+    const col = view.container.querySelector('.nc-col');
+    Object.defineProperty(grid, 'getBoundingClientRect', { value: () => ({ top: 100, left: 0, width: 800, height: 600 }), configurable: true });
+    Object.defineProperty(col, 'getBoundingClientRect', { value: () => ({ top: 100, left: 0, width: 800, height: 600 }), configurable: true });
+    Object.defineProperty(col, 'clientHeight', { value: 600, configurable: true });
+    const second = view.container.querySelectorAll('.nc-divider-h')[1];
+    fireEvent(second, evento('pointerdown', { clientX: 5, clientY: 500, pointerId: 7 }));
+    fireEvent(window, evento('pointermove', { clientX: 5, clientY: 450, altKey: true }));
+    fireEvent(window, evento('pointerup', {}));
+    await waitFor(() => expect(onLayoutChange).toHaveBeenCalledTimes(1));
+    const tiles = onLayoutChange.mock.calls[0][0].columns[0].tiles;
+    expect(tiles[0].height).toBe(1);
+    expect(tiles[1].height).toBeCloseTo(0.75, 10);
+    expect(tiles[2].height).toBeCloseTo(1.25, 10);
+  });
   it('2 colonne: il bordo segue il mouse 1:1 e UN solo onLayoutChange al rilascio', async () => {
     const { view, onLayoutChange, onResizeEnd } = montaGrid(twoCols());
     misura(view, 800);

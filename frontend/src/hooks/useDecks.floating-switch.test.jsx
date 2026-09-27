@@ -115,6 +115,25 @@ describe('useDecks — flottanti al cambio e alla rinomina del deck', () => {
 });
 
 describe('useDecks — merge del poll con una flottante aggiunta altrove', () => {
+  it('audit: dopo 409 con aggiunta remota, il retry non cancella la flottante', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [
+      { name: 'main', revision: 1, layout: emptyLayout() },
+      { name: 'uno', revision: 1, layout: griglia('a') },
+    ] });
+    let attempts = 0;
+    mocks.saveDeck.mockImplementation(async (_t, name, layout, revision, _route, floating) => {
+      attempts += 1;
+      if (attempts === 1) throw Object.assign(new Error('conflict'), {
+        status: 409, data: { current: { name, revision: 2, layout: griglia('a'), floating: [flottante] } },
+      });
+      return { name, revision: revision + 1, layout, ...(floating?.length ? { floating } : {}) };
+    });
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck.mock.calls.length).toBeGreaterThanOrEqual(2), { timeout: 4000 });
+    expect(mocks.saveDeck.mock.calls[1][5]).toEqual([flottante]);
+  });
   it('finestra sporca, remoto più nuovo con una flottante nuova: il merge la tiene e il PUT la porta', async () => {
     let revision = 1;
     mocks.getDecks.mockImplementation(async () => ({ decks: [
