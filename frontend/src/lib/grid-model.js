@@ -395,14 +395,25 @@ export function stripFloating(layout) {
 
 // Record -> vista: la griglia resta, gli staccati rientrano con addTileStable
 // (colonna meno piena, mai reflow degli altri) + il loro flag float.
-// Flottanti nel merge del poll, a TRE vie, tutte nelle STESSE coordinate:
-// base = il record su cui la finestra sporca ha lavorato, remote = il record
-// nuovo, local = la vista sporca. Vince la vista locale; una flottante tolta
-// da una parte e non toccata dall'altra resta tolta; una aggiunta da una
-// parte entra. Un'unione semplice non sapeva esprimere la cancellazione: la
-// finestra chiusa qui risorgeva dal remoto. Tetto MAX_FLOATING.
-const stessaGeometria = (a, b) => ['x', 'y', 'w', 'h', 'fontSize']
-  .every((k) => Math.abs((Number(a[k]) || 0) - (Number(b[k]) || 0)) < 1e-9);
+// Flottanti nel merge (poll con finestra sporca, ritentativo dopo un 409), a
+// TRE vie, tutte nelle STESSE coordinate: base = il record su cui la finestra
+// sporca ha lavorato, remote = il record nuovo, local = la vista sporca.
+// Presenza: una flottante tolta da una parte e non toccata dall'altra resta
+// tolta; una aggiunta da una parte entra. Geometria di una finestra presente
+// ovunque, PER CAMPO (x, y, w, h, fontSize): locale = base -> vince il remoto;
+// remoto = base -> vince il locale; cambiati entrambi -> vince il locale. Il
+// risultato torna dentro lo schermo. Tetto MAX_FLOATING.
+const CAMPI_FLOAT = ['x', 'y', 'w', 'h', 'fontSize'];
+const stessoValore = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) < 1e-9;
+const stessaGeometria = (a, b) => CAMPI_FLOAT.every((k) => stessoValore(a[k], b[k]));
+function fondiGeometria(base, remote, local) {
+  if (!base) return local;
+  const out = { ...local };
+  for (const k of CAMPI_FLOAT) {
+    if (stessoValore(local[k], base[k]) && !stessoValore(remote[k], base[k])) out[k] = remote[k];
+  }
+  return { ...out, ...clampFloatGeom(out) };
+}
 export function fondeFloating(baseFloating, remoteFloating, localFloating) {
   const perChiave = (list) => new Map((Array.isArray(list) ? list : [])
     .map((f) => [refKey(f), f]).filter(([k]) => k));
@@ -413,7 +424,7 @@ export function fondeFloating(baseFloating, remoteFloating, localFloating) {
   for (const [k, f] of local) {
     // tolta altrove e qui intatta: resta tolta
     if (!remote.has(k) && base.has(k) && stessaGeometria(f, base.get(k))) continue;
-    out.push(f);
+    out.push(remote.has(k) ? fondiGeometria(base.get(k), remote.get(k), f) : f);
   }
   for (const [k, f] of remote) {
     // gia' presa dalla vista, oppure tolta qui (c'era nella base)

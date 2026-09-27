@@ -74,3 +74,25 @@ describe('fondeFloating a tre vie', () => {
     expect(fondeFloating([], tante, [])).toHaveLength(MAX_FLOATING);
   });
 });
+
+// Geometria a tre vie PER CAMPO (x, y, w, h, fontSize) per una finestra
+// presente ovunque: locale = base → vince il remoto; remoto = base → vince
+// il locale; cambiati entrambi → vince il locale (la modifica di chi guarda).
+describe('fondeFloating: geometria a tre vie per campo', () => {
+  const g = (x, w = 0.3, fontSize = 11) => ({ session: 'a', x, y: 0.1, w, h: 0.3, fontSize });
+  it('spostata altrove, qui invariata: vince il remoto', () => {
+    expect(fondeFloating([g(0.1)], [g(0.2)], [g(0.1)])).toEqual([g(0.2)]);
+  });
+  it('spostata qui, altrove invariata: vince il locale', () => {
+    expect(fondeFloating([g(0.1)], [g(0.1)], [g(0.3)])).toEqual([g(0.3)]);
+  });
+  it('campi diversi cambiati dalle due parti: si prendono entrambi', () => {
+    expect(fondeFloating([g(0.1, 0.3)], [g(0.2, 0.3)], [g(0.1, 0.4)])).toEqual([g(0.2, 0.4)]);
+  });
+  it('stesso campo cambiato dalle due parti: vince il locale', () => {
+    expect(fondeFloating([g(0.1)], [g(0.2)], [g(0.3)])).toEqual([g(0.3)]);
+  });
+  it('font cambiato altrove, geometria cambiata qui', () => {
+    expect(fondeFloating([g(0.1, 0.3, 11)], [g(0.1, 0.3, 14)], [g(0.2, 0.3, 11)])).toEqual([g(0.2, 0.3, 14)]);
+  });
+});
