@@ -602,3 +602,77 @@ describe('useDecks — modifiche fatte mentre un salvataggio è in volo', () => 
     expect(fontA(suUno[1])).toBe(13);
   });
 });
+
+describe('audit — limite dei tre salvataggi al cambio deck', () => {
+  it('non deve perdere la quarta modifica fatta durante il terzo PUT', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [
+      { name: 'main', revision: 1, layout: emptyLayout() },
+      { name: 'uno', revision: 1, layout: griglia('a') },
+      { name: 'due', revision: 1, layout: griglia('b') },
+    ] });
+    const pendenti = [];
+    mocks.saveDeck.mockImplementation((...args) => new Promise((resolve) => {
+      pendenti.push({ args, resolve });
+    }));
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    fireEvent.click(screen.getByRole('button', { name: 'seleziona' }));
+    for (let giro = 0; giro < 3; giro += 1) {
+      await waitFor(() => expect(pendenti.length).toBe(giro + 1), { timeout: 4000 });
+      fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+      const { args, resolve } = pendenti[giro];
+      await act(async () => { resolve({ name: args[1], revision: args[3] + 1, layout: args[2] }); });
+    }
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['b']), { timeout: 4000 });
+    expect(mocks.saveDeck.mock.calls.filter((c) => c[1] === 'uno')).toHaveLength(4);
+    expect(mocks.saveDeck.mock.calls.at(-1)[2].columns[0].tiles[0].fontSize).toBe(15);
+  });
+});
+
+describe('audit — chiusura pagina con PUT in volo', () => {
+  it('il keepalive non deve usare la revisione vecchia dopo un edit successivo', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [
+      { name: 'main', revision: 1, layout: emptyLayout() },
+      { name: 'uno', revision: 1, layout: griglia('a') },
+    ] });
+    let resolveFirst;
+    mocks.saveDeck.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+    const { unmount } = render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(1), { timeout: 4000 });
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    window.dispatchEvent(new Event('pagehide'));
+    expect(mocks.saveDeckKeepalive).toHaveBeenCalledTimes(1);
+    const firstRev = mocks.saveDeck.mock.calls[0][3];
+    const keepaliveRev = mocks.saveDeckKeepalive.mock.calls[0][3];
+    const keepaliveFont = mocks.saveDeckKeepalive.mock.calls[0][2].columns[0].tiles[0].fontSize;
+    unmount();
+    await act(async () => { resolveFirst({ name: 'uno', revision: 2, layout: griglia('a') }); });
+    expect(keepaliveFont).toBe(13);
+    expect(keepaliveRev).toBeGreaterThan(firstRev);
+  });
+});
+
+describe('audit — rinomina lenta e autosave del vecchio nome', () => {
+  it('dopo una PATCH lenta deve salvare sul nome nuovo l’edit fatto nel frattempo', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [
+      { name: 'main', revision: 1, layout: emptyLayout() },
+      { name: 'due', revision: 1, layout: griglia('a') },
+    ] });
+    let resolveRename;
+    mocks.renameDeck.mockImplementationOnce(() => new Promise((resolve) => { resolveRename = resolve; }));
+    mocks.saveDeck.mockRejectedValueOnce(Object.assign(new Error('deck inesistente'), { status: 404 }));
+    render(<Probe start="due" />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'rinomina' }));
+    await waitFor(() => expect(mocks.renameDeck).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(1), { timeout: 4000 });
+    expect(mocks.saveDeck.mock.calls[0][1]).toBe('due');
+    await act(async () => { resolveRename({ name: 'tre', revision: 2, layout: griglia('a') }); });
+    expect(stato().tiles[0].fs).toBe(12);
+    await waitFor(() => expect(mocks.saveDeck.mock.calls.some((c) => c[1] === 'tre')).toBe(true), { timeout: 1500 });
+  });
+});
