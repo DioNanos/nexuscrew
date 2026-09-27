@@ -12,7 +12,7 @@ import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import './GridView.css';
 
-const SIDE = 0.28; // fasce laterali left/right (28%)
+const SIDE = 0.22; // fasce laterali left/right (22%, come il design)
 const CENTER_Y = 0.3; // banda verticale del «centro = scambia» (30%..70%)
 const transferHas = (transfer, type) => Array.from(transfer?.types || []).includes(type);
 const isSessionTransfer = (transfer) => transferHas(transfer, 'text/nc-session');
@@ -24,8 +24,8 @@ function nodeGroupForTile(node, groups) {
     : null;
 }
 
-// Zone di spostamento: fasce laterali 28%, poi la zona centrale (28%..72% x
-// 30%..70%) è «SCAMBIA», il resto metà top/bottom.
+// Zone di spostamento come il design: fasce laterali 22%, in mezzo alto e
+// basso al 30%, centro (22%..78% x 30%..70%) = «SCAMBIA».
 function quadrantOf(x, y, r) {
   const fx = (x - r.left) / (r.width || 1);
   const fy = (y - r.top) / (r.height || 1);
@@ -33,6 +33,27 @@ function quadrantOf(x, y, r) {
   if (fx > 1 - SIDE) return 'right';
   if (fy >= CENTER_Y && fy <= 1 - CENTER_Y) return 'center';
   return fy < 0.5 ? 'top' : 'bottom';
+}
+
+// Le cinque zone della finestra di arrivo, disegnate tutte insieme mentre ci
+// passi sopra: frecce ai bordi, scambio al centro (tracciati del design).
+const ZONE = [
+  ['left', 'M15 6l-6 6 6 6', 22],
+  ['top', 'M6 15l6-6 6 6', 22],
+  ['center', 'M4 8h16M20 8l-3-3M20 8l-3 3M20 16H4M4 16l3-3M4 16l3 3', 34],
+  ['bottom', 'M6 9l6 6 6-6', 22],
+  ['right', 'M9 6l6 6-6 6', 22],
+];
+function DropZones({ active }) {
+  return (
+    <div className="nc-drop-zones" data-testid="nc-drop-zones" aria-hidden="true">
+      {ZONE.map(([nome, d, size]) => (
+        <div key={nome} className={`nc-drop-zone ${nome}${active === nome ? ' on' : ''}`} data-zone={nome}>
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d={d} /></svg>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // Geometria/font del tile flottante con quella key (o null).
@@ -132,6 +153,8 @@ export default function GridView({
 
   const ncols = layout.columns.length;
   const floatingKeys = layout.columns.flatMap((c) => c.tiles).filter((t) => t.float).map((t) => refKey(t));
+  // Colonna i cui tile sono tutti staccati: non occupa spazio nella griglia.
+  const tuttaFlottante = (col) => !!col && col.tiles.length > 0 && col.tiles.every((t) => t.float);
 
   const isNewCol = (ci) => drag && drag.col === ci && drag.row === undefined;
   const isEnd = !!drag && drag.col === ncols;
@@ -386,9 +409,9 @@ export default function GridView({
         nodes.push(
           <div
             key={`c${ci}`}
-            className={`nc-col${isNewCol(ci) ? ' drop-newcol' : ''}${col.tiles.length && col.tiles.every((t) => t.float) ? ' nc-col-emptyfloat' : ''}`}
+            className={`nc-col${isNewCol(ci) ? ' drop-newcol' : ''}${tuttaFlottante(col) ? ' nc-col-emptyfloat' : ''}`}
             ref={(el) => { colRefs.current[ci] = el; }}
-            style={{ flexGrow: col.width, flexBasis: 0 }}
+            style={{ flexGrow: tuttaFlottante(col) ? 0 : col.width, flexBasis: 0 }}
             onDragOver={(e) => {
               if (!isSessionTransfer(e.dataTransfer)) return;
               e.preventDefault(); e.stopPropagation();
@@ -445,6 +468,8 @@ export default function GridView({
                   onPointerDown={fl ? () => promoteFloat(key) : undefined}
                   onDragOver={(e) => {
                     if (!isSessionTransfer(e.dataTransfer)) return;
+                    // una finestra staccata non è una destinazione: nessun drop qui
+                    if (fl) { e.stopPropagation(); return; }
                     e.preventDefault(); e.stopPropagation();
                     const q = quadrantOf(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
                     if (!(drag && drag.col === ci && drag.row === ri && drag.quadrant === q)) {
@@ -474,6 +499,9 @@ export default function GridView({
                     panelUrl={panelUrl} panelCellId={panelCellId}
                     panelPort={panelPortForRoute(tile.node ? tile.node.split('/') : [], nodePanelPorts, panelPort)}
                   />
+                  {!fl && drag && drag.col === ci && drag.row === ri && drag.quadrant && (
+                    <DropZones active={drag.quadrant} />
+                  )}
                   {fl && !flMini && ['n', 's', 'e', 'w', 'se'].map((dir) => (
                     <div key={`rz-${dir}`} className={`nc-float-rz ${dir}`} data-testid={`float-resize-${dir}`}
                       onPointerDown={(e) => startFloatResize(e, key, dir)} />
@@ -493,7 +521,7 @@ export default function GridView({
             })}
           </div>,
         );
-        if (ci < ncols - 1) {
+        if (ci < ncols - 1 && !tuttaFlottante(col) && !tuttaFlottante(layout.columns[ci + 1])) {
           nodes.push(
             <div key={`v${ci}`}
               className={`nc-divider-v${gesture && gesture.kind === 'col' && gesture.ci === ci ? ' dragging' : ''}`}
@@ -561,11 +589,19 @@ export default function GridView({
       )}
 
       {/* Spostamento: copia semitrasparente che segue il mouse. */}
-      {drag && drag.from && drag.ghost && (
-        <div className="nc-drag-ghost" data-testid="nc-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y }}>
-          {drag.from}
-        </div>
-      )}
+      {drag && drag.from && drag.ghost && (() => {
+        const src = layout.columns.flatMap((c) => c.tiles).find((t) => refKey(t) === drag.from);
+        const nome = src ? cellDisplayName({
+          session: src.session, node: src.node, ownerId: src.ownerId, cells, nodeGroups,
+          cell: findManagedCell({ session: src.session, node: src.node, ownerId: src.ownerId, cells, nodeGroups }),
+        }) : drag.from;
+        return (
+          <div className="nc-drag-ghost" data-testid="nc-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y }}>
+            <div className="nc-drag-ghost-head"><span className="nc-dot on" /><b>{nome}</b></div>
+            <div className="nc-drag-ghost-body" />
+          </div>
+        );
+      })()}
 
       {isEnd && <div className="nc-drop-line-v nc-drop-line-end" />}
 

@@ -6,7 +6,11 @@
   border: 1px solid #1c241c; border-radius: 8px;
   overflow: hidden;
 }
-.nc-tile.focused { border-color: #2e7d32; box-shadow: 0 0 0 1px #2e7d3244 inset; }
+/* Finestra a fuoco come il design: bordo verde chiaro, barra del titolo
+   verde scuro e titolo in evidenza (griglia e finestre staccate). */
+.nc-tile.focused { border: 2px solid #7ee787; box-shadow: none; }
+.nc-tile.focused .nc-tile-head { background: #173117; }
+.nc-tile.focused .nc-tile-name b { color: #d8ffe8; font-weight: 700; }
 
 .nc-tile-head {
   flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
@@ -65,3 +69,12 @@
   color: #d8c07a; background: rgba(48, 40, 12, 0.9);
   border-bottom: 1px solid #4a3f1c; text-align: center;
 }
+
+/* Finestra staccata: la barra del titolo sposta la finestra. */
+.nc-tile-head.nc-float-head { cursor: move; }
+.nc-tile-head.nc-float-head:active { cursor: move; }
+.nc-tile-float-btn {
+  width: 26px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid #2b3c2b; border-radius: 5px; background: transparent; color: #9fd;
+}
+.nc-tile.focused .nc-tile-float-btn { border-color: #2e7d32; color: #bfffd8; }

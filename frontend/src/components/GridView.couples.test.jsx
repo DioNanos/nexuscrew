@@ -215,6 +215,12 @@ describe('GridView spostamento: ghost, zone, scambio, Esc', () => {
     fireEvent(view.container.querySelector('[data-testid="tile-a"]'), evento('dragstart', { dataTransfer: dtDi('a') }));
     fireEvent(slots[1], evento('dragover', { clientX: 50, clientY: 50, dataTransfer: dtDi('a') }));
     await waitFor(() => expect(slots[1].className).toContain('drop-center'));
+    // le CINQUE zone del design sono tutte disegnate, accesa solo quella attiva
+    const zone = slots[1].querySelectorAll('.nc-drop-zone');
+    expect(Array.from(zone).map((z) => z.getAttribute('data-zone'))).toEqual(['left', 'top', 'center', 'bottom', 'right']);
+    expect(Array.from(zone).filter((z) => z.className.includes(' on')).map((z) => z.getAttribute('data-zone'))).toEqual(['center']);
+    // la copia che segue il mouse porta il titolo della finestra spostata
+    expect(view.container.querySelector('[data-testid="nc-drag-ghost"]').textContent).toContain('a');
     fireEvent(slots[1], evento('drop', { clientX: 50, clientY: 50, dataTransfer: dtDi('a') }));
     await waitFor(() => expect(onLayoutChange).toHaveBeenCalledTimes(1));
     const out = onLayoutChange.mock.calls[0][0];

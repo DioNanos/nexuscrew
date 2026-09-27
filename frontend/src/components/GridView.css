@@ -23,18 +23,21 @@
   min-height: 60px; min-width: 0; position: relative;
 }
 .nc-tile-slot > .nc-tile { flex: 1 1 auto; min-height: 0; }
-/* Anteprima drop direzionale: overlay semitrasparente sulla metà interessata. */
-.nc-tile-slot.drop-left::after,
-.nc-tile-slot.drop-right::after,
-.nc-tile-slot.drop-top::after,
-.nc-tile-slot.drop-bottom::after {
-  content: ''; position: absolute; z-index: 7; pointer-events: none;
-  background: rgba(0, 204, 102, 0.28); border: 2px solid #00cc66; border-radius: 4px;
+/* Spostamento: sulla finestra di arrivo le CINQUE zone del design, tutte
+   visibili (frecce ai bordi, scambio al centro), la zona attiva piena. */
+.nc-drop-zones { position: absolute; inset: 0; z-index: 7; pointer-events: none; }
+.nc-drop-zone {
+  position: absolute; display: flex; align-items: center; justify-content: center;
+  color: #4a6a4a;
 }
-.nc-tile-slot.drop-left::after   { left: 0; top: 0; bottom: 0; width: 50%; }
-.nc-tile-slot.drop-right::after  { right: 0; top: 0; bottom: 0; width: 50%; }
-.nc-tile-slot.drop-top::after    { left: 0; right: 0; top: 0; height: 50%; }
-.nc-tile-slot.drop-bottom::after { left: 0; right: 0; bottom: 0; height: 50%; }
+.nc-drop-zone.left   { left: 0; top: 0; bottom: 0; width: 22%; border-right: 1px dashed #2b3c2b; }
+.nc-drop-zone.right  { right: 0; top: 0; bottom: 0; width: 22%; border-left: 1px dashed #2b3c2b; }
+.nc-drop-zone.top    { left: 22%; right: 22%; top: 0; height: 30%; border-bottom: 1px dashed #2b3c2b; }
+.nc-drop-zone.bottom { left: 22%; right: 22%; bottom: 0; height: 30%; border-top: 1px dashed #2b3c2b; }
+.nc-drop-zone.center { left: 22%; right: 22%; top: 30%; bottom: 30%; }
+.nc-drop-zone.on {
+  background: rgba(0, 204, 102, 0.28); border: 2px solid #00cc66; border-radius: 6px; color: #d8ffe8;
+}
 
 /* Toolbar preset compatta, in alto a destra della griglia. */
 .nc-grid-toolbar {
@@ -115,21 +118,19 @@
    provenienza tratteggiato. */
 .nc-drag-ghost {
   position: fixed; z-index: 90; pointer-events: none;
-  transform: translate(-50%, -130%);
-  background: rgba(10, 30, 14, 0.85); color: #cfe;
-  border: 1px solid #00cc66; border-radius: 8px;
-  padding: 6px 12px; font-size: 12px; white-space: nowrap;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  width: 300px; height: 190px; display: flex; flex-direction: column;
+  transform: translate(-50%, -20%) rotate(-1.5deg);
+  border: 2px solid #7ee787; border-radius: 6px;
+  background: rgba(10, 14, 10, 0.85);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
 }
-.nc-tile-slot.nc-tile-source > .nc-tile { opacity: 0.4; outline: 2px dashed #4e6b4e; outline-offset: -4px; }
-
-/* Zona «centro = SCAMBIA»: overlay pieno con l'etichetta dello scambio. */
-.nc-tile-slot.drop-center::after {
-  content: '⇄'; position: absolute; z-index: 7; pointer-events: none;
-  inset: 0; display: flex; align-items: center; justify-content: center;
-  background: rgba(0, 204, 102, 0.20); border: 2px solid #00cc66; border-radius: 4px;
-  color: #9f9; font-size: 26px;
+.nc-drag-ghost-head {
+  height: 28px; box-sizing: border-box; display: flex; align-items: center; gap: 8px;
+  padding: 0 10px; background: #173117; border-radius: 4px 4px 0 0;
+  color: #d8ffe8; font-size: 13px;
 }
+.nc-drag-ghost-body { flex-grow: 1; opacity: 0.7; }
+.nc-tile-slot.nc-tile-source > .nc-tile { opacity: 0.45; border: 1px dashed #4a6a4a; }
 
 /* Indicator "nuova colonna in coda" (drop sull'area destra / griglia vuota). */
 .nc-drop-line-v { flex: 0 0 3px; align-self: stretch; background: #00cc66; border-radius: 2px; }

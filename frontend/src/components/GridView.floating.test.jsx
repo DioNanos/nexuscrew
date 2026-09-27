@@ -72,6 +72,10 @@ describe('GridView finestre flottanti', () => {
     // la colonna che conteneva SOLO lei collassa (griglia ricomposta)
     const collassate = view.container.querySelectorAll('.nc-col.nc-col-emptyfloat');
     expect(collassate.length).toBe(1);
+    // collasso VERO: l'inline flexGrow della colonna è 0 (l'inline vince sulla classe)
+    expect(collassate[0].style.flexGrow).toBe('0');
+    // e nessun divisore accanto a una colonna che non occupa spazio
+    expect(view.container.querySelectorAll('.nc-divider-v').length).toBe(0);
     // il terminale non si è ricreato
     expect(spie.perSessione.sola.istanze).toBe(1);
     expect(spie.perSessione.a.istanze).toBe(1);
@@ -179,6 +183,21 @@ describe('GridView finestre flottanti', () => {
     await waitFor(() => expect(onLayoutChange).toHaveBeenCalledTimes(1));
     const out = onLayoutChange.mock.calls[0][0];
     expect(out.columns.flatMap((c) => c.tiles).find((t) => t.session === 'a')).toBeUndefined();
+  });
+});
+
+describe('una finestra staccata non è una destinazione di spostamento', () => {
+  it('dragover sopra la flottante non accende zone né drop', async () => {
+    const layout = due();
+    layout.columns[0].tiles[0].float = { x: 0.2, y: 0.2, w: 0.4, h: 0.4 };
+    const { view } = monta(layout);
+    const slotA = view.container.querySelector('[data-testid="tile-a"]').closest('.nc-tile-slot');
+    Object.defineProperty(slotA, 'getBoundingClientRect', { value: () => ({ left: 0, top: 0, width: 100, height: 100 }), configurable: true });
+    const dt = { types: ['text/nc-session'], getData: () => 'b', setData() {} };
+    fireEvent(slotA, evento('dragover', { clientX: 50, clientY: 50, dataTransfer: dt }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(slotA.className).not.toContain('drop-');
+    expect(view.container.querySelector('[data-testid="nc-drop-zones"]')).toBeNull();
   });
 });
 
