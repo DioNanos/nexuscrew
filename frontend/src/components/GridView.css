@@ -97,13 +97,18 @@
 .nc-gesture-guide.v.snap { border-left: 2px dashed #00cc66; width: 0; }
 .nc-gesture-guide.h.snap { border-top: 2px dashed #00cc66; height: 0; }
 
-/* Badge con le misure dei due lati della coppia. */
+/* Badge con le misure COLONNE×RIGHE dei due lati della coppia: due chip,
+   come il design. Le misure di carattere non escono dal terminale: stima
+   da fontSize (larghezza carattere 0.6x, riga 1.2x). */
 .nc-gesture-badge {
   position: absolute; z-index: 42; pointer-events: none;
   transform: translate(-50%, -50%);
-  background: rgba(5, 20, 8, 0.9); color: #7ee787;
-  border: 1px solid #00cc66; border-radius: 6px;
-  font-size: 11px; padding: 2px 7px; white-space: nowrap;
+  display: flex; gap: 6px;
+}
+.nc-gesture-chip {
+  background: #0a0e0a; border: 1px solid #7ee787; border-radius: 4px;
+  color: #d8ffe8; font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 12px; padding: 3px 7px; white-space: nowrap;
 }
 
 /* Spostamento: copia semitrasparente che segue il mouse, posto di

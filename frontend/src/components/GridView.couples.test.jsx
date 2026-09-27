@@ -169,6 +169,22 @@ describe('GridView gesto resize a coppia', () => {
     expect(true).toBe(true); // nessuna eccezione = pulito
   });
 
+  it('il badge mostra le misure COLONNE×RIGHE dei due lati (non i pixel)', async () => {
+    const { view, onLayoutChange } = montaGrid(twoCols());
+    misura(view, 800, 600); // fontSize tile 11: charW 6.6, rowH 13.2
+    const d = view.container.querySelector('.nc-divider-v');
+    fireEvent(d, evento('pointerdown', { clientX: 400, clientY: 10, pointerId: 1 }));
+    fireEvent(window, evento('pointermove', { clientX: 300, clientY: 10 }));
+    await waitFor(() => expect(view.container.querySelector('.nc-gesture-badge')).toBeTruthy());
+    const badge = view.container.querySelector('.nc-gesture-badge');
+    // lato A: 300px/6.6 = 45 colonne; lato B: 500px/6.6 = 76; righe 600/13.2 = 45
+    expect(badge.textContent).toContain('45×45');
+    expect(badge.textContent).toContain('76×45');
+    expect(badge.textContent).not.toContain('px');
+    fireEvent(window, evento('pointerup', {}));
+    await waitFor(() => expect(onLayoutChange).toHaveBeenCalledTimes(1));
+  });
+
   it('durante il gesto nessun tile si ricrea (spia istanze) e lo scudo copre la griglia', async () => {
     const prima = spia.istanze;
     const { view, onLayoutChange } = montaGrid(threeCols());

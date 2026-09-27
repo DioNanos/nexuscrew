@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import GridTile from './GridTile.jsx';
 import {
   addTile, moveTile, removeTile, sessions, resizeColumnCouple, resizeTileCouple, swapTiles,
-  dropForQuadrant, zoomTile, refKey, MIN_COL_PX, MIN_ROW_PX, SNAP_POINTS, SNAP_PX,
+  dropForQuadrant, zoomTile, refKey, MIN_COL_PX, MIN_ROW_PX, SNAP_POINTS, SNAP_PX, TILE_FONT_DEF,
 } from '../lib/grid-model.js';
 import { cellDisplayName, findManagedCell } from '../lib/cell-display.js';
 import { panelPortForRoute } from '../lib/panel-port.js';
@@ -162,7 +162,12 @@ export default function GridView({
       }
       return { border, snapped, alt: ev.altKey === true };
     };
-    setGesture({ kind: 'col', ci, coupleLeft, couplePx, live: liveOf(e) });
+    setGesture({
+      kind: 'col', ci, coupleLeft, couplePx, live: liveOf(e),
+      pxOther: (gridRef.current && gridRef.current.clientHeight) || 0,
+      fsA: layout.columns[ci].tiles[0]?.fontSize || TILE_FONT_DEF,
+      fsB: layout.columns[ci + 1].tiles[0]?.fontSize || TILE_FONT_DEF,
+    });
     trackResize(
       (ev) => setGesture((g) => (g ? { ...g, live: liveOf(ev) } : g)),
       () => { // pointerup: applica UNA volta sola, con l'ultimo live visto
@@ -208,7 +213,12 @@ export default function GridView({
       }
       return { border, snapped, alt: ev.altKey === true };
     };
-    setGesture({ kind: 'row', ci, ri, coupleTop, couplePx, live: liveOf(e) });
+    setGesture({
+      kind: 'row', ci, ri, coupleTop, couplePx, live: liveOf(e),
+      pxOther: (colEl && colEl.clientWidth) || (gridRef.current && gridRef.current.clientWidth) || 0,
+      fsA: tiles[ri].fontSize || TILE_FONT_DEF,
+      fsB: tiles[ri + 1].fontSize || TILE_FONT_DEF,
+    });
     trackResize(
       (ev) => setGesture((g) => (g ? { ...g, live: liveOf(ev) } : g)),
       () => {
@@ -373,7 +383,16 @@ export default function GridView({
           style={gesture.kind === 'col'
             ? { left: gesture.coupleLeft + gesture.live.border, top: '50%' }
             : { top: gesture.coupleTop + gesture.live.border, left: '50%' }}>
-          {`${Math.round(gesture.live.border)} px · ${Math.round(gesture.couplePx - gesture.live.border)} px`}
+          {[gesture.fsA, gesture.fsB].map((fs, lato) => {
+            const px = lato === 0 ? gesture.live.border : gesture.couplePx - gesture.live.border;
+            const charW = Math.max(1, fs * 0.6);
+            const rowH = Math.max(1, fs * 1.2);
+            return (
+              <span key={lato} className="nc-gesture-chip">
+                {`${Math.round(px / charW)}×${Math.round(gesture.pxOther / rowH)}`}
+              </span>
+            );
+          })}
         </div>
       )}
 
