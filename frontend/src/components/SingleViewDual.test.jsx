@@ -294,6 +294,68 @@ describe('doppia vista: struttura e gestioni', () => {
   });
 });
 
+// NC_MANIGLIA — la maniglia della doppia vista deve SEGUIRE IL DITO: il
+// confine sale se trascino verso l'alto, scende se scendo, in entrambe le
+// disposizioni (cella aperta sopra, o sotto dopo ⇅). I flexGrow sono la
+// misura del confine: con contenitore 800px e pesi in somma 2, un confine
+// a Y px mette Y/800*2 nel pannello sopra e il resto in quello sotto.
+// Minimo 0.2: nessun pannello collassa anche trascinando fuori dallo schermo.
+describe('doppia vista: la maniglia segue il dito', () => {
+  function prepara(container, altezza = 800) {
+    const box = container.querySelector('.nc-dual');
+    Object.defineProperty(box, 'clientHeight', { value: altezza, configurable: true });
+    // jsdom non porta clientY negli eventi pointer sintetici (resta null e
+    // l'aritmetica della maniglia collasserebbe a 0): eventi costruiti a mano
+    // con le coordinate stabilite.
+    const evento = (type, props) => {
+      const e = new Event(type, { bubbles: true, cancelable: true });
+      for (const [k, v] of Object.entries(props)) Object.defineProperty(e, k, { value: v });
+      return e;
+    };
+    return {
+      flex: () => ({
+        main: container.querySelector('[data-testid="pane-main"]').style.flexGrow,
+        side: container.querySelector('[data-testid="pane-side"]').style.flexGrow,
+      }),
+      trascina: (da, a) => {
+        fireEvent(screen.getByTestId('dual-handle'), evento('pointerdown', { clientY: da }));
+        fireEvent(window, evento('pointermove', { clientY: a }));
+        fireEvent(window, evento('pointerup', {}));
+      },
+    };
+  }
+
+  it('cella aperta sopra: su 100px -> confine a 300 (main 0.75 / side 1.25); poi giù -> confine segue', async () => {
+    const { container } = monta();
+    await waitFor(() => expect(spie.perSessione['cloud-Fork'].props.takeSize).toBe(false));
+    const { flex, trascina } = prepara(container);
+    expect(flex()).toEqual({ main: '1', side: '1' });
+    // trascino dalla maniglia (400) verso l'alto fino a 300: il confine SALE
+    // (il listener è nativo su window: il re-render è asincrono, si aspetta)
+    trascina(400, 300);
+    await waitFor(() => expect(flex()).toEqual({ main: '0.75', side: '1.25' }));
+    // e viceversa: da 300 giù fino a 500: il confine SCENDE col dito
+    trascina(300, 500);
+    await waitFor(() => expect(flex()).toEqual({ main: '1.25', side: '0.75' }));
+    // trascinando fuori dallo schermo nessun pannello collassa (min 0.2)
+    trascina(500, -3000);
+    await waitFor(() => expect(flex()).toEqual({ main: '0.2', side: '1.8' }));
+  });
+
+  it('dopo ⇅ (aperta sotto): su 100px -> il sopra (side) si restringe: side 0.75 / main 1.25', async () => {
+    const { container } = monta();
+    await waitFor(() => expect(spie.perSessione['cloud-Fork'].props.takeSize).toBe(false));
+    const { flex, trascina } = prepara(container);
+    fireEvent.click(screen.getByLabelText('dual-swap'));
+    expect(flex()).toEqual({ main: '1', side: '1' });
+    trascina(400, 300);
+    await waitFor(() => expect(flex()).toEqual({ main: '1.25', side: '0.75' }));
+    // e scendendo il sopra (side) si riallarga col dito
+    trascina(300, 460);
+    await waitFor(() => expect(flex()).toEqual({ main: '0.85', side: '1.15' }));
+  });
+});
+
 // F1 (audit NC_0947/0948): il focus può stare sulla seconda cella NEL
 // momento in cui quella sparisce (✕ dell'operatore o onSideGone al poll).
 // Lo stato del focus sopravvive un render — l'effetto che lo azzera gira

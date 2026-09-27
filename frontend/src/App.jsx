@@ -416,8 +416,9 @@ export function SingleView({
   });
 
   // Maniglia delle altezze: stesso schema del drag della griglia (pointermove
-  // fino a up/cancel/blur su window). «Su» allarga il pannello superiore,
-  // quale cella stia sopra; il minimo 0.2 non lascia collassare nessuno.
+  // fino a up/cancel/blur su window). Il confine SEGUE IL DITO in entrambe
+  // le disposizioni: «su» restringe il pannello superiore, quale cella stia
+  // sopra; il minimo 0.2 non lascia collassare nessuno.
   const startDualResize = (startEvent) => {
     startEvent.preventDefault();
     const box = dualBoxRef.current;
@@ -428,7 +429,7 @@ export function SingleView({
     const verso = sideOnTop ? -1 : 1;
     const muovi = (ev) => {
       const somma = partenza.main + partenza.side;
-      const dm = ((startY - ev.clientY) / totale) * somma * verso;
+      const dm = ((ev.clientY - startY) / totale) * somma * verso;
       const main = clampWeight(partenza.main + dm);
       setWeights({ main, side: clampWeight(somma - main) });
     };
