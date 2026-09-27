@@ -74,7 +74,13 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
       <div
         className={`nc-tile-head${floating ? ' nc-float-head' : ''}`}
         draggable={!floating}
-        onPointerDown={floating && onFloatDragStart ? (e) => onFloatDragStart(e) : undefined}
+        // I tasti della barra (riattacca, riduci, ×) NON sono maniglia: uno
+        // spostamento avviato qui catturerebbe il puntatore e il click non
+        // arriverebbe mai al tasto.
+        onPointerDown={floating && onFloatDragStart ? (e) => {
+          if (e.target && e.target.closest && e.target.closest('.nc-tile-actions')) return;
+          onFloatDragStart(e);
+        } : undefined}
         onDragStart={(e) => {
           if (floating) return;
           e.dataTransfer.setData('text/nc-session', tileKey);
