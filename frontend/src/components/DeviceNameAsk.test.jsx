@@ -28,10 +28,10 @@ describe('DeviceNameAsk — il foglio che chiede il nome', () => {
     render(<DeviceNameAsk token="t" suggestion="Pixel 9 Pro" onSaved={onSaved} onLater={vi.fn()} />);
     const campo = screen.getByLabelText('Device name');
     expect(campo.value).toBe('Pixel 9 Pro');
-    fireEvent.change(campo, { target: { value: 'Pixel di DAG' } });
+    fireEvent.change(campo, { target: { value: 'Il mio Pixel' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-    await waitFor(() => expect(mocks.saveConfig).toHaveBeenCalledWith('t', { deviceName: 'Pixel di DAG' }));
-    await waitFor(() => expect(onSaved).toHaveBeenCalledWith('Pixel di DAG'));
+    await waitFor(() => expect(mocks.saveConfig).toHaveBeenCalledWith('t', { deviceName: 'Il mio Pixel' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith('Il mio Pixel'));
   });
 
   it('«più tardi» non salva niente e chiude', () => {
@@ -53,9 +53,9 @@ describe('Wizard — il nome del dispositivo nel setup', () => {
     render(<Wizard token="t" deviceNameNeeded deviceNameSuggestion="Pixel 9 Pro" />);
     const campo = screen.getByLabelText('Device name');
     expect(campo.value).toBe('Pixel 9 Pro');
-    fireEvent.change(campo, { target: { value: 'Pixel di DAG' } });
+    fireEvent.change(campo, { target: { value: 'Il mio Pixel' } });
     fireEvent.click(screen.getByRole('button', { name: 'local only' }));
-    await waitFor(() => expect(mocks.saveConfig).toHaveBeenCalledWith('t', { wizardDone: true, deviceName: 'Pixel di DAG' }));
+    await waitFor(() => expect(mocks.saveConfig).toHaveBeenCalledWith('t', { wizardDone: true, deviceName: 'Il mio Pixel' }));
   });
 
   it('hostname già significativo: nessun campo nome, finish salva solo wizardDone', async () => {
@@ -68,8 +68,8 @@ describe('Wizard — il nome del dispositivo nel setup', () => {
 
   it('il nome scelto alimenta il default locale della PairingCard', () => {
     render(<Wizard token="t" deviceNameNeeded deviceNameSuggestion="" />);
-    fireEvent.change(screen.getByLabelText('Device name'), { target: { value: 'Pixel di DAG' } });
+    fireEvent.change(screen.getByLabelText('Device name'), { target: { value: 'Il mio Pixel' } });
     fireEvent.click(screen.getByRole('button', { name: 'add node' }));
-    expect(screen.getByTestId('pair-card').getAttribute('data-device-default')).toBe('Pixel di DAG');
+    expect(screen.getByTestId('pair-card').getAttribute('data-device-default')).toBe('Il mio Pixel');
   });
 });

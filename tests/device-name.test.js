@@ -53,9 +53,9 @@ async function getSettings(env) {
 }
 
 test('hostname significativo: usato come deviceName, nessuna domanda', async (t) => {
-  const env = await boot(t, {}, { hostname: () => 'vps3' });
+  const env = await boot(t, {}, { hostname: () => 'mynode' });
   const s = await getSettings(env);
-  assert.equal(s.deviceName, 'vps3');
+  assert.equal(s.deviceName, 'mynode');
   assert.equal(s.deviceNameNeeded, false);
   assert.equal(s.deviceNameSuggestion, null);
 });
@@ -83,7 +83,7 @@ test('suggerimento modello dispositivo solo quando serve il nome', async (t) => 
   assert.equal(sNeeded.deviceNameSuggestion, model);
   assert.equal(sNeeded.deviceNameNeeded, true);
 
-  const fine = await boot(t, {}, { hostname: () => 'vps3', deviceModel: () => model });
+  const fine = await boot(t, {}, { hostname: () => 'mynode', deviceModel: () => model });
   const sFine = await getSettings(fine);
   assert.equal(sFine.deviceNameSuggestion, null);
 });
@@ -112,7 +112,7 @@ test('deviceName salvato: accettato dalla POST, persiste su file e sopravvive al
 });
 
 test('deviceName salvato vince anche su hostname significativo', async (t) => {
-  const env = await boot(t, {}, { hostname: () => 'vps3' });
+  const env = await boot(t, {}, { hostname: () => 'mynode' });
   const r = await fetch(`${env.base}/api/settings/config`, {
     method: 'POST', headers: H(env.token), body: JSON.stringify({ deviceName: 'Il mio pixel' }),
   });
@@ -121,7 +121,7 @@ test('deviceName salvato vince anche su hostname significativo', async (t) => {
 });
 
 test('validazione deviceName: vuoto, troppo lungo, control char, non stringa', async (t) => {
-  const env = await boot(t, {}, { hostname: () => 'vps3' });
+  const env = await boot(t, {}, { hostname: () => 'mynode' });
   for (const bad of ['', '   ', 'x'.repeat(65), 'riga\nnuova', 42]) {
     const r = await fetch(`${env.base}/api/settings/config`, {
       method: 'POST', headers: H(env.token), body: JSON.stringify({ deviceName: bad }),
@@ -136,7 +136,7 @@ test('validazione deviceName: vuoto, troppo lungo, control char, non stringa', a
 });
 
 test('peer esistenti invariati: la POST deviceName non tocca nodes.json', async (t) => {
-  const env = await boot(t, {}, { hostname: () => 'vps3' });
+  const env = await boot(t, {}, { hostname: () => 'mynode' });
   const before = fs.readFileSync(env.nodesPath, 'utf8');
   await fetch(`${env.base}/api/settings/config`, {
     method: 'POST', headers: H(env.token), body: JSON.stringify({ deviceName: 'Pixel 9 Pro' }),
