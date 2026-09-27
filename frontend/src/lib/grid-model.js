@@ -396,7 +396,7 @@ export function stripFloating(layout) {
 // Record -> vista: la griglia resta, gli staccati rientrano con addTileStable
 // (colonna meno piena, mai reflow degli altri) + il loro flag float.
 // Unione delle flottanti remote (record) e locali (sporco): per la stessa
-// ref vince la LOCALE, tetto MAX_FLOATING. Fix F2: senza questa fusione il
+// ref vince la LOCALE, tetto MAX_FLOATING. Senza questa fusione il
 // poll con locale sporco cancellava le flottanti aggiunte da un'altra
 // finestra.
 export function fondeFloating(remoteFloating, localFloating) {
@@ -419,7 +419,7 @@ export function materializeFloating(grid, floating) {
     // Le flottanti NON contano contro il tetto della griglia: il server le
     // tiene in un campo del record a parte (9 della griglia + fino a 6
     // flottanti), e la vista le rende position:fixed — aggiungerle con
-    // addTileStable le farebbe sparire oltre il nono tile (F3).
+    // addTileStable le farebbe sparire oltre il nono tile.
     const l = clone(out);
     if (!l.columns.length) l.columns.push({ width: 1, tiles: [] });
     let best = 0;
@@ -528,7 +528,7 @@ export function normalize(raw) {
           // Il flag `float` è VISTA STABILE (finestra staccata): normalize non
           // lo scarta, altrimenti il primo passaggio di
           // resolveLayoutForViewer/cloneLayout lo spegne e la finestra torna
-          // da sola nella griglia (D1).
+          // da sola nella griglia.
           if (t.float) out.float = clampFloatGeom(t.float);
           // `unavailable`/`stale` sono stato EFFIMERO di disponibilita': derivano
           // dal tick della topologia e NON si copiano nel layout normalizzato:

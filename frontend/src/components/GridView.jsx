@@ -192,7 +192,7 @@ export default function GridView({
     e.preventDefault(); e.stopPropagation();
     try { if (e.currentTarget.setPointerCapture && e.pointerId != null) e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* best-effort */ }
     const gridPx = (gridRef.current && gridRef.current.clientWidth) || 0;
-    // D2 — le coordinate della guida sono RELATIVE alla griglia: il rect dei
+    // Le coordinate della guida sono RELATIVE alla griglia: il rect dei
     // col è in coordinate viewport e senza sottrarre l'origine della griglia
     // la linea scattava della larghezza di sidebar + barra deck.
     const gRect = gridRef.current ? gridRef.current.getBoundingClientRect() : null;
@@ -248,8 +248,8 @@ export default function GridView({
     try { if (e.currentTarget.setPointerCapture && e.pointerId != null) e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* best-effort */ }
     const colEl = colRefs.current[ci];
     const gridPx = (colEl && colEl.clientHeight) || (gridRef.current && gridRef.current.clientHeight) || 0;
-    // D2/D3 — come per la colonna: coordinate RELATIVE alla griglia, e la
-    // guida di riga copre la sola colonna (D3: attraversava tutta la griglia).
+    // Come per la colonna: coordinate RELATIVE alla griglia, e la guida di
+    // riga copre la sola colonna (non attraversa tutta la griglia).
     const gRect = gridRef.current ? gridRef.current.getBoundingClientRect() : null;
     const originTop = gRect ? gRect.top : 0;
     const rr = colEl ? colEl.getBoundingClientRect() : null;
@@ -580,7 +580,7 @@ export default function GridView({
             const px = lato === 0 ? gesture.live.border : gesture.couplePx - gesture.live.border;
             const charW = Math.max(1, fs * 0.6);
             const rowH = Math.max(1, fs * 1.2);
-            // D4 — sempre COLONNE×RIGHE: nel resize di riga la larghezza è
+            // Sempre COLONNE×RIGHE: nel resize di riga la larghezza è
             // quella della colonna (pxOther) e l'altezza è il confine (px).
             const misure = gesture.kind === 'col'
               ? `${Math.round(px / charW)}×${Math.round(gesture.pxOther / rowH)}`

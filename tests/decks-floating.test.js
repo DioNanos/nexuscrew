@@ -99,7 +99,7 @@ test('geometria oltre il bordo viene clampata DENTRO (0..1), non rifiutata', asy
   assert.ok(d.floating[0].y + d.floating[0].h <= 1.0000001, 'y+h clampato dentro lo schermo');
 });
 
-// F4 (audit 0.9.51): il campo nuova generazione accetta solo NUMERI veri.
+// Il campo nuova generazione accetta solo NUMERI veri.
 // Stringhe numeriche e null non si coercitono più in silenzio: il record
 // pubblico non deve mai contenere tipi inventati da una conversione.
 test('parseFloating rifiuta geometria e font non numerici (stringhe e null)', () => {

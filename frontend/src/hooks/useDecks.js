@@ -458,7 +458,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           // La finestra è sporca e il remoto è più nuovo — merge
           // remoto ⊕ delta locale invece di restare indietro. Il layout fuso
           // è un cambio di layout: l'autosave lo salva con la revisione nuova.
-          // Fix F2: le flottanti del record REMOTO entrano nel fonduto
+          // Le flottanti del record REMOTO entrano nel fonduto
           // (remote ∪ locale, vince lo sporco locale) — altrimenti il PUT
           // dopo il merge le cancellava.
           const { grid: localGrid, floating: localFloat } = stripFloating(layoutRef.current);
@@ -562,7 +562,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const target = recordsRef.current.find((d) => d.id === id);
     if (!target) throw new Error(`deck inesistente: ${id}`);
     dirtyRef.current = false; skipRef.current = true;
-    // Fix F1: le flottanti del record ENTANO nella vista materializzate —
+    // Le flottanti del record ENTRANO nella vista materializzate —
     // ritornare solo viewLayout le cancellava al primo autosave.
     return vistaMaterializzata(target);
   };

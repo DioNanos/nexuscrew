@@ -85,9 +85,9 @@ describe('stripFloating / materializeFloating — record e ritorno', () => {
 });
 
 
-// Fix audit 0.9.51 (DevWorkerP): il flag float è VISTA STABILE — normalize
-// non lo scarta (D1) — e le flottanti NON contano contro il tetto di 9 tile
-// della griglia (F3): il server le tiene in un campo del record a parte.
+// Il flag float è VISTA STABILE — normalize non lo scarta — e le flottanti
+// NON contano contro il tetto di 9 tile della griglia: il server le tiene in
+// un campo del record a parte.
 describe('grid-model — flottanti e normalize', () => {
   const grigliaPiena = () => ({
     columns: Array.from({ length: 3 }, (_, c) => ({
@@ -96,7 +96,7 @@ describe('grid-model — flottanti e normalize', () => {
     })),
   });
 
-  it('normalize conserva il flag float con la geometria clampata (D1)', () => {
+  it('normalize conserva il flag float con la geometria clampata', () => {
     const layout = {
       columns: [{ width: 1, tiles: [
         { session: 'dev', height: 1, fontSize: 11 },
@@ -114,7 +114,7 @@ describe('grid-model — flottanti e normalize', () => {
     expect(out.columns[0].tiles[0].float).toBeUndefined();
   });
 
-  it('le flottanti materializzano anche con la griglia piena: 9 della griglia + flottante (F3)', () => {
+  it('le flottanti materializzano anche con la griglia piena: 9 della griglia + flottante', () => {
     const visto = materializeFloating(grigliaPiena(), [
       { session: 'fl', x: 0.6, y: 0.1, w: 0.4, h: 0.4, fontSize: 11 },
     ]);

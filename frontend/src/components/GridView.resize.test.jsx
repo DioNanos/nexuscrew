@@ -48,7 +48,7 @@ describe('GridView fine resize', () => {
   });
 });
 
-// Fix audit 0.9.51 D2-D4: la guida vive nel sistema di coordinate della
+// La guida vive nel sistema di coordinate della
 // GRIGLIA (non del viewport: niente offset sidebar+deckbar), la guida di
 // riga copre solo la sua colonna, e il badge di riga dice COLONNE×RIGHE
 // (larghezza÷charW × altezza÷rowH), non l'inverso.
@@ -59,8 +59,8 @@ const fissa = (el, r) => {
   Object.defineProperty(el, 'clientHeight', { configurable: true, value: Math.round(r.height) });
 };
 
-describe('GridView resize nel viewport reale (D2-D4)', () => {
-  it('D2: la linea guida col segue il mouse 1:1 dentro la griglia', async () => {
+describe('GridView resize nel viewport reale', () => {
+  it('la linea guida col segue il mouse 1:1 dentro la griglia', async () => {
     const { container } = render(<GridView layout={twoCols} onLayoutChange={vi.fn()} />);
     fissa(container.querySelector('.nc-grid'), rectOf(233, 56, 791, 800));
     const cols = container.querySelectorAll('.nc-col');
@@ -77,7 +77,7 @@ describe('GridView resize nel viewport reale (D2-D4)', () => {
     await waitFor(() => { expect(guida.style.left).toBe('367px'); }); // 1:1 col mouse
   });
 
-  it('D3: la guida di riga copre solo la sua colonna', async () => {
+  it('la guida di riga copre solo la sua colonna', async () => {
     const { container } = render(<GridView layout={oneColTwoTiles} onLayoutChange={vi.fn()} />);
     fissa(container.querySelector('.nc-grid'), rectOf(233, 56, 791, 800));
     const col = container.querySelector('.nc-col');
@@ -90,7 +90,7 @@ describe('GridView resize nel viewport reale (D2-D4)', () => {
     expect(guida.style.top).toBe('294px'); // 350 mouse − 56 origine griglia
   });
 
-  it('D4: il badge di riga dice colonne×righe (larghezza÷charW × altezza÷rowH)', async () => {
+  it('il badge di riga dice colonne×righe (larghezza÷charW × altezza÷rowH)', async () => {
     const { container } = render(<GridView layout={oneColTwoTiles} onLayoutChange={vi.fn()} />);
     fissa(container.querySelector('.nc-grid'), rectOf(233, 56, 791, 800));
     const col = container.querySelector('.nc-col');

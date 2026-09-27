@@ -305,7 +305,7 @@ export function SingleView({
   // col focus. Larghezza colonna ≈ 0,6 em del font (stima del terminale:
   // non esiste una misura condivisa in Terminal.jsx). L'altra cella resta
   // MONTATA e nascosta: mai smontata, nessun terminale ricreato.
-  // D5 — larghezza REALE del carattere monospace alla dimensione corrente,
+  // Larghezza REALE del carattere monospace alla dimensione corrente,
   // misurata sul DOM (span nascosto): la stima 0,6 em sbagliava le colonne
   // reali del terminale (il font monospace varia per piattaforma). Se il DOM
   // non misura (test/jsdom), fallback alla stima 0,6 em.
@@ -1298,7 +1298,7 @@ export default function App() {
     const saved = await deckStore.rename(from, to);
     if (from === deck) {
       setDeck(saved.id);
-      // Fix F1: anche qui le flottanti del record rientrano materializzate —
+      // Anche qui le flottanti del record rientrano materializzate —
       // installare solo il layout le cancellava al prossimo autosave.
       setLayout(deckStore.vistaMaterializzata(saved));
       setGridFocus(null); setSingle(null);
