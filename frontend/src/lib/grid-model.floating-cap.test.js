@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 // ogni passaggio che la ripulisce — normalize, e la risoluzione per il viewer
 // che il tick di disponibilità applica alla vista corrente — deve contare il
 // tetto della griglia sulle sole tile di griglia.
-import { fondeFloating, materializeFloating, normalize, stripFloating, MAX_FLOATING } from './grid-model.js';
+import { fondeFloating, materializeFloating, normalize, stessaVista, stripFloating, MAX_FLOATING } from './grid-model.js';
 import { resolveLayoutForViewer } from './deck-federation.js';
 
 const grigliaPiena = () => ({
@@ -98,5 +98,23 @@ describe('fondeFloating: geometria a tre vie per campo', () => {
   });
   it('font cambiato altrove, geometria cambiata qui', () => {
     expect(fondeFloating([g(0.1, 0.3, 11)], [g(0.1, 0.3, 14)], [g(0.2, 0.3, 11)])).toEqual([g(0.2, 0.3, 14)]);
+  });
+});
+
+describe('stessaVista', () => {
+  const v = (fs = 11, x = 0.1) => ({ columns: [{ width: 1, tiles: [
+    { session: 'a', height: 1, fontSize: fs },
+    { session: 'fl', height: 1, fontSize: 11, float: { x, y: 0.1, w: 0.3, h: 0.3 } },
+  ] }] });
+  it('ordine delle chiavi diverso: stessa vista', () => {
+    const riordinata = { columns: [{ tiles: [
+      { fontSize: 11, height: 1, session: 'a' },
+      { float: { h: 0.3, w: 0.3, y: 0.1, x: 0.1 }, fontSize: 11, height: 1, session: 'fl' },
+    ], width: 1 }] };
+    expect(stessaVista(v(), riordinata)).toBe(true);
+  });
+  it('font o geometria diversi: viste diverse', () => {
+    expect(stessaVista(v(), v(12))).toBe(false);
+    expect(stessaVista(v(), v(11, 0.2))).toBe(false);
   });
 });

@@ -470,6 +470,20 @@ export function riconciliaStaccate(grid, floating, base, remote, local) {
   return { grid: g, floating: fl.slice(0, MAX_FLOATING) };
 }
 
+// Due viste sono la stessa se hanno le stesse colonne, tile, pesi e font, e
+// le stesse staccate con la stessa geometria — senza badare all'ordine delle
+// chiavi degli oggetti (un merge ricostruisce le tile in un altro ordine).
+export function stessaVista(a, b) {
+  const firma = (layout) => {
+    const { grid, floating } = stripFloating(layout || emptyLayout());
+    return JSON.stringify({
+      g: grid.columns.map((c) => [c.width, c.tiles.map((t) => [refKey(t), t.ownerId || '', t.height, t.fontSize])]),
+      f: floating.map((f) => [refKey(f), f.ownerId || '', f.x, f.y, f.w, f.h, f.fontSize]),
+    });
+  };
+  return firma(a) === firma(b);
+}
+
 export function materializeFloating(grid, floating) {
   let out = grid;
   for (const f of Array.isArray(floating) ? floating : []) {

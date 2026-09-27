@@ -8,7 +8,7 @@ import {
 } from '../lib/deck-model.js';
 import {
   addTileSmart, emptyLayout, mergeRemoteWithLocal, normalize, sessions, stripFloating, materializeFloating,
-  fondeFloating, riconciliaStaccate,
+  fondeFloating, riconciliaStaccate, stessaVista,
 } from '../lib/grid-model.js';
 // Stessa soglia di useNodes: un owner scaduto e' un fatto, non un blip.
 import { OWNER_GRACE_MS } from './useNodes.js';
@@ -433,7 +433,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           // resta quella, come nella 0.9.50). Una modifica fatta mentre il
           // ritentativo è in volo si appoggia su di lei; alla risposta la vista
           // non si tocca più.
-          if (JSON.stringify(fusa) !== JSON.stringify(layoutRef.current)) {
+          if (!stessaVista(fusa, layoutRef.current)) {
             layoutRef.current = fusa;
             skipRef.current = true; setLayout(fusa);
           }
@@ -539,7 +539,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           // Un merge che non cambia la vista (es. il remoto è il nostro PUT
           // ancora in volo) non la tocca; la finestra resta sporca e si salva
           // sulla base nuova — se un PUT è in volo, saveNow lo aspetta prima.
-          if (JSON.stringify(merged) !== JSON.stringify(layoutRef.current)) setLayout(merged);
+          if (!stessaVista(merged, layoutRef.current)) setLayout(merged);
           else saveNow();
           return;
         }
