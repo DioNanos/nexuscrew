@@ -328,7 +328,6 @@ export function SingleView({
       return px;
     };
   }, []);
-  const pxColonna = misuratoreColonne(Math.max(1, fontSize));
   const sommaPesi = Math.max(0.01, weights.main + weights.side);
   const larghezzaBox = dualBoxRef.current?.clientWidth || window.innerWidth;
   // Larghezza UTILE della cella più stretta, quella in cui il terminale
@@ -338,8 +337,10 @@ export function SingleView({
   // (14 px). In orizzontale i pannelli hanno base 0 (sotto), quindi la loro
   // larghezza reale segue i pesi: soglia e terminale contano le stesse colonne.
   const larghezzaUtile = Math.max(0, larghezzaBox - 12) * (Math.min(weights.main, weights.side) / sommaPesi) - 26;
-  const celleStrette = larghezzaUtile / pxColonna;
-  const stretto = orizzontale && celleStrette < 40;
+  // Si misura SOLO con due celle affiancate: la vista singola non tocca il
+  // DOM durante il render (nessuno span di misura, nessun layout forzato).
+  const stretto = !!side && orizzontale
+    && larghezzaUtile / misuratoreColonne(Math.max(1, fontSize)) < 40;
   const zoom = (delta) => setFontSize((v) => writeFontSize(v + delta));
   // Lo zoom dell'anteprima del selettore scrive lo stesso nc_fontsize: quando
   // il foglio si chiude, il terminale principale rilegge il valore UNO che

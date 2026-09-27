@@ -196,6 +196,23 @@ describe('doppia vista in orizzontale', () => {
     }
   });
 
+  it('senza seconda cella nessuna misura del carattere nel DOM (come prima)', async () => {
+    const aggiunte = [];
+    const originale = document.body.appendChild.bind(document.body);
+    document.body.appendChild = (n) => { aggiunte.push(n.tagName); return originale(n); };
+    try {
+      ruota(true);
+      render(<SingleView session="cloud-Dev" cellName="Dev" token="t" onBack={vi.fn()} />);
+      await screen.findByTestId('term');
+      localStorage.setItem('nc_fontsize', '17');
+      ruota(false); ruota(true);
+      await waitFor(() => { expect(document.querySelector('.nc-dual')).toBeNull(); });
+    } finally {
+      document.body.appendChild = originale;
+    }
+    expect(aggiunte.filter((t) => t === 'SPAN')).toEqual([]);
+  });
+
   it('i pesi sono separati: il drag in orizzontale non tocca le altezze del verticale', async () => {
     monta();
     await screen.findByTestId('pane-side');
