@@ -690,7 +690,9 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       }
       const prima = layoutRef.current;
       const saved = await saveNow(origine);
-      if (!saved || (dirtyRef.current && layoutRef.current === prima)) {
+      if (!saved) throw new Error('salvataggio del deck corrente fallito: cambio annullato');
+      // ancora sporca ma senza modifiche nuove: il salvataggio non avanza
+      if (dirtyRef.current && layoutRef.current === prima) {
         throw new Error('salvataggio del deck corrente fallito: cambio annullato');
       }
     }
