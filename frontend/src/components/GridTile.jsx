@@ -22,7 +22,7 @@ import './GridTile.css';
 // cellName (Tranche D): titolo visibile risolto dal campo Fleet `cell` (es.
 // `Dev`). node/route/tmuxSession restano identita' tecniche e non compaiono
 // nel titolo visibile; solo il tooltip porta un identificativo tecnico.
-export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, sessionAlive = alive, available = true, stale = false, presence = null, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0 }) {
+export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, onDragTileStart, alive = true, sessionAlive = alive, available = true, stale = false, presence = null, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0 }) {
   const [inputPreferences] = useInputPreferences();
   // Titolo visibile = nome logico Fleet (gestita) o nome sessione (unmanaged).
   // session (tmuxSession reale) resta l'identita' del tile per attach/drag.
@@ -67,13 +67,16 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
       onMouseDown={() => onFocus && onFocus(tileKey)}
     >
       {/* L'header è la maniglia di drag: un tile APERTO si sposta nella
-          griglia trascinandolo (stesso protocollo delle card sidebar). */}
+          griglia trascinandolo (stesso protocollo delle card sidebar).
+          onDragTileStart dice alla griglia CHIE sta spostando: copia che
+          segue il mouse e posto di provenienza tratteggiato. */}
       <div
         className="nc-tile-head"
         draggable
         onDragStart={(e) => {
           e.dataTransfer.setData('text/nc-session', tileKey);
           e.dataTransfer.effectAllowed = 'move';
+          if (onDragTileStart) onDragTileStart(tileKey);
         }}
       >
         <button className="nc-tile-name" onClick={() => onFocus && onFocus(tileKey)} title={node ? `${visibleName} · ${node}` : visibleName}>

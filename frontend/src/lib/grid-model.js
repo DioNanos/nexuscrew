@@ -227,6 +227,88 @@ export function resizeTile(layout, colIdx, rowIdx, height) {
   return l;
 }
 
+// --- NC_GRIGLIA_DESKTOP: resize a COPPIA in pixel ----------------------------
+// Il bordo segue il mouse 1:1 e cambiano SOLO i due adiacenti: la somma dei
+// loro pesi resta costante, le altre finestre non si muovono. I minimi sono
+// in PIXEL della coppia (non pesi), l'aggancio magnetico scatta solo vicino
+// a 1/3, 1/2, 2/3 della coppia (linee tratteggiate) e si spegne con Alt.
+export const MIN_COL_PX = 120;
+export const MIN_ROW_PX = 60;
+export const SNAP_POINTS = [1 / 3, 0.5, 2 / 3];
+export const SNAP_PX = 16;
+
+// Frazione del bordo richiesta -> frazione valida: clamp ai minimi (in px
+// della coppia, mai oltre la metà) e aggancio opzionale ai divisori canonici.
+function coupleFraction(borderPx, couplePx, minPx, snap) {
+  if (!(couplePx > 0)) return 0.5;
+  const fMin = Math.max(0, Math.min(0.5, minPx / couplePx));
+  let f = borderPx / couplePx;
+  f = Math.max(fMin, Math.min(1 - fMin, f));
+  if (snap) {
+    for (const s of SNAP_POINTS) {
+      if (Math.abs(f - s) * couplePx <= SNAP_PX) { f = s; break; }
+    }
+  }
+  return f;
+}
+
+// gridPx = larghezza dell'intera griglia in px; borderPx = posizione del
+// bordo richiesta dal mouse, in px dall'inizio della coppia. opts.half
+// forza la coppia a metà (doppio clic sulla maniglia).
+export function resizeColumnCouple(layout, colIdx, gridPx, borderPx, opts = {}) {
+  const l = clone(layout);
+  const a = l.columns[colIdx];
+  const b = l.columns[colIdx + 1];
+  if (!a || !b) return layout;
+  const sumTot = l.columns.reduce((s, c) => s + (Number(c.width) || 1), 0);
+  const sum = (Number(a.width) || 1) + (Number(b.width) || 1);
+  const couplePx = (Number(gridPx) || 0) * (sum / (sumTot || 1));
+  const f = opts.half === true ? 0.5 : coupleFraction(borderPx, couplePx, opts.minPx ?? MIN_COL_PX, opts.snap !== false);
+  a.width = sum * f;
+  b.width = sum * (1 - f);
+  return l;
+}
+
+// Qui gridPx = altezza della COLONNA in px; borderPx dall'inizio della coppia
+// di tile (ri | ri+1). opts.half = doppio clic.
+export function resizeTileCouple(layout, colIdx, rowIdx, gridPx, borderPx, opts = {}) {
+  const l = clone(layout);
+  const col = l.columns[colIdx];
+  const a = col && col.tiles[rowIdx];
+  const b = col && col.tiles[rowIdx + 1];
+  if (!a || !b) return layout;
+  const sumTot = col.tiles.reduce((s, t) => s + (Number(t.height) || 1), 0);
+  const sum = (Number(a.height) || 1) + (Number(b.height) || 1);
+  const couplePx = (Number(gridPx) || 0) * (sum / (sumTot || 1));
+  const f = opts.half === true ? 0.5 : coupleFraction(borderPx, couplePx, opts.minPx ?? MIN_ROW_PX, opts.snap !== false);
+  a.height = sum * f;
+  b.height = sum * (1 - f);
+  return l;
+}
+
+// «Centro = SCAMBIA»: le due finestre si scambiano di posto. L'identità e le
+// proprietà per-tile (font, node, ownerId, stato effimero) viaggiano col tile;
+// la geometria (height dello slot, width delle colonne) resta agli slot.
+export function swapTiles(layout, keyA, keyB) {
+  if (!keyA || !keyB || keyA === keyB) return layout;
+  const l = clone(layout);
+  let pa = null; let pb = null;
+  for (const c of l.columns) {
+    for (let i = 0; i < c.tiles.length; i += 1) {
+      const k = refKey(c.tiles[i]);
+      if (k === keyA && !pa) pa = { col: c, i };
+      else if (k === keyB && !pb) pb = { col: c, i };
+    }
+  }
+  if (!pa || !pb) return layout;
+  const ta = pa.col.tiles[pa.i];
+  const tb = pb.col.tiles[pb.i];
+  const senzaGeometria = (t) => { const out = { ...t }; delete out.height; return out; };
+  pa.col.tiles[pa.i] = { ...senzaGeometria(tb), height: ta.height };
+  pb.col.tiles[pb.i] = { ...senzaGeometria(ta), height: tb.height };
+  return l;
+}
+
 // Zoom font di un singolo tile: delta relativo con clamp ai bound.
 // Indici invalidi → layout invariato (stesso riferimento).
 export function zoomTile(layout, colIdx, rowIdx, delta) {

@@ -49,17 +49,82 @@
 }
 .nc-grid-toolbar button:hover { background: #1c3a1c; color: #d8ffe8; }
 
-/* Divisori ridimensionabili (pointer). */
+/* Divisori ridimensionabili (pointer): maniglia SEMPRE visibile a tre
+   puntini, area di presa 11 px, verde mentre trascini. */
 .nc-divider-v {
-  flex: 0 0 6px; cursor: col-resize;
-  margin: 0 1px; border-radius: 2px;
+  flex: 0 0 11px; cursor: col-resize;
+  margin: 0; border-radius: 3px; position: relative;
+  background: rgba(28, 58, 28, 0.35);
+  display: flex; align-items: center; justify-content: center;
 }
-.nc-divider-v:hover { background: #1c3a1c; }
+.nc-divider-v::before {
+  content: '⋮'; color: #4e6b4e; font-size: 13px; line-height: 1;
+}
+.nc-divider-v:hover, .nc-divider-v.dragging { background: #1c3a1c; }
+.nc-divider-v.dragging { background: #00cc66; }
+.nc-divider-v.dragging::before { color: #052; }
 .nc-divider-h {
-  flex: 0 0 6px; cursor: row-resize;
-  margin: 1px 0; border-radius: 2px;
+  flex: 0 0 11px; cursor: row-resize;
+  margin: 0; border-radius: 3px; position: relative;
+  background: rgba(28, 58, 28, 0.35);
+  display: flex; align-items: center; justify-content: center;
 }
-.nc-divider-h:hover { background: #1c3a1c; }
+.nc-divider-h::before {
+  content: '⋯'; color: #4e6b4e; font-size: 13px; line-height: 1;
+}
+.nc-divider-h:hover, .nc-divider-h.dragging { background: #1c3a1c; }
+.nc-divider-h.dragging { background: #00cc66; }
+.nc-divider-h.dragging::before { color: #052; }
+
+/* Gesto di resize attivo: scudo trasparente sopra tutta la griglia — il
+   puntatore non si perde sopra iframe o terminali e il testo non si
+   seleziona. Finestre attenuate. */
+.nc-grid.gesturing .nc-tile { opacity: 0.55; }
+.nc-gesture-shield {
+  position: absolute; inset: 0; z-index: 40;
+  user-select: none; -webkit-user-select: none;
+  cursor: col-resize;
+}
+.nc-gesture-shield.row { cursor: row-resize; }
+
+/* Linea guida che segue il mouse 1:1; tratteggiata quando è agganciata. */
+.nc-gesture-guide {
+  position: absolute; z-index: 41; pointer-events: none; background: #00cc66;
+}
+.nc-gesture-guide.v { top: 0; bottom: 0; width: 2px; transform: translateX(-1px); }
+.nc-gesture-guide.h { left: 0; right: 0; height: 2px; transform: translateY(-1px); }
+.nc-gesture-guide.snap { background: none; border: 0; }
+.nc-gesture-guide.v.snap { border-left: 2px dashed #00cc66; width: 0; }
+.nc-gesture-guide.h.snap { border-top: 2px dashed #00cc66; height: 0; }
+
+/* Badge con le misure dei due lati della coppia. */
+.nc-gesture-badge {
+  position: absolute; z-index: 42; pointer-events: none;
+  transform: translate(-50%, -50%);
+  background: rgba(5, 20, 8, 0.9); color: #7ee787;
+  border: 1px solid #00cc66; border-radius: 6px;
+  font-size: 11px; padding: 2px 7px; white-space: nowrap;
+}
+
+/* Spostamento: copia semitrasparente che segue il mouse, posto di
+   provenienza tratteggiato. */
+.nc-drag-ghost {
+  position: fixed; z-index: 90; pointer-events: none;
+  transform: translate(-50%, -130%);
+  background: rgba(10, 30, 14, 0.85); color: #cfe;
+  border: 1px solid #00cc66; border-radius: 8px;
+  padding: 6px 12px; font-size: 12px; white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+.nc-tile-slot.nc-tile-source > .nc-tile { opacity: 0.4; outline: 2px dashed #4e6b4e; outline-offset: -4px; }
+
+/* Zona «centro = SCAMBIA»: overlay pieno con l'etichetta dello scambio. */
+.nc-tile-slot.drop-center::after {
+  content: '⇄'; position: absolute; z-index: 7; pointer-events: none;
+  inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 204, 102, 0.20); border: 2px solid #00cc66; border-radius: 4px;
+  color: #9f9; font-size: 26px;
+}
 
 /* Indicator "nuova colonna in coda" (drop sull'area destra / griglia vuota). */
 .nc-drop-line-v { flex: 0 0 3px; align-self: stretch; background: #00cc66; border-radius: 2px; }
