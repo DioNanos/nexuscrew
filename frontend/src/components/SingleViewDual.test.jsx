@@ -293,3 +293,72 @@ describe('doppia vista: struttura e gestioni', () => {
     expect(screen.getByTestId('pane-side').textContent).toContain('Fork');
   });
 });
+
+// F1 (audit NC_0947/0948): il focus può stare sulla seconda cella NEL
+// momento in cui quella sparisce (✕ dell'operatore o onSideGone al poll).
+// Lo stato del focus sopravvive un render — l'effetto che lo azzera gira
+// DOPO — e in quel render nessuna espressione deve leggere side.* di un
+// oggetto già null: la vista deve tornare singola, integra, con la barra
+// che scrive nella cella principale.
+describe('doppia vista: chiusura con il focus sulla seconda', () => {
+  const tornaSingola = (view, extra = {}) => view.rerender(
+    <SingleView session="cloud-Dev" cellName="Dev" token="t" onBack={vi.fn()}
+      side={null} onSideClose={vi.fn()} onSideGone={vi.fn()} {...extra} />,
+  );
+
+  it('✕ col focus sulla seconda: nessun crollo, vista singola e barra sull’aperta', async () => {
+    const onSideClose = vi.fn();
+    const view = monta({ onSideClose });
+    await apriComposer();
+    fireEvent.pointerDown(screen.getByTestId('pane-side'));
+    expect(screen.getByTestId('invio').getAttribute('data-target')).toBe('cloud-Fork');
+    fireEvent.click(screen.getByLabelText('dual-close'));
+    expect(onSideClose).toHaveBeenCalledTimes(1);
+    tornaSingola(view, { onSideClose });
+    // il render di transizione (focus residuo, reset non ancora corso) non
+    // deve smontare l'app: DOM vivo e un solo terminale, quello dell'aperta
+    await waitFor(() => expect(screen.getAllByTestId('term')).toHaveLength(1));
+    expect(screen.queryByTestId('pane-side')).toBeNull();
+    expect(screen.getByTestId('term').getAttribute('data-term-session')).toBe('cloud-Dev');
+    // la barra torna subito a scrivere nella cella principale
+    expect(screen.getByTestId('invio').getAttribute('data-target')).toBe('cloud-Dev');
+    fireEvent.click(screen.getByTestId('invio'));
+    expect(spie.perSessione['cloud-Dev'].pastes).toEqual(['ping']);
+    expect(spie.perSessione['cloud-Fork'].pastes).toEqual([]);
+  });
+
+  it('la seconda sparisce da sola (onSideGone) col focus su di lei: nessun crollo, barra sull’aperta', async () => {
+    fixture.sessions['/api'] = [{ name: 'cloud-Dev', activity: 0, attached: false, windows: 1 }];
+    fixture.cells[''] = [{ cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'claude.native', key: 'A' }];
+    const onSideGone = vi.fn();
+    const view = monta({ onSideGone });
+    await apriComposer();
+    fireEvent.pointerDown(screen.getByTestId('pane-side'));
+    expect(screen.getByTestId('invio').getAttribute('data-target')).toBe('cloud-Fork');
+    await waitFor(() => expect(onSideGone).toHaveBeenCalledTimes(1));
+    // il genitore risponde a onSideGone togliendo la side: questo render è quello del difetto
+    tornaSingola(view, { onSideGone });
+    await waitFor(() => expect(screen.getAllByTestId('term')).toHaveLength(1));
+    expect(screen.getByTestId('invio').getAttribute('data-target')).toBe('cloud-Dev');
+    fireEvent.click(screen.getByTestId('invio'));
+    expect(spie.perSessione['cloud-Dev'].pastes).toEqual(['ping']);
+    expect(spie.perSessione['cloud-Fork'].pastes).toEqual([]);
+  });
+
+  it('lista file della seconda aperta + ✕: nessun crollo e nessuna lista orfana', async () => {
+    localStorage.setItem('nc_bar_files_button', 'on');
+    const onSideClose = vi.fn();
+    const view = monta({ onSideClose });
+    fireEvent.pointerDown(screen.getByTestId('pane-side'));
+    // il tasto cartella apre la lista della cella col focus: la seconda
+    fireEvent.click(screen.getByLabelText('bar-menu-files'));
+    expect(screen.getByTestId('files').getAttribute('data-files-session')).toBe('cloud-Fork');
+    fireEvent.click(screen.getByLabelText('dual-close'));
+    expect(onSideClose).toHaveBeenCalledTimes(1);
+    tornaSingola(view, { onSideClose });
+    await waitFor(() => expect(screen.getAllByTestId('term')).toHaveLength(1));
+    expect(screen.getByTestId('term').getAttribute('data-term-session')).toBe('cloud-Dev');
+    // la lista muore con la sua cella: nessun pannello sulla sessione sparita
+    await waitFor(() => expect(screen.queryByTestId('files')).toBeNull());
+  });
+});

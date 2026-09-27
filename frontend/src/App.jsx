@@ -243,6 +243,12 @@ export function SingleView({
   // tocco su un pannello lo sposta. I ref sono PER PANNELLO e non si
   // condividono mai: l'input di una cella non deve finire nell'altra.
   const [focusSide, setFocusSide] = useState(false);
+  // Nel render in cui la seconda cella SPARISCE (✕ o onSideGone) lo stato
+  // del focus sopravvive un ciclo: l'effetto che lo azzera gira DOPO. Ogni
+  // scelta di bersaglio passa da qui — mai da focusSide da solo — così quel
+  // render di transizione ricade sulla cella principale invece di leggere
+  // side.* di un oggetto che non c'e' piu'.
+  const focaLaSide = !!side && focusSide;
   const [sideOnTop, setSideOnTop] = useState(false);
   const [weights, setWeights] = useState({ main: 1, side: 1 });
   const weightsRef = useRef(weights);
@@ -262,6 +268,9 @@ export function SingleView({
   // svuotando e ridisegnando il terminale a ogni ciclo di poll.
   const onFilesCella = useCallback((ev) => setFiles({ source: 'main', ev }), []);
   const onFilesSide = useCallback((ev) => setFiles({ source: 'side', ev }), []);
+  // La lista file della side vale solo finché la side esiste: chiusura e
+  // sparitura non devono lasciarla puntare a una sessione morta.
+  const filesSide = !!side && files?.source === 'side';
   const foca = (secondario) => {
     setFocusSide(secondario);
     setCtrlArmed((secondario ? sideCtrlRef : ctrlRef).current);
@@ -291,7 +300,7 @@ export function SingleView({
   const [ctrlArmed, setCtrlArmed] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const toggleCtrl = () => {
-    const r = focusSide ? sideCtrlRef : ctrlRef;
+    const r = focaLaSide ? sideCtrlRef : ctrlRef;
     r.current = !r.current;
     setCtrlArmed(r.current);
   };
@@ -390,7 +399,7 @@ export function SingleView({
   // (mostra/nasconde, per dispositivo in localStorage): non apre più la lista.
   // Il tasto, quando c'è, fa ciò che faceva la voce: apre/chiude la lista
   // della cella col focus. Il desktop resta com'era, voce = lista.
-  const cellaFoca = focusSide ? 'side' : 'main';
+  const cellaFoca = focaLaSide ? 'side' : 'main';
   const [filesTasto, setFilesTasto] = useState(leggiFilesTasto);
   const apriChiudiFiles = () => setFiles((cur) => (cur && cur.source === cellaFoca ? null : { source: cellaFoca, ev: null }));
   const barItems = barActionsItems({
@@ -436,19 +445,19 @@ export function SingleView({
   // I pannelli si CREANO solo con la seconda presente: le espressioni JSX
   // (side.session nelle strisce) si valutano a ogni render anche senza dual.
   const panePrincipale = side && (
-    <div key="pane-main" className={`nc-dual-pane${focusSide ? '' : ' foco'}`} data-testid="pane-main"
+    <div key="pane-main" className={`nc-dual-pane${focaLaSide ? '' : ' foco'}`} data-testid="pane-main"
       style={{ flexGrow: weights.main }} onPointerDown={() => foca(false)}>
       <div className="nc-dual-strip">
         <span className={`nc-dual-dot${mainPresent ? ' on' : ''}`} aria-hidden="true" />
         <b>{title}</b>
-        {!focusSide && <span className="nc-dual-matita" aria-hidden="true" title={t('dual-focus')}>✎</span>}
+        {!focaLaSide && <span className="nc-dual-matita" aria-hidden="true" title={t('dual-focus')}>✎</span>}
       </div>
       <div className="nc-dual-body">
         {/* readonly fisso: l'effetto di Terminal che crea terminale+socket lo
             ha nelle dipendenze — farlo dipendere dal focus ricostruirebbe i
             due terminali a ogni tocco. L'input diretto segue comunque il
             focus (focused → sock.focus) e i ref instradano barra e tasti. */}
-        <Terminal session={session} node={node} token={token} readonly={readonly} takeSize focused={!focusSide}
+        <Terminal session={session} node={node} token={token} readonly={readonly} takeSize focused={!focaLaSide}
           sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
           ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
           onFiles={onFilesCella} fontSize={fontSize}
@@ -458,12 +467,12 @@ export function SingleView({
     </div>
   );
   const paneSecondario = side && (
-    <div key="pane-side" className={`nc-dual-pane${focusSide ? ' foco' : ''}`} data-testid="pane-side"
+    <div key="pane-side" className={`nc-dual-pane${focaLaSide ? ' foco' : ''}`} data-testid="pane-side"
       style={{ flexGrow: weights.side }} onPointerDown={() => foca(true)}>
       <div className="nc-dual-strip">
         <span className={`nc-dual-dot${sideInfo?.present ? ' on' : ''}`} aria-hidden="true" />
         <b>{sideInfo ? sideInfo.title : side.session}</b>
-        {focusSide && <span className="nc-dual-matita" aria-hidden="true" title={t('dual-focus')}>✎</span>}
+        {focaLaSide && <span className="nc-dual-matita" aria-hidden="true" title={t('dual-focus')}>✎</span>}
         <span className="nc-dual-tasti">
           <button type="button" title={t('dual-swap')} aria-label={t('dual-swap')}
             onPointerDown={(e) => e.stopPropagation()}
@@ -476,7 +485,7 @@ export function SingleView({
       <div className="nc-dual-body">
         {/* takeSize={false}: il size-lock resta alla cella aperta, come per i
             tile della griglia — la seconda non si contende le misure. */}
-        <Terminal session={side.session} node={side.node} token={token} readonly={readonly} takeSize={false} focused={focusSide}
+        <Terminal session={side.session} node={side.node} token={token} readonly={readonly} takeSize={false} focused={focaLaSide}
           sendRef={sideSendRef} composerRef={sideComposerRef} actionRef={sideActionRef}
           ctrlRef={sideCtrlRef} setCtrlArmed={setCtrlArmed}
           onFiles={onFilesSide} fontSize={fontSize}
@@ -558,22 +567,22 @@ export function SingleView({
         )}
       </div>
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} onCellSwitcher={onCellSwitcher} cellSwitcherOpen={cellSwitcherOpen}
-        send={(seq) => (focusSide ? sideSendRef : sendRef).current(seq)}
-        action={(name) => (focusSide ? sideActionRef : actionRef).current(name)}
+        send={(seq) => (focaLaSide ? sideSendRef : sendRef).current(seq)}
+        action={(name) => (focaLaSide ? sideActionRef : actionRef).current(name)}
         ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} selectionMode={selectionMode} onSelectionMode={setSelectionMode}
         keepKeyboardClosed={inputPreferences.keybarKeepsKeyboardClosed} showEnter={inputPreferences.showKeybarEnter}
         keybarLayout={inputPreferences.keybarLayout} />
       {showComposer && (
-        <ComposerBar submitText={(text) => (focusSide ? sideComposerRef : composerRef).current(text)}
-          token={token} session={focusSide ? side.session : session} node={focusSide ? side.node : node}
-          ownerId={focusSide ? side.ownerId : ownerId} readonly={readonly}
+        <ComposerBar submitText={(text) => (focaLaSide ? sideComposerRef : composerRef).current(text)}
+          token={token} session={focaLaSide ? side.session : session} node={focaLaSide ? side.node : node}
+          ownerId={focaLaSide ? side.ownerId : ownerId} readonly={readonly}
           keepKeyboardClosedOnVoice={inputPreferences.voiceKeepsKeyboardClosed} />
       )}
-      {files && (files.source === 'side' ? (
+      {files && (filesSide ? (
         <FilesPanel session={side.session} node={side.node} token={token} filesEvent={files.ev} onClose={() => setFiles(null)} />
-      ) : (
+      ) : files.source === 'main' ? (
         <FilesPanel session={session} node={node} token={token} filesEvent={files.ev} onClose={() => setFiles(null)} />
-      ))}
+      ) : null)}
       {/* le quattro azioni della barra. Su mobile un foglio dal basso, su
           desktop un popover ancorato al ⋯: gli stessi due gusci delle azioni
           cella, nessun menu nuovo. */}
