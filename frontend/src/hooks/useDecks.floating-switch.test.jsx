@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../lib/api.js', () => mocks);
 
 import { useDecks } from './useDecks.js';
-import { emptyLayout, updateFloatGeom, zoomTile } from '../lib/grid-model.js';
+import { emptyLayout, reattachTile, updateFloatGeom, zoomTile } from '../lib/grid-model.js';
 
 const localId = 'a'.repeat(32);
 const griglia = (sessione) => ({ columns: [{ width: 1, tiles: [{ session: sessione, height: 1, fontSize: 11 }] }] });
@@ -43,6 +43,7 @@ function Probe({ start = 'uno' }) {
       <button type="button" onClick={() => { rinomina('due', 'tre').catch(() => {}); }}>rinomina</button>
       <button type="button" onClick={() => setLayout((l) => updateFloatGeom(l, 'fl', { x: 0.1, y: 0.1, w: 0.4, h: 0.5 }))}>sposta</button>
       <button type="button" onClick={() => setLayout((l) => zoomTile(l, 0, 0, 1))}>zoom</button>
+      <button type="button" onClick={() => setLayout((l) => reattachTile(l, 'fl'))}>riattacca</button>
       <pre data-testid="probe">{JSON.stringify({
         ready: value.ready,
         tiles: layout.columns.flatMap((c) => c.tiles.map((t) => ({ s: t.session, f: t.float || null }))),
@@ -137,4 +138,42 @@ describe('useDecks — merge del poll con una flottante aggiunta altrove', () =>
     expect(rev).toBe(2);
     expect(floating).toEqual([{ ...flottante, session: 'remota' }]);
   }, 20000);
+});
+
+// Chi non usa le finestre staccate manda esattamente il body della 0.9.50:
+// nessun campo `floating`. Il campo parte solo se la vista ne ha, o se il
+// record ne aveva e vanno svuotate (l'ultima riattaccata: `floating: []`).
+describe('useDecks — il campo floating solo quando serve', () => {
+  it('deck senza flottanti: PUT e keepalive senza il campo floating', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [
+      { name: 'main', revision: 1, layout: emptyLayout() },
+      { name: 'uno', revision: 1, layout: griglia('a') },
+    ] });
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalled(), { timeout: 4000 });
+    expect(ultimoPut()[5]).toBeUndefined();
+
+    mocks.saveDeck.mockRejectedValue(networkDown());
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    window.dispatchEvent(new Event('pagehide'));
+    expect(mocks.saveDeckKeepalive).toHaveBeenCalledTimes(1);
+    expect(mocks.saveDeckKeepalive.mock.calls[0][5]).toBeUndefined();
+  });
+
+  it('record con una flottante, riattaccata: il PUT svuota il record con floating []', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [
+      { name: 'main', revision: 1, layout: emptyLayout() },
+      { name: 'uno', revision: 1, layout: griglia('a'), floating: [flottante] },
+    ] });
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s).sort()).toEqual(['a', 'fl']));
+    fireEvent.click(screen.getByRole('button', { name: 'riattacca' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalled(), { timeout: 4000 });
+    const [, , layout, , , floating] = ultimoPut();
+    expect(layout.columns.flatMap((c) => c.tiles.map((t) => t.session)).sort()).toEqual(['a', 'fl']);
+    expect(floating).toEqual([]);
+  });
 });

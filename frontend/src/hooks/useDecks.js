@@ -38,6 +38,13 @@ function translateFloating(floating, translate) {
     return [out];
   });
 }
+// Il campo `floating` del PUT parte solo quando serve: la vista ha finestre
+// staccate, oppure il record ne aveva e vanno svuotate (`[]`). Senza nessuna
+// delle due il body resta quello di chi non le usa: solo layout e revisione.
+function floatingPerPut(floatingWin, rec) {
+  if (floatingWin.length) return floatingWin;
+  return Array.isArray(rec.floating) && rec.floating.length ? [] : undefined;
+}
 const routeKey = (route) => (Array.isArray(route) ? route.join('/') : '');
 
 // Cache dell'ultima lista deck (locale + remote): al reload della pagina la
@@ -358,7 +365,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       const { grid: gridOnly, floating: floatingView } = stripFloating(layoutRef.current);
       const canonical = canonicalizeLayoutForOwner(normalize(gridOnly), rec.ownerId, rec.ownerTopology);
       const floatingWin = translateFloating(floatingView, (l) => canonicalizeLayoutForOwner(l, rec.ownerId, rec.ownerTopology));
-      const saved = await saveDeck(token, rec.name, canonical, rec.revision, rec.ownerRoute, floatingWin);
+      const saved = await saveDeck(token, rec.name, canonical, rec.revision, rec.ownerRoute, floatingPerPut(floatingWin, rec));
       const augmented = augmentDeck(saved, ownerForRecord(rec), rec.ownerTopology, rec.local, true);
       install(recordsRef.current.map((d) => d.id === wanted ? augmented : d), false);
       dirtyRef.current = false; setSaveState('saved'); setError(''); setConflict(false);
@@ -425,7 +432,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       const { grid: gridOnly, floating: floatingView } = stripFloating(layoutRef.current);
       const canonical = canonicalizeLayoutForOwner(normalize(gridOnly), rec.ownerId, rec.ownerTopology);
       const floatingWin = translateFloating(floatingView, (l) => canonicalizeLayoutForOwner(l, rec.ownerId, rec.ownerTopology));
-      saveDeckKeepalive(token, rec.name, canonical, rec.revision, rec.ownerRoute, floatingWin);
+      saveDeckKeepalive(token, rec.name, canonical, rec.revision, rec.ownerRoute, floatingPerPut(floatingWin, rec));
     };
     window.addEventListener('pagehide', flush);
     window.addEventListener('beforeunload', flush);
