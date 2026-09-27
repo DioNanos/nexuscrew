@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../lib/api.js', () => mocks);
 
 import { useDecks, flottantiDelMerge } from './useDecks.js';
-import { emptyLayout, reattachTile, removeTile, updateFloatGeom, zoomTile } from '../lib/grid-model.js';
+import { detachTile, emptyLayout, reattachTile, removeTile, updateFloatGeom, zoomTile } from '../lib/grid-model.js';
 
 const localId = 'a'.repeat(32);
 const griglia = (sessione) => ({ columns: [{ width: 1, tiles: [{ session: sessione, height: 1, fontSize: 11 }] }] });
@@ -45,6 +45,7 @@ function Probe({ start = 'uno' }) {
       <button type="button" onClick={() => setLayout((l) => zoomTile(l, 0, 0, 1))}>zoom</button>
       <button type="button" onClick={() => setLayout((l) => reattachTile(l, 'fl'))}>riattacca</button>
       <button type="button" onClick={() => setLayout((l) => removeTile(l, 'fl'))}>chiudi</button>
+      <button type="button" onClick={() => setLayout((l) => detachTile(l, 'b', { x: 0.3, y: 0.2, w: 0.4, h: 0.5 }))}>stacca-b</button>
       <pre data-testid="probe">{JSON.stringify({
         ready: value.ready,
         tiles: layout.columns.flatMap((c) => c.tiles.map((t) => ({ s: t.session, f: t.float || null }))),
@@ -358,5 +359,81 @@ describe('useDecks — 409 e finestre staccate dell\'altra finestra', () => {
     const [, nome, , rev, , floating] = mocks.saveDeck.mock.calls[1];
     expect([nome, rev]).toEqual(['due', 2]);
     expect(floating).toEqual([flottante]);
+  });
+});
+
+// Stato di una finestra = campo anch'esso a tre vie: in griglia, staccata o
+// assente. L'altra finestra la stacca o la riattacca, questa non l'ha toccata
+// (ha fatto solo uno zoom su un'altra tile): vince l'altra. Vale al 409 e nel
+// merge del poll. Le tile mai staccate da nessuna parte restano come prima.
+describe('useDecks — staccata/riattaccata altrove mentre qui si fa altro', () => {
+  const dueTile = { columns: [{ width: 1, tiles: [{ session: 'a', height: 1, fontSize: 11 }, { session: 'b', height: 1, fontSize: 11 }] }] };
+  const soloA = { columns: [{ width: 1, tiles: [{ session: 'a', height: 1, fontSize: 11 }] }] };
+  const conB = { columns: [{ width: 1, tiles: [{ session: 'a', height: 1, fontSize: 11 }, { session: 'fl', height: 1, fontSize: 11 }] }] };
+  const bStaccata = { session: 'b', x: 0.3, y: 0.2, w: 0.4, h: 0.5, fontSize: 11 };
+  const rec = (rev, layout, floating) => ({ name: 'uno', revision: rev, layout, ...(floating ? { floating } : {}) });
+  const store = (r) => ({ decks: [{ name: 'main', revision: 1, layout: emptyLayout() }, r] });
+  const conflitto = (current) => Object.assign(new Error('deck modificato'), { status: 409, data: { current } });
+  const vista = () => stato().tiles.map((t) => `${t.s}${t.f ? '*' : ''}`).sort();
+
+  it('409: l\'altra ha staccato b → il ritentativo la porta staccata, non la rimette in griglia', async () => {
+    mocks.getDecks.mockResolvedValue(store(rec(1, dueTile)));
+    render(<Probe />);
+    await waitFor(() => expect(vista()).toEqual(['a', 'b']));
+    mocks.saveDeck.mockRejectedValueOnce(conflitto(rec(2, soloA, [bStaccata])));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    const [, , layout, rev, , floating] = ultimoPut();
+    expect(rev).toBe(2);
+    expect(layout.columns.flatMap((c) => c.tiles.map((t) => t.session))).toEqual(['a']);
+    expect(floating).toEqual([bStaccata]);
+    await waitFor(() => expect(vista()).toEqual(['a', 'b*']));
+  });
+
+  it('409: l\'altra ha riattaccato fl → il ritentativo la tiene in griglia, non la perde', async () => {
+    mocks.getDecks.mockResolvedValue(store(rec(1, soloA, [flottante])));
+    render(<Probe />);
+    await waitFor(() => expect(vista()).toEqual(['a', 'fl*']));
+    mocks.saveDeck.mockRejectedValueOnce(conflitto(rec(2, conB)));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    const [, , layout, , , floating] = ultimoPut();
+    expect(layout.columns.flatMap((c) => c.tiles.map((t) => t.session)).sort()).toEqual(['a', 'fl']);
+    expect(floating ?? []).toEqual([]); // il record nuovo non ne ha: il campo si omette
+    await waitFor(() => expect(vista()).toEqual(['a', 'fl']));
+  });
+
+  it('poll: l\'altra ha staccato b, qui sporca per altro → b staccata', async () => {
+    let r = 1;
+    mocks.getDecks.mockImplementation(async () => store(r === 1 ? rec(1, dueTile) : rec(2, soloA, [bStaccata])));
+    mocks.saveDeck.mockRejectedValue(networkDown());
+    render(<Probe />);
+    await waitFor(() => expect(vista()).toEqual(['a', 'b']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalled(), { timeout: 4000 });
+    r = 2;
+    await waitFor(() => expect(vista()).toEqual(['a', 'b*']), { timeout: 9000 });
+  }, 20000);
+
+  it('poll: l\'altra ha riattaccato fl, qui sporca per altro → fl in griglia', async () => {
+    let r = 1;
+    mocks.getDecks.mockImplementation(async () => store(r === 1 ? rec(1, soloA, [flottante]) : rec(2, conB)));
+    mocks.saveDeck.mockRejectedValue(networkDown());
+    render(<Probe />);
+    await waitFor(() => expect(vista()).toEqual(['a', 'fl*']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalled(), { timeout: 4000 });
+    r = 2;
+    await waitFor(() => expect(vista()).toEqual(['a', 'fl']), { timeout: 9000 });
+  }, 20000);
+
+  it('409: qui staccata, l\'altra non l\'ha toccata → resta staccata (vince il locale)', async () => {
+    mocks.getDecks.mockResolvedValue(store(rec(1, dueTile)));
+    render(<Probe />);
+    await waitFor(() => expect(vista()).toEqual(['a', 'b']));
+    mocks.saveDeck.mockRejectedValueOnce(conflitto(rec(2, { columns: [{ width: 1.5, tiles: dueTile.columns[0].tiles }] })));
+    fireEvent.click(screen.getByRole('button', { name: 'stacca-b' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    expect(ultimoPut()[5].map((f) => f.session)).toEqual(['b']);
   });
 });

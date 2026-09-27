@@ -434,6 +434,42 @@ export function fondeFloating(baseFloating, remoteFloating, localFloating) {
   return out.slice(0, MAX_FLOATING);
 }
 
+// Stato di una finestra nel merge: staccata, in griglia o assente. Si
+// decide a tre vie come un campo (se la vista locale non l'ha toccata vince
+// il remoto, altrimenti vince il locale; spostarla o ridimensionarla da
+// staccata conta come toccarla), SOLO per le finestre staccate da
+// qualche parte (base, remoto o vista): le tile mai staccate restano come le
+// decide il merge della griglia. base/remote/local = { grid, floating }, tutti
+// nelle stesse coordinate; grid/floating = il risultato dei due merge.
+export function riconciliaStaccate(grid, floating, base, remote, local) {
+  const staccate = (v) => (Array.isArray(v.floating) ? v.floating : []);
+  const stato = (v, k) => (staccate(v).some((f) => refKey(f) === k) ? 'float'
+    : sessions(v.grid).includes(k) ? 'grid' : '');
+  const tileIn = (layout, k) => layout.columns.flatMap((c) => c.tiles).find((t) => refKey(t) === k);
+  const chiavi = new Set([...staccate(base), ...staccate(remote), ...staccate(local)].map((f) => refKey(f)).filter(Boolean));
+  let g = grid;
+  let fl = Array.isArray(floating) ? floating : [];
+  const geom = (v, k) => staccate(v).find((f) => refKey(f) === k);
+  for (const k of chiavi) {
+    const sl = stato(local, k);
+    const sb = stato(base, k);
+    // toccata qui: cambiata di stato, o staccata e spostata/ridimensionata
+    const toccata = sl !== sb || (sl === 'float' && !stessaGeometria(geom(local, k), geom(base, k)));
+    const fin = toccata ? sl : stato(remote, k);
+    if (fin !== 'grid' && sessions(g).includes(k)) g = removeTile(g, k);
+    if (fin !== 'float') fl = fl.filter((f) => refKey(f) !== k);
+    if (fin === 'grid' && !sessions(g).includes(k)) {
+      const t = tileIn(remote.grid, k) || tileIn(local.grid, k) || tileIn(base.grid, k);
+      if (t) g = addTileStable(g, t);
+    }
+    if (fin === 'float' && !fl.some((f) => refKey(f) === k)) {
+      const f = [remote, local, base].map((v) => staccate(v).find((x) => refKey(x) === k)).find(Boolean);
+      if (f) fl = [...fl, f];
+    }
+  }
+  return { grid: g, floating: fl.slice(0, MAX_FLOATING) };
+}
+
 export function materializeFloating(grid, floating) {
   let out = grid;
   for (const f of Array.isArray(floating) ? floating : []) {

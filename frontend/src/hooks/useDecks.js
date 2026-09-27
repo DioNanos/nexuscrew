@@ -8,7 +8,7 @@ import {
 } from '../lib/deck-model.js';
 import {
   addTileSmart, emptyLayout, mergeRemoteWithLocal, normalize, sessions, stripFloating, materializeFloating,
-  fondeFloating,
+  fondeFloating, riconciliaStaccate,
 } from '../lib/grid-model.js';
 // Stessa soglia di useNodes: un owner scaduto e' un fatto, non un blip.
 import { OWNER_GRACE_MS } from './useNodes.js';
@@ -55,6 +55,24 @@ export function flottantiDelMerge(base, remote, localFloat, localNodeId, owners)
     l, localNodeId, owners,
   ));
   return fondeFloating(versoViewer(base), versoViewer(remote), localFloat);
+}
+
+// La vista fusa di un merge (poll con finestra sporca, ritentativo dopo un
+// 409): griglia dal merge del chiamante, staccate a tre vie, e lo stato
+// staccata/in griglia di ogni finestra staccata da qualche parte a tre vie.
+// Tutto nelle coordinate del viewer.
+function vistaFusa(base, remote, localLayout, gridFusa, localNodeId, owners) {
+  const inViewer = (l) => resolveLayoutForViewer(l, localNodeId, owners);
+  const versoViewer = (record) => translateFloating(record && record.floating, inViewer);
+  const { grid: localGrid, floating: localFloat } = stripFloating(localLayout);
+  const r = riconciliaStaccate(
+    gridFusa(localGrid),
+    flottantiDelMerge(base, remote, localFloat, localNodeId, owners),
+    { grid: base ? inViewer(base.layout) : emptyLayout(), floating: versoViewer(base) },
+    { grid: inViewer(remote.layout), floating: versoViewer(remote) },
+    { grid: localGrid, floating: localFloat },
+  );
+  return materializeFloating(r.grid, r.floating);
 }
 const routeKey = (route) => (Array.isArray(route) ? route.join('/') : '');
 
@@ -395,10 +413,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           // Le finestre staccate passano dallo stesso merge a tre vie del poll
           // (base = il record su cui questa finestra ha lavorato): il
           // ritentativo non cancella né riporta indietro quelle dell'altra.
-          const { grid: localGrid, floating: localFloat } = stripFloating(layoutRef.current);
-          const fusa = materializeFloating(localGrid, flottantiDelMerge(
-            conflicted, rebased, localFloat, localNodeIdRef.current, ownersRef.current,
-          ));
+          // la griglia resta quella locale (come prima): cambia solo quel che
+          // riguarda le finestre staccate
+          const fusa = vistaFusa(conflicted, rebased, layoutRef.current, (localGrid) => localGrid,
+            localNodeIdRef.current, ownersRef.current);
           layoutRef.current = fusa;
           install(recordsRef.current.map((d) => d.id === wanted ? rebased : d), false);
           dirtyRef.current = true;
@@ -483,11 +501,9 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           // Le flottanti del record REMOTO entrano nel fonduto
           // (remote ∪ locale, vince lo sporco locale) — altrimenti il PUT
           // dopo il merge le cancellava.
-          const { grid: localGrid, floating: localFloat } = stripFloating(layoutRef.current);
-          const merged = materializeFloating(
-            mergeRemoteWithLocal(viewLayout(remote), localGrid),
-            flottantiDelMerge(here, remote, localFloat, localNodeIdRef.current, ownersRef.current),
-          );
+          const merged = vistaFusa(here, remote, layoutRef.current,
+            (localGrid) => mergeRemoteWithLocal(viewLayout(remote), localGrid),
+            localNodeIdRef.current, ownersRef.current);
           install(next, false);
           setLayout(merged);
           return;
