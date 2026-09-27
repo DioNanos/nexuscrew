@@ -2,6 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.49 — 2026-09-27
+
+- **Desktop: l'esito dell'avvio o riavvio di una cella non resta più fisso in rosso nella barra dei deck: compare su una riga sua sotto la barra e sparisce dopo 10 secondi; gli errori veri restano nel foglio della cella finché non lo chiudi.**
+
 ## 0.9.48 — 2026-09-27
 
 - **Telefono: tasto cartella nella barra in alto (tra lo zoom e il menu ⋯) per aprire i file della cella; si accende e si spegne dal menu ⋯ → Cell files e resta finché è acceso.**
