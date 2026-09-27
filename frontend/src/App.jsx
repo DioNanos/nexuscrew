@@ -11,6 +11,7 @@ import PowerSheet from './components/PowerSheet.jsx';
 import DeckBar from './components/DeckBar.jsx';
 import SettingsPanel from './components/SettingsPanel.jsx';
 import Wizard from './components/Wizard.jsx';
+import DeviceNameAsk from './components/DeviceNameAsk.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
 import { CellActionsPopover, CellActionsSheet } from './components/CellActions.jsx';
@@ -734,8 +735,13 @@ export default function App() {
     setSettingsTab(tab); setSettingsNewCell(newCell); setSettingsLocation(location); setSettingsOpen(true);
   };
   const [wizardOpen, setWizardOpen] = useState(false);
+  // Il nome del dispositivo manca (host muto, es. Termux) e il setup è già
+  // stato fatto: al primo accesso la PWA lo chiede una volta con un foglio
+  // semplice. «Più tardi» vale per la sessione; al prossimo avvio ritorna.
+  const [deviceAsk, setDeviceAsk] = useState(null);
   const [pairDefaults, setPairDefaults] = useState({
     deviceDefault: '', localNodeId: '', localNameDefault: '',
+    deviceNameNeeded: false, deviceNameSuggestion: '',
   });
   // Il nome del NOSTRO nodo (es. VPSCloud), per l'intestazione del gruppo
   // locale nella lista delle celle: il gruppo locale si chiama come il nodo,
@@ -776,6 +782,8 @@ export default function App() {
         deviceDefault: s.deviceName || '',
         localNodeId: s.nodeId || '',
         localNameDefault: s.localName || '',
+        deviceNameNeeded: s.deviceNameNeeded === true,
+        deviceNameSuggestion: s.deviceNameSuggestion || '',
       });
       setLocalNodeLabel(s.deviceName || '');
       setRoDefault(!!c.readonlyDefault);
@@ -787,6 +795,12 @@ export default function App() {
         ? c.nodePanelPorts : {});
       if (s.firstRun === true && !c.readonlyDefault) setWizardOpen(true);
       else if (pairPending) setWizardOpen(true); // deep-link #pair: apri wizard sul pairing
+      else if (s.deviceNameNeeded === true && !c.readonlyDefault) {
+        // setup già fatto ma nome mancante: chiedilo ora (salta se rimandato in sessione)
+        let rimandato = false;
+        try { rimandato = sessionStorage.getItem('nc_device_ask_later') === '1'; } catch (_) { /* private mode */ }
+        if (!rimandato) setDeviceAsk({ suggestion: s.deviceNameSuggestion || '' });
+      }
     }).catch(() => { /* wizard best-effort: la UI resta usabile */ });
     return () => { cancelled = true; };
   }, [token, pairPending]);
@@ -1199,6 +1213,18 @@ export default function App() {
       {wizardOpen && (
         <Wizard token={token} initialPair={pairPending} {...pairDefaults}
           onPairDone={consumePair} onDone={() => setWizardOpen(false)} />
+      )}
+      {deviceAsk && (
+        <DeviceNameAsk token={token} suggestion={deviceAsk.suggestion}
+          onSaved={(nome) => {
+            setLocalNodeLabel(nome);
+            setPairDefaults((d) => ({ ...d, deviceDefault: nome, deviceNameNeeded: false }));
+            setDeviceAsk(null);
+          }}
+          onLater={() => {
+            try { sessionStorage.setItem('nc_device_ask_later', '1'); } catch (_) { /* private mode */ }
+            setDeviceAsk(null);
+          }} />
       )}
       <NotifyCenter token={token} />
     </>

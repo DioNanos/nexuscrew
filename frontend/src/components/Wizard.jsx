@@ -17,19 +17,27 @@ import './Wizard.css';
 // "consuma" (onPairDone pulisce il fragment dal sessionStorage) SOLO a
 // connessione avvenuta o su annulla esplicito: un tentativo fallito resta
 // riprovabile per tutta la sessione del tab.
-export default function Wizard({ token, initialPair, deviceDefault = '', localNodeId = '', localNameDefault = '', onPairDone, onDone }) {
+export default function Wizard({ token, initialPair, deviceDefault = '', localNodeId = '', localNameDefault = '', deviceNameNeeded = false, deviceNameSuggestion = '', onPairDone, onDone }) {
   useLang();
   const [step, setStep] = useState(initialPair ? 'pair' : 'welcome');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  // Nome del dispositivo quando l'host non lo dice (Termux/Android): chiesto
+  // QUI, al setup, e salvato insieme a wizardDone. Il valore scelto alimenta
+  // anche il default locale della PairingCard dello stesso wizard.
+  const [deviceName, setDeviceName] = useState(deviceNameSuggestion || '');
   // Questo passo SMONTA la PairingCard: la riga authorized_keys che il pairing
   // ha prodotto va tenuta qui, altrimenti sparisce proprio al primo pairing.
   const [authKeys, setAuthKeys] = useState(null);
 
   const finish = async () => {
     setBusy(true); setErr(null);
-    try { await saveConfig(token, { wizardDone: true }); if (onPairDone) onPairDone(); onDone(); }
-    catch (e) { setErr(String(e.message || e)); setBusy(false); }
+    try {
+      const patch = { wizardDone: true };
+      if (deviceNameNeeded && deviceName.trim()) patch.deviceName = deviceName.trim();
+      await saveConfig(token, patch);
+      if (onPairDone) onPairDone(); onDone();
+    } catch (e) { setErr(String(e.message || e)); setBusy(false); }
   };
 
   return (
@@ -37,6 +45,16 @@ export default function Wizard({ token, initialPair, deviceDefault = '', localNo
       <div className="nc-wiz-head"><b>{t('wizard-title')}</b><small>{t('hydra-simple')}</small></div>
       {step === 'welcome' && <div className="nc-wiz-body">
         <div className="nc-wiz-done">{t('local-ready')}</div>
+        {deviceNameNeeded && (
+          <div className="nc-wiz-done">{t('wizard-device-name')}</div>
+        )}
+        {deviceNameNeeded && (
+          <label className="nc-field">
+            <span>{t('device-name-label')}</span>
+            <input value={deviceName} onChange={(e) => setDeviceName(e.target.value)} maxLength={64}
+              data-testid="wizard-device-name-input" />
+          </label>
+        )}
         <div className="nc-sheet-actions">
           <button className="nc-btn ghost" disabled={busy} onClick={finish}>{t('local-only')}</button>
           <button className="nc-btn primary" disabled={busy} onClick={() => setStep('pair')}>{t('add-node')}</button>
@@ -44,7 +62,7 @@ export default function Wizard({ token, initialPair, deviceDefault = '', localNo
       </div>}
       {step === 'pair' && <div className="nc-wiz-body">
         <PairingCard token={token} initial={initialPair || ''} autoStart={!!initialPair}
-          deviceDefault={deviceDefault} localNodeId={localNodeId} localNameDefault={localNameDefault}
+          deviceDefault={deviceNameNeeded && deviceName.trim() ? deviceName.trim() : deviceDefault} localNodeId={localNodeId} localNameDefault={localNameDefault}
           onBusyChange={setBusy}
           onSuccess={async (esito) => {
             setAuthKeys(esito && esito.authorizedKeys
