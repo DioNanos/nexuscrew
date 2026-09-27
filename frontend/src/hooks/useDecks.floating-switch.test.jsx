@@ -48,7 +48,7 @@ function Probe({ start = 'uno' }) {
       <button type="button" onClick={() => setLayout((l) => detachTile(l, 'b', { x: 0.3, y: 0.2, w: 0.4, h: 0.5 }))}>stacca-b</button>
       <pre data-testid="probe">{JSON.stringify({
         ready: value.ready,
-        tiles: layout.columns.flatMap((c) => c.tiles.map((t) => ({ s: t.session, f: t.float || null }))),
+        tiles: layout.columns.flatMap((c) => c.tiles.map((t) => ({ s: t.session, f: t.float || null, fs: t.fontSize }))),
       })}</pre>
     </div>
   );
@@ -295,6 +295,73 @@ describe('useDecks — 409 e finestre staccate dell\'altra finestra', () => {
   const rec = (rev, floating) => ({ name: 'uno', revision: rev, layout: griglia('a'), ...(floating ? { floating } : {}) });
   const conflitto = (current) => Object.assign(new Error('deck modificato'), { status: 409, data: { current } });
   const store = (r, altro = []) => ({ decks: [{ name: 'main', revision: 1, layout: emptyLayout() }, r, ...altro] });
+
+  it('audit: una nuova mossa locale durante il retry 409 resta visibile', async () => {
+    const remota = { ...flottante, x: 0.05 };
+    let risolviRetry;
+    let tentativi = 0;
+    mocks.getDecks.mockResolvedValue(store(rec(1, [flottante])));
+    mocks.saveDeck.mockImplementation((_t, name, layout, revision, _route, floating) => {
+      tentativi += 1;
+      if (tentativi === 1) return Promise.reject(conflitto(rec(2, [remota])));
+      if (tentativi === 2) return new Promise((resolve) => { risolviRetry = () => resolve({
+        name, revision: revision + 1, layout, floating,
+      }); });
+      return Promise.resolve({ name, revision: revision + 1, layout, floating });
+    });
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s).sort()).toEqual(['a', 'fl']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    fireEvent.click(screen.getByRole('button', { name: 'sposta' }));
+    expect(stato().tiles.find((t) => t.s === 'fl').f.x).toBe(0.1);
+    await act(async () => { risolviRetry(); });
+    expect(stato().tiles.find((t) => t.s === 'fl').f.x).toBe(0.1);
+  });
+
+  it('audit: chiusura locale durante il retry 409 non rianima la finestra', async () => {
+    let risolviRetry;
+    let tentativi = 0;
+    mocks.getDecks.mockResolvedValue(store(rec(1, [flottante])));
+    mocks.saveDeck.mockImplementation((_t, name, layout, revision, _route, floating) => {
+      tentativi += 1;
+      if (tentativi === 1) return Promise.reject(conflitto(rec(2, [{ ...flottante, x: 0.05 }])));
+      if (tentativi === 2) return new Promise((resolve) => { risolviRetry = () => resolve({
+        name, revision: revision + 1, layout, floating,
+      }); });
+      return Promise.resolve({ name, revision: revision + 1, layout, floating });
+    });
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s).sort()).toEqual(['a', 'fl']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    fireEvent.click(screen.getByRole('button', { name: 'chiudi' }));
+    expect(stato().tiles.map((t) => t.s)).toEqual(['a']);
+    await act(async () => { risolviRetry(); });
+    expect(stato().tiles.map((t) => t.s)).toEqual(['a']);
+  });
+
+  it('audit: deck senza flottanti, secondo zoom durante retry 409 resta visibile', async () => {
+    let risolviRetry;
+    let tentativi = 0;
+    mocks.getDecks.mockResolvedValue(store(rec(1)));
+    mocks.saveDeck.mockImplementation((_t, name, layout, revision, _route, floating) => {
+      tentativi += 1;
+      if (tentativi === 1) return Promise.reject(conflitto(rec(2)));
+      if (tentativi === 2) return new Promise((resolve) => { risolviRetry = () => resolve({
+        name, revision: revision + 1, layout, floating,
+      }); });
+      return Promise.resolve({ name, revision: revision + 1, layout, floating });
+    });
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    expect(stato().tiles[0].fs).toBe(13);
+    await act(async () => { risolviRetry(); });
+    expect(stato().tiles[0].fs).toBe(13);
+  });
 
   it('l\'altra ha aggiunto una flottante, qui solo zoom: il ritentativo la porta e la vista la mostra', async () => {
     mocks.getDecks.mockResolvedValue(store(rec(1)));
