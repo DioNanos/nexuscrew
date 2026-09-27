@@ -265,3 +265,79 @@ describe('flottantiDelMerge — deck federato', () => {
     expect(flottantiDelMerge({ floating: [inOwner] }, { floating: [inOwner] }, [], localNodeId, owners)).toEqual([]);
   });
 });
+
+// 409 = un'altra finestra ha salvato prima. Il ritentativo non deve
+// cancellare né riportare indietro le finestre staccate dell'altra: passa
+// dallo stesso merge a tre vie del poll, con base il record su cui questa
+// finestra ha lavorato. Stessa forma per il cambio deck e la rinomina, che
+// salvano prima la modifica pendente.
+describe('useDecks — 409 e finestre staccate dell\'altra finestra', () => {
+  const rec = (rev, floating) => ({ name: 'uno', revision: rev, layout: griglia('a'), ...(floating ? { floating } : {}) });
+  const conflitto = (current) => Object.assign(new Error('deck modificato'), { status: 409, data: { current } });
+  const store = (r, altro = []) => ({ decks: [{ name: 'main', revision: 1, layout: emptyLayout() }, r, ...altro] });
+
+  it('l\'altra ha aggiunto una flottante, qui solo zoom: il ritentativo la porta e la vista la mostra', async () => {
+    mocks.getDecks.mockResolvedValue(store(rec(1)));
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    mocks.saveDeck.mockRejectedValueOnce(conflitto(rec(2, [flottante])));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    const [, , , rev, , floating] = ultimoPut();
+    expect(rev).toBe(2);
+    expect(floating).toEqual([flottante]);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s).sort()).toEqual(['a', 'fl']));
+  });
+
+  it('l\'altra ha spostato la flottante, qui solo zoom: il ritentativo tiene lo spostamento', async () => {
+    mocks.getDecks.mockResolvedValue(store(rec(1, [flottante])));
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s).sort()).toEqual(['a', 'fl']));
+    const spostata = { ...flottante, x: 0.05 };
+    mocks.saveDeck.mockRejectedValueOnce(conflitto(rec(2, [spostata])));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    expect(ultimoPut()[5]).toEqual([spostata]);
+    await waitFor(() => expect(stato().tiles.find((t) => t.s === 'fl').f.x).toBe(0.05));
+  });
+
+  it('merge del poll: spostata altrove, qui sporca per altro: vince lo spostamento', async () => {
+    let r = 1;
+    const spostata = { ...flottante, x: 0.05 };
+    mocks.getDecks.mockImplementation(async () => store(r === 1 ? rec(1, [flottante]) : rec(2, [spostata])));
+    mocks.saveDeck.mockRejectedValue(networkDown());
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s).sort()).toEqual(['a', 'fl']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalled(), { timeout: 4000 });
+    r = 2;
+    await waitFor(() => expect(stato().tiles.find((t) => t.s === 'fl').f.x).toBe(0.05), { timeout: 9000 });
+  }, 20000);
+
+  it('cambio deck con modifica pendente e 409: la flottante dell\'altra resta nel record', async () => {
+    mocks.getDecks.mockResolvedValue(store(rec(1), [{ name: 'due', revision: 1, layout: griglia('b') }]));
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    mocks.saveDeck.mockRejectedValueOnce(conflitto(rec(2, [flottante])));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    fireEvent.click(screen.getByRole('button', { name: 'seleziona' })); // prima del debounce
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    const [, nome, , rev, , floating] = mocks.saveDeck.mock.calls[1];
+    expect([nome, rev]).toEqual(['uno', 2]);
+    expect(floating).toEqual([flottante]);
+  });
+
+  it('rinomina con modifica pendente e 409: la flottante dell\'altra resta nel record', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [{ name: 'main', revision: 1, layout: emptyLayout() }, { ...rec(1), name: 'due' }] });
+    mocks.renameDeck.mockImplementation(async (_t, _f, to, revision) => ({ name: to, revision: revision + 1, layout: griglia('a'), floating: [flottante] }));
+    render(<Probe start="due" />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    mocks.saveDeck.mockRejectedValueOnce(conflitto({ ...rec(2, [flottante]), name: 'due' }));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    fireEvent.click(screen.getByRole('button', { name: 'rinomina' })); // prima del debounce
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    const [, nome, , rev, , floating] = mocks.saveDeck.mock.calls[1];
+    expect([nome, rev]).toEqual(['due', 2]);
+    expect(floating).toEqual([flottante]);
+  });
+});

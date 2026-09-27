@@ -392,16 +392,27 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
         const conflicted = recordsRef.current.find((d) => d.id === wanted);
         if (conflicted) {
           const rebased = augmentDeck(e.data.current, ownerForRecord(conflicted), conflicted.ownerTopology, conflicted.local, true);
+          // Le finestre staccate passano dallo stesso merge a tre vie del poll
+          // (base = il record su cui questa finestra ha lavorato): il
+          // ritentativo non cancella né riporta indietro quelle dell'altra.
+          const { grid: localGrid, floating: localFloat } = stripFloating(layoutRef.current);
+          const fusa = materializeFloating(localGrid, flottantiDelMerge(
+            conflicted, rebased, localFloat, localNodeIdRef.current, ownersRef.current,
+          ));
+          layoutRef.current = fusa;
           install(recordsRef.current.map((d) => d.id === wanted ? rebased : d), false);
           dirtyRef.current = true;
-          return saveNow(wanted, false);
+          const ok = await saveNow(wanted, false);
+          // la vista mostra il risultato fuso, senza un altro autosave
+          if (ok) { skipRef.current = true; setLayout(fusa); }
+          return ok;
         }
       }
       setSaveState('error'); setError(String(e.message || e));
       if (e.status === 409) setConflict(true);
       return false;
     }
-  }, [ready, token, install]);
+  }, [ready, token, install, setLayout]);
 
   // Azione «ricarica» del conflitto irrisolvibile — riparte dal remoto
   // e scarta la copia locale che non è riuscita a convergere.
