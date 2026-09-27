@@ -25,16 +25,22 @@ vi.mock('../lib/api.js', () => ({
 }));
 
 vi.mock('./Terminal.jsx', () => ({
-  default: function TermSpia({ session, composerRef, sendRef, actionRef, focused, readonly, takeSize }) {
+  default: function TermSpia({ session, composerRef, sendRef, actionRef, focused, readonly, takeSize, onFiles }) {
     const spia = spie.perSessione[session]
-      || (spie.perSessione[session] = { pastes: [], keys: [], actions: [], props: {}, socket: 0 });
+      || (spie.perSessione[session] = { pastes: [], keys: [], actions: [], props: {}, socket: 0, istanze: 0 });
     spia.props = { focused, readonly, takeSize };
     // Replica il contratto di connessione del vero terminale: l'effetto che
     // crea e distrugge terminale+socket dipende da queste props (lo stesso
-    // elenco di Terminal.jsx). Se una cambia, la "connessione" riparte.
+    // elenco di Terminal.jsx, ridotto alle prop che possono cambiare identità
+    // da un render all'altro: le primitive e le CALLBACK). Se una cambia, la
+    // "connessione" riparte.
     React.useEffect(() => {
       spia.socket += 1;
-    }, [session, readonly, takeSize]);
+    }, [session, readonly, takeSize, onFiles]);
+    // Istanze: un terminale creato per montaggio del componente.
+    React.useEffect(() => {
+      spia.istanze += 1;
+    }, []);
     composerRef.current = async (text) => { spia.pastes.push(text); return true; };
     sendRef.current = (seq) => { spia.keys.push(seq); return true; };
     actionRef.current = (name) => { spia.actions.push(name); return true; };
@@ -183,6 +189,43 @@ describe('doppia vista: l’input va solo alla cella col focus', () => {
     // nessuna riconnessione: due terminali, due connessioni, fermi
     expect(spie.perSessione['cloud-Dev'].socket).toBe(1);
     expect(spie.perSessione['cloud-Fork'].socket).toBe(1);
+    expect(screen.getAllByTestId('term')).toHaveLength(2);
+  });
+
+  it('re-render non correlati: 1 terminale/connessione in singola, 2 in doppia', async () => {
+    // SINGOLA: tre re-render con props non correlate (onBack nuovo a ogni giro)
+    // non devono creare né terminali né connessioni nuove.
+    const singola = render(<SingleView session="cloud-Dev" cellName="Dev" token="t" onBack={vi.fn()} />);
+    await waitFor(() => expect(spie.perSessione['cloud-Dev'].socket).toBe(1));
+    for (let i = 0; i < 3; i += 1) {
+      singola.rerender(<SingleView session="cloud-Dev" cellName="Dev" token="t" onBack={() => {}} />);
+    }
+    expect(spie.perSessione['cloud-Dev'].socket).toBe(1);
+    expect(spie.perSessione['cloud-Dev'].istanze).toBe(1);
+    expect(screen.getAllByTestId('term')).toHaveLength(1);
+    singola.unmount();
+
+    // DOPPIA: montaggio a parte con spie da zero — il passaggio singola→doppia
+    // cambia la STRUTTURA (rimonta il pannello principale) e non è un re-render.
+    spie.perSessione = {};
+    const doppia = render(
+      <SingleView session="cloud-Dev" cellName="Dev" token="t" onBack={() => {}}
+        side={{ session: 'cloud-Fork' }} onSideClose={vi.fn()} onSideGone={vi.fn()} />,
+    );
+    await waitFor(() => {
+      expect(spie.perSessione['cloud-Dev'].socket).toBe(1);
+      expect(spie.perSessione['cloud-Fork'].socket).toBe(1);
+    });
+    for (let i = 0; i < 3; i += 1) {
+      doppia.rerender(
+        <SingleView session="cloud-Dev" cellName="Dev" token="t" onBack={() => {}}
+          side={{ session: 'cloud-Fork' }} onSideClose={vi.fn()} onSideGone={vi.fn()} />,
+      );
+    }
+    expect(spie.perSessione['cloud-Dev'].socket).toBe(1);
+    expect(spie.perSessione['cloud-Fork'].socket).toBe(1);
+    expect(spie.perSessione['cloud-Dev'].istanze).toBe(1);
+    expect(spie.perSessione['cloud-Fork'].istanze).toBe(1);
     expect(screen.getAllByTestId('term')).toHaveLength(2);
   });
 });

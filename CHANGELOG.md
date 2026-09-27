@@ -2,6 +2,11 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.47 — 2026-09-27
+
+- **Corretto: nella 0.9.46 il terminale della cella si svuotava e si ridisegnava di continuo.**
+- La callback dei file passata al terminale veniva ricreata a ogni render e, essendo tra le dipendenze dell'effetto di connessione, faceva ripartire il socket a ogni ciclo di aggiornamento. Ora è stabile; un test con spia su connessioni e istanze del terminale verifica che re-render consecutivi non ricostruiscono nulla.
+
 ## 0.9.46 — 2026-09-27
 
 - **Doppia vista su telefono: una seconda cella sotto quella aperta, affiancata dalla lista rapida con un tasto; la barra scrive nella cella col focus.**
