@@ -36,6 +36,7 @@ function Probe({ start = 'uno' }) {
   const rinomina = async (from, to) => {
     const prima = layout;
     const saved = await value.rename(`local:${from}`, to);
+    if (current.split(":").pop() !== from) return; // come App: solo il deck corrente cambia id e vista
     setCurrent(saved.id);
     setLayout((cur) => (cur === prima ? value.vistaMaterializzata(saved) : cur));
   };
@@ -680,5 +681,68 @@ describe('audit — rinomina lenta e autosave del vecchio nome', () => {
     await act(async () => { resolveRename({ name: 'tre', revision: 2, layout: griglia('a') }); });
     expect(stato().tiles[0].fs).toBe(12);
     await waitFor(() => expect(mocks.saveDeck.mock.calls.some((c) => c[1] === 'tre')).toBe(true), { timeout: 1500 });
+  });
+});
+
+// Bordi della regola del cambio deck e della rinomina.
+describe('useDecks — cambio deck e rinomina: niente si scarta, niente finisce nel deck sbagliato', () => {
+  const tre = () => ({ decks: [
+    { name: 'main', revision: 1, layout: emptyLayout() },
+    { name: 'uno', revision: 1, layout: griglia('a') },
+    { name: 'due', revision: 1, layout: griglia('b') },
+  ] });
+  const fontA = (call) => call[2].columns[0].tiles.find((t) => t.session === 'a')?.fontSize;
+
+  it('salvataggio di uscita fallito: il cambio si annulla, la vista e la modifica restano', async () => {
+    mocks.getDecks.mockResolvedValue(tre());
+    mocks.saveDeck.mockRejectedValueOnce(Object.assign(new Error('500'), { status: 500 }));
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    fireEvent.click(screen.getByRole('button', { name: 'seleziona' }));
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalled());
+    await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
+    expect(stato().tiles.map((t) => `${t.s}:${t.fs}`)).toEqual(['a:12']); // resta su «uno», zoom intatto
+    // e l'autosave la salva appena può
+    await waitFor(() => expect(mocks.saveDeck.mock.calls.filter((c) => c[1] === 'uno').length).toBeGreaterThanOrEqual(2), { timeout: 4000 });
+    expect(fontA(ultimoPut())).toBe(12);
+  });
+
+  it('oltre il tetto, il salvataggio staccato che prende un 409 ritenta sul deck di partenza con la vista fissata', async () => {
+    mocks.getDecks.mockResolvedValue(tre());
+    const pendenti = [];
+    mocks.saveDeck.mockImplementation((...args) => new Promise((resolve, reject) => pendenti.push({ args, resolve, reject })));
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    fireEvent.click(screen.getByRole('button', { name: 'seleziona' }));
+    for (let giro = 0; giro < 3; giro += 1) {
+      await waitFor(() => expect(pendenti.length).toBe(giro + 1), { timeout: 4000 });
+      fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+      const { args, resolve } = pendenti[giro];
+      await act(async () => { resolve({ name: args[1], revision: args[3] + 1, layout: args[2] }); });
+    }
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['b']), { timeout: 4000 });
+    // il quarto (staccato) prende un 409: l'altra finestra aveva salvato «uno»
+    await waitFor(() => expect(pendenti.length).toBe(4));
+    await act(async () => { pendenti[3].reject(Object.assign(new Error('409'), { status: 409, data: { current: { name: 'uno', revision: 9, layout: griglia('a') } } })); });
+    await waitFor(() => expect(pendenti.length).toBe(5));
+    const [, nome, , rev] = pendenti[4].args;
+    expect([nome, rev, fontA(pendenti[4].args)]).toEqual(['uno', 9, 15]);
+    expect(stato().tiles.map((t) => t.s)).toEqual(['b']); // la vista di arrivo non si tocca
+  });
+
+  it('rinomina di un deck NON corrente con la vista sporca: la vista non finisce nel deck rinominato', async () => {
+    mocks.getDecks.mockResolvedValue(tre());
+    let resolveRename;
+    mocks.renameDeck.mockImplementationOnce(() => new Promise((resolve) => { resolveRename = resolve; }));
+    render(<Probe />); // corrente: «uno»
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'rinomina' })); // rinomina «due» → «tre»
+    await waitFor(() => expect(mocks.renameDeck).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await act(async () => { resolveRename({ name: 'tre', revision: 2, layout: griglia('b') }); });
+    await waitFor(() => expect(mocks.saveDeck.mock.calls.some((c) => c[1] === 'uno')).toBe(true), { timeout: 4000 });
+    expect(mocks.saveDeck.mock.calls.filter((c) => c[1] === 'tre')).toEqual([]);
   });
 });

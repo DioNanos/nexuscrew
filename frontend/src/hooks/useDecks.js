@@ -459,6 +459,43 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     try { return await volo; } finally { if (voloRef.current === volo) voloRef.current = null; }
   }, [ready, salva]);
 
+  // Salvataggio STACCATO dalla vista: il deck `targetId` con la vista `vista`
+  // fissata (cambio deck oltre il tetto anti-stallo: l'ultimo stato del deck
+  // di partenza). Non tocca la vista corrente né il suo stato sporco — sullo
+  // schermo c'è già il deck di arrivo. 409: merge a tre vie con la vista
+  // fissata come locale e un solo ritentativo. Si mette in coda agli altri
+  // PUT; un fallimento si segnala.
+  const salvaStaccato = useCallback((targetId, vista) => {
+    const wanted = deckIdForLocalOwner(targetId, localNodeIdRef.current);
+    const put = async (rec, v) => {
+      const { grid: gridOnly, floating: floatingView } = stripFloating(v);
+      const canonical = canonicalizeLayoutForOwner(normalize(gridOnly), rec.ownerId, rec.ownerTopology);
+      const floatingWin = translateFloating(floatingView, (l) => canonicalizeLayoutForOwner(l, rec.ownerId, rec.ownerTopology));
+      const saved = await saveDeck(token, rec.name, canonical, rec.revision, rec.ownerRoute, floatingPerPut(floatingWin, rec));
+      const augmented = augmentDeck(saved, ownerForRecord(rec), rec.ownerTopology, rec.local, true);
+      install(recordsRef.current.map((d) => d.id === wanted ? augmented : d), false);
+    };
+    const precedente = voloRef.current;
+    const volo = (async () => {
+      if (precedente) { try { await precedente; } catch (_) { /* gestito da chi l'ha avviato */ } }
+      const rec = recordsRef.current.find((d) => d.id === wanted);
+      if (!rec) { setError(`deck inesistente: ${wanted}`); return false; }
+      try { await put(rec, vista); return true; } catch (e) {
+        if (e.status === 409 && e.data && e.data.current) {
+          const rebased = augmentDeck(e.data.current, ownerForRecord(rec), rec.ownerTopology, rec.local, true);
+          const fusa = vistaFusa(rec, rebased, vista, (localGrid) => localGrid,
+            localNodeIdRef.current, ownersRef.current);
+          try { await put(rebased, fusa); return true; } catch (e2) { e = e2; }
+        }
+        setError(`salvataggio di "${rec.name}" fallito: ${String(e.message || e)}`);
+        return false;
+      }
+    })();
+    voloRef.current = volo;
+    volo.finally(() => { if (voloRef.current === volo) voloRef.current = null; });
+    return volo;
+  }, [token, install]);
+
   // Azione «ricarica» del conflitto irrisolvibile — riparte dal remoto
   // e scarta la copia locale che non è riuscita a convergere.
   const reloadCurrent = useCallback(async () => {
@@ -574,7 +611,8 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   };
   const rename = async (fromId, to) => {
     const deck = recordsRef.current.find((x) => x.id === fromId); if (!deck) throw new Error('deck inesistente');
-    if (deckIdForLocalOwner(fromId, localNodeIdRef.current) === resolveCurrentId() && dirtyRef.current) {
+    const eraCorrente = deckIdForLocalOwner(fromId, localNodeIdRef.current) === resolveCurrentId();
+    if (eraCorrente && dirtyRef.current) {
       const savedDirty = await saveNow(fromId);
       if (!savedDirty) throw new Error(`salvataggio di "${deck.name}" fallito: rinomina annullata`);
     }
@@ -585,7 +623,12 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     saveDeckOrders(replaceDeckOrderId(loadDeckOrders(), ownerKey, fromId, record.id));
     // Target = l'id NUOVO: col vecchio, rinominare il deck corrente sembrava
     // una revoca (record sparito) e la vista veniva svuotata.
-    install(recordsRef.current.map((x) => x.id === fromId ? record : x), false, record.id); return record;
+    install(recordsRef.current.map((x) => x.id === fromId ? record : x), false, record.id);
+    // Una modifica fatta durante la PATCH ha armato l'autosave sul nome
+    // VECCHIO (PUT a vuoto, 404): se la vista è ancora sporca si salva sul
+    // nome nuovo, subito.
+    if (eraCorrente && dirtyRef.current) saveNow(record.id);
+    return record;
   };
   const remove = async (id) => {
     const deck = recordsRef.current.find((x) => x.id === id); if (!deck) throw new Error('deck inesistente');
@@ -630,11 +673,26 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   ), [viewLayout]);
 
   const select = async (id) => {
-    // Si salva finché resta qualcosa: una modifica fatta mentre il
-    // salvataggio di uscita è in volo appartiene ancora al deck di partenza.
-    for (let giro = 0; giro < 3 && dirtyRef.current; giro += 1) {
-      const saved = await saveNow(resolveCurrentId());
-      if (!saved) throw new Error('salvataggio del deck corrente fallito: cambio annullato');
+    // Il cambio deck salva il deck corrente finché la vista ha modifiche:
+    // una modifica fatta mentre il salvataggio di uscita è in volo appartiene
+    // ancora al deck di partenza. Un giro in più parte solo se nel frattempo
+    // la vista è cambiata ancora; se un salvataggio non va a segno, o non fa
+    // avanzare nulla, il cambio si annulla e non si scarta niente.
+    const origine = resolveCurrentId();
+    for (let giro = 0; dirtyRef.current; giro += 1) {
+      if (giro === 3) {
+        // Tetto anti-stallo: chi continua a modificare mentre i salvataggi
+        // sono lenti non blocca il cambio per sempre. L'ultimo stato del deck
+        // di partenza parte COMUNQUE, in un salvataggio staccato dalla vista:
+        // niente si scarta, e il deck di arrivo non ne è toccato.
+        salvaStaccato(origine, layoutRef.current);
+        break;
+      }
+      const prima = layoutRef.current;
+      const saved = await saveNow(origine);
+      if (!saved || (dirtyRef.current && layoutRef.current === prima)) {
+        throw new Error('salvataggio del deck corrente fallito: cambio annullato');
+      }
     }
     const target = recordsRef.current.find((d) => d.id === id);
     if (!target) throw new Error(`deck inesistente: ${id}`);
