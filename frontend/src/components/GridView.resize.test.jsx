@@ -106,3 +106,54 @@ describe('GridView resize nel viewport reale', () => {
     expect(badge.textContent).toContain('120×22');
   });
 });
+
+// La coppia di un divisore NON comincia dove comincia la colonna: fra la 2ª e
+// la 3ª riga la coppia parte dalla 2ª tile. Stessa cosa per le colonne: fra la
+// 2ª e la 3ª la coppia parte dalla 2ª colonna.
+describe('GridView resize: coppie che non partono dall\'inizio', () => {
+  const treRighe = { columns: [{ width: 1, tiles: [
+    { session: 'a', height: 1 }, { session: 'b', height: 1 }, { session: 'c', height: 1 },
+  ] }] };
+  const treColonne = { columns: [
+    { width: 1, tiles: [{ session: 'a', height: 1 }] },
+    { width: 1, tiles: [{ session: 'b', height: 1 }] },
+    { width: 1, tiles: [{ session: 'c', height: 1 }] },
+  ] };
+
+  it('fra 2ª e 3ª riga: −50 px spostano il confine di 50 px, non lo schiacciano in fondo', async () => {
+    const onLayoutChange = vi.fn();
+    const { container } = render(<GridView layout={treRighe} onLayoutChange={onLayoutChange} />);
+    fissa(container.querySelector('.nc-grid'), rectOf(240, 56, 900, 900));
+    fissa(container.querySelector('.nc-col'), rectOf(240, 56, 900, 900));
+    // 3 righe da 300 px: il divisore fra 2ª e 3ª sta a y = 56 + 600
+    const div = container.querySelectorAll('.nc-divider-h')[1];
+    premici(div, { clientX: 400, clientY: 656 });
+    muovi(400, 606, { altKey: true });
+    const guida = await aspettaGuida(container);
+    expect(guida.style.top).toBe('550px'); // 606 − 56: la guida sta sotto il mouse
+    window.dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true, clientX: 400, clientY: 606, altKey: true }));
+    await waitFor(() => expect(onLayoutChange).toHaveBeenCalled());
+    const [l] = onLayoutChange.mock.calls[onLayoutChange.mock.calls.length - 1];
+    const h = l.columns[0].tiles.map((t) => Math.round(t.height * 1000) / 1000);
+    // coppia 2ª+3ª = 600 px, confine a 250 px dal suo inizio: 2 × 250/600
+    expect(h).toEqual([1, 0.833, 1.167]);
+  });
+
+  it('fra 2ª e 3ª colonna: la guida sta sotto il mouse e cambia solo la coppia', async () => {
+    const onLayoutChange = vi.fn();
+    const { container } = render(<GridView layout={treColonne} onLayoutChange={onLayoutChange} />);
+    fissa(container.querySelector('.nc-grid'), rectOf(240, 56, 900, 800));
+    const cols = container.querySelectorAll('.nc-col');
+    fissa(cols[0], rectOf(240, 56, 300, 800));
+    fissa(cols[1], rectOf(540, 56, 300, 800));
+    fissa(cols[2], rectOf(840, 56, 300, 800));
+    premici(container.querySelectorAll('.nc-divider-v')[1], { clientX: 840, clientY: 300 });
+    muovi(790, 300, { altKey: true });
+    const guida = await aspettaGuida(container);
+    expect(guida.style.left).toBe('550px'); // 790 − 240
+    window.dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true, clientX: 790, clientY: 300, altKey: true }));
+    await waitFor(() => expect(onLayoutChange).toHaveBeenCalled());
+    const [l] = onLayoutChange.mock.calls[onLayoutChange.mock.calls.length - 1];
+    expect(l.columns.map((c) => Math.round(c.width * 1000) / 1000)).toEqual([1, 0.833, 1.167]);
+  });
+});

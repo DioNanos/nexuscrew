@@ -253,13 +253,17 @@ export default function GridView({
     const gRect = gridRef.current ? gridRef.current.getBoundingClientRect() : null;
     const originTop = gRect ? gRect.top : 0;
     const rr = colEl ? colEl.getBoundingClientRect() : null;
-    const coupleTop = rr && rr.height > 0 ? rr.top - originTop : 0;
     const colLeft = rr ? rr.left - (gRect ? gRect.left : 0) : 0;
     const colWidth = rr && rr.width > 0 ? rr.width : ((colEl && colEl.clientWidth) || 0);
     const startY = Number.isFinite(e.clientY) ? e.clientY : 0;
     const tiles = layout.columns[ci].tiles;
     const sumH = tiles[ri].height + (tiles[ri + 1]?.height || 0);
     const sumTot = tiles.reduce((s, t) => s + t.height, 0);
+    // La coppia comincia alla tile ri, non in cima alla colonna: sopra ci
+    // sono le righe 0..ri-1, in proporzione ai pesi (stesso criterio con cui
+    // resizeTileCouple ricava i px della coppia).
+    const sopra = tiles.slice(0, ri).reduce((s, t) => s + t.height, 0);
+    const coupleTop = (rr && rr.height > 0 ? rr.top - originTop : 0) + gridPx * (sopra / (sumTot || 1));
     const couplePx = rr && rr.height > 0 ? gridPx * (sumH / (sumTot || 1)) : gridPx * (sumH / (sumTot || 1));
     const minPx = Math.min(MIN_ROW_PX, couplePx / 2);
     const liveOf = (ev) => {
