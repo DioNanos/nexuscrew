@@ -536,14 +536,18 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
             (localGrid) => mergeRemoteWithLocal(viewLayout(remote), localGrid),
             localNodeIdRef.current, ownersRef.current);
           install(next, false);
-          setLayout(merged);
+          // Un merge che non cambia la vista (es. il remoto è il nostro PUT
+          // ancora in volo) non la tocca; la finestra resta sporca e si salva
+          // sulla base nuova — se un PUT è in volo, saveNow lo aspetta prima.
+          if (JSON.stringify(merged) !== JSON.stringify(layoutRef.current)) setLayout(merged);
+          else saveNow();
           return;
         }
         install(next, refreshed && !sporca);
       } catch (_) {}
     }, 5000);
     return () => clearInterval(id);
-  }, [ready, loadAll, install, viewLayout, setLayout]);
+  }, [ready, loadAll, install, viewLayout, setLayout, saveNow]);
 
   // Aggiornamento di VISTA (overlay di disponibilita'): cambia il layout in
   // memoria senza marcare la finestra sporca — un flip di disponibilita' non
