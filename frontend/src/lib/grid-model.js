@@ -538,9 +538,20 @@ export function normalize(raw) {
         }),
     }))
     .filter((c) => c.tiles.length > 0);
+  // Tetti separati, come nel record del server: 9 tile di griglia e, a parte,
+  // MAX_FLOATING staccate. Un tetto unico sulla vista farebbe sparire una tile
+  // (di griglia o flottante) quando la griglia è piena e c'è una staccata.
   const seen = new Set();
+  let inGriglia = 0; let staccate = 0;
   for (const c of columns) {
-    c.tiles = c.tiles.filter((t) => !seen.has(refKey(t)) && seen.add(refKey(t)) && seen.size <= MAX_TILES);
+    c.tiles = c.tiles.filter((t) => {
+      const k = refKey(t);
+      if (seen.has(k)) return false;
+      if (t.float ? staccate >= MAX_FLOATING : inGriglia >= MAX_TILES) return false;
+      seen.add(k);
+      if (t.float) staccate += 1; else inGriglia += 1;
+      return true;
+    });
   }
   return { columns: columns.filter((c) => c.tiles.length > 0) };
 }
