@@ -2,6 +2,11 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.48 — 2026-09-27
+
+- **Telefono: tasto cartella nella barra in alto (tra lo zoom e il menu ⋯) per aprire i file della cella; si accende e si spegne dal menu ⋯ → Cell files e resta finché è acceso.**
+- Contiene la correzione della 0.9.47 (mai pubblicata): il terminale non si svuota più a ogni aggiornamento.
+
 ## 0.9.47 — 2026-09-27
 
 - **Corretto: nella 0.9.46 il terminale della cella si svuotava e si ridisegnava di continuo.**
