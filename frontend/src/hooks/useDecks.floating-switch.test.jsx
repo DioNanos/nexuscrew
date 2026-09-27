@@ -746,3 +746,36 @@ describe('useDecks — cambio deck e rinomina: niente si scarta, niente finisce 
     expect(mocks.saveDeck.mock.calls.filter((c) => c[1] === 'tre')).toEqual([]);
   });
 });
+
+// Rinomina lenta del deck corrente: il server ha già rinominato, la risposta
+// della PATCH non è ancora arrivata, e il poll vede un elenco senza il nome
+// vecchio. Non è una revoca: la vista non si svuota, e alla fine si salva
+// sul nome nuovo la vista vera — mai una griglia vuota.
+describe('useDecks — poll durante una rinomina lenta', () => {
+  it('il poll non svuota la vista e nessun PUT salva una griglia vuota', async () => {
+    let rinominato = false;
+    mocks.getDecks.mockImplementation(async () => ({ decks: [
+      { name: 'main', revision: 1, layout: emptyLayout() },
+      rinominato ? { name: 'tre', revision: 2, layout: griglia('a') } : { name: 'due', revision: 1, layout: griglia('a') },
+    ] }));
+    let resolveRename;
+    mocks.renameDeck.mockImplementationOnce(() => { rinominato = true; return new Promise((resolve) => { resolveRename = resolve; }); });
+    mocks.saveDeck.mockImplementation(async (_t, name, layout, revision, _route, floating) => {
+      if (name === 'due') throw Object.assign(new Error('deck inesistente'), { status: 404 });
+      return { name, revision: revision + 1, layout, ...(floating && floating.length ? { floating } : {}) };
+    });
+    render(<Probe start="due" />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'rinomina' }));
+    await waitFor(() => expect(mocks.renameDeck).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await act(async () => { await new Promise((r) => setTimeout(r, 5600)); }); // passa un poll con la PATCH in volo
+    expect(stato().tiles.map((t) => t.s)).toEqual(['a']);
+    await act(async () => { resolveRename({ name: 'tre', revision: 2, layout: griglia('a') }); });
+    await waitFor(() => expect(mocks.saveDeck.mock.calls.some((c) => c[1] === 'tre')).toBe(true), { timeout: 3000 });
+    for (const c of mocks.saveDeck.mock.calls) expect(c[2].columns.flatMap((k) => k.tiles).length).toBeGreaterThan(0);
+    const suTre = mocks.saveDeck.mock.calls.filter((c) => c[1] === 'tre').at(-1);
+    expect(suTre[2].columns[0].tiles[0].fontSize).toBe(12);
+    expect(stato().tiles.map((t) => `${t.s}:${t.fs}`)).toEqual(['a:12']);
+  }, 20000);
+});

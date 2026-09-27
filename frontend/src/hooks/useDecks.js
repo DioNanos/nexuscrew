@@ -384,6 +384,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   // Un salvataggio alla volta: chi arriva mentre un PUT è in volo ne aspetta
   // la risposta e riparte solo se la vista è ancora sporca.
   const voloRef = useRef(null);
+  // Rinomine in volo: finché la risposta della PATCH non arriva, il poll salta
+  // il giro. Il server può aver già rinominato: un elenco senza il nome
+  // vecchio sembrerebbe una revoca e svuoterebbe la vista.
+  const rinomineInVoloRef = useRef(0);
   const salva = useCallback(async (targetId, allowRebase = true) => {
     if (!ready || !dirtyRef.current) return true;
     const wanted = targetId === undefined ? resolveCurrentId() : deckIdForLocalOwner(targetId, localNodeIdRef.current);
@@ -552,8 +556,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       try {
         // una vista cambiata mentre il poll era in volo conta come sporca:
         // la risposta non la sovrascrive
+        if (rinomineInVoloRef.current) return;
         const vistaPrima = layoutRef.current;
         const next = await loadAll();
+        if (rinomineInVoloRef.current) return;
         const sporca = dirtyRef.current || layoutRef.current !== vistaPrima;
         const here = findCurrent(recordsRef.current);
         const remote = findCurrent(next);
@@ -617,7 +623,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       if (!savedDirty) throw new Error(`salvataggio di "${deck.name}" fallito: rinomina annullata`);
     }
     const fresh = recordsRef.current.find((x) => x.id === fromId); if (!fresh) throw new Error('deck inesistente');
-    const saved = await renameDeck(token, fresh.name, to, fresh.revision, fresh.ownerRoute);
+    rinomineInVoloRef.current += 1;
+    let saved;
+    try { saved = await renameDeck(token, fresh.name, to, fresh.revision, fresh.ownerRoute); }
+    finally { rinomineInVoloRef.current -= 1; }
     const record = augmentDeck(saved, ownerForRecord(fresh), fresh.ownerTopology, fresh.local, true);
     const ownerKey = fresh.local ? LOCAL_OWNER : fresh.ownerId;
     saveDeckOrders(replaceDeckOrderId(loadDeckOrders(), ownerKey, fromId, record.id));
