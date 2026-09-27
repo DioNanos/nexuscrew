@@ -114,3 +114,38 @@ test('parseFloating rifiuta geometria e font non numerici (stringhe e null)', ()
     assert.equal(decksStore.parseFloating(f, layoutOk), null, JSON.stringify(f));
   }
 });
+
+// Un client/nodo di versione precedente salva la griglia senza `floating`
+// e ci mette una sessione che nel record è staccata: vince la griglia, la
+// copia staccata omonima si scarta. Il record resta valido e rileggibile.
+test('PUT senza floating che mette in griglia una sessione staccata: vince la griglia', async (t) => {
+  const { base, token, decksPath } = await boot(t);
+  const h = H(token);
+  await fetch(`${base}/api/decks`, { method: 'POST', headers: h, body: JSON.stringify({ name: 'work' }) });
+  const due = [...floating(), { session: 'altra', x: 0.1, y: 0.1, w: 0.3, h: 0.3, fontSize: 11 }];
+  let r = await fetch(`${base}/api/decks/work`, { method: 'PUT', headers: h, body: JSON.stringify({ layout, expectedRevision: 0, floating: due }) });
+  assert.equal(r.status, 200);
+  const conFork = { columns: [{ width: 1, tiles: [{ session: 'dev', height: 1, fontSize: 11 }, { session: 'fork', height: 1, fontSize: 11 }] }] };
+  r = await fetch(`${base}/api/decks/work`, { method: 'PUT', headers: h, body: JSON.stringify({ layout: conFork, expectedRevision: 1 }) });
+  assert.equal(r.status, 200, await r.clone().text());
+  const d = await r.json();
+  assert.deepEqual(d.layout.columns[0].tiles.map((x) => x.session), ['dev', 'fork']);
+  assert.deepEqual(d.floating.map((f) => f.session), ['altra']);
+  // il file resta valido: la lista si legge e il record è quello
+  const lista = await fetch(`${base}/api/decks`, { headers: h });
+  assert.equal(lista.status, 200);
+  const rec = (await lista.json()).decks.find((x) => x.name === 'work');
+  assert.deepEqual(rec.floating.map((f) => f.session), ['altra']);
+  assert.ok(decksStore.loadStoreStrict(decksPath));
+});
+
+test('PUT senza floating che assorbe l\'unica staccata: il campo sparisce dal record', async (t) => {
+  const { base, token } = await boot(t);
+  const h = H(token);
+  await fetch(`${base}/api/decks`, { method: 'POST', headers: h, body: JSON.stringify({ name: 'work' }) });
+  await fetch(`${base}/api/decks/work`, { method: 'PUT', headers: h, body: JSON.stringify({ layout, expectedRevision: 0, floating: floating() }) });
+  const conFork = { columns: [{ width: 1, tiles: [{ session: 'dev', height: 1, fontSize: 11 }, { session: 'fork', height: 1, fontSize: 11 }] }] };
+  const r = await fetch(`${base}/api/decks/work`, { method: 'PUT', headers: h, body: JSON.stringify({ layout: conFork, expectedRevision: 1 }) });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).floating, undefined);
+});
