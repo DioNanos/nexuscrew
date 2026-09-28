@@ -66,7 +66,6 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
 }
 
 /* Il ⋯ della barra: stesso tondo dei suoi vicini, glifo centrato. */
-.nc-bar-menu { font-size: 18px; line-height: 1; }
 
 /* Transizione slide-in della vista singola (transform 0.2s). */
 .nc-app { animation: nc-slide-in 0.2s ease-out; }

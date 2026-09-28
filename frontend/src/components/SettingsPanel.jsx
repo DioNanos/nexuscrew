@@ -25,6 +25,7 @@ import { useNodes } from '../hooks/useNodes.js';
 import { COMPOSER_RESET_EVENT, clearAllComposerData } from '../lib/composer-model.js';
 import { useInputPreferences } from '../hooks/useInputPreferences.js';
 import { DEFAULT_INPUT_PREFERENCES, KEYBAR_LAYOUTS, TERMINAL_KEYBOARD_GESTURES } from '../lib/input-preferences.js';
+import { RENDERER_DOM, RENDERER_WEBGL, readRendererPreference, writeRendererPreference } from '../lib/terminal-renderer.js';
 import { useNotificationSpeech } from '../hooks/useNotificationSpeech.js';
 import {
   cancelNotificationSpeech, notificationSpeechPrimed, notificationSpeechSupported,
@@ -758,6 +759,13 @@ export function InputTab() {
           <small>{t('keybar-layout-help')}</small>
         </label>
       </div>
+      {/* La tastiera di scrittura era una voce del menu ⋯: e' uno stato
+          iniziale, quindi vive qui come preferenza persistita. */}
+      <label className="nc-check">
+        <input type="checkbox" checked={preferences.showComposer}
+          onChange={(event) => updatePreferences({ showComposer: event.target.checked })} />
+        <span><b>{t('bar-menu-keyboard')}</b><small>{t('bar-menu-keyboard-desc')}</small></span>
+      </label>
       <label className="nc-check">
         <input type="checkbox" checked={preferences.keybarKeepsKeyboardClosed}
           onChange={(event) => updatePreferences({ keybarKeepsKeyboardClosed: event.target.checked })} />
@@ -907,7 +915,16 @@ export function DiagnosticsTab({ token, roster = [], readonly }) {
 }
 
 // --- scheda SISTEMA ------------------------------------------------------------
+// Il renderer si aggancia alla creazione del terminale: la preferenza ha effetto
+// solo dopo il ricaricamento (stessa regola del vecchio interruttore del menu).
+function reloadAfterRendererChange() {
+  if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
+    window.location.reload();
+  }
+}
+
 function SystemTab({ token, settings, readonly, refresh, roster, section, setSection }) {
+  const [rendererPreference, setRendererPreference] = useState(readRendererPreference);
   const [err, setErr] = useState(null);
   const [note, setNote] = useState(null);
   const [confirmRotate, setConfirmRotate] = useState(false);
@@ -1026,6 +1043,21 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
       </div>
 
       {section === 'general' && <>
+        {/* Preferenza locale di questo browser, non del nodo: il renderer GPU
+            era una voce del menu ⋯ della barra. */}
+        <section className="nc-system-group">
+          <div className="nc-set-info">{t('input-settings-local')}</div>
+          <label className="nc-check">
+            <input type="checkbox" checked={rendererPreference === RENDERER_WEBGL}
+              onChange={(event) => {
+                const next = writeRendererPreference(event.target.checked ? RENDERER_WEBGL : RENDERER_DOM);
+                setRendererPreference(next);
+                reloadAfterRendererChange();
+              }} />
+            <span><b>{t('bar-menu-renderer')}</b><small>{t('bar-menu-renderer-desc')}</small></span>
+          </label>
+        </section>
+
         <section className="nc-system-group">
           <h3>{t('system-this-node')}</h3>
           {settings && (

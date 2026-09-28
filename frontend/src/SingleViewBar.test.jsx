@@ -2,14 +2,15 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // barra alta della vista singola.
 //
-// Cosa presidia: la barra espone SOLO −, + e ⋯ (le altre quattro azioni vivono
-// nel menu), ogni voce del menu mostra il proprio stato on/off, la voce
-// «Pannello» esiste solo se la cella pubblica un panelUrl, e il sottotitolo ha
-// il contratto di troncamento che oggi non ha.
+// Cosa presidia: la barra espone −, +, il bottone file (icona download) e — solo
+// se la cella pubblica un panelUrl — il bottone pannello (icona monitor). Il
+// menu ⋯ non esiste piu': tastiera e renderer sono preferenze delle Impostazioni,
+// file e pannello sono due bottoni in fila. Il sottotitolo ha il contratto di
+// troncamento che oggi non ha.
 //
 // Cosa NON presidia: la cascata CSS reale (jsdom non la calcola). Il contratto
 // sul foglio e' letto dal sorgente, come in SettingsPanelFleetMobile.test.js;
@@ -71,92 +72,49 @@ const apri = () => render(
   <SingleView session="cloud-AIDesktopCell" cellName="AIDesktopCell" token="t" onBack={vi.fn()} />,
 );
 
-async function apriMenu() {
-  await waitFor(() => { expect(screen.getByTitle(t('bar-menu-open'))).toBeTruthy(); });
-  fireEvent.click(screen.getByTitle(t('bar-menu-open')));
-  return waitFor(() => screen.getByRole('menu'));
-}
-
-describe('barra alta: solo −, + e ⋯', () => {
-  it('le quattro azioni non stanno piu\' in fila nella barra', async () => {
+describe('barra alta: −, +, file e (se c\'è) pannello', () => {
+  it('le due azioni stanno in fila nella barra, e il menu ⋯ non esiste piu\'', async () => {
     apri();
     await waitFor(() => { expect(screen.getByTitle(t('zoom-out'))).toBeTruthy(); });
-
-    // Restano: −, + e il ⋯.
     expect(screen.getByTitle(t('zoom-in'))).toBeTruthy();
-    expect(screen.getByTitle(t('bar-menu-open'))).toBeTruthy();
-
-    // Non stanno piu' nella barra: sono nel menu.
+    expect(screen.getByTitle(t('bar-menu-files'))).toBeTruthy();
+    expect(screen.getByTitle(t('bar-menu-panel'))).toBeTruthy();
+    // Nessun menu: ne' il trigger, ne' il ruolo, ne' il glifo.
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.querySelector('.nc-bar-menu')).toBeNull();
+    expect(screen.queryByText('⋯')).toBeNull();
+    // Tastiera e renderer non sono piu' azioni di barra (vivono nelle Impostazioni).
     expect(screen.queryByTitle(t('composer'))).toBeNull();
-    expect(screen.queryByTitle(t('files'))).toBeNull();
-    expect(screen.queryByTitle(t('panel'))).toBeNull();
     expect(document.querySelector('.nc-renderer-toggle')).toBeNull();
   });
 
-  // La voce si cerca per `data-cellaction`, non per testo: col sottotitolo il
-  // testo accessibile non e' piu' la sola etichetta.
-  const voce = (menu, id) => within(menu).getAllByRole('menuitemcheckbox')
-    .find((v) => v.dataset.cellaction === id);
-
-  it('il menu ⋯ contiene le quattro voci, con il loro stato vero', async () => {
+  it('il bottone file dichiara stato e nome accessibile, e apre il pannello file', async () => {
     apri();
-    const menu = await apriMenu();
-    const voci = within(menu).getAllByRole('menuitemcheckbox');
-    expect(voci.map((v) => v.dataset.cellaction))
-      .toEqual(['keyboard', 'files', 'panel', 'renderer']);
-    // Stato iniziale misurato, non dedotto: composer chiuso (pointer fine nei
-    // test), file chiusi, pannello chiuso, renderer WebGL (default senza
-    // preferenza scritta).
-    expect(voce(menu, 'keyboard').getAttribute('aria-checked')).toBe('false');
-    expect(voce(menu, 'files').getAttribute('aria-checked')).toBe('false');
-    expect(voce(menu, 'panel').getAttribute('aria-checked')).toBe('false');
-    expect(voce(menu, 'renderer').getAttribute('aria-checked')).toBe('true');
-    // La sottoriga del design c'e' per ogni voce.
-    expect(voce(menu, 'keyboard').querySelector('.nc-cellactions-desc').textContent)
-      .toBe(t('bar-menu-keyboard-desc'));
-    expect(voce(menu, 'renderer').querySelector('.nc-cellactions-desc').textContent)
-      .toBe(t('bar-menu-renderer-desc'));
+    const file = await screen.findByTitle(t('bar-menu-files'));
+    expect(file.getAttribute('aria-label')).toBe(t('bar-menu-files'));
+    expect(file.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(file);
+    await waitFor(() => {
+      expect(screen.getByTitle(t('bar-menu-files')).getAttribute('aria-pressed')).toBe('true');
+    });
   });
 
-  it('ogni voce cambia il proprio stato a ogni tocco', async () => {
+  it('il bottone pannello dichiara stato e apre il pannello della cella', async () => {
     apri();
-    // Il guscio condiviso (CellActions) chiude il menu dopo OGNI azione: lo
-    // stato cambiato si osserva riaprendo. E' il comportamento che il menu ha
-    // gia' per le azioni cella, non una scelta nuova di questa barra.
-    let menu = await apriMenu();
-    expect(voce(menu, 'keyboard').getAttribute('aria-checked')).toBe('false');
-    fireEvent.click(voce(menu, 'keyboard'));
-
-    menu = await apriMenu();
-    expect(voce(menu, 'keyboard').getAttribute('aria-checked')).toBe('true');
-    expect(voce(menu, 'files').getAttribute('aria-checked')).toBe('false');
-
-    fireEvent.click(voce(menu, 'files'));
-    menu = await apriMenu();
-    expect(voce(menu, 'files').getAttribute('aria-checked')).toBe('true');
-
-    fireEvent.click(voce(menu, 'panel'));
-    menu = await apriMenu();
-    expect(voce(menu, 'panel').getAttribute('aria-checked')).toBe('true');
+    const panel = await screen.findByTitle(t('bar-menu-panel'));
+    expect(panel.getAttribute('aria-label')).toBe(t('bar-menu-panel'));
+    expect(panel.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(panel);
+    await waitFor(() => {
+      expect(screen.getByTitle(t('bar-menu-panel')).getAttribute('aria-pressed')).toBe('true');
+    });
   });
 
-  it('il renderer parte dalla preferenza scritta, non da un default', async () => {
-    // Il renderer e' l'unica voce il cui tocco esce dal menu: scrive la
-    // preferenza e RICARICA la pagina. jsdom non naviga (e non lo si puo'
-    // stubbare in modo affidabile), quindi qui si verifica che la voce mostri
-    // lo stato scritto; il tocco con ricaricamento si prova dal vivo.
-    localStorage.setItem('nc-terminal-renderer', 'dom');
-    apri();
-    const menu = await apriMenu();
-    expect(voce(menu, 'renderer').getAttribute('aria-checked')).toBe('false');
-  });
-
-  it('senza panelUrl la voce Pannello non esiste (non e\' una voce spenta)', async () => {
+  it('senza panelUrl il bottone pannello non esiste (non e\' un bottone spento)', async () => {
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [cella('')] }));
     apri();
-    const menu = await apriMenu();
-    expect(voce(menu, 'panel')).toBeUndefined();
-    expect(within(menu).getAllByRole('menuitemcheckbox')).toHaveLength(3);
+    await waitFor(() => { expect(screen.getByTitle(t('bar-menu-files'))).toBeTruthy(); });
+    expect(screen.queryByTitle(t('bar-menu-panel'))).toBeNull();
   });
 });
 

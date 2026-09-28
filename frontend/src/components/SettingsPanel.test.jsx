@@ -208,6 +208,25 @@ describe('Settings Input KeyBar layout', () => {
   });
 });
 
+describe('Settings System renderer (preferenza locale del browser)', () => {
+  it('scrive nc-terminal-renderer e ricarica: la scelta A/B ora vive nelle Impostazioni', () => {
+    // Il ricaricamento (window.location.reload) non e' asseribile qui: jsdom non
+    // permette di sostituire location in modo affidabile. Si presidia la
+    // preferenza scritta, che e' cio' che il ricaricamento consuma.
+    localStorage.removeItem('nc-terminal-renderer');
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+    const check = screen.getByRole('checkbox', { name: /GPU renderer/ });
+    expect(check.checked).toBe(true); // webgl e' il default senza preferenza
+    fireEvent.click(check);
+    // Lo stato che l'interruttore mostra viene dalla preferenza scritta: si
+    // osserva dal DOM invece che dal localStorage, che in questa suite gira su
+    // un file condiviso fra worker e puo' essere azzerato da un altro file.
+    expect(check.checked).toBe(false);
+    fireEvent.click(check);
+    expect(check.checked).toBe(true);
+  });
+});
+
 describe('Settings System diagnostics', () => {
   it('keeps legacy diagnostics links compatible and saves alternateScreen from the nested section', async () => {
     const view = render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="diagnostics" />);

@@ -174,7 +174,6 @@ export const DICTS = {
     'cell-actions-boot': 'Avvio al boot',
     'cell-actions-watch': 'Guarda dal vivo',
     // menu ⋯ della barra alta e intestazione dei gruppi della lista.
-    'bar-menu-open': 'Altre azioni',
     'bar-menu-keyboard': 'Tastiera di scrittura',
     'bar-menu-keyboard-desc': 'sotto il terminale',
     'bar-menu-files': 'File della cella',
@@ -1001,7 +1000,6 @@ export const DICTS = {
     'cell-actions-boot': 'Boot at startup',
     'cell-actions-watch': 'Watch live',
     // the high bar's ⋯ menu and the list's group headers.
-    'bar-menu-open': 'More actions',
     'bar-menu-keyboard': 'On-screen keyboard',
     'bar-menu-keyboard-desc': 'below the terminal',
     'bar-menu-files': 'Cell files',
@@ -1827,7 +1825,6 @@ export const DICTS = {
     'cell-actions-boot': 'Arranque al inicio',
     'cell-actions-watch': 'Ver en vivo',
     // menú ⋯ de la barra superior y cabeceras de grupo de la lista.
-    'bar-menu-open': 'Más acciones',
     'bar-menu-keyboard': 'Teclado en pantalla',
     'bar-menu-keyboard-desc': 'bajo el terminal',
     'bar-menu-files': 'Archivos de la celda',

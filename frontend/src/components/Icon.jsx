@@ -85,6 +85,15 @@ const PATHS = {
       <path d="M5 20h14" />
     </>
   ),
+  // Download (simmetrico di upload): freccia giu' in un vassoio aperto in alto.
+  // E' il tasto «File della cella» della barra alta.
+  download: (
+    <>
+      <path d="M12 4v10" />
+      <polyline points="8 10 12 14 16 10" />
+      <path d="M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4" />
+    </>
+  ),
   chevronLeft: <polyline points="14 6 8 12 14 18" />,
   chevronUp: <polyline points="6 14 12 8 18 14" />,
   chevronDown: <polyline points="6 10 12 16 18 10" />,
