@@ -1295,15 +1295,12 @@ export default function App() {
     await selectDeck(created.id);
   };
   const onRenameDeck = async (from, to) => {
-    const prima = layout;
     const saved = await deckStore.rename(from, to);
     if (from === deck) {
       setDeck(saved.id);
       // Anche qui le flottanti del record rientrano materializzate —
-      // installare solo il layout le cancellava al prossimo autosave. Ma solo
-      // se la vista è quella del clic: una modifica fatta mentre la rinomina
-      // era in volo resta, e l'autosave la salva sul deck rinominato.
-      setLayout((cur) => (cur === prima ? deckStore.vistaMaterializzata(saved) : cur));
+      // installare solo il layout le cancellava al prossimo autosave.
+      setLayout(deckStore.vistaMaterializzata(saved));
       setGridFocus(null); setSingle(null);
       try { history.replaceState(null, '', deckUrl(saved, null)); } catch (_) {}
     }
