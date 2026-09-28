@@ -142,7 +142,7 @@
   color: #cfe; opacity: .4; font-size: 13px; text-align: center; padding: 20px;
 }
 
-/* --- Finestre flottanti (NC_FLOTTANTE) ------------------------------------- */
+/* --- Finestre flottanti ------------------------------------- */
 /* Lo slot flottante: position:fixed con geometria in % del viewport (dal
    flag float del tile). Bordo verde quando ha il focus, ombra come il
    design. Il tile resta montato: è lo stesso albero, solo fuori dal flusso. */

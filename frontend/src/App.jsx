@@ -252,7 +252,7 @@ export function SingleView({
   // side.* di un oggetto che non c'e' piu'.
   const focaLaSide = !!side && focusSide;
   const [sideOnTop, setSideOnTop] = useState(false);
-  // Pesi SEPARATI per orientamento (NC_ORIZZONTALE, design approvato): in
+  // Pesi SEPARATI per orientamento (design approvato della doppia vista orizzontale): in
   // orizzontale i pannelli si affiancano e il confine è verticale. Ogni
   // disposizione ricorda le sue proporzioni per la sessione, in memoria —
   // niente storage: tornando in verticale si ritrovano le altezze di prima.
@@ -300,7 +300,7 @@ export function SingleView({
     setSideInfo(null);
     setFiles((cur) => (cur && cur.source === 'side' ? null : cur));
   }, [sideKey]);
-  // Soglia del design (NC_ORIZZONTALE): in orizzontale, se la cella PIÙ
+  // Soglia del design della doppia vista orizzontale: in orizzontale, se la cella PIÙ
   // STRETTA scende sotto ~40 colonne al font corrente, si vede solo la cella
   // col focus. Larghezza colonna ≈ 0,6 em del font (stima del terminale:
   // non esiste una misura condivisa in Terminal.jsx). L'altra cella resta

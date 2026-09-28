@@ -1,5 +1,5 @@
 'use strict';
-// tests/device-name.test.js — nome di questo dispositivo (NC_NOME_DISPOSITIVO).
+// tests/device-name.test.js — nome di questo dispositivo.
 // Contratto nuovo: deviceName è PERSISTITO in config.json (chiave ammessa da
 // POST /api/settings/config, validazione label 1-64); senza valore salvato il
 // nome viene dall'hostname SOLO se significativo; hostname vuoto/«localhost»

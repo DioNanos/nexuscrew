@@ -493,7 +493,7 @@ test('readSshVersion e solo diagnostica locale, non certifica la policy remota',
   assert.equal(none, null);
 });
 
-// --- audit F2: spawn failure non crasha mai, failure esplicita ----------------
+// --- spawn failure non crasha mai, failure esplicita ----------------
 
 const sshThere = () => ({ stderr: 'OpenSSH_9.6p1\n' });
 const sshMissing = () => ({ error: { code: 'ENOENT' } });
@@ -575,7 +575,7 @@ test('F2 error async: niente crash (uncaught), cleanup pidfile, closeOwnedFd ide
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// --- audit F3: la fd di log aperta internamente non lecca mai ----------------
+// --- la fd di log aperta internamente non lecca mai ----------------
 
 test('F3 successo: la fd aperta internamente viene chiusa sul SUCCESSO (no leak)', () => {
   const dir = tmpDir();

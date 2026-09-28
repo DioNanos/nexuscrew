@@ -409,7 +409,7 @@ function errorHandlerCrashScript() {
   return `
 'use strict';
 const { EventEmitter } = require('node:events');
-const { createLeaseManager } = require(process.env.NC_LEASE_SERVER_PATH);
+const { createLeaseManager } = require(process.env.LEASE_SERVER_PATH_FINTO);
 
 function fakeSocket() {
   const s = new EventEmitter();
@@ -421,12 +421,12 @@ function fakeSocket() {
 }
 
 (async () => {
-  const manager = createLeaseManager({ home: process.env.NC_HOME, log: () => {} });
+  const manager = createLeaseManager({ home: process.env.LEASE_HOME_FINTA, log: () => {} });
   const identity = await manager.track('Dev');
   const sock = fakeSocket();
   const ok = manager.attachInitial('Dev', sock, { generation: 0 });
   if (!ok) { process.exit(2); return; }
-  if (process.env.NC_MODE === 'without-handler') {
+  if (process.env.LEASE_MODE_FINTO === 'without-handler') {
     // Rimuove SOLO il listener sull'istanza fake di QUESTO script isolato.
     sock.removeAllListeners('error');
   }
@@ -447,9 +447,9 @@ function runErrorHandlerScenario(mode) {
   try {
     const env = {
       ...process.env,
-      NC_LEASE_SERVER_PATH: path.join(__dirname, '..', 'lib', 'fleet', 'cell-lease-server.js'),
-      NC_HOME: home,
-      NC_MODE: mode,
+      LEASE_SERVER_PATH_FINTO: path.join(__dirname, '..', 'lib', 'fleet', 'cell-lease-server.js'),
+      LEASE_HOME_FINTA: home,
+      LEASE_MODE_FINTO: mode,
     };
     try {
       execFileSync(process.execPath, [scriptPath], { env, timeout: 5000, stdio: 'pipe' });

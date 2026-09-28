@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, waitFor } from '@testing-library/react';
 
-// NC_GRIGLIA_DESKTOP — il gesto della griglia desktop: resize a coppia in px
+// Il gesto della griglia desktop: resize a coppia in px
 // (bordo 1:1, UN solo onLayoutChange al rilascio, non adiacenti invariate),
 // aggancio magnetico con Alt che lo spegne, doppio clic = coppia a metà,
 // annullamento (pointercancel/blur/unmount, Esc durante lo spostamento),
@@ -59,7 +59,7 @@ function misura(view, w = 800, h = 600) {
 }
 
 describe('GridView gesto resize a coppia', () => {
-  it('audit: il divisore tra seconda e terza riga segue la sua coppia', async () => {
+  it('il divisore tra seconda e terza riga segue la sua coppia', async () => {
     const layout = { columns: [{ width: 1, tiles: [
       { session: 'a', height: 1 }, { session: 'b', height: 1 }, { session: 'c', height: 1 },
     ] }] };

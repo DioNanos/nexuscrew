@@ -294,7 +294,7 @@ describe('doppia vista: struttura e gestioni', () => {
   });
 });
 
-// NC_MANIGLIA — la maniglia della doppia vista deve SEGUIRE IL DITO: il
+// La maniglia della doppia vista deve SEGUIRE IL DITO: il
 // confine sale se trascino verso l'alto, scende se scendo, in entrambe le
 // disposizioni (cella aperta sopra, o sotto dopo ⇅). I flexGrow sono la
 // misura del confine: con contenitore 800px e pesi in somma 2, un confine
@@ -356,7 +356,7 @@ describe('doppia vista: la maniglia segue il dito', () => {
   });
 });
 
-// F1 (audit NC_0947/0948): il focus può stare sulla seconda cella NEL
+// Dal rilievo che ha mosso la correzione: il focus può stare sulla seconda cella NEL
 // momento in cui quella sparisce (✕ dell'operatore o onSideGone al poll).
 // Lo stato del focus sopravvive un render — l'effetto che lo azzera gira
 // DOPO — e in quel render nessuna espressione deve leggere side.* di un

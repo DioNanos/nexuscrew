@@ -11,7 +11,7 @@ import { advanceTileRuntime, initialTileRuntime, PRESENZA } from '../lib/termina
 import { useInputPreferences } from '../hooks/useInputPreferences.js';
 import './GridTile.css';
 
-// Un tile della griglia. Ogni tile ha i PROPRI ref (audit F6: mai condivisi
+// Un tile della griglia. Ogni tile ha i PROPRI ref (mai condivisi
 // tra tile — altrimenti l'input di uno finirebbe nel PTY di un altro).
 // takeSize: false per i tile in griglia (il size-lock sta alla vista singola:
 // 3 tile non si contendono la geometria tmux); TRUE per ogni finestra staccata,

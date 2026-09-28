@@ -410,7 +410,7 @@ describe('Settings native node audio', () => {
   });
 });
 
-describe('Settings Nodes tab — VL nodes appear in the same list (NC_UI_NODI_VL)', () => {
+describe('Settings Nodes tab — VL nodes appear in the same list (UI nodi VL)', () => {
   const vlPeer = vlNodeToPeer({
     nodeId: 'a'.repeat(32), label: 'VL-Node-A', cell: 'VL-aaaaaaaa',
     pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
@@ -490,11 +490,11 @@ describe('Settings Nodes tab — VL nodes appear in the same list (NC_UI_NODI_VL
   });
 });
 
-// Step 3 (NC_UI_NODI_VL_REMOTI): la federazione di /vl-nodes/* e' stata
+// Step 3 (UI nodi VL remoti): la federazione di /vl-nodes/* e' stata
 // ripristinata (b0e8bd1) — la UI deve aggregare i nodi VL di TUTTI gli owner
 // autorizzati (locale + topologia non-stale), non solo il locale. Pattern
 // portato da `readVlDirectory` (lib/mcp/tools.js).
-describe('Settings Nodes tab — VL nodes across REMOTE owners (NC_UI_NODI_VL_REMOTI)', () => {
+describe('Settings Nodes tab — VL nodes across REMOTE owners (UI nodi VL remoti)', () => {
   const remoteOwnerTopology = {
     nodes: [{ instanceId: 'remote-node-a-000', route: ['node-a'], label: 'Node A', stale: false }],
   };

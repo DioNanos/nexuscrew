@@ -2,7 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-// NC_NOME_DISPOSITIVO — il nome del dispositivo quando l'hostname non dice
+// Il nome del dispositivo quando l'hostname non dice
 // niente (Termux/Android: «localhost»): lo chiede la UI, lo salva la config.
 // Niente più fallback silenzioso «NexusCrew»: il campo vuoto resta vuoto e
 // l'utente decide.

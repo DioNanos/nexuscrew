@@ -177,7 +177,7 @@ describe('useDecks — flottanti al cambio e alla rinomina del deck', () => {
 });
 
 describe('useDecks — merge del poll con una flottante aggiunta altrove', () => {
-  it('audit: dopo 409 con aggiunta remota, il retry non cancella la flottante', async () => {
+  it('dopo 409 con aggiunta remota, il retry non cancella la flottante', async () => {
     mocks.getDecks.mockResolvedValue({ decks: [
       { name: 'main', revision: 1, layout: emptyLayout() },
       { name: 'uno', revision: 1, layout: griglia('a') },
@@ -357,7 +357,7 @@ describe('useDecks — 409 e finestre staccate dell\'altra finestra', () => {
   const conflitto = (current) => Object.assign(new Error('deck modificato'), { status: 409, data: { current } });
   const store = (r, altro = []) => ({ decks: [{ name: 'main', revision: 1, layout: emptyLayout() }, r, ...altro] });
 
-  it('audit: una nuova mossa locale durante il retry 409 resta visibile', async () => {
+  it('una nuova mossa locale durante il retry 409 resta visibile', async () => {
     const remota = { ...flottante, x: 0.05 };
     let risolviRetry;
     let tentativi = 0;
@@ -380,7 +380,7 @@ describe('useDecks — 409 e finestre staccate dell\'altra finestra', () => {
     expect(stato().tiles.find((t) => t.s === 'fl').f.x).toBe(0.1);
   });
 
-  it('audit: chiusura locale durante il retry 409 non rianima la finestra', async () => {
+  it('chiusura locale durante il retry 409 non rianima la finestra', async () => {
     let risolviRetry;
     let tentativi = 0;
     mocks.getDecks.mockResolvedValue(store(rec(1, [flottante])));
@@ -402,7 +402,7 @@ describe('useDecks — 409 e finestre staccate dell\'altra finestra', () => {
     expect(stato().tiles.map((t) => t.s)).toEqual(['a']);
   });
 
-  it('audit: deck senza flottanti, secondo zoom durante retry 409 resta visibile', async () => {
+  it('deck senza flottanti, secondo zoom durante retry 409 resta visibile', async () => {
     let risolviRetry;
     let tentativi = 0;
     mocks.getDecks.mockResolvedValue(store(rec(1)));
@@ -696,7 +696,7 @@ describe('useDecks — modifiche fatte mentre un salvataggio è in volo', () => 
   });
 });
 
-describe('audit — limite dei tre salvataggi al cambio deck', () => {
+describe('limite dei tre salvataggi al cambio deck', () => {
   // Limite della 0.9.50 (rosso anche su 6303c26): il percorso di salvataggio resta quello
   // della 0.9.50 in questa release. Rimandato alla 0.9.52.
   it.todo('non deve perdere la quarta modifica fatta durante il terzo PUT — limite 0.9.50, rimandato alla 0.9.52');
@@ -731,7 +731,7 @@ describe('audit — limite dei tre salvataggi al cambio deck', () => {
 // e' ancora in volo, quindi puo' ricevere un 409 che nessuno recupera. Era
 // gia' cosi' nella 0.9.50; in questa release non si cambia. Il test resta qui,
 // segnato come da fare, finche' non si corregge.
-describe('audit — chiusura pagina con PUT in volo', () => {
+describe('chiusura pagina con PUT in volo', () => {
   it.todo('il keepalive non deve usare la revisione vecchia dopo un edit successivo');
   it.skip('il keepalive non deve usare la revisione vecchia dopo un edit successivo (prova)', async () => {
     mocks.getDecks.mockResolvedValue({ decks: [
@@ -757,7 +757,7 @@ describe('audit — chiusura pagina con PUT in volo', () => {
   });
 });
 
-describe('audit — rinomina lenta e autosave del vecchio nome', () => {
+describe('rinomina lenta e autosave del vecchio nome', () => {
   // Limite della 0.9.50 (rosso anche su 6303c26): il percorso di salvataggio resta quello
   // della 0.9.50 in questa release. Rimandato alla 0.9.52.
   it.todo('dopo una PATCH lenta deve salvare sul nome nuovo l’edit fatto nel frattempo — limite 0.9.50, rimandato alla 0.9.52');

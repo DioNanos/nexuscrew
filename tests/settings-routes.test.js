@@ -134,7 +134,7 @@ test('GET /settings: due Termux hostname localhost ricevono handle stabili disti
 
   const a = await (await fetch(`${first.base}/api/settings`, { headers: H(first.token) })).json();
   const b = await (await fetch(`${second.base}/api/settings`, { headers: H(second.token) })).json();
-  // NC_NOME_DISPOSITIVO: niente più fallback generico — il nome va chiesto
+  // Nome del dispositivo: niente più fallback generico — il nome va chiesto
   // (deviceNameNeeded), ma gli handle suggeriti restano stabili e distinti.
   assert.equal(a.deviceName, '');
   assert.equal(b.deviceName, '');

@@ -20,7 +20,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const toml = require('smol-toml');
 const { writeCellCodexProfile } = require('../lib/fleet/managed.js');
 
-const BIN = process.env.NC_TEST_CODEX_BIN || 'codex-vl';
+const BIN = process.env.TEST_CODEX_BIN_FINTO || 'codex-vl';
 const MODEL_SCRITTO = 'gpt-5.1-codex';
 
 function binarioOk() {

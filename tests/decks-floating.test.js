@@ -1,5 +1,5 @@
 'use strict';
-// tests/decks-floating.test.js — NC_FLOTTANTE: le finestre staccate viaggiano
+// tests/decks-floating.test.js — finestre flottanti: le finestre staccate viaggiano
 // ACCANTO alla griglia nel record del deck (campo `floating`), valide e
 // clampate. La regola che rende innocuo un nodo/client vecchio: un PUT che
 // NON porta `floating` PRESERVA quello salvato; `floating: []` lo svuota.

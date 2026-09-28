@@ -227,7 +227,7 @@ export function resizeTile(layout, colIdx, rowIdx, height) {
   return l;
 }
 
-// --- NC_GRIGLIA_DESKTOP: resize a COPPIA in pixel ----------------------------
+// --- Griglia desktop: resize a COPPIA in pixel ----------------------------
 // Il bordo segue il mouse 1:1 e cambiano SOLO i due adiacenti: la somma dei
 // loro pesi resta costante, le altre finestre non si muovono. I minimi sono
 // in PIXEL della coppia (non pesi), l'aggancio magnetico scatta solo vicino
@@ -309,7 +309,7 @@ export function swapTiles(layout, keyA, keyB) {
   return l;
 }
 
-// --- NC_FLOTTANTE: finestre staccate -----------------------------------------
+// --- Finestre flottanti -----------------------------------------
 // La VISTA tiene lo staccato nelle columns con un flag `float` (geometria in
 // FRAZIONI di schermo, 0..1): il GridTile resta alla stessa posizione
 // dell'albero — reso position:fixed dal CSS — e non si smonta mai (il

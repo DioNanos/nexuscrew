@@ -565,7 +565,7 @@ test('panelUrl: forme non-stringa o vuote rifiutate', () => {
   }
 });
 
-// --- panelUrl su engine MANAGED (rilievo 1 dell'audit D8) -------------------
+// --- panelUrl su engine MANAGED (dal rilievo originale) -------------------
 // Il validatore è UNO: anche il ramo managed valida e conserva panelUrl con
 // lo stesso validPanelUrl del ramo custom. Prima del fix il ramo managed
 // tornava PRIMA della validazione: un valore valido spariva in silenzio e uno

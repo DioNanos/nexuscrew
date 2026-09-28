@@ -78,7 +78,7 @@ describe('vlNodeToPeer', () => {
   });
 });
 
-// Step 3 (owner remoti, brief NC_UI_NODI_VL_REMOTI): un nodo VL viene da UN
+// Step 3 (owner remoti, brief UI nodi VL remoti): un nodo VL viene da UN
 // owner preciso (locale o federato) — la fusione della lista deve saperlo,
 // non solo saperne il nodeId, altrimenti due nodi con la stessa label su
 // owner diversi sono indistinguibili (invariante 2 del brief) e un comando

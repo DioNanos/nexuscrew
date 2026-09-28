@@ -162,11 +162,11 @@ export const getNodes = (t) => jsonFetch('/api/nodes', t);
 export const getPeers = (t) => jsonFetch('/api/peers', t);
 // Nodi VL (device di esempio): endpoint separato, non federato — fuso con i peer
 // SOLO lato presentazione (vl-nodes-model.js), mai dentro /api/nodes o
-// /api/peers (design NC_UI_NODI_VL, 2026-08-05: non cambiare quel contratto).
+// /api/peers (design UI nodi VL, 2026-08-05: non cambiare quel contratto).
 // `route` (default locale, `[]`) instrada verso l'owner giusto — federazione
 // ripristinata per /vl-nodes/* (commit b0e8bd1): con più owner un comando
 // deve arrivare al device che lo dichiara, non sempre a quello locale
-// (design NC_UI_NODI_VL_REMOTI, 2026-08-05, invariante 3).
+// (design UI nodi VL remoti, 2026-08-05, invariante 3).
 export const getVlNodes = (t, route = []) => jsonFetch(`${routeBase(route)}/vl-nodes`, t);
 export const sendVlNodeCommand = (t, nodeId, kind, args = {}, route = []) => (
   jsonFetch(`${routeBase(route)}/vl-nodes/${encodeURIComponent(nodeId)}/commands`, t, { method: 'POST', body: { kind, args } })

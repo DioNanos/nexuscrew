@@ -22,7 +22,7 @@ function fintoDocker(dir, comportamento, extraEnv = {}) {
   fs.writeFileSync(bin, [
     '#!/bin/sh',
     'echo "$@" >> ' + JSON.stringify(registro),
-    'if [ -n "$NC_FINTO_INSPECT" ]; then echo true; exit 0; fi',
+    'if [ -n "$FINTO_INSPECT_SPIA" ]; then echo true; exit 0; fi',
     'if [ "' + comportamento + '" = "falla" ]; then echo "boom di docker" >&2; exit 1; fi',
     'if [ "' + comportamento + '" = "dormi" ]; then sleep 5; fi',
     'exit 0',
@@ -68,7 +68,7 @@ test('timeout: il comando non appende il servizio e l\'esito lo dichiara', async
 test('containerRunning: inspect risponde per running, assente e errori', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-aidesk-'));
   const vivo = fintoDocker(dir, 'registra');
-  // Lo script "registra" senza NC_FINTO_INSPECT non risponde all'inspect:
+  // Lo script "registra" senza FINTO_INSPECT_SPIA non risponde all'inspect:
   // per il test "vivo" serve un binario che all'inspect risponde true.
   fs.writeFileSync(vivo.bin, [
     '#!/bin/sh',

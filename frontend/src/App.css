@@ -143,7 +143,7 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
    (ellipsis); il testo intero sta nel `title` dell'elemento. Scade da solo. */
 .nc-deck-notice { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; }
 
-/* Orizzontale (NC_ORIZZONTALE): i pannelli si AFFIANCANO e la maniglia
+/* Orizzontale (doppia vista in orizzontale): i pannelli si AFFIANCANO e la maniglia
    diventa verticale — il confine segue il dito su clientX. */
 .nc-dual.row { flex-direction: row; }
 .nc-dual.row .nc-dual-handle { cursor: col-resize; }

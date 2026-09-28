@@ -1,7 +1,7 @@
 // frontend/src/lib/vl-nodes-model.js — traduce un nodo VL (`/api/vl-nodes`)
 // nella forma "peer" che `node-summary.js`/`node-detail.js`/`NodeSheet.jsx`
 // già sanno rendere, cosi' la UI puo' fondere le due liste SOLO lato
-// presentazione (design NC_UI_NODI_VL, 2026-08-05): il contratto di
+// presentazione (design UI nodi VL, 2026-08-05): il contratto di
 // `/api/nodes`/`/api/peers` non cambia, e questo file non tocca il backend.
 //
 // Mappatura misurata nel brief — solo `nodeId`/`label`/`health` sono davvero
@@ -19,7 +19,7 @@
 //                   componente, non questo modulo — regola del brief: mai
 //                   una lista fissa lato frontend)
 // `owner` — {instanceId, route, label} — identifica DA CHI viene questo
-// nodo (step 3, NC_UI_NODI_VL_REMOTI): il locale di default (route vuota),
+// nodo (step 3, UI nodi VL remoti): il locale di default (route vuota),
 // o un owner federato quando il chiamante lo fonde da piu' owner
 // (`topologyVlOwners`). Portato sul peer perche' due nodi con la stessa
 // label su owner diversi sono distinguibili SOLO cosi' (brief, invariante

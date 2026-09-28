@@ -215,7 +215,7 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
         </div>
       ))}
 
-      {/* Owner VL federati che non hanno risposto (design NC_UI_NODI_VL_REMOTI,
+      {/* Owner VL federati che non hanno risposto (design UI nodi VL remoti,
           invariante 1): visibile ma NON bloccante — la lista Fleet sopra
           resta intatta. Un owner muto che sparisce in silenzio si legge come
           "non ha nodi", che e' un'altra cosa: qui si dice esplicitamente che
@@ -1163,7 +1163,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   // perche' una scrittura senza revisione non e' una scrittura sorvegliata.
   const [peersAccessRevision, setPeersAccessRevision] = useState(null);
   // Owner VL federati che non hanno risposto all'ultimo refresh — visibili,
-  // non un errore bloccante (design NC_UI_NODI_VL_REMOTI, invariante 1: un
+  // non un errore bloccante (design UI nodi VL remoti, invariante 1: un
   // owner muto che sparisce in silenzio si legge come "non ha nodi").
   const [vlUnavailable, setVlUnavailable] = useState([]);
   const [readonly, setReadonly] = useState(false);
@@ -1215,7 +1215,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
       const j = await getPeers(token);
       const peers = j.peers || [];
       setPeersAccessRevision(Number.isInteger(j.accessRevision) ? j.accessRevision : null);
-      // Unione multi-owner SOLO lato presentazione (design NC_UI_NODI_VL_REMOTI,
+      // Unione multi-owner SOLO lato presentazione (design UI nodi VL remoti,
       // 2026-08-05): la federazione di /vl-nodes/* e' stata ripristinata
       // (b0e8bd1) — un nodo VL puo' appartenere a QUALUNQUE owner autorizzato
       // raggiungibile via /api/topology, non solo al locale. Semantica

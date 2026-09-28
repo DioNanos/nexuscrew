@@ -3,7 +3,7 @@ import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { saveConfig } from '../lib/api.js';
 
-// NC_NOME_DISPOSITIVO — quando il nome del dispositivo non è ricavabile
+// Quando il nome del dispositivo non è ricavabile
 // dall'host (Termux/Android: «localhost») né ancora salvato, questo foglio
 // lo CHIEDE una volta: campo semplice, salva in config (chiave deviceName).
 // Nessun fallback generico: il campo resta vuoto finché l'utente non decide.

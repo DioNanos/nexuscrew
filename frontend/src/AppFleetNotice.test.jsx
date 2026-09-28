@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-// L'esito delle azioni cella nel workspace desktop (NC_ERRORE_FISSO_FIX):
+// L'esito delle azioni cella nel workspace desktop:
 // esiti benigni → notice a scadenza su una RIGA SUA sotto la barra dei deck
 // (mai dentro .nc-deckbar, dove copriva i chip e non si toglieva più); errori
 // veri → nel foglio PowerSheet, che resta aperto sull'errore. La barra deck

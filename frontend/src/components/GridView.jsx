@@ -107,7 +107,7 @@ export default function GridView({
   const colRefs = useRef([]);
   const cleanupRef = useRef(null);                   // cleanup del drag-resize attivo
 
-  // F1 audit: i listener globali del resize vanno staccati anche su
+  // I listener globali del resize vanno staccati anche su
   // pointercancel/blur e se il componente smonta a metà drag. Col resize a
   // coppia il layout si applica SOLO a pointerup: cancel e blur ANNULLANO
   // (nessun onLayoutChange, nessun onResizeEnd), mai a metà gesto.
@@ -142,7 +142,7 @@ export default function GridView({
     return () => { window.removeEventListener('keydown', esc); };
   }, [drag, floatGesture]);
 
-  // F2 audit: drag abortito (esce dalla griglia / dragend senza drop) non
+  // Un drag abortito (esce dalla griglia / dragend senza drop) non
   // deve lasciare l'anteprima appesa.
   useEffect(() => {
     const end = () => setDrag(null);

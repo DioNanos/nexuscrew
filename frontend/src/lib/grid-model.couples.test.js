@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-// NC_GRIGLIA_DESKTOP — resize a COPPIA in pixel: il bordo segue il mouse 1:1,
+// Griglia desktop — resize a COPPIA in pixel: il bordo segue il mouse 1:1,
 // cambiano solo i due adiacenti (somma dei loro pesi costante), le altre
 // finestre invariate. Minimi in pixel (120 colonna / 60 riga), aggancio a
 // 1/3 1/2 2/3 della coppia. SwapTiles per lo spostamento «centro = scambia».

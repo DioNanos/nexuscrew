@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, waitFor } from '@testing-library/react';
 
-// NC_FLOTTANTE — la finestra staccata è lo STESSO tile nella stessa posizione
+// Finestre flottanti — la finestra staccata è lo STESSO tile nella stessa posizione
 // dell'albero (flag float + position:fixed): staccare e riattaccare NON deve
 // smontare il tile. Gesti 1:1 con commit UNA volta al rilascio, clic = primo
 // piano + focus (takeSize fisso: il focus non riconnette, vedi
