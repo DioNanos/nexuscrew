@@ -1,16 +1,31 @@
-// D384 (rilievo DevAuditor) — il throw sincrono di openTerminalSocket
-// (ws-client: origine non-locale su ws://) non deve lasciare indietro il
-// keyboardRef né il listener di blur registrati prima della connessione.
+// D384 (rilievo DevAuditor, commit 3) — Terminal con modificatori armati:
+// 1) il throw sincrono di openTerminalSocket (ws-client: origine non-locale su
+//    ws://) azzera keyboardRef e rimuove i listener (blur e paste);
+// 2) il paste NATIVO di xterm (clipboard → evento paste → onData sincrono) è
+//    letterale e NON consuma l'armamento (prima incollare mandava ESC+^C+resto);
+// 3) GridTile/CellPeek passano SOLO ctrlRef: il blocco non deve toccare altRef.
 import React, { useState } from 'react';
-import { render } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi, afterEach, beforeAll } from 'vitest';
+
+let lanciaOpen = false;
+const ultimaSock = { sendInput: null };
 
 vi.mock('../lib/ws-client.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     openTerminalSocket: vi.fn(() => {
-      throw new Error('nexuscrew: ws:// rifiutato su origine non-locale e non-TLS');
+      if (lanciaOpen) throw new Error('nexuscrew: ws:// rifiutato su origine non-locale e non-TLS');
+      const sock = {
+        sendInput: vi.fn(),
+        resize: vi.fn(),
+        isReady: () => true,
+        action: vi.fn(),
+        close: vi.fn(),
+      };
+      ultimaSock.sendInput = sock.sendInput;
+      return sock;
     }),
   };
 });
@@ -28,17 +43,20 @@ beforeAll(() => {
   HTMLCanvasElement.prototype.getContext = vi.fn(() => null);
 });
 
-function mountTerminal(keyboardRef) {
+function mountTerminal(overrides = {}) {
   const refs = {
     sendRef: { current: () => false },
     composerRef: { current: () => false },
     actionRef: { current: () => {} },
     ctrlRef: { current: false },
     altRef: { current: false },
-    keyboardRef,
+    setCtrlArmed: vi.fn(),
+    setAltArmed: vi.fn(),
+    keyboardRef: { current: null },
+    ...overrides,
   };
   function Wrapped() {
-    const [ctrlArmed, setCtrlArmed] = useState(false);
+    const [ctrlArmed, setCtrlArmed] = useState(refs.ctrlRef.current);
     const [altArmed, setAltArmed] = useState(false);
     return (
       <Terminal session="s" node="n" token="t" readonly={false} takeSize
@@ -47,20 +65,55 @@ function mountTerminal(keyboardRef) {
         setAltArmed={setAltArmed} keyboardRef={refs.keyboardRef} />
     );
   }
-  return render(<Wrapped />);
+  return { view: render(<Wrapped />), refs };
+}
+
+function textarea() {
+  const ta = document.querySelector('.xterm-helper-textarea');
+  expect(ta).toBeTruthy();
+  return ta;
 }
 
 describe('Terminal D384 — openTerminalSocket che lancia', () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { vi.restoreAllMocks(); lanciaOpen = false; });
 
-  it('azzeramento keyboardRef e rimozione del listener di blur nel ramo d\'errore', () => {
+  it('azzeramento keyboardRef e rimozione dei listener di blur e paste nel ramo d\'errore', () => {
+    lanciaOpen = true;
     const removeSpy = vi.spyOn(HTMLElement.prototype, 'removeEventListener');
     const keyboardRef = { current: null };
-    mountTerminal(keyboardRef);
+    mountTerminal({ keyboardRef });
     // il ref dev'essere stato AZZERATO dal ramo d'errore (prima del fix restava
     // la funzione requestTerminalKeyboard di un terminale non connesso)
     expect(keyboardRef.current).toBeNull();
-    // e il listener di blur di xterm è stato rimosso
     expect(removeSpy).toHaveBeenCalledWith('blur', expect.any(Function));
+    expect(removeSpy).toHaveBeenCalledWith('paste', expect.any(Function), true);
+  });
+});
+
+describe('Terminal D384 — modificatori armati e paste nativo', () => {
+  afterEach(() => { vi.restoreAllMocks(); lanciaOpen = false; });
+
+  it('paste NATIVO con CTRL armato: letterale e non consuma l\'armamento', () => {
+    const ctrlRef = { current: true };
+    mountTerminal({ ctrlRef });
+    fireEvent.paste(textarea(), { clipboardData: { getData: () => 'ciao' } });
+    // letterale: il testo incollato esce così com'è, senza ESC né prefissi di controllo
+    expect(ultimaSock.sendInput).toHaveBeenCalledWith('ciao');
+    // e non consuma l'armamento: resta pronto per un vero carattere controllato
+    expect(ctrlRef.current).toBe(true);
+  });
+
+  it('paste NATIVO senza modificatori: letterale uguale', () => {
+    mountTerminal({});
+    fireEvent.paste(textarea(), { clipboardData: { getData: () => 'ciao' } });
+    expect(ultimaSock.sendInput).toHaveBeenCalledWith('ciao');
+  });
+
+  it('solo ctrlRef (GridTile/CellPeek): CTRL+c → \\x03 senza toccare altRef assente', () => {
+    const ctrlRef = { current: true };
+    mountTerminal({ ctrlRef, altRef: undefined, setAltArmed: undefined });
+    // nessun TypeError: la guardia su altRef (rilievo DevAuditor) deve reggere
+    fireEvent.keyDown(textarea(), { key: 'c', keyCode: 67, which: 67 });
+    expect(ultimaSock.sendInput).toHaveBeenCalledWith('\x03');
   });
 });

@@ -250,6 +250,15 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       if (keyboardGestureRef.current === 'double-tap') lockTerminalKeyboard();
     };
     terminalTextarea?.addEventListener('blur', onTerminalTextareaBlur);
+    // D384 commit 3 (rilievo audit) — il paste NATIVO (clipboard → evento `paste`
+    // sulla textarea → onData emesso in modo sincrono dentro il gesto) va
+    // distinto dalla digitazione: senza questo, incollare con CTRL/ALT armati
+    // mandava ESC + controllo + resto e disarmava. Il listener è in CAPTURE
+    // sull'host, cioè PRIMA del handler di xterm (che legge la textarea nata
+    // con open): marca una finestra di 120 ms in cui onData è incollatura.
+    let pasteNativeUntil = 0;
+    const onTerminalPaste = () => { pasteNativeUntil = Date.now() + 120; };
+    hostRef.current?.addEventListener('paste', onTerminalPaste, true);
 
     let sock;
     try {
@@ -301,9 +310,10 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       term.write(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`);
       // D384 (rilievo DevAuditor): il throw sincrono di openTerminalSocket
       // (ws-client: origine non-locale su ws://) non deve lasciare indietro
-      // né il ref della tastiera né il listener di blur.
+      // né il ref della tastiera né i listener di blur e paste.
       if (keyboardRef) keyboardRef.current = null;
       terminalTextarea?.removeEventListener('blur', onTerminalTextareaBlur);
+      hostRef.current?.removeEventListener('paste', onTerminalPaste, true);
       return () => {
         try { rendererRef.current?.dispose?.(); } catch (_) { /* best effort */ }
         rendererRef.current = null;
@@ -323,19 +333,22 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       // sticky Ctrl: fold the next single character into its control code (a-z/@-_).
       // A composer paste is literal and must never consume an armed Ctrl key.
+      // D384 commit 3 (rilievo audit) — il paste NATIVO (riconosciuto dalla
+      // finestra `pasteNativeUntil`, vedi sopra) è LETTERALE e non consuma
+      // l'armamento, come il paste del Composer.
+      const pasteNativo = Date.now() < pasteNativeUntil;
       // D384 commit 2 — CTRL/ALT armati (anche insieme): il PRIMO carattere
       // dell'input esce con i prefissi (controllo e/o ESC) e entrambe le sticky
-      // si disarmano. Un composer paste è letterale: non consuma l'armamento.
-      // Le parole intere da IME: prefisso solo sul primo carattere, il resto
-      // esce pulito (comportamento scelto e dichiarato a Dev).
-      if (!composerPaste && d.length >= 1
+      // si disarmano. Le parole intere da IME: prefisso solo sul primo carattere,
+      // il resto esce pulito (comportamento scelto e dichiarato a Dev).
+      if (!composerPaste && !pasteNativo && d.length >= 1
         && ((ctrlRef && ctrlRef.current) || (altRef && altRef.current))) {
         d = inputConPrefissi(d, {
           ctrl: !!(ctrlRef && ctrlRef.current),
           alt: !!(altRef && altRef.current),
         });
-        ctrlRef.current = false;
-        altRef.current = false;
+        if (ctrlRef) ctrlRef.current = false;
+        if (altRef) altRef.current = false;
         if (setCtrlArmed) setCtrlArmed(false);
         if (setAltArmed) setAltArmed(false);
       }
@@ -1048,6 +1061,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       if (vv) { vv.removeEventListener('resize', onViewportResize); vv.removeEventListener('scroll', onResize); }
       virtualKeyboard?.removeEventListener?.('geometrychange', onKeyboardGeometry);
       terminalTextarea?.removeEventListener('blur', onTerminalTextareaBlur);
+      hostRef.current?.removeEventListener('paste', onTerminalPaste, true);
       if (ro) ro.disconnect();
       if (rafId) cancelAnimationFrame(rafId);
       sock.close();
