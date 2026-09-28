@@ -25,6 +25,16 @@
       "source": "\\b(?:browserai|devworkerp|devworkera|devworker|devauditor|forkauditor|warmaster|gameauditor|gamedev|designcreator|elnino)\\b",
       "flags": "i",
       "reason": "internal fleet cell name"
+    },
+    {
+      "source": "\\bNC_(?!(?:SUPERVISOR_OPT|SEND|TELE_SESSIONE)\\b)[A-Z0-9][A-Z0-9_]*\\b",
+      "flags": "",
+      "reason": "internal work-order code"
+    },
+    {
+      "source": "\\b(?:F[1-9]|D[1-9])\\b[^.\\n]{0,40}\\b(?:re)?audit\\b|\\b(?:re)?audit\\b[^.\\n]{0,40}\\b(?:F[1-9]|D[1-9])\\b",
+      "flags": "",
+      "reason": "internal finding id paired with audit provenance"
     }
   ],
   "path": [
