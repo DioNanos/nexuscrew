@@ -43,6 +43,7 @@ function Probe({ start = 'uno' }) {
   return (
     <div>
       <button type="button" onClick={() => { seleziona('due').catch(() => {}); }}>seleziona</button>
+      <button type="button" onClick={() => { seleziona('uno').catch(() => {}); }}>seleziona-uno</button>
       <button type="button" onClick={() => { rinomina('due', 'tre').catch(() => {}); }}>rinomina</button>
       <button type="button" onClick={() => setLayout((l) => updateFloatGeom(l, 'fl', { x: 0.1, y: 0.1, w: 0.4, h: 0.5 }))}>sposta</button>
       <button type="button" onClick={() => setLayout((l) => zoomTile(l, 0, 0, 1))}>zoom</button>
@@ -69,6 +70,61 @@ beforeEach(() => {
   mocks.saveDeck.mockImplementation(async (_t, name, layout, revision, _route, floating) => ({
     name, revision: revision + 1, layout, ...(floating && floating.length ? { floating } : {}),
   }));
+});
+
+describe('audit indipendente — rinomina e navigazione concorrenti', () => {
+  it('non salva il layout del deck di arrivo nel deck rinominato', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [
+      { name: 'main', revision: 1, layout: emptyLayout() },
+      { name: 'uno', revision: 1, layout: griglia('a') },
+      { name: 'due', revision: 1, layout: griglia('b') },
+    ] });
+    let resolveRename;
+    mocks.renameDeck.mockImplementationOnce(() => new Promise((resolve) => { resolveRename = resolve; }));
+    render(<Probe start="due" />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['b']));
+    fireEvent.click(screen.getByRole('button', { name: 'rinomina' }));
+    await waitFor(() => expect(mocks.renameDeck).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'seleziona-uno' }));
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    await act(async () => { resolveRename({ name: 'tre', revision: 2, layout: griglia('b') }); });
+    await waitFor(() => expect(mocks.saveDeck).toHaveBeenCalled(), { timeout: 4000 });
+    const wrong = mocks.saveDeck.mock.calls.find((c) => c[1] === 'tre' && c[2].columns[0].tiles[0].session === 'a');
+    expect(wrong).toBeUndefined();
+  });
+});
+
+describe('audit indipendente — fallimento del salvataggio staccato', () => {
+  it('un errore di rete non deve scartare la sola copia dell’ultimo edit del deck lasciato', async () => {
+    mocks.getDecks.mockResolvedValue({ decks: [
+      { name: 'main', revision: 1, layout: emptyLayout() },
+      { name: 'uno', revision: 1, layout: griglia('a') },
+      { name: 'due', revision: 1, layout: griglia('b') },
+    ] });
+    const pendenti = [];
+    mocks.saveDeck.mockImplementation((...args) => {
+      if (pendenti.length >= 3) return Promise.reject(networkDown());
+      return new Promise((resolve) => { pendenti.push({ args, resolve }); });
+    });
+    render(<Probe />);
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+    fireEvent.click(screen.getByRole('button', { name: 'seleziona' }));
+    for (let giro = 0; giro < 3; giro += 1) {
+      await waitFor(() => expect(pendenti.length).toBe(giro + 1), { timeout: 4000 });
+      fireEvent.click(screen.getByRole('button', { name: 'zoom' }));
+      const { args, resolve } = pendenti[giro];
+      await act(async () => { resolve({ name: args[1], revision: args[3] + 1, layout: args[2] }); });
+    }
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['b']));
+    await waitFor(() => expect(mocks.saveDeck.mock.calls.length).toBe(4));
+    expect(mocks.saveDeck.mock.calls[3][2].columns[0].tiles[0].fontSize).toBe(15);
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(screen.getByRole('button', { name: 'seleziona-uno' }));
+    await waitFor(() => expect(stato().tiles.map((t) => t.s)).toEqual(['a']));
+    expect(stato().tiles[0].fs).toBe(15);
+  });
 });
 
 describe('useDecks — flottanti al cambio e alla rinomina del deck', () => {
