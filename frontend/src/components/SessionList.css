@@ -25,7 +25,12 @@
 }
 @keyframes nc-blink { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .nc-cursor { animation: none; } }
-.nc-home-sub { margin-top: 4px; font-size: 13px; opacity: .65; }
+/* Il sottotitolo deve stare SOTTO la riga delle azioni: i tre bottoni in
+   alto a destra sono alti 40px (min-height .nc-refresh) mentre il wordmark
+   ne occupa ~31: con margin-top 4px il testo entrava nella fascia dei
+   bottoni e ci finiva sotto (visto a 412px). 20px lo portano sotto la riga,
+   e il testo resta intero invece di troncare. */
+.nc-home-sub { margin-top: 20px; font-size: 13px; opacity: .65; }
 /* Azioni header (settings + refresh): contenitore assoluto, bottoni statici. */
 .nc-head-actions {
   position: absolute; top: 0; right: 0;
