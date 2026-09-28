@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // Le finestre staccate sopravvivono ai passaggi che NON sono il caricamento:
@@ -69,6 +69,17 @@ beforeEach(() => {
   mocks.saveDeck.mockImplementation(async (_t, name, layout, revision, _route, floating) => ({
     name, revision: revision + 1, layout, ...(floating && floating.length ? { floating } : {}),
   }));
+});
+
+// Il hook tiene acceso per 1500ms il timer che riporta lo stato a idle dopo un
+// salvataggio riuscito: se un test lo lascia in sospeso, scatta dopo lo
+// smontaggio dell'ambiente e il worker esce con un errore non gestito
+// (RC=1 intermittente). Lo lasciamo spegnere qui, con l'ambiente ancora vivo,
+// solo nei test che hanno davvero chiamato il salvataggio.
+afterEach(async () => {
+  if (mocks.saveDeck.mock.calls.length + mocks.renameDeck.mock.calls.length > 0) {
+    await act(async () => { await new Promise((risolvi) => { setTimeout(risolvi, 1600); }); });
+  }
 });
 
 describe('audit indipendente — rinomina e navigazione concorrenti', () => {
