@@ -77,7 +77,7 @@
       "reason": "internal work-order code"
     },
     {
-      "source": "\\b(?:F[1-9]|D[1-9])\\b[^.\\n]{0,40}\\b(?:re)?audit\\b|\\b(?:re)?audit\\b[^.\\n]{0,40}\\b(?:F[1-9]|D[1-9])\\b",
+      "source": "\\b(?:F\\d+|D\\d+)\\b[^.\\n]{0,40}\\b(?:re)?audit\\b|\\b(?:re)?audit\\b[^.\\n]{0,40}\\b(?:F\\d+|D\\d+)\\b",
       "flags": "",
       "reason": "internal finding id paired with audit provenance"
     }

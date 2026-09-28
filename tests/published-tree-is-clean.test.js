@@ -942,22 +942,23 @@ test('SIGLE DI MANDATO — morde i codici interni e lascia le costanti di prodot
 test('RILIEVI ACCOPPIATI ALLA PROVENIENZA — la regola esiste in payload e superficie', () => {
   const defs = JSON.parse(fs.readFileSync(
     path.join(__dirname, 'published-tree-clean-rules.json'), 'utf8'));
-  const payloadRule = defs.payloadStructural.find((r) => r.source.includes('F[1-9]') && r.source.includes('audit'));
+  const payloadRule = defs.payloadStructural.find((r) => r.source.includes('F\\d+') && r.source.includes('audit'));
   assert.ok(payloadRule, 'la regola dei rilievi accoppiati deve esistere nel payload');
   const surface = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', 'publish', 'public-surface-rules.json'), 'utf8'));
-  const surfaceRule = surface.text.find((r) => r.source.includes('F[1-9]') && r.source.includes('audit'));
+  const surfaceRule = surface.text.find((r) => r.source.includes('F\\d+') && r.source.includes('audit'));
   assert.ok(surfaceRule, 'la regola dei rilievi accoppiati deve esistere anche in superficie');
 });
 
 test('RILIEVI ACCOPPIATI ALLA PROVENIENZA — morde la coppia, non i casi legittimi', () => {
   const defs = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', 'publish', 'public-surface-rules.json'), 'utf8'));
-  const rule = defs.text.find((r) => r.source.includes('F[1-9]') && r.source.includes('audit'));
+  const rule = defs.text.find((r) => r.source.includes('F\\d+') && r.source.includes('audit'));
   const re = new RegExp(rule.source, rule.flags);
   for (const coppia of ['F1 (audit NC_0947/0948): il focus', '// F2 (audit): claim atomico',
     '--- audit F5: write-failure', 'rilievo 1 audit D8', 'D2 audit: il consumatore vero',
-    "rilievo 1 dell'audit D8"]) {
+    "rilievo 1 dell'audit D8", 'F11 audit: marker sintetico per prova negativa.',
+    'audit D12: secondo giro multi-cifra']) {
     assert.ok(re.test(coppia), `coppia sigla+provenienza non respinta: ${coppia}`);
   }
   for (const lecito of ['return F7(x)', 'const D2 = misuratore();', 'npm install --no-audit',
