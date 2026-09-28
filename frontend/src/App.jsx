@@ -220,9 +220,12 @@ export function SingleView({
   const actionRef = useRef(() => {});
   const ctrlRef = useRef(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
+  const altRef = useRef(false);
+  const [altArmed, setAltArmed] = useState(false);
   const keyboardRef = useRef(null);   // D384: requestTerminalKeyboard del terminale attivo
   const [selectionMode, setSelectionMode] = useState(false);
   const toggleCtrl = () => { ctrlRef.current = !ctrlRef.current; setCtrlArmed(ctrlRef.current); };
+  const toggleAlt = () => { altRef.current = !altRef.current; setAltArmed(altRef.current); };
 
   // SingleView may be reused at the same React position when the operator
   // switches cells. Synchronize immediately instead of showing the previous
@@ -318,7 +321,7 @@ export function SingleView({
       </header>
       <div className="nc-termwrap">
         <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
-          ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} keyboardRef={keyboardRef} onFiles={setFilesEvent} fontSize={fontSize}
+          ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} altRef={altRef} setAltArmed={setAltArmed} keyboardRef={keyboardRef} onFiles={setFilesEvent} fontSize={fontSize}
           selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
           keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
         {/* D8: pannello in alternativa al terminale, overlay assoluto — il
@@ -338,7 +341,7 @@ export function SingleView({
       </div>
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} onCellSwitcher={onCellSwitcher} cellSwitcherOpen={cellSwitcherOpen}
         send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
-        ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} onKeyboardKeep={() => keyboardRef.current?.()} selectionMode={selectionMode} onSelectionMode={setSelectionMode}
+        ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} altArmed={altArmed} onAlt={toggleAlt} onAltConsume={() => { altRef.current = false; setAltArmed(false); }} onKeyboardKeep={() => keyboardRef.current?.()} selectionMode={selectionMode} onSelectionMode={setSelectionMode}
         keepKeyboardClosed={inputPreferences.keybarKeepsKeyboardClosed} showEnter={inputPreferences.showKeybarEnter}
         keybarLayout={inputPreferences.keybarLayout} />
       {showComposer && (

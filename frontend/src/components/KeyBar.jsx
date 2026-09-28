@@ -20,14 +20,14 @@ const REPEAT_INITIAL_DELAY_MS = 350;
 const REPEAT_INTERVAL_MS = 55;
 
 export default function KeyBar({
-  send, action, ctrlArmed = false, onCtrl, onKeyboard, selectionMode = false,
+  send, action, ctrlArmed = false, onCtrl, altArmed = false, onAlt, onAltConsume,
+  onKeyboard, selectionMode = false,
   onSelectionMode, onCellSwitcher, cellSwitcherOpen = false,
   keepKeyboardClosed = true, showEnter = true, keybarLayout = 'full',
   onKeyboardKeep,
 }) {
   const [copy, setCopy] = useState(false);
   const [menu, setMenu] = useState(false);
-  const [altArmed, setAltArmed] = useState(false);
   // expand/retract: espansione TEMPORANEA del layout compact al full. E' uno
   // stato locale — NON riscrive la preferenza keybarLayout (che resta "compact").
   const [expanded, setExpanded] = useState(false);
@@ -64,9 +64,12 @@ export default function KeyBar({
     if (keybarLayout !== 'compact') setExpanded(false);
   }, [keybarLayout]);
 
-  // ALT sticky: il prossimo tasto della barra esce come ESC+seq (Meta).
+  // ALT sticky: il prossimo tasto della barra esce come ESC+seq (Meta). Lo stato
+  // armato vive in App (altArmed/onAlt, come CTRL): un tasto della barra lo
+  // consuma (onAltConsume) e il prossimo input dal telefono non riceve un
+  // secondo ESC.
   const emit = (seq) => {
-    if (altArmed) { send(ESC + seq); setAltArmed(false); } else send(seq);
+    if (altArmed) { send(ESC + seq); if (onAltConsume) onAltConsume(); } else send(seq);
   };
   // D384 — keepOpen: CTRL e ALT non chiudono la tastiera soft e, nello stesso
   // gesto (pointerdown), chiedono l'apertura via onKeyboardKeep. Gli altri
@@ -212,7 +215,7 @@ export default function KeyBar({
             <button type="button" key="ctrl" className={ctrlArmed ? 'armed' : ''}
               {...press(() => { if (onCtrl) onCtrl(); }, { keepOpen: true })}>CTRL</button>
             <button type="button" key="alt" className={altArmed ? 'armed' : ''}
-              {...press(() => setAltArmed((v) => !v), { keepOpen: true })}>ALT</button>
+              {...press(() => { if (onAlt) onAlt(); }, { keepOpen: true })}>ALT</button>
             {Bk('←', ESC + '[D')}
             {Bk('↓', ESC + '[B')}
             {Bk('→', ESC + '[C')}

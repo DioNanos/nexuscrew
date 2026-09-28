@@ -10,6 +10,7 @@ import {
   LINK_OVERLAY_DELAY_MS, boundaryNoticeLine, overlayAfterDrop, scrollRestorePlan,
 } from '../lib/link-overlay.js';
 import { terminalRuntimeConfig } from '../lib/terminal-runtime-config.js';
+import { inputConPrefissi } from '../lib/modifier-prefix.js';
 import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, copyShortcutHint, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
@@ -28,7 +29,7 @@ import './Terminal.css';
 
 // node (opzionale): sessione su nodo remoto — il WS passa dal proxy
 // /node/<name>/ws (B1); tutto il resto del protocollo e' identico.
-export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, keyboardRef, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange, keyboardGesture = 'double-tap', onRendererChange }) {
+export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, altRef, setAltArmed, keyboardRef, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange, keyboardGesture = 'double-tap', onRendererChange }) {
   const hostRef = useRef(null);
   const apiRef = useRef(null);        // {term, fit, sock} per lo zoom senza riconnettere
   const rendererRef = useRef(null);   // addon GPU attivo (o null quando si disegna in DOM)
@@ -298,6 +299,11 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       });
     } catch (e) {
       term.write(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`);
+      // D384 (rilievo DevAuditor): il throw sincrono di openTerminalSocket
+      // (ws-client: origine non-locale su ws://) non deve lasciare indietro
+      // né il ref della tastiera né il listener di blur.
+      if (keyboardRef) keyboardRef.current = null;
+      terminalTextarea?.removeEventListener('blur', onTerminalTextareaBlur);
       return () => {
         try { rendererRef.current?.dispose?.(); } catch (_) { /* best effort */ }
         rendererRef.current = null;
@@ -317,15 +323,21 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       // sticky Ctrl: fold the next single character into its control code (a-z/@-_).
       // A composer paste is literal and must never consume an armed Ctrl key.
-      if (!composerPaste && ctrlRef && ctrlRef.current && d.length === 1) {
-        const c = d.charCodeAt(0);
-        let code = c;
-        if (c >= 97 && c <= 122) code = c - 96;        // a-z -> ^A..^Z
-        else if (c >= 64 && c <= 95) code = c - 64;    // @A-Z[\]^_ -> ^@..^_
-        else if (c === 32) code = 0;                   // space -> ^@
-        d = String.fromCharCode(code);
+      // D384 commit 2 — CTRL/ALT armati (anche insieme): il PRIMO carattere
+      // dell'input esce con i prefissi (controllo e/o ESC) e entrambe le sticky
+      // si disarmano. Un composer paste è letterale: non consuma l'armamento.
+      // Le parole intere da IME: prefisso solo sul primo carattere, il resto
+      // esce pulito (comportamento scelto e dichiarato a Dev).
+      if (!composerPaste && d.length >= 1
+        && ((ctrlRef && ctrlRef.current) || (altRef && altRef.current))) {
+        d = inputConPrefissi(d, {
+          ctrl: !!(ctrlRef && ctrlRef.current),
+          alt: !!(altRef && altRef.current),
+        });
         ctrlRef.current = false;
+        altRef.current = false;
         if (setCtrlArmed) setCtrlArmed(false);
+        if (setAltArmed) setAltArmed(false);
       }
       const ok = sock.sendInput(d);
       if (composerPaste) {
