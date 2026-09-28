@@ -250,15 +250,19 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       if (keyboardGestureRef.current === 'double-tap') lockTerminalKeyboard();
     };
     terminalTextarea?.addEventListener('blur', onTerminalTextareaBlur);
-    // D384 commit 3 (rilievo audit) — il paste NATIVO (clipboard → evento `paste`
-    // sulla textarea → onData emesso in modo sincrono dentro il gesto) va
-    // distinto dalla digitazione: senza questo, incollare con CTRL/ALT armati
-    // mandava ESC + controllo + resto e disarmava. Il listener è in CAPTURE
-    // sull'host, cioè PRIMA del handler di xterm (che legge la textarea nata
-    // con open): marca una finestra di 120 ms in cui onData è incollatura.
-    let pasteNativeUntil = 0;
-    const onTerminalPaste = () => { pasteNativeUntil = Date.now() + 120; };
+    // D384 commit 4 (audit) — il paste NATIVO marca una finestra che si CHIUDE
+    // al PRIMO onData dopo l'evento paste (l'emissione è sincrona): un tasto
+    // digitato subito dopo torna una digitazione (probe DevAuditor: paste poi
+    // keydown a +50 ms → ['ciao', '\x03'], CTRL disarmato). Tetti di sicurezza:
+    // il keydown successivo e 2 s di silenzio chiudono il marcatore anche se il
+    // paste non ha prodotto nessun onData. Entrambi i listener sono in CAPTURE
+    // sull'host, così girano PRIMA del keydown/onData di xterm sulla textarea.
+    let pasteNativoAperto = false;
+    let pasteNativoScadenza = 0;
+    const onTerminalPaste = () => { pasteNativoAperto = true; pasteNativoScadenza = Date.now() + 2000; };
+    const chiudiPasteNativo = () => { pasteNativoAperto = false; };
     hostRef.current?.addEventListener('paste', onTerminalPaste, true);
+    hostRef.current?.addEventListener('keydown', chiudiPasteNativo, true);
 
     let sock;
     try {
@@ -314,6 +318,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       if (keyboardRef) keyboardRef.current = null;
       terminalTextarea?.removeEventListener('blur', onTerminalTextareaBlur);
       hostRef.current?.removeEventListener('paste', onTerminalPaste, true);
+      hostRef.current?.removeEventListener('keydown', chiudiPasteNativo, true);
       return () => {
         try { rendererRef.current?.dispose?.(); } catch (_) { /* best effort */ }
         rendererRef.current = null;
@@ -333,10 +338,12 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       // sticky Ctrl: fold the next single character into its control code (a-z/@-_).
       // A composer paste is literal and must never consume an armed Ctrl key.
-      // D384 commit 3 (rilievo audit) — il paste NATIVO (riconosciuto dalla
-      // finestra `pasteNativeUntil`, vedi sopra) è LETTERALE e non consuma
-      // l'armamento, come il paste del Composer.
-      const pasteNativo = Date.now() < pasteNativeUntil;
+      // D384 commit 4 (audit) — il marcatore si chiude al PRIMO onData dopo
+      // l'evento paste: il primo blocco è letterale, il tasto SUBITO dopo torna
+      // una digitazione. (Il keydown in capture su host ha già chiuso il
+      // marcatore prima di questo onData, se c'è stato un tasto fisico.)
+      const pasteNativo = pasteNativoAperto && Date.now() < pasteNativoScadenza;
+      chiudiPasteNativo();
       // D384 commit 2 — CTRL/ALT armati (anche insieme): il PRIMO carattere
       // dell'input esce con i prefissi (controllo e/o ESC) e entrambe le sticky
       // si disarmano. Le parole intere da IME: prefisso solo sul primo carattere,
@@ -1062,6 +1069,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       virtualKeyboard?.removeEventListener?.('geometrychange', onKeyboardGeometry);
       terminalTextarea?.removeEventListener('blur', onTerminalTextareaBlur);
       hostRef.current?.removeEventListener('paste', onTerminalPaste, true);
+      hostRef.current?.removeEventListener('keydown', chiudiPasteNativo, true);
       if (ro) ro.disconnect();
       if (rafId) cancelAnimationFrame(rafId);
       sock.close();

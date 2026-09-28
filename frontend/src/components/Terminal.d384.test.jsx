@@ -117,3 +117,33 @@ describe('Terminal D384 — modificatori armati e paste nativo', () => {
     expect(ultimaSock.sendInput).toHaveBeenCalledWith('\x03');
   });
 });
+
+describe('Terminal D384 commit 4 — il marcatore del paste si chiude al primo onData', () => {
+  afterEach(() => { vi.restoreAllMocks(); lanciaOpen = false; });
+
+  it('probe audit: paste «ciao» poi keydown a +50 ms → [\'ciao\', \'\x03\'] e CTRL disarmato', async () => {
+    const ctrlRef = { current: true };
+    mountTerminal({ ctrlRef });
+    fireEvent.paste(textarea(), { clipboardData: { getData: () => 'ciao' } });
+    await new Promise((r) => setTimeout(r, 50));   // il tasto arriva a +50 ms dal paste
+    fireEvent.keyDown(textarea(), { key: 'c', keyCode: 67, which: 67 });
+    const chiamate = ultimaSock.sendInput.mock.calls.map((c) => c[0]);
+    // PRIMA del commit 4 il marcatore a tempo teneva «c» come incollatura: ['ciao', 'c']
+    expect(chiamate).toEqual(['ciao', '\x03']);
+    expect(ctrlRef.current).toBe(false);
+  });
+
+  it('paste senza onData: il keydown dopo chiude il marcatore e resta una digitazione', async () => {
+    const ctrlRef = { current: true };
+    mountTerminal({ ctrlRef });
+    // clipboardData vuota: il marcatore si arma ma xterm non emette nessun onData
+    fireEvent.paste(textarea(), { clipboardData: { getData: () => '' } });
+    await new Promise((r) => setTimeout(r, 50));
+    fireEvent.keyDown(textarea(), { key: 'c', keyCode: 67, which: 67 });
+    // xterm emette onData anche per il paste vuoto ('' = no-op sul PTY) e QUEL
+    // primo onData chiude il marcatore, come da progetto
+    const con_contenuto = ultimaSock.sendInput.mock.calls.map((c) => c[0]).filter((s) => s !== '');
+    expect(con_contenuto).toEqual(['\x03']);
+    expect(ctrlRef.current).toBe(false);
+  });
+});
