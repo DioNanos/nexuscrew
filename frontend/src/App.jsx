@@ -220,6 +220,7 @@ export function SingleView({
   const actionRef = useRef(() => {});
   const ctrlRef = useRef(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
+  const keyboardRef = useRef(null);   // D384: requestTerminalKeyboard del terminale attivo
   const [selectionMode, setSelectionMode] = useState(false);
   const toggleCtrl = () => { ctrlRef.current = !ctrlRef.current; setCtrlArmed(ctrlRef.current); };
 
@@ -317,7 +318,7 @@ export function SingleView({
       </header>
       <div className="nc-termwrap">
         <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
-          ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} onFiles={setFilesEvent} fontSize={fontSize}
+          ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} keyboardRef={keyboardRef} onFiles={setFilesEvent} fontSize={fontSize}
           selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
           keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
         {/* D8: pannello in alternativa al terminale, overlay assoluto — il
@@ -337,7 +338,7 @@ export function SingleView({
       </div>
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} onCellSwitcher={onCellSwitcher} cellSwitcherOpen={cellSwitcherOpen}
         send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
-        ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} selectionMode={selectionMode} onSelectionMode={setSelectionMode}
+        ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} onKeyboardKeep={() => keyboardRef.current?.()} selectionMode={selectionMode} onSelectionMode={setSelectionMode}
         keepKeyboardClosed={inputPreferences.keybarKeepsKeyboardClosed} showEnter={inputPreferences.showKeybarEnter}
         keybarLayout={inputPreferences.keybarLayout} />
       {showComposer && (

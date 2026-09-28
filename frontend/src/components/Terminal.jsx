@@ -28,7 +28,7 @@ import './Terminal.css';
 
 // node (opzionale): sessione su nodo remoto — il WS passa dal proxy
 // /node/<name>/ws (B1); tutto il resto del protocollo e' identico.
-export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange, keyboardGesture = 'double-tap', onRendererChange }) {
+export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, keyboardRef, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange, keyboardGesture = 'double-tap', onRendererChange }) {
   const hostRef = useRef(null);
   const apiRef = useRef(null);        // {term, fit, sock} per lo zoom senza riconnettere
   const rendererRef = useRef(null);   // addon GPU attivo (o null quando si disegna in DOM)
@@ -240,6 +240,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       keyboardUnlocked = true;
       return showTerminalVirtualKeyboard(term);
     };
+    // D384 — CTRL/ALT della KeyBar aprono la tastiera nello stesso gesto (pointerdown):
+    // la funzione vive qui (chiude su `term`), App la raggiunge tramite ref.
+    if (keyboardRef) keyboardRef.current = requestTerminalKeyboard;
     lockTerminalKeyboard();
     const terminalTextarea = term.textarea;
     const onTerminalTextareaBlur = () => {
@@ -999,6 +1002,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
 
     return () => {
       apiRef.current = null;
+      if (keyboardRef) keyboardRef.current = null;
       if (overlayTimerRef.current) { clearTimeout(overlayTimerRef.current); overlayTimerRef.current = null; }
       if (sendRef) sendRef.current = () => false;
       if (composerRef) composerRef.current = () => false;

@@ -1,8 +1,15 @@
 import React from 'react';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import KeyBar from './KeyBar.jsx';
+import * as virtualKeyboard from '../lib/virtual-keyboard.js';
+
+// D384 — spia il dismiss della tastiera: CTRL e ALT non devono più chiamarlo.
+vi.mock('../lib/virtual-keyboard.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, dismissVirtualKeyboard: vi.fn(() => ({ blurred: false, apiRequested: false })) };
+});
 
 function renderKeyBar(overrides = {}) {
   const props = {
@@ -31,11 +38,15 @@ describe('KeyBar mobile Enter column', () => {
   it('sends carriage return without opening the keyboard or taking pointer focus', () => {
     const { props } = renderKeyBar();
     const input = document.createElement('textarea'); document.body.appendChild(input); input.focus();
+    // il dismiss reale è mockato a livello di file: qui si prova che ENTER non
+    // PRENDA il focus (preventDefault), non che chiuda la tastiera (test D384 sotto)
+    input.blur();
     const enter = screen.getByRole('button', { name: 'ENTER' });
     const event = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
     enter.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
     expect(document.activeElement).not.toBe(input);
+    expect(document.activeElement).not.toBe(enter);
     expect(props.send).toHaveBeenCalledOnce();
     expect(props.send).toHaveBeenCalledWith('\r');
     expect(props.onKeyboard).not.toHaveBeenCalled();
@@ -81,11 +92,14 @@ describe('KeyBar compact layout', () => {
   it('sends a direct carriage return from the compact Enter without focusing text', () => {
     const { props } = renderKeyBar({ keybarLayout: 'compact' });
     const input = document.createElement('textarea'); document.body.appendChild(input); input.focus();
+    // dismiss mockato a livello di file: l'assert qui è che ENTER non prende il focus
+    input.blur();
     const enter = screen.getByRole('button', { name: 'ENTER' });
     const event = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
     enter.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
     expect(document.activeElement).not.toBe(input);
+    expect(document.activeElement).not.toBe(enter);
     expect(props.send).toHaveBeenCalledOnce();
     expect(props.send).toHaveBeenCalledWith('\r');
     expect(props.onKeyboard).not.toHaveBeenCalled();
@@ -280,5 +294,46 @@ describe('KeyBar cell switcher', () => {
     expect(button.getAttribute('aria-expanded')).toBe('false');
     fireEvent.pointerDown(button);
     expect(onCellSwitcher).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe('KeyBar D384 — CTRL e ALT tengono/aprono la tastiera', () => {
+  beforeEach(() => { vi.mocked(virtualKeyboard.dismissVirtualKeyboard).mockClear(); });
+
+  it('CTRL non chiude la tastiera e chiede l\'apertura', () => {
+    // la classe «armed» è pilotata dalla prop ctrlArmed (lo sticky lo tiene App via toggleCtrl)
+    const { props } = renderKeyBar({ ctrlArmed: true, onKeyboardKeep: vi.fn() });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'CTRL' }));
+    expect(virtualKeyboard.dismissVirtualKeyboard).not.toHaveBeenCalled();
+    expect(props.onKeyboardKeep).toHaveBeenCalledOnce();
+    expect(props.onCtrl).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'CTRL' }).classList.contains('armed')).toBe(true);
+  });
+
+  it('ALT non chiude la tastiera, chiede l\'apertura e resta sticky per un tasto', () => {
+    const { props } = renderKeyBar({ onKeyboardKeep: vi.fn() });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'ALT' }));
+    expect(virtualKeyboard.dismissVirtualKeyboard).not.toHaveBeenCalled();
+    expect(props.onKeyboardKeep).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'ALT' }).classList.contains('armed')).toBe(true);
+    // il prossimo tasto della barra esce come Meta e disarma ALT (invariato)
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'ESC' }));
+    expect(props.send).toHaveBeenCalledWith('\x1b\x1b');
+    expect(screen.getByRole('button', { name: 'ALT' }).classList.contains('armed')).toBe(false);
+  });
+
+  it('ESC continua a chiudere la tastiera (dismiss), senza chiedere aperture', () => {
+    const { props } = renderKeyBar({ onKeyboardKeep: vi.fn() });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'ESC' }));
+    expect(virtualKeyboard.dismissVirtualKeyboard).toHaveBeenCalledOnce();
+    expect(props.onKeyboardKeep).not.toHaveBeenCalled();
+    expect(props.send).toHaveBeenCalledWith('\x1b');
+  });
+
+  it('con keepKeyboardClosed=false ESC non chiama il dismiss (comportamento invariato)', () => {
+    renderKeyBar({ keepKeyboardClosed: false, onKeyboardKeep: vi.fn() });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'ESC' }));
+    expect(virtualKeyboard.dismissVirtualKeyboard).not.toHaveBeenCalled();
   });
 });

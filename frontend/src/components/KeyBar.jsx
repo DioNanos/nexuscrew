@@ -23,6 +23,7 @@ export default function KeyBar({
   send, action, ctrlArmed = false, onCtrl, onKeyboard, selectionMode = false,
   onSelectionMode, onCellSwitcher, cellSwitcherOpen = false,
   keepKeyboardClosed = true, showEnter = true, keybarLayout = 'full',
+  onKeyboardKeep,
 }) {
   const [copy, setCopy] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -67,22 +68,26 @@ export default function KeyBar({
   const emit = (seq) => {
     if (altArmed) { send(ESC + seq); setAltArmed(false); } else send(seq);
   };
-  const run = (fn) => {
-    if (keepKeyboardClosed) dismissVirtualKeyboard();
+  // D384 — keepOpen: CTRL e ALT non chiudono la tastiera soft e, nello stesso
+  // gesto (pointerdown), chiedono l'apertura via onKeyboardKeep. Gli altri
+  // tasti restano governati da keepKeyboardClosed, com'erano.
+  const run = (fn, { keepOpen } = {}) => {
+    if (keepKeyboardClosed && !keepOpen) dismissVirtualKeyboard();
+    if (keepOpen && onKeyboardKeep) onKeyboardKeep();
     fn();
   };
   // pointerdown mantiene il gesto diretto (PTY/clipboard/micro UI) senza dare
   // focus al button. Il click detail=0 conserva attivazione tastiera/screen reader
   // senza duplicare il pointer click successivo.
-  const press = (fn) => ({
-    onPointerDown: (e) => { e.preventDefault(); run(fn); },
-    onClick: (e) => { if (e.detail === 0) run(fn); },
+  const press = (fn, opts = {}) => ({
+    onPointerDown: (e) => { e.preventDefault(); run(fn, opts); },
+    onClick: (e) => { if (e.detail === 0) run(fn, opts); },
   });
-  const repeatPress = (fn) => ({
+  const repeatPress = (fn, opts = {}) => ({
     onPointerDown: (e) => {
       e.preventDefault();
       stopRepeat();
-      run(fn);
+      run(fn, opts);
       // ALT is sticky for exactly one KeyBar key. Do not turn Alt+navigation
       // into a stream of Meta-prefixed bytes while the button remains held.
       if (altArmed) return;
@@ -97,7 +102,7 @@ export default function KeyBar({
     onPointerCancel: stopRepeat,
     onLostPointerCapture: stopRepeat,
     onTouchCancel: stopRepeat,
-    onClick: (e) => { if (e.detail === 0) run(fn); },
+    onClick: (e) => { if (e.detail === 0) run(fn, opts); },
   });
   const Bk = (label, seq, after) => (
     <button type="button" key={label}
@@ -205,9 +210,9 @@ export default function KeyBar({
             {Bk('⇥', '\t')}
             {switcherKey}
             <button type="button" key="ctrl" className={ctrlArmed ? 'armed' : ''}
-              {...press(() => { if (onCtrl) onCtrl(); })}>CTRL</button>
+              {...press(() => { if (onCtrl) onCtrl(); }, { keepOpen: true })}>CTRL</button>
             <button type="button" key="alt" className={altArmed ? 'armed' : ''}
-              {...press(() => setAltArmed((v) => !v))}>ALT</button>
+              {...press(() => setAltArmed((v) => !v), { keepOpen: true })}>ALT</button>
             {Bk('←', ESC + '[D')}
             {Bk('↓', ESC + '[B')}
             {Bk('→', ESC + '[C')}
