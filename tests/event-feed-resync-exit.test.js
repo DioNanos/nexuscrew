@@ -44,7 +44,7 @@ function stubClient(t, responses = [], extra = {}) {
   });
   const hub = [];
   const client = createEventFeedClient({
-    loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 15,
+    loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 15, minSnapshotIntervalMs: 50,
     eventsHub: { broadcast: (e) => hub.push(e) },
     ...extra,
   });

@@ -40,6 +40,7 @@ function boot(t, dir, { cleanup = true } = {}) {
     port: 41999,
     fleetEnabled: false,
     eventFeedClientPollMs: 100,
+    eventFeedClientMinSnapshotIntervalMs: 50,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
     settingsSeams: {
@@ -281,6 +282,7 @@ test('E2E: recupero fallito → una richiesta di snapshot per scadenza, non uno 
     port: 41999,
     fleetEnabled: false,
     eventFeedClientPollMs: 50,
+    eventFeedClientMinSnapshotIntervalMs: 300,
     eventFeedClientResyncCooldownStepsMs: [300, 600, 1000],
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
@@ -368,6 +370,7 @@ function brokenRecoveryTest(label, failureMode, expectLastError) {
       port: 41999,
       fleetEnabled: false,
       eventFeedClientPollMs: 50,
+      eventFeedClientMinSnapshotIntervalMs: 300,
       eventFeedClientResyncCooldownStepsMs: [300, 600, 1000],
       sessionExistsSeam: () => true,
       pasteSeam: () => true,
@@ -408,10 +411,96 @@ function brokenRecoveryTest(label, failureMode, expectLastError) {
     assert.equal(hits.stream, 3, 'no stream request beyond the exhaustion rounds');
     const v2 = await viewNow();
     assert.equal(v2.resyncExhaustions, 3, 'the ladder grew across the thrown recoveries');
-    assert.ok(v2.resyncBlockedUntil, 'the cooldown stays armed while the owner keeps failing');
-    if (expectLastError) assert.equal(v2.lastError, expectLastError, 'the cause lands in lastError');
-    else assert.ok(v2.lastError, 'a cause lands in lastError');
+    // Il riarma segue il fetch fallito (che il socket distrutto rende lento):
+    // tra consumo e riarma c'e' una finestra di transito, si accetta entro un tick.
+    const rearmed = await waitUntil(async () => (await viewNow()).resyncBlockedUntil, { tries: 20, what: 'cooldown re-armed' });
+    assert.ok(rearmed, 'the cooldown stays armed while the owner keeps failing');
+    const v3 = await viewNow();
+    if (expectLastError) assert.equal(v3.lastError, expectLastError, 'the cause lands in lastError');
+    else assert.ok(v3.lastError, 'a cause lands in lastError');
   });
 }
 brokenRecoveryTest('HTTP 500', 'http500', 'snapshot HTTP 500');
 brokenRecoveryTest('socket chiusa', 'socket', null);
+
+// Il caso dell'ultimo giro di audit: un frame SSE malformato dopo uno
+// snapshot valido azzera il cursore e, senza l'invariante, ripartiva lo
+// snapshot a ogni tick (12 in 260 ms). Con la finestra minima la richiesta
+// torna a UNA per intervallo, qualunque sia la causa del reset.
+test('E2E: frame malformato dopo snapshot valido — uno snapshot per finestra', async (t) => {
+  const OWNER = 'f'.repeat(32);
+  const hits = { snap: 0, stream: 0 };
+  const small = JSON.stringify({ ownerId: OWNER, cursor: '1:1', viewEpoch: 1, notifications: [], asks: [] });
+  const fake = http.createServer((req, res) => {
+    const url = req.url || '';
+    const json = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (url === '/federation/health') return json(200, { ok: true, instanceId: OWNER, eventFeedV1: true });
+    if (url.includes('/event-feed/snapshot')) { hits.snap += 1; res.writeHead(200, { 'content-type': 'application/json' }); res.end(small); return; }
+    if (url.includes('/event-feed')) {
+      hits.stream += 1;
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end('id: 1:1\ndata: {"non json valida\n\n'); // frame malformato: il cursore cade, il resync riparte
+      return;
+    }
+    return json(404, { error: 'no stub' });
+  });
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+  t.after(() => { try { fake.close(); } catch (_) {} });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncgap-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const paths = {
+    home: dir, configDir,
+    configPath: path.join(configDir, 'config.json'),
+    nodesPath: path.join(configDir, 'nodes.json'),
+    tokenPath: path.join(configDir, 'token'),
+  };
+  nodesStore.initStore(paths.nodesPath);
+  const { server, token, watcher } = createServer({
+    ...paths,
+    filesRoot: path.join(dir, 'files'),
+    port: 41999,
+    fleetEnabled: false,
+    eventFeedClientPollMs: 50,
+    eventFeedClientMinSnapshotIntervalMs: 800,
+    eventFeedClientResyncCooldownStepsMs: [2000, 5000, 10000],
+    sessionExistsSeam: () => true,
+    pasteSeam: () => true,
+    settingsSeams: {
+      platform: 'linux', uid: 1000,
+      execImpl: () => { throw new Error('exec disabled in test'); },
+      serviceInstallPath: path.join(dir, 'systemd', 'nexuscrew.service'),
+      keygen: (_kp, name) => `ssh-ed25519 AAAAC3FAKEKEY nexuscrew-tunnel-${name}`,
+      spawnImpl: () => ({ pid: 4193999, unref() {} }),
+      sshVersion: () => ({ major: 9, minor: 6 }),
+    },
+  });
+  t.after(async () => { await sleep(40); server.close(); if (watcher) watcher.close(); });
+  const A = await new Promise((res) => server.listen(0, '127.0.0.1', () => res({
+    base: `http://127.0.0.1:${server.address().port}`, token, ...paths,
+  })));
+  let st = nodesStore.addNode(nodesStore.loadStoreStrict(A.nodesPath), {
+    name: 'owner', remotePort: 41999, localPort: fake.address().port, nodeId: OWNER,
+    token: 'TOK', direction: 'outbound', shared: true, visibility: 'network', ssh: 'u@owner',
+  });
+  st = nodesStore.updateNode(st, 'owner', { eventsReceive: true });
+  nodesStore.atomicWriteStore(A.nodesPath, st);
+  const viewNow = async () => {
+    const r = await fetch(`${A.base}/api/feed-state`, { headers: H(A.token) });
+    return ((await r.json()).views || []).find((x) => x.ownerId === OWNER) || null;
+  };
+  // Il primo snapshot arriva, il frame malformato fa ripartire il resync e
+  // la finestra blocca il secondo: stale con cooldown visibile.
+  assert.ok(await waitUntil(async () => {
+    const v = await viewNow();
+    return v && v.stale === true && v.nextSnapshotAllowedAt && hits.snap === 1 ? v : null;
+  }, { tries: 100, what: 'rate-limited after the malformed frame' }), 'the view is stale with the window visible and ONE snapshot');
+  await sleep(400); // dentro la finestra (800 ms)
+  assert.equal(hits.snap, 1, 'no snapshot inside the window: ' + hits.snap);
+  // Alla scadenza esattamente un altro snapshot, poi di nuovo finestra.
+  await waitUntil(async () => hits.snap >= 2, { tries: 100, what: 'second snapshot after the window' });
+  assert.equal(hits.snap, 2, 'one snapshot per interval: ' + hits.snap);
+  await sleep(400);
+  assert.equal(hits.snap, 2, 'the window holds after the second snapshot');
+});

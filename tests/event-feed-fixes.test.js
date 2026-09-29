@@ -148,7 +148,7 @@ function stubClient(t, responses = [], extra = {}) {
   quiesceAndRemove(t, dir, ref);
   const hub = [];
   const client = createEventFeedClient({
-    loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30,
+    loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30, minSnapshotIntervalMs: 0,
     eventsHub: { broadcast: (e) => hub.push(e) },
     ...extra,
   });
@@ -353,7 +353,7 @@ function stubOwners(t, defs, extra = {}) {
   const ref = { value: null };
   quiesceAndRemove(t, dir, ref);
   const client = createEventFeedClient({
-    loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30,
+    loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30, minSnapshotIntervalMs: 0,
     eventsHub: { broadcast: (e) => hub.push(e) },
     ...extra,
   });
@@ -443,7 +443,10 @@ test('R2d: the snapshot element sanity covers asks too (count and size)', async 
   const health = { ok: true, status: 200, json: async () => ({ ok: true, instanceId: ownerId, eventFeedV1: true }) };
   const snapOf = (snap) => ({ ok: true, status: 200, text: async () => JSON.stringify({ ownerId, cursor: '1:0', viewEpoch: 1, notifications: [], ...snap }) });
   const overCap = Array.from({ length: 101 }, (_, i) => ({ id: `ask-${i}`, question: 'q', options: [], session: 's', ts: 1 }));
-  const first = stubClient(t, [health, snapOf({ asks: overCap }), IDLE_STREAM]);
+  // Le risposte oversize si ripetono: il primo rifiuto deve restare visibile
+  // anche se l'invariante lascia correre i tick (il 500 di default non deve
+  // mai coprire la causa vera).
+  const first = stubClient(t, [health, ...Array.from({ length: 10 }, () => snapOf({ asks: overCap })), IDLE_STREAM]);
   first.client.start();
   const a = await waitForView(first.client, ownerId, (v) => v.lastError === 'snapshot-element-oversize');
   assert.equal(a.lastError, 'snapshot-element-oversize', '101 asks (cap 100) are refused, not applied');
@@ -451,7 +454,7 @@ test('R2d: the snapshot element sanity covers asks too (count and size)', async 
   first.client.stop();
 
   const huge = [{ id: 'ask-huge', question: 'q'.repeat(20 * 1024), options: [], session: 's', ts: 1 }];
-  const second = stubClient(t, [health, snapOf({ asks: huge }), IDLE_STREAM]);
+  const second = stubClient(t, [health, ...Array.from({ length: 10 }, () => snapOf({ asks: huge })), IDLE_STREAM]);
   second.client.start();
   const b = await waitForView(second.client, ownerId, (v) => v.lastError === 'snapshot-element-oversize');
   assert.equal(b.lastError, 'snapshot-element-oversize', 'an ask element over 16 KiB is refused');

@@ -43,6 +43,9 @@ function stubClient({ now = () => 1000, epoch = () => 1, asks = () => [ask()] } 
   };
   const client = createEventFeedClient({
     loadStore: () => store, fetchImpl, pollMs: 50, now,
+    // I round qui sono deterministici (round/resnapshot a mano): la finestra
+    // minima non è ciò che questi test provano.
+    minSnapshotIntervalMs: 0,
     eventsHub: { broadcast() {} }, log: () => {},
   });
   return { client };
