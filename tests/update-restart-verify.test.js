@@ -5,7 +5,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { restartRuntime, runUpdate } = require('../lib/update/runner.js');
+const runner = require('../lib/update/runner.js');
+const { restartRuntime } = runner;
+const runUpdate = (o) => runner.runUpdate({ npmInvocationImpl: () => ({ kind: 'path-npm', bin: 'npm', argvPrefix: [], env: null, npmCli: null }), npmPreflightImpl: () => ({}), log: () => {}, ...o });
 const core = require('../lib/update/core.js');
 
 const tmp = (t) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-rv-')); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
