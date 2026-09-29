@@ -925,3 +925,93 @@ unsubRejectionTest('senza elenco sottoscritto', () => JSON.stringify({
 unsubRejectionTest('asks stringa', () => JSON.stringify({
   ownerId: '7'.repeat(31) + '12', cursor: '1:1', viewEpoch: 1, notifications: [], asks: 'no-array',
 }));
+
+// Il retry programmato della riconciliazione (via NON sottoscritta): una
+// lettura caduta in finestra riceve 'skipped' dalla porta e arma UN tentativo
+// alla scadenza, per owner, senza duplicati. Il registro dei retry armati era
+// un Set usato con .set() (che su Set non esiste): TypeError alla prima
+// armatura e il retry NON partiva mai. Qui si esercita il ciclo intero —
+// prima lettura a finestra aperta ('ok', l'alias resta perché l'ask è viva),
+// seconda lettura in finestra ('skipped' → retry armato), poi il retry parte
+// da solo e l'owner viene contattato una seconda volta.
+test('E2E: retry programmato del reconcile — skipped in finestra arma un secondo tentativo', async (t) => {
+  const OWNER = '7'.repeat(31) + '9';
+  const hits = { snap: 0 };
+  const fake = http.createServer((req, res) => {
+    const url = req.url || '';
+    const json = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (url === '/federation/health') return json(200, { ok: true, instanceId: OWNER, eventFeedV1: true });
+    if (url.includes('/event-feed/snapshot')) {
+      hits.snap += 1;
+      return json(200, {
+        ownerId: OWNER, cursor: '1:1', viewEpoch: 1, notifications: [],
+        asks: [{ id: 'a3977abd', question: 'aperta davvero', session: 's' }],
+      });
+    }
+    if (url.includes('/event-feed')) return json(409, { error: 'x', reason: 'reset-required' });
+    return json(404, { error: 'no stub' });
+  });
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+  t.after(() => { try { fake.close(); } catch (_) {} });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncretry-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const paths = {
+    home: dir, configDir,
+    configPath: path.join(configDir, 'config.json'),
+    nodesPath: path.join(configDir, 'nodes.json'),
+    tokenPath: path.join(configDir, 'token'),
+  };
+  nodesStore.initStore(paths.nodesPath);
+  const alias = {
+    id: 'alias-val', question: 'alias vivo sul owner', options: [],
+    session: tmuxSessionForCell('dev'), ts: Date.now(), revision: 0,
+    originNode: OWNER, ownerId: OWNER, ownerAskId: 'a3977abd',
+  };
+  fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks: [alias] }), { mode: 0o600 });
+  const { server, token, watcher } = createServer({
+    ...paths,
+    filesRoot: path.join(dir, 'files'),
+    port: 41999,
+    fleetEnabled: false,
+    eventFeedClientPollMs: 500,
+    eventFeedClientMinSnapshotIntervalMs: 1000,
+    sessionExistsSeam: () => true,
+    pasteSeam: () => true,
+    settingsSeams: {
+      platform: 'linux', uid: 1000,
+      execImpl: () => { throw new Error('exec disabled in test'); },
+      serviceInstallPath: path.join(dir, 'systemd', 'nexuscrew.service'),
+      keygen: (_kp, name) => `ssh-ed25519 AAAAC3FAKEKEY nexuscrew-tunnel-${name}`,
+      spawnImpl: () => ({ pid: 4193999, unref() {} }),
+      sshVersion: () => ({ major: 9, minor: 6 }),
+    },
+  });
+  t.after(async () => { await sleep(40); server.close(); if (watcher) watcher.close(); });
+  const A = await new Promise((res) => server.listen(0, '127.0.0.1', () => res({
+    base: `http://127.0.0.1:${server.address().port}`, token, ...paths,
+  })));
+  let st = nodesStore.addNode(nodesStore.loadStoreStrict(A.nodesPath), {
+    name: 'owner', remotePort: 41999, localPort: fake.address().port, nodeId: OWNER,
+    token: 'TOK', direction: 'outbound', shared: true, visibility: 'network', ssh: 'u@owner',
+  });
+  nodesStore.atomicWriteStore(A.nodesPath, st);
+  // Prima lettura: finestra aperta → snapshot valido → 'ok'. L'ask è viva
+  // sull'owner, quindi l'alias NON si chiude.
+  const first = await fetch(`${A.base}/api/asks`, { headers: H(A.token) });
+  assert.equal(first.status, 200);
+  assert.equal(hits.snap, 1, 'the first read contacts the owner once');
+  // Seconda lettura SUBITO dopo: dentro la finestra → 'skipped', NESSUNA
+  // richiesta nuova, e il retry programmato si arma senza errori.
+  await fetch(`${A.base}/api/asks`, { headers: H(A.token) });
+  assert.equal(hits.snap, 1, 'a read inside the window makes no new request');
+  // Il retry parte DA SOLO alla scadenza della finestra (1 s in test).
+  const retried = await waitUntil(async () => hits.snap >= 2, { tries: 50, what: 'armed retry fires' });
+  assert.ok(retried, 'the armed retry contacts the owner again');
+  // L'alias è sopravvissuto a tutto il giro: l'ask è ancora aperta là.
+  const list = await fetch(`${A.base}/api/asks`, { headers: H(A.token) }).then((r) => r.json());
+  const rec = (list.asks || []).find((a) => a.id === 'alias-val');
+  assert.ok(rec, 'the alias still exists');
+  assert.notEqual(rec.dismissed, true, 'a live ask never closes its alias');
+});
