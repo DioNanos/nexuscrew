@@ -80,7 +80,7 @@ test('U2 backoff: almeno 1 h fra due update, anche per versioni diverse', async 
   u.close();
 });
 
-test('U2 backoff: l\'apply manuale di DAG non e\' frenato dal backoff (ma resta bloccato dal blocco versione)', async (t) => {
+test('U2 backoff: l\'apply manuale dell\'operatore non e\' frenato dal backoff (ma resta bloccato dal blocco versione)', async (t) => {
   const home = mkhome(t); const now = Date.now();
   seedState(home, { phase: 'idle', latest: '0.9.51', available: true, installs: { '0.9.51': [now - 1000, now - 2000] }, lastInstallAt: now - 1000 });
   const { u, spawned } = updater(home);
