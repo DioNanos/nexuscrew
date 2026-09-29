@@ -1,4 +1,4 @@
-// D384 (rilievo DevAuditor, commit 3) — Terminal con modificatori armati:
+// D384 commit 3 — Terminal con modificatori armati:
 // 1) il throw sincrono di openTerminalSocket (ws-client: origine non-locale su
 //    ws://) azzera keyboardRef e rimuove i listener (blur e paste);
 // 2) il paste NATIVO di xterm (clipboard → evento paste → onData sincrono) è
@@ -112,7 +112,7 @@ describe('Terminal D384 — modificatori armati e paste nativo', () => {
   it('solo ctrlRef (GridTile/CellPeek): CTRL+c → \\x03 senza toccare altRef assente', () => {
     const ctrlRef = { current: true };
     mountTerminal({ ctrlRef, altRef: undefined, setAltArmed: undefined });
-    // nessun TypeError: la guardia su altRef (rilievo DevAuditor) deve reggere
+    // nessun TypeError: la guardia su altRef (da audit) deve reggere
     fireEvent.keyDown(textarea(), { key: 'c', keyCode: 67, which: 67 });
     expect(ultimaSock.sendInput).toHaveBeenCalledWith('\x03');
   });
