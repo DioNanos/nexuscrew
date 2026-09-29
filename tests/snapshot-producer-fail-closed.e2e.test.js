@@ -49,6 +49,31 @@ const waitUntil = async (fn, { tries = 60, what = 'condition' } = {}) => {
   return null;
 };
 
+// Attende che la view del feed osservi un determinato lastError, RACCOGLIENDO
+// tutti gli errori visti durante il poll. Il rate-limit 6/min del produttore
+// (lib/notify/event-feed-routes.js:22 SNAPSHOT_RATE_PER_MIN) fa passare solo i
+// primi 6 snapshot (150 ms di finestra client l'uno => ~900 ms), poi li
+// sovrascrive con 429. Leggere lastError solo a fine poll perde il 503 se la
+// finestra e' gia' scaduta. L'asserzione essenziale (v. commenti dei test) e'
+// che il produttore sia stato contattato DAVVERO e abbia rifiutato (503
+// osservato almeno una volta), non che lastError sia ancora 503 alla fine.
+// Si polla CONCORRENTEMENTE alla riconciliazione, cosi' il primo 503 e'
+// catturato dentro la sua finestra.
+async function awaitSeenError(feedView, expected, { tries = 200, gap = 50 } = {}) {
+  const seen = [];
+  for (let i = 0; i < tries; i++) {
+    try {
+      const v = await feedView();
+      if (v && v.lastError) {
+        seen.push(v.lastError);
+        if (v.lastError === expected) return { ok: true, seen, view: v };
+      }
+    } catch (_) { /* best-effort: la view e' read-only */ }
+    await sleep(gap);
+  }
+  return { ok: false, seen };
+}
+
 // Finestra e cadenze come tests/snapshot-schema-e2e.test.js: le GET della
 // riconciliazione stanno oltre la finestra minima l'una dall'altra, così ogni
 // una passa dalla porta con la finestra libera.
@@ -257,20 +282,23 @@ test('E2E fail-closed (via sottoscritta): store illeggibile — view stale su sn
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { A, aliasRecord, feedView } = await pairReal(t, root, { broken: true, subscribed: true });
   // La riconciliazione passa dalla porta condivisa con la view: nessuna chiusura.
+  // Si OSSERVA la view CONCORRENTEMENTE alla riconciliazione: il 503 del
+  // produttore vive solo nei primi 6 snapshot (~900 ms di finestra client),
+  // poi il rate-limit 6/min lo sovrascrive con 429. Leggere lastError solo a
+  // fine riconciliazione perde il 503 e fa oscillare il test fra 503 e 429.
+  const observing = awaitSeenError(feedView, 'snapshot HTTP 503');
   await driveReconciliation(A);
+  const observed = await observing;
   const rec = await aliasRecord();
   assert.ok(rec, 'l\'alias importato è ancora nell\'elenco');
   assert.notEqual(rec.dismissed, true, 'nessuna chiusura per un produttore che non ha potuto leggere (via sottoscritta)');
   // La view del client segnala la causa: prova che il produttore è stato
   // contattato DAVVERO e che il suo rifiuto 503 è arrivato (non un verde a
-  // vuoto; il retry della view va a backoff, non a loop). La finestra/view può
-  // consumare il budget snapshot del peer: si attende la causa con pazienza,
-  // non a colpo sicuro.
-  const stale = await waitUntil(async () => {
-    const v = await feedView();
-    return v && v.lastError === 'snapshot HTTP 503' ? v : null;
-  }, { tries: 120, what: 'view stale con la causa del produttore' });
-  assert.ok(stale, 'la view dell\'owner è stale con lastError "snapshot HTTP 503"');
+  // vuoto; il retry della view va a backoff, non a loop). Si accetta la PRIMA
+  // osservazione del 503 anche se poi il rate lo sovrascrive con 429.
+  assert.ok(observed.ok,
+    'la view dell\'owner ha osservato almeno una volta lastError "snapshot HTTP 503" (visti: '
+    + Array.from(new Set(observed.seen)).join(', ') + ')');
 });
 
 // Il contratto del PRODUTTORE, su una coppia fresca (nessuna riconciliazione
@@ -362,15 +390,20 @@ test('E2E nc-0953 (via sottoscritta): asks.json malformato — view stale su 503
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-mal-view-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { A, aliasRecord, feedView } = await pairReal(t, root, { ownerRaw: malformedOwnerRaw(), subscribed: true });
+  // Si OSSERVA la view CONCORRENTEMENTE alla riconciliazione: il 503 del
+  // produttore malformato vive solo nei primi 6 snapshot (~900 ms), poi il
+  // rate-limit 6/min lo sovrascrive con 429. Leggere lastError a fine poll
+  // faceva oscillare il test fra 503 e 429 a seconda del ritmo. Si accetta la
+  // prima osservazione del 503 e si raccolgono gli errori visti.
+  const observing = awaitSeenError(feedView, 'snapshot HTTP 503');
   await driveReconciliation(A);
+  const observed = await observing;
   const rec = await aliasRecord();
   assert.ok(rec, 'l\'alias importato e\' ancora nell\'elenco');
   assert.notEqual(rec.dismissed, true, 'nessuna chiusura per store malformato (via sottoscritta)');
-  const stale = await waitUntil(async () => {
-    const v = await feedView();
-    return v && v.lastError === 'snapshot HTTP 503' ? v : null;
-  }, { tries: 120, what: 'view stale con la causa del produttore malformato' });
-  assert.ok(stale, 'la view e\' stale con lastError "snapshot HTTP 503"');
+  assert.ok(observed.ok,
+    'la view ha osservato almeno una volta lastError "snapshot HTTP 503" (visti: '
+    + Array.from(new Set(observed.seen)).join(', ') + ')');
 });
 
 test('E2E nc-0953 (porta): asks non array — produttore 503, la riconciliazione NON chiude l\'alias', async (t) => {
