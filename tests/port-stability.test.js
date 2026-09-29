@@ -26,7 +26,7 @@ function home(t) {
 const serverOpts = (dir, port, extra = {}) => ({
   home: dir, configDir: path.join(dir, '.nexuscrew'), configPath: path.join(dir, '.nexuscrew', 'config.json'),
   tokenPath: path.join(dir, '.nexuscrew', 'token'), nodesPath: path.join(dir, '.nexuscrew', 'nodes.json'),
-  filesRoot: path.join(dir, 'files'), bind: '127.0.0.1', port, panelPort: 0, autoUpdate: false, fleetEnabled: false, log: () => {}, ...extra,
+  filesRoot: path.join(dir, 'files'), bind: '127.0.0.1', port, panelPort: 0, autoUpdate: false, fleetEnabled: false, log: () => {}, lang: 'en', ...extra,
 });
 
 // ---- P1: il ripiego della porta principale non si persiste piu' -------------------------------------------------
@@ -129,7 +129,7 @@ function smartOpts(dir, port, extra = {}) {
     home: dir, configDir: path.join(dir, '.nexuscrew'), configPath: cfg, tokenPath: path.join(dir, '.nexuscrew', 'token'),
     platform: 'linux', tmuxOk: true, execImpl: () => '', ensureFleetDefaultsImpl: () => ({ created: false }),
     runInitImpl: () => { calls.init += 1; }, startImpl: () => ({ started: false }), startPortableImpl: () => ({ started: false }),
-    openImpl: () => true, noOpen: true, waitAttempts: 2, waitDelayMs: 5, port, ...extra,
+    openImpl: () => true, noOpen: true, waitAttempts: 2, waitDelayMs: 5, port, lang: 'en', ...extra,
   } };
 }
 

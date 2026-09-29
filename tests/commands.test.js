@@ -421,7 +421,7 @@ test('smart-up: porta occupata da altro processo -> errore chiaro, la porta NON 
     home, platform: 'linux',
     execImpl: () => { throw new Error('inactive'); },
     probeImpl: async () => false,
-    probeStatusImpl: async () => null,
+    probeStatusImpl: async () => null, lang: 'en',
     portAvailableImpl: async (port) => port === 41823,
     runInitImpl: () => { wrote = true; },
     waitAttempts: 1,
@@ -445,7 +445,7 @@ test('smart-up: non sposta la porta se esistono peer collegati', async () => {
   let wrote = false;
   await assert.rejects(() => smartUp({
     home, platform: 'linux', execImpl: () => { throw new Error('inactive'); },
-    probeImpl: async () => false, probeStatusImpl: async () => null, portAvailableImpl: async (port) => port === 41823,
+    probeImpl: async () => false, probeStatusImpl: async () => null, lang: 'en', portAvailableImpl: async (port) => port === 41823,
     runInitImpl: () => { wrote = true; }, waitAttempts: 1,
   }), /in use by another process/);
   assert.equal(wrote, false);
@@ -491,7 +491,7 @@ test('dispatch restart: un servizio che NON torna su e\' un fallimento, non un s
     ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
     log: (x) => logs.push(x),
     restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
-    probeStatusImpl: async () => null, // nessuna risposta: non e' il caso 401
+    probeStatusImpl: async () => null, lang: 'en', // nessuna risposta: non e' il caso 401
     waitForRuntimeImpl: async () => false, // il comando parte, il processo non risponde
     // Porta ancora occupata: qualcosa la tiene senza servire, quindi non c'e'
     // niente da ritentare e il rimedio non e' riavviare.
@@ -526,7 +526,7 @@ test('dispatch restart: porta libera e servizio assente -> riprova UNA volta', a
     log: (x) => logs.push(x),
     // Primo controllo: assente. Secondo, dopo il riavvio: presente.
     restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
-    probeStatusImpl: async () => null, // nessuna risposta: non e' il caso 401
+    probeStatusImpl: async () => null, lang: 'en', // nessuna risposta: non e' il caso 401
     waitForRuntimeImpl: async () => { giro += 1; return giro > 1; },
     portAvailableImpl: async () => true, // il processo e' uscito davvero
     startPortableImpl: () => { avvii.push('start'); return { started: true }; },
@@ -549,7 +549,7 @@ test('dispatch restart: se non resta su nemmeno al secondo avvio, e\' un fallime
     ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }),
     log: (x) => logs.push(x),
     restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
-    probeStatusImpl: async () => null, // nessuna risposta: non e' il caso 401
+    probeStatusImpl: async () => null, lang: 'en', // nessuna risposta: non e' il caso 401
     waitForRuntimeImpl: async () => false,
     portAvailableImpl: async () => true,
     startPortableImpl: () => { avvii.push('start'); return { started: true }; },
@@ -1628,7 +1628,7 @@ test('dispatch restart: su runtime GESTITO non avvia un processo accanto', async
     execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
     log: (x) => logs.push(x),
     restartImpl: () => ({ restarted: true, runtimeOwner: 'managed' }),
-    probeStatusImpl: async () => null,
+    probeStatusImpl: async () => null, lang: 'en',
     waitForRuntimeImpl: async () => false,
     portAvailableImpl: async () => { throw new Error('non deve nemmeno guardare la porta'); },
     startPortableImpl: () => { throw new Error('MAI avviare un portatile accanto a un servizio gestito'); },
@@ -1657,7 +1657,7 @@ test('dispatch restart: senza token non incolpa la porta, dice che non puo\' ver
     execImpl: (_bin, args) => (args.includes('is-active') ? 'active' : ''),
     log: (x) => logs.push(x),
     restartImpl: () => ({ restarted: true, runtimeOwner: 'portable' }),
-    probeStatusImpl: async () => null, // nessuna risposta: non e' il caso 401
+    probeStatusImpl: async () => null, lang: 'en', // nessuna risposta: non e' il caso 401
     waitForRuntimeImpl: async () => { throw new Error('non deve nemmeno sondare'); },
     startPortableImpl: () => { throw new Error('non deve riavviare'); },
   });

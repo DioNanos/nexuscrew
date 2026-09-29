@@ -43,7 +43,7 @@ test('start(): porta occupata al boot -> errore chiaro, nessun bind alternativo 
     candidate = start({
       home: dir, configDir: dir, configPath, tokenPath: path.join(dir, 'token'),
       filesRoot: path.join(dir, 'files'), port: occupied, fleetEnabled: false, autoUpdate: false, log: () => {},
-      ownPortWaitMs: 0, onListenError: resolve,
+      ownPortWaitMs: 0, lang: 'en', onListenError: resolve,
     });
   });
   const error = await failure;
@@ -72,7 +72,7 @@ test('start(): porta occupata con peer collegati -> nessun fallback silenzioso',
   const failure = new Promise((resolve) => {
     candidate = start({
       home: dir, configDir: dir, configPath, nodesPath, tokenPath: path.join(dir, 'token'),
-      filesRoot: path.join(dir, 'files'), port: occupied, fleetEnabled: false, autoUpdate: false, log: () => {},
+      filesRoot: path.join(dir, 'files'), port: occupied, fleetEnabled: false, autoUpdate: false, log: () => {}, lang: 'en',
       onListenError: resolve,
     });
   });
