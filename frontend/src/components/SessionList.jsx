@@ -87,7 +87,7 @@ export default function SessionList({
   // dall'intestazione. Senza, la riga è un bersaglio d'apertura e basta.
   const [reorderMode, setReorderMode] = useState(false);
   const {
-    pins, orders, togglePin, removePin, pinError, retryPinPersist, clearPinError, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
+    pins, orders, togglePin, removePin, pinError, reorderBlocked, retryPinPersist, clearPinError, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
   // Stato live del NODO che possiede `route` — mai quello di un altro nodo.
   const hostFor = (route) => hostByRoute[hostRouteKey(route)] || {};
@@ -311,8 +311,8 @@ export default function SessionList({
     [sessions, cellSessions],
   );
   const localRawItems = useMemo(
-    () => buildLocalRoster(cells, unmanaged, byName, undefined, { autorevole: localReadOk }),
-    [cells, unmanaged, byName],
+    () => buildLocalRoster(cells, unmanaged, byName, undefined, { autorevole: localReadOk, fleetStale }),
+    [cells, unmanaged, byName, localReadOk, fleetStale],
   );
 
   // Le righe-cella di TUTTE le posizioni, per chiave: serve a RI-RISOLVERE la
@@ -539,6 +539,7 @@ export default function SessionList({
       {err && <div className="nc-err">{err}</div>}
       {actionNotice && <div className="nc-notice" role="status">{actionNotice}</div>}
       {fleetStale && <div className="nc-set-hint nc-fleet-stale" role="status">{t('fleet-stale')}</div>}
+      {reorderBlocked && <div className="nc-set-hint nc-reorder-blocked" role="status">{t('reorder-blocked')} ({reorderBlocked.reason})</div>}
       {fleetOff !== null && (
         <div className="nc-set-hint nc-fleet-off" role="status">
           {t('fleet-off')}{fleetOff ? ` (${fleetOff})` : ''}

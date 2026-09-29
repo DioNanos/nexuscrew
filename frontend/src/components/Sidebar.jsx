@@ -58,7 +58,7 @@ export default function Sidebar({
 }) {
   const [lang, setLang] = useLang(); // re-render allo switch lingua
   const {
-    pins, orders, togglePin, removePin, pinError, retryPinPersist, clearPinError, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
+    pins, orders, togglePin, removePin, pinError, reorderBlocked, retryPinPersist, clearPinError, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
   const {
     groupsFor: preferredGroups, moveNode, stepNode, nodeKey,
@@ -178,7 +178,7 @@ export default function Sidebar({
   // Se un overlay esterno si apre (switcher), il peek della sidebar si chiude:
   // due popup fissi sovrapposti sono il difetto che questa riga toglie.
   useEffect(() => { if (overlayOpen) { setPeekKey(null); setPeekSource('preview'); } }, [overlayOpen]);
-  const localRawItems = buildLocalRoster(sortedCells, others, byName, undefined, { autorevole: localVerified });
+  const localRawItems = buildLocalRoster(sortedCells, others, byName, undefined, { autorevole: localVerified, fleetStale });
   const localItems = sidebarItems(localRawItems, pins, viewFor('local').filter, sidebarOrder(orders, 'local'));
   const preferredNodeGroups = preferredGroups(nodeGroups || []);
   const remoteRosters = preferredNodeGroups.map((g) => {
@@ -494,6 +494,7 @@ export default function Sidebar({
         <button className="nc-collapse-btn" onClick={onToggleCollapse} title={t('collapse')}>⟨</button>
         <span className="nc-side-title">{t('fleet')}</span>
         {/* R27: lettura fleet non riuscita → la lista e' l'ultima nota, non un dato */}
+        {reorderBlocked && <span className="nc-side-fleet-stale" role="status" title={t('reorder-blocked')} aria-label={t('reorder-blocked')}>⇅</span>}
         {fleetStale && <span className="nc-side-fleet-stale" role="status" title={t('fleet-stale')} aria-label={t('fleet-stale')}>●</span>}
         {/* R27 rev3: fleet spento per scelta → zero celle e' la verita' (reason del server) */}
         {fleetOff !== null && (

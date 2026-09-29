@@ -22,6 +22,13 @@ export function useRosterPreferences() {
   // Errore di persistenza dell'ultima rimozione (contratto rev6 §2.1: deve essere
   // SEGNALATO e RITENTABILE, non solo loggato in console). null = tutto ok.
   const [pinError, setPinError] = useState(null);
+  // Riordino rifiutato perche' la lista e' parziale: {reason, position, at}. Si spegne da solo o al prossimo riordino valido.
+  const [reorderBlocked, setReorderBlocked] = useState(null);
+  useEffect(() => {
+    if (!reorderBlocked) return undefined;
+    const timer = setTimeout(() => setReorderBlocked(null), 8000);
+    return () => clearTimeout(timer);
+  }, [reorderBlocked]);
 
   // O2: lo stato di questa istanza segue lo storage. Un'altra finestra (evento `storage`, anche con chiave
   // null dopo un clear) o un'altra istanza di questo documento (CHANGE_EVENT) ricaricano i valori correnti.
@@ -81,6 +88,13 @@ export function useRosterPreferences() {
   const canMoveRoster = (source, target) => pins.includes(source) === pins.includes(target);
 
   function moveRoster(position, source, target, rawItems) {
+    const partial = rawItems.find((item) => item.partial)?.partial;
+    if (partial) {
+      setReorderBlocked({ reason: partial, position, at: Date.now() });
+      appendOrderJournal({ reason: 'reorder-blocked', position: canonicalPosition(position), source, target, note: partial });
+      return;
+    }
+    setReorderBlocked(null);
     const currentPins = loadPins();
     const sourcePinned = currentPins.includes(source); const targetPinned = currentPins.includes(target);
     if (sourcePinned !== targetPinned) return;
@@ -106,6 +120,7 @@ export function useRosterPreferences() {
   }
 
   function stepRoster(position, source, delta, rawItems) {
+    if (rawItems.some((item) => item.partial)) { moveRoster(position, source, source, rawItems); return; }
     const currentPins = loadPins(); const currentOrders = positionView(loadSidebarOrders());
     const sourceTechnical = rawItems.find((item) => item.key === source)?.technical === true;
     const sourcePinned = currentPins.includes(source);
@@ -117,7 +132,7 @@ export function useRosterPreferences() {
 
   return {
     pins, views: positionView(views), orders: positionView(orders), togglePin, removePin,
-    pinError, retryPinPersist, clearPinError,
+    pinError, retryPinPersist, clearPinError, reorderBlocked,
     viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   };
 }
