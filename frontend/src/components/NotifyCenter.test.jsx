@@ -336,3 +336,78 @@ describe('arretrato: dedup che discrimina e cap per ts', () => {
     expect(document.querySelectorAll('.nc-remote-notice').length).toBe(50);
   });
 });
+
+describe('federated ask dismiss: confirmed only, remembered, nothing silent', () => {
+  const openPanel = (container) => {
+    const badge = container.querySelector('.nc-ask-badge');
+    expect(badge).toBeTruthy();
+    act(() => { badge.click(); });
+  };
+  const importedView = (id, question, extra = []) => ({
+    views: [{
+      ownerId: 'ownerA', askReplyAccess: true,
+      asks: [{ id, question, session: 's', options: [] }, ...extra],
+    }],
+  });
+
+  it('a confirmed dismiss does not come back when the feed state is read again', async () => {
+    const { getFeedState, relayAskDismiss } = await import('../lib/api.js');
+    getAsks.mockResolvedValue({ asks: [] });
+    getFeedState.mockResolvedValue(importedView('a1-reload', 'ricompare?'));
+    relayAskDismiss.mockResolvedValue({ dismissed: true });
+
+    const first = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(first.container.querySelector('.nc-ask-badge')).toBeTruthy());
+    openPanel(first.container);
+    expect(screen.getByText('ricompare?')).toBeTruthy();
+    await act(async () => { first.container.querySelector('.nc-ask-dismiss').click(); });
+    await waitFor(() => expect(screen.queryByText('ricompare?')).toBeNull());
+    expect(relayAskDismiss).toHaveBeenCalled();
+    first.unmount();
+
+    // Reload: the owner's view can still list the ask for a moment (its closing
+    // frame and this read race). The local tombstone keeps the card out — and a
+    // fresh ask in the SAME view proves the list was read, not just empty.
+    getFeedState.mockResolvedValue(importedView('a1-reload', 'ricompare?', [
+      { id: 'a1-reload-2', question: 'nuova, resta', session: 's', options: [] },
+    ]));
+    const second = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(second.container.querySelector('.nc-ask-badge')).toBeTruthy());
+    openPanel(second.container);
+    expect(screen.getByText('nuova, resta')).toBeTruthy();
+    expect(screen.queryByText('ricompare?')).toBeNull();
+  });
+
+  it('a failed dismiss keeps the card and shows the cause', async () => {
+    const { getFeedState, relayAskDismiss } = await import('../lib/api.js');
+    getAsks.mockResolvedValue({ asks: [] });
+    getFeedState.mockResolvedValue(importedView('a1-fail', 'non deve sparire'));
+    relayAskDismiss.mockRejectedValueOnce(new Error('owner non tra i peer autorizzati'));
+
+    const { container } = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
+    openPanel(container);
+    expect(screen.getByText('non deve sparire')).toBeTruthy();
+    await act(async () => { container.querySelector('.nc-ask-dismiss').click(); });
+    expect(await screen.findByText('owner non tra i peer autorizzati')).toBeTruthy();
+    expect(screen.getByText('non deve sparire')).toBeTruthy();
+  });
+
+  it('an uncertain receipt disables the X and says why', async () => {
+    const { getFeedState, getAskRelayState } = await import('../lib/api.js');
+    getAsks.mockResolvedValue({ asks: [] });
+    getFeedState.mockResolvedValue(importedView('a1-unc', 'esito incerto'));
+    getAskRelayState.mockResolvedValue({
+      attempts: [{ state: 'uncertain', ownerId: 'ownerA', askId: 'a1-unc', requestId: 'rid-1' }],
+    });
+
+    const { container } = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
+    openPanel(container);
+    const x = container.querySelector('.nc-ask-dismiss');
+    await waitFor(() => expect(x.disabled).toBe(true));
+    expect(x.getAttribute('title')).toBe(
+      'Uncertain outcome: the answer may have arrived. Verify the status before retrying.',
+    );
+  });
+});
