@@ -173,13 +173,23 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
     setDismissing(false);
   };
 
+  // Il titolo della X: l'incertezza vince su tutto (niente invii ciechi), poi
+  // l'avviso di view stale, poi il dismiss normale.
+  const dismissTitle = uncertainRid ? t('ask-uncertain')
+    : (feedViewState === 'degraded' ? t('ask-dismiss-stale') : t('ask-dismiss'));
+
   return (
     <div className="nc-ask-card">
       <div className="nc-ask-head">
         <span className="nc-ntf-from">{ask.session}</span>
         {ask.ownerId && <span className="nc-ntf-from">{t('feed-owner')}</span>}
         <code className="nc-ask-id">#{ask.id}</code>
-        <button type="button" className="nc-ask-dismiss" title={uncertainRid ? t('ask-uncertain') : t('ask-dismiss')} aria-label={uncertainRid ? t('ask-uncertain') : t('ask-dismiss')} disabled={dismissing || !!uncertainRid || (!!ask.ownerId && askReplyAccess === false)} onClick={dismiss}>
+        {/* La X dice SEMPRE perché: con esito incerto il motivo è quello, con
+            la view stale/degraded il messaggio avvisa che i dati della card
+            non sono vivi (lo scarto parte comunque via relay diretto). */}
+        <button type="button" className="nc-ask-dismiss"
+          title={dismissTitle} aria-label={dismissTitle}
+          disabled={dismissing || !!uncertainRid || (!!ask.ownerId && askReplyAccess === false)} onClick={dismiss}>
           <Icon name="x" size={14} />
         </button>
       </div>
@@ -192,6 +202,12 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
               quale delle due è; i permessi non cambiano in nessun caso. */}
           {t(feedViewState === 'live' ? 'ask-remote-readonly' : 'ask-remote-no-feed')}
         </small>
+      )}
+      {/* Con il permesso di risposta la card resta viva, ma se la view è
+          stale/degraded l'operatore deve vederlo: è la card che ricompare
+          quando il feed è fermo (Pixel 2026-09-29). */}
+      {ask.ownerId && askReplyAccess !== false && feedViewState === 'degraded' && (
+        <small className="nc-set-hint">{t('ask-feed-stale')}</small>
       )}
       {(uncertainRid || blockedOriginal) && <>
         <div className="nc-err">{t('ask-uncertain')}</div>

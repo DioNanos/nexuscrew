@@ -411,3 +411,49 @@ describe('federated ask dismiss: confirmed only, remembered, nothing silent', ()
     );
   });
 });
+
+describe('NotifyCenter ask card feed state (Pixel fix)', () => {
+  const staleView = (id, question) => ({
+    views: [{
+      ownerId: 'ownerA', askReplyAccess: true, stale: true, lastError: 'resync-exhausted',
+      asks: [{ id, question, session: 's', options: [] }],
+    }],
+  });
+
+  it('a degraded view shows the stale note and the X explains why, even with reply access', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getAsks.mockResolvedValue({ asks: [] });
+    getFeedState.mockResolvedValue(staleView('a3977abd', 'la card che torna'));
+
+    const { container } = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
+    act(() => { container.querySelector('.nc-ask-badge').click(); });
+    expect(await screen.findByText('la card che torna')).toBeTruthy();
+    // Il badge stale è visibile ANCHE con il permesso di risposta: è la card
+    // che ricompariva con il feed fermo (Pixel 2026-09-29).
+    expect(await screen.findByText(/feed is inactive/)).toBeTruthy();
+    // La X dice perché, al posto del titolo di dismiss ordinario.
+    const x = container.querySelector('.nc-ask-dismiss');
+    expect(x.getAttribute('title')).toBe(
+      'Dismiss anyway: the dismissal is forwarded directly to the node, but while the feed is down the card may not reflect the live state.',
+    );
+  });
+
+  it('a live view keeps the plain dismiss title and shows no stale note', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getAsks.mockResolvedValue({ asks: [] });
+    getFeedState.mockResolvedValue({
+      views: [{
+        ownerId: 'ownerA', askReplyAccess: true,
+        asks: [{ id: 'live1', question: 'normale', session: 's', options: [] }],
+      }],
+    });
+
+    const { container } = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
+    act(() => { container.querySelector('.nc-ask-badge').click(); });
+    expect(await screen.findByText('normale')).toBeTruthy();
+    expect(container.querySelector('.nc-ask-dismiss').getAttribute('title')).toBe('Dismiss question');
+    expect(screen.queryByText(/feed is inactive/)).toBeNull();
+  });
+});
