@@ -28,6 +28,7 @@ import { OWNER_ID_RE } from '../lib/grid-model.js';
 import { isValidLabel } from '../lib/settings-model.js';
 import { runFleetPowerAction } from '../lib/fleet-action-notice.js';
 import useActionNotice from '../hooks/useActionNotice.js';
+import { loadLastRoster, saveLastRoster } from '../lib/last-roster.js';
 import { fleetReadOutcome } from '../lib/fleet-read-policy.js';
 import { writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import './SessionList.css';
@@ -135,17 +136,21 @@ export default function SessionList({
     try { fs = await fleetStatus(token); } catch (e) { fleetError = e; }
     const fleet = fleetReadOutcome({ fs, error: fleetError });
     if (fleet.kind === 'data') {
+      saveLastRoster('local', fleet.cells);
       setCells(fleet.cells);
       setFleetCapabilities(fleet.capabilities);
       setFleetStale(false);
       setFleetOff(null);
     } else if (fleet.kind === 'stale') {
+      // Cache in memoria vuota (PWA riaperta): riparte dall'ultimo roster buono salvato, marcato come non vivo.
+      setCells((current) => (current.length ? current : loadLastRoster('local')));
       setFleetStale(true);
       setFleetOff(null);
     } else {
       // spento per scelta (o non classificato): zero celle e' la verita' del
       // server — lista vuota con indicatore, mai l'ultima lista come fantasma
       setCells([]);
+      saveLastRoster('local', []);
       setFleetCapabilities([]);
       setFleetStale(false);
       setFleetOff(fleet.reason || '');

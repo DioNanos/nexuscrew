@@ -38,6 +38,7 @@ import {
 } from './lib/deck-model.js';
 import { deckId, refWithOwner, resolveLayoutForViewer, tickOwnerAvailability } from './lib/deck-federation.js';
 import { hostRouteKey, hostDesignationFailureMessage } from './lib/host-designation.js';
+import { loadLastRoster, saveLastRoster } from './lib/last-roster.js';
 import { fleetReadOutcome } from './lib/fleet-read-policy.js';
 import { panelPortForRoute } from './lib/panel-port.js';
 import { AUTH_INVALID_EVENT, TOKEN_NOT_REMEMBERED_EVENT, loadToken, saveToken } from './lib/token-store.js';
@@ -1059,15 +1060,19 @@ export default function App() {
       if (!guard.isCurrent(turno)) return;
       const fleet = fleetReadOutcome({ fs, error: fleetError });
       if (fleet.kind === 'data') {
+        saveLastRoster('local', fleet.cells);
         setCells(fleet.cells);
         setFleetCapabilities(fleet.capabilities);
         setFleetStale(false);
         setFleetOff(null);
       } else if (fleet.kind === 'stale') {
+        // Cache in memoria vuota (PWA riaperta): riparte dall'ultimo roster buono salvato, marcato come non vivo.
+        setCells((current) => (current.length ? current : loadLastRoster('local')));
         setFleetStale(true);
         setFleetOff(null);
       } else {
         setCells([]);
+        saveLastRoster('local', []);
         setFleetCapabilities([]);
         setFleetStale(false);
         setFleetOff(fleet.reason || '');
