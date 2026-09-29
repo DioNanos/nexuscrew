@@ -64,6 +64,15 @@ describe('identita\' stabile delle posizioni (O3)', () => {
     expect(store('nc_pins')).toEqual(['vecchio:cloud-Dev']);
   });
 
+  it('rinomina con il fantasma del vecchio nome ancora in lista (sticky): migra verso il nome VIVO', () => {
+    localStorage.setItem('nc_pins', JSON.stringify(['vecchio:cloud-Dev']));
+    registerRouteIdentities([{ ...group('vecchio', X), status: 'up' }]);
+    resetRouteRegistry();
+    registerRouteIdentities([{ ...group('vecchio', X), status: 'down' }, { ...group('nuovo', X), status: 'up' }]);
+    expect(store('nc_pins')).toEqual(['vecchio:cloud-Dev', 'nuovo:cloud-Dev']);
+    expect(store(ROUTE_ALIAS_KEY)[X]).toBe('nuovo');
+  });
+
   it('senza instanceId valido non migra ne\' scrive', () => {
     localStorage.setItem('nc_sidebar_order_v1', JSON.stringify({ n: ['n:a'] }));
     expect(registerRouteIdentities([{ name: 'n', route: ['n'], instanceId: 'x' }])).toBe(false);

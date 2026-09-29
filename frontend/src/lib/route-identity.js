@@ -40,10 +40,14 @@ export function positionView(stored, reg = registry) {
 
 // groups: gruppi nodo correnti. Ritorna true se ha scritto qualcosa nello storage.
 export function registerRouteIdentities(groups, { storage = globalThis.localStorage } = {}) {
-  const next = new Map();
+  const next = new Map(); // nome -> id (tutti i nomi noti, anche un fantasma sticky del vecchio nome)
+  const live = new Map();  // id -> nome preferito: il gruppo raggiungibile, altrimenti il primo visto
   for (const group of Array.isArray(groups) ? groups : []) {
     const id = String(group?.instanceId || ''); const name = routeName(group);
-    if (OWNER_ID_RE.test(id) && name && !next.has(name)) next.set(name, id);
+    if (!(OWNER_ID_RE.test(id) && name) || next.has(name)) continue;
+    next.set(name, id);
+    const up = group.status === 'up' && group.stale !== true;
+    if (!live.has(id) || (up && !live.get(id).up)) live.set(id, { name, up });
   }
   registry = next;
   if (!next.size) return false;
@@ -54,10 +58,10 @@ export function registerRouteIdentities(groups, { storage = globalThis.localStor
   const nextAliases = { ...aliases }; const nextOrders = { ...orders }; const nextViews = { ...views }; let nextPins = [...pins];
   const changed = { aliases: false, orders: false, views: false, pins: false };
 
-  for (const [name, id] of next) {
+  for (const [id, { name }] of live) {
     const canonical = `id:${id}`; const last = typeof aliases[id] === 'string' ? aliases[id] : '';
     // Un nome che oggi appartiene a un ALTRO nodo non e' un vecchio nome di questo: niente riscritture su quello.
-    const previous = last && last !== name && !next.has(last) ? last : '';
+    const previous = last && last !== name && (!next.has(last) || next.get(last) === id) ? last : '';
     if (previous) {
       nextPins = dedupe([...nextPins, ...pins.filter((k) => k.startsWith(`${previous}:`)).map((k) => rewritePrefix(k, previous, name))]);
       changed.pins = changed.pins || nextPins.length !== pins.length;
