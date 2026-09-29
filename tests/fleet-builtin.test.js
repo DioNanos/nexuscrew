@@ -381,7 +381,7 @@ test('up: alternate-screen setup e best-effort e non blocca l avvio della cella'
 // 2. up flag-mode: lancia in tmux, argv diretto, nessuna digitazione prompt
 // ---------------------------------------------------------------------------
 test('up flag-mode: tmux starts one-shot helper; no secret argv and no paste', async () => {
-  process.env.NC_SENTINEL_SHOULD_NOT_LEAK = '1';
+  process.env.SENTINEL_SHOULD_NOT_LEAK_FINTO = '1';
   const w = makeWorld();
   try {
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
@@ -419,9 +419,9 @@ test('up flag-mode: tmux starts one-shot helper; no secret argv and no paste', a
 
     // env minimale: il sentinel del processo NON raggiunge il launcher
     const envTxt = fs.readFileSync(path.join(w.cap, 'launch-env.txt'), 'utf8');
-    assert.ok(!/NC_SENTINEL_SHOULD_NOT_LEAK/.test(envTxt), 'env del processo non leakato (minimale)');
+    assert.ok(!/SENTINEL_SHOULD_NOT_LEAK_FINTO/.test(envTxt), 'env del processo non leakato (minimale)');
     assert.ok(/^PATH=/m.test(envTxt), 'PATH controllato dal service presente');
-  } finally { w.cleanup(); delete process.env.NC_SENTINEL_SHOULD_NOT_LEAK; }
+  } finally { w.cleanup(); delete process.env.SENTINEL_SHOULD_NOT_LEAK_FINTO; }
 });
 
 // ---------------------------------------------------------------------------

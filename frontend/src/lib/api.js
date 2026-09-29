@@ -162,11 +162,11 @@ export const getNodes = (t) => jsonFetch('/api/nodes', t);
 export const getPeers = (t) => jsonFetch('/api/peers', t);
 // Nodi VL (device di esempio): endpoint separato, non federato — fuso con i peer
 // SOLO lato presentazione (vl-nodes-model.js), mai dentro /api/nodes o
-// /api/peers (design NC_UI_NODI_VL, 2026-08-05: non cambiare quel contratto).
+// /api/peers (design UI nodi VL, 2026-08-05: non cambiare quel contratto).
 // `route` (default locale, `[]`) instrada verso l'owner giusto — federazione
 // ripristinata per /vl-nodes/* (commit b0e8bd1): con più owner un comando
 // deve arrivare al device che lo dichiara, non sempre a quello locale
-// (design NC_UI_NODI_VL_REMOTI, 2026-08-05, invariante 3).
+// (design UI nodi VL remoti, 2026-08-05, invariante 3).
 export const getVlNodes = (t, route = []) => jsonFetch(`${routeBase(route)}/vl-nodes`, t);
 export const sendVlNodeCommand = (t, nodeId, kind, args = {}, route = []) => (
   jsonFetch(`${routeBase(route)}/vl-nodes/${encodeURIComponent(nodeId)}/commands`, t, { method: 'POST', body: { kind, args } })
@@ -260,16 +260,16 @@ export const getFeedState = (t) => jsonFetch('/api/feed-state', t);
 // (senza, un tunnel «su a metà» teneva la UI senza decks per minuti.
 export const getDecks = (t, route = []) => jsonFetch(`${routeBase(route)}/decks`, t, route.length ? { timeoutMs: FEDERATED_FETCH_TIMEOUT_MS } : {});
 export const createDeck = (t, name, route = []) => jsonFetch(`${routeBase(route)}/decks`, t, { method: 'POST', body: { name } });
-export const saveDeck = (t, name, layout, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PUT', body: { layout, expectedRevision } });
+export const saveDeck = (t, name, layout, expectedRevision, route = [], floating) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PUT', body: { layout, expectedRevision, ...(floating ? { floating } : {}) } });
 
 // Flush a chiusura pagina — PUT keepalive fire-and-forget. La risposta
 // non viene letta (la pagina sta per chiudersi): serve solo a consegnare
 // l'ultima modifica quando il debounce dell'autosave non ha tempo di scadere.
-export const saveDeckKeepalive = (t, name, layout, expectedRevision, route = []) => apiFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, {
+export const saveDeckKeepalive = (t, name, layout, expectedRevision, route = [], floating) => apiFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, {
   method: 'PUT',
   keepalive: true,
   headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ layout, expectedRevision }),
+  body: JSON.stringify({ layout, expectedRevision, ...(floating ? { floating } : {}) }),
 });
 export const renameDeck = (t, name, next, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PATCH', body: { name: next, expectedRevision } });
 export const deleteDeck = (t, name, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'DELETE', body: { expectedRevision } });

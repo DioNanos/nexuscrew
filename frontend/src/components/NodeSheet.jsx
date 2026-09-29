@@ -40,7 +40,7 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   // L'ultimo comando VL che QUESTA sessione ha sottomesso — {id, kind,
   // submittedAt} | null. Serve a distinguere "inviato da me, in attesa
   // dell'ack" da un lastAck del nodo che appartiene a un comando precedente
-  // (design NC_UI_NODI_VL step 2: "inviato" non e' "fatto").
+  // (design UI nodi VL step 2: "inviato" non e' "fatto").
   const [vlPending, setVlPending] = useState(null);
   // Campo prompt (verbo con argomenti): il click sul verbo APRE il campo, non
   // spara. Il testo resta nel campo se l'invio fallisce (ritentabile).
@@ -91,7 +91,7 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   // questo click" da un ack di un comando precedente (mai un successo
   // ottimistico prima che il server lo confermi).
   const runVlCommand = (kind, args = vlDefaultArgs(kind)) => guard(`${node.nodeId}:${kind}`, async () => {
-    // La route dell'owner (step 3, NC_UI_NODI_VL_REMOTI): un nodo remoto ha
+    // La route dell'owner (step 3, UI nodi VL remoti): un nodo remoto ha
     // `node.route` non vuota, e il comando DEVE arrivare li', non a
     // /api/vl-nodes locale — sbagliare instrada il comando al device
     // sbagliato (invariante 3 del brief).
@@ -294,7 +294,7 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
         {test && <div className={`nc-set-test${test.ok ? ' ok' : ' ko'}`}>{test.result}{test.detail ? ` — ${test.detail}` : ''}</div>}
       </SheetSection>
 
-      {/* Comandi VL: "inviato" non e' "fatto" (design NC_UI_NODI_VL step 2).
+      {/* Comandi VL: "inviato" non e' "fatto" (design UI nodi VL step 2).
           I bottoni sono nel footer (letti da capabilities); qui va solo lo
           STATO dell'ultimo comando — mai un successo prima che il server lo
           confermi in lastAck. */}

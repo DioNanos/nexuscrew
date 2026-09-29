@@ -530,7 +530,7 @@ test('up claude.kimi-code report consenso pendente: recovery consenso (mai /logi
 test('up claude.kimi-code report Not logged in: recovery /config; env child names-only', async () => {
   const w = makeManagedWorld({
     client: 'claude', provider: 'kimi-code', delivery: 'skipped-not-ready:not-ready-auth',
-    env: { KIMI_API_KEY: 'sk-test-fixture-only', NC_SENTINEL_LEAK: 'no' },
+    env: { KIMI_API_KEY: 'sk-test-fixture-only', SENTINEL_LEAK_FINTO: 'no' },
   });
   try {
     const res = await w.runtime.up('Dev');
@@ -541,12 +541,12 @@ test('up claude.kimi-code report Not logged in: recovery /config; env child name
     const t = w.ticket();
     // Asse D names-only: i NOMI env del child sono l'allowlist minimal +
     // il set del provider kimi-code; la chiave serve al child Claude (auth),
-    // nessuna chiave runtime spuria (NC_SENTINEL_LEAK) passa.
+    // nessuna chiave runtime spuria (SENTINEL_LEAK_FINTO) passa.
     const names = Object.keys(t.env).sort();
     for (const required of ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CONFIG_DIR', 'NEXUSCREW_MCP_SESSION', 'PATH', 'HOME']) {
       assert.ok(names.includes(required), `env name richiesto presente: ${required}`);
     }
-    assert.ok(!names.includes('NC_SENTINEL_LEAK'), 'env runtime non allowlisted mai ereditato');
+    assert.ok(!names.includes('SENTINEL_LEAK_FINTO'), 'env runtime non allowlisted mai ereditato');
     assert.ok(!names.includes('KIMI_API_KEY'), 'la variabile sorgente non passa: il child vede solo ANTHROPIC_*');
     const allowed = /^(PATH|HOME|SHELL|TERM|COLORTERM|LANG|LANGUAGE|LC_ALL|LC_CTYPE|USER|LOGNAME|TMUX|TMUX_TMPDIR|XDG_[A-Z_]+|DBUS_SESSION_BUS_ADDRESS|PREFIX|TMPDIR|TERMUX_VERSION|ANDROID_DATA|ANDROID_ROOT|ANTHROPIC_[A-Z_]+|CLAUDE_CODE_[A-Z_]+|CLAUDE_CONFIG_DIR|API_TIMEOUT_MS|MCP_DEVICE|NEXUSCREW_MCP_SESSION)$/;
     for (const n of names) assert.match(n, allowed, `env name inatteso nel child: ${n}`);

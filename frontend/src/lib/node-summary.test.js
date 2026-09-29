@@ -72,7 +72,7 @@ describe('nodeRowSummary — a VL node produces a real row, not null', () => {
   });
 });
 
-// Step 3 (owner remoti, brief NC_UI_NODI_VL_REMOTI, invariante 2): "due nodi
+// Step 3 (owner remoti, brief UI nodi VL remoti, invariante 2): "due nodi
 // con la stessa label su owner diversi sono distinguibili SOLO cosi'" — la
 // riga deve portare l'owner, non solo lo stato.
 describe('nodeRowSummary — shows the owner for a VL node (step 3, invariant 2)', () => {

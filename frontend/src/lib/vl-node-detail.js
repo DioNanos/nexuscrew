@@ -2,7 +2,7 @@
 // nodo VL. Compagno di node-detail.js, ma per i nodi VL: qui il potere non
 // e' `node.actions` (deciso dal server per i peer Fleet), sono le
 // `capabilities` che il DEVICE dichiara — un nodo che non dichiara un
-// comando non deve avere il bottone (design NC_UI_NODI_VL, 2026-08-05).
+// comando non deve avere il bottone (design UI nodi VL, 2026-08-05).
 //
 // `update_candidate` e' esclusa a prescindere in questo giro: e' la
 // capability per cui le route sono state tolte dalla federazione, ed e' una

@@ -6,7 +6,10 @@ import {
   loadDeckOrders, loadDecks, moveDeckInOrder, orderDeckRecords, readLayoutRaw,
   removeDeckOrderId, replaceDeckOrderId, saveDeckOrders, saveDecks, writeLayoutRaw,
 } from '../lib/deck-model.js';
-import { addTileSmart, emptyLayout, mergeRemoteWithLocal, normalize, sessions } from '../lib/grid-model.js';
+import {
+  addTileSmart, emptyLayout, mergeRemoteWithLocal, normalize, sessions, stripFloating, materializeFloating,
+  fondeFloating, riconciliaStaccate, stessaVista,
+} from '../lib/grid-model.js';
 // Stessa soglia di useNodes: un owner scaduto e' un fatto, non un blip.
 import { OWNER_GRACE_MS } from './useNodes.js';
 import {
@@ -15,6 +18,62 @@ import {
 } from '../lib/deck-federation.js';
 
 const empty = (layout) => sessions(normalize(layout)).length === 0;
+
+// Finestre flottanti del record: stesse coordinate dei tile della griglia.
+// Ogni flottante passa, da sola, per la STESSA traduzione owner<->viewer dei
+// tile (resolveLayoutForViewer al caricamento, canonicalizeLayoutForOwner al
+// salvataggio): una flottante remota non viene mai salvata con la route del
+// viewer. La geometria non si tocca; una ref che la traduzione scarta sparisce.
+function translateFloating(floating, translate) {
+  if (!Array.isArray(floating)) return [];
+  return floating.flatMap((f) => {
+    const tile = { session: f.session, height: 1, fontSize: f.fontSize };
+    if (f.node) tile.node = f.node;
+    if (f.ownerId) tile.ownerId = f.ownerId;
+    const t = translate({ columns: [{ width: 1, tiles: [tile] }] }).columns[0]?.tiles[0];
+    if (!t) return [];
+    const out = { session: t.session, x: f.x, y: f.y, w: f.w, h: f.h, fontSize: f.fontSize };
+    if (t.node) out.node = t.node;
+    if (t.ownerId) out.ownerId = t.ownerId;
+    return [out];
+  });
+}
+// Il campo `floating` del PUT parte solo quando serve: la vista ha finestre
+// staccate, oppure il record ne aveva e vanno svuotate (`[]`). Senza nessuna
+// delle due il body resta quello di chi non le usa: solo layout e revisione.
+function floatingPerPut(floatingWin, rec) {
+  if (floatingWin.length) return floatingWin;
+  return Array.isArray(rec.floating) && rec.floating.length ? [] : undefined;
+}
+// Flottanti del merge del poll: base (il record su cui la vista ha lavorato)
+// e remoto arrivano in coordinate OWNER, la vista in coordinate VIEWER. Tutto
+// passa prima nelle coordinate del viewer, poi il merge a tre vie: mai la
+// stessa finestra due volte, mai una ref remota attaccata alla sessione
+// locale omonima.
+export function flottantiDelMerge(base, remote, localFloat, localNodeId, owners) {
+  const versoViewer = (record) => translateFloating(record && record.floating, (l) => resolveLayoutForViewer(
+    l, localNodeId, owners,
+  ));
+  return fondeFloating(versoViewer(base), versoViewer(remote), localFloat);
+}
+
+// La vista fusa di un merge (poll con finestra sporca, ritentativo dopo un
+// 409): griglia dal merge del chiamante, staccate a tre vie, e lo stato
+// staccata/in griglia di ogni finestra staccata da qualche parte a tre vie.
+// Tutto nelle coordinate del viewer.
+function vistaFusa(base, remote, localLayout, gridFusa, localNodeId, owners) {
+  const inViewer = (l) => resolveLayoutForViewer(l, localNodeId, owners);
+  const versoViewer = (record) => translateFloating(record && record.floating, inViewer);
+  const { grid: localGrid, floating: localFloat } = stripFloating(localLayout);
+  const r = riconciliaStaccate(
+    gridFusa(localGrid),
+    flottantiDelMerge(base, remote, localFloat, localNodeId, owners),
+    { grid: base ? inViewer(base.layout) : emptyLayout(), floating: versoViewer(base) },
+    { grid: inViewer(remote.layout), floating: versoViewer(remote) },
+    { grid: localGrid, floating: localFloat },
+  );
+  return materializeFloating(r.grid, r.floating);
+}
 const routeKey = (route) => (Array.isArray(route) ? route.join('/') : '');
 
 // Cache dell'ultima lista deck (locale + remote): al reload della pagina la
@@ -144,7 +203,11 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const rec = ordered.find((d) => d.id === wanted);
     if (applyLayout && rec) {
       skipRef.current = true;
-      const viewed = viewLayout(rec);
+      // La vista materializza anche le finestre staccate (campo record
+      // `floating`): rientrano in griglia con il loro flag, pronte a flottare.
+      const viewed = materializeFloating(viewLayout(rec), translateFloating(rec.floating, (l) => resolveLayoutForViewer(
+        l, localNodeIdRef.current, ownersRef.current,
+      )));
       setLayout(viewed);
       // localStorage per i deck locali: SOLO geometria, lo stato effimero di
       // disponibilita' (unavailable/stale) non si persiste mai.
@@ -326,8 +389,12 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     if (rec.available === false) { setError(`nodo owner offline: ${rec.ownerLabel}`); return false; }
     setSaveState('saving');
     try {
-      const canonical = canonicalizeLayoutForOwner(normalize(layoutRef.current), rec.ownerId, rec.ownerTopology);
-      const saved = await saveDeck(token, rec.name, canonical, rec.revision, rec.ownerRoute);
+      // La vista tiene gli staccati nelle columns col flag `float`: prima
+      // del PUT si separano (griglia pura + lista `floating` a livello record).
+      const { grid: gridOnly, floating: floatingView } = stripFloating(layoutRef.current);
+      const canonical = canonicalizeLayoutForOwner(normalize(gridOnly), rec.ownerId, rec.ownerTopology);
+      const floatingWin = translateFloating(floatingView, (l) => canonicalizeLayoutForOwner(l, rec.ownerId, rec.ownerTopology));
+      const saved = await saveDeck(token, rec.name, canonical, rec.revision, rec.ownerRoute, floatingPerPut(floatingWin, rec));
       const augmented = augmentDeck(saved, ownerForRecord(rec), rec.ownerTopology, rec.local, true);
       install(recordsRef.current.map((d) => d.id === wanted ? augmented : d), false);
       dirtyRef.current = false; setSaveState('saved'); setError(''); setConflict(false);
@@ -343,6 +410,17 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
         const conflicted = recordsRef.current.find((d) => d.id === wanted);
         if (conflicted) {
           const rebased = augmentDeck(e.data.current, ownerForRecord(conflicted), conflicted.ownerTopology, conflicted.local, true);
+          // Finestre staccate: merge a tre vie con base il record su cui
+          // questa finestra ha lavorato (la griglia resta quella locale, come
+          // prima). La vista si aggiorna PRIMA del ritentativo e solo se il
+          // merge ha cambiato qualcosa: senza staccate non cambia nulla e la
+          // vista resta quella, come nella 0.9.50.
+          const fusa = vistaFusa(conflicted, rebased, layoutRef.current, (localGrid) => localGrid,
+            localNodeIdRef.current, ownersRef.current);
+          if (!stessaVista(fusa, layoutRef.current)) {
+            layoutRef.current = fusa;
+            skipRef.current = true; setLayout(fusa);
+          }
           install(recordsRef.current.map((d) => d.id === wanted ? rebased : d), false);
           dirtyRef.current = true;
           return saveNow(wanted, false);
@@ -352,7 +430,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       if (e.status === 409) setConflict(true);
       return false;
     }
-  }, [ready, token, install]);
+  }, [ready, token, install, setLayout]);
 
   // Azione «ricarica» del conflitto irrisolvibile — riparte dal remoto
   // e scarta la copia locale che non è riuscita a convergere.
@@ -391,8 +469,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       if (!dirtyRef.current) return;
       const rec = recordsRef.current.find((d) => d.id === resolveCurrentId());
       if (!rec || rec.available === false) return;
-      const canonical = canonicalizeLayoutForOwner(normalize(layoutRef.current), rec.ownerId, rec.ownerTopology);
-      saveDeckKeepalive(token, rec.name, canonical, rec.revision, rec.ownerRoute);
+      const { grid: gridOnly, floating: floatingView } = stripFloating(layoutRef.current);
+      const canonical = canonicalizeLayoutForOwner(normalize(gridOnly), rec.ownerId, rec.ownerTopology);
+      const floatingWin = translateFloating(floatingView, (l) => canonicalizeLayoutForOwner(l, rec.ownerId, rec.ownerTopology));
+      saveDeckKeepalive(token, rec.name, canonical, rec.revision, rec.ownerRoute, floatingPerPut(floatingWin, rec));
     };
     window.addEventListener('pagehide', flush);
     window.addEventListener('beforeunload', flush);
@@ -418,7 +498,12 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           // La finestra è sporca e il remoto è più nuovo — merge
           // remoto ⊕ delta locale invece di restare indietro. Il layout fuso
           // è un cambio di layout: l'autosave lo salva con la revisione nuova.
-          const merged = mergeRemoteWithLocal(viewLayout(remote), layoutRef.current);
+          // Le finestre staccate passano dal merge a tre vie (base = il record
+          // su cui questa finestra ha lavorato), tutto nelle coordinate di chi
+          // guarda; la griglia dal merge di sempre.
+          const merged = vistaFusa(here, remote, layoutRef.current,
+            (localGrid) => mergeRemoteWithLocal(viewLayout(remote), localGrid),
+            localNodeIdRef.current, ownersRef.current);
           install(next, false);
           setLayout(merged);
           return;
@@ -498,6 +583,15 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const record = augmentDeck(saved, ownerForRecord(deck), deck.ownerTopology, deck.local, true);
     install(recordsRef.current.map((x) => x.id === targetId ? record : x), false); return record;
   };
+  // La vista di un record CON le flottanti materializzate: la stessa
+  // espressione dell'install (translateFloating per le ref dei nodi remoti).
+  const vistaMaterializzata = useCallback((record) => materializeFloating(
+    viewLayout(record),
+    translateFloating(record.floating, (l) => resolveLayoutForViewer(
+      l, localNodeIdRef.current, ownersRef.current,
+    )),
+  ), [viewLayout]);
+
   const select = async (id) => {
     if (dirtyRef.current) {
       const saved = await saveNow(resolveCurrentId());
@@ -506,12 +600,14 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const target = recordsRef.current.find((d) => d.id === id);
     if (!target) throw new Error(`deck inesistente: ${id}`);
     dirtyRef.current = false; skipRef.current = true;
-    return viewLayout(target);
+    // Le flottanti del record ENTRANO nella vista materializzate —
+    // ritornare solo viewLayout le cancellava al primo autosave.
+    return vistaMaterializzata(target);
   };
 
   return {
     decks: records, records, localNodeId, ready, saveState, error, setError, conflict, reloadCurrent,
-    saveNow, select, add, rename, remove, reorder, addTileTo, viewUpdate,
+    saveNow, select, add, rename, remove, reorder, addTileTo, viewUpdate, vistaMaterializzata,
     localMainId: deckId(null, 'main'), parseDeckId,
   };
 }

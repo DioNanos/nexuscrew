@@ -23,18 +23,21 @@
   min-height: 60px; min-width: 0; position: relative;
 }
 .nc-tile-slot > .nc-tile { flex: 1 1 auto; min-height: 0; }
-/* Anteprima drop direzionale: overlay semitrasparente sulla metà interessata. */
-.nc-tile-slot.drop-left::after,
-.nc-tile-slot.drop-right::after,
-.nc-tile-slot.drop-top::after,
-.nc-tile-slot.drop-bottom::after {
-  content: ''; position: absolute; z-index: 7; pointer-events: none;
-  background: rgba(0, 204, 102, 0.28); border: 2px solid #00cc66; border-radius: 4px;
+/* Spostamento: sulla finestra di arrivo le CINQUE zone del design, tutte
+   visibili (frecce ai bordi, scambio al centro), la zona attiva piena. */
+.nc-drop-zones { position: absolute; inset: 0; z-index: 7; pointer-events: none; }
+.nc-drop-zone {
+  position: absolute; display: flex; align-items: center; justify-content: center;
+  color: #4a6a4a;
 }
-.nc-tile-slot.drop-left::after   { left: 0; top: 0; bottom: 0; width: 50%; }
-.nc-tile-slot.drop-right::after  { right: 0; top: 0; bottom: 0; width: 50%; }
-.nc-tile-slot.drop-top::after    { left: 0; right: 0; top: 0; height: 50%; }
-.nc-tile-slot.drop-bottom::after { left: 0; right: 0; bottom: 0; height: 50%; }
+.nc-drop-zone.left   { left: 0; top: 0; bottom: 0; width: 22%; border-right: 1px dashed #2b3c2b; }
+.nc-drop-zone.right  { right: 0; top: 0; bottom: 0; width: 22%; border-left: 1px dashed #2b3c2b; }
+.nc-drop-zone.top    { left: 22%; right: 22%; top: 0; height: 30%; border-bottom: 1px dashed #2b3c2b; }
+.nc-drop-zone.bottom { left: 22%; right: 22%; bottom: 0; height: 30%; border-top: 1px dashed #2b3c2b; }
+.nc-drop-zone.center { left: 22%; right: 22%; top: 30%; bottom: 30%; }
+.nc-drop-zone.on {
+  background: rgba(0, 204, 102, 0.28); border: 2px solid #00cc66; border-radius: 6px; color: #d8ffe8;
+}
 
 /* Toolbar preset compatta, in alto a destra della griglia. */
 .nc-grid-toolbar {
@@ -49,17 +52,85 @@
 }
 .nc-grid-toolbar button:hover { background: #1c3a1c; color: #d8ffe8; }
 
-/* Divisori ridimensionabili (pointer). */
+/* Divisori ridimensionabili (pointer): maniglia SEMPRE visibile a tre
+   puntini, area di presa 11 px, verde mentre trascini. */
 .nc-divider-v {
-  flex: 0 0 6px; cursor: col-resize;
-  margin: 0 1px; border-radius: 2px;
+  flex: 0 0 11px; cursor: col-resize;
+  margin: 0; border-radius: 3px; position: relative;
+  background: rgba(28, 58, 28, 0.35);
+  display: flex; align-items: center; justify-content: center;
 }
-.nc-divider-v:hover { background: #1c3a1c; }
+.nc-divider-v::before {
+  content: '⋮'; color: #4e6b4e; font-size: 13px; line-height: 1;
+}
+.nc-divider-v:hover, .nc-divider-v.dragging { background: #1c3a1c; }
+.nc-divider-v.dragging { background: #00cc66; }
+.nc-divider-v.dragging::before { color: #052; }
 .nc-divider-h {
-  flex: 0 0 6px; cursor: row-resize;
-  margin: 1px 0; border-radius: 2px;
+  flex: 0 0 11px; cursor: row-resize;
+  margin: 0; border-radius: 3px; position: relative;
+  background: rgba(28, 58, 28, 0.35);
+  display: flex; align-items: center; justify-content: center;
 }
-.nc-divider-h:hover { background: #1c3a1c; }
+.nc-divider-h::before {
+  content: '⋯'; color: #4e6b4e; font-size: 13px; line-height: 1;
+}
+.nc-divider-h:hover, .nc-divider-h.dragging { background: #1c3a1c; }
+.nc-divider-h.dragging { background: #00cc66; }
+.nc-divider-h.dragging::before { color: #052; }
+
+/* Gesto di resize attivo: scudo trasparente sopra tutta la griglia — il
+   puntatore non si perde sopra iframe o terminali e il testo non si
+   seleziona. Finestre attenuate. */
+.nc-grid.gesturing .nc-tile { opacity: 0.55; }
+.nc-gesture-shield {
+  position: absolute; inset: 0; z-index: 40;
+  user-select: none; -webkit-user-select: none;
+  cursor: col-resize;
+}
+.nc-gesture-shield.row { cursor: row-resize; }
+
+/* Linea guida che segue il mouse 1:1; tratteggiata quando è agganciata. */
+.nc-gesture-guide {
+  position: absolute; z-index: 41; pointer-events: none; background: #00cc66;
+}
+.nc-gesture-guide.v { top: 0; bottom: 0; width: 2px; transform: translateX(-1px); }
+.nc-gesture-guide.h { left: 0; right: 0; height: 2px; transform: translateY(-1px); }
+.nc-gesture-guide.snap { background: none; border: 0; }
+.nc-gesture-guide.v.snap { border-left: 2px dashed #00cc66; width: 0; }
+.nc-gesture-guide.h.snap { border-top: 2px dashed #00cc66; height: 0; }
+
+/* Badge con le misure COLONNE×RIGHE dei due lati della coppia: due chip,
+   come il design. Le misure di carattere non escono dal terminale: stima
+   da fontSize (larghezza carattere 0.6x, riga 1.2x). */
+.nc-gesture-badge {
+  position: absolute; z-index: 42; pointer-events: none;
+  transform: translate(-50%, -50%);
+  display: flex; gap: 6px;
+}
+.nc-gesture-chip {
+  background: #0a0e0a; border: 1px solid #7ee787; border-radius: 4px;
+  color: #d8ffe8; font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 12px; padding: 3px 7px; white-space: nowrap;
+}
+
+/* Spostamento: copia semitrasparente che segue il mouse, posto di
+   provenienza tratteggiato. */
+.nc-drag-ghost {
+  position: fixed; z-index: 90; pointer-events: none;
+  width: 300px; height: 190px; display: flex; flex-direction: column;
+  transform: translate(-50%, -20%) rotate(-1.5deg);
+  border: 2px solid #7ee787; border-radius: 6px;
+  background: rgba(10, 14, 10, 0.85);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+}
+.nc-drag-ghost-head {
+  height: 28px; box-sizing: border-box; display: flex; align-items: center; gap: 8px;
+  padding: 0 10px; background: #173117; border-radius: 4px 4px 0 0;
+  color: #d8ffe8; font-size: 13px;
+}
+.nc-drag-ghost-body { flex-grow: 1; opacity: 0.7; }
+.nc-tile-slot.nc-tile-source > .nc-tile { opacity: 0.45; border: 1px dashed #4a6a4a; }
 
 /* Indicator "nuova colonna in coda" (drop sull'area destra / griglia vuota). */
 .nc-drop-line-v { flex: 0 0 3px; align-self: stretch; background: #00cc66; border-radius: 2px; }
@@ -70,3 +141,41 @@
   display: flex; align-items: center; justify-content: center;
   color: #cfe; opacity: .4; font-size: 13px; text-align: center; padding: 20px;
 }
+
+/* --- Finestre flottanti ------------------------------------- */
+/* Lo slot flottante: position:fixed con geometria in % del viewport (dal
+   flag float del tile). Bordo verde quando ha il focus, ombra come il
+   design. Il tile resta montato: è lo stesso albero, solo fuori dal flusso. */
+.nc-tile-slot.nc-float {
+  display: flex; flex-direction: column;
+  border: 1px solid #243; border-radius: 8px;
+  background: #0a0e0a;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.65);
+  overflow: hidden;
+}
+.nc-tile-slot.nc-float > .nc-tile.focused { border: 2px solid #7ee787; border-radius: 8px; }
+.nc-tile-slot.nc-float > .nc-tile { flex: 1 1 auto; min-height: 0; }
+/* ridotta a barra titolo */
+.nc-tile-slot.nc-float-mini .nc-tile-body,
+.nc-tile-slot.nc-float-mini .nc-float-rz { display: none; }
+/* colonna i cui tile sono TUTTI flottanti: non occupa spazio (i figli sono
+   fixed e restano visibili: l'overflow non li clippa senza containing block) */
+.nc-col.nc-col-emptyfloat { flex: 0 0 0; min-width: 0; }
+/* maniglie di resize della finestra: bordi e angolo SE */
+.nc-float-rz { position: absolute; z-index: 5; }
+.nc-float-rz.n { left: 8px; right: 8px; top: -3px; height: 7px; cursor: ns-resize; }
+.nc-float-rz.s { left: 8px; right: 8px; bottom: -3px; height: 7px; cursor: ns-resize; }
+.nc-float-rz.w { top: 8px; bottom: 8px; left: -3px; width: 7px; cursor: ew-resize; }
+.nc-float-rz.e { top: 8px; bottom: 8px; right: -3px; width: 7px; cursor: ew-resize; }
+.nc-float-rz.se { right: -2px; bottom: -2px; width: 16px; height: 16px; cursor: nwse-resize;
+  border-right: 2px solid #7ee787; border-bottom: 2px solid #7ee787; border-radius: 0 0 6px 0; }
+/* guide di aggancio (bordi schermo / altre finestre) durante lo spostamento */
+.nc-float-snap { position: fixed; z-index: 60; pointer-events: none; opacity: 0.6; }
+.nc-float-snap.v { top: 0; bottom: 0; border-left: 1px dashed #7ee787; }
+.nc-float-snap.h { left: 0; right: 0; border-top: 1px dashed #7ee787; }
+
+/* Linee degli agganci VISIBILI durante tutto il gesto (design
+   Desktop-Ridimensiona): non solo al momento dello snap. */
+.nc-gesture-ghost { position: absolute; z-index: 40; pointer-events: none; background: rgba(0, 204, 102, .18); }
+.nc-gesture-ghost.v { top: 0; bottom: 0; width: 2px; }
+.nc-gesture-ghost.h { height: 2px; }

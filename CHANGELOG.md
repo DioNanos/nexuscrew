@@ -2,6 +2,36 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.51 — 2026-09-27
+
+- **Mobile: la maniglia della doppia vista segue il dito.** Il confine tra le due celle si muove come lo trascini, senza inversione di verso.
+- **Mobile: la doppia vista si usa anche con il telefono in orizzontale.** Ruotando, le due celle si affiancano sinistra/destra con la maniglia verticale e ogni disposizione ricorda le sue proporzioni; se la cella più stretta scende sotto ~40 colonne al font corrente si vede solo quella col focus — l'altra resta montata e nascosta, con il tasto per passarle — e il tasto di scambio diventa ⇆. Nessun terminale viene ricreato ruotando o cambiando disposizione.
+- **Desktop: spostare e ridimensionare le finestre non è più rozzo.** Il bordo tra due finestre segue il mouse, cambiano solo le due vicine, le misure del terminale compaiono mentre trascini e si aggancia a un terzo, metà e due terzi (Alt per non agganciare); doppio clic sulla maniglia per dividere a metà. Per spostare una finestra c'è una copia che segue il mouse e, sulla finestra di arrivo, il centro la scambia di posto; Esc annulla.
+- **Desktop: finestre staccate.** Il tastino nella barra del titolo stacca una finestra dalla griglia e la fa flottare sopra le altre: si sposta dal titolo, si ridimensiona da bordi e angolo, si aggancia ai bordi dello schermo e alle altre finestre, si riduce e si rimette nella griglia. Staccata, la finestra dà le sue misure alla sessione: per questo il terminale si ricollega una volta quando la stacchi e una quando la riattacchi; spostarla, ridimensionarla o passare da una finestra all'altra non lo ricollega.
+- Le finestre staccate si salvano nel deck accanto alla griglia: un nodo o un client di versione precedente che salva quel deck vede la griglia e non le cancella. Unico limite: su un deck che appartiene a un nodo non ancora aggiornato le finestre staccate non si salvano (la griglia sì, intatta) e al ricaricamento tornano nella griglia. Se un client di versione precedente rimette nella griglia una sessione che nel deck è staccata, vince la griglia: la copia staccata si scarta e il deck resta valido. Aggiorna anche i nodi che possiedono deck condivisi.
+
+## 0.9.50 — 2026-09-27
+
+- **Nome del dispositivo: si prende dal nome dell'host e, quando l'host non ne ha uno (per esempio Android, dove è "localhost"), lo chiede nel primo avvio o al primo accesso; resta salvato, compare nella vista locale e nei nuovi collegamenti. I nodi già collegati non cambiano nome.**
+
+## 0.9.49 — 2026-09-27
+
+- **Desktop: l'esito dell'avvio o riavvio di una cella non resta più fisso in rosso nella barra dei deck: compare su una riga sua sotto la barra e sparisce dopo 10 secondi; gli errori veri restano nel foglio della cella finché non lo chiudi.**
+
+## 0.9.48 — 2026-09-27
+
+- **Telefono: tasto cartella nella barra in alto (tra lo zoom e il menu ⋯) per aprire i file della cella; si accende e si spegne dal menu ⋯ → Cell files e resta finché è acceso.**
+- Contiene la correzione della 0.9.47 (mai pubblicata): il terminale non si svuota più a ogni aggiornamento.
+
+## 0.9.47 — 2026-09-27
+
+- **Corretto: nella 0.9.46 il terminale della cella si svuotava e si ridisegnava di continuo.**
+- La callback dei file passata al terminale veniva ricreata a ogni render e, essendo tra le dipendenze dell'effetto di connessione, faceva ripartire il socket a ogni ciclo di aggiornamento. Ora è stabile; un test con spia su connessioni e istanze del terminale verifica che re-render consecutivi non ricostruiscono nulla.
+
+## 0.9.46 — 2026-09-27
+
+- **Doppia vista su telefono: una seconda cella sotto quella aperta, affiancata dalla lista rapida con un tasto; la barra scrive nella cella col focus.**
+
 ## 0.9.45 — 2026-09-24
 
 - **The start and stop window cannot hang any more.** A start or a stop had no client-side deadline: a slow node kept the sheet busy with its buttons disabled, and the only way out was to reload the page. The action now has a 60-second cap, **Cancel** stays active while it works, and the primary button says what it is doing — "starting…" or "stopping…" — so the state of the action is never ambiguous. When the cap expires the sheet closes and the outcome arrives as a notice, because the server may still be completing the start and the roster tells the truth a moment later. (commits 6e8cdb2, 0f82958)

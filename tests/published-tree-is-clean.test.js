@@ -900,3 +900,69 @@ test('HOSTNAME — variante composta: vps3-node matcha come la macchina singola'
   const colpe = colpeIn('il deck e\' su vps3-node dietro la rete interna', 'lib/esempio.js', true);
   assert.ok(colpe.length >= 1, 'hostname composto NON respinto');
 });
+
+// SIGLE DI MANDATO (prefisso NC_ maiuscolo): i codici dei mandati interni non
+// devono comparire ne' nella payload ne' sulla superficie pubblica. Le
+// eccezioni sono le costanti DI PRODOTTO con lo stesso prefisso, dichiarate
+// nella regola stessa (lookahead negativo): l'opzione tmux del supervisore,
+// la variabile della skill, la variabile di telemetria del documento interno
+// (che resta fuori dall'albero pubblico per la exclude-list). NEXUSCREW_* non
+// contiene il prefisso; la costante di build del frontend e' preceduta da
+// underscore, quindi senza confine di parola: entrambe coperte da controprova.
+test('SIGLE DI MANDATO — la regola esiste in payload e superficie', () => {
+  const defs = JSON.parse(fs.readFileSync(
+    path.join(__dirname, 'published-tree-clean-rules.json'), 'utf8'));
+  const payloadRule = defs.payloadStructural.find((r) => r.source.includes('NC_'));
+  assert.ok(payloadRule, 'la regola delle sigle di mandato deve esistere nel payload');
+  const surface = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'publish', 'public-surface-rules.json'), 'utf8'));
+  const surfaceRule = surface.text.find((r) => r.source.includes('NC_'));
+  assert.ok(surfaceRule, 'la regola delle sigle di mandato deve esistere anche in superficie');
+});
+
+test('SIGLE DI MANDATO — morde i codici interni e lascia le costanti di prodotto', () => {
+  const defs = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'publish', 'public-surface-rules.json'), 'utf8'));
+  const rule = defs.text.find((r) => r.source.includes('NC_'));
+  const re = new RegExp(rule.source, rule.flags);
+  for (const sigla of ['NC_ORIZZONTALE', 'NC_FLOTTANTE', 'NC_0947', 'NC_UI_NODI_VL_REMOTI', 'NC_SENTINEL_LEAK']) {
+    assert.ok(re.test(sigla), `sigla interna non respinta: ${sigla}`);
+  }
+  for (const lecito of ['NC_SUPERVISOR_OPT', 'NC_SEND', 'NC_TELE_SESSIONE',
+    'NEXUSCREW_MCP_SESSION', '__NC_BUILD_VERSION__', '@nc_supervisor']) {
+    assert.equal(re.test(lecito), false, `falso positivo su una chiave di prodotto: ${lecito}`);
+  }
+});
+
+// SIGLE DI RILIEVO ACCOPPIATE ALLA PROVENIENZA: un identificatore corto della
+// serie F1..F9 / D1..D9 accanto alla parola che nomina il giro di revisione
+// interno e' provenienza di lavoro, non documentazione. Da solo l'identificatore
+// resta lecito (collisioni legittime: variabili, versioni); e' l'accoppiata a
+// mordere, sulla stessa riga.
+test('RILIEVI ACCOPPIATI ALLA PROVENIENZA — la regola esiste in payload e superficie', () => {
+  const defs = JSON.parse(fs.readFileSync(
+    path.join(__dirname, 'published-tree-clean-rules.json'), 'utf8'));
+  const payloadRule = defs.payloadStructural.find((r) => r.source.includes('F\\d+') && r.source.includes('audit'));
+  assert.ok(payloadRule, 'la regola dei rilievi accoppiati deve esistere nel payload');
+  const surface = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'publish', 'public-surface-rules.json'), 'utf8'));
+  const surfaceRule = surface.text.find((r) => r.source.includes('F\\d+') && r.source.includes('audit'));
+  assert.ok(surfaceRule, 'la regola dei rilievi accoppiati deve esistere anche in superficie');
+});
+
+test('RILIEVI ACCOPPIATI ALLA PROVENIENZA — morde la coppia, non i casi legittimi', () => {
+  const defs = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'publish', 'public-surface-rules.json'), 'utf8'));
+  const rule = defs.text.find((r) => r.source.includes('F\\d+') && r.source.includes('audit'));
+  const re = new RegExp(rule.source, rule.flags);
+  for (const coppia of ['F1 (audit NC_0947/0948): il focus', '// F2 (audit): claim atomico',
+    '--- audit F5: write-failure', 'rilievo 1 audit D8', 'D2 audit: il consumatore vero',
+    "rilievo 1 dell'audit D8", 'F11 audit: marker sintetico per prova negativa.',
+    'audit D12: secondo giro multi-cifra']) {
+    assert.ok(re.test(coppia), `coppia sigla+provenienza non respinta: ${coppia}`);
+  }
+  for (const lecito of ['return F7(x)', 'const D2 = misuratore();', 'npm install --no-audit',
+    'revisione F2/F3 della guardia', 'misurato: F7 nel bundle']) {
+    assert.equal(re.test(lecito), false, `falso positivo su testo lecito: ${lecito}`);
+  }
+});
