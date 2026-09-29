@@ -112,6 +112,21 @@ function seedAsks(dir, asks) {
   fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks }), { mode: 0o600 });
 }
 
+// Semina un asks.json RAW (già serializzato): serve per i casi MALFORMATI
+// (virgola finale) o con `asks` non array, che seedAsks() non puo' esprimere
+// perche' JSON.stringify produrrebbe JSON valido.
+function seedAsksRaw(dir, raw) {
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(path.join(configDir, 'asks.json'), raw, { mode: 0o600 });
+}
+
+// Ripara asks.json sul disco con una forma valida (stesso store, niente restart).
+function repairAsks(dir, asks) {
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.writeFileSync(path.join(configDir, 'asks.json'), `${JSON.stringify({ asks }, null, 2)}\n`, { mode: 0o600 });
+}
+
 // L'ask dell'owner, nelle due forme che fanno la differenza:
 //   sano    — chiuso (answered): list({open:true}) lo esclude LEGITTIMAMENTE;
 //   rotto   — aperto con `options` non array: supera il filtro di load()
@@ -133,10 +148,11 @@ function ownerAsk({ broken }) {
 
 // Coppia reale owner B / client A. L'alias importato di quell'ask e' aperto su
 // A: e' lui che la riconciliazione potrebbe chiudere per colpa del finto vuoto.
-async function pairReal(t, root, { broken, subscribed }) {
+async function pairReal(t, root, { broken, subscribed, ownerRaw }) {
   const ownerDir = path.join(root, 'owner');
   const clientDir = path.join(root, 'client');
-  seedAsks(ownerDir, [ownerAsk({ broken })]);
+  if (ownerRaw !== undefined) seedAsksRaw(ownerDir, ownerRaw);
+  else seedAsks(ownerDir, [ownerAsk({ broken })]);
   const B = await boot(t, ownerDir);
   const selfB = nodesStore.loadStoreStrict(B.nodesPath).nodeId;
   seedAsks(clientDir, [{
@@ -186,7 +202,7 @@ async function pairReal(t, root, { broken, subscribed }) {
     assert.equal(r.status, 200);
     return ((await r.json()).views || []).find((v) => v.ownerId === selfB) || null;
   };
-  return { A, B, selfA, selfB, ownerSnapshot, aliasRecord, feedView };
+  return { A, B, selfA, selfB, ownerSnapshot, aliasRecord, feedView, ownerDir };
 }
 
 // Quattro GET oltre la finestra l'una dall'altra: ognuna dà alla
@@ -298,4 +314,96 @@ test('E2E fail-closed (ricevente 0.9.51/0.9.52): la GET della riconciliazione no
   assert.ok(skipped, 'la risposta non è ok: il ricevente 0.9.51/0.9.52 salta l\'owner');
   assert.equal(skipStatus, 503, 'salta per il rifiuto asks-unreadable, non per un caso accidentale');
   assert.equal(snap, null, 'nessun corpo raggiunge la decisione del ricevente vecchio: chiusura impossibile');
+});
+
+// --- DIFETTO nc-0953: asks.json ESISTENTE ma MALFORMATO ----------------------
+// Il 503 di 6d05d1f scatta solo se list() LANCIA. Ma un JSON malformato (virgola
+// finale) o un `asks` non array fanno tornare [] a list() SILENZIOSAMENTE: il
+// produttore spediva 200 con asks:[] autorevole e i riceventi chiudevano alias
+// aperti. Queste prove replicano quel difetto sul produttore reale: con il fix
+// il health gate rifiuta 503 PRIMA di list(), e il ricevente non chiude.
+
+// Una domanda aperta dell'owner, con JSON malformato (virgola finale dopo
+// l'array): il file ESISTE, contiene una domanda aperta, ma e' illeggibile.
+function malformedOwnerRaw() {
+  const session = tmuxSessionForCell('dev');
+  return `{"asks":[{"id":"${OWNER_ASK_ID}","question":"aperta ma store malformato","session":"${session}","ts":${Date.now()},"answered":false,"dismissed":false}],}`;
+}
+
+// Forma `asks` non array: JSON valido, ma la struttura e' invalida.
+function nonArrayOwnerRaw() {
+  const session = tmuxSessionForCell('dev');
+  return `${JSON.stringify({ asks: { id: OWNER_ASK_ID, session } }, null, 2)}\n`;
+}
+
+// La domanda aperta dell'owner, in forma VALIDA, per il riparo.
+function openOwnerAsk() {
+  const session = tmuxSessionForCell('dev');
+  return { id: OWNER_ASK_ID, question: 'aperta e leggibile', session, ts: Date.now(), answered: false, dismissed: false };
+}
+
+test('E2E nc-0953 (porta): asks.json malformato (virgola finale) — produttore 503, la riconciliazione NON chiude l\'alias', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-mal-door-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { A, ownerSnapshot, aliasRecord } = await pairReal(t, root, { ownerRaw: malformedOwnerRaw(), subscribed: false });
+  // Il produttore reale non puo' leggere il proprio store: 503, nessuno snapshot.
+  const r = await ownerSnapshot();
+  assert.equal(r.status, 503, 'store malformato => 503, non 200 con asks:[] autorevole');
+  const body = await r.json();
+  assert.deepEqual(body, { error: 'asks-unreadable' });
+  // La riconciliazione reale (porta) riceve 503 e non chiude l'alias.
+  await driveReconciliation(A);
+  const rec = await aliasRecord();
+  assert.ok(rec, 'l\'alias importato e\' ancora nell\'elenco');
+  assert.notEqual(rec.dismissed, true, 'uno snapshot di un produttore con store malformato NON chiude mai un alias');
+});
+
+test('E2E nc-0953 (via sottoscritta): asks.json malformato — view stale su 503, alias APERTO', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-mal-view-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { A, aliasRecord, feedView } = await pairReal(t, root, { ownerRaw: malformedOwnerRaw(), subscribed: true });
+  await driveReconciliation(A);
+  const rec = await aliasRecord();
+  assert.ok(rec, 'l\'alias importato e\' ancora nell\'elenco');
+  assert.notEqual(rec.dismissed, true, 'nessuna chiusura per store malformato (via sottoscritta)');
+  const stale = await waitUntil(async () => {
+    const v = await feedView();
+    return v && v.lastError === 'snapshot HTTP 503' ? v : null;
+  }, { tries: 120, what: 'view stale con la causa del produttore malformato' });
+  assert.ok(stale, 'la view e\' stale con lastError "snapshot HTTP 503"');
+});
+
+test('E2E nc-0953 (porta): asks non array — produttore 503, la riconciliazione NON chiude l\'alias', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-nonarr-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { A, ownerSnapshot, aliasRecord } = await pairReal(t, root, { ownerRaw: nonArrayOwnerRaw(), subscribed: false });
+  const r = await ownerSnapshot();
+  assert.equal(r.status, 503, 'asks non array => 503, non vuoto autorevole');
+  assert.deepEqual(await r.json(), { error: 'asks-unreadable' });
+  await driveReconciliation(A);
+  const rec = await aliasRecord();
+  assert.ok(rec, 'l\'alias importato e\' ancora nell\'elenco');
+  assert.notEqual(rec.dismissed, true, 'uno snapshot di un produttore con asks non array NON chiude mai un alias');
+});
+
+test('E2E nc-0953 (risanamento): ripara il file sull\'owner — lo snapshot torna 200 con la domanda e l\'alias resta APERTO', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-repair-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { A, selfB, ownerSnapshot, aliasRecord, ownerDir } = await pairReal(t, root, { ownerRaw: malformedOwnerRaw(), subscribed: false });
+  // Fase 1: store malformato -> 503 (un solo snapshot esplicito, per non
+  // consumare il rate 6/min che serve alla fase successiva).
+  assert.equal((await ownerSnapshot()).status, 503);
+  // Fase 2: l'operatore ripara asks.json sul disco (stesso server, niente
+  // restart). Lo store illeggibile NON e' cacheato: il prossimo snapshot rilegge.
+  repairAsks(ownerDir, [openOwnerAsk()]);
+  const r = await ownerSnapshot();
+  assert.equal(r.status, 200, 'dopo il riparo lo snapshot e\' di nuovo autorevole');
+  const snap = await r.json();
+  assert.equal(snap.ownerId, selfB);
+  assert.ok(Array.isArray(snap.asks) && snap.asks.some((a) => a.id === OWNER_ASK_ID), 'la domanda aperta e\' di nuovo nello snapshot');
+  // Fase 3: la riconciliazione vede la domanda VIVA e NON chiude l'alias.
+  await driveReconciliation(A);
+  const rec = await aliasRecord();
+  assert.ok(rec, 'l\'alias e\' ancora presente');
+  assert.notEqual(rec.dismissed, true, 'la domanda e\' viva nello snapshot: l\'alias resta APERTO, non viene chiuso');
 });
