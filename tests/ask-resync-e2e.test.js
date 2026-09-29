@@ -831,3 +831,81 @@ test('E2E: skip in finestra → un retry alla scadenza chiude l\'alias senza nuo
   assert.ok(closed, 'the scheduled retry closes the alias without new GETs');
   assert.ok(hits.snap >= afterGets + 1, 'the retry went through the door: ' + hits.snap);
 });
+
+// R7: il validatore dello snapshot è UNO per entrambe le vie. Owner NON
+// sottoscritto: uno snapshot dichiarato incompleto (resyncRequired) o di un
+// altro owner non è autorevole, e l'alias aperto non si chiude.
+function unsubRejectionTest(label, snapBody) {
+  test(`E2E: owner non sottoscritto, snapshot ${label} — l'alias NON si chiude`, async (t) => {
+    const OWNER = '7'.repeat(31) + label.length;
+    const hits = { snap: 0 };
+    const fake = http.createServer((req, res) => {
+      const url = req.url || '';
+      const json = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+      if (url === '/federation/health') return json(200, { ok: true, instanceId: OWNER, eventFeedV1: true });
+      if (url.includes('/event-feed/snapshot')) { hits.snap += 1; res.writeHead(200, { 'content-type': 'application/json' }); res.end(snapBody()); return; }
+      if (url.includes('/event-feed')) return json(409, { error: 'x', reason: 'reset-required' });
+      return json(404, { error: 'no stub' });
+    });
+    await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+    t.after(() => { try { fake.close(); } catch (_) {} });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncval-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const configDir = path.join(dir, '.nexuscrew');
+    fs.mkdirSync(configDir, { recursive: true });
+    const paths = {
+      home: dir, configDir,
+      configPath: path.join(configDir, 'config.json'),
+      nodesPath: path.join(configDir, 'nodes.json'),
+      tokenPath: path.join(configDir, 'token'),
+    };
+    nodesStore.initStore(paths.nodesPath);
+    const alias = {
+      id: 'alias-val', question: 'alias con snapshot non valido', options: [],
+      session: tmuxSessionForCell('dev'), ts: Date.now(), revision: 0,
+      originNode: OWNER, ownerId: OWNER, ownerAskId: 'a3977abd',
+    };
+    fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks: [alias] }), { mode: 0o600 });
+    const { server, token, watcher } = createServer({
+      ...paths,
+      filesRoot: path.join(dir, 'files'),
+      port: 41999,
+      fleetEnabled: false,
+      eventFeedClientPollMs: 500,
+      eventFeedClientMinSnapshotIntervalMs: 1000,
+      sessionExistsSeam: () => true,
+      pasteSeam: () => true,
+      settingsSeams: {
+        platform: 'linux', uid: 1000,
+        execImpl: () => { throw new Error('exec disabled in test'); },
+        serviceInstallPath: path.join(dir, 'systemd', 'nexuscrew.service'),
+        keygen: (_kp, name) => `ssh-ed25519 AAAAC3FAKEKEY nexuscrew-tunnel-${name}`,
+        spawnImpl: () => ({ pid: 4193999, unref() {} }),
+        sshVersion: () => ({ major: 9, minor: 6 }),
+      },
+    });
+    t.after(async () => { await sleep(40); server.close(); if (watcher) watcher.close(); });
+    const A = await new Promise((res) => server.listen(0, '127.0.0.1', () => res({
+      base: `http://127.0.0.1:${server.address().port}`, token, ...paths,
+    })));
+    let st = nodesStore.addNode(nodesStore.loadStoreStrict(A.nodesPath), {
+      name: 'owner', remotePort: 41999, localPort: fake.address().port, nodeId: OWNER,
+      token: 'TOK', direction: 'outbound', shared: true, visibility: 'network', ssh: 'u@owner',
+    });
+    nodesStore.atomicWriteStore(A.nodesPath, st);
+    const r = await fetch(`${A.base}/api/asks`, { headers: H(A.token) });
+    assert.equal(r.status, 200);
+    const list = await r.json();
+    const rec = (list.asks || []).find((a) => a.id === 'alias-val');
+    assert.ok(rec, 'the alias still exists');
+    assert.notEqual(rec.dismissed, true, `an ${label} snapshot never closes an open alias`);
+    assert.ok(hits.snap >= 1, 'the owner was contacted: ' + hits.snap);
+  });
+}
+unsubRejectionTest('resyncRequired', () => JSON.stringify({
+  ownerId: '7'.repeat(31) + '14', cursor: '1:1', viewEpoch: 1, notifications: [],
+  asks: [], resyncRequired: true,
+}));
+unsubRejectionTest('ownerId sbagliato', () => JSON.stringify({
+  ownerId: 'f'.repeat(32), cursor: '1:1', viewEpoch: 1, notifications: [], asks: [],
+}));
