@@ -39,6 +39,8 @@ import {
 import { deckId, refWithOwner, resolveLayoutForViewer, tickOwnerAvailability } from './lib/deck-federation.js';
 import { hostRouteKey, hostDesignationFailureMessage } from './lib/host-designation.js';
 import { loadLastRoster, saveLastRoster } from './lib/last-roster.js';
+import { adoptDeviceId } from './lib/prefs-sync.js';
+import { usePrefsSync } from './hooks/usePrefsSync.js';
 import { fleetReadOutcome } from './lib/fleet-read-policy.js';
 import { panelPortForRoute } from './lib/panel-port.js';
 import { AUTH_INVALID_EVENT, TOKEN_NOT_REMEMBERED_EVENT, loadToken, saveToken } from './lib/token-store.js';
@@ -76,13 +78,14 @@ function loadSideW() {
 function bootstrapFromFragment() {
   const out = { token: '', pair: '' };
   try {
-    const { token, pair, nextUrl } = parseBootstrapHash({
+    const { token, pair, device, nextUrl } = parseBootstrapHash({
       hash: location.hash, origin: location.origin, pathname: location.pathname, search: location.search,
     });
     if (token) {
       out.token = token;
       saveToken(token, { remember: true }); // un solo posto: toglie l'eventuale copia di sessione vecchia
     }
+    if (device) adoptDeviceId(device); // solo se questo browser non ha gia' un profilo
     if (pair) {
       out.pair = pair;
       try { sessionStorage.setItem('nc_pair', pair); } catch (_) {}
@@ -744,6 +747,7 @@ export default function App() {
   const [token, setToken] = useState(boot.token);
   // T2: il nodo LOCALE ha risposto 401 al token in uso: si riapre il prompt, senza toccare le preferenze.
   const [authInvalid, setAuthInvalid] = useState(false);
+  usePrefsSync(authInvalid ? '' : token); // copia delle preferenze sul nodo (recupero dopo un wipe dello storage)
   const tokenRef = useRef(boot.token);
   tokenRef.current = token;
   useEffect(() => {

@@ -32,6 +32,7 @@ import {
 } from '../lib/notification-speech.js';
 import './SettingsPanel.css';
 import PreferencesJournal from './PreferencesJournal.jsx';
+import PreferencesBackup from './PreferencesBackup.jsx';
 
 // Pannello settings (design §5, B2-UI). Stessa struttura a schede su desktop
 // (overlay nel workspace) e mobile (full-screen via CSS). Le schede principali:
@@ -1127,6 +1128,7 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
             <span><b>{t('alternate-screen')}</b><small>{t('alternate-screen-help')}</small></span>
           </label>
         </div>
+        <PreferencesBackup token={token} />
         <PreferencesJournal />
         <DiagnosticsTab token={token} roster={roster} readonly={readonly} />
       </section>}
