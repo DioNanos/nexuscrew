@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { adoptDeviceId, applyPrefs, collectPrefs, DEVICE_KEY, exportPrefs, importPrefs, isEmptyPrefs, resolveConflict, SYNC_KEY, syncPrefs } from './prefs-sync.js';
 
 // Server finto con la stessa semantica di /api/prefs: dispositivi emessi dal server, If-Match, whitelist.
@@ -154,5 +154,62 @@ describe('preferenze per dispositivo sul server (R1)', () => {
     applyPrefs(full);
     expect(localStorage.getItem(SYNC_KEY)).toBeNull();
     expect(JSON.parse(localStorage.getItem('nc_order_journal_v1')).at(-1).reason).toBe('prefs-restore');
+  });
+
+  describe('storage che rifiuta le scritture (il ripristino dichiara il vero)', () => {
+    const failOn = (key) => {
+      const real = Storage.prototype.setItem;
+      return vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (k, v) {
+        if (k === key) throw new DOMException('quota', 'QuotaExceededError');
+        return real.call(this, k, v);
+      });
+    };
+    afterEach(() => vi.restoreAllMocks());
+
+    it('syncPrefs: la scrittura fallisce -> errore con causa, mai «restored», nessuna scrittura a meta\' e revisione non avanzata', async () => {
+      seed(); const s = fakeServer();
+      await syncPrefs({ request: s.request });
+      const id = localStorage.getItem(DEVICE_KEY);
+      localStorage.clear(); adoptDeviceId(id);
+      const spy = failOn('nc_pins');
+      const r = await syncPrefs({ request: s.request });
+      expect(r.status).toBe('error');
+      expect(r.code).toBe('storage-write-failed');
+      expect(r.note).toMatch(/quota/i);
+      expect(localStorage.getItem('nc_pins')).toBeNull();
+      // niente a meta': le altre chiavi non restano scritte da sole
+      for (const k of ['nc_sidebar_order_v1', 'nc_sidebar_views_v1', 'nc_node_order_v1']) expect(localStorage.getItem(k)).toBeNull();
+      expect(localStorage.getItem(SYNC_KEY)).toBeNull();
+      // la copia del nodo e' intatta: quando lo storage torna a funzionare il ripristino riesce
+      spy.mockRestore();
+      const again = await syncPrefs({ request: s.request });
+      expect(again.status).toBe('restored');
+      expect(collectPrefs()).toEqual(full);
+    });
+
+    it('resolveConflict(server): stessa verita\' — errore, il locale resta com\'era, si puo\' ritentare', async () => {
+      seed(); const s = fakeServer();
+      await syncPrefs({ request: s.request });
+      const id = localStorage.getItem(DEVICE_KEY);
+      localStorage.clear(); adoptDeviceId(id); seed({ ...full, pins: ['n:locale'] });
+      const c = (await syncPrefs({ request: s.request })).conflict;
+      const spy = failOn('nc_sidebar_views_v1');
+      const r = await resolveConflict('server', c, { request: s.request });
+      expect(r.status).toBe('error'); expect(r.code).toBe('storage-write-failed');
+      expect(collectPrefs().pins).toEqual(['n:locale']);
+      expect(collectPrefs().orders).toEqual(full.orders);
+      spy.mockRestore();
+      expect((await resolveConflict('server', c, { request: s.request })).status).toBe('restored');
+      expect(collectPrefs().pins).toEqual(['n:a']);
+    });
+
+    it('importPrefs: errore dichiarato e nulla cambia', () => {
+      seed(); const file = exportPrefs(); localStorage.clear();
+      failOn('nc_pins');
+      const r = importPrefs(file);
+      expect(r.ok).toBe(false); expect(r.reason).toBe('storage-write-failed');
+      expect(localStorage.getItem('nc_pins')).toBeNull();
+      expect(localStorage.getItem('nc_sidebar_order_v1')).toBeNull();
+    });
   });
 });

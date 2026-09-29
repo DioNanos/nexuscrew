@@ -34,13 +34,13 @@ export default function PreferencesBackup({ token = '' }) {
     try { text = await readText(chosen); } catch (error) { setMessage({ ok: false, text: String(error?.message || error) }); return; }
     if (!isEmptyPrefs(collectPrefs()) && !window.confirm(t('prefs-import-confirm'))) return;
     const result = importPrefs(text);
-    setMessage(result.ok ? { ok: true, text: t('prefs-import-done') } : { ok: false, text: t(result.reason === 'not-json' || result.reason === 'wrong-kind' ? 'prefs-import-wrong' : 'prefs-import-bad') });
+    setMessage(result.ok ? { ok: true, text: t('prefs-import-done') } : { ok: false, text: t(result.reason === 'not-json' || result.reason === 'wrong-kind' ? 'prefs-import-wrong' : result.reason === 'storage-write-failed' ? 'prefs-import-storage' : 'prefs-import-bad') });
   };
 
   return (
     <div className="nc-set-form nc-prefs-backup">
       <div className="nc-sheet-label">{t('prefs-backup')}</div>
-      <div data-testid="sync-status" className="nc-set-hint">{t('prefs-sync')}: {state.status}{state.revision !== undefined ? ` (r${state.revision})` : ''}{state.code ? ` · ${state.code}` : ''}</div>
+      <div data-testid="sync-status" className="nc-set-hint">{t('prefs-sync')}: {state.status}{state.revision !== undefined ? ` (r${state.revision})` : ''}{state.code ? ` · ${state.code}` : ''}{state.note ? ` · ${state.note}` : ''}</div>
       {state.status === 'conflict' && (
         <div className="nc-set-confirm" role="group" aria-label={t('prefs-conflict')}>
           <div>{t('prefs-conflict')}</div>

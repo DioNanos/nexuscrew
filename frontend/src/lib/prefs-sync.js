@@ -55,16 +55,31 @@ const stable = (v) => (Array.isArray(v) ? `[${v.map(stable).join(',')}]`
 export const hashPrefs = (d) => { const s = stable(normalizePrefs(d) || {}); let h = 2166136261; for (let i = 0; i < s.length; i += 1) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16); };
 
 // Scrive le quattro chiavi (passando dal pref-store: il grezzo illeggibile non si perde) e avvisa i consumatori.
+// Tutto o niente: se una scrittura fallisce le chiavi gia' scritte tornano al valore di prima, cosi' non resta uno stato
+// a meta' (che al giro dopo sembrerebbe un conflitto). Ritorna null se ok, l'errore (con la causa) altrimenti.
+const PREF_KEYS = ['nc_pins', SIDEBAR_ORDER_KEY, SIDEBAR_VIEW_KEY, NODE_ORDER_KEY];
 export function applyPrefs(data, { storage, note = 'restore' } = {}) {
-  const d = normalizePrefs(data); if (!d) return false;
-  const errors = [
-    writePref('nc_pins', d.pins, { storage }), writePref(SIDEBAR_ORDER_KEY, d.orders, { storage }),
-    writePref(SIDEBAR_VIEW_KEY, d.views, { storage }), writePref(NODE_ORDER_KEY, d.nodeOrder, { storage }),
-  ];
+  const d = normalizePrefs(data); if (!d) return new Error('preferenze non valide');
+  let s = storage; try { s = s || globalThis.localStorage; } catch (e) { return e; }
+  const before = {};
+  for (const key of PREF_KEYS) { try { before[key] = s.getItem(key); } catch (_) { before[key] = null; } }
+  const values = { nc_pins: d.pins, [SIDEBAR_ORDER_KEY]: d.orders, [SIDEBAR_VIEW_KEY]: d.views, [NODE_ORDER_KEY]: d.nodeOrder };
+  for (const key of PREF_KEYS) {
+    const error = writePref(key, values[key], { storage });
+    if (error) {
+      for (const k of PREF_KEYS) {
+        try { if (before[k] === null || before[k] === undefined) s.removeItem(k); else s.setItem(k, before[k]); } catch (_) { /* best effort */ }
+      }
+      appendOrderJournal({ reason: 'prefs-restore-failed', key, note: String(error && error.message || error).slice(0, 120) });
+      return error;
+    }
+  }
   appendOrderJournal({ reason: 'prefs-restore', note, after: d.pins });
   try { window.dispatchEvent(new Event(CHANGE_EVENT)); } catch (_) { /* fuori dal browser */ }
-  return errors.every((e) => !e);
+  return null;
 }
+
+const writeFailed = (error) => ({ status: 'error', code: 'storage-write-failed', note: String(error && error.message || error).slice(0, 120) });
 
 const ls = (storage) => { try { return storage || globalThis.localStorage; } catch (_) { return null; } };
 const getDevice = (storage) => { try { const v = ls(storage)?.getItem(DEVICE_KEY); return DEVICE_RE.test(v || '') ? v : ''; } catch (_) { return ''; } };
@@ -118,7 +133,12 @@ export async function syncPrefs({ request, token, storage } = {}) {
       if (isEmptyPrefs(local)) return { status: 'synced', revision: server.revision };
       return put(req, id, local, server.revision, storage);
     }
-    if (isEmptyPrefs(local)) { applyPrefs(serverData, { storage }); writeSync(server.revision, serverData, storage); return { status: 'restored', revision: server.revision }; }
+    if (isEmptyPrefs(local)) {
+      const failure = applyPrefs(serverData, { storage });
+      if (failure) return writeFailed(failure); // la copia del nodo resta intatta e la revisione non avanza: si ritenta al prossimo giro
+      writeSync(server.revision, serverData, storage);
+      return { status: 'restored', revision: server.revision };
+    }
     if (hashPrefs(local) === hashPrefs(serverData)) { writeSync(server.revision, local, storage); return { status: 'synced', revision: server.revision }; }
     const last = readSync(storage);
     if (last && last.revision === server.revision && last.hash !== hashPrefs(local)) return put(req, id, local, server.revision, storage);
@@ -134,7 +154,9 @@ export async function resolveConflict(choice, conflict, { request, token, storag
   try {
     if (choice === 'server') {
       if (!conflict.server) return { status: 'error', code: 'no-server-copy' };
-      applyPrefs(conflict.server, { storage, note: 'restore-from-server' }); writeSync(conflict.revision, conflict.server, storage);
+      const failure = applyPrefs(conflict.server, { storage, note: 'restore-from-server' });
+      if (failure) return writeFailed(failure);
+      writeSync(conflict.revision, conflict.server, storage);
       return { status: 'restored', revision: conflict.revision };
     }
     return await put(req, conflict.deviceId || getDevice(storage), conflict.local, conflict.revision, storage);
@@ -152,5 +174,7 @@ export function importPrefs(text, { storage } = {}) {
   if (!plain(parsed) || parsed.kind !== FILE_KIND || parsed.version !== 1) return { ok: false, reason: 'wrong-kind' };
   const data = normalizePrefs(parsed.data);
   if (!data) return { ok: false, reason: 'bad-schema' };
-  return { ok: applyPrefs(data, { storage, note: 'import' }), data };
+  const failure = applyPrefs(data, { storage, note: 'import' });
+  if (failure) return { ok: false, reason: 'storage-write-failed', note: String(failure && failure.message || failure).slice(0, 120) };
+  return { ok: true, data };
 }
