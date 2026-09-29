@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { packEntries } = require('./pack-json-shape.js');
 
 const [sourceSha, outDir, manifestPath] = process.argv.slice(2);
 const ROOT = process.cwd();
@@ -160,12 +161,12 @@ try {
   if (!pkg.name || !pkg.version) throw new Error('package name/version mancanti');
   fs.mkdirSync(outDir, { recursive: true });
   const npmEnv = { ...process.env, npm_config_ignore_scripts: 'true' };
-  const dry = JSON.parse(run('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: sourceDir, env: npmEnv }));
-  if (!Array.isArray(dry) || dry.length !== 1 || !Array.isArray(dry[0].files)) throw new Error('npm dry-run senza packlist');
+  const dry = packEntries(JSON.parse(run('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: sourceDir, env: npmEnv })));
+  if (dry.length !== 1 || !Array.isArray(dry[0].files)) throw new Error('npm dry-run senza packlist');
   const packlist = dry[0].files.map((entry) => entry.path).sort();
   if (!packlist.length || packlist.some((rel) => rel.startsWith('/') || rel.includes('\\') || rel.includes('..'))) throw new Error('packlist non sicura');
-  const packed = JSON.parse(run('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', outDir], { cwd: sourceDir, env: npmEnv }));
-  if (!Array.isArray(packed) || packed.length !== 1 || !packed[0].filename) throw new Error('npm pack senza tarball');
+  const packed = packEntries(JSON.parse(run('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', outDir], { cwd: sourceDir, env: npmEnv })));
+  if (packed.length !== 1 || !packed[0].filename) throw new Error('npm pack senza tarball');
   const tarball = path.resolve(outDir, packed[0].filename);
   if (!fs.existsSync(tarball)) throw new Error(`tarball mancante: ${tarball}`);
   const listed = safeEntries(run('tar', ['-tzf', tarball]));

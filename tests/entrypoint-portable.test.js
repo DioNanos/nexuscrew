@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
+const { packEntries } = require('../publish/pack-json-shape.js'); // D-384/NC_0952: npm 12 torna un oggetto
 
 const ROOT = path.join(__dirname, '..');
 const ENTRY = path.join(ROOT, 'bin', 'nexuscrew.js');
@@ -157,7 +158,7 @@ test('a file descriptor above 2 survives the exec', () => {
 test('the packed file keeps the executable bit', () => {
   const packed = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
   assert.equal(packed.status, 0, packed.stderr);
-  const report = JSON.parse(packed.stdout)[0];
+  const report = packEntries(JSON.parse(packed.stdout))[0];
   const entry = report.files.find((f) => f.path === 'bin/nexuscrew.js');
   assert.ok(entry, `bin/nexuscrew.js is not in the package: ${report.files.map((f) => f.path).join(', ')}`);
   assert.ok((entry.mode & 0o111) !== 0, `packed without the executable bit: mode ${entry.mode.toString(8)}`);
