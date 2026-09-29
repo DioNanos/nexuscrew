@@ -1,3 +1,5 @@
+import { readPref, writePref } from './pref-store.js';
+
 // Local-only node ordering. Labels are deliberately excluded: a node name has
 // one canonical, server-backed source shared by Settings, the roster and peers.
 export const NODE_ORDER_KEY = 'nc_node_order_v1';
@@ -12,15 +14,15 @@ export function nodePreferenceKey(node) {
 }
 
 export function loadNodeOrder(storage = globalThis.localStorage) {
-  try {
-    const raw = JSON.parse(storage.getItem(NODE_ORDER_KEY));
-    if (!Array.isArray(raw)) return [];
-    return [...new Set(raw.filter((key) => typeof key === 'string' && key && key.length <= 192))].slice(0, 128);
-  } catch (_) { return []; }
+  return readPref(NODE_ORDER_KEY, {
+    storage, fallback: () => [],
+    parse: (raw) => (Array.isArray(raw)
+      ? [...new Set(raw.filter((key) => typeof key === 'string' && key && key.length <= 192))].slice(0, 128) : undefined),
+  });
 }
 
 export function saveNodeOrder(order, storage = globalThis.localStorage) {
-  try { storage.setItem(NODE_ORDER_KEY, JSON.stringify(order)); } catch (_) {}
+  writePref(NODE_ORDER_KEY, order, { storage });
   return order;
 }
 
