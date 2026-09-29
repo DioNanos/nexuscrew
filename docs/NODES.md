@@ -93,7 +93,7 @@ of this installation it reaches once it is:
 ```bash
 nexuscrew nodes cells <name|nodeId> all            # default
 nexuscrew nodes cells <name|nodeId> none
-nexuscrew nodes cells <name|nodeId> Research,Dev
+nexuscrew nodes cells <name|nodeId> cella-a,cella-b
 ```
 
 The scope is set here, on the installation that owns the cells — never by the

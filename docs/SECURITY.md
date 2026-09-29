@@ -110,7 +110,7 @@ set locally, on the installation that owns the cells:
 ```bash
 nexuscrew nodes cells <node> all            # default: every cell
 nexuscrew nodes cells <node> none           # no cell at all
-nexuscrew nodes cells <node> Research,Dev   # exactly these
+nexuscrew nodes cells <node> cella-a,cella-b   # exactly these
 ```
 
 The scope is enforced on the federated request, in one place in front of the

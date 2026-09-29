@@ -252,7 +252,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     terminalTextarea?.addEventListener('blur', onTerminalTextareaBlur);
     // D384 commit 4 — il paste NATIVO marca una finestra che si CHIUDE
     // al PRIMO onData dopo l'evento paste (l'emissione è sincrona): un tasto
-    // digitato subito dopo torna una digitazione (probe delvAuditor: paste poi
+    // digitato subito dopo torna una digitazione (probe: paste poi
     // keydown a +50 ms → ['ciao', '\x03'], CTRL disarmato). Tetti di sicurezza:
     // il keydown successivo e 2 s di silenzio chiudono il marcatore anche se il
     // paste non ha prodotto nessun onData. Entrambi i listener sono in CAPTURE
