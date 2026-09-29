@@ -5,7 +5,7 @@ import { loadPins } from './pins.js';
 import { loadSidebarOrders, loadSidebarViews, SIDEBAR_ORDER_KEY, SIDEBAR_VIEW_KEY } from './sidebar-model.js';
 import { loadNodeOrder, NODE_ORDER_KEY } from './node-preferences.js';
 
-// Copia per-dispositivo delle preferenze sul nodo (R1): pin, ordini, viste, ordine nodi. Serve a ritrovarle se lo
+// Copia per-dispositivo delle preferenze sul nodo: pin, ordini, viste, ordine nodi. Serve a ritrovarle se lo
 // storage del browser viene svuotato. Regole: il token non fa mai parte delle preferenze; il primo sync non carica
 // mai un insieme vuoto; una copia locale non vuota non viene mai sostituita da quella del server senza una scelta.
 export const DEVICE_KEY = 'nc_device_id_v1';

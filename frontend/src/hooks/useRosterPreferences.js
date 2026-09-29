@@ -30,7 +30,7 @@ export function useRosterPreferences() {
     return () => clearTimeout(timer);
   }, [reorderBlocked]);
 
-  // O2: lo stato di questa istanza segue lo storage. Un'altra finestra (evento `storage`, anche con chiave
+  // lo stato di questa istanza segue lo storage. Un'altra finestra (evento `storage`, anche con chiave
   // null dopo un clear) o un'altra istanza di questo documento (CHANGE_EVENT) ricaricano i valori correnti.
   useEffect(() => {
     const reload = (event) => {

@@ -2,7 +2,7 @@
 import { AUTH_INVALID_EVENT, isLocalApiPath } from './token-store.js';
 export { AUTH_INVALID_EVENT, isLocalApiPath };
 
-// T2: il 401 del nodo LOCALE dice che il token in uso non vale piu' (rotazione, file sostituito): lo si annuncia
+// il 401 del nodo LOCALE dice che il token in uso non vale piu' (rotazione, file sostituito): lo si annuncia
 // perche' l'app riapra il prompt. Non per i peer (route federate) e non per timeout/errori di rete.
 function noteAuth(path, token, response) {
   if (!response || response.status !== 401 || !isLocalApiPath(path)) return;

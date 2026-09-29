@@ -2,7 +2,7 @@ import { readPref, writePref } from './pref-store.js';
 
 // Ultimo elenco celle Fleet letto con esito AUTOREVOLE, per posizione ('local' o `id:<instanceId>`).
 // Serve a una PWA riaperta mentre il fleet non risponde: senza, la lista mostra solo le sessioni tmux e le celle
-// spente spariscono (O1). Le celle ripristinate sono marcate `preserved` e mai vive.
+// spente spariscono. Le celle ripristinate sono marcate `preserved` e mai vive.
 export const LAST_ROSTER_KEY = 'nc_last_roster_v1';
 const MAX_CELLS = 64;
 const FIELDS = ['cell', 'tmuxSession', 'engine', 'model', 'label', 'boot'];

@@ -745,7 +745,7 @@ export default function App() {
   useLang(); // re-render globale allo switch lingua
   const [boot] = useState(bootstrapFromFragment);
   const [token, setToken] = useState(boot.token);
-  // T2: il nodo LOCALE ha risposto 401 al token in uso: si riapre il prompt, senza toccare le preferenze.
+  // il nodo LOCALE ha risposto 401 al token in uso: si riapre il prompt, senza toccare le preferenze.
   const [authInvalid, setAuthInvalid] = useState(false);
   usePrefsSync(authInvalid ? '' : token); // copia delle preferenze sul nodo (recupero dopo un wipe dello storage)
   const tokenRef = useRef(boot.token);
