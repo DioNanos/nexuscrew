@@ -1,4 +1,4 @@
-// D-384/NC_0952 — le DUE forme di `npm pack --json` accettate dal verifier.
+// D384 commit 2 — le DUE forme di `npm pack --json` accettate dal verifier.
 'use strict';
 
 const { test } = require('node:test');
