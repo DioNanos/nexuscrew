@@ -2,6 +2,14 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.52 — 2026-09-29
+
+- **Telefono: CTRL e ALT non chiudono più la tastiera.** Toccandoli la tastiera si apre se era chiusa e resta aperta se lo era già; gli altri tasti della barra e la preferenza di tenerla chiusa non cambiano.
+- **Telefono: CTRL e ALT si combinano con quello che digiti.** Con CTRL armato il primo carattere diventa il carattere di controllo (`c` → ^C), con ALT armato parte ESC seguito dal carattere, con entrambi ESC più il carattere di controllo. Dopo quel carattere si disarmano entrambi; parole intere e testo da tastiera con predizione escono invariati.
+- **Telefono: incollare con CTRL o ALT armati incolla il testo così com'è.** Prima l'incolla veniva trattata come digitazione e il testo usciva alterato; ora resta letterale e l'armamento rimane. Un tasto digitato subito dopo l'incolla torna una digitazione normale.
+- Corretto: le celle mostrate in griglia o in anteprima non lanciano più un errore quando ALT è armato.
+- Pacchetto: la verifica del contenuto prima della pubblicazione riconosce anche il formato di `npm pack --json` di npm 12 e respinge le sigle di lavoro interno nei file pubblicati.
+
 ## 0.9.51 — 2026-09-27
 
 - **Mobile: la maniglia della doppia vista segue il dito.** Il confine tra le due celle si muove come lo trascini, senza inversione di verso.
