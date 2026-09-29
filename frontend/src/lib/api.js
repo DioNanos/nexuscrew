@@ -1,4 +1,13 @@
 // fetch con Bearer: tutte le /api del server lo richiedono.
+import { AUTH_INVALID_EVENT, isLocalApiPath } from './token-store.js';
+export { AUTH_INVALID_EVENT, isLocalApiPath };
+
+// il 401 del nodo LOCALE dice che il token in uso non vale piu' (rotazione, file sostituito): lo si annuncia
+// perche' l'app riapra il prompt. Non per i peer (route federate) e non per timeout/errori di rete.
+function noteAuth(path, token, response) {
+  if (!response || response.status !== 401 || !isLocalApiPath(path)) return;
+  try { window.dispatchEvent(new CustomEvent(AUTH_INVALID_EVENT, { detail: { token, path } })); } catch (_) { /* fuori dal browser */ }
+}
 
 // un tunnel federato «su a metà» (socket aperto, nessuna risposta) non
 // genera MAI un errore da solo: senza timeout la fetch pende fino al limite del
@@ -19,7 +28,7 @@ export function apiFetch(path, token, opts = {}) {
     return fetch(path, {
       ...opts,
       headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` },
-    });
+    }).then((r) => { noteAuth(path, token, r); return r; });
   }
   // Audit fix: `controller` è di fetchAbortSignal — qui si usa QUELLO (abort di
   // timeout e abort esterno agiscono sullo stesso controller), mai una variabile
@@ -52,6 +61,7 @@ export function apiFetch(path, token, opts = {}) {
     // (il poll) resterebbe occupato. Il cleanup lo fa chi CONSUMA il body,
     // in `finally` (`jsonFetch`), tramite `__cleanupTimeout`.
     r.__cleanupTimeout = cleanup;
+    noteAuth(path, token, r);
     return r;
   }, (e) => { cleanup(); throw e; });
 }

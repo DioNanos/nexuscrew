@@ -412,24 +412,22 @@ test('startPortable passa HOME e path runtime espliciti al processo detached', (
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('smart-up: porta occupata da altro processo -> successiva libera e config aggiornata', async () => {
+test('smart-up: porta occupata da altro processo -> errore chiaro, la porta NON si sposta e config resta', async () => {
   const { home } = initHome(41822);
   const cp = path.join(home, '.nexuscrew', 'config.json');
   fs.writeFileSync(cp, JSON.stringify({ port: 41822, wizardDone: true }) + '\n', { mode: 0o600 });
-  let migrated = false;
-  const r = await smartUp({
+  let wrote = false;
+  await assert.rejects(() => smartUp({
     home, platform: 'linux',
     execImpl: () => { throw new Error('inactive'); },
-    probeImpl: async (port) => migrated && port === 41823,
+    probeImpl: async () => false,
+    probeStatusImpl: async () => null,
     portAvailableImpl: async (port) => port === 41823,
-    runInitImpl: ({ port }) => {
-      const cfg = JSON.parse(fs.readFileSync(cp, 'utf8')); cfg.port = port;
-      fs.writeFileSync(cp, JSON.stringify(cfg) + '\n', { mode: 0o600 }); migrated = true;
-    },
+    runInitImpl: () => { wrote = true; },
     waitAttempts: 1,
-  });
-  assert.equal(r.port, 41823);
-  assert.equal(JSON.parse(fs.readFileSync(cp, 'utf8')).port, 41823);
+  }), /in use by another process.*--port/s);
+  assert.equal(wrote, false);
+  assert.equal(JSON.parse(fs.readFileSync(cp, 'utf8')).port, 41822);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -447,9 +445,9 @@ test('smart-up: non sposta la porta se esistono peer collegati', async () => {
   let wrote = false;
   await assert.rejects(() => smartUp({
     home, platform: 'linux', execImpl: () => { throw new Error('inactive'); },
-    probeImpl: async () => false, portAvailableImpl: async (port) => port === 41823,
+    probeImpl: async () => false, probeStatusImpl: async () => null, portAvailableImpl: async (port) => port === 41823,
     runInitImpl: () => { wrote = true; }, waitAttempts: 1,
-  }), /paired peers exist/);
+  }), /in use by another process/);
   assert.equal(wrote, false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).port, 41822);
   fs.rmSync(home, { recursive: true, force: true });

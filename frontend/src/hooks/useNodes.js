@@ -8,6 +8,8 @@ import {
   apiFetch, getNodes, getTopology, getNodeAliases, getRouteSessions, fleetStatus, getVlNodes,
 } from '../lib/api.js';
 import { buildNodeGroups, trackDown } from '../lib/nodes-model.js';
+import { registerRouteIdentities } from '../lib/route-identity.js';
+import { loadLastRoster, saveLastRoster } from '../lib/last-roster.js';
 import { vlNodeToPeer, topologyVlOwners, vlSidebarGroups } from '../lib/vl-nodes-model.js';
 import { fleetReadOutcome } from '../lib/fleet-read-policy.js';
 import {
@@ -183,6 +185,16 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       const remote = {};
       const fleet = {};
       const direct = new Set(nodes.map((n) => n.name));
+      // Ultimo elenco celle buono per instanceId (sopravvive alla riapertura della PWA): usato solo come elenco fermo.
+      const ownerOf = new Map([
+        ...nodes.map((n) => [n.name, n.nodeId]),
+        ...topology.filter((n) => Array.isArray(n.route)).map((n) => [n.route.join('/'), n.instanceId]),
+      ].filter(([, id]) => typeof id === 'string' && id));
+      const restoredFleet = (key) => {
+        const id = ownerOf.get(key);
+        const cells = id ? loadLastRoster(`id:${id}`) : [];
+        return cells.length ? { available: false, cells, fleetState: 'stale' } : null;
+      };
       const routes = [];
       for (const n of nodes) {
         if (n.tunnel?.status === 'up' && (n.nodeId || n.paired !== false)
@@ -217,7 +229,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
           // Il backoff rende la lettura Fleet NON VERIFICABILE, non vuota.
           // Conserviamo la risposta precedente soltanto come elenco fermo;
           // available:false impedisce di presentarla come dato aggiornato.
-          const cachedFleet = peerCacheRef.current.fleet[key];
+          const cachedFleet = peerCacheRef.current.fleet[key] || restoredFleet(key);
           if (cachedFleet) fleet[key] = { ...cachedFleet, available: false, fleetState: 'stale' };
           return;
         }
@@ -242,7 +254,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
             lastGoodAt: cachedRemote ? cachedRemote.at : null,
           };
         }
-        const previousFleet = peerCacheRef.current.fleet[key] || null;
+        const previousFleet = peerCacheRef.current.fleet[key] || restoredFleet(key);
         try {
           const response = await fleetStatus(token, route);
           const outcome = fleetReadOutcome({ fs: response });
@@ -253,10 +265,12 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
               cells: outcome.cells,
               fleetState: 'available',
             };
+            if (ownerOf.get(key)) saveLastRoster(`id:${ownerOf.get(key)}`, outcome.cells);
           } else if (outcome.kind === 'disabled') {
             // available:false con ragione di configurazione e' un dato reale:
             // zero celle, senza conservare celle fantasma.
             fleet[key] = { ...response, available: false, cells: [], fleetState: 'disabled' };
+            if (ownerOf.get(key)) saveLastRoster(`id:${ownerOf.get(key)}`, []);
           } else {
             // La risposta e' arrivata, ma la lettura non e' verificabile
             // (per esempio fleet.json illeggibile): elenco fermo, non vuoto.
@@ -311,10 +325,13 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       }
       const first = buildNodeGroups({ nodes, topology, remote, fleet, aliases, down: downRef.current });
       downRef.current = trackDown(downRef.current, first, Math.floor(Date.now() / 1000));
-      setGroups([
+      const nextGroups = [
         ...buildNodeGroups({ nodes, topology, remote, fleet, aliases, down: downRef.current }),
         ...vlSidebarGroups(vlPeers),
-      ]);
+      ];
+      // Prima dei componenti: le preferenze per nome si allineano all'identita' (instanceId) del nodo.
+      registerRouteIdentities(nextGroups);
+      setGroups(nextGroups);
     }
 
     poll();

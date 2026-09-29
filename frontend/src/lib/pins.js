@@ -1,9 +1,10 @@
+import { readPref, writePref } from './pref-store.js';
+
 // Pin condivisi (desktop sidebar + home mobile): array di nomi in localStorage.
 const KEY = 'nc_pins';
 
 export function loadPins() {
-  try { const v = JSON.parse(localStorage.getItem(KEY)); return Array.isArray(v) ? v : []; }
-  catch (_) { return []; }
+  return readPref(KEY, { fallback: () => [], parse: (v) => (Array.isArray(v) ? v : undefined) });
 }
 
 // Persiste l'array; ritorna null se ok, l'errore altrimenti. L'esito NON e'
@@ -11,8 +12,7 @@ export function loadPins() {
 // cosi' la UI puo' segnalarlo e ritentarlo (un fallimento di localStorage non
 // deve essere silenzioso, specialmente dopo un clear server riuscito).
 function persist(next) {
-  try { localStorage.setItem(KEY, JSON.stringify(next)); return null; }
-  catch (e) { return e instanceof Error ? e : new Error(String(e)); }
+  return writePref(KEY, next);
 }
 
 // Toggle (addPin/removePin a seconda dello stato). Ritorna { next, error }.
@@ -38,7 +38,7 @@ export function movePinIn(pins, source, target) {
   next.splice(from, 1);
   const targetAfterRemoval = next.indexOf(target);
   next.splice(from < to ? targetAfterRemoval + 1 : targetAfterRemoval, 0, source);
-  try { localStorage.setItem(KEY, JSON.stringify(next)); } catch (_) { /* best-effort: riordino locale */ }
+  persist(next); // best-effort: il riordino locale non fallisce se lo storage rifiuta
   return next;
 }
 

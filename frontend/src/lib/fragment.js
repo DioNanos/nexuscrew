@@ -11,12 +11,14 @@
 export function parseBootstrapHash({ hash = '', origin = '', pathname = '', search = '' } = {}) {
   const clean = String(hash || '').replace(/^#/, '');
   const nextUrl = `${pathname || ''}${search || ''}`;
-  if (!clean) return { token: '', pair: '', nextUrl };
+  if (!clean) return { token: '', pair: '', device: '', nextUrl };
   const params = new URLSearchParams(clean);
   const token = params.get('token') || '';
+  const deviceRaw = params.get('device') || '';
+  const device = /^[a-f0-9]{32}$/.test(deviceRaw) ? deviceRaw : '';
   const pairRaw = params.get('pair') || '';
   const pair = pairRaw ? `${origin || ''}${pathname || ''}#pair=${pairRaw}` : '';
   // nextUrl: il fragment (token/pair) e' sensibile -> rimosso; path+query preservati
   // (la condivisione esplicita del link non si rompe).
-  return { token, pair, nextUrl };
+  return { token, pair, device, nextUrl };
 }
