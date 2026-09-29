@@ -67,7 +67,9 @@ export function moveSidebarItem(orders, position, source, target, availableKeys 
   if (typeof position !== 'string' || !position || source === target) return orders;
   const available = [...new Set(availableKeys.filter((key) => typeof key === 'string' && key))];
   if (!available.includes(source) || !available.includes(target)) return orders;
-  const stored = sidebarOrder(orders, position).filter((key) => available.includes(key));
+  // Le chiavi salvate ma non visibili ORA (nodo in errore, cella spenta non ancora letta) restano nell'ordine:
+  // scartarle cancellava la posizione scelta dall'utente al primo spostamento (roster parziale).
+  const stored = sidebarOrder(orders, position);
   const base = [...stored, ...available.filter((key) => !stored.includes(key))];
   const sourceIndex = base.indexOf(source);
   const targetIndex = base.indexOf(target);

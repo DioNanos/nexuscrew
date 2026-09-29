@@ -37,7 +37,8 @@ export function moveNodeGroup(order, source, target, groups = []) {
   if (!source || !target || source === target) return order;
   const available = groups.map(nodePreferenceKey).filter(Boolean);
   if (!available.includes(source) || !available.includes(target)) return order;
-  const base = [...order.filter((key) => available.includes(key)), ...available.filter((key) => !order.includes(key))];
+  // Un nodo offline (assente da `groups` in questo momento) conserva la sua posizione nell'ordine salvato.
+  const base = [...order, ...available.filter((key) => !order.includes(key))];
   const sourceIndex = base.indexOf(source); const targetIndex = base.indexOf(target);
   base.splice(sourceIndex, 1);
   const targetAfterRemoval = base.indexOf(target);
