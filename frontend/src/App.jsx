@@ -40,6 +40,8 @@ import { deckId, refWithOwner, resolveLayoutForViewer, tickOwnerAvailability } f
 import { hostRouteKey, hostDesignationFailureMessage } from './lib/host-designation.js';
 import { fleetReadOutcome } from './lib/fleet-read-policy.js';
 import { panelPortForRoute } from './lib/panel-port.js';
+import { AUTH_INVALID_EVENT, TOKEN_NOT_REMEMBERED_EVENT, loadToken, saveToken } from './lib/token-store.js';
+import LoginScreen from './components/LoginScreen.jsx';
 import {t} from './lib/i18n.js';
 import { useLang } from './hooks/useLang.js';
 import { setTerminalRuntimeConfig } from './lib/terminal-runtime-config.js';
@@ -78,7 +80,7 @@ function bootstrapFromFragment() {
     });
     if (token) {
       out.token = token;
-      try { localStorage.setItem('nc_token', token); } catch (_) {}
+      saveToken(token, { remember: true }); // un solo posto: toglie l'eventuale copia di sessione vecchia
     }
     if (pair) {
       out.pair = pair;
@@ -87,7 +89,7 @@ function bootstrapFromFragment() {
     // rimuove il fragment sensibile (token e/o pair), preserva path + query.
     if (location.hash) { try { history.replaceState(null, '', nextUrl); } catch (_) {} }
   } catch (_) { /* best-effort: la UI resta usabile */ }
-  if (!out.token) out.token = sessionStorage.getItem('nc_token') || localStorage.getItem('nc_token') || '';
+  if (!out.token) out.token = loadToken();
   if (!out.pair) { const p = sessionStorage.getItem('nc_pair'); if (p) out.pair = p; }
   return out;
 }
@@ -739,6 +741,23 @@ export default function App() {
   useLang(); // re-render globale allo switch lingua
   const [boot] = useState(bootstrapFromFragment);
   const [token, setToken] = useState(boot.token);
+  // T2: il nodo LOCALE ha risposto 401 al token in uso: si riapre il prompt, senza toccare le preferenze.
+  const [authInvalid, setAuthInvalid] = useState(false);
+  const tokenRef = useRef(boot.token);
+  tokenRef.current = token;
+  useEffect(() => {
+    const onInvalid = (event) => { if (event && event.detail && event.detail.token === tokenRef.current) setAuthInvalid(true); };
+    window.addEventListener(AUTH_INVALID_EVENT, onInvalid);
+    return () => window.removeEventListener(AUTH_INVALID_EVENT, onInvalid);
+  }, []);
+  const submitToken = useCallback((value, remember) => {
+    const saved = saveToken(value, { remember });
+    if (!saved.ok || (remember && saved.where !== 'local')) {
+      try { window.dispatchEvent(new CustomEvent(TOKEN_NOT_REMEMBERED_EVENT)); } catch (_) { /* fuori dal browser */ }
+    }
+    setAuthInvalid(false);
+    setToken(value);
+  }, []);
   // pairing deep-link (#pair) acquisito dal fragment e tenuto in sessionStorage:
   // se presente, apre il wizard precompilato. Consumato una volta (one-time invite).
   const [pairPending, setPairPending] = useState(boot.pair || '');
@@ -746,7 +765,6 @@ export default function App() {
     setPairPending('');
     try { sessionStorage.removeItem('nc_pair'); } catch (_) {}
   }, []);
-  const [remember, setRemember] = useState(false);
   const isDesktop = useDesktop();
 
   // Deck corrente: il path sceglie quello iniziale (anche per una finestra
@@ -1333,18 +1351,7 @@ export default function App() {
     setLayout((l) => removeTile(l, name));
   };
 
-  if (!token) {
-    return (
-      <div className="nc-auth">
-        <p>{t('auth-prompt')}</p>
-        <input onChange={(e) => setToken(e.target.value.trim())} placeholder="token" />
-        <label>
-          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> {t('remember-device')}
-        </label>
-        <button onClick={() => { (remember ? localStorage : sessionStorage).setItem('nc_token', token); }}>ok</button>
-      </div>
-    );
-  }
+  if (!token || authInvalid) return <LoginScreen onSubmit={submitToken} reason={authInvalid ? 'invalid' : ''} />;
 
   // Overlay condivisi mobile/desktop: settings panel + first-run wizard (B2-UI)
   // + centro notifiche/ask del MCP bridge (SSE /api/events, presente ovunque).
