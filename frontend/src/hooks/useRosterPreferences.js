@@ -5,11 +5,12 @@ import {
   saveSidebarViews, sidebarItems, sidebarOrder, sidebarView, SIDEBAR_ORDER_KEY, SIDEBAR_VIEW_KEY,
 } from '../lib/sidebar-model.js';
 import { appendOrderJournal } from '../lib/order-journal.js';
+import { canonicalPosition, positionView, ROUTE_ALIAS_KEY } from '../lib/route-identity.js';
 
 // Cambio di preferenze avvenuto in QUESTO documento: sidebar desktop e lista mobile restano allineate
 // senza aspettare l'evento `storage` (che il browser non manda alla finestra che ha scritto).
 const CHANGE_EVENT = 'nexuscrew-roster-preferences';
-const WATCHED = new Set(['nc_pins', SIDEBAR_ORDER_KEY, SIDEBAR_VIEW_KEY]);
+const WATCHED = new Set(['nc_pins', SIDEBAR_ORDER_KEY, SIDEBAR_VIEW_KEY, ROUTE_ALIAS_KEY]);
 const announce = () => { try { window.dispatchEvent(new Event(CHANGE_EVENT)); } catch (_) { /* fuori dal browser */ } };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const keep = (next) => (prev) => (same(prev, next) ? prev : next);
@@ -67,10 +68,12 @@ export function useRosterPreferences() {
   };
   const clearPinError = () => setPinError(null);
 
-  const viewFor = (key) => sidebarView(views, key);
+  // Le posizioni si salvano sotto id:<instanceId> (vedi route-identity); i componenti continuano a passare il nome.
+  const viewFor = (key) => sidebarView(positionView(views), key);
   const updateView = (key, patch) => {
     const before = loadSidebarViews();
-    const next = saveSidebarViews({ ...before, [key]: { ...sidebarView(before, key), ...patch } });
+    const slot = canonicalPosition(key);
+    const next = saveSidebarViews({ ...before, [slot]: { ...sidebarView(positionView(before), key), ...patch } });
     setViews(next);
     announce();
   };
@@ -88,18 +91,22 @@ export function useRosterPreferences() {
       announce();
       return;
     }
-    const before = loadSidebarOrders();
+    const stored = loadSidebarOrders();
+    const slot = canonicalPosition(position);
+    const before = positionView(stored);
     const sourceTechnical = rawItems.find((item) => item.key === source)?.technical === true;
     const available = sidebarItems(rawItems, currentPins, sourceTechnical ? 'technical' : 'all', sidebarOrder(before, position)).map((item) => item.key);
-    const next = moveSidebarItem(before, position, source, target, available);
+    // Parte dall'ordine visibile per questa posizione (canonico o per nome), ma scrive solo sotto la voce canonica.
+    const moved = moveSidebarItem({ ...stored, [slot]: sidebarOrder(before, position) }, slot, source, target, available);
+    const next = { ...stored, [slot]: moved[slot] };
     saveSidebarOrders(next);
-    appendOrderJournal({ reason: 'move', position, source, target, before: sidebarOrder(before, position), after: sidebarOrder(next, position), visible: available });
+    appendOrderJournal({ reason: 'move', position: slot, source, target, before: sidebarOrder(before, position), after: moved[slot], visible: available });
     setOrders(next);
     announce();
   }
 
   function stepRoster(position, source, delta, rawItems) {
-    const currentPins = loadPins(); const currentOrders = loadSidebarOrders();
+    const currentPins = loadPins(); const currentOrders = positionView(loadSidebarOrders());
     const sourceTechnical = rawItems.find((item) => item.key === source)?.technical === true;
     const sourcePinned = currentPins.includes(source);
     const available = sidebarItems(rawItems, currentPins, sourceTechnical ? 'technical' : 'all', sidebarOrder(currentOrders, position))
@@ -109,7 +116,7 @@ export function useRosterPreferences() {
   }
 
   return {
-    pins, views, orders, togglePin, removePin,
+    pins, views: positionView(views), orders: positionView(orders), togglePin, removePin,
     pinError, retryPinPersist, clearPinError,
     viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   };

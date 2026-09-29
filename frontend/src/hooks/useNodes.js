@@ -8,6 +8,7 @@ import {
   apiFetch, getNodes, getTopology, getNodeAliases, getRouteSessions, fleetStatus, getVlNodes,
 } from '../lib/api.js';
 import { buildNodeGroups, trackDown } from '../lib/nodes-model.js';
+import { registerRouteIdentities } from '../lib/route-identity.js';
 import { vlNodeToPeer, topologyVlOwners, vlSidebarGroups } from '../lib/vl-nodes-model.js';
 import { fleetReadOutcome } from '../lib/fleet-read-policy.js';
 import {
@@ -311,10 +312,13 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       }
       const first = buildNodeGroups({ nodes, topology, remote, fleet, aliases, down: downRef.current });
       downRef.current = trackDown(downRef.current, first, Math.floor(Date.now() / 1000));
-      setGroups([
+      const nextGroups = [
         ...buildNodeGroups({ nodes, topology, remote, fleet, aliases, down: downRef.current }),
         ...vlSidebarGroups(vlPeers),
-      ]);
+      ];
+      // Prima dei componenti: le preferenze per nome si allineano all'identita' (instanceId) del nodo.
+      registerRouteIdentities(nextGroups);
+      setGroups(nextGroups);
     }
 
     poll();
