@@ -835,8 +835,8 @@ test('E2E: skip in finestra → un retry alla scadenza chiude l\'alias senza nuo
 // R7: il validatore dello snapshot è UNO per entrambe le vie. Owner NON
 // sottoscritto: uno snapshot dichiarato incompleto (resyncRequired) o di un
 // altro owner non è autorevole, e l'alias aperto non si chiude.
-function unsubRejectionTest(label, snapBody) {
-  test(`E2E: owner non sottoscritto, snapshot ${label} — l'alias NON si chiude`, async (t) => {
+function unsubRejectionTest(label, snapBody, subscribed = false) {
+  test(`E2E: owner ${subscribed ? 'sottoscritto' : 'non sottoscritto'}, snapshot ${label} — l'alias NON si chiude`, async (t) => {
     const OWNER = '7'.repeat(31) + label.length;
     const hits = { snap: 0 };
     const fake = http.createServer((req, res) => {
@@ -892,6 +892,7 @@ function unsubRejectionTest(label, snapBody) {
       name: 'owner', remotePort: 41999, localPort: fake.address().port, nodeId: OWNER,
       token: 'TOK', direction: 'outbound', shared: true, visibility: 'network', ssh: 'u@owner',
     });
+    if (subscribed) st = nodesStore.updateNode(st, 'owner', { eventsReceive: true });
     nodesStore.atomicWriteStore(A.nodesPath, st);
     const r = await fetch(`${A.base}/api/asks`, { headers: H(A.token) });
     assert.equal(r.status, 200);
@@ -908,4 +909,19 @@ unsubRejectionTest('resyncRequired', () => JSON.stringify({
 }));
 unsubRejectionTest('ownerId sbagliato', () => JSON.stringify({
   ownerId: 'f'.repeat(32), cursor: '1:1', viewEpoch: 1, notifications: [], asks: [],
+}));
+// Il bloccante del re-audit (2026-09-29): uno snapshot senza `asks` (o con
+// asks non array) passava il validatore come 'ok'; applySnapshot lo trasformava
+// in [] e la riconciliazione chiudeva alias ancora APERTI — l'elenco mancante
+// diventava un elenco vuoto autorevole. Col schema completo la forma è
+// rifiutata dal validatore unico PRIMA di ogni applicazione: nessuna chiusura,
+// su entrambe le vie.
+unsubRejectionTest('senza elenco', () => JSON.stringify({
+  ownerId: '7'.repeat(31) + '11', cursor: '1:1', viewEpoch: 1, notifications: [],
+}));
+unsubRejectionTest('senza elenco sottoscritto', () => JSON.stringify({
+  ownerId: '7'.repeat(31) + '26', cursor: '1:1', viewEpoch: 1, notifications: [],
+}), true);
+unsubRejectionTest('asks stringa', () => JSON.stringify({
+  ownerId: '7'.repeat(31) + '12', cursor: '1:1', viewEpoch: 1, notifications: [], asks: 'no-array',
 }));
