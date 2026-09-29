@@ -5,20 +5,20 @@ import { moveNodeGroup } from './node-preferences.js';
 // O1: lo spostamento riscriveva l'ordine salvato SENZA le chiavi non visibili in quel momento
 // (nodo in errore, cella spenta non ancora letta): al ritorno quelle finivano in coda.
 // Riprodotto sul bundle 0.9.52: 7 chiavi → 3 dopo un solo spostamento.
-const ordine = ['Trading', 'Fork', 'Dev', 'Research', 'shell1', 'DevAuditor', 'SysAdmin'].map((k) => `nodo:${k}`);
-const visibili = ['Research', 'Dev', 'shell1'].map((k) => `nodo:${k}`);
+const ordine = ['alfa', 'beta', 'gamma', 'delta', 'shell1', 'epsilon', 'zeta'].map((k) => `nodo:${k}`);
+const visibili = ['delta', 'gamma', 'shell1'].map((k) => `nodo:${k}`);
 
 describe('moveSidebarItem non scarta le chiavi assenti (O1)', () => {
   it('un solo spostamento con la lista parziale conserva tutte le 7 chiavi', () => {
-    const next = moveSidebarItem({ nodo: ordine }, 'nodo', 'nodo:shell1', 'nodo:Research', visibili);
+    const next = moveSidebarItem({ nodo: ordine }, 'nodo', 'nodo:shell1', 'nodo:delta', visibili);
     const dopo = sidebarOrder(next, 'nodo');
     expect([...dopo].sort()).toEqual([...ordine].sort());
   });
 
-  it('le chiavi assenti restano dove erano rispetto alle altre (Trading e Fork in cima)', () => {
-    const dopo = sidebarOrder(moveSidebarItem({ nodo: ordine }, 'nodo', 'nodo:shell1', 'nodo:Research', visibili), 'nodo');
-    expect(dopo.slice(0, 2)).toEqual(['nodo:Trading', 'nodo:Fork']);
-    expect(dopo.indexOf('nodo:shell1')).toBeLessThan(dopo.indexOf('nodo:Research'));
+  it('le chiavi assenti restano dove erano rispetto alle altre (alfa e beta in cima)', () => {
+    const dopo = sidebarOrder(moveSidebarItem({ nodo: ordine }, 'nodo', 'nodo:shell1', 'nodo:delta', visibili), 'nodo');
+    expect(dopo.slice(0, 2)).toEqual(['nodo:alfa', 'nodo:beta']);
+    expect(dopo.indexOf('nodo:shell1')).toBeLessThan(dopo.indexOf('nodo:delta'));
   });
 
   it('lo spostamento fra visibili funziona ancora nelle due direzioni', () => {

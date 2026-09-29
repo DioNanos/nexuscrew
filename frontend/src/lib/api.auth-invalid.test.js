@@ -14,7 +14,7 @@ describe('401 locale contro 401 di peer', () => {
     expect(isLocalApiPath('/api/sessions')).toBe(true);
     expect(isLocalApiPath('/api/nodes')).toBe(true);
     expect(isLocalApiPath('/api/route/samsungwork/_/sessions')).toBe(false);
-    expect(isLocalApiPath('/node/mgm/api/sessions')).toBe(false);
+    expect(isLocalApiPath('/node/relay/api/sessions')).toBe(false);
     expect(isLocalApiPath('https://example.test/api/x')).toBe(false);
   });
 
@@ -27,7 +27,7 @@ describe('401 locale contro 401 di peer', () => {
   it('401 su una route federata NON emette nulla (e' + "'" + ' il peer che rifiuta, non noi)', async () => {
     stub(401);
     await apiFetch('/api/route/samsungwork/_/sessions', 'tok');
-    await apiFetch('/node/mgm/api/sessions', 'tok');
+    await apiFetch('/node/relay/api/sessions', 'tok');
     expect(events).toEqual([]);
   });
 
