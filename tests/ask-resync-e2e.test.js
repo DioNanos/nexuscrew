@@ -582,3 +582,252 @@ test('E2E: N GET /api/asks in 1 s → al massimo uno snapshot per owner', async 
   const rec = (list.asks || []).find((a) => a.id === '4f7cc1bc');
   assert.ok(!rec || rec.dismissed === true, 'the imported alias is closed by the reconciliation');
 });
+
+// R6-1 (grave): con l'owner sottoscritto e il primo snapshot ancora in volo,
+// uno skip NON è autorevole: la riconciliazione non deve chiudere un alias
+// aperto sulla base di una view vuota per costruzione.
+test('E2E: snapshot in volo — lo skip non chiude alias aperti', async (t) => {
+  const OWNER = 'b'.repeat(31) + '1';
+  const hits = { snap: 0 };
+  const withAsk = JSON.stringify({ ownerId: OWNER, cursor: '1:1', viewEpoch: 1, notifications: [], asks: [{ id: 'a3977abd', question: 'aperta davvero', session: 's' }] });
+  const fake = http.createServer((req, res) => {
+    const url = req.url || '';
+    const json = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (url === '/federation/health') return json(200, { ok: true, instanceId: OWNER, eventFeedV1: true });
+    if (url.includes('/event-feed/snapshot')) {
+      hits.snap += 1;
+      // Primo snapshot LENTO: resta in volo mentre arriva la GET /api/asks.
+      setTimeout(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(withAsk); }, 400);
+      return;
+    }
+    if (url.includes('/event-feed')) return json(409, { error: 'x', reason: 'reset-required' });
+    return json(404, { error: 'no stub' });
+  });
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+  t.after(() => { try { fake.close(); } catch (_) {} });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncpend-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const paths = {
+    home: dir, configDir,
+    configPath: path.join(configDir, 'config.json'),
+    nodesPath: path.join(configDir, 'nodes.json'),
+    tokenPath: path.join(configDir, 'token'),
+  };
+  nodesStore.initStore(paths.nodesPath);
+  const alias = {
+    id: 'alias-pend', question: 'aperta davvero', options: [],
+    session: tmuxSessionForCell('dev'), ts: Date.now(), revision: 0,
+    originNode: OWNER, ownerId: OWNER, ownerAskId: 'a3977abd',
+  };
+  fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks: [alias] }), { mode: 0o600 });
+  const { server, token, watcher } = createServer({
+    ...paths,
+    filesRoot: path.join(dir, 'files'),
+    port: 41999,
+    fleetEnabled: false,
+    eventFeedClientPollMs: 50,
+    eventFeedClientMinSnapshotIntervalMs: 1000,
+    sessionExistsSeam: () => true,
+    pasteSeam: () => true,
+    settingsSeams: {
+      platform: 'linux', uid: 1000,
+      execImpl: () => { throw new Error('exec disabled in test'); },
+      serviceInstallPath: path.join(dir, 'systemd', 'nexuscrew.service'),
+      keygen: (_kp, name) => `ssh-ed25519 AAAAC3FAKEKEY nexuscrew-tunnel-${name}`,
+      spawnImpl: () => ({ pid: 4193999, unref() {} }),
+      sshVersion: () => ({ major: 9, minor: 6 }),
+    },
+  });
+  t.after(async () => { await sleep(40); server.close(); if (watcher) watcher.close(); });
+  const A = await new Promise((res) => server.listen(0, '127.0.0.1', () => res({
+    base: `http://127.0.0.1:${server.address().port}`, token, ...paths,
+  })));
+  let st = nodesStore.addNode(nodesStore.loadStoreStrict(A.nodesPath), {
+    name: 'owner', remotePort: 41999, localPort: fake.address().port, nodeId: OWNER,
+    token: 'TOK', direction: 'outbound', shared: true, visibility: 'network', ssh: 'u@owner',
+    eventsReceive: true,
+  });
+  nodesStore.atomicWriteStore(A.nodesPath, st);
+  // La GET parte mentre il primo snapshot è in volo.
+  await sleep(100);
+  const r = await fetch(`${A.base}/api/asks`, { headers: H(A.token) });
+  assert.equal(r.status, 200);
+  await sleep(800); // il snapshot in volo si applica: l'ask è aperta sull'owner
+  const list = await fetch(`${A.base}/api/asks`, { headers: H(A.token) }).then((x) => x.json());
+  const rec = (list.asks || []).find((a) => a.id === 'alias-pend');
+  assert.ok(rec, 'the alias still exists');
+  assert.notEqual(rec.dismissed, true, 'a skipped snapshot never closes an open alias');
+  assert.ok(hits.snap >= 1, 'the snapshot eventually landed: ' + hits.snap);
+});
+
+// R6-2: il timeout della porta copre fetch E corpo — un owner che manda gli
+// header e non chiude il corpo non può appendere la GET /api/asks.
+test('E2E: corpo che non finisce — la porta aborta e la GET risponde', async (t) => {
+  const OWNER = 'c'.repeat(31) + '2';
+  let headersSent = 0;
+  const fake = http.createServer((req, res) => {
+    const url = req.url || '';
+    const json = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (url === '/federation/health') return json(200, { ok: true, instanceId: OWNER, eventFeedV1: true });
+    if (url.includes('/event-feed/snapshot')) {
+      headersSent += 1;
+      // Header FLUSHATI con un pezzo di corpo, poi niente più: è il caso
+      // reale dell'audit (fetch risolve, r.text() resta appeso).
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"asks":');
+      return;
+    }
+    if (url.includes('/event-feed')) return json(409, { error: 'x', reason: 'reset-required' });
+    return json(404, { error: 'no stub' });
+  });
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+  t.after(() => { try { fake.close(); } catch (_) {} });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nchang-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const paths = {
+    home: dir, configDir,
+    configPath: path.join(configDir, 'config.json'),
+    nodesPath: path.join(configDir, 'nodes.json'),
+    tokenPath: path.join(configDir, 'token'),
+  };
+  nodesStore.initStore(paths.nodesPath);
+  const alias = {
+    id: 'alias-hang', question: 'alias con owner appeso', options: [],
+    session: tmuxSessionForCell('dev'), ts: Date.now(), revision: 0,
+    originNode: OWNER, ownerId: OWNER, ownerAskId: 'h4ng1ng',
+  };
+  fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks: [alias] }), { mode: 0o600 });
+  const { server, token, watcher } = createServer({
+    ...paths,
+    filesRoot: path.join(dir, 'files'),
+    port: 41999,
+    fleetEnabled: false,
+    eventFeedClientPollMs: 500,
+    eventFeedClientMinSnapshotIntervalMs: 1000,
+    sessionExistsSeam: () => true,
+    pasteSeam: () => true,
+    settingsSeams: {
+      platform: 'linux', uid: 1000,
+      execImpl: () => { throw new Error('exec disabled in test'); },
+      serviceInstallPath: path.join(dir, 'systemd', 'nexuscrew.service'),
+      keygen: (_kp, name) => `ssh-ed25519 AAAAC3FAKEKEY nexuscrew-tunnel-${name}`,
+      spawnImpl: () => ({ pid: 4193999, unref() {} }),
+      sshVersion: () => ({ major: 9, minor: 6 }),
+    },
+  });
+  t.after(async () => { await sleep(40); server.close(); if (watcher) watcher.close(); });
+  const A = await new Promise((res) => server.listen(0, '127.0.0.1', () => res({
+    base: `http://127.0.0.1:${server.address().port}`, token, ...paths,
+  })));
+  let st = nodesStore.addNode(nodesStore.loadStoreStrict(A.nodesPath), {
+    name: 'owner', remotePort: 41999, localPort: fake.address().port, nodeId: OWNER,
+    token: 'TOK', direction: 'outbound', shared: true, visibility: 'network', ssh: 'u@owner',
+  });
+  nodesStore.atomicWriteStore(A.nodesPath, st);
+  const t0 = Date.now();
+  // La corsa sta nel test: oggi la GET resta appesa (il corpo non finisce e
+  // la porta non aborta la lettura), e il rosso deve essere un rosso, non un
+  // test appeso.
+  const r = await Promise.race([
+    fetch(`${A.base}/api/asks`, { headers: H(A.token) }),
+    sleep(9000).then(() => null),
+  ]);
+  const elapsed = Date.now() - t0;
+  assert.ok(r, 'the GET answers even with a hanging owner body (no hang)');
+  assert.equal(r.status, 200, 'the GET answers even with a hanging owner body');
+  assert.ok(elapsed < 6000, `the door timeout bounds the read (elapsed ${elapsed} ms)`);
+  assert.ok(headersSent >= 1, 'the owner was actually contacted');
+  // L'alias resta aperto: un timeout non è autorevole.
+  const list = await r.json();
+  const rec = (list.asks || []).find((a) => a.id === 'alias-hang');
+  assert.ok(rec && rec.dismissed !== true, 'a timeout never closes an open alias');
+});
+
+// R6-3: una GET caduta nella finestra non può lasciare la card aperta per
+// sempre: UN tentativo programmato alla scadenza della finestra, per owner,
+// senza duplicati, chiude l'alias appena l'owner risulta pulito.
+test('E2E: skip in finestra → un retry alla scadenza chiude l\'alias senza nuove GET', async (t) => {
+  const OWNER = 'd'.repeat(31) + '3';
+  const hits = { snap: 0 };
+  const withAsk = JSON.stringify({ ownerId: OWNER, cursor: '1:1', viewEpoch: 1, notifications: [], asks: [{ id: 'a3977abd', question: 'aperta', session: 's' }] });
+  const clean = JSON.stringify({ ownerId: OWNER, cursor: '1:2', viewEpoch: 1, notifications: [], asks: [] });
+  const fake = http.createServer((req, res) => {
+    const url = req.url || '';
+    const json = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (url === '/federation/health') return json(200, { ok: true, instanceId: OWNER, eventFeedV1: true });
+    if (url.includes('/event-feed/snapshot')) {
+      hits.snap += 1;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(hits.snap <= 2 ? withAsk : clean); // i primi due lo elencano, poi l'owner lo chiude
+      return;
+    }
+    if (url.includes('/event-feed')) return json(409, { error: 'x', reason: 'reset-required' });
+    return json(404, { error: 'no stub' });
+  });
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+  t.after(() => { try { fake.close(); } catch (_) {} });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncretry-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const paths = {
+    home: dir, configDir,
+    configPath: path.join(configDir, 'config.json'),
+    nodesPath: path.join(configDir, 'nodes.json'),
+    tokenPath: path.join(configDir, 'token'),
+  };
+  nodesStore.initStore(paths.nodesPath);
+  const alias = {
+    id: 'alias-retry', question: 'aperta', options: [],
+    session: tmuxSessionForCell('dev'), ts: Date.now(), revision: 0,
+    originNode: OWNER, ownerId: OWNER, ownerAskId: 'a3977abd',
+  };
+  fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks: [alias] }), { mode: 0o600 });
+  const { server, token, watcher } = createServer({
+    ...paths,
+    filesRoot: path.join(dir, 'files'),
+    port: 41999,
+    fleetEnabled: false,
+    eventFeedClientPollMs: 500,
+    eventFeedClientMinSnapshotIntervalMs: 1000,
+    sessionExistsSeam: () => true,
+    pasteSeam: () => true,
+    settingsSeams: {
+      platform: 'linux', uid: 1000,
+      execImpl: () => { throw new Error('exec disabled in test'); },
+      serviceInstallPath: path.join(dir, 'systemd', 'nexuscrew.service'),
+      keygen: (_kp, name) => `ssh-ed25519 AAAAC3FAKEKEY nexuscrew-tunnel-${name}`,
+      spawnImpl: () => ({ pid: 4193999, unref() {} }),
+      sshVersion: () => ({ major: 9, minor: 6 }),
+    },
+  });
+  t.after(async () => { await sleep(40); server.close(); if (watcher) watcher.close(); });
+  const A = await new Promise((res) => server.listen(0, '127.0.0.1', () => res({
+    base: `http://127.0.0.1:${server.address().port}`, token, ...paths,
+  })));
+  let st = nodesStore.addNode(nodesStore.loadStoreStrict(A.nodesPath), {
+    name: 'owner', remotePort: 41999, localPort: fake.address().port, nodeId: OWNER,
+    token: 'TOK', direction: 'outbound', shared: true, visibility: 'network', ssh: 'u@owner',
+  });
+  nodesStore.atomicWriteStore(A.nodesPath, st);
+  // GET 1: snapshot con la ask aperta → la card resta (autorevole).
+  await fetch(`${A.base}/api/asks`, { headers: H(A.token) });
+  await sleep(1200); // la finestra (1000 ms) scade, l'owner nel frattempo chiude
+  // GET 2 dentro la NUOVA finestra... la prima richesta ha esaurito la finestra
+  // precedente: questa GET genera il secondo snapshot (con la ask) e apre una
+  // finestra nuova; la chiusura dell'owner è già effettiva al prossimo tentativo.
+  await fetch(`${A.base}/api/asks`, { headers: H(A.token) });
+  const afterGets = hits.snap;
+  // Nessun'altra GET: solo il retry programmato può chiudere l'alias.
+  const closed = await waitUntil(async () => {
+    const l = await fetch(`${A.base}/api/asks`, { headers: H(A.token) }).then((x) => x.json());
+    const rec = (l.asks || []).find((a) => a.id === 'alias-retry');
+    return !rec || rec.dismissed === true;
+  }, { tries: 60, what: 'alias closed by the scheduled retry' });
+  assert.ok(closed, 'the scheduled retry closes the alias without new GETs');
+  assert.ok(hits.snap >= afterGets + 1, 'the retry went through the door: ' + hits.snap);
+});
