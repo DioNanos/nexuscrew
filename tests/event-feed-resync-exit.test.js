@@ -181,3 +181,24 @@ test('R5+: un recupero fallito riarma il cooldown — un solo snapshot per scade
   assert.equal(v.resyncExhaustions, 3, 'the ladder grew across the failed recoveries');
   client.stop();
 });
+
+test('recupero che LANCIA (reti/500): stesso punto di uscita, stesso riarma', async (t) => {
+  // Lo snapshot di recupero può fallire anche LANCIANDO (HTTP 500, rete,
+  // abort): il riarma non può vivere solo nel ramo false, altrimenti il catch
+  // esterno lascia il gate aperto e il tick di start() ripete lo snapshot a
+  // ogni pollMs, aggirando il backoff. Un solo punto di uscita, tutti i modi.
+  const { client, calls } = stubClient(t,
+    [health, ...snap409pairs(3), { error: new Error('boom di rete') }, { error: new Error('boom di rete') }],
+    { resyncCooldownStepsMs: [200, 500, 1000] });
+  client.start();
+  await waitExhausted(client);
+  await sleep(400);  // prima scadenza: UN tentativo che lancia → riarma
+  await sleep(500);  // seconda scadenza: UN altro
+  await sleep(200);
+  const snaps = calls.filter((c) => c.url.includes('/event-feed/snapshot')).length;
+  assert.ok(snaps <= 5, 'a throwing recovery is capped at one attempt per expiry: ' + snaps);
+  const v = client.state().views.find((x) => x.ownerId === OWNER);
+  assert.equal(v.lastError, 'boom di rete', 'the cause lands in lastError');
+  assert.ok(v.resyncBlockedUntil, 'the cooldown is re-armed after a thrown recovery');
+  client.stop();
+});
