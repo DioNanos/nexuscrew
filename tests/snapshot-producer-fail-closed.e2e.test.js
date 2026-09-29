@@ -1,15 +1,17 @@
 'use strict';
 // tests/snapshot-producer-fail-closed.e2e.test.js — E2E produttore→ricevente→
 // riconciliazione con DUE server REALI (nessuno stub HTTP): il produttore dello
-// snapshot dichiara asks:[] senza resyncRequired anche quando la LETTURA dello
-// store degli asks è FALLITA (asks.json persistito con `options` malformata fa
-// lanciare list()). Quel vuoto viaggiava come elenco AUTOREVOLE: il validatore
-// del ricevente lo accettava e reconcileImportedAsks chiudeva come 'dismissed'
-// ogni alias importato assente. Contratto fail-closed: se il produttore non ha
-// potuto leggere, lo snapshot NON è autorevole (resyncRequired:true) e la
-// riconciliazione non chiude NIENTE.
+// snapshot rispondeva 200 con asks:[] anche quando la LETTURA dello store degli
+// asks è FALLITA (asks.json persistito con `options` malformata fa lanciare
+// list()). Quel vuoto viaggiava come elenco AUTOREVOLE: i riceventi senza
+// validatore (0.9.51/0.9.52: `if (!res.ok) continue;` e nient'altro) lo
+// accettavano e reconcileImportedAsks chiudeva come 'dismissed' ogni alias
+// importato assente. Contratto fail-closed: se il produttore non ha potuto
+// leggere, non spedisce NESSUNO snapshot — 503 con corpo
+// {"error":"asks-unreadable"} — e OGNI generazione di riceventi salta
+// (0.9.51/0.9.52 su !res.ok, 0.9.53 su esito porta non 'ok' / errore vista).
 //
-// Quattro prove, stesso harness (stessa coppia reale, cambia solo lo store
+// Cinque prove, stesso harness (stessa coppia reale, cambia solo lo store
 // dell'owner):
 //   1. CONTROLLO POSITIVO — owner sano, ask chiusa: lo snapshot è un vuoto
 //      LEGITTIMO e l'alias SI chiude (il test sa anche fallire: se la coppia
@@ -17,10 +19,15 @@
 //   2. DIFETTO (porta, owner non sottoscritto) — store dell'owner illeggibile:
 //      la riconciliazione reale NON chiude l'alias.
 //   3. DIFETTO (via sottoscritta) — stessa corruzione: la view del feed client
-//      resta STALE con lastError 'snapshot-resync-required' (il marcatore è
-//      arrivato davvero) e l'alias resta APERTO.
+//      resta STALE con lastError 'snapshot HTTP 503' (il rifiuto del produttore
+//      è arrivato davvero) e l'alias resta APERTO.
 //   4. CONTRATTO DEL PRODUTTORE — coppia fresca, la stessa GET federata che fa
-//      la porta: lo snapshot risponde 200 e dichiara resyncRequired:true.
+//      la porta: risposta 503, JSON dichiarato, corpo {"error":
+//      "asks-unreadable"} — nessuno snapshot.
+//   5. RICEVENTE 0.9.51/0.9.52 — la stessa GET della loro riconciliazione
+//      (237abc5:lib/server.js:1163-1166): res.ok è false, quindi il loro
+//      `if (!res.ok) continue;` (:1167, identico in 0.9.51) salta l'owner —
+//      nessun parse, nessuna chiusura.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -218,17 +225,18 @@ test('E2E fail-closed (porta): store dell\'owner illeggibile — la riconciliazi
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-door-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { A, aliasRecord } = await pairReal(t, root, { broken: true, subscribed: false });
-  // Riconciliazione reale: la porta prende lo snapshot del produttore rotto e
-  // NON deve chiudere. È l'asserzione del difetto: su codice senza fail-closed
-  // l'alias viene chiuso 'dismissed' da un elenco che il produttore non ha
-  // mai potuto leggere.
+  // Riconciliazione reale: la porta chiede lo snapshot al produttore rotto e
+  // riceve un esito non 'ok' (http-503) — NON chiude. È l'asserzione del
+  // difetto: su codice senza fail-closed il produttore rispondeva 200 con
+  // asks:[] e l'alias veniva chiuso 'dismissed' da un elenco che non era mai
+  // stato letto davvero.
   await driveReconciliation(A);
   const rec = await aliasRecord();
   assert.ok(rec, 'l\'alias importato è ancora nell\'elenco');
   assert.notEqual(rec.dismissed, true, 'uno snapshot di un produttore che non ha potuto leggere gli asks NON chiude mai un alias');
 });
 
-test('E2E fail-closed (via sottoscritta): store illeggibile — view stale su resync-required, l\'alias resta APERTO', async (t) => {
+test('E2E fail-closed (via sottoscritta): store illeggibile — view stale su snapshot HTTP 503, l\'alias resta APERTO', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-view-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { A, aliasRecord, feedView } = await pairReal(t, root, { broken: true, subscribed: true });
@@ -236,30 +244,58 @@ test('E2E fail-closed (via sottoscritta): store illeggibile — view stale su re
   await driveReconciliation(A);
   const rec = await aliasRecord();
   assert.ok(rec, 'l\'alias importato è ancora nell\'elenco');
-  assert.notEqual(rec.dismissed, true, 'nessuna chiusura per uno snapshot non autorevole (via sottoscritta)');
+  assert.notEqual(rec.dismissed, true, 'nessuna chiusura per un produttore che non ha potuto leggere (via sottoscritta)');
   // La view del client segnala la causa: prova che il produttore è stato
-  // contattato DAVVERO e che il marcatore del produttore rotto è arrivato
-  // (non un verde a vuoto). La finestra/view può consumare il budget snapshot
-  // del peer: si attende la causa con pazienza, non a colpo sicuro.
+  // contattato DAVVERO e che il suo rifiuto 503 è arrivato (non un verde a
+  // vuoto; il retry della view va a backoff, non a loop). La finestra/view può
+  // consumare il budget snapshot del peer: si attende la causa con pazienza,
+  // non a colpo sicuro.
   const stale = await waitUntil(async () => {
     const v = await feedView();
-    return v && v.lastError === 'snapshot-resync-required' ? v : null;
+    return v && v.lastError === 'snapshot HTTP 503' ? v : null;
   }, { tries: 120, what: 'view stale con la causa del produttore' });
-  assert.ok(stale, 'la view dell\'owner è stale con lastError snapshot-resync-required');
+  assert.ok(stale, 'la view dell\'owner è stale con lastError "snapshot HTTP 503"');
 });
 
 // Il contratto del PRODUTTORE, su una coppia fresca (nessuna riconciliazione
-// azionata: il primo snapshot della finestra non può che rispondere 200, fuori
-// dal rate 6/min che view e porta consumano negli altri test): se lo store
-// lancia, la risposta esiste, è JSON e dichiara sé stessa non autorevole.
-test('E2E fail-closed (produttore): lettura asks che lancia — snapshot 200 con resyncRequired:true', async (t) => {
+// azionata: il primo snapshot della finestra non può che rispondere, fuori dal
+// rate 6/min che view e porta consumano negli altri test): se lo store lancia,
+// non parte NESSUNO snapshot. Rifiuto 503, corpo JSON minimo: un 200 — con
+// qualunque corpo o marcatore — verrebbe invece deciso dai riceventi che non
+// conoscono il validatore.
+test('E2E fail-closed (produttore): lettura asks che lancia — 503, JSON {"error":"asks-unreadable"}, nessuno snapshot', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-prod-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const { selfB, ownerSnapshot } = await pairReal(t, root, { broken: true, subscribed: false });
+  const { ownerSnapshot } = await pairReal(t, root, { broken: true, subscribed: false });
   const r = await ownerSnapshot();
-  assert.equal(r.status, 200, 'la route federata dello snapshot risponde comunque');
-  const snap = await r.json();
-  assert.equal(snap.ownerId, selfB, 'snapshot del proprietario atteso');
-  assert.equal(snap.resyncRequired, true, 'la lettura fallita rende lo snapshot NON autorevole');
-  assert.ok(Array.isArray(snap.asks), 'asks resta un elenco (vuoto)');
+  assert.equal(r.status, 503, 'senza un elenco leggibile non c\'è snapshot: rifiuto 503');
+  assert.match(String(r.headers.get('content-type') || ''), /^application\/json\b/, 'il corpo è JSON dichiarato');
+  const body = await r.json();
+  assert.deepEqual(body, { error: 'asks-unreadable' }, 'corpo minimo: nessun campo di snapshot');
+});
+
+// Il ricevente 0.9.51/0.9.52 non ha validatore: la sua riconciliazione fa la
+// GET federata (237abc5:lib/server.js:1163-1166; la catena d'hop la aggiunge
+// il proxy federato in avanti, lib/proxy/federation.js:423-425 — qui la GET
+// replica la richiesta come arriva all'owner) e decide SOLO su res.ok
+// (`if (!res.ok) continue;`, 237abc5:lib/server.js:1167 — regione identica in
+// 0.9.51, 307c037). Si esegue quel ramo esatto contro il produttore reale
+// rotto: deve saltare.
+test('E2E fail-closed (ricevente 0.9.51/0.9.52): la GET della riconciliazione non è ok — il ramo !res.ok salta', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-legacy-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { ownerSnapshot } = await pairReal(t, root, { broken: true, subscribed: false });
+  // Il frammento del ricevente vecchio, tale e quale: fetch, e SOLO res.ok
+  // decide. Nessun validatore, nessun marcatore conosciuto.
+  let snap = null;
+  let skipped = false;
+  let skipStatus = null;
+  try {
+    const res = await ownerSnapshot();
+    if (!res.ok) { skipped = true; skipStatus = res.status; } // 237abc5:lib/server.js:1167
+    else { snap = await res.json(); }
+  } catch (_) { skipped = true; }
+  assert.ok(skipped, 'la risposta non è ok: il ricevente 0.9.51/0.9.52 salta l\'owner');
+  assert.equal(skipStatus, 503, 'salta per il rifiuto asks-unreadable, non per un caso accidentale');
+  assert.equal(snap, null, 'nessun corpo raggiunge la decisione del ricevente vecchio: chiusura impossibile');
 });
