@@ -155,3 +155,29 @@ test('R5+: un frame sano riporta la scala al primo gradino', async (t) => {
   assert.ok(second <= first + 150, 'after a healthy frame the ladder is back at the first step: ' + first + ' → ' + second);
   client.stop();
 });
+
+test('R5+: un recupero fallito riarma il cooldown — un solo snapshot per scadenza', async (t) => {
+  // La prova dell'audit (reaudit 2026-09-29): snapshotOnce che torna FALSE
+  // senza throw (oversize qui; anche owner-mismatch o resyncRequired) non
+  // armava più il cooldown: 13 snapshot in ~300 ms con poll a 15 ms. Il
+  // tentativo di recupero è UNO per scadenza, e il gradino cresce.
+  const oversizeSnap = () => ({ ok: true, status: 200, text: async () => JSON.stringify({
+    ownerId: OWNER, cursor: '5:0', viewEpoch: 5, asks: [], notifications: [],
+    filler: 'x'.repeat(4 * 1024 * 1024),
+  }) });
+  const { client, calls } = stubClient(t,
+    [health, ...snap409pairs(3), oversizeSnap(), oversizeSnap(), oversizeSnap()],
+    { resyncCooldownStepsMs: [200, 500, 1000] });
+  client.start();
+  await waitExhausted(client);
+  await sleep(400);  // scade il primo cooldown (200 ms) → UN tentativo
+  await sleep(500);  // scade il secondo (500 ms) → UN altro tentativo
+  await sleep(200);  // margine: nessun altro tentativo prima del terzo gradino
+  const snaps = calls.filter((c) => c.url.includes('/event-feed/snapshot')).length;
+  assert.ok(snaps <= 5, 'at most one snapshot per expiry (3 + 2 recovery): ' + snaps);
+  const v = client.state().views.find((x) => x.ownerId === OWNER);
+  assert.equal(v.lastError, 'snapshot-oversize', 'the diagnostic carries the cause');
+  assert.ok(v.resyncBlockedUntil, 'the cooldown is re-armed after the failed recovery');
+  assert.equal(v.resyncExhaustions, 3, 'the ladder grew across the failed recoveries');
+  client.stop();
+});

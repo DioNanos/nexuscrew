@@ -238,3 +238,91 @@ test('E2E (Pixel): view in resync-exhausted + dismiss confermato → la card esc
   const gone = await waitUntil(async () => !hasAsk(await feedView(A, OWNER), 'pixel1234'));
   assert.ok(gone, 'the confirmed dismiss removes the card from the gated view');
 });
+
+// Il finding dell'audit (reaudit 2026-09-29): alla scadenza del cooldown uno
+// snapshotOnce FALSE (oversize, owner-mismatch, resyncRequired) non riarmava
+// il cooldown → uno snapshot a ogni tick, all'infinito. Via HTTP reale: un
+// owner che prima fa esaurire il resync (stream 409 perenne) e poi risponde
+// con snapshot oversize deve ricevere ESATTAMENTE uno snapshot per scadenza.
+test('E2E: recupero fallito → una richiesta di snapshot per scadenza, non uno storm', async (t) => {
+  const OWNER = 'd'.repeat(32);
+  const hits = { snap: 0, stream: 0 };
+  const small = JSON.stringify({ ownerId: OWNER, cursor: '1:1', viewEpoch: 1, notifications: [], asks: [] });
+  const oversize = JSON.stringify({ ownerId: OWNER, cursor: '1:1', viewEpoch: 1, notifications: [], asks: [], filler: 'x'.repeat(4 * 1024 * 1024) });
+  const fake = http.createServer((req, res) => {
+    const url = req.url || '';
+    const json = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (url === '/federation/health') return json(200, { ok: true, instanceId: OWNER, eventFeedV1: true });
+    if (url.includes('/event-feed/snapshot')) {
+      hits.snap += 1;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(hits.snap <= 3 ? small : oversize); // i primi 3 round esauriscono, poi il recupero fallisce
+      return;
+    }
+    if (url.includes('/event-feed')) { hits.stream += 1; return json(409, { error: 'cursor is too old', reason: 'reset-required' }); }
+    return json(404, { error: 'no stub' });
+  });
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+  t.after(() => { try { fake.close(); } catch (_) {} });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrearm-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const paths = {
+    home: dir, configDir,
+    configPath: path.join(configDir, 'config.json'),
+    nodesPath: path.join(configDir, 'nodes.json'),
+    tokenPath: path.join(configDir, 'token'),
+  };
+  nodesStore.initStore(paths.nodesPath);
+  const { server, token, watcher } = createServer({
+    ...paths,
+    filesRoot: path.join(dir, 'files'),
+    port: 41999,
+    fleetEnabled: false,
+    eventFeedClientPollMs: 50,
+    eventFeedClientResyncCooldownStepsMs: [300, 600, 1000],
+    sessionExistsSeam: () => true,
+    pasteSeam: () => true,
+    settingsSeams: {
+      platform: 'linux', uid: 1000,
+      execImpl: () => { throw new Error('exec disabled in test'); },
+      serviceInstallPath: path.join(dir, 'systemd', 'nexuscrew.service'),
+      keygen: (_kp, name) => `ssh-ed25519 AAAAC3FAKEKEY nexuscrew-tunnel-${name}`,
+      spawnImpl: () => ({ pid: 4193999, unref() {} }),
+      sshVersion: () => ({ major: 9, minor: 6 }),
+    },
+  });
+  t.after(async () => { await sleep(40); server.close(); if (watcher) watcher.close(); });
+  const A = await new Promise((res) => server.listen(0, '127.0.0.1', () => res({
+    base: `http://127.0.0.1:${server.address().port}`, token, ...paths,
+  })));
+  let st = nodesStore.addNode(nodesStore.loadStoreStrict(A.nodesPath), {
+    name: 'owner', remotePort: 41999, localPort: fake.address().port, nodeId: OWNER,
+    token: 'TOK', direction: 'outbound', shared: true, visibility: 'network', ssh: 'u@owner',
+  });
+  st = nodesStore.updateNode(st, 'owner', { eventsReceive: true });
+  nodesStore.atomicWriteStore(A.nodesPath, st);
+  // Esaurimento col primo gradino (3 round di snapshot+409).
+  const armed = await waitUntil(async () => {
+    const r = await fetch(`${A.base}/api/feed-state`, { headers: H(A.token) });
+    const v = ((await r.json()).views || []).find((x) => x.ownerId === OWNER);
+    return v && v.resyncBlockedUntil ? v : null;
+  }, { tries: 100, what: 'cooldown armed' });
+  assert.ok(armed, 'the view reaches the exhausted state with a cooldown');
+  // Due scadenze (300 + 600 ms): il quinto snapshot è il recupero della
+  // seconda scadenza; il terzo gradino (1000 ms) lo segue e resta FUORI dalla
+  // finestra di asserzione — un tentativo per scadenza, mai di più.
+  const five = await waitUntil(async () => hits.snap >= 5, { tries: 100, what: 'second recovery attempt' });
+  assert.ok(five, 'two recovery attempts happened after two expiries');
+  assert.equal(hits.snap, 5, 'exactly one recovery snapshot per expiry (3 + 2): ' + hits.snap);
+  // L'arm del cooldown avviene quando il client PROCESSA la risposta, dopo il
+  // conteggio lato server: prima la stabilità, poi la lettura dello stato.
+  await sleep(500); // dentro il terzo gradino: nessun tentativo supplementare
+  assert.equal(hits.snap, 5, 'the re-armed cooldown holds: no extra attempt before the next expiry');
+  const r2 = await fetch(`${A.base}/api/feed-state`, { headers: H(A.token) });
+  const v2 = ((await r2.json()).views || []).find((x) => x.ownerId === OWNER);
+  assert.equal(v2.resyncExhaustions, 3, 'the ladder grew across the failed recoveries');
+  assert.equal(v2.lastError, 'snapshot-oversize', 'the diagnostic carries the cause');
+  assert.ok(v2.resyncBlockedUntil, 'the cooldown stays armed while the owner stays broken');
+});

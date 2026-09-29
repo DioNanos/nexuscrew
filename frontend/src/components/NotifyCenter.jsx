@@ -205,7 +205,7 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
       )}
       {/* Con il permesso di risposta la card resta viva, ma se la view è
           stale/degraded l'operatore deve vederlo: è la card che ricompare
-          quando il feed è fermo (Pixel 2026-09-29). */}
+          quando il feed è fermo. */}
       {ask.ownerId && askReplyAccess !== false && feedViewState === 'degraded' && (
         <small className="nc-set-hint">{t('ask-feed-stale')}</small>
       )}
