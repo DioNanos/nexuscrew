@@ -16,8 +16,21 @@
 }
 
 /* Wordmark: identità da terminale — mono, cursore a blocco che lampeggia. */
-.nc-home-head { position: relative; }
-.nc-wordmark { font-size: 26px; font-weight: 700; letter-spacing: .5px; color: #d8ffe8; }
+/* Testo e azioni in due colonne: i bottoni occupano la propria, quindi il
+   sottotitolo non puo' finire sotto di loro a nessuna larghezza. Prima erano
+   posizionati in assoluto sopra un sottotitolo a tutta larghezza, e su schermo
+   stretto il testo ci passava sotto e veniva tagliato. */
+.nc-home-head {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "mark actions"
+    "sub  actions";
+  align-items: start;
+  column-gap: 12px;
+}
+.nc-wordmark { grid-area: mark; font-size: 26px; font-weight: 700; letter-spacing: .5px; color: #d8ffe8; }
 .nc-cursor {
   display: inline-block; width: 12px; height: 22px; margin-left: 6px;
   background: #00cc66; vertical-align: -2px;
@@ -25,10 +38,10 @@
 }
 @keyframes nc-blink { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .nc-cursor { animation: none; } }
-.nc-home-sub { margin-top: 4px; font-size: 13px; opacity: .65; }
-/* Azioni header (settings + refresh): contenitore assoluto, bottoni statici. */
+.nc-home-sub { grid-area: sub; margin-top: 4px; font-size: 13px; opacity: .65; }
+/* Azioni header (riordino + settings + refresh): colonna propria della griglia. */
 .nc-head-actions {
-  position: absolute; top: 0; right: 0;
+  grid-area: actions;
   display: inline-flex; gap: 6px;
 }
 .nc-refresh {
