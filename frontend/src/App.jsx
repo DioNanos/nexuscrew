@@ -14,9 +14,9 @@ import Wizard from './components/Wizard.jsx';
 import DeviceNameAsk from './components/DeviceNameAsk.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
-import { CellActionsPopover, CellActionsSheet } from './components/CellActions.jsx';
 import { cellRuntime } from './lib/roster-view-model.js';
-import { nextRendererPreference, readRendererPreference, writeRendererPreference } from './lib/terminal-renderer.js';
+import { readRendererPreference } from './lib/terminal-renderer.js';
+import { leggiFilesTasto } from './lib/bar-files-tasto.js';
 import { readFontSize, writeFontSize } from './lib/terminal-fontsize.js';
 import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import { createPollGuard } from './lib/poll-guard.js';
@@ -121,73 +121,6 @@ function rel(epochSec) {
 // cellName (opzionale, Tranche D): titolo logico Fleet gia' risolto dal roster
 // (desktop overlay). Se assente (mobile), la lookup fleetStatus esistente lo
 // risolve al primo ciclo. Il titolo visibile deriva sempre da `cell.cell`.
-// L'impostazione del TASTO file della barra (vista singola mobile): per
-// dispositivo, in localStorage. Spenta di default — nessun client esistente
-// vede nulla di nuovo finché l'operatore non la accende — e il tasto resta
-// visibile a ogni avvio finché lei la spegne. L'impostazione dice solo se il
-// tasto ESISTE: lo stato del pannello resta in `files`.
-const BAR_FILES_TASTO = 'nc_bar_files_button';
-
-export function leggiFilesTasto() {
-  try { return localStorage.getItem(BAR_FILES_TASTO) === 'on'; } catch (_) { return false; }
-}
-
-function scriviFilesTasto(on) {
-  try { localStorage.setItem(BAR_FILES_TASTO, on ? 'on' : 'off'); } catch (_) { /* private mode */ }
-}
-
-// le quattro azioni della barra alta, raccolte nel menu ⋯.
-//
-// Sono le STESSE azioni di prima, con lo stesso stato vero: qui si decide solo
-// l'ordine e quali compaiono. Una voce che non ha il suo handler non c'e' — e'
-// il contratto di CellActionsMenu, gli stessi item delle azioni cella.
-export function barActionsItems({
-  showComposer, showFiles, showPanel, hasPanel, rendererKind,
-  // Su mobile la voce «files» è l'IMPOSTAZIONE del tasto in barra — accenderla
-  // mostra il tasto, spegnerlo lo toglie: NON apre la lista. `filesSetting` è
-  // il valore di quell'impostazione; null è la modalità desktop, dove la voce
-  // resta lo switch che apre e chiude la lista com'era.
-  filesSetting = null,
-  handlers = {},
-} = {}) {
-  const items = [];
-  if (typeof handlers.onToggleComposer === 'function') {
-    items.push({
-      id: 'keyboard', kind: 'switch', on: !!showComposer,
-      labelKey: 'bar-menu-keyboard', descKey: 'bar-menu-keyboard-desc',
-      run: handlers.onToggleComposer,
-    });
-  }
-  if (typeof handlers.onToggleFiles === 'function') {
-    items.push(filesSetting === null ? {
-      id: 'files', kind: 'switch', on: !!showFiles,
-      labelKey: 'bar-menu-files', descKey: 'bar-menu-files-desc',
-      run: handlers.onToggleFiles,
-    } : {
-      id: 'files', kind: 'switch', on: !!filesSetting,
-      labelKey: 'bar-menu-files', descKey: 'bar-menu-files-setting-desc',
-      run: handlers.onToggleFiles,
-    });
-  }
-  // Il pannello esiste solo se la cella ne pubblica uno: la voce SPARISCE, non
-  // resta spenta.
-  if (hasPanel && typeof handlers.onTogglePanel === 'function') {
-    items.push({
-      id: 'panel', kind: 'switch', on: !!showPanel,
-      labelKey: 'bar-menu-panel', descKey: 'bar-menu-panel-desc',
-      run: handlers.onTogglePanel,
-    });
-  }
-  if (typeof handlers.onSwitchRenderer === 'function') {
-    items.push({
-      id: 'renderer', kind: 'switch', on: rendererKind === 'webgl',
-      labelKey: 'bar-menu-renderer', descKey: 'bar-menu-renderer-desc',
-      run: handlers.onSwitchRenderer,
-    });
-  }
-  return items;
-}
-
 // La parola di stato del centro della barra. Esce dal contratto `stato` della
 // cella (roster-view-model.js), non da una derivazione nuova, e «ferma» si dice
 // «in attesa» — la stessa parola che usa la lista per la stessa cosa. Senza un
@@ -216,24 +149,16 @@ export function SingleView({
   useLang(); // re-render allo switch lingua
   const [inputPreferences] = useInputPreferences();
   const isDesktop = useDesktop();
-  // Il menu ⋯ della barra: aperto/chiuso, piu' il rettangolo del trigger per il
-  // popover desktop (il foglio mobile non ne ha bisogno).
-  const [showBarMenu, setShowBarMenu] = useState(false);
-  const [barMenuRect, setBarMenuRect] = useState(null);
-  // Su touch il composer è aperto di default (l'IME Gboard corrompe l'input in xterm).
-  const [showComposer, setShowComposer] = useState(() => window.matchMedia('(pointer: coarse)').matches);
+  // Su touch il composer è aperto di default (l'IME Gboard corrompe l'input in
+  // xterm): quello che cambia è dove si sceglie. Ora è una preferenza locale
+  // persistita (Impostazioni → input) che vale come stato iniziale della vista.
+  const [showComposer, setShowComposer] = useState(() => inputPreferences.showComposer);
   const [fontSize, setFontSize] = useState(readFontSize);
-  // Renderer del terminale: preferenza per browser + quello che sta disegnando
-  // davvero (il GPU puo' non essere disponibile, o perdere il contesto).
-  const [rendererPref, setRendererPref] = useState(readRendererPreference);
+  // Renderer del terminale: quello che sta disegnando davvero (il GPU puo' non
+  // essere disponibile, o perdere il contesto). La scelta A/B vive ora nelle
+  // Impostazioni (scheda sistema): scrive la preferenza e ricarica la pagina,
+  // perche' il renderer si aggancia alla creazione del terminale.
   const [rendererKind, setRendererKind] = useState(() => readRendererPreference());
-  const switchRenderer = () => {
-    const next = writeRendererPreference(nextRendererPreference(readRendererPreference()));
-    setRendererPref(next);
-    // Il renderer si aggancia alla creazione del terminale: il ricaricamento e'
-    // il modo affidabile per far ripartire l'A/B con l'altro motore.
-    if (typeof window !== 'undefined') window.location.reload();
-  };
   // Titolo visibile (Tranche D): nome logico Fleet o, in fallback, il nome
   // sessione tmux. Inizializza con cellName (desktop overlay) o session.
   const [title, setTitle] = useState(cellName || session);
@@ -466,26 +391,12 @@ export function SingleView({
     return () => { alive = false; clearInterval(id); };
   }, [side?.session, side?.node, token]);
 
-  // le quattro azioni della barra, nello stesso contratto delle azioni
-  // cella. Gli handler sono gli stessi setter di prima: cambia solo dove stanno.
-  // Con la doppia vista, la lista file riguarda la cella col focus.
-  // NC mobile — la voce «files» del menu è l'IMPOSTAZIONE del tasto in barra
-  // (mostra/nasconde, per dispositivo in localStorage): non apre più la lista.
-  // Il tasto, quando c'è, fa ciò che faceva la voce: apre/chiude la lista
-  // della cella col focus. Il desktop resta com'era, voce = lista.
+  // La cella col focus: la lista file e il tasto in barra riguardano quella.
   const cellaFoca = focaLaSide ? 'side' : 'main';
-  const [filesTasto, setFilesTasto] = useState(leggiFilesTasto);
   const apriChiudiFiles = () => setFiles((cur) => (cur && cur.source === cellaFoca ? null : { source: cellaFoca, ev: null }));
-  const barItems = barActionsItems({
-    showComposer, showFiles: files?.source === cellaFoca, showPanel, hasPanel: !!panelUrl, rendererKind,
-    filesSetting: isDesktop ? null : filesTasto,
-    handlers: {
-      onToggleComposer: () => setShowComposer((v) => !v),
-      onToggleFiles: isDesktop ? apriChiudiFiles : () => setFilesTasto((on) => { scriviFilesTasto(!on); return !on; }),
-      onTogglePanel: () => setShowPanel((v) => !v),
-      onSwitchRenderer: switchRenderer,
-    },
-  });
+  // Opzione per dispositivo del tasto file (vedi lib/bar-files-tasto.js):
+  // vale sul telefono, si accende da Impostazioni → input.
+  const [filesTasto] = useState(leggiFilesTasto);
 
   // Maniglia delle altezze/larghezze: stesso schema del drag della griglia
   // (pointermove fino a up/cancel/blur su window). Il confine SEGUE IL DITO
@@ -655,27 +566,27 @@ export function SingleView({
         <span className="nc-bar-right">
           <button onClick={() => zoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
           <button onClick={() => zoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
-          {/* Il tasto dei file (solo mobile, solo con l'impostazione accesa):
-              apre e chiude la lista della cella col focus — la stessa apriChiudiFiles
-              del menu di prima — e RESTA in barra finché l'impostazione lo dice,
-              a pannello aperto o chiuso: aria-pressed dice lo stato del pannello.
-              Ordine del design: − + [cartella] ⋯. Il desktop non lo vede. */}
-          {!isDesktop && filesTasto && (
+          {/* Non c'e' piu' nessun menu: le azioni che restano stanno in fila
+              (file, pannello). Tastiera e renderer sono preferenze locali
+              della scheda Impostazioni.
+              Sul TELEFONO il tasto file resta governato dall'opzione per
+              dispositivo (`nc_bar_files_button`, accesa da Impostazioni →
+              input): spenta, il tasto non c'e' — come prima. Sul desktop c'e'
+              sempre: senza il menu ⋯ sarebbe l'unica via al pannello. */}
+          {(isDesktop || filesTasto) && (
             <button type="button" onClick={apriChiudiFiles}
               title={t('bar-menu-files')} aria-label={t('bar-menu-files')}
               aria-pressed={files?.source === cellaFoca ? 'true' : 'false'}>
-              <Icon name="folder" size={18} />
+              <Icon name="download" size={18} />
             </button>
           )}
-          {/* Le altre quattro azioni stanno nel menu: la barra resta
-              indietro + centro + − + + + ⋯, come il design. */}
-          <button type="button" className={`nc-bar-menu${showBarMenu ? ' on' : ''}`}
-            title={t('bar-menu-open')} aria-label={t('bar-menu-open')}
-            aria-haspopup="menu" aria-expanded={showBarMenu ? 'true' : 'false'}
-            onClick={(event) => {
-              if (!showBarMenu) setBarMenuRect(event.currentTarget.getBoundingClientRect());
-              setShowBarMenu((v) => !v);
-            }}>⋯</button>
+          {panelUrl ? (
+            <button type="button" onClick={() => setShowPanel((v) => !v)}
+              title={t('bar-menu-panel')} aria-label={t('bar-menu-panel')}
+              aria-pressed={showPanel ? 'true' : 'false'}>
+              <Icon name="monitor" size={18} />
+            </button>
+          ) : null}
         </span>
       </header>
       <div className="nc-termwrap">
@@ -729,14 +640,6 @@ export function SingleView({
       ) : files.source === 'main' ? (
         <FilesPanel session={session} node={node} token={token} filesEvent={files.ev} onClose={() => setFiles(null)} />
       ) : null)}
-      {/* le quattro azioni della barra. Su mobile un foglio dal basso, su
-          desktop un popover ancorato al ⋯: gli stessi due gusci delle azioni
-          cella, nessun menu nuovo. */}
-      {showBarMenu && (isDesktop ? (
-        <CellActionsPopover anchorRect={barMenuRect} items={barItems} onClose={() => setShowBarMenu(false)} />
-      ) : (
-        <CellActionsSheet cellName={title} items={barItems} onClose={() => setShowBarMenu(false)} />
-      ))}
     </div>
   );
 }

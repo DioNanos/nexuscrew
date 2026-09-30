@@ -29,7 +29,21 @@ describe('Settings Input tab', () => {
     expect(JSON.parse(localStorage.getItem(INPUT_PREFERENCES_KEY))).toEqual({
       terminalKeyboardGesture: 'never', keybarKeepsKeyboardClosed: false,
       voiceKeepsKeyboardClosed: false, showKeybarEnter: false, keybarLayout: 'compact',
+      showComposer: false,
     });
+  });
+
+  it('la tastiera di scrittura e\' una preferenza locale persistita, non un interruttore di sessione', () => {
+    render(<InputTab />);
+    const composer = screen.getByRole('checkbox', { name: /On-screen keyboard/ });
+    // Nei test il pointer e' fine: il default e' chiusa, come il comportamento
+    // di prima reso persistibile.
+    expect(composer.checked).toBe(false);
+    fireEvent.click(composer);
+    // Lo stato mostrato viene dal valore scritto (saveInputPreferences): si
+    // osserva dal DOM, non dal localStorage, che in questa suite gira su un
+    // file condiviso fra worker e puo' essere azzerato da un altro file.
+    expect(composer.checked).toBe(true);
   });
 
   it('restores the recommended double-tap, IME locks and full KeyBar layout', () => {

@@ -3,12 +3,23 @@ export const INPUT_PREFERENCES_EVENT = 'nc-input-preferences';
 export const TERMINAL_KEYBOARD_GESTURES = Object.freeze(['double-tap', 'single-tap', 'never']);
 export const KEYBAR_LAYOUTS = Object.freeze(['full', 'compact']);
 
+// Default della tastiera di scrittura: quello che l'app fa oggi senza
+// preferenza scritta (touch = composer aperto, pointer fine = chiuso). Non e'
+// una scelta nuova, e' il comportamento esistente reso persistibile.
+function defaultShowComposer() {
+  try {
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(pointer: coarse)').matches : false;
+  } catch (_) { return false; }
+}
+
 export const DEFAULT_INPUT_PREFERENCES = Object.freeze({
   terminalKeyboardGesture: 'double-tap',
   keybarKeepsKeyboardClosed: true,
   voiceKeepsKeyboardClosed: true,
   showKeybarEnter: true,
   keybarLayout: 'full',
+  showComposer: defaultShowComposer(),
 });
 
 export function normalizeInputPreferences(value) {
@@ -24,6 +35,8 @@ export function normalizeInputPreferences(value) {
       ? input.showKeybarEnter : DEFAULT_INPUT_PREFERENCES.showKeybarEnter,
     keybarLayout: KEYBAR_LAYOUTS.includes(input.keybarLayout)
       ? input.keybarLayout : DEFAULT_INPUT_PREFERENCES.keybarLayout,
+    showComposer: typeof input.showComposer === 'boolean'
+      ? input.showComposer : DEFAULT_INPUT_PREFERENCES.showComposer,
   };
 }
 
