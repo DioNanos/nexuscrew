@@ -1,25 +1,40 @@
+/* Pannello file della cella: drawer laterale.
+   Colori presi dal resto dell'app, non inventati: #0a0e0a e' il nero di
+   .nc-workspace, #2e7d32 il verde di tab/outline, #243/#1c231c i separatori,
+   #9fd il testo dei bottoni della barra, #d8ffe8 il titolo, #7ee787 il verde
+   acceso delle voci attive, #7fb89a il testo secondario.
+   Qui non si usa piu' var(--bg, #111511): --bg non e' mai definita dall'app,
+   quindi il pannello cadeva SEMPRE sul grigio-verde di fallback — era la
+   ragione dell'aspetto spento. */
 .nc-files {
   position: fixed; top: 0; right: 0; bottom: 0;
   width: min(340px, 90vw);
-  background: var(--bg, #111511);
-  border-left: 1px solid #2a332a;
+  background: #0a0e0a;
+  border-left: 1px solid #2e7d32;
+  color: #d8ffe8;
   display: flex; flex-direction: column;
   z-index: 30;
 }
-.nc-files header { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid #2a332a; }
-.nc-files nav { display: flex; gap: 6px; padding: 8px 10px; }
-.nc-files nav button { flex: 0 0 auto; padding: 4px 10px; border-radius: 6px; }
-.nc-files nav button.on { background: #2e7d32; color: #fff; }
-.nc-files nav .up { margin-left: auto; }
+.nc-files header { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #243; }
+.nc-files header b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Una riga sola: outbox / inbox, una accesa. */
+.nc-files nav { display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid #1c231c; }
+.nc-files nav button { flex: 0 0 auto; padding: 4px 10px; border-radius: 6px; background: none; border: 1px solid #243; color: #9fd; cursor: pointer; }
+.nc-files nav button.on { background: #1a241a; border-color: #2e7d32; color: #7ee787; }
 .nc-files ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
 .nc-files li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #1c231c; }
-.nc-files li .name { flex: 1; cursor: pointer; overflow-wrap: anywhere; }
+/* Il nome e' testo: leggibile (ellissi, mai a capo) e selezionabile, ma non e'
+   un comando — il download ha il suo tasto. Niente cursor:pointer, niente link. */
+.nc-files li .name { flex: 1; min-width: 0; color: #d8ffe8; user-select: text; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nc-files li small { flex: 0 0 auto; color: #7fb89a; font-size: 11px; }
+.nc-files li button { flex: 0 0 auto; background: none; border: 1px solid #243; border-radius: 6px; color: #9fd; padding: 4px 10px; cursor: pointer; }
 .nc-files li.empty { opacity: 0.5; justify-content: center; }
 .nc-busy { padding: 4px 10px; font-size: 12px; color: #e0a030; }
 
-/* Touch targets: nav e righe file alte abbastanza da essere tap-pabili. */
+/* Touch: nav e tasti di riga alti/larghi abbastanza da essere tap-pabili. */
 @media (pointer: coarse) {
   .nc-files nav button, .nc-files li { min-height: 42px; }
+  .nc-files li button { min-width: 42px; min-height: 42px; }
 }
 
 .nc-files header button, .nc-files nav button, .nc-files li button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/api.js', () => ({
@@ -22,13 +22,19 @@ beforeEach(() => {
   apiFetch.mockResolvedValueOnce(listResponse);
 });
 
+async function apriPannello(props) {
+  const view = render(<FilesPanel session="cloud-Dev" token="t" onClose={() => {}} {...props} />);
+  await screen.findByText('a.txt');
+  return view;
+}
+
 describe('FilesPanel error messages (R27 #7)', () => {
   it('shows the server error cause on a failed download instead of a generic message', async () => {
     apiFetch.mockResolvedValueOnce({
       ok: false, status: 401, json: async () => ({ error: 'token scaduto' }),
     });
-    render(<FilesPanel session="cloud-Dev" token="t" onClose={() => {}} />);
-    fireEvent.click(await screen.findByText('a.txt'));
+    await apriPannello();
+    fireEvent.click(screen.getByTitle('download file'));
     expect(await screen.findByText('errore: token scaduto')).toBeTruthy();
     expect(screen.queryByText('errore download')).toBeNull();
   });
@@ -37,31 +43,77 @@ describe('FilesPanel error messages (R27 #7)', () => {
     apiFetch.mockResolvedValueOnce({
       ok: false, status: 500, json: async () => ({ error: 'box non trovato' }),
     });
-    render(<FilesPanel session="cloud-Dev" token="t" onClose={() => {}} />);
-    fireEvent.click(await screen.findByTitle('delete'));
+    await apriPannello();
+    fireEvent.click(screen.getByTitle('delete'));
     expect(await screen.findByText('errore: box non trovato')).toBeTruthy();
     // GET iniziale + DELETE: nessun refresh dopo un delete fallito
     expect(apiFetch).toHaveBeenCalledTimes(2);
   });
 });
 
-describe('FilesPanel upload (R31-A2)', () => {
-  it('shows when a requested paste never reached the cell: 502 + server cause', async () => {
-    // Il backend risponde 502 con la causa vera quando il paste richiesto non
-    // arriva alla PTY. uploadFiles legge gia' j.error qualunque sia lo status:
-    // questa guardia protegge la catena — un upload "riuscito" che nessuna
-    // cella ha ricevuto deve dire perche', a schermo come in risposta.
+describe('FilesPanel riga file e scatole', () => {
+  it('non ha piu\' il tasto di caricamento ne\' il suo input file', async () => {
+    // Il file entra nella cella dal menu allegati del composer (voce «Inbox»,
+    // stessa route POST /files/upload): il pannello non lo duplica piu'.
+    const { container } = await apriPannello();
+    expect(screen.queryByText('upload')).toBeNull();
+    expect(container.querySelector('input[type=file]')).toBeNull();
+  });
+
+  it('ogni riga scarica quel file dal proprio tastino', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x']) });
+    await apriPannello();
+    fireEvent.click(screen.getByTitle('download file'));
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+    const url = String(apiFetch.mock.calls[1][0]);
+    expect(url).toContain('/files/download');
+    expect(url).toContain('box=outbox');
+    expect(url).toContain('name=a.txt');
+    expect(click).toHaveBeenCalled();
+    click.mockRestore();
+  });
+
+  it('il nome del file non e\' interattivo: niente tap, niente comando', async () => {
+    await apriPannello();
+    const nome = screen.getByText('a.txt');
+    expect(nome.tagName).toBe('SPAN');
+    expect(nome.getAttribute('role')).toBeNull();
+    expect(nome.getAttribute('tabindex')).toBeNull();
+    expect(nome.tabIndex).toBe(-1);
+    fireEvent.click(nome);
+    // il click sul nome non fa partire nessuna richiesta: resta il solo GET iniziale
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('il cestino cancella ancora il file della scatola attiva', async () => {
+    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) }); // DELETE
+    apiFetch.mockResolvedValueOnce(listResponse); // refresh
+    await apriPannello();
+    fireEvent.click(screen.getByTitle('delete'));
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(3));
+    const [url, token, opts] = apiFetch.mock.calls[1];
+    expect(String(url)).toContain('box=outbox');
+    expect(String(url)).toContain('name=a.txt');
+    expect(token).toBe('t');
+    expect(opts).toEqual({ method: 'DELETE' });
+  });
+
+  it('il nav mostra le due scatole, una accesa', async () => {
+    apiFetch.mockReset();
     apiFetch.mockResolvedValueOnce({
-      ok: false, status: 502,
-      json: async () => ({
-        error: 'paste fallito: sessione "cloud-Dev" non raggiungibile',
-        name: '20260819-0000_doc.txt', path: '/tmp/nc/doc.txt', size: 4, pasted: false,
-      }),
+      ok: true,
+      json: async () => ({ inbox: [{ name: 'b.txt', size: 2, mtime: 1 }], outbox: [{ name: 'a.txt', size: 10, mtime: 1 }] }),
     });
-    apiFetch.mockResolvedValueOnce(listResponse); // refresh dopo l'upload
-    const { container } = render(<FilesPanel session="cloud-Dev" token="t" onClose={() => {}} />);
-    const input = container.querySelector('input[type=file]');
-    fireEvent.change(input, { target: { files: [new File(['ciao'], 'doc.txt', { type: 'text/plain' })] } });
-    expect(await screen.findByText('errore: paste fallito: sessione "cloud-Dev" non raggiungibile')).toBeTruthy();
+    const { container } = await apriPannello();
+    const nav = container.querySelector('.nc-files nav');
+    const stato = () => [...nav.querySelectorAll('button')].map((b) => `${b.textContent}:${b.className}`);
+    expect(stato()).toEqual(['outbox:on', 'inbox:']);
+    expect(screen.getByText('a.txt')).toBeTruthy();
+    fireEvent.click(nav.querySelectorAll('button')[1]);
+    expect(stato()).toEqual(['outbox:', 'inbox:on']);
+    expect(screen.getByText('b.txt')).toBeTruthy();
   });
 });
