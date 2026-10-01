@@ -94,3 +94,52 @@ test('config assente: resta il comportamento di prima (config minima con la port
   assert.deepEqual(dopo, { port: 41820 });
   fs.rmSync(home, { recursive: true, force: true });
 });
+
+// --- anti-leak ---------------------------------------------------------------
+// Il motivo dell'illeggibilita' e' una CATEGORIA, mai il messaggio del parser:
+// su Node recenti `JSON.parse` include un estratto dell'input, e l'azione viene
+// stampata dal comando — cosi' il contenuto della config finirebbe nei log.
+const SENTINELLA = 'S3CR3T';
+const MOTIVI_AMMESSI = /\((parse-error|not-object|read-error(?::[A-Z]+)?)\)/;
+const PAROLE_DEL_PARSER = /Unexpected|Expected|position|column|is not valid JSON/i;
+
+test('config malformata: il valore sentinella non compare nelle azioni', () => {
+  // Un valore senza virgolette: forma che sul codice precedente faceva uscire il
+  // valore INTERO nell'avviso (l'estratto del parser lo conteneva tutto).
+  const home = preparaHome(`{"port":41820,"tok":${SENTINELLA}}`);
+  const prima = fs.readFileSync(configPathOf(home));
+
+  const r = eseguiInit(home, 42005);
+
+  const azioni = r.actions.join('\n');
+  assert.ok(!azioni.includes(SENTINELLA), `il valore non deve comparire nelle azioni: ${azioni}`);
+  assert.ok(!PAROLE_DEL_PARSER.test(azioni), `niente testo del parser nelle azioni: ${azioni}`);
+  assert.ok(r.actions.some((a) => MOTIVI_AMMESSI.test(a)),
+    `il motivo deve essere una categoria fissa, viste: ${JSON.stringify(r.actions)}`);
+  assert.ok(fs.readFileSync(configPathOf(home)).equals(prima), 'il file resta byte-identico');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('config malformata: il valore sentinella non compare nemmeno su stdout/stderr', () => {
+  const home = preparaHome(`{"port":41820,"tok":${SENTINELLA}}`);
+  const catturato = [];
+  const outW = process.stdout.write;
+  const errW = process.stderr.write;
+  process.stdout.write = (c) => { catturato.push(String(c)); return true; };
+  process.stderr.write = (c) => { catturato.push(String(c)); return true; };
+  try {
+    // Come fa il comando: le azioni finiscono su stdout. E' il percorso da cui
+    // il valore trapelerebbe.
+    runInit({
+      platform: 'linux', home, port: 42006, tmuxOk: true,
+      installPath: path.join(home, '.config', 'systemd', 'user', 'nexuscrew.service'),
+      execImpl: () => {},
+      log: (m) => process.stdout.write(`${m}\n`),
+    });
+  } finally {
+    process.stdout.write = outW;
+    process.stderr.write = errW;
+  }
+  assert.ok(!catturato.join('').includes(SENTINELLA), 'il valore non deve finire su stdout/stderr');
+  fs.rmSync(home, { recursive: true, force: true });
+});
