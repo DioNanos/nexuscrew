@@ -25,7 +25,6 @@ import { useNodes } from '../hooks/useNodes.js';
 import { COMPOSER_RESET_EVENT, clearAllComposerData } from '../lib/composer-model.js';
 import { useInputPreferences } from '../hooks/useInputPreferences.js';
 import { DEFAULT_INPUT_PREFERENCES, KEYBAR_LAYOUTS, TERMINAL_KEYBOARD_GESTURES } from '../lib/input-preferences.js';
-import { leggiFilesTasto, scriviFilesTasto } from '../lib/bar-files-tasto.js';
 import { RENDERER_DOM, RENDERER_WEBGL, readRendererPreference, writeRendererPreference } from '../lib/terminal-renderer.js';
 import { useNotificationSpeech } from '../hooks/useNotificationSpeech.js';
 import {
@@ -737,10 +736,6 @@ export function AudioTab({ token, readonly, nodes = [], settings = null }) {
 // server e' READONLY: governano soltanto focus, IME, STT e KeyBar locali.
 export function InputTab() {
   const [preferences, updatePreferences] = useInputPreferences();
-  // Il tasto «File della cella» in barra: opzione per dispositivo (vedi
-  // lib/bar-files-tasto.js). Sul telefono decide se il tasto esiste; sul
-  // desktop non si applica.
-  const [filesTasto, setFilesTasto] = useState(leggiFilesTasto);
   return (
     <div className="nc-set-tab nc-input-settings">
       <div className="nc-set-info">{t('input-settings-local')}</div>
@@ -772,13 +767,6 @@ export function InputTab() {
         <input type="checkbox" checked={preferences.showComposer}
           onChange={(event) => updatePreferences({ showComposer: event.target.checked })} />
         <span><b>{t('bar-menu-keyboard')}</b><small>{t('bar-menu-keyboard-desc')}</small></span>
-      </label>
-      {/* Anche il tasto «File della cella» era una voce del menu ⋯: e' stata
-          per dispositivo, e vive qui come tale. */}
-      <label className="nc-check">
-        <input type="checkbox" checked={filesTasto}
-          onChange={(event) => { setFilesTasto(event.target.checked); scriviFilesTasto(event.target.checked); }} />
-        <span><b>{t('bar-menu-files')}</b><small>{t('bar-menu-files-setting-desc')}</small></span>
       </label>
       <label className="nc-check">
         <input type="checkbox" checked={preferences.keybarKeepsKeyboardClosed}

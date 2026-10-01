@@ -48,10 +48,6 @@ beforeEach(() => {
   }
   localStorage.clear();
   localStorage.setItem('nc_lang', 'en');
-  // Il tasto file in barra e' un'opzione per dispositivo (spenta di default):
-  // qui interessa il bottone PANNELLO, e il tasto file serve solo da segnale che
-  // il poll ha pubblicato lo stato della cella.
-  localStorage.setItem('nc_bar_files_button', 'on');
   mocks.fleetStatus.mockImplementation(async () => ({
     available: true, cells: [cella('https://127.0.0.1:6901/vnc.html')],
   }));

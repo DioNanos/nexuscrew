@@ -16,7 +16,6 @@ import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
 import { cellRuntime } from './lib/roster-view-model.js';
 import { readRendererPreference } from './lib/terminal-renderer.js';
-import { leggiFilesTasto } from './lib/bar-files-tasto.js';
 import { readFontSize, writeFontSize } from './lib/terminal-fontsize.js';
 import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import { createPollGuard } from './lib/poll-guard.js';
@@ -394,9 +393,6 @@ export function SingleView({
   // La cella col focus: la lista file e il tasto in barra riguardano quella.
   const cellaFoca = focaLaSide ? 'side' : 'main';
   const apriChiudiFiles = () => setFiles((cur) => (cur && cur.source === cellaFoca ? null : { source: cellaFoca, ev: null }));
-  // Opzione per dispositivo del tasto file (vedi lib/bar-files-tasto.js):
-  // vale sul telefono, si accende da Impostazioni → input.
-  const [filesTasto] = useState(leggiFilesTasto);
 
   // Maniglia delle altezze/larghezze: stesso schema del drag della griglia
   // (pointermove fino a up/cancel/blur su window). Il confine SEGUE IL DITO
@@ -568,18 +564,12 @@ export function SingleView({
           <button onClick={() => zoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
           {/* Non c'e' piu' nessun menu: le azioni che restano stanno in fila
               (file, pannello). Tastiera e renderer sono preferenze locali
-              della scheda Impostazioni.
-              Sul TELEFONO il tasto file resta governato dall'opzione per
-              dispositivo (`nc_bar_files_button`, accesa da Impostazioni →
-              input): spenta, il tasto non c'e' — come prima. Sul desktop c'e'
-              sempre: senza il menu ⋯ sarebbe l'unica via al pannello. */}
-          {(isDesktop || filesTasto) && (
-            <button type="button" onClick={apriChiudiFiles}
-              title={t('bar-menu-files')} aria-label={t('bar-menu-files')}
-              aria-pressed={files?.source === cellaFoca ? 'true' : 'false'}>
-              <Icon name="download" size={18} />
-            </button>
-          )}
+              della scheda Impostazioni. */}
+          <button type="button" onClick={apriChiudiFiles}
+            title={t('bar-menu-files')} aria-label={t('bar-menu-files')}
+            aria-pressed={files?.source === cellaFoca ? 'true' : 'false'}>
+            <Icon name="download" size={18} />
+          </button>
           {panelUrl ? (
             <button type="button" onClick={() => setShowPanel((v) => !v)}
               title={t('bar-menu-panel')} aria-label={t('bar-menu-panel')}

@@ -408,7 +408,6 @@ describe('doppia vista: chiusura con il focus sulla seconda', () => {
   });
 
   it('lista file della seconda aperta + ✕: nessun crollo e nessuna lista orfana', async () => {
-    localStorage.setItem('nc_bar_files_button', 'on');
     const onSideClose = vi.fn();
     const view = monta({ onSideClose });
     fireEvent.pointerDown(screen.getByTestId('pane-side'));
