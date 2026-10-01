@@ -2,15 +2,15 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
-// barra alta della vista singola.
+// barra alta della vista singola — decisioni DAG sulla PR #7.
 //
-// Cosa presidia: la barra espone −, +, il bottone file (icona download) e — solo
-// se la cella pubblica un panelUrl — il bottone pannello (icona monitor). Il
-// menu ⋯ non esiste piu': tastiera e renderer sono preferenze delle Impostazioni,
-// file e pannello sono due bottoni in fila. Il sottotitolo ha il contratto di
-// troncamento che oggi non ha.
+// Cosa presidia: la barra espone −, +, i tasti DIRETTI cartella (icona
+// disegnata della PR, non il download) e tastiera, il tasto AI Desktop SOLO
+// con l'opzione accesa, e il menu ⋯ PER INTERO con i suoi quattro sottomenu
+// (tastiera, file, pannello, renderer) come prima: i tasti diretti sono
+// un'aggiunta, non una sostituzione.
 //
 // Cosa NON presidia: la cascata CSS reale (jsdom non la calcola). Il contratto
 // sul foglio e' letto dal sorgente, come in SettingsPanelFleetMobile.test.js;
@@ -59,9 +59,6 @@ beforeEach(() => {
   }
   localStorage.clear();
   localStorage.setItem('nc_lang', 'en');
-  // Il tasto file in barra e' un'opzione per dispositivo, spenta di default:
-  // qui la si accende, e i casi con l'opzione SPENTA la spengono da soli.
-  localStorage.setItem('nc_bar_files_button', 'on');
   // switchRenderer ricarica la pagina: in jsdom la navigazione e' "not
   // implemented" e sporcherebbe l'output. Si sostituisce il solo metodo.
   ricarica = vi.fn();
@@ -77,49 +74,115 @@ const apri = () => render(
   <SingleView session="cloud-AIDesktopCell" cellName="AIDesktopCell" token="t" onBack={vi.fn()} />,
 );
 
-describe('barra alta: −, +, file e (se c\'è) pannello', () => {
-  it('le due azioni stanno in fila nella barra, e il menu ⋯ non esiste piu\'', async () => {
+async function apriMenu() {
+  await waitFor(() => { expect(screen.getByTitle(t('bar-menu-open'))).toBeTruthy(); });
+  fireEvent.click(screen.getByTitle(t('bar-menu-open')));
+  return waitFor(() => screen.getByRole('menu'));
+}
+
+// La voce si cerca per `data-cellaction`, non per testo: col sottotitolo il
+// testo accessibile non e' piu' la sola etichetta.
+const voce = (menu, id) => within(menu).getAllByRole('menuitemcheckbox')
+  .find((v) => v.dataset.cellaction === id);
+
+describe('barra alta: −, +, cartella, tastiera, (AI Desktop) e menu ⋯', () => {
+  it('cartella e tastiera sono in fila ACCESI di default; AI Desktop non c\'e\'', async () => {
     apri();
     await waitFor(() => { expect(screen.getByTitle(t('zoom-out'))).toBeTruthy(); });
     expect(screen.getByTitle(t('zoom-in'))).toBeTruthy();
     expect(screen.getByTitle(t('bar-menu-files'))).toBeTruthy();
-    expect(screen.getByTitle(t('bar-menu-panel'))).toBeTruthy();
-    // Nessun menu: ne' il trigger, ne' il ruolo, ne' il glifo.
-    expect(screen.queryByRole('menu')).toBeNull();
-    expect(document.querySelector('.nc-bar-menu')).toBeNull();
-    expect(screen.queryByText('⋯')).toBeNull();
-    // Tastiera e renderer non sono piu' azioni di barra (vivono nelle Impostazioni).
-    expect(screen.queryByTitle(t('composer'))).toBeNull();
-    expect(document.querySelector('.nc-renderer-toggle')).toBeNull();
+    expect(screen.getByTitle(t('bar-menu-keyboard'))).toBeTruthy();
+    // AI Desktop: default spento, il tasto non esiste (la voce del menu resta).
+    expect(screen.queryByTitle(t('bar-menu-panel'))).toBeNull();
+    // Il menu ⋯ resta: trigger, ruolo e glifo.
+    expect(screen.getByTitle(t('bar-menu-open'))).toBeTruthy();
+    expect(document.querySelector('.nc-bar-menu')).toBeTruthy();
+    expect(screen.getByText('⋯')).toBeTruthy();
   });
 
-  it('il bottone file dichiara stato e nome accessibile, e apre il pannello file', async () => {
+  it('il tasto file usa la CARTELLA disegnata della PR, non l\'icona download', async () => {
     apri();
     const file = await screen.findByTitle(t('bar-menu-files'));
-    expect(file.getAttribute('aria-label')).toBe(t('bar-menu-files'));
-    expect(file.getAttribute('aria-pressed')).toBe('false');
-    fireEvent.click(file);
-    await waitFor(() => {
-      expect(screen.getByTitle(t('bar-menu-files')).getAttribute('aria-pressed')).toBe('true');
-    });
+    const d = file.querySelector('svg path')?.getAttribute('d') || '';
+    // Il tratto della cartella in Icon.jsx («folder»): collo del bordo in alto
+    // a sinistra. Il download comincia con la freccia «M12 4v10».
+    expect(d.startsWith('M4 6a2 2 0 0 1 2-2h3.6')).toBe(true);
   });
 
-  it('il bottone pannello dichiara stato e apre il pannello della cella', async () => {
+  it('il tasto tastiera dichiara stato e nome accessibile, e commuta il composer', async () => {
     apri();
-    const panel = await screen.findByTitle(t('bar-menu-panel'));
-    expect(panel.getAttribute('aria-label')).toBe(t('bar-menu-panel'));
-    expect(panel.getAttribute('aria-pressed')).toBe('false');
-    fireEvent.click(panel);
+    const tastiera = await screen.findByTitle(t('bar-menu-keyboard'));
+    expect(tastiera.getAttribute('aria-label')).toBe(t('bar-menu-keyboard'));
+    expect(tastiera.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(tastiera);
     await waitFor(() => {
-      expect(screen.getByTitle(t('bar-menu-panel')).getAttribute('aria-pressed')).toBe('true');
+      expect(screen.getByTitle(t('bar-menu-keyboard')).getAttribute('aria-pressed')).toBe('true');
     });
   });
 
-  it('senza panelUrl il bottone pannello non esiste (non e\' un bottone spento)', async () => {
+  it('il menu ⋯ contiene le quattro voci, con il loro stato vero', async () => {
+    apri();
+    const menu = await apriMenu();
+    const voci = within(menu).getAllByRole('menuitemcheckbox');
+    expect(voci.map((v) => v.dataset.cellaction))
+      .toEqual(['keyboard', 'files', 'panel', 'renderer']);
+    // Stato iniziale misurato, non dedotto: composer chiuso (pointer fine nei
+    // test), IMPOSTAZIONE del tasto file accesa (default nuovo), pannello
+    // chiuso, renderer WebGL (default senza preferenza scritta).
+    expect(voce(menu, 'keyboard').getAttribute('aria-checked')).toBe('false');
+    expect(voce(menu, 'files').getAttribute('aria-checked')).toBe('true');
+    expect(voce(menu, 'panel').getAttribute('aria-checked')).toBe('false');
+    expect(voce(menu, 'renderer').getAttribute('aria-checked')).toBe('true');
+    // La sottoriga del design c'e' per ogni voce.
+    expect(voce(menu, 'keyboard').querySelector('.nc-cellactions-desc').textContent)
+      .toBe(t('bar-menu-keyboard-desc'));
+    expect(voce(menu, 'renderer').querySelector('.nc-cellactions-desc').textContent)
+      .toBe(t('bar-menu-renderer-desc'));
+  });
+
+  it('ogni voce cambia il proprio stato a ogni tocco', async () => {
+    apri();
+    // Il guscio condiviso (CellActions) chiude il menu dopo OGNI azione: lo
+    // stato cambiato si osserva riaprendo. E' il comportamento che il menu ha
+    // gia' per le azioni cella, non una scelta nuova di questa barra.
+    let menu = await apriMenu();
+    expect(voce(menu, 'keyboard').getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(voce(menu, 'keyboard'));
+
+    menu = await apriMenu();
+    expect(voce(menu, 'keyboard').getAttribute('aria-checked')).toBe('true');
+    // Su mobile la voce «files» e' l'IMPOSTAZIONE del tasto: accesa di
+    // default, il tocco la spegne (e il tasto in barra sparisce).
+    expect(voce(menu, 'files').getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(voce(menu, 'files'));
+
+    menu = await apriMenu();
+    expect(voce(menu, 'files').getAttribute('aria-checked')).toBe('false');
+    expect(screen.queryByTitle(t('bar-menu-files'))).toBeNull();
+
+    fireEvent.click(voce(menu, 'files'));
+    menu = await apriMenu();
+    expect(voce(menu, 'files').getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByTitle(t('bar-menu-files'))).toBeTruthy();
+
+    fireEvent.click(voce(menu, 'panel'));
+    menu = await apriMenu();
+    expect(voce(menu, 'panel').getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('il renderer parte dalla preferenza scritta, non da un default', async () => {
+    localStorage.setItem('nc-terminal-renderer', 'dom');
+    apri();
+    const menu = await apriMenu();
+    expect(voce(menu, 'renderer').getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('senza panelUrl la voce Pannello non esiste (non e\' una voce spenta)', async () => {
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [cella('')] }));
     apri();
-    await waitFor(() => { expect(screen.getByTitle(t('bar-menu-files'))).toBeTruthy(); });
-    expect(screen.queryByTitle(t('bar-menu-panel'))).toBeNull();
+    const menu = await apriMenu();
+    expect(voce(menu, 'panel')).toBeUndefined();
+    expect(within(menu).getAllByRole('menuitemcheckbox')).toHaveLength(3);
   });
 });
 
@@ -145,15 +208,18 @@ describe('contratto CSS del sottotitolo della barra', () => {
   });
 });
 
-// Il tasto file della barra: da questa PR sta sempre in barra (non e' piu' una
-// impostazione per dispositivo) e apre/chiude la lista della cella col focus.
-// In doppia vista serve la cella che ha il focus.
-describe('tasto file della barra (opzione per dispositivo)', () => {
+// I tre tasti diretti sono opzioni PER DISPOSITIVO (lib/bar-files-tasto.js):
+// cartella e tastiera accesi di default, AI Desktop spento. Il default nuovo
+// vale SOLO per chi non ha mai salvato la chiave: un valore gia' scritto
+// ('on'/'off') si rispetta in entrambi i sensi.
+describe('tasti diretti della barra (opzioni per dispositivo)', () => {
   const tastoFiles = () => screen.queryByTitle(t('bar-menu-files'));
+  const tastoTastiera = () => screen.queryByTitle(t('bar-menu-keyboard'));
+  const tastoPannello = () => screen.queryByTitle(t('bar-menu-panel'));
   const ordineBarra = () =>
     [...document.querySelectorAll('.nc-bar-right button')].map((b) => b.getAttribute('title'));
 
-  it('opzione SPENTA sul telefono: il tasto non esiste', async () => {
+  it('valore gia\' salvato OFF: il tasto file non c\'e, anche col default nuovo acceso', async () => {
     localStorage.setItem('nc_bar_files_button', 'off');
     apri();
     await waitFor(() => { expect(screen.getByTitle(t('zoom-out'))).toBeTruthy(); });
@@ -161,7 +227,32 @@ describe('tasto file della barra (opzione per dispositivo)', () => {
     expect(tastoFiles()).toBeNull();
   });
 
-  it('opzione ACCESA: il tasto apre e chiude la lista della cella col focus', async () => {
+  it('valore gia\' salvato ON vale anche dove il default sarebbe spento (AI Desktop)', async () => {
+    localStorage.setItem('nc_bar_panel_button', 'on');
+    apri();
+    const panel = await waitFor(() => { const b = tastoPannello(); expect(b).toBeTruthy(); return b; });
+    expect(panel.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(panel);
+    await waitFor(() => { expect(tastoPannello().getAttribute('aria-pressed')).toBe('true'); });
+  });
+
+  it('opzione tastiera OFF: il tasto tastiera sparisce, il menu resta', async () => {
+    localStorage.setItem('nc_bar_keyboard_button', 'off');
+    apri();
+    await waitFor(() => { expect(screen.getByTitle(t('bar-menu-open'))).toBeTruthy(); });
+    expect(tastoTastiera()).toBeNull();
+    expect(tastoFiles()).toBeTruthy();
+  });
+
+  it('senza panelUrl il tasto AI Desktop non esiste nemmeno con l\'opzione accesa', async () => {
+    localStorage.setItem('nc_bar_panel_button', 'on');
+    mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [cella('')] }));
+    apri();
+    await waitFor(() => { expect(tastoFiles()).toBeTruthy(); });
+    expect(tastoPannello()).toBeNull();
+  });
+
+  it('il tasto file apre e chiude la lista della cella col focus', async () => {
     apri();
     const tasto = await waitFor(() => { const b = tastoFiles(); expect(b).toBeTruthy(); return b; });
     expect(tasto.getAttribute('aria-pressed')).toBe('false');
@@ -176,27 +267,17 @@ describe('tasto file della barra (opzione per dispositivo)', () => {
     expect(tastoFiles().getAttribute('aria-pressed')).toBe('false');
   });
 
-  it('sul DESKTOP il tasto c\'e\' anche con l\'opzione spenta: senza menu sarebbe l\'unica via al pannello', async () => {
-    const veroMatchMedia = window.matchMedia;
-    window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
-    try {
-      localStorage.setItem('nc_bar_files_button', 'off');
-      apri();
-      await waitFor(() => { expect(tastoFiles()).toBeTruthy(); });
-    } finally {
-      window.matchMedia = veroMatchMedia;
-    }
-  });
-
-  it('ordine dei tasti in barra: -, +, file, (se c\'e\') pannello — nessun altro posto', async () => {
+  it('ordine dei tasti in barra: -, +, cartella, tastiera, (pannello), ⋯', async () => {
+    localStorage.setItem('nc_bar_panel_button', 'on');
     apri();
-    await waitFor(() => { expect(tastoFiles()).toBeTruthy(); });
+    await waitFor(() => { expect(tastoPannello()).toBeTruthy(); });
     expect(ordineBarra()).toEqual([
-      t('zoom-out'), t('zoom-in'), t('bar-menu-files'), t('bar-menu-panel'),
+      t('zoom-out'), t('zoom-in'), t('bar-menu-files'), t('bar-menu-keyboard'),
+      t('bar-menu-panel'), t('bar-menu-open'),
     ]);
   });
 
-  it('in doppia vista il tasto serve la cella col focus', async () => {
+  it('in doppia vista il tasto file serve la cella col focus', async () => {
     render(<SingleView session="cloud-AIDesktopCell" cellName="AIDesktopCell" token="t" onBack={vi.fn()}
       side={{ session: 'cloud-SideCell' }} onSideClose={vi.fn()} onSideGone={vi.fn()} />);
     const tasto = await waitFor(() => { const b = tastoFiles(); expect(b).toBeTruthy(); return b; });

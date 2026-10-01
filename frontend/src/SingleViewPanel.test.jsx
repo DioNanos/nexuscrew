@@ -48,10 +48,11 @@ beforeEach(() => {
   }
   localStorage.clear();
   localStorage.setItem('nc_lang', 'en');
-  // Il tasto file in barra e' un'opzione per dispositivo (spenta di default):
-  // qui interessa il bottone PANNELLO, e il tasto file serve solo da segnale che
-  // il poll ha pubblicato lo stato della cella.
-  localStorage.setItem('nc_bar_files_button', 'on');
+  // Il tasto AI Desktop e' un'opzione per dispositivo SPENTA di default
+  // (decisione DAG sulla PR #7): qui si accende, e il caso del default la
+  // lascia spenta da solo. Il tasto file (acceso di default) serve da segnale
+  // che il poll ha pubblicato lo stato della cella.
+  localStorage.setItem('nc_bar_panel_button', 'on');
   mocks.fleetStatus.mockImplementation(async () => ({
     available: true, cells: [cella('https://127.0.0.1:6901/vnc.html')],
   }));
@@ -62,6 +63,15 @@ describe('Bottone Pannello della barra (vista singola)', () => {
     render(<SingleView session="cloud-AIDesktopCell" cellName="AIDesktopCell" token="t" onBack={vi.fn()} />);
     await waitFor(() => { expect(screen.getByTitle(t('bar-menu-panel'))).toBeTruthy(); });
     expect(screen.getByTitle(t('bar-menu-panel')).getAttribute('aria-label')).toBe(t('bar-menu-panel'));
+  });
+
+  it('DEFAULT: opzione mai salvata → il tasto NON c\'è, resta solo la voce del menu ⋯', async () => {
+    localStorage.removeItem('nc_bar_panel_button');
+    render(<SingleView session="cloud-AIDesktopCell" cellName="AIDesktopCell" token="t" onBack={vi.fn()} />);
+    await waitFor(() => { expect(screen.getByTitle(t('bar-menu-files'))).toBeTruthy(); });
+    expect(screen.queryByTitle(t('bar-menu-panel'))).toBeNull();
+    // la voce nel menu ⋯ resta comunque (dalla barra non si toglie niente)
+    expect(screen.getByTitle(t('bar-menu-open'))).toBeTruthy();
   });
 
   it('OFF: panelUrl tagliato dal fleetStatus → il bottone NON c\'è più', async () => {
