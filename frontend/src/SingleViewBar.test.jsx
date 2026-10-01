@@ -59,6 +59,9 @@ beforeEach(() => {
   }
   localStorage.clear();
   localStorage.setItem('nc_lang', 'en');
+  // Il tasto file in barra e' un'opzione per dispositivo, spenta di default:
+  // qui la si accende, e i casi con l'opzione SPENTA la spengono da soli.
+  localStorage.setItem('nc_bar_files_button', 'on');
   // switchRenderer ricarica la pagina: in jsdom la navigazione e' "not
   // implemented" e sporcherebbe l'output. Si sostituisce il solo metodo.
   ricarica = vi.fn();
@@ -145,12 +148,20 @@ describe('contratto CSS del sottotitolo della barra', () => {
 // Il tasto file della barra: da questa PR sta sempre in barra (non e' piu' una
 // impostazione per dispositivo) e apre/chiude la lista della cella col focus.
 // In doppia vista serve la cella che ha il focus.
-describe('tasto file della barra', () => {
+describe('tasto file della barra (opzione per dispositivo)', () => {
   const tastoFiles = () => screen.queryByTitle(t('bar-menu-files'));
   const ordineBarra = () =>
     [...document.querySelectorAll('.nc-bar-right button')].map((b) => b.getAttribute('title'));
 
-  it('il tasto c\'e\' sempre, apre e chiude la lista della cella col focus', async () => {
+  it('opzione SPENTA sul telefono: il tasto non esiste', async () => {
+    localStorage.setItem('nc_bar_files_button', 'off');
+    apri();
+    await waitFor(() => { expect(screen.getByTitle(t('zoom-out'))).toBeTruthy(); });
+    await waitFor(() => { expect(mocks.fleetStatus).toHaveBeenCalled(); });
+    expect(tastoFiles()).toBeNull();
+  });
+
+  it('opzione ACCESA: il tasto apre e chiude la lista della cella col focus', async () => {
     apri();
     const tasto = await waitFor(() => { const b = tastoFiles(); expect(b).toBeTruthy(); return b; });
     expect(tasto.getAttribute('aria-pressed')).toBe('false');
@@ -163,6 +174,18 @@ describe('tasto file della barra', () => {
     fireEvent.click(tastoFiles());
     expect(screen.queryByTestId('files-panel')).toBeNull();
     expect(tastoFiles().getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('sul DESKTOP il tasto c\'e\' anche con l\'opzione spenta: senza menu sarebbe l\'unica via al pannello', async () => {
+    const veroMatchMedia = window.matchMedia;
+    window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+    try {
+      localStorage.setItem('nc_bar_files_button', 'off');
+      apri();
+      await waitFor(() => { expect(tastoFiles()).toBeTruthy(); });
+    } finally {
+      window.matchMedia = veroMatchMedia;
+    }
   });
 
   it('ordine dei tasti in barra: -, +, file, (se c\'e\') pannello — nessun altro posto', async () => {
