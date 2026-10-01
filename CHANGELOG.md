@@ -2,6 +2,13 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.54 — 2026-10-01
+
+- **Il proxy federato non crolla più quando la porta del tunnel rifiuta la connessione.** Il listener degli errori sull'upstream federato viene registrato prima del connect: un rifiuto sulla porta del tunnel viene gestito come errore di connessione invece di propagarsi come eccezione non catturata e abbattere il processo.
+- **Un config.json illeggibile non viene più riscritto.** Se la configurazione non si legge, il nodo non riparte da un oggetto vuoto: prima il fallback perdeva `autoUpdate` e `wizardDone` e il wizard si riapriva come al primo avvio. Ora la scrittura è fail-closed come quella di `fleet.json` e l'illeggibilità viene riportata per quello che è — una categoria di errore — invece del messaggio del parser.
+- **Impostazioni, `autoupdate off` e identity rifiutano con un errore chiaro invece di perdere le chiavi.** Le tre operazioni verificano prima di scrivere: quando la configurazione non è in condizione di essere aggiornata rispondono con il motivo, senza cancellare o corrompere le chiavi esistenti.
+- **L'avviso non riporta mai il contenuto del file.** Quando una scrittura fallisce, il messaggio nomina il file e il motivo, senza incollarne il contenuto.
+
 ## 0.9.53 — 2026-09-30
 
 - **Telefono: le preferenze non si perdono più quando il browser le dimentica.** Pin, ordine delle celle e viste si sincronizzano sul nodo, per dispositivo: un telefono ritrova la sua disposizione anche dopo che lo storage del browser è stato svuotato. Il link di `show` porta l'identificativo del dispositivo; al primo uso il nodo ne emette uno. Una copia vuota non sostituisce mai una copia piena, un ripristino fallito viene riportato per quello che è e il nodo conserva la sua versione per ritentare al giro successivo. In Impostazioni c'è il diario delle ultime scritture (con copia e pulizia) e lo stato della memoria; l'app chiede al browser la memoria persistente, registra l'esito e ritenta un rifiuto al massimo una volta al giorno. I file di esportazione e importazione contengono solo pin, ordine e viste, mai il token.
