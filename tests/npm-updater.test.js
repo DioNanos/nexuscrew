@@ -8,7 +8,11 @@ const path = require('node:path');
 
 const core = require('../lib/update/core.js');
 const { createNpmUpdater, isGlobalInstall, lookupLatestNpm } = require('../lib/update/manager.js');
-const { restartRuntime, runUpdate, regenBootDefinitions } = require('../lib/update/runner.js');
+const runner = require('../lib/update/runner.js');
+const { restartRuntime, regenBootDefinitions } = runner;
+// Questi test provano il flusso dell'update con un npm finto: l'invocazione di npm (stesso node del demone) e la
+// preflight del prefix hanno test propri in update-npm-env.test.js, qui restano fuori dal quadro.
+const runUpdate = (o) => runner.runUpdate({ npmInvocationImpl: () => ({ kind: 'path-npm', bin: 'npm', argvPrefix: [], env: null, npmCli: null }), npmPreflightImpl: () => ({}), log: () => {}, ...o });
 const serviceMod = require('../lib/cli/service.js');
 const fleetMod = require('../lib/cli/fleet-service.js');
 const realAlias = require('../lib/cli/stable-alias.js');

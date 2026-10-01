@@ -38,12 +38,35 @@ const feedViewStateOf = (health, ownerId) => {
   return (h.stale === true || h.error === true) ? 'degraded' : 'live';
 };
 
+// Le ask che QUESTA interfaccia ha scartato dopo un dismiss CONFERMATO
+// dall'owner. Senza memoria, la rilettura del feed-state (reload, o il giro
+// successivo) rimette la card: e' la notifica che ricompare.
+// Il tombstone ha un TTL: un id riusato dopo un reset dell'owner non resta
+// nascosto per sempre.
+const DISMISSED_TTL_MS = 10 * 60 * 1000;
+const dismissedAsks = new Map(); // askKeyOf -> timestamp
+
+function noteAskDismissed(key) {
+  dismissedAsks.set(key, Date.now());
+}
+
+function askStillDismissed(a) {
+  const key = askKeyOf(a.id, a.ownerId, a.ownerAskId);
+  const at = dismissedAsks.get(key);
+  if (at === undefined) return false;
+  if (Date.now() - at > DISMISSED_TTL_MS) { dismissedAsks.delete(key); return false; }
+  return true;
+}
+
 // Compattazione, mai sostituzione: due liste della stessa natura possono
 // completarsi in QUALUNQUE ordine (snapshot locale da /api/asks, ask importate
-// dal feed-state). Una chiave gia' nota resta una volta sola.
+// dal feed-state). Una chiave gia' nota resta una volta sola, e una scartata
+// non rientra.
 function mergeAsks(cur, extra) {
   const seen = new Set(cur.map((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId)));
-  const add = (extra || []).filter((a) => a && a.id && !seen.has(askKeyOf(a.id, a.ownerId, a.ownerAskId)));
+  const add = (extra || []).filter((a) => a && a.id
+    && !seen.has(askKeyOf(a.id, a.ownerId, a.ownerAskId))
+    && !askStillDismissed(a));
   return add.length ? [...cur, ...add] : cur;
 }
 
@@ -55,7 +78,9 @@ function mergeAsks(cur, extra) {
 function applyLocalSnapshot(cur, incoming) {
   const imported = mergeAsks([], cur.filter((a) => a.imported));
   const seen = new Set(imported.map((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId)));
-  const locals = (incoming || []).filter((a) => a && a.id && !seen.has(askKeyOf(a.id, a.ownerId, a.ownerAskId)));
+  const locals = (incoming || []).filter((a) => a && a.id
+    && !seen.has(askKeyOf(a.id, a.ownerId, a.ownerAskId))
+    && !askStillDismissed(a));
   return [...locals, ...imported];
 }
 
@@ -126,18 +151,32 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
   // sparire una domanda ancora aperta.
   const dismiss = async () => {
     if (dismissing) return;
+    // Con un esito incerto la X e' disabilitata con il motivo (sotto, e nel
+    // title): qui la guardia e' solo la cintura, mai un no-op muto.
+    if (uncertainRid) return;
+    setErr(null);
     setDismissing(true);
     try {
       if (ask.ownerId) {
-        if (uncertainRid) return; // prima la verifica, poi eventualmente dismiss
         await relayAskDismiss(token, { ownerId: ask.ownerId, askId: ask.ownerAskId || ask.id });
-        onDismiss(ask.id, ask.ownerId);
       } else {
         await dismissAsk(token, ask.id);
-        onDismiss(ask.id);
       }
-    } catch (_) { setDismissing(false); }
+      // Solo un dismiss CONFERMATO nasconde la card, e lo ricorda: un errore o
+      // un esito incerto non devono far sparire una domanda ancora aperta.
+      noteAskDismissed(askKeyOf(ask.id, ask.ownerId, ask.ownerAskId));
+      onDismiss(ask.id, ask.ownerId);
+    } catch (e) {
+      // Niente silenzi: la causa sta sulla card.
+      setErr(String((e && e.message) || e));
+    }
+    setDismissing(false);
   };
+
+  // Il titolo della X: l'incertezza vince su tutto (niente invii ciechi), poi
+  // l'avviso di view stale, poi il dismiss normale.
+  const dismissTitle = uncertainRid ? t('ask-uncertain')
+    : (feedViewState === 'degraded' ? t('ask-dismiss-stale') : t('ask-dismiss'));
 
   return (
     <div className="nc-ask-card">
@@ -145,7 +184,12 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
         <span className="nc-ntf-from">{ask.session}</span>
         {ask.ownerId && <span className="nc-ntf-from">{t('feed-owner')}</span>}
         <code className="nc-ask-id">#{ask.id}</code>
-        <button type="button" className="nc-ask-dismiss" title={t('ask-dismiss')} aria-label={t('ask-dismiss')} disabled={dismissing || (!!ask.ownerId && askReplyAccess === false)} onClick={dismiss}>
+        {/* La X dice SEMPRE perché: con esito incerto il motivo è quello, con
+            la view stale/degraded il messaggio avvisa che i dati della card
+            non sono vivi (lo scarto parte comunque via relay diretto). */}
+        <button type="button" className="nc-ask-dismiss"
+          title={dismissTitle} aria-label={dismissTitle}
+          disabled={dismissing || !!uncertainRid || (!!ask.ownerId && askReplyAccess === false)} onClick={dismiss}>
           <Icon name="x" size={14} />
         </button>
       </div>
@@ -158,6 +202,12 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
               quale delle due è; i permessi non cambiano in nessun caso. */}
           {t(feedViewState === 'live' ? 'ask-remote-readonly' : 'ask-remote-no-feed')}
         </small>
+      )}
+      {/* Con il permesso di risposta la card resta viva, ma se la view è
+          stale/degraded l'operatore deve vederlo: è la card che ricompare
+          quando il feed è fermo. */}
+      {ask.ownerId && askReplyAccess !== false && feedViewState === 'degraded' && (
+        <small className="nc-set-hint">{t('ask-feed-stale')}</small>
       )}
       {(uncertainRid || blockedOriginal) && <>
         <div className="nc-err">{t('ask-uncertain')}</div>

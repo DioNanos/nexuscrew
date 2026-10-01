@@ -8,6 +8,8 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
 .nc-termwrap { position: relative; flex: 1; }
 .nc-auth { color: #cfe; padding: 20px; display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
 .nc-auth input[type=text], .nc-auth input:not([type]) { padding: 10px; background: #122; border: 1px solid #243; color: #cfe; border-radius: 6px; }
+.nc-auth .nc-auth-error { color: #f88; margin: 0; }
+.nc-auth button:disabled { opacity: .5; }
 .nc-auth button { padding: 10px; background: #122; border: 1px solid #243; color: #9fd; border-radius: 6px; }
 .nc-bar-right { margin-left: auto; display: flex; gap: 4px; }
 
