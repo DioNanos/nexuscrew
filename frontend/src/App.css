@@ -3,7 +3,7 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
 /* dvh tracks the visible viewport so the bottom KeyBar stays above the soft keyboard */
 .nc-app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; min-height: 0; }
 .nc-keybar { flex: 0 0 auto; }
-.nc-bar { display: flex; gap: 10px; align-items: center; padding: 8px; color: #cfe; background: #0e140e; }
+.nc-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px; color: #cfe; background: #0e140e; }
 .nc-bar button { background: none; border: 1px solid #243; color: #9fd; border-radius: 6px; padding: 4px 10px; }
 .nc-termwrap { position: relative; flex: 1; }
 .nc-auth { color: #cfe; padding: 20px; display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
@@ -11,7 +11,13 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
 .nc-auth .nc-auth-error { color: #f88; margin: 0; }
 .nc-auth button:disabled { opacity: .5; }
 .nc-auth button { padding: 10px; background: #122; border: 1px solid #243; color: #9fd; border-radius: 6px; }
-.nc-bar-right { margin-left: auto; display: flex; gap: 4px; }
+/* Il gruppo destro della barra wrap-a quando i tasti non ci stanno su una riga
+   (schermo stretto, testo grande o zoom). Perche' il wrap accada DENTRO il
+   gruppo e non sfondi il bordo, il gruppo deve poter RESTRINGERE: flex 0 1 auto
+   + min-width:0. margin-left:auto lo tiene a destra anche su piu' righe; i tasti
+   restano bersagli da minimo 42 px (regola coarse piu' sotto). */
+.nc-bar-right { margin-left: auto; display: flex; flex-wrap: wrap; gap: 4px;
+  flex: 0 1 auto; min-width: 0; justify-content: flex-end; }
 
 /* Touch targets: header buttons grandi e leggibili sul telefono. */
 @media (pointer: coarse) {
@@ -28,7 +34,6 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 13px; font-weight: 600;
 }
-.nc-bar-right { flex: 0 0 auto; }
 
 /* Su schermi stretti il back è solo chevron: lo spazio va al titolo. */
 @media (max-width: 480px) {
@@ -50,9 +55,11 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
   background: #0a0e0a;
 }
 
-/* Header vista singola: nome centrato + sottotitolo stato. */
+/* Header vista singola: nome centrato + sottotitolo stato.
+   flex-basis 0: il titolo non spinge i tasti destri a capo — il wrap avviene
+   solo quando i tasti davvero non ci stanno (zoom/schermo stretto). */
 .nc-bar-single .nc-bar-center {
-  flex: 1 1 auto; min-width: 0;
+  flex: 1 1 0; min-width: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   line-height: 1.15;
 }
