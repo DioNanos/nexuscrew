@@ -169,6 +169,13 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = [], n
   // periodico. status/label freschi arrivano comunque via ownersRef a ogni
   // render per il loop di reload dentro loadAll.
   const ownersSig = owners.map((o) => `${o.instanceId}:${routeKey(o.route)}`).join('|');
+  // Firma dei SOLO stati (instanceId + status): il ritorno a 'up' di un owner
+  // degradato deve ripartire subito con il suo caricamento per-owner, senza
+  // aspettare il poll periodico e senza rifare il caricamento completo — un
+  // blip di stato dalla topologia non deve innescare quel loadAll (per quello
+  // c'è ownersSig, che resta a sola identità).
+  const ownerStatusSig = owners.map((o) => `${o.instanceId}:${o.status ?? ''}`).join('|');
+  const ownerStatusRef = useRef(ownerStatusSig);
   ownersRef.current = owners;
   nodeOrderRef.current = nodeOrder;
   layoutRef.current = layout;
@@ -290,12 +297,14 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = [], n
         return;
       }
       // Degrado per owner (timeout federato o errore di rete): le sue deck
-      // precedenti restano con available:false e l'istante del refresh
-      // fallito. Mai un reflow, mai una rimozione.
+      // precedenti restano con la disponibilità GIÀ nota (un solo fetch
+      // caduto non dichiara offline un owner che la lista nodi/celle vede
+      // 'up'), il flag stale e l'istante del refresh fallito — il segnalino
+      // «in ritardo» è onesto, l'offline no. Mai un reflow, mai una rimozione;
+      // un owner mai caricato resta senza deck, come prima.
       const previous = recordsRef.current.filter((d) => !d.local && d.ownerId === owner.instanceId)
         .map((d) => ({
           ...d,
-          available: false,
           stale: true,
           refreshFailedAt: Date.now(),
           ownerRoute: [...owner.route],
@@ -399,6 +408,23 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = [], n
       setRecords(ordered);
     }
   }, [nodeOrder]);
+
+  // Il ritorno a 'up' di un owner degradato riparte subito con il suo
+  // caricamento per-owner: l'effetto confronta la firma degli stati con quella
+  // del render precedente e ricarica SOLO gli owner appena tornati 'up'. Chi
+  // passa a non-up non fa nulla qui (il suo degrado esplicito arriva con la
+  // prossima loadAll); il primo render non ricarica nulla — di quello si
+  // occupa la loadAll che parte al mount.
+  useEffect(() => {
+    const prev = new Map(ownerStatusRef.current.split('|').filter(Boolean).map((entry) => {
+      const sep = entry.indexOf(':');
+      return [entry.slice(0, sep), entry.slice(sep + 1)];
+    }));
+    for (const owner of ownersRef.current) {
+      if (owner.status === 'up' && prev.get(owner.instanceId) !== 'up') loadOwnerDecks(owner);
+    }
+    ownerStatusRef.current = ownerStatusSig;
+  }, [ownerStatusSig, loadOwnerDecks]);
 
   const saveNow = useCallback(async (targetId, allowRebase = true) => {
     if (!ready || !dirtyRef.current) return true;

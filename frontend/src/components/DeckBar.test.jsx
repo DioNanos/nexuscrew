@@ -274,3 +274,35 @@ describe('D-392 — gruppi della barra nell\'ordine della lista nodi', () => {
     expect(keys).toEqual(['local', ownerA, ownerB]);
   });
 });
+
+describe('stale deck badge (a late refresh is not offline)', () => {
+  const staleOwner = 'c'.repeat(32);
+  const staleDecks = [
+    { id: `${staleOwner}:late`, name: 'late', ownerId: staleOwner, ownerLabel: 'Relay', local: false, available: true, stale: true, refreshFailedAt: 1234 },
+    { id: `${staleOwner}:dark`, name: 'dark', ownerId: staleOwner, ownerLabel: 'Relay', local: false, available: false },
+  ];
+
+  function renderStaleBar() {
+    localStorage.setItem(COLLAPSE_KEY, JSON.stringify({ [staleOwner]: false }));
+    render(<DeckBar decks={staleDecks} currentDeck="" onReorder={vi.fn()}
+      onNavigate={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} />);
+  }
+
+  it('shows a discrete late badge with the owner tooltip on a stale deck, without the offline class', () => {
+    renderStaleBar();
+    const badge = screen.getByText('running late');
+    expect(badge.className).toBe('nc-deck-stale');
+    expect(badge.title).toBe('Relay · refresh running late');
+    const chip = badge.closest('.nc-deck-chip');
+    expect(chip?.className).not.toContain('offline');
+    expect(chip?.querySelector('.nc-deck-open')?.disabled).toBe(false);
+  });
+
+  it('keeps the offline class and no badge for a confirmed unavailable deck', () => {
+    renderStaleBar();
+    const darkChip = screen.getByText('dark').closest('.nc-deck-chip');
+    expect(darkChip?.className).toContain('offline');
+    expect(darkChip?.querySelector('.nc-deck-open')?.disabled).toBe(true);
+    expect(darkChip?.querySelector('.nc-deck-stale')).toBeNull();
+  });
+});
