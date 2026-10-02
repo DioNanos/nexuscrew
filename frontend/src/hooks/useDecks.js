@@ -139,7 +139,7 @@ function augmentDeck(deck, owner, topology, local = false, available = true) {
   };
 }
 
-export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
+export function useDecks(token, current, layout, setLayout, remoteOwners = [], nodeOrder = []) {
   const [records, setRecords] = useState([]);
   const [ready, setReady] = useState(false);
   const [saveState, setSaveState] = useState('idle');
@@ -148,6 +148,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   const [localNodeId, setLocalNodeId] = useState('');
   const recordsRef = useRef([]);
   const ownersRef = useRef([]);
+  // Ordine della lista nodi/celle (nc_node_order_v1, chiavi nodePreferenceKey):
+  // i GRUPPI della rail lo seguono (D-392). Va in un ref per non rifare il
+  // caricamento a ogni riordino: il riordino tocca solo l'ordine, non i dati.
+  const nodeOrderRef = useRef([]);
   // Da quando un owner manca dalle risposte confermate: passata la grazia le
   // sue deck sloggano (rimozione confermata), sotto restano come blip. Stessa
   // soglia di useNodes, cosi' non esistono due grazie divergenti.
@@ -166,6 +170,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   // render per il loop di reload dentro loadAll.
   const ownersSig = owners.map((o) => `${o.instanceId}:${routeKey(o.route)}`).join('|');
   ownersRef.current = owners;
+  nodeOrderRef.current = nodeOrder;
   layoutRef.current = layout;
   currentRef.current = current;
   recordsRef.current = records;
@@ -190,7 +195,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
 
   const install = useCallback((next, applyLayout = true, targetId) => {
     const wanted = targetId === undefined ? resolveCurrentId() : deckIdForLocalOwner(targetId, localNodeIdRef.current);
-    const ordered = orderDeckRecords(next, loadDeckOrders());
+    const ordered = orderDeckRecords(next, loadDeckOrders(), nodeOrderRef.current);
     const previousHadTarget = recordsRef.current.some((d) => d.id === wanted);
     recordsRef.current = ordered; setRecords(ordered);
     // Cache dell'ultima lista conosciuta (senza i flag effimeri del refresh
@@ -380,6 +385,20 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     });
     return () => { cancelled = true; };
   }, [install, loadAll, ownersSig, token, findCurrent]);
+
+  // D-392: un riordino nella lista nodi/celle a sinistra si riflette subito
+  // sui gruppi della rail, senza ricaricare nulla — stessi record, ordine
+  // nuovo. Il confronto evita il re-render quando l'ordine non cambia nulla.
+  useEffect(() => {
+    if (!recordsRef.current.length) return;
+    const ordered = orderDeckRecords(recordsRef.current, loadDeckOrders(), nodeOrder);
+    const moved = ordered.length !== recordsRef.current.length
+      || ordered.some((d, i) => d.id !== recordsRef.current[i].id);
+    if (moved) {
+      recordsRef.current = ordered;
+      setRecords(ordered);
+    }
+  }, [nodeOrder]);
 
   const saveNow = useCallback(async (targetId, allowRebase = true) => {
     if (!ready || !dirtyRef.current) return true;

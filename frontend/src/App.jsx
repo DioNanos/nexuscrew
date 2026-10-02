@@ -51,6 +51,7 @@ import { useLang } from './hooks/useLang.js';
 import { setTerminalRuntimeConfig } from './lib/terminal-runtime-config.js';
 import { useNodes } from './hooks/useNodes.js';
 import { useDecks } from './hooks/useDecks.js';
+import { useNodePreferences } from './hooks/useNodePreferences.js';
 import { useInputPreferences } from './hooks/useInputPreferences.js';
 import { reportServerVersions } from './lib/sw-update.js';
 import { parseBootstrapHash } from './lib/fragment.js';
@@ -844,7 +845,10 @@ export default function App() {
   const deckOwners = useMemo(() => (nodeGroups || []).filter((g) => g.instanceId).map((g) => ({
     instanceId: g.instanceId, route: g.route, label: g.label, status: g.status, stale: g.stale === true,
   })), [nodeGroups]);
-  const deckStore = useDecks(token, deck, layout, setLayout, deckOwners);
+  // D-392: l'ordine dei DECKS in alto segue l'ordine della lista nodi/celle a
+  // sinistra (nc_node_order_v1, per identita' — id/instanceId — mai per etichetta).
+  const { order: deckNodeOrder } = useNodePreferences();
+  const deckStore = useDecks(token, deck, layout, setLayout, deckOwners, deckNodeOrder);
   // L'avviso delle azioni cella (avvio/riavvio/stop): notice a scadenza su una
   // riga SUA sotto la barra dei deck — stessa meccanica del roster mobile
   // (useActionNotice, auto-clear 10 s). NON passa da deckStore.setError: la

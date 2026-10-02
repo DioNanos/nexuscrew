@@ -245,3 +245,32 @@ describe('regressions: navigate / popout / new still wired', () => {
     expect(group.querySelector('.nc-deck-newbtn')).toBeTruthy();
   });
 });
+
+// D-392: i gruppi owner della barra seguono l'ordine dei deck ricevuti —
+// l'ordine lo decide orderDeckRecords (lista nodi/celle a sinistra), la barra
+// non riordina. Il componente deve rispettare l'ordine di ingresso.
+describe('D-392 — gruppi della barra nell\'ordine della lista nodi', () => {
+  const ownerA = 'a'.repeat(32);
+  const ownerB = 'b'.repeat(32);
+  const d = (ownerId, name, local = false) => ({
+    id: local ? `local:${name}` : `${ownerId}:${name}`,
+    name,
+    ownerId,
+    ownerLabel: local ? 'Local' : ownerId.slice(0, 4),
+    local,
+    available: true,
+  });
+
+  it('rende i gruppi owner nell\'ordine dei decks in ingresso (lista: A prima di B)', () => {
+    const decks = [
+      d(null, 'main', true),
+      d(ownerA, 'primo'),
+      d(ownerA, 'secondo'),
+      d(ownerB, 'main'),
+    ];
+    render(<DeckBar decks={decks} currentDeck="local:main" onReorder={vi.fn()}
+      onNavigate={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} />);
+    const keys = [...document.querySelectorAll('.nc-deck-owner-group[data-owner-key]')].map((el) => el.getAttribute('data-owner-key'));
+    expect(keys).toEqual(['local', ownerA, ownerB]);
+  });
+});
