@@ -130,10 +130,10 @@
 .nc-cell-switcher-menu.on { color: #bfffd8; border-color: rgba(0, 204, 102, .55); background: rgba(0, 204, 102, .12); }
 
 /* Il tasto della doppia vista: stesso abito del menu (icona a tratto,
-   bordo sottile, bersaglio 44 px). Spento quando è disabilitato (cella aperta
-   o riga non selezionabile); premuto — il verde dell'handle attivo — sulla
-   riga già affiancata. L'icona è un rettangolo diviso in due, a tratto: il
-   verde che riempie è il bottone, non il disegno. */
+   bordo sottile, bersaglio 44 px). L'icona è la splitView del set unico
+   (Icon.jsx): solo tratto, currentColor — nessun rettangolo pieno. Spento
+   quando è disabilitato (cella aperta o riga non selezionabile); premuto —
+   il verde dell'handle attivo — sulla riga già affiancata. */
 .nc-cell-switcher-side {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 44px; min-height: 44px; padding: 0; flex: 0 0 auto;
@@ -142,6 +142,9 @@
 }
 .nc-cell-switcher-side svg { display: block; }
 .nc-cell-switcher-side:disabled { opacity: .38; cursor: default; }
+.nc-cell-switcher-side:hover:not(:disabled) {
+  color: #c9d6c9; border-color: rgba(255, 255, 255, .28);
+}
 .nc-cell-switcher-side.on {
   color: #bfffd8; border-color: rgba(0, 204, 102, .45); background: rgba(0, 204, 102, .12);
 }

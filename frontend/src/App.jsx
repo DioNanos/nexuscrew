@@ -17,6 +17,7 @@ import CellSwitcher from './components/CellSwitcher.jsx';
 import { CellActionsPopover, CellActionsSheet } from './components/CellActions.jsx';
 import { cellRuntime } from './lib/roster-view-model.js';
 import { nextRendererPreference, readRendererPreference, writeRendererPreference } from './lib/terminal-renderer.js';
+import { leggiFilesTasto, scriviFilesTasto, leggiTastieraTasto, leggiPannelloTasto } from './lib/bar-files-tasto.js';
 import { readFontSize, writeFontSize } from './lib/terminal-fontsize.js';
 import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import { createPollGuard } from './lib/poll-guard.js';
@@ -121,26 +122,14 @@ function rel(epochSec) {
 // cellName (opzionale, Tranche D): titolo logico Fleet gia' risolto dal roster
 // (desktop overlay). Se assente (mobile), la lookup fleetStatus esistente lo
 // risolve al primo ciclo. Il titolo visibile deriva sempre da `cell.cell`.
-// L'impostazione del TASTO file della barra (vista singola mobile): per
-// dispositivo, in localStorage. Spenta di default — nessun client esistente
-// vede nulla di nuovo finché l'operatore non la accende — e il tasto resta
-// visibile a ogni avvio finché lei la spegne. L'impostazione dice solo se il
-// tasto ESISTE: lo stato del pannello resta in `files`.
-const BAR_FILES_TASTO = 'nc_bar_files_button';
-
-export function leggiFilesTasto() {
-  try { return localStorage.getItem(BAR_FILES_TASTO) === 'on'; } catch (_) { return false; }
-}
-
-function scriviFilesTasto(on) {
-  try { localStorage.setItem(BAR_FILES_TASTO, on ? 'on' : 'off'); } catch (_) { /* private mode */ }
-}
-
 // le quattro azioni della barra alta, raccolte nel menu ⋯.
 //
 // Sono le STESSE azioni di prima, con lo stesso stato vero: qui si decide solo
 // l'ordine e quali compaiono. Una voce che non ha il suo handler non c'e' — e'
 // il contratto di CellActionsMenu, gli stessi item delle azioni cella.
+// Decisione DAG sulla PR #7: il menu ⋯ resta PER INTERO con tutti i suoi
+// sottomenu; i tasti diretti (cartella, tastiera, AI Desktop) sono AGGIUNTI
+// fuori dal menu, non una sostituzione.
 export function barActionsItems({
   showComposer, showFiles, showPanel, hasPanel, rendererKind,
   // Su mobile la voce «files» è l'IMPOSTAZIONE del tasto in barra — accenderla
@@ -220,18 +209,19 @@ export function SingleView({
   // popover desktop (il foglio mobile non ne ha bisogno).
   const [showBarMenu, setShowBarMenu] = useState(false);
   const [barMenuRect, setBarMenuRect] = useState(null);
-  // Su touch il composer è aperto di default (l'IME Gboard corrompe l'input in xterm).
-  const [showComposer, setShowComposer] = useState(() => window.matchMedia('(pointer: coarse)').matches);
+  // Su touch il composer è aperto di default (l'IME Gboard corrompe l'input in
+  // xterm): quello che cambia è dove si sceglie. Ora è una preferenza locale
+  // persistita (Impostazioni → input) che vale come stato iniziale della vista.
+  const [showComposer, setShowComposer] = useState(() => inputPreferences.showComposer);
   const [fontSize, setFontSize] = useState(readFontSize);
-  // Renderer del terminale: preferenza per browser + quello che sta disegnando
-  // davvero (il GPU puo' non essere disponibile, o perdere il contesto).
-  const [rendererPref, setRendererPref] = useState(readRendererPreference);
+  // Renderer del terminale: quello che sta disegnando davvero (il GPU puo' non
+  // essere disponibile, o perdere il contesto). La scelta A/B vive nella stessa
+  // preferenza per browser e si cambia da due posti — la voce del menu ⋯ e
+  // l'interruttore in Impostazioni → sistema — entrambi con ricaricamento,
+  // perche' il renderer si aggancia alla creazione del terminale.
   const [rendererKind, setRendererKind] = useState(() => readRendererPreference());
   const switchRenderer = () => {
-    const next = writeRendererPreference(nextRendererPreference(readRendererPreference()));
-    setRendererPref(next);
-    // Il renderer si aggancia alla creazione del terminale: il ricaricamento e'
-    // il modo affidabile per far ripartire l'A/B con l'altro motore.
+    writeRendererPreference(nextRendererPreference(readRendererPreference()));
     if (typeof window !== 'undefined') window.location.reload();
   };
   // Titolo visibile (Tranche D): nome logico Fleet o, in fallback, il nome
@@ -474,8 +464,13 @@ export function SingleView({
   // Il tasto, quando c'è, fa ciò che faceva la voce: apre/chiude la lista
   // della cella col focus. Il desktop resta com'era, voce = lista.
   const cellaFoca = focaLaSide ? 'side' : 'main';
-  const [filesTasto, setFilesTasto] = useState(leggiFilesTasto);
   const apriChiudiFiles = () => setFiles((cur) => (cur && cur.source === cellaFoca ? null : { source: cellaFoca, ev: null }));
+  // I tre tasti diretti fuori dal menu sono opzioni per dispositivo (vedi
+  // lib/bar-files-tasto.js): cartella e tastiera ACCESI di default, AI Desktop
+  // SPENTO. Un valore gia' salvato vince sul default nuovo.
+  const [filesTasto, setFilesTasto] = useState(leggiFilesTasto);
+  const [tastieraTasto] = useState(leggiTastieraTasto);
+  const [pannelloTasto] = useState(leggiPannelloTasto);
   const barItems = barActionsItems({
     showComposer, showFiles: files?.source === cellaFoca, showPanel, hasPanel: !!panelUrl, rendererKind,
     filesSetting: isDesktop ? null : filesTasto,
@@ -653,22 +648,39 @@ export function SingleView({
           {sub && <small className="nc-bar-sub">{sub}</small>}
         </span>
         <span className="nc-bar-right">
-          <button onClick={() => zoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
-          <button onClick={() => zoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
-          {/* Il tasto dei file (solo mobile, solo con l'impostazione accesa):
-              apre e chiude la lista della cella col focus — la stessa apriChiudiFiles
-              del menu di prima — e RESTA in barra finché l'impostazione lo dice,
-              a pannello aperto o chiuso: aria-pressed dice lo stato del pannello.
-              Ordine del design: − + [cartella] ⋯. Il desktop non lo vede. */}
-          {!isDesktop && filesTasto && (
+          <button onClick={() => zoom(-1)} title={t('zoom-out')} aria-label={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
+          <button onClick={() => zoom(+1)} title={t('zoom-in')} aria-label={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
+          {/* I tre tasti DIRETTI, fuori dal menu ⋯ (decisione DAG sulla PR #7):
+              cartella (icona disegnata della PR, non piu' il download) e
+              tastiera ACCESI di default, AI Desktop SPENTO — ognuno con la sua
+              opzione per dispositivo in Impostazioni → input, e un valore gia'
+              salvato che vince sul default nuovo.
+              Ordine del design: − + [cartella] [tastiera] [pannello] ⋯. */}
+          {filesTasto && (
             <button type="button" onClick={apriChiudiFiles}
               title={t('bar-menu-files')} aria-label={t('bar-menu-files')}
               aria-pressed={files?.source === cellaFoca ? 'true' : 'false'}>
               <Icon name="folder" size={18} />
             </button>
           )}
-          {/* Le altre quattro azioni stanno nel menu: la barra resta
-              indietro + centro + − + + + ⋯, come il design. */}
+          {tastieraTasto && (
+            <button type="button" onClick={() => setShowComposer((v) => !v)}
+              title={t('bar-menu-keyboard')} aria-label={t('bar-menu-keyboard')}
+              aria-pressed={showComposer ? 'true' : 'false'}>
+              <Icon name="keyboard" size={18} />
+            </button>
+          )}
+          {/* AI Desktop: doppio opt-in — la cella deve pubblicare un panelUrl
+              E l'opzione del tasto deve essere accesa (spenta di default). */}
+          {panelUrl && pannelloTasto && (
+            <button type="button" onClick={() => setShowPanel((v) => !v)}
+              title={t('bar-menu-panel')} aria-label={t('bar-menu-panel')}
+              aria-pressed={showPanel ? 'true' : 'false'}>
+              <Icon name="monitor" size={18} />
+            </button>
+          )}
+          {/* Le quattro azioni restano ANCHE nel menu ⋯, per intero e con gli
+              stessi sottomenu di sempre: dalla barra non si toglie niente. */}
           <button type="button" className={`nc-bar-menu${showBarMenu ? ' on' : ''}`}
             title={t('bar-menu-open')} aria-label={t('bar-menu-open')}
             aria-haspopup="menu" aria-expanded={showBarMenu ? 'true' : 'false'}

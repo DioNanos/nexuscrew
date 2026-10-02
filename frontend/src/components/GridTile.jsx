@@ -106,8 +106,8 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
             </>
           ) : (
             <>
-              {onZoom && <button onClick={() => onZoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={14} /></button>}
-          {onZoom && <button onClick={() => onZoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={14} /></button>}
+              {onZoom && <button onClick={() => onZoom(-1)} title={t('zoom-out')} aria-label={t('zoom-out')}><Icon name="zoomOut" size={14} /></button>}
+          {onZoom && <button onClick={() => onZoom(+1)} title={t('zoom-in')} aria-label={t('zoom-in')}><Icon name="zoomIn" size={14} /></button>}
           {onSendToDeck && deckTargets.length > 0 && (
             <select
               className="nc-tile-deck"
@@ -135,7 +135,7 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="9" width="12" height="12" rx="1"></rect><path d="M13 3h8v8M21 3l-9 9"></path></svg>
             </button>
           )}
-          {onClose && <button className="nc-tile-close" onClick={() => onClose(tileKey)} title={t('close')}>✕</button>}
+          {onClose && <button className="nc-tile-close" onClick={() => onClose(tileKey)} title={t('close')} aria-label={t('close')}>✕</button>}
         </span>
       </div>
 

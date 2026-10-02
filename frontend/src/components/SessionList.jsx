@@ -657,8 +657,6 @@ export default function SessionList({
       </footer>
       </main>
 
-      <button className="nc-fab" onClick={() => onSettings('fleet', true)} title={t('fleet-new-cell')} aria-label={t('fleet-new-cell')}>+</button>
-
       {powerCellLive && (
         <PowerSheet cell={powerCellLive} token={token} route={Array.isArray(powerCellLive.route) ? powerCellLive.route : []} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
       )}

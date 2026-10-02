@@ -6,18 +6,30 @@
 }
 
 /* Il root dell'app non scorre: su mobile header e comandi restano visibili,
-   mentre solo il roster sottostante usa lo spazio residuo. Il padding in fondo
-   evita che l'ultima card finisca sotto il FAB. */
+   mentre solo il roster sottostante usa lo spazio residuo. */
 .nc-home-scroll {
   min-height: 0; flex: 1 1 auto; overflow-y: auto;
   overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch;
   display: flex; flex-direction: column; gap: 12px;
-  padding: 0 2px 76px 0;
+  padding: 0 2px 8px 0;
 }
 
 /* Wordmark: identità da terminale — mono, cursore a blocco che lampeggia. */
-.nc-home-head { position: relative; }
-.nc-wordmark { font-size: 26px; font-weight: 700; letter-spacing: .5px; color: #d8ffe8; }
+/* Testo e azioni in due colonne: i bottoni occupano la propria, quindi il
+   sottotitolo non puo' finire sotto di loro a nessuna larghezza. Prima erano
+   posizionati in assoluto sopra un sottotitolo a tutta larghezza, e su schermo
+   stretto il testo ci passava sotto e veniva tagliato. */
+.nc-home-head {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  grid-template-areas:
+    "mark actions"
+    "sub  actions";
+  align-items: start;
+  column-gap: 12px;
+}
+.nc-wordmark { grid-area: mark; font-size: 26px; font-weight: 700; letter-spacing: .5px; color: #d8ffe8; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nc-cursor {
   display: inline-block; width: 12px; height: 22px; margin-left: 6px;
   background: #00cc66; vertical-align: -2px;
@@ -25,11 +37,15 @@
 }
 @keyframes nc-blink { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .nc-cursor { animation: none; } }
-.nc-home-sub { margin-top: 4px; font-size: 13px; opacity: .65; }
-/* Azioni header (settings + refresh): contenitore assoluto, bottoni statici. */
+.nc-home-sub { grid-area: sub; margin-top: 4px; font-size: 13px; opacity: .65; }
+/* Azioni header (riordino + settings + refresh): colonna propria della griglia.
+   Puo' andare a capo e restringersi: a schermo stretto, con testo grande o con
+   zoom i tre tasti restano dentro il bordo invece di sfondarlo (ognuno resta
+   bersaglio da 40 px, la misura di .nc-refresh). */
 .nc-head-actions {
-  position: absolute; top: 0; right: 0;
-  display: inline-flex; gap: 6px;
+  grid-area: actions;
+  display: inline-flex; flex-wrap: wrap; justify-content: flex-end;
+  gap: 6px; min-width: 0;
 }
 .nc-refresh {
   display: inline-flex; align-items: center; justify-content: center;
@@ -175,16 +191,6 @@
 }
 .nc-power:active, .nc-menu:active { border-color: #2e7d32; }
 .nc-menu:active { color: #f88; }
-
-/* FAB nuova sessione (fisso bottom-right). */
-.nc-fab {
-  position: fixed; right: 18px; bottom: 18px; z-index: 20;
-  width: 54px; height: 54px; border-radius: 50%;
-  background: #2e7d32; color: #fff; border: none;
-  font-size: 28px; line-height: 1; cursor: pointer;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
-}
-.nc-fab:active { background: #255028; }
 
 /* Picker lingua nel footer (IT · EN · ES). */
 .nc-lang {

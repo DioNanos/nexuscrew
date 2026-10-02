@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiFetch, seenKey } from '../lib/api.js';
 import {t} from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
@@ -17,7 +17,6 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   const [box, setBox] = useState('outbox');
   const [data, setData] = useState({ inbox: [], outbox: [] });
   const [busy, setBusy] = useState('');
-  const fileInput = useRef(null);
 
   async function refresh() {
     try {
@@ -31,21 +30,6 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   }
   useEffect(() => { refresh(); }, [session, node]);
   useEffect(() => { if (filesEvent && filesEvent.session === session) refresh(); }, [filesEvent]);
-
-  async function uploadFiles(files) {
-    for (const f of files) {
-      setBusy(`carico ${f.name}…`);
-      const fd = new FormData();
-      fd.append('session', session);
-      fd.append('file', f);
-      try {
-        const r = await apiFetch(`${base}/files/upload`, token, { method: 'POST', body: fd });
-        const j = await r.json();
-        setBusy(j.error ? `errore: ${j.error}` : '');
-      } catch (e) { setBusy(String(e)); }
-    }
-    refresh();
-  }
 
   async function download(name) {
     const r = await apiFetch(
@@ -85,24 +69,25 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
     <div className="nc-files">
       <header>
         <b>{node ? `${node}:${session}` : session}</b>
-        <button onClick={onClose} title={t('close')}><Icon name="x" size={20} /></button>
+        <button onClick={onClose} title={t('close')} aria-label={t('close')}><Icon name="x" size={20} /></button>
       </header>
+      {/* Una riga sola: scatola attiva e scatola spenta. Il caricamento non sta
+          qui — il file entra nella cella dal menu allegati del composer
+          (voce «Inbox»), che usa la stessa route POST /files/upload. */}
       <nav>
         <button className={box === 'outbox' ? 'on' : ''} onClick={() => setBox('outbox')}>outbox</button>
         <button className={box === 'inbox' ? 'on' : ''} onClick={() => setBox('inbox')}>inbox</button>
-        <button className="up" onClick={() => fileInput.current && fileInput.current.click()}><Icon name="upload" size={18} /> {t('upload')}</button>
-        <input
-          type="file" multiple ref={fileInput} style={{ display: 'none' }}
-          onChange={(e) => { uploadFiles(Array.from(e.target.files || [])); e.target.value = ''; }}
-        />
       </nav>
       {busy && <div className="nc-busy">{busy}</div>}
       <ul>
         {data[box].map((f) => (
           <li key={f.name}>
-            <span className="name" onClick={() => download(f.name)}>{f.name}</span>
+            {/* Il nome e' testo: leggibile e selezionabile, mai un comando. */}
+            <span className="name">{f.name}</span>
             <small>{fmtSize(f.size)}</small>
-            <button onClick={() => del(f.name)} title={t('delete')}><Icon name="trash" size={18} /></button>
+            <button type="button" onClick={() => download(f.name)} title={t('files-download')}
+              aria-label={`${t('files-download')} ${f.name}`}><Icon name="download" size={18} /></button>
+            <button onClick={() => del(f.name)} title={t('delete')} aria-label={`${t('delete')} ${f.name}`}><Icon name="trash" size={18} /></button>
           </li>
         ))}
         {data[box].length === 0 && <li className="empty">{t('empty-files')}</li>}

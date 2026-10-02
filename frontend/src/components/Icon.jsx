@@ -85,6 +85,15 @@ const PATHS = {
       <path d="M5 20h14" />
     </>
   ),
+  // Download (simmetrico di upload): freccia giu' in un vassoio aperto in alto.
+  // E' il tasto di scarico delle righe del pannello File.
+  download: (
+    <>
+      <path d="M12 4v10" />
+      <polyline points="8 10 12 14 16 10" />
+      <path d="M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4" />
+    </>
+  ),
   chevronLeft: <polyline points="14 6 8 12 14 18" />,
   chevronUp: <polyline points="6 14 12 8 18 14" />,
   chevronDown: <polyline points="6 10 12 16 18 10" />,
@@ -146,6 +155,15 @@ const PATHS = {
     <>
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </>
+  ),
+  // La doppia vista: una finestra divisa col pannello destro (il «lato B»
+  // dove la riga si affianca). Solo tratto, come tutto il set: il fill resta
+  // none, il colore lo dà currentColor del bottone che la ospita.
+  splitView: (
+    <>
+      <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" />
+      <line x1="14.5" y1="5.5" x2="14.5" y2="18.5" />
     </>
   ),
   // Copia (feather "copy"): bottone copia della riga authorized_keys.
