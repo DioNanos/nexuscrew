@@ -6,9 +6,8 @@
 // il parse di config.json falliva in un `catch (_) { current = {}; }` e, quando
 // l'init riceveva una porta (percorso di `fleet up`, commands.js:735), il file
 // veniva RISCRITTO con `{ port }`. Cosi' sparivano le chiavi dell'operatore —
-// `autoUpdate` tornava a true da solo (il default e' true, lib/config.js:84, e
-// tutti i lettori usano «diverso da false») e `wizardDone` faceva riaprire il
-// wizard.
+// `autoUpdate` tornava a acceso da solo (oggi il default e' false e tutti i
+// lettori usano «=== true») e `wizardDone` faceva riaprire il wizard.
 //
 // La regola qui e' quella che il repo applica gia' a fleet.json (init.js:71-74):
 // un file presente e invalido non si riscrive, si dichiara e si prosegue.

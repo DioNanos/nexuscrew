@@ -85,6 +85,47 @@ beforeEach(() => {
   mocks.getDiagnosticsLogs.mockResolvedValue({ events: [] });
 });
 
+describe('Settings: autoUpdate parte spento (stesso criterio del backend)', () => {
+  const label = /automatic updates from npm/;
+
+  it('parte spento e resta spento se il GET fallisce', async () => {
+    mocks.getSettings.mockRejectedValue(new Error('GET ko'));
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+    expect((await screen.findByRole('checkbox', { name: label })).checked).toBe(false);
+  });
+
+  const base = {
+    version: '0.9.55', platform: 'linux', port: 41820,
+    service: { installed: true, active: true, boot: true }, alternateScreen: false,
+  };
+
+  it('con autoUpdate assente nella risposta resta spento', async () => {
+    mocks.getSettings.mockResolvedValue({ ...base }); // senza autoUpdate
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+    const check = await screen.findByRole('checkbox', { name: label });
+    await waitFor(() => expect(check.checked).toBe(false));
+  });
+
+  it('con autoUpdate:true esplicito si accende', async () => {
+    mocks.getSettings.mockResolvedValue({ ...base, autoUpdate: true });
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+    const check = await screen.findByRole('checkbox', { name: label });
+    await waitFor(() => expect(check.checked).toBe(true));
+  });
+
+  it('accendere la casella salva autoUpdate:true', async () => {
+    mocks.getSettings.mockResolvedValue({
+      version: '0.9.55', platform: 'linux', port: 41820,
+      service: { installed: true, active: true, boot: true }, alternateScreen: false, // assente -> spento
+    });
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+    const check = await screen.findByRole('checkbox', { name: label });
+    expect(check.checked).toBe(false);
+    fireEvent.click(check);
+    await waitFor(() => expect(mocks.saveConfig).toHaveBeenCalledWith('token', { autoUpdate: true }));
+  });
+});
+
 describe('Settings Share partial OFF convergence', () => {
   it.each([
     [

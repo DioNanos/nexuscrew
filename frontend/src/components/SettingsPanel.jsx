@@ -963,7 +963,9 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
   const [confirmRotate, setConfirmRotate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [updateView, setUpdateView] = useState(null);
-  const [autoUpdate, setAutoUpdate] = useState(true);
+  // Spento in partenza, come il default del server: la casella non deve mai
+  // mostrarsi accesa prima del GET, ne' restare accesa se il GET fallisce.
+  const [autoUpdate, setAutoUpdate] = useState(false);
   const [alternateScreen, setAlternateScreen] = useState(false);
   // Il desktop grafico: spunta + stato reale del container. Il GET è su
   // chiamata esplicita (quando la scheda si apre), mai nel percorso caldo.
@@ -971,7 +973,7 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
 
   useEffect(() => {
     setUpdateView((settings && settings.update) || null);
-    setAutoUpdate(!settings || settings.autoUpdate !== false);
+    setAutoUpdate(!!(settings && settings.autoUpdate === true));
     setAlternateScreen(!!(settings && settings.alternateScreen));
   }, [settings]);
 
