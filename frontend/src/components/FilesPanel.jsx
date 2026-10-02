@@ -69,7 +69,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
     <div className="nc-files">
       <header>
         <b>{node ? `${node}:${session}` : session}</b>
-        <button onClick={onClose} title={t('close')}><Icon name="x" size={20} /></button>
+        <button onClick={onClose} title={t('close')} aria-label={t('close')}><Icon name="x" size={20} /></button>
       </header>
       {/* Una riga sola: scatola attiva e scatola spenta. Il caricamento non sta
           qui — il file entra nella cella dal menu allegati del composer
@@ -87,7 +87,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
             <small>{fmtSize(f.size)}</small>
             <button type="button" onClick={() => download(f.name)} title={t('files-download')}
               aria-label={`${t('files-download')} ${f.name}`}><Icon name="download" size={18} /></button>
-            <button onClick={() => del(f.name)} title={t('delete')}><Icon name="trash" size={18} /></button>
+            <button onClick={() => del(f.name)} title={t('delete')} aria-label={`${t('delete')} ${f.name}`}><Icon name="trash" size={18} /></button>
           </li>
         ))}
         {data[box].length === 0 && <li className="empty">{t('empty-files')}</li>}

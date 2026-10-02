@@ -19,6 +19,11 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
 .nc-bar-right { margin-left: auto; display: flex; flex-wrap: wrap; gap: 4px;
   flex: 0 1 auto; min-width: 0; justify-content: flex-end; }
 
+/* Bersagli ≥40 px anche su desktop: i tasti della barra (vista singola)
+   restano compatti ma con area cliccabile di almeno 40×40. Il coarse qui
+   sotto sale a 42. */
+.nc-bar button, .nc-bar-right button { min-height: 40px; min-width: 40px; }
+
 /* Touch targets: header buttons grandi e leggibili sul telefono. */
 @media (pointer: coarse) {
   .nc-bar button, .nc-bar-right button { min-height: 42px; min-width: 42px; font-size: 20px; }

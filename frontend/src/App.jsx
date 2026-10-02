@@ -648,8 +648,8 @@ export function SingleView({
           {sub && <small className="nc-bar-sub">{sub}</small>}
         </span>
         <span className="nc-bar-right">
-          <button onClick={() => zoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
-          <button onClick={() => zoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
+          <button onClick={() => zoom(-1)} title={t('zoom-out')} aria-label={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
+          <button onClick={() => zoom(+1)} title={t('zoom-in')} aria-label={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
           {/* I tre tasti DIRETTI, fuori dal menu ⋯ (decisione DAG sulla PR #7):
               cartella (icona disegnata della PR, non piu' il download) e
               tastiera ACCESI di default, AI Desktop SPENTO — ognuno con la sua

@@ -31,10 +31,17 @@
 .nc-files li.empty { opacity: 0.5; justify-content: center; }
 .nc-busy { padding: 4px 10px; font-size: 12px; color: #e0a030; }
 
+/* Bersagli ≥40 px anche su desktop: close del header, nav outbox/inbox e
+   tasti di riga (download/cestino) con area cliccabile di almeno 40 px.
+   Il coarse qui sotto sale a 42. */
+.nc-files header button { min-height: 40px; min-width: 40px; }
+.nc-files nav button { min-height: 40px; }
+.nc-files li button { min-height: 40px; min-width: 40px; }
+
 /* Touch: nav e tasti di riga alti/larghi abbastanza da essere tap-pabili. */
 @media (pointer: coarse) {
-  .nc-files nav button, .nc-files li { min-height: 42px; }
-  .nc-files li button { min-width: 42px; min-height: 42px; }
+  .nc-files header button, .nc-files nav button, .nc-files li { min-height: 42px; }
+  .nc-files header button, .nc-files li button { min-width: 42px; min-height: 42px; }
 }
 
 .nc-files header button, .nc-files nav button, .nc-files li button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
