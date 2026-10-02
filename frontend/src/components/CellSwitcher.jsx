@@ -10,6 +10,7 @@ import { hostRouteKey } from '../lib/host-designation.js';
 import { liveHostView } from '../lib/live-host-view.js';
 import { runLiveHostCommand } from '../lib/live-host-command.js';
 import RosterHandle from './RosterHandle.jsx';
+import Icon from './Icon.jsx';
 import { CellActionsSheet, cellActionsItems, cellActionsState } from './CellActions.jsx';
 import { applyCellStar, cellStarView } from '../lib/cell-star.js';
 import { liveHostIndicatorKeys } from '../lib/live-host-view.js';
@@ -637,10 +638,7 @@ export default function CellSwitcher({
                       event.stopPropagation();
                       if (!currentRow && row.selectable) onToggleSide(row);
                     }}>
-                    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
-                      <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" />
-                      <line x1="3.5" y1="12" x2="20.5" y2="12" />
-                    </svg>
+                    <Icon name="splitView" size={20} />
                   </button>
                 )}
                 {/* Le azioni della riga in un foglio dal basso: il pin e la Live.
