@@ -2,6 +2,18 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.55 — 2026-10-02
+
+Grazie a @sadoc1184-droid per le PR #7, #8 e #10.
+
+- **Pannello file: ogni riga ha il suo scaricamento.** (PR #8) Il pannello dei file della cella mostra il tasto di scaricamento sulla riga del file, con la navigazione delle cartelle su una sola riga e i colori del tema: prima si poteva solo caricare, non scaricare un singolo file.
+- **L'intestazione della home non si sovrappone più al testo.** (PR #10) Il titolo e il sottotitolo hanno la loro colonna accanto ai tasti: su schermo stretto il testo non finisce più sotto i bottoni e non viene tagliato.
+- **La barra della vista singola ha i tasti «cartella» e «tastiera» visibili di default.** (PR #7, adattata alle nostre decisioni) La cartella usa l'icona disegnata nuova; il menu ⋯ resta per intero con tutti i suoi sottomenu e dalla barra non si toglie niente. AI Desktop è spenta di default. Cartella, tastiera e AI Desktop hanno ciascuno il suo interruttore in Impostazioni › input, e il renderer GPU si sceglie in Impostazioni › sistema. Un valore già salvato resta come l'operatore l'ha lasciato.
+- **Niente più «+» in fondo alla lista delle celle.** Il tasto fisso in basso a destra è stato tolto: aggiungere una cella resta possibile da Impostazioni › fleet e, su desktop, dal «+ Nuovo» della barra laterale.
+- **Tasti più grandi e leggibili.** Con il testo di sistema ingrandito o lo zoom del browser al 200% le icone della barra e delle intestazioni non escono più dallo schermo: vanno a capo e restano toccabili.
+- **Il tasto «seconda finestra» mostra la sua icona.** (PR #7) Il bottone che affianca una cella al lato B non è più un quadrato pieno: il disegno si vede anche nello stato attivo.
+- **L'aggiornamento automatico è spento di default**: si accende da Impostazioni o con `nexuscrew autoupdate on`.
+
 ## 0.9.54 — 2026-10-01
 
 - **Il proxy federato non crolla più quando la porta del tunnel rifiuta la connessione.** Il listener degli errori sull'upstream federato viene registrato prima del connect: un rifiuto sulla porta del tunnel viene gestito come errore di connessione invece di propagarsi come eccezione non catturata e abbattere il processo.
