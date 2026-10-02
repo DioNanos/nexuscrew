@@ -59,7 +59,7 @@ describe('Settings Input tab', () => {
     expect(screen.getByRole('checkbox', { name: /Show the tall Enter keypad key/ }).checked).toBe(true);
   });
 
-  // I tre tasti diretti della barra (decisione DAG sulla PR #7): cartella e
+  // I tre tasti diretti della barra (decisione dell'operatore sulla PR #7): cartella e
   // tastiera ACCESI di default, AI Desktop SPENTO. Ognuno scrive la sua
   // chiave per dispositivo.
   it('i tasti diretti della barra: default acceso/acceso/spento, e il click commuta', () => {

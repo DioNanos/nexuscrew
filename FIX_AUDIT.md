@@ -5,7 +5,7 @@ bottone/tasto a cui si riferisce.
 
 ## B4 — bottone «seconda finestra» (affiancata) nella lista celle
 
-Difetto (screenshot DAG dal telefono, cassetto «Cells»): il bottone che
+Difetto (screenshot dell'operatore dal telefono, cassetto «Cells»): il bottone che
 affianca la cella al lato B mostrava un **quadrato nero pieno** su ogni riga,
 anche nello stato attivo (riga con bordo verde): l'icona dentro non si vedeva.
 

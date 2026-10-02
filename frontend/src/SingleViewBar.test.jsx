@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
-// barra alta della vista singola — decisioni DAG sulla PR #7.
+// barra alta della vista singola — decisioni dell'operatore sulla PR #7.
 //
 // Cosa presidia: la barra espone −, +, i tasti DIRETTI cartella (icona
 // disegnata della PR, non il download) e tastiera, il tasto AI Desktop SOLO

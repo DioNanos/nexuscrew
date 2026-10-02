@@ -127,7 +127,7 @@ function rel(epochSec) {
 // Sono le STESSE azioni di prima, con lo stesso stato vero: qui si decide solo
 // l'ordine e quali compaiono. Una voce che non ha il suo handler non c'e' — e'
 // il contratto di CellActionsMenu, gli stessi item delle azioni cella.
-// Decisione DAG sulla PR #7: il menu ⋯ resta PER INTERO con tutti i suoi
+// Decisione dell'operatore sulla PR #7: il menu ⋯ resta PER INTERO con tutti i suoi
 // sottomenu; i tasti diretti (cartella, tastiera, AI Desktop) sono AGGIUNTI
 // fuori dal menu, non una sostituzione.
 export function barActionsItems({
@@ -650,7 +650,7 @@ export function SingleView({
         <span className="nc-bar-right">
           <button onClick={() => zoom(-1)} title={t('zoom-out')} aria-label={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
           <button onClick={() => zoom(+1)} title={t('zoom-in')} aria-label={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
-          {/* I tre tasti DIRETTI, fuori dal menu ⋯ (decisione DAG sulla PR #7):
+          {/* I tre tasti DIRETTI, fuori dal menu ⋯ (decisione dell'operatore sulla PR #7):
               cartella (icona disegnata della PR, non piu' il download) e
               tastiera ACCESI di default, AI Desktop SPENTO — ognuno con la sua
               opzione per dispositivo in Impostazioni → input, e un valore gia'

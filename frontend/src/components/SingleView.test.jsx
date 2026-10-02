@@ -54,7 +54,7 @@ beforeEach(() => {
   fixture.sessions = [{ name: 'cloud-Dev', activity: 0, attached: false, windows: 1 }];
   fixture.cells = [{ cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'claude.native', key: 'A' }];
   // Il tasto AI Desktop in barra e' un'opzione per dispositivo spenta di
-  // default (decisione DAG sulla PR #7): questi test del pannello D8 la
+  // default (decisione dell'operatore sulla PR #7): questi test del pannello D8 la
   // accendono per avere il bottone.
   localStorage.clear();
   localStorage.setItem('nc_bar_panel_button', 'on');

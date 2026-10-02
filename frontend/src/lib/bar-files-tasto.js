@@ -6,7 +6,7 @@
 // scheda Impostazioni → input: un modulo condiviso evita il ciclo
 // App → SettingsPanel → App.
 //
-// Default (decisione DAG sulla PR #7): cartella e tastiera ACCESI, AI Desktop
+// Default (decisione dell'operatore sulla PR #7): cartella e tastiera ACCESI, AI Desktop
 // SPENTO. Il default vale SOLO per chi non ha mai salvato la chiave: un valore
 // gia' salvato ('on'/'off'), in un senso o nell'altro, si rispetta — chi aveva
 // spento il tasto file prima del cambio non se lo ritrova in barra.

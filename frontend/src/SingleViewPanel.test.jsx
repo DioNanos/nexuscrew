@@ -49,7 +49,7 @@ beforeEach(() => {
   localStorage.clear();
   localStorage.setItem('nc_lang', 'en');
   // Il tasto AI Desktop e' un'opzione per dispositivo SPENTA di default
-  // (decisione DAG sulla PR #7): qui si accende, e il caso del default la
+  // (decisione dell'operatore sulla PR #7): qui si accende, e il caso del default la
   // lascia spenta da solo. Il tasto file (acceso di default) serve da segnale
   // che il poll ha pubblicato lo stato della cella.
   localStorage.setItem('nc_bar_panel_button', 'on');
