@@ -36,7 +36,7 @@ test('a pending forbidden stream body has a deadline and releases the owner slot
   });
   void client.poll(); await flush();
   assert.equal(streams, 1);
-  t.mock.timers.tick(59999); await flush();
+  t.mock.timers.tick(4999); await flush();
   assert.equal(signal.aborted, false, 'the body deadline does not fire early');
   t.mock.timers.tick(1); await flush();
   assert.equal(signal.aborted, true, 'the forbidden response body deadline aborts its slot');
