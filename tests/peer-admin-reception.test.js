@@ -107,3 +107,16 @@ test('migration opens an admin feed at startup without a manual restart or toggl
   assert.ok(view && !view.stale, 'a recognized admin starts receiving an authoritative owner snapshot');
   assert.equal(view.askReplyAccess, true);
 });
+
+for (const kind of ['missing', 'invalid', 'symlink']) test(`startup migration reports the appropriate store condition (${kind})`, async t => {
+  const f = fixture(t); const messages = [];
+  if (kind === 'missing') fs.unlinkSync(f.nodesPath);
+  if (kind === 'invalid') fs.writeFileSync(f.nodesPath, '{invalid');
+  if (kind === 'symlink') {
+    const target = path.join(f.home, 'store-target'); fs.renameSync(f.nodesPath, target); fs.symlinkSync(target, f.nodesPath);
+  }
+  await startup(t, f, { log: message => messages.push(message) });
+  const migration = messages.filter(message => message.includes('Admin reception migration skipped'));
+  if (kind === 'missing') assert.equal(migration.some(message => message.includes('unreadable')), false);
+  else assert.ok(migration.some(message => message.includes('NODES_STORE_INVALID')), JSON.stringify(migration));
+});
