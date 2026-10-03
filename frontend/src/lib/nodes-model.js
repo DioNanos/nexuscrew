@@ -113,10 +113,22 @@ function sessionsVerifiedAt(available, r) {
   return Number.isFinite(at) ? at : null;
 }
 
-export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases } = {}) {
+// `pendingReads` (opzionale): chiavi di lettura in corso — la chiave nuda
+// della route o `key#sessions` / `key#fleet` per la singola fonte. Una lettura
+// in corso NON e' un esito: la route non diventa unreachable, un gruppo nuovo
+// e' "pending" e uno gia' noto conserva il proprio snapshot marcato
+// "checking". `previousGroups` (opzionale) e' la proiezione precedente, da
+// cui riprendere stato e snapshot.
+export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases, pendingReads, previousGroups } = {}) {
   const out = [];
   const directRoutes = new Set();
   const seenIds = new Set();
+  const routeInProgress = (key) => Boolean(pendingReads && (
+    pendingReads.has(key) || pendingReads.has(`${key}#sessions`) || pendingReads.has(`${key}#fleet`)));
+  const findPrevious = (key, name) => (Array.isArray(previousGroups)
+    ? previousGroups.find((g) => g.name === name
+      && (Array.isArray(g.route) ? g.route.join('/') : '') === key)
+    : null);
   for (const n of Array.isArray(nodes) ? nodes : []) {
     if (!n || typeof n.name !== 'string' || !NODE_NAME_RE.test(n.name)) continue;
     if (n.direction === 'inbound' && n.shared !== true) continue;
@@ -159,6 +171,35 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     const fleetInventoryPresent = fleetInventoryKnown(f, fleetState);
     // A host without a running tmux server can still expose a complete Fleet
     // inventory. Do not hide its cells merely because /sessions is degraded.
+    const sessionsPendingNow = r && r.pendingRead === true;
+    const fleetPendingNow = f && f.pendingRead === true;
+    if (routeInProgress(key) && (sessionsPendingNow || fleetPendingNow)) {
+      const previous = (!n.stale) ? findPrevious(key, n.name) : null;
+      if (previous) {
+        // Gruppo gia' noto: stato e snapshot precedenti sono conservati (e
+        // NON rinnovati come se il riuso fosse una verifica fresca), con un
+        // marcatore che distingue il riuso da un esito nuovo.
+        out.push({ ...previous, checking: true });
+        continue;
+      }
+      const sessionsEsito = sessionsPendingNow
+        ? false
+        : Boolean(r && (Array.isArray(r.sessions) || r.error));
+      const fleetEsito = fleetPendingNow
+        ? false
+        : Boolean(f && (f.fleetState !== undefined || f.available !== undefined));
+      if (!sessionsEsito && !fleetEsito) {
+        // Gruppo nuovo senza alcuna lettura conclusa: pending, non unreachable.
+        out.push({
+          ...base, checking: true, status: 'pending',
+          sessions: [], cells: [], unmanaged: [], fleetAvailable: false, pendingRead: true,
+        });
+        continue;
+      }
+      // Una sola fonte e' in corso: l'altra e' gia' esito e costruisce il
+      // gruppo normale, marcato in corso.
+      base.checking = true;
+    }
     if (!sessionsAvailable && !fleetInventoryPresent) {
       // R21: la CAUSA del mancato raggiungimento viaggia col gruppo: tre
       // esiti (502/403/404) suggeriscono tre azioni diverse a chi guarda.
@@ -205,6 +246,29 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
     const fleetState = fleetStateOf(f);
     const fleetInventoryAvailable = fleetState === 'available' && fleetInventoryKnown(f, fleetState);
     const fleetInventoryPresent = fleetInventoryKnown(f, fleetState);
+    const sessionsPendingNow = r && r.pendingRead === true;
+    const fleetPendingNow = f && f.pendingRead === true;
+    if (routeInProgress(key) && (sessionsPendingNow || fleetPendingNow)) {
+      const previous = (!n.stale) ? findPrevious(key, n.name) : null;
+      if (previous) {
+        out.push({ ...previous, checking: true });
+        continue;
+      }
+      const sessionsEsito = sessionsPendingNow
+        ? false
+        : Boolean(r && (Array.isArray(r.sessions) || r.error));
+      const fleetEsito = fleetPendingNow
+        ? false
+        : Boolean(f && (f.fleetState !== undefined || f.available !== undefined));
+      if (!sessionsEsito && !fleetEsito) {
+        out.push({
+          ...base, checking: true, status: 'pending',
+          sessions: [], cells: [], unmanaged: [], fleetAvailable: false, pendingRead: true,
+        });
+        continue;
+      }
+      base.checking = true;
+    }
     if (!sessionsAvailable && !fleetInventoryPresent) {
       // R21: come sopra — la causa distingue l'assenza dal rifiuto dalla
       // rotta inesistente, e il recupero non deve buttarla via.

@@ -44,6 +44,7 @@ const VPS_VL_NODES = {
 const calls = vi.hoisted(() => ({ vlRoutes: [] }));
 
 vi.mock('../lib/api.js', () => ({
+  ROSTER_READ_TIMEOUT_MS: 8000,
   apiFetch: vi.fn(async () => ({ json: async () => ({ instanceId: PHONE_INSTANCE, version: 'test' }) })),
   getNodes: vi.fn(async () => ({ nodes: [] })),
   getTopology: vi.fn(async () => PHONE_TOPOLOGY),

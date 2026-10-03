@@ -11,7 +11,9 @@ import {
   getDiagnosticsStatus, getDiagnosticsLogs, setDiagnosticsVerbose, clearDiagnosticsLogs,
   getAudioSettings, setAudioConsent, testLocalAudio, stopLocalAudio,
   getAudioGroups, saveAudioGroup, deleteAudioGroup,
+  getRouteConfig, ROSTER_READ_TIMEOUT_MS,
 } from '../lib/api.js';
+import { createPollGuard } from '../lib/poll-guard.js';
 import { validateNodeForm, tunnelInfo, toSlug, isValidLabel } from '../lib/settings-model.js';
 import PairingCard from './PairingCard.jsx';
 import NodeSheet from './NodeSheet.jsx';
@@ -1275,67 +1277,122 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
     };
   }, [tab, updateTabOverflow]);
 
+  // Guardia generazionale e abort del giro: condivisi fra poll e refresh
+  // manuale. Un giro occupa la guardia finche' TUTTE le sue letture limitate
+  // sono concluse (anche se l'UI e' gia' stata pubblicata): i tick su giro
+  // occupato si saltano, non si accodano.
+  const refreshGuardRef = useRef(createPollGuard());
+  const refreshAbortRef = useRef(null);
+  // Snapshot separati per fonte: i peer Fleet e i nodi VL non si sovrascrivono
+  // a vicenda e la composizione corrente viene ricalcolata a ogni
+  // pubblicazione, cosi' una chiusura su un vecchio array non cancella dati
+  // nuovi.
+  const peersSnapshotRef = useRef([]);
+  const vlSnapshotRef = useRef(new Map());
+
+  const publishNodes = useCallback((guard, round) => {
+    if (!guard.isCurrent(round)) return;
+    const peers = peersSnapshotRef.current;
+    const vl = [];
+    const seen = new Set();
+    for (const list of vlSnapshotRef.current.values()) {
+      for (const peer of list) {
+        const routeKey = Array.isArray(peer.route) && peer.route.length ? peer.route.join('/') : 'local';
+        const key = `${routeKey}:${peer.nodeId || peer.name || peer.label || ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        vl.push(peer);
+      }
+    }
+    setNodes([...peers, ...vl]);
+  }, []);
+
   const refresh = useCallback(async () => {
+    const guard = refreshGuardRef.current;
+    const round = guard.begin();
+    if (round === null) return;
+    const controller = new AbortController();
+    refreshAbortRef.current = controller;
+    const opts = { timeoutMs: ROSTER_READ_TIMEOUT_MS, signal: controller.signal };
     try {
-      const s = await getSettings(token);
-      setSettings(s); setLoadErr(null);
-    } catch (e) { setLoadErr(String(e.message || e)); }
-    try {
-      const j = await getPeers(token);
-      const peers = j.peers || [];
-      setPeersAccessRevision(Number.isInteger(j.accessRevision) ? j.accessRevision : null);
-      // Unione multi-owner SOLO lato presentazione (design UI nodi VL remoti,
-      // 2026-08-05): la federazione di /vl-nodes/* e' stata ripristinata
-      // (b0e8bd1) — un nodo VL puo' appartenere a QUALUNQUE owner autorizzato
-      // raggiungibile via /api/topology, non solo al locale. Semantica
-      // portata da `readVlDirectory` (lib/mcp/tools.js): owner locale +
-      // owner federati non-stale, interrogati in parallelo, un fallimento
-      // per-owner non blocca gli altri. Il contratto di /api/peers non
-      // cambia — questo resta un arricchimento lato presentazione.
-      let vlPeers = [];
-      let unavailable = [];
+      // Settings e peer partono IN PARALLELO e con esiti indipendenti: i
+      // peer si pubblicano al LORO arrivo, senza aspettare le settings.
+      getSettings(token, opts).then((s) => {
+        if (!guard.isCurrent(round)) return;
+        setSettings(s); setLoadErr(null);
+      }).catch((e) => {
+        if (!guard.isCurrent(round)) return;
+        setLoadErr(String(e?.message || e));
+      });
+      getPeers(token, opts).then((j) => {
+        if (!guard.isCurrent(round)) return;
+        const peers = j.peers || [];
+        peersSnapshotRef.current = peers;
+        setPeersAccessRevision(Number.isInteger(j.accessRevision) ? j.accessRevision : null);
+        publishNodes(guard, round);
+      }).catch((e) => {
+        if (!guard.isCurrent(round)) return;
+        setLoadErr(String(e?.message || e));
+      });
+      // Arricchimento VL (design UI nodi VL remoti, 2026-08-05): unione
+      // multi-owner SOLO lato presentazione. Ogni owner termina entro il
+      // tetto proprio (4 s dalla partenza della sua GET) e non trattiene ne'
+      // i peer ne' gli altri owner.
       try {
         const [config, topology] = await Promise.all([
-          apiFetch('/api/config', token).then((r) => r.json()).catch(() => null),
-          getTopology(token).catch(() => null),
+          getRouteConfig(token, [], opts).then((j) => j).catch(() => null),
+          getTopology(token, opts).then((j) => j).catch(() => null),
         ]);
+        if (!guard.isCurrent(round)) return;
         const localInstanceId = config && typeof config.instanceId === 'string' ? config.instanceId : '';
         const owners = [
           { instanceId: localInstanceId || null, route: [], label: null },
           ...topologyVlOwners(topology, localInstanceId),
         ];
-        const results = await Promise.all(owners.map(async (owner) => {
+        const unavailable = [];
+        await Promise.all(owners.map(async (owner) => {
+          const ownerKey = owner.route.join('/') || 'local';
           try {
             const payload = await getVlNodes(token, owner.route);
+            if (!guard.isCurrent(round)) return;
             const peers = (payload.nodes || []).map((n) => vlNodeToPeer(n, owner)).filter(Boolean);
-            return { ok: true, peers };
-          } catch (error) { return { ok: false, owner, error }; }
+            vlSnapshotRef.current.set(ownerKey, peers);
+          } catch (error) {
+            if (!guard.isCurrent(round)) return;
+            // Il locale mantiene il degrado silenzioso (feature non
+            // installata non e' un "owner che non risponde"). Un owner REMOTO
+            // che non risponde entra in vlUnavailable; i suoi ultimi VL noti
+            // restano nella composizione, presentati come dati non
+            // aggiornati, mai come una lettura nuova.
+            if (owner.route.length === 0) return;
+            unavailable.push({
+              instanceId: owner.instanceId, label: owner.label,
+              route: owner.route,
+              failure: /timeout/i.test(String(error?.message || error)) ? 'timeout' : 'unreachable',
+            });
+          }
         }));
-        for (const result of results) {
-          if (result.ok) { vlPeers.push(...result.peers); continue; }
-          // Il locale mantiene il degrado silenzioso di step 1/2 (feature
-          // non installata/disattivata non e' un "owner che non risponde").
-          // Solo un owner REMOTO che non risponde entra nell'elenco visibile
-          // (invariante 1): sparire in silenzio si legge come "non ha nodi",
-          // che e' un'altra cosa.
-          if (result.owner.route.length === 0) continue;
-          unavailable.push({
-            instanceId: result.owner.instanceId, label: result.owner.label,
-            route: result.owner.route,
-            failure: /timeout/i.test(String(result.error?.message || result.error)) ? 'timeout' : 'unreachable',
-          });
-        }
+        if (!guard.isCurrent(round)) return;
+        setVlUnavailable(unavailable);
+        publishNodes(guard, round);
       } catch (_) { /* arricchimento VL opzionale: i peer Fleet restano comunque */ }
-      setVlUnavailable(unavailable);
-      setNodes([...peers, ...vlPeers]);
-    } catch (e) { setLoadErr(String(e.message || e)); }
-  }, [token]);
+    } finally {
+      if (refreshAbortRef.current === controller) refreshAbortRef.current = null;
+      guard.end(round);
+    }
+  }, [token, publishNodes]);
 
   // Poll leggero (5s) finché il pannello è aperto: stato tunnel per-nodo fresco.
   useEffect(() => {
     refresh();
     const id = setInterval(refresh, 5000);
-    return () => clearInterval(id);
+    return () => {
+      clearInterval(id);
+      // Cleanup: la guardia si invalida (un giro vecchio non publica piu') e
+      // le letture del giro in volo vengono abortite.
+      refreshGuardRef.current.reset();
+      if (refreshAbortRef.current) refreshAbortRef.current.abort();
+    };
   }, [refresh]);
 
   // Stato READONLY dal server (config effettiva, env inclusa): mutanti disabilitati.

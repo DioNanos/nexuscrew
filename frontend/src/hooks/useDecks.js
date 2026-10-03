@@ -355,9 +355,13 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = [], n
       // deve far lampeggiare offline la rail. Owner non-up (nessun reload
       // in arrivo): degrado esplicito, come prima.
       const reloading = owner.status === 'up';
+      // Un owner "pending" (lettura della discovery ancora in corso) non e'
+      // un esito: la disponibilita' gia' nota resta com'e', senza degradazione
+      // ne' marcatura stale. Il degrado arriva da uno stato non-up confermato.
+      const pending = owner.status === 'pending';
       return [{
         ...d,
-        available: reloading ? d.available !== false : false,
+        available: pending ? d.available : (reloading ? d.available !== false : false),
         stale: owner.stale === true,
         ownerRoute: [...owner.route],
         ownerLabel: owner.label,
