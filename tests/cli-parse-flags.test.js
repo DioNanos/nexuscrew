@@ -46,7 +46,7 @@ const ESEMPI = Object.freeze({
 });
 
 function nodeHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d391-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cli-flags-'));
   fs.mkdirSync(path.join(home, '.nexuscrew'), { recursive: true });
   store.initStore(path.join(home, '.nexuscrew', 'nodes.json'));
   return home;
