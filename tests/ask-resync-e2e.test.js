@@ -43,6 +43,7 @@ function boot(t, dir, { cleanup = true } = {}) {
     eventFeedClientMinSnapshotIntervalMs: 50,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -292,6 +293,7 @@ test('E2E: recupero fallito → una richiesta di snapshot per scadenza, non uno 
     eventFeedClientResyncCooldownStepsMs: [300, 600, 1000],
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -380,6 +382,7 @@ function brokenRecoveryTest(label, failureMode, expectLastError) {
       eventFeedClientResyncCooldownStepsMs: [300, 600, 1000],
       sessionExistsSeam: () => true,
       pasteSeam: () => true,
+      askSubmit: () => ({ outcome: 'submitted', submitted: true }),
       settingsSeams: {
         platform: 'linux', uid: 1000,
         execImpl: () => { throw new Error('exec disabled in test'); },
@@ -473,6 +476,7 @@ test('E2E: frame malformato dopo snapshot valido — uno snapshot per finestra',
     eventFeedClientResyncCooldownStepsMs: [2000, 5000, 10000],
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -557,6 +561,7 @@ test('E2E: N GET /api/asks in 1 s → al massimo uno snapshot per owner', async 
     eventFeedClientMinSnapshotIntervalMs: 1000,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -637,6 +642,7 @@ test('E2E: snapshot in volo — lo skip non chiude alias aperti', async (t) => {
     eventFeedClientMinSnapshotIntervalMs: 1000,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -716,6 +722,7 @@ test('E2E: corpo che non finisce — la porta aborta e la GET risponde', async (
     eventFeedClientMinSnapshotIntervalMs: 1000,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -802,6 +809,7 @@ test('E2E: skip in finestra → un retry alla scadenza chiude l\'alias senza nuo
     eventFeedClientMinSnapshotIntervalMs: 1000,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -881,6 +889,7 @@ function unsubRejectionTest(label, snapBody, subscribed = false) {
       eventFeedClientMinSnapshotIntervalMs: 1000,
       sessionExistsSeam: () => true,
       pasteSeam: () => true,
+      askSubmit: () => ({ outcome: 'submitted', submitted: true }),
       settingsSeams: {
         platform: 'linux', uid: 1000,
         execImpl: () => { throw new Error('exec disabled in test'); },
@@ -985,6 +994,7 @@ test('E2E: retry programmato del reconcile — skipped in finestra arma un secon
     eventFeedClientMinSnapshotIntervalMs: 1000,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },

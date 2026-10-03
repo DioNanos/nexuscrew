@@ -20,6 +20,7 @@ async function boot(t, label) {
     tokenPath: path.join(configDir, 'token'), filesRoot: path.join(home, 'files'),
     port: 0, fleetEnabled: false, sessionExistsSeam: () => true,
     pasteSeam: async (session, text) => { pastes.push({ session, text }); return true; },
+    askSubmit: async (session, text) => { pastes.push({ session, text }); return { outcome: 'submitted', submitted: true }; },
     settingsSeams: { platform: 'linux', uid: 1000, execImpl: () => { throw new Error('disabled in fixture'); },
       serviceInstallPath: path.join(home, 'service'), keygen: () => 'ssh-ed25519 AAAAFIXTURE demo',
       spawnImpl: () => ({ pid: 4100000, unref() {} }), sshVersion: () => ({ major: 9, minor: 6 }) },

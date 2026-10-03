@@ -55,7 +55,7 @@ async function callback(t, { mismatch = false, missing = false } = {}) {
   const app = express();
   app.use('/api', notifyRoutes({ cfg: {}, notifier: { emitRaw() {}, emit: async frame => { frames.push(frame); return { ui: 1, push: 0 }; } },
     push: { sendToAll: async () => ({ sent: 0 }), vapidPublicKey: () => 'fixture' },
-    asks, paste: async (session, text) => { pastes.push({ session, text }); return true; },
+    asks, submit: async (...args) => { const result = await (async (session, text) => { pastes.push({ session, text }); return true; })(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; },
     sessionExists: session => ['demo-Reviewer','demo-Shell'].includes(session),
     fleetP: Promise.resolve({ available: false }), instanceId: () => 'a'.repeat(32), identityMode: 'legacy', localNodeId: () => 'a'.repeat(32) }));
   const server = http.createServer(app); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

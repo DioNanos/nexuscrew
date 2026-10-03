@@ -51,7 +51,7 @@ function setup(t, { peerTargets = async () => [adminPeer(P1), adminPeer(P2)], di
     notifier: createNotifier({ hub, push }),
     push,
     asks,
-    paste: () => Promise.resolve(true),
+    submit: async (...args) => { const result = await (() => Promise.resolve(true))(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; },
     sessionExists: (s) => typeof s === 'string' && s.startsWith('cell-'),
     localNodeId: () => SELF,
     dispatcher,
@@ -202,6 +202,7 @@ function boot(t, { pasteCalls = null } = {}) {
     fleetEnabled: false,
     sessionExistsSeam: () => true,
     pasteSeam: pasteCalls ? (session, text) => { pasteCalls.push({ session, text }); return true; } : undefined,
+    askSubmit: pasteCalls ? (session, text) => { pasteCalls.push({ session, text }); return { outcome: 'submitted', submitted: true }; } : undefined,
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },

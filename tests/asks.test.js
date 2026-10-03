@@ -30,7 +30,7 @@ function setup(t, { readonly = false, pasteOk = true, pasteImpl, askRate, replyL
     notifier: createNotifier({ hub, push }),
     push,
     asks,
-    paste,
+    submit: async (...args) => { const result = await (paste)(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; },
     sessionExists: (s) => typeof s === 'string' && s.startsWith('cell-'),
   }));
   return new Promise((res) => {
