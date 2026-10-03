@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   relayAskVerify: vi.fn(),
   getAsks: vi.fn(),
   getFeedState: vi.fn(),
+  getAskReplyCapability: vi.fn(),
   answerAsk: vi.fn(),
   dismissAsk: vi.fn(),
 }));
@@ -17,6 +18,7 @@ vi.mock('../lib/api.js', async (importOriginal) => ({
   relayAskVerify: mocks.relayAskVerify,
   getAsks: mocks.getAsks,
   getFeedState: mocks.getFeedState,
+  getAskReplyCapability: mocks.getAskReplyCapability,
   answerAsk: mocks.answerAsk,
   dismissAsk: mocks.dismissAsk,
 }));
@@ -40,6 +42,7 @@ beforeEach(() => {
     views: [{ ownerId: owner, stale: false, askReplyAccess: true },
             { ownerId: other, stale: false, askReplyAccess: false }],
   });
+  mocks.getAskReplyCapability.mockReset().mockImplementation(async (_token, { ownerId, askId }) => ({ ownerId, askId, canReply: ownerId === owner, status: ownerId === owner ? 'open' : ownerId === other ? 'denied' : 'unreachable' }));
   mocks.answerAsk.mockReset();
   mocks.dismissAsk.mockReset();
 });
@@ -75,7 +78,7 @@ describe('federated ask cards', () => {
     await waitFor(() => expect(screen.getAllByText(/procedo\?/i)).toHaveLength(1), { timeout: 2000 });
   });
 
-  it('senza askReplyAccess nello snapshot: card in sola lettura', async () => {
+  it('senza capability di risposta: card in sola lettura', async () => {
     mocks.getAsks.mockResolvedValue({ asks: [remoteAsk({ ownerId: other })] });
     await renderCenter();
     await waitFor(() => expect(screen.getByText(/read-only/i)).toBeTruthy());
@@ -107,25 +110,26 @@ describe('federated ask cards', () => {
   });
 });
 
-describe('federated ask cards — l\'hint distingue il feed non importato dal grant negato', () => {
+describe('federated ask cards — capability diagnostics stay separate from the feed', () => {
   // Owner senza view nel feed-state: la card esiste ma la sottoscrizione no.
   const absent = 'c'.repeat(32);
 
-  it('view dell\'owner assente: hint di ricezione da attivare, non il grant negato', async () => {
+  it('an unreachable action route is distinct from a denied capability', async () => {
     mocks.getAsks.mockResolvedValue({ asks: [remoteAsk({ ownerId: absent })] });
     await renderCenter();
-    await waitFor(() => expect(screen.getByText(/not receiving this node/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/route is unreachable/i)).toBeTruthy());
     expect(screen.queryByText(/read-only/i)).toBeNull();
     expect(screen.queryByText(/^send$/i)).toBeNull();
   });
 
-  it('view stale o in errore: stesso hint di ricezione da attivare', async () => {
+  it('an unsupported action remains distinct from a stale feed', async () => {
     mocks.getAsks.mockResolvedValue({ asks: [remoteAsk()] });
     mocks.getFeedState.mockResolvedValue({
       views: [{ ownerId: owner, stale: true, lastError: 'boom', askReplyAccess: false }],
     });
+    mocks.getAskReplyCapability.mockImplementation(async (_token, { ownerId, askId }) => ({ ownerId, askId, canReply: false, status: 'unsupported' }));
     await renderCenter();
-    await waitFor(() => expect(screen.getByText(/not receiving this node/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/does not support reply capability/i)).toBeTruthy());
     expect(screen.queryByText(/read-only/i)).toBeNull();
     expect(screen.queryByText(/^send$/i)).toBeNull();
   });
@@ -137,10 +141,10 @@ describe('federated ask cards — l\'hint distingue il feed non importato dal gr
     expect(screen.queryByText(/not receiving this node/i)).toBeNull();
   });
 
-  it('mutazione: i due hint non sono intercambiabili, ciascuno al proprio posto', async () => {
+  it('unreachable and denied capabilities show their own diagnostics', async () => {
     mocks.getAsks.mockResolvedValue({ asks: [remoteAsk({ ownerId: absent }), remoteAsk({ id: 'def67890', ownerId: other })] });
     await renderCenter();
-    const noFeed = await screen.findAllByText(/not receiving this node/i);
+    const noFeed = await screen.findAllByText(/route is unreachable/i);
     const readonly = await screen.findAllByText(/read-only/i);
     expect(noFeed).toHaveLength(1);
     expect(readonly).toHaveLength(1);
