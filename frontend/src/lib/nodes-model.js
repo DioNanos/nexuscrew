@@ -136,18 +136,22 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases,
     const r = remote?.[key] || (sessionsPending && previous ? {
       sessions: previous.sessionsAvailable ? previous.sessions : undefined,
       at: previous.verifiedAt, lastGoodAt: previous.verifiedAt,
+      ...(previous.sessionsAvailable === false && previous.cause ? { cause: previous.cause } : {}),
     } : null);
     const f = fleet?.[key] || (fleetPending && previous ? {
       available: previous.fleetAvailable, cells: previous.cells,
       fleetState: previous.fleetState, capabilities: previous.capabilities,
       engines: previous.engines, provider: previous.fleetProvider,
+      cellsPreserved: previous.cellsPreserved,
+      ...(previous.fleetState === 'stale' && previous.cause ? { cause: previous.cause } : {}),
     } : null);
     if (sessionsPending || fleetPending) {
       base.checking = true;
       base.sessionsPending = sessionsPending;
       base.fleetPending = fleetPending;
     }
-    return { r, f, previous, pending: sessionsPending || fleetPending };
+    return { r, f, previous, pending: sessionsPending || fleetPending,
+      rereading: previous && (sessionsPending || fleetPending) && !remote?.[key] && !fleet?.[key] };
   }
   for (const n of Array.isArray(nodes) ? nodes : []) {
     if (!n || typeof n.name !== 'string' || !NODE_NAME_RE.test(n.name)) continue;
@@ -183,7 +187,12 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases,
         ...preservedFleetFields(fleet && (fleet[key] || fleet[n.name]), route, key) });
       continue;
     }
-    const { r, f, previous, pending } = sources(key, base);
+    const { r, f, previous, pending, rereading } = sources(key, base);
+    if (rereading) {
+      out.push({ ...previous, checking: true,
+        sessionsPending: base.sessionsPending, fleetPending: base.fleetPending });
+      continue;
+    }
     const sessionsAvailable = !!(r && !r.error && Array.isArray(r.sessions));
     const fleetState = fleetStateOf(f);
     const fleetInventoryAvailable = fleetState === 'available' && fleetInventoryKnown(f, fleetState);
@@ -208,6 +217,8 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases,
       ...base, status: 'up', sessions,
       cells, unmanaged: sessions.filter((s) => !cellTmux.has(s.name)),
       fleetAvailable: fleetInventoryAvailable, fleetState,
+      ...(f?.cellsPreserved ? { cellsPreserved: true } : {}),
+      ...(r?.cause || f?.cause ? { cause: r?.cause || f?.cause } : {}),
       capabilities: (f && f.capabilities) || [],
       engines: (f && f.engines) || [],
       fleetProvider: (f && f.provider) || null,
@@ -233,7 +244,12 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases,
         ...preservedFleetFields(fleet && fleet[key], n.route, key) });
       continue;
     }
-    const { r, f, previous, pending } = sources(key, base);
+    const { r, f, previous, pending, rereading } = sources(key, base);
+    if (rereading) {
+      out.push({ ...previous, checking: true,
+        sessionsPending: base.sessionsPending, fleetPending: base.fleetPending });
+      continue;
+    }
     const sessionsAvailable = !!(r && !r.error && Array.isArray(r.sessions));
     const fleetState = fleetStateOf(f);
     const fleetInventoryAvailable = fleetState === 'available' && fleetInventoryKnown(f, fleetState);
@@ -257,6 +273,8 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases,
       ...base, status: 'up', sessions,
       cells, unmanaged: sessions.filter((s) => !cellTmux.has(s.name)),
       fleetAvailable: fleetInventoryAvailable, fleetState,
+      ...(f?.cellsPreserved ? { cellsPreserved: true } : {}),
+      ...(r?.cause || f?.cause ? { cause: r?.cause || f?.cause } : {}),
       capabilities: (f && f.capabilities) || [],
       engines: (f && f.engines) || [],
       fleetProvider: (f && f.provider) || null, lastSeen: n.lastSeen || null,

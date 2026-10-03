@@ -334,13 +334,11 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
           // Il backoff rende la lettura Fleet NON VERIFICABILE, non vuota.
           const cachedFleet = peerCacheRef.current.fleet[key] || restoredFleet(key);
           if (cachedFleet) fleet[key] = { ...cachedFleet, available: false, fleetState: 'stale' };
-          publish();
           return;
         }
         // Letture in corso: la proiezione distingue il pendere da un esito.
         pendingReads.add(`${key}#sessions`);
         pendingReads.add(`${key}#fleet`);
-        publish();
 
         const sessionsTask = (async () => {
               let sessionsOk = false;
