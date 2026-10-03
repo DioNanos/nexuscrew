@@ -3,13 +3,23 @@
 // Best-effort ovunque: un nodo che non risponde diventa gruppo 'unreachable'
 // (design §7, niente spinner infinito); zero nodi configurati -> groups = []
 // e la UI resta identica a oggi.
+//
+// Le fonti non fanno barriera fra loro: la discovery si pubblica quando
+// arriva, sessions e fleet girano in parallelo per ogni route e pubblicano
+// per fonte, il VL e' un arricchimento separato con il suo tetto. Una
+// lettura ancora in corso non e' un esito: i gruppi senza esiti sono
+// "pending", quelli gia' noti conservano il loro stato marcato "checking".
 import { useEffect, useRef, useState } from 'react';
 import {
-  apiFetch, getNodes, getTopology, getNodeAliases, getRouteSessions, fleetStatus, getVlNodes,
+  getRouteConfig, getNodes, getTopology, getNodeAliases, getRouteSessions,
+  fleetStatus, getVlNodes, ROSTER_READ_TIMEOUT_MS,
 } from '../lib/api.js';
 import { buildNodeGroups, trackDown } from '../lib/nodes-model.js';
+import { registerRouteIdentities } from '../lib/route-identity.js';
+import { loadLastRoster, saveLastRoster } from '../lib/last-roster.js';
 import { vlNodeToPeer, topologyVlOwners, vlSidebarGroups } from '../lib/vl-nodes-model.js';
 import { fleetReadOutcome } from '../lib/fleet-read-policy.js';
+import { createPollGuard } from '../lib/poll-guard.js';
 import {
   classifyPeerFailure, recordPeerFailure, recordPeerSuccess, shouldPollPeer,
 } from '../lib/peer-backoff.js';
@@ -64,6 +74,7 @@ function mergeStickyOwners(map, fetchOk, fresh, keyOf, now) {
 
 export function useNodes(token, enabled = true, refreshKey = 0) {
   const [groups, setGroups] = useState([]);
+  const groupsRef = useRef([]);
   const downRef = useRef({});
   // R21: backoff per-peer (stato) + ultima risposta nota (cache). Il peer
   // morto non si interroga piu' a cadenza fissa: si dirada fino al tetto, e
@@ -71,9 +82,13 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
   // noto durante i giri saltati — incluso il motivo per cui si salta.
   const backoffRef = useRef({});
   const peerCacheRef = useRef({ remote: {}, fleet: {} });
-  // Il token con cui la cache e' stata riempita, e il giro in volo.
+  // Il token con cui la cache e' stata riempita, e la guardia generazionale
+  // del giro in volo.
   const cacheTokenRef = useRef(null);
-  const inFlightRef = useRef(false);
+  const cacheInstanceRef = useRef(null);
+  const cacheOwnersRef = useRef(new Map());
+  const guardRef = useRef(createPollGuard());
+  const abortRef = useRef(null);
 
   useEffect(() => {
     if (!enabled || !token) { setGroups([]); return undefined; }
@@ -82,127 +97,231 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
     // diverso e' un'altra sessione, e i suoi dati non sono i nostri. Senza
     // questo, dopo un cambio di token la UI mostrerebbe l'elenco dell'utente
     // precedente come se fosse una lettura corrente.
+    const tokenChanged = cacheTokenRef.current !== null && cacheTokenRef.current !== token;
     if (cacheTokenRef.current !== token) {
       cacheTokenRef.current = token;
       backoffRef.current = {};
       peerCacheRef.current = { remote: {}, fleet: {} };
+      cacheOwnersRef.current.clear();
       downRef.current = {};
+      groupsRef.current = [];
+      setGroups([]);
     }
     // Owner sticky, ripristinati dal localStorage per ripartire pieni al
     // reload della pagina invece che con la lista vuota.
     const sticky = { instanceId: '', nodes: new Map(), topology: new Map() };
-    const persisted = readStickyOwners();
+    const persisted = tokenChanged ? null : readStickyOwners();
     if (persisted) {
       sticky.instanceId = persisted.instanceId || '';
       for (const n of persisted.nodes) sticky.nodes.set(n.name, { data: n, missingSince: null });
       for (const t of persisted.topology) sticky.topology.set(t.route.join('/'), { data: t, missingSince: null });
     }
 
-    // Round ORDINATI per costruzione: un giro non parte mentre il precedente e'
-    // ancora in volo, quindi non ci sono due round da riordinare. Le fetch
-    // federate hanno timeout fino a 8 s contro un poll di 4 s: la
-    // sovrapposizione non e' un'ipotesi, e senza questa guardia una risposta
-    // vecchia puo' atterrare dopo una nuova e sovrascriverla — il peer finito
-    // in backoff per un timeout riapparirebbe vivo, e viceversa.
+    // Il giro: guardia generazionale, abort proprio e pubblicazioni per
+    // fonte. Ogni giro porta il PROPRIO token: una risposta tardiva di un
+    // giro scartato non scrive piu' nulla (gruppi, cache, backoff, storage).
     async function poll() {
-      if (inFlightRef.current) return;
-      inFlightRef.current = true;
-      try { await pollOnce(); } finally { inFlightRef.current = false; }
-    }
-
-    async function pollOnce() {
+      const guard = guardRef.current;
       const pollStart = Date.now();
+      const round = guard.begin();
+      if (round === null) return;
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const opts = { timeoutMs: ROSTER_READ_TIMEOUT_MS, signal: controller.signal };
+      const current = () => alive && guard.isCurrent(round);
       let nodes = []; let topology = []; let aliases = {}; let localInstanceId = '';
       let nodesOk = false; let topologyOk = false;
-      await Promise.all([
-        getNodes(token).then((j) => { nodes = Array.isArray(j.nodes) ? j.nodes : []; nodesOk = true; }).catch(() => {}),
-        getTopology(token).then((j) => { topology = Array.isArray(j.nodes) ? j.nodes : []; topologyOk = true; }).catch(() => {}),
-        getNodeAliases(token).then((j) => { aliases = j && typeof j.aliasesByInstanceId === 'object' ? j.aliasesByInstanceId : {}; }).catch(() => {}),
-        apiFetch('/api/config', token).then((r) => r.json())
-          .then((j) => { localInstanceId = j && typeof j.instanceId === 'string' ? j.instanceId : ''; }).catch(() => {}),
-      ]);
-      if (!alive) return;
-      // Sticky: un fetch fallito/vuoto non azzera l'elenco owner; chi manca
-      // da una risposta confermata resta come stale finché non scade la grazia.
-      if (localInstanceId && sticky.instanceId !== localInstanceId) {
-        // localStorage di un ALTRO nodo locale: la cache non e' nostra. E lo
-        // stesso vale per le risposte dei peer, che sono indicizzate per
-        // ROTTA: un'altra istanza puo' riusare la stessa rotta, e in quel caso
-        // l'elenco di prima e' il residuo di un nodo diverso.
-        sticky.instanceId = localInstanceId;
-        sticky.nodes.clear(); sticky.topology.clear();
-        backoffRef.current = {};
-        peerCacheRef.current = { remote: {}, fleet: {} };
-      } else if (localInstanceId) {
-        sticky.instanceId = localInstanceId;
-      }
-      mergeStickyOwners(sticky.nodes, nodesOk, nodes, (n) => n && n.name, pollStart);
-      mergeStickyOwners(sticky.topology, topologyOk, topology, (t) => (Array.isArray(t && t.route) ? t.route.join('/') : ''), pollStart);
-      nodes = [...sticky.nodes.values()].map((e) => e.data);
-      topology = [...sticky.topology.values()].map((e) => e.data);
-      if (nodesOk || topologyOk) {
-        writeStickyOwners({
-          instanceId: sticky.instanceId,
-          savedAt: pollStart,
-          nodes: [...sticky.nodes.values()].map((e) => e.data),
-          topology: [...sticky.topology.values()].map((e) => e.data),
+      let nodesState = 'pending'; let topologyState = 'pending';
+      const remote = {}; const fleet = {}; let vlPeers = [];
+      // Letture in corso, per route e per fonte: chiave nuda o `key#sessions` /
+      // `key#fleet`. Non sono esiti: la proiezione li distingue dai dati.
+      const pendingReads = new Set();
+      const routesStarted = new Set();
+      const vlStarted = new Set();
+      let ownerOf = new Map();
+      const readTasks = [];
+
+      const computeOwnerOf = () => {
+        ownerOf = new Map([
+          ...topology.filter((n) => Array.isArray(n.route)).map((n) => [n.route.join('/'), n.instanceId]),
+          ...nodes.map((n) => [n.name, n.nodeId]),
+        ].filter(([, id]) => typeof id === 'string' && id));
+      };
+      const restoredFleet = (key) => {
+        const id = ownerOf.get(key);
+        const cells = id ? loadLastRoster(`id:${id}`) : [];
+        return cells.length ? { available: false, cells, fleetState: 'stale' } : null;
+      };
+
+      const publish = () => {
+        if (!current() || !localInstanceId) return false;
+        const previousGroups = groupsRef.current;
+        const first = buildNodeGroups({
+          nodes, topology, remote, fleet, aliases, down: downRef.current,
+          pendingReads, previousGroups,
         });
-      }
-      // Nodi VL nella stessa lista della sidebar (VL_NODES_IN_SIDEBAR):
-      // owner locale + owner federati vivi dalla topology gia' pollata —
-      // stessa semantica multi-owner di SettingsPanel (readVlDirectory).
-      // Best-effort per-owner: un owner che non risponde non blocca gli
-      // altri e non blocca i gruppi Fleet.
-      // topologyVlOwners legge la RISPOSTA di /api/topology ({nodes:[...]});
-      // qui `topology` è già l'array spacchettato — va riavvolto, o gli owner
-      // federati risultano SEMPRE vuoti e i nodi VL restano visibili solo a
-      // chi è collegato all'owner che li ospita (trovato con il test
-      // federato: nodo su un owner, UI su un altro).
-      const vlOwners = [
-        { instanceId: localInstanceId || null, route: [], label: null },
-        ...topologyVlOwners({ nodes: topology }, localInstanceId),
-      ];
-      const vlPeers = [];
-      await Promise.all(vlOwners.map(async (owner) => {
-        // R21: stesso backoff dei peer — un owner morto interrogato ogni 4 s
-        // faceva lo stesso rumore indistinto (vl-nodes nel log del pannello).
-        const key = `vl:${owner.route.join('/')}`;
-        if (!shouldPollPeer(backoffRef.current, key, pollStart)) return; // zero righe, come owner irraggiungibile
-        try {
-          const payload = await getVlNodes(token, owner.route);
-          backoffRef.current = recordPeerSuccess(backoffRef.current, key);
-          for (const raw of payload.nodes || []) {
-            const peer = vlNodeToPeer(raw, owner);
-            if (peer) vlPeers.push(peer);
-          }
-        } catch (e) {
-          backoffRef.current = recordPeerFailure(backoffRef.current, key, classifyPeerFailure(e), pollStart);
+        downRef.current = trackDown(downRef.current, first, Math.floor(Date.now() / 1000));
+        const nextGroups = [
+          ...buildNodeGroups({
+            nodes, topology, remote, fleet, aliases, down: downRef.current,
+            pendingReads, previousGroups: groupsRef.current,
+          }),
+          ...vlSidebarGroups(vlPeers),
+        ];
+        // Prima dei componenti: le preferenze per nome si allineano all'identita' (instanceId) del nodo.
+        registerRouteIdentities(nextGroups);
+        groupsRef.current = nextGroups;
+        setGroups(nextGroups);
+        return true;
+      };
+
+      // La singola fonte di discovery aggiorna il proprio snapshot (sticky
+      // compreso) e ripubblica: l'assenza da una richiesta in corso o fallita
+      // non e' una rimozione confermata.
+      let nodesFresh = []; let topologyFresh = [];
+      // Ogni fonte risolta aggiorna il proprio esito e la proiezione viene
+      // RICONCILIATA: merge sticky per fonte (solo con esito confermato),
+      // conservazione cache dei nodi non raggiungibili, avvio delle letture
+      // pronte, pubblicazione. L'identita' locale (config) precede il merge:
+      // una cache di un'altra istanza viene svuotata PRIMA, non dopo.
+      const reconcile = () => {
+        if (!current()) return;
+        if (!localInstanceId) return;
+        // Un esito confermato aggiorna; un FETCH FALLITO non azzera: marca
+        // gli owner noti come stale (stessa semantica del merge sticky).
+        if (nodesOk) {
+          mergeStickyOwners(sticky.nodes, true, nodesFresh, (n) => n && n.name, pollStart);
+        } else if (nodesState === 'error') {
+          mergeStickyOwners(sticky.nodes, false, nodesFresh, (n) => n && n.name, pollStart);
         }
-      }));
-      if (!alive) return;
-      const remote = {};
-      const fleet = {};
-      const direct = new Set(nodes.map((n) => n.name));
-      const routes = [];
-      for (const n of nodes) {
-        if (n.tunnel?.status === 'up' && (n.nodeId || n.paired !== false)
-          && (n.direction !== 'inbound' || n.shared === true)) routes.push([n.name]);
+        if (topologyOk) {
+          mergeStickyOwners(sticky.topology, true, topologyFresh, (t) => (Array.isArray(t && t.route) ? t.route.join('/') : ''), pollStart);
+        } else if (topologyState === 'error') {
+          mergeStickyOwners(sticky.topology, false, topologyFresh, (t) => (Array.isArray(t && t.route) ? t.route.join('/') : ''), pollStart);
+        }
+        nodes = [...sticky.nodes.values()].map((e) => e.data);
+        topology = [...sticky.topology.values()].map((e) => e.data);
+        computeOwnerOf();
+        for (const [key, id] of ownerOf) {
+          const previousId = cacheOwnersRef.current.get(key);
+          if (previousId && previousId !== id) {
+            delete peerCacheRef.current.remote[key]; delete peerCacheRef.current.fleet[key];
+            delete backoffRef.current[key]; delete backoffRef.current[`vl:${key}`]; delete downRef.current[key];
+          }
+          cacheOwnersRef.current.set(key, id);
+        }
+        // Nodi NON raggiungibili o stale: la lettura fleet non e' VERIFICABILE,
+        // non assente — l'ultimo elenco noto resta come elenco fermo (stale)
+        // finche' il nodo non torna su.
+        for (const n of nodes) {
+          if (n.tunnel?.status === 'up') continue;
+          const cachedFleet = peerCacheRef.current.fleet[n.name];
+          if (cachedFleet && !fleet[n.name]) {
+            fleet[n.name] = { ...cachedFleet, available: false, fleetState: 'stale' };
+          }
+        }
+        for (const n of topology) {
+          if (!n.stale || !Array.isArray(n.route) || !n.route.length) continue;
+          const key = n.route.join('/');
+          const cachedFleet = peerCacheRef.current.fleet[key];
+          if (cachedFleet && !fleet[key]) {
+            fleet[key] = { ...cachedFleet, available: false, fleetState: 'stale' };
+          }
+        }
+        if (nodesOk || topologyOk) {
+          writeStickyOwners({
+            instanceId: sticky.instanceId,
+            savedAt: pollStart,
+            nodes: [...sticky.nodes.values()].map((e) => e.data),
+            topology: [...sticky.topology.values()].map((e) => e.data),
+          });
+        }
+        maybeStartReads();
+        publish();
+      };
+      const applyNodes = (ok, list) => {
+        if (!current()) return;
+        nodesState = ok ? 'success' : 'error';
+        nodesOk = ok;
+        nodesFresh = ok ? list : [];
+        reconcile();
+      };
+      const applyTopology = (ok, list) => {
+        if (!current()) return;
+        topologyState = ok ? 'success' : 'error';
+        topologyOk = ok;
+        topologyFresh = ok ? list : [];
+        reconcile();
+      };
+      const applyConfig = (j) => {
+        if (!current()) return;
+        localInstanceId = j && typeof j.instanceId === 'string' ? j.instanceId : '';
+        if (localInstanceId && (sticky.instanceId !== localInstanceId || cacheInstanceRef.current !== localInstanceId)) {
+          // localStorage di un ALTRO nodo locale: la cache non e' nostra. E lo
+          // stesso vale per le risposte dei peer, che sono indicizzate per
+          // ROTTA: un'altra istanza puo' riusare la stessa rotta, e in quel caso
+          // l'elenco di prima e' il residuo di un nodo diverso.
+          if (sticky.instanceId !== localInstanceId) {
+            sticky.nodes.clear(); sticky.topology.clear();
+          }
+          groupsRef.current = []; downRef.current = {};
+          backoffRef.current = {};
+          peerCacheRef.current = { remote: {}, fleet: {} };
+          cacheOwnersRef.current.clear();
+        } else if (localInstanceId) {
+          sticky.instanceId = localInstanceId;
+        }
+        cacheInstanceRef.current = localInstanceId || null;
+        sticky.instanceId = localInstanceId;
+        reconcile();
+      };
+
+      // Un owner VL e' un arricchimento separato: parte con la discovery, non
+      // blocca nessuna lettura principale e pubblica per owner.
+      function startVlReads() {
+        const vlOwners = [
+          { instanceId: localInstanceId || null, route: [], label: null },
+          ...topologyVlOwners({ nodes: topology }, localInstanceId),
+        ];
+        for (const owner of vlOwners) {
+          const identity = `${owner.instanceId}:${owner.route.join('/')}`;
+          if (vlStarted.has(identity)) continue;
+          vlStarted.add(identity);
+          const key = `vl:${owner.route.join('/')}`;
+          readTasks.push((async () => {
+            if (!shouldPollPeer(backoffRef.current, key, pollStart)) return;
+            try {
+              const payload = await getVlNodes(token, owner.route, { signal: controller.signal });
+              if (!current()) return;
+              backoffRef.current = recordPeerSuccess(backoffRef.current, key);
+              const peers = [];
+              for (const raw of payload.nodes || []) {
+                const peer = vlNodeToPeer(raw, owner);
+                if (peer) peers.push(peer);
+              }
+              // I VL nuovi sostituiscono SOLO i loro: gli altri owner restano.
+              const ownerKey = owner.route.join('/') || 'local';
+              vlPeers = vlPeers.filter((peer) => (Array.isArray(peer.route) ? peer.route.join('/') || 'local' : 'local') !== ownerKey);
+              vlPeers.push(...peers);
+              publish();
+            } catch (e) {
+              if (!current()) return;
+              backoffRef.current = recordPeerFailure(backoffRef.current, key, classifyPeerFailure(e), pollStart);
+            }
+          })());
+        }
       }
-      for (const n of topology) {
-        // Una route vuota non e' una posizione fleet: e' il VL owner locale
-        // (o un gruppo locale riflesso) e interrogarla con fleetStatus/
-        // getRouteSessions rifletterebbe il fleet locale sotto un'altra
-        // etichetta. Stesso criterio di rosterItemsByPosition/CellSwitcher.
-        if (!n.stale && Array.isArray(n.route) && n.route.length > 0
-          && !(n.route.length === 1 && direct.has(n.route[0]))) routes.push(n.route);
-      }
-      // Per ogni posizione remota up: sessions (tmux) E fleet (celle attive/inattive
-      // + capability). Cosi' il client remoto non perde piu' le celle Fleet di un
-      // nodo: ogni posizione mostra celle Fleet + tmux unmanaged (inventario Hydra).
-      await Promise.all(routes.map(async (route) => {
+
+      // Per ogni posizione remota up: sessions E fleet in parallelo e per
+      // fonte. Il peer sano non aspetta il peer lento, il fleet sano non
+      // aspetta sessions lento e viceversa; l'attesa complessiva serve solo a
+      // sapere quando liberare la guardia.
+      async function startRouteReads(route) {
         const key = route.join('/');
         const cachedRemote = peerCacheRef.current.remote[key] || null;
         if (!shouldPollPeer(backoffRef.current, key, pollStart)) {
+          pendingReads.delete(`${key}#sessions`);
+          pendingReads.delete(`${key}#fleet`);
           // R21: il peer in backoff NON si interroga — chi guarda gli ALTRI
           // peer non deve essere intasato dal suo rumore. E non interrogarlo
           // significa che la sua lista NON e' verificata, non che sia vuota:
@@ -215,111 +334,166 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
             lastGoodAt: cachedRemote ? cachedRemote.at : null,
           };
           // Il backoff rende la lettura Fleet NON VERIFICABILE, non vuota.
-          // Conserviamo la risposta precedente soltanto come elenco fermo;
-          // available:false impedisce di presentarla come dato aggiornato.
-          const cachedFleet = peerCacheRef.current.fleet[key];
+          const cachedFleet = peerCacheRef.current.fleet[key] || restoredFleet(key);
           if (cachedFleet) fleet[key] = { ...cachedFleet, available: false, fleetState: 'stale' };
           return;
         }
-        let sessionsOk = false;
-        try {
-          const payload = await getRouteSessions(token, route);
-          sessionsOk = true;
-          // L'istante viaggia col payload: e' l'ora della LETTURA, non del
-          // render, e serve al tetto del «non verificato» quando piu' tardi
-          // questa risposta sara' l'ultima buona rimasta.
-          remote[key] = { ...payload, at: pollStart };
-          peerCacheRef.current.remote[key] = { payload, at: pollStart };
-        } catch (e) {
-          // R21: la causa distingue 502 (peer assente), 403 (peer nega),
-          // 404 (rotta inesistente): tre azioni diverse per chi guarda.
-          // Il tentativo fallito NON cancella l'ultima lettura buona: la
-          // marca soltanto come non verificata. Ultimo dato buono e ultimo
-          // tentativo sono due cose diverse e restano separate.
-          remote[key] = {
-            error: 'unreachable',
-            cause: classifyPeerFailure(e),
-            lastGoodAt: cachedRemote ? cachedRemote.at : null,
-          };
-        }
-        const previousFleet = peerCacheRef.current.fleet[key] || null;
-        try {
-          const response = await fleetStatus(token, route);
-          const outcome = fleetReadOutcome({ fs: response });
-          if (outcome.kind === 'data') {
-            fleet[key] = {
-              ...response,
-              available: true,
-              cells: outcome.cells,
-              fleetState: 'available',
+        // Letture in corso: la proiezione distingue il pendere da un esito.
+        pendingReads.add(`${key}#sessions`);
+        pendingReads.add(`${key}#fleet`);
+
+        const sessionsTask = (async () => {
+              let sessionsOk = false;
+          try {
+            const payload = await getRouteSessions(token, route, opts);
+            if (!current()) return;
+            sessionsOk = true;
+            // L'istante viaggia col payload: e' l'ora della LETTURA, non del
+            // render, e serve al tetto del «non verificato» quando piu' tardi
+            // questa risposta sara' l'ultima buona rimasta.
+            remote[key] = { ...payload, at: pollStart };
+            peerCacheRef.current.remote[key] = { payload, at: pollStart };
+          } catch (e) {
+            if (!current()) return;
+            // R21: la causa distingue 502 (peer assente), 403 (peer nega),
+            // 404 (rotta inesistente): tre azioni diverse per chi guarda.
+            remote[key] = {
+              error: 'unreachable',
+              cause: classifyPeerFailure(e),
+              lastGoodAt: cachedRemote ? cachedRemote.at : null,
             };
-          } else if (outcome.kind === 'disabled') {
-            // available:false con ragione di configurazione e' un dato reale:
-            // zero celle, senza conservare celle fantasma.
-            fleet[key] = { ...response, available: false, cells: [], fleetState: 'disabled' };
-          } else {
-            // La risposta e' arrivata, ma la lettura non e' verificabile
-            // (per esempio fleet.json illeggibile): elenco fermo, non vuoto.
+          } finally {
+            pendingReads.delete(`${key}#sessions`);
+          }
+          // Il backoff segue sessions, il segnale di vita del peer, una volta
+          // sola per esito e indipendentemente dal ritardo fleet/VL.
+          backoffRef.current = sessionsOk
+            ? recordPeerSuccess(backoffRef.current, key)
+            : recordPeerFailure(backoffRef.current, key, remote[key].cause, pollStart);
+          publish();
+        })();
+
+        const fleetTask = (async () => {
+          const previousFleet = peerCacheRef.current.fleet[key] || restoredFleet(key);
+          try {
+            const response = await fleetStatus(token, route, opts);
+            if (!current()) return;
+            const outcome = fleetReadOutcome({ fs: response });
+            if (outcome.kind === 'data') {
+              fleet[key] = {
+                ...response,
+                available: true,
+                cells: outcome.cells,
+                fleetState: 'available',
+              };
+              if (ownerOf.get(key)) saveLastRoster(`id:${ownerOf.get(key)}`, outcome.cells);
+            } else if (outcome.kind === 'disabled') {
+              // available:false con ragione di configurazione e' un dato reale:
+              // zero celle, senza conservare celle fantasma.
+              fleet[key] = { ...response, available: false, cells: [], fleetState: 'disabled' };
+              if (ownerOf.get(key)) saveLastRoster(`id:${ownerOf.get(key)}`, []);
+            } else {
+              // La risposta e' arrivata, ma la lettura non e' verificabile
+              // (per esempio fleet.json illeggibile): elenco fermo, non vuoto.
+              fleet[key] = {
+                ...(previousFleet || {}),
+                available: false,
+                cells: Array.isArray(previousFleet?.cells) ? previousFleet.cells : [],
+                fleetState: 'stale',
+                ...(response?.reason ? { reason: response.reason } : {}),
+              };
+            }
+            peerCacheRef.current.fleet[key] = fleet[key];
+          } catch (e) {
+            if (!current()) return;
+            // Un errore di trasporto non prova che il nodo abbia zero celle.
             fleet[key] = {
               ...(previousFleet || {}),
               available: false,
               cells: Array.isArray(previousFleet?.cells) ? previousFleet.cells : [],
               fleetState: 'stale',
-              ...(response?.reason ? { reason: response.reason } : {}),
+              cause: classifyPeerFailure(e),
             };
+            peerCacheRef.current.fleet[key] = fleet[key];
           }
-          peerCacheRef.current.fleet[key] = fleet[key];
-        } catch (e) {
-          // Un errore di trasporto non prova che il nodo abbia zero celle.
-          fleet[key] = {
-            ...(previousFleet || {}),
-            available: false,
-            cells: Array.isArray(previousFleet?.cells) ? previousFleet.cells : [],
-            fleetState: 'stale',
-            cause: classifyPeerFailure(e),
-          };
-          peerCacheRef.current.fleet[key] = fleet[key];
+          pendingReads.delete(`${key}#fleet`);
+          publish();
+        })();
+
+        await Promise.allSettled([sessionsTask, fleetTask]);
+      }
+
+      // Le letture principali partono una volta sola, quando la discovery
+      // della propria fonte e la config sono valide. L'alias non e' un
+      // prerequisito.
+      function maybeStartReads() {
+        if (!current() || !localInstanceId) return;
+        startVlReads();
+        const direct = new Set(nodes.map((n) => n.name));
+        const add = (route) => {
+          const key = route.join('/');
+          if (routesStarted.has(key)) return;
+          routesStarted.add(key);
+          readTasks.push(startRouteReads(route));
+        };
+        for (const n of nodes) {
+          if (nodesOk && !n.stale && n.tunnel?.status === 'up' && (n.nodeId || n.paired !== false)
+            && (n.direction !== 'inbound' || n.shared === true)) add([n.name]);
+          else if (nodesState === 'pending' && !n.stale && n.tunnel?.status === 'up') {
+            pendingReads.add(`${n.name}#sessions`); pendingReads.add(`${n.name}#fleet`);
+          }
         }
-        // Il backoff segue sessions, il segnale di vita del peer: se riesce,
-        // il peer e' vivo anche se fleet nega o non conosce la rotta —
-        // quelle sono cause da MOSTRARE, non motivi per smettere di guardare.
-        backoffRef.current = sessionsOk
-          ? recordPeerSuccess(backoffRef.current, key)
-          : recordPeerFailure(backoffRef.current, key, remote[key].cause, pollStart);
-      }));
-      if (!alive) return;
-      // Nodi NON raggiungibili (tunnel giu', passive, needs-repair diretti;
-      // topology stale): la lettura fleet non e' VERIFICABILE, non assente —
-      // stessa forma del backoff R21. L'ultimo elenco noto resta visibile
-      // come elenco fermo (stale) finche' il nodo non torna su: a quel punto
-      // il fetch autorevole (available, anche vuoto, o disabled) LO SOSTITUISCE
-      // per intero — nessuna unione, quindi una cella eliminata davvero sparisce.
-      for (const n of nodes) {
-        if (n.tunnel?.status === 'up') continue;
-        const cachedFleet = peerCacheRef.current.fleet[n.name];
-        if (cachedFleet && !fleet[n.name]) {
-          fleet[n.name] = { ...cachedFleet, available: false, fleetState: 'stale' };
+        for (const n of topology) {
+          if (!n.stale && Array.isArray(n.route) && n.route.length > 0
+            && !(n.route.length === 1 && direct.has(n.route[0]))) {
+            const key = n.route.join('/');
+            if (topologyOk) add(n.route);
+            else if (topologyState === 'pending') {
+              pendingReads.add(`${key}#sessions`); pendingReads.add(`${key}#fleet`);
+            }
+          }
         }
       }
-      for (const n of topology) {
-        if (!n.stale || !Array.isArray(n.route) || !n.route.length) continue;
-        const key = n.route.join('/');
-        const cachedFleet = peerCacheRef.current.fleet[key];
-        if (cachedFleet && !fleet[key]) {
-          fleet[key] = { ...cachedFleet, available: false, fleetState: 'stale' };
-        }
+
+      const taskNodes = getNodes(token, opts).then(
+        (j) => { applyNodes(true, Array.isArray(j.nodes) ? j.nodes : []); },
+        () => { applyNodes(false, []); },
+      );
+      const taskTopology = getTopology(token, opts).then(
+        (j) => { applyTopology(true, Array.isArray(j.nodes) ? j.nodes : []); },
+        () => { applyTopology(false, []); },
+      );
+      const taskAliases = getNodeAliases(token, opts).then(
+        (j) => { if (!current()) return; aliases = j && typeof j.aliasesByInstanceId === 'object' ? j.aliasesByInstanceId : {}; publish(); },
+        () => {},
+      );
+      const taskConfig = getRouteConfig(token, [], opts).then(
+        (j) => { applyConfig(j); },
+        () => {},
+      );
+
+      // L'attesa complessiva serve solo a sapere quando liberare la guardia:
+      // le singole pubblicazioni sono gia' avvenute per fonte. La discovery
+      // prima: e' lei che avvia le letture per route (raccolte in readTasks);
+      // la guardia si libera solo quando ANCHE quelle sono concluse.
+      try {
+        await Promise.allSettled([taskNodes, taskTopology, taskAliases, taskConfig]);
+        await Promise.allSettled(readTasks);
+      } finally {
+        if (guard.isCurrent(round)) guard.end(round);
       }
-      const first = buildNodeGroups({ nodes, topology, remote, fleet, aliases, down: downRef.current });
-      downRef.current = trackDown(downRef.current, first, Math.floor(Date.now() / 1000));
-      setGroups([
-        ...buildNodeGroups({ nodes, topology, remote, fleet, aliases, down: downRef.current }),
-        ...vlSidebarGroups(vlPeers),
-      ]);
     }
 
     poll();
     const id = setInterval(poll, POLL_MS);
-    return () => { alive = false; clearInterval(id); };
+    return () => {
+      alive = false;
+      clearInterval(id);
+      // Cleanup: la guardia si invalida (il finally del giro vecchio non
+      // libera il nuovo) e le letture del giro in volo vengono abortite.
+      guardRef.current.reset();
+      if (abortRef.current) abortRef.current.abort();
+    };
   }, [token, enabled, refreshKey]);
 
   return groups;

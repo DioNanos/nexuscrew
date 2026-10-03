@@ -19,7 +19,9 @@ const NODES = {
 const calls = vi.hoisted(() => ({ sessions: 0, failTimes: 2 }));
 
 vi.mock('../lib/api.js', () => ({
+  ROSTER_READ_TIMEOUT_MS: 8000,
   apiFetch: vi.fn(async () => ({ json: async () => ({ instanceId: 'local', version: 'test' }) })),
+  getRouteConfig: vi.fn(async () => ({ instanceId: 'local', version: 'test' })),
   getNodes: vi.fn(async () => NODES),
   getTopology: vi.fn(async () => ({ nodes: [] })),
   getNodeAliases: vi.fn(async () => ({ aliasesByInstanceId: {} })),

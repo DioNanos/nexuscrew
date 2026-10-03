@@ -2,6 +2,99 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.58 — 2026-10-03
+
+- **Reply to questions across connected hubs.** Replies and dismissals follow the question's owner through the network. Reply availability is checked separately from the notification feed, and an uncertain reply can be verified before another is sent.
+- **Interrupted event feeds recover without keeping a slot blocked.** Disconnections invalidate the cursor, owner retries retain their backoff, and health, snapshot and error-body reads have a deadline. Snapshot validation errors remain visible until a valid snapshot heals them.
+- **Admin access presets enable event reception.** Existing admin peers are migrated once; later choices to turn reception off are preserved.
+- **Codex on Termux keeps the active cell's MCP context.** Supported clients launch without reusing a shared daemon. Capability probes are cached while the binary is unchanged, and transient probe failures can be retried.
+- **Nodes in backoff finish their pending indicator.** A skipped roster read no longer leaves discovery placeholders marked as requests still in progress.
+
+- **Federated questions and their closures go only to admin peers.** Every hub checks its own next hop; user, host and custom peers keep questions local.
+- **Slow reverse links get a bounded opportunity to answer.** Owner actions share one total deadline and reuse a verified reverse slot briefly, while channel changes and failed forwarding invalidate it.
+
+- **Question replies to managed cells are submitted with one Enter.** Replies use the same submission as cell messages, including Codex composer handling. An uncertain delivery blocks automatic retries until it is explicitly reconciled; text already in the composer may be submitted with the reply. Manual tmux sessions retain paste-only delivery.
+
+## 0.9.57 — 2026-10-03
+
+- **The node list no longer flickers for nodes reached through a hub.**
+
+## 0.9.56 — 2026-10-03
+
+- **Le opzioni accettano il valore separato da uno spazio.** Comandi come `nodes edit --access-role user` ora funzionano; se manca il valore, il messaggio indica chiaramente quale opzione lo richiede.
+- **I deck in alto seguono l'ordine della lista.** La barra dei deck rispetta l'ordine dei nodi e delle celle scelto nella lista.
+- **Un aggiornamento lento non mette più un deck offline.** Il badge «in ritardo» segnala un aggiornamento che tarda ad arrivare; il deck risulta offline solo quando il nodo è giù.
+- **Le liste dei nodi non si bloccano su un nodo lento o spento.** Le letture hanno un tempo massimo e ogni risposta aggiorna la lista appena arriva, senza aspettare le altre.
+
+## 0.9.55 — 2026-10-02
+
+Grazie a @sadoc1184-droid per le PR #7, #8 e #10.
+
+- **Pannello file: ogni riga ha il suo scaricamento.** (PR #8) Il pannello dei file della cella mostra il tasto di scaricamento sulla riga del file, con la navigazione delle cartelle su una sola riga e i colori del tema: prima si poteva solo caricare, non scaricare un singolo file.
+- **L'intestazione della home non si sovrappone più al testo.** (PR #10) Il titolo e il sottotitolo hanno la loro colonna accanto ai tasti: su schermo stretto il testo non finisce più sotto i bottoni e non viene tagliato.
+- **La barra della vista singola ha i tasti «cartella» e «tastiera» visibili di default.** (PR #7, adattata alle nostre decisioni) La cartella usa l'icona disegnata nuova; il menu ⋯ resta per intero con tutti i suoi sottomenu e dalla barra non si toglie niente. AI Desktop è spenta di default. Cartella, tastiera e AI Desktop hanno ciascuno il suo interruttore in Impostazioni › input, e il renderer GPU si sceglie in Impostazioni › sistema. Un valore già salvato resta come l'operatore l'ha lasciato.
+- **Niente più «+» in fondo alla lista delle celle.** Il tasto fisso in basso a destra è stato tolto: aggiungere una cella resta possibile da Impostazioni › fleet e, su desktop, dal «+ Nuovo» della barra laterale.
+- **Tasti più grandi e leggibili.** Con il testo di sistema ingrandito o lo zoom del browser al 200% le icone della barra e delle intestazioni non escono più dallo schermo: vanno a capo e restano toccabili.
+- **Il tasto «seconda finestra» mostra la sua icona.** (PR #7) Il bottone che affianca una cella al lato B non è più un quadrato pieno: il disegno si vede anche nello stato attivo.
+- **L'aggiornamento automatico è spento di default**: si accende da Impostazioni o con `nexuscrew autoupdate on`.
+
+## 0.9.54 — 2026-10-01
+
+- **Il proxy federato non crolla più quando la porta del tunnel rifiuta la connessione.** Il listener degli errori sull'upstream federato viene registrato prima del connect: un rifiuto sulla porta del tunnel viene gestito come errore di connessione invece di propagarsi come eccezione non catturata e abbattere il processo.
+- **Un config.json illeggibile non viene più riscritto.** Se la configurazione non si legge, il nodo non riparte da un oggetto vuoto: prima il fallback perdeva `autoUpdate` e `wizardDone` e il wizard si riapriva come al primo avvio. Ora la scrittura è fail-closed come quella di `fleet.json` e l'illeggibilità viene riportata per quello che è — una categoria di errore — invece del messaggio del parser.
+- **Impostazioni, `autoupdate off` e identity rifiutano con un errore chiaro invece di perdere le chiavi.** Le tre operazioni verificano prima di scrivere: quando la configurazione non è in condizione di essere aggiornata rispondono con il motivo, senza cancellare o corrompere le chiavi esistenti.
+- **L'avviso non riporta mai il contenuto del file.** Quando una scrittura fallisce, il messaggio nomina il file e il motivo, senza incollarne il contenuto.
+
+## 0.9.53 — 2026-09-30
+
+- **Telefono: le preferenze non si perdono più quando il browser le dimentica.** Pin, ordine delle celle e viste si sincronizzano sul nodo, per dispositivo: un telefono ritrova la sua disposizione anche dopo che lo storage del browser è stato svuotato. Il link di `show` porta l'identificativo del dispositivo; al primo uso il nodo ne emette uno. Una copia vuota non sostituisce mai una copia piena, un ripristino fallito viene riportato per quello che è e il nodo conserva la sua versione per ritentare al giro successivo. In Impostazioni c'è il diario delle ultime scritture (con copia e pulizia) e lo stato della memoria; l'app chiede al browser la memoria persistente, registra l'esito e ritenta un rifiuto al massimo una volta al giorno. I file di esportazione e importazione contengono solo pin, ordine e viste, mai il token.
+- **L'ordine della lista segue il nodo, non il suo nome.** Pin, ordine e viste sono legati all'identità del nodo, non al nome: rinominare un nodo non li orfana più. Un valore salvato illeggibile si conserva invece di cadere nel default, e il default non lo sovrascrive (la copia grezza va in un campo a parte e l'evento finisce nel diario). Uno spostamento non cancella più le chiavi non visibili in quel momento: con una lista parziale un solo spostamento non rimette in fondo le celle o i nodi nascosti. Il riordino è bloccato mentre la lista è incompleta, con un avviso che dice perché. Quando il fleet non risponde a un avvio fresco, l'ultima lista buona resta come elenco non live, così le celle spente non spariscono dal roster.
+- **Le domande chiuse non ricompaiono più tra nodi.** Un'ask chiusa dall'owner ricompariva perché la view del feed non conservava memoria dello scarto: ora la tiene, con scadenza ed epoca della view, e la applica sia unendo lo stream sia allo snapshot locale; la X non è più muta e un dismiss fallito mostra la causa. Lo stream federato inoltrato non viene più trattato come una richiesta ferma: il timeout iniziale è separato dal watchdog di inattività che chiude uno stream muto, e il 504 dei GET normali resta com'era.
+- **Lo store delle domande illeggibile non produce più un elenco vuoto autorevole.** Se gli asks non si leggono, lo snapshot risponde 503 ritentabile invece di un elenco vuoto presentato come veritiero; un file malformato (virgola finale, JSON non a oggetto, `asks` non array) non viene mai sovrascritto con uno vuoto e le mutazioni rifiutano finché il file non è riparato, così le domande aperte non si perdono. La chiusura federata su uno store illeggibile risponde 503 ritentabile, perché la coda riprovi dopo la riparazione invece di considerare la chiusura conclusa. Un fd aperto non resta più appeso quando una guardia rifiuta il file dopo l'apertura.
+- **La card di una domanda resta gestibile anche a feed esaurito.** Quando i tentativi di sincronizzazione dello snapshot si esauriscono, la view non resta congelata: un cooldown a gradini cresce a ogni esaurimento, paga un tentativo fresco a ogni scadenza e torna al primo gradino dopo un frame sano; un dismiss confermato dall'owner chiude la card subito, stream o non stream. Un tentativo di recupero fallito riarma il cooldown al gradino successivo, così il poll non ripete lo snapshot a ogni tick. Con la view non aggiornata la card avvisa che il feed non è attivo anche quando la risposta è concessa, e la X dice che lo scarto parte comunque via relay diretto.
+- **Porta occupata: il messaggio dice la porta e l'azione.** Il nodo non si sposta più di porta da solo: una porta occupata aspetta l'orfano del nodo o fallisce con un messaggio che nomina la porta e dice cosa fare (liberala, o sceglierne un'altra con `nexuscrew init --port <N>`), in italiano, inglese e spagnolo. Il `show` non riscrive più la config quando la sonda della porta va in timeout.
+- **Aggiornamento automatico più sicuro.** npm è lanciato con il node del daemon, così un node diverso nel PATH non installa in un altro albero; un preflight verifica il prefix e che il root globale di npm punti al pacchetto in esecuzione; la versione installata è letta dal path eseguito. Dopo il riavvio la versione in esecuzione è confrontata con il target (e uno `started:false` è un errore, a meno che il processo non giri già la versione attesa); una versione che non è stata presa viene bloccata, gli install automatici sono limitati a due per versione nelle 24 ore e uno all'ora, e il primo controllo dopo uno start aspetta il resto dell'intervallo invece di partire subito. Lo start e il riavvio sono serializzati su un lock condiviso, così due avviatori non si ammazzano a vicenda il nodo fresco.
+- **Login: il token digitato non raggiunge lo storage a ogni tasto.** Il token entra nello stato dell'app e nello storage solo su «ok» o Invio; prima ogni tasto lo scriveva e la schermata spariva al primo carattere, perdendo un token inserito a mano a ogni riapertura. «Ricorda su questo dispositivo» è di default sui touch. Un 401 dal nodo locale, mai da una rotta federata o da un timeout, riapre il prompt con il motivo lasciando pin e ordine intatti.
+- **Banner di aggiornamento dentro lo schermo.** Il banner non esce più dallo schermo sui telefoni stretti: è largo al massimo quanto lo schermo, va a capo e i suoi tasti non si restringono.
+
+## 0.9.52 — 2026-09-29
+
+- **Telefono: CTRL e ALT non chiudono più la tastiera.** Toccandoli la tastiera si apre se era chiusa e resta aperta se lo era già; gli altri tasti della barra e la preferenza di tenerla chiusa non cambiano.
+- **Telefono: CTRL e ALT si combinano con quello che digiti.** Con CTRL armato il primo carattere diventa il carattere di controllo (`c` → ^C), con ALT armato parte ESC seguito dal carattere, con entrambi ESC più il carattere di controllo. Dopo quel carattere si disarmano entrambi; parole intere e testo da tastiera con predizione escono invariati.
+- **Telefono: incollare con CTRL o ALT armati incolla il testo così com'è.** Prima l'incolla veniva trattata come digitazione e il testo usciva alterato; ora resta letterale e l'armamento rimane. Un tasto digitato subito dopo l'incolla torna una digitazione normale.
+- Corretto: le celle mostrate in griglia o in anteprima non lanciano più un errore quando ALT è armato.
+- Pacchetto: la verifica del contenuto prima della pubblicazione riconosce anche il formato di `npm pack --json` di npm 12 e respinge le sigle di lavoro interno nei file pubblicati.
+
+## 0.9.51 — 2026-09-27
+
+- **Mobile: la maniglia della doppia vista segue il dito.** Il confine tra le due celle si muove come lo trascini, senza inversione di verso.
+- **Mobile: la doppia vista si usa anche con il telefono in orizzontale.** Ruotando, le due celle si affiancano sinistra/destra con la maniglia verticale e ogni disposizione ricorda le sue proporzioni; se la cella più stretta scende sotto ~40 colonne al font corrente si vede solo quella col focus — l'altra resta montata e nascosta, con il tasto per passarle — e il tasto di scambio diventa ⇆. Nessun terminale viene ricreato ruotando o cambiando disposizione.
+- **Desktop: spostare e ridimensionare le finestre non è più rozzo.** Il bordo tra due finestre segue il mouse, cambiano solo le due vicine, le misure del terminale compaiono mentre trascini e si aggancia a un terzo, metà e due terzi (Alt per non agganciare); doppio clic sulla maniglia per dividere a metà. Per spostare una finestra c'è una copia che segue il mouse e, sulla finestra di arrivo, il centro la scambia di posto; Esc annulla.
+- **Desktop: finestre staccate.** Il tastino nella barra del titolo stacca una finestra dalla griglia e la fa flottare sopra le altre: si sposta dal titolo, si ridimensiona da bordi e angolo, si aggancia ai bordi dello schermo e alle altre finestre, si riduce e si rimette nella griglia. Staccata, la finestra dà le sue misure alla sessione: per questo il terminale si ricollega una volta quando la stacchi e una quando la riattacchi; spostarla, ridimensionarla o passare da una finestra all'altra non lo ricollega.
+- Le finestre staccate si salvano nel deck accanto alla griglia: un nodo o un client di versione precedente che salva quel deck vede la griglia e non le cancella. Unico limite: su un deck che appartiene a un nodo non ancora aggiornato le finestre staccate non si salvano (la griglia sì, intatta) e al ricaricamento tornano nella griglia. Se un client di versione precedente rimette nella griglia una sessione che nel deck è staccata, vince la griglia: la copia staccata si scarta e il deck resta valido. Aggiorna anche i nodi che possiedono deck condivisi.
+
+## 0.9.50 — 2026-09-27
+
+- **Nome del dispositivo: si prende dal nome dell'host e, quando l'host non ne ha uno (per esempio Android, dove è "localhost"), lo chiede nel primo avvio o al primo accesso; resta salvato, compare nella vista locale e nei nuovi collegamenti. I nodi già collegati non cambiano nome.**
+
+## 0.9.49 — 2026-09-27
+
+- **Desktop: l'esito dell'avvio o riavvio di una cella non resta più fisso in rosso nella barra dei deck: compare su una riga sua sotto la barra e sparisce dopo 10 secondi; gli errori veri restano nel foglio della cella finché non lo chiudi.**
+
+## 0.9.48 — 2026-09-27
+
+- **Telefono: tasto cartella nella barra in alto (tra lo zoom e il menu ⋯) per aprire i file della cella; si accende e si spegne dal menu ⋯ → Cell files e resta finché è acceso.**
+- Contiene la correzione della 0.9.47 (mai pubblicata): il terminale non si svuota più a ogni aggiornamento.
+
+## 0.9.47 — 2026-09-27
+
+- **Corretto: nella 0.9.46 il terminale della cella si svuotava e si ridisegnava di continuo.**
+- La callback dei file passata al terminale veniva ricreata a ogni render e, essendo tra le dipendenze dell'effetto di connessione, faceva ripartire il socket a ogni ciclo di aggiornamento. Ora è stabile; un test con spia su connessioni e istanze del terminale verifica che re-render consecutivi non ricostruiscono nulla.
+
+## 0.9.46 — 2026-09-27
+
+- **Doppia vista su telefono: una seconda cella sotto quella aperta, affiancata dalla lista rapida con un tasto; la barra scrive nella cella col focus.**
+
 ## 0.9.45 — 2026-09-24
 
 - **The start and stop window cannot hang any more.** A start or a stop had no client-side deadline: a slow node kept the sheet busy with its buttons disabled, and the only way out was to reload the page. The action now has a 60-second cap, **Cancel** stays active while it works, and the primary button says what it is doing — "starting…" or "stopping…" — so the state of the action is never ambiguous. When the cap expires the sheet closes and the outcome arrives as a notice, because the server may still be completing the start and the roster tells the truth a moment later. (commits 6e8cdb2, 0f82958)

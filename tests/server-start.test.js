@@ -30,29 +30,28 @@ test('start(): il token non compare nell\'output di startup', async (t) => {
   assert.ok(out.includes('nexuscrew show'), 'lo startup rimanda a `nexuscrew show`');
 });
 
-test('start(): porta occupata al boot -> bind alternativo e persistenza atomica', async (t) => {
+test('start(): porta occupata al boot -> errore chiaro, nessun bind alternativo e config.json invariato', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-start-port-'));
   const blocker = require('node:http').createServer((_req, res) => res.end('other'));
   await new Promise((resolve) => blocker.listen(0, '127.0.0.1', resolve));
   const occupied = blocker.address().port;
   const configPath = path.join(dir, 'config.json');
-  fs.writeFileSync(configPath, JSON.stringify({ port: occupied, wizardDone: true }) + '\n', { mode: 0o600 });
-  const server = start({
-    home: dir, configDir: dir, configPath, tokenPath: path.join(dir, 'token'),
-    filesRoot: path.join(dir, 'files'), port: occupied, fleetEnabled: false, log: () => {},
+  const original = JSON.stringify({ port: occupied, wizardDone: true }) + '\n';
+  fs.writeFileSync(configPath, original, { mode: 0o600 });
+  let candidate;
+  const failure = new Promise((resolve) => {
+    candidate = start({
+      home: dir, configDir: dir, configPath, tokenPath: path.join(dir, 'token'),
+      filesRoot: path.join(dir, 'files'), port: occupied, fleetEnabled: false, autoUpdate: false, log: () => {},
+      ownPortWaitMs: 0, lang: 'en', onListenError: resolve,
+    });
   });
-  await new Promise((resolve) => server.on('listening', resolve));
-  t.after(() => {
-    server.close(); blocker.close();
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
-  const selected = server.address().port;
-  assert.notEqual(selected, occupied);
-  assert.ok(selected > occupied && selected <= occupied + 200, 'sceglie deterministicamente la prima porta successiva disponibile');
-  const persisted = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  assert.equal(persisted.port, selected);
-  assert.equal(persisted.wizardDone, true);
-  assert.equal(fs.statSync(configPath).mode & 0o777, 0o600);
+  const error = await failure;
+  t.after(() => { try { candidate.close(); } catch (_) {} blocker.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  assert.equal(error.code, 'EADDRINUSE');
+  assert.match(error.message, /--port/);
+  assert.equal(candidate.listening, false, 'nessun listener su un\'altra porta');
+  assert.equal(fs.readFileSync(configPath, 'utf8'), original, 'config.json non riscritto');
 });
 
 test('start(): porta occupata con peer collegati -> nessun fallback silenzioso', async (t) => {
@@ -73,7 +72,7 @@ test('start(): porta occupata con peer collegati -> nessun fallback silenzioso',
   const failure = new Promise((resolve) => {
     candidate = start({
       home: dir, configDir: dir, configPath, nodesPath, tokenPath: path.join(dir, 'token'),
-      filesRoot: path.join(dir, 'files'), port: occupied, fleetEnabled: false, autoUpdate: false, log: () => {},
+      filesRoot: path.join(dir, 'files'), port: occupied, fleetEnabled: false, autoUpdate: false, log: () => {}, lang: 'en',
       onListenError: resolve,
     });
   });

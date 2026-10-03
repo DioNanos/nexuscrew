@@ -35,7 +35,7 @@ function setup(t, { ui = 0, push = 0 } = {}) {
     notifier,
     push: {},
     asks: {}, // route /asks mai esercitate qui
-    paste: async () => true,
+    submit: async (...args) => { const result = await (async () => true)(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; },
     sessionExists: () => true,
     localNodeId: () => SELF,
     originResolver: { resolve: async () => ({ ok: true, origin: { node: 'a'.repeat(32), cell: 'Dev' } }) },

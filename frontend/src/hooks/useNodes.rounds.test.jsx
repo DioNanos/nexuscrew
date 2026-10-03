@@ -22,7 +22,9 @@ const NODES = {
 const calls = vi.hoisted(() => ({ sessions: 0, okTimes: 1, pending: [], hang: false, instanceId: 'local' }));
 
 vi.mock('../lib/api.js', () => ({
+  ROSTER_READ_TIMEOUT_MS: 8000,
   apiFetch: vi.fn(async () => ({ json: async () => ({ instanceId: calls.instanceId, version: 'test' }) })),
+  getRouteConfig: vi.fn(async () => ({ instanceId: calls.instanceId, version: 'test' })),
   getNodes: vi.fn(async () => NODES),
   getTopology: vi.fn(async () => ({ nodes: [] })),
   getNodeAliases: vi.fn(async () => ({ aliasesByInstanceId: {} })),

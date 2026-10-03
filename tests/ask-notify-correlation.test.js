@@ -44,6 +44,7 @@ function boot(t) {
     fleetEnabled: false,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
   });
   return new Promise((res) => server.listen(0, '127.0.0.1', () => {
     t.after(() => {

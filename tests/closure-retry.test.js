@@ -187,7 +187,7 @@ function impianto(t, risposta) {
   });
   const fanout = createClosureFanout({
     dispatcher: { dispatch: async ({ target }) => risposta(target) },
-    peerTargets: async () => [B_ID, C_ID],
+    peerTargets: async () => [B_ID, C_ID].map(nodeId => ({ nodeId, accessConfigured: true, ...require('../lib/nodes/access-presets.js').PRESETS.admin })),
     localNodeId: () => A_ID,
     retry,
   });
@@ -259,4 +259,36 @@ test('una chiusura senza pendenti non entra in coda', async (t) => {
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'no-targets');
   assert.equal(retry.size(), 0);
+});
+
+for (const failure of ['throw', 'invalid']) test(`closure retry retains an unknown inventory after ${failure} and delivers when admin enumeration recovers`, async t => {
+  const clock = fakeClock(); const target = B_ID; const calls = []; let healthy = false;
+  const retry = createClosureRetryQueue({ now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
+    run: args => fanout.dispatch({ ...args, retryOnFailure: false }),
+  });
+  const fanout = createClosureFanout({ dispatcher: { dispatch: async args => { calls.push(args.target); return { status: 'delivered' }; } },
+    localNodeId: () => A_ID, retry,
+    peerTargets: async () => {
+      if (!healthy) { if (failure === 'throw') throw new Error('inventory unavailable'); return {}; }
+      return [{ nodeId: target, accessConfigured: true, ...require('../lib/nodes/access-presets.js').PRESETS.admin }];
+    },
+  });
+  t.after(() => retry.stop());
+  retry.enqueue({ askId: '11223344', outcome: 'dismissed', session: 'cell-reviewer', targets: [target] });
+  await retry.drain('read');
+  assert.deepStrictEqual(calls, []); assert.equal(retry.size(), 1, 'unknown inventory does not remove the pending closure');
+  assert.deepStrictEqual(retry.pending()[0].targets, [target]);
+  const unknown = await fanout.dispatch({ askId: '11223344', outcome: 'dismissed', session: 'cell-reviewer', targets: [target], retryOnFailure: false });
+  assert.equal(unknown[0].status, 'unknown');
+  healthy = true; clock.advance(1000); await retry.drain('read');
+  assert.deepStrictEqual(calls, [target]); assert.equal(retry.size(), 0);
+});
+
+test('closure retry refuses a known custom peer without forwarding', async t => {
+  const calls = []; const grants = { ...require('../lib/nodes/access-presets.js').PRESETS.admin, liveHostAccess: false, filesReadAccess: false };
+  const fanout = createClosureFanout({ dispatcher: { dispatch: async args => { calls.push(args); return { status: 'delivered' }; } },
+    localNodeId: () => A_ID, peerTargets: async () => [{ nodeId: B_ID, accessConfigured: true, ...grants }],
+  });
+  const out = await fanout.dispatch({ askId: '11223344', outcome: 'dismissed', session: 'cell-reviewer', targets: [B_ID] });
+  assert.deepStrictEqual(calls, []); assert.deepStrictEqual(out, [{ target: B_ID, status: 'refused', reason: 'ask-target-not-admin' }]);
 });

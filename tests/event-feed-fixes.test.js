@@ -148,7 +148,7 @@ function stubClient(t, responses = [], extra = {}) {
   quiesceAndRemove(t, dir, ref);
   const hub = [];
   const client = createEventFeedClient({
-    loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30,
+    loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30, minSnapshotIntervalMs: 0,
     eventsHub: { broadcast: (e) => hub.push(e) },
     ...extra,
   });
@@ -316,7 +316,7 @@ function stubOwners(t, defs, extra = {}) {
     const port = m ? Number(m[1]) : 0;
     return defs.find((d) => d.port === port) || null;
   };
-  const fetchImpl = async (url) => {
+  const fetchImpl = async (url, opts = {}) => {
     calls.push({ url });
     const d = ownerAt(url);
     if (!d) return { ok: false, status: 404, json: async () => ({ error: 'unknown' }), text: async () => '' };
@@ -338,7 +338,10 @@ function stubOwners(t, defs, extra = {}) {
           return {
             read: async () => {
               state.reads += 1;
-              if (sent) return { done: true };
+              if (sent) return new Promise((_resolve, reject) => {
+                if (opts.signal.aborted) reject(new Error('client stopped'));
+                else opts.signal.addEventListener('abort', () => reject(new Error('client stopped')), { once: true });
+              });
               sent = true;
               return { done: false, value: Buffer.from(payload) };
             },
@@ -353,7 +356,7 @@ function stubOwners(t, defs, extra = {}) {
   const ref = { value: null };
   quiesceAndRemove(t, dir, ref);
   const client = createEventFeedClient({
-    loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30,
+    loadStore: () => nodesStore.loadStoreStrict(nodesPath), fetchImpl, pollMs: 30, minSnapshotIntervalMs: 0,
     eventsHub: { broadcast: (e) => hub.push(e) },
     ...extra,
   });
@@ -443,7 +446,10 @@ test('R2d: the snapshot element sanity covers asks too (count and size)', async 
   const health = { ok: true, status: 200, json: async () => ({ ok: true, instanceId: ownerId, eventFeedV1: true }) };
   const snapOf = (snap) => ({ ok: true, status: 200, text: async () => JSON.stringify({ ownerId, cursor: '1:0', viewEpoch: 1, notifications: [], ...snap }) });
   const overCap = Array.from({ length: 101 }, (_, i) => ({ id: `ask-${i}`, question: 'q', options: [], session: 's', ts: 1 }));
-  const first = stubClient(t, [health, snapOf({ asks: overCap }), IDLE_STREAM]);
+  // Le risposte oversize si ripetono: il primo rifiuto deve restare visibile
+  // anche se l'invariante lascia correre i tick (il 500 di default non deve
+  // mai coprire la causa vera).
+  const first = stubClient(t, [health, ...Array.from({ length: 10 }, () => snapOf({ asks: overCap })), IDLE_STREAM]);
   first.client.start();
   const a = await waitForView(first.client, ownerId, (v) => v.lastError === 'snapshot-element-oversize');
   assert.equal(a.lastError, 'snapshot-element-oversize', '101 asks (cap 100) are refused, not applied');
@@ -451,7 +457,7 @@ test('R2d: the snapshot element sanity covers asks too (count and size)', async 
   first.client.stop();
 
   const huge = [{ id: 'ask-huge', question: 'q'.repeat(20 * 1024), options: [], session: 's', ts: 1 }];
-  const second = stubClient(t, [health, snapOf({ asks: huge }), IDLE_STREAM]);
+  const second = stubClient(t, [health, ...Array.from({ length: 10 }, () => snapOf({ asks: huge })), IDLE_STREAM]);
   second.client.start();
   const b = await waitForView(second.client, ownerId, (v) => v.lastError === 'snapshot-element-oversize');
   assert.equal(b.lastError, 'snapshot-element-oversize', 'an ask element over 16 KiB is refused');
@@ -500,4 +506,50 @@ test('R4: the kill switch flipped during/after the build still refuses the snaps
   const r = await fetch(`${A.base}/api/route/owner/_/event-feed/snapshot`, { headers: H(A.token) });
   assert.equal(r.status, 403);
   assert.equal((await r.json()).reason, 'events-disabled');
+});
+
+test('a named snapshot rejection survives EOF until a valid snapshot heals it', async (t) => {
+  const ownerId = 'a'.repeat(32);
+  const valid = { ownerId, cursor: '1:0', viewEpoch: 1, asks: [], notifications: [], fleetState: null };
+  const oversized = { ...valid, fleetState: { available: true, cells: [{ cell: 'x'.repeat(20 * 1024), active: true }] } };
+  const snapshot = (value) => ({ ok: true, status: 200, text: async () => JSON.stringify(value) });
+  let entered;
+  let finish;
+  const reading = new Promise((resolve) => { entered = resolve; });
+  const stream = { ok: true, status: 200, body: { getReader: () => ({ read: () => {
+    entered();
+    return new Promise((resolve) => { finish = resolve; });
+  } }) } };
+  const { client } = stubClient(t, [
+    { ok: true, status: 200, json: async () => ({ instanceId: ownerId, eventFeedV1: true }) },
+    snapshot(valid), stream, snapshot(oversized), snapshot(valid),
+  ]);
+  const round = client.poll();
+  await reading;
+  await client.ownerSnapshotAsks(ownerId);
+  assert.equal(client.viewFor(ownerId).lastError, 'snapshot-element-oversize');
+  finish({ done: true });
+  await round;
+  assert.equal(client.viewFor(ownerId).lastError, 'snapshot-element-oversize', 'EOF preserves the named rejection');
+  await client.ownerSnapshotAsks(ownerId);
+  assert.equal(client.viewFor(ownerId).lastError, null, 'a valid snapshot heals the rejection');
+  assert.equal(client.viewFor(ownerId).stale, false);
+});
+
+test('a named snapshot rejection survives a later parse failure until healing', async (t) => {
+  const ownerId = 'a'.repeat(32);
+  const valid = { ownerId, cursor: '1:0', viewEpoch: 1, asks: [], notifications: [], fleetState: null };
+  const oversized = { ...valid, fleetState: { available: true, cells: [{ cell: 'x'.repeat(20 * 1024), active: true }] } };
+  const snapshot = (value) => ({ ok: true, status: 200, text: async () => JSON.stringify(value) });
+  const { client } = stubClient(t, [
+    { ok: true, status: 200, json: async () => ({ instanceId: ownerId, eventFeedV1: true }) },
+    snapshot(oversized), { ok: true, status: 200, text: async () => '' }, snapshot(valid),
+  ]);
+  await client.poll();
+  assert.equal(client.viewFor(ownerId).lastError, 'snapshot-element-oversize');
+  await client.poll();
+  assert.equal(client.viewFor(ownerId).lastError, 'snapshot-element-oversize', 'a parse failure preserves the named rejection');
+  await client.ownerSnapshotAsks(ownerId);
+  assert.equal(client.viewFor(ownerId).lastError, null, 'a valid snapshot heals the rejection');
+  assert.equal(client.viewFor(ownerId).stale, false);
 });

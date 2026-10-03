@@ -27,7 +27,7 @@ export const REACH = {
   down: 'tunnel-down',
   passive: 'node-connected-client',
   // Un nodo VL non ha un tunnel: e' un poll verso il broker (design
-  // NC_UI_NODI_VL, 2026-08-05). Chiavi distinte apposta — "tunnel giu'" per
+  // UI nodi VL, 2026-08-05). Chiavi distinte apposta — "tunnel giu'" per
   // un nodo che non ha mai avuto un tunnel sarebbe un campo vuoto travestito
   // da stato, esattamente cio' che il brief chiede di evitare.
   vlOnline: 'vl-poll-online',
@@ -81,9 +81,9 @@ export function nodeExposure(node) {
 
 // Per un nodo VL la riga non ha un `name` leggibile da mostrare come
 // sottotitolo (e' il `nodeId`, 32 caratteri esadecimali): mostra la salute
-// dichiarata dal device se c'e' (brief NC_UI_NODI_VL §3, "salute reali nella
+// dichiarata dal device se c'e' (brief UI nodi VL §3, "salute reali nella
 // lista"), altrimenti lo stato del poll — mai un campo vuoto o "undefined".
-// Con owner remoti (step 3, NC_UI_NODI_VL_REMOTI, invariante 2): un owner
+// Con owner remoti (step 3, UI nodi VL remoti, invariante 2): un owner
 // remoto va anteposto — due device con la stessa label su owner diversi sono
 // distinguibili SOLO cosi'. Un nodo locale (`ownerLabel` assente) non
 // guadagna un prefisso "Locale" ovunque: sarebbe rumore quando non c'e'

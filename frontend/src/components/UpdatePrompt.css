@@ -1,18 +1,20 @@
 /* Banner PWA "nuova versione" — fisso in basso, non invasivo.
    Verde terminale coerente con header/go; distinto dal .nc-stale (in alto, API-based). */
 .nc-update {
-  position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: 8px; left: 8px; right: 8px; margin: 0 auto; width: max-content;
   z-index: 2000; display: flex; align-items: center; gap: 10px;
   background: #0f1a0f; color: #d9f7c7; border: 1px solid #2e7d32;
   border-radius: 10px; padding: 6px 8px 6px 14px; font-size: 13px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+  /* mai piu' largo dello schermo; il testo va a capo e i bottoni restano raggiungibili */
+  box-sizing: border-box; max-width: calc(100vw - 16px); flex-wrap: wrap;
 }
-.nc-update-msg { white-space: nowrap; }
+.nc-update-msg { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
 .nc-update-btn {
   display: inline-flex; align-items: center; justify-content: center;
   background: #2e7d32; border: 1px solid #2e7d32; color: #06120a;
   border-radius: 7px; padding: 4px 12px; font: inherit; font-size: 13px;
-  cursor: pointer;
+  cursor: pointer; flex: none;
 }
 .nc-update-btn:hover { background: #3a9d42; }
 @media (prefers-reduced-motion: reduce) { .nc-update { transition: none; } }
@@ -21,6 +23,6 @@
   width: 22px; height: 22px; padding: 0;
   background: transparent; border: 1px solid #2e7d32; color: #d9f7c7;
   border-radius: 7px; font: inherit; font-size: 14px; line-height: 1;
-  cursor: pointer;
+  cursor: pointer; flex: none;
 }
 .nc-update-close:hover { background: #2e7d32; color: #06120a; }

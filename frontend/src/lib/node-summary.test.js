@@ -72,7 +72,7 @@ describe('nodeRowSummary — a VL node produces a real row, not null', () => {
   });
 });
 
-// Step 3 (owner remoti, brief NC_UI_NODI_VL_REMOTI, invariante 2): "due nodi
+// Step 3 (owner remoti, brief UI nodi VL remoti, invariante 2): "due nodi
 // con la stessa label su owner diversi sono distinguibili SOLO cosi'" — la
 // riga deve portare l'owner, non solo lo stato.
 describe('nodeRowSummary — shows the owner for a VL node (step 3, invariant 2)', () => {
@@ -85,7 +85,7 @@ describe('nodeRowSummary — shows the owner for a VL node (step 3, invariant 2)
 
   it('two nodes with the SAME label on different owners produce different subtitles', () => {
     const ownerA = { instanceId: 'a'.repeat(16), route: ['node-a'], label: 'Node A' };
-    const ownerB = { instanceId: 'b'.repeat(16), route: ['nova'], label: 'NovaLNX' };
+    const ownerB = { instanceId: 'b'.repeat(16), route: ['node-b'], label: 'Node B' };
     const rowA = nodeRowSummary(vlNodeToPeer(RAW_ONLINE, ownerA));
     const rowB = nodeRowSummary(vlNodeToPeer(RAW_ONLINE, ownerB));
     expect(rowA.title).toBe(rowB.title); // stessa label del device

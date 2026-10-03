@@ -19,7 +19,9 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/api.js', () => ({
+  ROSTER_READ_TIMEOUT_MS: 8000,
   apiFetch: vi.fn(async () => ({ json: async () => ({ instanceId: 'local0', version: 'test' }) })),
+  getRouteConfig: vi.fn(async () => ({ instanceId: 'local0', version: 'test' })),
   getNodes: vi.fn(async () => {
     if (!state.nodesOk) throw new Error('HTTP 502');
     return state.nodesResp;

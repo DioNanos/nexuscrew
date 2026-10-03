@@ -1,4 +1,13 @@
 // fetch con Bearer: tutte le /api del server lo richiedono.
+import { AUTH_INVALID_EVENT, isLocalApiPath } from './token-store.js';
+export { AUTH_INVALID_EVENT, isLocalApiPath };
+
+// il 401 del nodo LOCALE dice che il token in uso non vale piu' (rotazione, file sostituito): lo si annuncia
+// perche' l'app riapra il prompt. Non per i peer (route federate) e non per timeout/errori di rete.
+function noteAuth(path, token, response) {
+  if (!response || response.status !== 401 || !isLocalApiPath(path)) return;
+  try { window.dispatchEvent(new CustomEvent(AUTH_INVALID_EVENT, { detail: { token, path } })); } catch (_) { /* fuori dal browser */ }
+}
 
 // un tunnel federato «su a metà» (socket aperto, nessuna risposta) non
 // genera MAI un errore da solo: senza timeout la fetch pende fino al limite del
@@ -6,6 +15,13 @@
 // (route non vuota) prendono questo default; le locali no (il server risponde
 // sempre, anche solo per un errore).
 export const FEDERATED_FETCH_TIMEOUT_MS = 8000;
+
+// Tetti per le letture del roster: un nodo VL o una lettura di
+// sessions/fleet senza scadenza client blocca la lista dei nodi per un tempo
+// indeterminato. Sono default applicati DAI CHIAMANTI del fix: nessun tetto
+// globale corto su mutazioni, download o stream.
+export const VL_READ_TIMEOUT_MS = 4000;
+export const ROSTER_READ_TIMEOUT_MS = 8000;
 
 export function fetchAbortSignal(ms) {
   const controller = new AbortController();
@@ -19,7 +35,7 @@ export function apiFetch(path, token, opts = {}) {
     return fetch(path, {
       ...opts,
       headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` },
-    });
+    }).then((r) => { noteAuth(path, token, r); return r; });
   }
   // Audit fix: `controller` è di fetchAbortSignal — qui si usa QUELLO (abort di
   // timeout e abort esterno agiscono sullo stesso controller), mai una variabile
@@ -52,6 +68,7 @@ export function apiFetch(path, token, opts = {}) {
     // (il poll) resterebbe occupato. Il cleanup lo fa chi CONSUMA il body,
     // in `finally` (`jsonFetch`), tramite `__cleanupTimeout`.
     r.__cleanupTimeout = cleanup;
+    noteAuth(path, token, r);
     return r;
   }, (e) => { cleanup(); throw e; });
 }
@@ -67,6 +84,9 @@ async function jsonFetch(path, token, opts = {}) {
     headers: { 'content-type': 'application/json' },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
     timeoutMs: opts.timeoutMs,
+    // Il signal esterno (cleanup di un giro abortito) non viene piu' scartato:
+    // abort esterno e timeout agiscono sullo stesso controller in apiFetch.
+    signal: opts.signal,
   });
   let j;
   try {
@@ -157,17 +177,22 @@ export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs$
 
 // Settings API B2 (design §4b(6)): read-only + mutanti lista chiusa. jsonFetch
 // propaga la causa esplicita (j.error) su ogni failure — MAI errori muti in UI.
-export const getSettings = (t) => jsonFetch('/api/settings', t);
-export const getNodes = (t) => jsonFetch('/api/nodes', t);
-export const getPeers = (t) => jsonFetch('/api/peers', t);
+export const getSettings = (t, opts = {}) => jsonFetch('/api/settings', t, opts);
+export const getNodes = (t, opts = {}) => jsonFetch('/api/nodes', t, opts);
+export const getPeers = (t, opts = {}) => jsonFetch('/api/peers', t, opts);
 // Nodi VL (device di esempio): endpoint separato, non federato — fuso con i peer
 // SOLO lato presentazione (vl-nodes-model.js), mai dentro /api/nodes o
-// /api/peers (design NC_UI_NODI_VL, 2026-08-05: non cambiare quel contratto).
+// /api/peers (design UI nodi VL, 2026-08-05: non cambiare quel contratto).
 // `route` (default locale, `[]`) instrada verso l'owner giusto — federazione
 // ripristinata per /vl-nodes/* (commit b0e8bd1): con più owner un comando
 // deve arrivare al device che lo dichiara, non sempre a quello locale
-// (design NC_UI_NODI_VL_REMOTI, 2026-08-05, invariante 3).
-export const getVlNodes = (t, route = []) => jsonFetch(`${routeBase(route)}/vl-nodes`, t);
+// (design UI nodi VL remoti, 2026-08-05, invariante 3).
+// Lettura VL: tetto di 4 s applicato anche alla GET locale (lettura
+// opzionale: un owner che non risponde non trattiene la lista dei nodi).
+export const getVlNodes = (t, route = [], opts = {}) => jsonFetch(
+  `${routeBase(route)}/vl-nodes`, t,
+  { timeoutMs: VL_READ_TIMEOUT_MS, ...opts },
+);
 export const sendVlNodeCommand = (t, nodeId, kind, args = {}, route = []) => (
   jsonFetch(`${routeBase(route)}/vl-nodes/${encodeURIComponent(nodeId)}/commands`, t, { method: 'POST', body: { kind, args } })
 );
@@ -178,10 +203,10 @@ export const removeVlNode = (t, nodeId, route = []) => jsonFetch(`${routeBase(ro
 export const getVlNodeEvents = (t, nodeId, after = 0, route = []) => jsonFetch(
   `${routeBase(route)}/vl-nodes/${encodeURIComponent(nodeId)}/events${after ? `?after=${encodeURIComponent(after)}` : ''}`, t,
 );
-export const getTopology = (t) => jsonFetch('/api/topology', t);
-export const getRouteSessions = (t, route) => jsonFetch(`${routeBase(route)}/sessions`, t);
-export const getRouteConfig = (t, route) => jsonFetch(`${routeBase(route)}/config`, t);
-export const getRouteTopology = (t, route) => jsonFetch(`${routeBase(route)}/topology`, t);
+export const getTopology = (t, opts = {}) => jsonFetch('/api/topology', t, opts);
+export const getRouteSessions = (t, route, opts = {}) => jsonFetch(`${routeBase(route)}/sessions`, t, opts);
+export const getRouteConfig = (t, route, opts = {}) => jsonFetch(`${routeBase(route)}/config`, t, opts);
+export const getRouteTopology = (t, route, opts = {}) => jsonFetch(`${routeBase(route)}/topology`, t, opts);
 // Sessioni di un nodo remoto via proxy B1 (stesso token locale: il proxy
 // verifica il Bearer e inietta LUI il token remoto — mai visto dal browser).
 export const getNodeSessions = (t, name) => jsonFetch(`/node/${encodeURIComponent(name)}/api/sessions`, t);
@@ -202,7 +227,7 @@ export const createPeerInvite = (t, body, route = []) => jsonFetch(
   `${routeBase(route)}/settings/peering/invite`, t, { method: 'POST', body: body || {} },
 );
 export const renameNodeLabel = (t, name, label) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/label`, t, { method: 'PATCH', body: { label } });
-export const getNodeAliases = (t) => jsonFetch('/api/settings/node-aliases', t);
+export const getNodeAliases = (t, opts = {}) => jsonFetch('/api/settings/node-aliases', t, opts);
 export const saveNodeAlias = (t, instanceId, alias) => jsonFetch(`/api/settings/node-aliases/${encodeURIComponent(instanceId)}`, t, { method: 'PATCH', body: { alias } });
 export const deleteNodeAlias = (t, instanceId) => jsonFetch(`/api/settings/node-aliases/${encodeURIComponent(instanceId)}`, t, { method: 'DELETE' });
 export const updateNode = (t, name, patch) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}`, t, { method: 'PATCH', body: patch });
@@ -244,12 +269,13 @@ export const dismissAsk = (t, id) => jsonFetch(`/api/asks/${encodeURIComponent(i
 // Ask federate (owner remoto): la risposta passa dal relay del PROPRIO server,
 // che risolve la route dall'ownerId via inventario autorizzata. La chiave
 // della card è (ownerId, askId): il solo id non basta fra più proprietari.
-export const relayAskAnswer = (t, { ownerId, askId, text }) => jsonFetch('/api/asks-relay', t, {
-  method: 'POST', body: { ownerId, askId, text },
+export const relayAskAnswer = (t, { ownerId, askId, text, requestId }) => jsonFetch('/api/asks-relay', t, {
+  method: 'POST', body: { ownerId, askId, text, requestId },
 });
 export const relayAskVerify = (t, { ownerId, askId, requestId }) => jsonFetch('/api/asks-relay', t, {
   method: 'POST', body: { action: 'verify', ownerId, askId, requestId },
 });
+export const getAskReplyCapability = (t, { ownerId, askId }, opts = {}) => jsonFetch(`/api/asks-relay/capability?ownerId=${encodeURIComponent(ownerId)}&askId=${encodeURIComponent(askId)}`, t, { timeoutMs: 8000, ...opts });
 export const getAskRelayState = (t) => jsonFetch('/api/asks-relay/state', t);
 export const relayAskDismiss = (t, { ownerId, askId }) => jsonFetch('/api/asks-relay', t, {
   method: 'POST', body: { action: 'dismiss', ownerId, askId },
@@ -260,16 +286,16 @@ export const getFeedState = (t) => jsonFetch('/api/feed-state', t);
 // (senza, un tunnel «su a metà» teneva la UI senza decks per minuti.
 export const getDecks = (t, route = []) => jsonFetch(`${routeBase(route)}/decks`, t, route.length ? { timeoutMs: FEDERATED_FETCH_TIMEOUT_MS } : {});
 export const createDeck = (t, name, route = []) => jsonFetch(`${routeBase(route)}/decks`, t, { method: 'POST', body: { name } });
-export const saveDeck = (t, name, layout, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PUT', body: { layout, expectedRevision } });
+export const saveDeck = (t, name, layout, expectedRevision, route = [], floating) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PUT', body: { layout, expectedRevision, ...(floating ? { floating } : {}) } });
 
 // Flush a chiusura pagina — PUT keepalive fire-and-forget. La risposta
 // non viene letta (la pagina sta per chiudersi): serve solo a consegnare
 // l'ultima modifica quando il debounce dell'autosave non ha tempo di scadere.
-export const saveDeckKeepalive = (t, name, layout, expectedRevision, route = []) => apiFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, {
+export const saveDeckKeepalive = (t, name, layout, expectedRevision, route = [], floating) => apiFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, {
   method: 'PUT',
   keepalive: true,
   headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ layout, expectedRevision }),
+  body: JSON.stringify({ layout, expectedRevision, ...(floating ? { floating } : {}) }),
 });
 export const renameDeck = (t, name, next, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PATCH', body: { name: next, expectedRevision } });
 export const deleteDeck = (t, name, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'DELETE', body: { expectedRevision } });

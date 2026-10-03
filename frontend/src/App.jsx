@@ -11,11 +11,13 @@ import PowerSheet from './components/PowerSheet.jsx';
 import DeckBar from './components/DeckBar.jsx';
 import SettingsPanel from './components/SettingsPanel.jsx';
 import Wizard from './components/Wizard.jsx';
+import DeviceNameAsk from './components/DeviceNameAsk.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
 import { CellActionsPopover, CellActionsSheet } from './components/CellActions.jsx';
 import { cellRuntime } from './lib/roster-view-model.js';
 import { nextRendererPreference, readRendererPreference, writeRendererPreference } from './lib/terminal-renderer.js';
+import { leggiFilesTasto, scriviFilesTasto, leggiTastieraTasto, leggiPannelloTasto } from './lib/bar-files-tasto.js';
 import { readFontSize, writeFontSize } from './lib/terminal-fontsize.js';
 import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import { createPollGuard } from './lib/poll-guard.js';
@@ -27,20 +29,29 @@ import {
 } from './lib/api.js';
 import { isValidLabel } from './lib/settings-model.js';
 import { runFleetPowerAction } from './lib/fleet-action-notice.js';
+import useActionNotice from './hooks/useActionNotice.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
 import { cellDisplayName } from './lib/cell-display.js';
+import { isSameRef, toggleSideRef, readSavedDual, writeSavedDual, clearSavedDual, clampWeight } from './lib/dual-view.js';
+import { positionKey } from './lib/nodes-model.js';
 import {
   MAIN_DECK, deckLocationFromPath, deckUrl, readLayoutRaw,
 } from './lib/deck-model.js';
 import { deckId, refWithOwner, resolveLayoutForViewer, tickOwnerAvailability } from './lib/deck-federation.js';
 import { hostRouteKey, hostDesignationFailureMessage } from './lib/host-designation.js';
+import { loadLastRoster, saveLastRoster } from './lib/last-roster.js';
+import { adoptDeviceId } from './lib/prefs-sync.js';
+import { usePrefsSync } from './hooks/usePrefsSync.js';
 import { fleetReadOutcome } from './lib/fleet-read-policy.js';
 import { panelPortForRoute } from './lib/panel-port.js';
+import { AUTH_INVALID_EVENT, TOKEN_NOT_REMEMBERED_EVENT, loadToken, saveToken } from './lib/token-store.js';
+import LoginScreen from './components/LoginScreen.jsx';
 import {t} from './lib/i18n.js';
 import { useLang } from './hooks/useLang.js';
 import { setTerminalRuntimeConfig } from './lib/terminal-runtime-config.js';
 import { useNodes } from './hooks/useNodes.js';
 import { useDecks } from './hooks/useDecks.js';
+import { useNodePreferences } from './hooks/useNodePreferences.js';
 import { useInputPreferences } from './hooks/useInputPreferences.js';
 import { reportServerVersions } from './lib/sw-update.js';
 import { parseBootstrapHash } from './lib/fragment.js';
@@ -69,13 +80,14 @@ function loadSideW() {
 function bootstrapFromFragment() {
   const out = { token: '', pair: '' };
   try {
-    const { token, pair, nextUrl } = parseBootstrapHash({
+    const { token, pair, device, nextUrl } = parseBootstrapHash({
       hash: location.hash, origin: location.origin, pathname: location.pathname, search: location.search,
     });
     if (token) {
       out.token = token;
-      try { localStorage.setItem('nc_token', token); } catch (_) {}
+      saveToken(token, { remember: true }); // un solo posto: toglie l'eventuale copia di sessione vecchia
     }
+    if (device) adoptDeviceId(device); // solo se questo browser non ha gia' un profilo
     if (pair) {
       out.pair = pair;
       try { sessionStorage.setItem('nc_pair', pair); } catch (_) {}
@@ -83,7 +95,7 @@ function bootstrapFromFragment() {
     // rimuove il fragment sensibile (token e/o pair), preserva path + query.
     if (location.hash) { try { history.replaceState(null, '', nextUrl); } catch (_) {} }
   } catch (_) { /* best-effort: la UI resta usabile */ }
-  if (!out.token) out.token = sessionStorage.getItem('nc_token') || localStorage.getItem('nc_token') || '';
+  if (!out.token) out.token = loadToken();
   if (!out.pair) { const p = sessionStorage.getItem('nc_pair'); if (p) out.pair = p; }
   return out;
 }
@@ -116,8 +128,17 @@ function rel(epochSec) {
 // Sono le STESSE azioni di prima, con lo stesso stato vero: qui si decide solo
 // l'ordine e quali compaiono. Una voce che non ha il suo handler non c'e' — e'
 // il contratto di CellActionsMenu, gli stessi item delle azioni cella.
+// Decisione dell'operatore sulla PR #7: il menu ⋯ resta PER INTERO con tutti i suoi
+// sottomenu; i tasti diretti (cartella, tastiera, AI Desktop) sono AGGIUNTI
+// fuori dal menu, non una sostituzione.
 export function barActionsItems({
-  showComposer, showFiles, showPanel, hasPanel, rendererKind, handlers = {},
+  showComposer, showFiles, showPanel, hasPanel, rendererKind,
+  // Su mobile la voce «files» è l'IMPOSTAZIONE del tasto in barra — accenderla
+  // mostra il tasto, spegnerlo lo toglie: NON apre la lista. `filesSetting` è
+  // il valore di quell'impostazione; null è la modalità desktop, dove la voce
+  // resta lo switch che apre e chiude la lista com'era.
+  filesSetting = null,
+  handlers = {},
 } = {}) {
   const items = [];
   if (typeof handlers.onToggleComposer === 'function') {
@@ -128,9 +149,13 @@ export function barActionsItems({
     });
   }
   if (typeof handlers.onToggleFiles === 'function') {
-    items.push({
+    items.push(filesSetting === null ? {
       id: 'files', kind: 'switch', on: !!showFiles,
       labelKey: 'bar-menu-files', descKey: 'bar-menu-files-desc',
+      run: handlers.onToggleFiles,
+    } : {
+      id: 'files', kind: 'switch', on: !!filesSetting,
+      labelKey: 'bar-menu-files', descKey: 'bar-menu-files-setting-desc',
       run: handlers.onToggleFiles,
     });
   }
@@ -171,28 +196,33 @@ export function SingleView({
   // Live host della cella aperta (gia' risolto da App per la route giusta):
   // the phone header has room for a dot only; the sentence lives in the title.
   liveHost = null,
+  // Doppia vista: `side` è il ref {session, node?, ownerId?} della seconda
+  // cella affiancata (null = vista singola, identica a prima). onSideClose
+  // arriva dal tasto ✕ del pannello affiancato; onSideGone dalle letture che
+  // scoprono che la seconda cella non esiste più. Il desktop non passa mai
+  // queste props: la sua vista singola resta intatta.
+  side = null, onSideClose = null, onSideGone = null,
 }) {
   useLang(); // re-render allo switch lingua
   const [inputPreferences] = useInputPreferences();
   const isDesktop = useDesktop();
-  const [showFiles, setShowFiles] = useState(false);
   // Il menu ⋯ della barra: aperto/chiuso, piu' il rettangolo del trigger per il
   // popover desktop (il foglio mobile non ne ha bisogno).
   const [showBarMenu, setShowBarMenu] = useState(false);
   const [barMenuRect, setBarMenuRect] = useState(null);
-  // Su touch il composer è aperto di default (l'IME Gboard corrompe l'input in xterm).
-  const [showComposer, setShowComposer] = useState(() => window.matchMedia('(pointer: coarse)').matches);
-  const [filesEvent, setFilesEvent] = useState(null);
+  // Su touch il composer è aperto di default (l'IME Gboard corrompe l'input in
+  // xterm): quello che cambia è dove si sceglie. Ora è una preferenza locale
+  // persistita (Impostazioni → input) che vale come stato iniziale della vista.
+  const [showComposer, setShowComposer] = useState(() => inputPreferences.showComposer);
   const [fontSize, setFontSize] = useState(readFontSize);
-  // Renderer del terminale: preferenza per browser + quello che sta disegnando
-  // davvero (il GPU puo' non essere disponibile, o perdere il contesto).
-  const [rendererPref, setRendererPref] = useState(readRendererPreference);
+  // Renderer del terminale: quello che sta disegnando davvero (il GPU puo' non
+  // essere disponibile, o perdere il contesto). La scelta A/B vive nella stessa
+  // preferenza per browser e si cambia da due posti — la voce del menu ⋯ e
+  // l'interruttore in Impostazioni → sistema — entrambi con ricaricamento,
+  // perche' il renderer si aggancia alla creazione del terminale.
   const [rendererKind, setRendererKind] = useState(() => readRendererPreference());
   const switchRenderer = () => {
-    const next = writeRendererPreference(nextRendererPreference(readRendererPreference()));
-    setRendererPref(next);
-    // Il renderer si aggancia alla creazione del terminale: il ricaricamento e'
-    // il modo affidabile per far ripartire l'A/B con l'altro motore.
+    writeRendererPreference(nextRendererPreference(readRendererPreference()));
     if (typeof window !== 'undefined') window.location.reload();
   };
   // Titolo visibile (Tranche D): nome logico Fleet o, in fallback, il nome
@@ -208,6 +238,109 @@ export function SingleView({
   const [panelUrl, setPanelUrl] = useState('');
   const [panelCellId, setPanelCellId] = useState('');
   const [showPanel, setShowPanel] = useState(false);
+  // Doppia vista: il focus decide a QUALE cella scrivono barra e tasti; il
+  // tocco su un pannello lo sposta. I ref sono PER PANNELLO e non si
+  // condividono mai: l'input di una cella non deve finire nell'altra.
+  const [focusSide, setFocusSide] = useState(false);
+  // Nel render in cui la seconda cella SPARISCE (✕ o onSideGone) lo stato
+  // del focus sopravvive un ciclo: l'effetto che lo azzera gira DOPO. Ogni
+  // scelta di bersaglio passa da qui — mai da focusSide da solo — così quel
+  // render di transizione ricade sulla cella principale invece di leggere
+  // side.* di un oggetto che non c'e' piu'.
+  const focaLaSide = !!side && focusSide;
+  const [sideOnTop, setSideOnTop] = useState(false);
+  // Pesi SEPARATI per orientamento (design approvato della doppia vista orizzontale): in
+  // orizzontale i pannelli si affiancano e il confine è verticale. Ogni
+  // disposizione ricorda le sue proporzioni per la sessione, in memoria —
+  // niente storage: tornando in verticale si ritrovano le altezze di prima.
+  const [pesi, setPesi] = useState({ v: { main: 1, side: 1 }, h: { main: 1, side: 1 } });
+  const [orizzontale, setOrizzontale] = useState(() => window.matchMedia('(orientation: landscape)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(orientation: landscape)');
+    const ruota = (e) => setOrizzontale(e.matches);
+    mq.addEventListener('change', ruota);
+    return () => mq.removeEventListener('change', ruota);
+  }, []);
+  const weights = orizzontale ? pesi.h : pesi.v;
+  const weightsRef = useRef(weights);
+  weightsRef.current = weights;
+  const [sideInfo, setSideInfo] = useState(null); // {title, present} dal nodo della side
+  const [mainPresent, setMainPresent] = useState(true);
+  const sideSendRef = useRef(() => {});
+  const sideComposerRef = useRef(() => false);
+  const sideActionRef = useRef(() => {});
+  const sideCtrlRef = useRef(false);
+  const sideAltRef = useRef(false);   // ALT del pannello affiancato
+  const sideKeyboardRef = useRef(null); // requestTerminalKeyboard della side
+  const dualBoxRef = useRef(null);
+  // I file caduti/aperti riguardano il pannello di origine, non la vista.
+  const [files, setFiles] = useState(null); // {source:'main'|'side', ev} | null
+  // Stabili per contratto: onFiles sta nelle dipendenze dell'effetto del
+  // terminale che crea e distrugge socket (stesso elenco di Terminal.jsx):
+  // una funzione nuova a ogni render farebbe ripartire la connessione,
+  // svuotando e ridisegnando il terminale a ogni ciclo di poll.
+  const onFilesCella = useCallback((ev) => setFiles({ source: 'main', ev }), []);
+  const onFilesSide = useCallback((ev) => setFiles({ source: 'side', ev }), []);
+  // La lista file della side vale solo finché la side esiste: chiusura e
+  // sparitura non devono lasciarla puntare a una sessione morta.
+  const filesSide = !!side && files?.source === 'side';
+  const foca = (secondario) => {
+    setFocusSide(secondario);
+    setCtrlArmed((secondario ? sideCtrlRef : ctrlRef).current);
+    setAltArmed((secondario ? sideAltRef : altRef).current);   // ALT segue il focus
+  };
+  // Cambio della cella affiancata: focus, ordine, altezze e lista file
+  // ripartono puliti (la chiave è la stringa, non l'oggetto: il ripristino
+  // della stessa coppia non rimonta nulla).
+  const sideKey = side ? `${side.node || ''}:${side.session}` : '';
+  useEffect(() => {
+    setFocusSide(false);
+    setSideOnTop(false);
+    setPesi({ v: { main: 1, side: 1 }, h: { main: 1, side: 1 } });
+    setSideInfo(null);
+    setFiles((cur) => (cur && cur.source === 'side' ? null : cur));
+  }, [sideKey]);
+  // Soglia del design della doppia vista orizzontale: in orizzontale, se la cella PIÙ
+  // STRETTA scende sotto ~40 colonne al font corrente, si vede solo la cella
+  // col focus. Larghezza colonna ≈ 0,6 em del font (stima del terminale:
+  // non esiste una misura condivisa in Terminal.jsx). L'altra cella resta
+  // MONTATA e nascosta: mai smontata, nessun terminale ricreato.
+  // Larghezza REALE del carattere monospace alla dimensione corrente,
+  // misurata sul DOM (span nascosto): la stima 0,6 em sbagliava le colonne
+  // reali del terminale (il font monospace varia per piattaforma). Se il DOM
+  // non misura (test/jsdom), fallback alla stima 0,6 em.
+  const misuratoreColonne = useMemo(() => {
+    const cache = new Map();
+    return (fs) => {
+      if (cache.has(fs)) return cache.get(fs);
+      let px = fs * 0.6;
+      try {
+        const span = document.createElement('span');
+        span.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-family:courier-new,courier,monospace;';
+        span.style.fontSize = `${fs}px`;
+        span.textContent = '0'.repeat(20);
+        document.body.appendChild(span);
+        const w = span.getBoundingClientRect().width;
+        document.body.removeChild(span);
+        if (Number.isFinite(w) && w > 0) px = w / 20;
+      } catch (_) { /* misura impossibile: stima */ }
+      cache.set(fs, px);
+      return px;
+    };
+  }, []);
+  const sommaPesi = Math.max(0.01, weights.main + weights.side);
+  const larghezzaBox = dualBoxRef.current?.clientWidth || window.innerWidth;
+  // Larghezza UTILE della cella più stretta, quella in cui il terminale
+  // conta davvero le colonne: il box meno la maniglia (12 px,
+  // .nc-dual-handle) diviso per peso, meno bordi del pannello (2+2 px),
+  // padding di .nc-terminal-host (4+4 px) e barra di scorrimento di xterm
+  // (14 px). In orizzontale i pannelli hanno base 0 (sotto), quindi la loro
+  // larghezza reale segue i pesi: soglia e terminale contano le stesse colonne.
+  const larghezzaUtile = Math.max(0, larghezzaBox - 12) * (Math.min(weights.main, weights.side) / sommaPesi) - 26;
+  // Si misura SOLO con due celle affiancate: la vista singola non tocca il
+  // DOM durante il render (nessuno span di misura, nessun layout forzato).
+  const stretto = !!side && orizzontale
+    && larghezzaUtile / misuratoreColonne(Math.max(1, fontSize)) < 40;
   const zoom = (delta) => setFontSize((v) => writeFontSize(v + delta));
   // Lo zoom dell'anteprima del selettore scrive lo stesso nc_fontsize: quando
   // il foglio si chiude, il terminale principale rilegge il valore UNO che
@@ -220,8 +353,22 @@ export function SingleView({
   const actionRef = useRef(() => {});
   const ctrlRef = useRef(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
+  const altRef = useRef(false);
+  const [altArmed, setAltArmed] = useState(false);
+  const keyboardRef = useRef(null);   // requestTerminalKeyboard del terminale attivo
   const [selectionMode, setSelectionMode] = useState(false);
-  const toggleCtrl = () => { ctrlRef.current = !ctrlRef.current; setCtrlArmed(ctrlRef.current); };
+  // Il toggle arma la sticky del pannello (unito alla 0.9.51)
+  // che ha il focus (main o side), come fa `foca` al cambio focus.
+  const toggleCtrl = () => {
+    const r = focaLaSide ? sideCtrlRef : ctrlRef;
+    r.current = !r.current;
+    setCtrlArmed(r.current);
+  };
+  const toggleAlt = () => {
+    const r = focaLaSide ? sideAltRef : altRef;
+    r.current = !r.current;
+    setAltArmed(r.current);
+  };
 
   // SingleView may be reused at the same React position when the operator
   // switches cells. Synchronize immediately instead of showing the previous
@@ -268,23 +415,223 @@ export function SingleView({
       if (cell) txt = [`${cell.engine}${cell.key ? `·${cell.key}` : ''}`, parolaStatoCella(cell, sess)].filter(Boolean).join(' · ');
       else if (sess) txt = sess.attached ? `attached · ${rel(sess.activity)}` : (sess.activity ? rel(sess.activity) : '');
       setSub(txt);
+      // pallino di presenza nella striscia del pannello principale (doppia vista)
+      setMainPresent(!!(sess || cell));
     }
     load();
     const id = setInterval(load, 4000);
     return () => { alive = false; clearInterval(id); };
   }, [session, node, token]);
 
+  // La cella affiancata: titolo e presenza dal SUO nodo, stessa forma della
+  // lettura principale (sessioni + fleetStatus, best-effort). Se almeno una
+  // fonte autorevole risponde e il nome non c'è in nessuna, la seconda è
+  // sparita: la vista torna singola e l'ospite dimentica la coppia.
+  const onSideGoneRef = useRef(onSideGone);
+  onSideGoneRef.current = onSideGone;
+  useEffect(() => {
+    if (!side) { setSideInfo(null); return undefined; }
+    let alive = true;
+    const route = side.node ? side.node.split('/') : [];
+    const base = side.node ? `/api/route/${side.node.split('/').map(encodeURIComponent).join('/')}/_` : '/api';
+    async function load() {
+      let sess = null; let cell = null; let sessLetta = false; let cellLetta = false;
+      try {
+        const r = await apiFetch(`${base}/sessions`, token);
+        const j = await r.json();
+        if (Array.isArray(j.sessions)) { sessLetta = true; sess = j.sessions.find((s) => s.name === side.session); }
+      } catch (_) { /* best-effort */ }
+      try {
+        const fs = await fleetStatus(token, route);
+        if (fs.available && Array.isArray(fs.cells)) { cellLetta = true; cell = fs.cells.find((c) => c.tmuxSession === side.session); }
+      } catch (_) { /* best-effort: nodo senza capability fleet */ }
+      if (!alive) return;
+      setSideInfo({
+        title: cellDisplayName({ session: side.session, cell }),
+        present: !!(sess || cell),
+      });
+      if ((sessLetta || cellLetta) && !sess && !cell) onSideGoneRef.current?.();
+    }
+    load();
+    const id = setInterval(load, 4000);
+    return () => { alive = false; clearInterval(id); };
+  }, [side?.session, side?.node, token]);
+
   // le quattro azioni della barra, nello stesso contratto delle azioni
   // cella. Gli handler sono gli stessi setter di prima: cambia solo dove stanno.
+  // Con la doppia vista, la lista file riguarda la cella col focus.
+  // NC mobile — la voce «files» del menu è l'IMPOSTAZIONE del tasto in barra
+  // (mostra/nasconde, per dispositivo in localStorage): non apre più la lista.
+  // Il tasto, quando c'è, fa ciò che faceva la voce: apre/chiude la lista
+  // della cella col focus. Il desktop resta com'era, voce = lista.
+  const cellaFoca = focaLaSide ? 'side' : 'main';
+  const apriChiudiFiles = () => setFiles((cur) => (cur && cur.source === cellaFoca ? null : { source: cellaFoca, ev: null }));
+  // I tre tasti diretti fuori dal menu sono opzioni per dispositivo (vedi
+  // lib/bar-files-tasto.js): cartella e tastiera ACCESI di default, AI Desktop
+  // SPENTO. Un valore gia' salvato vince sul default nuovo.
+  const [filesTasto, setFilesTasto] = useState(leggiFilesTasto);
+  const [tastieraTasto] = useState(leggiTastieraTasto);
+  const [pannelloTasto] = useState(leggiPannelloTasto);
   const barItems = barActionsItems({
-    showComposer, showFiles, showPanel, hasPanel: !!panelUrl, rendererKind,
+    showComposer, showFiles: files?.source === cellaFoca, showPanel, hasPanel: !!panelUrl, rendererKind,
+    filesSetting: isDesktop ? null : filesTasto,
     handlers: {
       onToggleComposer: () => setShowComposer((v) => !v),
-      onToggleFiles: () => setShowFiles((v) => !v),
+      onToggleFiles: isDesktop ? apriChiudiFiles : () => setFilesTasto((on) => { scriviFilesTasto(!on); return !on; }),
       onTogglePanel: () => setShowPanel((v) => !v),
       onSwitchRenderer: switchRenderer,
     },
   });
+
+  // Maniglia delle altezze/larghezze: stesso schema del drag della griglia
+  // (pointermove fino a up/cancel/blur su window). Il confine SEGUE IL DITO
+  // in entrambe le disposizioni: «su» restringe il pannello superiore e
+  // «sinistra» quello a sinistra, quale cella stia in quella posizione; il
+  // minimo 0.2 non lascia collassare nessuno. Ogni orientamento scrive i
+  // SUOI pesi.
+  const startDualResize = (startEvent) => {
+    startEvent.preventDefault();
+    const box = dualBoxRef.current;
+    if (!box) return;
+    const scrivi = (main, side) => setPesi((cur) => ({
+      ...cur,
+      [orizzontale ? 'h' : 'v']: { main, side },
+    }));
+    if (orizzontale) {
+      const startX = startEvent.clientX;
+      const partenza = weightsRef.current;
+      const totale = box.clientWidth || 1;
+      const verso = sideOnTop ? -1 : 1;
+      const muovi = (ev) => {
+        const somma = partenza.main + partenza.side;
+        const dm = ((ev.clientX - startX) / totale) * somma * verso;
+        const main = clampWeight(partenza.main + dm);
+        scrivi(main, clampWeight(somma - main));
+      };
+      const su = () => {
+        window.removeEventListener('pointermove', muovi);
+        window.removeEventListener('pointerup', su);
+        window.removeEventListener('pointercancel', su);
+        window.removeEventListener('blur', su);
+      };
+      window.addEventListener('pointermove', muovi);
+      window.addEventListener('pointerup', su);
+      window.addEventListener('pointercancel', su);
+      window.addEventListener('blur', su);
+      return;
+    }
+    const startY = startEvent.clientY;
+    const partenza = weightsRef.current;
+    const totale = box.clientHeight || 1;
+    const verso = sideOnTop ? -1 : 1;
+    const muovi = (ev) => {
+      const somma = partenza.main + partenza.side;
+      const dm = ((ev.clientY - startY) / totale) * somma * verso;
+      const main = clampWeight(partenza.main + dm);
+      scrivi(main, clampWeight(somma - main));
+    };
+    const su = () => {
+      window.removeEventListener('pointermove', muovi);
+      window.removeEventListener('pointerup', su);
+      window.removeEventListener('pointercancel', su);
+      window.removeEventListener('blur', su);
+    };
+    window.addEventListener('pointermove', muovi);
+    window.addEventListener('pointerup', su);
+    window.addEventListener('pointercancel', su);
+    window.addEventListener('blur', su);
+  };
+
+  // I pannelli si CREANO solo con la seconda presente: le espressioni JSX
+  // (side.session nelle strisce) si valutano a ogni render anche senza dual.
+  // In stretto il pannello SENZA focus si NASCONDE (display:none): resta
+  // montato — mai un terminale ricreato — e nella striscia della cella
+  // visibile sta il tasto-icona per passare all'altra (pallino = suo stato).
+  const panePrincipale = side && (
+    <div key="pane-main"
+      className={`nc-dual-pane${focaLaSide ? '' : ' foco'}${stretto && focaLaSide ? ' nascosto' : ''}`}
+      data-testid="pane-main"
+      style={{ flexGrow: weights.main, flexBasis: orizzontale ? 0 : undefined }} onPointerDown={() => foca(false)}>
+      <div className="nc-dual-strip">
+        <span className={`nc-dual-dot${mainPresent ? ' on' : ''}`} aria-hidden="true" />
+        <b>{title}</b>
+        {!focaLaSide && <span className="nc-dual-matita" aria-hidden="true" title={t('dual-focus')}>✎</span>}
+        {stretto && (
+          <button type="button" className="nc-dual-alt"
+            title={t('dual-go-to').replace('{cell}', sideInfo?.title || side.session)}
+            aria-label={t('dual-go-to').replace('{cell}', sideInfo?.title || side.session)}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); foca(!focaLaSide); }}>
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">
+              <rect x="3.5" y="6" width="17" height="12" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <rect x="3.5" y="6" width="8.5" height="12" fill="currentColor" />
+            </svg>
+            <span className={`nc-dual-dot${sideInfo?.present ? ' on' : ''}`} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+      <div className="nc-dual-body">
+        {/* readonly fisso: l'effetto di Terminal che crea terminale+socket lo
+            ha nelle dipendenze — farlo dipendere dal focus ricostruirebbe i
+            due terminali a ogni tocco. L'input diretto segue comunque il
+            focus (focused → sock.focus) e i ref instradano barra e tasti. */}
+        <Terminal session={session} node={node} token={token} readonly={readonly} takeSize focused={!focaLaSide}
+          sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
+          ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} altRef={altRef} setAltArmed={setAltArmed} keyboardRef={keyboardRef}
+          onFiles={onFilesCella} fontSize={fontSize}
+          selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
+          keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
+      </div>
+    </div>
+  );
+  const paneSecondario = side && (
+    <div key="pane-side"
+      className={`nc-dual-pane${focaLaSide ? ' foco' : ''}${stretto && !focaLaSide ? ' nascosto' : ''}`}
+      data-testid="pane-side"
+      style={{ flexGrow: weights.side, flexBasis: orizzontale ? 0 : undefined }} onPointerDown={() => foca(true)}>
+      <div className="nc-dual-strip">
+        <span className={`nc-dual-dot${sideInfo?.present ? ' on' : ''}`} aria-hidden="true" />
+        <b>{sideInfo ? sideInfo.title : side.session}</b>
+        {focaLaSide && <span className="nc-dual-matita" aria-hidden="true" title={t('dual-focus')}>✎</span>}
+        <span className="nc-dual-tasti">
+          <button type="button" title={t('dual-swap')} aria-label={t('dual-swap')}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); setSideOnTop((v) => !v); }}>{orizzontale ? '⇆' : '⇅'}</button>
+          <button type="button" title={t('dual-close')} aria-label={t('dual-close')}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onSideClose?.(); }}>✕</button>
+        </span>
+        {stretto && (
+          <button type="button" className="nc-dual-alt"
+            title={t('dual-go-to').replace('{cell}', title)}
+            aria-label={t('dual-go-to').replace('{cell}', title)}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); foca(!focaLaSide); }}>
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">
+              <rect x="3.5" y="6" width="17" height="12" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <rect x="12" y="6" width="8.5" height="12" fill="currentColor" />
+            </svg>
+            <span className={`nc-dual-dot${mainPresent ? ' on' : ''}`} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+      <div className="nc-dual-body">
+        {/* takeSize={false}: il size-lock resta alla cella aperta, come per i
+            tile della griglia — la seconda non si contende le misure. */}
+        <Terminal session={side.session} node={side.node} token={token} readonly={readonly} takeSize={false} focused={focaLaSide}
+          sendRef={sideSendRef} composerRef={sideComposerRef} actionRef={sideActionRef}
+          ctrlRef={sideCtrlRef} setCtrlArmed={setCtrlArmed} altRef={sideAltRef} setAltArmed={setAltArmed} keyboardRef={sideKeyboardRef}
+          onFiles={onFilesSide} fontSize={fontSize}
+          selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
+          keyboardGesture={inputPreferences.terminalKeyboardGesture} />
+      </div>
+    </div>
+  );
+  const maniglia = (
+    <div key="dual-handle" className="nc-dual-handle" data-testid="dual-handle" role="separator"
+      aria-orientation={orizzontale ? 'vertical' : 'horizontal'}
+      onPointerDown={startDualResize} />
+  );
 
   return (
     <div className="nc-app">
@@ -302,10 +649,39 @@ export function SingleView({
           {sub && <small className="nc-bar-sub">{sub}</small>}
         </span>
         <span className="nc-bar-right">
-          <button onClick={() => zoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
-          <button onClick={() => zoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
-          {/* Le altre quattro azioni stanno nel menu: la barra resta
-              indietro + centro + − + + + ⋯, come il design. */}
+          <button onClick={() => zoom(-1)} title={t('zoom-out')} aria-label={t('zoom-out')}><Icon name="zoomOut" size={18} /></button>
+          <button onClick={() => zoom(+1)} title={t('zoom-in')} aria-label={t('zoom-in')}><Icon name="zoomIn" size={18} /></button>
+          {/* I tre tasti DIRETTI, fuori dal menu ⋯ (decisione dell'operatore sulla PR #7):
+              cartella (icona disegnata della PR, non piu' il download) e
+              tastiera ACCESI di default, AI Desktop SPENTO — ognuno con la sua
+              opzione per dispositivo in Impostazioni → input, e un valore gia'
+              salvato che vince sul default nuovo.
+              Ordine del design: − + [cartella] [tastiera] [pannello] ⋯. */}
+          {filesTasto && (
+            <button type="button" onClick={apriChiudiFiles}
+              title={t('bar-menu-files')} aria-label={t('bar-menu-files')}
+              aria-pressed={files?.source === cellaFoca ? 'true' : 'false'}>
+              <Icon name="folder" size={18} />
+            </button>
+          )}
+          {tastieraTasto && (
+            <button type="button" onClick={() => setShowComposer((v) => !v)}
+              title={t('bar-menu-keyboard')} aria-label={t('bar-menu-keyboard')}
+              aria-pressed={showComposer ? 'true' : 'false'}>
+              <Icon name="keyboard" size={18} />
+            </button>
+          )}
+          {/* AI Desktop: doppio opt-in — la cella deve pubblicare un panelUrl
+              E l'opzione del tasto deve essere accesa (spenta di default). */}
+          {panelUrl && pannelloTasto && (
+            <button type="button" onClick={() => setShowPanel((v) => !v)}
+              title={t('bar-menu-panel')} aria-label={t('bar-menu-panel')}
+              aria-pressed={showPanel ? 'true' : 'false'}>
+              <Icon name="monitor" size={18} />
+            </button>
+          )}
+          {/* Le quattro azioni restano ANCHE nel menu ⋯, per intero e con gli
+              stessi sottomenu di sempre: dalla barra non si toglie niente. */}
           <button type="button" className={`nc-bar-menu${showBarMenu ? ' on' : ''}`}
             title={t('bar-menu-open')} aria-label={t('bar-menu-open')}
             aria-haspopup="menu" aria-expanded={showBarMenu ? 'true' : 'false'}
@@ -316,10 +692,21 @@ export function SingleView({
         </span>
       </header>
       <div className="nc-termwrap">
-        <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
-          ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} onFiles={setFilesEvent} fontSize={fontSize}
-          selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
-          keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
+        {side ? (
+          <div className={`nc-dual${orizzontale ? ' row' : ''}`} ref={dualBoxRef}>
+            {/* ENTRAMBI i pannelli restano sempre nel DOM (in stretto il non
+                visibile è display:none: mai un terminale smontato); la
+                maniglia sparisce solo in stretto, dove non serve. */}
+            {stretto
+              ? (sideOnTop ? [paneSecondario, panePrincipale] : [panePrincipale, paneSecondario])
+              : (sideOnTop ? [paneSecondario, maniglia, panePrincipale] : [panePrincipale, maniglia, paneSecondario])}
+          </div>
+        ) : (
+          <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
+            ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} altRef={altRef} setAltArmed={setAltArmed} keyboardRef={keyboardRef} onFiles={onFilesCella} fontSize={fontSize}
+            selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
+            keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
+        )}
         {/* D8: pannello in alternativa al terminale, overlay assoluto — il
             terminale resta montato (PTY vivo, nessun reflow al toggle).
             L'ingresso passa dal ticket: la PWA lo chiede e l'iframe punta
@@ -336,17 +723,25 @@ export function SingleView({
         )}
       </div>
       <KeyBar onKeyboard={() => setShowComposer((v) => !v)} onCellSwitcher={onCellSwitcher} cellSwitcherOpen={cellSwitcherOpen}
-        send={(seq) => sendRef.current(seq)} action={(name) => actionRef.current(name)}
-        ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} selectionMode={selectionMode} onSelectionMode={setSelectionMode}
+        send={(seq) => (focaLaSide ? sideSendRef : sendRef).current(seq)}
+        action={(name) => (focaLaSide ? sideActionRef : actionRef).current(name)}
+        ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} altArmed={altArmed} onAlt={toggleAlt}
+        onAltConsume={() => { const r = focaLaSide ? sideAltRef : altRef; r.current = false; setAltArmed(false); }}
+        onKeyboardKeep={() => (focaLaSide ? sideKeyboardRef : keyboardRef).current?.()}
+        selectionMode={selectionMode} onSelectionMode={setSelectionMode}
         keepKeyboardClosed={inputPreferences.keybarKeepsKeyboardClosed} showEnter={inputPreferences.showKeybarEnter}
         keybarLayout={inputPreferences.keybarLayout} />
       {showComposer && (
-        <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId} readonly={readonly}
+        <ComposerBar submitText={(text) => (focaLaSide ? sideComposerRef : composerRef).current(text)}
+          token={token} session={focaLaSide ? side.session : session} node={focaLaSide ? side.node : node}
+          ownerId={focaLaSide ? side.ownerId : ownerId} readonly={readonly}
           keepKeyboardClosedOnVoice={inputPreferences.voiceKeepsKeyboardClosed} />
       )}
-      {showFiles && (
-        <FilesPanel session={session} node={node} token={token} filesEvent={filesEvent} onClose={() => setShowFiles(false)} />
-      )}
+      {files && (filesSide ? (
+        <FilesPanel session={side.session} node={side.node} token={token} filesEvent={files.ev} onClose={() => setFiles(null)} />
+      ) : files.source === 'main' ? (
+        <FilesPanel session={session} node={node} token={token} filesEvent={files.ev} onClose={() => setFiles(null)} />
+      ) : null)}
       {/* le quattro azioni della barra. Su mobile un foglio dal basso, su
           desktop un popover ancorato al ⋯: gli stessi due gusci delle azioni
           cella, nessun menu nuovo. */}
@@ -363,6 +758,24 @@ export default function App() {
   useLang(); // re-render globale allo switch lingua
   const [boot] = useState(bootstrapFromFragment);
   const [token, setToken] = useState(boot.token);
+  // il nodo LOCALE ha risposto 401 al token in uso: si riapre il prompt, senza toccare le preferenze.
+  const [authInvalid, setAuthInvalid] = useState(false);
+  usePrefsSync(authInvalid ? '' : token); // copia delle preferenze sul nodo (recupero dopo un wipe dello storage)
+  const tokenRef = useRef(boot.token);
+  tokenRef.current = token;
+  useEffect(() => {
+    const onInvalid = (event) => { if (event && event.detail && event.detail.token === tokenRef.current) setAuthInvalid(true); };
+    window.addEventListener(AUTH_INVALID_EVENT, onInvalid);
+    return () => window.removeEventListener(AUTH_INVALID_EVENT, onInvalid);
+  }, []);
+  const submitToken = useCallback((value, remember) => {
+    const saved = saveToken(value, { remember });
+    if (!saved.ok || (remember && saved.where !== 'local')) {
+      try { window.dispatchEvent(new CustomEvent(TOKEN_NOT_REMEMBERED_EVENT)); } catch (_) { /* fuori dal browser */ }
+    }
+    setAuthInvalid(false);
+    setToken(value);
+  }, []);
   // pairing deep-link (#pair) acquisito dal fragment e tenuto in sessionStorage:
   // se presente, apre il wizard precompilato. Consumato una volta (one-time invite).
   const [pairPending, setPairPending] = useState(boot.pair || '');
@@ -370,7 +783,6 @@ export default function App() {
     setPairPending('');
     try { sessionStorage.removeItem('nc_pair'); } catch (_) {}
   }, []);
-  const [remember, setRemember] = useState(false);
   const isDesktop = useDesktop();
 
   // Deck corrente: il path sceglie quello iniziale (anche per una finestra
@@ -388,6 +800,24 @@ export default function App() {
       ...(typeof ref?.cellName === 'string' && ref.cellName ? { cellName: ref.cellName } : {}),
     } : null);
   };
+
+  // Doppia vista mobile: la seconda cella è uno stato del DISPOSITIVO
+  // (localStorage, coppia {main, side}); il deck è una superficie desktop e
+  // resta intatto. Il ripristino vale riaprendo la STESSA cella; chiudere il
+  // pannello dimentica la coppia; se la cella affiancata sparisce, la vista
+  // torna singola (onSideGone dalla lettura della vista).
+  const [side, setSide] = useState(null);
+  useEffect(() => {
+    const saved = readSavedDual();
+    setSide(saved && session && isSameRef(saved.main, session) ? saved.side : null);
+  }, [session]);
+  const toggleSideRow = (row) => {
+    const mainRef = session ? { session: session.session, node: session.node } : null;
+    const next = toggleSideRef(mainRef, side, row);
+    setSide(next);
+    if (next) writeSavedDual(mainRef, next); else clearSavedDual();
+  };
+  const chiudiSide = () => { setSide(null); clearSavedDual(); };
 
   // desktop workspace state
   const [dSessions, setDSessions] = useState([]);
@@ -413,9 +843,18 @@ export default function App() {
   // zero nodi configurati -> [] e workspace identico a oggi.
   const nodeGroups = useNodes(token, isDesktop);
   const deckOwners = useMemo(() => (nodeGroups || []).filter((g) => g.instanceId).map((g) => ({
-    instanceId: g.instanceId, route: g.route, label: g.label, status: g.status, stale: g.stale === true,
+    instanceId: g.instanceId, route: g.route, label: g.label, status: g.status, stale: g.stale === true, checking: g.checking === true,
   })), [nodeGroups]);
-  const deckStore = useDecks(token, deck, layout, setLayout, deckOwners);
+  // l'ordine dei DECKS in alto segue l'ordine della lista nodi/celle a
+  // sinistra (nc_node_order_v1, per identita' — id/instanceId — mai per etichetta).
+  const { order: deckNodeOrder } = useNodePreferences();
+  const deckStore = useDecks(token, deck, layout, setLayout, deckOwners, deckNodeOrder);
+  // L'avviso delle azioni cella (avvio/riavvio/stop): notice a scadenza su una
+  // riga SUA sotto la barra dei deck — stessa meccanica del roster mobile
+  // (useActionNotice, auto-clear 10 s). NON passa da deckStore.setError: la
+  // barra deck resta per gli errori di deck, e niente messaggi che non si
+  // tolgono più.
+  const { notice: deckActionNotice, showActionNotice: mostraAvvisoDeck } = useActionNotice();
   const decks = deckStore.decks;
   // 0.8.8 salvava le celle remote come route:<cell-id> anziché usare la vera
   // tmuxSession route:cloud-<id>. Ripara una volta i deck esistenti, ma solo se
@@ -473,8 +912,13 @@ export default function App() {
     setSettingsTab(tab); setSettingsNewCell(newCell); setSettingsLocation(location); setSettingsOpen(true);
   };
   const [wizardOpen, setWizardOpen] = useState(false);
+  // Il nome del dispositivo manca (host muto, es. Termux) e il setup è già
+  // stato fatto: al primo accesso la PWA lo chiede una volta con un foglio
+  // semplice. «Più tardi» vale per la sessione; al prossimo avvio ritorna.
+  const [deviceAsk, setDeviceAsk] = useState(null);
   const [pairDefaults, setPairDefaults] = useState({
     deviceDefault: '', localNodeId: '', localNameDefault: '',
+    deviceNameNeeded: false, deviceNameSuggestion: '',
   });
   // Il nome del NOSTRO nodo (es. VPSCloud), per l'intestazione del gruppo
   // locale nella lista delle celle: il gruppo locale si chiama come il nodo,
@@ -515,6 +959,8 @@ export default function App() {
         deviceDefault: s.deviceName || '',
         localNodeId: s.nodeId || '',
         localNameDefault: s.localName || '',
+        deviceNameNeeded: s.deviceNameNeeded === true,
+        deviceNameSuggestion: s.deviceNameSuggestion || '',
       });
       setLocalNodeLabel(s.deviceName || '');
       setRoDefault(!!c.readonlyDefault);
@@ -526,6 +972,12 @@ export default function App() {
         ? c.nodePanelPorts : {});
       if (s.firstRun === true && !c.readonlyDefault) setWizardOpen(true);
       else if (pairPending) setWizardOpen(true); // deep-link #pair: apri wizard sul pairing
+      else if (s.deviceNameNeeded === true && !c.readonlyDefault) {
+        // setup già fatto ma nome mancante: chiedilo ora (salta se rimandato in sessione)
+        let rimandato = false;
+        try { rimandato = sessionStorage.getItem('nc_device_ask_later') === '1'; } catch (_) { /* private mode */ }
+        if (!rimandato) setDeviceAsk({ suggestion: s.deviceNameSuggestion || '' });
+      }
     }).catch(() => { /* wizard best-effort: la UI resta usabile */ });
     return () => { cancelled = true; };
   }, [token, pairPending]);
@@ -628,15 +1080,19 @@ export default function App() {
       if (!guard.isCurrent(turno)) return;
       const fleet = fleetReadOutcome({ fs, error: fleetError });
       if (fleet.kind === 'data') {
+        saveLastRoster('local', fleet.cells);
         setCells(fleet.cells);
         setFleetCapabilities(fleet.capabilities);
         setFleetStale(false);
         setFleetOff(null);
       } else if (fleet.kind === 'stale') {
+        // Cache in memoria vuota (PWA riaperta): riparte dall'ultimo roster buono salvato, marcato come non vivo.
+        setCells((current) => (current.length ? current : loadLastRoster('local')));
         setFleetStale(true);
         setFleetOff(null);
       } else {
         setCells([]);
+        saveLastRoster('local', []);
         setFleetCapabilities([]);
         setFleetStale(false);
         setFleetOff(fleet.reason || '');
@@ -851,14 +1307,12 @@ export default function App() {
     const { cell } = powerCell;
     const route = Array.isArray(powerCell.route) ? powerCell.route : [];
     // Stesso percorso del roster mobile: esiti benigni (timeout client,
-    // sessione già attiva) come notice del deck, errori veri nel foglio.
-    let benign = null;
-    try {
-      benign = await runFleetPowerAction({ token, powerCell, payload, onNotice: (text) => deckStore.setError(text) });
-    } catch (e) {
-      deckStore.setError(String((e && e.message) || e));
-      throw e;
-    }
+    // sessione già attiva) come notice a SCADENZA su una riga sua sotto la
+    // barra — mai dentro la barra, dove il messaggio copriva i chip e non
+    // si toglieva più. Gli errori veri vengono rilanciati: restano nel foglio,
+    // che li mostra coi pulsanti riabilitati. La barra deck parla solo di
+    // deck: il suo errore resta quello di caricamento/salvataggio/owner.
+    const benign = await runFleetPowerAction({ token, powerCell, payload, onNotice: mostraAvvisoDeck });
     if (!benign) {
       const enabled = payload.action === 'up'
         ? !!payload.boot
@@ -902,7 +1356,11 @@ export default function App() {
   const onRenameDeck = async (from, to) => {
     const saved = await deckStore.rename(from, to);
     if (from === deck) {
-      setDeck(saved.id); setLayout(resolveLayoutForViewer(saved.layout, deckStore.localNodeId, deckOwners)); setGridFocus(null); setSingle(null);
+      setDeck(saved.id);
+      // Anche qui le flottanti del record rientrano materializzate —
+      // installare solo il layout le cancellava al prossimo autosave.
+      setLayout(deckStore.vistaMaterializzata(saved));
+      setGridFocus(null); setSingle(null);
       try { history.replaceState(null, '', deckUrl(saved, null)); } catch (_) {}
     }
   };
@@ -918,18 +1376,7 @@ export default function App() {
     setLayout((l) => removeTile(l, name));
   };
 
-  if (!token) {
-    return (
-      <div className="nc-auth">
-        <p>{t('auth-prompt')}</p>
-        <input onChange={(e) => setToken(e.target.value.trim())} placeholder="token" />
-        <label>
-          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> {t('remember-device')}
-        </label>
-        <button onClick={() => { (remember ? localStorage : sessionStorage).setItem('nc_token', token); }}>ok</button>
-      </div>
-    );
-  }
+  if (!token || authInvalid) return <LoginScreen onSubmit={submitToken} reason={authInvalid ? 'invalid' : ''} />;
 
   // Overlay condivisi mobile/desktop: settings panel + first-run wizard (B2-UI)
   // + centro notifiche/ask del MCP bridge (SSE /api/events, presente ovunque).
@@ -940,6 +1387,18 @@ export default function App() {
       {wizardOpen && (
         <Wizard token={token} initialPair={pairPending} {...pairDefaults}
           onPairDone={consumePair} onDone={() => setWizardOpen(false)} />
+      )}
+      {deviceAsk && (
+        <DeviceNameAsk token={token} suggestion={deviceAsk.suggestion}
+          onSaved={(nome) => {
+            setLocalNodeLabel(nome);
+            setPairDefaults((d) => ({ ...d, deviceDefault: nome, deviceNameNeeded: false }));
+            setDeviceAsk(null);
+          }}
+          onLater={() => {
+            try { sessionStorage.setItem('nc_device_ask_later', '1'); } catch (_) { /* private mode */ }
+            setDeviceAsk(null);
+          }} />
       )}
       <NotifyCenter token={token} />
     </>
@@ -974,11 +1433,14 @@ export default function App() {
       <SingleView session={session.session} node={session.node} ownerId={session.ownerId} cellName={session.cellName} token={token} readonly={roDefault}
           liveHost={liveHostViewFor(session.node ? session.node.split('/') : [])}
         panelPort={panelPortForRoute(session.node ? session.node.split('/') : [], nodePanelPorts, panelPort)}
+        side={side} onSideClose={chiudiSide} onSideGone={chiudiSide}
         onBack={() => setSession(null)} onCellSwitcher={() => setCellSwitcherOpen(true)} cellSwitcherOpen={cellSwitcherOpen} />
       {cellSwitcherOpen && <CellSwitcher token={token} current={session} localNodeLabel={localNodeLabel}
         panelPort={panelPort} nodePanelPorts={nodePanelPorts}
         hostByRoute={hostByRoute} onDesignateCell={designateCellHostOnce} onClearHostCell={clearCellHostOnce}
         onLiveHostApplied={applyLiveHostResult}
+        sideKey={side ? positionKey(side.node ? side.node.split('/') : [], side.session) : null}
+        onToggleSide={toggleSideRow}
         onPick={(next) => { pickSession(next); setCellSwitcherOpen(false); }} onClose={() => setCellSwitcherOpen(false)} />}
       {settingsOverlays}
     </>;
@@ -1038,6 +1500,12 @@ export default function App() {
           sidebarVisible={sidebarVisible}
           onToggleSidebar={!isMainDeck ? () => setSideHidden((v) => !v) : null}
         />
+        {/* L'avviso delle azioni cella: riga SUA sotto la barra — mai dentro
+            .nc-deckbar, così non copre i chip. Il testo intero sta nel title
+            se la riga lo tronca, e scade da solo (useActionNotice). */}
+        {deckActionNotice && (
+          <div className="nc-notice nc-deck-notice" role="status" title={deckActionNotice}>{deckActionNotice}</div>
+        )}
         <GridView
           layout={layout}
           onLayoutChange={setLayout}

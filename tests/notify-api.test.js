@@ -83,7 +83,7 @@ test('notify: 401 senza token, validazione strict, delivered', async (t) => {
   assert.deepEqual(await r.json(), { delivered: { ui: 0, push: 0 } });
 });
 
-// F1 (audit): il campo `session` e' controllato dal chiamante e NON puo' essere
+// il campo `session` e' controllato dal chiamante e NON puo' essere
 // il confine di sicurezza. Il limite e' GLOBALE per principal/token (l'unico
 // Bearer identifica l'installazione): cambiare session NON apre un bucket nuovo.
 test('notify F1: rate-limit globale per token — session diverse non bypassano', async (t) => {
@@ -117,7 +117,7 @@ test('notify F1: cap sulla mappa dei bucket (LRU, niente crescita illimitata)', 
   assert.equal(rl.size(), 1);
 });
 
-// F4 (audit): file segreti preesistenti con mode/owner insicuro o symlink sono
+// file segreti preesistenti con mode/owner insicuro o symlink sono
 // RIFIUTATI fail-closed (mai riparati in silenzio); i file 0600 regolari passano.
 test('persist F4: mode 0644 e symlink rifiutati, 0600 ok, assente -> {}', () => {
   const { readJsonSafe, atomicWriteJson } = require('../lib/notify/persist.js');
@@ -219,7 +219,7 @@ test('READONLY: subscribe/unsubscribe bloccati (403), notify resta permesso', as
   assert.equal(r.status, 200);
 });
 
-// F3 (audit): READONLY e' un floor — GET vapid non deve GENERARE nulla (503 se
+// READONLY e' un floor — GET vapid non deve GENERARE nulla (503 se
 // mancano le chiavi, 200 solo su chiavi gia' esistenti), outbox e' gated 403,
 // e il cleanup delle subscription morte NON riscrive push.json.
 test('READONLY F3: vapid non genera (503 senza file, 200 con file preesistente)', async (t) => {
@@ -266,7 +266,7 @@ test('READONLY F3: notify consegnata ma cleanup subscription morte NON riscrive 
   assert.equal(fs.readFileSync(subsPath, 'utf8'), before);
 });
 
-// F7 (audit): SSRF — endpoint push SOLO https, niente loopback/reti private,
+// SSRF — endpoint push SOLO https, niente loopback/reti private,
 // DNS verificato e connessione pinning sull'IP risolto, cap subscription.
 test('push F7: endpoint http/loopback/privati rifiutati, cap subscription', async (t) => {
   const { j } = await startSrv(t, { pushMaxSubs: 2 });

@@ -62,7 +62,7 @@ test('e2e: hub+peer inbound — risposta con canale reverse non verificato = rif
   // slot reverse che punta alla porta reale del server B (tunnel finto).
   const entry = {
     name: 'peer', remotePort: 41999, localPort: B.port, nodeId: selfB,
-    acceptToken: SECRET, direction: 'inbound', shared: true, visibility: 'network',
+    token: SECRET, acceptToken: SECRET, direction: 'inbound', shared: true, visibility: 'network',
   };
   console.log('DBG-ENTRY:', JSON.stringify(entry));
   let stA = nodesStore.addNode(nodesStore.loadStoreStrict(A.nodesPath), entry);

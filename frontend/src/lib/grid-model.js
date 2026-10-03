@@ -227,6 +227,290 @@ export function resizeTile(layout, colIdx, rowIdx, height) {
   return l;
 }
 
+// --- Griglia desktop: resize a COPPIA in pixel ----------------------------
+// Il bordo segue il mouse 1:1 e cambiano SOLO i due adiacenti: la somma dei
+// loro pesi resta costante, le altre finestre non si muovono. I minimi sono
+// in PIXEL della coppia (non pesi), l'aggancio magnetico scatta solo vicino
+// a 1/3, 1/2, 2/3 della coppia (linee tratteggiate) e si spegne con Alt.
+export const MIN_COL_PX = 120;
+export const MIN_ROW_PX = 60;
+export const SNAP_POINTS = [1 / 3, 0.5, 2 / 3];
+export const SNAP_PX = 16;
+
+// Frazione del bordo richiesta -> frazione valida: clamp ai minimi (in px
+// della coppia, mai oltre la metà) e aggancio opzionale ai divisori canonici.
+function coupleFraction(borderPx, couplePx, minPx, snap) {
+  if (!(couplePx > 0)) return 0.5;
+  const fMin = Math.max(0, Math.min(0.5, minPx / couplePx));
+  let f = borderPx / couplePx;
+  f = Math.max(fMin, Math.min(1 - fMin, f));
+  if (snap) {
+    for (const s of SNAP_POINTS) {
+      if (Math.abs(f - s) * couplePx <= SNAP_PX) { f = s; break; }
+    }
+  }
+  return f;
+}
+
+// gridPx = larghezza dell'intera griglia in px; borderPx = posizione del
+// bordo richiesta dal mouse, in px dall'inizio della coppia. opts.half
+// forza la coppia a metà (doppio clic sulla maniglia).
+export function resizeColumnCouple(layout, colIdx, gridPx, borderPx, opts = {}) {
+  const l = clone(layout);
+  const a = l.columns[colIdx];
+  const b = l.columns[colIdx + 1];
+  if (!a || !b) return layout;
+  const sumTot = l.columns.reduce((s, c) => s + (Number(c.width) || 1), 0);
+  const sum = (Number(a.width) || 1) + (Number(b.width) || 1);
+  const couplePx = (Number(gridPx) || 0) * (sum / (sumTot || 1));
+  const f = opts.half === true ? 0.5 : coupleFraction(borderPx, couplePx, opts.minPx ?? MIN_COL_PX, opts.snap !== false);
+  a.width = sum * f;
+  b.width = sum * (1 - f);
+  return l;
+}
+
+// Qui gridPx = altezza della COLONNA in px; borderPx dall'inizio della coppia
+// di tile (ri | ri+1). opts.half = doppio clic.
+export function resizeTileCouple(layout, colIdx, rowIdx, gridPx, borderPx, opts = {}) {
+  const l = clone(layout);
+  const col = l.columns[colIdx];
+  const a = col && col.tiles[rowIdx];
+  const b = col && col.tiles[rowIdx + 1];
+  if (!a || !b) return layout;
+  const sumTot = col.tiles.reduce((s, t) => s + (Number(t.height) || 1), 0);
+  const sum = (Number(a.height) || 1) + (Number(b.height) || 1);
+  const couplePx = (Number(gridPx) || 0) * (sum / (sumTot || 1));
+  const f = opts.half === true ? 0.5 : coupleFraction(borderPx, couplePx, opts.minPx ?? MIN_ROW_PX, opts.snap !== false);
+  a.height = sum * f;
+  b.height = sum * (1 - f);
+  return l;
+}
+
+// «Centro = SCAMBIA»: le due finestre si scambiano di posto. L'identità e le
+// proprietà per-tile (font, node, ownerId, stato effimero) viaggiano col tile;
+// la geometria (height dello slot, width delle colonne) resta agli slot.
+export function swapTiles(layout, keyA, keyB) {
+  if (!keyA || !keyB || keyA === keyB) return layout;
+  const l = clone(layout);
+  let pa = null; let pb = null;
+  for (const c of l.columns) {
+    for (let i = 0; i < c.tiles.length; i += 1) {
+      const k = refKey(c.tiles[i]);
+      if (k === keyA && !pa) pa = { col: c, i };
+      else if (k === keyB && !pb) pb = { col: c, i };
+    }
+  }
+  if (!pa || !pb) return layout;
+  const ta = pa.col.tiles[pa.i];
+  const tb = pb.col.tiles[pb.i];
+  const senzaGeometria = (t) => { const out = { ...t }; delete out.height; return out; };
+  pa.col.tiles[pa.i] = { ...senzaGeometria(tb), height: ta.height };
+  pb.col.tiles[pb.i] = { ...senzaGeometria(ta), height: tb.height };
+  return l;
+}
+
+// --- Finestre flottanti -----------------------------------------
+// La VISTA tiene lo staccato nelle columns con un flag `float` (geometria in
+// FRAZIONI di schermo, 0..1): il GridTile resta alla stessa posizione
+// dell'albero — reso position:fixed dal CSS — e non si smonta mai (il
+// terminale si riconnette solo a stacca/riattacca, per takeSize). La SERIALIZZAZIONE (record del deck) sposta gli staccati FUORI: griglia
+// pura + lista `floating` a livello record (validata dal server).
+export const MAX_FLOATING = 6;
+
+const clampFloatGeom = (g) => {
+  let { x, y, w, h } = g;
+  w = Math.max(0.05, Math.min(1, Number(w) || 0.3));
+  h = Math.max(0.05, Math.min(1, Number(h) || 0.3));
+  x = Math.max(0, Math.min(1 - w, Number(x) || 0));
+  y = Math.max(0, Math.min(1 - h, Number(y) || 0));
+  return { x, y, w, h };
+};
+
+function trovaTile(l, key) {
+  for (const c of l.columns) {
+    for (let i = 0; i < c.tiles.length; i += 1) if (refKey(c.tiles[i]) === key) return { tile: c.tiles[i] };
+  }
+  return null;
+}
+
+// Stacca: mette il flag float (clampato). Oltre MAX_FLOATING non fa nulla
+// (ritorna lo stesso riferimento: nessun salvataggio inutile).
+export function detachTile(layout, ref, geom) {
+  const l = clone(layout);
+  const key = refKey(ref);
+  if (floatingRefs(l).length >= MAX_FLOATING) return layout;
+  const hit = trovaTile(l, key);
+  if (!hit || hit.tile.float) return layout;
+  hit.tile.float = clampFloatGeom(geom || {});
+  return l;
+}
+
+// Riattacca: toglie il flag. Il tile non si è mai mosso dall'albero: torna
+// nel flusso della griglia ESATTAMENTE dov'era (design: «dov'era»).
+export function reattachTile(layout, ref) {
+  const l = clone(layout);
+  const hit = trovaTile(l, refKey(ref));
+  if (!hit || !hit.tile.float) return layout;
+  delete hit.tile.float;
+  return l;
+}
+
+// Sposta/ridimensiona una flottante (drag dal titolo, resize dal bordo):
+// aggiorna solo la geometria del flag, clampata dentro lo schermo.
+export function updateFloatGeom(layout, ref, geom) {
+  const l = clone(layout);
+  const hit = trovaTile(l, refKey(ref));
+  if (!hit || !hit.tile.float) return layout;
+  hit.tile.float = clampFloatGeom(geom);
+  return l;
+}
+
+// refKey di tutti gli staccati (in ordine di griglia).
+export function floatingRefs(layout) {
+  return layout.columns.flatMap((c) => c.tiles).filter((t) => t.float).map((t) => refKey(t));
+}
+
+// Vista -> record: griglia SENZA staccati (le colonne che restano vuote
+// spariscono: il formato del server non le ammette) + lista floating con i
+// soli campi del record (nessun height: la geometria è nel float).
+export function stripFloating(layout) {
+  const floating = [];
+  const columns = [];
+  for (const c of layout.columns) {
+    const tiles = [];
+    for (const t of c.tiles) {
+      if (t.float) {
+        const f = { session: t.session, ...t.float, fontSize: t.fontSize };
+        if (t.node) f.node = t.node;
+        if (t.ownerId) f.ownerId = t.ownerId;
+        floating.push(f);
+      } else {
+        tiles.push(t);
+      }
+    }
+    if (tiles.length) columns.push({ width: c.width, tiles });
+  }
+  return { grid: { columns }, floating };
+}
+
+// Record -> vista: la griglia resta, gli staccati rientrano con addTileStable
+// (colonna meno piena, mai reflow degli altri) + il loro flag float.
+// Flottanti nel merge (poll con finestra sporca, ritentativo dopo un 409), a
+// TRE vie, tutte nelle STESSE coordinate: base = il record su cui la finestra
+// sporca ha lavorato, remote = il record nuovo, local = la vista sporca.
+// Presenza: una flottante tolta da una parte e non toccata dall'altra resta
+// tolta; una aggiunta da una parte entra. Geometria di una finestra presente
+// ovunque, PER CAMPO (x, y, w, h, fontSize): locale = base -> vince il remoto;
+// remoto = base -> vince il locale; cambiati entrambi -> vince il locale. Il
+// risultato torna dentro lo schermo. Tetto MAX_FLOATING.
+const CAMPI_FLOAT = ['x', 'y', 'w', 'h', 'fontSize'];
+const stessoValore = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) < 1e-9;
+const stessaGeometria = (a, b) => CAMPI_FLOAT.every((k) => stessoValore(a[k], b[k]));
+function fondiGeometria(base, remote, local) {
+  if (!base) return local;
+  const out = { ...local };
+  for (const k of CAMPI_FLOAT) {
+    if (stessoValore(local[k], base[k]) && !stessoValore(remote[k], base[k])) out[k] = remote[k];
+  }
+  return { ...out, ...clampFloatGeom(out) };
+}
+export function fondeFloating(baseFloating, remoteFloating, localFloating) {
+  const perChiave = (list) => new Map((Array.isArray(list) ? list : [])
+    .map((f) => [refKey(f), f]).filter(([k]) => k));
+  const base = perChiave(baseFloating);
+  const remote = perChiave(remoteFloating);
+  const local = perChiave(localFloating);
+  const out = [];
+  for (const [k, f] of local) {
+    // tolta altrove e qui intatta: resta tolta
+    if (!remote.has(k) && base.has(k) && stessaGeometria(f, base.get(k))) continue;
+    out.push(remote.has(k) ? fondiGeometria(base.get(k), remote.get(k), f) : f);
+  }
+  for (const [k, f] of remote) {
+    // gia' presa dalla vista, oppure tolta qui (c'era nella base)
+    if (local.has(k) || base.has(k)) continue;
+    out.push(f);
+  }
+  return out.slice(0, MAX_FLOATING);
+}
+
+// Stato di una finestra nel merge: staccata, in griglia o assente. Si
+// decide a tre vie come un campo (se la vista locale non l'ha toccata vince
+// il remoto, altrimenti vince il locale; spostarla o ridimensionarla da
+// staccata conta come toccarla), SOLO per le finestre staccate da
+// qualche parte (base, remoto o vista): le tile mai staccate restano come le
+// decide il merge della griglia. base/remote/local = { grid, floating }, tutti
+// nelle stesse coordinate; grid/floating = il risultato dei due merge.
+export function riconciliaStaccate(grid, floating, base, remote, local) {
+  const staccate = (v) => (Array.isArray(v.floating) ? v.floating : []);
+  const stato = (v, k) => (staccate(v).some((f) => refKey(f) === k) ? 'float'
+    : sessions(v.grid).includes(k) ? 'grid' : '');
+  const tileIn = (layout, k) => layout.columns.flatMap((c) => c.tiles).find((t) => refKey(t) === k);
+  const chiavi = new Set([...staccate(base), ...staccate(remote), ...staccate(local)].map((f) => refKey(f)).filter(Boolean));
+  let g = grid;
+  let fl = Array.isArray(floating) ? floating : [];
+  const geom = (v, k) => staccate(v).find((f) => refKey(f) === k);
+  for (const k of chiavi) {
+    const sl = stato(local, k);
+    const sb = stato(base, k);
+    // toccata qui: cambiata di stato, o staccata e spostata/ridimensionata
+    const toccata = sl !== sb || (sl === 'float' && !stessaGeometria(geom(local, k), geom(base, k)));
+    const fin = toccata ? sl : stato(remote, k);
+    if (fin !== 'grid' && sessions(g).includes(k)) g = removeTile(g, k);
+    if (fin !== 'float') fl = fl.filter((f) => refKey(f) !== k);
+    if (fin === 'grid' && !sessions(g).includes(k)) {
+      const t = tileIn(remote.grid, k) || tileIn(local.grid, k) || tileIn(base.grid, k);
+      if (t) g = addTileStable(g, t);
+    }
+    if (fin === 'float' && !fl.some((f) => refKey(f) === k)) {
+      const f = [remote, local, base].map((v) => staccate(v).find((x) => refKey(x) === k)).find(Boolean);
+      if (f) fl = [...fl, f];
+    }
+  }
+  return { grid: g, floating: fl.slice(0, MAX_FLOATING) };
+}
+
+// Due viste sono la stessa se hanno le stesse colonne, tile, pesi e font, e
+// le stesse staccate con la stessa geometria — senza badare all'ordine delle
+// chiavi degli oggetti (un merge ricostruisce le tile in un altro ordine).
+export function stessaVista(a, b) {
+  const firma = (layout) => {
+    const { grid, floating } = stripFloating(layout || emptyLayout());
+    return JSON.stringify({
+      g: grid.columns.map((c) => [c.width, c.tiles.map((t) => [refKey(t), t.ownerId || '', t.height, t.fontSize])]),
+      f: floating.map((f) => [refKey(f), f.ownerId || '', f.x, f.y, f.w, f.h, f.fontSize]),
+    });
+  };
+  return firma(a) === firma(b);
+}
+
+export function materializeFloating(grid, floating) {
+  let out = grid;
+  for (const f of Array.isArray(floating) ? floating : []) {
+    const ref = { session: f.session };
+    if (f.node) ref.node = f.node;
+    if (f.ownerId) ref.ownerId = f.ownerId;
+    const key = refKey(ref);
+    if (!key || sessions(out).includes(key)) continue;
+    // Le flottanti NON contano contro il tetto della griglia: il server le
+    // tiene in un campo del record a parte (9 della griglia + fino a 6
+    // flottanti), e la vista le rende position:fixed — aggiungerle con
+    // addTileStable le farebbe sparire oltre il nono tile.
+    const l = clone(out);
+    if (!l.columns.length) l.columns.push({ width: 1, tiles: [] });
+    let best = 0;
+    for (let i = 1; i < l.columns.length; i += 1) {
+      if (l.columns[i].tiles.length < l.columns[best].tiles.length) best = i;
+    }
+    const tile = { session: ref.session, height: 1, fontSize: f.fontSize || TILE_FONT_DEF, float: clampFloatGeom(f) };
+    if (ref.node) tile.node = ref.node;
+    if (ref.ownerId) tile.ownerId = ref.ownerId;
+    l.columns[best].tiles.push(tile);
+    out = l;
+  }
+  return out;
+}
+
 // Zoom font di un singolo tile: delta relativo con clamp ai bound.
 // Indici invalidi → layout invariato (stesso riferimento).
 export function zoomTile(layout, colIdx, rowIdx, delta) {
@@ -317,6 +601,11 @@ export function normalize(raw) {
           const out = { session: t.session, height: Math.max(MIN_W, Number(t.height) || 1), fontSize: repairFont(t.fontSize) };
           if (t.node != null) out.node = t.node;
           if (t.ownerId != null) out.ownerId = t.ownerId;
+          // Il flag `float` è VISTA STABILE (finestra staccata): normalize non
+          // lo scarta, altrimenti il primo passaggio di
+          // resolveLayoutForViewer/cloneLayout lo spegne e la finestra torna
+          // da sola nella griglia.
+          if (t.float) out.float = clampFloatGeom(t.float);
           // `unavailable`/`stale` sono stato EFFIMERO di disponibilita': derivano
           // dal tick della topologia e NON si copiano nel layout normalizzato:
           // mai serializzati (nemmeno via localStorage), mai parte del confronto
@@ -325,9 +614,20 @@ export function normalize(raw) {
         }),
     }))
     .filter((c) => c.tiles.length > 0);
+  // Tetti separati, come nel record del server: 9 tile di griglia e, a parte,
+  // MAX_FLOATING staccate. Un tetto unico sulla vista farebbe sparire una tile
+  // (di griglia o flottante) quando la griglia è piena e c'è una staccata.
   const seen = new Set();
+  let inGriglia = 0; let staccate = 0;
   for (const c of columns) {
-    c.tiles = c.tiles.filter((t) => !seen.has(refKey(t)) && seen.add(refKey(t)) && seen.size <= MAX_TILES);
+    c.tiles = c.tiles.filter((t) => {
+      const k = refKey(t);
+      if (seen.has(k)) return false;
+      if (t.float ? staccate >= MAX_FLOATING : inGriglia >= MAX_TILES) return false;
+      seen.add(k);
+      if (t.float) staccate += 1; else inGriglia += 1;
+      return true;
+    });
   }
   return { columns: columns.filter((c) => c.tiles.length > 0) };
 }

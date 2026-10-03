@@ -3,9 +3,10 @@
 // loopback-only e la accetta col pattern gia' usato dal proxy WS).
 // Riconnessione: nativa di EventSource (retry hint dal server); i frame
 // malformati si scartano in silenzio (fail-closed, mai crash della UI).
-export function connectEvents(token, onFrame) {
+export function connectEvents(token, onFrame, onOpen) {
   if (typeof EventSource === 'undefined' || !token) return () => {};
   const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
+  es.onopen = () => { if (typeof onOpen === 'function') onOpen(); };
   es.onmessage = (e) => {
     try {
       const frame = JSON.parse(e.data);

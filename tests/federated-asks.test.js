@@ -59,7 +59,7 @@ function unit(t, { pasteCalls = [], pasteOk = true } = {}) {
   let closures = [];
   const service = createAskAnswerService({
     asks, receipts,
-    paste: () => { pasteCalls.push(1); return Promise.resolve(pasteOk); },
+    submit: async (...args) => { const result = await (() => { pasteCalls.push(1); return Promise.resolve(pasteOk); })(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; },
     onClosure: (kind, info) => closures.push({ kind, ...info }),
     labelPrefix: 'human',
   });
@@ -128,7 +128,7 @@ test('crash con pending: al restart diventa delivery-unknown e BLOCCA anche il l
       return { ok: true, ask: { ...a } };
     },
   };
-  const service = createAskAnswerService({ asks, receipts: receipts2, paste: async () => true, onClosure: () => {} });
+  const service = createAskAnswerService({ asks, receipts: receipts2, submit: async (...args) => { const result = await (async () => true)(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; }, onClosure: () => {} });
   const local = await service.answerLocal({ askId: 'abc12345', text: 'retry' });
   assert.equal(local.code, 409);
   assert.equal(local.reason, 'delivery-unknown-block');
@@ -167,7 +167,7 @@ test('un reconcile non persistito NON sblocca: il blocco resta e non si incolla'
     release() {},
     commit(id, text) { const a = this.get(id); a.answered = true; a.answer = text; return true; },
     markReconciled(id) { const a = this.get(id); a.revision = (a.revision || 0) + 1; return { ok: true, ask: { ...a } }; } };
-  const service = createAskAnswerService({ asks, receipts: receipts2, paste: async () => { pasteCalls.push(1); return true; }, onClosure: () => {} });
+  const service = createAskAnswerService({ asks, receipts: receipts2, submit: async (...args) => { const result = await (async () => { pasteCalls.push(1); return true; })(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; }, onClosure: () => {} });
   const out = await service.reconcile({ askId: 'abc12345', decision: 'allow-new-attempt', expectedRevision: 0 });
   assert.equal(out.ok, false, 'a failed write cannot unlock');
   assert.equal(out.reason, 'persist-failed');
@@ -202,7 +202,7 @@ test('il dismiss non rimuove un ask con esito incerto, su nessuno dei due percor
     get: (id) => (id === ask.id ? ask : null),
     dismiss: () => { ask.dismissed = true; ask.revision += 1; return { ok: true, ask: { ...ask } }; },
   };
-  const service = createAskAnswerService({ asks, receipts, paste: async () => true, onClosure: () => {} });
+  const service = createAskAnswerService({ asks, receipts, submit: async (...args) => { const result = await (async () => true)(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; }, onClosure: () => {} });
   const out = service.dismiss('abc12345');
   assert.equal(out.ok, false, 'an unknown outcome cannot be dismissed away');
   assert.equal(out.reason, 'delivery-unknown-block');
@@ -260,6 +260,7 @@ function boot(t, { pasteCalls = null, seed = null } = {}) {
     fleetEnabled: false,
     sessionExistsSeam: () => true,
     pasteSeam: pasteCalls ? (session, text) => { pasteCalls.push({ session, text }); return true; } : undefined,
+    askSubmit: pasteCalls ? (session, text) => { pasteCalls.push({ session, text }); return { outcome: 'submitted', submitted: true }; } : undefined,
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -483,7 +484,7 @@ test('una ricevuta terminale blocca il paste anche su un nuovo requestId', async
   const id = asks.create({ question: 'q', session: 'cell-test' }).ask.id;
   const receipts = createAskReceipts({ filePath: path.join(dir, 'receipts.json') });
   let pastes = 0;
-  const service = createAskAnswerService({ asks, receipts, paste: async () => { pastes += 1; return true; }, onClosure: () => {} });
+  const service = createAskAnswerService({ asks, receipts, submit: async (...args) => { const result = await (async () => { pastes += 1; return true; })(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; }, onClosure: () => {} });
   const first = await service.answerFederated({ askId: id, text: 'yes', peerId: PEER, requestId: '88888888-8888-4888-8888-888888888888' });
   assert.equal(first.ok, true);
   assert.equal(pastes, 1);
@@ -511,7 +512,7 @@ test('mark-delivered: se la transizione dello store fallisce, il blocco resta', 
     claim: () => ({ ok: true, ask: { ...ask } }),
   };
   let pastes = 0;
-  const service = createAskAnswerService({ asks, receipts, paste: async () => { pastes += 1; return true; }, onClosure: () => {} });
+  const service = createAskAnswerService({ asks, receipts, submit: async (...args) => { const result = await (async () => { pastes += 1; return true; })(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; }, onClosure: () => {} });
   const out = service.reconcile({ askId: 'abc12345', decision: 'mark-delivered', expectedRevision: 0 });
   assert.equal(out.ok, false);
   assert.equal(out.reason, 'ask-transition-failed');
@@ -540,7 +541,7 @@ test('mark-delivered: se la ricevuta non si scrive, l ask resta CHIUSO e non si 
   fs.unlinkSync(filePath);
   fs.mkdirSync(filePath);
   let pastes = 0;
-  const service = createAskAnswerService({ asks, receipts, paste: async () => { pastes += 1; return true; }, onClosure: () => {} });
+  const service = createAskAnswerService({ asks, receipts, submit: async (...args) => { const result = await (async () => { pastes += 1; return true; })(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; }, onClosure: () => {} });
   const out = service.reconcile({ askId: 'abc12345', decision: 'mark-delivered', expectedRevision: 0 });
   assert.equal(out.ok, false, 'the receipt was not reconciled');
   assert.equal(out.reason, 'persist-failed');
@@ -568,7 +569,7 @@ test('allow-new-attempt: un fallimento parziale non chiude l ask e non fa incoll
   fs.unlinkSync(filePath);
   fs.mkdirSync(filePath); // the receipt write cannot land
   let pastes = 0;
-  const service = createAskAnswerService({ asks, receipts, paste: async () => { pastes += 1; return true; }, onClosure: () => {} });
+  const service = createAskAnswerService({ asks, receipts, submit: async (...args) => { const result = await (async () => { pastes += 1; return true; })(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; }, onClosure: () => {} });
   const out = service.reconcile({ askId: 'abc12345', decision: 'allow-new-attempt', expectedRevision: 0 });
   assert.equal(out.ok, false);
   assert.equal(ask.answered, undefined, 'reopening must never close the ask');
@@ -593,11 +594,11 @@ function realFix3(t) {
   let release = null;
   const service = createAskAnswerService({
     asks, receipts,
-    paste: async () => {
+    submit: async (...args) => { const result = await (async () => {
       pastes.push(1);
       if (pastes.length === 1 && release) await new Promise((r) => { release.hang = r; });
       return true;
-    },
+    })(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; },
     labelPrefix: 'human',
   });
   return { asks, receipts, service, pastes, hook: (r) => { release = r; } };

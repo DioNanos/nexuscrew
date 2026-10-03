@@ -71,7 +71,7 @@ test('fleet backup: custom engine rejects secret-looking argv and invalid env na
   assert.equal(parseFleetBackup(JSON.stringify({ ...base, engines: [{ ...custom, envKeys: ['BAD-NAME'] }] })).ok, false);
 });
 
-// --- panelUrl nel backup (rilievo 1 audit D8) -------------------------------
+// --- panelUrl nel backup (dal rilievo originale) -------------------------------
 // Prima dell'allowlist il campo spariva in silenzio nel round-trip per ENTRRAMBI
 // i rami (managed e custom): export pulito, restore senza pannello, nessun
 // errore. Ora viaggia, e un valore invalido rifiuta l'engine (fail-closed).

@@ -79,7 +79,7 @@ test('buildPairBody: numeri e default coerenti, niente campi vuoti fabbricati', 
 
 test('deriveLocalName: due Termux localhost usano label + suffisso nodeId stabile', async () => {
   const { deriveLocalName } = await pf();
-  assert.equal(deriveLocalName('AsusRP3', '5bd6'.repeat(8)), 'asus-rp3-5bd6');
+  assert.equal(deriveLocalName('peer-a', '5bd6'.repeat(8)), 'peer-a-5bd6');
   assert.equal(deriveLocalName('localhost', '1'.repeat(32)), 'nexuscrew-1111');
   assert.equal(deriveLocalName('localhost', '2'.repeat(32)), 'nexuscrew-2222');
   assert.equal(deriveLocalName('localhost', '1'.repeat(32)), 'nexuscrew-1111');

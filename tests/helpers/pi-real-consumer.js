@@ -1,6 +1,6 @@
 'use strict';
 
-// D2 audit: "il consumatore vero non e' il file: e' Pi che lo legge." Un test
+// "il consumatore vero non e' il file: e' Pi che lo legge." Un test
 // che legge il file .ts generato non prova che Pi possa caricarlo — questo
 // helper esegue REALMENTE il pacchetto Pi installato sulla macchina (Node 24
 // esegue file .ts nativamente, e i moduli di composizione modello di Pi sono

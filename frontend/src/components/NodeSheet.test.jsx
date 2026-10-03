@@ -333,7 +333,7 @@ describe('NC-I: azioni', () => {
   });
 });
 
-describe('NC_UI_NODI_VL step 2: comandi VL da capabilities + stato da lastAck', () => {
+describe('UI nodi VL step 2: comandi VL da capabilities + stato da lastAck', () => {
   const vlNode = (overrides = {}) => vlNodeToPeer({
     nodeId: 'a'.repeat(32), label: 'N900', cell: 'VL-aaaaaaaa',
     pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
@@ -408,10 +408,10 @@ describe('NC_UI_NODI_VL step 2: comandi VL da capabilities + stato da lastAck', 
   });
 });
 
-// Step 3 (NC_UI_NODI_VL_REMOTI): la federazione di /vl-nodes/* e' stata
+// Step 3 (UI nodi VL remoti): la federazione di /vl-nodes/* e' stata
 // ripristinata (b0e8bd1) — un nodo VL puo' appartenere a un owner remoto, e
 // un comando DEVE arrivare a quell'owner, non sempre a /api/vl-nodes locale.
-describe('NC_UI_NODI_VL_REMOTI step 3: owner remoti', () => {
+describe('UI nodi VL remoti step 3: owner remoti', () => {
   const vlNode = (overrides = {}) => vlNodeToPeer({
     nodeId: 'a'.repeat(32), label: 'N900', cell: 'VL-aaaaaaaa',
     pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
@@ -456,7 +456,7 @@ describe('NC_UI_NODI_VL_REMOTI step 3: owner remoti', () => {
     );
     const nodeB = vlNodeToPeer(
       { nodeId: 'b'.repeat(32), label: 'N900', capabilities: [] },
-      { instanceId: 'b'.repeat(16), route: ['nova'], label: 'NovaLNX' },
+      { instanceId: 'b'.repeat(16), route: ['node-b'], label: 'Node B' },
     );
     const { container } = render(<NodesTab
       token="token" nodes={[nodeA, nodeB]} roster={[]} settings={{}} readonly={false}
@@ -467,7 +467,7 @@ describe('NC_UI_NODI_VL_REMOTI step 3: owner remoti', () => {
     const rows = container.querySelectorAll('.nc-node-row');
     expect(rows.length).toBe(2);
     expect(container.textContent).toContain('Node A');
-    expect(container.textContent).toContain('NovaLNX');
+    expect(container.textContent).toContain('Node B');
   });
 });
 

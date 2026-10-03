@@ -1,3 +1,5 @@
+import { readPref, writePref } from './pref-store.js';
+
 // Pure sidebar roster model.  Every item has a route-qualified `key`, a
 // human-readable `label`, a `live` flag and optional `activity` epoch.
 
@@ -38,17 +40,19 @@ export function compareSidebarItems(a, b, pins = [], order = []) {
 }
 
 export function loadSidebarOrders(storage = globalThis.localStorage) {
-  try {
-    const raw = JSON.parse(storage.getItem(SIDEBAR_ORDER_KEY));
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-    const out = {};
-    for (const [position, keys] of Object.entries(raw).slice(0, 64)) {
-      if (typeof position !== 'string' || !position || position.length > 160 || !Array.isArray(keys)) continue;
-      const clean = [...new Set(keys.filter((key) => typeof key === 'string' && key && key.length <= 256))].slice(0, 128);
-      if (clean.length) out[position] = clean;
-    }
-    return out;
-  } catch (_) { return {}; }
+  return readPref(SIDEBAR_ORDER_KEY, {
+    storage, fallback: () => ({}),
+    parse: (raw) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+      const out = {};
+      for (const [position, keys] of Object.entries(raw).slice(0, 64)) {
+        if (typeof position !== 'string' || !position || position.length > 160 || !Array.isArray(keys)) continue;
+        const clean = [...new Set(keys.filter((key) => typeof key === 'string' && key && key.length <= 256))].slice(0, 128);
+        if (clean.length) out[position] = clean;
+      }
+      return out;
+    },
+  });
 }
 
 export function sidebarOrder(orders, position) {
@@ -56,7 +60,7 @@ export function sidebarOrder(orders, position) {
 }
 
 export function saveSidebarOrders(orders, storage = globalThis.localStorage) {
-  try { storage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(orders)); } catch (_) {}
+  writePref(SIDEBAR_ORDER_KEY, orders, { storage });
   return orders;
 }
 
@@ -67,7 +71,9 @@ export function moveSidebarItem(orders, position, source, target, availableKeys 
   if (typeof position !== 'string' || !position || source === target) return orders;
   const available = [...new Set(availableKeys.filter((key) => typeof key === 'string' && key))];
   if (!available.includes(source) || !available.includes(target)) return orders;
-  const stored = sidebarOrder(orders, position).filter((key) => available.includes(key));
+  // Le chiavi salvate ma non visibili ORA (nodo in errore, cella spenta non ancora letta) restano nell'ordine:
+  // scartarle cancellava la posizione scelta dall'utente al primo spostamento (roster parziale).
+  const stored = sidebarOrder(orders, position);
   const base = [...stored, ...available.filter((key) => !stored.includes(key))];
   const sourceIndex = base.indexOf(source);
   const targetIndex = base.indexOf(target);
@@ -79,10 +85,10 @@ export function moveSidebarItem(orders, position, source, target, availableKeys 
 }
 
 export function loadSidebarViews(storage = globalThis.localStorage) {
-  try {
-    const raw = JSON.parse(storage.getItem(SIDEBAR_VIEW_KEY));
-    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  } catch (_) { return {}; }
+  return readPref(SIDEBAR_VIEW_KEY, {
+    storage, fallback: () => ({}),
+    parse: (raw) => (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : undefined),
+  });
 }
 
 export function sidebarView(views, key) {
@@ -93,7 +99,7 @@ export function sidebarView(views, key) {
 }
 
 export function saveSidebarViews(views, storage = globalThis.localStorage) {
-  try { storage.setItem(SIDEBAR_VIEW_KEY, JSON.stringify(views)); } catch (_) {}
+  writePref(SIDEBAR_VIEW_KEY, views, { storage });
   return views;
 }
 

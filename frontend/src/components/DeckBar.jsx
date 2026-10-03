@@ -125,6 +125,10 @@ export default function DeckBar({
                             disabled={busy || d.available === false}
                             onClick={() => navigate(d)}
                           >{d.name}{d.id === currentDeck ? ' •' : ''}</button>
+                          {d.available !== false && d.stale === true && d.refreshFailedAt
+                            ? <span className="nc-deck-stale"
+                                title={`${d.ownerLabel} · ${t('deck-stale')}`}>{t('deck-stale-badge')}</span>
+                            : null}
                           <button className="nc-deck-mini" disabled={d.available === false} title={t('detach-deck')} onClick={() => popout(d)}>↗</button>
                           {d.name !== MAIN_DECK && (
                             <>

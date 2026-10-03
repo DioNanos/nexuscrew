@@ -6,7 +6,10 @@ import {
   loadDeckOrders, loadDecks, moveDeckInOrder, orderDeckRecords, readLayoutRaw,
   removeDeckOrderId, replaceDeckOrderId, saveDeckOrders, saveDecks, writeLayoutRaw,
 } from '../lib/deck-model.js';
-import { addTileSmart, emptyLayout, mergeRemoteWithLocal, normalize, sessions } from '../lib/grid-model.js';
+import {
+  addTileSmart, emptyLayout, mergeRemoteWithLocal, normalize, sessions, stripFloating, materializeFloating,
+  fondeFloating, riconciliaStaccate, stessaVista,
+} from '../lib/grid-model.js';
 // Stessa soglia di useNodes: un owner scaduto e' un fatto, non un blip.
 import { OWNER_GRACE_MS } from './useNodes.js';
 import {
@@ -15,6 +18,62 @@ import {
 } from '../lib/deck-federation.js';
 
 const empty = (layout) => sessions(normalize(layout)).length === 0;
+
+// Finestre flottanti del record: stesse coordinate dei tile della griglia.
+// Ogni flottante passa, da sola, per la STESSA traduzione owner<->viewer dei
+// tile (resolveLayoutForViewer al caricamento, canonicalizeLayoutForOwner al
+// salvataggio): una flottante remota non viene mai salvata con la route del
+// viewer. La geometria non si tocca; una ref che la traduzione scarta sparisce.
+function translateFloating(floating, translate) {
+  if (!Array.isArray(floating)) return [];
+  return floating.flatMap((f) => {
+    const tile = { session: f.session, height: 1, fontSize: f.fontSize };
+    if (f.node) tile.node = f.node;
+    if (f.ownerId) tile.ownerId = f.ownerId;
+    const t = translate({ columns: [{ width: 1, tiles: [tile] }] }).columns[0]?.tiles[0];
+    if (!t) return [];
+    const out = { session: t.session, x: f.x, y: f.y, w: f.w, h: f.h, fontSize: f.fontSize };
+    if (t.node) out.node = t.node;
+    if (t.ownerId) out.ownerId = t.ownerId;
+    return [out];
+  });
+}
+// Il campo `floating` del PUT parte solo quando serve: la vista ha finestre
+// staccate, oppure il record ne aveva e vanno svuotate (`[]`). Senza nessuna
+// delle due il body resta quello di chi non le usa: solo layout e revisione.
+function floatingPerPut(floatingWin, rec) {
+  if (floatingWin.length) return floatingWin;
+  return Array.isArray(rec.floating) && rec.floating.length ? [] : undefined;
+}
+// Flottanti del merge del poll: base (il record su cui la vista ha lavorato)
+// e remoto arrivano in coordinate OWNER, la vista in coordinate VIEWER. Tutto
+// passa prima nelle coordinate del viewer, poi il merge a tre vie: mai la
+// stessa finestra due volte, mai una ref remota attaccata alla sessione
+// locale omonima.
+export function flottantiDelMerge(base, remote, localFloat, localNodeId, owners) {
+  const versoViewer = (record) => translateFloating(record && record.floating, (l) => resolveLayoutForViewer(
+    l, localNodeId, owners,
+  ));
+  return fondeFloating(versoViewer(base), versoViewer(remote), localFloat);
+}
+
+// La vista fusa di un merge (poll con finestra sporca, ritentativo dopo un
+// 409): griglia dal merge del chiamante, staccate a tre vie, e lo stato
+// staccata/in griglia di ogni finestra staccata da qualche parte a tre vie.
+// Tutto nelle coordinate del viewer.
+function vistaFusa(base, remote, localLayout, gridFusa, localNodeId, owners) {
+  const inViewer = (l) => resolveLayoutForViewer(l, localNodeId, owners);
+  const versoViewer = (record) => translateFloating(record && record.floating, inViewer);
+  const { grid: localGrid, floating: localFloat } = stripFloating(localLayout);
+  const r = riconciliaStaccate(
+    gridFusa(localGrid),
+    flottantiDelMerge(base, remote, localFloat, localNodeId, owners),
+    { grid: base ? inViewer(base.layout) : emptyLayout(), floating: versoViewer(base) },
+    { grid: inViewer(remote.layout), floating: versoViewer(remote) },
+    { grid: localGrid, floating: localFloat },
+  );
+  return materializeFloating(r.grid, r.floating);
+}
 const routeKey = (route) => (Array.isArray(route) ? route.join('/') : '');
 
 // Cache dell'ultima lista deck (locale + remote): al reload della pagina la
@@ -51,6 +110,7 @@ function cleanOwners(input) {
       label: String(owner.label || owner.name || owner.route.join(' › ')),
       status: owner.status || 'offline',
       stale: owner.stale === true,
+      checking: owner.checking === true,
     });
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));
@@ -80,7 +140,7 @@ function augmentDeck(deck, owner, topology, local = false, available = true) {
   };
 }
 
-export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
+export function useDecks(token, current, layout, setLayout, remoteOwners = [], nodeOrder = []) {
   const [records, setRecords] = useState([]);
   const [ready, setReady] = useState(false);
   const [saveState, setSaveState] = useState('idle');
@@ -89,6 +149,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   const [localNodeId, setLocalNodeId] = useState('');
   const recordsRef = useRef([]);
   const ownersRef = useRef([]);
+  // Ordine della lista nodi/celle (nc_node_order_v1, chiavi nodePreferenceKey):
+  // i GRUPPI della rail lo seguono. Va in un ref per non rifare il
+  // caricamento a ogni riordino: il riordino tocca solo l'ordine, non i dati.
+  const nodeOrderRef = useRef([]);
   // Da quando un owner manca dalle risposte confermate: passata la grazia le
   // sue deck sloggano (rimozione confermata), sotto restano come blip. Stessa
   // soglia di useNodes, cosi' non esistono due grazie divergenti.
@@ -106,7 +170,17 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   // periodico. status/label freschi arrivano comunque via ownersRef a ogni
   // render per il loop di reload dentro loadAll.
   const ownersSig = owners.map((o) => `${o.instanceId}:${routeKey(o.route)}`).join('|');
+  // Firma dei SOLO stati (instanceId + status): il ritorno a 'up' di un owner
+  // degradato deve ripartire subito con il suo caricamento per-owner, senza
+  // aspettare il poll periodico e senza rifare il caricamento completo — un
+  // blip di stato dalla topologia non deve innescare quel loadAll (per quello
+  // c'è ownersSig, che resta a sola identità).
+  const ownerStatusSig = owners.map((o) => `${o.instanceId}:${o.status ?? ''}:${o.checking ? 'checking' : 'settled'}`).join('|');
+  const ownerStatusRef = useRef(new Map(owners.map(o => [
+    o.instanceId, o.checking ? 'pending' : o.status,
+  ])));
   ownersRef.current = owners;
+  nodeOrderRef.current = nodeOrder;
   layoutRef.current = layout;
   currentRef.current = current;
   recordsRef.current = records;
@@ -131,7 +205,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
 
   const install = useCallback((next, applyLayout = true, targetId) => {
     const wanted = targetId === undefined ? resolveCurrentId() : deckIdForLocalOwner(targetId, localNodeIdRef.current);
-    const ordered = orderDeckRecords(next, loadDeckOrders());
+    const ordered = orderDeckRecords(next, loadDeckOrders(), nodeOrderRef.current);
     const previousHadTarget = recordsRef.current.some((d) => d.id === wanted);
     recordsRef.current = ordered; setRecords(ordered);
     // Cache dell'ultima lista conosciuta (senza i flag effimeri del refresh
@@ -144,7 +218,11 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const rec = ordered.find((d) => d.id === wanted);
     if (applyLayout && rec) {
       skipRef.current = true;
-      const viewed = viewLayout(rec);
+      // La vista materializza anche le finestre staccate (campo record
+      // `floating`): rientrano in griglia con il loro flag, pronte a flottare.
+      const viewed = materializeFloating(viewLayout(rec), translateFloating(rec.floating, (l) => resolveLayoutForViewer(
+        l, localNodeIdRef.current, ownersRef.current,
+      )));
       setLayout(viewed);
       // localStorage per i deck locali: SOLO geometria, lo stato effimero di
       // disponibilita' (unavailable/stale) non si persiste mai.
@@ -222,12 +300,14 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
         return;
       }
       // Degrado per owner (timeout federato o errore di rete): le sue deck
-      // precedenti restano con available:false e l'istante del refresh
-      // fallito. Mai un reflow, mai una rimozione.
+      // precedenti restano con la disponibilità GIÀ nota (un solo fetch
+      // caduto non dichiara offline un owner che la lista nodi/celle vede
+      // 'up'), il flag stale e l'istante del refresh fallito — il segnalino
+      // «in ritardo» è onesto, l'offline no. Mai un reflow, mai una rimozione;
+      // un owner mai caricato resta senza deck, come prima.
       const previous = recordsRef.current.filter((d) => !d.local && d.ownerId === owner.instanceId)
         .map((d) => ({
           ...d,
-          available: false,
           stale: true,
           refreshFailedAt: Date.now(),
           ownerRoute: [...owner.route],
@@ -278,9 +358,13 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       // deve far lampeggiare offline la rail. Owner non-up (nessun reload
       // in arrivo): degrado esplicito, come prima.
       const reloading = owner.status === 'up';
+      // Un owner "pending" (lettura della discovery ancora in corso) non e'
+      // un esito: la disponibilita' gia' nota resta com'e', senza degradazione
+      // ne' marcatura stale. Il degrado arriva da uno stato non-up confermato.
+      const pending = owner.status === 'pending' || owner.checking === true;
       return [{
         ...d,
-        available: reloading ? d.available !== false : false,
+        available: pending ? d.available : (reloading ? d.available !== false : false),
         stale: owner.stale === true,
         ownerRoute: [...owner.route],
         ownerLabel: owner.label,
@@ -292,7 +376,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     // dall'install dell'elenco fresh.
     setTimeout(() => {
       for (const owner of known.values()) {
-        if (owner.status === 'up') loadOwnerDecks(owner);
+        if (owner.status === 'up' && !owner.checking) loadOwnerDecks(owner);
       }
     }, 0);
     return [...localRecords, ...previousRemote];
@@ -318,6 +402,42 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     return () => { cancelled = true; };
   }, [install, loadAll, ownersSig, token, findCurrent]);
 
+  // un riordino nella lista nodi/celle a sinistra si riflette subito
+  // sui gruppi della rail, senza ricaricare nulla — stessi record, ordine
+  // nuovo. Il confronto evita il re-render quando l'ordine non cambia nulla.
+  useEffect(() => {
+    if (!recordsRef.current.length) return;
+    const ordered = orderDeckRecords(recordsRef.current, loadDeckOrders(), nodeOrder);
+    const moved = ordered.length !== recordsRef.current.length
+      || ordered.some((d, i) => d.id !== recordsRef.current[i].id);
+    if (moved) {
+      recordsRef.current = ordered;
+      setRecords(ordered);
+    }
+  }, [nodeOrder]);
+
+  // Il ritorno a 'up' di un owner degradato riparte subito con il suo
+  // caricamento per-owner: l'effetto confronta la firma degli stati con quella
+  // del render precedente e ricarica SOLO gli owner appena tornati 'up'. Chi
+  // passa a non-up non fa nulla qui (il suo degrado esplicito arriva con la
+  // prossima loadAll); il primo render non ricarica nulla — di quello si
+  // occupa la loadAll che parte al mount.
+  useEffect(() => {
+    const previous = ownerStatusRef.current;
+    const confirmed = new Map();
+    for (const owner of ownersRef.current) {
+      if (owner.checking || owner.status === 'pending') {
+        // L'attesa non sostituisce l'ultimo esito: un down breve deve ancora
+        // provocare il reload quando il ritorno up viene verificato.
+        confirmed.set(owner.instanceId, previous.get(owner.instanceId) || 'pending');
+        continue;
+      }
+      if (owner.status === 'up' && previous.get(owner.instanceId) !== 'up') loadOwnerDecks(owner);
+      confirmed.set(owner.instanceId, owner.status);
+    }
+    ownerStatusRef.current = confirmed;
+  }, [ownerStatusSig, loadOwnerDecks]);
+
   const saveNow = useCallback(async (targetId, allowRebase = true) => {
     if (!ready || !dirtyRef.current) return true;
     const wanted = targetId === undefined ? resolveCurrentId() : deckIdForLocalOwner(targetId, localNodeIdRef.current);
@@ -326,8 +446,12 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     if (rec.available === false) { setError(`nodo owner offline: ${rec.ownerLabel}`); return false; }
     setSaveState('saving');
     try {
-      const canonical = canonicalizeLayoutForOwner(normalize(layoutRef.current), rec.ownerId, rec.ownerTopology);
-      const saved = await saveDeck(token, rec.name, canonical, rec.revision, rec.ownerRoute);
+      // La vista tiene gli staccati nelle columns col flag `float`: prima
+      // del PUT si separano (griglia pura + lista `floating` a livello record).
+      const { grid: gridOnly, floating: floatingView } = stripFloating(layoutRef.current);
+      const canonical = canonicalizeLayoutForOwner(normalize(gridOnly), rec.ownerId, rec.ownerTopology);
+      const floatingWin = translateFloating(floatingView, (l) => canonicalizeLayoutForOwner(l, rec.ownerId, rec.ownerTopology));
+      const saved = await saveDeck(token, rec.name, canonical, rec.revision, rec.ownerRoute, floatingPerPut(floatingWin, rec));
       const augmented = augmentDeck(saved, ownerForRecord(rec), rec.ownerTopology, rec.local, true);
       install(recordsRef.current.map((d) => d.id === wanted ? augmented : d), false);
       dirtyRef.current = false; setSaveState('saved'); setError(''); setConflict(false);
@@ -343,6 +467,17 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
         const conflicted = recordsRef.current.find((d) => d.id === wanted);
         if (conflicted) {
           const rebased = augmentDeck(e.data.current, ownerForRecord(conflicted), conflicted.ownerTopology, conflicted.local, true);
+          // Finestre staccate: merge a tre vie con base il record su cui
+          // questa finestra ha lavorato (la griglia resta quella locale, come
+          // prima). La vista si aggiorna PRIMA del ritentativo e solo se il
+          // merge ha cambiato qualcosa: senza staccate non cambia nulla e la
+          // vista resta quella, come nella 0.9.50.
+          const fusa = vistaFusa(conflicted, rebased, layoutRef.current, (localGrid) => localGrid,
+            localNodeIdRef.current, ownersRef.current);
+          if (!stessaVista(fusa, layoutRef.current)) {
+            layoutRef.current = fusa;
+            skipRef.current = true; setLayout(fusa);
+          }
           install(recordsRef.current.map((d) => d.id === wanted ? rebased : d), false);
           dirtyRef.current = true;
           return saveNow(wanted, false);
@@ -352,7 +487,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       if (e.status === 409) setConflict(true);
       return false;
     }
-  }, [ready, token, install]);
+  }, [ready, token, install, setLayout]);
 
   // Azione «ricarica» del conflitto irrisolvibile — riparte dal remoto
   // e scarta la copia locale che non è riuscita a convergere.
@@ -391,8 +526,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       if (!dirtyRef.current) return;
       const rec = recordsRef.current.find((d) => d.id === resolveCurrentId());
       if (!rec || rec.available === false) return;
-      const canonical = canonicalizeLayoutForOwner(normalize(layoutRef.current), rec.ownerId, rec.ownerTopology);
-      saveDeckKeepalive(token, rec.name, canonical, rec.revision, rec.ownerRoute);
+      const { grid: gridOnly, floating: floatingView } = stripFloating(layoutRef.current);
+      const canonical = canonicalizeLayoutForOwner(normalize(gridOnly), rec.ownerId, rec.ownerTopology);
+      const floatingWin = translateFloating(floatingView, (l) => canonicalizeLayoutForOwner(l, rec.ownerId, rec.ownerTopology));
+      saveDeckKeepalive(token, rec.name, canonical, rec.revision, rec.ownerRoute, floatingPerPut(floatingWin, rec));
     };
     window.addEventListener('pagehide', flush);
     window.addEventListener('beforeunload', flush);
@@ -418,7 +555,12 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
           // La finestra è sporca e il remoto è più nuovo — merge
           // remoto ⊕ delta locale invece di restare indietro. Il layout fuso
           // è un cambio di layout: l'autosave lo salva con la revisione nuova.
-          const merged = mergeRemoteWithLocal(viewLayout(remote), layoutRef.current);
+          // Le finestre staccate passano dal merge a tre vie (base = il record
+          // su cui questa finestra ha lavorato), tutto nelle coordinate di chi
+          // guarda; la griglia dal merge di sempre.
+          const merged = vistaFusa(here, remote, layoutRef.current,
+            (localGrid) => mergeRemoteWithLocal(viewLayout(remote), localGrid),
+            localNodeIdRef.current, ownersRef.current);
           install(next, false);
           setLayout(merged);
           return;
@@ -498,6 +640,15 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const record = augmentDeck(saved, ownerForRecord(deck), deck.ownerTopology, deck.local, true);
     install(recordsRef.current.map((x) => x.id === targetId ? record : x), false); return record;
   };
+  // La vista di un record CON le flottanti materializzate: la stessa
+  // espressione dell'install (translateFloating per le ref dei nodi remoti).
+  const vistaMaterializzata = useCallback((record) => materializeFloating(
+    viewLayout(record),
+    translateFloating(record.floating, (l) => resolveLayoutForViewer(
+      l, localNodeIdRef.current, ownersRef.current,
+    )),
+  ), [viewLayout]);
+
   const select = async (id) => {
     if (dirtyRef.current) {
       const saved = await saveNow(resolveCurrentId());
@@ -506,12 +657,14 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     const target = recordsRef.current.find((d) => d.id === id);
     if (!target) throw new Error(`deck inesistente: ${id}`);
     dirtyRef.current = false; skipRef.current = true;
-    return viewLayout(target);
+    // Le flottanti del record ENTRANO nella vista materializzate —
+    // ritornare solo viewLayout le cancellava al primo autosave.
+    return vistaMaterializzata(target);
   };
 
   return {
     decks: records, records, localNodeId, ready, saveState, error, setError, conflict, reloadCurrent,
-    saveNow, select, add, rename, remove, reorder, addTileTo, viewUpdate,
+    saveNow, select, add, rename, remove, reorder, addTileTo, viewUpdate, vistaMaterializzata,
     localMainId: deckId(null, 'main'), parseDeckId,
   };
 }

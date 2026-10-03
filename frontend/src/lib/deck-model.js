@@ -190,17 +190,34 @@ export function removeDeckOrderId(orders, ownerKey, id) {
   return normalizeDeckOrders({ ...orders, [ownerKey]: deckOrder(orders, ownerKey).filter((item) => item !== id) });
 }
 
-export function orderDeckRecords(records, orders = {}) {
+export function orderDeckRecords(records, orders = {}, nodeOrder = []) {
   const groups = new Map();
+  const arrival = new Map();
   for (const record of Array.isArray(records) ? records : []) {
     const ownerKey = record?.local ? 'local' : String(record?.ownerId || '');
     if (!validOwnerKey(ownerKey) || !idBelongsToOwner(record?.id, ownerKey)) continue;
     if (!groups.has(ownerKey)) groups.set(ownerKey, []);
+    if (!arrival.has(ownerKey)) arrival.set(ownerKey, arrival.size);
     groups.get(ownerKey).push(record);
   }
+  // l'ordine dei GRUPPI segue la lista nodi/celle scelta dall'utente
+  // (nodePreferenceKey: 'local' per il nodo locale, 'id:<instanceId>' per gli
+  // owner federati — mai l'etichetta). 'local' resta sempre primo; un gruppo
+  // che non sta nella lista va in coda, stabile sull'ordine di prima
+  // apparizione: niente salti mentre i dati arrivano (ordine stabile).
+  const listRank = new Map();
+  (Array.isArray(nodeOrder) ? nodeOrder : []).forEach((key, index) => {
+    if (typeof key === 'string' && !listRank.has(key)) listRank.set(key, index);
+  });
+  const groupRank = (ownerKey) => {
+    if (ownerKey === 'local') return -1;
+    const inList = listRank.get(`id:${ownerKey}`);
+    return inList === undefined ? Number.MAX_SAFE_INTEGER : inList;
+  };
   const out = [];
-  for (const [, group] of groups) {
-    const ownerKey = group[0].local ? 'local' : group[0].ownerId;
+  for (const ownerKey of [...groups.keys()].sort((a, b) => groupRank(a) - groupRank(b)
+    || arrival.get(a) - arrival.get(b))) {
+    const group = groups.get(ownerKey);
     const saved = deckOrder(orders, ownerKey);
     const rank = new Map(saved.map((id, index) => [id, index]));
     group.sort((a, b) => {

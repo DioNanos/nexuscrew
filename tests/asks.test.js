@@ -30,7 +30,7 @@ function setup(t, { readonly = false, pasteOk = true, pasteImpl, askRate, replyL
     notifier: createNotifier({ hub, push }),
     push,
     asks,
-    paste,
+    submit: async (...args) => { const result = await (paste)(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; },
     sessionExists: (s) => typeof s === 'string' && s.startsWith('cell-'),
   }));
   return new Promise((res) => {
@@ -181,7 +181,7 @@ test('answer: id ignoto 404, text invalido 400, paste fallito 502 (ask resta ape
   assert.equal(open.asks.length, 1);
 });
 
-// F2 (audit): claim atomico open->answering — il rollback su paste fallito
+// claim atomico open->answering — il rollback su paste fallito
 // rilascia il claim e l'ask resta risponibile al retry.
 test('answer F2: dopo un paste fallito (rollback) il retry vince e chiude', async (t) => {
   const { j, pasted, pasteState } = await setup(t, { pasteOk: false });
@@ -196,7 +196,7 @@ test('answer F2: dopo un paste fallito (rollback) il retry vince e chiude', asyn
   assert.equal((await (await j('/api/asks?open=1')).json()).asks.length, 0);
 });
 
-// F2 (audit): due answer CONCORRENTI -> un solo paste; la seconda respinta 409.
+// due answer CONCORRENTI -> un solo paste; la seconda respinta 409.
 // Il paste e' ritardato per tenere aperta la finestra di race che l'audit ha
 // riprodotto (entrambe superavano il check answered prima del mark).
 test('answer F2: race — due answer parallele, un solo paste, l\'altra 409', async (t) => {
@@ -221,7 +221,7 @@ test('answer F2: race — due answer parallele, un solo paste, l\'altra 409', as
   assert.equal((await j(`/api/asks/${id}/answer`, { method: 'POST', body: JSON.stringify({ text: 'terza' }) })).status, 409);
 });
 
-// F5 (audit): la creazione ask e' rate-limitata (globale per token) — session
+// la creazione ask e' rate-limitata (globale per token) — session
 // diverse NON bypassano.
 test('create F5: rate-limit sulla creazione, session diverse non bypassano', async (t) => {
   const { j } = await setup(t);
@@ -237,7 +237,7 @@ test('create F5: rate-limit sulla creazione, session diverse non bypassano', asy
   assert.equal(blocked.status, 429);
 });
 
-// F5 (audit): cap DURO sugli ask aperti — al cap il nuovo ask e' RIFIUTATO con
+// cap DURO sugli ask aperti — al cap il nuovo ask e' RIFIUTATO con
 // errore chiaro; nessun ask aperto viene droppato in silenzio.
 test('create F5: cap duro store — 105 create, dalla 101 respinte, nessun drop', async () => {
   const dir = tmpdir();
@@ -358,11 +358,11 @@ test('dismiss READONLY F3: gated 403 (mutazione durevole, niente stato)', async 
   assert.ok(!frames.some((f) => f.type === 'ask-dismissed'), 'nessun frame in READONLY');
 });
 
-// F-02: un ask dismissato NON e' piu' claimable. Senza questa guardia in claim()
+// Un ask dismissato NON e' piu' claimable. Senza questa guardia in claim()
 // la sequenza dismiss -> claim -> commit lascia l'ask nello stato ibrido
 // `dismissed && answered`. Il verso opposto (dismiss mentre answering -> 409)
 // regge gia'; questo e' il buco che manca.
-test('F-02: un ask dismissato non e\' piu\' claimable (niente dismissed && answered)', async (t) => {
+test('un ask dismissato non e\' piu\' claimable (niente dismissed && answered)', async (t) => {
   const { j, asks } = await setup(t);
   const { id } = await (await j('/api/asks', {
     method: 'POST', body: JSON.stringify({ question: 'q', session: 'cell-a' }),
@@ -373,7 +373,7 @@ test('F-02: un ask dismissato non e\' piu\' claimable (niente dismissed && answe
   assert.equal(claim.reason, 'dismissed');
 });
 
-test('F-02: answer su un ask dismissato -> 409, nessun paste, resta solo dismissed', async (t) => {
+test('answer su un ask dismissato -> 409, nessun paste, resta solo dismissed', async (t) => {
   const { j, asks, pasted } = await setup(t);
   const { id } = await (await j('/api/asks', {
     method: 'POST', body: JSON.stringify({ question: 'q', session: 'cell-a' }),

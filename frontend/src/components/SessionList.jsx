@@ -28,6 +28,7 @@ import { OWNER_ID_RE } from '../lib/grid-model.js';
 import { isValidLabel } from '../lib/settings-model.js';
 import { runFleetPowerAction } from '../lib/fleet-action-notice.js';
 import useActionNotice from '../hooks/useActionNotice.js';
+import { loadLastRoster, saveLastRoster } from '../lib/last-roster.js';
 import { fleetReadOutcome } from '../lib/fleet-read-policy.js';
 import { writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import './SessionList.css';
@@ -86,7 +87,7 @@ export default function SessionList({
   // dall'intestazione. Senza, la riga è un bersaglio d'apertura e basta.
   const [reorderMode, setReorderMode] = useState(false);
   const {
-    pins, orders, togglePin, removePin, pinError, retryPinPersist, clearPinError, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
+    pins, orders, togglePin, removePin, pinError, reorderBlocked, retryPinPersist, clearPinError, viewFor, updateView, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
   // Stato live del NODO che possiede `route` — mai quello di un altro nodo.
   const hostFor = (route) => hostByRoute[hostRouteKey(route)] || {};
@@ -135,17 +136,21 @@ export default function SessionList({
     try { fs = await fleetStatus(token); } catch (e) { fleetError = e; }
     const fleet = fleetReadOutcome({ fs, error: fleetError });
     if (fleet.kind === 'data') {
+      saveLastRoster('local', fleet.cells);
       setCells(fleet.cells);
       setFleetCapabilities(fleet.capabilities);
       setFleetStale(false);
       setFleetOff(null);
     } else if (fleet.kind === 'stale') {
+      // Cache in memoria vuota (PWA riaperta): riparte dall'ultimo roster buono salvato, marcato come non vivo.
+      setCells((current) => (current.length ? current : loadLastRoster('local')));
       setFleetStale(true);
       setFleetOff(null);
     } else {
       // spento per scelta (o non classificato): zero celle e' la verita' del
       // server — lista vuota con indicatore, mai l'ultima lista come fantasma
       setCells([]);
+      saveLastRoster('local', []);
       setFleetCapabilities([]);
       setFleetStale(false);
       setFleetOff(fleet.reason || '');
@@ -306,8 +311,8 @@ export default function SessionList({
     [sessions, cellSessions],
   );
   const localRawItems = useMemo(
-    () => buildLocalRoster(cells, unmanaged, byName, undefined, { autorevole: localReadOk }),
-    [cells, unmanaged, byName],
+    () => buildLocalRoster(cells, unmanaged, byName, undefined, { autorevole: localReadOk, fleetStale }),
+    [cells, unmanaged, byName, localReadOk, fleetStale],
   );
 
   // Le righe-cella di TUTTE le posizioni, per chiave: serve a RI-RISOLVERE la
@@ -534,6 +539,7 @@ export default function SessionList({
       {err && <div className="nc-err">{err}</div>}
       {actionNotice && <div className="nc-notice" role="status">{actionNotice}</div>}
       {fleetStale && <div className="nc-set-hint nc-fleet-stale" role="status">{t('fleet-stale')}</div>}
+      {reorderBlocked && <div className="nc-set-hint nc-reorder-blocked" role="status">{t('reorder-blocked')} ({reorderBlocked.reason})</div>}
       {fleetOff !== null && (
         <div className="nc-set-hint nc-fleet-off" role="status">
           {t('fleet-off')}{fleetOff ? ` (${fleetOff})` : ''}
@@ -650,8 +656,6 @@ export default function SessionList({
         </span>
       </footer>
       </main>
-
-      <button className="nc-fab" onClick={() => onSettings('fleet', true)} title={t('fleet-new-cell')} aria-label={t('fleet-new-cell')}>+</button>
 
       {powerCellLive && (
         <PowerSheet cell={powerCellLive} token={token} route={Array.isArray(powerCellLive.route) ? powerCellLive.route : []} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />

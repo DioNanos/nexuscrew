@@ -17,6 +17,7 @@ vi.mock('../lib/api.js', () => ({
   // The feed-state read feeds the per-owner reply grants (empty = read-only).
   getFeedState: vi.fn(() => Promise.resolve({ views: [] })),
   getAskRelayState: vi.fn(() => Promise.resolve({ attempts: [] })),
+  getAskReplyCapability: vi.fn((_token, { ownerId, askId }) => Promise.resolve({ ownerId, askId, canReply: true, status: 'open' })),
   relayAskAnswer: vi.fn(() => Promise.resolve({ status: 'committed' })),
   relayAskDismiss: vi.fn(() => Promise.resolve({ dismissed: true })),
   relayAskVerify: vi.fn(() => Promise.resolve({ state: 'committed' })),
@@ -334,5 +335,126 @@ describe('arretrato: dedup che discrimina e cap per ts', () => {
     expect(screen.getByText('T e6')).toBeTruthy();
     expect(screen.queryByText('T e5')).toBeNull();
     expect(document.querySelectorAll('.nc-remote-notice').length).toBe(50);
+  });
+});
+
+describe('federated ask dismiss: confirmed only, remembered, nothing silent', () => {
+  const openPanel = (container) => {
+    const badge = container.querySelector('.nc-ask-badge');
+    expect(badge).toBeTruthy();
+    act(() => { badge.click(); });
+  };
+  const importedView = (id, question, extra = []) => ({
+    views: [{
+      ownerId: 'ownerA', askReplyAccess: true,
+      asks: [{ id, question, session: 's', options: [] }, ...extra],
+    }],
+  });
+
+  it('a confirmed dismiss does not come back when the feed state is read again', async () => {
+    const { getFeedState, relayAskDismiss } = await import('../lib/api.js');
+    getAsks.mockResolvedValue({ asks: [] });
+    getFeedState.mockResolvedValue(importedView('a1-reload', 'ricompare?'));
+    relayAskDismiss.mockResolvedValue({ dismissed: true });
+
+    const first = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(first.container.querySelector('.nc-ask-badge')).toBeTruthy());
+    openPanel(first.container);
+    expect(screen.getByText('ricompare?')).toBeTruthy();
+    await act(async () => { first.container.querySelector('.nc-ask-dismiss').click(); });
+    await waitFor(() => expect(screen.queryByText('ricompare?')).toBeNull());
+    expect(relayAskDismiss).toHaveBeenCalled();
+    first.unmount();
+
+    // Reload: the owner's view can still list the ask for a moment (its closing
+    // frame and this read race). The local tombstone keeps the card out — and a
+    // fresh ask in the SAME view proves the list was read, not just empty.
+    getFeedState.mockResolvedValue(importedView('a1-reload', 'ricompare?', [
+      { id: 'a1-reload-2', question: 'nuova, resta', session: 's', options: [] },
+    ]));
+    const second = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(second.container.querySelector('.nc-ask-badge')).toBeTruthy());
+    openPanel(second.container);
+    expect(screen.getByText('nuova, resta')).toBeTruthy();
+    expect(screen.queryByText('ricompare?')).toBeNull();
+  });
+
+  it('a failed dismiss keeps the card and shows the cause', async () => {
+    const { getFeedState, relayAskDismiss } = await import('../lib/api.js');
+    getAsks.mockResolvedValue({ asks: [] });
+    getFeedState.mockResolvedValue(importedView('a1-fail', 'non deve sparire'));
+    relayAskDismiss.mockRejectedValueOnce(new Error('owner non tra i peer autorizzati'));
+
+    const { container } = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
+    openPanel(container);
+    expect(screen.getByText('non deve sparire')).toBeTruthy();
+    await act(async () => { container.querySelector('.nc-ask-dismiss').click(); });
+    expect(await screen.findByText('owner non tra i peer autorizzati')).toBeTruthy();
+    expect(screen.getByText('non deve sparire')).toBeTruthy();
+  });
+
+  it('an uncertain receipt disables the X and says why', async () => {
+    const { getFeedState, getAskRelayState } = await import('../lib/api.js');
+    getAsks.mockResolvedValue({ asks: [] });
+    getFeedState.mockResolvedValue(importedView('a1-unc', 'esito incerto'));
+    getAskRelayState.mockResolvedValue({
+      attempts: [{ state: 'uncertain', ownerId: 'ownerA', askId: 'a1-unc', requestId: 'rid-1' }],
+    });
+
+    const { container } = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
+    openPanel(container);
+    const x = container.querySelector('.nc-ask-dismiss');
+    await waitFor(() => expect(x.disabled).toBe(true));
+    expect(x.getAttribute('title')).toBe(
+      'Uncertain outcome: the answer may have arrived. Verify the status before retrying.',
+    );
+  });
+});
+
+describe('NotifyCenter ask card feed state (Pixel fix)', () => {
+  const staleView = (id, question) => ({
+    views: [{
+      ownerId: 'ownerA', askReplyAccess: true, stale: true, lastError: 'resync-exhausted',
+      asks: [{ id, question, session: 's', options: [] }],
+    }],
+  });
+
+  it('a degraded view shows the stale note and the X explains why, even with reply access', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getAsks.mockResolvedValue({ asks: [] });
+    getFeedState.mockResolvedValue(staleView('a3977abd', 'la card che torna'));
+
+    const { container } = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
+    act(() => { container.querySelector('.nc-ask-badge').click(); });
+    expect(await screen.findByText('la card che torna')).toBeTruthy();
+    // Il badge stale è visibile ANCHE con il permesso di risposta: è la card
+    // che ricompariva con il feed fermo (Pixel 2026-09-29).
+    expect(await screen.findByText(/feed is inactive/)).toBeTruthy();
+    // La X dice perché, al posto del titolo di dismiss ordinario.
+    const x = container.querySelector('.nc-ask-dismiss');
+    expect(x.getAttribute('title')).toBe(
+      'Dismiss anyway: the dismissal is forwarded directly to the node, but while the feed is down the card may not reflect the live state.',
+    );
+  });
+
+  it('a live view keeps the plain dismiss title and shows no stale note', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getAsks.mockResolvedValue({ asks: [] });
+    getFeedState.mockResolvedValue({
+      views: [{
+        ownerId: 'ownerA', askReplyAccess: true,
+        asks: [{ id: 'live1', question: 'normale', session: 's', options: [] }],
+      }],
+    });
+
+    const { container } = render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
+    act(() => { container.querySelector('.nc-ask-badge').click(); });
+    expect(await screen.findByText('normale')).toBeTruthy();
+    expect(container.querySelector('.nc-ask-dismiss').getAttribute('title')).toBe('Dismiss question');
+    expect(screen.queryByText(/feed is inactive/)).toBeNull();
   });
 });

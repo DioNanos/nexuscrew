@@ -15,12 +15,12 @@ const { createLaunchBroker } = require('../lib/fleet/launch-broker.js');
 const { createIdentityAuthority } = require('../lib/fleet/identity-authority.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 
-const CELL = 'e2e-cell-d199';
-const DAEMON_CREDENTIAL = 'd199-daemon-credential';
-const LAUNCHER_CREDENTIAL = 'd199-launcher-credential';
+const CELL = 'e2e-cell-identity-fixture';
+const DAEMON_CREDENTIAL = 'identity-fixture-daemon-credential';
+const LAUNCHER_CREDENTIAL = 'identity-fixture-launcher-credential';
 const CELL_EXEC = path.join(__dirname, '..', 'lib', 'fleet', 'cell-exec.js');
 function tempDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d199-e2e-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'nc-identity-fixture-e2e-'));
 }
 
 function waitForExit(child) {
@@ -119,9 +119,9 @@ async function startHarness(t, { required = true, authorityAlive = true, fixture
   const home = tempDir();
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const subject = {
-    ownerInstanceId: 'owner-d199',
+    ownerInstanceId: 'owner-identity-fixture',
     cellId: CELL,
-    incarnationId: 'incarnation-d199',
+    incarnationId: 'incarnation-identity-fixture',
     launchEpoch: null,
   };
   let verifyCalls = 0;
@@ -187,8 +187,8 @@ async function startHarness(t, { required = true, authorityAlive = true, fixture
     },
     identity: {
       audience: 'nexuscrew-lease',
-      daemonBootId: 'boot-d199-launch',
-      connectionId: 'connection-d199-launch',
+      daemonBootId: 'boot-identity-fixture-launch',
+      connectionId: 'connection-identity-fixture-launch',
       subject,
     },
   });
@@ -208,7 +208,7 @@ async function startHarness(t, { required = true, authorityAlive = true, fixture
   let initialized;
   try {
     initialized = await rpc(child, 1, 'initialize', {
-    clientInfo: { name: 'd199-e2e', version: '0.1.0' },
+    clientInfo: { name: 'identity-fixture-e2e', version: '0.1.0' },
     capabilities: { extensions: { 'nexuscrew.identity.v1': {} } },
     });
   } catch (error) {

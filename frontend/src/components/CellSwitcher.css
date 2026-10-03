@@ -129,6 +129,34 @@
 }
 .nc-cell-switcher-menu.on { color: #bfffd8; border-color: rgba(0, 204, 102, .55); background: rgba(0, 204, 102, .12); }
 
+/* Il tasto della doppia vista: stesso abito del menu (icona a tratto,
+   bordo sottile, bersaglio 44 px). L'icona è la splitView del set unico
+   (Icon.jsx): solo tratto, currentColor — nessun rettangolo pieno. Spento
+   quando è disabilitato (cella aperta o riga non selezionabile); premuto —
+   il verde dell'handle attivo — sulla riga già affiancata. */
+.nc-cell-switcher-side {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 44px; min-height: 44px; padding: 0; flex: 0 0 auto;
+  background: transparent; border: 1px solid rgba(255, 255, 255, .14);
+  color: #9aa89a; border-radius: 10px; line-height: 1; cursor: pointer;
+}
+.nc-cell-switcher-side svg { display: block; }
+.nc-cell-switcher-side:disabled { opacity: .38; cursor: default; }
+.nc-cell-switcher-side:hover:not(:disabled) {
+  color: #c9d6c9; border-color: rgba(255, 255, 255, .28);
+}
+.nc-cell-switcher-side.on {
+  color: #bfffd8; border-color: rgba(0, 204, 102, .45); background: rgba(0, 204, 102, .12);
+}
+
+/* La riga affiancata al lato B si «spegne» come le .off — il testo cala a
+   opacità .55 — ma resta viva: il suo tocco apre come sempre, e il tocco sul
+   tasto (sopra) la toglie dall'affiancamento. Il pallino e la parola di stato
+   restano leggibili, com'è per le .off. */
+.nc-cell-switcher-row.side .nc-cell-switcher-copy b,
+.nc-cell-switcher-row.side .nc-cell-switcher-copy small:not(.nc-cell-switcher-state),
+.nc-cell-switcher-row.side .nc-cell-switcher-dot { opacity: .55; }
+
 /* «SEI QUI»: la cella in cui si sta lavorando, detta in parole. La riga lo
    diceva solo col bordo; chi arriva da un'altra schermata non lo sa leggere. */
 .nc-cell-switcher-here {

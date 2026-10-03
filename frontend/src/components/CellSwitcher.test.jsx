@@ -655,3 +655,111 @@ describe('CellSwitcher — il comando Live esplicito', () => {
     expect(onLiveHostApplied).not.toHaveBeenCalled();
   });
 });
+
+// Il tasto della doppia vista: affianca la riga, o la toglie se è già
+// affiancata. Tre stati (disabilitato sulla cella aperta, vuoto sulle righe
+// selezionabili, disabilitato sulle non raggiungibili), nessun effetto sulla
+// riga al di là del toggle, e NIENTE tasto senza `onToggleSide` — desktop e
+// liste senza doppia vista restano identiche.
+describe('CellSwitcher side key', () => {
+  const REMOTE_KEY = positionKey(['hub'], 'cloud-Remote');
+
+  const riga = async (cellName) => {
+    const selezione = await screen.findByRole('button', { name: new RegExp(`^${cellName} `) });
+    return selezione.closest('div[data-roster-key]');
+  };
+  const tastoAffianca = (rigaElemento) =>
+    within(rigaElemento).queryByRole('button', { name: t('cell-switcher-side-add') });
+  const tastoTogli = (rigaElemento) =>
+    within(rigaElemento).queryByRole('button', { name: t('cell-switcher-side-remove') });
+
+  it('senza onToggleSide non rende nessun tasto: il DOM resta quello di oggi', async () => {
+    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} />);
+    await riga('cell-One');
+    expect(screen.queryByRole('button', { name: t('cell-switcher-side-add') })).toBeNull();
+    expect(screen.queryByRole('button', { name: t('cell-switcher-side-remove') })).toBeNull();
+  });
+
+  it('tre stati: disabilitato sulla cella aperta, vuoto sulle selezionabili, disabilitato sulle non raggiungibili', async () => {
+    const onToggleSide = vi.fn();
+    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={vi.fn()} onClose={vi.fn()} onToggleSide={onToggleSide} />);
+
+    // (a) la riga aperta: disabilitato, mai premuto
+    const qui = tastoAffianca(await riga('cell-One'));
+    expect(qui).toBeTruthy();
+    expect(qui.disabled).toBe(true);
+    expect(qui.getAttribute('aria-pressed')).toBe('false');
+
+    // (c) una riga selezionabile: attivo, vuoto (non premuto), etichette
+    const altra = tastoAffianca(await riga('Remote'));
+    expect(altra).toBeTruthy();
+    expect(altra.disabled).toBe(false);
+    expect(altra.getAttribute('aria-pressed')).toBe('false');
+    expect(altra.getAttribute('title')).toBe(t('cell-switcher-side-add'));
+    expect(altra.getAttribute('aria-label')).toBe(t('cell-switcher-side-add'));
+    // L'icona è a tratto (fill none, currentColor): un SVG senza attributi
+    // qui riempiva il rettangolo di nero — il quadrato pieno dell'audit B4.
+    const icona = altra.querySelector('svg');
+    expect(icona).toBeTruthy();
+    expect(icona.getAttribute('fill')).toBe('none');
+    expect(icona.getAttribute('stroke')).toBe('currentColor');
+
+    // la cella degradata si vede (attiva ma degradata) e non è raggiungibile:
+    // il suo tasto è disabilitato
+    const degradata = tastoAffianca(await riga('Degraded'));
+    expect(degradata).toBeTruthy();
+    expect(degradata.disabled).toBe(true);
+  });
+
+  it('il tocco affianca: onToggleSide una volta con la riga, senza aprire né selezionare', async () => {
+    const onToggleSide = vi.fn(); const onPick = vi.fn(); const onClose = vi.fn();
+    render(<Switcher token="token" current={{ session: 'cloud-cell-One' }} onPick={onPick} onClose={onClose} onToggleSide={onToggleSide} />);
+    const rigaRemote = await riga('Remote');
+
+    fireEvent.click(within(rigaRemote).getByRole('button', { name: t('cell-switcher-side-add') }));
+
+    expect(onToggleSide).toHaveBeenCalledTimes(1);
+    expect(onToggleSide.mock.calls[0][0].key).toBe(REMOTE_KEY);
+    expect(onPick).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('cell-switcher-anteprima')).toBeNull();
+    expect(within(rigaRemote).getByRole('button', { name: /^Remote / }).getAttribute('data-selected')).toBeNull();
+  });
+
+  it('riga affiancata: tasto premuto col titolo per togliere, riga spenta, il tocco chiama il toggle', async () => {
+    const onToggleSide = vi.fn();
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()}
+      sideKey={REMOTE_KEY} onToggleSide={onToggleSide} />);
+    const rigaRemote = await riga('Remote');
+
+    // (b) premuto, e la frase per togliere
+    expect(tastoAffianca(rigaRemote)).toBeNull();
+    const premuto = tastoTogli(rigaRemote);
+    expect(premuto).toBeTruthy();
+    expect(premuto.getAttribute('aria-pressed')).toBe('true');
+    expect(premuto.disabled).toBe(false);
+    // la riga "si spegne" come le .off, ma resta una riga selezionabile
+    expect(rigaRemote.className).toContain(' side');
+    expect(rigaRemote.className).not.toContain(' off');
+
+    fireEvent.click(premuto);
+    expect(onToggleSide).toHaveBeenCalledTimes(1);
+    expect(onToggleSide.mock.calls[0][0].key).toBe(REMOTE_KEY);
+    expect(screen.queryByTestId('cell-switcher-anteprima')).toBeNull();
+  });
+
+  it('una riga non selezionabile non si affianca: disabilitato anche in modalità tutte', async () => {
+    const onToggleSide = vi.fn();
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} onToggleSide={onToggleSide} />);
+    await riga('cell-One');
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+
+    const spenta = await riga('cell-Three');
+    const tasto = tastoAffianca(spenta);
+    expect(tasto).toBeTruthy();
+    expect(tasto.disabled).toBe(true);
+
+    fireEvent.click(tasto);
+    expect(onToggleSide).not.toHaveBeenCalled();
+  });
+});

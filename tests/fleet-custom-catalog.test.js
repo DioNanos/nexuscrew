@@ -1,6 +1,6 @@
 'use strict';
 
-// D2 (audit del pacchetto, bocciatura fetta D): la versione precedente di
+// la versione precedente di
 // questo test costruiva `spec.models` A MANO e chiamava customCatalogFor
 // direttamente — verde su un percorso che in produzione non esiste mai. Lo
 // spec che resolveManagedEngine passa a customCatalogFor viene SEMPRE da

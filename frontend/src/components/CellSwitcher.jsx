@@ -10,6 +10,7 @@ import { hostRouteKey } from '../lib/host-designation.js';
 import { liveHostView } from '../lib/live-host-view.js';
 import { runLiveHostCommand } from '../lib/live-host-command.js';
 import RosterHandle from './RosterHandle.jsx';
+import Icon from './Icon.jsx';
 import { CellActionsSheet, cellActionsItems, cellActionsState } from './CellActions.jsx';
 import { applyCellStar, cellStarView } from '../lib/cell-star.js';
 import { liveHostIndicatorKeys } from '../lib/live-host-view.js';
@@ -169,6 +170,12 @@ export default function CellSwitcher({
   // Lo stato dell'host per nodo e le due azioni di designazione arrivano
   // dalle stesse callback che usa la home: la stella qui non ha una via sua.
   hostByRoute = {}, onDesignateCell, onClearHostCell, onLiveHostApplied,
+  // La chiave della riga AFFIANCATA nella doppia vista e il suo toggle
+  //. Lo stato resta a chi ospita la lista (per dispositivo, in
+  // localStorage): qui il componente è senza memoria. Senza `onToggleSide`
+  // il tasto non esiste nel DOM: desktop e liste senza doppia vista restano
+  // identiche al pixel e al nodo.
+  sideKey = null, onToggleSide,
   // L'intervallo del poll e' un parametro, non una costante letta dal modulo:
   // in produzione e' POLL_MS, nei test e' corto, cosi' nessun assert dipende da
   // un timer da 4 secondi che sotto carico puo' sforare il budget del waitFor.
@@ -545,6 +552,7 @@ export default function CellSwitcher({
           {visibleRows.map((row, indice) => {
             const currentRow = current?.session === row.session && (current?.node || '') === row.node;
             const menuAperto = !!menuRow && menuRow.key === row.key;
+            const affiancata = sideKey != null && sideKey === row.key;
             const status = statusFor(row);
             // Vuota per le celle che non pubblicano telemetria: niente campo,
             // la riga resta esattamente com'era (il «dove supportato» richiesto).
@@ -566,7 +574,7 @@ export default function CellSwitcher({
                     row.nodeLabel || localNodeLabel || t('cell-switcher-group-local'))}
                 </div>
               )}
-              <div className={`nc-cell-switcher-row${currentRow ? ' current' : ''}${selectedKey === row.key ? ' selected' : ''}${row.selectable ? '' : ' off'}`}
+              <div className={`nc-cell-switcher-row${currentRow ? ' current' : ''}${selectedKey === row.key ? ' selected' : ''}${affiancata ? ' side' : ''}${row.selectable ? '' : ' off'}`}
                 data-roster-key={row.key} data-position={position}>
                 {/* Riordino a MODALITA', come nella home mobile: senza modalita'
                     la maniglia non esiste nel DOM, e la riga e' solo un bersaglio. */}
@@ -610,6 +618,29 @@ export default function CellSwitcher({
                     </span>
                   </span>
                 </button>
+                {/* Il tasto della doppia vista: affianca la riga al lato
+                    B, o la toglie se lo è già. Tre stati: sulla cella aperta e
+                    sulle righe non selezionabili è disabilitato; sulla riga
+                    affiancata è premuto (e la riga si "spegne" in css); sulle
+                    altre selezionabili è vuoto. Il tocco NON tocca la riga né
+                    il suo gesto: stopPropagation, come il menu ⋯ — il gesto
+                    tap della riga resta sull'unico bersaglio che lo registra
+                    (il bottone di selezione). Solo aria-label e title, niente
+                    scritte nuove. */}
+                {onToggleSide && (
+                  <button type="button"
+                    className={`nc-cell-switcher-side${affiancata ? ' on' : ''}`}
+                    title={t(affiancata ? 'cell-switcher-side-remove' : 'cell-switcher-side-add')}
+                    aria-label={t(affiancata ? 'cell-switcher-side-remove' : 'cell-switcher-side-add')}
+                    aria-pressed={affiancata ? 'true' : 'false'}
+                    disabled={currentRow || !row.selectable}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (!currentRow && row.selectable) onToggleSide(row);
+                    }}>
+                    <Icon name="splitView" size={20} />
+                  </button>
+                )}
                 {/* Le azioni della riga in un foglio dal basso: il pin e la Live.
                     Non stanno piu' in fila come stella e comando: la riga resta
                     pallino + testo + ⋯, come il disegno approvato. */}

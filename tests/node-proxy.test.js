@@ -292,7 +292,7 @@ test('READONLY locale: metodi mutanti verso nodo -> 403; GET passa', async (t) =
   assert.ok(upstream.reqs.every((x) => x.method === 'GET'), 'nessuna mutazione deve raggiungere upstream');
 });
 
-// --- audit F5: write-failure nello upgrade WS -> fail(502) operative, no socket leak ---
+// --- write-failure nello upgrade WS -> fail(502) operative, no socket leak ---
 
 test('F5 handleNodeUpgrade: write-failure -> fail(502) operativo (entrambi i socket distrutti + 502)', () => {
   const { EventEmitter } = require('node:events');

@@ -3,22 +3,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 
 // LA FORMA FEDERATA: nodo VL su un owner, interfaccia su un altro.
-// È l'unico caso che riguarda chi guarda dal telefono, ed è quello che
-// nessun test copriva: il mio E2E aveva nodo e hub sullo stesso owner.
+// È il caso che riguarda chi guarda dal telefono.
 //
-// I dati NON sono inventati: topology e /api/vl-nodes riproducono le
-// risposte REALI misurate sull'infrastruttura viva il 2026-08-06 via proxy
-// federato (topology del telefono: owner cloud-example-com a un hop,
-// non stale; vl-nodes di Node A: N900 online con session dichiarata).
+// Topology e /api/vl-nodes di fixture: un owner a un hop (non stale) e un
+// nodo peer online con una sessione dichiarata.
 
-const PHONE_INSTANCE = '5c588d7441c73b414f0912b30305f269';
+const PHONE_INSTANCE = 'aaaaaaaabbbbccccddddeeeeffff0001';
 const VPS_INSTANCE = '1f2e3d4c5b6a79880123456789abcdef';
-const N900_ID = '82dffb30040048879162878d75306bbe';
+const PEER_DEVICE_ID = 'aaaaaaaabbbbccccddddeeeeffff0002';
 
 const PHONE_TOPOLOGY = {
   nodes: [
     { name: 'cloud-example-com', instanceId: VPS_INSTANCE, route: ['cloud-example-com'], stale: false, label: 'VPS_Cloud' },
-    { name: 'nexus-crew-0e88', instanceId: '0e88cdc9cd977e5db29ffcdba839e924', route: ['cloud-example-com', 'nexus-crew-0e88'], stale: false },
+    { name: 'nexus-crew-remote-a', instanceId: 'aaaaaaaabbbbccccddddeeeeffff0003', route: ['cloud-example-com', 'nexus-crew-remote-a'], stale: false },
   ],
 };
 
@@ -26,8 +23,8 @@ const VPS_VL_NODES = {
   instanceId: VPS_INSTANCE,
   protocol: 'vl-node/1',
   nodes: [{
-    nodeId: N900_ID,
-    label: 'N900',
+    nodeId: PEER_DEVICE_ID,
+    label: 'PeerDevice',
     pairedAt: 1785601321838,
     online: true,
     lastSeen: 1785982674769,
@@ -44,7 +41,9 @@ const VPS_VL_NODES = {
 const calls = vi.hoisted(() => ({ vlRoutes: [] }));
 
 vi.mock('../lib/api.js', () => ({
+  ROSTER_READ_TIMEOUT_MS: 8000,
   apiFetch: vi.fn(async () => ({ json: async () => ({ instanceId: PHONE_INSTANCE, version: 'test' }) })),
+  getRouteConfig: vi.fn(async () => ({ instanceId: PHONE_INSTANCE, version: 'test' })),
   getNodes: vi.fn(async () => ({ nodes: [] })),
   getTopology: vi.fn(async () => PHONE_TOPOLOGY),
   getNodeAliases: vi.fn(async () => ({ aliasesByInstanceId: {} })),
@@ -80,14 +79,14 @@ describe('useNodes — aggregazione federata dei nodi VL', () => {
     expect(calls.vlRoutes.filter((r) => r.length === 0)).toHaveLength(1);
   });
 
-  it('il N900 di un owner remoto diventa un gruppo sidebar con la sessione dichiarata', async () => {
+  it('il PeerDevice di un owner remoto diventa un gruppo sidebar con la sessione dichiarata', async () => {
     const { result } = renderHook(() => useNodes('token', true));
     await waitFor(() => {
       const vl = (result.current || []).filter((g) => g.kind === 'vl');
       expect(vl).toHaveLength(1);
     });
     const group = result.current.find((g) => g.kind === 'vl');
-    expect(group.label).toBe('N900');
+    expect(group.label).toBe('PeerDevice');
     expect(group.status).toBe('up');
     expect(group.sessions).toHaveLength(1);
     expect(group.sessions[0].name).toBe('ollama');
@@ -107,7 +106,7 @@ describe('useNodes — VL locale con route vuota', () => {
     // fleet locale sotto l'etichetta del device VL). La topology include il
     // local owner con route=[] (come un VL owner locale).
     const localVl = {
-      nodeId: N900_ID, label: 'N900', pairedAt: 1785601321838, online: true,
+      nodeId: PEER_DEVICE_ID, label: 'PeerDevice', pairedAt: 1785601321838, online: true,
       lastSeen: 1785982674769, generation: 1, version: '0.1.0',
       capabilities: ['status', 'health', 'prompt'],
       health: { state: 'running', uptimeSec: 371554, rssBytes: 2097152, processCount: 2, brokerReachable: true },
@@ -131,7 +130,7 @@ describe('useNodes — VL locale con route vuota', () => {
     expect(getRouteSessions).not.toHaveBeenCalledWith('token', []);
     // Il gruppo VL resta display-only: sessione dichiarata, zero celle fleet.
     const group = result.current.find((g) => g.kind === 'vl');
-    expect(group.label).toBe('N900');
+    expect(group.label).toBe('PeerDevice');
     expect(group.sessions.map((s) => s.name)).toEqual(['ollama']);
     expect(group.cells).toEqual([]);
   });

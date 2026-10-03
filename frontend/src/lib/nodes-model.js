@@ -35,7 +35,7 @@ export function trackDown(prev, nodes, nowSec) {
     const key = route.join('/');
     const upNow = n.status === 'up' || (n.tunnel && n.tunnel.status === 'up');
     const passive = n.status === 'passive' || (n.tunnel && n.tunnel.status === 'passive');
-    if (!upNow && !passive) out[key] = (prev && prev[key]) || nowSec;
+    if (!upNow && !passive && n.status !== 'pending' && !n.checking) out[key] = (prev && prev[key]) || nowSec;
   }
   return out; // nodi tornati up (o rimossi) spariscono dalla mappa
 }
@@ -113,10 +113,46 @@ function sessionsVerifiedAt(available, r) {
   return Number.isFinite(at) ? at : null;
 }
 
-export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases } = {}) {
+// `pendingReads` (opzionale): chiavi di lettura in corso — la chiave nuda
+// della route o `key#sessions` / `key#fleet` per la singola fonte. Una lettura
+// in corso NON e' un esito: la route non diventa unreachable, un gruppo nuovo
+// e' "pending" e uno gia' noto conserva il proprio snapshot marcato
+// "checking". `previousGroups` (opzionale) e' la proiezione precedente, da
+// cui riprendere stato e snapshot.
+export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases, pendingReads, previousGroups } = {}) {
   const out = [];
   const directRoutes = new Set();
   const seenIds = new Set();
+  const sourcePending = (key, source) => Boolean(pendingReads &&
+    (pendingReads.has(key) || pendingReads.has(`${key}#${source}`)));
+  const findPrevious = (key, name, instanceId) => (Array.isArray(previousGroups)
+    ? previousGroups.find((g) => g.name === name && g.instanceId === instanceId
+      && (Array.isArray(g.route) ? g.route.join('/') : '') === key)
+    : null);
+  function sources(key, base) {
+    const previous = findPrevious(key, base.name, base.instanceId);
+    const sessionsPending = sourcePending(key, 'sessions');
+    const fleetPending = sourcePending(key, 'fleet');
+    const r = remote?.[key] || (sessionsPending && previous ? {
+      sessions: previous.sessionsAvailable ? previous.sessions : undefined,
+      at: previous.verifiedAt, lastGoodAt: previous.verifiedAt,
+      ...(previous.sessionsAvailable === false && previous.cause ? { cause: previous.cause } : {}),
+    } : null);
+    const f = fleet?.[key] || (fleetPending && previous ? {
+      available: previous.fleetAvailable, cells: previous.cells,
+      fleetState: previous.fleetState, capabilities: previous.capabilities,
+      engines: previous.engines, provider: previous.fleetProvider,
+      cellsPreserved: previous.cellsPreserved,
+      ...(previous.fleetState === 'stale' && previous.cause ? { cause: previous.cause } : {}),
+    } : null);
+    if (sessionsPending || fleetPending) {
+      base.checking = true;
+      base.sessionsPending = sessionsPending;
+      base.fleetPending = fleetPending;
+    }
+    return { r, f, previous, pending: sessionsPending || fleetPending,
+      rereading: previous && (sessionsPending || fleetPending) && !remote?.[key] && !fleet?.[key] };
+  }
   for (const n of Array.isArray(nodes) ? nodes : []) {
     if (!n || typeof n.name !== 'string' || !NODE_NAME_RE.test(n.name)) continue;
     if (n.direction === 'inbound' && n.shared !== true) continue;
@@ -151,18 +187,25 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
         ...preservedFleetFields(fleet && (fleet[key] || fleet[n.name]), route, key) });
       continue;
     }
-    const r = (remote && (remote[key] || remote[n.name])) || null;
-    const f = fleet && (fleet[key] || fleet[n.name]);
+    const { r, f, previous, pending, rereading } = sources(key, base);
+    if (rereading) {
+      out.push({ ...previous, checking: true,
+        sessionsPending: base.sessionsPending, fleetPending: base.fleetPending });
+      continue;
+    }
     const sessionsAvailable = !!(r && !r.error && Array.isArray(r.sessions));
     const fleetState = fleetStateOf(f);
     const fleetInventoryAvailable = fleetState === 'available' && fleetInventoryKnown(f, fleetState);
     const fleetInventoryPresent = fleetInventoryKnown(f, fleetState);
-    // A host without a running tmux server can still expose a complete Fleet
-    // inventory. Do not hide its cells merely because /sessions is degraded.
+    if (pending && !r && !f) {
+      out.push({ ...base, status: previous?.status || 'pending', pendingRead: true,
+        verifiedAt: previous?.verifiedAt ?? null });
+      continue;
+    }
     if (!sessionsAvailable && !fleetInventoryPresent) {
       // R21: la CAUSA del mancato raggiungimento viaggia col gruppo: tre
       // esiti (502/403/404) suggeriscono tre azioni diverse a chi guarda.
-      out.push({ ...base, status: 'unreachable', cause: (r && r.cause) || null });
+      out.push({ ...base, status: pending ? (previous?.status || 'pending') : 'unreachable', cause: (r && r.cause) || null });
       continue;
     }
     const sessions = (sessionsAvailable ? r.sessions : [])
@@ -174,6 +217,8 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
       ...base, status: 'up', sessions,
       cells, unmanaged: sessions.filter((s) => !cellTmux.has(s.name)),
       fleetAvailable: fleetInventoryAvailable, fleetState,
+      ...(f?.cellsPreserved ? { cellsPreserved: true } : {}),
+      ...(r?.cause || f?.cause ? { cause: r?.cause || f?.cause } : {}),
       capabilities: (f && f.capabilities) || [],
       engines: (f && f.engines) || [],
       fleetProvider: (f && f.provider) || null,
@@ -199,16 +244,25 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
         ...preservedFleetFields(fleet && fleet[key], n.route, key) });
       continue;
     }
-    const r = (remote && remote[key]) || null;
-    const f = fleet && fleet[key];
+    const { r, f, previous, pending, rereading } = sources(key, base);
+    if (rereading) {
+      out.push({ ...previous, checking: true,
+        sessionsPending: base.sessionsPending, fleetPending: base.fleetPending });
+      continue;
+    }
     const sessionsAvailable = !!(r && !r.error && Array.isArray(r.sessions));
     const fleetState = fleetStateOf(f);
     const fleetInventoryAvailable = fleetState === 'available' && fleetInventoryKnown(f, fleetState);
     const fleetInventoryPresent = fleetInventoryKnown(f, fleetState);
+    if (pending && !r && !f) {
+      out.push({ ...base, status: previous?.status || 'pending', pendingRead: true,
+        verifiedAt: previous?.verifiedAt ?? null });
+      continue;
+    }
     if (!sessionsAvailable && !fleetInventoryPresent) {
       // R21: come sopra — la causa distingue l'assenza dal rifiuto dalla
       // rotta inesistente, e il recupero non deve buttarla via.
-      out.push({ ...base, status: 'unreachable', downSince: (down && down[key]) || null, cause: (r && r.cause) || null });
+      out.push({ ...base, status: pending ? (previous?.status || 'pending') : 'unreachable', downSince: (down && down[key]) || null, cause: (r && r.cause) || null });
       continue;
     }
     const sessions = (sessionsAvailable ? r.sessions : []).filter((s) => s && typeof s.name === 'string' && s.name)
@@ -219,6 +273,8 @@ export function buildNodeGroups({ nodes, topology, remote, down, fleet, aliases 
       ...base, status: 'up', sessions,
       cells, unmanaged: sessions.filter((s) => !cellTmux.has(s.name)),
       fleetAvailable: fleetInventoryAvailable, fleetState,
+      ...(f?.cellsPreserved ? { cellsPreserved: true } : {}),
+      ...(r?.cause || f?.cause ? { cause: r?.cause || f?.cause } : {}),
       capabilities: (f && f.capabilities) || [],
       engines: (f && f.engines) || [],
       fleetProvider: (f && f.provider) || null, lastSeen: n.lastSeen || null,

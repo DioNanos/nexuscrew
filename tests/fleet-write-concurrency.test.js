@@ -115,7 +115,7 @@ function scriviFiglio(dir) {
     'const fs = require("node:fs");',
     'const crypto = require("node:crypto");',
     'const [fleetPath, prefix, iterazioniStr, goFile, forma] = process.argv.slice(2);',
-    'const DEFS = require(process.env.NC_RACE_DEFS_MODULE);',
+    'const DEFS = require(process.env.RACE_DEFS_MODULE_FINTA);',
     'const lavoro = () => { for (let j = 0; j < 250; j += 1) crypto.createHash("sha256").update(String(j)).digest("hex"); };',
     'const conModel = (defs, id) => ({ ...defs, models: [...(defs.models || []), { id, engine: "claude" }] });',
     'if (goFile !== "-") {',
@@ -151,7 +151,7 @@ function scriviFiglio(dir) {
 // Spawn di un figlio con stderr catturato per la diagnosi.
 function lanciaFiglio(script, args) {
   const child = spawn(process.execPath, [script, ...args], {
-    env: { ...process.env, NC_RACE_DEFS_MODULE: require.resolve('../lib/fleet/definitions.js') },
+    env: { ...process.env, RACE_DEFS_MODULE_FINTA: require.resolve('../lib/fleet/definitions.js') },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stderr = '';

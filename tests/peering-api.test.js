@@ -60,12 +60,12 @@ test('PWA invite -> public one-time join creates an inbound scoped peer', async 
   const body = { invite: fullInvite.invite, instanceId: 'b'.repeat(32), name: 'pixel', port: 41821, acceptToken: clientAcceptToken, roles: { client: true, node: false } };
   const legacyLocalhost = await fetch(`${base}/pair/join`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ...body, name: 'localhost', label: 'AsusRP3' }),
+    body: JSON.stringify({ ...body, name: 'localhost', label: 'peer-a' }),
   });
   assert.equal(legacyLocalhost.status, 409, 'localhost e riservato anche prima della prima collisione');
   const legacyConflict = await legacyLocalhost.json();
   assert.equal(legacyConflict.code, 'peer-name-conflict');
-  assert.equal(legacyConflict.suggestedName, 'asus-rp3-bbbb');
+  assert.equal(legacyConflict.suggestedName, 'peer-a-bbbb');
   const escalation = await fetch(`${base}/pair/join`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ ...body, shared: true }),

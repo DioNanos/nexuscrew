@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   getTopology: vi.fn(),
   saveConfig: vi.fn(),
   apiFetch: vi.fn(),
+  getRouteConfig: vi.fn(),
   getDiagnosticsStatus: vi.fn(),
   getDiagnosticsLogs: vi.fn(),
   getAiDesktop: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock('../lib/api.js', async (importOriginal) => ({
   getTopology: mocks.getTopology,
   saveConfig: mocks.saveConfig,
   apiFetch: mocks.apiFetch,
+  getRouteConfig: mocks.getRouteConfig,
   getDiagnosticsStatus: mocks.getDiagnosticsStatus,
   getDiagnosticsLogs: mocks.getDiagnosticsLogs,
   getAiDesktop: mocks.getAiDesktop,
@@ -77,12 +79,54 @@ beforeEach(() => {
   mocks.getPeers.mockResolvedValue({ peers: [] });
   mocks.getVlNodes.mockResolvedValue({ nodes: [] });
   mocks.getTopology.mockResolvedValue({ nodes: [] });
+  mocks.getRouteConfig.mockResolvedValue({instanceId: 'local-id-0000000'});
   mocks.saveConfig.mockResolvedValue({ saved: true });
   mocks.apiFetch.mockResolvedValue({
     json: vi.fn().mockResolvedValue({ readonlyDefault: false, instanceId: 'local-id-0000000' }),
   });
   mocks.getDiagnosticsStatus.mockResolvedValue({ verbose: false });
   mocks.getDiagnosticsLogs.mockResolvedValue({ events: [] });
+});
+
+describe('Settings: autoUpdate parte spento (stesso criterio del backend)', () => {
+  const label = /automatic updates from npm/;
+
+  it('parte spento e resta spento se il GET fallisce', async () => {
+    mocks.getSettings.mockRejectedValue(new Error('GET ko'));
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+    expect((await screen.findByRole('checkbox', { name: label })).checked).toBe(false);
+  });
+
+  const base = {
+    version: '0.9.55', platform: 'linux', port: 41820,
+    service: { installed: true, active: true, boot: true }, alternateScreen: false,
+  };
+
+  it('con autoUpdate assente nella risposta resta spento', async () => {
+    mocks.getSettings.mockResolvedValue({ ...base }); // senza autoUpdate
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+    const check = await screen.findByRole('checkbox', { name: label });
+    await waitFor(() => expect(check.checked).toBe(false));
+  });
+
+  it('con autoUpdate:true esplicito si accende', async () => {
+    mocks.getSettings.mockResolvedValue({ ...base, autoUpdate: true });
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+    const check = await screen.findByRole('checkbox', { name: label });
+    await waitFor(() => expect(check.checked).toBe(true));
+  });
+
+  it('accendere la casella salva autoUpdate:true', async () => {
+    mocks.getSettings.mockResolvedValue({
+      version: '0.9.55', platform: 'linux', port: 41820,
+      service: { installed: true, active: true, boot: true }, alternateScreen: false, // assente -> spento
+    });
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+    const check = await screen.findByRole('checkbox', { name: label });
+    expect(check.checked).toBe(false);
+    fireEvent.click(check);
+    await waitFor(() => expect(mocks.saveConfig).toHaveBeenCalledWith('token', { autoUpdate: true }));
+  });
 });
 
 describe('Settings Share partial OFF convergence', () => {
@@ -205,6 +249,25 @@ describe('Settings Input KeyBar layout', () => {
   it('stays editable regardless of server READONLY (InputTab is client-only)', () => {
     render(<InputTab />);
     expect(screen.getByLabelText('Keypad layout').disabled).toBe(false);
+  });
+});
+
+describe('Settings System renderer (preferenza locale del browser)', () => {
+  it('scrive nc-terminal-renderer e ricarica: la scelta A/B ora vive nelle Impostazioni', () => {
+    // Il ricaricamento (window.location.reload) non e' asseribile qui: jsdom non
+    // permette di sostituire location in modo affidabile. Si presidia la
+    // preferenza scritta, che e' cio' che il ricaricamento consuma.
+    localStorage.removeItem('nc-terminal-renderer');
+    render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="system" />);
+    const check = screen.getByRole('checkbox', { name: /GPU renderer/ });
+    expect(check.checked).toBe(true); // webgl e' il default senza preferenza
+    fireEvent.click(check);
+    // Lo stato che l'interruttore mostra viene dalla preferenza scritta: si
+    // osserva dal DOM invece che dal localStorage, che in questa suite gira su
+    // un file condiviso fra worker e puo' essere azzerato da un altro file.
+    expect(check.checked).toBe(false);
+    fireEvent.click(check);
+    expect(check.checked).toBe(true);
   });
 });
 
@@ -410,7 +473,7 @@ describe('Settings native node audio', () => {
   });
 });
 
-describe('Settings Nodes tab — VL nodes appear in the same list (NC_UI_NODI_VL)', () => {
+describe('Settings Nodes tab — VL nodes appear in the same list (UI nodi VL)', () => {
   const vlPeer = vlNodeToPeer({
     nodeId: 'a'.repeat(32), label: 'VL-Node-A', cell: 'VL-aaaaaaaa',
     pairedAt: 1700000000000, online: true, lastSeen: 1700000100000,
@@ -490,11 +553,11 @@ describe('Settings Nodes tab — VL nodes appear in the same list (NC_UI_NODI_VL
   });
 });
 
-// Step 3 (NC_UI_NODI_VL_REMOTI): la federazione di /vl-nodes/* e' stata
+// Step 3 (UI nodi VL remoti): la federazione di /vl-nodes/* e' stata
 // ripristinata (b0e8bd1) — la UI deve aggregare i nodi VL di TUTTI gli owner
 // autorizzati (locale + topologia non-stale), non solo il locale. Pattern
 // portato da `readVlDirectory` (lib/mcp/tools.js).
-describe('Settings Nodes tab — VL nodes across REMOTE owners (NC_UI_NODI_VL_REMOTI)', () => {
+describe('Settings Nodes tab — VL nodes across REMOTE owners (UI nodi VL remoti)', () => {
   const remoteOwnerTopology = {
     nodes: [{ instanceId: 'remote-node-a-000', route: ['node-a'], label: 'Node A', stale: false }],
   };
@@ -515,7 +578,7 @@ describe('Settings Nodes tab — VL nodes across REMOTE owners (NC_UI_NODI_VL_RE
     expect(await screen.findByRole('button', { name: /VL-Node-A/ })).toBeTruthy();
     // Il fetch remoto e' realmente avvenuto sulla route dell'owner, non solo
     // su quella locale.
-    await waitFor(() => expect(mocks.getVlNodes).toHaveBeenCalledWith('token', ['node-a']));
+    await waitFor(() => expect(mocks.getVlNodes).toHaveBeenCalledWith('token', ['node-a'], { signal: expect.any(AbortSignal) }));
   });
 
   it('a REMOTE owner that does not respond does NOT hide the rest of the list (invariant 1)', async () => {
@@ -556,7 +619,7 @@ describe('Settings Nodes tab — VL nodes across REMOTE owners (NC_UI_NODI_VL_RE
     });
     render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
     await waitFor(() => expect(mocks.getVlNodes).toHaveBeenCalled());
-    expect(mocks.getVlNodes).not.toHaveBeenCalledWith('token', ['old']);
+    expect(mocks.getVlNodes.mock.calls.some(([, route]) => route.join('/') === 'old')).toBe(false);
   });
 });
 

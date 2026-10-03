@@ -1,11 +1,7 @@
 'use strict';
-// NC-5 subset: processi reali NC (authority/lease, nexuscrew mcp stdio, bus,
-// sonda emit). VL C5 non chiuso: i casi che richiedono TUI/daemon/app-server
-// restano skip espliciti, non verdi finti.
-//
-// Revisioni pinnate (documentate, non eseguite qui):
-//   NC  760ac031d3c1bfe9581c82b346d9017827a04603  (tip NC-4 residuo)
-//   VL  865fefceb5 … 7339ffa0af                   (C1–C4; C5 aperto)
+// Processi reali (authority/lease, nexuscrew mcp stdio, bus, sonda emit).
+// I casi che richiedono TUI/daemon/app-server restano skip espliciti, non
+// verdi finti.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -25,10 +21,7 @@ const { liveHostRoutes } = require('../lib/live-host/routes.js');
 const { createLiveHostStore } = require('../lib/live-host/store.js');
 const { createLiveBridge } = require('../lib/live-host/bridge.js');
 
-const PINNED_NC = '760ac031d3c1bfe9581c82b346d9017827a04603';
-const PINNED_VL_FROM = '865fefceb5';
-const PINNED_VL_TO = '7339ffa0af';
-const SKIP_VL = `richiede VL C5/daemon/TUI (pinnato ${PINNED_VL_FROM}..${PINNED_VL_TO}; NC ${PINNED_NC.slice(0, 7)})`;
+const SKIP_TERMINAL = 'richiede TUI/daemon/app-server (coperti fuori da questa suite)';
 
 const LOCAL = 'a'.repeat(32);
 const CELL = 'Dev';
@@ -100,7 +93,7 @@ async function makeMcpHub(t) {
     notifier: { emit: async (frame) => { notifies.push(frame); return { ui: 1, push: 0 }; } },
     push: { sendToAll: async () => ({ sent: 0, removed: 0 }), vapidPublicKey: () => 'k' },
     asks: { create: () => ({ id: 'ask' }) },
-    paste: async () => true,
+    submit: async (...args) => { const result = await (async () => true)(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; },
     sessionExists: (session) => session === SESSION,
     fleetP, instanceId: () => LOCAL, identityMode: 'authority', localNodeId: () => LOCAL,
   }));
@@ -258,10 +251,10 @@ test('lease_pairing_designation_race_denies_old_binding', async (t) => {
   assert.equal(daemon.seen.methods.includes('thread/resume'), false);
 });
 
-test('new_tui_b_never_reuses_a_identity', { skip: SKIP_VL }, () => {});
-test('paired_live_preserves_host_a_origin', { skip: SKIP_VL }, () => {});
-test('a_b_live_interleaving_isolation', { skip: SKIP_VL }, () => {});
-test('resume_fork_and_new_incarnation_reauthorize', { skip: SKIP_VL }, () => {});
-test('cwd_does_not_become_identity', { skip: SKIP_VL }, () => {});
-test('stale_socket_and_restart_are_scoped', { skip: SKIP_VL }, () => {});
-test('feature_register_contract_smoke', { skip: SKIP_VL }, () => {});
+test('new_tui_b_never_reuses_a_identity', { skip: SKIP_TERMINAL }, () => {});
+test('paired_live_preserves_host_a_origin', { skip: SKIP_TERMINAL }, () => {});
+test('a_b_live_interleaving_isolation', { skip: SKIP_TERMINAL }, () => {});
+test('resume_fork_and_new_incarnation_reauthorize', { skip: SKIP_TERMINAL }, () => {});
+test('cwd_does_not_become_identity', { skip: SKIP_TERMINAL }, () => {});
+test('stale_socket_and_restart_are_scoped', { skip: SKIP_TERMINAL }, () => {});
+test('feature_register_contract_smoke', { skip: SKIP_TERMINAL }, () => {});

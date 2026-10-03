@@ -11,18 +11,19 @@ import { advanceTileRuntime, initialTileRuntime, PRESENZA } from '../lib/termina
 import { useInputPreferences } from '../hooks/useInputPreferences.js';
 import './GridTile.css';
 
-// Un tile della griglia. Ogni tile ha i PROPRI ref (audit F6: mai condivisi
+// Un tile della griglia. Ogni tile ha i PROPRI ref (mai condivisi
 // tra tile — altrimenti l'input di uno finirebbe nel PTY di un altro).
-// takeSize={false}: il tile non ridimensiona la sessione tmux (lo fa solo la
-// vista singola / chi ha preso il size-lock); evita che 3 tile si contendano
-// le dimensioni della stessa sessione.
+// takeSize: false per i tile in griglia (il size-lock sta alla vista singola:
+// 3 tile non si contendono la geometria tmux); TRUE per ogni finestra staccata,
+// fisso finche' resta staccata. E' un'opzione di attach del PTY: cambiarlo
+// riconnette il terminale, quindi non segue MAI il focus (solo stacca/riattacca).
 // node (opzionale, B2): il tile porta con se' il nodo remoto — terminale via
 // WS proxy, files/composer via HTTP proxy. Identita' del tile = refKey
 // "node:session" (drag, focus, close), locale = solo nome (retrocompatibile).
 // cellName (Tranche D): titolo visibile risolto dal campo Fleet `cell` (es.
 // `Dev`). node/route/tmuxSession restano identita' tecniche e non compaiono
 // nel titolo visibile; solo il tooltip porta un identificativo tecnico.
-export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, alive = true, sessionAlive = alive, available = true, stale = false, presence = null, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0 }) {
+export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, onDragTileStart, floating = false, minimized = false, takeSize = false, onDetach, onReattach, onToggleMinimize, onFloatDragStart, alive = true, sessionAlive = alive, available = true, stale = false, presence = null, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0 }) {
   const [inputPreferences] = useInputPreferences();
   // Titolo visibile = nome logico Fleet (gestita) o nome sessione (unmanaged).
   // session (tmuxSession reale) resta l'identita' del tile per attach/drag.
@@ -67,13 +68,24 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
       onMouseDown={() => onFocus && onFocus(tileKey)}
     >
       {/* L'header è la maniglia di drag: un tile APERTO si sposta nella
-          griglia trascinandolo (stesso protocollo delle card sidebar). */}
+          griglia trascinandolo (stesso protocollo delle card sidebar).
+          onDragTileStart dice alla griglia CHIE sta spostando: copia che
+          segue il mouse e posto di provenienza tratteggiato. */}
       <div
-        className="nc-tile-head"
-        draggable
+        className={`nc-tile-head${floating ? ' nc-float-head' : ''}`}
+        draggable={!floating}
+        // I tasti della barra (riattacca, riduci, ×) NON sono maniglia: uno
+        // spostamento avviato qui catturerebbe il puntatore e il click non
+        // arriverebbe mai al tasto.
+        onPointerDown={floating && onFloatDragStart ? (e) => {
+          if (e.target && e.target.closest && e.target.closest('.nc-tile-actions')) return;
+          onFloatDragStart(e);
+        } : undefined}
         onDragStart={(e) => {
+          if (floating) return;
           e.dataTransfer.setData('text/nc-session', tileKey);
           e.dataTransfer.effectAllowed = 'move';
+          if (onDragTileStart) onDragTileStart(tileKey);
         }}
       >
         <button className="nc-tile-name" onClick={() => onFocus && onFocus(tileKey)} title={node ? `${visibleName} · ${node}` : visibleName}>
@@ -81,8 +93,21 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
           <b>{visibleName}</b>
         </button>
         <span className="nc-tile-actions">
-          {onZoom && <button onClick={() => onZoom(-1)} title={t('zoom-out')}><Icon name="zoomOut" size={14} /></button>}
-          {onZoom && <button onClick={() => onZoom(+1)} title={t('zoom-in')}><Icon name="zoomIn" size={14} /></button>}
+          {floating ? (
+            <>
+              {onReattach && (
+                <button className="nc-tile-float-btn" onClick={() => onReattach(tileKey)} title={t('tile-reattach')} aria-label={t('tile-reattach')}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="3" width="12" height="12" rx="1"></rect><path d="M11 21H3v-8M3 21l9-9"></path></svg>
+                </button>
+              )}
+              {onToggleMinimize && (
+                <button onClick={() => onToggleMinimize(tileKey)} title={minimized ? t('tile-restore') : t('tile-minimize')} aria-label={minimized ? t('tile-restore') : t('tile-minimize')}>–</button>
+              )}
+            </>
+          ) : (
+            <>
+              {onZoom && <button onClick={() => onZoom(-1)} title={t('zoom-out')} aria-label={t('zoom-out')}><Icon name="zoomOut" size={14} /></button>}
+          {onZoom && <button onClick={() => onZoom(+1)} title={t('zoom-in')} aria-label={t('zoom-in')}><Icon name="zoomIn" size={14} /></button>}
           {onSendToDeck && deckTargets.length > 0 && (
             <select
               className="nc-tile-deck"
@@ -103,7 +128,14 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
             <button onClick={() => setShowPanel((v) => !v)} title={t('panel')} aria-pressed={showPanel}><Icon name="monitor" size={14} /></button>
           )}
           {onOpenSingle && <button onClick={() => onOpenSingle({ session, node, ownerId })} title={t('single-view')}>↗</button>}
-          {onClose && <button className="nc-tile-close" onClick={() => onClose(tileKey)} title={t('close')}>✕</button>}
+            </>
+          )}
+          {!floating && onDetach && (
+            <button className="nc-tile-float-btn" onClick={() => onDetach(tileKey)} title={t('tile-detach')} aria-label={t('tile-detach')}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="9" width="12" height="12" rx="1"></rect><path d="M13 3h8v8M21 3l-9 9"></path></svg>
+            </button>
+          )}
+          {onClose && <button className="nc-tile-close" onClick={() => onClose(tileKey)} title={t('close')} aria-label={t('close')}>✕</button>}
         </span>
       </div>
 
@@ -121,7 +153,7 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
             un overlay SOPRA il contenuto, mai un sostituto. */}
         <Terminal
           key={`${tileKey}:${terminalGeneration}`}
-          session={session} node={node} token={token} readonly={readonly} takeSize={false} focused={focused}
+          session={session} node={node} token={token} readonly={readonly} takeSize={takeSize} focused={focused}
           sendRef={sendRef} composerRef={composerRef} actionRef={actionRef} ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
           onFiles={setFilesEvent} fontSize={fontSize}
           keyboardGesture={inputPreferences.terminalKeyboardGesture}

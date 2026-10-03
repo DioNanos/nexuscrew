@@ -86,9 +86,9 @@ their path is inserted into the terminal without automatically pressing Enter.
 
 ## Pairing and sharing
 
-**Pairing grants owner-equivalent authority. Pair only devices you own.**
+**A paired admin node is trusted as you are. Pair only devices you own.**
 
-A paired node can create tmux sessions — including a shell — attach to them over
+A node with the `admin` access preset can create tmux sessions — including a shell — attach to them over
 the federated WebSocket and write into them as the user running NexusCrew. It
 can define engines and cells, and a custom engine may name an existing
 executable with arguments of its choosing: the trust gate checks the binary's
@@ -98,9 +98,14 @@ Admission is the exception. Minting a pairing invite is not federated: an invite
 belongs to the installation that will host the new node, so it is issued there,
 locally. A paired node cannot admit a third party on your behalf.
 
-This is a deliberate boundary, not a defect list. NexusCrew was designed to put
-one person's machines on one control plane, and it treats a paired node the way
-it treats you.
+The `user` preset grants event and file-read access, without administrative
+operations or ASK replies. The `nexushost` preset grants no cell visibility or
+those access rights. Choose the preset on the installation that owns the
+resources. An `admin` peer is trusted as you are; the other presets grant less.
+
+Federated ASK creation and closure go only to configured `admin` peers, hop by
+hop. Each hub checks its own next peer before forwarding. This rule does not
+change generic notifications or the relay of ASK replies.
 
 ### Cell scope
 
@@ -110,7 +115,7 @@ set locally, on the installation that owns the cells:
 ```bash
 nexuscrew nodes cells <node> all            # default: every cell
 nexuscrew nodes cells <node> none           # no cell at all
-nexuscrew nodes cells <node> Research,Dev   # exactly these
+nexuscrew nodes cells <node> cella-a,cella-b   # exactly these
 ```
 
 The scope is enforced on the federated request, in one place in front of the
@@ -123,13 +128,9 @@ be able to create the cell it was not granted. The terminal attach is gated
 with the same predicate, and a tmux session that maps to no cell is outside
 every scope.
 
-What the scope does **not** change: the pairing itself is still
-owner-equivalent for everything it governs, and the granted cells are granted
-fully — inside its scope a node still creates sessions, attaches to them and
-writes into them as the user running NexusCrew. It attenuates reach, not the
-authority held within that reach. A capability model with proof of possession —
-authority granted, attenuated and revoked as a token rather than as
-configuration — remains on the roadmap and is not implemented.
+Cell scope limits the cells a peer can reach; the access preset also limits
+what it can do. Neither is a sandbox for an executable launched with
+administrative authority.
 
 So: do not accept a pairing invite from an installation you do not own, and do
 not treat a cell scope as a sandbox for code you do not trust. It is a

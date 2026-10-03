@@ -3,13 +3,26 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
 /* dvh tracks the visible viewport so the bottom KeyBar stays above the soft keyboard */
 .nc-app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; min-height: 0; }
 .nc-keybar { flex: 0 0 auto; }
-.nc-bar { display: flex; gap: 10px; align-items: center; padding: 8px; color: #cfe; background: #0e140e; }
+.nc-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px; color: #cfe; background: #0e140e; }
 .nc-bar button { background: none; border: 1px solid #243; color: #9fd; border-radius: 6px; padding: 4px 10px; }
 .nc-termwrap { position: relative; flex: 1; }
 .nc-auth { color: #cfe; padding: 20px; display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
 .nc-auth input[type=text], .nc-auth input:not([type]) { padding: 10px; background: #122; border: 1px solid #243; color: #cfe; border-radius: 6px; }
+.nc-auth .nc-auth-error { color: #f88; margin: 0; }
+.nc-auth button:disabled { opacity: .5; }
 .nc-auth button { padding: 10px; background: #122; border: 1px solid #243; color: #9fd; border-radius: 6px; }
-.nc-bar-right { margin-left: auto; display: flex; gap: 4px; }
+/* Il gruppo destro della barra wrap-a quando i tasti non ci stanno su una riga
+   (schermo stretto, testo grande o zoom). Perche' il wrap accada DENTRO il
+   gruppo e non sfondi il bordo, il gruppo deve poter RESTRINGERE: flex 0 1 auto
+   + min-width:0. margin-left:auto lo tiene a destra anche su piu' righe; i tasti
+   restano bersagli da minimo 42 px (regola coarse piu' sotto). */
+.nc-bar-right { margin-left: auto; display: flex; flex-wrap: wrap; gap: 4px;
+  flex: 0 1 auto; min-width: 0; justify-content: flex-end; }
+
+/* Bersagli ≥40 px anche su desktop: i tasti della barra (vista singola)
+   restano compatti ma con area cliccabile di almeno 40×40. Il coarse qui
+   sotto sale a 42. */
+.nc-bar button, .nc-bar-right button { min-height: 40px; min-width: 40px; }
 
 /* Touch targets: header buttons grandi e leggibili sul telefono. */
 @media (pointer: coarse) {
@@ -26,7 +39,6 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 13px; font-weight: 600;
 }
-.nc-bar-right { flex: 0 0 auto; }
 
 /* Su schermi stretti il back è solo chevron: lo spazio va al titolo. */
 @media (max-width: 480px) {
@@ -48,9 +60,11 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
   background: #0a0e0a;
 }
 
-/* Header vista singola: nome centrato + sottotitolo stato. */
+/* Header vista singola: nome centrato + sottotitolo stato.
+   flex-basis 0: il titolo non spinge i tasti destri a capo — il wrap avviene
+   solo quando i tasti davvero non ci stanno (zoom/schermo stretto). */
 .nc-bar-single .nc-bar-center {
-  flex: 1 1 auto; min-width: 0;
+  flex: 1 1 0; min-width: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   line-height: 1.15;
 }
@@ -113,3 +127,49 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
    il nome della cella nell'header. */
 .nc-renderer-toggle { opacity: .55; }
 .nc-renderer-toggle.on { opacity: 1; color: #7fe3ff; }
+
+/* Doppia vista nella singola mobile: due pannelli sopra/sotto con maniglia,
+   focus al tocco (bordo verde + matita sulla striscia). Solo classi nuove:
+   nessuna regola esistente cambia, il desktop non le incontra mai. */
+.nc-dual { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.nc-dual-pane { position: relative; display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  border: 2px solid #243; border-radius: 6px; overflow: hidden; background: #0a0e0a; }
+.nc-dual-pane.foco { border-color: #7ee787; }
+.nc-dual-pane:not(.foco) .nc-dual-strip { opacity: .6; }
+.nc-dual-strip { flex: 0 0 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+  background: #0e140e; border-bottom: 1px solid #1c241c; min-width: 0; }
+.nc-dual-strip b { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-weight: 600; color: #d8ffe8; }
+.nc-dual-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #333; }
+.nc-dual-dot.on { background: #2e7d32; }
+.nc-dual-matita { flex: 0 0 auto; font-size: 12px; line-height: 1; color: #7ee787; }
+.nc-dual-tasti { display: flex; gap: 2px; flex: 0 0 auto; }
+.nc-dual-tasti button { background: none; border: 0; color: #9fd; font-size: 14px; line-height: 1;
+  min-height: 22px; min-width: 24px; padding: 0 3px; border-radius: 4px; }
+.nc-dual-body { position: relative; flex: 1; min-height: 0; }
+.nc-dual-handle { flex: 0 0 12px; position: relative; cursor: row-resize; touch-action: none; }
+.nc-dual-handle::after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 36px; height: 3px; border-radius: 2px; background: #243; }
+.nc-dual-handle:hover::after { background: #1c3a1c; }
+
+/* L'avviso delle azioni cella (avvio/riavvio/stop): riga SUA sotto la barra
+   dei deck — mai dentro .nc-deckbar, così non copre i chip. Testo contenuto
+   (ellipsis); il testo intero sta nel `title` dell'elemento. Scade da solo. */
+.nc-deck-notice { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; }
+
+/* Orizzontale (doppia vista in orizzontale): i pannelli si AFFIANCANO e la maniglia
+   diventa verticale — il confine segue il dito su clientX. */
+.nc-dual.row { flex-direction: row; }
+.nc-dual.row .nc-dual-handle { cursor: col-resize; }
+.nc-dual.row .nc-dual-handle::after { width: 3px; height: 36px; }
+
+/* Stretto (poche colonne al font corrente): si vede solo la cella col
+   focus. L'altra è display:none — MONTATA, mai ricreata — e nella striscia
+   della cella visibile sta il tasto-icona per passarle (rettangolo diviso,
+   metà piena, col pallino di stato dell'altra). */
+.nc-dual-pane.nascosto { display: none; }
+.nc-dual-alt {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: none; border: 0; color: #9fd; cursor: pointer;
+  min-height: 22px; min-width: 24px; padding: 0 3px; border-radius: 4px;
+}

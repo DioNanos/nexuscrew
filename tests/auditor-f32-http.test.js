@@ -31,6 +31,7 @@ function boot(t, { pasteCalls = null } = {}) {
     fleetEnabled: false,
     sessionExistsSeam: () => true,
     pasteSeam: pasteCalls ? (session, text) => { pasteCalls.push({ session, text }); return true; } : undefined,
+    askSubmit: pasteCalls ? (session, text) => { pasteCalls.push({ session, text }); return { outcome: 'submitted', submitted: true }; } : undefined,
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },

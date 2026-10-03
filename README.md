@@ -20,7 +20,7 @@ stay yours, and your infrastructure stays under your control.
 > and this README alone does not replace it.
 
 <p align="center">
-  <img src="docs/img/fleet-deck-desktop.png" width="960" alt="NexusCrew desktop deck with multiple live tmux sessions">
+  <img src="docs/img/fleet-deck-desktop.png" width="960" alt="NexusCrew 0.9.56 desktop deck with multiple live tmux sessions">
 </p>
 
 ## One control plane. Every screen.
@@ -105,20 +105,18 @@ session ownership to tmux.
 
 ### Pair only devices you own
 
-**A paired node is trusted as you are.** Pairing today grants a node the same
-authority over this machine that you have: it can create sessions, attach to
+**A paired admin node is trusted as you are.** The `admin` access preset grants
+a node the same authority over this machine that you have: it can create sessions, attach to
 them and type into them as the user running NexusCrew, define engines and cells,
-and read what the fleet exposes. There is no lesser class of peer yet.
+and read what the fleet exposes. The `user` and `nexushost` access presets grant
+less authority.
 
 Pair your own devices, and only those. Do not accept a pairing invite from
-someone else's installation, and do not hand one out expecting it to grant less
-than everything.
+someone else's installation. Choose the access preset deliberately: `admin`
+grants owner-equivalent authority; `user` and `nexushost` grant less.
 
-This is a property of the current design, not an oversight: NexusCrew was built
-to put one person's machines on one control plane. Supporting a node that
-belongs to somebody else needs per-node authority that can be granted and
-revoked — a capability model, not a setting. It is on the roadmap and it is not
-here yet.
+Federated ASK creation and closure are delivered only to configured `admin`
+peers, hop by hop: each hub applies this rule to its own next peer.
 
 Remote access is intentionally carried through SSH or a VPN you control:
 

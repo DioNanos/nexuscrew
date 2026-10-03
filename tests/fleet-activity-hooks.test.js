@@ -242,7 +242,8 @@ test('cella codex NON provata: nessun hook e nessuna generazione da pubblicare',
 
 test('su win32 e su termux nessun hook, anche con la versione provata', (t) => {
   const m = mondo(t);
-  binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 0.156.1"\n');
+  assert.equal(require('../lib/runtime/env.js').termuxRuntimePaths({ OLLAMA_API_KEY: 'k', OPENAI_API_KEY: 'k' }, { platform: 'linux', home: m.home }), null);
+  binarioFinto(m, 'codex', '#!/bin/sh\nif [ "$1" = "--help" ]; then echo "Usage: codex --no-daemon"; else echo "codex-cli 0.156.1"; fi\n');
   for (const [nome, extra] of [['win32', { platform: 'win32' }], ['termux', { platform: 'android' }]]) {
     const r = risolviCodex(m, 'codex', 'openai-api', extra);
     assert.equal(hookDi(r).length, 0, `${nome}: nessun hook`);
@@ -371,4 +372,11 @@ test('la cella di un documento reale porta gli hook nel proprio argv', (t) => {
   const r = resolveManagedEngine(defs.engines[0], defs.cells[0], { home: m.home, env: {}, filesRoot: m.filesRoot });
   assert.equal(r.ok, true, r.reason);
   assert.ok(settingsDi(r.engine.args).hooks, 'gli hook arrivano fino all\'argv della cella');
+});
+
+test('a Termux daemon runtime whose help lacks embedded mode refuses launch with a diagnostic', t => {
+  const m = mondo(t); binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 0.156.1"\n');
+  const r = resolveManagedEngine({ id: 'codex.native', managed: { client: 'codex', provider: 'native', model: '', permissionPolicy: 'standard' } },
+    { id: 'Reviewer', cwd: m.cwd, tmuxSession: 'demo-Reviewer' }, { home: m.home, env: {}, platform: 'android', filesRoot: m.filesRoot });
+  assert.equal(r.ok, false); assert.match(r.reason, /runtime capability could not be verified/);
 });

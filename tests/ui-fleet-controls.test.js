@@ -11,7 +11,10 @@ test('primary + creates a managed Fleet cell on mobile and desktop', () => {
   const app = read('../App.jsx');
   const mobile = read('SessionList.jsx');
   assert.match(app, /onNew=\{\(\) => openSettings\('fleet', true\)\}/);
-  assert.match(mobile, /onClick=\{\(\) => onSettings\('fleet', true\)\}/);
+  // Il tasto diretto «+» della lista e' stato tolto: la creazione di una cella
+  // resta raggiungibile da Impostazioni (il gear) › fleet; su desktop il «+ Nuovo».
+  assert.doesNotMatch(mobile, /onSettings\('fleet', true\)/);
+  assert.match(mobile, /onSettings\('nodes', false\)/);
   assert.doesNotMatch(app, /<NewSessionDialog/);
   assert.doesNotMatch(mobile, /<NewSessionDialog/);
 });
@@ -22,7 +25,9 @@ test('mobile Fleet keeps its header fixed and scrolls only the roster', () => {
   assert.match(mobile, /<header className="nc-home-head">[\s\S]*?<\/header>\s*<main className="nc-home-scroll">/);
   assert.match(css, /\.nc-home\s*\{[^}]*height:\s*100dvh[^}]*overflow:\s*hidden/s);
   assert.match(css, /\.nc-home-scroll\s*\{[^}]*overflow-y:\s*auto[^}]*-webkit-overflow-scrolling:\s*touch/s);
-  assert.match(css, /\.nc-home-scroll\s*\{[^}]*padding:[^;}]*76px/s);
+  // Senza piu' il tasto «+» la lista non riserva piu' spazio per esso in fondo
+  // (era 76px): il padding di fondo resta minimo.
+  assert.match(css, /\.nc-home-scroll\s*\{[^}]*padding:[^;}]*8px/s);
 });
 
 test('mobile Fleet footer aligns metadata and language controls without overlap', () => {

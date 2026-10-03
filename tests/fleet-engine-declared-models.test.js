@@ -92,7 +92,7 @@ test('declaredModelsFor merges engine and profile models without duplicates', ()
 test('end-to-end catalog uses engine models before the shared profile fallback', () => {
   const defs = engineDeclaredDefs();
   const extraModels = extraModelsFrom(defs);
-  const home = withBinary(tempHome('nc-d145-e2e-'), 'codex-vl');
+  const home = withBinary(tempHome('nc-models-fixture-e2e-'), 'codex-vl');
   try {
     const r = resolveManagedEngine(defs.engines[0], { id: 'Dev' },
       { home, env: { X_ZAI_P_API_KEY: 'secret' }, extraModels });

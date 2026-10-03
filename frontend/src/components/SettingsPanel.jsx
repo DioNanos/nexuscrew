@@ -11,7 +11,9 @@ import {
   getDiagnosticsStatus, getDiagnosticsLogs, setDiagnosticsVerbose, clearDiagnosticsLogs,
   getAudioSettings, setAudioConsent, testLocalAudio, stopLocalAudio,
   getAudioGroups, saveAudioGroup, deleteAudioGroup,
+  getRouteConfig, ROSTER_READ_TIMEOUT_MS,
 } from '../lib/api.js';
+import { createPollGuard } from '../lib/poll-guard.js';
 import { validateNodeForm, tunnelInfo, toSlug, isValidLabel } from '../lib/settings-model.js';
 import PairingCard from './PairingCard.jsx';
 import NodeSheet from './NodeSheet.jsx';
@@ -25,12 +27,20 @@ import { useNodes } from '../hooks/useNodes.js';
 import { COMPOSER_RESET_EVENT, clearAllComposerData } from '../lib/composer-model.js';
 import { useInputPreferences } from '../hooks/useInputPreferences.js';
 import { DEFAULT_INPUT_PREFERENCES, KEYBAR_LAYOUTS, TERMINAL_KEYBOARD_GESTURES } from '../lib/input-preferences.js';
+import {
+  leggiFilesTasto, scriviFilesTasto,
+  leggiTastieraTasto, scriviTastieraTasto,
+  leggiPannelloTasto, scriviPannelloTasto,
+} from '../lib/bar-files-tasto.js';
+import { RENDERER_DOM, RENDERER_WEBGL, readRendererPreference, writeRendererPreference } from '../lib/terminal-renderer.js';
 import { useNotificationSpeech } from '../hooks/useNotificationSpeech.js';
 import {
   cancelNotificationSpeech, notificationSpeechPrimed, notificationSpeechSupported,
   previewNotificationSpeech, resetNotificationSpeechPriming,
 } from '../lib/notification-speech.js';
 import './SettingsPanel.css';
+import PreferencesJournal from './PreferencesJournal.jsx';
+import PreferencesBackup from './PreferencesBackup.jsx';
 
 // Pannello settings (design §5, B2-UI). Stessa struttura a schede su desktop
 // (overlay nel workspace) e mobile (full-screen via CSS). Le schede principali:
@@ -215,7 +225,7 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
         </div>
       ))}
 
-      {/* Owner VL federati che non hanno risposto (design NC_UI_NODI_VL_REMOTI,
+      {/* Owner VL federati che non hanno risposto (design UI nodi VL remoti,
           invariante 1): visibile ma NON bloccante — la lista Fleet sopra
           resta intatta. Un owner muto che sparisce in silenzio si legge come
           "non ha nodi", che e' un'altra cosa: qui si dice esplicitamente che
@@ -733,6 +743,12 @@ export function AudioTab({ token, readonly, nodes = [], settings = null }) {
 // server e' READONLY: governano soltanto focus, IME, STT e KeyBar locali.
 export function InputTab() {
   const [preferences, updatePreferences] = useInputPreferences();
+  // I tre tasti diretti della barra: opzioni per dispositivo (vedi
+  // lib/bar-files-tasto.js). Cartella e tastiera accesi di default, AI
+  // Desktop spento; un valore gia' salvato vince sul default nuovo.
+  const [filesTasto, setFilesTasto] = useState(leggiFilesTasto);
+  const [tastieraTasto, setTastieraTasto] = useState(leggiTastieraTasto);
+  const [pannelloTasto, setPannelloTasto] = useState(leggiPannelloTasto);
   return (
     <div className="nc-set-tab nc-input-settings">
       <div className="nc-set-info">{t('input-settings-local')}</div>
@@ -758,6 +774,33 @@ export function InputTab() {
           <small>{t('keybar-layout-help')}</small>
         </label>
       </div>
+      {/* La tastiera di scrittura era una voce del menu ⋯: e' uno stato
+          iniziale, quindi vive qui come preferenza persistita. */}
+      <label className="nc-check">
+        <input type="checkbox" checked={preferences.showComposer}
+          onChange={(event) => updatePreferences({ showComposer: event.target.checked })} />
+        <span><b>{t('bar-menu-keyboard')}</b><small>{t('bar-menu-keyboard-desc')}</small></span>
+      </label>
+      {/* Anche il tasto «File della cella» era una voce del menu ⋯: e' stata
+          per dispositivo, e vive qui come tale. Il menu ⋯ resta, ma il tasto
+          diretto ha la sua opzione: cartella (default acceso). */}
+      <label className="nc-check">
+        <input type="checkbox" checked={filesTasto}
+          onChange={(event) => { setFilesTasto(event.target.checked); scriviFilesTasto(event.target.checked); }} />
+        <span><b>{t('bar-menu-files')}</b><small>{t('bar-menu-files-setting-desc')}</small></span>
+      </label>
+      {/* I due tasti diretti nuovi: tastiera (default acceso) e AI Desktop
+          (default spento). */}
+      <label className="nc-check">
+        <input type="checkbox" checked={tastieraTasto}
+          onChange={(event) => { setTastieraTasto(event.target.checked); scriviTastieraTasto(event.target.checked); }} />
+        <span><b>{t('bar-keyboard-button')}</b><small>{t('bar-keyboard-button-desc')}</small></span>
+      </label>
+      <label className="nc-check">
+        <input type="checkbox" checked={pannelloTasto}
+          onChange={(event) => { setPannelloTasto(event.target.checked); scriviPannelloTasto(event.target.checked); }} />
+        <span><b>{t('bar-panel-button')}</b><small>{t('bar-panel-button-desc')}</small></span>
+      </label>
       <label className="nc-check">
         <input type="checkbox" checked={preferences.keybarKeepsKeyboardClosed}
           onChange={(event) => updatePreferences({ keybarKeepsKeyboardClosed: event.target.checked })} />
@@ -907,13 +950,24 @@ export function DiagnosticsTab({ token, roster = [], readonly }) {
 }
 
 // --- scheda SISTEMA ------------------------------------------------------------
+// Il renderer si aggancia alla creazione del terminale: la preferenza ha effetto
+// solo dopo il ricaricamento (stessa regola del vecchio interruttore del menu).
+function reloadAfterRendererChange() {
+  if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
+    window.location.reload();
+  }
+}
+
 function SystemTab({ token, settings, readonly, refresh, roster, section, setSection }) {
+  const [rendererPreference, setRendererPreference] = useState(readRendererPreference);
   const [err, setErr] = useState(null);
   const [note, setNote] = useState(null);
   const [confirmRotate, setConfirmRotate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [updateView, setUpdateView] = useState(null);
-  const [autoUpdate, setAutoUpdate] = useState(true);
+  // Spento in partenza, come il default del server: la casella non deve mai
+  // mostrarsi accesa prima del GET, ne' restare accesa se il GET fallisce.
+  const [autoUpdate, setAutoUpdate] = useState(false);
   const [alternateScreen, setAlternateScreen] = useState(false);
   // Il desktop grafico: spunta + stato reale del container. Il GET è su
   // chiamata esplicita (quando la scheda si apre), mai nel percorso caldo.
@@ -921,7 +975,7 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
 
   useEffect(() => {
     setUpdateView((settings && settings.update) || null);
-    setAutoUpdate(!settings || settings.autoUpdate !== false);
+    setAutoUpdate(!!(settings && settings.autoUpdate === true));
     setAlternateScreen(!!(settings && settings.alternateScreen));
   }, [settings]);
 
@@ -1026,6 +1080,21 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
       </div>
 
       {section === 'general' && <>
+        {/* Preferenza locale di questo browser, non del nodo: il renderer GPU
+            era una voce del menu ⋯ della barra. */}
+        <section className="nc-system-group">
+          <div className="nc-set-info">{t('input-settings-local')}</div>
+          <label className="nc-check">
+            <input type="checkbox" checked={rendererPreference === RENDERER_WEBGL}
+              onChange={(event) => {
+                const next = writeRendererPreference(event.target.checked ? RENDERER_WEBGL : RENDERER_DOM);
+                setRendererPreference(next);
+                reloadAfterRendererChange();
+              }} />
+            <span><b>{t('bar-menu-renderer')}</b><small>{t('bar-menu-renderer-desc')}</small></span>
+          </label>
+        </section>
+
         <section className="nc-system-group">
           <h3>{t('system-this-node')}</h3>
           {settings && (
@@ -1126,6 +1195,8 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
             <span><b>{t('alternate-screen')}</b><small>{t('alternate-screen-help')}</small></span>
           </label>
         </div>
+        <PreferencesBackup token={token} />
+        <PreferencesJournal />
         <DiagnosticsTab token={token} roster={roster} readonly={readonly} />
       </section>}
 
@@ -1163,7 +1234,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   // perche' una scrittura senza revisione non e' una scrittura sorvegliata.
   const [peersAccessRevision, setPeersAccessRevision] = useState(null);
   // Owner VL federati che non hanno risposto all'ultimo refresh — visibili,
-  // non un errore bloccante (design NC_UI_NODI_VL_REMOTI, invariante 1: un
+  // non un errore bloccante (design UI nodi VL remoti, invariante 1: un
   // owner muto che sparisce in silenzio si legge come "non ha nodi").
   const [vlUnavailable, setVlUnavailable] = useState([]);
   const [readonly, setReadonly] = useState(false);
@@ -1206,67 +1277,159 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
     };
   }, [tab, updateTabOverflow]);
 
+  // Guardia generazionale e abort del giro: condivisi fra poll e refresh
+  // manuale. Un giro occupa la guardia finche' TUTTE le sue letture limitate
+  // sono concluse (anche se l'UI e' gia' stata pubblicata): i tick su giro
+  // occupato si saltano, non si accodano.
+  const refreshGuardRef = useRef(createPollGuard());
+  const refreshAbortRef = useRef(null);
+  // Snapshot separati per fonte: i peer Fleet e i nodi VL non si sovrascrivono
+  // a vicenda e la composizione corrente viene ricalcolata a ogni
+  // pubblicazione, cosi' una chiusura su un vecchio array non cancella dati
+  // nuovi.
+  const peersSnapshotRef = useRef([]);
+  const vlSnapshotRef = useRef(new Map());
+  const snapshotIdentityRef = useRef({ token: null, instanceId: null });
+
+  const publishNodes = useCallback((guard, round) => {
+    if (!guard.isCurrent(round)) return;
+    const peers = peersSnapshotRef.current;
+    const vl = [];
+    const seen = new Set();
+    for (const list of vlSnapshotRef.current.values()) {
+      for (const peer of list) {
+        const routeKey = Array.isArray(peer.route) && peer.route.length ? peer.route.join('/') : 'local';
+        const key = `${peer.ownerInstanceId}:${routeKey}:${peer.nodeId || peer.name || peer.label || ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        vl.push(peer);
+      }
+    }
+    setNodes([...peers, ...vl]);
+  }, []);
+
   const refresh = useCallback(async () => {
+    const guard = refreshGuardRef.current;
+    const round = guard.begin();
+    if (round === null) return;
+    const controller = new AbortController();
+    refreshAbortRef.current = controller;
+    const opts = { timeoutMs: ROSTER_READ_TIMEOUT_MS, signal: controller.signal };
     try {
-      const s = await getSettings(token);
-      setSettings(s); setLoadErr(null);
-    } catch (e) { setLoadErr(String(e.message || e)); }
-    try {
-      const j = await getPeers(token);
-      const peers = j.peers || [];
-      setPeersAccessRevision(Number.isInteger(j.accessRevision) ? j.accessRevision : null);
-      // Unione multi-owner SOLO lato presentazione (design NC_UI_NODI_VL_REMOTI,
-      // 2026-08-05): la federazione di /vl-nodes/* e' stata ripristinata
-      // (b0e8bd1) — un nodo VL puo' appartenere a QUALUNQUE owner autorizzato
-      // raggiungibile via /api/topology, non solo al locale. Semantica
-      // portata da `readVlDirectory` (lib/mcp/tools.js): owner locale +
-      // owner federati non-stale, interrogati in parallelo, un fallimento
-      // per-owner non blocca gli altri. Il contratto di /api/peers non
-      // cambia — questo resta un arricchimento lato presentazione.
-      let vlPeers = [];
-      let unavailable = [];
-      try {
+      // Settings e peer partono IN PARALLELO e con esiti indipendenti: i
+      // peer si pubblicano al LORO arrivo, senza aspettare le settings.
+      const settingsTask = getSettings(token, opts).then((s) => {
+        if (!guard.isCurrent(round)) return;
+        setSettings(s); setLoadErr(null);
+      }).catch((e) => {
+        if (!guard.isCurrent(round)) return;
+        setLoadErr(String(e?.message || e));
+      });
+      const peersTask = getPeers(token, opts).then((j) => {
+        if (!guard.isCurrent(round)) return;
+        const peers = j.peers || [];
+        peersSnapshotRef.current = peers;
+        setPeersAccessRevision(Number.isInteger(j.accessRevision) ? j.accessRevision : null);
+        publishNodes(guard, round);
+      }).catch((e) => {
+        if (!guard.isCurrent(round)) return;
+        setLoadErr(String(e?.message || e));
+      });
+      // Arricchimento VL (design UI nodi VL remoti, 2026-08-05): unione
+      // multi-owner SOLO lato presentazione. Ogni owner termina entro il
+      // tetto proprio (4 s dalla partenza della sua GET) e non trattiene ne'
+      // i peer ne' gli altri owner.
+      const enrichmentTask = (async () => {
         const [config, topology] = await Promise.all([
-          apiFetch('/api/config', token).then((r) => r.json()).catch(() => null),
-          getTopology(token).catch(() => null),
+          getRouteConfig(token, [], opts).then((j) => j).catch(() => null),
+          getTopology(token, opts).then((j) => j).catch(() => null),
         ]);
+        if (!guard.isCurrent(round)) return;
         const localInstanceId = config && typeof config.instanceId === 'string' ? config.instanceId : '';
+        if (!localInstanceId) return;
+        if (snapshotIdentityRef.current.instanceId !== localInstanceId) {
+          vlSnapshotRef.current.clear();
+          snapshotIdentityRef.current.instanceId = localInstanceId;
+        }
         const owners = [
           { instanceId: localInstanceId || null, route: [], label: null },
           ...topologyVlOwners(topology, localInstanceId),
         ];
-        const results = await Promise.all(owners.map(async (owner) => {
-          try {
-            const payload = await getVlNodes(token, owner.route);
-            const peers = (payload.nodes || []).map((n) => vlNodeToPeer(n, owner)).filter(Boolean);
-            return { ok: true, peers };
-          } catch (error) { return { ok: false, owner, error }; }
-        }));
-        for (const result of results) {
-          if (result.ok) { vlPeers.push(...result.peers); continue; }
-          // Il locale mantiene il degrado silenzioso di step 1/2 (feature
-          // non installata/disattivata non e' un "owner che non risponde").
-          // Solo un owner REMOTO che non risponde entra nell'elenco visibile
-          // (invariante 1): sparire in silenzio si legge come "non ha nodi",
-          // che e' un'altra cosa.
-          if (result.owner.route.length === 0) continue;
-          unavailable.push({
-            instanceId: result.owner.instanceId, label: result.owner.label,
-            route: result.owner.route,
-            failure: /timeout/i.test(String(result.error?.message || result.error)) ? 'timeout' : 'unreachable',
-          });
+        const ownerKeyOf = (owner) => `${owner.instanceId}:${owner.route.join('/')}`;
+        if (topology) {
+          const present = new Set(owners.map(ownerKeyOf));
+          for (const key of vlSnapshotRef.current.keys()) {
+            if (!present.has(key)) vlSnapshotRef.current.delete(key);
+          }
         }
-      } catch (_) { /* arricchimento VL opzionale: i peer Fleet restano comunque */ }
-      setVlUnavailable(unavailable);
-      setNodes([...peers, ...vlPeers]);
-    } catch (e) { setLoadErr(String(e.message || e)); }
-  }, [token]);
+        if (!topology) {
+          for (const [key, peers] of vlSnapshotRef.current) {
+            if (peers.some(peer => peer.route.length)) vlSnapshotRef.current.set(key, peers.map(peer => ({
+              ...peer, stale: true, online: false, canManage: false, capabilities: [],
+            })));
+          }
+        }
+        const unavailable = new Map();
+        setVlUnavailable([]);
+        publishNodes(guard, round);
+        await Promise.allSettled(owners.map(async (owner) => {
+          const ownerKey = ownerKeyOf(owner);
+          try {
+            const payload = await getVlNodes(token, owner.route, { signal: controller.signal });
+            if (!guard.isCurrent(round)) return;
+            const peers = (payload.nodes || []).map((n) => vlNodeToPeer(n, owner)).filter(Boolean);
+            vlSnapshotRef.current.set(ownerKey, peers);
+            unavailable.delete(ownerKey);
+          } catch (error) {
+            if (!guard.isCurrent(round)) return;
+            // Il locale mantiene il degrado silenzioso (feature non
+            // installata non e' un "owner che non risponde"). Un owner REMOTO
+            // che non risponde entra in vlUnavailable; i suoi ultimi VL noti
+            // restano nella composizione, presentati come dati non
+            // aggiornati, mai come una lettura nuova.
+            const denied = error?.status === 403 || error?.status === 404;
+            if (denied) vlSnapshotRef.current.delete(ownerKey);
+            else {
+              const previous = vlSnapshotRef.current.get(ownerKey);
+              if (previous) vlSnapshotRef.current.set(ownerKey, previous.map(peer => ({
+                ...peer, stale: true, online: false, canManage: false, capabilities: [],
+              })));
+            }
+            if (owner.route.length > 0) unavailable.set(ownerKey, {
+              instanceId: owner.instanceId, label: owner.label,
+              route: owner.route,
+              failure: /timeout/i.test(String(error?.message || error)) ? 'timeout' : 'unreachable',
+            });
+          }
+          if (!guard.isCurrent(round)) return;
+          setVlUnavailable([...unavailable.values()]);
+          publishNodes(guard, round);
+        }));
+      })();
+      await Promise.allSettled([settingsTask, peersTask, enrichmentTask]);
+    } finally {
+      if (refreshAbortRef.current === controller) refreshAbortRef.current = null;
+      guard.end(round);
+    }
+  }, [token, publishNodes]);
 
   // Poll leggero (5s) finché il pannello è aperto: stato tunnel per-nodo fresco.
   useEffect(() => {
+    if (snapshotIdentityRef.current.token !== token) {
+      snapshotIdentityRef.current = { token, instanceId: null };
+      peersSnapshotRef.current = [];
+      vlSnapshotRef.current.clear();
+      setNodes([]); setVlUnavailable([]); setPeersAccessRevision(null);
+    }
     refresh();
     const id = setInterval(refresh, 5000);
-    return () => clearInterval(id);
+    return () => {
+      clearInterval(id);
+      // Cleanup: la guardia si invalida (un giro vecchio non publica piu') e
+      // le letture del giro in volo vengono abortite.
+      refreshGuardRef.current.reset();
+      if (refreshAbortRef.current) refreshAbortRef.current.abort();
+    };
   }, [refresh]);
 
   // Stato READONLY dal server (config effettiva, env inclusa): mutanti disabilitati.

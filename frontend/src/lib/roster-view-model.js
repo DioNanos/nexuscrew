@@ -206,8 +206,18 @@ function cellSearchText(cell, session) {
 // manuale, live, fresh, attivita', label, key), quindi l'ordinamento qui non
 // cambia il risultato finale — la sidebar pre-ordina per pinRank prima di
 // chiamare, la home passa l'ordine naturale.
-export function buildLocalRoster(cells, unmanaged, byName, storage = globalThis.localStorage, { autorevole = true } = {}) {
-  return [
+// Una lista e' PARZIALE quando non e' una lettura completa: sessioni non lette, oppure fleet illeggibile e nessun
+// elenco di celle da mostrare. Su una lista parziale il riordino e' bloccato (motivo dichiarato), perche' l'ordine
+// va deciso sull'elenco intero.
+export function partialReason({ sessionsOk = true, fleetStale = false, cellCount = 0 } = {}) {
+  if (!sessionsOk) return 'sessions';
+  if (fleetStale && !cellCount) return 'fleet';
+  return null;
+}
+
+export function buildLocalRoster(cells, unmanaged, byName, storage = globalThis.localStorage, { autorevole = true, fleetStale = false } = {}) {
+  const partial = partialReason({ sessionsOk: autorevole, fleetStale, cellCount: Array.isArray(cells) ? cells.length : 0 });
+  return withPartial([
     ...(Array.isArray(cells) ? cells : []).map((c) => {
       const session = byName.get(c.tmuxSession) || {};
       const key = positionKey([], c.tmuxSession);
@@ -227,8 +237,10 @@ export function buildLocalRoster(cells, unmanaged, byName, storage = globalThis.
         searchText: `${s.preview || ''} ${s.cmd || ''}`,
       };
     }),
-  ];
+  ], partial);
 }
+
+const withPartial = (items, partial) => (partial ? items.map((item) => ({ ...item, partial })) : items);
 
 // Costruisce le righe normalizzate di una posizione remota (gruppo nodo):
 // celle Fleet (attive e inattive) + tmux unmanaged. Ritorna { route, rawItems }
@@ -263,5 +275,6 @@ export function buildRemoteRoster(group, storage = globalThis.localStorage) {
       };
     }),
   ];
-  return { route, rawItems };
+  const partial = partialReason({ sessionsOk: g.sessionsAvailable !== false, fleetStale: g.fleetState === 'stale', cellCount: (g.cells || []).length });
+  return { route, rawItems: withPartial(rawItems, partial) };
 }

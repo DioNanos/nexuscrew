@@ -56,7 +56,7 @@ test('fresh install -> background orchestration -> authenticated PWA wizard reac
   assert.equal(result.opened, true);
   assert.match(openedUrl, new RegExp(`^http://127\\.0\\.0\\.1:${port}/#token=`));
   const token = fs.readFileSync(tokenPath, 'utf8').trim();
-  assert.ok(token && openedUrl.endsWith(token));
+  assert.ok(token && openedUrl.includes(`#token=${token}`));
   assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
   const settings = await fetch(`http://127.0.0.1:${port}/api/settings`, {
     headers: { authorization: `Bearer ${token}` },

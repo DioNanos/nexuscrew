@@ -17,6 +17,7 @@ vi.mock('../lib/api.js', () => ({
   // The feed-state read feeds the per-owner reply grants (empty = read-only).
   getFeedState: vi.fn(() => Promise.resolve({ views: [] })),
   getAskRelayState: vi.fn(() => Promise.resolve({ attempts: [] })),
+  getAskReplyCapability: vi.fn((_token, { ownerId, askId }) => Promise.resolve({ ownerId, askId, canReply: true, status: 'open' })),
   relayAskAnswer: vi.fn(() => Promise.resolve({ status: 'committed' })),
   relayAskDismiss: vi.fn(() => Promise.resolve({ dismissed: true })),
   relayAskVerify: vi.fn(() => Promise.resolve({ state: 'committed' })),

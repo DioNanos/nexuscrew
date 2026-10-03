@@ -10,6 +10,7 @@ import {
   LINK_OVERLAY_DELAY_MS, boundaryNoticeLine, overlayAfterDrop, scrollRestorePlan,
 } from '../lib/link-overlay.js';
 import { terminalRuntimeConfig } from '../lib/terminal-runtime-config.js';
+import { inputConPrefissi } from '../lib/modifier-prefix.js';
 import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
 import { wantsLocalSelection, isCopyShortcut, copyShortcutHint, LONG_PRESS_MS, movedBeyondLongPress } from '../lib/selection.js';
@@ -28,7 +29,7 @@ import './Terminal.css';
 
 // node (opzionale): sessione su nodo remoto — il WS passa dal proxy
 // /node/<name>/ws (B1); tutto il resto del protocollo e' identico.
-export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange, keyboardGesture = 'double-tap', onRendererChange }) {
+export default function Terminal({ session, node, token, readonly, takeSize, focused, sendRef, composerRef, actionRef, ctrlRef, setCtrlArmed, altRef, setAltArmed, keyboardRef, onFiles, fontSize = 13, selectionMode = false, onSelectionModeChange, keyboardGesture = 'double-tap', onRendererChange }) {
   const hostRef = useRef(null);
   const apiRef = useRef(null);        // {term, fit, sock} per lo zoom senza riconnettere
   const rendererRef = useRef(null);   // addon GPU attivo (o null quando si disegna in DOM)
@@ -240,12 +241,28 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       keyboardUnlocked = true;
       return showTerminalVirtualKeyboard(term);
     };
+    // CTRL/ALT della KeyBar aprono la tastiera nello stesso gesto (pointerdown):
+    // la funzione vive qui (chiude su `term`), App la raggiunge tramite ref.
+    if (keyboardRef) keyboardRef.current = requestTerminalKeyboard;
     lockTerminalKeyboard();
     const terminalTextarea = term.textarea;
     const onTerminalTextareaBlur = () => {
       if (keyboardGestureRef.current === 'double-tap') lockTerminalKeyboard();
     };
     terminalTextarea?.addEventListener('blur', onTerminalTextareaBlur);
+    // Il paste NATIVO marca una finestra che si CHIUDE
+    // al PRIMO onData dopo l'evento paste (l'emissione è sincrona): un tasto
+    // digitato subito dopo torna una digitazione (probe: paste poi
+    // keydown a +50 ms → ['ciao', '\x03'], CTRL disarmato). Tetti di sicurezza:
+    // il keydown successivo e 2 s di silenzio chiudono il marcatore anche se il
+    // paste non ha prodotto nessun onData. Entrambi i listener sono in CAPTURE
+    // sull'host, così girano PRIMA del keydown/onData di xterm sulla textarea.
+    let pasteNativoAperto = false;
+    let pasteNativoScadenza = 0;
+    const onTerminalPaste = () => { pasteNativoAperto = true; pasteNativoScadenza = Date.now() + 2000; };
+    const chiudiPasteNativo = () => { pasteNativoAperto = false; };
+    hostRef.current?.addEventListener('paste', onTerminalPaste, true);
+    hostRef.current?.addEventListener('keydown', chiudiPasteNativo, true);
 
     let sock;
     try {
@@ -295,6 +312,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       });
     } catch (e) {
       term.write(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`);
+      // Il throw sincrono di openTerminalSocket
+      // (ws-client: origine non-locale su ws://) non deve lasciare indietro
+      // né il ref della tastiera né i listener di blur e paste.
+      if (keyboardRef) keyboardRef.current = null;
+      terminalTextarea?.removeEventListener('blur', onTerminalTextareaBlur);
+      hostRef.current?.removeEventListener('paste', onTerminalPaste, true);
+      hostRef.current?.removeEventListener('keydown', chiudiPasteNativo, true);
       return () => {
         try { rendererRef.current?.dispose?.(); } catch (_) { /* best effort */ }
         rendererRef.current = null;
@@ -314,15 +338,26 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       // sticky Ctrl: fold the next single character into its control code (a-z/@-_).
       // A composer paste is literal and must never consume an armed Ctrl key.
-      if (!composerPaste && ctrlRef && ctrlRef.current && d.length === 1) {
-        const c = d.charCodeAt(0);
-        let code = c;
-        if (c >= 97 && c <= 122) code = c - 96;        // a-z -> ^A..^Z
-        else if (c >= 64 && c <= 95) code = c - 64;    // @A-Z[\]^_ -> ^@..^_
-        else if (c === 32) code = 0;                   // space -> ^@
-        d = String.fromCharCode(code);
-        ctrlRef.current = false;
+      // Il marcatore si chiude al PRIMO onData dopo
+      // l'evento paste: il primo blocco è letterale, il tasto SUBITO dopo torna
+      // una digitazione. (Il keydown in capture su host ha già chiuso il
+      // marcatore prima di questo onData, se c'è stato un tasto fisico.)
+      const pasteNativo = pasteNativoAperto && Date.now() < pasteNativoScadenza;
+      chiudiPasteNativo();
+      // CTRL/ALT armati (anche insieme): il PRIMO carattere
+      // dell'input esce con i prefissi (controllo e/o ESC) e entrambe le sticky
+      // si disarmano. Le parole intere da IME: prefisso solo sul primo carattere,
+      // il resto esce pulito (comportamento scelto e dichiarato a Dev).
+      if (!composerPaste && !pasteNativo && d.length >= 1
+        && ((ctrlRef && ctrlRef.current) || (altRef && altRef.current))) {
+        d = inputConPrefissi(d, {
+          ctrl: !!(ctrlRef && ctrlRef.current),
+          alt: !!(altRef && altRef.current),
+        });
+        if (ctrlRef) ctrlRef.current = false;
+        if (altRef) altRef.current = false;
         if (setCtrlArmed) setCtrlArmed(false);
+        if (setAltArmed) setAltArmed(false);
       }
       const ok = sock.sendInput(d);
       if (composerPaste) {
@@ -999,6 +1034,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
 
     return () => {
       apiRef.current = null;
+      if (keyboardRef) keyboardRef.current = null;
       if (overlayTimerRef.current) { clearTimeout(overlayTimerRef.current); overlayTimerRef.current = null; }
       if (sendRef) sendRef.current = () => false;
       if (composerRef) composerRef.current = () => false;
@@ -1032,6 +1068,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       if (vv) { vv.removeEventListener('resize', onViewportResize); vv.removeEventListener('scroll', onResize); }
       virtualKeyboard?.removeEventListener?.('geometrychange', onKeyboardGeometry);
       terminalTextarea?.removeEventListener('blur', onTerminalTextareaBlur);
+      hostRef.current?.removeEventListener('paste', onTerminalPaste, true);
+      hostRef.current?.removeEventListener('keydown', chiudiPasteNativo, true);
       if (ro) ro.disconnect();
       if (rafId) cancelAnimationFrame(rafId);
       sock.close();

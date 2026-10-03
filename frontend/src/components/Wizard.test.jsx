@@ -38,8 +38,8 @@ describe('Wizard — la riga authorized_keys sopravvive allo smontaggio della ca
     mocks.pairNode.mockResolvedValueOnce({
       paired: true, authorizedKeys: riga, authorizedKeysNote: 'il peer ha un pannello sulla propria porta 41821',
     });
-    render(<Wizard token="token" initialPair={pairingUrl()} deviceDefault="AsusRP3"
-      localNodeId={'5bd61234'.repeat(4)} localNameDefault="asus-rp3-5bd6" />);
+    render(<Wizard token="token" initialPair={pairingUrl()} deviceDefault="peer-a"
+      localNodeId={'5bd61234'.repeat(4)} localNameDefault="peer-a-5bd6" />);
     await waitFor(() => expect(mocks.pairNode).toHaveBeenCalledTimes(1));
     // il passo è cambiato: il bottone finale c'è, il modulo di pairing no
     expect(await screen.findByRole('button', { name: 'finish' })).toBeTruthy();
@@ -49,8 +49,8 @@ describe('Wizard — la riga authorized_keys sopravvive allo smontaggio della ca
 
   it('non mostra nulla quando il pairing non produce la riga', async () => {
     mocks.pairNode.mockResolvedValueOnce({ paired: true });
-    render(<Wizard token="token" initialPair={pairingUrl()} deviceDefault="AsusRP3"
-      localNodeId={'5bd61234'.repeat(4)} localNameDefault="asus-rp3-5bd6" />);
+    render(<Wizard token="token" initialPair={pairingUrl()} deviceDefault="peer-a"
+      localNodeId={'5bd61234'.repeat(4)} localNameDefault="peer-a-5bd6" />);
     await waitFor(() => expect(mocks.pairNode).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole('button', { name: 'finish' })).toBeTruthy();
     expect(screen.queryByLabelText('Line to replace in ~/.ssh/authorized_keys on the peer')).toBeNull();
@@ -71,8 +71,8 @@ describe('Wizard — l invito si consuma solo a successo', () => {
   it('chiama onPairDone dopo un pairing riuscito', async () => {
     const onPairDone = vi.fn();
     mocks.pairNode.mockResolvedValueOnce({ paired: true });
-    render(<Wizard token="token" initialPair={pairingUrl()} deviceDefault="AsusRP3"
-      localNodeId={'5bd61234'.repeat(4)} localNameDefault="asus-rp3-5bd6" onPairDone={onPairDone} />);
+    render(<Wizard token="token" initialPair={pairingUrl()} deviceDefault="peer-a"
+      localNodeId={'5bd61234'.repeat(4)} localNameDefault="peer-a-5bd6" onPairDone={onPairDone} />);
     await waitFor(() => expect(mocks.pairNode).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(onPairDone).toHaveBeenCalledTimes(1));
   });
@@ -82,8 +82,8 @@ describe('Wizard — l invito si consuma solo a successo', () => {
     const errore = new Error('HTTP 502');
     errore.data = { stage: 'ssh-ready', code: 'ssh-auth-failed', detail: 'rejected', retryable: true };
     mocks.pairNode.mockRejectedValueOnce(errore);
-    render(<Wizard token="token" initialPair={pairingUrl()} deviceDefault="AsusRP3"
-      localNodeId={'5bd61234'.repeat(4)} localNameDefault="asus-rp3-5bd6" onPairDone={onPairDone} />);
+    render(<Wizard token="token" initialPair={pairingUrl()} deviceDefault="peer-a"
+      localNodeId={'5bd61234'.repeat(4)} localNameDefault="peer-a-5bd6" onPairDone={onPairDone} />);
     await waitFor(() => expect(mocks.pairNode).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(onPairDone).not.toHaveBeenCalled();

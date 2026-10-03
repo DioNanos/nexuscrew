@@ -237,11 +237,11 @@ test('pair stages: client legacy senza localName deriva handle stabile e mai loc
     join: (_n, opts) => { joinBody = JSON.parse(opts.body); return R(410, { error: 'stop after capture' }); },
   });
   const response = await pairReq(base, token, {
-    name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir), localLabel: 'AsusRP3',
+    name: 'peer', ssh: 'relay', pairingUrl: makePairingUrl(dir), localLabel: 'peer-a',
   });
   assert.equal(response.status, 502);
-  assert.equal(joinBody.name, 'asus-rp3-aaaa');
-  assert.equal(joinBody.label, 'AsusRP3');
+  assert.equal(joinBody.name, 'peer-a-aaaa');
+  assert.equal(joinBody.label, 'peer-a');
   assert.notEqual(joinBody.name, 'localhost');
 });
 
@@ -256,7 +256,7 @@ test('pair stages: conflitto localName propaga proposta e riusa lo stesso invito
         return R(409, {
           error: `nome peer gia' in uso: ${body.name}`,
           code: 'peer-name-conflict',
-          suggestedName: 'asus-rp3-aaaaaa',
+          suggestedName: 'peer-a-aaaaaa',
         });
       }
       return R(200, { credential: CREDENTIAL, reversePort: 44001, instanceId: PEER_ID });
@@ -267,22 +267,22 @@ test('pair stages: conflitto localName propaga proposta e riusa lo stesso invito
   const link = makePairingUrl(dir);
   const first = await pairReq(base, token, {
     name: 'peer', ssh: 'relay', pairingUrl: link,
-    localLabel: 'AsusRP3', localName: 'asus-rp3-aaaa',
+    localLabel: 'peer-a', localName: 'peer-a-aaaa',
   });
   assert.equal(first.status, 409);
   const conflict = await first.json();
   assert.equal(conflict.stage, 'conflict');
   assert.equal(conflict.code, 'peer-name-conflict');
-  assert.equal(conflict.suggestedName, 'asus-rp3-aaaaaa');
+  assert.equal(conflict.suggestedName, 'peer-a-aaaaaa');
   assert.equal(conflict.retryable, true);
   assert.match(conflict.hint, /non e' stato consumato/);
 
   const second = await pairReq(base, token, {
     name: 'peer', ssh: 'relay', pairingUrl: link,
-    localLabel: 'AsusRP3', localName: conflict.suggestedName,
+    localLabel: 'peer-a', localName: conflict.suggestedName,
   });
   assert.equal(second.status, 200);
-  assert.deepEqual(seenNames, ['asus-rp3-aaaa', 'asus-rp3-aaaaaa']);
+  assert.deepEqual(seenNames, ['peer-a-aaaa', 'peer-a-aaaaaa']);
   assert.equal(calls.join, 2);
 });
 
