@@ -53,10 +53,10 @@ const baseSnapshot = () => ({
 });
 
 function makeClient(t, { eventsReceive = false, responses = [] } = {}) {
-  const fetchImpl = async () => {
+  const fetchImpl = async (_url, opts = {}) => {
     const next = responses.shift();
     if (!next) return { ok: false, status: 500, text: async () => '', json: async () => ({}) };
-    return next;
+    return typeof next === 'function' ? next(opts) : next;
   };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncschema-'));
   const nodesPath = path.join(dir, 'nodes.json');
@@ -84,19 +84,30 @@ function makeClient(t, { eventsReceive = false, responses = [] } = {}) {
 }
 
 // La VIA SOTTOSCRITTA: un round di poll() senza start() (nessun timer), con
-// capability dichiarata e stream che chiude subito. La view riporta l'esito.
+// capability dichiarata e stream sano aperto fino all'abort. La view riporta l'esito.
 async function subscribedView(t, snap, contentType = CT_JSON) {
   const health = { ok: true, status: 200, json: async () => ({ ok: true, instanceId: OWNER, eventFeedV1: true }) };
-  const stream = {
+  let enteredStream;
+  const streamEntered = new Promise((resolve) => { enteredStream = resolve; });
+  const stream = ({ signal }) => ({
     ok: true, status: 200,
-    body: { getReader: () => ({ read: async () => ({ done: true }) }) },
+    body: { getReader: () => ({ read: () => {
+      enteredStream();
+      return new Promise((resolve) => {
+        if (signal.aborted) resolve({ done: true });
+        else signal.addEventListener('abort', () => resolve({ done: true }), { once: true });
+      });
+    } }) },
     text: async () => '',
-  };
+  });
   const client = makeClient(t, {
     eventsReceive: true,
     responses: [health, snapRes(snap, contentType), stream],
   });
-  await client.poll();
+  const round = client.poll();
+  await Promise.race([streamEntered, round]);
+  client.stop();
+  await round;
   return client.viewFor(OWNER);
 }
 
