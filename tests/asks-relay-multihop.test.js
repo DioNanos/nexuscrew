@@ -294,7 +294,7 @@ for (const transit of [false, true]) test(`a real reverse owner supports capabil
   const closed = await fetch(`${origin.base}/api/asks-relay/capability?ownerId=${owner.id}&askId=${next.id}`, { headers: headers(origin.token) }).then(r => r.json());
   assert.equal(closed.canReply, false); assert.equal(closed.status, 'dismissed');
   assert.equal(actionLeaks.length, 0); assert.equal(owner.pastes.length, 1);
-  assert.ok(proofRequests.length >= 5);
+  assert.equal(proofRequests.length, 1, 'one cold proof is shared by the warm actions');
   assert.ok(proofRequests.every(p => !p.headers.authorization && !p.text.includes('Proceed')));
 });
 

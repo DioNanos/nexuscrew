@@ -62,15 +62,16 @@ async function fixture(t, { transit = false, proof = 'valid', direction = 'inbou
   store.atomicWriteStore(nodesPath, st);
   assert.ok(store.loadStoreStrict(nodesPath), 'fixture obeys the real store parser');
   let readonly = false;
+  let proofClock = 0;
   const hub = express();
-  hub.use('/api/route', federation.localRouter({ nodesPath, localPort: 1, localCredential: () => 'local-fixture', readonly: () => readonly }));
-  hub.use('/federation', federation.peerRouter({ nodesPath, localPort: 1, localCredential: () => 'local-fixture', readonly: () => readonly }));
+  hub.use('/api/route', federation.localRouter({ nodesPath, localPort: 1, localCredential: () => 'local-fixture', readonly: () => readonly, askProofNow: () => proofClock }));
+  hub.use('/federation', federation.peerRouter({ nodesPath, localPort: 1, localCredential: () => 'local-fixture', readonly: () => readonly, askProofNow: () => proofClock }));
   const hubServer = await listen(t, hub);
   const request = (resource = '/event-feed/asks/11223344/answer', method = 'POST', extra = {}, options = {}) => fetch(
     `http://127.0.0.1:${hubServer.address().port}${transit ? '/federation/route' : '/api/route'}/owner/_${resource}`,
     { ...options, method, headers: { 'content-type': 'application/json', ...(transit ? { authorization: 'Bearer client-ingress-fixture', 'x-nexuscrew-visited': CLIENT } : {}), ...extra }, ...(method === 'POST' ? { body: JSON.stringify(BODY) } : {}) });
   const edit = (name, patch) => store.atomicWriteStore(nodesPath, store.updateNode(store.loadStoreStrict(nodesPath), name, patch));
-  return { request, actions, leaks, probes, edit, nodesPath, port, release: () => release?.(), setReadonly: value => { readonly = value; } };
+  return { request, actions, leaks, probes, edit, nodesPath, port, release: () => release?.(), setReadonly: value => { readonly = value; }, clock: value => { proofClock = value; } };
 }
 for (const transit of [false, true]) test(`a divergent inbound slot receives the action without leaking to localPort (${transit ? 'transit' : 'local'})`, async t => {
   const f = await fixture(t, { transit });
@@ -93,6 +94,8 @@ for (const proof of ['timeout', 'body-timeout', 'unavailable', 'mac', 'instance'
 test('a replayed reverse proof cannot authorize the next action', async t => {
   const f = await fixture(t, { proof: 'replay' });
   const first = await f.request(); await first.text();
+  // Positive caching is policy; replay protection is exercised with a cold cache.
+  f.clock(10001);
   const second = await f.request(); const body = await second.json();
   assert.equal(second.status, 404); assert.equal(body.reason, 'reverse-slot-unverified');
   assert.equal(f.actions.length, 1); assert.equal(f.leaks.length, 0);
