@@ -35,7 +35,7 @@ test('a supported Termux Codex launch disables shared daemon reuse and passes dy
   assert.ok(['EXISTING','MCP_DEVICE','NEXUSCREW_MCP_SESSION','TMUX','TMUX_PANE'].every(name => names.includes(name)));
   assert.equal(out.engine.command, process.execPath, 'the capability probe follows the same Node shim path as launch');
 });
-for (const unsupported of [{ version: '0.159.0' }, { flag: false }, { version: 'unknown' }]) test(`an unsupported Termux runtime refuses launch with a diagnostic (${JSON.stringify(unsupported)})`, t => {
+for (const unsupported of [{ flag: false }, { version: 'unknown' }]) test(`an unsupported Termux runtime refuses launch with a diagnostic (${JSON.stringify(unsupported)})`, t => {
   const f = fixture(t, unsupported); const out = f.resolve();
   assert.equal(out.ok, false);
   assert.match(out.reason, /daemon|embedded|identity/i);
@@ -120,9 +120,24 @@ test('a Linux-reporting Termux runtime gets the same embedded containment', t =>
   const out = f.resolve(); assert.equal(out.ok, true, out.reason);
   assert.ok(out.engine.args.includes('--no-daemon'));
 });
-test('a future runtime with an unverified connection contract is refused', t => {
-  const out = fixture(t, { version: '0.161.0' }).resolve();
-  assert.equal(out.ok, false); assert.match(out.reason, /embedded identity/i);
+for (const version of ['0.160.0', '0.161.0']) test(`a capable runtime selects embedded mode (${version})`, t => {
+  const out = fixture(t, { version }).resolve();
+  assert.equal(out.ok, true, out.reason); assert.ok(out.engine.args.includes('--no-daemon'));
+});
+for (const version of ['0.130.0', '0.131.0-alpha.11']) test(`a runtime before local daemon reuse preserves launch (${version})`, t => {
+  const out = fixture(t, { version, flag: false }).resolve();
+  assert.equal(out.ok, true, out.reason); assert.equal(out.engine.args.includes('--no-daemon'), false);
+});
+for (const version of ['0.131.0-alpha.12', '0.131.0', '0.161.0']) test(`a daemon runtime without embedded capability refuses launch (${version})`, t => {
+  const out = fixture(t, { version, flag: false }).resolve(); assert.equal(out.ok, false);
+});
+test('capability probes are cached until the resolved binary modification time changes', t => {
+  const f = fixture(t); const log = path.join(f.home, 'probes');
+  fs.appendFileSync(f.binary, `require('node:fs').appendFileSync(${JSON.stringify(log)},process.argv.at(-1)+'\\n');\n`);
+  assert.equal(f.resolve().ok,true); assert.equal(f.resolve().ok,true);
+  assert.equal(fs.readFileSync(log,'utf8').trim().split('\n').length,2);
+  const st = fs.statSync(f.binary); fs.utimesSync(f.binary, st.atime, new Date(st.mtimeMs+2000));
+  assert.equal(f.resolve().ok,true); assert.equal(fs.readFileSync(log,'utf8').trim().split('\n').length,4);
 });
 test('static NexusCrew MCP identity overrides are rejected rather than copied from another cell', t => {
   const f = fixture(t);
@@ -138,4 +153,12 @@ test('the embedded containment does not invent a NexusCrew server absent from us
   const out = f.resolve(); assert.equal(out.ok, true, out.reason);
   assert.ok(out.engine.args.includes('--no-daemon'));
   assert.equal(out.engine.args.some(arg => arg.startsWith('mcp_servers.nexuscrew.')), false);
+});
+
+test('capability probes use a ten second deadline and refuse process errors', t => {
+  const f = fixture(t); const calls = [];
+  t.mock.method(require('node:child_process'), 'spawnSync', (command, args, options) => {
+    calls.push(options.timeout); return { error: Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }) };
+  });
+  const out = f.resolve(); assert.equal(out.ok, false); assert.deepEqual(calls, [10000]);
 });
