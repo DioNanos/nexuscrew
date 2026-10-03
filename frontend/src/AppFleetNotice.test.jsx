@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('./lib/api.js', () => ({
+  ROSTER_READ_TIMEOUT_MS: 8000,
   apiFetch: mocks.apiFetch, fleetStatus: mocks.fleetStatus, fleetBoot: mocks.fleetBoot,
   killSession: mocks.killSession, getSettings: mocks.getSettings, nodeAction: mocks.nodeAction,
   renameNodeLabel: mocks.renameNodeLabel, setSessionTechnical: mocks.setSessionTechnical,
