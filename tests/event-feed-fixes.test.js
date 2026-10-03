@@ -316,7 +316,7 @@ function stubOwners(t, defs, extra = {}) {
     const port = m ? Number(m[1]) : 0;
     return defs.find((d) => d.port === port) || null;
   };
-  const fetchImpl = async (url) => {
+  const fetchImpl = async (url, opts = {}) => {
     calls.push({ url });
     const d = ownerAt(url);
     if (!d) return { ok: false, status: 404, json: async () => ({ error: 'unknown' }), text: async () => '' };
@@ -338,7 +338,10 @@ function stubOwners(t, defs, extra = {}) {
           return {
             read: async () => {
               state.reads += 1;
-              if (sent) return { done: true };
+              if (sent) return new Promise((_resolve, reject) => {
+                if (opts.signal.aborted) reject(new Error('client stopped'));
+                else opts.signal.addEventListener('abort', () => reject(new Error('client stopped')), { once: true });
+              });
               sent = true;
               return { done: false, value: Buffer.from(payload) };
             },
