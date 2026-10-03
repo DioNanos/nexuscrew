@@ -187,7 +187,7 @@ function impianto(t, risposta) {
   });
   const fanout = createClosureFanout({
     dispatcher: { dispatch: async ({ target }) => risposta(target) },
-    peerTargets: async () => [B_ID, C_ID],
+    peerTargets: async () => [B_ID, C_ID].map(nodeId => ({ nodeId, accessConfigured: true, ...require('../lib/nodes/access-presets.js').PRESETS.admin })),
     localNodeId: () => A_ID,
     retry,
   });
