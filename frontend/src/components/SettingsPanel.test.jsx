@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   getTopology: vi.fn(),
   saveConfig: vi.fn(),
   apiFetch: vi.fn(),
+  getRouteConfig: vi.fn(),
   getDiagnosticsStatus: vi.fn(),
   getDiagnosticsLogs: vi.fn(),
   getAiDesktop: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock('../lib/api.js', async (importOriginal) => ({
   getTopology: mocks.getTopology,
   saveConfig: mocks.saveConfig,
   apiFetch: mocks.apiFetch,
+  getRouteConfig: mocks.getRouteConfig,
   getDiagnosticsStatus: mocks.getDiagnosticsStatus,
   getDiagnosticsLogs: mocks.getDiagnosticsLogs,
   getAiDesktop: mocks.getAiDesktop,
@@ -77,6 +79,7 @@ beforeEach(() => {
   mocks.getPeers.mockResolvedValue({ peers: [] });
   mocks.getVlNodes.mockResolvedValue({ nodes: [] });
   mocks.getTopology.mockResolvedValue({ nodes: [] });
+  mocks.getRouteConfig.mockResolvedValue({instanceId: 'local-id-0000000'});
   mocks.saveConfig.mockResolvedValue({ saved: true });
   mocks.apiFetch.mockResolvedValue({
     json: vi.fn().mockResolvedValue({ readonlyDefault: false, instanceId: 'local-id-0000000' }),
@@ -575,7 +578,7 @@ describe('Settings Nodes tab — VL nodes across REMOTE owners (UI nodi VL remot
     expect(await screen.findByRole('button', { name: /VL-Node-A/ })).toBeTruthy();
     // Il fetch remoto e' realmente avvenuto sulla route dell'owner, non solo
     // su quella locale.
-    await waitFor(() => expect(mocks.getVlNodes).toHaveBeenCalledWith('token', ['node-a']));
+    await waitFor(() => expect(mocks.getVlNodes).toHaveBeenCalledWith('token', ['node-a'], { signal: expect.any(AbortSignal) }));
   });
 
   it('a REMOTE owner that does not respond does NOT hide the rest of the list (invariant 1)', async () => {
@@ -616,7 +619,7 @@ describe('Settings Nodes tab — VL nodes across REMOTE owners (UI nodi VL remot
     });
     render(<SettingsPanel token="token" onClose={vi.fn()} initialTab="nodes" />);
     await waitFor(() => expect(mocks.getVlNodes).toHaveBeenCalled());
-    expect(mocks.getVlNodes).not.toHaveBeenCalledWith('token', ['old']);
+    expect(mocks.getVlNodes.mock.calls.some(([, route]) => route.join('/') === 'old')).toBe(false);
   });
 });
 

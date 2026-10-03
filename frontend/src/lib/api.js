@@ -16,6 +16,13 @@ function noteAuth(path, token, response) {
 // sempre, anche solo per un errore).
 export const FEDERATED_FETCH_TIMEOUT_MS = 8000;
 
+// Tetti per le letture del roster (D-394): un nodo VL o una lettura di
+// sessions/fleet senza scadenza client blocca la lista dei nodi per un tempo
+// indeterminato. Sono default applicati DAI CHIAMANTI del fix: nessun tetto
+// globale corto su mutazioni, download o stream.
+export const VL_READ_TIMEOUT_MS = 4000;
+export const ROSTER_READ_TIMEOUT_MS = 8000;
+
 export function fetchAbortSignal(ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new DOMException('timeout', 'TimeoutError')), ms);
@@ -77,6 +84,9 @@ async function jsonFetch(path, token, opts = {}) {
     headers: { 'content-type': 'application/json' },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
     timeoutMs: opts.timeoutMs,
+    // Il signal esterno (cleanup di un giro abortito) non viene piu' scartato:
+    // abort esterno e timeout agiscono sullo stesso controller in apiFetch.
+    signal: opts.signal,
   });
   let j;
   try {
@@ -167,9 +177,9 @@ export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs$
 
 // Settings API B2 (design §4b(6)): read-only + mutanti lista chiusa. jsonFetch
 // propaga la causa esplicita (j.error) su ogni failure — MAI errori muti in UI.
-export const getSettings = (t) => jsonFetch('/api/settings', t);
-export const getNodes = (t) => jsonFetch('/api/nodes', t);
-export const getPeers = (t) => jsonFetch('/api/peers', t);
+export const getSettings = (t, opts = {}) => jsonFetch('/api/settings', t, opts);
+export const getNodes = (t, opts = {}) => jsonFetch('/api/nodes', t, opts);
+export const getPeers = (t, opts = {}) => jsonFetch('/api/peers', t, opts);
 // Nodi VL (device di esempio): endpoint separato, non federato — fuso con i peer
 // SOLO lato presentazione (vl-nodes-model.js), mai dentro /api/nodes o
 // /api/peers (design UI nodi VL, 2026-08-05: non cambiare quel contratto).
@@ -177,7 +187,12 @@ export const getPeers = (t) => jsonFetch('/api/peers', t);
 // ripristinata per /vl-nodes/* (commit b0e8bd1): con più owner un comando
 // deve arrivare al device che lo dichiara, non sempre a quello locale
 // (design UI nodi VL remoti, 2026-08-05, invariante 3).
-export const getVlNodes = (t, route = []) => jsonFetch(`${routeBase(route)}/vl-nodes`, t);
+// Lettura VL: tetto di 4 s applicato anche alla GET locale (lettura
+// opzionale: un owner che non risponde non trattiene la lista dei nodi).
+export const getVlNodes = (t, route = [], opts = {}) => jsonFetch(
+  `${routeBase(route)}/vl-nodes`, t,
+  { timeoutMs: VL_READ_TIMEOUT_MS, ...opts },
+);
 export const sendVlNodeCommand = (t, nodeId, kind, args = {}, route = []) => (
   jsonFetch(`${routeBase(route)}/vl-nodes/${encodeURIComponent(nodeId)}/commands`, t, { method: 'POST', body: { kind, args } })
 );
@@ -188,10 +203,10 @@ export const removeVlNode = (t, nodeId, route = []) => jsonFetch(`${routeBase(ro
 export const getVlNodeEvents = (t, nodeId, after = 0, route = []) => jsonFetch(
   `${routeBase(route)}/vl-nodes/${encodeURIComponent(nodeId)}/events${after ? `?after=${encodeURIComponent(after)}` : ''}`, t,
 );
-export const getTopology = (t) => jsonFetch('/api/topology', t);
-export const getRouteSessions = (t, route) => jsonFetch(`${routeBase(route)}/sessions`, t);
-export const getRouteConfig = (t, route) => jsonFetch(`${routeBase(route)}/config`, t);
-export const getRouteTopology = (t, route) => jsonFetch(`${routeBase(route)}/topology`, t);
+export const getTopology = (t, opts = {}) => jsonFetch('/api/topology', t, opts);
+export const getRouteSessions = (t, route, opts = {}) => jsonFetch(`${routeBase(route)}/sessions`, t, opts);
+export const getRouteConfig = (t, route, opts = {}) => jsonFetch(`${routeBase(route)}/config`, t, opts);
+export const getRouteTopology = (t, route, opts = {}) => jsonFetch(`${routeBase(route)}/topology`, t, opts);
 // Sessioni di un nodo remoto via proxy B1 (stesso token locale: il proxy
 // verifica il Bearer e inietta LUI il token remoto — mai visto dal browser).
 export const getNodeSessions = (t, name) => jsonFetch(`/node/${encodeURIComponent(name)}/api/sessions`, t);
@@ -212,7 +227,7 @@ export const createPeerInvite = (t, body, route = []) => jsonFetch(
   `${routeBase(route)}/settings/peering/invite`, t, { method: 'POST', body: body || {} },
 );
 export const renameNodeLabel = (t, name, label) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}/label`, t, { method: 'PATCH', body: { label } });
-export const getNodeAliases = (t) => jsonFetch('/api/settings/node-aliases', t);
+export const getNodeAliases = (t, opts = {}) => jsonFetch('/api/settings/node-aliases', t, opts);
 export const saveNodeAlias = (t, instanceId, alias) => jsonFetch(`/api/settings/node-aliases/${encodeURIComponent(instanceId)}`, t, { method: 'PATCH', body: { alias } });
 export const deleteNodeAlias = (t, instanceId) => jsonFetch(`/api/settings/node-aliases/${encodeURIComponent(instanceId)}`, t, { method: 'DELETE' });
 export const updateNode = (t, name, patch) => jsonFetch(`/api/settings/nodes/${encodeURIComponent(name)}`, t, { method: 'PATCH', body: patch });

@@ -70,7 +70,7 @@ describe('useDecks: lista sticky (le deck non spariscono per un blip)', () => {
     expect(state().ids).toContain(remoteId);
   });
 
-  it('un fetch remoto fallito mantiene il dato precedente con available:false', async () => {
+  it('un fetch remoto fallito mantiene il dato precedente disponibile, segnato stale', async () => {
     render(<Probe owners={[owner]} />);
     await tick(0);
     expect(state().ids).toContain(remoteId);
@@ -83,7 +83,7 @@ describe('useDecks: lista sticky (le deck non spariscono per un blip)', () => {
     await tick(5600); // oltre il boundary: il setTimeout(0) del reload per-owner deve cadere dentro l'avanzamento
 
     expect(state().ids).toContain(remoteId);
-    expect(state().available).toEqual([true]);
+    expect(state().available).toEqual([false]);
     expect(state().refreshFailedAt[0]).toBeGreaterThan(0);
   });
 

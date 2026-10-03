@@ -110,6 +110,7 @@ function cleanOwners(input) {
       label: String(owner.label || owner.name || owner.route.join(' › ')),
       status: owner.status || 'offline',
       stale: owner.stale === true,
+      checking: owner.checking === true,
     });
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));
@@ -139,7 +140,7 @@ function augmentDeck(deck, owner, topology, local = false, available = true) {
   };
 }
 
-export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
+export function useDecks(token, current, layout, setLayout, remoteOwners = [], nodeOrder = []) {
   const [records, setRecords] = useState([]);
   const [ready, setReady] = useState(false);
   const [saveState, setSaveState] = useState('idle');
@@ -148,6 +149,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   const [localNodeId, setLocalNodeId] = useState('');
   const recordsRef = useRef([]);
   const ownersRef = useRef([]);
+  // Ordine della lista nodi/celle (nc_node_order_v1, chiavi nodePreferenceKey):
+  // i GRUPPI della rail lo seguono (D-392). Va in un ref per non rifare il
+  // caricamento a ogni riordino: il riordino tocca solo l'ordine, non i dati.
+  const nodeOrderRef = useRef([]);
   // Da quando un owner manca dalle risposte confermate: passata la grazia le
   // sue deck sloggano (rimozione confermata), sotto restano come blip. Stessa
   // soglia di useNodes, cosi' non esistono due grazie divergenti.
@@ -165,7 +170,17 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
   // periodico. status/label freschi arrivano comunque via ownersRef a ogni
   // render per il loop di reload dentro loadAll.
   const ownersSig = owners.map((o) => `${o.instanceId}:${routeKey(o.route)}`).join('|');
+  // Firma dei SOLO stati (instanceId + status): il ritorno a 'up' di un owner
+  // degradato deve ripartire subito con il suo caricamento per-owner, senza
+  // aspettare il poll periodico e senza rifare il caricamento completo — un
+  // blip di stato dalla topologia non deve innescare quel loadAll (per quello
+  // c'è ownersSig, che resta a sola identità).
+  const ownerStatusSig = owners.map((o) => `${o.instanceId}:${o.status ?? ''}:${o.checking ? 'checking' : 'settled'}`).join('|');
+  const ownerStatusRef = useRef(new Map(owners.map(o => [
+    o.instanceId, o.checking ? 'pending' : o.status,
+  ])));
   ownersRef.current = owners;
+  nodeOrderRef.current = nodeOrder;
   layoutRef.current = layout;
   currentRef.current = current;
   recordsRef.current = records;
@@ -190,7 +205,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
 
   const install = useCallback((next, applyLayout = true, targetId) => {
     const wanted = targetId === undefined ? resolveCurrentId() : deckIdForLocalOwner(targetId, localNodeIdRef.current);
-    const ordered = orderDeckRecords(next, loadDeckOrders());
+    const ordered = orderDeckRecords(next, loadDeckOrders(), nodeOrderRef.current);
     const previousHadTarget = recordsRef.current.some((d) => d.id === wanted);
     recordsRef.current = ordered; setRecords(ordered);
     // Cache dell'ultima lista conosciuta (senza i flag effimeri del refresh
@@ -285,12 +300,14 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
         return;
       }
       // Degrado per owner (timeout federato o errore di rete): le sue deck
-      // precedenti restano con available:false e l'istante del refresh
-      // fallito. Mai un reflow, mai una rimozione.
+      // precedenti restano con la disponibilità GIÀ nota (un solo fetch
+      // caduto non dichiara offline un owner che la lista nodi/celle vede
+      // 'up'), il flag stale e l'istante del refresh fallito — il segnalino
+      // «in ritardo» è onesto, l'offline no. Mai un reflow, mai una rimozione;
+      // un owner mai caricato resta senza deck, come prima.
       const previous = recordsRef.current.filter((d) => !d.local && d.ownerId === owner.instanceId)
         .map((d) => ({
           ...d,
-          available: false,
           stale: true,
           refreshFailedAt: Date.now(),
           ownerRoute: [...owner.route],
@@ -341,9 +358,13 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
       // deve far lampeggiare offline la rail. Owner non-up (nessun reload
       // in arrivo): degrado esplicito, come prima.
       const reloading = owner.status === 'up';
+      // Un owner "pending" (lettura della discovery ancora in corso) non e'
+      // un esito: la disponibilita' gia' nota resta com'e', senza degradazione
+      // ne' marcatura stale. Il degrado arriva da uno stato non-up confermato.
+      const pending = owner.status === 'pending' || owner.checking === true;
       return [{
         ...d,
-        available: reloading ? d.available !== false : false,
+        available: pending ? d.available : (reloading ? d.available !== false : false),
         stale: owner.stale === true,
         ownerRoute: [...owner.route],
         ownerLabel: owner.label,
@@ -355,7 +376,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     // dall'install dell'elenco fresh.
     setTimeout(() => {
       for (const owner of known.values()) {
-        if (owner.status === 'up') loadOwnerDecks(owner);
+        if (owner.status === 'up' && !owner.checking) loadOwnerDecks(owner);
       }
     }, 0);
     return [...localRecords, ...previousRemote];
@@ -380,6 +401,42 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = []) {
     });
     return () => { cancelled = true; };
   }, [install, loadAll, ownersSig, token, findCurrent]);
+
+  // D-392: un riordino nella lista nodi/celle a sinistra si riflette subito
+  // sui gruppi della rail, senza ricaricare nulla — stessi record, ordine
+  // nuovo. Il confronto evita il re-render quando l'ordine non cambia nulla.
+  useEffect(() => {
+    if (!recordsRef.current.length) return;
+    const ordered = orderDeckRecords(recordsRef.current, loadDeckOrders(), nodeOrder);
+    const moved = ordered.length !== recordsRef.current.length
+      || ordered.some((d, i) => d.id !== recordsRef.current[i].id);
+    if (moved) {
+      recordsRef.current = ordered;
+      setRecords(ordered);
+    }
+  }, [nodeOrder]);
+
+  // Il ritorno a 'up' di un owner degradato riparte subito con il suo
+  // caricamento per-owner: l'effetto confronta la firma degli stati con quella
+  // del render precedente e ricarica SOLO gli owner appena tornati 'up'. Chi
+  // passa a non-up non fa nulla qui (il suo degrado esplicito arriva con la
+  // prossima loadAll); il primo render non ricarica nulla — di quello si
+  // occupa la loadAll che parte al mount.
+  useEffect(() => {
+    const previous = ownerStatusRef.current;
+    const confirmed = new Map();
+    for (const owner of ownersRef.current) {
+      if (owner.checking || owner.status === 'pending') {
+        // L'attesa non sostituisce l'ultimo esito: un down breve deve ancora
+        // provocare il reload quando il ritorno up viene verificato.
+        confirmed.set(owner.instanceId, previous.get(owner.instanceId) || 'pending');
+        continue;
+      }
+      if (owner.status === 'up' && previous.get(owner.instanceId) !== 'up') loadOwnerDecks(owner);
+      confirmed.set(owner.instanceId, owner.status);
+    }
+    ownerStatusRef.current = confirmed;
+  }, [ownerStatusSig, loadOwnerDecks]);
 
   const saveNow = useCallback(async (targetId, allowRebase = true) => {
     if (!ready || !dirtyRef.current) return true;

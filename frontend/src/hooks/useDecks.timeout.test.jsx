@@ -30,7 +30,7 @@ function Probe({ owners, current }) {
   const value = useDecks('token', current, layout, setLayout, owners);
   return <pre data-testid="probe">{JSON.stringify({
     ready: value.ready,
-    decks: (value.records || []).map((d) => ({ id: d.id, local: d.local, available: d.available })),
+    decks: (value.records || []).map((d) => ({ id: d.id, local: d.local, available: d.available, stale: d.stale === true })),
   })}</pre>;
 }
 
@@ -62,7 +62,7 @@ describe('owner remoto senza risposta', () => {
     expect(mocks.saveDeck).not.toHaveBeenCalled();
   });
 
-  it('owner che fallisce al refresh: solo le SUE deck degradano, le altre restano disponibili', async () => {
+  it('owner che fallisce al refresh: solo le SUE deck si segnano in ritardo, le altre restano disponibili', async () => {
     const callsByOwner = {};
     mocks.getDecks.mockImplementation((_t, route = []) => {
       if (!route.length) return Promise.resolve(localStore);
@@ -82,7 +82,8 @@ describe('owner remoto senza risposta', () => {
     // firma degli owner) — il peer rifiuta, Beta risponde ancora.
     rerender(<Probe owners={[OWNER_UP, OWNER_B, OWNER_EXTRA]} current={remoteIdDeck} />);
     await waitFor(() => expect(mocks.getRouteConfig.mock.calls.length).toBe(2));
-    await waitFor(() => expect(stateOf().decks.find((d) => d.id === remoteIdDeck)?.available).toBe(false));
+    await waitFor(() => expect(stateOf().decks.find((d) => d.id === remoteIdDeck)?.stale).toBe(true));
+    expect(stateOf().decks.find((d) => d.id === remoteIdDeck)?.available).not.toBe(false);
     expect(stateOf().decks.find((d) => d.id === secondIdDeck)?.available).toBe(true);
     expect(stateOf().decks.some((d) => d.local && d.available)).toBe(true);
     expect(mocks.saveDeck).not.toHaveBeenCalled();
