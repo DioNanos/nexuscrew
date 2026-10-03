@@ -156,6 +156,8 @@ async function pair(t, root) {
     cellVisibility: 'selected', cells: ['dev'], eventsAccess: true, nodeEventsAccess: true,
     askReplyAccess: true, filesReadAccess: false, liveHostAccess: false, panelAccess: false, peerOperatorAccess: false,
   });
+  stB = nodesStore.setPeerAccessPreset(stB, 'client', 'admin');
+  stB = nodesStore.updateNode(stB, 'client', { eventsReceive: false });
   nodesStore.atomicWriteStore(B.nodesPath, stB);
   return { A, B, selfA, selfB, ownerDir, clientDir };
 }

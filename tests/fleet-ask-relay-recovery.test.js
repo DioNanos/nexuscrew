@@ -11,6 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { createAskRelay } = require('../lib/notify/ask-relay.js');
+const nodes = require('../lib/nodes/store.js');
 
 const SELF = 'f'.repeat(32);
 
@@ -98,7 +99,7 @@ function inboundStore(ownerId, { shared = true, grants = true, withSlot = true }
     askReplyAccess: grants === true || grants === 'reply-only',
     eventsAccess: grants === true || grants === 'events-only',
     cellVisibility: 'all',
-    ...(withSlot ? { reversePool: { slots: [{ port: 41821 }], activeSlot: 0 } } : {}),
+    ...(withSlot ? { reversePool: nodes.reversePoolDefault(41821, { generation: 1, verification: 'verified' }) } : {}),
   };
   return { nodeId: SELF, nodes: [peer] };
 }
@@ -173,4 +174,19 @@ test('consenso incompleto (askReplyAccess assente): owner-unknown, nessun forwar
   const out = await relay.relayAnswer({ ownerId, askId: 'a', text: 'x' });
   assert.strictEqual(out.reason, 'owner-unknown');
   assert.strictEqual(calls.length, 0);
+});
+
+for (const missing of ['active generation', 'slot generation', 'slot state']) test(`an incomplete inbound pool without ${missing} is refused before probing`, async () => {
+  const ownerId = '8'.repeat(32); const st = inboundStore(ownerId);
+  if (missing === 'active generation') delete st.nodes[0].reversePool.activeGeneration;
+  if (missing === 'slot generation') delete st.nodes[0].reversePool.slots[0].generation;
+  if (missing === 'slot state') delete st.nodes[0].reversePool.slots[0].state;
+  let probes = 0; let forwards = 0;
+  const relay = createAskRelay({ loadStore: () => st,
+    probeReverseSlotImpl: async () => { probes++; return { owned: true }; },
+    fetchImpl: async () => { forwards++; return { status: 200, json: async () => ({ dismissed: true }) }; },
+  });
+  const out = await relay.relayDismiss({ ownerId, askId: '11223344' });
+  assert.equal(out.code, 404); assert.equal(out.reason, 'reverse-slot-unverified');
+  assert.equal(probes, 0, 'an incomplete pool cannot start an ownership challenge'); assert.equal(forwards, 0);
 });

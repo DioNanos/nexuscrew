@@ -101,3 +101,15 @@ test('ASK closure is not sent to user or custom even after they were previously 
   const closed = actions.filter(a => a.body.closeOutcome);
   assert.deepEqual(closed.map(a => new URL(a.url).port), [String(admin.port)]);
 });
+
+test('a custom next hop refuses an ASK closure with a healthy store before delivery', async t => {
+  const origin = await boot(t); const hub = await boot(t); const leaf = await boot(t);
+  pair(origin, hub, 'hub'); pair(hub, origin, 'origin'); pair(hub, leaf, 'leaf', 'custom'); pair(leaf, hub, 'hub');
+  const actions = observe(t);
+  const response = await fetch(`http://127.0.0.1:${origin.port}/api/route/hub/leaf/_/asks`, { method: 'POST', headers: headers(origin.token),
+    body: JSON.stringify({ target: leaf.id, originNode: origin.id, originCell: tmuxSessionForCell('reviewer'),
+      ownerNode: origin.id, askId: '11223344', closeOutcome: 'dismissed' }) });
+  assert.equal(response.status, 403); assert.equal((await response.json()).reason, 'ask-target-not-admin');
+  assert.equal(actions.filter(a => new URL(a.url).port === String(leaf.port)).length, 0);
+  assert.ok(nodes.loadStoreStrict(leaf.nodesPath), 'the refused target has a healthy store');
+});
