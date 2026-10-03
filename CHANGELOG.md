@@ -2,6 +2,13 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.56 — 2026-10-03
+
+- **Le opzioni accettano il valore separato da uno spazio.** Comandi come `nodes edit --access-role user` ora funzionano; se manca il valore, il messaggio indica chiaramente quale opzione lo richiede.
+- **I deck in alto seguono l'ordine della lista.** La barra dei deck rispetta l'ordine dei nodi e delle celle scelto nella lista.
+- **Un aggiornamento lento non mette più un deck offline.** Il badge «in ritardo» segnala un aggiornamento che tarda ad arrivare; il deck risulta offline solo quando il nodo è giù.
+- **Le liste dei nodi non si bloccano su un nodo lento o spento.** Le letture hanno un tempo massimo e ogni risposta aggiorna la lista appena arriva, senza aspettare le altre.
+
 ## 0.9.55 — 2026-10-02
 
 Grazie a @sadoc1184-droid per le PR #7, #8 e #10.
