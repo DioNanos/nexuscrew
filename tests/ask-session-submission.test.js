@@ -10,7 +10,7 @@ const nodes = require('../lib/nodes/store.js');
 async function boot(t, engine = 'claude.native', failure = '') {
  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-submit-')); const configDir = path.join(home, '.nexuscrew'); fs.mkdirSync(configDir);
  const nodesPath = path.join(configDir, 'nodes.json'); nodes.initStore(nodesPath);
- const log = path.join(home,'commands.jsonl'), binary = path.join(home,'tmux');
+ const log = path.join(home,'commands.jsonl'), binary = path.join(home,'tmux'); const presence = { value: true };
  fs.writeFileSync(log,'');
  fs.writeFileSync(binary, `#!${process.execPath}
 const fs=require('node:fs'); const a=process.argv.slice(2);
@@ -20,14 +20,14 @@ if(a[0]===${JSON.stringify(failure)})process.exit(1);
 if(a[0]==='display-message')process.stdout.write(a.at(-1)==='#{pane_id}'?'%7\\n':'cell-reviewer\\t0\\t%7\\n');
 `,{mode:0o700});
  const runtime=createServer({ home,configDir,nodesPath,configPath:path.join(configDir,'config.json'),tokenPath:path.join(configDir,'token'),
- port:0,tmuxBin:binary,fleetEnabled:false,sessionExistsSeam:()=>true,filesRoot:path.join(home,'files'),
+ port:0,tmuxBin:binary,fleetEnabled:false,sessionExistsSeam:()=>presence.value,filesRoot:path.join(home,'files'),
  settingsSeams:{platform:'linux',uid:1000,execImpl:()=>{throw Error('disabled');},serviceInstallPath:path.join(home,'service'),keygen:()=> 'ssh-ed25519 AAAAFIXTURE demo',spawnImpl:()=>({pid:4100000,unref(){}}),sshVersion:()=>({major:9,minor:6})}});
  const fleet=await runtime.fleetP; fleet.available=true; fleet.cellStatus=async()=>({available:true,cells:[{cell:'Reviewer',tmuxSession:'cell-reviewer',engine,active:true,tmux:true}]});
  await new Promise(r=>runtime.server.listen(0,'127.0.0.1',r));
  t.after(async()=>{runtime.server.closeAllConnections();await new Promise(r=>runtime.server.close(r));runtime.watcher.close();fs.rmSync(home,{recursive:true,force:true});});
  const request=async(url,body)=>{const r=await fetch('http://127.0.0.1:'+runtime.server.address().port+'/api'+url,{method:'POST',headers:{authorization:'Bearer '+runtime.token,'content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
  const created=await request('/asks',{question:'Proceed?',session:'cell-reviewer'});assert.equal(created.status,201);
- return {request,id:created.body.id,commands:()=>fs.readFileSync(log,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse),fleet};
+ return {request,id:created.body.id,commands:()=>fs.readFileSync(log,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse),fleet,presence};
 }
 for(const engine of ['claude.native','codex.native']) test(`ASK answer submits once using the server Fleet engine ${engine}`,async t=>{
  const s=await boot(t,engine);const out=await s.request('/asks/'+s.id+'/answer',{text:'Proceed\n',engine:'shell.local'});assert.equal(out.status,200);
@@ -41,9 +41,9 @@ test('ASK retry after an attempted paste does not paste or submit again',async t
  assert.equal((await s.request('/asks/'+s.id+'/answer',{text:'Again'})).status,409);
  assert.equal(s.commands().filter(a=>a[0]==='paste-buffer').length,1);assert.equal(s.commands().filter(a=>a.at(-1)==='Enter').length,0);
 });
-test('an unknown Fleet cell refuses ASK before paste and releases the claim',async t=>{
- const s=await boot(t);s.fleet.cellStatus=async()=>({available:true,cells:[]});assert.equal((await s.request('/asks/'+s.id+'/answer',{text:'Proceed'})).status,502);assert.equal(s.commands().length,0);
- s.fleet.cellStatus=async()=>({available:true,cells:[{cell:'Reviewer',tmuxSession:'cell-reviewer',engine:'claude.native',active:true,tmux:true}]});assert.equal((await s.request('/asks/'+s.id+'/answer',{text:'Proceed'})).status,200);
+test('an unavailable Fleet refuses ASK before paste and releases the claim',async t=>{
+ const s=await boot(t);s.fleet.available=false;assert.equal((await s.request('/asks/'+s.id+'/answer',{text:'Proceed'})).status,502);assert.equal(s.commands().length,0);
+ s.fleet.available=true;s.fleet.cellStatus=async()=>({available:true,cells:[{cell:'Reviewer',tmuxSession:'cell-reviewer',engine:'claude.native',active:true,tmux:true}]});assert.equal((await s.request('/asks/'+s.id+'/answer',{text:'Proceed'})).status,200);
 });
 
 const { createAsksStore } = require('../lib/notify/asks.js');
@@ -92,5 +92,17 @@ test('a failed durable unknown receipt keeps the answer claim held',async t=>{
 
 for (const state of ['inactive', 'missing-tmux']) test(`ASK refuses a Fleet cell that is ${state} before paste`, async t => {
  const s=await boot(t);s.fleet.cellStatus=async()=>({available:true,cells:[{cell:'Reviewer',tmuxSession:'cell-reviewer',engine:'codex.native',active:state!=='inactive',tmux:state!=='missing-tmux'}]});
+ assert.equal((await s.request('/asks/'+s.id+'/answer',{text:'Proceed'})).status,502);assert.equal(s.commands().length,0);
+});
+
+test('a manual tmux session keeps paste-only ASK answers without a presumed engine', async t => {
+ const s=await boot(t);s.fleet.cellStatus=async()=>({available:true,cells:[]});
+ const out=await s.request('/asks/'+s.id+'/answer',{text:'Proceed',engine:'codex.native'});assert.equal(out.status,200);assert.equal(out.body.answered,true);
+ const c=s.commands();assert.equal(c.filter(a=>a[0]==='send-keys'&&a.includes('-l')).length,1);
+ assert.equal(c.filter(a=>a.at(-1)==='Enter'||a.at(-1)==='C-e').length,0);
+ assert.equal((await s.request('/asks/'+s.id+'/answer',{text:'Again'})).status,409);assert.equal(s.commands().filter(a=>a[0]==='send-keys').length,1);
+});
+test('an absent manual tmux session refuses ASK before any paste', async t => {
+ const s=await boot(t);s.fleet.cellStatus=async()=>({available:true,cells:[]});s.presence.value=false;
  assert.equal((await s.request('/asks/'+s.id+'/answer',{text:'Proceed'})).status,502);assert.equal(s.commands().length,0);
 });
