@@ -507,3 +507,49 @@ test('R4: the kill switch flipped during/after the build still refuses the snaps
   assert.equal(r.status, 403);
   assert.equal((await r.json()).reason, 'events-disabled');
 });
+
+test('a named snapshot rejection survives EOF until a valid snapshot heals it', async (t) => {
+  const ownerId = 'a'.repeat(32);
+  const valid = { ownerId, cursor: '1:0', viewEpoch: 1, asks: [], notifications: [], fleetState: null };
+  const oversized = { ...valid, fleetState: { available: true, cells: [{ cell: 'x'.repeat(20 * 1024), active: true }] } };
+  const snapshot = (value) => ({ ok: true, status: 200, text: async () => JSON.stringify(value) });
+  let entered;
+  let finish;
+  const reading = new Promise((resolve) => { entered = resolve; });
+  const stream = { ok: true, status: 200, body: { getReader: () => ({ read: () => {
+    entered();
+    return new Promise((resolve) => { finish = resolve; });
+  } }) } };
+  const { client } = stubClient(t, [
+    { ok: true, status: 200, json: async () => ({ instanceId: ownerId, eventFeedV1: true }) },
+    snapshot(valid), stream, snapshot(oversized), snapshot(valid),
+  ]);
+  const round = client.poll();
+  await reading;
+  await client.ownerSnapshotAsks(ownerId);
+  assert.equal(client.viewFor(ownerId).lastError, 'snapshot-element-oversize');
+  finish({ done: true });
+  await round;
+  assert.equal(client.viewFor(ownerId).lastError, 'snapshot-element-oversize', 'EOF preserves the named rejection');
+  await client.ownerSnapshotAsks(ownerId);
+  assert.equal(client.viewFor(ownerId).lastError, null, 'a valid snapshot heals the rejection');
+  assert.equal(client.viewFor(ownerId).stale, false);
+});
+
+test('a named snapshot rejection survives a later parse failure until healing', async (t) => {
+  const ownerId = 'a'.repeat(32);
+  const valid = { ownerId, cursor: '1:0', viewEpoch: 1, asks: [], notifications: [], fleetState: null };
+  const oversized = { ...valid, fleetState: { available: true, cells: [{ cell: 'x'.repeat(20 * 1024), active: true }] } };
+  const snapshot = (value) => ({ ok: true, status: 200, text: async () => JSON.stringify(value) });
+  const { client } = stubClient(t, [
+    { ok: true, status: 200, json: async () => ({ instanceId: ownerId, eventFeedV1: true }) },
+    snapshot(oversized), { ok: true, status: 200, text: async () => '' }, snapshot(valid),
+  ]);
+  await client.poll();
+  assert.equal(client.viewFor(ownerId).lastError, 'snapshot-element-oversize');
+  await client.poll();
+  assert.equal(client.viewFor(ownerId).lastError, 'snapshot-element-oversize', 'a parse failure preserves the named rejection');
+  await client.ownerSnapshotAsks(ownerId);
+  assert.equal(client.viewFor(ownerId).lastError, null, 'a valid snapshot heals the rejection');
+  assert.equal(client.viewFor(ownerId).stale, false);
+});
