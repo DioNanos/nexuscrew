@@ -1289,6 +1289,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   // nuovi.
   const peersSnapshotRef = useRef([]);
   const vlSnapshotRef = useRef(new Map());
+  const snapshotIdentityRef = useRef({ token: null, instanceId: null });
 
   const publishNodes = useCallback((guard, round) => {
     if (!guard.isCurrent(round)) return;
@@ -1298,7 +1299,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
     for (const list of vlSnapshotRef.current.values()) {
       for (const peer of list) {
         const routeKey = Array.isArray(peer.route) && peer.route.length ? peer.route.join('/') : 'local';
-        const key = `${routeKey}:${peer.nodeId || peer.name || peer.label || ''}`;
+        const key = `${peer.ownerInstanceId}:${routeKey}:${peer.nodeId || peer.name || peer.label || ''}`;
         if (seen.has(key)) continue;
         seen.add(key);
         vl.push(peer);
@@ -1317,14 +1318,14 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
     try {
       // Settings e peer partono IN PARALLELO e con esiti indipendenti: i
       // peer si pubblicano al LORO arrivo, senza aspettare le settings.
-      getSettings(token, opts).then((s) => {
+      const settingsTask = getSettings(token, opts).then((s) => {
         if (!guard.isCurrent(round)) return;
         setSettings(s); setLoadErr(null);
       }).catch((e) => {
         if (!guard.isCurrent(round)) return;
         setLoadErr(String(e?.message || e));
       });
-      getPeers(token, opts).then((j) => {
+      const peersTask = getPeers(token, opts).then((j) => {
         if (!guard.isCurrent(round)) return;
         const peers = j.peers || [];
         peersSnapshotRef.current = peers;
@@ -1338,25 +1339,47 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
       // multi-owner SOLO lato presentazione. Ogni owner termina entro il
       // tetto proprio (4 s dalla partenza della sua GET) e non trattiene ne'
       // i peer ne' gli altri owner.
-      try {
+      const enrichmentTask = (async () => {
         const [config, topology] = await Promise.all([
           getRouteConfig(token, [], opts).then((j) => j).catch(() => null),
           getTopology(token, opts).then((j) => j).catch(() => null),
         ]);
         if (!guard.isCurrent(round)) return;
         const localInstanceId = config && typeof config.instanceId === 'string' ? config.instanceId : '';
+        if (!localInstanceId) return;
+        if (snapshotIdentityRef.current.instanceId !== localInstanceId) {
+          vlSnapshotRef.current.clear();
+          snapshotIdentityRef.current.instanceId = localInstanceId;
+        }
         const owners = [
           { instanceId: localInstanceId || null, route: [], label: null },
           ...topologyVlOwners(topology, localInstanceId),
         ];
-        const unavailable = [];
-        await Promise.all(owners.map(async (owner) => {
-          const ownerKey = owner.route.join('/') || 'local';
+        const ownerKeyOf = (owner) => `${owner.instanceId}:${owner.route.join('/')}`;
+        if (topology) {
+          const present = new Set(owners.map(ownerKeyOf));
+          for (const key of vlSnapshotRef.current.keys()) {
+            if (!present.has(key)) vlSnapshotRef.current.delete(key);
+          }
+        }
+        if (!topology) {
+          for (const [key, peers] of vlSnapshotRef.current) {
+            if (peers.some(peer => peer.route.length)) vlSnapshotRef.current.set(key, peers.map(peer => ({
+              ...peer, stale: true, online: false, canManage: false, capabilities: [],
+            })));
+          }
+        }
+        const unavailable = new Map();
+        setVlUnavailable([]);
+        publishNodes(guard, round);
+        await Promise.allSettled(owners.map(async (owner) => {
+          const ownerKey = ownerKeyOf(owner);
           try {
-            const payload = await getVlNodes(token, owner.route);
+            const payload = await getVlNodes(token, owner.route, { signal: controller.signal });
             if (!guard.isCurrent(round)) return;
             const peers = (payload.nodes || []).map((n) => vlNodeToPeer(n, owner)).filter(Boolean);
             vlSnapshotRef.current.set(ownerKey, peers);
+            unavailable.delete(ownerKey);
           } catch (error) {
             if (!guard.isCurrent(round)) return;
             // Il locale mantiene il degrado silenzioso (feature non
@@ -1364,18 +1387,26 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
             // che non risponde entra in vlUnavailable; i suoi ultimi VL noti
             // restano nella composizione, presentati come dati non
             // aggiornati, mai come una lettura nuova.
-            if (owner.route.length === 0) return;
-            unavailable.push({
+            const denied = error?.status === 403 || error?.status === 404;
+            if (denied) vlSnapshotRef.current.delete(ownerKey);
+            else {
+              const previous = vlSnapshotRef.current.get(ownerKey);
+              if (previous) vlSnapshotRef.current.set(ownerKey, previous.map(peer => ({
+                ...peer, stale: true, online: false, canManage: false, capabilities: [],
+              })));
+            }
+            if (owner.route.length > 0) unavailable.set(ownerKey, {
               instanceId: owner.instanceId, label: owner.label,
               route: owner.route,
               failure: /timeout/i.test(String(error?.message || error)) ? 'timeout' : 'unreachable',
             });
           }
+          if (!guard.isCurrent(round)) return;
+          setVlUnavailable([...unavailable.values()]);
+          publishNodes(guard, round);
         }));
-        if (!guard.isCurrent(round)) return;
-        setVlUnavailable(unavailable);
-        publishNodes(guard, round);
-      } catch (_) { /* arricchimento VL opzionale: i peer Fleet restano comunque */ }
+      })();
+      await Promise.allSettled([settingsTask, peersTask, enrichmentTask]);
     } finally {
       if (refreshAbortRef.current === controller) refreshAbortRef.current = null;
       guard.end(round);
@@ -1384,6 +1415,12 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
 
   // Poll leggero (5s) finché il pannello è aperto: stato tunnel per-nodo fresco.
   useEffect(() => {
+    if (snapshotIdentityRef.current.token !== token) {
+      snapshotIdentityRef.current = { token, instanceId: null };
+      peersSnapshotRef.current = [];
+      vlSnapshotRef.current.clear();
+      setNodes([]); setVlUnavailable([]); setPeersAccessRevision(null);
+    }
     refresh();
     const id = setInterval(refresh, 5000);
     return () => {

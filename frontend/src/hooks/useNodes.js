@@ -11,7 +11,7 @@
 // "pending", quelli gia' noti conservano il loro stato marcato "checking".
 import { useEffect, useRef, useState } from 'react';
 import {
-  apiFetch, getNodes, getTopology, getNodeAliases, getRouteSessions,
+  getRouteConfig, getNodes, getTopology, getNodeAliases, getRouteSessions,
   fleetStatus, getVlNodes, ROSTER_READ_TIMEOUT_MS,
 } from '../lib/api.js';
 import { buildNodeGroups, trackDown } from '../lib/nodes-model.js';
@@ -85,6 +85,8 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
   // Il token con cui la cache e' stata riempita, e la guardia generazionale
   // del giro in volo.
   const cacheTokenRef = useRef(null);
+  const cacheInstanceRef = useRef(null);
+  const cacheOwnersRef = useRef(new Map());
   const guardRef = useRef(createPollGuard());
   const abortRef = useRef(null);
 
@@ -95,16 +97,20 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
     // diverso e' un'altra sessione, e i suoi dati non sono i nostri. Senza
     // questo, dopo un cambio di token la UI mostrerebbe l'elenco dell'utente
     // precedente come se fosse una lettura corrente.
+    const tokenChanged = cacheTokenRef.current !== null && cacheTokenRef.current !== token;
     if (cacheTokenRef.current !== token) {
       cacheTokenRef.current = token;
       backoffRef.current = {};
       peerCacheRef.current = { remote: {}, fleet: {} };
+      cacheOwnersRef.current.clear();
       downRef.current = {};
+      groupsRef.current = [];
+      setGroups([]);
     }
     // Owner sticky, ripristinati dal localStorage per ripartire pieni al
     // reload della pagina invece che con la lista vuota.
     const sticky = { instanceId: '', nodes: new Map(), topology: new Map() };
-    const persisted = readStickyOwners();
+    const persisted = tokenChanged ? null : readStickyOwners();
     if (persisted) {
       sticky.instanceId = persisted.instanceId || '';
       for (const n of persisted.nodes) sticky.nodes.set(n.name, { data: n, missingSince: null });
@@ -125,18 +131,20 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       const current = () => alive && guard.isCurrent(round);
       let nodes = []; let topology = []; let aliases = {}; let localInstanceId = '';
       let nodesOk = false; let topologyOk = false;
+      let nodesState = 'pending'; let topologyState = 'pending';
       const remote = {}; const fleet = {}; let vlPeers = [];
       // Letture in corso, per route e per fonte: chiave nuda o `key#sessions` /
       // `key#fleet`. Non sono esiti: la proiezione li distingue dai dati.
       const pendingReads = new Set();
-      let readsStarted = false;
+      const routesStarted = new Set();
+      const vlStarted = new Set();
       let ownerOf = new Map();
       const readTasks = [];
 
       const computeOwnerOf = () => {
         ownerOf = new Map([
-          ...nodes.map((n) => [n.name, n.nodeId]),
           ...topology.filter((n) => Array.isArray(n.route)).map((n) => [n.route.join('/'), n.instanceId]),
+          ...nodes.map((n) => [n.name, n.nodeId]),
         ].filter(([, id]) => typeof id === 'string' && id));
       };
       const restoredFleet = (key) => {
@@ -146,7 +154,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       };
 
       const publish = () => {
-        if (!current()) return false;
+        if (!current() || !localInstanceId) return false;
         const previousGroups = groupsRef.current;
         const first = buildNodeGroups({
           nodes, topology, remote, fleet, aliases, down: downRef.current,
@@ -177,22 +185,31 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       // pronte, pubblicazione. L'identita' locale (config) precede il merge:
       // una cache di un'altra istanza viene svuotata PRIMA, non dopo.
       const reconcile = () => {
-        if (!alive) return;
+        if (!current()) return;
+        if (!localInstanceId) return;
         // Un esito confermato aggiorna; un FETCH FALLITO non azzera: marca
         // gli owner noti come stale (stessa semantica del merge sticky).
         if (nodesOk) {
           mergeStickyOwners(sticky.nodes, true, nodesFresh, (n) => n && n.name, pollStart);
-        } else {
+        } else if (nodesState === 'error') {
           mergeStickyOwners(sticky.nodes, false, nodesFresh, (n) => n && n.name, pollStart);
         }
         if (topologyOk) {
           mergeStickyOwners(sticky.topology, true, topologyFresh, (t) => (Array.isArray(t && t.route) ? t.route.join('/') : ''), pollStart);
-        } else {
+        } else if (topologyState === 'error') {
           mergeStickyOwners(sticky.topology, false, topologyFresh, (t) => (Array.isArray(t && t.route) ? t.route.join('/') : ''), pollStart);
         }
         nodes = [...sticky.nodes.values()].map((e) => e.data);
         topology = [...sticky.topology.values()].map((e) => e.data);
         computeOwnerOf();
+        for (const [key, id] of ownerOf) {
+          const previousId = cacheOwnersRef.current.get(key);
+          if (previousId && previousId !== id) {
+            delete peerCacheRef.current.remote[key]; delete peerCacheRef.current.fleet[key];
+            delete backoffRef.current[key]; delete backoffRef.current[`vl:${key}`]; delete downRef.current[key];
+          }
+          cacheOwnersRef.current.set(key, id);
+        }
         // Nodi NON raggiungibili o stale: la lettura fleet non e' VERIFICABILE,
         // non assente — l'ultimo elenco noto resta come elenco fermo (stale)
         // finche' il nodo non torna su.
@@ -223,13 +240,15 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
         publish();
       };
       const applyNodes = (ok, list) => {
-        if (!alive) return;
+        if (!current()) return;
+        nodesState = ok ? 'success' : 'error';
         nodesOk = ok;
         nodesFresh = ok ? list : [];
         reconcile();
       };
       const applyTopology = (ok, list) => {
-        if (!alive) return;
+        if (!current()) return;
+        topologyState = ok ? 'success' : 'error';
         topologyOk = ok;
         topologyFresh = ok ? list : [];
         reconcile();
@@ -237,18 +256,23 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       const applyConfig = (j) => {
         if (!current()) return;
         localInstanceId = j && typeof j.instanceId === 'string' ? j.instanceId : '';
-        if (localInstanceId && sticky.instanceId !== localInstanceId) {
+        if (localInstanceId && (sticky.instanceId !== localInstanceId || cacheInstanceRef.current !== localInstanceId)) {
           // localStorage di un ALTRO nodo locale: la cache non e' nostra. E lo
           // stesso vale per le risposte dei peer, che sono indicizzate per
           // ROTTA: un'altra istanza puo' riusare la stessa rotta, e in quel caso
           // l'elenco di prima e' il residuo di un nodo diverso.
-          sticky.instanceId = localInstanceId;
-          sticky.nodes.clear(); sticky.topology.clear();
+          if (sticky.instanceId !== localInstanceId) {
+            sticky.nodes.clear(); sticky.topology.clear();
+          }
+          groupsRef.current = []; downRef.current = {};
           backoffRef.current = {};
           peerCacheRef.current = { remote: {}, fleet: {} };
+          cacheOwnersRef.current.clear();
         } else if (localInstanceId) {
           sticky.instanceId = localInstanceId;
         }
+        cacheInstanceRef.current = localInstanceId || null;
+        sticky.instanceId = localInstanceId;
         reconcile();
       };
 
@@ -260,6 +284,9 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
           ...topologyVlOwners({ nodes: topology }, localInstanceId),
         ];
         for (const owner of vlOwners) {
+          const identity = `${owner.instanceId}:${owner.route.join('/')}`;
+          if (vlStarted.has(identity)) continue;
+          vlStarted.add(identity);
           const key = `vl:${owner.route.join('/')}`;
           readTasks.push((async () => {
             if (!shouldPollPeer(backoffRef.current, key, pollStart)) return;
@@ -274,7 +301,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
               }
               // I VL nuovi sostituiscono SOLO i loro: gli altri owner restano.
               const ownerKey = owner.route.join('/') || 'local';
-              vlPeers = vlPeers.filter((peer) => (Array.isArray(peer.route) ? peer.route.join('/') : 'local') !== ownerKey);
+              vlPeers = vlPeers.filter((peer) => (Array.isArray(peer.route) ? peer.route.join('/') || 'local' : 'local') !== ownerKey);
               vlPeers.push(...peers);
               publish();
             } catch (e) {
@@ -397,24 +424,34 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       }
 
       // Le letture principali partono una volta sola, quando la discovery
-      // minima (nodes, topology, config) e' conclusa. L'alias non e' un
+      // della propria fonte e la config sono valide. L'alias non e' un
       // prerequisito.
       function maybeStartReads() {
-        if (readsStarted || !nodesOk || !topologyOk || !localInstanceId) return;
-        readsStarted = true;
+        if (!current() || !localInstanceId) return;
         startVlReads();
         const direct = new Set(nodes.map((n) => n.name));
+        const add = (route) => {
+          const key = route.join('/');
+          if (routesStarted.has(key)) return;
+          routesStarted.add(key);
+          readTasks.push(startRouteReads(route));
+        };
         for (const n of nodes) {
-          if (n.tunnel?.status === 'up' && (n.nodeId || n.paired !== false)
-            && (n.direction !== 'inbound' || n.shared === true)) readTasks.push(startRouteReads([n.name]));
+          if (nodesOk && !n.stale && n.tunnel?.status === 'up' && (n.nodeId || n.paired !== false)
+            && (n.direction !== 'inbound' || n.shared === true)) add([n.name]);
+          else if (nodesState === 'pending' && !n.stale && n.tunnel?.status === 'up') {
+            pendingReads.add(`${n.name}#sessions`); pendingReads.add(`${n.name}#fleet`);
+          }
         }
         for (const n of topology) {
-          // Una route vuota non e' una posizione fleet: e' il VL owner locale
-          // (o un gruppo locale riflesso) e interrogarla con fleetStatus/
-          // getRouteSessions rifletterebbe il fleet locale sotto un'altra
-          // etichetta. Stesso criterio di rosterItemsByPosition/CellSwitcher.
           if (!n.stale && Array.isArray(n.route) && n.route.length > 0
-            && !(n.route.length === 1 && direct.has(n.route[0]))) readTasks.push(startRouteReads(n.route));
+            && !(n.route.length === 1 && direct.has(n.route[0]))) {
+            const key = n.route.join('/');
+            if (topologyOk) add(n.route);
+            else if (topologyState === 'pending') {
+              pendingReads.add(`${key}#sessions`); pendingReads.add(`${key}#fleet`);
+            }
+          }
         }
       }
 
@@ -427,10 +464,10 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
         () => { applyTopology(false, []); },
       );
       const taskAliases = getNodeAliases(token, opts).then(
-        (j) => { aliases = j && typeof j.aliasesByInstanceId === 'object' ? j.aliasesByInstanceId : {}; publish(); },
+        (j) => { if (!current()) return; aliases = j && typeof j.aliasesByInstanceId === 'object' ? j.aliasesByInstanceId : {}; publish(); },
         () => {},
       );
-      const taskConfig = apiFetch('/api/config', token, opts).then((r) => r.json()).then(
+      const taskConfig = getRouteConfig(token, [], opts).then(
         (j) => { applyConfig(j); },
         () => {},
       );

@@ -71,3 +71,19 @@ describe('owner pending: le deck conservano la disponibilita\' nota', () => {
     expect(decks.every((d) => d.stale === false)).toBe(true);
   });
 });
+
+it('a brief confirmed down still reloads when checking becomes confirmed up', async () => {
+  vi.useFakeTimers();
+  const view = render(<Probe owners={[OWNER_UP]} current="main" />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  const remoteCalls = () => mocks.getDecks.mock.calls.filter(([, route]) => route?.length).length;
+  const before = remoteCalls();
+  view.rerender(<Probe owners={[{ ...OWNER_UP, status: 'down' }]} current="main" />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+  view.rerender(<Probe owners={[{ ...OWNER_UP, checking: true }]} current="main" />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+  expect(remoteCalls()).toBe(before);
+  view.rerender(<Probe owners={[OWNER_UP]} current="main" />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+  expect(remoteCalls()).toBe(before + 1);
+});

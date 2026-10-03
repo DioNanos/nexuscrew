@@ -110,6 +110,7 @@ function cleanOwners(input) {
       label: String(owner.label || owner.name || owner.route.join(' › ')),
       status: owner.status || 'offline',
       stale: owner.stale === true,
+      checking: owner.checking === true,
     });
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));
@@ -174,8 +175,10 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = [], n
   // aspettare il poll periodico e senza rifare il caricamento completo — un
   // blip di stato dalla topologia non deve innescare quel loadAll (per quello
   // c'è ownersSig, che resta a sola identità).
-  const ownerStatusSig = owners.map((o) => `${o.instanceId}:${o.status ?? ''}`).join('|');
-  const ownerStatusRef = useRef(ownerStatusSig);
+  const ownerStatusSig = owners.map((o) => `${o.instanceId}:${o.status ?? ''}:${o.checking ? 'checking' : 'settled'}`).join('|');
+  const ownerStatusRef = useRef(new Map(owners.map(o => [
+    o.instanceId, o.checking ? 'pending' : o.status,
+  ])));
   ownersRef.current = owners;
   nodeOrderRef.current = nodeOrder;
   layoutRef.current = layout;
@@ -358,7 +361,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = [], n
       // Un owner "pending" (lettura della discovery ancora in corso) non e'
       // un esito: la disponibilita' gia' nota resta com'e', senza degradazione
       // ne' marcatura stale. Il degrado arriva da uno stato non-up confermato.
-      const pending = owner.status === 'pending';
+      const pending = owner.status === 'pending' || owner.checking === true;
       return [{
         ...d,
         available: pending ? d.available : (reloading ? d.available !== false : false),
@@ -373,7 +376,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = [], n
     // dall'install dell'elenco fresh.
     setTimeout(() => {
       for (const owner of known.values()) {
-        if (owner.status === 'up') loadOwnerDecks(owner);
+        if (owner.status === 'up' && !owner.checking) loadOwnerDecks(owner);
       }
     }, 0);
     return [...localRecords, ...previousRemote];
@@ -420,14 +423,19 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = [], n
   // prossima loadAll); il primo render non ricarica nulla — di quello si
   // occupa la loadAll che parte al mount.
   useEffect(() => {
-    const prev = new Map(ownerStatusRef.current.split('|').filter(Boolean).map((entry) => {
-      const sep = entry.indexOf(':');
-      return [entry.slice(0, sep), entry.slice(sep + 1)];
-    }));
+    const previous = ownerStatusRef.current;
+    const confirmed = new Map();
     for (const owner of ownersRef.current) {
-      if (owner.status === 'up' && prev.get(owner.instanceId) !== 'up') loadOwnerDecks(owner);
+      if (owner.checking || owner.status === 'pending') {
+        // L'attesa non sostituisce l'ultimo esito: un down breve deve ancora
+        // provocare il reload quando il ritorno up viene verificato.
+        confirmed.set(owner.instanceId, previous.get(owner.instanceId) || 'pending');
+        continue;
+      }
+      if (owner.status === 'up' && previous.get(owner.instanceId) !== 'up') loadOwnerDecks(owner);
+      confirmed.set(owner.instanceId, owner.status);
     }
-    ownerStatusRef.current = ownerStatusSig;
+    ownerStatusRef.current = confirmed;
   }, [ownerStatusSig, loadOwnerDecks]);
 
   const saveNow = useCallback(async (targetId, allowRebase = true) => {

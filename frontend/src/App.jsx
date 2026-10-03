@@ -843,7 +843,7 @@ export default function App() {
   // zero nodi configurati -> [] e workspace identico a oggi.
   const nodeGroups = useNodes(token, isDesktop);
   const deckOwners = useMemo(() => (nodeGroups || []).filter((g) => g.instanceId).map((g) => ({
-    instanceId: g.instanceId, route: g.route, label: g.label, status: g.status, stale: g.stale === true,
+    instanceId: g.instanceId, route: g.route, label: g.label, status: g.status, stale: g.stale === true, checking: g.checking === true,
   })), [nodeGroups]);
   // D-392: l'ordine dei DECKS in alto segue l'ordine della lista nodi/celle a
   // sinistra (nc_node_order_v1, per identita' — id/instanceId — mai per etichetta).

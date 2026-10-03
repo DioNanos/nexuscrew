@@ -19,7 +19,7 @@ const build = (remote, fleet, extra = {}) => buildNodeGroups({
 
 describe('stato di lettura dei gruppi', () => {
   it('una route con letture in corso e nessun esito e\' "pending", non unreachable', () => {
-    const groups = build({ vps: { pendingRead: true } }, {}, {
+    const groups = build({}, {}, {
       pendingReads: new Set(['vps']),
     });
     expect(groups).toHaveLength(1);
@@ -33,8 +33,8 @@ describe('stato di lettura dei gruppi', () => {
     );
     expect(completo[0].status).toBe('up');
     const groups = build(
-      { vps: { pendingRead: true } },
-      { vps: { pendingRead: true } },
+      {},
+      {},
       { pendingReads: new Set(['vps']), previousGroups: completo },
     );
     expect(groups).toHaveLength(1);
