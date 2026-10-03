@@ -26,7 +26,7 @@ function stubClient({ now = () => 1000, epoch = () => 1, asks = () => [ask()] } 
     nodeId: SELF,
     nodes: [{ name: 'owner', nodeId: OWNER, token: 'TOK', direction: 'outbound', eventsReceive: true, localPort: 46001 }],
   };
-  const fetchImpl = async (url) => {
+  const fetchImpl = async (url, opts = {}) => {
     if (url.includes('/federation/health')) {
       return { ok: true, status: 200, json: async () => ({ ok: true, instanceId: OWNER, eventFeedV1: true }) };
     }
@@ -37,7 +37,10 @@ function stubClient({ now = () => 1000, epoch = () => 1, asks = () => [ask()] } 
     }
     if (url.includes('/event-feed')) {
       return { ok: true, status: 200, json: async () => ({}), text: async () => '',
-        body: { getReader: () => ({ read: async () => ({ done: true }), cancel: async () => {} }) } };
+        body: { getReader: () => ({ read: () => new Promise((_resolve, reject) => {
+          if (opts.signal.aborted) reject(new Error('client stopped'));
+          else opts.signal.addEventListener('abort', () => reject(new Error('client stopped')), { once: true });
+        }), cancel: async () => {} }) } };
     }
     return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
   };
@@ -53,7 +56,11 @@ function stubClient({ now = () => 1000, epoch = () => 1, asks = () => [ask()] } 
 
 // Deterministic: one explicit round instead of racing the poll interval.
 async function round(client) {
-  await client.poll();
+  client.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  const beforeStop = client.state().views[0];
+  client.stop();
+  assert.deepEqual(client.state().views[0], beforeStop, 'intentional stop preserves the view, epoch and asks');
   return (client.state().views[0] || {}).asks || [];
 }
 async function resnapshot(client) {

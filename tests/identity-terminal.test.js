@@ -100,7 +100,7 @@ async function makeMcpHub(t) {
     notifier: { emit: async (frame) => { notifies.push(frame); return { ui: 1, push: 0 }; } },
     push: { sendToAll: async () => ({ sent: 0, removed: 0 }), vapidPublicKey: () => 'k' },
     asks: { create: () => ({ id: 'ask' }) },
-    paste: async () => true,
+    submit: async (...args) => { const result = await (async () => true)(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; },
     sessionExists: (session) => session === SESSION,
     fleetP, instanceId: () => LOCAL, identityMode: 'authority', localNodeId: () => LOCAL,
   }));

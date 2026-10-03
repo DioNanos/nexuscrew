@@ -182,7 +182,7 @@ async function makeWorld(t, { identityMode = 'authority' } = {}) {
     notifier,
     push,
     asks,
-    paste,
+    submit: async (...args) => { const result = await (paste)(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; },
     sessionExists,
     fleetP,
     instanceId: () => LOCAL,

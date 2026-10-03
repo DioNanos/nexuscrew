@@ -69,6 +69,7 @@ function boot(t, dir) {
     fleetEnabled: false,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -156,6 +157,8 @@ async function pair(t, root) {
     cellVisibility: 'selected', cells: ['dev'], eventsAccess: true, nodeEventsAccess: true,
     askReplyAccess: true, filesReadAccess: false, liveHostAccess: false, panelAccess: false, peerOperatorAccess: false,
   });
+  stB = nodesStore.setPeerAccessPreset(stB, 'client', 'admin');
+  stB = nodesStore.updateNode(stB, 'client', { eventsReceive: false });
   nodesStore.atomicWriteStore(B.nodesPath, stB);
   return { A, B, selfA, selfB, ownerDir, clientDir };
 }

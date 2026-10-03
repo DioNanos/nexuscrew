@@ -43,6 +43,7 @@ function boot(t, dir, { cleanup = true } = {}) {
     eventFeedClientMinSnapshotIntervalMs: 50,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -200,7 +201,7 @@ test('E2E (Pixel): view in resync-exhausted + dismiss confermato → la card esc
     const url = req.url || '';
     const json = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
     if (url === '/federation/health') return json(200, { ok: true, instanceId: OWNER, eventFeedV1: true });
-    if (url.includes('/event-feed/snapshot')) { hits.feed += 1; return json(200, { ownerId: OWNER, cursor: '1:1', viewEpoch: 1, notifications: [], asks: [{ id: 'pixel1234', question: 'la card che non sparisce', session: 's' }] }); }
+    if (url.includes('/event-feed/snapshot')) { hits.feed += 1; return json(200, { ownerId: OWNER, cursor: '1:1', viewEpoch: 1, notifications: [], asks: [{ id: 'abc12345', question: 'la card che non sparisce', session: 's' }] }); }
     if (url.includes('/event-feed/asks/') && req.method === 'DELETE') { hits.dismiss += 1; return json(200, { dismissed: true }); }
     if (url.includes('/event-feed')) { hits.feed += 1; return json(409, { error: 'cursor is too old', reason: 'reset-required' }); }
     return json(404, { error: 'no stub' });
@@ -219,24 +220,30 @@ test('E2E (Pixel): view in resync-exhausted + dismiss confermato → la card esc
   // La card arriva via snapshot, poi lo stream 409 per sempre esaurisce il resync.
   const view = await waitUntil(async () => {
     const v = await feedView(A, OWNER);
-    return v && v.stale === true && v.lastError === 'resync-exhausted' && hasAsk(v, 'pixel1234') ? v : null;
+    return v && v.stale === true && v.lastError === 'resync-exhausted' && hasAsk(v, 'abc12345') ? v : null;
   }, { tries: 100, what: 'gated view with the card' });
   assert.ok(view, 'the view is resync-exhausted with the card still in it');
   // Durante il cooldown l'owner non riceve nulla (il tappo di R5 resta).
   const feedBefore = hits.feed;
   await sleep(400);
   assert.equal(hits.feed, feedBefore, 'the exhausted view makes no request (R5)');
+  const invalid = await fetch(`${A.base}/api/asks-relay`, {
+    method: 'POST', headers: H(A.token),
+    body: JSON.stringify({ action: 'dismiss', ownerId: OWNER, askId: 'not-hex' }),
+  });
+  assert.equal(invalid.status, 404, 'invalid ASK ids are refused by the routed allowlist');
+  assert.equal(hits.dismiss, 0, 'an invalid id never forwards the dismiss to the owner');
   // Il dismiss confermato: 2xx dall'owner, scrittura arrivata.
   const r = await fetch(`${A.base}/api/asks-relay`, {
     method: 'POST', headers: H(A.token),
-    body: JSON.stringify({ action: 'dismiss', ownerId: OWNER, askId: 'pixel1234' }),
+    body: JSON.stringify({ action: 'dismiss', ownerId: OWNER, askId: 'abc12345' }),
   });
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { dismissed: true });
   assert.equal(hits.dismiss, 1, 'the relay reached the owner exactly once');
   // La card esce dalla view NONOSTANTE lo stream morto: è il percorso che
   // mancava (dismissConfirmed senza chiamanti nella 0.9.52 e in e822fb0).
-  const gone = await waitUntil(async () => !hasAsk(await feedView(A, OWNER), 'pixel1234'));
+  const gone = await waitUntil(async () => !hasAsk(await feedView(A, OWNER), 'abc12345'));
   assert.ok(gone, 'the confirmed dismiss removes the card from the gated view');
 });
 
@@ -286,6 +293,7 @@ test('E2E: recupero fallito → una richiesta di snapshot per scadenza, non uno 
     eventFeedClientResyncCooldownStepsMs: [300, 600, 1000],
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -374,6 +382,7 @@ function brokenRecoveryTest(label, failureMode, expectLastError) {
       eventFeedClientResyncCooldownStepsMs: [300, 600, 1000],
       sessionExistsSeam: () => true,
       pasteSeam: () => true,
+      askSubmit: () => ({ outcome: 'submitted', submitted: true }),
       settingsSeams: {
         platform: 'linux', uid: 1000,
         execImpl: () => { throw new Error('exec disabled in test'); },
@@ -467,6 +476,7 @@ test('E2E: frame malformato dopo snapshot valido — uno snapshot per finestra',
     eventFeedClientResyncCooldownStepsMs: [2000, 5000, 10000],
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -551,6 +561,7 @@ test('E2E: N GET /api/asks in 1 s → al massimo uno snapshot per owner', async 
     eventFeedClientMinSnapshotIntervalMs: 1000,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -631,6 +642,7 @@ test('E2E: snapshot in volo — lo skip non chiude alias aperti', async (t) => {
     eventFeedClientMinSnapshotIntervalMs: 1000,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -710,6 +722,7 @@ test('E2E: corpo che non finisce — la porta aborta e la GET risponde', async (
     eventFeedClientMinSnapshotIntervalMs: 1000,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -796,6 +809,7 @@ test('E2E: skip in finestra → un retry alla scadenza chiude l\'alias senza nuo
     eventFeedClientMinSnapshotIntervalMs: 1000,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -875,6 +889,7 @@ function unsubRejectionTest(label, snapBody, subscribed = false) {
       eventFeedClientMinSnapshotIntervalMs: 1000,
       sessionExistsSeam: () => true,
       pasteSeam: () => true,
+      askSubmit: () => ({ outcome: 'submitted', submitted: true }),
       settingsSeams: {
         platform: 'linux', uid: 1000,
         execImpl: () => { throw new Error('exec disabled in test'); },
@@ -979,6 +994,7 @@ test('E2E: retry programmato del reconcile — skipped in finestra arma un secon
     eventFeedClientMinSnapshotIntervalMs: 1000,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },

@@ -102,6 +102,7 @@ function boot(t, dir) {
     eventFeedClientMinSnapshotIntervalMs: WINDOW_MS,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },

@@ -2,6 +2,19 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.58 — 2026-10-03
+
+- **Reply to questions across connected hubs.** Replies and dismissals follow the question's owner through the network. Reply availability is checked separately from the notification feed, and an uncertain reply can be verified before another is sent.
+- **Interrupted event feeds recover without keeping a slot blocked.** Disconnections invalidate the cursor, owner retries retain their backoff, and health, snapshot and error-body reads have a deadline. Snapshot validation errors remain visible until a valid snapshot heals them.
+- **Admin access presets enable event reception.** Existing admin peers are migrated once; later choices to turn reception off are preserved.
+- **Codex on Termux keeps the active cell's MCP context.** Supported clients launch without reusing a shared daemon. Capability probes are cached while the binary is unchanged, and transient probe failures can be retried.
+- **Nodes in backoff finish their pending indicator.** A skipped roster read no longer leaves discovery placeholders marked as requests still in progress.
+
+- **Federated questions and their closures go only to admin peers.** Every hub checks its own next hop; user, host and custom peers keep questions local.
+- **Slow reverse links get a bounded opportunity to answer.** Owner actions share one total deadline and reuse a verified reverse slot briefly, while channel changes and failed forwarding invalidate it.
+
+- **Question replies to managed cells are submitted with one Enter.** Replies use the same submission as cell messages, including Codex composer handling. An uncertain delivery blocks automatic retries until it is explicitly reconciled; text already in the composer may be submitted with the reply. Manual tmux sessions retain paste-only delivery.
+
 ## 0.9.57 — 2026-10-03
 
 - **The node list no longer flickers for nodes reached through a hub.**

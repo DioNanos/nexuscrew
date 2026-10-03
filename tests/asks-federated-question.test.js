@@ -21,6 +21,8 @@ const { createServer } = require('../lib/server.js');
 const nodesStore = require('../lib/nodes/store.js');
 const { tmuxSessionForCell } = require('../lib/fleet/definitions.js');
 const { allowedResource } = require('../lib/proxy/federation.js');
+const { PRESETS } = require('../lib/nodes/access-presets.js');
+const adminPeer = nodeId => ({ nodeId, accessConfigured: true, ...PRESETS.admin });
 const { classifyResource } = require('../lib/proxy/resource-acl.js');
 
 const P1 = '1'.repeat(32);
@@ -29,7 +31,7 @@ const SELF = 'f'.repeat(32);
 
 // --- unit harness: dispatcher e peer list iniettati --------------------------
 
-function setup(t, { peerTargets = null, dispatchImpl = null, frames = [] } = {}) {
+function setup(t, { peerTargets = async () => [adminPeer(P1), adminPeer(P2)], dispatchImpl = null, frames = [] } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncaskfed-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const hub = { broadcast: (f) => { frames.push(f); return 1; }, clientCount: () => 1 };
@@ -49,7 +51,7 @@ function setup(t, { peerTargets = null, dispatchImpl = null, frames = [] } = {})
     notifier: createNotifier({ hub, push }),
     push,
     asks,
-    paste: () => Promise.resolve(true),
+    submit: async (...args) => { const result = await (() => Promise.resolve(true))(...args); return { outcome: result ? 'submitted' : 'failed-pre-paste' }; },
     sessionExists: (s) => typeof s === 'string' && s.startsWith('cell-'),
     localNodeId: () => SELF,
     dispatcher,
@@ -125,7 +127,7 @@ test('A2: con un target esplicito il dispatch parte UNA volta, verso quel nodo',
 });
 
 test('A2: senza target (D1) il dispatch parte per TUTTI i peer autorizzati, una volta ciascuno', async (t) => {
-  const s = await setup(t, { peerTargets: async () => [P1, P2, P1, SELF, 'non-un-id'] });
+  const s = await setup(t, { peerTargets: async () => [P1, P2, P1, SELF, 'non-un-id'].map(adminPeer) });
   const r = await ask(s.j, { question: 'q', options: ['a'], session: 'cell-a' });
   assert.equal(r.status, 201);
   assert.deepStrictEqual(s.calls.map((c) => c.target), [P1, P2],
@@ -200,6 +202,7 @@ function boot(t, { pasteCalls = null } = {}) {
     fleetEnabled: false,
     sessionExistsSeam: () => true,
     pasteSeam: pasteCalls ? (session, text) => { pasteCalls.push({ session, text }); return true; } : undefined,
+    askSubmit: pasteCalls ? (session, text) => { pasteCalls.push({ session, text }); return { outcome: 'submitted', submitted: true }; } : undefined,
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabled in test'); },
@@ -230,7 +233,7 @@ async function pair(t, preset = 'admin') {
     name: 'owner', remotePort: 41999, localPort: B.port, nodeId: selfB,
     token: SECRET, direction: 'outbound', shared: true, visibility: 'network', ssh: 'u@owner',
   });
-  nodesStore.atomicWriteStore(A.nodesPath, stA);
+  nodesStore.atomicWriteStore(A.nodesPath, nodesStore.setPeerAccessPreset(stA, 'owner', 'admin'));
   return { A, B, selfA, selfB };
 }
 
@@ -251,7 +254,7 @@ async function pairWithPaste(t) {
     name: 'owner', remotePort: 41999, localPort: B.port, nodeId: selfB,
     token: SECRET, direction: 'outbound', shared: true, visibility: 'network', ssh: 'u@owner',
   });
-  nodesStore.atomicWriteStore(A.nodesPath, stA);
+  nodesStore.atomicWriteStore(A.nodesPath, nodesStore.setPeerAccessPreset(stA, 'owner', 'admin'));
   return { A, B, selfA, selfB };
 }
 

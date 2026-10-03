@@ -320,6 +320,8 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
         const key = route.join('/');
         const cachedRemote = peerCacheRef.current.remote[key] || null;
         if (!shouldPollPeer(backoffRef.current, key, pollStart)) {
+          pendingReads.delete(`${key}#sessions`);
+          pendingReads.delete(`${key}#fleet`);
           // R21: il peer in backoff NON si interroga — chi guarda gli ALTRI
           // peer non deve essere intasato dal suo rumore. E non interrogarlo
           // significa che la sua lista NON e' verificata, non che sia vuota:

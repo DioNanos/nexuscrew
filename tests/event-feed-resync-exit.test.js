@@ -140,12 +140,13 @@ test('R5+: la scala del cooldown cresce al secondo esaurimento', async (t) => {
 });
 
 test('R5+: un frame sano riporta la scala al primo gradino', async (t) => {
+  t.mock.method(Math, 'random', () => 0);
   // Primo esaurimento (scala 200); alla scadenza il recovery porta uno stream
   // CON un frame valido (streak e scala azzerati); tre nuovi round di reset →
   // il secondo esaurimento torna al PRIMO gradino, non a quello cresciuto.
   const frameStream = sse(['id: 5:9\ndata: {"v":1,"ownerId":"' + OWNER + '","eventId":"e1","scope":"node","cellId":null,"hop":1,"emittedAt":1,"frame":{"type":"notify","title":"x"}}\n\n']);
   const { client } = stubClient(t,
-    [health, ...snap409pairs(3), snapWithAsk(), frameStream, reset409, ...snap409pairs(2)],
+    [health, ...snap409pairs(3), snapWithAsk(), frameStream, snapWithAsk(), reset409, ...snap409pairs(2)],
     { resyncCooldownStepsMs: [200, 500, 1000] });
   client.start();
   const first = await remaining(client);

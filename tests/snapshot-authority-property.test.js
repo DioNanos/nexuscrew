@@ -293,6 +293,7 @@ async function runCase(c, fakeOwnerPort, rootDir) {
     eventFeedClientMinSnapshotIntervalMs: 1000,
     sessionExistsSeam: () => true,
     pasteSeam: () => true,
+    askSubmit: () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: {
       platform: 'linux', uid: 1000,
       execImpl: () => { throw new Error('exec disabilitato nel test'); },

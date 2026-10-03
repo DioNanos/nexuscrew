@@ -5,6 +5,7 @@ import { nodeAction, removeNode, updateNode, setNodeVisibility, sendVlNodeComman
 import { tunnelInfo, isValidLabel } from '../lib/settings-model.js';
 import { nodeDetailModel, selectionCandidates, cellScopeGrants, cellScopeCandidates, peerAccessModel } from '../lib/node-detail.js';
 import { PRESET_NAMES, accessMatrix } from '../lib/access-presets.js';
+import { getPushState, subscribePush } from '../lib/push.js';
 import { vlNodeActions, vlCommandStatus, vlHasPrompt, vlDefaultArgs, VL_PROMPT_MAX } from '../lib/vl-node-detail.js';
 import { healthHintParts } from '../lib/roster-view-model.js';
 import AuthorizedKeysLine from './AuthorizedKeysLine.jsx';
@@ -158,6 +159,10 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   const applyPeerAccess = (preset) => guard(`${node.name}:access`, async () => {
     try {
       await updateNode(token, node.name, { accessRole: preset, accessRevision: peerAccessRevision });
+      if (preset === 'admin' && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        try { if (await getPushState() === 'idle') await subscribePush(token); }
+        catch { /* Browser permission and subscription remain separate from peer grants. */ }
+      }
       setAccessPreset(null);
       await refresh();
     } catch (e) {
@@ -485,7 +490,7 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
             </select>
           </label>
           {accessPreset && (() => {
-            const rows = accessMatrix(peerAccess.grants, accessPreset);
+            const rows = accessMatrix(peerAccess.grants, accessPreset, node.eventsReceive);
             const changed = rows.filter((r) => r.changed).length;
             return <>
               <div className="nc-access-matrix" role="table" aria-label={t('peer-access-matrix')}>

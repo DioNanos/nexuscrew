@@ -59,13 +59,15 @@ export const PRESETS = Object.freeze({
 // write, and whether the two differ. The caller renders it; this decides it.
 // `changed` rows are exactly what the confirmation is about — hiding a change
 // here would hide it from the person who must own it.
-export function accessMatrix(currentGrants, presetName) {
+export function accessMatrix(currentGrants, presetName, eventsReceive = false) {
   const preset = PRESETS[presetName];
   if (!preset) return [];
   const current = currentGrants && typeof currentGrants === 'object' ? currentGrants : {};
-  return ACCESS_GRANT_KEYS.map((key) => {
+  const rows = ACCESS_GRANT_KEYS.map((key) => {
     const next = preset[key];
     const before = current[key];
     return { key, current: before, next, changed: before !== next };
   });
+  if (presetName === 'admin') rows.push({ key: 'eventsReceive', current: eventsReceive === true, next: true, changed: eventsReceive !== true });
+  return rows;
 }
