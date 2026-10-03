@@ -162,3 +162,15 @@ test('capability probes use a ten second deadline and refuse process errors', t 
   });
   const out = f.resolve(); assert.equal(out.ok, false); assert.deepEqual(calls, [10000]);
 });
+
+test('a transient capability probe failure is retried on the next launch', t => {
+  const f = fixture(t); const childProcess = require('node:child_process');
+  const original = childProcess.spawnSync; let first = true;
+  t.mock.method(childProcess, 'spawnSync', (...args) => {
+    if (first) { first = false; return { error: Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }) }; }
+    return original(...args);
+  });
+  assert.equal(f.resolve().ok, false);
+  const second = f.resolve(); assert.equal(second.ok, true, second.reason);
+  assert.ok(second.engine.args.includes('--no-daemon'));
+});
