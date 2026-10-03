@@ -2,6 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.57 — 2026-10-03
+
+- **The node list no longer flickers for nodes reached through a hub.**
+
 ## 0.9.56 — 2026-10-03
 
 - **Le opzioni accettano il valore separato da uno spazio.** Comandi come `nodes edit --access-role user` ora funzionano; se manca il valore, il messaggio indica chiaramente quale opzione lo richiede.
