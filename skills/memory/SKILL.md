@@ -41,7 +41,8 @@ Do not load every category by default.
 
 ## Write safely
 
-`memory_write {category, content}` replaces the category by default.
+`memory_write {category, data}` replaces the category by default, where
+`data` is the JSON object to store.
 
 - Set `merge:true` for a top-level patch: supplied keys are inserted or
   overwritten, JSON `null` deletes a key, and untouched keys remain.
