@@ -47,19 +47,31 @@ a quick switch.
 
 ## Install in 30 seconds
 
+Install the package globally:
+
 ```bash
-npm install -g @mmmbuto/nexuscrew
+npm install -g @mmmbuto/nexuscrew@latest
+```
+
+Start it — the first run creates a loopback-only runtime, starts it in the
+background and opens the authenticated PWA:
+
+```bash
 nexuscrew
 ```
 
-The first run creates a loopback-only runtime, starts it in the background and
-opens the authenticated PWA.
+Prerequisites: Linux needs Node.js 18+, tmux (3.4+ recommended) and OpenSSH,
+installed with your distribution package manager. On macOS:
 
-| Platform | Prerequisites |
-|---|---|
-| Linux | Node.js 18+, tmux (3.4+ recommended), OpenSSH |
-| macOS | `brew install node tmux` |
-| Android / Termux | `pkg install nodejs-lts tmux openssh` |
+```bash
+brew install node tmux
+```
+
+On Android / Termux:
+
+```bash
+pkg install nodejs-lts tmux openssh
+```
 
 NexusCrew ships scriptless PTY prebuilds for Linux x64/ARM64, macOS x64/ARM64
 and Android ARM64. A normal global install does not need a compiler or native
@@ -181,9 +193,21 @@ devices.
 
 ## Development
 
+Run the test suite:
+
 ```bash
 npm test
+```
+
+Build the frontend assets:
+
+```bash
 npm run build
+```
+
+Run the runtime in the foreground:
+
+```bash
 node bin/nexuscrew.js serve
 ```
 
