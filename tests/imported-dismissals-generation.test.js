@@ -244,4 +244,3 @@ test('an older visible feed cannot acknowledge a newer already-dismissed alias',
   assert.equal(store.getImportedDismissal(OWNER, ID).ownerAskTs, 100);
   assert.equal(store.isImportedDismissed(OWNER, source), false);
 });
-
