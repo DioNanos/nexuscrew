@@ -166,3 +166,20 @@ test('both closed notify producer schemas and owner aliases preserve the canonic
   const alias = canonicalAskAlert({ ...identity, askId: '12345678', ownerAskId: identity.askId });
   assert.equal(alias.askId, identity.askId); assert.equal(alias.tag, alertFields(identity).tag, 'owner-qualified ID takes precedence over a local alias');
 });
+
+test('authoritative historical adoption persists before imported alert admission, not after an extra send', async t => {
+  const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os');
+  const { createAskAlertRegistry } = require('../lib/notify/ask-alert-registry.js'); const { createEventFeedClient } = require('../lib/notify/event-feed-client.js'); const { askFingerprint } = require('../lib/notify/asks.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'historical-admission-order-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const registry = createAskAlertRegistry({ filePath: path.join(dir, 'ask-alerts.json') });
+  const ask = { id: identity.askId, question: 'continue?', options: ['yes'], session: 'cloud-reviewer', ts: identity.ownerAskTs };
+  const historical = { ownerId, askId: ask.id, ownerAskFingerprint: askFingerprint(ask) };
+  registry.claim(historical, 'push'); registry.complete(historical, 'push', 1);
+  const sent = []; const notifier = createNotifier({ alertRegistry: registry, hub: { broadcast: () => 0 }, push: { sendToAll: async payload => { sent.push(payload); return { sent: 1 }; } } });
+  let delivery;
+  const client = createEventFeedClient({ loadStore: () => ({ nodeId: 'b'.repeat(32), nodes: [] }), eventsHub: { broadcast: f => { delivery = notifier.emit(f); } },
+    onAuthoritativeAsks: (owner, asks) => { for (const a of asks) registry.adopt(owner, a, a.ownerAskTs === undefined ? a.ts : a.ownerAskTs); }, log() {} }); t.after(() => client.stop());
+  const view = client.viewFor(ownerId); view.stale = false; view.asks = [ask];
+  client.reemit({ ownerId, eventId: 'late-historical-alert', hop: 1, scope: 'cell', cellId: 'reviewer', frame: { type: 'notify', title: 'ask', askId: ask.id, body: ask.question } });
+  await delivery; assert.equal(sent.length, 0, 'adoption must suppress known-generation delivery before awaiting the push sender');
+});
