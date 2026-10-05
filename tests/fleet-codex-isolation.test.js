@@ -74,3 +74,18 @@ test('final passthrough cannot turn a legacy isolation decision into a required 
   const f = fixture(t, { required:'0', runtimeRequired:'1', passthroughRequired:true });
   const out = f.resolve(); assert.ok(!out.ok || out.engine.env[KEY] === '0', 'final env and channel must agree');
 });
+
+// Append only after the current frozen pipeline has completed.
+for (const client of ['codex', 'codex-vl']) for (const failure of [{ version: 'unknown' }, { flag: false }]) {
+  test(`${client} isolation refusal tells the operator which package and command to update (${JSON.stringify(failure)})`, t => {
+    const out = fixture(t, { client, ...failure }).resolve();
+    assert.equal(out.ok, false);
+    const pkg = client === 'codex' ? '@openai/codex' : '@mmmbuto/codex-vl';
+    const minimum = client === 'codex' ? '0.156.0' : '0.156.1-vl.1';
+    assert.ok(out.reason.includes(`Update ${pkg} to ${minimum} or later`), out.reason);
+    assert.ok(out.reason.includes(`npm install -g ${pkg}@latest`), out.reason);
+    assert.match(out.reason, /--version/);
+    assert.match(out.reason, /--help/);
+    assert.match(out.reason, /--no-daemon/);
+  });
+}
