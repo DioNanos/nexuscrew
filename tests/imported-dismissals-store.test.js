@@ -186,3 +186,16 @@ for (const [field, value] of [['attempts', -1], ['nextRetryAt', 'tomorrow'], ['d
   const restarted = f.restart(); assert.equal(restarted.health().readable, false);
   assert.equal(dismiss(restarted).ok, false); assert.deepEqual(JSON.parse(fs.readFileSync(f.store.filePath)), raw);
 });
+
+test('a dismissal record under a noncanonical key makes the store unreadable', t => {
+  const { store, restart } = fixture(t);
+  assert.equal(dismiss(store).ok, true);
+  const state = JSON.parse(fs.readFileSync(store.filePath, 'utf8'));
+  const record = state.importedDismissals[`${OWNER}|${ID}`];
+  state.importedDismissals = { wrongKey: record };
+  fs.writeFileSync(store.filePath, JSON.stringify(state));
+  const before = fs.readFileSync(store.filePath, 'utf8');
+  assert.equal(restart().health().readable, false);
+  assert.equal(restart().dismissImported({ ownerId: OWNER, ownerAskId: ID, ask: source() }).ok, false);
+  assert.equal(fs.readFileSync(store.filePath, 'utf8'), before, 'malformed history is never overwritten');
+});
