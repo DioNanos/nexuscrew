@@ -68,7 +68,7 @@ test('relay forwards the generation header and returns the owner outcome', async
 });
 test('dismissal inspection rejects an owner response with a different canonical pair', async () => {
   const relay = createAskRelay({ loadStore: () => ({ nodeId: PEER, nodes: [{ nodeId: OWNER, direction: 'outbound', localPort: 12345, token: 'fixture' }] }),
-    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ ownerId: PEER, askId: ID, generationPrecondition: true, status: 'open', ask: { id: ID, ts: 100 } }) }) });
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ ownerId: PEER, askId: ID, generationPrecondition: true, status: 'open', ask: { id: ID, ts: 100, question: 'Review?', session: 'reviewer' } }) }) });
   assert.equal(typeof relay.inspectDismissal, 'function');
   assert.equal((await relay.inspectDismissal({ ownerId: OWNER, askId: ID })).ok, false);
 });
