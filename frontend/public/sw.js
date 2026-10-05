@@ -43,7 +43,8 @@ function alertKey(data) {
 
 // Canonical ASK identity takes precedence over event IDs and caller tags.
 async function askAlertTag(data) {
-  if (!/^[a-f0-9]{32}$/i.test(data.ownerId || '') || !/^[a-f0-9]{8}$/i.test(data.askId || '')) return null;
+  if (typeof data.ownerId !== 'string' || typeof data.askId !== 'string'
+    || !/^[a-f0-9]{32}$/i.test(data.ownerId) || !/^[a-f0-9]{8}$/i.test(data.askId)) return null;
   const generation = Number.isSafeInteger(data.ownerAskTs) && data.ownerAskTs > 0 ? String(data.ownerAskTs)
     : typeof data.ownerAskFingerprint === 'string' && /^[a-f0-9]{64}$/.test(data.ownerAskFingerprint) ? `unknown:${data.ownerAskFingerprint}` : null;
   if (!generation) return null;
