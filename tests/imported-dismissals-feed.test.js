@@ -27,7 +27,7 @@ function fixture(t) {
   const dismiss = () => { const out = store.dismissImported({ ownerId: OWNER, ownerAskId: ID, ask: question() }); assert.equal(out.ok, true); };
   return { client, dismiss, broadcast, store: () => store, restart() { store = createAsksStore({ dir }); }, changeEpoch() { epoch++; clock += 11 * 60000; }, setAsks(value) { asks = value; }, hold(value) { hold = value; } };
 }
-async function round(client) { client.start(); await new Promise(resolve => setImmediate(resolve)); client.stop(); return client.state().views[0]?.asks || []; }
+async function round(client) { client.start(); await new Promise(resolve => setImmediate(resolve)); client.stop(); assert.deepEqual(client.viewFor(OWNER).asks, client.state().views[0]?.asks || [], 'snapshot cache and aggregated view agree'); return client.state().views[0]?.asks || []; }
 test('durable suppression survives subscriber and store restart past TTL and epoch reset', async t => {
   const f = fixture(t); f.dismiss(); assert.deepEqual(await round(f.client()), []);
   f.restart(); f.changeEpoch(); assert.deepEqual(await round(f.client()), []);
@@ -35,7 +35,7 @@ test('durable suppression survives subscriber and store restart past TTL and epo
 test('snapshot suppression is evaluated after an in-flight response completes', async t => {
   const f = fixture(t); let release; const held = new Promise(resolve => { release = resolve; }); f.hold(held);
   const client = f.client(); client.start(); await new Promise(resolve => setImmediate(resolve)); f.dismiss(); release();
-  await new Promise(resolve => setImmediate(resolve)); assert.deepEqual(client.state().views[0].asks, []); client.stop();
+  await new Promise(resolve => setImmediate(resolve)); assert.deepEqual(client.viewFor(OWNER).asks, []); assert.deepEqual(client.state().views[0].asks, []); client.stop();
 });
 test('a replacement fingerprint or timestamp remains visible in snapshots', async t => {
   const f = fixture(t); f.dismiss(); f.setAsks([{ ...question(), question: 'New review?' }, { ...question(), id: '87654321' }]);

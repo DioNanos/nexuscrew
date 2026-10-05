@@ -116,3 +116,20 @@ test('an applied DELETE with a lost response is recovered from durable owner tru
   assert.equal(restarted.getImportedDismissal(OWNER, ID).syncState, 'confirmed-dismissed');
   assert.equal(deletes, 0);
 });
+test('owner and global budgets persist across repeated nudges within a time window', async t => {
+  let clock = 10000;
+  const f = fixture(t, { extra: { now: () => clock, globalBudget: 2, ownerBudget: 1, budgetWindowMs: 60000 } });
+  for (const [ownerId, id] of [[OWNER, '11223345'], ['c'.repeat(32), '11223346'], ['d'.repeat(32), '11223347']]) {
+    f.store.dismissImported({ ownerId, ownerAskId: id, ask: { ...ASK, id } });
+  }
+  await f.drainer.drain(); await f.drainer.drain();
+  assert.equal(f.calls.filter(c => c[0] === 'inspect').length, 2);
+  clock += 60001; await f.drainer.drain(); assert.equal(f.calls.filter(c => c[0] === 'inspect').length, 4);
+});
+test('blocked records are reactivated only by a changed owner permission or channel binding', async t => {
+  let binding = 'old';
+  const f = fixture(t, { inspect: async () => ({ ok: false, code: 403, reason: 'grant-required:ask-action' }), extra: { bindingForOwner: () => binding } });
+  await f.drainer.drain(); assert.equal(f.store.getImportedDismissal(OWNER, ID).syncState, 'blocked');
+  await f.drainer.drain(); assert.equal(f.calls.length, 1);
+  binding = 'new'; await f.drainer.drain(); assert.equal(f.calls.length, 2);
+});
