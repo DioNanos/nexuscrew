@@ -50,11 +50,11 @@ test('aggregated reads filter existing views using the live owner-qualified dism
 });
 test('late imported ask frames are suppressed before local SSE emission', t => {
   const f = fixture(t), client = f.client(); f.dismiss();
-  const frame = { type: 'ask', askId: ID, ...question() };
+  const frame = { type: 'ask', askId: ID, ...question(), askTs: question().ts };
   assert.equal(client.reemit({ ownerId: OWNER, eventId: 'old', hop: 1, frame }), false);
   assert.deepEqual(f.broadcast, []);
-  assert.equal(client.reemit({ ownerId: OWNER, eventId: 'new', hop: 1, frame: { ...frame, ts: 101 } }), true);
-  assert.equal(f.broadcast[0].ask.ts, 101);
+  assert.equal(client.reemit({ ownerId: OWNER, eventId: 'new', hop: 1, frame: { ...frame, askTs: 101, ts: 999 } }), true);
+  assert.equal(f.broadcast[0].ask.ownerAskTs, 101);
 });
 
 test('an authoritative feed closure updates a feed-only locally dismissed record', t => {
