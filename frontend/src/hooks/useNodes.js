@@ -87,6 +87,13 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
   const cacheTokenRef = useRef(null);
   const cacheInstanceRef = useRef(null);
   const cacheOwnersRef = useRef(new Map());
+  // Last known VL peers per owner (`vl:<route>`): the sidebar keeps showing
+  // a vl node while its owner read is in flight, failing or backed off.
+  // `at` is the moment of the last CONFIRMED read (failures and skips never
+  // renew it); past OWNER_GRACE_MS the entry is dropped. `round` marks the
+  // poll that filled it, so anything published from an older round is
+  // flagged stale, never presented as freshly verified.
+  const vlCacheRef = useRef(new Map());
   const guardRef = useRef(createPollGuard());
   const abortRef = useRef(null);
 
@@ -103,6 +110,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       backoffRef.current = {};
       peerCacheRef.current = { remote: {}, fleet: {} };
       cacheOwnersRef.current.clear();
+      vlCacheRef.current.clear();
       downRef.current = {};
       groupsRef.current = [];
       setGroups([]);
@@ -132,7 +140,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       let nodes = []; let topology = []; let aliases = {}; let localInstanceId = '';
       let nodesOk = false; let topologyOk = false;
       let nodesState = 'pending'; let topologyState = 'pending';
-      const remote = {}; const fleet = {}; let vlPeers = [];
+      const remote = {}; const fleet = {};
       // Letture in corso, per route e per fonte: chiave nuda o `key#sessions` /
       // `key#fleet`. Non sono esiti: la proiezione li distingue dai dati.
       const pendingReads = new Set();
@@ -155,6 +163,18 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
 
       const publish = () => {
         if (!current() || !localInstanceId) return false;
+        // VL peers come from the per-owner cache, so intermediate publishes
+        // (discovery, sessions, fleet...) keep the node in the sidebar while
+        // its own read is still in flight, failed or backed off. Entries past
+        // the owner grace are dropped here; entries filled by an older round
+        // are published flagged stale, never as freshly verified.
+        const vlPeers = [];
+        const nowMs = Date.now();
+        for (const [key, entry] of vlCacheRef.current) {
+          if (nowMs - entry.at > OWNER_GRACE_MS) { vlCacheRef.current.delete(key); continue; }
+          const stale = entry.round !== round;
+          for (const peer of entry.peers) vlPeers.push({ ...peer, stale });
+        }
         const previousGroups = groupsRef.current;
         const first = buildNodeGroups({
           nodes, topology, remote, fleet, aliases, down: downRef.current,
@@ -207,6 +227,9 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
           if (previousId && previousId !== id) {
             delete peerCacheRef.current.remote[key]; delete peerCacheRef.current.fleet[key];
             delete backoffRef.current[key]; delete backoffRef.current[`vl:${key}`]; delete downRef.current[key];
+            // A different owner on the same route is different data: the
+            // cached vl entry belongs to the old one and must not survive.
+            vlCacheRef.current.delete(`vl:${key}`);
           }
           cacheOwnersRef.current.set(key, id);
         }
@@ -268,6 +291,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
           backoffRef.current = {};
           peerCacheRef.current = { remote: {}, fleet: {} };
           cacheOwnersRef.current.clear();
+          vlCacheRef.current.clear();
         } else if (localInstanceId) {
           sticky.instanceId = localInstanceId;
         }
@@ -299,10 +323,16 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
                 const peer = vlNodeToPeer(raw, owner);
                 if (peer) peers.push(peer);
               }
-              // I VL nuovi sostituiscono SOLO i loro: gli altri owner restano.
-              const ownerKey = owner.route.join('/') || 'local';
-              vlPeers = vlPeers.filter((peer) => (Array.isArray(peer.route) ? peer.route.join('/') || 'local' : 'local') !== ownerKey);
-              vlPeers.push(...peers);
+              // A confirmed read — even an empty one — replaces ONLY this
+              // owner's entry: an authoritative empty answer is a removal,
+              // while failures and skips leave the cached entry untouched
+              // (its grace start never moves because of a fallback).
+              vlCacheRef.current.set(key, {
+                peers,
+                ownerInstanceId: owner.instanceId ?? null,
+                at: pollStart,
+                round,
+              });
               publish();
             } catch (e) {
               if (!current()) return;
