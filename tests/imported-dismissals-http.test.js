@@ -175,6 +175,8 @@ test('an offline user peer retains local intent as blocked without remote permis
   const runtime = await boot(t);
   nodes.atomicWriteStore(runtime.nodesPath, nodes.setPeerAccessPreset(nodes.loadStoreStrict(runtime.nodesPath), 'owner', 'user'));
   const out = await dismiss(runtime); assert.equal(out.code, 200); assert.equal(out.body.ownerSync, 'blocked');
+  const record = createAsksStore({ dir: runtime.configDir }).getImportedDismissal(OWNER, ID);
+  assert.equal(record.lastReason, 'permission-denied'); assert.match(record.retryBinding, /^[a-f0-9]{64}$/);
 });
 test('revoked event access prevents local dismissal through a cached hub route', async t => {
   const runtime = await boot(t, { routed: true });
