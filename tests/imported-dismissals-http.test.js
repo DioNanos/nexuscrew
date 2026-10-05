@@ -9,12 +9,13 @@ const { createAsksStore } = require('../lib/notify/asks.js');
 const nodes = require('../lib/nodes/store.js');
 const { tmuxSessionForCell } = require('../lib/fleet/definitions.js');
 const OWNER = 'b'.repeat(32), ID = '12345678';
-async function boot(t, { readonly = false, malformed = false, symlink = false, queued = false, feedOnly = false, ownerPort = 42001, routed = false } = {}) {
+async function boot(t, { readonly = false, malformed = false, symlink = false, queued = false, feedOnly = false, ownerPort = 42001, routed = false, extraAlias = false } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-owner-access-'));
   const configDir = path.join(home, '.nexuscrew'); fs.mkdirSync(configDir);
   const nodesPath = path.join(configDir, 'nodes.json'); nodes.initStore(nodesPath);
   const store = createAsksStore({ dir: configDir });
   const alias = feedOnly ? null : store.create({ question: 'Review?', options: ['Yes'], session: tmuxSessionForCell('reviewer'), ownerId: OWNER, ownerAskId: ID, originNode: OWNER, ownerAskTs: 100 }).ask;
+  if (extraAlias) store.create({ question: 'Review?', session: tmuxSessionForCell('reviewer'), ownerId: OWNER, ownerAskId: '87654321', originNode: OWNER, ownerAskTs: 100 });
   let st = nodes.addNode(nodes.loadStoreStrict(nodesPath), { name: 'owner', nodeId: routed ? 'c'.repeat(32) : OWNER, direction: feedOnly ? 'outbound' : 'inbound', eventsReceive: feedOnly, token: 'fixture', shared: true, visibility: 'network', ssh: 'demo@example.invalid', localPort: ownerPort, remotePort: 42002 });
   st = nodes.setPeerAccessPreset(st, 'owner', 'admin'); nodes.atomicWriteStore(nodesPath, st);
   if (routed) require('../lib/nodes/topology-cache.js').atomicWriteCache(path.join(configDir, 'topology-cache.json'), { schemaVersion: 1, nodes: [{ instanceId: OWNER, name: 'source', route: ['owner', 'source'], lastSeen: Date.now() }] });
@@ -205,4 +206,16 @@ test('legacy local capability retains its exact response shape without the dismi
   const runtime = await boot(t);
   const body = await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}`, { headers: { authorization: `Bearer ${runtime.token}` } }).then(r => r.json());
   assert.deepEqual(Object.keys(body).sort(), ['askId', 'canReply', 'ownerId', 'reason', 'status']);
+});
+
+for (const credential of ['token', 'acceptToken']) test(`a pairing ${credential} change changes the durable blocked retry binding without storing credentials`, async t => {
+  const runtime = await boot(t, { extraAlias: true });
+  nodes.atomicWriteStore(runtime.nodesPath, nodes.setPeerAccessPreset(nodes.loadStoreStrict(runtime.nodesPath), 'owner', 'user'));
+  assert.equal((await dismiss(runtime)).code, 200);
+  const first = createAsksStore({ dir: runtime.configDir }).getImportedDismissal(OWNER, ID);
+  const st = nodes.loadStoreStrict(runtime.nodesPath); st.nodes[0][credential] = 'repaired-pairing-token'; nodes.atomicWriteStore(runtime.nodesPath, st);
+  assert.equal((await dismiss(runtime, { askId: '87654321' })).code, 200);
+  const second = createAsksStore({ dir: runtime.configDir }).getImportedDismissal(OWNER, '87654321');
+  assert.notEqual(first.retryBinding, second.retryBinding);
+  assert.equal(JSON.stringify(second).includes('repaired-pairing-token'), false);
 });
