@@ -79,17 +79,12 @@ test('identity required: authority gia costruita (cfg.identityAuthority) -> 1 e 
   assert.equal(r.engine.identityChannel, true);
 });
 
-test('identity required: override definition esplicito rispettato anche fuori authority', () => {
+test('identity required: legacy override one is refused under the isolation contract', () => {
   const m = mondo();
   const engine = { ...ENGINE, env: { [KEY]: '1' } };
   const r = resolve(m, {}, engine);
-  assert.equal(r.ok, true);
-  assert.equal(r.engine.env[KEY], '1');
-  // Override esplicito a 1 fuori authority: il canale si apre come prima
-  // (comportamento invariato) e resta la riga di warning.
-  assert.equal(r.engine.identityChannel, true);
-  assert.equal(r.engine.identityAuthorityUnavailable, undefined);
-  assert.ok(m.lines.some((l) => l.includes('override definition') && l.includes(KEY)), m.lines);
+  // Contract change: an explicit one without authority is no longer a warning-only launch.
+  assert.ok(!r.ok || r.engine.identityAuthorityUnavailable);
 });
 
 test('identity required: override runtime cfg.env esplicito rispettato', () => {
@@ -111,13 +106,11 @@ test('identity required: override definition vince su cfg.env', () => {
   assert.equal(r.engine.identityChannel, false);
 });
 
-test('identity required: override esplicito 0 in authority mode -> standalone deliberato, nessun rifiuto', () => {
+test('identity required: explicit zero cannot bypass unavailable authority', () => {
   const m = mondo();
   const r = resolve(m, { fleetIdentityMode: 'authority', env: { [KEY]: '0' } });
-  assert.equal(r.ok, true);
-  assert.equal(r.engine.env[KEY], '0');
-  assert.equal(r.engine.identityChannel, false);
-  assert.equal(r.engine.identityAuthorityUnavailable, undefined);
+  // Contract change: previously allowed standalone; unavailable authority now refuses even zero.
+  assert.ok(!r.ok || r.engine.identityAuthorityUnavailable);
 });
 
 test('identity required: credenziali identiche nei file -> lancio rifiutato col fault', () => {
