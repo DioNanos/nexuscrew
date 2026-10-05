@@ -68,3 +68,20 @@ for (const feedFirst of [false, true]) test(`direct notifier and real imported r
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(sent.length, 1, 'same canonical question across actual direct and imported paths');
 });
+
+test('a real feed ASK frame admits historical alert generation before the following notification', async t => {
+  const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os');
+  const { createAskAlertRegistry } = require('../lib/notify/ask-alert-registry.js');
+  const { askFingerprint } = require('../lib/notify/asks.js');
+  const { createEventFeedClient } = require('../lib/notify/event-feed-client.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-generation-feed-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const registry = createAskAlertRegistry({ filePath: path.join(dir, 'ask-alerts.json') });
+  const ask = { id: identity.askId, question: 'continue?', options: ['yes'], session: 'cloud-reviewer' };
+  const old = { ownerId, askId: ask.id, ownerAskFingerprint: askFingerprint(ask) };
+  registry.claim(old, 'push'); registry.complete(old, 'push', 1);
+  const client = createEventFeedClient({ loadStore: () => ({ nodeId: 'b'.repeat(32), nodes: [] }), eventsHub: { broadcast() {} },
+    onAuthoritativeAsks: (owner, asks) => { for (const a of asks) registry.adopt(owner, a, a.ownerAskTs); }, log() {},
+  }); t.after(() => client.stop());
+  client.reemit({ ownerId, eventId: 'owner-ask-frame', hop: 1, scope: 'cell', cellId: 'reviewer', frame: { type: 'ask', askId: ask.id, askTs: identity.ownerAskTs, question: ask.question, options: ask.options, session: ask.session, ts: identity.ownerAskTs + 99 } });
+  assert.equal(registry.claim(frame(), 'push').allowed, false, 'the real feed callback must preserve historical alert admission');
+});
