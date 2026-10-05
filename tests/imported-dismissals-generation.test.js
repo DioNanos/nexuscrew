@@ -218,3 +218,27 @@ for (const outcome of ['dismissed', 'answered']) for (const pathKind of ['fanout
     assert.equal(store.findImported(other, source.id).dismissed, false); assert.equal(store.findImported(other, source.id).answered, false);
   } finally { clearTimeout(timeout); controller.abort(); await reader.cancel().catch(() => {}); }
 });
+
+test('an older visible feed cannot acknowledge a newer already-dismissed alias', async t => {
+  const http = require('node:http');
+  const source = { id: ID, ts: 50, question: 'Replacement question', session: tmuxSessionForCell('reviewer') };
+  const owner = http.createServer((req, res) => {
+    const json = body => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (req.url.includes('/federation/health')) return json({ ok: true, instanceId: OWNER, eventFeedV1: true });
+    if (req.url.includes('/event-feed/snapshot')) return json({ ownerId: OWNER, cursor: '1:0', viewEpoch: 1, asks: [source], notifications: [] });
+    if (req.url.includes('/event-feed')) { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write(': ready\n\n'); return; }
+    json({ nodes: [] });
+  });
+  await new Promise(r => owner.listen(0, '127.0.0.1', r)); t.after(() => { owner.closeAllConnections(); owner.close(); });
+  const runtime = await boot(t, { feedOnly: true, initialAlias: true, queued: true, ownerPort: owner.address().port });
+  const headers = { authorization: `Bearer ${runtime.token}` }; let view;
+  for (let i = 0; i < 100; i++) { view = await fetch(`http://127.0.0.1:${runtime.port}/api/feed-state`, { headers }).then(r => r.json()); if (view.views.some(v => v.asks.some(a => a.question === source.question))) break; await new Promise(r => setTimeout(r, 10)); }
+  assert.ok(view.views.some(v => v.asks.some(a => a.question === source.question)));
+  owner.closeAllConnections(); await new Promise(r => owner.close(r));
+  await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}&dismissals=1`, { headers });
+  const out = await dismiss(runtime); assert.equal(out.code, 409); assert.equal(out.body.reason, 'generation-ambiguous');
+  const store = createAsksStore({ dir: runtime.configDir });
+  assert.equal(store.getImportedDismissal(OWNER, ID).ownerAskTs, 100);
+  assert.equal(store.isImportedDismissed(OWNER, source), false);
+});
+
