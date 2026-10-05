@@ -28,3 +28,27 @@ test('the real feed producer and relay keep ASK generation and the same canonica
   assert.equal(imported.ownerAskTs, identity.ownerAskTs);
   assert.equal(imported.tag, sent[0].tag);
 });
+
+test('direct notifications share canonical admission for concurrent fan-out and feed replay', async () => {
+  const seen = new Set(); let claims = 0; const calls = [];
+  const alertRegistry = {
+    claim(f, channel) { claims++; const key = `${f.ownerId}|${f.askId}|${f.ownerAskTs}|${channel}`; if (seen.has(key)) return { allowed: false, reason: 'already-alerted' }; seen.add(key); return { allowed: true }; },
+    complete() {},
+  };
+  const n = createNotifier({ alertRegistry, hub: { broadcast: () => { calls.push('ui'); return 1; } }, push: { sendToAll: async () => { calls.push('push'); return { sent: 1 }; } } });
+  await Promise.all([n.emit(frame()), n.emit(frame({ eventId: 'feed-replay' }))]);
+  assert.equal(claims, 4, 'both channels consult the shared question registry');
+  assert.deepEqual(calls, ['ui', 'push']);
+});
+test('zero delivery distinguishes persisted ASK from successful alert delivery', async () => {
+  const n = createNotifier({ hub: { broadcast: () => 0 }, push: { sendToAll: async () => ({ sent: 0 }) } });
+  const result = await n.emit(frame());
+  assert.equal(result.ui, 0); assert.equal(result.push, 0);
+  assert.equal(result.alertStatus, 'no-delivery');
+});
+test('a failed push is observable without rejecting or recreating the ASK', async () => {
+  const n = createNotifier({ hub: { broadcast: () => 0 }, push: { sendToAll: async () => { throw new Error('provider unavailable'); } } });
+  const result = await n.emit(frame());
+  assert.equal(result.alertStatus, 'no-delivery');
+  assert.equal(result.pushReason, 'send-failed');
+});
