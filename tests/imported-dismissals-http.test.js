@@ -103,7 +103,7 @@ test('feed-only local dismissal is durable and idempotent without creating an al
   }
   assert.ok(view.views.some(item => item.asks.some(ask => ask.id === ID)), 'the authorized feed establishes the known pair');
   owner.closeAllConnections(); await new Promise(resolve => owner.close(resolve));
-  await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}`, { headers });
+  await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}&dismissals=1`, { headers });
   const first = await dismiss(runtime); assert.equal(first.code, 200);
   const second = await dismiss(runtime); assert.equal(second.code, 200);
   const store = createAsksStore({ dir: runtime.configDir }); assert.equal(store.list().length, 0); assert.equal(store.listImportedDismissals().length, 1);
@@ -162,13 +162,13 @@ test('local dismissal accepts a known owner behind an authorized unavailable fir
 });
 test('local capability distinguishes remote reply from durable local dismissal', async t => {
   const runtime = await boot(t);
-  const response = await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}`, { headers: { authorization: `Bearer ${runtime.token}` } });
+  const response = await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}&dismissals=1`, { headers: { authorization: `Bearer ${runtime.token}` } });
   const body = await response.json(); assert.equal(body.canReply, false);
   assert.equal(body.canDismissRemote, false); assert.equal(body.canDismissLocal, true);
 });
 test('READONLY capability refuses both local and remote dismissals', async t => {
   const runtime = await boot(t, { readonly: true });
-  const body = await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}`, { headers: { authorization: `Bearer ${runtime.token}` } }).then(r => r.json());
+  const body = await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}&dismissals=1`, { headers: { authorization: `Bearer ${runtime.token}` } }).then(r => r.json());
   assert.equal(body.canDismissLocal, false); assert.equal(body.canDismissRemote, false);
 });
 test('an offline user peer retains local intent as blocked without remote permission', async t => {
@@ -199,4 +199,10 @@ test('a failed local write after cache load returns no acknowledgement and rolls
   const body = await fetch(`http://127.0.0.1:${runtime.port}/api/asks`, { headers }).then(r => r.json());
   assert.equal(body.asks.find(ask => ask.id === runtime.alias.id).dismissed, false);
   assert.equal(JSON.parse(fs.readFileSync(file)).importedDismissals[`${OWNER}|${ID}`], undefined);
+});
+
+test('legacy local capability retains its exact response shape without the dismissal opt-in', async t => {
+  const runtime = await boot(t);
+  const body = await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}`, { headers: { authorization: `Bearer ${runtime.token}` } }).then(r => r.json());
+  assert.deepEqual(Object.keys(body).sort(), ['askId', 'canReply', 'ownerId', 'reason', 'status']);
 });
