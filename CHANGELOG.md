@@ -2,7 +2,7 @@
 
 All notable changes to NexusCrew are tracked here.
 
-## Unreleased
+## 0.9.59 — 2026-10-05
 
 - Delayed question events retain the original question generation separately from their emission time. Local dismissal follows the current visible generation, refuses conflicting views, and preserves historical aliases. Imported closure events identify the owner question while mixed-node clients can still resolve older alias-only closures.
 
