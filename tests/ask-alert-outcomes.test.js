@@ -73,3 +73,16 @@ test('the imported ASK cap rejects HTTP ingress with 429 and never drops an open
   assert.deepEqual(fs.readFileSync(path.join(s.dir, 'asks.json')), before); assert.equal(s.asks.list({ open: true }).length, 100);
   assert.equal(s.emitted.length, 0); assert.equal(s.pushed.length, 0);
 });
+
+test('concurrent public ASK ingress persists its pending claim before the first push settles', async t => {
+  let release; let started; const start = new Promise(resolve => { started = resolve; });
+  const wait = new Promise(resolve => { release = resolve; }); t.after(() => release());
+  const s = await setup(t, { send: async (_payload, n) => { if (n === 1) { started(); await wait; } return { sent: 1 }; } });
+  const first = s.request(); await start;
+  const pending = JSON.parse(fs.readFileSync(path.join(s.dir, 'ask-alerts.json')));
+  assert.ok(Object.values(pending.entries).some(record => record.push === 'pending'), 'durable claim precedes the awaited sender');
+  const second = await s.request();
+  assert.equal(second.body.deduped, true); assert.equal(second.body.alert.pushAttempted, false);
+  assert.equal(second.body.alert.pushReason, 'alert-uncertain'); assert.equal(s.pushed.length, 1);
+  release(); assert.equal((await first).body.alert.push, 1);
+});

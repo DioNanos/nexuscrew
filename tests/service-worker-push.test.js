@@ -183,3 +183,13 @@ test('array-shaped ASK identifiers never become canonical alert tags', async () 
     assert.equal(worker.shown[0].options.tag, 'nexuscrew', 'only string identifiers authorize canonical ASK deduplication');
   }
 });
+
+test('ASK generations coexist and caller tags cannot override their canonical browser identity', async () => {
+  const { alertFields } = require('../lib/notify/ask-alert-identity.js'); const worker = loadWorker(fakeIndexedDB());
+  const base = { ownerId: 'a'.repeat(32), askId: 'abcdef01', ownerAskTs: 1700000000000 };
+  for (const over of [{}, { askId: 'abcdef02' }, { ownerId: 'b'.repeat(32) }, { ownerAskTs: base.ownerAskTs + 1 }]) {
+    const expected = alertFields({ ...base, ...over }); await worker.push({ title: 'ask', ...expected, tag: 'nexuscrew' });
+    assert.equal(worker.shown.at(-1).options.tag, expected.tag, 'the SW derives rather than accepts the caller tag');
+  }
+  assert.equal(worker.shown.length, 4); assert.equal(new Set(worker.shown.map(item => item.options.tag)).size, 4, 'distinct questions never replace each other by a shared tag');
+});

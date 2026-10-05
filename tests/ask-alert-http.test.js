@@ -125,3 +125,27 @@ test('server adopts a historical fan-out alert from its real authoritative feed 
   await send({ ownerAskTs: ask.ts });
   assert.equal(pushed.length, 1, 'server snapshot wiring must adopt the historical admission before a known-generation replay');
 });
+
+test('real imported feed stays read-only for alert admission and still distributes ASK and closure frames', async t => {
+  const pushed = []; const origin = await boot(t, { eventFeedClientPollMs: 50 });
+  const remote = await boot(t, { eventFeedClientPollMs: 50,
+    webpushImpl: { generateVAPIDKeys: () => ({ publicKey: 'pub-test', privateKey: 'priv-test' }), sendNotification: async (_s, payload) => { pushed.push(JSON.parse(payload)); return { statusCode: 201 }; } },
+    pushLookupImpl: async () => [{ address: '93.184.216.34', family: 4 }],
+  });
+  const subscribed = await fetch(`http://127.0.0.1:${remote.port}/api/push/subscribe`, { method: 'POST', headers: headers(remote.token), body: JSON.stringify({ subscription: { endpoint: 'https://push.example/readonly', keys: { p256dh: 'k1', auth: 'a1' } } }) });
+  assert.equal(subscribed.status, 200); remote.cfg.readonlyDefault = true;
+  pair(origin, remote, 'remote', 'user'); pair(remote, origin, 'origin');
+  nodes.atomicWriteStore(origin.nodesPath, nodes.updateNode(nodes.loadStoreStrict(origin.nodesPath), 'remote', { direction: 'inbound', transport: 'inbound' }));
+  nodes.atomicWriteStore(remote.nodesPath, nodes.updateNode(nodes.loadStoreStrict(remote.nodesPath), 'origin', { eventsReceive: true }));
+  await until(async () => { const state = await fetch(`http://127.0.0.1:${remote.port}/api/feed-state`, { headers: headers(remote.token) }).then(r => r.json()); return state.views.some(v => v.ownerId === origin.id && !v.stale); }, 'read-only feed view becomes authoritative');
+  const frames = await sse(t, remote);
+  const created = await fetch(`http://127.0.0.1:${origin.port}/api/asks`, { method: 'POST', headers: headers(origin.token), body: JSON.stringify({ question: 'read-only view?', session: tmuxSessionForCell('reviewer'), target: remote.id }) });
+  assert.equal(created.status, 201); const { id } = await created.json();
+  await until(() => frames.some(f => f.type === 'ask') && frames.some(f => f.type === 'notify'), 'ASK and notify still reach the read-only UI');
+  assert.equal(pushed.length, 0, 'read-only imported notify never sends push');
+  assert.equal(fs.existsSync(path.join(path.dirname(remote.nodesPath), 'ask-alerts.json')), false, 'read-only ingress creates no admission file');
+  const closed = await fetch(`http://127.0.0.1:${origin.port}/api/asks/${id}`, { method: 'DELETE', headers: headers(origin.token), body: '{}' });
+  assert.equal(closed.status, 200);
+  await until(() => frames.some(f => f.type === 'ask-dismissed' && f.ownerAskId === id), 'closure remains delivered to read-only UI');
+  assert.equal(fs.existsSync(path.join(path.dirname(remote.nodesPath), 'ask-alerts.json')), false);
+});
