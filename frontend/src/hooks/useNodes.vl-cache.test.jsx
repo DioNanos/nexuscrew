@@ -41,7 +41,7 @@ const VL_PAYLOAD = {
   }],
 };
 
-const state = vi.hoisted(() => ({ vlForOwner: async () => ({ nodes: [] }) }));
+const state = vi.hoisted(() => ({ vlForOwner: async () => ({ nodes: [] }), vlQueue: [] }));
 
 vi.mock('../lib/api.js', () => ({
   ROSTER_READ_TIMEOUT_MS: 8000,
@@ -262,6 +262,44 @@ describe('useNodes — VL sidebar cache per owner', () => {
     // The new owner confirms an empty directory: the old node stays gone.
     await act(async () => { resolveNewOwner({ nodes: [] }); await vi.advanceTimersByTimeAsync(0); });
     expect(vlLabels(hook.result)).toEqual([]);
+  });
+
+  it('a late reply from the previous owner of the same route does not republish', async () => {
+    // Round 1: the previous owner holds the route; its node is published.
+    const OLD_PAYLOAD = { ...VL_PAYLOAD, instanceId: 'o1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1' };
+    state.vlQueue = [OLD_PAYLOAD];
+    state.vlForOwner = async () => {
+      const item = state.vlQueue.shift();
+      if (item === undefined) return { nodes: [] };
+      return typeof item === 'function' ? item() : item;
+    };
+    const hook = renderHook(() => useNodes('token', true));
+    await runFirstRound(hook);
+    expect(vlLabels(hook.result)).toEqual(['VL-Node-A']);
+
+    // Round 2: the topology hands the same route to a new owner. The old
+    // owner's read (started from the sticky snapshot before the fresh
+    // topology landed) hangs, while the new owner confirms an empty
+    // directory. When the old reply lands late — same round, still
+    // current — it must not overwrite the new owner's confirmed answer.
+    vi.mocked(getTopology).mockResolvedValue({
+      nodes: [{ name: 'hub-example', instanceId: 'n3wn3wn3n3wn3wn3n3wn3wn3n3wn3wn3', route: OWNER_ROUTE, stale: false, label: 'Hub' }],
+    });
+    let resolveOld;
+    state.vlQueue = [
+      () => new Promise((resolve) => { resolveOld = resolve; }),
+      { nodes: [] },
+    ];
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(vlLabels(hook.result)).toEqual([]);
+
+    await act(async () => { resolveOld(OLD_PAYLOAD); await vi.advanceTimersByTimeAsync(0); });
+    expect(vlLabels(hook.result)).toEqual([]);
+  });
+
+  it('exposes the owner grace window as the same constant used for owners', async () => {
+    // One grace number for owners and their VL nodes: no diverging values.
+    expect(OWNER_GRACE_MS).toBe(10 * 60 * 1000);
   });
 
   it('exposes the owner grace window as the same constant used for owners', async () => {
