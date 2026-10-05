@@ -4,7 +4,19 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+// Capture the notifier input before the events hub enriches frames for SSE.
+const notifierModule = require('../lib/notify/notifier.js');
+const originalNotifier = notifierModule.createNotifier;
+const emittedClosureFrames = [];
+notifierModule.createNotifier = deps => {
+  const notifier = originalNotifier(deps);
+  return { ...notifier, emitRaw(frame) {
+    emittedClosureFrames.push(structuredClone(frame));
+    return notifier.emitRaw(frame);
+  } };
+};
 const { createServer } = require('../lib/server.js');
+notifierModule.createNotifier = originalNotifier;
 const { createAsksStore } = require('../lib/notify/asks.js');
 const nodes = require('../lib/nodes/store.js');
 const { tmuxSessionForCell } = require('../lib/fleet/definitions.js');
@@ -216,6 +228,9 @@ for (const outcome of ['dismissed', 'answered']) for (const pathKind of ['fanout
     let text = '', frame;
     while (!frame) { text += Buffer.from((await reader.read()).value).toString(); frame = text.split('\n').filter(x => x.startsWith('data: ')).map(x => JSON.parse(x.slice(6))).find(f => ['ask-dismissed', 'ask-answered'].includes(f.type) && f.ownerId === owner.id); }
     assert.equal(frame.id, alias.id); assert.equal(frame.ownerAskId, source.id);
+    const emitted = emittedClosureFrames.find(f => f.id === alias.id && f.ownerId === owner.id);
+    assert.ok(emitted, 'the imported closure reached the notifier');
+    assert.equal(emitted.ownerAskId, source.id, 'the producer frame carries the canonical owner ask id before SSE enrichment');
     assert.equal(frame.type, pathKind === 'reconciliation' ? 'ask-dismissed' : `ask-${outcome}`);
     const store = createAsksStore({ dir: receiver.configDir });
     assert.equal(store.findImported(other, source.id).dismissed, false); assert.equal(store.findImported(other, source.id).answered, false);
