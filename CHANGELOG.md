@@ -2,6 +2,13 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.59 — 2026-10-05
+
+- Delayed question events retain the original question generation separately from their emission time. Local dismissal follows the current visible generation, refuses conflicting views, and preserves historical aliases. Imported closure events identify the owner question while mixed-node clients can still resolve older alias-only closures.
+
+- Imported questions can be dismissed locally while their owner is unavailable. Cards offer an explicit local action after capability checks, remain visible on errors, and distinguish pending origin closure from unauthorized remote closure. Local dismissals survive restarts and feed refreshes, and synchronize with the owner through authorized routes using generation checks, bounded retries, and durable history. Retry bindings use public pairing rotation counters rather than credential hashes.
+- **VL nodes no longer blink away when their owner read fails.** The sidebar keeps the last known VL directory per owner, republished on every update and marked as not verified; entries survive skipped or failed reads and owners that temporarily drop out of the topology, within the same grace window used for owners. A confirmed read — even an empty one — replaces the cached entry for that owner alone, and a token or instance change drops it. Cache writes, publications, backoff successes and backoff failures are all scoped to the route's current owner: a late reply from a superseded owner (or from a route whose owner is no longer identifiable) touches neither the cache nor the backoff.
+
 ## 0.9.58 — 2026-10-03
 
 - **Reply to questions across connected hubs.** Replies and dismissals follow the question's owner through the network. Reply availability is checked separately from the notification feed, and an uncertain reply can be verified before another is sent.

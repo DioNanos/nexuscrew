@@ -98,6 +98,12 @@ export function vlSidebarGroups(peers) {
       capabilities: [],
       engines: [],
       health: peer.health ?? null,
+      // Data from the per-owner cache (an older round than the one being
+      // published) is explicitly flagged: the sidebar must not present it
+      // as freshly verified. fleetState 'stale' reuses the existing fleet
+      // indicator (warn dot + not-verified notice) for vl groups too.
+      stale: peer.stale === true,
+      fleetState: peer.stale === true ? 'stale' : null,
       peer,
     });
   }

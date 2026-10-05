@@ -101,21 +101,26 @@ async function remaining(client) {
 }
 
 test('R5+: esaurito il resync il loop si ferma, e dopo il cooldown uno snapshot fresco ripristina la view', async (t) => {
+  // Il clock iniettabile mantiene deterministica la finestra del cooldown:
+  // il polling usa timer reali, ma solo il test fa avanzare il tempo del gate.
   // Un cooldown da 250 ms: durante la finestra NESSUNA richiesta (R5 resta),
   // alla scadenza UN tentativo: snapshot pulito → stale=false, lastError=null,
   // la ask chiusa sparita dalla view.
+  let clock = Date.now();
   const { client, calls } = stubClient(t,
     [health, ...snap409pairs(3), snapClean(), hang],
-    { resyncCooldownStepsMs: [250, 500, 1000] });
+    { now: () => clock, minSnapshotIntervalMs: 0, resyncCooldownStepsMs: [250, 500, 1000] });
   client.start();
   const view = await waitExhausted(client);
   assert.ok(view, 'the view exists');
   assert.equal(view.lastError, 'resync-exhausted', 'three reset rounds exhaust the resync (R5 unchanged)');
   const snapshots = () => calls.filter((c) => c.url.includes('/event-feed/snapshot')).length;
   const atExhaustion = calls.length;
-  await sleep(120); // dentro il cooldown (250 ms)
+  clock = view.resyncBlockedUntil - 1;
+  await sleep(120); // il clock resta dentro il cooldown, anche sotto carico
   assert.equal(calls.length, atExhaustion, 'during the cooldown the loop is stopped: no request');
-  await sleep(400); // il cooldown (250 ms) scade, il tick (15 ms) passa il gate
+  clock = view.resyncBlockedUntil;
+  for (let i = 0; i < 400 && snapshots() < 4; i++) await sleep(10);
   assert.ok(snapshots() >= 4, 'after the cooldown a fresh snapshot is paid: ' + snapshots());
   const recovered = client.state().views.find((v) => v.ownerId === OWNER);
   assert.equal(recovered.stale, false, 'a clean snapshot clears stale');

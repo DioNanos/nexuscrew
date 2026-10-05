@@ -275,10 +275,14 @@ export const relayAskAnswer = (t, { ownerId, askId, text, requestId }) => jsonFe
 export const relayAskVerify = (t, { ownerId, askId, requestId }) => jsonFetch('/api/asks-relay', t, {
   method: 'POST', body: { action: 'verify', ownerId, askId, requestId },
 });
-export const getAskReplyCapability = (t, { ownerId, askId }, opts = {}) => jsonFetch(`/api/asks-relay/capability?ownerId=${encodeURIComponent(ownerId)}&askId=${encodeURIComponent(askId)}`, t, { timeoutMs: 8000, ...opts });
+export const getAskReplyCapability = (t, { ownerId, askId }, opts = {}) => jsonFetch(`/api/asks-relay/capability?ownerId=${encodeURIComponent(ownerId)}&askId=${encodeURIComponent(askId)}&dismissals=1`, t, { timeoutMs: 8000, ...opts });
 export const getAskRelayState = (t) => jsonFetch('/api/asks-relay/state', t);
 export const relayAskDismiss = (t, { ownerId, askId }) => jsonFetch('/api/asks-relay', t, {
   method: 'POST', body: { action: 'dismiss', ownerId, askId },
+});
+// Explicit local intent: the server resolves visibility and owner generation.
+export const relayAskDismissLocal = (t, { ownerId, askId }) => jsonFetch('/api/asks-relay', t, {
+  method: 'POST', body: { action: 'dismiss-local', ownerId, askId },
 });
 export const getFeedState = (t) => jsonFetch('/api/feed-state', t);
 
