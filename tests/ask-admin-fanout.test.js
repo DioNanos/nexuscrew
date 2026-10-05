@@ -125,3 +125,13 @@ test('ASK fan-out keeps legacy acceptance and adds observable zero-channel alert
   assert.equal(ask.fanout[0].alertStatus, 'no-delivery', 'dispatcher and local fan-out preserve added diagnostics');
   assert.ok((await open(remote)).some(a => a.ownerAskId === ask.id), 'zero channels never undo ASK persistence');
 });
+
+test('ASK admission logging failure does not change the persisted legacy receipt', async t => {
+  const origin = await boot(t);
+  const remote = await boot(t, { log: line => { if (line.startsWith('ask ingress ')) throw new Error('fixture logger unavailable'); } });
+  pair(origin, remote, 'remote'); pair(remote, origin, 'origin'); observe();
+  const ask = await create(origin, remote.id);
+  assert.equal(ask.fanout[0].status, 'delivered', 'logging cannot undo accepted ASK delivery');
+  assert.equal(ask.fanout[0].alertStatus, 'no-delivery');
+  assert.ok((await open(remote)).some(a => a.ownerAskId === ask.id), 'persisted ASK remains visible');
+});

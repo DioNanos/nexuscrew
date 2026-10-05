@@ -174,3 +174,12 @@ for (const concurrent of [false, true]) test(`canonical ASK replay does not aler
   const restarted = loadWorker(db); await restarted.push(payload);
   assert.equal(restarted.shown.length, 0, 'restart preserves canonical alert admission');
 });
+
+test('array-shaped ASK identifiers never become canonical alert tags', async () => {
+  for (const over of [{ ownerId: ['a'.repeat(32)] }, { askId: ['abcdef01'] }]) {
+    const worker = loadWorker(fakeIndexedDB());
+    await worker.push({ title: 'invalid shape', ownerId: 'a'.repeat(32), askId: 'abcdef01', ownerAskTs: 1700000000000, ...over });
+    assert.equal(worker.shown.length, 1, 'legacy fallback still displays the notification');
+    assert.equal(worker.shown[0].options.tag, 'nexuscrew', 'only string identifiers authorize canonical ASK deduplication');
+  }
+});
