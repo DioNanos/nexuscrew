@@ -234,3 +234,18 @@ test('local dismissal SSE carries canonical generation context without exporting
     assert.deepEqual(frame.askGeneration, { question: runtime.alias.question, options: runtime.alias.options, session: runtime.alias.session });
   } finally { controller.abort(); await reader.cancel().catch(() => {}); }
 });
+
+for (const variant of ['hop', 'extra body key']) test(`local dismissal rejects ${variant} without persisting a record`, async t => {
+  const runtime = await boot(t);
+  const store = createAsksStore({ dir: runtime.configDir });
+  const before = fs.readFileSync(store.filePath, 'utf8');
+  const response = await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay`, {
+    method: 'POST', headers: { authorization: `Bearer ${runtime.token}`, 'content-type': 'application/json',
+      ...(variant === 'hop' ? { 'x-nexuscrew-hop': 'untrusted-hop' } : {}) },
+    body: JSON.stringify({ action: 'dismiss-local', ownerId: OWNER, askId: ID,
+      ...(variant === 'extra body key' ? { note: 'not allowed' } : {}) }),
+  });
+  assert.equal(response.status, variant === 'hop' ? 403 : 400);
+  assert.equal(fs.readFileSync(store.filePath, 'utf8'), before);
+  assert.equal(store.getImportedDismissal(OWNER, ID), null);
+});
