@@ -34,7 +34,7 @@ async function fixture(t, { ask = {}, refuse, beforeGate } = {}) {
 }
 test('owner capability proves the canonical generation and precondition support', async t => {
   const f = await fixture(t); const result = await f.request('GET');
-  assert.equal(result.body.generationPrecondition, true); assert.deepEqual(result.body.ask, f.current);
+  assert.equal(result.body.generationPrecondition, true); assert.deepEqual(result.body.ask, { id: ID, ts: 100, question: 'Review?', options: ['Yes'], session: 'reviewer' });
 });
 test('an answer completed during authorization wins without dismiss mutation', async t => {
   const f = await fixture(t, { beforeGate: ask => { ask.answered = true; ask.revision = 7; } });
