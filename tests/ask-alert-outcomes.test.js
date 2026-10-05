@@ -48,6 +48,8 @@ test('failed ASK alert attempts retain acceptance and a later explicit deduped i
   const third = await s.request();
   assert.equal(third.body.status, 'delivered'); assert.equal(third.body.deduped, true); assert.equal(third.body.alert.push, 0);
   assert.equal(third.body.alert.pushAttempted, false, 'successful admission must not attempt another push');
+  assert.equal(s.pushed[0].askId, ASK.ownerAskId, 'local alias IDs never identify alerts');
+  assert.equal(s.pushed[0].ownerAskTs, ASK.ownerAskTs, 'owner creation generation survives the direct route');
   assert.equal(s.pushed.length, 2); assert.equal(s.emitted.filter(f => f.type === 'ask').length, 3, 'all ASK cards remain distributed');
   assert.ok(s.logs.every(line => !line.includes(ASK.question)), 'ingress logs contain owner/id and outcomes, never question text');
 });

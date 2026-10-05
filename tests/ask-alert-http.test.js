@@ -149,3 +149,25 @@ test('real imported feed stays read-only for alert admission and still distribut
   await until(() => frames.some(f => f.type === 'ask-dismissed' && f.ownerAskId === id), 'closure remains delivered to read-only UI');
   assert.equal(fs.existsSync(path.join(path.dirname(remote.nodesPath), 'ask-alerts.json')), false);
 });
+
+test('real push provider failure stays visible in ASK receipts and does not undo persistence or explicit replay', async t => {
+  let fail = true; const attempted = [];
+  const origin = await boot(t); const remote = await boot(t, {
+    webpushImpl: { generateVAPIDKeys: () => ({ publicKey: 'pub-test', privateKey: 'priv-test' }), sendNotification: async (_s, payload) => { attempted.push(JSON.parse(payload)); if (fail) throw new Error('fixture provider unavailable'); return { statusCode: 201 }; } },
+    pushLookupImpl: async () => [{ address: '93.184.216.34', family: 4 }],
+  });
+  pair(origin, remote, 'remote'); pair(remote, origin, 'origin');
+  const subscribed = await fetch(`http://127.0.0.1:${remote.port}/api/push/subscribe`, { method: 'POST', headers: headers(remote.token), body: JSON.stringify({ subscription: { endpoint: 'https://push.example/failure', keys: { p256dh: 'k1', auth: 'a1' } } }) });
+  assert.equal(subscribed.status, 200); const session = tmuxSessionForCell('reviewer');
+  const created = await fetch(`http://127.0.0.1:${origin.port}/api/asks`, { method: 'POST', headers: headers(origin.token), body: JSON.stringify({ question: 'provider failure?', options: ['yes'], session, target: remote.id }) });
+  assert.equal(created.status, 201); const body = await created.json();
+  assert.equal(body.fanout[0].status, 'delivered'); assert.equal(body.fanout[0].alertStatus, 'no-delivery');
+  assert.equal(body.fanout[0].alert.push, 0); assert.equal(body.fanout[0].alert.pushAttempted, true);
+  const listed = await fetch(`http://127.0.0.1:${origin.port}/api/asks?open=1`, { headers: headers(origin.token) }).then(r => r.json());
+  const ask = listed.asks.find(a => a.id === body.id); assert.ok(ask); fail = false;
+  const replay = await fetch(`http://127.0.0.1:${origin.port}/api/route/remote/_/asks`, { method: 'POST', headers: headers(origin.token), body: JSON.stringify({ target: remote.id, originNode: origin.id, originCell: session, ownerNode: origin.id, askId: ask.id, ownerAskTs: ask.ts, question: ask.question, options: ask.options, session }) });
+  assert.equal(replay.status, 200); const receipt = await replay.json();
+  assert.equal(receipt.status, 'delivered'); assert.equal(receipt.deduped, true); assert.equal(receipt.alert.push, 1);
+  assert.equal(receipt.alert.pushAttempted, true); assert.equal(attempted.length, 2);
+  assert.equal(attempted[1].askId, ask.id); assert.equal(attempted[1].ownerAskTs, ask.ts);
+});
