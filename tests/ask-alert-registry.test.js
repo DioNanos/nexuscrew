@@ -79,3 +79,13 @@ test('canonical metadata ignores emission timestamps and distinguishes unknown f
   const b = canonicalAskAlert({ ownerId, askId: 'abcdef01', ownerAskFingerprint: 'b'.repeat(64) });
   assert.notEqual(a.tag, b.tag);
 });
+
+test('non-object registry entries fail closed without throwing or rewriting their source', t => {
+  for (const entries of [42, true, 'malformed', []]) {
+    const f = fixture(t); fs.writeFileSync(f.file, JSON.stringify({ v: 1, entries })); const before = fs.readFileSync(f.file);
+    const corrupted = createAskAlertRegistry(f.options); let claim;
+    assert.doesNotThrow(() => { claim = corrupted.claim(frame(), 'push'); }, 'malformed storage cannot escape admission as an exception');
+    assert.equal(claim.allowed, false, 'malformed entries cannot admit a canonical alert');
+    assert.deepEqual(fs.readFileSync(f.file), before);
+  }
+});
