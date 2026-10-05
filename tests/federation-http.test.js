@@ -354,8 +354,17 @@ test('scoped federation HTTP reaches sessions, fleet and owner decks, and no set
 
 test('server-controlled visited IDs reject an HTTP federation cycle', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fed-cycle-'));
-  const reserve = async () => { const s = await listen((_q, r) => r.end()); const p = s.address().port; await close(s); return p; };
-  const aPort = await reserve(); const bPort = await reserve(); const cPort = await reserve();
+  // Keep all listeners bound while preparing the topology: released ephemeral
+  // ports can otherwise be returned again by the kernel.
+  const aa = express(), bb = express(), cc = express();
+  const as = await listen(aa);
+  t.after(async () => { await close(as); });
+  const bs = await listen(bb);
+  t.after(async () => { await close(bs); });
+  const cs = await listen(cc);
+  t.after(async () => { await close(cs); });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const aPort = as.address().port, bPort = bs.address().port, cPort = cs.address().port;
   const aPath = path.join(dir, 'a.json'); const bPath = path.join(dir, 'b.json'); const cPath = path.join(dir, 'c.json');
   const node = (name, port, nodeId, token, acceptToken) => ({ name, ssh: name, remotePort: port, localPort: port, direction: 'outbound', transport: 'ssh', autostart: false, shared: true, visibility: 'network', peerOperatorAccess: true, nodeId, token, acceptToken });
   let a = store.emptyStore('a'.repeat(32));
@@ -368,16 +377,10 @@ test('server-controlled visited IDs reject an HTTP federation cycle', async (t) 
   c = store.addNode(c, node('b', bPort, 'b'.repeat(32), 'c-to-b', 'b-to-c'));
   c = store.addNode(c, node('a', aPort, 'a'.repeat(32), 'c-to-a', 'a-to-c'));
   store.atomicWriteStore(aPath, a); store.atomicWriteStore(bPath, b); store.atomicWriteStore(cPath, c);
-  const aa = express();
   aa.use('/api/route', fed.localRouter({ nodesPath: aPath, localPort: aPort, localCredential: () => 'a-main' }));
   aa.use('/federation', fed.peerRouter({ nodesPath: aPath, localPort: aPort, localCredential: () => 'a-main' }));
-  const bb = express(); bb.use('/federation', fed.peerRouter({ nodesPath: bPath, localPort: bPort, localCredential: () => 'b-main' }));
-  const cc = express(); cc.use('/federation', fed.peerRouter({ nodesPath: cPath, localPort: cPort, localCredential: () => 'c-main' }));
-  const as = http.createServer(aa); const bs = http.createServer(bb); const cs = http.createServer(cc);
-  await new Promise((resolve) => as.listen(aPort, '127.0.0.1', resolve));
-  await new Promise((resolve) => bs.listen(bPort, '127.0.0.1', resolve));
-  await new Promise((resolve) => cs.listen(cPort, '127.0.0.1', resolve));
-  t.after(async () => { await close(as); await close(bs); await close(cs); fs.rmSync(dir, { recursive: true, force: true }); });
+  bb.use('/federation', fed.peerRouter({ nodesPath: bPath, localPort: bPort, localCredential: () => 'b-main' }));
+  cc.use('/federation', fed.peerRouter({ nodesPath: cPath, localPort: cPort, localCredential: () => 'c-main' }));
   const r = await fetch(`http://127.0.0.1:${aPort}/api/route/b/c/a/_/sessions`);
   assert.equal(r.status, 409);
   assert.match((await r.json()).error, /cycle/);
