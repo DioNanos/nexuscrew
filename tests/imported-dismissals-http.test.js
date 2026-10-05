@@ -9,7 +9,7 @@ const { createAsksStore } = require('../lib/notify/asks.js');
 const nodes = require('../lib/nodes/store.js');
 const { tmuxSessionForCell } = require('../lib/fleet/definitions.js');
 const OWNER = 'b'.repeat(32), ID = '12345678';
-async function boot(t, { readonly = false, malformed = false, symlink = false } = {}) {
+async function boot(t, { readonly = false, malformed = false, symlink = false, queued = false } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-owner-access-'));
   const configDir = path.join(home, '.nexuscrew'); fs.mkdirSync(configDir);
   const nodesPath = path.join(configDir, 'nodes.json'); nodes.initStore(nodesPath);
@@ -17,6 +17,7 @@ async function boot(t, { readonly = false, malformed = false, symlink = false } 
   const alias = store.create({ question: 'Review?', options: ['Yes'], session: tmuxSessionForCell('reviewer'), ownerId: OWNER, ownerAskId: ID, originNode: OWNER, ownerAskTs: 100 }).ask;
   let st = nodes.addNode(nodes.loadStoreStrict(nodesPath), { name: 'owner', nodeId: OWNER, direction: 'inbound', token: 'fixture', shared: true, visibility: 'network', ssh: 'demo@example.invalid', localPort: 42001, remotePort: 42002 });
   st = nodes.setPeerAccessPreset(st, 'owner', 'admin'); nodes.atomicWriteStore(nodesPath, st);
+  if (queued) store.dismissImported({ ownerId: OWNER, ownerAskId: ID, ask: alias });
   if (malformed) { const value = JSON.parse(fs.readFileSync(store.filePath)); value.importedDismissals = []; fs.writeFileSync(store.filePath, JSON.stringify(value)); }
   if (symlink) { fs.renameSync(store.filePath, store.filePath + '.target'); fs.symlinkSync(store.filePath + '.target', store.filePath); }
   const runtime = createServer({ home, configDir, nodesPath, configPath: path.join(configDir, 'config.json'), tokenPath: path.join(configDir, 'token'),
@@ -71,4 +72,12 @@ test('new fanout imports preserve owner timestamp distinct from receipt timestam
   const source = createAsksStore({ dir: owner.configDir }).get(created.id);
   assert.ok(alias); assert.equal(alias.ownerAskTs, source.ts); assert.ok(alias.ts >= alias.ownerAskTs);
   assert.notEqual(alias.id, created.id);
+});
+test('server bootstrap resumes durable imported dismissal work without a feed subscription', async t => {
+  const runtime = await boot(t, { queued: true }); let record;
+  for (let i = 0; i < 50; i++) {
+    record = createAsksStore({ dir: runtime.configDir }).getImportedDismissal(OWNER, ID);
+    if (record.attempts > 0) break; await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.ok(record.attempts > 0, 'a restarted server must resume durable work');
 });

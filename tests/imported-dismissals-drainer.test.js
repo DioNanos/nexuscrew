@@ -133,3 +133,10 @@ test('blocked records are reactivated only by a changed owner permission or chan
   await f.drainer.drain(); assert.equal(f.calls.length, 1);
   binding = 'new'; clock += 60001; await f.drainer.drain(); assert.equal(f.calls.length, 2);
 });
+test('READONLY prevents drain acquisition and a change during inspection prevents DELETE', async t => {
+  let readonly = true;
+  const f = fixture(t, { extra: { readonly: () => readonly }, inspect: async () => { readonly = true; return { ok: true, status: 'open', ask: ASK, generationPrecondition: true }; } });
+  await f.drainer.drain(); assert.equal(f.calls.length, 0);
+  readonly = false; await f.drainer.drain(); assert.equal(f.calls.filter(c => c[0] === 'inspect').length, 1);
+  assert.equal(f.calls.filter(c => c[0] === 'delete').length, 0); assert.equal(f.store.getImportedDismissal(OWNER, ID).syncState, 'pending');
+});
