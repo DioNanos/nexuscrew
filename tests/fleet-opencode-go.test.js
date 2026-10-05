@@ -27,7 +27,7 @@ function world() {
   for (const name of ['claude', 'codex-vl', 'pi']) {
     const target = path.join(home, '.local', 'bin', name);
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.writeFileSync(target, '#!/bin/sh\ncase "$1" in --version) echo "codex-cli 0.160.0" ;; --help) echo "Usage: codex --no-daemon" ;; esac\n', { mode: 0o755 });
   }
   return home;
 }
@@ -276,7 +276,7 @@ test('Codex-VL usa la wire Responses su /v1 e non propaga credenziali ambientali
     assert.match(argv, /wire_api="responses"/);
     assert.doesNotMatch(argv, /OPENAI_API_KEY|must-not-propagate/);
     assert.equal(argv.includes(value), false);
-    assert.deepEqual(result.engine.args.slice(-2), ['-m', 'deepseek-v4-flash']);
+    assert.deepEqual(result.engine.args.slice(-3), ['-m', 'deepseek-v4-flash', '--no-daemon']);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 

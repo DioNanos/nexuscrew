@@ -438,7 +438,7 @@ function makeManagedWorld({ client, provider, delivery, env = {} }) {
   const binDir = path.join(home, '.local', 'bin'); fs.mkdirSync(binDir, { recursive: true });
   const binName = client === 'kimi' ? 'kimi' : 'claude';
   const bin = path.join(binDir, binName);
-  fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); fs.chmodSync(bin, 0o755);
+  fs.writeFileSync(bin, '#!/bin/sh\ncase "$1" in --version) echo "codex-cli 0.160.0" ;; --help) echo "Usage: codex --no-daemon" ;; esac\n', { mode: 0o755 }); fs.chmodSync(bin, 0o755);
   const engineId = client === 'kimi' ? 'kimi.native' : 'claude.kimi-code';
   const defsPath = path.join(root, 'fleet.json');
   atomicWrite(defsPath, {
@@ -947,7 +947,7 @@ test('regression: claude.native/codex/pi/agy conservano prompt su argv; solo kim
     for (const name of ['claude', 'codex', 'pi', 'agy', 'kimi']) {
       const dir = path.join(home, '.local', 'bin'); fs.mkdirSync(dir, { recursive: true });
       const bin = path.join(dir, name);
-      fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); fs.chmodSync(bin, 0o755);
+      fs.writeFileSync(bin, '#!/bin/sh\ncase "$1" in --version) echo "codex-cli 0.160.0" ;; --help) echo "Usage: codex --no-daemon" ;; esac\n', { mode: 0o755 }); fs.chmodSync(bin, 0o755);
     }
     const cell = { id: 'Dev', prompt: 'bootstrap' };
     const claude = resolveManagedEngine(

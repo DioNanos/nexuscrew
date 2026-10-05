@@ -17,7 +17,7 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ncmanaged-'));
 function fakeClient(home, name) {
   const p = path.join(home, '.local', 'bin', name);
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(p, '#!/bin/sh\ncase "$1" in --version) echo "codex-cli 0.160.0" ;; --help) echo "Usage: codex --no-daemon" ;; esac\n', { mode: 0o755 });
   fs.chmodSync(p, 0o755);
   return p;
 }
@@ -448,7 +448,7 @@ test('Codex-VL OpenRouter usa Responses command-auth senza env_key e pinna Kimi 
     assert.match(joined, /openrouter-kimi-k3\.json/);
     assert.equal(joined.includes('.env_key='), false);
     assert.equal(joined.includes(secret), false);
-    assert.deepEqual(r.engine.args.slice(-2), ['-m', 'moonshotai/kimi-k3']);
+    assert.deepEqual(r.engine.args.slice(-3), ['-m', 'moonshotai/kimi-k3', '--no-daemon']);
     const catalogArg = r.engine.args.find((arg) => arg.startsWith('model_catalog_json='));
     const catalog = JSON.parse(fs.readFileSync(JSON.parse(catalogArg.slice('model_catalog_json='.length)), 'utf8')).models[0];
     assert.equal(catalog.context_window, 1048576);
@@ -504,7 +504,7 @@ test('OpenAI API usa OPENAI_API_KEY senza creare un provider compatibile', () =>
       assert.deepEqual(r.engine.env, client === 'codex-vl'
         ? { OPENAI_API_KEY: 'secret', CODEX_APP_SERVER_IDENTITY_REQUIRED: '0' }
         : { OPENAI_API_KEY: 'secret' });
-      assert.deepEqual(r.engine.args, ['-m', 'gpt-5.4']);
+      assert.deepEqual(r.engine.args, ['-m', 'gpt-5.4', '--no-daemon']);
       assert.equal(JSON.stringify(r.info).includes('secret'), false);
     }
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -627,10 +627,10 @@ test('Codex-VL Native: standard non forza bypass; unsafe e opt-in', () => {
     assert.equal(r.ok, true);
     assert.equal(r.engine.command, bin);
     assert.deepEqual(r.engine.env, { CODEX_APP_SERVER_IDENTITY_REQUIRED: '0' });
-    assert.deepEqual(r.engine.args, ['bootstrap']);
+    assert.deepEqual(r.engine.args, ['--no-daemon', 'bootstrap']);
     assert.equal(r.engine.promptMode, 'managed-argv');
     const unsafe = resolveManagedEngine({ id: 'codex-vl.native', label: 'Codex', managed: { ...managed, permissionPolicy: 'unsafe' } }, { id: 'Dev', prompt: 'bootstrap' }, { home });
-    assert.deepEqual(unsafe.engine.args, ['--dangerously-bypass-approvals-and-sandbox', 'bootstrap']);
+    assert.deepEqual(unsafe.engine.args, ['--dangerously-bypass-approvals-and-sandbox', '--no-daemon', 'bootstrap']);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -642,7 +642,7 @@ test('Termux: npm CLI con shebang /usr/bin/env node usa process.execPath esplici
     fs.writeFileSync(bin, '#!/usr/bin/env node\nconsole.log("ok")\n', { mode: 0o755 });
     fs.chmodSync(bin, 0o755);
     const node = path.join(home, 'node');
-    fs.writeFileSync(node, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.writeFileSync(node, '#!/bin/sh\nshift\ncase "$1" in --version) echo "codex-cli 0.160.0" ;; --help) echo "Usage: codex --no-daemon" ;; esac\n', { mode: 0o755 });
     fs.chmodSync(node, 0o755);
     assert.equal(needsExplicitNode(bin, 'android'), true);
     assert.equal(needsExplicitNode(bin, 'linux'), false);
@@ -652,7 +652,7 @@ test('Termux: npm CLI con shebang /usr/bin/env node usa process.execPath esplici
     }, { id: 'Dev', prompt: 'bootstrap' }, { home, platform: 'android', nodeExecPath: node });
     assert.equal(r.ok, true);
     assert.equal(r.engine.command, node);
-    assert.deepEqual(r.engine.args, [bin, 'bootstrap']);
+    assert.deepEqual(r.engine.args, [bin, '--no-daemon', 'bootstrap']);
     assert.equal(r.engine.clientBinary, bin);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -687,7 +687,7 @@ test('needsExplicitNode: Termux runtime via PREFIX attiva il workaround anche co
     assert.equal(needsExplicitNode(bin, 'linux'), false);
     // resolveManagedEngine threads cfg.env: explicit nodeExecPath is honored.
     const node = path.join(home, 'node');
-    fs.writeFileSync(node, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.writeFileSync(node, '#!/bin/sh\nshift\ncase "$1" in --version) echo "codex-cli 0.160.0" ;; --help) echo "Usage: codex --no-daemon" ;; esac\n', { mode: 0o755 });
     fs.chmodSync(node, 0o755);
     const r = resolveManagedEngine({
       id: 'codex-vl.native', label: 'Codex-VL',
@@ -695,7 +695,7 @@ test('needsExplicitNode: Termux runtime via PREFIX attiva il workaround anche co
     }, { id: 'Dev' }, { home, platform: 'linux', env: termuxEnv, nodeExecPath: node });
     assert.equal(r.ok, true);
     assert.equal(r.engine.command, node);
-    assert.deepEqual(r.engine.args, [bin]);
+    assert.deepEqual(r.engine.args, [bin, '--no-daemon']);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
