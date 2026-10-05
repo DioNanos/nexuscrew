@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
-import { getAsks, answerAsk, dismissAsk, relayAskAnswer, relayAskDismiss, relayAskVerify, getFeedState, getAskRelayState, getAskReplyCapability } from '../lib/api.js';
+import { getAsks, answerAsk, dismissAsk, relayAskAnswer, relayAskDismiss, relayAskDismissLocal, relayAskVerify, getFeedState, getAskRelayState, getAskReplyCapability } from '../lib/api.js';
 import { mergeRemoteNotices, toRemoteNotice, normalizeTs, boundedByTs } from '../lib/remote-notices.js';
 import { connectEvents } from '../lib/events.js';
 import { useNotificationSpeech } from '../hooks/useNotificationSpeech.js';
@@ -45,16 +45,26 @@ const feedViewStateOf = (health, ownerId) => {
 // nascosto per sempre.
 const DISMISSED_TTL_MS = 10 * 60 * 1000;
 const dismissedAsks = new Map(); // askKeyOf -> timestamp
+const generationTsOf = a => Object.hasOwn(a, 'ownerAskTs') ? a.ownerAskTs : a.ownerAskId || a.originNode ? null : a.ts;
 
-function noteAskDismissed(key) {
-  dismissedAsks.set(key, Date.now());
+function noteAskDismissed(key, localAsk) {
+  dismissedAsks.set(key, localAsk ? { at: Date.now(), local: true,
+    ts: generationTsOf(localAsk),
+    fingerprint: localAsk.question === undefined ? null : JSON.stringify([localAsk.question, localAsk.options || [], localAsk.session]) } : { at: Date.now() });
 }
 
 function askStillDismissed(a) {
   const key = askKeyOf(a.id, a.ownerId, a.ownerAskId);
   const at = dismissedAsks.get(key);
   if (at === undefined) return false;
-  if (Date.now() - at > DISMISSED_TTL_MS) { dismissedAsks.delete(key); return false; }
+  if (at.local) {
+    const ts = generationTsOf(a);
+    // Local intent has no TTL. A different observed generation is a new card;
+    // durable filtering on reload remains the receiving server's responsibility.
+    return !(at.ts && ts && at.ts !== ts)
+      && (at.fingerprint === null || at.fingerprint === JSON.stringify([a.question, a.options || [], a.session]));
+  }
+  if (Date.now() - at.at > DISMISSED_TTL_MS) { dismissedAsks.delete(key); return false; }
   return true;
 }
 
@@ -103,7 +113,7 @@ function Toast({ n, onClose }) {
   );
 }
 
-function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, feedViewState = 'live', initialUncertainRid = null, capabilityStatus = 'loading', onRefused = () => {} }) {
+function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, feedViewState = 'live', initialUncertainRid = null, canDismissLocal = false, canDismissRemote = false, capabilityStatus = 'loading', onRefused = () => {} }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -116,10 +126,14 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
   // resta solo la riconciliazione con l'owner: nessun reinvio cieco.
   const [blockedOriginal, setBlockedOriginal] = useState(false);
   const requestIdRef = useRef(null);
+  useEffect(() => { if (initialUncertainRid) setUncertainRid(initialUncertainRid); }, [initialUncertainRid]);
+  const dismissBlocked = dismissing || busy || !!uncertainRid || blockedOriginal
+    || (!!ask.ownerId && (['loading', 'unsupported'].includes(capabilityStatus) || (!canDismissLocal && !canDismissRemote)));
+  const dismissLocally = !!ask.ownerId && canDismissLocal === true;
 
   const send = async (value) => {
     const answer = String(value || '').trim();
-    if (!answer || busy) return;
+    if (!answer || busy || dismissing || uncertainRid || blockedOriginal) return;
     setErr(null); setBusy(true);
     try {
       if (ask.ownerId) {
@@ -134,12 +148,13 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
         if (out && out.uncertain) {
           // Blocco precedente: il nuovo requestId non ha ricevuta — la verifica
           // possibile è solo sull'ID originale autorizzato, se noto.
-          setUncertainRid(out.originalRequestId || out.requestId || requestIdRef.current);
-          setBlockedOriginal(false);
+          const missingOriginal = out.reason === 'delivery-unknown-block' && !out.originalRequestId;
+          setUncertainRid(missingOriginal ? null : out.originalRequestId || out.requestId || requestIdRef.current);
+          setBlockedOriginal(missingOriginal);
           return;
         }
         if (!out || out.status !== 'committed') { requestIdRef.current = null; onRefused(); setErr(t('ask-reconcile')); return; }
-        onAnswered(ask.id, ask.ownerId);
+        onAnswered(ask.id, ask.ownerId, ask.ownerAskId);
       } else {
         await answerAsk(token, ask.id, answer);
         onAnswered(ask.id);
@@ -152,36 +167,30 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
     } finally { setBusy(false); }
   };
 
-  // Scarta la domanda: DELETE (marca dismissed lato server, lo storico resta).
-  // Lo scarto fallito NON rimuove la card: un errore di rete non deve far
-  // sparire una domanda ancora aperta.
+  // Hide only after an acknowledged durable mutation, never on a network error.
   const dismiss = async () => {
-    if (dismissing) return;
-    // Con un esito incerto la X e' disabilitata con il motivo (sotto, e nel
-    // title): qui la guardia e' solo la cintura, mai un no-op muto.
-    if (uncertainRid) return;
-    setErr(null);
-    setDismissing(true);
+    if (dismissBlocked) return;
+    setErr(null); setDismissing(true);
     try {
-      if (ask.ownerId) {
+      let out;
+      if (dismissLocally) {
+        out = await relayAskDismissLocal(token, { ownerId: ask.ownerId, askId: ask.ownerAskId || ask.id });
+        if (out?.dismissed !== true || out.scope !== 'local' || !['pending', 'blocked'].includes(out.ownerSync)) {
+          throw new Error(t('ask-dismiss-unconfirmed'));
+        }
+      } else if (ask.ownerId) {
         await relayAskDismiss(token, { ownerId: ask.ownerId, askId: ask.ownerAskId || ask.id });
       } else {
         await dismissAsk(token, ask.id);
       }
-      // Solo un dismiss CONFERMATO nasconde la card, e lo ricorda: un errore o
-      // un esito incerto non devono far sparire una domanda ancora aperta.
-      noteAskDismissed(askKeyOf(ask.id, ask.ownerId, ask.ownerAskId));
-      onDismiss(ask.id, ask.ownerId);
+      noteAskDismissed(askKeyOf(ask.id, ask.ownerId, ask.ownerAskId), dismissLocally ? ask : null);
+      onDismiss(ask.id, ask.ownerId, ask.ownerAskId, out);
     } catch (e) {
-      // Niente silenzi: la causa sta sulla card.
       setErr(String((e && e.message) || e)); onRefused();
-    }
-    setDismissing(false);
+    } finally { setDismissing(false); }
   };
-
-  // Il titolo della X: l'incertezza vince su tutto (niente invii ciechi), poi
-  // l'avviso di view stale, poi il dismiss normale.
-  const dismissTitle = uncertainRid ? t('ask-uncertain')
+  const dismissTitle = uncertainRid || blockedOriginal ? t('ask-uncertain')
+    : dismissLocally ? t('ask-dismiss-local')
     : (feedViewState === 'degraded' ? t('ask-dismiss-stale') : t('ask-dismiss'));
 
   return (
@@ -195,7 +204,7 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
             non sono vivi (lo scarto parte comunque via relay diretto). */}
         <button type="button" className="nc-ask-dismiss"
           title={dismissTitle} aria-label={dismissTitle}
-          disabled={dismissing || !!uncertainRid || (!!ask.ownerId && askReplyAccess === false)} onClick={dismiss}>
+          disabled={dismissBlocked} onClick={dismiss}>
           <Icon name="x" size={14} />
         </button>
       </div>
@@ -218,31 +227,31 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
       {(uncertainRid || blockedOriginal) && <>
         <div className="nc-err">{t('ask-uncertain')}</div>
         {blockedOriginal && !uncertainRid && <div className="nc-err">{t('ask-reconcile')}</div>}
-        <button type="button" className="nc-btn ghost" disabled={verifying}
+        {uncertainRid && <button type="button" className="nc-btn ghost" disabled={verifying}
           onClick={async () => {
             setVerifying(true);
             try {
               const out = await relayAskVerify(token, { ownerId: ask.ownerId, askId: ask.ownerAskId || ask.id, requestId: uncertainRid });
-              if (out?.state === 'committed') onAnswered(ask.id, ask.ownerId);
+              if (out?.state === 'committed') onAnswered(ask.id, ask.ownerId, ask.ownerAskId);
               else if (out?.state === 'failed') {
                 setUncertainRid(null); requestIdRef.current = null; onRefused();
               }
             } catch (e) { setErr(String(e.message || e)); onRefused(); }
             finally { setVerifying(false); }
-          }}>{t('ask-verify')}</button>
+          }}>{t('ask-verify')}</button>}
       </>}
       {(!ask.ownerId || askReplyAccess === true) && !uncertainRid && !blockedOriginal && <>
         {Array.isArray(ask.options) && ask.options.length > 0 && (
           <div className="nc-ask-opts">
             {ask.options.map((o) => (
-              <button key={o} type="button" className="nc-btn ghost" disabled={busy} onClick={() => send(o)}>{o}</button>
+              <button key={o} type="button" className="nc-btn ghost" disabled={busy || dismissing} onClick={() => send(o)}>{o}</button>
             ))}
           </div>
         )}
         <div className="nc-ask-reply">
-          <textarea rows={2} placeholder={t('ask-reply-ph')} value={text} disabled={busy}
+          <textarea rows={2} placeholder={t('ask-reply-ph')} value={text} disabled={busy || dismissing}
             onChange={(e) => setText(e.target.value)} />
-          <button type="button" className="nc-btn primary" disabled={busy || !text.trim()}
+          <button type="button" className="nc-btn primary" disabled={busy || dismissing || !text.trim()}
             onClick={() => send(text)}>{t('send')}</button>
         </div>
       </>}
@@ -256,6 +265,7 @@ export default function NotifyCenter({ token }) {
   const [speechEnabled] = useNotificationSpeech();
   const [toasts, setToasts] = useState([]);
   const [asks, setAsks] = useState([]);
+  const [dismissalNotice, setDismissalNotice] = useState(null);
   // Arretrato di notifiche IMPORTATE dai feed remoti: lista consultabile e
   // SILENZIOSA (mai toast/TTS/push per queste card; il live resta com'era).
   // Dedup unica snapshot+SSE per (ownerId,eventId); bounded; una view revocata
@@ -365,7 +375,19 @@ export default function NotifyCenter({ token }) {
   // La chiave di una card è (ownerId, askId): gli ask importati hanno chiavi
   // di due parti, quelli locali una. Rimuovere per solo id toglierebbe la card
   // sbagliata quando due proprietari hanno lo stesso id di ask.
-  const removeAsk = (id, ownerId) => setAsks((cur) => cur.filter((a) => askKeyOf(a.id, a.ownerId) !== askKeyOf(id, ownerId)));
+  // Older receivers emit the local alias id. Resolve it only within its owner,
+  // and refuse a collision rather than removing an unrelated canonical card.
+  const closureIdentity = frame => {
+    if (frame.ownerAskId || !frame.ownerId) return frame;
+    const matches = asksRef.current.filter(a => a.ownerId === frame.ownerId && (a.id === frame.id || a.ownerAskId === frame.id));
+    const ids = new Set(matches.map(a => a.ownerAskId || a.id));
+    return ids.size > 1 ? null : { ...frame, ownerAskId: ids.size === 1 ? [...ids][0] : frame.id };
+  };
+  const removeAsk = (id, ownerId, ownerAskId, out) => {
+    const key = askKeyOf(id, ownerId, ownerAskId);
+    if (out?.scope === 'local' && ['pending', 'blocked'].includes(out.ownerSync)) setDismissalNotice(out.ownerSync);
+    setAsks((cur) => cur.filter((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId) !== key));
+  };
 
   // Fetch iniziale ask aperti + canale SSE. Entrambi best-effort: la UI resta
   // usabile anche senza il canale (gli ask ricompaiono al prossimo mount).
@@ -386,13 +408,17 @@ export default function NotifyCenter({ token }) {
       if (frame.type === 'notify') pushToast(frame);
       else if (frame.type === 'ask' && frame.ask && frame.ask.id) {
         // Two owners can legitimately use the same ask id: identity is the pair.
-        const key = askKeyOf(frame.ask.id, frame.ask.ownerId);
-        setAsks((cur) => (cur.some((a) => askKeyOf(a.id, a.ownerId) === key) ? cur : [...cur, frame.ask]));
+        setAsks((cur) => mergeAsks(cur, [frame.ask]));
       } else if (frame.type === 'ask-answered' && frame.id) {
-        removeAsk(frame.id, frame.ownerId);
-      } else if (frame.type === 'ask-dismissed' && frame.id) {
-        // Un'altra UI ha scartato la domanda: la card sparisce qui senza DELETE.
-        removeAsk(frame.id, frame.ownerId);
+        const identity = closureIdentity(frame);
+        if (identity) removeAsk(identity.id, identity.ownerId, identity.ownerAskId);
+      } else if (frame.type === 'ask-dismissed' && (frame.id || frame.ownerAskId)) {
+        const identity = closureIdentity(frame);
+        if (!identity) return;
+        const key = askKeyOf(identity.id, identity.ownerId, identity.ownerAskId);
+        const localAsk = frame.scope === 'local' && asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
+        noteAskDismissed(key, frame.scope === 'local' ? localAsk || { ...frame.askGeneration, ownerAskTs: frame.ownerAskTs } : null);
+        removeAsk(identity.id, identity.ownerId, identity.ownerAskId, frame);
       }
     }, () => refreshCapabilities(true));
     return () => { cancelled = true; close(); };
@@ -461,6 +487,10 @@ export default function NotifyCenter({ token }) {
 
   return (
     <>
+      {dismissalNotice && <div className="nc-ntf-toasts"><div className="nc-ntf-toast" role="status">
+        <div className="nc-ntf-toast-txt">{t(dismissalNotice === 'blocked' ? 'ask-dismiss-local-blocked' : 'ask-dismiss-local-pending')}</div>
+        <button type="button" className="nc-ntf-x" title={t('close')} onClick={() => setDismissalNotice(null)}><Icon name="x" size={14} /></button>
+      </div></div>}
       {toasts.length > 0 && (
         <div className="nc-ntf-toasts">
           {toasts.map((n) => <Toast key={n.key} n={n} onClose={() => dropToast(n.key)} />)}
@@ -482,8 +512,12 @@ export default function NotifyCenter({ token }) {
             </button>
           </div>
           <div className="nc-ask-panel-body">
-            {asks.map((a) => <AskCard key={askKeyOf(a.id, a.ownerId)} ask={a} token={token}
+            {asks.map((a) => <AskCard key={askKeyOf(a.id, a.ownerId, a.ownerAskId)} ask={a} token={token}
               askReplyAccess={!a.ownerId || replyCapabilities[a.ownerId + '|' + (a.ownerAskId || a.id)]?.canReply === true}
+              canDismissLocal={replyCapabilities[a.ownerId + '|' + (a.ownerAskId || a.id)]?.canDismissLocal === true}
+              canDismissRemote={replyCapabilities[a.ownerId + '|' + (a.ownerAskId || a.id)]?.canDismissRemote === true
+                || (replyCapabilities[a.ownerId + '|' + (a.ownerAskId || a.id)]?.canDismissRemote === undefined
+                  && replyCapabilities[a.ownerId + '|' + (a.ownerAskId || a.id)]?.canReply === true)}
               capabilityStatus={replyCapabilities[a.ownerId + '|' + (a.ownerAskId || a.id)]?.status || 'loading'}
               onRefused={() => refreshCapabilities(true)}
               feedViewState={a.ownerId ? feedViewStateOf(viewHealth, a.ownerId) : 'live'}
