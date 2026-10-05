@@ -150,3 +150,31 @@ it('a token change cannot reuse a previous local dismissal capability', async ()
   view.rerender(<NotifyCenter token="replacement-token" />); await act(async () => {});
   expect(dismissButton().disabled).toBe(true);
 });
+
+it('a local closure received before either snapshot prevents their stale copies from appearing', async () => {
+  const local = deferred(), feed = deferred(); mocks.getAsks.mockReturnValue(local.promise); mocks.getFeedState.mockReturnValue(feed.promise);
+  render(<NotifyCenter token="fixture-token" />); await act(async () => {});
+  await emit({ type: 'ask-dismissed', id: alias.id, ownerId: OWNER, ownerAskId: alias.ownerAskId, scope: 'local', ownerAskTs: 100 });
+  await act(async () => { local.resolve({ asks: [alias] }); feed.resolve({ views: [{ ownerId: OWNER, asks: [{ ...alias, id: alias.ownerAskId, ownerAskId: undefined, ts: 100 }] }] }); });
+  expect(document.querySelector('.nc-ask-badge')).toBeNull();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 11 * 60 * 1000);
+  try { await emit({ type: 'ask', ask: alias }); expect(document.querySelector('.nc-ask-badge')).toBeNull(); } finally { clock.mockRestore(); }
+});
+it('unsupported capability never enables local dismissal even with a contradictory bit', async () => {
+  mocks.getAskReplyCapability.mockImplementation(async () => cap({ status: 'unsupported' })); await mount();
+  expect(dismissButton().disabled).toBe(true);
+});
+it('an answered response removes the canonical alias without affecting another owner', async () => {
+  mocks.getAsks.mockResolvedValue({ asks: [alias, { ...alias, id: 'other-alias', ownerId: OTHER, question: 'Other owner' }] });
+  mocks.getAskReplyCapability.mockImplementation(async (_token, body) => ({ ...cap({ status: 'open', canReply: true }), ownerId: body.ownerId, askId: body.askId }));
+  await mount(); fireEvent.click(screen.getAllByText('Yes')[0]); await act(async () => {});
+  expect(screen.queryByText(alias.question)).toBeNull(); expect(screen.getByText('Other owner')).toBeTruthy();
+});
+for (const [lang, action, state] of [
+  ['it', 'Scarta su questo nodo', 'Scarto solo locale: chiusura remota non autorizzata'],
+  ['es', 'Descartar en este nodo', 'Descarte solo local: el cierre remoto no está autorizado'],
+]) it(`uses localized local dismissal copy in ${lang}`, async () => {
+  localStorage.setItem('nc_lang', lang); mocks.relayAskDismissLocal.mockResolvedValue({ dismissed: true, scope: 'local', ownerSync: 'blocked' });
+  await mount(); expect(dismissButton().title).toBe(action); fireEvent.click(dismissButton()); await act(async () => {});
+  expect(screen.getByText(state)).toBeTruthy();
+});
