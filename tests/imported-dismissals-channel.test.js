@@ -25,3 +25,10 @@ test('an availability observation is invalidated when the current route binding 
   await f.relay.replyCapability({ ownerId: OWNER, askId: ID }); assert.equal(f.relay.channelState(OWNER).unavailable, true);
   f.node.localPort++; assert.equal(f.relay.channelState(OWNER).unavailable, false);
 });
+test('a cached multihop route change invalidates an old channel outage observation', async () => {
+  let routeBinding = 'hub/source';
+  const relay = createAskRelay({ loadStore: () => ({ nodeId: SELF, nodes: [{ nodeId: OWNER, direction: 'outbound', localPort: 42001, token: 'fixture' }] }),
+    availabilityBinding: () => routeBinding, fetchImpl: async () => { throw new Error('offline'); } });
+  await relay.replyCapability({ ownerId: OWNER, askId: ID }); assert.equal(relay.channelState(OWNER).unavailable, true);
+  routeBinding = 'other/source'; assert.equal(relay.channelState(OWNER).unavailable, false);
+});
