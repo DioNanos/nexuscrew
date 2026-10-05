@@ -2,6 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## Unreleased
+
+- Imported questions can be dismissed locally while their owner is unavailable. Local dismissals survive restarts and feed refreshes, and synchronize with the owner through authorized routes using generation checks, bounded retries, and durable history.
+
 ## 0.9.58 — 2026-10-03
 
 - **Reply to questions across connected hubs.** Replies and dismissals follow the question's owner through the network. Reply availability is checked separately from the notification feed, and an uncertain reply can be verified before another is sent.
