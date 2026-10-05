@@ -100,3 +100,27 @@ describe('treno di lettura per route', () => {
     offA(); offB();
   });
 });
+
+describe('cadenza adattiva: la finestra in secondo piano non genera traffico', () => {
+  const setVis = (stato) => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: stato });
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+
+  it('documento nascosto: i tick si fermano; alla riapertura un giro subito', async () => {
+    const off = subscribeFleetRoute('t', [], () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    const prima = sessionsCalls();
+    setVis('hidden');
+    await vi.advanceTimersByTimeAsync(FLEET_POLL_MS * 3);
+    // Nascosto = zero letture: una tab lasciata aperta in secondo piano non
+    // trafficava nulla, nemmeno a distanza di tre periodi.
+    expect(sessionsCalls()).toBe(prima);
+    setVis('visible');
+    await vi.advanceTimersByTimeAsync(0);
+    // Riaperta = dati freschi SUBITO, non l'ultima fotografia di prima.
+    expect(sessionsCalls()).toBe(prima + 1);
+    off();
+    setVis('visible');
+  });
+});
