@@ -6,7 +6,9 @@ import { act, renderHook } from '@testing-library/react';
 // sidebar while its owner's read is in flight, failing, backed off, or the
 // owner is temporarily gone from the topology — published as not-verified
 // (stale) instead of blinking away. Only a confirmed read (even an empty
-// one) or the owner grace may remove it.
+// one) or the owner grace may remove it. Every cache write, publication,
+// backoff success and backoff failure is scoped to the CURRENT owner of
+// the route: a reply from a superseded owner must not touch any of them.
 //
 // The scenario mirrors the federated one: a VL node owned by a remote
 // owner, watched from another node. Time is driven with fake timers, like
@@ -34,15 +36,14 @@ const VL_PAYLOAD = {
     generation: 1,
     version: '0.1.0',
     capabilities: ['status', 'health'],
-    health: { state: 'running', uptimeSec: 371554, rssBytes: 2097152 },
+    health: { status: 'healthy', state: 'running', uptimeSec: 371554, rssBytes: 2097152 },
     session: { attached: true, profile: 'ollama' },
     inflight: null,
     lastAck: null,
   }],
 };
 
-const state = vi.hoisted(() => ({ vlForOwner: async () => ({ nodes: [] }), vlQueue: [] }));
-const calls = vi.hoisted(() => ({ vl: [] }));
+const state = vi.hoisted(() => ({ vlForOwner: async () => ({ nodes: [] }) }));
 
 vi.mock('../lib/api.js', () => ({
   ROSTER_READ_TIMEOUT_MS: 8000,
@@ -54,7 +55,6 @@ vi.mock('../lib/api.js', () => ({
   getRouteSessions: vi.fn(async () => ({ sessions: [] })),
   fleetStatus: vi.fn(async () => ({ available: false })),
   getVlNodes: vi.fn(async (_token, route = []) => {
-    calls.vl.push(Array.isArray(route) ? route.join('/') : String(route));
     if (Array.isArray(route) && route.join('/') === OWNER_KEY) return state.vlForOwner(_token, route);
     return { nodes: [] };
   }),
@@ -68,7 +68,9 @@ const vlGroups = (result) => (result.current || []).filter((g) => g.kind === 'vl
 const vlLabels = (result) => vlGroups(result).map((g) => g.label);
 
 beforeEach(() => {
+  localStorage.clear();
   state.vlForOwner = async () => ({ nodes: [] });
+  vi.mocked(getRouteConfig).mockResolvedValue({ instanceId: LOCAL_INSTANCE, version: 'test' });
   vi.mocked(getTopology).mockResolvedValue(TOPOLOGY_WITH_OWNER);
   vi.mocked(getVlNodes).mockClear();
   vi.useFakeTimers();
@@ -252,7 +254,7 @@ describe('useNodes — VL sidebar cache per owner', () => {
     // Same route, different owner instance: the cached node belongs to the
     // previous owner. While the new owner's read is in flight, nothing of
     // the old owner may be published under the new one.
-    const OTHER_INSTANCE = 'd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4';
+    const OTHER_INSTANCE = 'd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d';
     vi.mocked(getTopology).mockResolvedValue({
       nodes: [{ name: 'hub-example', instanceId: OTHER_INSTANCE, route: OWNER_ROUTE, stale: false, label: 'Hub2' }],
     });
@@ -277,10 +279,13 @@ describe('useNodes — VL sidebar cache per owner', () => {
     // the previous owner, so its read starts first; only after the fresh
     // topology hands the same route to a replacement owner does the
     // replacement's read start. Replies are controlled by call order.
+    let calls = 0;
     let resolveTopology, resolveOld, resolveNew;
     vi.mocked(getTopology).mockImplementation(() => new Promise((resolve) => { resolveTopology = resolve; }));
-    let calls = 0;
-    state.vlForOwner = () => new Promise((resolve) => { if (++calls === 1) resolveOld = resolve; else resolveNew = resolve; });
+    state.vlForOwner = () => new Promise((resolve) => {
+      if (++calls === 1) { resolveOld = resolve; }
+      else { resolveNew = resolve; }
+    });
     await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
     expect(calls).toBe(1);
 
@@ -333,6 +338,70 @@ describe('useNodes — VL sidebar cache per owner', () => {
     await act(async () => { resolveOwner({ nodes: [] }); await vi.advanceTimersByTimeAsync(0); });
     expect(vlLabels(hook.result)).toEqual([]);
   });
+
+describe('replacement outcome and identity scoped errors', () => {
+ for (const mode of ['success', 'error', 'error-control']) it(`old owner ${mode} cannot change the replacement result or retry schedule`, async () => {
+ const error = mode !== 'success';
+  state.vlForOwner = async () => VL_PAYLOAD;
+  const hook = renderHook(() => useNodes('token', true)); await runFirstRound(hook);
+  let resolveTopology, resolveOld, rejectOld, resolveNew, rejectNew;
+  vi.mocked(getTopology).mockImplementation(() => new Promise(resolve => {resolveTopology=resolve;}));
+  let calls=0;
+  state.vlForOwner = () => new Promise((resolve,reject) => {if (++calls===1) {resolveOld=resolve;rejectOld=reject;} else {resolveNew=resolve;rejectNew=reject;}});
+  await act(async () => {await vi.advanceTimersByTimeAsync(4000);});expect(calls).toBe(1);
+  const replacement='d4'.repeat(16);
+  const topology={nodes:[{name:'hub-example',instanceId:replacement,route:OWNER_ROUTE,stale:false}]};
+  await act(async () => {resolveTopology(topology);await vi.advanceTimersByTimeAsync(0);});expect(calls).toBe(2);
+  vi.mocked(getTopology).mockResolvedValue(topology);
+  const payload={instanceId:replacement,nodes:VL_PAYLOAD.nodes.map(n=>({...n,nodeId:'e7'.repeat(16),label:'New-VL'}))};
+  if (!error) {
+   await act(async () => {resolveNew(payload);await vi.advanceTimersByTimeAsync(0);});expect(vlLabels(hook.result)).toEqual(['New-VL']);
+   await act(async () => {resolveOld(VL_PAYLOAD);await vi.advanceTimersByTimeAsync(0);});
+   console.log('AUDITOR_REPLACEMENT_NONEMPTY',JSON.stringify(vlLabels(hook.result)));
+   expect(vlLabels(hook.result)).toEqual(['New-VL']);
+  } else {
+   await act(async () => {rejectNew(Object.assign(new Error('replacement unavailable'),{status:502}));await vi.advanceTimersByTimeAsync(0);});
+   await act(async () => {if (mode === 'error') rejectOld(Object.assign(new Error('old unavailable'),{status:502})); else resolveOld(VL_PAYLOAD);await vi.advanceTimersByTimeAsync(0);});
+   // Replacement failed only ONCE. Its first retry is due next poll (4s),
+   // independent of the old owner's terminal error in the previous poll.
+   let retryCalls=0;
+   state.vlForOwner=async()=>{retryCalls++;return payload;};
+   await act(async () => {await vi.advanceTimersByTimeAsync(4000);});
+   const retryAtFour = retryCalls; const labelsAtFour = vlLabels(hook.result);
+   await act(async () => {await vi.advanceTimersByTimeAsync(4000);});
+   console.log('AUDITOR_OLD_ERROR_RETRY',JSON.stringify({mode,retryAtFour,labelsAtFour,retryAtEight:retryCalls,labelsAtEight:vlLabels(hook.result)}));
+   expect(retryAtFour).toBe(1);expect(labelsAtFour).toEqual(['New-VL']);
+  }
+ });
+});
+
+
+describe('local and unknown owner routes', () => {
+ it('local vl: cache is kept through failure and replaced by confirmed empty', async () => {
+  vi.mocked(getTopology).mockResolvedValue({nodes:[]});
+  let reads=0;let fail=false;let empty=false;
+  vi.mocked(getVlNodes).mockImplementation(async (_token,route=[]) => {
+   if (route.length) return {nodes:[]};reads++;
+   if (fail) throw Object.assign(new Error('local down'),{status:502});
+   return empty?{nodes:[]}:VL_PAYLOAD;
+  });
+  const h=renderHook(()=>useNodes('token',true));await runFirstRound(h);
+  expect(vlLabels(h.result)).toEqual(['VL-Node-A']);expect(vlGroups(h.result)[0].peer.ownerInstanceId).toBe(LOCAL_INSTANCE);
+  fail=true;await act(async()=>{await vi.advanceTimersByTimeAsync(4000);});
+  expect(vlLabels(h.result)).toEqual(['VL-Node-A']);expect(vlGroups(h.result)[0].fleetState).toBe('stale');
+  fail=false;empty=true;await act(async()=>{await vi.advanceTimersByTimeAsync(4000);});expect(vlLabels(h.result)).toEqual([]);expect(reads).toBe(3);
+  vi.mocked(getVlNodes).mockImplementation(async (_token,route=[]) => route.join('/')===OWNER_KEY ? state.vlForOwner(_token,route):{nodes:[]});
+ });
+ it('temporarily unknown owner identity retains last known data as stale', async () => {
+  state.vlForOwner=async()=>VL_PAYLOAD;
+  const h=renderHook(()=>useNodes('token',true));await runFirstRound(h);expect(vlLabels(h.result)).toEqual(['VL-Node-A']);
+  const before=vi.mocked(getVlNodes).mock.calls.filter(a=>a[1].join('/')===OWNER_KEY).length;
+  vi.mocked(getTopology).mockResolvedValue({nodes:[{name:'hub-example',route:OWNER_ROUTE,stale:false}]});
+  await act(async()=>{await vi.advanceTimersByTimeAsync(4000);});
+  expect(vlLabels(h.result)).toEqual(['VL-Node-A']);expect(vlGroups(h.result)[0].stale).toBe(true);
+  expect(vi.mocked(getVlNodes).mock.calls.filter(a=>a[1].join('/')===OWNER_KEY).length).toBe(before);
+ });
+});
 
   it('exposes the owner grace window as the same constant used for owners', async () => {
     // One grace number for owners and their VL nodes: no diverging values.
