@@ -4,6 +4,8 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
+- Delayed question events retain the original question generation separately from their emission time. Local dismissal follows the current visible generation, refuses conflicting views, and preserves historical aliases. Imported closure events identify the owner question while mixed-node clients can still resolve older alias-only closures.
+
 - Imported questions can be dismissed locally while their owner is unavailable. Cards offer an explicit local action after capability checks, remain visible on errors, and distinguish pending origin closure from unauthorized remote closure. Local dismissals survive restarts and feed refreshes, and synchronize with the owner through authorized routes using generation checks, bounded retries, and durable history. Retry bindings use public pairing rotation counters rather than credential hashes.
 
 ## 0.9.58 — 2026-10-03

@@ -66,6 +66,7 @@ test('a real fanout feed event reappears after durable dismissal of the same ask
   let envelope;
   for (let i = 0; i < 30; i++) { if (fs.existsSync(historyPath)) envelope = JSON.parse(fs.readFileSync(historyPath)).entries.map(e => e.envelope).find(e => e.frame.type === 'ask' && e.frame.askId === source.id); if (envelope) break; await new Promise(r => setTimeout(r, 10)); }
   assert.ok(envelope); assert.ok(envelope.frame.ts > source.ts, 'fanout actually delays event emission');
+  assert.equal(envelope.frame.askTs, source.ts, 'producer preserves the original generation');
   console.log('OBSERVED_REAL_TIMESTAMP', JSON.stringify({ ownerTs: source.ts, aliasTs: alias.ownerAskTs, feedTs: envelope.frame.ts }));
   const { createEventFeedClient } = require('../lib/notify/event-feed-client.js'); const frames = [];
   const client = createEventFeedClient({ isAskDismissed: (ownerId, ask) => store.isImportedDismissed(ownerId, ask), eventsHub: { broadcast: f => frames.push(f) }, loadStore: () => ({ nodes: [] }) }); t.after(() => client.stop());
