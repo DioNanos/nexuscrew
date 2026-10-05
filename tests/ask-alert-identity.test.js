@@ -52,3 +52,19 @@ test('a failed push is observable without rejecting or recreating the ASK', asyn
   assert.equal(result.alertStatus, 'no-delivery');
   assert.equal(result.pushReason, 'send-failed');
 });
+
+for (const feedFirst of [false, true]) test(`direct notifier and real imported relay share one push admission (${feedFirst ? 'feed first' : 'fan-out first'})`, async t => {
+  const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os');
+  const { createAskAlertRegistry } = require('../lib/notify/ask-alert-registry.js');
+  const { createPushRelay, createPushDedup } = require('../lib/notify/push-relay.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-shared-admission-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const registry = createAskAlertRegistry({ filePath: path.join(dir, 'ask-alerts.json') }); const sent = [];
+  const send = async p => { sent.push(p); return { sent: 1 }; };
+  const n = createNotifier({ alertRegistry: registry, hub: { broadcast: () => 1 }, push: { sendToAll: send } });
+  const relay = createPushRelay({ alertRegistry: registry, pushDedup: createPushDedup({ filePath: path.join(dir, 'events.json') }), send, sendTimeoutMs: 20 });
+  const envelope = buildEnvelope({ type: 'notify', ownerId, cellId: 'dev', payload: frame() });
+  if (feedFirst) { relay.consider(envelope); await new Promise(resolve => setImmediate(resolve)); await n.emit(frame()); }
+  else { await n.emit(frame()); relay.consider(envelope); }
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(sent.length, 1, 'same canonical question across actual direct and imported paths');
+});
