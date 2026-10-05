@@ -127,9 +127,9 @@ test('owner and global budgets persist across repeated nudges within a time wind
   clock += 60001; await f.drainer.drain(); assert.equal(f.calls.filter(c => c[0] === 'inspect').length, 4);
 });
 test('blocked records are reactivated only by a changed owner permission or channel binding', async t => {
-  let binding = 'old';
-  const f = fixture(t, { inspect: async () => ({ ok: false, code: 403, reason: 'grant-required:ask-action' }), extra: { bindingForOwner: () => binding } });
+  let binding = 'old', clock = 10000;
+  const f = fixture(t, { inspect: async () => ({ ok: false, code: 403, reason: 'grant-required:ask-action' }), extra: { now: () => clock, bindingForOwner: () => binding } });
   await f.drainer.drain(); assert.equal(f.store.getImportedDismissal(OWNER, ID).syncState, 'blocked');
   await f.drainer.drain(); assert.equal(f.calls.length, 1);
-  binding = 'new'; await f.drainer.drain(); assert.equal(f.calls.length, 2);
+  binding = 'new'; clock += 60001; await f.drainer.drain(); assert.equal(f.calls.length, 2);
 });
