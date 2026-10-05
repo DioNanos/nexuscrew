@@ -104,3 +104,19 @@ test('historical feed notify derives only a server-side fingerprint from a fresh
   view.stale = false; client.reemit({ ...legacy, eventId: 'different-question', frame: { ...legacy.frame, body: 'another question' } });
   assert.equal(emitted[2].ownerAskFingerprint, undefined, 'ID alone cannot identify a reused question');
 });
+
+test('a legacy live ASK supplies the fingerprint for its following notify and closures discard that alert source', t => {
+  const { createEventFeedClient } = require('../lib/notify/event-feed-client.js'); const { askFingerprint } = require('../lib/notify/asks.js');
+  const events = []; const client = createEventFeedClient({ loadStore: () => ({ nodeId: 'b'.repeat(32), nodes: [] }), eventsHub: { broadcast: f => events.push(f) }, log() {} });
+  t.after(() => client.stop()); const view = client.viewFor(ownerId); view.stale = false;
+  const ask = { id: identity.askId, question: 'legacy?', options: ['yes'], session: 'cloud-reviewer' };
+  const envelope = (eventId, frame) => ({ ownerId, eventId, hop: 1, scope: 'cell', cellId: 'reviewer', frame });
+  client.reemit(envelope('live-ask', { type: 'ask', askId: ask.id, question: ask.question, options: ask.options, session: ask.session, ts: identity.ownerAskTs + 1000 }));
+  client.reemit(envelope('legacy-live-alert', { type: 'notify', askId: ask.id, title: 'domanda', body: ask.question }));
+  assert.equal(events[1].ownerAskFingerprint, askFingerprint(ask), 'a live legacy ASK supplies full fields before its notify, even after an empty snapshot');
+  assert.equal(events[1].ownerAskTs, undefined, 'a legacy live frame emission timestamp is never a generation');
+  assert.deepEqual(view.asks, [], 'alert source bookkeeping does not change the panel snapshot contract');
+  client.reemit(envelope('closed', { type: 'ask-closed', askId: ask.id, outcome: 'answered' }));
+  client.reemit(envelope('late-alert', { type: 'notify', askId: ask.id, title: 'domanda', body: ask.question }));
+  assert.equal(events.at(-1).ownerAskFingerprint, undefined, 'a closure discards the live alert source');
+});
