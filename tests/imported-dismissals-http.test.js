@@ -120,3 +120,36 @@ test('local imported dismissal does not publish a closure to a third peer or dur
   assert.deepEqual(after.notifications, before.notifications);
   assert.equal(fs.existsSync(historyPath) ? fs.readFileSync(historyPath, 'utf8') : null, history);
 });
+for (const transport of ['reverse', 'hub']) test(`durable dismissal recovery over ${transport} preserves generation headers and survives a lost DELETE reply`, async t => {
+  const { createAskRelay } = require('../lib/notify/ask-relay.js');
+  const { createImportedDismissalDrainer } = require('../lib/notify/imported-dismissals.js');
+  const client = await boot(t), owner = await boot(t); let hub;
+  if (transport === 'hub') {
+    hub = await boot(t); connect(client, hub, 'hub'); connect(hub, client, 'client'); connect(hub, owner, 'source'); connect(owner, hub, 'hub');
+  } else { connect(client, owner, 'source'); connect(owner, client, 'client'); }
+  const response = await fetch(`http://127.0.0.1:${owner.port}/api/asks`, { method: 'POST', headers: { authorization: `Bearer ${owner.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ question: 'Recover this dismissal?', session: tmuxSessionForCell('reviewer') }) });
+  const created = await response.json(); assert.equal(response.status, 201);
+  const source = createAsksStore({ dir: owner.configDir }).get(created.id); let probes = 0, deletes = 0, loseReply = false;
+  const st = nodes.loadStoreStrict(client.nodesPath);
+  if (transport === 'reverse') {
+    const node = st.nodes.find(node => node.nodeId === owner.id); node.direction = 'inbound'; node.transport = 'inbound'; node.shared = true;
+    node.reversePool = { activeSlot: 0, activeGeneration: 1, slots: [{ port: owner.port, state: 'active', generation: 1 }] };
+  }
+  const relay = createAskRelay({ loadStore: () => st, localPort: () => client.port, localToken: () => client.token,
+    ...(hub ? { peers: async () => [{ nodeId: owner.id, route: ['hub', 'source'] }] } : {}),
+    probeReverseSlotImpl: async ({ expected }) => { probes++; assert.equal(expected.instanceId, owner.id); assert.equal(expected.remotePort, owner.port); return { owned: true }; },
+    fetchImpl: async (url, options) => { const result = await fetch(url, options); if (options.method === 'DELETE') { deletes++; if (loseReply) { loseReply = false; await result.text(); throw new Error('applied response lost'); } } return result; },
+  });
+  const refused = await relay.relayDismiss({ ownerId: owner.id, askId: source.id, expectedTs: source.ts - 1 });
+  assert.equal(refused.code, 409); assert.equal(refused.reason, 'generation-mismatch'); assert.equal(createAsksStore({ dir: owner.configDir }).get(source.id).dismissed, false);
+  const dir = path.join(client.configDir, 'dismissal-recovery-fixture'); const store = createAsksStore({ dir });
+  store.dismissImported({ ownerId: owner.id, ownerAskId: source.id, ask: source }); let clock = 1000; loseReply = true;
+  const make = saved => createImportedDismissalDrainer({ store: saved, relay, now: () => clock, random: () => 0 });
+  const first = make(store); t.after(() => first.stop()); await first.drain(); first.stop();
+  assert.equal(store.getImportedDismissal(owner.id, source.id).syncState, 'pending');
+  assert.equal(createAsksStore({ dir: owner.configDir }).get(source.id).dismissed, true);
+  clock += 60001; const restarted = make(createAsksStore({ dir })); t.after(() => restarted.stop()); await restarted.drain();
+  assert.equal(createAsksStore({ dir }).getImportedDismissal(owner.id, source.id).syncState, 'confirmed-dismissed');
+  assert.equal(deletes, 2, 'one rejected precondition and one applied DELETE, with no blind resend');
+  if (transport === 'reverse') assert.ok(probes > 0, 'the selected reverse binding must be proved');
+});
