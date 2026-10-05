@@ -45,6 +45,9 @@ test('authoritative generation adoption preserves an already alerted historical 
   f.store.claim(unknown, 'push'); f.store.complete(unknown, 'push', 1);
   // Absence of adoption must fail this behavior, not throw for a missing helper.
   if (typeof f.store.adopt === 'function') f.store.adopt(ownerId, ask, 1700000000000);
+  // Restart before any later claim can incidentally save the in-memory adoption.
+  const immediatelyRestarted = createAskAlertRegistry(f.options);
+  assert.equal(immediatelyRestarted.claim(frame(), 'push').allowed, false, 'adoption alone must persist the authoritative admission');
   assert.equal(f.store.claim(frame(), 'push').allowed, false, 'matching authoritative generation keeps prior alert admission');
   assert.equal(f.store.claim(frame({ ownerAskTs: 1700000000001 }), 'push').allowed, true, 'a reused ID with a new timestamp can alert');
   const restarted = createAskAlertRegistry(f.options); assert.equal(restarted.claim(frame(), 'push').allowed, false, 'adoption persisted');
