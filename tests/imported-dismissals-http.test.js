@@ -187,3 +187,14 @@ test('a known pair without an unavailable channel cannot use local fallback', as
   const st = nodes.loadStoreStrict(runtime.nodesPath); st.nodes[0].direction = 'outbound'; st.nodes[0].transport = 'auto'; nodes.atomicWriteStore(runtime.nodesPath, st);
   const out = await dismiss(runtime); assert.equal(out.code, 409); assert.equal(out.body.reason, 'owner-availability-unknown');
 });
+test('a failed local write after cache load returns no acknowledgement and rolls back the alias', async t => {
+  const runtime = await boot(t);
+  const headers = { authorization: `Bearer ${runtime.token}` };
+  await fetch(`http://127.0.0.1:${runtime.port}/api/asks`, { headers }).then(r => r.json());
+  const file = path.join(runtime.configDir, 'asks.json');
+  fs.renameSync(file, file + '.target'); fs.symlinkSync(file + '.target', file);
+  const out = await dismiss(runtime); assert.equal(out.code, 503); assert.equal(out.body.dismissed, undefined);
+  const body = await fetch(`http://127.0.0.1:${runtime.port}/api/asks`, { headers }).then(r => r.json());
+  assert.equal(body.asks.find(ask => ask.id === runtime.alias.id).dismissed, false);
+  assert.equal(JSON.parse(fs.readFileSync(file)).importedDismissals[`${OWNER}|${ID}`], undefined);
+});

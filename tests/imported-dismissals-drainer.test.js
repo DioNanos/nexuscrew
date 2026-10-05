@@ -96,6 +96,7 @@ test('concurrent drains are single-flight for each owner-qualified pair', async 
   const f = fixture(t, { inspect: async () => { await wait; return { ok: true, status: 'open', ask: ASK, generationPrecondition: true }; } });
   const first = f.drainer.drain();
   const second = f.drainer.drain();
+  assert.equal(first, second, 'concurrent callers must share the active drain');
   release(); await Promise.all([first, second]);
   assert.equal(f.calls.filter(c => c[0] === 'delete').length, 1);
 });
