@@ -16,7 +16,7 @@ function fixture(t, extra = {}) {
   return { store, dir, restart };
 }
 function dismiss(store, ask = source(), ownerId = OWNER) {
-  return store.dismissImported({ ownerId, ownerAskId: ask.id, ask, syncState: 'pending' });
+  return store.dismissImported({ ownerId, ownerAskId: ask.ownerAskId || ask.id, ask, syncState: 'pending' });
 }
 
 test('new imports retain the owner timestamp separately from local receipt time', t => {
@@ -53,7 +53,7 @@ test('double dismissal and restart preserve one record, timestamp and alias revi
   const { store, restart } = fixture(t);
   const { ask } = store.create({ ...source(), ownerId: OWNER, ownerAskId: ID, originNode: OWNER, ownerAskTs: 1000 });
   assert.equal(dismiss(store, ask).ok, true);
-  const first = store.get(ask.id);
+  const first = { ...store.get(ask.id) };
   const record = store.getImportedDismissal(OWNER, ID);
   assert.equal(dismiss(store, first).ok, true);
   assert.equal(store.get(ask.id).revision, first.revision);
