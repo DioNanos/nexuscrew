@@ -223,4 +223,14 @@ describe('vlSidebarGroups', () => {
   it('a peer without the flag is reported as not stale', () => {
     expect(vlSidebarGroups([vlNodeToPeer(RAW)])[0].stale).toBe(false);
   });
+
+  it('a stale cached peer surfaces as fleetState "stale" for the existing indicator', () => {
+    const peer = { ...vlNodeToPeer(RAW), stale: true };
+    expect(vlSidebarGroups([peer])[0].fleetState).toBe('stale');
+  });
+
+  it('a fresh peer carries no stale fleet state', () => {
+    const peer = { ...vlNodeToPeer(RAW), stale: false };
+    expect(vlSidebarGroups([peer])[0].fleetState).toBeNull();
+  });
 });
