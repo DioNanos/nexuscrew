@@ -9,19 +9,19 @@ const { createAsksStore } = require('../lib/notify/asks.js');
 const nodes = require('../lib/nodes/store.js');
 const { tmuxSessionForCell } = require('../lib/fleet/definitions.js');
 const OWNER = 'b'.repeat(32), ID = '12345678';
-async function boot(t, { readonly = false, malformed = false, symlink = false, queued = false } = {}) {
+async function boot(t, { readonly = false, malformed = false, symlink = false, queued = false, feedOnly = false, ownerPort = 42001 } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-owner-access-'));
   const configDir = path.join(home, '.nexuscrew'); fs.mkdirSync(configDir);
   const nodesPath = path.join(configDir, 'nodes.json'); nodes.initStore(nodesPath);
   const store = createAsksStore({ dir: configDir });
-  const alias = store.create({ question: 'Review?', options: ['Yes'], session: tmuxSessionForCell('reviewer'), ownerId: OWNER, ownerAskId: ID, originNode: OWNER, ownerAskTs: 100 }).ask;
-  let st = nodes.addNode(nodes.loadStoreStrict(nodesPath), { name: 'owner', nodeId: OWNER, direction: 'inbound', token: 'fixture', shared: true, visibility: 'network', ssh: 'demo@example.invalid', localPort: 42001, remotePort: 42002 });
+  const alias = feedOnly ? null : store.create({ question: 'Review?', options: ['Yes'], session: tmuxSessionForCell('reviewer'), ownerId: OWNER, ownerAskId: ID, originNode: OWNER, ownerAskTs: 100 }).ask;
+  let st = nodes.addNode(nodes.loadStoreStrict(nodesPath), { name: 'owner', nodeId: OWNER, direction: feedOnly ? 'outbound' : 'inbound', eventsReceive: feedOnly, token: 'fixture', shared: true, visibility: 'network', ssh: 'demo@example.invalid', localPort: ownerPort, remotePort: 42002 });
   st = nodes.setPeerAccessPreset(st, 'owner', 'admin'); nodes.atomicWriteStore(nodesPath, st);
   if (queued) store.dismissImported({ ownerId: OWNER, ownerAskId: ID, ask: alias });
   if (malformed) { const value = JSON.parse(fs.readFileSync(store.filePath)); value.importedDismissals = []; fs.writeFileSync(store.filePath, JSON.stringify(value)); }
   if (symlink) { fs.renameSync(store.filePath, store.filePath + '.target'); fs.symlinkSync(store.filePath + '.target', store.filePath); }
   const runtime = createServer({ home, configDir, nodesPath, configPath: path.join(configDir, 'config.json'), tokenPath: path.join(configDir, 'token'),
-    readonlyDefault: readonly, filesRoot: path.join(home, 'files'), port: 0, fleetEnabled: false, sessionExistsSeam: () => true, pasteSeam: () => true,
+    readonlyDefault: readonly, eventFeedClientPollMs: 20, filesRoot: path.join(home, 'files'), port: 0, fleetEnabled: false, sessionExistsSeam: () => true, pasteSeam: () => true,
     askSubmit: async () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: { platform: 'linux', uid: 1000, execImpl: () => { throw new Error('disabled'); }, serviceInstallPath: path.join(home, 'service'),
       keygen: () => 'ssh-ed25519 AAAAFIXTURE demo', spawnImpl: () => ({ pid: 4100000, unref() {} }), sshVersion: () => ({ major: 9, minor: 6 }) },
@@ -81,4 +81,31 @@ test('server bootstrap resumes durable imported dismissal work without a feed su
   }
   assert.ok(record.attempts > 0, 'a restarted server must resume durable work');
   assert.equal(record.syncState, 'pending'); assert.equal(record.lastReason, 'reverse-slot-unverified');
+});
+test('feed-only local dismissal is durable and idempotent without creating an alias', async t => {
+  const http = require('node:http');
+  const source = { id: ID, ts: 100, question: 'Feed only?', session: tmuxSessionForCell('reviewer') };
+  const owner = http.createServer((req, res) => {
+    const json = body => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (req.url.includes('/health')) return json({ ok: true, instanceId: OWNER, eventFeedV1: true });
+    if (req.url.includes('/event-feed/snapshot')) return json({ ownerId: OWNER, cursor: '1:0', viewEpoch: 1, asks: [source], notifications: [] });
+    if (req.url.includes('/event-feed')) { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write(': ready\n\n'); return; }
+    json({ nodes: [] });
+  });
+  await new Promise(resolve => owner.listen(0, '127.0.0.1', resolve));
+  t.after(() => { owner.closeAllConnections(); owner.close(); });
+  const runtime = await boot(t, { feedOnly: true, ownerPort: owner.address().port });
+  const headers = { authorization: `Bearer ${runtime.token}` }; let view;
+  for (let i = 0; i < 100; i++) {
+    view = await fetch(`http://127.0.0.1:${runtime.port}/api/feed-state`, { headers }).then(r => r.json());
+    if (view.views.some(item => item.asks.some(ask => ask.id === ID))) break; await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.ok(view.views.some(item => item.asks.some(ask => ask.id === ID)), 'the authorized feed establishes the known pair');
+  owner.closeAllConnections(); await new Promise(resolve => owner.close(resolve));
+  await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}`, { headers });
+  const first = await dismiss(runtime); assert.equal(first.code, 200);
+  const second = await dismiss(runtime); assert.equal(second.code, 200);
+  const store = createAsksStore({ dir: runtime.configDir }); assert.equal(store.list().length, 0); assert.equal(store.listImportedDismissals().length, 1);
+  const after = await fetch(`http://127.0.0.1:${runtime.port}/api/feed-state`, { headers }).then(r => r.json());
+  assert.ok(after.views.every(item => item.asks.every(ask => ask.id !== ID)));
 });
