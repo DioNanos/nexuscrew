@@ -178,3 +178,14 @@ for (const [lang, action, state] of [
   await mount(); expect(dismissButton().title).toBe(action); fireEvent.click(dismissButton()); await act(async () => {});
   expect(screen.getByText(state)).toBeTruthy();
 });
+it('an early unknown-generation closure suppresses matching content and permits a different question', async () => {
+  const local = deferred(); mocks.getAsks.mockReturnValue(local.promise); mocks.getFeedState.mockResolvedValue({ views: [] });
+  render(<NotifyCenter token="fixture-token" />); await act(async () => {});
+  const historical = { ...alias, ownerAskTs: undefined };
+  await emit({ type: 'ask-dismissed', id: alias.id, ownerId: OWNER, ownerAskId: alias.ownerAskId, scope: 'local',
+    askGeneration: { question: alias.question, options: alias.options, session: alias.session } });
+  await act(async () => local.resolve({ asks: [historical] })); expect(document.querySelector('.nc-ask-badge')).toBeNull();
+  await emit({ type: 'ask', ask: { ...historical, question: 'A different new question' } });
+  fireEvent.click(await screen.findByTitle((_title, element) => element.className === 'nc-ask-badge'));
+  expect(screen.getByText('A different new question')).toBeTruthy();
+});

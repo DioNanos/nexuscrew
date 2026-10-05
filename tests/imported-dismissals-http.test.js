@@ -219,3 +219,18 @@ for (const credential of ['token', 'acceptToken']) test(`a pairing ${credential}
   assert.notEqual(first.retryBinding, second.retryBinding);
   assert.equal(JSON.stringify(second).includes('repaired-pairing-token'), false);
 });
+test('local dismissal SSE carries canonical generation context without exporting a closure', async t => {
+  const runtime = await boot(t);
+  const controller = new AbortController();
+  const stream = await fetch(`http://127.0.0.1:${runtime.port}/api/events`, { headers: { authorization: `Bearer ${runtime.token}` }, signal: controller.signal });
+  const reader = stream.body.getReader(); await reader.read();
+  try {
+    assert.equal((await dismiss(runtime)).code, 200);
+    let data = '';
+    while (!data.includes('ask-dismissed')) data += Buffer.from((await reader.read()).value).toString();
+    const frame = JSON.parse(data.split('\n').find(line => line.startsWith('data: ')).slice(6));
+    assert.equal(frame.scope, 'local'); assert.equal(frame.ownerId, OWNER); assert.equal(frame.ownerAskId, ID);
+    assert.equal(frame.ownerAskTs, 100); assert.equal(frame.ownerSync, 'pending');
+    assert.deepEqual(frame.askGeneration, { question: runtime.alias.question, options: runtime.alias.options, session: runtime.alias.session });
+  } finally { controller.abort(); await reader.cancel().catch(() => {}); }
+});
