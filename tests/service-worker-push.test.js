@@ -71,7 +71,7 @@ function loadWorker(indexedDB) {
       openWindow: async (url) => { navigated.push(url); },
     },
   };
-  const sandbox = { self, console, setTimeout, clearTimeout, Date, Promise, JSON, encodeURIComponent };
+  const sandbox = { self, console, setTimeout, clearTimeout, Date, Promise, JSON, encodeURIComponent, TextEncoder, crypto: require('node:crypto').webcrypto };
   vm.runInNewContext(fs.readFileSync(SW_PATH, 'utf8'), sandbox, { filename: 'sw.js' });
   // A worker handler that never settles must fail the test, not hang it.
   const withTimeout = (p, ms = 2000) => Promise.race([
