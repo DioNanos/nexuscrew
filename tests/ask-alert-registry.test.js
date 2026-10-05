@@ -89,3 +89,13 @@ test('non-object registry entries fail closed without throwing or rewriting thei
     assert.deepEqual(fs.readFileSync(f.file), before);
   }
 });
+
+test('a matching authoritative ASK binds late historical replay to an already alerted known generation', t => {
+  const f = fixture(t); const ask = { id: 'abcdef01', question: 'review?', options: ['yes'], session: 'cloud-reviewer' };
+  const unknown = frame({ ownerAskTs: null, ownerAskFingerprint: askFingerprint(ask) });
+  f.store.claim(frame(), 'push'); f.store.complete(frame(), 'push', 1);
+  assert.equal(f.store.adopt(ownerId, ask, 1700000000000), true, 'bind the unknown namespace before its first late ingress');
+  assert.equal(f.store.claim(unknown, 'push').reason, 'already-alerted', 'old feed metadata cannot create a second alert after known fan-out');
+  assert.equal(createAskAlertRegistry(f.options).claim(unknown, 'push').reason, 'already-alerted', 'late historical binding persists');
+  assert.equal(Object.keys(JSON.parse(fs.readFileSync(f.file)).entries).length, 1);
+});
