@@ -49,7 +49,7 @@ const dismissedAsks = new Map(); // askKeyOf -> timestamp
 function noteAskDismissed(key, localAsk) {
   dismissedAsks.set(key, localAsk ? { at: Date.now(), local: true,
     ts: localAsk.ownerAskTs || (!localAsk.ownerAskId ? localAsk.ts : null),
-    fingerprint: JSON.stringify([localAsk.question, localAsk.options || [], localAsk.session]) } : { at: Date.now() });
+    fingerprint: localAsk.question === undefined ? null : JSON.stringify([localAsk.question, localAsk.options || [], localAsk.session]) } : { at: Date.now() });
 }
 
 function askStillDismissed(a) {
@@ -61,7 +61,7 @@ function askStillDismissed(a) {
     // Local intent has no TTL. A different observed generation is a new card;
     // durable filtering on reload remains the receiving server's responsibility.
     return !(at.ts && ts && at.ts !== ts)
-      && at.fingerprint === JSON.stringify([a.question, a.options || [], a.session]);
+      && (at.fingerprint === null || at.fingerprint === JSON.stringify([a.question, a.options || [], a.session]));
   }
   if (Date.now() - at.at > DISMISSED_TTL_MS) { dismissedAsks.delete(key); return false; }
   return true;
@@ -127,7 +127,7 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
   const requestIdRef = useRef(null);
   useEffect(() => { if (initialUncertainRid) setUncertainRid(initialUncertainRid); }, [initialUncertainRid]);
   const dismissBlocked = dismissing || busy || !!uncertainRid || blockedOriginal
-    || (!!ask.ownerId && (capabilityStatus === 'loading' || (!canDismissLocal && !canDismissRemote)));
+    || (!!ask.ownerId && (['loading', 'unsupported'].includes(capabilityStatus) || (!canDismissLocal && !canDismissRemote)));
   const dismissLocally = !!ask.ownerId && canDismissLocal === true;
 
   const send = async (value) => {
@@ -405,7 +405,7 @@ export default function NotifyCenter({ token }) {
       } else if (frame.type === 'ask-dismissed' && (frame.id || frame.ownerAskId)) {
         const key = askKeyOf(frame.id, frame.ownerId, frame.ownerAskId);
         const localAsk = frame.scope === 'local' && asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
-        noteAskDismissed(key, localAsk || null);
+        noteAskDismissed(key, frame.scope === 'local' ? localAsk || { ownerAskTs: frame.ownerAskTs } : null);
         removeAsk(frame.id, frame.ownerId, frame.ownerAskId, frame);
       }
     }, () => refreshCapabilities(true));
