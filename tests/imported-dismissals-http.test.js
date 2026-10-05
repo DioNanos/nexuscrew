@@ -171,3 +171,19 @@ test('READONLY capability refuses both local and remote dismissals', async t => 
   const body = await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}`, { headers: { authorization: `Bearer ${runtime.token}` } }).then(r => r.json());
   assert.equal(body.canDismissLocal, false); assert.equal(body.canDismissRemote, false);
 });
+test('an offline user peer retains local intent as blocked without remote permission', async t => {
+  const runtime = await boot(t);
+  nodes.atomicWriteStore(runtime.nodesPath, nodes.setPeerAccessPreset(nodes.loadStoreStrict(runtime.nodesPath), 'owner', 'user'));
+  const out = await dismiss(runtime); assert.equal(out.code, 200); assert.equal(out.body.ownerSync, 'blocked');
+});
+test('revoked event access prevents local dismissal through a cached hub route', async t => {
+  const runtime = await boot(t, { routed: true });
+  nodes.atomicWriteStore(runtime.nodesPath, nodes.setPeerAccessPreset(nodes.loadStoreStrict(runtime.nodesPath), 'owner', 'nexushost'));
+  assert.equal((await dismiss(runtime)).code, 404);
+  assert.equal(createAsksStore({ dir: runtime.configDir }).listImportedDismissals().length, 0);
+});
+test('a known pair without an unavailable channel cannot use local fallback', async t => {
+  const runtime = await boot(t);
+  const st = nodes.loadStoreStrict(runtime.nodesPath); st.nodes[0].direction = 'outbound'; st.nodes[0].transport = 'auto'; nodes.atomicWriteStore(runtime.nodesPath, st);
+  const out = await dismiss(runtime); assert.equal(out.code, 409); assert.equal(out.body.reason, 'owner-availability-unknown');
+});
