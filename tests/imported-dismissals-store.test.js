@@ -170,3 +170,12 @@ test('a new direct import generation creates a fresh alias and resolves the late
   assert.notEqual(next.id, old.id); assert.equal(next.dismissed, false);
   assert.equal(store.findImported(OWNER, ID).id, next.id); assert.equal(store.isImportedDismissed(OWNER, next), false);
 });
+test('a failed authoritative closure write rolls back both alias and synchronization cache', t => {
+  const { store, dir } = fixture(t);
+  const alias = store.create({ ...source(), ownerId: OWNER, ownerAskId: ID, originNode: OWNER }).ask;
+  dismiss(store, alias); const before = store.getImportedDismissal(OWNER, ID);
+  const file = store.filePath; fs.renameSync(file, path.join(dir, 'saved.json')); fs.symlinkSync(path.join(dir, 'saved.json'), file);
+  const result = store.closeImported({ ownerId: OWNER, ownerAskId: ID, outcome: 'answered' });
+  assert.equal(result.ok, false); assert.deepEqual(store.getImportedDismissal(OWNER, ID), before);
+  assert.equal(store.get(alias.id).answered, false);
+});
