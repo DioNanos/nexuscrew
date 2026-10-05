@@ -155,3 +155,18 @@ test('answering and answered aliases cannot acquire a local dismissal record', t
   assert.equal(dismiss(store, store.get(alias.id)).reason, 'answered');
   assert.deepEqual(store.listImportedDismissals(), []);
 });
+test('direct imports of a locally dismissed generation are explicitly suppressed', t => {
+  const { store } = fixture(t);
+  const imported = store.create({ ...source(), ownerId: OWNER, ownerAskId: ID, originNode: OWNER, ownerAskTs: 1000 }).ask;
+  assert.equal(store.dismissImported({ ownerId: OWNER, ownerAskId: ID, ask: imported }).ok, true);
+  const replay = store.create({ ...source(), ownerId: OWNER, ownerAskId: ID, originNode: OWNER, ownerAskTs: 1000 });
+  assert.equal(replay.suppressed, true); assert.equal(store.list().length, 1);
+});
+test('a new direct import generation creates a fresh alias and resolves the latest canonical pair', t => {
+  const { store } = fixture(t);
+  const old = store.create({ ...source(), ownerId: OWNER, ownerAskId: ID, originNode: OWNER, ownerAskTs: 1000 }).ask;
+  store.dismissImported({ ownerId: OWNER, ownerAskId: ID, ask: old });
+  const next = store.create({ ...source(), question: 'New question?', ownerId: OWNER, ownerAskId: ID, originNode: OWNER, ownerAskTs: 1001 }).ask;
+  assert.notEqual(next.id, old.id); assert.equal(next.dismissed, false);
+  assert.equal(store.findImported(OWNER, ID).id, next.id); assert.equal(store.isImportedDismissed(OWNER, next), false);
+});
