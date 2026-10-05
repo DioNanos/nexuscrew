@@ -163,3 +163,14 @@ test('an unusable identity never dedups, and an out-of-shape tag falls back', as
   await w.click({ url: 'https://evil.example/steal' });
   assert.equal(w.navigated[1], '/', 'a remote link still falls back to the app root');
 });
+
+for (const concurrent of [false, true]) test(`canonical ASK replay does not alert twice even without a shared eventId (${concurrent ? 'concurrent' : 'serial'})`, async () => {
+  const { alertFields } = require('../lib/notify/ask-alert-identity.js');
+  const db = fakeIndexedDB(); const worker = loadWorker(db);
+  const payload = { title: 'ask', ...alertFields({ ownerId: 'a'.repeat(32), askId: 'abcdef01', ownerAskTs: 1700000000000 }) };
+  if (concurrent) await Promise.all([worker.push(payload), worker.push({ ...payload, eventId: 'different-feed-event' })]);
+  else { await worker.push(payload); await worker.push({ ...payload, eventId: 'different-feed-event' }); }
+  assert.equal(worker.shown.length, 1, 'canonical question generation, not event identity');
+  const restarted = loadWorker(db); await restarted.push(payload);
+  assert.equal(restarted.shown.length, 0, 'restart preserves canonical alert admission');
+});
