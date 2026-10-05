@@ -85,3 +85,22 @@ test('a real feed ASK frame admits historical alert generation before the follow
   client.reemit({ ownerId, eventId: 'owner-ask-frame', hop: 1, scope: 'cell', cellId: 'reviewer', frame: { type: 'ask', askId: ask.id, askTs: identity.ownerAskTs, question: ask.question, options: ask.options, session: ask.session, ts: identity.ownerAskTs + 99 } });
   assert.equal(registry.claim(frame(), 'push').allowed, false, 'the real feed callback must preserve historical alert admission');
 });
+
+test('historical feed notify derives only a server-side fingerprint from a fresh matching full ASK', t => {
+  const { createEventFeedClient } = require('../lib/notify/event-feed-client.js');
+  const { askFingerprint } = require('../lib/notify/asks.js');
+  const emitted = []; const authoritative = [];
+  const client = createEventFeedClient({ loadStore: () => ({ nodeId: 'b'.repeat(32), nodes: [] }), eventsHub: { broadcast: f => emitted.push(f) },
+    onAuthoritativeAsks: (owner, asks) => authoritative.push({ owner, asks }), log() {} }); t.after(() => client.stop());
+  const ask = { id: identity.askId, question: 'continue?', options: ['yes'], session: 'cloud-reviewer', ts: identity.ownerAskTs };
+  const view = client.viewFor(ownerId); view.stale = false; view.asks = [ask];
+  const legacy = { ownerId, eventId: 'historic-notify', hop: 1, scope: 'cell', cellId: 'reviewer', frame: { type: 'notify', askId: ask.id, title: 'domanda', body: ask.question, ts: identity.ownerAskTs + 999 } };
+  client.reemit(legacy);
+  assert.equal(emitted[0].ownerAskFingerprint, askFingerprint(ask), 'full owner view supplies the historical fingerprint');
+  assert.equal(emitted[0].ownerAskTs, undefined, 'notification timestamp cannot assert a generation');
+  assert.equal(authoritative.length, 2, 'adoption runs before and after admission so a first historical alert is bound');
+  view.stale = true; client.reemit({ ...legacy, eventId: 'stale-notify' });
+  assert.equal(emitted[1].ownerAskFingerprint, undefined, 'stale state cannot identify the historical question');
+  view.stale = false; client.reemit({ ...legacy, eventId: 'different-question', frame: { ...legacy.frame, body: 'another question' } });
+  assert.equal(emitted[2].ownerAskFingerprint, undefined, 'ID alone cannot identify a reused question');
+});

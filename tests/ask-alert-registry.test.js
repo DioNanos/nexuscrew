@@ -49,3 +49,33 @@ test('authoritative generation adoption preserves an already alerted historical 
   assert.equal(f.store.claim(frame({ ownerAskTs: 1700000000001 }), 'push').allowed, true, 'a reused ID with a new timestamp can alert');
   const restarted = createAskAlertRegistry(f.options); assert.equal(restarted.claim(frame(), 'push').allowed, false, 'adoption persisted');
 });
+
+test('authoritative adoption requires matching owner, ask ID, fingerprint and a valid generation', t => {
+  const f = fixture(t); const ask = { id: 'abcdef01', question: 'review?', options: ['yes'], session: 'cloud-reviewer' };
+  const unknown = frame({ ownerAskTs: null, ownerAskFingerprint: askFingerprint(ask) });
+  f.store.claim(unknown, 'push'); f.store.complete(unknown, 'push', 1);
+  const before = fs.readFileSync(f.file);
+  for (const [owner, body, ts] of [[ 'b'.repeat(32), ask, 1700000000000 ], [ownerId, { ...ask, id: 'abcdef02' }, 1700000000000],
+    [ownerId, { ...ask, options: ['no'] }, 1700000000000], [ownerId, ask, null], [ownerId, ask, -1]]) {
+    assert.equal(f.store.adopt(owner, body, ts), false);
+    assert.deepEqual(fs.readFileSync(f.file), before, 'an unmatched authoritative view cannot rewrite admission');
+  }
+});
+test('historical in-flight completion and late replay follow the bounded adopted record after restart', t => {
+  const f = fixture(t); const ask = { id: 'abcdef01', question: 'review?', options: ['yes'], session: 'cloud-reviewer' };
+  const unknown = frame({ ownerAskTs: null, ownerAskFingerprint: askFingerprint(ask) });
+  assert.equal(f.store.claim(unknown, 'push').allowed, true);
+  assert.equal(f.store.adopt(ownerId, ask, 1700000000000), true);
+  assert.equal(f.store.complete(unknown, 'push', 1), true, 'pending send completes on the adopted generation');
+  const restarted = createAskAlertRegistry(f.options);
+  assert.equal(restarted.claim(unknown, 'push').reason, 'already-alerted', 'old namespace cannot replay');
+  assert.equal(restarted.claim(frame(), 'push').reason, 'already-alerted', 'known namespace cannot replay');
+  assert.equal(Object.keys(JSON.parse(fs.readFileSync(f.file)).entries).length, 1, 'adoption does not grow the record set');
+});
+test('canonical metadata ignores emission timestamps and distinguishes unknown fingerprints', () => {
+  const { canonicalAskAlert } = require('../lib/notify/ask-alert-identity.js');
+  assert.equal(canonicalAskAlert({ ownerId, askId: 'abcdef01', ts: 1700000000000 }), null, 'emission time is not a generation');
+  const a = canonicalAskAlert({ ownerId, askId: 'abcdef01', ownerAskFingerprint: 'a'.repeat(64) });
+  const b = canonicalAskAlert({ ownerId, askId: 'abcdef01', ownerAskFingerprint: 'b'.repeat(64) });
+  assert.notEqual(a.tag, b.tag);
+});

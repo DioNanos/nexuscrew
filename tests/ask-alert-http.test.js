@@ -89,3 +89,39 @@ for (const feedFirst of [false, true]) test(`real fan-out and owner feed alert o
   assert.equal(pushed[0].ownerId, origin.id); assert.equal(pushed[0].askId, ask.id); assert.equal(pushed[0].ownerAskTs, ask.ts);
   assert.match(pushed[0].tag, /^nc:ask:[a-f0-9]{64}$/);
 });
+
+test('server adopts a historical fan-out alert from its real authoritative feed snapshot before replay', async t => {
+  const pushed = [];
+  const origin = await boot(t, { eventFeedClientPollMs: 50 });
+  const remote = await boot(t, { eventFeedClientPollMs: 50,
+    webpushImpl: { generateVAPIDKeys: () => ({ publicKey: 'pub-test', privateKey: 'priv-test' }), sendNotification: async (_s, payload) => { pushed.push(JSON.parse(payload)); return { statusCode: 201 }; } },
+    pushLookupImpl: async () => [{ address: '93.184.216.34', family: 4 }],
+  });
+  pair(origin, remote, 'remote', 'user'); pair(remote, origin, 'origin');
+  nodes.atomicWriteStore(origin.nodesPath, nodes.updateNode(nodes.loadStoreStrict(origin.nodesPath), 'remote', { direction: 'inbound', transport: 'inbound', eventsReceive: false }));
+  nodes.atomicWriteStore(remote.nodesPath, nodes.updateNode(nodes.loadStoreStrict(remote.nodesPath), 'origin', { eventsReceive: false }));
+  const session = tmuxSessionForCell('reviewer');
+  const created = await fetch(`http://127.0.0.1:${origin.port}/api/asks`, { method: 'POST', headers: headers(origin.token), body: JSON.stringify({ question: 'historical?', options: ['yes'], session, target: remote.id }) });
+  assert.equal(created.status, 201); const { id } = await created.json();
+  const listed = await fetch(`http://127.0.0.1:${origin.port}/api/asks`, { headers: headers(origin.token) }).then(r => r.json());
+  const ask = listed.asks.find(a => a.id === id); assert.ok(ask);
+  nodes.atomicWriteStore(origin.nodesPath, nodes.setPeerAccessPreset(nodes.loadStoreStrict(origin.nodesPath), 'remote', 'admin'));
+  const subscribed = await fetch(`http://127.0.0.1:${remote.port}/api/push/subscribe`, { method: 'POST', headers: headers(remote.token), body: JSON.stringify({ subscription: { endpoint: 'https://push.example/history', keys: { p256dh: 'k1', auth: 'a1' } } }) });
+  assert.equal(subscribed.status, 200);
+  const send = async generation => {
+    const response = await fetch(`http://127.0.0.1:${origin.port}/api/route/remote/_/asks`, { method: 'POST', headers: headers(origin.token), body: JSON.stringify({ target: remote.id, originNode: origin.id, originCell: session, ownerNode: origin.id, askId: id, question: ask.question, options: ask.options, session, ...generation }) });
+    assert.equal(response.status, 200); return response.json();
+  };
+  await send({}); assert.equal(pushed.length, 1); assert.equal(pushed[0].ownerAskTs, undefined);
+  assert.match(pushed[0].ownerAskFingerprint, /^[a-f0-9]{64}$/);
+  nodes.atomicWriteStore(origin.nodesPath, nodes.updateNode(nodes.loadStoreStrict(origin.nodesPath), 'remote', { direction: 'inbound', transport: 'inbound' }));
+  nodes.atomicWriteStore(remote.nodesPath, nodes.updateNode(nodes.loadStoreStrict(remote.nodesPath), 'origin', { eventsReceive: true }));
+  await until(async () => { const state = await fetch(`http://127.0.0.1:${remote.port}/api/feed-state`, { headers: headers(remote.token) }).then(r => r.json()); return state.views.some(v => v.ownerId === origin.id && !v.stale && v.asks.some(a => a.id === id)); }, 'real owner snapshot must include this ASK');
+  const { canonicalAskAlert } = require('../lib/notify/ask-alert-identity.js');
+  const known = canonicalAskAlert({ ownerId: origin.id, askId: id, ownerAskTs: ask.ts });
+  const ledger = JSON.parse(fs.readFileSync(path.join(path.dirname(remote.nodesPath), 'ask-alerts.json')));
+  assert.equal(ledger.entries[known.tag]?.push, 'delivered', 'real server callback persists adoption under the authoritative generation');
+  assert.equal(ledger.entries[pushed[0].tag], undefined, 'historical record is renamed rather than duplicated');
+  await send({ ownerAskTs: ask.ts });
+  assert.equal(pushed.length, 1, 'server snapshot wiring must adopt the historical admission before a known-generation replay');
+});
