@@ -15,6 +15,7 @@ function fixture(t) {
   function client() {
     const value = createEventFeedClient({ now: () => clock, minSnapshotIntervalMs: 0, pollMs: 60000,
       isAskDismissed: (owner, ask) => store.isImportedDismissed(owner, ask),
+      onAskClosed: (ownerId, ownerAskId, outcome) => store.closeImported({ ownerId, ownerAskId, outcome }),
       eventsHub: { broadcast: frame => broadcast.push(frame) },
       loadStore: () => ({ nodeId: SELF, nodes: [{ name: 'owner', nodeId: OWNER, direction: 'outbound', token: 'fixture', eventsReceive: true, localPort: 42001 }] }),
       fetchImpl: async (url, options = {}) => {
@@ -54,4 +55,11 @@ test('late imported ask frames are suppressed before local SSE emission', t => {
   assert.deepEqual(f.broadcast, []);
   assert.equal(client.reemit({ ownerId: OWNER, eventId: 'new', hop: 1, frame: { ...frame, ts: 101 } }), true);
   assert.equal(f.broadcast[0].ask.ts, 101);
+});
+
+test('an authoritative feed closure updates a feed-only locally dismissed record', t => {
+  const f = fixture(t), client = f.client(); f.dismiss();
+  client.reemit({ ownerId: OWNER, eventId: 'closed', hop: 1, frame: { type: 'ask-closed', askId: ID, outcome: 'answered' } });
+  assert.equal(f.store().getImportedDismissal(OWNER, ID).syncState, 'confirmed-answered');
+  assert.equal(f.store().getImportedDismissal(OWNER, ID).ownerOutcome, 'answered');
 });
