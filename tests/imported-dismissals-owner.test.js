@@ -72,3 +72,8 @@ test('dismissal inspection rejects an owner response with a different canonical 
   assert.equal(typeof relay.inspectDismissal, 'function');
   assert.equal((await relay.inspectDismissal({ ownerId: OWNER, askId: ID })).ok, false);
 });
+test('generation inspection exposes only question identity without answer or receipt payloads', async t => {
+  const f = await fixture(t, { ask: { answered: true, answer: 'Private answer', receipts: ['private receipt'], revision: 9 } });
+  const result = await f.request('GET');
+  assert.deepEqual(Object.keys(result.body.ask).sort(), ['id', 'options', 'question', 'session', 'ts']);
+});
