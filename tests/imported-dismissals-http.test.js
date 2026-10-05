@@ -68,6 +68,7 @@ test('new fanout imports preserve owner timestamp distinct from receipt timestam
     body: JSON.stringify({ question: 'A new routed question?', session: tmuxSessionForCell('reviewer'), target: receiver.id }) });
   const created = await response.json(); assert.equal(response.status, 201); assert.ok(created.fanout.some(result => result.status === 'delivered'));
   const alias = createAsksStore({ dir: receiver.configDir }).findImported(owner.id, created.id);
-  assert.ok(alias); assert.equal(alias.ownerAskTs, created.ts); assert.ok(alias.ts >= alias.ownerAskTs);
+  const source = createAsksStore({ dir: owner.configDir }).get(created.id);
+  assert.ok(alias); assert.equal(alias.ownerAskTs, source.ts); assert.ok(alias.ts >= alias.ownerAskTs);
   assert.notEqual(alias.id, created.id);
 });
