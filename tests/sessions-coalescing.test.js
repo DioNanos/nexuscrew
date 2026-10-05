@@ -55,9 +55,10 @@ test('due letture vicine: una sola series di spawn tmux, stessa risposta', async
   const seconda = await fetch(`${base}/api/sessions`, { headers: H(token) });
   const corpo = await seconda.json();
   const counts = spawnCounts(dir);
-  // UNA chiamata list-panes (che porta anche i campi sessione) e NESSUNA
-  // list-sessions: il giro completo in uno spawn, non due.
-  assert.equal(counts.listPanes, 1);
+  // La seconda lettura, dentro la finestra, serve la risposta pronta: ZERO
+  // spawn. E NESSUNA list-sessions: le sessioni arrivano dalla stessa
+  // list-panes del giro originario.
+  assert.equal(counts.listPanes, 0);
   assert.equal(counts.listSessions, 0);
   assert.deepEqual(corpo, prima);
   assert.equal(corpo.sessions.length, 1);
@@ -97,4 +98,17 @@ test('oltre la finestra di coalescing il cambiamento di tmux torna visibile', as
   assert.equal(dopo.sessions.length, 1);
   assert.equal(dopo.sessions[0].name, 'cell-b');
   t.after(() => { delete process.env.FAKE_TMUX_SESSIONS_STATE; });
+});
+
+test('la riga sessione viene dal pane ATTIVO, non dal primo pane della lista', async (t) => {
+  // dead-supervisor: il primo pane e' il supervisore morto (titolo diverso),
+  // la riga sessione deve parlare col pane attivo della seconda finestra —
+  // lo stesso pane a cui si rivolgevano i formati di list-sessions.
+  process.env.FAKE_TMUX_ACTIVITY_MODE = 'dead-supervisor';
+  t.after(() => { delete process.env.FAKE_TMUX_ACTIVITY_MODE; });
+  const { base, token } = await boot(t);
+  const corpo = await (await fetch(`${base}/api/sessions`, { headers: H(token) })).json();
+  assert.equal(corpo.sessions.length, 1);
+  assert.equal(corpo.sessions[0].name, 'claude-dead');
+  assert.equal(corpo.sessions[0].paneTitle, 'Dev');
 });

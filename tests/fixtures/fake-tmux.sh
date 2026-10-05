@@ -45,7 +45,7 @@ case "$1" in
         if [ -n "${FAKE_TMUX_SESSIONS_STATE:-}" ]; then
           printf "cell-${FAKE_TMUX_SESSIONS_STATE}\t%%1\t0\t\t0\t1\t1718380800\t1751990000\tnode\t\t1\t1\t${FAKE_TMUX_SESSIONS_STATE}\n"
         elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "dead-supervisor" ]; then
-          printf 'claude-dead\t%%1\t1\t1\t0\t1\t1718380800\t1751990000\tnode\t\t0\t0\tDev\n'
+          printf 'claude-dead\t%%1\t1\t1\t0\t1\t1718380800\t1751990000\tnode\t\t0\t0\tKilled supervisor\n'
           printf 'claude-dead\t%%2\t0\t\t0\t1\t1718380800\t1751990000\tnode\t\t1\t1\tDev\n'
         elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "unmarked" ]; then
           printf 'claude-unmarked\t%%1\t0\t\t0\t1\t1718380800\t1751990000\tnode\t\t1\t1\tDev\n'
