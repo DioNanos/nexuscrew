@@ -1756,3 +1756,11 @@ test('nc_cells directory: owner stale = voce in unavailable (failure stale + las
   const dir2 = await readCellDirectory(topologySenzaLastSeen, null);
   assert.equal(dir2.unavailable[0].lastSeen, null);
 });
+
+test('nc_ask preserves additive fan-out alert outcomes and legacy askId and note', async () => {
+  const fanout = [{ target: 'a'.repeat(32), status: 'delivered', alertStatus: 'no-delivery', alert: { ui: 0, push: 0, uiAttempted: true, pushAttempted: true } }];
+  const { srv, out } = makeSrv({ env: { NEXUSCREW_MCP_SESSION: 'cell-b' }, responder: () => ({ status: 201, json: { id: 'abcdef01', fanout } }) });
+  await srv.handleLine(rpc(170, 'tools/call', { name: 'nc_ask', arguments: { question: 'continue?' } }));
+  const result = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(result.askId, 'abcdef01'); assert.match(result.note, /incollat/); assert.deepEqual(result.fanout, fanout);
+});

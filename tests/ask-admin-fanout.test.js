@@ -122,6 +122,8 @@ test('ASK fan-out keeps legacy acceptance and adds observable zero-channel alert
   assert.equal(ask.fanout[0].status, 'delivered', 'legacy receipt means ASK accepted');
   assert.equal(ask.fanout[0].alertStatus, 'no-delivery', 'accepted ASK must not claim a visible alert');
   assert.equal(ask.fanout[0].alert.ui, 0); assert.equal(ask.fanout[0].alert.push, 0);
+  assert.equal(ask.fanout[0].alert.uiAttempted, true, 'UI attempt diagnostic survives dispatch and fan-out');
+  assert.equal(ask.fanout[0].alert.pushAttempted, true, 'push attempt diagnostic survives dispatch and fan-out');
   assert.equal(ask.fanout[0].alertStatus, 'no-delivery', 'dispatcher and local fan-out preserve added diagnostics');
   assert.ok((await open(remote)).some(a => a.ownerAskId === ask.id), 'zero channels never undo ASK persistence');
 });
