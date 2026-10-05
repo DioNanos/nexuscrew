@@ -41,7 +41,8 @@ const VL_PAYLOAD = {
   }],
 };
 
-const state = vi.hoisted(() => ({ vlForOwner: async () => ({ nodes: [] }) }));
+const state = vi.hoisted(() => ({ vlForOwner: async () => ({ nodes: [] }), vlQueue: [] }));
+const calls = vi.hoisted(() => ({ vl: [] }));
 
 vi.mock('../lib/api.js', () => ({
   ROSTER_READ_TIMEOUT_MS: 8000,
@@ -53,6 +54,7 @@ vi.mock('../lib/api.js', () => ({
   getRouteSessions: vi.fn(async () => ({ sessions: [] })),
   fleetStatus: vi.fn(async () => ({ available: false })),
   getVlNodes: vi.fn(async (_token, route = []) => {
+    calls.vl.push(Array.isArray(route) ? route.join('/') : String(route));
     if (Array.isArray(route) && route.join('/') === OWNER_KEY) return state.vlForOwner(_token, route);
     return { nodes: [] };
   }),
@@ -60,7 +62,7 @@ vi.mock('../lib/api.js', () => ({
 
 import { useNodes } from './useNodes.js';
 import { OWNER_GRACE_MS } from './useNodes.js';
-import { getTopology, getVlNodes } from '../lib/api.js';
+import { getRouteConfig, getTopology, getVlNodes } from '../lib/api.js';
 
 const vlGroups = (result) => (result.current || []).filter((g) => g.kind === 'vl');
 const vlLabels = (result) => vlGroups(result).map((g) => g.label);
@@ -261,6 +263,74 @@ describe('useNodes — VL sidebar cache per owner', () => {
 
     // The new owner confirms an empty directory: the old node stays gone.
     await act(async () => { resolveNewOwner({ nodes: [] }); await vi.advanceTimersByTimeAsync(0); });
+    expect(vlLabels(hook.result)).toEqual([]);
+  });
+
+  it('ignores an old owner reply after a replacement owner confirmed empty on the same route', async () => {
+    // Round 1: the previous owner holds the route; its node is published.
+    state.vlForOwner = async () => VL_PAYLOAD;
+    const hook = renderHook(() => useNodes('token', true));
+    await runFirstRound(hook);
+    expect(vlLabels(hook.result)).toEqual(['VL-Node-A']);
+
+    // Round 2: the fresh topology hangs. The sticky snapshot still lists
+    // the previous owner, so its read starts first; only after the fresh
+    // topology hands the same route to a replacement owner does the
+    // replacement's read start. Replies are controlled by call order.
+    let resolveTopology, resolveOld, resolveNew;
+    vi.mocked(getTopology).mockImplementation(() => new Promise((resolve) => { resolveTopology = resolve; }));
+    let calls = 0;
+    state.vlForOwner = () => new Promise((resolve) => { if (++calls === 1) resolveOld = resolve; else resolveNew = resolve; });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(calls).toBe(1);
+
+    const REPLACEMENT_INSTANCE = 'd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d';
+    await act(async () => {
+      resolveTopology({ nodes: [{ name: 'hub-example', instanceId: REPLACEMENT_INSTANCE, route: OWNER_ROUTE, stale: false, label: 'Hub' }] });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(calls).toBe(2);
+
+    // The replacement owner confirms an empty directory.
+    await act(async () => { resolveNew({ instanceId: REPLACEMENT_INSTANCE, nodes: [] }); await vi.advanceTimersByTimeAsync(0); });
+    expect(vlLabels(hook.result)).toEqual([]);
+
+    // The old owner's late reply lands in the same round: it must not
+    // republish its node over the replacement owner's confirmed answer.
+    await act(async () => { resolveOld(VL_PAYLOAD); await vi.advanceTimersByTimeAsync(0); });
+    expect(vlLabels(hook.result)).toEqual([]);
+  });
+
+  it('keeps an explicitly stale owner without starting a new read for it', async () => {
+    state.vlForOwner = async () => VL_PAYLOAD;
+    const hook = renderHook(() => useNodes('token', true));
+    await runFirstRound(hook);
+    const readsBefore = vi.mocked(getVlNodes).mock.calls.filter((args) => args[1].join('/') === OWNER_KEY).length;
+
+    // An owner marked stale in the topology is not polled anymore, but its
+    // cached node stays published with the not-verified marker.
+    vi.mocked(getTopology).mockResolvedValue({ nodes: TOPOLOGY_WITH_OWNER.nodes.map((n) => ({ ...n, stale: true })) });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(vlLabels(hook.result)).toEqual(['VL-Node-A']);
+    expect(vlGroups(hook.result)[0].fleetState).toBe('stale');
+    expect(vi.mocked(getVlNodes).mock.calls.filter((args) => args[1].join('/') === OWNER_KEY).length).toBe(readsBefore);
+  });
+
+  it('drops the cached nodes when the local instance changes', async () => {
+    state.vlForOwner = async () => VL_PAYLOAD;
+    const hook = renderHook(() => useNodes('token', true));
+    await runFirstRound(hook);
+    expect(vlLabels(hook.result)).toEqual(['VL-Node-A']);
+
+    // A different local instance is a different device: cached vl nodes
+    // must not survive it (the new instance's first read is left in flight
+    // and must publish nothing while pending).
+    vi.mocked(getRouteConfig).mockResolvedValue({ instanceId: 'e6'.repeat(16) });
+    let resolveOwner;
+    state.vlForOwner = () => new Promise((resolve) => { resolveOwner = resolve; });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(vlLabels(hook.result)).toEqual([]);
+    await act(async () => { resolveOwner({ nodes: [] }); await vi.advanceTimersByTimeAsync(0); });
     expect(vlLabels(hook.result)).toEqual([]);
   });
 
