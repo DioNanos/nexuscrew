@@ -77,3 +77,9 @@ test('generation inspection exposes only question identity without answer or rec
   const result = await f.request('GET');
   assert.deepEqual(Object.keys(result.body.ask).sort(), ['id', 'options', 'question', 'session', 'ts']);
 });
+for (const operation of ['inspectDismissal', 'relayDismiss']) test(`dismissal ${operation} preserves Retry-After from a rate-limited owner`, async () => {
+  const relay = createAskRelay({ loadStore: () => ({ nodeId: PEER, nodes: [{ nodeId: OWNER, direction: 'outbound', localPort: 12345, token: 'fixture' }] }),
+    fetchImpl: async () => ({ ok: false, status: 429, headers: new Headers({ 'retry-after': '120' }), json: async () => ({ reason: 'answer-rate' }) }) });
+  const result = await relay[operation]({ ownerId: OWNER, askId: ID, expectedTs: 100 });
+  assert.equal(result.retryAfterMs, 120000);
+});

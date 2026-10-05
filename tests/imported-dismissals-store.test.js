@@ -179,3 +179,10 @@ test('a failed authoritative closure write rolls back both alias and synchroniza
   assert.equal(result.ok, false); assert.deepEqual(store.getImportedDismissal(OWNER, ID), before);
   assert.equal(store.get(alias.id).answered, false);
 });
+for (const [field, value] of [['attempts', -1], ['nextRetryAt', 'tomorrow'], ['dismissed', false]]) test(`malformed durable ${field} blocks mutations without resetting intent`, t => {
+  const f = fixture(t); assert.equal(dismiss(f.store).ok, true);
+  const raw = JSON.parse(fs.readFileSync(f.store.filePath)); raw.importedDismissals[`${OWNER}|${ID}`][field] = value;
+  fs.writeFileSync(f.store.filePath, JSON.stringify(raw));
+  const restarted = f.restart(); assert.equal(restarted.health().readable, false);
+  assert.equal(dismiss(restarted).ok, false); assert.deepEqual(JSON.parse(fs.readFileSync(f.store.filePath)), raw);
+});
