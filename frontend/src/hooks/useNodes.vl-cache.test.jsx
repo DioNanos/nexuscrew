@@ -194,11 +194,15 @@ describe('useNodes — VL sidebar cache per owner', () => {
 
   it('ignores a late response from a superseded round', async () => {
     state.vlForOwner = async () => VL_PAYLOAD;
-    const hook = renderHook(() => useNodes('token', true));
+    const hook = renderHook(({ token }) => useNodes(token, true), {
+      initialProps: { token: 'token-a' },
+    });
     await runFirstRound(hook);
     expect(vlGroups(hook.result)[0].stale).toBe(false);
 
-    // Round 2 hangs; round 3 supersedes it and confirms an empty owner.
+    // Round 2 hangs; a token change supersedes it (guard reset + abort):
+    // the new session drops the cache and publishes nothing until its own
+    // first read lands.
     let resolveStaleRound;
     state.vlForOwner = () => new Promise((resolve) => { resolveStaleRound = resolve; });
     await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
@@ -206,12 +210,57 @@ describe('useNodes — VL sidebar cache per owner', () => {
     expect(vlGroups(hook.result)[0].stale).toBe(true);
 
     state.vlForOwner = async () => ({ nodes: [] });
+    await act(async () => { hook.rerender({ token: 'token-b' }); await vi.advanceTimersByTimeAsync(0); });
+    expect(vlLabels(hook.result)).toEqual([]);
+
+    // The superseded round finally resolves with a payload: it must not
+    // resurrect the node nor touch what the confirmed read decided.
+    await act(async () => { resolveStaleRound(VL_PAYLOAD); await vi.advanceTimersByTimeAsync(4000); });
+    expect(vlLabels(hook.result)).toEqual([]);
+  });
+
+  it('expires the node after the owner grace even when reads keep failing', async () => {
+    state.vlForOwner = async () => VL_PAYLOAD;
+    const hook = renderHook(() => useNodes('token', true));
+    await runFirstRound(hook);
+    expect(vlLabels(hook.result)).toEqual(['VL-Node-A']);
+
+    // From now on every read fails (the retry cap spreads the attempts):
+    // failures must not renew the grace, so once the ten minutes since the
+    // last confirmed read are spent, the node goes away.
+    state.vlForOwner = async () => {
+      const e = new Error('HTTP 502');
+      e.status = 502;
+      throw e;
+    };
+    await act(async () => { await vi.advanceTimersByTimeAsync(9 * 60 * 1000); });
+    expect(vlLabels(hook.result)).toEqual(['VL-Node-A']);
+    expect(vlGroups(hook.result)[0].stale).toBe(true);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(2 * 60 * 1000); });
+    expect(vlLabels(hook.result)).toEqual([]);
+  });
+
+  it('invalidates the cached node when a different owner takes the same route', async () => {
+    state.vlForOwner = async () => VL_PAYLOAD;
+    const hook = renderHook(() => useNodes('token', true));
+    await runFirstRound(hook);
+    expect(vlLabels(hook.result)).toEqual(['VL-Node-A']);
+
+    // Same route, different owner instance: the cached node belongs to the
+    // previous owner. While the new owner's read is in flight, nothing of
+    // the old owner may be published under the new one.
+    const OTHER_INSTANCE = 'd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4';
+    vi.mocked(getTopology).mockResolvedValue({
+      nodes: [{ name: 'hub-example', instanceId: OTHER_INSTANCE, route: OWNER_ROUTE, stale: false, label: 'Hub2' }],
+    });
+    let resolveNewOwner;
+    state.vlForOwner = () => new Promise((resolve) => { resolveNewOwner = resolve; });
     await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
     expect(vlLabels(hook.result)).toEqual([]);
 
-    // The stale round finally resolves with a payload: it must not
-    // resurrect the node nor touch what the confirmed read decided.
-    await act(async () => { resolveStaleRound(VL_PAYLOAD); await vi.advanceTimersByTimeAsync(0); });
+    // The new owner confirms an empty directory: the old node stays gone.
+    await act(async () => { resolveNewOwner({ nodes: [] }); await vi.advanceTimersByTimeAsync(0); });
     expect(vlLabels(hook.result)).toEqual([]);
   });
 

@@ -2,6 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## Unreleased
+
+- **VL nodes no longer blink away when their owner read fails.** The sidebar keeps the last known VL directory per owner, republished on every update and marked as not verified; entries survive skipped or failed reads and owners that temporarily drop out of the topology, within the same grace window used for owners. A confirmed read — even an empty one — replaces the cached entry for that owner alone, and a token or instance change drops it.
+
 ## 0.9.58 — 2026-10-03
 
 - **Reply to questions across connected hubs.** Replies and dismissals follow the question's owner through the network. Reply availability is checked separately from the notification feed, and an uncertain reply can be verified before another is sent.
