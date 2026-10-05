@@ -4,7 +4,7 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
-- Imported questions can be dismissed locally while their owner is unavailable. Local dismissals survive restarts and feed refreshes, and synchronize with the owner through authorized routes using generation checks, bounded retries, and durable history.
+- Imported questions can be dismissed locally while their owner is unavailable. Cards offer an explicit local action after capability checks, remain visible on errors, and distinguish pending origin closure from unauthorized remote closure. Local dismissals survive restarts and feed refreshes, and synchronize with the owner through authorized routes using generation checks, bounded retries, and durable history. Retry bindings use public pairing rotation counters rather than credential hashes.
 
 ## 0.9.58 — 2026-10-03
 
