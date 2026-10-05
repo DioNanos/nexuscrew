@@ -94,6 +94,10 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
   // poll that filled it, so anything published from an older round is
   // flagged stale, never presented as freshly verified.
   const vlCacheRef = useRef(new Map());
+  // Routes present in the fresh topology whose owner is not identifiable
+  // (no usable instanceId): cached vl entries for those routes stay
+  // published but cannot be verified.
+  const vlUnknownRoutesRef = useRef(new Set());
   const guardRef = useRef(createPollGuard());
   const abortRef = useRef(null);
 
@@ -111,6 +115,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
       peerCacheRef.current = { remote: {}, fleet: {} };
       cacheOwnersRef.current.clear();
       vlCacheRef.current.clear();
+      vlUnknownRoutesRef.current.clear();
       downRef.current = {};
       groupsRef.current = [];
       setGroups([]);
@@ -182,7 +187,8 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
             vlCacheRef.current.delete(key);
             continue;
           }
-          const stale = entry.round !== round;
+          const unknownRoute = vlUnknownRoutesRef.current.has(key.slice('vl:'.length));
+          const stale = entry.round !== round || entry.identityUnknown === true || unknownRoute;
           for (const peer of entry.peers) vlPeers.push({ ...peer, stale });
         }
         const previousGroups = groupsRef.current;
@@ -243,6 +249,24 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
           }
           cacheOwnersRef.current.set(key, id);
         }
+        // Owners whose identity is no longer resolvable from the fresh
+        // topology (route gone, or present without a usable instanceId)
+        // keep their cached vl entries, but those entries are no longer
+        // verifiable: flagged until a confirmed read for a known owner
+        // replaces them.
+        for (const key of cacheOwnersRef.current.keys()) {
+          if (!ownerOf.has(key)) {
+            const staleVlEntry = vlCacheRef.current.get(`vl:${key}`);
+            if (staleVlEntry) staleVlEntry.identityUnknown = true;
+          }
+        }
+        // Routes still present in the topology but without a usable owner
+        // identity: their cached vl entries cannot be verified.
+        vlUnknownRoutesRef.current = new Set(
+          topology
+            .filter((n) => !n.stale && Array.isArray(n.route) && n.route.length > 0 && !ownerOf.has(n.route.join('/')))
+            .map((n) => n.route.join('/')),
+        );
         // Nodi NON raggiungibili o stale: la lettura fleet non e' VERIFICABILE,
         // non assente — l'ultimo elenco noto resta come elenco fermo (stale)
         // finche' il nodo non torna su.
@@ -302,6 +326,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
           peerCacheRef.current = { remote: {}, fleet: {} };
           cacheOwnersRef.current.clear();
           vlCacheRef.current.clear();
+          vlUnknownRoutesRef.current.clear();
         } else if (localInstanceId) {
           sticky.instanceId = localInstanceId;
         }
@@ -327,6 +352,16 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
             try {
               const payload = await getVlNodes(token, owner.route, { signal: controller.signal });
               if (!current()) return;
+              // Only the CURRENT owner of the route may touch the shared
+              // backoff and fill the cache: a reply from a superseded owner
+              // (its read started from the sticky snapshot before the fresh
+              // topology reassigned the route) must neither reset the new
+              // owner's backoff nor fill the cache.
+              const routeOwner = cacheOwnersRef.current.get(owner.route.join('/'));
+              if ((routeOwner !== undefined && routeOwner !== owner.instanceId)
+                || vlUnknownRoutesRef.current.has(owner.route.join('/'))) {
+                return;
+              }
               backoffRef.current = recordPeerSuccess(backoffRef.current, key);
               const peers = [];
               for (const raw of payload.nodes || []) {
@@ -334,17 +369,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
                 if (peer) peers.push(peer);
               }
               // A confirmed read — even an empty one — replaces ONLY this
-              // owner's entry: an authoritative empty answer is a removal,
-              // while failures and skips leave the cached entry untouched
-              // (its grace start never moves because of a fallback). Only
-              // the CURRENT owner of the route may fill the cache: a late
-              // reply from a previous owner (its read started before the
-              // topology reassigned the route) must not overwrite the new
-              // owner's confirmed answer.
-              const routeOwner = cacheOwnersRef.current.get(owner.route.join('/'));
-              if (routeOwner !== undefined && routeOwner !== owner.instanceId) {
-                return;
-              }
+              // owner's entry: an authoritative empty answer is a removal.
               vlCacheRef.current.set(key, {
                 peers,
                 ownerInstanceId: owner.instanceId ?? null,
@@ -354,6 +379,15 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
               publish();
             } catch (e) {
               if (!current()) return;
+              // Same identity rule on failures: a superseded owner's
+              // failure must not pile up on the current owner's backoff
+              // (the current owner would inherit the failures and skip its
+              // own retry).
+              const catchRouteOwner = cacheOwnersRef.current.get(owner.route.join('/'));
+              if ((catchRouteOwner !== undefined && catchRouteOwner !== owner.instanceId)
+                || vlUnknownRoutesRef.current.has(owner.route.join('/'))) {
+                return;
+              }
               backoffRef.current = recordPeerFailure(backoffRef.current, key, classifyPeerFailure(e), pollStart);
             }
           })());

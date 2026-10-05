@@ -4,7 +4,7 @@ All notable changes to NexusCrew are tracked here.
 
 ## Unreleased
 
-- **VL nodes no longer blink away when their owner read fails.** The sidebar keeps the last known VL directory per owner, republished on every update and marked as not verified; entries survive skipped or failed reads and owners that temporarily drop out of the topology, within the same grace window used for owners. A confirmed read — even an empty one — replaces the cached entry for that owner alone, and a token or instance change drops it.
+- **VL nodes no longer blink away when their owner read fails.** The sidebar keeps the last known VL directory per owner, republished on every update and marked as not verified; entries survive skipped or failed reads and owners that temporarily drop out of the topology, within the same grace window used for owners. A confirmed read — even an empty one — replaces the cached entry for that owner alone, and a token or instance change drops it. Cache writes, publications, backoff successes and backoff failures are all scoped to the route's current owner: a late reply from a superseded owner (or from a route whose owner is no longer identifiable) touches neither the cache nor the backoff.
 
 ## 0.9.58 — 2026-10-03
 
