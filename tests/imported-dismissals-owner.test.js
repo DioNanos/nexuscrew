@@ -9,19 +9,29 @@ const nodes = require('../lib/nodes/store.js');
 const { createEventFeedAsksRoutes } = require('../lib/notify/event-feed-asks-routes.js');
 const { createAskRelay } = require('../lib/notify/ask-relay.js');
 const OWNER = 'a'.repeat(32), PEER = 'b'.repeat(32), ID = '12345678';
-async function fixture(t, { ask = {}, refuse, beforeGate } = {}) {
+async function fixture(t, { ask = {}, refuse, beforeGate, persisted = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dismissal-owner-'));
   const nodesPath = path.join(dir, 'nodes.json');
   nodes.initStore(nodesPath);
   let st = nodes.addNode(nodes.loadStoreStrict(nodesPath), { name: 'peer', nodeId: PEER, direction: 'inbound', token: 'fixture', localPort: 42001, remotePort: 42002, ssh: 'demo@example.invalid', shared: true, visibility: 'network' });
   st = nodes.setPeerAccessPreset(st, 'peer', 'admin'); nodes.atomicWriteStore(nodesPath, st);
   const current = { id: ID, ts: 100, question: 'Review?', options: ['Yes'], session: 'reviewer', answered: false, dismissed: false, revision: 0, ...ask };
+  const askFile = path.join(dir, 'asks.json'), receiptFile = path.join(dir, 'ask-receipts.json');
+  let persistedStore, persistedService;
+  if (persisted) {
+    fs.writeFileSync(askFile, JSON.stringify({ asks: [current] }), { mode: 0o600 });
+    persistedStore = require('../lib/notify/asks.js').createAsksStore({ dir });
+    const receipts = require('../lib/notify/ask-receipts.js').createAskReceipts({ filePath: receiptFile });
+    assert.equal(receipts.attempt({ peerId: PEER, askId: ID, requestId: 'receipt-one', text: 'Done' }).ok, true);
+    receipts.finalize(PEER, ID, 'receipt-one', 'committed', 'delivered');
+    persistedService = require('../lib/notify/ask-answer-service.js').createAskAnswerService({ asks: persistedStore, receipts, submit: async () => { throw new Error('no new submission allowed'); } });
+  }
   let calls = 0;
   const app = express();
   app.use('/asks', createEventFeedAsksRoutes({ nodesPath, localNodeId: () => OWNER, eventsEnabled: () => true,
     originResolver: { resolve: async () => { if (beforeGate) beforeGate(current); return { ok: true, trust: 'federated', origin: { node: PEER }, visited: [PEER, OWNER] }; } },
-    cellForSession: () => 'reviewer', asks: { get: () => current },
-    answerService: { dismiss() { calls++; if (refuse) return { ok: false, ...refuse }; current.dismissed = true; current.revision++; return { ok: true }; } },
+    cellForSession: () => 'reviewer', asks: persistedStore || { get: () => current },
+    answerService: { dismiss(id) { calls++; if (persistedService) return persistedService.dismiss(id); if (refuse) return { ok: false, ...refuse }; current.dismissed = true; current.revision++; return { ok: true }; } },
   }));
   const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); fs.rmSync(dir, { recursive: true, force: true }); });
@@ -30,7 +40,7 @@ async function fixture(t, { ask = {}, refuse, beforeGate } = {}) {
       headers: expected === undefined ? {} : { 'x-nexuscrew-ask-ts': expected } });
     return { code: response.status, body: await response.json() };
   }
-  return { request, current, calls: () => calls };
+  return { request, current: persistedStore ? persistedStore.get(ID) : current, calls: () => calls, askFile, receiptFile };
 }
 test('owner capability proves the canonical generation and precondition support', async t => {
   const f = await fixture(t); const result = await f.request('GET');
@@ -82,4 +92,22 @@ for (const operation of ['inspectDismissal', 'relayDismiss']) test(`dismissal ${
     fetchImpl: async () => ({ ok: false, status: 429, headers: new Headers({ 'retry-after': '120' }), json: async () => ({ reason: 'answer-rate' }) }) });
   const result = await relay[operation]({ ownerId: OWNER, askId: ID, expectedTs: 100 });
   assert.equal(result.retryAfterMs, 120000);
+});
+
+test('deleting an already answered owner ask preserves its revision and receipt', async t => {
+  const receipt = { requestId: 'receipt-one', state: 'delivered', answer: 'Done', revision: 9 };
+  const f = await fixture(t, { persisted: true, ask: { answered: true, answer: 'Done', answeredTs: 321, revision: 9, receipts: [receipt] } });
+  const beforeAskFile = fs.readFileSync(f.askFile, 'utf8');
+  const beforeReceiptFile = fs.readFileSync(f.receiptFile, 'utf8');
+  const before = structuredClone(f.current);
+  const beforeReceipt = structuredClone(f.current.receipts);
+  const result = await f.request();
+  assert.equal(result.code, 200);
+  assert.deepEqual(result.body, { dismissed: false, id: ID, outcome: 'answered', idempotent: true });
+  assert.equal(f.calls(), 0, 'the dismiss service never runs on an answered ask');
+  assert.deepEqual(f.current, before, 'the complete owner ask remains unchanged');
+  assert.equal(f.current.revision, 9);
+  assert.deepEqual(f.current.receipts, beforeReceipt);
+  assert.equal(fs.readFileSync(f.askFile, 'utf8'), beforeAskFile);
+  assert.equal(fs.readFileSync(f.receiptFile, 'utf8'), beforeReceiptFile);
 });
