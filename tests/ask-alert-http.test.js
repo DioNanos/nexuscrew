@@ -1,0 +1,91 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { createServer } = require('../lib/server.js');
+const nodes = require('../lib/nodes/store.js');
+const { tmuxSessionForCell } = require('../lib/fleet/definitions.js');
+const headers = token => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
+async function boot(t, extra = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-owner-access-'));
+  const configDir = path.join(home, '.nexuscrew'); fs.mkdirSync(configDir);
+  const nodesPath = path.join(configDir, 'nodes.json'); nodes.initStore(nodesPath);
+  const runtime = createServer({ home, configDir, nodesPath, configPath: path.join(configDir, 'config.json'), tokenPath: path.join(configDir, 'token'),
+    ...extra, filesRoot: path.join(home, 'files'), port: 0, fleetEnabled: false, sessionExistsSeam: () => true, pasteSeam: () => true,
+    askSubmit: async () => ({ outcome: 'submitted', submitted: true }),
+    settingsSeams: { platform: 'linux', uid: 1000, execImpl: () => { throw new Error('disabled'); }, serviceInstallPath: path.join(home, 'service'),
+      keygen: () => 'ssh-ed25519 AAAAFIXTURE demo', spawnImpl: () => ({ pid: 4100000, unref() {} }), sshVersion: () => ({ major: 9, minor: 6 }) },
+  });
+  await new Promise(resolve => runtime.server.listen(0, '127.0.0.1', resolve));
+  runtime.server.prependListener('request', (req, res) => {
+    if (req.method !== 'POST' || !req.url.includes('/federation/route/') || !req.url.endsWith('/asks')) return;
+    const entry = { url: `http://127.0.0.1:${runtime.server.address().port}${req.url}` };
+    const end = res.end; res.end = function(chunk, ...args) {
+      entry.status = res.statusCode;
+      if (typeof chunk === 'string' || Buffer.isBuffer(chunk)) { try { entry.reply = JSON.parse(String(chunk)); } catch (_) {} }
+      return end.call(this, chunk, ...args);
+    };
+    const chunks = []; req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => { entry.body = JSON.parse(Buffer.concat(chunks).toString()); observed.push(entry); });
+  });
+  t.after(async () => { runtime.server.closeAllConnections(); await new Promise(resolve => runtime.server.close(resolve)); runtime.watcher.close(); fs.rmSync(home, { recursive: true, force: true }); });
+  return { ...runtime, nodesPath, port: runtime.server.address().port, id: nodes.loadStoreStrict(nodesPath).nodeId };
+}
+
+let observed = [];
+const access = require('../lib/nodes/access-presets.js');
+function pair(local, remote, name, preset = 'admin') {
+  let st = nodes.addNode(nodes.loadStoreStrict(local.nodesPath), { name, nodeId: remote.id, direction: 'outbound', token: 'paired-admin-fixture', acceptToken: 'paired-admin-fixture',
+    localPort: remote.port, remotePort: 41999, shared: true, visibility: 'network', ssh: 'demo@example.invalid' });
+  if (preset !== 'legacy') st = nodes.setPeerAccessPreset(st, name, preset === 'custom' ? 'admin' : preset);
+  if (preset === 'custom') st = nodes.updateNode(st, name, { liveHostAccess: false, filesReadAccess: false });
+  nodes.atomicWriteStore(local.nodesPath, st);
+  const view = access.grantsOf(st.nodes.find(p => p.name === name));
+  assert.equal(view.label, preset === 'legacy' ? 'unconfigured' : preset);
+}
+function observe() { observed = []; return observed; }
+async function until(check, message) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) { if (await check()) return; await new Promise(r => setTimeout(r, 20)); }
+  assert.fail(message);
+}
+async function sse(t, node) {
+  const ctrl = new AbortController(); const frames = [];
+  const response = await fetch(`http://127.0.0.1:${node.port}/api/events`, { headers: headers(node.token), signal: ctrl.signal });
+  assert.equal(response.status, 200); const reader = response.body.getReader();
+  const finished = (async () => {
+    let buffer = ''; const decoder = new TextDecoder();
+    try { for (;;) { const { done, value } = await reader.read(); if (done) break; buffer += decoder.decode(value); let end;
+      while ((end = buffer.indexOf('\n\n')) >= 0) { const part = buffer.slice(0, end); buffer = buffer.slice(end + 2); const line = part.split('\n').find(s => s.startsWith('data: ')); if (line) frames.push(JSON.parse(line.slice(6))); }
+    } } catch (_) { /* owned stream aborted during cleanup */ }
+  })();
+  t.after(async () => { ctrl.abort(); await finished; }); return frames;
+}
+for (const feedFirst of [false, true]) test(`real fan-out and owner feed alert once while both ASK frames reach SSE (${feedFirst ? 'feed first' : 'fan-out first'})`, async t => {
+  const pushed = [];
+  const webpushImpl = { generateVAPIDKeys: () => ({ publicKey: 'pub-test', privateKey: 'priv-test' }), sendNotification: async (_sub, payload) => { pushed.push(JSON.parse(payload)); return { statusCode: 201 }; } };
+  const origin = await boot(t, { eventFeedClientPollMs: 50 });
+  const remote = await boot(t, { eventFeedClientPollMs: 50, webpushImpl, pushLookupImpl: async () => [{ address: '93.184.216.34', family: 4 }] });
+  pair(origin, remote, 'remote', feedFirst ? 'user' : 'admin'); pair(remote, origin, 'origin');
+  nodes.atomicWriteStore(origin.nodesPath, nodes.updateNode(nodes.loadStoreStrict(origin.nodesPath), 'remote', { direction: 'inbound', transport: 'inbound' }));
+  nodes.atomicWriteStore(remote.nodesPath, nodes.updateNode(nodes.loadStoreStrict(remote.nodesPath), 'origin', { eventsReceive: true }));
+  await until(async () => { const state = await fetch(`http://127.0.0.1:${remote.port}/api/feed-state`, { headers: headers(remote.token) }).then(r => r.json()); return state.views.some(v => v.ownerId === origin.id && v.stale === false); }, 'authoritative owner view must be live');
+  const subscribed = await fetch(`http://127.0.0.1:${remote.port}/api/push/subscribe`, { method: 'POST', headers: headers(remote.token), body: JSON.stringify({ subscription: { endpoint: 'https://push.example/a', keys: { p256dh: 'k1', auth: 'a1' } } }) });
+  assert.equal(subscribed.status, 200);
+  const frames = await sse(t, remote); const session = tmuxSessionForCell('reviewer');
+  const created = await fetch(`http://127.0.0.1:${origin.port}/api/asks`, { method: 'POST', headers: headers(origin.token), body: JSON.stringify({ question: 'review?', options: ['yes'], session, target: remote.id }) });
+  assert.equal(created.status, 201); const body = await created.json();
+  await until(() => pushed.length >= 1 && frames.some(f => f.type === 'notify'), 'first ingress alerts through real notifier or imported relay');
+  const asks = await fetch(`http://127.0.0.1:${origin.port}/api/asks?open=1`, { headers: headers(origin.token) }).then(r => r.json());
+  const ask = asks.asks.find(a => a.id === body.id); assert.ok(ask);
+  if (feedFirst) nodes.atomicWriteStore(origin.nodesPath, nodes.setPeerAccessPreset(nodes.loadStoreStrict(origin.nodesPath), 'remote', 'admin'));
+  const replay = await fetch(`http://127.0.0.1:${origin.port}/api/route/remote/_/asks`, { method: 'POST', headers: headers(origin.token), body: JSON.stringify({ target: remote.id, originNode: origin.id, originCell: session, ownerNode: origin.id, askId: ask.id, ownerAskTs: ask.ts, question: ask.question, options: ask.options, session }) });
+  assert.equal(replay.status, 200, await replay.text());
+  await until(() => frames.filter(f => f.type === 'ask').length >= 2, 'both canonical ASK frames remain delivered despite alert suppression');
+  assert.equal(pushed.length, 1, 'one push across direct and feed paths');
+  assert.equal(frames.filter(f => f.type === 'notify').length, 1, 'one UI toast input across paths');
+  assert.equal(pushed[0].ownerId, origin.id); assert.equal(pushed[0].askId, ask.id); assert.equal(pushed[0].ownerAskTs, ask.ts);
+  assert.match(pushed[0].tag, /^nc:ask:[a-f0-9]{64}$/);
+});
