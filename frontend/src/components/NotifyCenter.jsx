@@ -45,10 +45,11 @@ const feedViewStateOf = (health, ownerId) => {
 // nascosto per sempre.
 const DISMISSED_TTL_MS = 10 * 60 * 1000;
 const dismissedAsks = new Map(); // askKeyOf -> timestamp
+const generationTsOf = a => Object.hasOwn(a, 'ownerAskTs') ? a.ownerAskTs : a.ownerAskId || a.originNode ? null : a.ts;
 
 function noteAskDismissed(key, localAsk) {
   dismissedAsks.set(key, localAsk ? { at: Date.now(), local: true,
-    ts: localAsk.ownerAskTs || (!localAsk.ownerAskId ? localAsk.ts : null),
+    ts: generationTsOf(localAsk),
     fingerprint: localAsk.question === undefined ? null : JSON.stringify([localAsk.question, localAsk.options || [], localAsk.session]) } : { at: Date.now() });
 }
 
@@ -57,7 +58,7 @@ function askStillDismissed(a) {
   const at = dismissedAsks.get(key);
   if (at === undefined) return false;
   if (at.local) {
-    const ts = a.ownerAskTs || (!a.ownerAskId ? a.ts : null);
+    const ts = generationTsOf(a);
     // Local intent has no TTL. A different observed generation is a new card;
     // durable filtering on reload remains the receiving server's responsibility.
     return !(at.ts && ts && at.ts !== ts)
@@ -374,6 +375,14 @@ export default function NotifyCenter({ token }) {
   // La chiave di una card è (ownerId, askId): gli ask importati hanno chiavi
   // di due parti, quelli locali una. Rimuovere per solo id toglierebbe la card
   // sbagliata quando due proprietari hanno lo stesso id di ask.
+  // Older receivers emit the local alias id. Resolve it only within its owner,
+  // and refuse a collision rather than removing an unrelated canonical card.
+  const closureIdentity = frame => {
+    if (frame.ownerAskId || !frame.ownerId) return frame;
+    const matches = asksRef.current.filter(a => a.ownerId === frame.ownerId && (a.id === frame.id || a.ownerAskId === frame.id));
+    const ids = new Set(matches.map(a => a.ownerAskId || a.id));
+    return ids.size > 1 ? null : { ...frame, ownerAskId: ids.size === 1 ? [...ids][0] : frame.id };
+  };
   const removeAsk = (id, ownerId, ownerAskId, out) => {
     const key = askKeyOf(id, ownerId, ownerAskId);
     if (out?.scope === 'local' && ['pending', 'blocked'].includes(out.ownerSync)) setDismissalNotice(out.ownerSync);
@@ -401,12 +410,15 @@ export default function NotifyCenter({ token }) {
         // Two owners can legitimately use the same ask id: identity is the pair.
         setAsks((cur) => mergeAsks(cur, [frame.ask]));
       } else if (frame.type === 'ask-answered' && frame.id) {
-        removeAsk(frame.id, frame.ownerId, frame.ownerAskId);
+        const identity = closureIdentity(frame);
+        if (identity) removeAsk(identity.id, identity.ownerId, identity.ownerAskId);
       } else if (frame.type === 'ask-dismissed' && (frame.id || frame.ownerAskId)) {
-        const key = askKeyOf(frame.id, frame.ownerId, frame.ownerAskId);
+        const identity = closureIdentity(frame);
+        if (!identity) return;
+        const key = askKeyOf(identity.id, identity.ownerId, identity.ownerAskId);
         const localAsk = frame.scope === 'local' && asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
         noteAskDismissed(key, frame.scope === 'local' ? localAsk || { ...frame.askGeneration, ownerAskTs: frame.ownerAskTs } : null);
-        removeAsk(frame.id, frame.ownerId, frame.ownerAskId, frame);
+        removeAsk(identity.id, identity.ownerId, identity.ownerAskId, frame);
       }
     }, () => refreshCapabilities(true));
     return () => { cancelled = true; close(); };
