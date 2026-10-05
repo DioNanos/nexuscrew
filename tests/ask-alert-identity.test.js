@@ -86,7 +86,7 @@ test('a real feed ASK frame admits historical alert generation before the follow
   assert.equal(registry.claim(frame(), 'push').allowed, false, 'the real feed callback must preserve historical alert admission');
 });
 
-test('historical feed notify derives only a server-side fingerprint from a fresh matching full ASK', t => {
+test('historical feed notify adopts a generation only from a fresh matching full ASK', t => {
   const { createEventFeedClient } = require('../lib/notify/event-feed-client.js');
   const { askFingerprint } = require('../lib/notify/asks.js');
   const emitted = []; const authoritative = [];
@@ -96,8 +96,8 @@ test('historical feed notify derives only a server-side fingerprint from a fresh
   const view = client.viewFor(ownerId); view.stale = false; view.asks = [ask];
   const legacy = { ownerId, eventId: 'historic-notify', hop: 1, scope: 'cell', cellId: 'reviewer', frame: { type: 'notify', askId: ask.id, title: 'domanda', body: ask.question, ts: identity.ownerAskTs + 999 } };
   client.reemit(legacy);
-  assert.equal(emitted[0].ownerAskFingerprint, askFingerprint(ask), 'full owner view supplies the historical fingerprint');
-  assert.equal(emitted[0].ownerAskTs, undefined, 'notification timestamp cannot assert a generation');
+  assert.equal(emitted[0].ownerAskTs, ask.ts, 'full authoritative ASK supplies its creation generation');
+  assert.notEqual(emitted[0].ownerAskTs, legacy.frame.ts, 'notification emission timestamp cannot assert a generation');
   assert.equal(authoritative.length, 2, 'adoption runs before and after admission so a first historical alert is bound');
   view.stale = true; client.reemit({ ...legacy, eventId: 'stale-notify' });
   assert.equal(emitted[1].ownerAskFingerprint, undefined, 'stale state cannot identify the historical question');
@@ -119,4 +119,24 @@ test('a legacy live ASK supplies the fingerprint for its following notify and cl
   client.reemit(envelope('closed', { type: 'ask-closed', askId: ask.id, outcome: 'answered' }));
   client.reemit(envelope('late-alert', { type: 'notify', askId: ask.id, title: 'domanda', body: ask.question }));
   assert.equal(events.at(-1).ownerAskFingerprint, undefined, 'a closure discards the live alert source');
+});
+
+test('fresh authoritative generation lets a reused ID alert despite an older identical historical fingerprint', async t => {
+  const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os');
+  const { createAskAlertRegistry } = require('../lib/notify/ask-alert-registry.js');
+  const { createEventFeedClient } = require('../lib/notify/event-feed-client.js'); const { askFingerprint } = require('../lib/notify/asks.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'historical-new-generation-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const registry = createAskAlertRegistry({ filePath: path.join(dir, 'ask-alerts.json') }); const sent = [];
+  const ask = { id: identity.askId, question: 'same question', options: ['yes'], session: 'cloud-reviewer', ts: identity.ownerAskTs };
+  const historic = { ownerId, askId: ask.id, ownerAskFingerprint: askFingerprint(ask) };
+  registry.claim(historic, 'push'); registry.complete(historic, 'push', 1); registry.adopt(ownerId, ask, ask.ts);
+  const notifier = createNotifier({ alertRegistry: registry, hub: { broadcast: () => 0 }, push: { sendToAll: async payload => { sent.push(payload); return { sent: 1 }; } } });
+  let delivered;
+  const client = createEventFeedClient({ loadStore: () => ({ nodeId: 'b'.repeat(32), nodes: [] }), eventsHub: { broadcast: f => { delivered = notifier.emit(f); } },
+    onAuthoritativeAsks: (owner, asks) => { for (const a of asks) registry.adopt(owner, a, a.ownerAskTs === undefined ? a.ts : a.ownerAskTs); }, log() {} }); t.after(() => client.stop());
+  const view = client.viewFor(ownerId); view.stale = false; view.asks = [{ ...ask, ts: ask.ts + 1 }];
+  client.reemit({ ownerId, eventId: 'new-generation-legacy-notify', hop: 1, scope: 'cell', cellId: 'reviewer', frame: { type: 'notify', askId: ask.id, title: 'domanda', body: ask.question, ts: ask.ts + 1000 } });
+  await delivered;
+  assert.equal(sent.length, 1, 'a fresh owner generation cannot be suppressed through the old unknown fingerprint alias');
+  assert.equal(sent[0].ownerAskTs, ask.ts + 1);
 });
