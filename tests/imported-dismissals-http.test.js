@@ -9,14 +9,15 @@ const { createAsksStore } = require('../lib/notify/asks.js');
 const nodes = require('../lib/nodes/store.js');
 const { tmuxSessionForCell } = require('../lib/fleet/definitions.js');
 const OWNER = 'b'.repeat(32), ID = '12345678';
-async function boot(t, { readonly = false, malformed = false, symlink = false, queued = false, feedOnly = false, ownerPort = 42001 } = {}) {
+async function boot(t, { readonly = false, malformed = false, symlink = false, queued = false, feedOnly = false, ownerPort = 42001, routed = false } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-owner-access-'));
   const configDir = path.join(home, '.nexuscrew'); fs.mkdirSync(configDir);
   const nodesPath = path.join(configDir, 'nodes.json'); nodes.initStore(nodesPath);
   const store = createAsksStore({ dir: configDir });
   const alias = feedOnly ? null : store.create({ question: 'Review?', options: ['Yes'], session: tmuxSessionForCell('reviewer'), ownerId: OWNER, ownerAskId: ID, originNode: OWNER, ownerAskTs: 100 }).ask;
-  let st = nodes.addNode(nodes.loadStoreStrict(nodesPath), { name: 'owner', nodeId: OWNER, direction: feedOnly ? 'outbound' : 'inbound', eventsReceive: feedOnly, token: 'fixture', shared: true, visibility: 'network', ssh: 'demo@example.invalid', localPort: ownerPort, remotePort: 42002 });
+  let st = nodes.addNode(nodes.loadStoreStrict(nodesPath), { name: 'owner', nodeId: routed ? 'c'.repeat(32) : OWNER, direction: feedOnly ? 'outbound' : 'inbound', eventsReceive: feedOnly, token: 'fixture', shared: true, visibility: 'network', ssh: 'demo@example.invalid', localPort: ownerPort, remotePort: 42002 });
   st = nodes.setPeerAccessPreset(st, 'owner', 'admin'); nodes.atomicWriteStore(nodesPath, st);
+  if (routed) require('../lib/nodes/topology-cache.js').atomicWriteCache(path.join(configDir, 'topology-cache.json'), { schemaVersion: 1, nodes: [{ instanceId: OWNER, name: 'source', route: ['owner', 'source'], lastSeen: Date.now() }] });
   if (queued) store.dismissImported({ ownerId: OWNER, ownerAskId: ID, ask: alias });
   if (malformed) { const value = JSON.parse(fs.readFileSync(store.filePath)); value.importedDismissals = []; fs.writeFileSync(store.filePath, JSON.stringify(value)); }
   if (symlink) { fs.renameSync(store.filePath, store.filePath + '.target'); fs.symlinkSync(store.filePath + '.target', store.filePath); }
@@ -152,4 +153,21 @@ for (const transport of ['reverse', 'hub']) test(`durable dismissal recovery ove
   assert.equal(createAsksStore({ dir }).getImportedDismissal(owner.id, source.id).syncState, 'confirmed-dismissed');
   assert.equal(deletes, 2, 'one rejected precondition and one applied DELETE, with no blind resend');
   if (transport === 'reverse') assert.ok(probes > 0, 'the selected reverse binding must be proved');
+});
+
+test('local dismissal accepts a known owner behind an authorized unavailable first hop', async t => {
+  const runtime = await boot(t, { routed: true });
+  const result = await dismiss(runtime); assert.equal(result.code, 200);
+  assert.equal(createAsksStore({ dir: runtime.configDir }).getImportedDismissal(OWNER, ID).syncState, 'pending');
+});
+test('local capability distinguishes remote reply from durable local dismissal', async t => {
+  const runtime = await boot(t);
+  const response = await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}`, { headers: { authorization: `Bearer ${runtime.token}` } });
+  const body = await response.json(); assert.equal(body.canReply, false);
+  assert.equal(body.canDismissRemote, false); assert.equal(body.canDismissLocal, true);
+});
+test('READONLY capability refuses both local and remote dismissals', async t => {
+  const runtime = await boot(t, { readonly: true });
+  const body = await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}`, { headers: { authorization: `Bearer ${runtime.token}` } }).then(r => r.json());
+  assert.equal(body.canDismissLocal, false); assert.equal(body.canDismissRemote, false);
 });
