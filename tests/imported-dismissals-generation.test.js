@@ -158,10 +158,12 @@ test('an answered historical alias does not block dismissal of a replacement fee
   assert.ok(view.views.some(v => v.asks.some(a => a.question === source.question)));
   owner.closeAllConnections(); await new Promise(r => owner.close(r));
   await fetch(`http://127.0.0.1:${runtime.port}/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}&dismissals=1`, { headers });
+  const beforeAlias = createAsksStore({ dir: runtime.configDir }).get(runtime.alias.id);
   const out = await dismiss(runtime); assert.equal(out.code, 200);
   const store = createAsksStore({ dir: runtime.configDir });
   console.log('OBSERVED_REPLACEMENT_ACK', JSON.stringify({ ack: out.body, recordedTs: store.getImportedDismissal(OWNER, ID).ownerAskTs, replacementSuppressed: store.isImportedDismissed(OWNER, source) }));
   assert.equal(store.isImportedDismissed(OWNER, source), true, 'the acknowledged replacement must be durably suppressed');
+  assert.deepEqual(store.get(runtime.alias.id), beforeAlias, 'historical answered alias remains untouched');
 });
 
 
