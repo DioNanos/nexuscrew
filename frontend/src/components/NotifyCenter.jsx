@@ -405,7 +405,7 @@ export default function NotifyCenter({ token }) {
       } else if (frame.type === 'ask-dismissed' && (frame.id || frame.ownerAskId)) {
         const key = askKeyOf(frame.id, frame.ownerId, frame.ownerAskId);
         const localAsk = frame.scope === 'local' && asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
-        noteAskDismissed(key, frame.scope === 'local' ? localAsk || { ownerAskTs: frame.ownerAskTs } : null);
+        noteAskDismissed(key, frame.scope === 'local' ? localAsk || { ...frame.askGeneration, ownerAskTs: frame.ownerAskTs } : null);
         removeAsk(frame.id, frame.ownerId, frame.ownerAskId, frame);
       }
     }, () => refreshCapabilities(true));
