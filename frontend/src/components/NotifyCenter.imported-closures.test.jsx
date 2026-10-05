@@ -37,3 +37,14 @@ it('a direct imported owner closure with the actual server shape removes the can
   await emit({ type: 'ask-dismissed', id: alias.id, ownerId: OWNER });
   expect(screen.queryByText(alias.question)).toBeNull();
 });
+
+for (const type of ['ask-dismissed', 'ask-answered']) for (const legacy of [true, false]) it(`${type} resolves ${legacy ? 'legacy alias' : 'canonical'} identity without cross-owner removal`, async () => {
+  mocks.getAsks.mockResolvedValue({ asks: [alias, { ...alias, id: 'other-alias', ownerId: OTHER, question: 'Other owner' }] });
+  await mount(); await emit({ type, id: alias.id, ownerId: OWNER, ...(legacy ? {} : { ownerAskId: alias.ownerAskId }) });
+  expect(screen.queryByText(alias.question)).toBeNull(); expect(screen.getByText('Other owner')).toBeTruthy();
+});
+it('a delayed legacy feed frame cannot invent a replacement generation after local dismissal', async () => {
+  await mount(); fireEvent.click(dismissButton()); await act(async () => {});
+  await emit({ type: 'ask', ask: { id: alias.ownerAskId, ownerId: OWNER, ownerAskTs: null, question: alias.question, options: alias.options, session: alias.session, ts: 999 } });
+  expect(screen.queryByText(alias.question)).toBeNull();
+});

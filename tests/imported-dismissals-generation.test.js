@@ -43,6 +43,11 @@ function connect(local, remote, name) {
 }
 test('a real fanout feed event reappears after durable dismissal of the same ask', async t => {
   const owner = await boot(t), receiver = await boot(t); connect(owner, receiver, 'receiver'); connect(receiver, owner, 'source');
+  const actualFetch = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (String(url).includes(`${receiver.port}/`) && options?.method === 'POST') await new Promise(resolve => setTimeout(resolve, 75));
+    return actualFetch(url, options);
+  });
   const response = await fetch(`http://127.0.0.1:${owner.port}/api/asks`, { method: 'POST', headers: { authorization: `Bearer ${owner.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ question: 'Canonical timestamp?', session: tmuxSessionForCell('reviewer'), target: receiver.id }) });
   const created = await response.json(); assert.equal(response.status, 201);
   const source = createAsksStore({ dir: owner.configDir }).get(created.id);
@@ -51,7 +56,8 @@ test('a real fanout feed event reappears after durable dismissal of the same ask
   const historyPath = path.join(owner.configDir, 'event-feed-history.json');
   let envelope;
   for (let i = 0; i < 30; i++) { if (fs.existsSync(historyPath)) envelope = JSON.parse(fs.readFileSync(historyPath)).entries.map(e => e.envelope).find(e => e.frame.type === 'ask' && e.frame.askId === source.id); if (envelope) break; await new Promise(r => setTimeout(r, 10)); }
-  assert.ok(envelope); console.log('OBSERVED_REAL_TIMESTAMP', JSON.stringify({ ownerTs: source.ts, aliasTs: alias.ownerAskTs, feedTs: envelope.frame.ts }));
+  assert.ok(envelope); assert.ok(envelope.frame.ts > source.ts, 'fanout actually delays event emission');
+  console.log('OBSERVED_REAL_TIMESTAMP', JSON.stringify({ ownerTs: source.ts, aliasTs: alias.ownerAskTs, feedTs: envelope.frame.ts }));
   const { createEventFeedClient } = require('../lib/notify/event-feed-client.js'); const frames = [];
   const client = createEventFeedClient({ isAskDismissed: (ownerId, ask) => store.isImportedDismissed(ownerId, ask), eventsHub: { broadcast: f => frames.push(f) }, loadStore: () => ({ nodes: [] }) }); t.after(() => client.stop());
   client.reemit(envelope); console.log('OBSERVED_RESURRECTION', frames.length);
@@ -78,4 +84,38 @@ test('dismissal ACK for a replacement feed ask persists the obsolete alias inste
   const store = createAsksStore({ dir: runtime.configDir });
   console.log('OBSERVED_REPLACEMENT_ACK', JSON.stringify({ ack: out.body, recordedTs: store.getImportedDismissal(OWNER, ID).ownerAskTs, replacementSuppressed: store.isImportedDismissed(OWNER, source) }));
   assert.equal(store.isImportedDismissed(OWNER, source), true, 'the acknowledged replacement must be durably suppressed');
+});
+
+test('live and legacy feed cards never use event time as owner generation', t => {
+  const { createEventFeedClient } = require('../lib/notify/event-feed-client.js');
+  const frames = [], store = createAsksStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'feed-generation-')) });
+  t.after(() => fs.rmSync(path.dirname(store.filePath), { recursive: true, force: true }));
+  const client = createEventFeedClient({ eventsHub: { broadcast: f => frames.push(f) }, loadStore: () => ({ nodes: [] }) });
+  t.after(() => client.stop());
+  for (const [eventId, askTs] of [['known', 100], ['legacy', undefined]]) {
+    const id = eventId === 'known' ? ID : '87654321';
+    client.reemit({ ownerId: OWNER, eventId, hop: 1, frame: { type: 'ask', askId: id, question: 'Same question', session: 'reviewer', ts: 999, ...(askTs ? { askTs } : {}) } });
+    const card = frames.at(-1).ask;
+    assert.equal(card.ts, 999, 'event timestamp is preserved');
+    assert.equal(card.ownerAskTs, askTs || null);
+    const out = store.dismissImported({ ownerId: OWNER, ownerAskId: id, ask: card });
+    assert.equal(out.record.ownerAskTs, askTs || null);
+    assert.equal(out.record.generation, askTs ? 'known' : 'unknown');
+  }
+});
+test('feed-only original generation drains against the real owner without mismatch', async t => {
+  const owner = await boot(t);
+  const response = await fetch(`http://127.0.0.1:${owner.port}/api/asks`, { method: 'POST', headers: { authorization: `Bearer ${owner.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ question: 'Feed card', session: tmuxSessionForCell('reviewer') }) });
+  const created = await response.json(); assert.equal(response.status, 201);
+  const source = createAsksStore({ dir: owner.configDir }).get(created.id);
+  let envelope;
+  for (let i = 0; i < 30; i++) { const p = path.join(owner.configDir, 'event-feed-history.json'); if (fs.existsSync(p)) envelope = JSON.parse(fs.readFileSync(p)).entries.map(e => e.envelope).find(e => e.frame.askId === source.id); if (envelope) break; await new Promise(r => setTimeout(r, 10)); }
+  const clientNode = await boot(t); connect(clientNode, owner, 'source'); connect(owner, clientNode, 'client');
+  const frames = []; const client = require('../lib/notify/event-feed-client.js').createEventFeedClient({ eventsHub: { broadcast: f => frames.push(f) }, loadStore: () => ({ nodes: [] }) }); t.after(() => client.stop());
+  client.reemit(envelope); const store = createAsksStore({ dir: path.join(clientNode.configDir, 'feed-only') });
+  store.dismissImported({ ownerId: owner.id, ownerAskId: source.id, ask: frames[0].ask });
+  const relay = require('../lib/notify/ask-relay.js').createAskRelay({ loadStore: () => nodes.loadStoreStrict(clientNode.nodesPath), localPort: () => clientNode.port, localToken: () => clientNode.token });
+  const drainer = require('../lib/notify/imported-dismissals.js').createImportedDismissalDrainer({ store, relay }); t.after(() => drainer.stop()); await drainer.drain();
+  const record = store.getImportedDismissal(owner.id, source.id);
+  assert.equal(record.syncState, 'confirmed-dismissed'); assert.equal(record.ownerAskTs, source.ts);
 });
