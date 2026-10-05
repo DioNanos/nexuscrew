@@ -60,7 +60,7 @@ test('parallel local dismiss clicks preserve one durable timestamp and revision'
   const store = createAsksStore({ dir: runtime.configDir }); assert.equal(store.listImportedDismissals().length, 1); assert.equal(store.get(runtime.alias.id).revision, 1);
 });
 function connect(local, remote, name) {
-  let st = nodes.addNode(nodes.loadStoreStrict(local.nodesPath), { name, nodeId: remote.id, direction: 'outbound', token: 'fanout-fixture', acceptToken: 'fanout-fixture', shared: true, visibility: 'network', ssh: 'demo@example.invalid', localPort: remote.port, remotePort: 42003 });
+  let st = nodes.addNode(nodes.loadStoreStrict(local.nodesPath), { name, nodeId: remote.id, direction: 'outbound', eventsReceive: false, token: 'fanout-fixture', acceptToken: 'fanout-fixture', shared: true, visibility: 'network', ssh: 'demo@example.invalid', localPort: remote.port, remotePort: 42003 });
   st = nodes.setPeerAccessPreset(st, name, 'admin'); nodes.atomicWriteStore(local.nodesPath, st);
 }
 test('new fanout imports preserve owner timestamp distinct from receipt timestamp', async t => {
@@ -108,4 +108,15 @@ test('feed-only local dismissal is durable and idempotent without creating an al
   const store = createAsksStore({ dir: runtime.configDir }); assert.equal(store.list().length, 0); assert.equal(store.listImportedDismissals().length, 1);
   const after = await fetch(`http://127.0.0.1:${runtime.port}/api/feed-state`, { headers }).then(r => r.json());
   assert.ok(after.views.every(item => item.asks.every(ask => ask.id !== ID)));
+});
+test('local imported dismissal does not publish a closure to a third peer or durable feed history', async t => {
+  const receiver = await boot(t), observer = await boot(t); connect(observer, receiver, 'receiver'); connect(receiver, observer, 'observer');
+  nodes.atomicWriteStore(receiver.nodesPath, nodes.updateNode(nodes.loadStoreStrict(receiver.nodesPath), 'observer', { direction: 'inbound', transport: 'inbound', shared: false }));
+  const snapshot = () => fetch(`http://127.0.0.1:${observer.port}/api/route/receiver/_/event-feed/snapshot`, { headers: { authorization: `Bearer ${observer.token}` } }).then(r => r.json());
+  const before = await snapshot(); assert.equal(before.ownerId, receiver.id, JSON.stringify(before)); assert.equal(typeof before.cursor, 'string');
+  const historyPath = path.join(receiver.configDir, 'event-feed-history.json'); const history = fs.existsSync(historyPath) ? fs.readFileSync(historyPath, 'utf8') : null;
+  assert.equal((await dismiss(receiver)).code, 200);
+  const after = await snapshot(); assert.equal(after.cursor, before.cursor, 'the receiving publisher did not append a federated closure');
+  assert.deepEqual(after.notifications, before.notifications);
+  assert.equal(fs.existsSync(historyPath) ? fs.readFileSync(historyPath, 'utf8') : null, history);
 });
