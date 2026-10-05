@@ -209,4 +209,18 @@ describe('vlSidebarGroups', () => {
     expect(vlSidebarGroups(null)).toEqual([]);
     expect(vlSidebarGroups([null, {}, { kind: 'cell' }])).toEqual([]);
   });
+
+  it('propagates peer.stale to the group so cached data is not read as fresh', () => {
+    const peer = { ...vlNodeToPeer(RAW), stale: true };
+    expect(vlSidebarGroups([peer])[0].stale).toBe(true);
+  });
+
+  it('a freshly read peer is explicitly not stale (boolean, never undefined)', () => {
+    const peer = { ...vlNodeToPeer(RAW), stale: false };
+    expect(vlSidebarGroups([peer])[0].stale).toBe(false);
+  });
+
+  it('a peer without the flag is reported as not stale', () => {
+    expect(vlSidebarGroups([vlNodeToPeer(RAW)])[0].stale).toBe(false);
+  });
 });
