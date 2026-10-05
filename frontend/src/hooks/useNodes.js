@@ -172,6 +172,16 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
         const nowMs = Date.now();
         for (const [key, entry] of vlCacheRef.current) {
           if (nowMs - entry.at > OWNER_GRACE_MS) { vlCacheRef.current.delete(key); continue; }
+          // An entry filled by an owner that no longer holds the route is
+          // neither published nor kept: the current owner's confirmed
+          // answer is the only data that counts for that route.
+          const routePath = key.slice('vl:'.length);
+          const routeOwner = cacheOwnersRef.current.get(routePath);
+          if (entry.ownerInstanceId != null && routeOwner !== undefined
+            && routeOwner !== entry.ownerInstanceId) {
+            vlCacheRef.current.delete(key);
+            continue;
+          }
           const stale = entry.round !== round;
           for (const peer of entry.peers) vlPeers.push({ ...peer, stale });
         }
@@ -326,7 +336,15 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
               // A confirmed read — even an empty one — replaces ONLY this
               // owner's entry: an authoritative empty answer is a removal,
               // while failures and skips leave the cached entry untouched
-              // (its grace start never moves because of a fallback).
+              // (its grace start never moves because of a fallback). Only
+              // the CURRENT owner of the route may fill the cache: a late
+              // reply from a previous owner (its read started before the
+              // topology reassigned the route) must not overwrite the new
+              // owner's confirmed answer.
+              const routeOwner = cacheOwnersRef.current.get(owner.route.join('/'));
+              if (routeOwner !== undefined && routeOwner !== owner.instanceId) {
+                return;
+              }
               vlCacheRef.current.set(key, {
                 peers,
                 ownerInstanceId: owner.instanceId ?? null,
