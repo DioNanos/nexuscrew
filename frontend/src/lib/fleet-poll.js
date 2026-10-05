@@ -32,6 +32,28 @@ export const FLEET_POLL_TIMEOUT_MS = 3500;
 // credenziali deve partire da letture nuove, non cavalcare il treno vecchio.
 const trains = new Map();
 
+// Cadenza adattiva: una finestra in secondo piano non genera traffico. Il
+// documento nascosto sospende l'interval di TUTTI i treni (il ciclo in volo
+// completa e consegna, i tick successivi no); alla riapparsa ogni treno
+// riparte con un giro immediato — chi torna deve trovare dati freschi, non
+// l'ultima fotografia di prima della sospensione.
+let visibilityHooked = false;
+function ensureVisibilityHook() {
+  if (visibilityHooked || typeof document === 'undefined' || !document.addEventListener) return;
+  visibilityHooked = true;
+  document.addEventListener('visibilitychange', () => {
+    const nascosto = document.visibilityState === 'hidden';
+    for (const state of trains.values()) {
+      if (nascosto) {
+        if (state.timer !== null) { clearInterval(state.timer); state.timer = null; }
+      } else if (state.timer === null) {
+        state.timer = setInterval(state.cycle, FLEET_POLL_MS);
+        state.cycle();
+      }
+    }
+  });
+}
+
 const trainKey = (token, route) => `${token}|${JSON.stringify(route || [])}`;
 
 function basePathFor(route) {
@@ -65,6 +87,7 @@ function startTrain(token, route) {
     }
   };
   state.cycle = cycle;
+  ensureVisibilityHook();
   state.timer = setInterval(cycle, FLEET_POLL_MS);
   cycle();
   return state;
@@ -94,7 +117,7 @@ export function subscribeFleetRoute(token, route, onSnapshot) {
     if (!s) return;
     s.consumers.delete(onSnapshot);
     if (s.consumers.size === 0) {
-      clearInterval(s.timer);
+      if (s.timer !== null) clearInterval(s.timer);
       trains.delete(k);
     }
   };
