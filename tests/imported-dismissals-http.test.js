@@ -80,4 +80,5 @@ test('server bootstrap resumes durable imported dismissal work without a feed su
     if (record.attempts > 0) break; await new Promise(resolve => setTimeout(resolve, 10));
   }
   assert.ok(record.attempts > 0, 'a restarted server must resume durable work');
+  assert.equal(record.syncState, 'pending'); assert.equal(record.lastReason, 'reverse-slot-unverified');
 });
