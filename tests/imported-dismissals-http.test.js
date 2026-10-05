@@ -58,3 +58,16 @@ test('parallel local dismiss clicks preserve one durable timestamp and revision'
   const runtime = await boot(t); const results = await Promise.all([dismiss(runtime), dismiss(runtime)]); assert.deepEqual(results.map(r => r.code), [200, 200]);
   const store = createAsksStore({ dir: runtime.configDir }); assert.equal(store.listImportedDismissals().length, 1); assert.equal(store.get(runtime.alias.id).revision, 1);
 });
+function connect(local, remote, name) {
+  let st = nodes.addNode(nodes.loadStoreStrict(local.nodesPath), { name, nodeId: remote.id, direction: 'outbound', token: 'fanout-fixture', acceptToken: 'fanout-fixture', shared: true, visibility: 'network', ssh: 'demo@example.invalid', localPort: remote.port, remotePort: 42003 });
+  st = nodes.setPeerAccessPreset(st, name, 'admin'); nodes.atomicWriteStore(local.nodesPath, st);
+}
+test('new fanout imports preserve owner timestamp distinct from receipt timestamp', async t => {
+  const owner = await boot(t), receiver = await boot(t); connect(owner, receiver, 'receiver'); connect(receiver, owner, 'source');
+  const response = await fetch(`http://127.0.0.1:${owner.port}/api/asks`, { method: 'POST', headers: { authorization: `Bearer ${owner.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ question: 'A new routed question?', session: tmuxSessionForCell('reviewer'), target: receiver.id }) });
+  const created = await response.json(); assert.equal(response.status, 201); assert.ok(created.fanout.some(result => result.status === 'delivered'));
+  const alias = createAsksStore({ dir: receiver.configDir }).findImported(owner.id, created.id);
+  assert.ok(alias); assert.equal(alias.ownerAskTs, created.ts); assert.ok(alias.ts >= alias.ownerAskTs);
+  assert.notEqual(alias.id, created.id);
+});
