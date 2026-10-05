@@ -9,7 +9,7 @@ const { createAsksStore } = require('../lib/notify/asks.js');
 const nodes = require('../lib/nodes/store.js');
 const { tmuxSessionForCell } = require('../lib/fleet/definitions.js');
 const OWNER = 'b'.repeat(32), ID = '12345678';
-async function boot(t, { readonly = false, malformed = false, symlink = false, queued = false, feedOnly = false, ownerPort = 42001, routed = false, extraAlias = false, initialAlias = false, answered = false, additionalImports = [] } = {}) {
+async function boot(t, { readonly = false, malformed = false, symlink = false, queued = false, feedOnly = false, ownerPort = 42001, routed = false, extraAlias = false, initialAlias = false, answered = false, additionalImports = [], seedPeer = true } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-owner-access-'));
   const configDir = path.join(home, '.nexuscrew'); fs.mkdirSync(configDir);
   const nodesPath = path.join(configDir, 'nodes.json'); nodes.initStore(nodesPath);
@@ -17,8 +17,8 @@ async function boot(t, { readonly = false, malformed = false, symlink = false, q
   const alias = feedOnly && !initialAlias ? null : store.create({ question: 'Review?', options: ['Yes'], session: tmuxSessionForCell('reviewer'), ownerId: OWNER, ownerAskId: ID, originNode: OWNER, ownerAskTs: 100 }).ask;
   for (const item of additionalImports) store.create(item);
   if (extraAlias) store.create({ question: 'Review?', session: tmuxSessionForCell('reviewer'), ownerId: OWNER, ownerAskId: '87654321', originNode: OWNER, ownerAskTs: 100 });
-  let st = nodes.addNode(nodes.loadStoreStrict(nodesPath), { name: 'owner', nodeId: routed ? 'c'.repeat(32) : OWNER, direction: feedOnly ? 'outbound' : 'inbound', eventsReceive: feedOnly, token: 'fixture', shared: true, visibility: 'network', ssh: 'demo@example.invalid', localPort: ownerPort, remotePort: 42002 });
-  st = nodes.setPeerAccessPreset(st, 'owner', 'admin'); nodes.atomicWriteStore(nodesPath, st);
+  let st = seedPeer ? nodes.addNode(nodes.loadStoreStrict(nodesPath), { name: 'owner', nodeId: routed ? 'c'.repeat(32) : OWNER, direction: feedOnly ? 'outbound' : 'inbound', eventsReceive: feedOnly, token: 'fixture', shared: true, visibility: 'network', ssh: 'demo@example.invalid', localPort: ownerPort, remotePort: 42002 }) : nodes.loadStoreStrict(nodesPath);
+  if (seedPeer) st = nodes.setPeerAccessPreset(st, 'owner', 'admin'); nodes.atomicWriteStore(nodesPath, st);
   if (routed) require('../lib/nodes/topology-cache.js').atomicWriteCache(path.join(configDir, 'topology-cache.json'), { schemaVersion: 1, nodes: [{ instanceId: OWNER, name: 'source', route: ['owner', 'source'], lastSeen: Date.now() }] });
   if (answered) store.commit(alias.id, 'Historical answer');
   if (queued) store.dismissImported({ ownerId: OWNER, ownerAskId: ID, ask: alias });
@@ -51,11 +51,13 @@ function connect(local, remote, name) {
   st = nodes.setPeerAccessPreset(st, name, 'admin'); nodes.atomicWriteStore(local.nodesPath, st);
 }
 test('a real fanout feed event reappears after durable dismissal of the same ask', async t => {
-  const owner = await boot(t), receiver = await boot(t); connect(owner, receiver, 'receiver'); connect(receiver, owner, 'source');
-  const actualFetch = globalThis.fetch;
-  t.mock.method(globalThis, 'fetch', async (url, options) => {
-    if (String(url).includes(`${receiver.port}/`) && options?.method === 'POST') await new Promise(resolve => setTimeout(resolve, 75));
-    return actualFetch(url, options);
+  const owner = await boot(t, { seedPeer: false }), receiver = await boot(t, { seedPeer: false }); connect(owner, receiver, 'receiver'); connect(receiver, owner, 'source');
+  const listeners = receiver.server.listeners('request');
+  let delayedRequests = 0;
+  receiver.server.removeAllListeners('request');
+  receiver.server.on('request', async (req, res) => {
+    if (req.method === 'POST' && req.url.includes('/asks')) { delayedRequests++; await new Promise(resolve => setTimeout(resolve, 75)); }
+    for (const listener of listeners) listener.call(receiver.server, req, res);
   });
   const response = await fetch(`http://127.0.0.1:${owner.port}/api/asks`, { method: 'POST', headers: { authorization: `Bearer ${owner.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ question: 'Canonical timestamp?', session: tmuxSessionForCell('reviewer'), target: receiver.id }) });
   const created = await response.json(); assert.equal(response.status, 201);
@@ -65,7 +67,8 @@ test('a real fanout feed event reappears after durable dismissal of the same ask
   const historyPath = path.join(owner.configDir, 'event-feed-history.json');
   let envelope;
   for (let i = 0; i < 30; i++) { if (fs.existsSync(historyPath)) envelope = JSON.parse(fs.readFileSync(historyPath)).entries.map(e => e.envelope).find(e => e.frame.type === 'ask' && e.frame.askId === source.id); if (envelope) break; await new Promise(r => setTimeout(r, 10)); }
-  assert.ok(envelope); assert.ok(envelope.frame.ts > source.ts, 'fanout actually delays event emission');
+  assert.ok(envelope); assert.ok(delayedRequests > 0, 'real receiver delayed the fanout HTTP request');
+  assert.ok(envelope.frame.ts > source.ts, 'fanout actually delays event emission');
   assert.equal(envelope.frame.askTs, source.ts, 'producer preserves the original generation');
   console.log('OBSERVED_REAL_TIMESTAMP', JSON.stringify({ ownerTs: source.ts, aliasTs: alias.ownerAskTs, feedTs: envelope.frame.ts }));
   const { createEventFeedClient } = require('../lib/notify/event-feed-client.js'); const frames = [];
@@ -125,13 +128,13 @@ test('live and legacy feed cards never use event time as owner generation', t =>
   }
 });
 test('feed-only original generation drains against the real owner without mismatch', async t => {
-  const owner = await boot(t);
+  const owner = await boot(t, { seedPeer: false });
   const response = await fetch(`http://127.0.0.1:${owner.port}/api/asks`, { method: 'POST', headers: { authorization: `Bearer ${owner.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ question: 'Feed card', session: tmuxSessionForCell('reviewer') }) });
   const created = await response.json(); assert.equal(response.status, 201);
   const source = createAsksStore({ dir: owner.configDir }).get(created.id);
   let envelope;
   for (let i = 0; i < 30; i++) { const p = path.join(owner.configDir, 'event-feed-history.json'); if (fs.existsSync(p)) envelope = JSON.parse(fs.readFileSync(p)).entries.map(e => e.envelope).find(e => e.frame.askId === source.id); if (envelope) break; await new Promise(r => setTimeout(r, 10)); }
-  const clientNode = await boot(t); connect(clientNode, owner, 'source'); connect(owner, clientNode, 'client');
+  const clientNode = await boot(t, { seedPeer: false }); connect(clientNode, owner, 'source'); connect(owner, clientNode, 'client');
   const frames = []; const client = require('../lib/notify/event-feed-client.js').createEventFeedClient({ eventsHub: { broadcast: f => frames.push(f) }, loadStore: () => ({ nodes: [] }) }); t.after(() => client.stop());
   client.reemit(envelope); const store = createAsksStore({ dir: path.join(clientNode.configDir, 'feed-only') });
   store.dismissImported({ ownerId: owner.id, ownerAskId: source.id, ask: frames[0].ask });
@@ -191,11 +194,11 @@ test('conflicting alias and feed content at one timestamp refuses an ambiguous g
 });
 
 for (const outcome of ['dismissed', 'answered']) for (const pathKind of ['fanout', 'reconciliation']) test(`${pathKind} ${outcome} emits canonical imported closure and preserves an owner collision`, async t => {
-  const owner = await boot(t);
+  const owner = await boot(t, { seedPeer: false });
   const response = await fetch(`http://127.0.0.1:${owner.port}/api/asks`, { method: 'POST', headers: { authorization: `Bearer ${owner.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ question: 'Close this alias', session: tmuxSessionForCell('reviewer') }) });
   const source = await response.json(); assert.equal(response.status, 201);
   const other = 'd'.repeat(32);
-  const receiver = await boot(t, { additionalImports: [owner.id, other].map(ownerId => ({ ownerId, ownerAskId: source.id, originNode: ownerId, question: ownerId === other ? 'Other owner' : 'Close this alias', session: tmuxSessionForCell('reviewer') })) });
+  const receiver = await boot(t, { seedPeer: false, additionalImports: [owner.id, other].map(ownerId => ({ ownerId, ownerAskId: source.id, originNode: ownerId, question: ownerId === other ? 'Other owner' : 'Close this alias', session: tmuxSessionForCell('reviewer') })) });
   connect(receiver, owner, 'source'); connect(owner, receiver, 'receiver');
   if (pathKind === 'reconciliation') nodes.atomicWriteStore(owner.nodesPath, nodes.setPeerAccessGrants(nodes.loadStoreStrict(owner.nodesPath), 'receiver', { ...require('../lib/nodes/access-presets.js').grantsOf(nodes.loadStoreStrict(owner.nodesPath).nodes.find(n => n.name === 'receiver')).grants, askReplyAccess: false, liveHostAccess: false }));
   if (pathKind === 'reconciliation') nodes.atomicWriteStore(owner.nodesPath, nodes.updateNode(nodes.loadStoreStrict(owner.nodesPath), 'receiver', { direction: 'inbound', transport: 'inbound' }));
