@@ -19,9 +19,12 @@ export function noticeKeyOf(ownerId, eventId) {
 // e' del renderer React). Non-ammissibile -> null.
 export function toRemoteNotice(envelope, ownerId) {
   if (!envelope || typeof envelope !== 'object') return null;
-  if (envelope.type !== 'notify' || !envelope.eventId) return null;
-  const title = typeof envelope.title === 'string' ? envelope.title : '';
-  const body = typeof envelope.body === 'string' ? envelope.body : '';
+  const frame = envelope.frame && typeof envelope.frame === 'object' ? envelope.frame : envelope;
+  if (frame.type !== 'notify' || !envelope.eventId) return null;
+  // ASK alerts belong to the answerable card, never to the generic history.
+  if (typeof frame.askId === 'string' && frame.askId) return null;
+  const title = typeof frame.title === 'string' ? frame.title : '';
+  const body = typeof frame.body === 'string' ? frame.body : '';
   if (!title && !body) return null;
   return {
     key: noticeKeyOf(ownerId, envelope.eventId),
@@ -29,7 +32,7 @@ export function toRemoteNotice(envelope, ownerId) {
     eventId: String(envelope.eventId),
     title,
     body,
-    urgency: envelope.urgency === 'high' ? 'high' : 'normal',
+    urgency: frame.urgency === 'high' ? 'high' : 'normal',
     ts: normalizeTs(envelope.ts),
   };
 }
