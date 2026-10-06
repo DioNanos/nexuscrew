@@ -49,3 +49,12 @@ it('a real live owner ASK survives reconnect until a new owner snapshot excludes
   expect(screen.queryByText(ask.question)).toBeNull();
  } finally {p.client.stop();}
 });
+it('a healthy cached owner read retains a fan-out ASK until a new snapshot excludes it',async()=>{
+ const p=createProbe();expect((await p.client.ownerSnapshotAsks(owner)).status).toBe('ok');
+ await mount();p.client.rememberLiveAsk(owner,ask);await emit({type:'ask',ask});await openPanel();
+ m.getFeedState.mockResolvedValue(p.client.state());await act(async()=>m.open());
+ expect(screen.queryByText(ask.question)).not.toBeNull();
+ expect((await p.client.ownerSnapshotAsks(owner)).status).toBe('ok');
+ m.getFeedState.mockResolvedValue(p.client.state());await act(async()=>m.open());
+ expect(screen.queryByText(ask.question)).toBeNull();
+});

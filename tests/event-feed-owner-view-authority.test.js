@@ -107,3 +107,14 @@ test('an owner snapshot deadline revokes cached authority while its acquisition 
   assert.equal(p.client.state().views[0].lastError,'snapshot-timeout');
  } finally {clearTimeout(keepAlive);release();await new Promise(resolve=>setImmediate(resolve));}
 });
+test('a fan-out received during a pending owner read supersedes it without fabricating a cursor', async () => {
+ const p=createProbe();assert.equal((await p.client.ownerSnapshotAsks(ownerId)).status,'ok');
+ let release,started;const waiting=new Promise(resolve=>{started=resolve;});const before=p.snapshot();
+ p.setResponse(()=>{started();return new Promise(resolve=>{release=()=>resolve({ok:true,headers:{get:()=> 'application/json'},text:async()=>JSON.stringify(before)});});});
+ const pending=p.client.ownerSnapshotAsks(ownerId);await waiting;
+ p.client.rememberLiveAsk(ownerId,{...ask,id:'local-alias',ownerAskId:ask.id,imported:true});
+ assert.equal(p.client.state().views[0].cursor,'1:0');
+ release();const result=await pending;
+ assert.notEqual(result.status,'ok');assert.equal(p.client.state().views[0].asks.length,1);
+ assert.equal(p.client.state().views[0].asks[0].id,ask.id);
+});
