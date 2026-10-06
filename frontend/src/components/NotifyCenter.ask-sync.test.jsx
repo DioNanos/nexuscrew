@@ -65,3 +65,18 @@ it('an owner resync signal refreshes the panel while its SSE stays connected', a
  m.getFeedState.mockResolvedValueOnce({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:[ask]}]});await mount();await openPanel();
  m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:1',asks:[]}]});await emit({type:'feed-state-changed',ownerId:owner});await waitFor(()=>expect(screen.queryByText(ask.question)).toBeNull());
 });
+it('an old token read cannot overwrite the next token view', async () => {
+ const pending=deferred();m.getAsks.mockReturnValueOnce(pending.promise);
+ const view=render(<NotifyCenter token="old"/>);await waitFor(()=>expect(m.frame).toBeTypeOf('function'));
+ m.getAsks.mockResolvedValue({asks:[{id:'new-local',ts:200,question:'Current token',session:'reviewer'}]});view.rerender(<NotifyCenter token="new"/>);await openPanel();
+ await act(async()=>pending.resolve({asks:[{id:'old-local',ts:100,question:'Old token',session:'reviewer'}]}));expect(screen.queryByText('Old token')).toBeNull();expect(screen.getByText('Current token')).toBeTruthy();
+});
+it('a late close cannot erase a newer generation that arrives again after a confirmed close',async()=>{
+ await mount();await emit({type:'ask',ask});await openPanel();await emit({type:'ask-answered',id:ask.id,ownerId:owner,ownerAskTs:100});
+ await emit({type:'ask',ask:{...ask,ownerAskTs:200,question:'Reopened generation'}});expect(screen.getByText('Reopened generation')).toBeTruthy();
+ await emit({type:'ask-answered',id:ask.id,ownerId:owner,ownerAskTs:100});expect(screen.getByText('Reopened generation')).toBeTruthy();
+});
+it('an owner snapshot at the ASK cap is a floor and cannot remove a known absent card',async()=>{
+ await mount();await emit({type:'ask',ask});await openPanel();
+ const floor=Array.from({length:100},(_,i)=>({...ask,id:'id-'+i,question:'Floor '+i}));m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:floor}]});await act(async()=>m.open());expect(screen.getByText(ask.question)).toBeTruthy();
+});

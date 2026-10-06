@@ -171,3 +171,16 @@ test('real push provider failure stays visible in ASK receipts and does not undo
   assert.equal(receipt.alert.pushAttempted, true); assert.equal(attempted.length, 2);
   assert.equal(attempted[1].askId, ask.id); assert.equal(attempted[1].ownerAskTs, ask.ts);
 });
+
+test('an authoritative empty feed snapshot reaches the connected browser through the real server resync wiring', async t => {
+  const origin=await boot(t,{eventFeedClientPollMs:50}), remote=await boot(t,{eventFeedClientPollMs:50});
+  pair(origin,remote,'remote','user');pair(remote,origin,'origin');
+  nodes.atomicWriteStore(origin.nodesPath,nodes.updateNode(nodes.loadStoreStrict(origin.nodesPath),'remote',{direction:'inbound',transport:'inbound',eventsReceive:false}));
+  nodes.atomicWriteStore(remote.nodesPath,nodes.updateNode(nodes.loadStoreStrict(remote.nodesPath),'origin',{eventsReceive:false}));
+  const frames=await sse(t,remote);
+  nodes.atomicWriteStore(remote.nodesPath,nodes.updateNode(nodes.loadStoreStrict(remote.nodesPath),'origin',{eventsReceive:true}));
+  await until(()=>frames.some(f=>f.type==='feed-state-changed'&&f.ownerId===origin.id),'the applied empty owner snapshot must signal the connected browser');
+  const state=await fetch(`http://127.0.0.1:${remote.port}/api/feed-state`,{headers:headers(remote.token)}).then(r=>r.json());
+  const view=state.views.find(v=>v.ownerId===origin.id);assert.ok(view);assert.equal(view.stale,false);assert.deepEqual(view.asks,[]);
+  assert.equal(frames.filter(f=>f.type==='notify').length,0,'resync is a state refresh, not a new alert');
+});
