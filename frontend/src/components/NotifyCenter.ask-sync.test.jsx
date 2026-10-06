@@ -96,3 +96,10 @@ it('an unknown-generation closure keeps identical historical content hidden but 
  m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:3',asks:[{...historic,ownerAskTs:200,question:'Different canonical content'}]}]});
  await emit({type:'feed-state-changed',ownerId:owner});await waitFor(()=>expect(screen.queryByText('Different canonical content')).not.toBeNull());
 });
+
+it('a stale dismissed frame cannot install a generic tombstone for a newer current generation',async()=>{
+ const current={...ask,ownerAskTs:200,question:'Current after stale dismiss'};await mount();await emit({type:'ask',ask:current});await openPanel();
+ await emit({type:'ask-dismissed',id:ask.id,ownerId:owner,ownerAskTs:100});
+ m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:3',asks:[current]}]});
+ await emit({type:'feed-state-changed',ownerId:owner});expect(screen.queryByText(current.question)).not.toBeNull();
+});
