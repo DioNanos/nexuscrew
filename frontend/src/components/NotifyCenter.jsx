@@ -278,6 +278,16 @@ export default function NotifyCenter({ token }) {
   const [replyCapabilities, setReplyCapabilities] = useState({});
   const capabilityRequests = useRef(new Map());
   const capabilityGeneration = useRef(0);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const closedAsks = useRef(new Map());
+  const alertAdmissions = useRef(new Map());
+  const filterClosed = list => (list || []).filter(a => {
+    const closed = closedAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId));
+    if (!closed) return true;
+    if (Date.now() - closed.at > DISMISSED_TTL_MS) { closedAsks.current.delete(askKeyOf(a.id, a.ownerId, a.ownerAskId)); return true; }
+    const ts = generationTsOf(a);
+    return Number.isSafeInteger(ts) && ts > 0 && Number.isSafeInteger(closed.ts) && closed.ts > 0 && ts !== closed.ts;
+  });
   const asksRef = useRef(asks);
   asksRef.current = asks;
   const refreshCapabilities = useCallback((force = false) => {
@@ -338,6 +348,17 @@ export default function NotifyCenter({ token }) {
   }, []);
 
   const pushToast = useCallback((frame) => {
+    if (frame.askId && frame.ownerId) {
+      const generation = Number.isSafeInteger(frame.ownerAskTs) && frame.ownerAskTs > 0 ? frame.ownerAskTs : frame.ownerAskFingerprint;
+      if (generation) {
+        const identity = JSON.stringify([frame.ownerId, frame.ownerAskId || frame.askId, generation]);
+        const now = Date.now();
+        for (const [k, at] of alertAdmissions.current) if (now - at > 24 * 60 * 60 * 1000) alertAdmissions.current.delete(k);
+        if (alertAdmissions.current.has(identity)) return;
+        alertAdmissions.current.set(identity, now);
+        if (alertAdmissions.current.size > 4096) alertAdmissions.current.delete(alertAdmissions.current.keys().next().value);
+      }
+    }
     const key = `t${seq.current += 1}`;
     setToasts((cur) => [...cur.slice(-3), { ...frame, key }]); // max 4 a schermo
     setTimeout(() => dropToast(key), frame.urgency === 'high' ? TOAST_HIGH_MS : TOAST_MS);
@@ -386,6 +407,9 @@ export default function NotifyCenter({ token }) {
   const removeAsk = (id, ownerId, ownerAskId, out) => {
     const key = askKeyOf(id, ownerId, ownerAskId);
     if (out?.scope === 'local' && ['pending', 'blocked'].includes(out.ownerSync)) setDismissalNotice(out.ownerSync);
+    const current = asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
+    closedAsks.current.set(key, { at: Date.now(), ts: current ? generationTsOf(current) : out?.ownerAskTs });
+    if (closedAsks.current.size > 4096) closedAsks.current.delete(closedAsks.current.keys().next().value);
     setAsks((cur) => cur.filter((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId) !== key));
   };
 
@@ -393,25 +417,21 @@ export default function NotifyCenter({ token }) {
   // usabile anche senza il canale (gli ask ricompaiono al prossimo mount).
   useEffect(() => {
     if (!token) return undefined;
-    let cancelled = false;
-    // Lo snapshot locale NON sostituisce tutto lo stato: compatta con le ask
-    // importate gia' presenti (l'ordine delle due risposte non e' garantito).
-    getAsks(token).then((j) => { if (!cancelled) setAsks((cur) => applyLocalSnapshot(cur, j.asks)); }).catch(() => {});
     const close = connectEvents(token, (frame) => {
+      if (frame.type === 'feed-state-changed') { setRefreshVersion(v => v + 1); return; }
       if (frame.type === 'notify' && frame.ownerId && frame.eventId) {
         // Importato live: entra nella lista consultabile (dedup con l'arretrato
         // per (ownerId,eventId)); nessun toast/speaker aggiuntivo per la card.
         const card = toRemoteNotice(frame, frame.ownerId);
-        if (!card) return;
-        setRemoteNotices((cur) => boundedByTs(mergeRemoteNotices(cur, [card], null)));
+        if (card) setRemoteNotices((cur) => boundedByTs(mergeRemoteNotices(cur, [card], null)));
       }
       if (frame.type === 'notify') pushToast(frame);
       else if (frame.type === 'ask' && frame.ask && frame.ask.id) {
         // Two owners can legitimately use the same ask id: identity is the pair.
-        setAsks((cur) => mergeAsks(cur, [frame.ask]));
+        setAsks((cur) => mergeAsks(cur, filterClosed([frame.ask])));
       } else if (frame.type === 'ask-answered' && frame.id) {
         const identity = closureIdentity(frame);
-        if (identity) removeAsk(identity.id, identity.ownerId, identity.ownerAskId);
+        if (identity) removeAsk(identity.id, identity.ownerId, identity.ownerAskId, frame);
       } else if (frame.type === 'ask-dismissed' && (frame.id || frame.ownerAskId)) {
         const identity = closureIdentity(frame);
         if (!identity) return;
@@ -420,9 +440,15 @@ export default function NotifyCenter({ token }) {
         noteAskDismissed(key, frame.scope === 'local' ? localAsk || { ...frame.askGeneration, ownerAskTs: frame.ownerAskTs } : null);
         removeAsk(identity.id, identity.ownerId, identity.ownerAskId, frame);
       }
-    }, () => refreshCapabilities(true));
-    return () => { cancelled = true; close(); };
+    }, () => { refreshCapabilities(true); setRefreshVersion(v => v + 1); });
+    return () => { close(); };
   }, [token, pushToast, refreshCapabilities]);
+
+  useEffect(() => {
+    let alive = true;
+    if (token) getAsks(token).then(j => { if (alive) setAsks(cur => applyLocalSnapshot(cur, filterClosed(j.asks))); }).catch(() => {});
+    return () => { alive = false; };
+  }, [token, refreshVersion]);
 
   // Riconciliazione dopo refresh: gli esiti incerti noti al relay locale
   // ricostruiscono lo stato «verifica» delle card importate, senza reinvii.
@@ -472,7 +498,8 @@ export default function NotifyCenter({ token }) {
         }
       }
       setViewHealth(health);
-      if (imported.length) setAsks((cur) => mergeAsks(cur, imported));
+      const authoritative = new Set(((j && j.views) || []).filter(v => v.stale === false && Number.isSafeInteger(v.viewEpoch) && typeof v.cursor === 'string' && !v.lastError && !v.error && v.resyncRequired !== true && Array.isArray(v.asks) && v.asks.length < 100).map(v => v.ownerId));
+      setAsks(cur => mergeAsks(cur.filter(a => !authoritative.has(a.ownerId)), filterClosed(imported)));
       // Rebuild dall'arretrato: le card di una view revocata cadono qui; le
       // card arrivate via SSE di un owner ancora attivo restano (dedup per key).
       setRemoteNotices((cur) => {
@@ -483,7 +510,7 @@ export default function NotifyCenter({ token }) {
       });
     }).catch(() => {});
     return () => { alive = false; };
-  }, [token]);
+  }, [token, refreshVersion]);
 
   return (
     <>
