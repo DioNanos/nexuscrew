@@ -21,10 +21,11 @@ import { leggiFilesTasto, scriviFilesTasto, leggiTastieraTasto, leggiPannelloTas
 import { readFontSize, writeFontSize } from './lib/terminal-fontsize.js';
 import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import { createPollGuard } from './lib/poll-guard.js';
+import { subscribeFleetRoute, readFleetRoute } from './lib/fleet-poll.js';
 import VlSessionView from './components/VlSessionView.jsx';
 import CellPanel from './components/CellPanel.jsx';
 import {
-  apiFetch, fleetStatus, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
+  apiFetch, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
   getLiveHost, designateHostCell, clearHostCell,
 } from './lib/api.js';
 import { isValidLabel } from './lib/settings-model.js';
@@ -380,48 +381,54 @@ export function SingleView({
   // del nodo che possiede la sessione (Locale o route remota via proxy). La Fleet
   // non e' piu' un concetto solo-locale: una sessione remota su un nodo che ha
   // capability fleet mostra comunque engine/model (parita' mobile/desktop).
+  // Le letture arrivano dal treno condiviso di lib/fleet-poll.js —
+  // un solo giro per route per finestra, non uno per pannello. La policy
+  // qui e' quella di sempre (best-effort, titolo dal campo Fleet o dal nome
+  // sessione, mai fetch aggiuntive). La sottoscrizione dipende solo da
+  // route e token: cambiare cella sulla stessa route NON rilancia letture,
+  // riapplica la policy sullo snapshot corrente del treno (coalescing).
+  const applyMainSnapshot = (snap) => {
+    const j = !snap || snap.sessionsError ? null : snap.sessionsJson;
+    let sess = null;
+    if (j && Array.isArray(j.sessions)) sess = j.sessions.find((s) => s.name === session);
+    const fs = !snap || snap.fleetError ? null : snap.fs;
+    let cell = null;
+    if (fs && fs.available && Array.isArray(fs.cells)) cell = fs.cells.find((c) => c.tmuxSession === session);
+    // Titolo visibile dal campo Fleet `cell` (gestita) o dal nome sessione
+    // (unmanaged). Riusa la lookup fleetStatus gia' fatta per il sottotitolo:
+    // nessuna fetch aggiuntiva (Tranche D).
+    setTitle(cellDisplayName({
+      session,
+      cell: cell || (cellName ? { cell: cellName } : null),
+    }));
+    // D8: campo opzionale; assente o vuoto (anche solo spazi) → nessun
+    // pannello. Non è una ri-validazione: è la resa dello stato "nessun
+    // pannello configurato". Serve anche l'ID della cella: è la chiave con
+    // cui si chiede il ticket di visione sul nodo che la possiede.
+    setPanelUrl(typeof cell?.panelUrl === 'string' ? cell.panelUrl.trim() : '');
+    setPanelCellId(typeof cell?.cell === 'string' ? cell.cell : '');
+    // il centro porta motore E stato, come il design. La parola esce
+    // dal contratto `stato` della cella; senza canale resta il solo motore.
+    let txt = '';
+    if (cell) txt = [`${cell.engine}${cell.key ? `·${cell.key}` : ''}`, parolaStatoCella(cell, sess)].filter(Boolean).join(' · ');
+    else if (sess) txt = sess.attached ? `attached · ${rel(sess.activity)}` : (sess.activity ? rel(sess.activity) : '');
+    setSub(txt);
+    // pallino di presenza nella striscia del pannello principale (doppia vista)
+    setMainPresent(!!(sess || cell));
+  };
+  const applyMainRef = useRef(applyMainSnapshot);
+  applyMainRef.current = applyMainSnapshot;
   useEffect(() => {
-    let alive = true;
     const route = node ? node.split('/') : [];
-    const base = node ? `/api/route/${node.split('/').map(encodeURIComponent).join('/')}/_` : '/api';
-    async function load() {
-      let sess = null; let cell = null;
-      try {
-        const r = await apiFetch(`${base}/sessions`, token);
-        const j = await r.json();
-        if (Array.isArray(j.sessions)) sess = j.sessions.find((s) => s.name === session);
-      } catch (_) { /* best-effort */ }
-      try {
-        const fs = await fleetStatus(token, route);
-        if (fs.available && Array.isArray(fs.cells)) cell = fs.cells.find((c) => c.tmuxSession === session);
-      } catch (_) { /* best-effort: nodo senza capability fleet */ }
-      if (!alive) return;
-      // Titolo visibile dal campo Fleet `cell` (gestita) o dal nome sessione
-      // (unmanaged). Riusa la lookup fleetStatus gia' fatta per il sottotitolo:
-      // nessuna fetch aggiuntiva (Tranche D).
-      setTitle(cellDisplayName({
-        session,
-        cell: cell || (cellName ? { cell: cellName } : null),
-      }));
-      // D8: campo opzionale; assente o vuoto (anche solo spazi) → nessun
-      // pannello. Non è una ri-validazione: è la resa dello stato "nessun
-      // pannello configurato". Serve anche l'ID della cella: è la chiave con
-      // cui si chiede il ticket di visione sul nodo che la possiede.
-      setPanelUrl(typeof cell?.panelUrl === 'string' ? cell.panelUrl.trim() : '');
-      setPanelCellId(typeof cell?.cell === 'string' ? cell.cell : '');
-      // il centro porta motore E stato, come il design. La parola esce
-      // dal contratto `stato` della cella; senza canale resta il solo motore.
-      let txt = '';
-      if (cell) txt = [`${cell.engine}${cell.key ? `·${cell.key}` : ''}`, parolaStatoCella(cell, sess)].filter(Boolean).join(' · ');
-      else if (sess) txt = sess.attached ? `attached · ${rel(sess.activity)}` : (sess.activity ? rel(sess.activity) : '');
-      setSub(txt);
-      // pallino di presenza nella striscia del pannello principale (doppia vista)
-      setMainPresent(!!(sess || cell));
-    }
-    load();
-    const id = setInterval(load, 4000);
-    return () => { alive = false; clearInterval(id); };
-  }, [session, node, token]);
+    const onSnapshot = (snap) => applyMainRef.current(snap);
+    onSnapshot(readFleetRoute(route));
+    return subscribeFleetRoute(token, route, onSnapshot);
+  }, [node, token]);
+  // Cambio cella (o nome logico) sulla stessa route: nessuna lettura nuova,
+  // la policy si riapplica subito sull'ultimo snapshot del treno.
+  useEffect(() => {
+    applyMainRef.current(readFleetRoute(node ? node.split('/') : []));
+  }, [session, cellName]);
 
   // La cella affiancata: titolo e presenza dal SUO nodo, stessa forma della
   // lettura principale (sessioni + fleetStatus, best-effort). Se almeno una
@@ -429,33 +436,43 @@ export function SingleView({
   // sparita: la vista torna singola e l'ospite dimentica la coppia.
   const onSideGoneRef = useRef(onSideGone);
   onSideGoneRef.current = onSideGone;
+  // Stessa lettura condivisa della striscia principale — la cella
+  // affiancata consuma il treno della PROPRIA route (spesso la stessa della
+  // principale) invece di aggiungere un poll parallelo. Anche qui la
+  // sottoscrizione dipende solo da route e token: cambiare la cella
+  // affiancata sulla stessa route riapplica la policy sullo snapshot.
+  const applySideSnapshot = (snap) => {
+    // La consegna del treno puo' arrivare quando side e' gia' null (ref
+    // aggiornato dal render, subscription in chiusura): la policy non legge
+    // nulla di una cella che non c'e' piu'.
+    if (!side) return;
+    const j = !snap || snap.sessionsError ? null : snap.sessionsJson;
+    let sess = null; let sessLetta = false;
+    if (j && Array.isArray(j.sessions)) { sessLetta = true; sess = j.sessions.find((s) => s.name === side.session); }
+    const fs = !snap || snap.fleetError ? null : snap.fs;
+    let cell = null; let cellLetta = false;
+    if (fs && fs.available && Array.isArray(fs.cells)) { cellLetta = true; cell = fs.cells.find((c) => c.tmuxSession === side.session); }
+    setSideInfo({
+      title: cellDisplayName({ session: side.session, cell }),
+      present: !!(sess || cell),
+    });
+    if ((sessLetta || cellLetta) && !sess && !cell) onSideGoneRef.current?.();
+  };
+  const applySideRef = useRef(applySideSnapshot);
+  applySideRef.current = applySideSnapshot;
   useEffect(() => {
     if (!side) { setSideInfo(null); return undefined; }
-    let alive = true;
     const route = side.node ? side.node.split('/') : [];
-    const base = side.node ? `/api/route/${side.node.split('/').map(encodeURIComponent).join('/')}/_` : '/api';
-    async function load() {
-      let sess = null; let cell = null; let sessLetta = false; let cellLetta = false;
-      try {
-        const r = await apiFetch(`${base}/sessions`, token);
-        const j = await r.json();
-        if (Array.isArray(j.sessions)) { sessLetta = true; sess = j.sessions.find((s) => s.name === side.session); }
-      } catch (_) { /* best-effort */ }
-      try {
-        const fs = await fleetStatus(token, route);
-        if (fs.available && Array.isArray(fs.cells)) { cellLetta = true; cell = fs.cells.find((c) => c.tmuxSession === side.session); }
-      } catch (_) { /* best-effort: nodo senza capability fleet */ }
-      if (!alive) return;
-      setSideInfo({
-        title: cellDisplayName({ session: side.session, cell }),
-        present: !!(sess || cell),
-      });
-      if ((sessLetta || cellLetta) && !sess && !cell) onSideGoneRef.current?.();
-    }
-    load();
-    const id = setInterval(load, 4000);
-    return () => { alive = false; clearInterval(id); };
-  }, [side?.session, side?.node, token]);
+    const onSnapshot = (snap) => applySideRef.current(snap);
+    onSnapshot(readFleetRoute(route));
+    return subscribeFleetRoute(token, route, onSnapshot);
+    // `side` in dipendenza (non solo la sua route): a side null la callback
+    // LASCIA il treno anche quando la route non e' cambiata.
+  }, [side, side?.node, token]);
+  useEffect(() => {
+    if (!side) return;
+    applySideRef.current(readFleetRoute(side.node ? side.node.split('/') : []));
+  }, [side?.session]);
 
   // le quattro azioni della barra, nello stesso contratto delle azioni
   // cella. Gli handler sono gli stessi setter di prima: cambia solo dove stanno.
@@ -1026,16 +1043,15 @@ export default function App() {
   // che useNodes produce un nuovo array (~4s, anche a dati invariati).
   const nodeGroupsRef = useRef(nodeGroups);
   useEffect(() => { nodeGroupsRef.current = nodeGroups; }, [nodeGroups]);
-  // Guardia di non-sovrapposizione sui due poll del desktop. Il periodo e' 4 s
+  // Guardia di non-sovrapposizione sul poll host del desktop. Il periodo e' 4 s
   // e da qui in poi ogni giro ha un tetto di POLL_TIMEOUT_MS: il tetto limita
   // quanto DURA un giro, non impedisce che due coesistano — un tick parte
   // comunque ogni 4 s, e senza guardia la risposta piu' VECCHIA puo' atterrare
   // dopo la piu' nuova, riportando la lista a un esito superato. Stesso rimedio
-  // di useNodes.js.
+  // di useNodes.js. (Il poll sessions+flotta e' passato al treno condiviso di
+  // lib/fleet-poll.js, che porta la stessa guardia dentro il proprio ciclo.)
   const loadGuardRef = useRef(null);
   if (!loadGuardRef.current) loadGuardRef.current = createPollGuard();
-  const pollGuardRef = useRef(null);
-  if (!pollGuardRef.current) pollGuardRef.current = createPollGuard();
   // Tetto di tempo per RICHIESTA, non per giro: e' il massimo che una singola
   // lettura del poll puo' restare appesa. Un giro ne fa DUE in sequenza
   // (sessioni, poi flotta), quindi puo' durare fino a circa il doppio di
@@ -1044,66 +1060,9 @@ export default function App() {
   // perche' una connessione aperta che non risponde non produce mai un
   // errore: senza tetto il `finally` che libera la guardia non scatterebbe e
   // il poll resterebbe fermo fino al limite del browser (~300 s), senza che
-  // nessun tick possa recuperare.
+  // nessun tick possa recuperare. Il treno condiviso usa lo stesso tetto
+  // (FLEET_POLL_TIMEOUT_MS).
   const POLL_TIMEOUT_MS = 3500;
-  const poll = useCallback(async () => {
-    const guard = pollGuardRef.current;
-    const turno = guard.begin();
-    // Un giro e' gia' in volo: il tick si SALTA, non si accoda.
-    if (turno === null) return;
-    try {
-      try {
-        const r = await apiFetch('/api/sessions', token, { timeoutMs: POLL_TIMEOUT_MS });
-        const j = await r.json();
-        // La lettura LOCALE e' autorevole solo quando ha risposto davvero: un
-        // errore non svuota la lista (l'ultima nota resta) e non la promuove
-        // nemmeno a prova di assenza — la marca non verificata, come i peer.
-        // La guardia si controlla PRIMA di ogni scrittura: un esito di un giro
-        // superato (cleanup dell'effetto, cambio token) non aggiorna niente,
-        // nemmeno lo stato delle sessioni — che e' la prima cosa che si scrive.
-        if (!guard.isCurrent(turno)) return;
-        if (!j.error) {
-          setDSessions(j.sessions || []);
-          setLocalVerified(true);
-          setLocalSessionsAt(Date.now());
-        } else {
-          setLocalVerified(false);
-        }
-      } catch (_) { if (guard.isCurrent(turno)) setLocalVerified(false); }
-      // R27: stessa policy pura della home mobile (lib/fleet-read-policy.js) —
-      // un fallimento di lettura NON svuota la lista: non e' «zero celle»,
-      // resta l'ultima nota con l'indicatore stale in sidebar.
-      let fs = null; let fleetError = null;
-      try { fs = await fleetStatus(token, undefined, { timeoutMs: POLL_TIMEOUT_MS }); } catch (e) { fleetError = e; }
-      // Seconda riga di difesa: se fra la partenza e qui la guardia e' stata
-      // superata, questo esito non e' piu' quello da applicare.
-      if (!guard.isCurrent(turno)) return;
-      const fleet = fleetReadOutcome({ fs, error: fleetError });
-      if (fleet.kind === 'data') {
-        saveLastRoster('local', fleet.cells);
-        setCells(fleet.cells);
-        setFleetCapabilities(fleet.capabilities);
-        setFleetStale(false);
-        setFleetOff(null);
-      } else if (fleet.kind === 'stale') {
-        // Cache in memoria vuota (PWA riaperta): riparte dall'ultimo roster buono salvato, marcato come non vivo.
-        setCells((current) => (current.length ? current : loadLastRoster('local')));
-        setFleetStale(true);
-        setFleetOff(null);
-      } else {
-        setCells([]);
-        saveLastRoster('local', []);
-        setFleetCapabilities([]);
-        setFleetStale(false);
-        setFleetOff(fleet.reason || '');
-      }
-    } finally {
-      // Sempre, anche sul percorso d'errore: senza questo il primo fallimento
-      // lascerebbe la guardia chiusa e il poll non ripartirebbe mai. Chiude
-      // solo se questo e' ancora il giro corrente (vedi poll-guard.js).
-      guard.end(turno);
-    }
-  }, [token]);
   // hostByRoute e' server-owned e vale per DESKTOP e MOBILE: polling separato dal
   // poll sessions/fleet (desktop-only), best-effort, nessun retry (inerzia). Una
   // route irraggiungibile o senza liveHostAccess non tocca le altre voci della
@@ -1164,17 +1123,53 @@ export default function App() {
   }, [token]);
 
   // Polling sessions + flotta (solo desktop: su mobile pensa SessionList).
+  // Le letture passano dal treno condiviso di lib/fleet-poll.js — un
+  // solo giro per route per finestra (striscia, cella affiancata e questo poll
+  // condividono il treno locale), con dentro la stessa guardia di prima (tick
+  // saltato se un giro e' in volo, esiti superati scartati) e lo stesso tetto
+  // per richiesta. La policy che applica gli esiti resta quella di sempre,
+  // parola per parola.
   useEffect(() => {
-    if (!isDesktop) return;
-    poll();
-    const id = setInterval(poll, 4000);
-    return () => {
-      clearInterval(id);
-      // Stessa ragione del poll host: senza invalidazione la risposta del giro
-      // vecchio resterebbe «corrente» e potrebbe scrivere cells/fleetStale.
-      pollGuardRef.current.reset();
+    if (!isDesktop) return undefined;
+    const apply = (snap) => {
+      if (!snap) return;
+      const j = snap.sessionsError ? null : snap.sessionsJson;
+      // La lettura LOCALE e' autorevole solo quando ha risposto davvero: un
+      // errore non svuota la lista (l'ultima nota resta) e non la promuove
+      // nemmeno a prova di assenza — la marca non verificata, come i peer.
+      if (j && !j.error) {
+        setDSessions(j.sessions || []);
+        setLocalVerified(true);
+        setLocalSessionsAt(snap.at);
+      } else {
+        setLocalVerified(false);
+      }
+      // R27: stessa policy pura della home mobile (lib/fleet-read-policy.js) —
+      // un fallimento di lettura NON svuota la lista: non e' «zero celle»,
+      // resta l'ultima nota con l'indicatore stale in sidebar.
+      const fleet = fleetReadOutcome({ fs: snap.fs, error: snap.fleetError });
+      if (fleet.kind === 'data') {
+        saveLastRoster('local', fleet.cells);
+        setCells(fleet.cells);
+        setFleetCapabilities(fleet.capabilities);
+        setFleetStale(false);
+        setFleetOff(null);
+      } else if (fleet.kind === 'stale') {
+        // Cache in memoria vuota (PWA riaperta): riparte dall'ultimo roster buono salvato, marcato come non vivo.
+        setCells((current) => (current.length ? current : loadLastRoster('local')));
+        setFleetStale(true);
+        setFleetOff(null);
+      } else {
+        setCells([]);
+        saveLastRoster('local', []);
+        setFleetCapabilities([]);
+        setFleetStale(false);
+        setFleetOff(fleet.reason || '');
+      }
     };
-  }, [isDesktop, poll]);
+    apply(readFleetRoute([]));
+    return subscribeFleetRoute(token, [], apply);
+  }, [isDesktop, token]);
   // Designazione cella ospite: API-first. designate imposta hostByRoute[route]
   // riflettendo la risposta del server (mai ottimismo pre-response); clear
   // ritorna un boolean cosi' la Sidebar rimuove il pin locale solo a riuscita
