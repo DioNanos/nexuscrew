@@ -30,8 +30,8 @@ it('an answered frame prevails over a local read already in flight',async()=>{
  await emit({type:'ask-answered',id:ask.id,ownerId:owner,ownerAskTs:100});await act(async()=>pending.resolve({asks:[ask]}));expect(screen.queryByText(ask.question)).toBeNull();
 });
 it('reconnect applies an authoritative empty owner snapshot without removing another owner',async()=>{
- m.getFeedState.mockResolvedValueOnce({views:[{ownerId:owner,stale:false,asks:[ask]},{ownerId:other,stale:false,asks:[{...ask,ownerId:other,question:'Other question'}]}]});
+ m.getFeedState.mockResolvedValueOnce({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:"1:0",asks:[ask]},{ownerId:other,stale:false,viewEpoch:1,cursor:"1:0",asks:[{...ask,ownerId:other,question:'Other question'}]}]});
  await mount();await openPanel();expect(screen.getByText(ask.question)).toBeTruthy();
- m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,asks:[]},{ownerId:other,stale:false,asks:[{...ask,ownerId:other,question:'Other question'}]}]});
+ m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:"1:0",asks:[]},{ownerId:other,stale:false,viewEpoch:1,cursor:"1:0",asks:[{...ask,ownerId:other,question:'Other question'}]}]});
  await act(async()=>m.open());await waitFor(()=>expect(screen.queryByText(ask.question)).toBeNull());expect(screen.getByText('Other question')).toBeTruthy();
 });
