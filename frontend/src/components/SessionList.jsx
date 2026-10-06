@@ -122,7 +122,7 @@ export default function SessionList({
     });
   }, [cells, nodeGroups]);
 
-  // D-428/A: le letture locali arrivano dal treno condiviso di
+  // Le letture locali arrivano dal treno condiviso di
   // lib/fleet-poll.js — un solo giro per finestra per sessions+flotta, la
   // stessa policy di sempre applicata qui sotto. refresh() resta come kick
   // manuale dopo le azioni (kill, power, technical): chiede un ciclo subito

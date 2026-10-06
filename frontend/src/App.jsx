@@ -381,7 +381,7 @@ export function SingleView({
   // del nodo che possiede la sessione (Locale o route remota via proxy). La Fleet
   // non e' piu' un concetto solo-locale: una sessione remota su un nodo che ha
   // capability fleet mostra comunque engine/model (parita' mobile/desktop).
-  // D-428: le letture arrivano dal treno condiviso di lib/fleet-poll.js —
+  // Le letture arrivano dal treno condiviso di lib/fleet-poll.js —
   // un solo giro per route per finestra, non uno per pannello. La policy
   // qui e' quella di sempre (best-effort, titolo dal campo Fleet o dal nome
   // sessione, mai fetch aggiuntive). La sottoscrizione dipende solo da
@@ -436,7 +436,7 @@ export function SingleView({
   // sparita: la vista torna singola e l'ospite dimentica la coppia.
   const onSideGoneRef = useRef(onSideGone);
   onSideGoneRef.current = onSideGone;
-  // D-428: stessa lettura condivisa della striscia principale — la cella
+  // Stessa lettura condivisa della striscia principale — la cella
   // affiancata consuma il treno della PROPRIA route (spesso la stessa della
   // principale) invece di aggiungere un poll parallelo. Anche qui la
   // sottoscrizione dipende solo da route e token: cambiare la cella
@@ -1117,7 +1117,7 @@ export default function App() {
   }, [token]);
 
   // Polling sessions + flotta (solo desktop: su mobile pensa SessionList).
-  // D-428/A: le letture passano dal treno condiviso di lib/fleet-poll.js — un
+  // Le letture passano dal treno condiviso di lib/fleet-poll.js — un
   // solo giro per route per finestra (striscia, cella affiancata e questo poll
   // condividono il treno locale), con dentro la stessa guardia di prima (tick
   // saltato se un giro e' in volo, esiti superati scartati) e lo stesso tetto
