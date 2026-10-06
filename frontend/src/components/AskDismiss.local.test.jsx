@@ -189,3 +189,15 @@ it('an early unknown-generation closure suppresses matching content and permits 
   fireEvent.click(await screen.findByTitle((_title, element) => element.className === 'nc-ask-badge'));
   expect(screen.getByText('A different new question')).toBeTruthy();
 });
+it('retains the content fingerprint of a closure received before its card', async () => {
+  const local = deferred(); mocks.getAsks.mockReturnValue(local.promise); mocks.getFeedState.mockResolvedValue({ views: [] });
+  render(<NotifyCenter token="fixture-token" />); await act(async () => {});
+  const historical = { ...alias, ownerAskTs: undefined };
+  await emit({ type: 'ask-dismissed', id: alias.id, ownerId: OWNER, ownerAskId: alias.ownerAskId, scope: 'local',
+    askGeneration: { question: alias.question, options: alias.options, session: alias.session } });
+  await act(async () => local.resolve({ asks: [historical] })); expect(document.querySelector('.nc-ask-badge')).toBeNull();
+  await emit({ type: 'ask', ask: { ...historical, question: 'A different new question' } });
+  expect(document.querySelector('.nc-ask-badge')).not.toBeNull();
+  fireEvent.click(document.querySelector('.nc-ask-badge'));
+  expect(screen.getByText('A different new question')).toBeTruthy();
+});
