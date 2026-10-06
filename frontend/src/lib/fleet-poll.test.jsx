@@ -123,4 +123,52 @@ describe('cadenza adattiva: la finestra in secondo piano non genera traffico', (
     off();
     setVis('visible');
   });
+
+  it('treno nato con il documento gia nascosto: lettura iniziale sola, nessun tick', async () => {
+    setVis('hidden');
+    const off = subscribeFleetRoute('t', [], () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    // La lettura iniziale una tantum resta: chi riapre la finestra trova
+    // comunque una fotografia, non una vista vuota.
+    expect(sessionsCalls()).toBe(1);
+    await vi.advanceTimersByTimeAsync(FLEET_POLL_MS * 3);
+    // Nato nascosto = niente interval armato: tre periodi, zero letture.
+    expect(sessionsCalls()).toBe(1);
+    // Coalescing alla nascita in stato nascosto: chi arriva in corsa riceve
+    // lo snapshot corrente senza letture nuove.
+    const visti = [];
+    const offB = subscribeFleetRoute('t', [], (s) => visti.push(s));
+    expect(visti).toHaveLength(1);
+    expect(sessionsCalls()).toBe(1);
+    // Alla riapparsa riparte come oggi: giro immediato piu cadenza.
+    setVis('visible');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sessionsCalls()).toBe(2);
+    await vi.advanceTimersByTimeAsync(FLEET_POLL_MS);
+    expect(sessionsCalls()).toBe(3);
+    // Cleanup: l'ultimo osservatore via elimina anche un treno nato nascosto.
+    off(); offB();
+    expect(readFleetRoute([], 't')).toBeNull();
+    setVis('visible');
+  });
+
+  it('nuova route mentre il documento resta nascosto: il treno nuovo non riparte da solo', async () => {
+    const offA = subscribeFleetRoute('t', [], () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    const prima = sessionsCalls();
+    setVis('hidden');
+    offA();
+    const offB = subscribeFleetRoute('t', ['hub'], () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    // Il treno sostitutivo nasce nascosto: solo la lettura iniziale.
+    expect(sessionsCalls()).toBe(prima + 1);
+    await vi.advanceTimersByTimeAsync(FLEET_POLL_MS * 3);
+    expect(sessionsCalls()).toBe(prima + 1);
+    // Riapparsa: il treno riprende come oggi, giro subito.
+    setVis('visible');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sessionsCalls()).toBe(prima + 2);
+    offB();
+    setVis('visible');
+  });
 });
