@@ -769,82 +769,82 @@ describe('CellSwitcher side key', () => {
 });
 
 describe('quick cell list follows the normal list ordering', () => {
-  const mgmId = 'a'.repeat(32);
-  const vpsId = 'b'.repeat(32);
+  const northId = 'a'.repeat(32);
+  const southId = 'b'.repeat(32);
   const keyOf = (route, tmux) => positionKey([route], tmux);
   const positionLabels = () => [...document.querySelectorAll('.nc-cell-switcher-position')].map((e) => e.textContent);
-  const groupRole = (text) => (text.includes('PIXEL9PRO') ? 'local' : text.includes('VPSCloud') ? 'vps' : 'mgm');
+  const groupRole = (text) => (text.includes('Node-Local') ? 'local' : text.includes('South') ? 'south' : 'north');
   const rowKeys = () => [...document.querySelectorAll('[data-roster-key]')].map((e) => e.dataset.rosterKey);
   const mgmFeed = [
-    { ...active('Dev', 'mgm-dev'), activity: 40 },
-    { ...active('DevWorker', 'mgm-devworker'), activity: 30 },
-    { ...active('DevWorkerA', 'mgm-devworkera'), activity: 20 },
-    { ...active('DevAuditor', 'mgm-devauditor'), activity: 10 },
+    { ...active('Cell-1', 'north-c1'), activity: 40 },
+    { ...active('Cell-2', 'north-c2'), activity: 30 },
+    { ...active('Cell-3', 'north-c3'), activity: 20 },
+    { ...active('Cell-4', 'north-c4'), activity: 10 },
   ];
   const vpsFeed = [
-    { ...active('Trading', 'vps-trading'), activity: 40 },
-    { ...active('Dev', 'vps-dev'), activity: 30 },
-    { ...active('Personal', 'vps-personal'), activity: 20 },
-    { ...active('Research', 'vps-research'), activity: 10 },
+    { ...active('Cell-A', 'south-c1'), activity: 40 },
+    { ...active('Cell-B', 'south-c2'), activity: 30 },
+    { ...active('Cell-C', 'south-c3'), activity: 20 },
+    { ...active('Cell-D', 'south-c4'), activity: 10 },
   ];
-  // Ordine di arrivo dal feed: MGM prima di VPSCloud, come nel Pixel.
-  const writePixelSnapshot = () => writeCellSwitcherSnapshot({
+  // Ordine di arrivo dal feed: il nodo hub prima del nodo edge.
+  const writeFixtureSnapshot = () => writeCellSwitcherSnapshot({
     sessions: [{ name: 'cloud-cell-One', activity: 10, working: true }],
     cells: [active('cell-One', 'cloud-cell-One')],
     localFresh: true,
     nodeGroups: [
-      { route: ['mgm'], label: 'MGM', instanceId: mgmId, sessions: [], cells: mgmFeed },
-      { route: ['vps'], label: 'VPSCloud', instanceId: vpsId, sessions: [], cells: vpsFeed },
+      { route: ['north'], label: 'North', instanceId: northId, sessions: [], cells: mgmFeed },
+      { route: ['south'], label: 'South', instanceId: southId, sessions: [], cells: vpsFeed },
     ],
   });
 
   it('node groups follow the user node order and pinned cells keep the manual order', async () => {
-    writePixelSnapshot();
-    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${vpsId}`, `id:${mgmId}`]));
-    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ vps: { filter: 'pinned' } }));
-    const vpsOrder = [keyOf('vps', 'vps-personal'), keyOf('vps', 'vps-research'), keyOf('vps', 'vps-trading'), keyOf('vps', 'vps-dev')];
-    localStorage.setItem('nc_pins', JSON.stringify(vpsOrder));
-    localStorage.setItem('nc_sidebar_order_v1', JSON.stringify({ vps: vpsOrder }));
+    writeFixtureSnapshot();
+    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${southId}`, `id:${northId}`]));
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ south: { filter: 'pinned' } }));
+    const southOrder = [keyOf('south', 'south-c3'), keyOf('south', 'south-c4'), keyOf('south', 'south-c1'), keyOf('south', 'south-c2')];
+    localStorage.setItem('nc_pins', JSON.stringify(southOrder));
+    localStorage.setItem('nc_sidebar_order_v1', JSON.stringify({ south: southOrder }));
     mocks.getRouteSessions.mockImplementation(async (_token, route) => {
-      if (route.join('/') === 'mgm') return { sessions: [
-        { name: 'mgm-dev', activity: 40 }, { name: 'mgm-devworker', activity: 30 },
-        { name: 'mgm-devworkera', activity: 20 }, { name: 'mgm-devauditor', activity: 10 },
+      if (route.join('/') === 'north') return { sessions: [
+        { name: 'north-c1', activity: 40 }, { name: 'north-c2', activity: 30 },
+        { name: 'north-c3', activity: 20 }, { name: 'north-c4', activity: 10 },
       ] };
-      if (route.join('/') === 'vps') return { sessions: [
-        { name: 'vps-trading', activity: 40 }, { name: 'vps-dev', activity: 30 },
-        { name: 'vps-personal', activity: 20 }, { name: 'vps-research', activity: 10 },
+      if (route.join('/') === 'south') return { sessions: [
+        { name: 'south-c1', activity: 40 }, { name: 'south-c2', activity: 30 },
+        { name: 'south-c3', activity: 20 }, { name: 'south-c4', activity: 10 },
       ] };
       return { sessions: [] };
     });
     mocks.fleetStatus.mockImplementation(async (_token, route = []) => {
-      if (route.join('/') === 'mgm') return { available: true, cells: mgmFeed };
-      if (route.join('/') === 'vps') return { available: true, cells: vpsFeed };
+      if (route.join('/') === 'north') return { available: true, cells: mgmFeed };
+      if (route.join('/') === 'south') return { available: true, cells: vpsFeed };
       if (!route.length) return { available: true, cells: [active('cell-One', 'cloud-cell-One')] };
       return { available: true, cells: [] };
     });
 
-    render(<Switcher token="token" current={{}} localNodeLabel="PIXEL9PRO" onPick={vi.fn()} onClose={vi.fn()} />);
+    render(<Switcher token="token" current={{}} localNodeLabel="Node-Local" onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-One / });
     // Le righe remote arrivano col primo ciclo di refresh verificato.
     await new Promise((r) => setTimeout(r, 300));
     await waitFor(() => expect(rowKeys().length).toBe(9), { timeout: 4000 });
     // Node groups: the locale first, then the user order from the normal list
-    // (VPSCloud before MGM), never the arrival order of the feed.
+    // (the edge node before the hub node), never the arrival order of the feed.
     expect(groupRole(positionLabels()[0])).toBe('local');
-    expect(positionLabels().map(groupRole)).toEqual(['local', 'vps', 'mgm']);
-    // VPSCloud is in "pinned" mode in the normal list: the manual pinned order
+    expect(positionLabels().map(groupRole)).toEqual(['local', 'south', 'north']);
+    // The edge node is in "pinned" mode in the normal list: the manual pinned order
     // (Personal, Research, Trading, Dev) governs the quick list too.
-    const vpsRows = rowKeys().filter((k) => k.startsWith('vps:'));
-    expect(vpsRows).toEqual(vpsOrder);
-    // MGM has no pins or manual order: the activity fallback keeps the rows
+    const southRows = rowKeys().filter((k) => k.startsWith('south:'));
+    expect(southRows).toEqual(southOrder);
+    // The other node has no pins or manual order: the activity fallback keeps the rows
     // in the received order, exactly like the live cells of the normal list.
-    expect(rowKeys().filter((k) => k.startsWith('mgm:'))).toEqual([
-      keyOf('mgm', 'mgm-dev'), keyOf('mgm', 'mgm-devworker'), keyOf('mgm', 'mgm-devworkera'), keyOf('mgm', 'mgm-devauditor'),
+    expect(rowKeys().filter((k) => k.startsWith('north:'))).toEqual([
+      keyOf('north', 'north-c1'), keyOf('north', 'north-c2'), keyOf('north', 'north-c3'), keyOf('north', 'north-c4'),
     ]);
 
     // The user reorders the nodes: the quick list follows immediately.
-    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${mgmId}`, `id:${vpsId}`]));
+    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${northId}`, `id:${southId}`]));
     window.dispatchEvent(new Event('nexuscrew-node-preferences'));
-    await waitFor(() => expect(positionLabels().map(groupRole)).toEqual(['local', 'mgm', 'vps']));
+    await waitFor(() => expect(positionLabels().map(groupRole)).toEqual(['local', 'north', 'south']));
   });
 });
