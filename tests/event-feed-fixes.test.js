@@ -566,3 +566,24 @@ test('a valid owner snapshot signals local view reconciliation, including an emp
   await client.ownerSnapshotAsks(ownerId);
   assert.equal(changes.length,1,'a rejected incomplete snapshot cannot claim authoritative refresh');
 });
+
+test('feed closure rejects a known older generation before store callback, view removal and browser emission', t => {
+  const ownerId = 'a'.repeat(32); const closed = [];
+  const { client, hub } = stubClient(t, [], { onAskClosed: (...args) => closed.push(args) });
+  const view = client.viewFor(ownerId); view.viewEpoch = 1; view.stale = false;
+  view.asks = [{ id: 'abcdef01', ownerAskTs: 200, ownerId }];
+  const send = (eventId, askTs) => client.reemit({ ownerId, eventId, hop: 1,
+    frame: { type: 'ask-closed', askId: 'abcdef01', outcome: 'answered', ...(askTs === undefined ? {} : { askTs }) } });
+  send('old', 100);
+  assert.equal(closed.length, 0, 'stale generation cannot reach imported store callback');
+  assert.equal(view.asks.length, 1, 'stale closure cannot erase current owner view');
+  assert.equal(hub.length, 0, 'stale closure cannot erase browser card');
+  send('current', 200);
+  assert.equal(closed.length, 1);
+  assert.equal(closed[0][3], 200, 'store callback carries creation generation');
+  assert.equal(view.asks.length, 0);
+  assert.equal(hub[0].ownerAskTs, 200, 'browser receives closure generation');
+  view.asks = [{ id: 'abcdef02', ownerId }];
+  client.reemit({ ownerId, eventId: 'legacy', hop: 1, frame: { type: 'ask-closed', askId: 'abcdef02', outcome: 'dismissed' } });
+  assert.equal(view.asks.length, 0, 'legacy unknown closure still removes its alias');
+});

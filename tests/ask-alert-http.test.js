@@ -210,3 +210,25 @@ for (const viaFeed of [false, true]) test(`real owner closure preserves creation
   const frame = frames.find(f => f.type === 'ask-dismissed' && f.ownerAskId === id);
   assert.equal(frame.ownerAskTs, ask.ts, 'closure carries ASK creation generation, never its emission time');
 });
+
+test('real direct stale generation closure cannot mutate a newer imported ASK or emit its removal', async t => {
+  const origin = await boot(t); const remote = await boot(t);
+  pair(origin, remote, 'remote'); pair(remote, origin, 'origin');
+  const frames = await sse(t, remote);
+  async function route(body) {
+    return fetch(`http://127.0.0.1:${origin.port}/api/route/remote/_/asks`, { method: 'POST', headers: headers(origin.token),
+      body: JSON.stringify({ target: remote.id, originNode: origin.id, originCell: tmuxSessionForCell('reviewer'), ownerNode: origin.id, askId: 'abcdef01', ...body }) });
+  }
+  const create = await route({ question: 'new generation?', session: tmuxSessionForCell('reviewer'), ownerAskTs: 200 });
+  assert.equal(create.status, 200);
+  await until(() => frames.some(f => f.type === 'ask'), 'new generation reaches browser');
+  const stale = await route({ closeOutcome: 'dismissed', ownerAskTs: 100 });
+  assert.equal(stale.status, 200); const receipt = await stale.json();
+  assert.equal(receipt.status, 'delivered', 'old peer receipt contract is retained');
+  assert.equal(receipt.closed, false, 'stale generation is an idempotent non-closure');
+  const list = await fetch(`http://127.0.0.1:${remote.port}/api/asks?open=1`, { headers: headers(remote.token) }).then(r => r.json());
+  assert.ok(list.asks.some(a => a.ownerAskId === 'abcdef01' && a.ownerAskTs === 200), 'new generation remains open durably');
+  assert.equal(frames.filter(f => f.type === 'ask-dismissed').length, 0, 'stale closure cannot remove browser card');
+  const legacy = await route({ closeOutcome: 'dismissed' });
+  assert.equal(legacy.status, 200); assert.equal((await legacy.json()).closed, true, 'legacy unknown closure remains accepted');
+});
