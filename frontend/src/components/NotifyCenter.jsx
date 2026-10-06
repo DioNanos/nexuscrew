@@ -280,6 +280,8 @@ export default function NotifyCenter({ token }) {
   const capabilityGeneration = useRef(0);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const closedAsks = useRef(new Map());
+  const liveRevision = useRef(0);
+  const liveAsks = useRef(new Map());
   const alertAdmissions = useRef(new Map());
   const filterClosed = list => (list || []).filter(a => {
     const closed = closedAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId));
@@ -408,7 +410,10 @@ export default function NotifyCenter({ token }) {
     const key = askKeyOf(id, ownerId, ownerAskId);
     if (out?.scope === 'local' && ['pending', 'blocked'].includes(out.ownerSync)) setDismissalNotice(out.ownerSync);
     const current = asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
-    closedAsks.current.set(key, { at: Date.now(), ts: current ? generationTsOf(current) : out?.ownerAskTs });
+    const currentTs = current && generationTsOf(current);
+    if (Number.isSafeInteger(out?.ownerAskTs) && out.ownerAskTs > 0 && Number.isSafeInteger(currentTs) && currentTs > 0 && out.ownerAskTs !== currentTs) return;
+    closedAsks.current.set(key, { at: Date.now(), ts: current ? currentTs : out?.ownerAskTs });
+    liveAsks.current.delete(key);
     if (closedAsks.current.size > 4096) closedAsks.current.delete(closedAsks.current.keys().next().value);
     setAsks((cur) => cur.filter((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId) !== key));
   };
@@ -428,6 +433,9 @@ export default function NotifyCenter({ token }) {
       if (frame.type === 'notify') pushToast(frame);
       else if (frame.type === 'ask' && frame.ask && frame.ask.id) {
         // Two owners can legitimately use the same ask id: identity is the pair.
+        const liveKey = askKeyOf(frame.ask.id, frame.ask.ownerId, frame.ask.ownerAskId);
+        liveAsks.current.set(liveKey, ++liveRevision.current);
+        if (liveAsks.current.size > 4096) liveAsks.current.delete(liveAsks.current.keys().next().value);
         setAsks((cur) => mergeAsks(cur, filterClosed([frame.ask])));
       } else if (frame.type === 'ask-answered' && frame.id) {
         const identity = closureIdentity(frame);
@@ -446,7 +454,8 @@ export default function NotifyCenter({ token }) {
 
   useEffect(() => {
     let alive = true;
-    if (token) getAsks(token).then(j => { if (alive) setAsks(cur => applyLocalSnapshot(cur, filterClosed(j.asks))); }).catch(() => {});
+    const started = liveRevision.current;
+    if (token) getAsks(token).then(j => { if (alive) setAsks(cur => mergeAsks(applyLocalSnapshot(cur, filterClosed(j.asks)), filterClosed(cur.filter(a => (liveAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId)) || 0) > started)))); }).catch(() => {});
     return () => { alive = false; };
   }, [token, refreshVersion]);
 
@@ -476,6 +485,7 @@ export default function NotifyCenter({ token }) {
   const [viewHealth, setViewHealth] = useState({});
   useEffect(() => {
     let alive = true;
+    const started = liveRevision.current;
     getFeedState(token).then((j) => {
       if (!alive) return;
       const health = {};
@@ -499,7 +509,7 @@ export default function NotifyCenter({ token }) {
       }
       setViewHealth(health);
       const authoritative = new Set(((j && j.views) || []).filter(v => v.stale === false && Number.isSafeInteger(v.viewEpoch) && typeof v.cursor === 'string' && !v.lastError && !v.error && v.resyncRequired !== true && Array.isArray(v.asks) && v.asks.length < 100).map(v => v.ownerId));
-      setAsks(cur => mergeAsks(cur.filter(a => !authoritative.has(a.ownerId)), filterClosed(imported)));
+      setAsks(cur => mergeAsks(cur.filter(a => !authoritative.has(a.ownerId) || (liveAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId)) || 0) > started), filterClosed(imported)));
       // Rebuild dall'arretrato: le card di una view revocata cadono qui; le
       // card arrivate via SSE di un owner ancora attivo restano (dedup per key).
       setRemoteNotices((cur) => {
