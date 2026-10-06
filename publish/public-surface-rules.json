@@ -22,6 +22,11 @@
       "reason": "internal node hostname"
     },
     {
+      "source": "\\bVPS[_-]?Cloud\\b",
+      "flags": "i",
+      "reason": "internal node name"
+    },
+    {
       "source": "\\b(?:browserai|devworkerp|devworkera|devworker|devauditor|forkauditor|warmaster|gameauditor|gamedev|designcreator|elnino)\\b",
       "flags": "i",
       "reason": "internal fleet cell name"
