@@ -23,13 +23,13 @@ function sourceSha() {
   return spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
 }
 
-function runVerifier({ staging, exclude, manifest, env = process.env }) {
+function runVerifier({ staging, exclude, manifest, env = process.env, source, rulesPath } = {}) {
   const invocation = path.join(path.dirname(manifest), 'invocation.argv');
   fs.writeFileSync(invocation, 'negative-control\0');
   return spawnSync(process.execPath, [
-    path.join(ROOT, 'publish', 'verify-git-surface.js'), sourceSha(), staging, manifest,
+    path.join(ROOT, 'publish', 'verify-git-surface.js'), source || sourceSha(), staging, manifest,
     exclude, path.join(ROOT, 'publish', 'build-git-surface.sh'),
-    path.join(ROOT, 'publish', 'public-surface-rules.json'),
+    rulesPath || path.join(ROOT, 'publish', 'public-surface-rules.json'),
     path.join(ROOT, 'publish', 'verify-git-surface.js'), invocation,
   ], { cwd: ROOT, encoding: 'utf8', env });
 }
@@ -171,6 +171,177 @@ test('negative control: empty staging fails the object equation before manifest'
     assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.equal(fs.existsSync(manifest), false);
     assert.match(result.stderr, /object equation fallita|public tree vuoto/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- workcodes (surface scan): the verifier must enforce the workcode bundle ---
+
+// Builds a throwaway commit whose tree contains exactly `files` ([{ rel, data }]),
+// so the object equation can be satisfied by a staging with the same contents.
+function syntheticSource(files) {
+  const root = {};
+  for (const { rel, data } of files) {
+    const parts = rel.split('/');
+    let level = root;
+    for (const part of parts.slice(0, -1)) {
+      level[part] = level[part] || {};
+      level = level[part];
+    }
+    level[parts.at(-1)] = { data };
+  }
+  const writeTree = (level) => {
+    const entries = Object.entries(level).map(([name, value]) => {
+      if (value.data !== undefined) {
+        const hash = spawnSync('git', ['hash-object', '-w', '--stdin'], { cwd: ROOT, input: Buffer.from(value.data) });
+        assert.equal(hash.status, 0, hash.stderr.toString());
+        return `100644 blob ${hash.stdout.toString().trim()}\t${name}`;
+      }
+      return `040000 tree ${writeTree(value)}\t${name}`;
+    });
+    const tree = spawnSync('git', ['mktree'], { cwd: ROOT, input: entries.join('\n'), encoding: 'utf8' });
+    assert.equal(tree.status, 0, tree.stderr);
+    return tree.stdout.trim();
+  };
+  const commit = spawnSync('git', ['commit-tree', writeTree(root)], {
+    cwd: ROOT,
+    input: 'synthetic surface fixture\n',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'NexusCrew Test', GIT_AUTHOR_EMAIL: 'test@nexuscrew.invalid',
+      GIT_COMMITTER_NAME: 'NexusCrew Test', GIT_COMMITTER_EMAIL: 'test@nexuscrew.invalid',
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(commit.status, 0, commit.stderr);
+  return commit.stdout.trim();
+}
+
+function syntheticStaging(dir, files) {
+  const staging = path.join(dir, 'staging');
+  fs.mkdirSync(staging, { recursive: true });
+  for (const { rel, data } of files) {
+    const target = path.join(staging, rel);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, data);
+  }
+  return staging;
+}
+
+function emptyExclude(dir) {
+  const exclude = path.join(dir, 'exclude.txt');
+  fs.writeFileSync(exclude, '# synthetic surface: nothing excluded\n');
+  return exclude;
+}
+
+function rulesWithoutWorkcodes(dir) {
+  const base = JSON.parse(fs.readFileSync(path.join(ROOT, 'publish', 'public-surface-rules.json'), 'utf8'));
+  delete base.workcodes;
+  const rulesPath = path.join(dir, 'rules-without-workcodes.json');
+  fs.writeFileSync(rulesPath, JSON.stringify(base));
+  return rulesPath;
+}
+
+test('workcodes: a rule bundle without the workcodes section is rejected', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-missing-'));
+  try {
+    const staging = path.join(dir, 'staging');
+    fs.mkdirSync(staging);
+    const exclude = emptyExclude(dir);
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({ staging, exclude, manifest, rulesPath: rulesWithoutWorkcodes(dir) });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /rule bundle non valido/);
+    assert.match(result.stderr, /workcodes/);
+    assert.equal(fs.existsSync(manifest), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('workcodes: a denied work token in a comment fails the verifier', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-deny-'));
+  try {
+    const files = [{ rel: 'src/demo.js', data: '// per-node groups (B2): polled separately\n' }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /internal work code/);
+    assert.match(result.stderr, /B2/);
+    assert.doesNotMatch(result.stderr, /unclassified/);
+    assert.equal(fs.existsSync(manifest), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('workcodes: an unclassified token fails closed', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-closed-'));
+  try {
+    const files = [{ rel: 'src/demo.js', data: '// QQ9 drafted overnight, not in any list\n' }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /fail-closed/);
+    assert.match(result.stderr, /QQ9/);
+    assert.equal(fs.existsSync(manifest), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('workcodes: allowToken, allowTokenRe, allowLineRe and allowPathPrefix let files pass', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-allow-'));
+  try {
+    const files = [
+      { rel: 'src/allowed-tokens.js', data: '// C0 sentinel\n// everything is UTF-8 on the wire\n' },
+      { rel: 'src/encoded-line.js', data: '// B2 token url=%41 percent-encoded line\n' },
+      { rel: 'frontend/dist/bundle.js', data: '// QQ9 under the dist prefix, not scanned\n' },
+    ];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.ok(fs.existsSync(manifest), 'manifest missing on allow path');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('workcodes: a clean binary blob passes through the strings scanner', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-bin-clean-'));
+  try {
+    const payload = Buffer.concat([Buffer.from([0x00, 0x01, 0x02]), Buffer.from('plain ascii payload inside\0tail'), Buffer.from([0xff])]);
+    const files = [{ rel: 'assets/blob.bin', data: payload }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.ok(fs.existsSync(manifest), 'manifest missing for clean binary');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('workcodes: a denied work token inside a binary blob is caught via strings', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-bin-deny-'));
+  try {
+    const payload = Buffer.concat([Buffer.from([0x00]), Buffer.from('note B2 inside the blob\0'), Buffer.from([0xff])]);
+    const files = [{ rel: 'assets/blob.bin', data: payload }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /B2/);
+    assert.equal(fs.existsSync(manifest), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
