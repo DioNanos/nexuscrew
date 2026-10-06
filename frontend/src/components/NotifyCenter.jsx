@@ -285,6 +285,7 @@ export default function NotifyCenter({ token }) {
   const closedAsks = useRef(new Map());
   const liveRevision = useRef(0);
   const liveAsks = useRef(new Map());
+  const ownerSnapshots = useRef(new Map());
   const alertAdmissions = useRef(new Map());
   const filterClosed = list => (list || []).filter(a => {
     const closed = closedAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId));
@@ -458,7 +459,7 @@ export default function NotifyCenter({ token }) {
   useEffect(() => {
     let alive = true;
     const started = liveRevision.current;
-    if (token) getAsks(token).then(j => { if (alive) setAsks(cur => mergeAsks(applyLocalSnapshot(cur, filterClosed(j.asks)), filterClosed(cur.filter(a => (liveAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId)) || 0) > started)))); }).catch(() => {});
+    if (token) getAsks(token).then(j => { if (alive) setAsks(cur => mergeAsks(applyLocalSnapshot(cur, filterClosed((j.asks || []).filter(a => !a.ownerId || (ownerSnapshots.current.get(a.ownerId) || 0) <= started))), filterClosed(cur.filter(a => (liveAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId)) || 0) > started)))); }).catch(() => {});
     return () => { alive = false; };
   }, [token, refreshVersion]);
 
@@ -512,6 +513,10 @@ export default function NotifyCenter({ token }) {
       }
       setViewHealth(health);
       const authoritative = new Set(((j && j.views) || []).filter(v => v.stale === false && Number.isSafeInteger(v.viewEpoch) && typeof v.cursor === 'string' && !v.lastError && !v.error && v.resyncRequired !== true && Array.isArray(v.asks) && v.asks.length < 100).map(v => v.ownerId));
+      for (const ownerId of authoritative) {
+        ownerSnapshots.current.delete(ownerId); ownerSnapshots.current.set(ownerId, ++liveRevision.current);
+        if (ownerSnapshots.current.size > 4096) ownerSnapshots.current.delete(ownerSnapshots.current.keys().next().value);
+      }
       setAsks(cur => mergeAsks(cur.filter(a => !authoritative.has(a.ownerId) || (liveAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId)) || 0) > started), filterClosed(imported)));
       // Rebuild dall'arretrato: le card di una view revocata cadono qui; le
       // card arrivate via SSE di un owner ancora attivo restano (dedup per key).
