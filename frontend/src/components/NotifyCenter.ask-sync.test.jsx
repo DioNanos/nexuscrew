@@ -78,7 +78,7 @@ it('a late close cannot erase a newer generation that arrives again after a conf
 });
 it('an owner snapshot at the ASK cap is a floor and cannot remove a known absent card',async()=>{
  await mount();await emit({type:'ask',ask});await openPanel();
- const floor=Array.from({length:100},(_,i)=>({...ask,id:'id-'+i,question:'Floor '+i}));m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:floor}]});await act(async()=>m.open());expect(screen.getByText(ask.question)).toBeTruthy();
+ const floor=Array.from({length:100},(_,i)=>({...ask,id:'id-'+i,question:'Floor '+i}));m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:floor}]});await act(async()=>m.open());expect(screen.queryByText(ask.question)).not.toBeNull();
 });
 
 it('a late imported alias read cannot resurrect a card after a newer complete owner snapshot',async()=>{
