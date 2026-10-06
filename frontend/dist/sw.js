@@ -41,6 +41,19 @@ function alertKey(data) {
   return eventId ? `${owner}:${eventId}` : null;
 }
 
+// Canonical ASK identity takes precedence over event IDs and caller tags.
+async function askAlertTag(data) {
+  if (typeof data.ownerId !== 'string' || typeof data.askId !== 'string'
+    || !/^[a-f0-9]{32}$/i.test(data.ownerId) || !/^[a-f0-9]{8}$/i.test(data.askId)) return null;
+  const generation = Number.isSafeInteger(data.ownerAskTs) && data.ownerAskTs > 0 ? String(data.ownerAskTs)
+    : typeof data.ownerAskFingerprint === 'string' && /^[a-f0-9]{64}$/.test(data.ownerAskFingerprint) ? `unknown:${data.ownerAskFingerprint}` : null;
+  if (!generation) return null;
+  const bytes = new TextEncoder().encode(JSON.stringify([data.ownerId, data.askId, generation]));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return `nc:ask:${Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('')}`;
+}
+let alertDelivery = Promise.resolve();
+
 function openAlertsDb() {
   return new Promise((resolve) => {
     try {
@@ -93,9 +106,10 @@ self.addEventListener('push', (e) => {
   const title = typeof data.title === 'string' && data.title ? data.title : 'NexusCrew';
   const body = typeof data.body === 'string' ? data.body : '';
   const url = safeLocalPath(data.url) || '/';
-  const key = alertKey(data);
-  const tag = typeof data.tag === 'string' && TAG_RE.test(data.tag) ? data.tag : LEGACY_TAG;
-  e.waitUntil((async () => {
+  e.waitUntil(alertDelivery = alertDelivery.catch(() => {}).then(async () => {
+    const askTag = await askAlertTag(data);
+    const key = askTag || alertKey(data);
+    const tag = askTag || (typeof data.tag === 'string' && TAG_RE.test(data.tag) ? data.tag : LEGACY_TAG);
     if (await alreadyAlerted(key)) return; // this event already rang once
     await rememberAlerted(key); // registered BEFORE showing: no double alert
     await self.registration.showNotification(title, {
@@ -104,7 +118,7 @@ self.addEventListener('push', (e) => {
       tag,
       data: { url },
     });
-  })());
+  }));
 });
 
 // Click sulla notifica: focus di una finestra gia' aperta (deep-link via

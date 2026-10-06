@@ -86,9 +86,13 @@ describe('CellSwitcher', () => {
 
     const dialog = await screen.findByRole('dialog', { name: 'Cells / cloud sessions' });
     expect(dialog.getAttribute('aria-modal')).toBeNull();
-    expect(screen.getByRole('button', { name: /^cell-One / }).getAttribute('aria-current')).toBe('true');
+    // Rows land in a commit later than the dialog: the beforeEach snapshot is
+    // not "fresh", so local/remote rows only appear after the first refresh
+    // cycle. Wait for the row itself, like every other test in this file —
+    // never a sync query right after the dialog alone.
+    expect((await screen.findByRole('button', { name: /^cell-One / })).getAttribute('aria-current')).toBe('true');
     expect(screen.getByText('you are here')).toBeTruthy();
-    const remote = screen.getByRole('button', { name: /^Remote / });
+    const remote = await screen.findByRole('button', { name: /^Remote / });
     expect(remote).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Degraded / }).getAttribute('aria-disabled')).toBe('true');
     expect(screen.queryByRole('button', { name: /^cell-Three / })).toBeNull();

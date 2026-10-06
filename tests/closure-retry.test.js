@@ -292,3 +292,15 @@ test('closure retry refuses a known custom peer without forwarding', async t => 
   const out = await fanout.dispatch({ askId: '11223344', outcome: 'dismissed', session: 'cell-reviewer', targets: [B_ID] });
   assert.deepStrictEqual(calls, []); assert.deepStrictEqual(out, [{ target: B_ID, status: 'refused', reason: 'ask-target-not-admin' }]);
 });
+
+ test('closure retries preserve separate generations of a reused owner ask id', async () => {
+  const clock = fakeClock(); const seen = [];
+  const q = createClosureRetryQueue({ now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
+    run: async item => { seen.push(item); return item.targets.map(target => ({ target, status: 'delivered' })); } });
+  q.enqueue({ askId: 'abcdef01', ownerAskTs: 100, outcome: 'dismissed', session: 'cell-a', targets: ['peer'] });
+  q.enqueue({ askId: 'abcdef01', ownerAskTs: 200, outcome: 'dismissed', session: 'cell-a', targets: ['peer'] });
+  assert.equal(q.size(), 2, 'closures for distinct generations must never merge');
+  await q.drain('read');
+  assert.deepStrictEqual(seen.map(item => item.ownerAskTs), [100, 200], 'retry carries the original creation generation');
+  assert.equal(q.size(), 0); q.stop();
+});

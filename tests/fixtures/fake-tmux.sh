@@ -18,7 +18,11 @@ case "$1" in
     case "$*" in *"=ghost"*) exit 1 ;; esac
     exit 0 ;;
   list-sessions)
-    if [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "pi-working" ]; then
+    if [ -n "${FAKE_TMUX_SESSIONS_STATE:-}" ]; then
+      # Stato commutabile a runtime (test di coalescing/freschezza): la cella
+      # si chiama come lo stato, cosi' il corpo della risposta lo porta.
+      printf "cell-${FAKE_TMUX_SESSIONS_STATE}\t0\t1\t1718380800\t1751990000\tnode\t\t${FAKE_TMUX_SESSIONS_STATE}\n"
+    elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "pi-working" ]; then
       printf 'pi-cell\t0\t1\t1718380800\t1751990000\tnode\t\tπ - project\n'
     elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "quoted-working" ]; then
       printf 'claude-idle\t0\t1\t1718380800\t1751990000\tnode\t\tDev\n'
@@ -30,6 +34,28 @@ case "$1" in
     fi
     exit 0 ;;
   list-panes)
+    # Il formato "fleet snapshot" (arg con session_created) porta in UNA riga
+    # i campi del supervisore E quelli della sessione: 13 campi — sessione,
+    # pane, pane_dead, marcatore, attached, windows, created, activity, cmd,
+    # visibility, window_active, pane_active, titolo. `dead-supervisor` tiene
+    # la forma misurata: pane marcato morto NON attivo + seconda finestra
+    # attiva (la riga sessione deve venire da QUEST'ultima).
+    case "$*" in
+      *session_created*)
+        if [ -n "${FAKE_TMUX_SESSIONS_STATE:-}" ]; then
+          printf "cell-${FAKE_TMUX_SESSIONS_STATE}\t%%1\t0\t\t0\t1\t1718380800\t1751990000\tnode\t\t1\t1\t${FAKE_TMUX_SESSIONS_STATE}\n"
+        elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "dead-supervisor" ]; then
+          printf 'claude-dead\t%%1\t1\t1\t0\t1\t1718380800\t1751990000\tnode\t\t0\t0\tKilled supervisor\n'
+          printf 'claude-dead\t%%2\t0\t\t0\t1\t1718380800\t1751990000\tnode\t\t1\t1\tDev\n'
+        elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "unmarked" ]; then
+          printf 'claude-unmarked\t%%1\t0\t\t0\t1\t1718380800\t1751990000\tnode\t\t1\t1\tDev\n'
+        elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "quoted-working" ]; then
+          printf 'claude-idle\t%%1\t0\t1\t0\t1\t1718380800\t1751990000\tnode\t\t1\t1\tDev\n'
+        elif [ "${FAKE_TMUX_ACTIVITY_MODE:-}" = "pi-working" ]; then
+          printf 'pi-cell\t%%1\t0\t\t0\t1\t1718380800\t1751990000\tnode\t\t1\t1\tπ - project\n'
+        fi
+        exit 0 ;;
+    esac
     # UNA chiamata per giro. Quattro campi: sessione, pane, pane_dead, marcatore
     # del supervisore. `dead-supervisor` e' il caso misurato con tmux vero: il
     # pane del supervisore e' morto ma c'e' una SECONDA FINESTRA VIVA — se si

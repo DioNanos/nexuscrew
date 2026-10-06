@@ -199,3 +199,14 @@ test('a dismissal record under a noncanonical key makes the store unreadable', t
   assert.equal(restart().dismissImported({ ownerId: OWNER, ownerAskId: ID, ask: source() }).ok, false);
   assert.equal(fs.readFileSync(store.filePath, 'utf8'), before, 'malformed history is never overwritten');
 });
+
+test('a closure for a new imported generation leaves the previous dismissal receipt untouched',t=>{
+ const {store}=fixture(t);const old=store.create({...source(),ownerId:OWNER,ownerAskId:ID,originNode:OWNER,ownerAskTs:1000}).ask;
+ assert.equal(dismiss(store,old).ok,true);const receipt=store.getImportedDismissal(OWNER,ID);
+ const current=store.create({...source(),question:'New current question?',ownerId:OWNER,ownerAskId:ID,originNode:OWNER,ownerAskTs:2000}).ask;assert.ok(current);
+ const closed=store.closeImported({ownerId:OWNER,ownerAskId:ID,ownerAskTs:2000,outcome:'answered'});
+ assert.equal(closed.changed,true,'current generation must close despite an older dismissal receipt');
+ assert.equal(store.get(current.id).answered,true);assert.deepEqual(store.getImportedDismissal(OWNER,ID),receipt,'previous generation receipt remains byte-equivalent');
+ const before=fs.readFileSync(store.filePath);const stale=store.closeImported({ownerId:OWNER,ownerAskId:ID,ownerAskTs:1000,outcome:'dismissed'});
+ assert.equal(stale.generationMismatch,true);assert.deepEqual(fs.readFileSync(store.filePath),before,'stale closure does not persist any mutation');
+});

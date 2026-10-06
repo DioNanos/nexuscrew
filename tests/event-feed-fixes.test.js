@@ -553,3 +553,65 @@ test('a named snapshot rejection survives a later parse failure until healing', 
   assert.equal(client.viewFor(ownerId).lastError, null, 'a valid snapshot heals the rejection');
   assert.equal(client.viewFor(ownerId).stale, false);
 });
+
+test('a valid owner snapshot signals local view reconciliation, including an empty view, but a rejected snapshot does not', async t => {
+  const ownerId='a'.repeat(32), changes=[];
+  const valid={ownerId,cursor:'1:0',viewEpoch:1,asks:[],notifications:[],fleetState:null};
+  const response=value=>({ok:true,status:200,text:async()=>JSON.stringify(value)});
+  const {client}=stubClient(t,[{ok:true,status:200,json:async()=>({instanceId:ownerId,eventFeedV1:true})},response(valid),sse([]),response({...valid,resyncRequired:true})],{onViewChanged:(id)=>changes.push({id,state:client.state()})});
+  await client.poll();
+  assert.equal(changes.length,1,'a fresh empty snapshot must wake the connected browser');
+  assert.equal(changes[0].id,ownerId);
+  assert.equal(changes[0].state.views[0].stale,false,'signal only after applying the complete view');
+  await client.ownerSnapshotAsks(ownerId);
+  assert.equal(changes.length,1,'a rejected incomplete snapshot cannot claim authoritative refresh');
+});
+
+test('feed closure rejects a known older generation before store callback, view removal and browser emission', t => {
+  const ownerId = 'a'.repeat(32); const closed = [];
+  const { client, hub } = stubClient(t, [], { onAskClosed: (...args) => closed.push(args) });
+  const view = client.viewFor(ownerId); view.viewEpoch = 1; view.stale = false;
+  view.asks = [{ id: 'abcdef01', ownerAskTs: 200, ownerId }];
+  const send = (eventId, askTs) => client.reemit({ ownerId, eventId, hop: 1,
+    frame: { type: 'ask-closed', askId: 'abcdef01', outcome: 'answered', ...(askTs === undefined ? {} : { askTs }) } });
+  send('old', 100);
+  assert.equal(closed.length, 0, 'stale generation cannot reach imported store callback');
+  assert.equal(view.asks.length, 1, 'stale closure cannot erase current owner view');
+  assert.equal(hub.length, 0, 'stale closure cannot erase browser card');
+  send('current', 200);
+  assert.equal(closed.length, 1);
+  assert.equal(closed[0][3], 200, 'store callback carries creation generation');
+  assert.equal(view.asks.length, 0);
+  assert.equal(hub[0].ownerAskTs, 200, 'browser receives closure generation');
+  view.asks = [{ id: 'abcdef02', ownerId }];
+  client.reemit({ ownerId, eventId: 'legacy', hop: 1, frame: { type: 'ask-closed', askId: 'abcdef02', outcome: 'dismissed' } });
+  assert.equal(view.asks.length, 0, 'legacy unknown closure still removes its alias');
+});
+
+test('a known closure tombstone rejects its old generation but permits a reused ID in a fresh snapshot', async t => {
+  const ownerId = 'a'.repeat(32);
+  const snapshot = asks => ({ ok: true, status: 200, text: async () => JSON.stringify({ ownerId, cursor: '1:2', viewEpoch: 1, asks, notifications: [] }) });
+  const { client } = stubClient(t, [snapshot([{id:'abcdef01',ts:100,question:'old',session:'reviewer'}]), snapshot([{id:'abcdef01',ts:200,question:'new',session:'reviewer'}])]);
+  const view = client.viewFor(ownerId); view.viewEpoch=1; view.stale=false; view.asks=[{id:'abcdef01',ts:100,ownerId}];
+  client.reemit({ownerId,eventId:'closed',hop:1,frame:{type:'ask-closed',askId:'abcdef01',askTs:100,outcome:'dismissed'}});
+  await client.ownerSnapshotAsks(ownerId); assert.equal(view.asks.length,0,'old snapshot cannot revive closed generation');
+  await client.ownerSnapshotAsks(ownerId); assert.equal(view.asks.length,1,'new generation must survive old generation tombstone');
+  assert.equal(view.asks[0].ts,200);
+});
+test('an imported store generation rejection prevents feed removal even when its view has no ASK', t => {
+ const {client,hub}=stubClient(t,[],{onAskClosed:()=>({ok:true,changed:false,generationMismatch:true})});
+ client.reemit({ownerId:'a'.repeat(32),eventId:'late',hop:1,frame:{type:'ask-closed',askId:'abcdef01',askTs:100,outcome:'answered'}});
+ assert.equal(hub.length,0,'store guard must propagate to browser delivery');
+});
+
+test('unknown closure tombstone permits different snapshot content and owner epoch reset without inventing a generation', async t => {
+ const ownerId='a'.repeat(32); const historic={id:'abcdef01',question:'historic',options:[],session:'reviewer',ownerAskTs:null};
+ const response=(asks,viewEpoch=1)=>({ok:true,status:200,text:async()=>JSON.stringify({ownerId,cursor:`${viewEpoch}:2`,viewEpoch,asks,notifications:[]})});
+ const {client}=stubClient(t,[response([historic]),response([{...historic,question:'changed'}]),response([historic],2)]);
+ const view=client.viewFor(ownerId);view.viewEpoch=1;view.stale=false;view.asks=[historic];
+ client.reemit({ownerId,eventId:'unknown-close',hop:1,frame:{type:'ask-closed',askId:historic.id,outcome:'dismissed'}});
+ await client.ownerSnapshotAsks(ownerId);assert.equal(view.asks.length,0,'same historical content remains suppressed');
+ await client.ownerSnapshotAsks(ownerId);assert.equal(view.asks.length,1,'changed authoritative content is not the historical closed question');
+ await client.ownerSnapshotAsks(ownerId);assert.equal(view.asks.length,1,'owner epoch reset invalidates old tombstone');
+ assert.equal(view.asks[0].ownerAskTs,null,'unknown stays unknown');
+});

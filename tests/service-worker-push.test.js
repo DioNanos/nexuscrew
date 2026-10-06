@@ -71,7 +71,7 @@ function loadWorker(indexedDB) {
       openWindow: async (url) => { navigated.push(url); },
     },
   };
-  const sandbox = { self, console, setTimeout, clearTimeout, Date, Promise, JSON, encodeURIComponent };
+  const sandbox = { self, console, setTimeout, clearTimeout, Date, Promise, JSON, encodeURIComponent, TextEncoder, crypto: require('node:crypto').webcrypto };
   vm.runInNewContext(fs.readFileSync(SW_PATH, 'utf8'), sandbox, { filename: 'sw.js' });
   // A worker handler that never settles must fail the test, not hang it.
   const withTimeout = (p, ms = 2000) => Promise.race([
@@ -162,4 +162,34 @@ test('an unusable identity never dedups, and an out-of-shape tag falls back', as
   assert.deepEqual(w.navigated, [`/#owner=${'a'.repeat(32)}&ask=ask-1`], 'a local route is opened as-is');
   await w.click({ url: 'https://evil.example/steal' });
   assert.equal(w.navigated[1], '/', 'a remote link still falls back to the app root');
+});
+
+for (const concurrent of [false, true]) test(`canonical ASK replay does not alert twice even without a shared eventId (${concurrent ? 'concurrent' : 'serial'})`, async () => {
+  const { alertFields } = require('../lib/notify/ask-alert-identity.js');
+  const db = fakeIndexedDB(); const worker = loadWorker(db);
+  const payload = { title: 'ask', ...alertFields({ ownerId: 'a'.repeat(32), askId: 'abcdef01', ownerAskTs: 1700000000000 }) };
+  if (concurrent) await Promise.all([worker.push(payload), worker.push({ ...payload, eventId: 'different-feed-event' })]);
+  else { await worker.push(payload); await worker.push({ ...payload, eventId: 'different-feed-event' }); }
+  assert.equal(worker.shown.length, 1, 'canonical question generation, not event identity');
+  const restarted = loadWorker(db); await restarted.push(payload);
+  assert.equal(restarted.shown.length, 0, 'restart preserves canonical alert admission');
+});
+
+test('array-shaped ASK identifiers never become canonical alert tags', async () => {
+  for (const over of [{ ownerId: ['a'.repeat(32)] }, { askId: ['abcdef01'] }]) {
+    const worker = loadWorker(fakeIndexedDB());
+    await worker.push({ title: 'invalid shape', ownerId: 'a'.repeat(32), askId: 'abcdef01', ownerAskTs: 1700000000000, ...over });
+    assert.equal(worker.shown.length, 1, 'legacy fallback still displays the notification');
+    assert.equal(worker.shown[0].options.tag, 'nexuscrew', 'only string identifiers authorize canonical ASK deduplication');
+  }
+});
+
+test('ASK generations coexist and caller tags cannot override their canonical browser identity', async () => {
+  const { alertFields } = require('../lib/notify/ask-alert-identity.js'); const worker = loadWorker(fakeIndexedDB());
+  const base = { ownerId: 'a'.repeat(32), askId: 'abcdef01', ownerAskTs: 1700000000000 };
+  for (const over of [{}, { askId: 'abcdef02' }, { ownerId: 'b'.repeat(32) }, { ownerAskTs: base.ownerAskTs + 1 }]) {
+    const expected = alertFields({ ...base, ...over }); await worker.push({ title: 'ask', ...expected, tag: 'nexuscrew' });
+    assert.equal(worker.shown.at(-1).options.tag, expected.tag, 'the SW derives rather than accepts the caller tag');
+  }
+  assert.equal(worker.shown.length, 4); assert.equal(new Set(worker.shown.map(item => item.options.tag)).size, 4, 'distinct questions never replace each other by a shared tag');
 });

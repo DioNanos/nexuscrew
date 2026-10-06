@@ -125,7 +125,7 @@ test('motori senza canale: pi, shell e un codex non provato non prendono hook', 
   // Il binario del client deve esistere, o la risoluzione si ferma prima
   // (fail-closed sul client assente) e il test non proverebbe nulla sugli hook.
   // `codex-vl` risponde con una versione NON provata: il gate non inietta.
-  fs.writeFileSync(path.join(m.home, '.local', 'bin', 'codex-vl'), '#!/bin/sh\necho "codex-cli 9.9.9"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(m.home, '.local', 'bin', 'codex-vl'), '#!/bin/sh\nif [ "$1" = "--help" ]; then echo "Usage: codex --no-daemon"; else echo "codex-cli 9.9.9"; fi\n', { mode: 0o755 });
   fs.writeFileSync(path.join(m.home, '.local', 'bin', 'pi'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const defs = parseDefinitions({
     schemaVersion: 1,
@@ -159,7 +159,7 @@ test('motori senza canale: pi, shell e un codex non provato non prendono hook', 
 // da' il via libera sbagliato.
 
 function binarioFinto(m, client, corpo) {
-  fs.writeFileSync(path.join(m.home, '.local', 'bin', client), corpo, { mode: 0o755 });
+  fs.writeFileSync(path.join(m.home, '.local', 'bin', client), corpo.replace('#!/bin/sh\n', '#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo \"Usage: codex --no-daemon\"; exit 0; fi\n'), { mode: 0o755 });
 }
 
 function risolviCodex(m, client, provider, extra = {}) {
@@ -195,10 +195,13 @@ test('codex-vl con la sua versione provata: hook presenti', (t) => {
   assert.equal(hookDi(risolviCodex(m, 'codex-vl', 'ollama-cloud')).length, EVENTI_CODEX.length);
 });
 
-test('binario che esce senza output: versione non determinabile, nessun hook', (t) => {
+test('a binary without version output refuses an unverifiable isolated launch', (t) => {
   const m = mondo(t);
   binarioFinto(m, 'codex', '#!/bin/sh\nexit 0\n');
-  assert.equal(hookDi(risolviCodex(m, 'codex', 'openai-api')).length, 0);
+  const r = resolveManagedEngine({ id: 'ex', managed: { client: 'codex', provider: 'native', model: '' } },
+    { id: 'Dev', cwd: m.cwd, tmuxSession: 'cloud-Dev' }, { home: m.home, env: {} });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /capability could not be verified/);
 });
 
 // --- la generazione va pubblicata anche per codex -------------------------
@@ -375,7 +378,7 @@ test('la cella di un documento reale porta gli hook nel proprio argv', (t) => {
 });
 
 test('a Termux daemon runtime whose help lacks embedded mode refuses launch with a diagnostic', t => {
-  const m = mondo(t); binarioFinto(m, 'codex', '#!/bin/sh\necho "codex-cli 0.156.1"\n');
+  const m = mondo(t); fs.writeFileSync(path.join(m.home, '.local', 'bin', 'codex'), '#!/bin/sh\necho "codex-cli 0.156.1"\n', { mode: 0o755 });
   const r = resolveManagedEngine({ id: 'codex.native', managed: { client: 'codex', provider: 'native', model: '', permissionPolicy: 'standard' } },
     { id: 'Reviewer', cwd: m.cwd, tmuxSession: 'demo-Reviewer' }, { home: m.home, env: {}, platform: 'android', filesRoot: m.filesRoot });
   assert.equal(r.ok, false); assert.match(r.reason, /runtime capability could not be verified/);

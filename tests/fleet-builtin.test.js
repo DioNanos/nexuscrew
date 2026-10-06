@@ -648,7 +648,7 @@ test('managed codex-vl.native: launcher interno, login nativo, fake tmux', async
   try {
     const bin = path.join(w.home, '.local', 'bin', 'codex-vl');
     fs.mkdirSync(path.dirname(bin), { recursive: true });
-    fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n'); fs.chmodSync(bin, 0o755);
+    fs.writeFileSync(bin, '#!/bin/sh\ncase "$1" in --version) echo "codex-cli 0.160.0" ;; --help) echo "Usage: codex --no-daemon" ;; esac\n'); fs.chmodSync(bin, 0o755);
     atomicWrite(w.defsPath, {
       schemaVersion: 1,
       engines: [{ id: 'codex-vl.native', label: 'Codex-VL · Native', managed: { client: 'codex-vl', provider: 'native', model: '' } }],

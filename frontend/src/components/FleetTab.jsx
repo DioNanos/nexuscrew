@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { runFleetPowerAction } from '../lib/fleet-action-notice.js';
+import useVisibleInterval from '../hooks/useVisibleInterval.js';
 import {
   fleetStatus, fleetDefinitions, fleetDefineEngine, fleetEditEngine, fleetRemoveEngine,
   fleetDefineCell, fleetEditCell, fleetRemoveCell, fleetRestart, fleetDown,
@@ -68,7 +69,11 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     } catch (e) { setErr(String(e.message || e)); }
     finally { setLoaded(true); }
   }, [token, location]);
-  useEffect(() => { refresh(); const id = setInterval(refresh, 5000); return () => clearInterval(id); }, [refresh]);
+  // Cadenza adattiva: il ciclo dei 5 s si sospende quando il documento e'
+  // nascosto (finestra in secondo piano) e riparte con un giro immediato
+  // alla riapparsa — chi torna trova lo stato fresco.
+  useEffect(() => { if (document.visibilityState !== 'hidden') refresh(); }, [refresh]);
+  useVisibleInterval(refresh, 5000);
 
   const active = new Set((status.cells || []).filter((c) => c.active).map((c) => c.cell));
   const editable = status.provider === 'builtin' && (status.capabilities || []).includes('edit');

@@ -80,3 +80,18 @@ describe('cap e taglio per ts', () => {
     expect(boundedByTs(list)[0].ts).toBe(59);
   });
 });
+
+describe('ASK correlation and actual snapshot envelopes', () => {
+  it('keeps a generic snapshot envelope equivalent to the same live notice', () => {
+    const live = env('generic-1', 1700000000000, { body: 'generic message' });
+    const snapshot = { eventId: live.eventId, ts: live.ts, ownerId: 'owner', frame: { type: live.type, title: live.title, body: live.body, urgency: live.urgency } };
+    expect(toRemoteNotice(snapshot, 'owner')).toEqual(toRemoteNotice(live, 'owner'));
+  });
+  it('does not turn a correlated live ASK alert into a second generic panel card', () => {
+    expect(toRemoteNotice(env('ask-alert-1', 10, { askId: 'abcdef01', ownerAskTs: 1700000000000 }), 'owner')).toBeNull();
+  });
+  it('does not revive a correlated ASK as a generic card from a snapshot', () => {
+    const snapshot = { eventId: 'ask-alert-1', ts: 10, frame: { type: 'notify', title: 'question', askId: 'abcdef01' } };
+    expect(toRemoteNotice(snapshot, 'owner')).toBeNull();
+  });
+});

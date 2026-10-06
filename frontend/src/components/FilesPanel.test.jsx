@@ -117,3 +117,18 @@ describe('FilesPanel riga file e scatole', () => {
     expect(screen.getByText('b.txt')).toBeTruthy();
   });
 });
+
+describe('FilesPanel X di chiusura', () => {
+  it('la X usa la classe condivisa nc-ntf-x (toast e pannello ASK) con aria-label invariata', async () => {
+    const onClose = vi.fn();
+    await apriPannello({ onClose });
+    const x = screen.getByLabelText('close');
+    // Fissa il riuso dello stile condiviso: la classe deve restare nc-ntf-x,
+    // non uno stile nuovo per-componente o il bottone nativo del browser.
+    expect(x.className).toBe('nc-ntf-x');
+    expect(x.getAttribute('type')).toBe('button');
+    expect(x.getAttribute('aria-label')).toBe('close');
+    fireEvent.click(x);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
