@@ -5,6 +5,7 @@ All notable changes to NexusCrew are tracked here.
 ## 0.9.61 — 2026-10-06
 
 - **Fix startup crash when no explicit home is configured.** The owner question scope and the Fleet runtime now derive the fleet definitions path from one canonical helper, so a missing cfg.home falls back to os.homedir() like every other server path.
+- **Files panel close button now uses the shared close style.** The outbox/inbox list close button matches the asks panel: shared class, 16px icon and a native `type=button`, with the accessibility attributes and the 40px touch target preserved and pinned by a test.
 
 ## 0.9.60 — 2026-10-06
 
