@@ -114,3 +114,26 @@ test('a custom next hop refuses an ASK closure with a healthy store before deliv
   assert.equal(actions.filter(a => new URL(a.url).port === String(leaf.port)).length, 0);
   assert.ok(nodes.loadStoreStrict(leaf.nodesPath), 'the refused target has a healthy store');
 });
+
+test('ASK fan-out keeps legacy acceptance and adds observable zero-channel alert outcomes', async t => {
+  const origin = await boot(t); const remote = await boot(t);
+  pair(origin, remote, 'remote'); pair(remote, origin, 'origin');
+  const actions = observe(); const ask = await create(origin, remote.id);
+  assert.equal(ask.fanout[0].status, 'delivered', 'legacy receipt means ASK accepted');
+  assert.equal(ask.fanout[0].alertStatus, 'no-delivery', 'accepted ASK must not claim a visible alert');
+  assert.equal(ask.fanout[0].alert.ui, 0); assert.equal(ask.fanout[0].alert.push, 0);
+  assert.equal(ask.fanout[0].alert.uiAttempted, true, 'UI attempt diagnostic survives dispatch and fan-out');
+  assert.equal(ask.fanout[0].alert.pushAttempted, true, 'push attempt diagnostic survives dispatch and fan-out');
+  assert.equal(ask.fanout[0].alertStatus, 'no-delivery', 'dispatcher and local fan-out preserve added diagnostics');
+  assert.ok((await open(remote)).some(a => a.ownerAskId === ask.id), 'zero channels never undo ASK persistence');
+});
+
+test('ASK admission logging failure does not change the persisted legacy receipt', async t => {
+  const origin = await boot(t);
+  const remote = await boot(t, { log: line => { if (line.startsWith('ask ingress ')) throw new Error('fixture logger unavailable'); } });
+  pair(origin, remote, 'remote'); pair(remote, origin, 'origin'); observe();
+  const ask = await create(origin, remote.id);
+  assert.equal(ask.fanout[0].status, 'delivered', 'logging cannot undo accepted ASK delivery');
+  assert.equal(ask.fanout[0].alertStatus, 'no-delivery');
+  assert.ok((await open(remote)).some(a => a.ownerAskId === ask.id), 'persisted ASK remains visible');
+});

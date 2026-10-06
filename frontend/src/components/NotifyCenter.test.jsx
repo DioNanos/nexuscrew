@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   eventHandler: null,
+  openHandler: null,
   speechEnabled: true,
   speaker: { enqueue: vi.fn(), stop: vi.fn(), dispose: vi.fn() },
   resolveLang: vi.fn((frame, uiLang) => frame.lang || uiLang),
@@ -24,7 +25,8 @@ vi.mock('../lib/api.js', () => ({
 }));
 
 vi.mock('../lib/events.js', () => ({
-  connectEvents: vi.fn((_token, onFrame) => {
+  connectEvents: vi.fn((_token, onFrame, onOpen) => {
+    mocks.openHandler = onOpen;
     mocks.eventHandler = onFrame;
     return mocks.closeEvents;
   }),
@@ -233,7 +235,11 @@ describe('federated ask cards: identity per owner and reload', () => {
     await waitFor(() => expect(mocks.eventHandler).toBeTypeOf('function'));
     act(() => mocks.eventHandler({ type: 'ask', ask: { id: 'loc4', session: 's', question: 'locale viva' } }));
     await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeTruthy());
-    // Risposta altrove: la domanda locale non e' piu' aperta e deve sparire.
+    // A fresh read started after the live card is authoritative; the older
+    // in-flight empty read cannot prove that a later live card was closed.
+    getAsks.mockResolvedValue({ asks: [] });
+    await act(async () => { mocks.openHandler(); });
+    await waitFor(() => expect(container.querySelector('.nc-ask-badge')).toBeNull());
     await act(async () => { finishLocal({ asks: [] }); });
     expect(container.querySelector('.nc-ask-badge')).toBeNull();
   });
