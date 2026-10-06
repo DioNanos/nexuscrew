@@ -232,3 +232,19 @@ test('real direct stale generation closure cannot mutate a newer imported ASK or
   const legacy = await route({ closeOutcome: 'dismissed' });
   assert.equal(legacy.status, 200); assert.equal((await legacy.json()).closed, true, 'legacy unknown closure remains accepted');
 });
+
+test('real owner queued closure preserves generation after its peer returns',async t=>{
+ observe();const origin=await boot(t),remote=await boot(t);pair(origin,remote,'remote');pair(remote,origin,'origin');
+ const created=await fetch(`http://127.0.0.1:${origin.port}/api/asks`,{method:'POST',headers:headers(origin.token),body:JSON.stringify({question:'retry generation?',session:tmuxSessionForCell('reviewer'),target:remote.id})});
+ assert.equal(created.status,201);const {id}=await created.json();
+ const listing=await fetch(`http://127.0.0.1:${origin.port}/api/asks?open=1`,{headers:headers(origin.token)}).then(r=>r.json());const ask=listing.asks.find(a=>a.id===id);assert.ok(ask);
+ remote.server.closeAllConnections();await new Promise(resolve=>remote.server.close(resolve));
+ const closed=await fetch(`http://127.0.0.1:${origin.port}/api/asks/${id}`,{method:'DELETE',headers:headers(origin.token),body:'{}'});assert.equal(closed.status,200);
+ await new Promise(resolve=>remote.server.listen(remote.port,'127.0.0.1',resolve));
+ const frames=await sse(t,remote);
+ await fetch(`http://127.0.0.1:${origin.port}/api/asks?open=1`,{headers:headers(origin.token)});
+ await until(()=>frames.some(f=>f.type==='ask-dismissed'&&f.ownerAskId===id),'queued closure reaches returned peer');
+ assert.equal(frames.find(f=>f.type==='ask-dismissed'&&f.ownerAskId===id).ownerAskTs,ask.ts,'server retry wiring retains original generation');
+ const delivery=observed.find(e=>e.body.askId===id&&e.body.closeOutcome==='dismissed'&&e.status===200);assert.ok(delivery);
+ assert.equal(delivery.body.ownerAskTs,ask.ts,'the actual retried HTTP body carries the original generation');
+});
