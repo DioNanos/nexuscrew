@@ -75,7 +75,7 @@ function rowsFromSnapshot(snapshot) {
         verified: fresh === true,
         // Poll non verificato ma celle note (dal gruppo): la riga resta
         // VISIBLE nel drawer come non selezionabile — nasconderla faceva
-        // sparire il nodo dalla lista veloce (l'hub diretto del Pixel).
+        // sparire il nodo dalla lista veloce (un directly connected hub).
         keepVisible: fresh !== true && cells.length > 0,
         working: runtime.working,
         degraded: !!cell.degraded,
@@ -161,7 +161,6 @@ function orderRowsByPosition(rows, rosterItems, pins, orders, views, viewFor, no
     .map((position, index) => ({ position, index }))
     .sort((a, b) => rankOf(a.position) - rankOf(b.position) || a.index - b.index)
     .map(({ position }) => position);
-  console.log('ORB_DEBUG', JSON.stringify({ positions, nodeOrder, groups: [...groupsByPosition.keys()], rows: rows.length }));
   return positions.flatMap((position) => {
     const displayRows = rows.filter((row) => (row.node || 'local') === position);
     const canonical = new Map((rosterItems.get(position) || []).map((item) => [item.key, item]));
@@ -258,7 +257,6 @@ export default function CellSwitcher({
   const {
     pins, orders, views, viewFor, togglePin, removePin, pinError, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
-  console.log('CELLSWITCHER_BODY', rows.length, (snapshot.nodeGroups || []).length);
   // L'ordine dei GRUPPI è quello scelto dall'utente per i nodi nella lista
   // normale (la stessa preferenza che segue la griglia dei deck).
   const { order: nodeOrder } = useNodePreferences();
@@ -356,8 +354,6 @@ export default function CellSwitcher({
         nodeGroups,
         refreshedAt: Date.now(),
       });
-      console.log('REFRESH_DEBUG', JSON.stringify(byRoute && [...remote.map(({ group, result }) => [group.route.join('/'), result.fresh, Array.isArray(result.sessions), Array.isArray(result.cells), result.sessions && result.sessions.length])]));
-      console.log('REFRESH_DEBUG2', JSON.stringify(nodeGroups.map((g) => [g.route.join('/'), g.switcherFresh, (g.cells || []).length])));
       setSnapshot(next);
       setReady(true);
       inFlight = false;
