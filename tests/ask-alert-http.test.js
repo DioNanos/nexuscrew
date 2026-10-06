@@ -184,3 +184,29 @@ test('an authoritative empty feed snapshot reaches the connected browser through
   const view=state.views.find(v=>v.ownerId===origin.id);assert.ok(view);assert.equal(view.stale,false);assert.deepEqual(view.asks,[]);
   assert.equal(frames.filter(f=>f.type==='notify').length,0,'resync is a state refresh, not a new alert');
 });
+
+for (const viaFeed of [false, true]) test(`real owner closure preserves creation generation through ${viaFeed ? 'feed' : 'fan-out'} to browser SSE`, async t => {
+  const origin = await boot(t, { eventFeedClientPollMs: 50 });
+  const remote = await boot(t, { eventFeedClientPollMs: 50 });
+  pair(origin, remote, 'remote', viaFeed ? 'user' : 'admin'); pair(remote, origin, 'origin');
+  if (viaFeed) {
+    nodes.atomicWriteStore(origin.nodesPath, nodes.updateNode(nodes.loadStoreStrict(origin.nodesPath), 'remote', { direction: 'inbound', transport: 'inbound' }));
+    nodes.atomicWriteStore(remote.nodesPath, nodes.updateNode(nodes.loadStoreStrict(remote.nodesPath), 'origin', { eventsReceive: true }));
+    await until(async () => {
+      const state = await fetch(`http://127.0.0.1:${remote.port}/api/feed-state`, { headers: headers(remote.token) }).then(r => r.json());
+      return state.views.some(v => v.ownerId === origin.id && v.stale === false);
+    }, 'owner feed must be connected before creation');
+  }
+  const frames = await sse(t, remote);
+  const response = await fetch(`http://127.0.0.1:${origin.port}/api/asks`, { method: 'POST', headers: headers(origin.token),
+    body: JSON.stringify({ question: 'generation survives closure?', session: tmuxSessionForCell('reviewer'), target: remote.id }) });
+  assert.equal(response.status, 201); const { id } = await response.json();
+  await until(() => frames.some(f => f.type === 'ask' && (f.ask.ownerAskId || f.ask.id) === id), 'created ASK reaches browser');
+  const listing = await fetch(`http://127.0.0.1:${origin.port}/api/asks?open=1`, { headers: headers(origin.token) }).then(r => r.json());
+  const ask = listing.asks.find(a => a.id === id); assert.ok(ask);
+  const closed = await fetch(`http://127.0.0.1:${origin.port}/api/asks/${id}`, { method: 'DELETE', headers: headers(origin.token), body: '{}' });
+  assert.equal(closed.status, 200);
+  await until(() => frames.some(f => f.type === 'ask-dismissed' && f.ownerAskId === id), 'owner closure reaches browser');
+  const frame = frames.find(f => f.type === 'ask-dismissed' && f.ownerAskId === id);
+  assert.equal(frame.ownerAskTs, ask.ts, 'closure carries ASK creation generation, never its emission time');
+});
