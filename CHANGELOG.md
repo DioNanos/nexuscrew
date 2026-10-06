@@ -2,6 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.62 — 2026-10-06
+
+- **The federated-ask close button always works on the viewing node.** Removing a card is a local intent and no longer requires the owner to be unreachable or to grant anything: the capability offers the local dismissal for any visible, quiet ask, the dismiss endpoint persists it durably on the receiving node without the former "owner channel availability" refusal (sync stays `blocked` without the reply grant — removing is not answering), and the close button stays enabled with reachable owners, older owner versions and missing grants. A locally dismissed card stays hidden across reloads and snapshots, while a newer generation of the same ask comes back; the owner-side alerts, feed watermark and owner closures are untouched, and a remote grant still dismisses on the owner as before.
+
 ## 0.9.61 — 2026-10-06
 
 - **Fix startup crash when no explicit home is configured.** The owner question scope and the Fleet runtime now derive the fleet definitions path from one canonical helper, so a missing cfg.home falls back to os.homedir() like every other server path.
