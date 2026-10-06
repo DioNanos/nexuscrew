@@ -103,3 +103,9 @@ it('a stale dismissed frame cannot install a generic tombstone for a newer curre
  m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:3',asks:[current]}]});
  await emit({type:'feed-state-changed',ownerId:owner});expect(screen.queryByText(current.question)).not.toBeNull();
 });
+
+for (const watermark of [{viewEpoch:0,cursor:'0:0'},{viewEpoch:1,cursor:'invalid'},{viewEpoch:1,cursor:'2:0'}]) it(`an invalid authoritative watermark cannot remove cards: ${JSON.stringify(watermark)}`,async()=>{
+ await mount();await emit({type:'ask',ask});await openPanel();
+ m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,asks:[],...watermark}]});
+ await emit({type:'feed-state-changed',ownerId:owner});expect(screen.queryByText(ask.question)).not.toBeNull();
+});
