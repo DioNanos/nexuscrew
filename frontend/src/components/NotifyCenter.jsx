@@ -422,8 +422,9 @@ export default function NotifyCenter({ token }) {
     const current = asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
     const currentTs = current && generationTsOf(current);
     if (closureGenerationMismatch(key, out)) return;
+    const content = current || out?.askGeneration;
     closedAsks.current.set(key, { at: Date.now(), ts: current ? currentTs : out?.ownerAskTs,
-      fingerprint: current && current.question !== undefined ? JSON.stringify([current.question, current.options || [], current.session]) : null });
+      fingerprint: content && content.question !== undefined ? JSON.stringify([content.question, content.options || [], content.session]) : null });
     liveAsks.current.delete(key);
     if (closedAsks.current.size > 4096) closedAsks.current.delete(closedAsks.current.keys().next().value);
     setAsks((cur) => cur.filter((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId) !== key));
