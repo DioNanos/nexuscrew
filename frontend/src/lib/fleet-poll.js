@@ -34,15 +34,17 @@ const trains = new Map();
 
 // Cadenza adattiva: una finestra in secondo piano non genera traffico. Il
 // documento nascosto sospende l'interval di TUTTI i treni (il ciclo in volo
-// completa e consegna, i tick successivi no); alla riapparsa ogni treno
-// riparte con un giro immediato — chi torna deve trovare dati freschi, non
-// l'ultima fotografia di prima della sospensione.
+// completa e consegna, i tick successivi no) e un treno che NASCE nascosto
+// non lo arma affatto: resta la sola lettura iniziale una tantum. Alla
+// riapparsa ogni treno riparte con un giro immediato — chi torna deve
+// trovare dati freschi, non l'ultima fotografia di prima della sospensione.
+const documentoNascosto = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
 let visibilityHooked = false;
 function ensureVisibilityHook() {
   if (visibilityHooked || typeof document === 'undefined' || !document.addEventListener) return;
   visibilityHooked = true;
   document.addEventListener('visibilitychange', () => {
-    const nascosto = document.visibilityState === 'hidden';
+    const nascosto = documentoNascosto();
     for (const state of trains.values()) {
       if (nascosto) {
         if (state.timer !== null) { clearInterval(state.timer); state.timer = null; }
@@ -88,7 +90,9 @@ function startTrain(token, route) {
   };
   state.cycle = cycle;
   ensureVisibilityHook();
-  state.timer = setInterval(cycle, FLEET_POLL_MS);
+  // Nascere nascosti non significa non leggere nulla: la lettura iniziale
+  // una tantum resta (una richiesta, non una cadenza), l'interval no.
+  if (!documentoNascosto()) state.timer = setInterval(cycle, FLEET_POLL_MS);
   cycle();
   return state;
 }
