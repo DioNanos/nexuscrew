@@ -55,6 +55,28 @@ test('riscrittura nel millisecondo con stessa size: il nuovo valore diventa visi
   assert.equal(b, 'B'.repeat(32), 'la voce cache-ata non vive più di un secondo');
 });
 
+test('cap di 1 s con orologio mockato: identita invariata, eta scaduta, si rilegge', async (t) => {
+  const { home, keyFile } = workspace();
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  // Il caso che solo il cap decide: identita' del file INVARIATA (nessuna
+  // riscrittura: niente timing del file system) e voce oltre il secondo di
+  // eta'. L'orologio del cap e' mockato: lettura a T0, clock avanti di
+  // 1,1 s, rilettura — deve tornare al disco (due letture), perche' una
+  // voce vecchia non vale piu' nemmeno a identita' pari. Senza cap la
+  // seconda lettura servirebbe la voce (una sola lettura): rosso.
+  const originaria = fs.readFileSync;
+  const conta = t.mock.method(fs, 'readFileSync', (...args) => originaria(...args));
+  let ora = 1_000_000;
+  t.mock.method(Date, 'now', () => ora);
+  const prima = leggi(home, keyFile);
+  ora += 1100;
+  const seconda = leggi(home, keyFile);
+  assert.equal(prima, 'A'.repeat(32));
+  assert.equal(seconda, 'A'.repeat(32));
+  const letture = conta.mock.calls.filter((c) => String(c.arguments[0]) === keyFile).length;
+  assert.equal(letture, 2, 'eta oltre il cap: la voce non vale, si rilegge dal disco');
+});
+
 test('riscrittura oltre il secondo: il nuovo valore diventa visibile subito', async (t) => {
   const { home, keyFile } = workspace();
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
