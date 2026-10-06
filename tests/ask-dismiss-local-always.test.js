@@ -109,3 +109,19 @@ test('an answered ask keeps refusing the local dismissal', async t => {
   assert.equal(result.code, 409);
   assert.equal(result.body.reason, 'answered');
 });
+
+test('asymmetric grants: a reachable owner with a local reply grant still records blocked', async t => {
+  // The viewer grants the owner a reply grant in its own store, but the owner
+  // denies the reply back (owner -> viewer askReplyAccess = false). The local
+  // capability is true and the local dismissal must persist as "blocked":
+  // "pending" would make the drainer retry a remote closure the owner never
+  // authorized.
+  const runtime = await boot(t, { withReplyGrant: true });
+  const capability = await getJSON(runtime, `/api/asks-relay/capability?ownerId=${OWNER}&askId=${ID}&dismissals=1`);
+  assert.equal(capability.body.canDismissLocal, true);
+  assert.equal(capability.body.canDismissRemote, false, 'the owner denial wins for the remote dismissal');
+  const result = await dismissLocal(runtime);
+  assert.equal(result.code, 200);
+  assert.equal(result.body.ownerSync, 'blocked', 'a reachable owner means no sync is queued at all');
+  assert.equal(freshStore(runtime).getImportedDismissal(OWNER, ID).syncState, 'blocked');
+});
