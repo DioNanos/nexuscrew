@@ -71,3 +71,27 @@ test('a replayed closed generation cannot return to the exported owner view', as
     assert.equal(p.client.state().views[0].asks.length, 0);
   } finally { p.client.stop(); }
 });
+test('an older live generation cannot overwrite the current ASK', async () => {
+ const p = createProbe();
+ try {
+  await p.start();
+  await p.emit({type:'ask',askId:ask.id,question:'Current generation',session:ask.session,ts:200,askTs:200});
+  await p.emit({type:'ask',askId:ask.id,question:ask.question,session:ask.session,ts:999,askTs:100});
+  assert.equal(p.client.state().views[0].asks[0].ownerAskTs,200);
+  assert.equal(p.client.state().views[0].asks[0].question,'Current generation');
+ } finally {p.client.stop();}
+});
+test('a live ASK beyond the view cap revokes authority without silently evicting existing cards', async () => {
+ const p = createProbe(); const initial=p.snapshot();
+ initial.asks=Array.from({length:99},(_,i)=>({...ask,id:`item${i}`,question:`Question ${i}`}));
+ p.setResponse(()=>({ok:true,headers:{get:()=> 'application/json'},text:async()=>JSON.stringify(initial)}));
+ try {
+  await p.start();
+  await p.emit({type:'ask',askId:'last-item',question:'Last slot',session:ask.session,ts:100,askTs:100});
+  await p.emit({type:'ask',askId:'overflow-item',question:'Overflow',session:ask.session,ts:100,askTs:100});
+  const view=p.client.state().views[0];
+  assert.equal(view.asks.length,100);assert.equal(view.stale,true);assert.equal(view.lastError,'snapshot-asks-cap');
+  assert.ok(view.asks.some(a=>a.id==='item0'));
+  assert.ok(p.frames.some(f=>f.ask && f.ask.id==='overflow-item'),'the live ASK is still delivered to the UI');
+ } finally {p.client.stop();}
+});
