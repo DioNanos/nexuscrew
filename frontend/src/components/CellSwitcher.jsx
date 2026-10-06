@@ -5,6 +5,8 @@ import { readCellSwitcherSnapshot, writeCellSwitcherSnapshot } from '../lib/cell
 import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-view-model.js';
 import { positionKey } from '../lib/nodes-model.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
+import { nodePreferenceKey } from '../lib/node-preferences.js';
+import { useNodePreferences } from '../hooks/useNodePreferences.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { hostRouteKey } from '../lib/host-designation.js';
 import { liveHostView } from '../lib/live-host-view.js';
@@ -136,11 +138,26 @@ function rosterItemsByPosition(snapshot) {
   return positions;
 }
 
-// La rail resta una superficie compatta, ma mantiene le stesse sezioni logiche
-// della lista principale: Locale prima, poi ciascuna route nell'ordine ricevuto.
-// Entro una posizione applica esattamente nc_pins/nc_sidebar_order_v1.
-function orderRowsByPosition(rows, rosterItems, pins, orders) {
-  const positions = [...new Set(rows.map((row) => row.node || 'local'))];
+// Il drawer segue la lista normale: Locale prima, poi le route nell'ordine
+// scelto dall'utente per i nodi (nc_node_order_v1, stesso criterio dei deck);
+// entro una posizione vale il modo scelto per quel nodo (le righe fuori modo
+// restano nel drawer, in coda) e l'ordine manuale/pinned di nc_sidebar_order.
+function orderRowsByPosition(rows, rosterItems, pins, orders, views, viewFor, nodeOrder, snapshotGroups) {
+  const groupsByPosition = new Map((snapshotGroups || [])
+    .filter((group) => Array.isArray(group.route) && group.route.length)
+    .map((group) => [group.route.join('/'), group]));
+  const rankOf = (position) => {
+    if (position === 'local') return -1;
+    const group = groupsByPosition.get(position);
+    if (!group) return Number.MAX_SAFE_INTEGER;
+    const rank = nodeOrder.indexOf(nodePreferenceKey(group));
+    return rank >= 0 ? rank : Number.MAX_SAFE_INTEGER;
+  };
+  const positions = [...new Set(rows.map((row) => row.node || 'local'))]
+    .map((position, index) => ({ position, index }))
+    .sort((a, b) => rankOf(a.position) - rankOf(b.position) || a.index - b.index)
+    .map(({ position }) => position);
+  console.log('ORB_DEBUG', JSON.stringify({ positions, nodeOrder, groups: [...groupsByPosition.keys()], rows: rows.length }));
   return positions.flatMap((position) => {
     const displayRows = rows.filter((row) => (row.node || 'local') === position);
     const canonical = new Map((rosterItems.get(position) || []).map((item) => [item.key, item]));
@@ -157,8 +174,17 @@ function orderRowsByPosition(rows, rosterItems, pins, orders) {
         activity: item?.activity ?? row.activity,
       };
     });
-    return sidebarItems(sortable, pins, 'all', sidebarOrder(orders, position))
-      .map((item) => byKey.get(item.key));
+    // Lo stesso ordinamento della lista normale per questo nodo: il modo
+    // scelto (Sidebar.jsx usa groupView.filter) governa le prime righe; le
+    // righe fuori modo restano visibili in coda, nel drawer, per non nascondere
+    // celle che il filtro attive/all del drawer si aspetta.
+    const inMode = sidebarItems(sortable, pins, viewFor(position).filter, sidebarOrder(orders, position));
+    const inModeKeys = new Set(inMode.map((item) => item.key));
+    const rest = sidebarItems(
+      sortable.filter((row) => !inModeKeys.has(row.key)),
+      pins, 'all', sidebarOrder(orders, position),
+    );
+    return [...inMode, ...rest].map((item) => byKey.get(item.key));
   });
 }
 
@@ -218,11 +244,15 @@ export default function CellSwitcher({
   const rows = useMemo(() => rowsFromSnapshot(snapshot), [snapshot]);
   const rosterItems = useMemo(() => rosterItemsByPosition(snapshot), [snapshot]);
   const {
-    pins, orders, togglePin, removePin, pinError, canMoveRoster, moveRoster, stepRoster,
+    pins, orders, views, viewFor, togglePin, removePin, pinError, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
+  console.log('CELLSWITCHER_BODY', rows.length, (snapshot.nodeGroups || []).length);
+  // L'ordine dei GRUPPI è quello scelto dall'utente per i nodi nella lista
+  // normale (la stessa preferenza che segue la griglia dei deck).
+  const { order: nodeOrder } = useNodePreferences();
   const orderedRows = useMemo(
-    () => orderRowsByPosition(rows, rosterItems, pins, orders),
-    [rows, rosterItems, pins, orders],
+    () => orderRowsByPosition(rows, rosterItems, pins, orders, views, viewFor, nodeOrder, snapshot.nodeGroups),
+    [rows, rosterItems, pins, orders, views, viewFor, nodeOrder, snapshot.nodeGroups],
   );
   const visibleRows = useMemo(
     () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || (row.degraded && row.active))),
@@ -314,6 +344,8 @@ export default function CellSwitcher({
         nodeGroups,
         refreshedAt: Date.now(),
       });
+      console.log('REFRESH_DEBUG', JSON.stringify(byRoute && [...remote.map(({ group, result }) => [group.route.join('/'), result.fresh, Array.isArray(result.sessions), Array.isArray(result.cells), result.sessions && result.sessions.length])]));
+      console.log('REFRESH_DEBUG2', JSON.stringify(nodeGroups.map((g) => [g.route.join('/'), g.switcherFresh, (g.cells || []).length])));
       setSnapshot(next);
       setReady(true);
       inFlight = false;

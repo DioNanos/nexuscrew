@@ -767,3 +767,84 @@ describe('CellSwitcher side key', () => {
     expect(onToggleSide).not.toHaveBeenCalled();
   });
 });
+
+describe('quick cell list follows the normal list ordering', () => {
+  const mgmId = 'a'.repeat(32);
+  const vpsId = 'b'.repeat(32);
+  const keyOf = (route, tmux) => positionKey([route], tmux);
+  const positionLabels = () => [...document.querySelectorAll('.nc-cell-switcher-position')].map((e) => e.textContent);
+  const groupRole = (text) => (text.includes('PIXEL9PRO') ? 'local' : text.includes('VPSCloud') ? 'vps' : 'mgm');
+  const rowKeys = () => [...document.querySelectorAll('[data-roster-key]')].map((e) => e.dataset.rosterKey);
+  const mgmFeed = [
+    { ...active('Dev', 'mgm-dev'), activity: 40 },
+    { ...active('DevWorker', 'mgm-devworker'), activity: 30 },
+    { ...active('DevWorkerA', 'mgm-devworkera'), activity: 20 },
+    { ...active('DevAuditor', 'mgm-devauditor'), activity: 10 },
+  ];
+  const vpsFeed = [
+    { ...active('Trading', 'vps-trading'), activity: 40 },
+    { ...active('Dev', 'vps-dev'), activity: 30 },
+    { ...active('Personal', 'vps-personal'), activity: 20 },
+    { ...active('Research', 'vps-research'), activity: 10 },
+  ];
+  // Ordine di arrivo dal feed: MGM prima di VPSCloud, come nel Pixel.
+  const writePixelSnapshot = () => writeCellSwitcherSnapshot({
+    sessions: [{ name: 'cloud-cell-One', activity: 10, working: true }],
+    cells: [active('cell-One', 'cloud-cell-One')],
+    localFresh: true,
+    nodeGroups: [
+      { route: ['mgm'], label: 'MGM', instanceId: mgmId, sessions: [], cells: mgmFeed },
+      { route: ['vps'], label: 'VPSCloud', instanceId: vpsId, sessions: [], cells: vpsFeed },
+    ],
+  });
+
+  it('node groups follow the user node order and pinned cells keep the manual order', async () => {
+    writePixelSnapshot();
+    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${vpsId}`, `id:${mgmId}`]));
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ vps: { filter: 'pinned' } }));
+    const vpsOrder = [keyOf('vps', 'vps-personal'), keyOf('vps', 'vps-research'), keyOf('vps', 'vps-trading'), keyOf('vps', 'vps-dev')];
+    localStorage.setItem('nc_pins', JSON.stringify(vpsOrder));
+    localStorage.setItem('nc_sidebar_order_v1', JSON.stringify({ vps: vpsOrder }));
+    mocks.getRouteSessions.mockImplementation(async (_token, route) => {
+      if (route.join('/') === 'mgm') return { sessions: [
+        { name: 'mgm-dev', activity: 40 }, { name: 'mgm-devworker', activity: 30 },
+        { name: 'mgm-devworkera', activity: 20 }, { name: 'mgm-devauditor', activity: 10 },
+      ] };
+      if (route.join('/') === 'vps') return { sessions: [
+        { name: 'vps-trading', activity: 40 }, { name: 'vps-dev', activity: 30 },
+        { name: 'vps-personal', activity: 20 }, { name: 'vps-research', activity: 10 },
+      ] };
+      return { sessions: [] };
+    });
+    mocks.fleetStatus.mockImplementation(async (_token, route = []) => {
+      if (route.join('/') === 'mgm') return { available: true, cells: mgmFeed };
+      if (route.join('/') === 'vps') return { available: true, cells: vpsFeed };
+      if (!route.length) return { available: true, cells: [active('cell-One', 'cloud-cell-One')] };
+      return { available: true, cells: [] };
+    });
+
+    render(<Switcher token="token" current={{}} localNodeLabel="PIXEL9PRO" onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    // Le righe remote arrivano col primo ciclo di refresh verificato.
+    await new Promise((r) => setTimeout(r, 300));
+    await waitFor(() => expect(rowKeys().length).toBe(9), { timeout: 4000 });
+    // Node groups: the locale first, then the user order from the normal list
+    // (VPSCloud before MGM), never the arrival order of the feed.
+    expect(groupRole(positionLabels()[0])).toBe('local');
+    expect(positionLabels().map(groupRole)).toEqual(['local', 'vps', 'mgm']);
+    // VPSCloud is in "pinned" mode in the normal list: the manual pinned order
+    // (Personal, Research, Trading, Dev) governs the quick list too.
+    const vpsRows = rowKeys().filter((k) => k.startsWith('vps:'));
+    expect(vpsRows).toEqual(vpsOrder);
+    // MGM has no pins or manual order: the activity fallback keeps the rows
+    // in the received order, exactly like the live cells of the normal list.
+    expect(rowKeys().filter((k) => k.startsWith('mgm:'))).toEqual([
+      keyOf('mgm', 'mgm-dev'), keyOf('mgm', 'mgm-devworker'), keyOf('mgm', 'mgm-devworkera'), keyOf('mgm', 'mgm-devauditor'),
+    ]);
+
+    // The user reorders the nodes: the quick list follows immediately.
+    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${mgmId}`, `id:${vpsId}`]));
+    window.dispatchEvent(new Event('nexuscrew-node-preferences'));
+    await waitFor(() => expect(positionLabels().map(groupRole)).toEqual(['local', 'mgm', 'vps']));
+  });
+});
