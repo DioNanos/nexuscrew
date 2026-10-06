@@ -56,3 +56,12 @@ it('distinct owners and generations each produce one first alert in either ingre
  await mount();const f={type:'notify',ownerId:owner,askId:ask.id,ownerAskTs:100,title:'ASK alert'};
  await emit({...f,eventId:'feed-first'});await emit(f);await emit({...f,ownerId:other});await emit({...f,ownerAskTs:200});expect(m.enqueue).toHaveBeenCalledTimes(3);
 });
+it('a new live generation updates the existing card without duplicating its canonical key', async () => {
+ await mount();await emit({type:'ask',ask});await openPanel();
+ await emit({type:'ask',ask:{...ask,ownerAskTs:200,question:'New generation'}});
+ expect(screen.queryByText('New generation')).not.toBeNull();expect(screen.queryByText(ask.question)).toBeNull();expect(document.querySelectorAll('.nc-ask-card').length).toBe(1);
+});
+it('an owner resync signal refreshes the panel while its SSE stays connected', async () => {
+ m.getFeedState.mockResolvedValueOnce({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:[ask]}]});await mount();await openPanel();
+ m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:1',asks:[]}]});await emit({type:'feed-state-changed',ownerId:owner});await waitFor(()=>expect(screen.queryByText(ask.question)).toBeNull());
+});

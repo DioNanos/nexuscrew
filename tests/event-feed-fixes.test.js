@@ -553,3 +553,16 @@ test('a named snapshot rejection survives a later parse failure until healing', 
   assert.equal(client.viewFor(ownerId).lastError, null, 'a valid snapshot heals the rejection');
   assert.equal(client.viewFor(ownerId).stale, false);
 });
+
+test('a valid owner snapshot signals local view reconciliation, including an empty view, but a rejected snapshot does not', async t => {
+  const ownerId='a'.repeat(32), changes=[];
+  const valid={ownerId,cursor:'1:0',viewEpoch:1,asks:[],notifications:[],fleetState:null};
+  const response=value=>({ok:true,status:200,text:async()=>JSON.stringify(value)});
+  const {client}=stubClient(t,[{ok:true,status:200,json:async()=>({instanceId:ownerId,eventFeedV1:true})},response(valid),sse([]),response({...valid,resyncRequired:true})],{onViewChanged:(id)=>changes.push({id,state:client.state()})});
+  await client.poll();
+  assert.equal(changes.length,1,'a fresh empty snapshot must wake the connected browser');
+  assert.equal(changes[0].id,ownerId);
+  assert.equal(changes[0].state.views[0].stale,false,'signal only after applying the complete view');
+  await client.ownerSnapshotAsks(ownerId);
+  assert.equal(changes.length,1,'a rejected incomplete snapshot cannot claim authoritative refresh');
+});
