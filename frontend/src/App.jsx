@@ -442,6 +442,10 @@ export function SingleView({
   // sottoscrizione dipende solo da route e token: cambiare la cella
   // affiancata sulla stessa route riapplica la policy sullo snapshot.
   const applySideSnapshot = (snap) => {
+    // La consegna del treno puo' arrivare quando side e' gia' null (ref
+    // aggiornato dal render, subscription in chiusura): la policy non legge
+    // nulla di una cella che non c'e' piu'.
+    if (!side) return;
     const j = !snap || snap.sessionsError ? null : snap.sessionsJson;
     let sess = null; let sessLetta = false;
     if (j && Array.isArray(j.sessions)) { sessLetta = true; sess = j.sessions.find((s) => s.name === side.session); }
@@ -462,7 +466,9 @@ export function SingleView({
     const onSnapshot = (snap) => applySideRef.current(snap);
     onSnapshot(readFleetRoute(route));
     return subscribeFleetRoute(token, route, onSnapshot);
-  }, [side?.node, token]);
+    // `side` in dipendenza (non solo la sua route): a side null la callback
+    // LASCIA il treno anche quando la route non e' cambiata.
+  }, [side, side?.node, token]);
   useEffect(() => {
     if (!side) return;
     applySideRef.current(readFleetRoute(side.node ? side.node.split('/') : []));
