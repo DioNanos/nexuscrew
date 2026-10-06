@@ -248,3 +248,12 @@ test('real owner queued closure preserves generation after its peer returns',asy
  const delivery=observed.find(e=>e.body.askId===id&&e.body.closeOutcome==='dismissed'&&e.status===200);assert.ok(delivery);
  assert.equal(delivery.body.ownerAskTs,ask.ts,'the actual retried HTTP body carries the original generation');
 });
+
+test('a local owner closure carries creation generation in its real browser SSE frame',async t=>{
+ const node=await boot(t);const frames=await sse(t,node);
+ const response=await fetch(`http://127.0.0.1:${node.port}/api/asks`,{method:'POST',headers:headers(node.token),body:JSON.stringify({question:'local generation?',session:tmuxSessionForCell('reviewer')})});assert.equal(response.status,201);const {id}=await response.json();
+ const listing=await fetch(`http://127.0.0.1:${node.port}/api/asks?open=1`,{headers:headers(node.token)}).then(r=>r.json());const ask=listing.asks.find(a=>a.id===id);assert.ok(ask);
+ const closed=await fetch(`http://127.0.0.1:${node.port}/api/asks/${id}`,{method:'DELETE',headers:headers(node.token),body:'{}'});assert.equal(closed.status,200);
+ await until(()=>frames.some(f=>f.type==='ask-dismissed'&&f.id===id),'local closure reaches browser');
+ assert.equal(frames.find(f=>f.type==='ask-dismissed'&&f.id===id).ownerAskTs,ask.ts,'local closure identifies its creation generation');
+});
