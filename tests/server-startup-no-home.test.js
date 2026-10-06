@@ -40,5 +40,6 @@ test('createServer starts and serves with no explicit home, like a production in
   const port = runtime.server.address().port;
   const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, { headers: { authorization: `Bearer ${runtime.token}` } });
   assert.equal(res.status, 200);
-  assert.ok(Array.isArray(await res.json()), 'sessions must answer a real payload');
+  const body = await res.json();
+  assert.ok(body && Array.isArray(body.sessions), 'sessions must answer a real payload');
 });

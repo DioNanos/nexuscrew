@@ -2,6 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.61 — 2026-10-06
+
+- **Fix startup crash when no explicit home is configured.** The owner question scope and the Fleet runtime now derive the fleet definitions path from one canonical helper, so a missing cfg.home falls back to os.homedir() like every other server path.
+
 ## 0.9.60 — 2026-10-06
 
 - **Managed Codex cells keep their own identity on every platform.** Legacy launches isolate supported Codex and Codex-VL clients from a shared daemon and preserve the cell's MCP context. Conflicting identity overrides and unavailable authority are refused with an actionable update message; verified authority launches retain their existing behavior.
