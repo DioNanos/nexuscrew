@@ -95,3 +95,15 @@ test('a live ASK beyond the view cap revokes authority without silently evicting
   assert.ok(p.frames.some(f=>f.ask && f.ask.id==='overflow-item'),'the live ASK is still delivered to the UI');
  } finally {p.client.stop();}
 });
+test('an owner snapshot deadline revokes cached authority while its acquisition is pending', async () => {
+ const p=createProbe(); assert.equal((await p.client.ownerSnapshotAsks(ownerId)).status,'ok');
+ let release;
+ p.setResponse(()=>new Promise(resolve=>{release=()=>resolve({ok:true,headers:{get:()=> 'application/json'},text:async()=>JSON.stringify(p.snapshot())});}));
+ const keepAlive=setTimeout(()=>{},5000);
+ try {
+  const result=await p.client.ownerSnapshotAsks(ownerId);
+  assert.equal(result.status,'pending');assert.equal(result.reason,'door-timeout');
+  assert.equal(p.client.state().views[0].stale,true);
+  assert.equal(p.client.state().views[0].lastError,'snapshot-timeout');
+ } finally {clearTimeout(keepAlive);release();await new Promise(resolve=>setImmediate(resolve));}
+});
