@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { sessionsFromPanes, FLEET_PANES_FMT } = require('../lib/tmux/list.js');
 const { parsePanes } = require('../lib/tmux/supervisor-pane.js');
-const { SESSIONS_CACHE_MS, createSnapshotCache } = require('../lib/sessions-snapshot.js');
+const { TMUX_READS_WINDOW_MS, createTmuxReadWindow } = require('../lib/tmux-reads.js');
 
 // Le parti pure del coalescing: la derivazione per-sessione dalle righe
 // per-pane e la finestra di condivisione. Il contratto di rete (spawn,
@@ -60,13 +60,13 @@ test('il formato fleet snapshot non sposta i campi del supervisore: parsePanes r
   assert.ok(FLEET_PANES_FMT.startsWith('#{session_name}\t#{pane_id}\t#{pane_dead}\t'));
 });
 
-test('createSnapshotCache: finestra di coalescing del valore operativo (2 s)', () => {
-  assert.equal(SESSIONS_CACHE_MS, 2000);
+test('createTmuxReadWindow: finestra di coalescing del valore operativo (2 s)', () => {
+  assert.equal(TMUX_READS_WINDOW_MS, 2000);
 });
 
-test('createSnapshotCache: letture vicine e burst condividono un solo giro', async () => {
+test('createTmuxReadWindow: letture vicine e burst condividono un solo giro', async () => {
   let giri = 0;
-  const cache = createSnapshotCache(async () => { giri += 1; return { giri }; }, 1000);
+  const cache = createTmuxReadWindow(async () => { giri += 1; return { giri }; }, 1000);
   const a = cache.read();
   const b = cache.read();
   const c = cache.read();
@@ -76,17 +76,17 @@ test('createSnapshotCache: letture vicine e burst condividono un solo giro', asy
   assert.equal(giri, 1);
 });
 
-test('createSnapshotCache: oltre la finestra si rilegge', async () => {
+test('createTmuxReadWindow: oltre la finestra si rilegge', async () => {
   let giri = 0;
-  const cache = createSnapshotCache(async () => { giri += 1; return giri; }, 30);
+  const cache = createTmuxReadWindow(async () => { giri += 1; return giri; }, 30);
   assert.equal(await cache.read(), 1);
   await new Promise((r) => setTimeout(r, 60));
   assert.equal(await cache.read(), 2);
 });
 
-test('createSnapshotCache: un errore non si cache-a, la prossima lettura riparte', async () => {
+test('createTmuxReadWindow: un errore non si cache-a, la prossima lettura riparte', async () => {
   let tentativi = 0;
-  const cache = createSnapshotCache(async () => {
+  const cache = createTmuxReadWindow(async () => {
     tentativi += 1;
     if (tentativi === 1) throw new Error('boom');
     return tentativi;
