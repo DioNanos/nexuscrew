@@ -114,11 +114,16 @@ test('a legacy live ASK supplies the fingerprint for its following notify and cl
   const ask = { id: identity.askId, question: 'legacy?', options: ['yes'], session: 'cloud-reviewer' };
   const envelope = (eventId, frame) => ({ ownerId, eventId, hop: 1, scope: 'cell', cellId: 'reviewer', frame });
   client.reemit(envelope('live-ask', { type: 'ask', askId: ask.id, question: ask.question, options: ask.options, session: ask.session, ts: identity.ownerAskTs + 1000 }));
+  const beforeNotify = structuredClone(view.asks);
+  assert.equal(beforeNotify.length, 1, 'the live ASK enters the owner view exactly once');
+  assert.equal(beforeNotify[0].id, ask.id);
+  assert.equal(beforeNotify[0].ownerAskTs ?? null, null, 'emission time is not the ASK generation');
   client.reemit(envelope('legacy-live-alert', { type: 'notify', askId: ask.id, title: 'domanda', body: ask.question }));
   assert.equal(events[1].ownerAskFingerprint, askFingerprint(ask), 'a live legacy ASK supplies full fields before its notify, even after an empty snapshot');
   assert.equal(events[1].ownerAskTs, undefined, 'a legacy live frame emission timestamp is never a generation');
-  assert.deepEqual(view.asks, [], 'alert source bookkeeping does not change the panel snapshot contract');
+  assert.deepEqual(view.asks, beforeNotify, 'alert bookkeeping neither duplicates nor changes the live ASK');
   client.reemit(envelope('closed', { type: 'ask-closed', askId: ask.id, outcome: 'answered' }));
+  assert.deepEqual(view.asks, [], 'the owner closure removes the live ASK');
   client.reemit(envelope('late-alert', { type: 'notify', askId: ask.id, title: 'domanda', body: ask.question }));
   assert.equal(events.at(-1).ownerAskFingerprint, undefined, 'a closure discards the live alert source');
 });
