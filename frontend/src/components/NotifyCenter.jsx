@@ -73,11 +73,14 @@ function askStillDismissed(a) {
 // dal feed-state). Una chiave gia' nota resta una volta sola, e una scartata
 // non rientra.
 function mergeAsks(cur, extra) {
-  const seen = new Set(cur.map((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId)));
-  const add = (extra || []).filter((a) => a && a.id
-    && !seen.has(askKeyOf(a.id, a.ownerId, a.ownerAskId))
-    && !askStillDismissed(a));
-  return add.length ? [...cur, ...add] : cur;
+  const cards = new Map(cur.map(a => [askKeyOf(a.id, a.ownerId, a.ownerAskId), a]));
+  for (const a of extra || []) {
+    if (!a || !a.id || askStillDismissed(a)) continue;
+    const key = askKeyOf(a.id, a.ownerId, a.ownerAskId), previous = cards.get(key);
+    const ts = generationTsOf(a), oldTs = previous && generationTsOf(previous);
+    if (!previous || (Number.isSafeInteger(ts) && ts > 0 && Number.isSafeInteger(oldTs) && oldTs > 0 && ts > oldTs)) cards.set(key, a);
+  }
+  return [...cards.values()];
 }
 
 // Lo snapshot locale e' autorevole SOLO sulle proprie card: sostituisce gli ask
