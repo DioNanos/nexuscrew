@@ -411,12 +411,17 @@ export default function NotifyCenter({ token }) {
     const ids = new Set(matches.map(a => a.ownerAskId || a.id));
     return ids.size > 1 ? null : { ...frame, ownerAskId: ids.size === 1 ? [...ids][0] : frame.id };
   };
+  const closureGenerationMismatch = (key, frame) => {
+    const current = asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
+    const currentTs = current && generationTsOf(current);
+    return Number.isSafeInteger(frame?.ownerAskTs) && frame.ownerAskTs > 0 && Number.isSafeInteger(currentTs) && currentTs > 0 && frame.ownerAskTs !== currentTs;
+  };
   const removeAsk = (id, ownerId, ownerAskId, out) => {
     const key = askKeyOf(id, ownerId, ownerAskId);
     if (out?.scope === 'local' && ['pending', 'blocked'].includes(out.ownerSync)) setDismissalNotice(out.ownerSync);
     const current = asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
     const currentTs = current && generationTsOf(current);
-    if (Number.isSafeInteger(out?.ownerAskTs) && out.ownerAskTs > 0 && Number.isSafeInteger(currentTs) && currentTs > 0 && out.ownerAskTs !== currentTs) return;
+    if (closureGenerationMismatch(key, out)) return;
     closedAsks.current.set(key, { at: Date.now(), ts: current ? currentTs : out?.ownerAskTs,
       fingerprint: current && current.question !== undefined ? JSON.stringify([current.question, current.options || [], current.session]) : null });
     liveAsks.current.delete(key);
@@ -450,6 +455,7 @@ export default function NotifyCenter({ token }) {
         const identity = closureIdentity(frame);
         if (!identity) return;
         const key = askKeyOf(identity.id, identity.ownerId, identity.ownerAskId);
+        if (closureGenerationMismatch(key, frame)) return;
         const localAsk = frame.scope === 'local' && asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
         noteAskDismissed(key, frame.scope === 'local' ? localAsk || { ...frame.askGeneration, ownerAskTs: frame.ownerAskTs } : null);
         removeAsk(identity.id, identity.ownerId, identity.ownerAskId, frame);
