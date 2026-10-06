@@ -35,3 +35,24 @@ it('reconnect applies an authoritative empty owner snapshot without removing ano
  m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:"1:0",asks:[]},{ownerId:other,stale:false,viewEpoch:1,cursor:"1:0",asks:[{...ask,ownerId:other,question:'Other question'}]}]});
  await act(async()=>m.open());await waitFor(()=>expect(screen.queryByText(ask.question)).toBeNull());expect(screen.getByText('Other question')).toBeTruthy();
 });
+it('a local ASK arriving after a read started survives its older empty result', async () => {
+ const pending=deferred();m.getAsks.mockReturnValue(pending.promise);await mount();
+ const local={...ask,ownerId:undefined,imported:false,ts:100};await emit({type:'ask',ask:local});await openPanel();
+ await act(async()=>pending.resolve({asks:[]}));expect(screen.queryByText(local.question)).not.toBeNull();
+});
+it('an imported ASK arriving after a feed read started survives its older empty result', async () => {
+ const pending=deferred();m.getFeedState.mockReturnValue(pending.promise);await mount();await emit({type:'ask',ask});await openPanel();
+ await act(async()=>pending.resolve({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:[]}]}));expect(screen.queryByText(ask.question)).not.toBeNull();
+});
+it('a closure for an earlier generation cannot remove the current reused ASK ID', async () => {
+ await mount();await emit({type:'ask',ask:{...ask,ownerAskTs:200}});await openPanel();
+ await emit({type:'ask-answered',id:ask.id,ownerId:owner,ownerAskTs:100});expect(screen.queryByText(ask.question)).not.toBeNull();
+});
+for(const bad of [{stale:true},{lastError:'unreachable'},{resyncRequired:true},{error:true}]) it(`a non-authoritative owner snapshot preserves cards: ${JSON.stringify(bad)}`,async()=>{
+ await mount();await emit({type:'ask',ask});await openPanel();
+ m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:[],...bad}]});await act(async()=>m.open());expect(screen.queryByText(ask.question)).not.toBeNull();
+});
+it('distinct owners and generations each produce one first alert in either ingress order',async()=>{
+ await mount();const f={type:'notify',ownerId:owner,askId:ask.id,ownerAskTs:100,title:'ASK alert'};
+ await emit({...f,eventId:'feed-first'});await emit(f);await emit({...f,ownerId:other});await emit({...f,ownerAskTs:200});expect(m.enqueue).toHaveBeenCalledTimes(3);
+});
