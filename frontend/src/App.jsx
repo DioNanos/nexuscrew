@@ -21,7 +21,7 @@ import { leggiFilesTasto, scriviFilesTasto, leggiTastieraTasto, leggiPannelloTas
 import { readFontSize, writeFontSize } from './lib/terminal-fontsize.js';
 import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import { createPollGuard } from './lib/poll-guard.js';
-import { subscribeFleetRoute, readFleetRoute } from './lib/fleet-poll.js';
+import { subscribeFleetRoute, readFleetRoute, refreshFleetRoute } from './lib/fleet-poll.js';
 import VlSessionView from './components/VlSessionView.jsx';
 import CellPanel from './components/CellPanel.jsx';
 import {
@@ -1284,18 +1284,18 @@ export default function App() {
     try { await killSession(token, name, route); } catch (_) { return; }
     const key = route.length ? `${route.join('/')}:${name}` : name;
     setLayout((l) => removeTile(l, key));
-    poll();
+    refreshFleetRoute(route, token);
   };
   const onVisibility = async (name, technical, route = []) => {
     try { await setSessionTechnical(token, name, technical, route); } catch (_) { return; }
-    poll();
+    refreshFleetRoute(route, token);
   };
   // Il boot e' una preferenza di riavvio indipendente dal lifecycle corrente:
   // questo toggle non accende ne' spegne la cella. PowerSheet continua a poter
   // aggiornare la stessa proprieta' durante un'azione on/off.
   const onBoot = async (cell, enabled, route = []) => {
     await fleetBoot(token, { cell, enabled: !!enabled }, route);
-    poll();
+    refreshFleetRoute(route, token);
   };
   const onFleetConfirm = async (payload) => {
     if (!powerCell) return;
@@ -1314,7 +1314,7 @@ export default function App() {
         : (payload.boot ? false : !!powerCell.boot);
       setBootSettlement({ id: ++bootSettlementSeq.current, cell, route, enabled });
     }
-    poll();
+    refreshFleetRoute(route, token);
   };
   const onBootSettlementApplied = useCallback((id) => {
     setBootSettlement((current) => (current?.id === id ? null : current));
