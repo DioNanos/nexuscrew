@@ -118,3 +118,13 @@ test('a fan-out received during a pending owner read supersedes it without fabri
  assert.notEqual(result.status,'ok');assert.equal(p.client.state().views[0].asks.length,1);
  assert.equal(p.client.state().views[0].asks[0].id,ask.id);
 });
+test('a decision-only snapshot started before fan-out cannot authorize alias closure', async () => {
+ const p=createProbe();assert.equal((await p.client.ownerSnapshotAsks(ownerId)).status,'ok');
+ let release,started;const waiting=new Promise(resolve=>{started=resolve;});const before=p.snapshot();before.notifications="unusable-view";
+ p.setResponse(()=>{started();return new Promise(resolve=>{release=()=>resolve({ok:true,headers:{get:()=> 'application/json'},text:async()=>JSON.stringify(before)});});});
+ const pending=p.client.ownerSnapshotAsks(ownerId);await waiting;
+ p.client.rememberLiveAsk(ownerId,{...ask,id:'local-alias',ownerAskId:ask.id,imported:true});
+ release();const result=await pending;
+ assert.notEqual(result.status,'ok','a valid decision schema cannot make a superseded read authoritative');
+ assert.equal(p.client.state().views[0].asks.length,1);
+});
