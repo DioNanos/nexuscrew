@@ -9,7 +9,24 @@ import { act, render } from '@testing-library/react';
 // quando side diventava null — niente unsubscribe, e la consegna del tick
 // successivo chiamava la policy con side nullo: rifiuzione non gestita ad
 // App.jsx (2 a giro di suite completa, misurate in verifica).
-const mocks = vi.hoisted(() => ({ rifiuti: [] }));
+const mocks = vi.hoisted(() => ({ rifiuti: [], sottoscrizioni: [] }));
+
+// Spia delegante sul treno: conta le sottoscrizioni e registra quando la
+// loro chiusura viene invocata. Serve a vedere cio' che il crash rendeva
+// invisibile: la sottoscrizione della side deve CHIUDERSI quando la cella
+// sparisce, non solo smettere di rompersi.
+vi.mock('../lib/fleet-poll.js', async (importOriginal) => {
+  const reale = await importOriginal();
+  return {
+    ...reale,
+    subscribeFleetRoute: (token, route, cb) => {
+      const chiudiDavvero = reale.subscribeFleetRoute(token, route, cb);
+      const record = { route: JSON.stringify(route || []), chiusa: false };
+      mocks.sottoscrizioni.push(record);
+      return () => { record.chiusa = true; chiudiDavvero(); };
+    },
+  };
+});
 
 vi.mock('../lib/api.js', () => ({
   apiFetch: vi.fn(async () => ({ json: async () => ({ sessions: [] }) })),
@@ -49,6 +66,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   mocks.rifiuti = [];
+  mocks.sottoscrizioni = [];
   localStorage.clear();
 });
 
@@ -73,5 +91,9 @@ describe('side rimossa: la sottoscrizione va via con lei', () => {
       vi.useRealTimers();
     }
     expect(mocks.rifiuti).toHaveLength(0);
+    // Due sottoscrizioni aperte al mount (principale + side, stessa route):
+    // quando la side sparisce, la SUA chiusura deve essere invocata.
+    expect(mocks.sottoscrizioni.length).toBe(2);
+    expect(mocks.sottoscrizioni[1].chiusa).toBe(true);
   });
 });
