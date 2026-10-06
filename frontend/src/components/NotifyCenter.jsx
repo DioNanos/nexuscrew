@@ -520,7 +520,12 @@ export default function NotifyCenter({ token }) {
         }
       }
       setViewHealth(health);
-      const authoritative = new Set(((j && j.views) || []).filter(v => v.stale === false && Number.isSafeInteger(v.viewEpoch) && typeof v.cursor === 'string' && !v.lastError && !v.error && v.resyncRequired !== true && Array.isArray(v.asks) && v.asks.length < 100).map(v => v.ownerId));
+      const authoritative = new Set(((j && j.views) || []).filter(v => {
+        const cursor = typeof v.cursor === 'string' && /^([1-9]\d*):(\d+)$/.exec(v.cursor);
+        return v.stale === false && Number.isSafeInteger(v.viewEpoch) && v.viewEpoch > 0
+          && cursor && Number(cursor[1]) === v.viewEpoch && Number.isSafeInteger(Number(cursor[2]))
+          && !v.lastError && !v.error && v.resyncRequired !== true && Array.isArray(v.asks) && v.asks.length < 100;
+      }).map(v => v.ownerId));
       for (const ownerId of authoritative) {
         ownerSnapshots.current.delete(ownerId); ownerSnapshots.current.set(ownerId, ++liveRevision.current);
         if (ownerSnapshots.current.size > 4096) ownerSnapshots.current.delete(ownerSnapshots.current.keys().next().value);
