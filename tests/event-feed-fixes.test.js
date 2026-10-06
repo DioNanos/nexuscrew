@@ -587,3 +587,19 @@ test('feed closure rejects a known older generation before store callback, view 
   client.reemit({ ownerId, eventId: 'legacy', hop: 1, frame: { type: 'ask-closed', askId: 'abcdef02', outcome: 'dismissed' } });
   assert.equal(view.asks.length, 0, 'legacy unknown closure still removes its alias');
 });
+
+test('a known closure tombstone rejects its old generation but permits a reused ID in a fresh snapshot', async t => {
+  const ownerId = 'a'.repeat(32);
+  const snapshot = asks => ({ ok: true, status: 200, text: async () => JSON.stringify({ ownerId, cursor: '1:2', viewEpoch: 1, asks, notifications: [] }) });
+  const { client } = stubClient(t, [snapshot([{id:'abcdef01',ts:100,question:'old',session:'reviewer'}]), snapshot([{id:'abcdef01',ts:200,question:'new',session:'reviewer'}])]);
+  const view = client.viewFor(ownerId); view.viewEpoch=1; view.stale=false; view.asks=[{id:'abcdef01',ts:100,ownerId}];
+  client.reemit({ownerId,eventId:'closed',hop:1,frame:{type:'ask-closed',askId:'abcdef01',askTs:100,outcome:'dismissed'}});
+  await client.ownerSnapshotAsks(ownerId); assert.equal(view.asks.length,0,'old snapshot cannot revive closed generation');
+  await client.ownerSnapshotAsks(ownerId); assert.equal(view.asks.length,1,'new generation must survive old generation tombstone');
+  assert.equal(view.asks[0].ts,200);
+});
+test('an imported store generation rejection prevents feed removal even when its view has no ASK', t => {
+ const {client,hub}=stubClient(t,[],{onAskClosed:()=>({ok:true,changed:false,generationMismatch:true})});
+ client.reemit({ownerId:'a'.repeat(32),eventId:'late',hop:1,frame:{type:'ask-closed',askId:'abcdef01',askTs:100,outcome:'answered'}});
+ assert.equal(hub.length,0,'store guard must propagate to browser delivery');
+});

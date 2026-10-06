@@ -80,3 +80,10 @@ it('an owner snapshot at the ASK cap is a floor and cannot remove a known absent
  await mount();await emit({type:'ask',ask});await openPanel();
  const floor=Array.from({length:100},(_,i)=>({...ask,id:'id-'+i,question:'Floor '+i}));m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:floor}]});await act(async()=>m.open());expect(screen.getByText(ask.question)).toBeTruthy();
 });
+
+it('a late imported alias read cannot resurrect a card after a newer complete owner snapshot',async()=>{
+ const pending=deferred();m.getAsks.mockReturnValue(pending.promise);
+ m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:2',asks:[]}]});
+ await mount();await act(async()=>pending.resolve({asks:[{...ask,id:'local-alias',ownerAskId:ask.id,originNode:owner}]}));
+ expect(screen.queryByTitle((_t,e)=>e.className==='nc-ask-badge')).toBeNull();
+});
