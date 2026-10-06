@@ -87,3 +87,12 @@ it('a late imported alias read cannot resurrect a card after a newer complete ow
  await mount();await act(async()=>pending.resolve({asks:[{...ask,id:'local-alias',ownerAskId:ask.id,originNode:owner}]}));
  expect(screen.queryByTitle((_t,e)=>e.className==='nc-ask-badge')).toBeNull();
 });
+
+it('an unknown-generation closure keeps identical historical content hidden but permits different authoritative content',async()=>{
+ const historic={...ask,ownerAskTs:null};await mount();await emit({type:'ask',ask:historic});await openPanel();
+ await emit({type:'ask-answered',id:historic.id,ownerId:owner});
+ m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:2',asks:[{...historic,ownerAskTs:100}]}]});
+ await emit({type:'feed-state-changed',ownerId:owner});expect(screen.queryByText(ask.question)).toBeNull();
+ m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:3',asks:[{...historic,ownerAskTs:200,question:'Different canonical content'}]}]});
+ await emit({type:'feed-state-changed',ownerId:owner});await waitFor(()=>expect(screen.queryByText('Different canonical content')).not.toBeNull());
+});
