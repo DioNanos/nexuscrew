@@ -130,3 +130,14 @@ for(const session of ['cloud-reviewer','mgm-reviewer']) test(`owner feed emits a
  const {owner,reader}=await fixture(t,{cells:[{id:'reviewer',engine:'fixture',cwd:'/tmp',boot:false,tmuxSession:session}]});const id=await askOn(owner,session);await (await routed(reader,'event-feed/snapshot')).json();const {frames,stop}=await ownerStream(t,owner,reader);
  try{const r=await fetch(`http://127.0.0.1:${owner.port}/api/asks/${id}`,{method:'DELETE',headers:headers(owner.token)});assert.equal(r.status,200);await r.json();await until(()=>frames.some(f=>f.frame?.type==='ask-closed'&&f.frame.askId===id),'owner closure must retain scope even when the cell is inactive');}finally{await stop();}
 });
+
+test('selected grants continue to filter resolved cells on capability and snapshot',async t=>{
+ const cells=[{id:'reviewer',engine:'fixture',cwd:'/tmp',boot:false,tmuxSession:'mgm-reviewer'},{id:'other',engine:'fixture',cwd:'/tmp',boot:false,tmuxSession:'cloud-other'}];
+ const {owner,reader}=await fixture(t,{cells});const store=nodes.loadStoreStrict(owner.nodesPath);const grants=access.grantsOf(store.nodes.find(n=>n.name==='reader')).grants;nodes.atomicWriteStore(owner.nodesPath,nodes.setPeerAccessGrants(store,'reader',{...grants,liveHostAccess:false,cellVisibility:'selected',cells:['reviewer']}));
+ const hidden=await askOn(owner,'cloud-other');const visible=await askOn(owner,'mgm-reviewer');
+ const cap=await routed(reader,`event-feed/asks/${hidden}/capability`);assert.equal((await cap.json()).status,'denied');const snap=await routed(reader,'event-feed/snapshot');assert.equal(snap.status,200);const asks=(await snap.json()).asks;assert.equal(asks.some(a=>a.id===hidden),false);assert.equal(asks.some(a=>a.id===visible),true);
+});
+test('readonly owner still denies reply after its exact local cell resolves',async t=>{
+ const {owner,reader}=await fixture(t);const id=await askOn(owner,'mgm-reviewer');owner.cfg.readonlyDefault=true;
+ const cap=await routed(reader,`event-feed/asks/${id}/capability`);assert.equal(cap.status,200);const body=await cap.json();assert.equal(body.status,'denied');assert.equal(body.canReply,false);
+});
