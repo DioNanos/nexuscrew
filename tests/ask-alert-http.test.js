@@ -257,3 +257,18 @@ test('a local owner closure carries creation generation in its real browser SSE 
  await until(()=>frames.some(f=>f.type==='ask-dismissed'&&f.id===id),'local closure reaches browser');
  assert.equal(frames.find(f=>f.type==='ask-dismissed'&&f.id===id).ownerAskTs,ask.ts,'local closure identifies its creation generation');
 });
+test('a real fan-out ASK is retained in the exported owner view before any new owner snapshot', async t => {
+ const origin=await boot(t,{eventFeedClientPollMs:50}), remote=await boot(t,{eventFeedClientPollMs:50});
+ pair(origin,remote,'remote');pair(remote,origin,'origin');
+ nodes.atomicWriteStore(origin.nodesPath,nodes.updateNode(nodes.loadStoreStrict(origin.nodesPath),'remote',{direction:'inbound',transport:'inbound'}));
+ nodes.atomicWriteStore(remote.nodesPath,nodes.updateNode(nodes.loadStoreStrict(remote.nodesPath),'origin',{eventsReceive:true}));
+ const read=async()=>fetch(`http://127.0.0.1:${remote.port}/api/feed-state`,{headers:headers(remote.token)}).then(r=>r.json());
+ await until(async()=> (await read()).views.some(v=>v.ownerId===origin.id && !v.stale),'initial owner snapshot is healthy');
+ const frames=await sse(t,remote);
+ const response=await fetch(`http://127.0.0.1:${origin.port}/api/route/remote/_/asks`,{method:'POST',headers:headers(origin.token),body:JSON.stringify({target:remote.id,originNode:origin.id,originCell:tmuxSessionForCell('reviewer'),ownerNode:origin.id,askId:'abcdef01',ownerAskTs:100,question:'Fan-out survives cached read',session:tmuxSessionForCell('reviewer')})});
+ assert.equal(response.status,200);
+ await until(()=>frames.some(f=>f.type==='ask'),'authenticated fan-out reaches browser SSE');
+ const view=(await read()).views.find(v=>v.ownerId===origin.id);
+ assert.ok(view.asks.some(a=>(a.ownerAskId||a.id)==='abcdef01' && a.ownerAskTs===100),'cached owner view must retain a received live ASK');
+ assert.equal(view.stale,false);assert.equal(view.cursor,'1:0','fan-out does not invent an owner feed cursor');
+});
