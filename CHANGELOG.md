@@ -2,6 +2,20 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.61 — 2026-10-06
+
+- **Fix startup crash when no explicit home is configured.** The owner question scope and the Fleet runtime now derive the fleet definitions path from one canonical helper, so a missing cfg.home falls back to os.homedir() like every other server path.
+- **Files panel close button now uses the shared close style.** The outbox/inbox list close button matches the asks panel: shared class, 16px icon and a native `type=button`, with the accessibility attributes and the 40px touch target preserved and pinned by a test.
+
+## 0.9.60 — 2026-10-06
+
+- **Managed Codex cells keep their own identity on every platform.** Legacy launches isolate supported Codex and Codex-VL clients from a shared daemon and preserve the cell's MCP context. Conflicting identity overrides and unavailable authority are refused with an actionable update message; verified authority launches retain their existing behavior.
+- **New questions remain distinct and alert once per generation.** Push notifications carry an owner-qualified question tag, and fan-out and event-feed deliveries share bounded alert admission. Replayed questions do not repeat the alert, while delivery responses retain compatibility and report channel outcomes.
+- **Question cards follow authoritative owner views.** Correlated notifications do not add a second card or voice alert. Reconnects refresh the panel, stale reads preserve newer live questions, and generation-qualified closures cannot remove a replacement question.
+- **Locally defined sessions retain question permissions regardless of their prefix or activity.** Capability checks, event feeds and snapshots use an exact, unique Fleet session mapping before the legacy codec. Unavailable or invalid enabled Fleet definitions fail closed, and snapshots return an error instead of certifying an empty view; disabled Fleet retains legacy resolution.
+- **Fleet polling does less repeated work.** Visible panels share polling requests, hidden views suspend their polling, session reads coalesce within a bounded window, and validated definition and credential reads reuse bounded caches while preserving invalidation checks.
+- **Frontend tests wait for asynchronous controls to appear.** Question relay and cell switching checks retain their original assertions without racing capability reads.
+
 ## 0.9.59 — 2026-10-05
 
 - Delayed question events retain the original question generation separately from their emission time. Local dismissal follows the current visible generation, refuses conflicting views, and preserves historical aliases. Imported closure events identify the owner question while mixed-node clients can still resolve older alias-only closures.

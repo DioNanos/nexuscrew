@@ -40,12 +40,14 @@ for (const unsupported of [{ flag: false }, { version: 'unknown' }]) test(`an un
   assert.equal(out.ok, false);
   assert.match(out.reason, /daemon|embedded|identity/i);
 });
-test('native Codex outside Termux preserves its launch path', t => {
+test('native Codex outside Termux uses isolated launch', t => {
   const out = fixture(t, { platform: 'linux' }).resolve(); assert.equal(out.ok, true);
-  assert.equal(out.engine.args.includes('--no-daemon'), false);
+  assert.equal(out.engine.args.includes('--no-daemon'), true);
 });
 test('codex-vl keeps its existing authority contract on Termux', t => {
-  const out = fixture(t, { client: 'codex-vl' }).resolve(); assert.equal(out.ok, true, out.reason);
+  const f = fixture(t, { client: 'codex-vl' });
+  f.cfg.fleetIdentityMode = 'authority'; f.cfg.identityAuthority = { fixture: true };
+  const out = f.resolve(); assert.equal(out.ok, true, out.reason);
   assert.equal(out.engine.args.includes('--no-daemon'), false);
 });
 async function callback(t, { mismatch = false, missing = false } = {}) {

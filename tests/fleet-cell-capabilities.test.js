@@ -389,7 +389,7 @@ function mondoCodex(t, { toml = TOML_UTENTE } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-cellcap-cdx-'));
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const bin = path.join(home, '.local', 'bin', 'codex');
-  fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(bin, '#!/bin/sh\ncase "$1" in --version) echo "codex-cli 0.160.0" ;; --help) echo "Usage: codex --no-daemon" ;; esac\n', { mode: 0o755 });
   fs.mkdirSync(path.join(home, '.codex'));
   fs.writeFileSync(path.join(home, '.codex', 'config.toml'), toml, { mode: 0o600 });
   const cwd = path.join(home, 'lavoro');

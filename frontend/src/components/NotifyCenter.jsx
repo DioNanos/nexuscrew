@@ -73,11 +73,14 @@ function askStillDismissed(a) {
 // dal feed-state). Una chiave gia' nota resta una volta sola, e una scartata
 // non rientra.
 function mergeAsks(cur, extra) {
-  const seen = new Set(cur.map((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId)));
-  const add = (extra || []).filter((a) => a && a.id
-    && !seen.has(askKeyOf(a.id, a.ownerId, a.ownerAskId))
-    && !askStillDismissed(a));
-  return add.length ? [...cur, ...add] : cur;
+  const cards = new Map(cur.map(a => [askKeyOf(a.id, a.ownerId, a.ownerAskId), a]));
+  for (const a of extra || []) {
+    if (!a || !a.id || askStillDismissed(a)) continue;
+    const key = askKeyOf(a.id, a.ownerId, a.ownerAskId), previous = cards.get(key);
+    const ts = generationTsOf(a), oldTs = previous && generationTsOf(previous);
+    if (!previous || (Number.isSafeInteger(ts) && ts > 0 && Number.isSafeInteger(oldTs) && oldTs > 0 && ts > oldTs)) cards.set(key, a);
+  }
+  return [...cards.values()];
 }
 
 // Lo snapshot locale e' autorevole SOLO sulle proprie card: sostituisce gli ask
@@ -278,6 +281,20 @@ export default function NotifyCenter({ token }) {
   const [replyCapabilities, setReplyCapabilities] = useState({});
   const capabilityRequests = useRef(new Map());
   const capabilityGeneration = useRef(0);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const closedAsks = useRef(new Map());
+  const liveRevision = useRef(0);
+  const liveAsks = useRef(new Map());
+  const ownerSnapshots = useRef(new Map());
+  const alertAdmissions = useRef(new Map());
+  const filterClosed = list => (list || []).filter(a => {
+    const closed = closedAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId));
+    if (!closed) return true;
+    if (Date.now() - closed.at > DISMISSED_TTL_MS) { closedAsks.current.delete(askKeyOf(a.id, a.ownerId, a.ownerAskId)); return true; }
+    const ts = generationTsOf(a);
+    if (Number.isSafeInteger(ts) && ts > 0 && Number.isSafeInteger(closed.ts) && closed.ts > 0) return ts !== closed.ts;
+    return closed.fingerprint !== null && closed.fingerprint !== undefined && closed.fingerprint !== JSON.stringify([a.question, a.options || [], a.session]);
+  });
   const asksRef = useRef(asks);
   asksRef.current = asks;
   const refreshCapabilities = useCallback((force = false) => {
@@ -338,6 +355,17 @@ export default function NotifyCenter({ token }) {
   }, []);
 
   const pushToast = useCallback((frame) => {
+    if (frame.askId && frame.ownerId) {
+      const generation = Number.isSafeInteger(frame.ownerAskTs) && frame.ownerAskTs > 0 ? frame.ownerAskTs : frame.ownerAskFingerprint;
+      if (generation) {
+        const identity = JSON.stringify([frame.ownerId, frame.ownerAskId || frame.askId, generation]);
+        const now = Date.now();
+        for (const [k, at] of alertAdmissions.current) if (now - at > 24 * 60 * 60 * 1000) alertAdmissions.current.delete(k);
+        if (alertAdmissions.current.has(identity)) return;
+        alertAdmissions.current.set(identity, now);
+        if (alertAdmissions.current.size > 4096) alertAdmissions.current.delete(alertAdmissions.current.keys().next().value);
+      }
+    }
     const key = `t${seq.current += 1}`;
     setToasts((cur) => [...cur.slice(-3), { ...frame, key }]); // max 4 a schermo
     setTimeout(() => dropToast(key), frame.urgency === 'high' ? TOAST_HIGH_MS : TOAST_MS);
@@ -383,9 +411,22 @@ export default function NotifyCenter({ token }) {
     const ids = new Set(matches.map(a => a.ownerAskId || a.id));
     return ids.size > 1 ? null : { ...frame, ownerAskId: ids.size === 1 ? [...ids][0] : frame.id };
   };
+  const closureGenerationMismatch = (key, frame) => {
+    const current = asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
+    const currentTs = current && generationTsOf(current);
+    return Number.isSafeInteger(frame?.ownerAskTs) && frame.ownerAskTs > 0 && Number.isSafeInteger(currentTs) && currentTs > 0 && frame.ownerAskTs !== currentTs;
+  };
   const removeAsk = (id, ownerId, ownerAskId, out) => {
     const key = askKeyOf(id, ownerId, ownerAskId);
     if (out?.scope === 'local' && ['pending', 'blocked'].includes(out.ownerSync)) setDismissalNotice(out.ownerSync);
+    const current = asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
+    const currentTs = current && generationTsOf(current);
+    if (closureGenerationMismatch(key, out)) return;
+    const content = current || out?.askGeneration;
+    closedAsks.current.set(key, { at: Date.now(), ts: current ? currentTs : out?.ownerAskTs,
+      fingerprint: content && content.question !== undefined ? JSON.stringify([content.question, content.options || [], content.session]) : null });
+    liveAsks.current.delete(key);
+    if (closedAsks.current.size > 4096) closedAsks.current.delete(closedAsks.current.keys().next().value);
     setAsks((cur) => cur.filter((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId) !== key));
   };
 
@@ -393,36 +434,43 @@ export default function NotifyCenter({ token }) {
   // usabile anche senza il canale (gli ask ricompaiono al prossimo mount).
   useEffect(() => {
     if (!token) return undefined;
-    let cancelled = false;
-    // Lo snapshot locale NON sostituisce tutto lo stato: compatta con le ask
-    // importate gia' presenti (l'ordine delle due risposte non e' garantito).
-    getAsks(token).then((j) => { if (!cancelled) setAsks((cur) => applyLocalSnapshot(cur, j.asks)); }).catch(() => {});
     const close = connectEvents(token, (frame) => {
+      if (frame.type === 'feed-state-changed') { setRefreshVersion(v => v + 1); return; }
       if (frame.type === 'notify' && frame.ownerId && frame.eventId) {
         // Importato live: entra nella lista consultabile (dedup con l'arretrato
         // per (ownerId,eventId)); nessun toast/speaker aggiuntivo per la card.
         const card = toRemoteNotice(frame, frame.ownerId);
-        if (!card) return;
-        setRemoteNotices((cur) => boundedByTs(mergeRemoteNotices(cur, [card], null)));
+        if (card) setRemoteNotices((cur) => boundedByTs(mergeRemoteNotices(cur, [card], null)));
       }
       if (frame.type === 'notify') pushToast(frame);
       else if (frame.type === 'ask' && frame.ask && frame.ask.id) {
         // Two owners can legitimately use the same ask id: identity is the pair.
-        setAsks((cur) => mergeAsks(cur, [frame.ask]));
+        const liveKey = askKeyOf(frame.ask.id, frame.ask.ownerId, frame.ask.ownerAskId);
+        liveAsks.current.set(liveKey, ++liveRevision.current);
+        if (liveAsks.current.size > 4096) liveAsks.current.delete(liveAsks.current.keys().next().value);
+        setAsks((cur) => mergeAsks(cur, filterClosed([frame.ask])));
       } else if (frame.type === 'ask-answered' && frame.id) {
         const identity = closureIdentity(frame);
-        if (identity) removeAsk(identity.id, identity.ownerId, identity.ownerAskId);
+        if (identity) removeAsk(identity.id, identity.ownerId, identity.ownerAskId, frame);
       } else if (frame.type === 'ask-dismissed' && (frame.id || frame.ownerAskId)) {
         const identity = closureIdentity(frame);
         if (!identity) return;
         const key = askKeyOf(identity.id, identity.ownerId, identity.ownerAskId);
+        if (closureGenerationMismatch(key, frame)) return;
         const localAsk = frame.scope === 'local' && asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
         noteAskDismissed(key, frame.scope === 'local' ? localAsk || { ...frame.askGeneration, ownerAskTs: frame.ownerAskTs } : null);
         removeAsk(identity.id, identity.ownerId, identity.ownerAskId, frame);
       }
-    }, () => refreshCapabilities(true));
-    return () => { cancelled = true; close(); };
+    }, () => { refreshCapabilities(true); setRefreshVersion(v => v + 1); });
+    return () => { close(); };
   }, [token, pushToast, refreshCapabilities]);
+
+  useEffect(() => {
+    let alive = true;
+    const started = liveRevision.current;
+    if (token) getAsks(token).then(j => { if (alive) setAsks(cur => mergeAsks(applyLocalSnapshot(cur, filterClosed((j.asks || []).filter(a => !a.ownerId || (ownerSnapshots.current.get(a.ownerId) || 0) <= started))), filterClosed(cur.filter(a => (liveAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId)) || 0) > started)))); }).catch(() => {});
+    return () => { alive = false; };
+  }, [token, refreshVersion]);
 
   // Riconciliazione dopo refresh: gli esiti incerti noti al relay locale
   // ricostruiscono lo stato «verifica» delle card importate, senza reinvii.
@@ -450,6 +498,7 @@ export default function NotifyCenter({ token }) {
   const [viewHealth, setViewHealth] = useState({});
   useEffect(() => {
     let alive = true;
+    const started = liveRevision.current;
     getFeedState(token).then((j) => {
       if (!alive) return;
       const health = {};
@@ -472,7 +521,17 @@ export default function NotifyCenter({ token }) {
         }
       }
       setViewHealth(health);
-      if (imported.length) setAsks((cur) => mergeAsks(cur, imported));
+      const authoritative = new Set(((j && j.views) || []).filter(v => {
+        const cursor = typeof v.cursor === 'string' && /^([1-9]\d*):(\d+)$/.exec(v.cursor);
+        return v.stale === false && Number.isSafeInteger(v.viewEpoch) && v.viewEpoch > 0
+          && cursor && Number(cursor[1]) === v.viewEpoch && Number.isSafeInteger(Number(cursor[2]))
+          && !v.lastError && !v.error && v.resyncRequired !== true && Array.isArray(v.asks) && v.asks.length < 100;
+      }).map(v => v.ownerId));
+      for (const ownerId of authoritative) {
+        ownerSnapshots.current.delete(ownerId); ownerSnapshots.current.set(ownerId, ++liveRevision.current);
+        if (ownerSnapshots.current.size > 4096) ownerSnapshots.current.delete(ownerSnapshots.current.keys().next().value);
+      }
+      setAsks(cur => mergeAsks(cur.filter(a => !authoritative.has(a.ownerId) || (liveAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId)) || 0) > started), filterClosed(imported)));
       // Rebuild dall'arretrato: le card di una view revocata cadono qui; le
       // card arrivate via SSE di un owner ancora attivo restano (dedup per key).
       setRemoteNotices((cur) => {
@@ -483,7 +542,7 @@ export default function NotifyCenter({ token }) {
       });
     }).catch(() => {});
     return () => { alive = false; };
-  }, [token]);
+  }, [token, refreshVersion]);
 
   return (
     <>

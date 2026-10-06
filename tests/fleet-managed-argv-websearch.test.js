@@ -17,7 +17,7 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ncargvws-'));
 function withBinary(home, client) {
   const bin = path.join(home, '.local', 'bin', client);
   fs.mkdirSync(path.dirname(bin), { recursive: true });
-  fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(bin, '#!/bin/sh\ncase "$1" in --version) echo "codex-cli 0.160.0" ;; --help) echo "Usage: codex --no-daemon" ;; esac\n', { mode: 0o755 });
   return home;
 }
 

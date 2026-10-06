@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  apiFetch, fleetStatus, fleetBoot, killSession, nodeAction, renameNodeLabel, setSessionTechnical,
+  apiFetch, fleetBoot, killSession, nodeAction, renameNodeLabel, setSessionTechnical,
 } from '../lib/api.js';
+import { subscribeFleetRoute, refreshFleetRoute } from '../lib/fleet-poll.js';
 import Icon from './Icon.jsx';
 import CellPeek from './CellPeek.jsx';
 import { panelPortForRoute } from '../lib/panel-port.js';
@@ -121,53 +122,57 @@ export default function SessionList({
     });
   }, [cells, nodeGroups]);
 
-  async function refresh() {
-    try {
-      const r = await apiFetch('/api/sessions', token);
-      const j = await r.json();
-      if (j.error) { setErr(j.error); setSessions([]); setLocalReadOk(false); }
-      else { setErr(null); setSessions(j.sessions || []); setLocalReadOk(true); }
-    } catch (e) { setErr(String(e)); setSessions([]); setLocalReadOk(false); }
-    // flotta nello stesso interval del polling sessioni (4s). R27: la
-    // decisione e' la policy pura condivisa col desktop — un fallimento di
-    // lettura NON svuota la lista (non e' «zero celle»), resta l'ultima nota
-    // con l'indicatore stale. Mai presentare una lista vuota come un dato.
-    let fs = null; let fleetError = null;
-    try { fs = await fleetStatus(token); } catch (e) { fleetError = e; }
-    const fleet = fleetReadOutcome({ fs, error: fleetError });
-    if (fleet.kind === 'data') {
-      saveLastRoster('local', fleet.cells);
-      setCells(fleet.cells);
-      setFleetCapabilities(fleet.capabilities);
-      setFleetStale(false);
-      setFleetOff(null);
-    } else if (fleet.kind === 'stale') {
-      // Cache in memoria vuota (PWA riaperta): riparte dall'ultimo roster buono salvato, marcato come non vivo.
-      setCells((current) => (current.length ? current : loadLastRoster('local')));
-      setFleetStale(true);
-      setFleetOff(null);
-    } else {
-      // spento per scelta (o non classificato): zero celle e' la verita' del
-      // server — lista vuota con indicatore, mai l'ultima lista come fantasma
-      setCells([]);
-      saveLastRoster('local', []);
-      setFleetCapabilities([]);
-      setFleetStale(false);
-      setFleetOff(fleet.reason || '');
-    }
+  // Le letture locali arrivano dal treno condiviso di
+  // lib/fleet-poll.js — un solo giro per finestra per sessions+flotta, la
+  // stessa policy di sempre applicata qui sotto. refresh() resta come kick
+  // manuale dopo le azioni (kill, power, technical): chiede un ciclo subito
+  // al treno invece di fare fetch proprie.
+  function refresh() {
+    refreshFleetRoute([], token);
   }
 
   useEffect(() => {
-    refresh();
+    const apply = (snap) => {
+      if (!snap) return;
+      const j = snap.sessionsError ? null : snap.sessionsJson;
+      if (j && !j.error) { setErr(null); setSessions(j.sessions || []); setLocalReadOk(true); }
+      else if (j) { setErr(j.error); setSessions([]); setLocalReadOk(false); }
+      else { setErr(String(snap.sessionsError)); setSessions([]); setLocalReadOk(false); }
+      // flotta nello stesso interval del polling sessioni (4s). R27: la
+      // decisione e' la policy pura condivisa col desktop — un fallimento di
+      // lettura NON svuota la lista (non e' «zero celle»), resta l'ultima nota
+      // con l'indicatore stale. Mai presentare una lista vuota come un dato.
+      const fleet = fleetReadOutcome({ fs: snap.fs, error: snap.fleetError });
+      if (fleet.kind === 'data') {
+        saveLastRoster('local', fleet.cells);
+        setCells(fleet.cells);
+        setFleetCapabilities(fleet.capabilities);
+        setFleetStale(false);
+        setFleetOff(null);
+      } else if (fleet.kind === 'stale') {
+        // Cache in memoria vuota (PWA riaperta): riparte dall'ultimo roster buono salvato, marcato come non vivo.
+        setCells((current) => (current.length ? current : loadLastRoster('local')));
+        setFleetStale(true);
+        setFleetOff(null);
+      } else {
+        // spento per scelta (o non classificato): zero celle e' la verita' del
+        // server — lista vuota con indicatore, mai l'ultima lista come fantasma
+        setCells([]);
+        saveLastRoster('local', []);
+        setFleetCapabilities([]);
+        setFleetStale(false);
+        setFleetOff(fleet.reason || '');
+      }
+    };
+    const off = subscribeFleetRoute(token, [], apply);
     apiFetch('/api/config', token).then((r) => r.json())
       .then((j) => {
         setVersion(j.version || '');
         setEndpoint({ bind: j.bind || '127.0.0.1', port: j.port || '' });
         setLocalNodeId(OWNER_ID_RE.test(String(j.instanceId || '')) ? j.instanceId : '');
       }).catch(() => {});
-    const id = setInterval(refresh, 4000);
-    return () => clearInterval(id);
-  }, []);
+    return off;
+  }, [token]);
 
   async function copyEndpointUrl() {
     if (!endpoint.port) return;

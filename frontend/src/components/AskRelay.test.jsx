@@ -55,10 +55,19 @@ async function renderCenter() {
   return view;
 }
 
+// The federated reply textarea only exists once the owner capability (an async
+// fetch started when asks load) resolves: the badge only says the asks arrived.
+// The send button renders in the same fragment as the textarea, so waiting for
+// it waits for the right gate (same pattern as AskRelay.capability.test.jsx).
+async function replyTextarea() {
+  await screen.findByText(/^send$/i);
+  return document.querySelector('.nc-ask-reply textarea');
+}
+
 describe('federated ask cards', () => {
   it('la risposta porta (ownerId, askId): chiavi per proprietario, mai id solo', async () => {
     await renderCenter();
-    const ta = document.querySelector('.nc-ask-reply textarea');
+    const ta = await replyTextarea();
     fireEvent.change(ta, { target: { value: 'vai' } });
     fireEvent.click(screen.getByText(/^send$/i));
     await waitFor(() => expect(mocks.relayAskAnswer).toHaveBeenCalledTimes(1));
@@ -71,7 +80,7 @@ describe('federated ask cards', () => {
     mocks.getAsks.mockResolvedValue({ asks: [remoteAsk(), remoteAsk({ ownerId: other })] });
     await renderCenter();
     expect(screen.getAllByText(/procedo\?/i)).toHaveLength(2);
-    const ta = document.querySelector('.nc-ask-reply textarea');
+    const ta = await replyTextarea();
     fireEvent.change(ta, { target: { value: 'vai' } });
     fireEvent.click(screen.getByText(/^send$/i));
     await waitFor(() => expect(mocks.relayAskAnswer).toHaveBeenCalledTimes(1));
@@ -90,7 +99,7 @@ describe('federated ask cards', () => {
       uncertain: true, reason: 'delivery-unknown', requestId: 'rid-1',
     });
     await renderCenter();
-    fireEvent.change(document.querySelector('.nc-ask-reply textarea'), { target: { value: 'vai' } });
+    fireEvent.change(await replyTextarea(), { target: { value: 'vai' } });
     fireEvent.click(screen.getByText(/^send$/i));
     await waitFor(() => expect(screen.getByText(/uncertain/i)).toBeTruthy());
     expect(screen.getByText(/verify status/i)).toBeTruthy();
@@ -103,7 +112,7 @@ describe('federated ask cards', () => {
   it('un errore 403 resta visibile sulla card', async () => {
     mocks.relayAskAnswer.mockRejectedValueOnce(Object.assign(new Error('not granted'), { status: 403 }));
     await renderCenter();
-    const ta = document.querySelector('.nc-ask-reply textarea');
+    const ta = await replyTextarea();
     fireEvent.change(ta, { target: { value: 'vai' } });
     fireEvent.click(screen.getByText(/^send$/i));
     await waitFor(() => expect(screen.getByText(/not granted/i)).toBeTruthy());

@@ -69,7 +69,10 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
     <div className="nc-files">
       <header>
         <b>{node ? `${node}:${session}` : session}</b>
-        <button onClick={onClose} title={t('close')} aria-label={t('close')}><Icon name="x" size={20} /></button>
+        {/* La X usa la classe condivisa nc-ntf-x (toast e pannello ASK)
+            con i token colore dell'app, non lo stile nativo del browser che
+            la rendeva grigia e grossa. */}
+        <button type="button" className="nc-ntf-x" onClick={onClose} title={t('close')} aria-label={t('close')}><Icon name="x" size={16} /></button>
       </header>
       {/* Una riga sola: scatola attiva e scatola spenta. Il caricamento non sta
           qui — il file entra nella cella dal menu allegati del composer
