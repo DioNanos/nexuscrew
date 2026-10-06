@@ -292,7 +292,8 @@ export default function NotifyCenter({ token }) {
     if (!closed) return true;
     if (Date.now() - closed.at > DISMISSED_TTL_MS) { closedAsks.current.delete(askKeyOf(a.id, a.ownerId, a.ownerAskId)); return true; }
     const ts = generationTsOf(a);
-    return Number.isSafeInteger(ts) && ts > 0 && Number.isSafeInteger(closed.ts) && closed.ts > 0 && ts !== closed.ts;
+    if (Number.isSafeInteger(ts) && ts > 0 && Number.isSafeInteger(closed.ts) && closed.ts > 0) return ts !== closed.ts;
+    return closed.fingerprint !== null && closed.fingerprint !== undefined && closed.fingerprint !== JSON.stringify([a.question, a.options || [], a.session]);
   });
   const asksRef = useRef(asks);
   asksRef.current = asks;
@@ -416,7 +417,8 @@ export default function NotifyCenter({ token }) {
     const current = asksRef.current.find(a => askKeyOf(a.id, a.ownerId, a.ownerAskId) === key);
     const currentTs = current && generationTsOf(current);
     if (Number.isSafeInteger(out?.ownerAskTs) && out.ownerAskTs > 0 && Number.isSafeInteger(currentTs) && currentTs > 0 && out.ownerAskTs !== currentTs) return;
-    closedAsks.current.set(key, { at: Date.now(), ts: current ? currentTs : out?.ownerAskTs });
+    closedAsks.current.set(key, { at: Date.now(), ts: current ? currentTs : out?.ownerAskTs,
+      fingerprint: current && current.question !== undefined ? JSON.stringify([current.question, current.options || [], current.session]) : null });
     liveAsks.current.delete(key);
     if (closedAsks.current.size > 4096) closedAsks.current.delete(closedAsks.current.keys().next().value);
     setAsks((cur) => cur.filter((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId) !== key));
