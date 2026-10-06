@@ -22,7 +22,7 @@ function world() {
   for (const name of ['claude', 'codex-vl', 'pi']) {
     const target = path.join(home, '.local', 'bin', name);
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.writeFileSync(target, '#!/bin/sh\ncase "$1" in --version) echo "codex-cli 0.160.0" ;; --help) echo "Usage: codex --no-daemon" ;; esac\n', { mode: 0o755 });
   }
   return home;
 }
@@ -162,7 +162,7 @@ test('Codex-VL 0.144.7 profile is Responses-only and its catalog loads in the re
     assert.match(argv, /model_context_window=983616/);
     assert.doesNotMatch(argv, /OPENAI_API_KEY|must-not-propagate/);
     assert.equal(argv.includes(value), false);
-    assert.deepEqual(result.engine.args.slice(-2), ['-m', 'qwen3.8-max']);
+    assert.deepEqual(result.engine.args.slice(-3), ['-m', 'qwen3.8-max', '--no-daemon']);
     const catalogArg = result.engine.args.find((arg) => arg.startsWith('model_catalog_json='));
     const catalogPath = JSON.parse(catalogArg.slice('model_catalog_json='.length));
     const model = JSON.parse(fs.readFileSync(catalogPath, 'utf8')).models[0];
