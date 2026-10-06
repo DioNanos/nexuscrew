@@ -897,14 +897,24 @@ describe('quick cell list keeps every node visible', () => {
       return { available: true, cells: [] };
     });
 
-    render(<Switcher token="token" current={{}} localNodeLabel="Node-Local" onPick={vi.fn()} onClose={vi.fn()} />);
+    const onPick = vi.fn();
+    render(<Switcher token="token" current={{}} localNodeLabel="Node-Local" onPick={onPick} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-One / });
     await waitFor(() => expect(rowKeys().some((k) => k.startsWith('south:'))).toBe(true));
     // Tre gruppi nell'ordine scelto dall'utente: locale, hub diretto, nodo
     // raggiunto attraverso l'hub.
     expect(positionLabels().map(groupRole)).toEqual(['local', 'north', 'south']);
-    // Col filtro "all" del pannello le celle non verificate dell'hub restano
-    // elencate (non selezionabili), come le mostra la lista normale.
+    // Le celle dell'hub, anche con letture non verificate, sono SELEZIONABILI
+    // come nella lista normale (tmux noto al gruppo): doppio tocco e apre la
+    // route giusta con la sessione esatta.
+    const hubRow = await screen.findByRole('button', { name: /^Hub-Cell-1 / });
+    expect(hubRow.getAttribute('aria-disabled')).toBe('false');
+    fireEvent.click(hubRow);
+    fireEvent.click(hubRow);
+    await waitFor(() => expect(onPick).toHaveBeenCalledWith({
+      session: 'north-c1', node: 'north', cellName: 'Hub-Cell-1',
+    }));
+    // Col filtro "all" le celle dell'hub restano elencate nell'ordine ricevuto.
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
     expect(rowKeys().filter((k) => k.startsWith('north:'))).toEqual([
       keyOf('north', 'north-c1'), keyOf('north', 'north-c2'),

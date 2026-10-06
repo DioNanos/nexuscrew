@@ -176,6 +176,11 @@ function orderRowsByPosition(rows, rosterItems, pins, orders, views, viewFor, no
         live: item?.live ?? row.live,
         fresh: item?.fresh === true,
         activity: item?.activity ?? row.activity,
+        // Le righe dei nodi seguono il criterio della lista normale
+        // (roster-view-model: la cella è apribile se ha una tmux nota al
+        // gruppo) senza esigere un poll verificato del drawer. Il locale
+        // resta com'era.
+        selectable: position === 'local' ? row.selectable : item?.live === true,
       };
     });
     // Lo stesso ordinamento della lista normale per questo nodo: il modo
@@ -188,7 +193,10 @@ function orderRowsByPosition(rows, rosterItems, pins, orders, views, viewFor, no
       sortable.filter((row) => !inModeKeys.has(row.key)),
       pins, 'all', sidebarOrder(orders, position),
     );
-    return [...inMode, ...rest].map((item) => byKey.get(item.key));
+    return [...inMode, ...rest].map((item) => {
+      const row = byKey.get(item.key);
+      return row ? { ...row, selectable: item.selectable } : null;
+    }).filter(Boolean);
   });
 }
 
@@ -402,6 +410,16 @@ export default function CellSwitcher({
     setNotice('');
     if (!row.selectable) {
       setNotice(row.verified ? t('cell-switcher-not-active') : t('cell-switcher-not-confirmed'));
+      return;
+    }
+    // Riga di un nodo con letture non verificate (l'hub diretto durante la
+    // finestra cieca): l'apertura e' DIRETTA, come la lista normale che apre
+    // con la sola tmux nota — nessuna pretesa di esistenza verificata qui:
+    // se la sessione e' morta, il server risponde col vero stato. Il
+    // ricontrollo fresco resta per le righe verificate.
+    if (row.verified !== true) {
+      onPick({ session: row.session, ...(row.node ? { node: row.node } : {}), cellName: row.cellName });
+      onClose();
       return;
     }
     setPicking(row.key);
