@@ -1,5 +1,5 @@
 # NC identity contract gate (piano v3 :114-117, :222-226).
-# Node Linux, isolated suite + NC-5 subset. Nessuna credenziale, nessun nodo di produzione.
+# Node Linux, isolated suite. Nessuna credenziale, nessun nodo di produzioneuzione.
 name: identity-gate
 
 on:
@@ -49,23 +49,23 @@ jobs:
           node-version: '20'
       - name: install
         run: npm ci --omit=optional
-      - name: NC-5 subset
+      - name: identity subset
         shell: bash
         run: |
           set -uo pipefail
-          node --test --test-reporter=tap tests/identity-terminal.test.js 2>&1 | tee /tmp/nc5.tap
+          node --test --test-reporter=tap tests/identity-terminal.test.js 2>&1 | tee /tmp/identity-subset.tap
           node_rc=$?
           set -e
           if [ "$node_rc" -ne 0 ]; then
-            echo "NC-5 test runner exited $node_rc" >&2
+            echo "test runner exited $node_rc" >&2
             exit "$node_rc"
           fi
 
           require_pass() {
-            grep -Eq "^ok [0-9]+ - $1$" /tmp/nc5.tap
+            grep -Eq "^ok [0-9]+ - $1$" /tmp/identity-subset.tap
           }
           require_skip() {
-            grep -Eq "^ok [0-9]+ - $1 # SKIP richiede VL C5/daemon/TUI \(pinnato 865fefceb5\.\.7339ffa0af; NC 760ac03\)$" /tmp/nc5.tap
+            grep -Eq "^ok [0-9]+ - $1 # SKIP richiede TUI/daemon/app-server \(coperti fuori da questa suite\)$" /tmp/identity-subset.tap
           }
 
           require_pass tool_sees_bound_owner_and_cell
@@ -80,10 +80,10 @@ jobs:
           require_skip stale_socket_and_restart_are_scoped
           require_skip feature_register_contract_smoke
 
-          grep -Fx '# tests 10' /tmp/nc5.tap
-          grep -Fx '# pass 3' /tmp/nc5.tap
-          grep -Fx '# fail 0' /tmp/nc5.tap
-          grep -Fx '# skipped 7' /tmp/nc5.tap
+          grep -Fx '# tests 10' /tmp/identity-subset.tap
+          grep -Fx '# pass 3' /tmp/identity-subset.tap
+          grep -Fx '# fail 0' /tmp/identity-subset.tap
+          grep -Fx '# skipped 7' /tmp/identity-subset.tap
       - name: cleanup processes
         if: always()
         run: pkill -f 'nexuscrew mcp' || true

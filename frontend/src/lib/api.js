@@ -16,7 +16,7 @@ function noteAuth(path, token, response) {
 // sempre, anche solo per un errore).
 export const FEDERATED_FETCH_TIMEOUT_MS = 8000;
 
-// Tetti per le letture del roster (D-394): un nodo VL o una lettura di
+// Tetti per le letture del roster: un nodo VL o una lettura di
 // sessions/fleet senza scadenza client blocca la lista dei nodi per un tempo
 // indeterminato. Sono default applicati DAI CHIAMANTI del fix: nessun tetto
 // globale corto su mutazioni, download o stream.

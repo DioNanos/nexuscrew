@@ -1,4 +1,4 @@
-// D384 commit 2 — i prefissi di CTRL/ALT sul primo carattere dell'input soft.
+// I prefissi di CTRL/ALT sul primo carattere dell'input soft.
 import { describe, expect, it } from 'vitest';
 
 import { inputConPrefissi } from './modifier-prefix.js';

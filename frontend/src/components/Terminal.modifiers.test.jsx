@@ -1,4 +1,4 @@
-// D384 commit 3 — Terminal con modificatori armati:
+// Terminal con modificatori armati:
 // 1) il throw sincrono di openTerminalSocket (ws-client: origine non-locale su
 //    ws://) azzera keyboardRef e rimuove i listener (blur e paste);
 // 2) il paste NATIVO di xterm (clipboard → evento paste → onData sincrono) è
@@ -74,7 +74,7 @@ function textarea() {
   return ta;
 }
 
-describe('Terminal D384 — openTerminalSocket che lancia', () => {
+describe('Terminal — openTerminalSocket che lancia', () => {
   afterEach(() => { vi.restoreAllMocks(); lanciaOpen = false; });
 
   it('azzeramento keyboardRef e rimozione dei listener di blur e paste nel ramo d\'errore', () => {
@@ -90,7 +90,7 @@ describe('Terminal D384 — openTerminalSocket che lancia', () => {
   });
 });
 
-describe('Terminal D384 — modificatori armati e paste nativo', () => {
+describe('Terminal — modificatori armati e paste nativo', () => {
   afterEach(() => { vi.restoreAllMocks(); lanciaOpen = false; });
 
   it('paste NATIVO con CTRL armato: letterale e non consuma l\'armamento', () => {
@@ -118,7 +118,7 @@ describe('Terminal D384 — modificatori armati e paste nativo', () => {
   });
 });
 
-describe('Terminal D384 commit 4 — il marcatore del paste si chiude al primo onData', () => {
+describe('Terminal — il marcatore del paste si chiude al primo onData', () => {
   afterEach(() => { vi.restoreAllMocks(); lanciaOpen = false; });
 
   it('probe audit: paste «ciao» poi keydown a +50 ms → [\'ciao\', \'\x03\'] e CTRL disarmato', async () => {

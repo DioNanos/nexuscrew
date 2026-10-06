@@ -271,8 +271,8 @@ export function SingleView({
   const sideComposerRef = useRef(() => false);
   const sideActionRef = useRef(() => {});
   const sideCtrlRef = useRef(false);
-  const sideAltRef = useRef(false);   // D384: ALT del pannello affiancato
-  const sideKeyboardRef = useRef(null); // D384: requestTerminalKeyboard della side
+  const sideAltRef = useRef(false);   // ALT del pannello affiancato
+  const sideKeyboardRef = useRef(null); // requestTerminalKeyboard della side
   const dualBoxRef = useRef(null);
   // I file caduti/aperti riguardano il pannello di origine, non la vista.
   const [files, setFiles] = useState(null); // {source:'main'|'side', ev} | null
@@ -288,7 +288,7 @@ export function SingleView({
   const foca = (secondario) => {
     setFocusSide(secondario);
     setCtrlArmed((secondario ? sideCtrlRef : ctrlRef).current);
-    setAltArmed((secondario ? sideAltRef : altRef).current);   // D384: ALT segue il focus
+    setAltArmed((secondario ? sideAltRef : altRef).current);   // ALT segue il focus
   };
   // Cambio della cella affiancata: focus, ordine, altezze e lista file
   // ripartono puliti (la chiave è la stringa, non l'oggetto: il ripristino
@@ -356,9 +356,9 @@ export function SingleView({
   const [ctrlArmed, setCtrlArmed] = useState(false);
   const altRef = useRef(false);
   const [altArmed, setAltArmed] = useState(false);
-  const keyboardRef = useRef(null);   // D384: requestTerminalKeyboard del terminale attivo
+  const keyboardRef = useRef(null);   // requestTerminalKeyboard del terminale attivo
   const [selectionMode, setSelectionMode] = useState(false);
-  // D384 commit 2 unito alla 0.9.51: il toggle arma la sticky del pannello
+  // Il toggle arma la sticky del pannello (unito alla 0.9.51)
   // che ha il focus (main o side), come fa `foca` al cambio focus.
   const toggleCtrl = () => {
     const r = focaLaSide ? sideCtrlRef : ctrlRef;
@@ -862,7 +862,7 @@ export default function App() {
   const deckOwners = useMemo(() => (nodeGroups || []).filter((g) => g.instanceId).map((g) => ({
     instanceId: g.instanceId, route: g.route, label: g.label, status: g.status, stale: g.stale === true, checking: g.checking === true,
   })), [nodeGroups]);
-  // D-392: l'ordine dei DECKS in alto segue l'ordine della lista nodi/celle a
+  // l'ordine dei DECKS in alto segue l'ordine della lista nodi/celle a
   // sinistra (nc_node_order_v1, per identita' — id/instanceId — mai per etichetta).
   const { order: deckNodeOrder } = useNodePreferences();
   const deckStore = useDecks(token, deck, layout, setLayout, deckOwners, deckNodeOrder);

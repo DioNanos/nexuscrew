@@ -456,7 +456,7 @@ describe('UI nodi VL remoti step 3: owner remoti', () => {
     );
     const nodeB = vlNodeToPeer(
       { nodeId: 'b'.repeat(32), label: 'N900', capabilities: [] },
-      { instanceId: 'b'.repeat(16), route: ['nova'], label: 'NovaLNX' },
+      { instanceId: 'b'.repeat(16), route: ['node-b'], label: 'Node B' },
     );
     const { container } = render(<NodesTab
       token="token" nodes={[nodeA, nodeB]} roster={[]} settings={{}} readonly={false}
@@ -467,7 +467,7 @@ describe('UI nodi VL remoti step 3: owner remoti', () => {
     const rows = container.querySelectorAll('.nc-node-row');
     expect(rows.length).toBe(2);
     expect(container.textContent).toContain('Node A');
-    expect(container.textContent).toContain('NovaLNX');
+    expect(container.textContent).toContain('Node B');
   });
 });
 
