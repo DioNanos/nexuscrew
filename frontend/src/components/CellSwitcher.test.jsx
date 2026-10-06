@@ -848,3 +848,66 @@ describe('quick cell list follows the normal list ordering', () => {
     await waitFor(() => expect(positionLabels().map(groupRole)).toEqual(['local', 'north', 'south']));
   });
 });
+
+describe('quick cell list keeps every node visible', () => {
+  const northId = 'c'.repeat(32);
+  const keyOf = (route, tmux) => positionKey([route], tmux);
+  const southId = 'd'.repeat(32);
+  const Switcher = (props) => <CellSwitcher pollMs={20} {...props} />;
+  const positionLabels = () => [...document.querySelectorAll('.nc-cell-switcher-position')].map((e) => e.textContent);
+  const groupRole = (text) => (text.includes('Node-Local') ? 'local' : text.includes('North') ? 'north' : 'south');
+  const rowKeys = () => [...document.querySelectorAll('[data-roster-key]')].map((e) => e.dataset.rosterKey);
+  const northFeed = [
+    { ...active('Hub-Cell-1', 'north-c1'), activity: 40 },
+    { ...active('Hub-Cell-2', 'north-c2'), activity: 30 },
+  ];
+  const southFeed = [
+    { ...active('Far-Cell-1', 'south-c1'), activity: 20 },
+    { ...active('Far-Cell-2', 'south-c2'), activity: 10 },
+  ];
+  // Ordine di arrivo dal feed: il nodo a due salti prima dell'hub diretto.
+  const writeFixtureSnapshot = () => writeCellSwitcherSnapshot({
+    sessions: [{ name: 'cloud-cell-One', activity: 10, working: true }],
+    cells: [active('cell-One', 'cloud-cell-One')],
+    localFresh: true,
+    nodeGroups: [
+      { route: ['south'], label: 'South', instanceId: southId, sessions: [], cells: southFeed },
+      { route: ['north'], label: 'North', instanceId: northId, sessions: [], cells: northFeed },
+    ],
+  });
+
+  it('a direct hub whose reads are not verified stays a visible group, in the user node order', async () => {
+    writeFixtureSnapshot();
+    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${northId}`, `id:${southId}`]));
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ north: { filter: 'all' }, south: { filter: 'all' } }));
+    // Hub diretto: le letture NON si verificano in questo giro (fleet non
+    // available, sessioni vuote). Il gruppo esiste nelle nodeGroups e deve
+    // restare visibile: sparire faceva sembrare il nodo assente.
+    mocks.getRouteSessions.mockImplementation(async (_token, route) => {
+      if (route.join('/') === 'north') return { sessions: [] };
+      if (route.join('/') === 'south') return { sessions: [
+        { name: 'south-c1', activity: 40 }, { name: 'south-c2', activity: 30 },
+      ] };
+      return { sessions: [] };
+    });
+    mocks.fleetStatus.mockImplementation(async (_token, route = []) => {
+      if (route.join('/') === 'north') return { available: false };
+      if (route.join('/') === 'south') return { available: true, cells: southFeed };
+      if (!route.length) return { available: true, cells: [active('cell-One', 'cloud-cell-One')] };
+      return { available: true, cells: [] };
+    });
+
+    render(<Switcher token="token" current={{}} localNodeLabel="Node-Local" onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    await waitFor(() => expect(rowKeys().some((k) => k.startsWith('south:'))).toBe(true));
+    // Tre gruppi nell'ordine scelto dall'utente: locale, hub diretto, nodo
+    // raggiunto attraverso l'hub.
+    expect(positionLabels().map(groupRole)).toEqual(['local', 'north', 'south']);
+    // Col filtro "all" del pannello le celle non verificate dell'hub restano
+    // elencate (non selezionabili), come le mostra la lista normale.
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    expect(rowKeys().filter((k) => k.startsWith('north:'))).toEqual([
+      keyOf('north', 'north-c1'), keyOf('north', 'north-c2'),
+    ]);
+  });
+});

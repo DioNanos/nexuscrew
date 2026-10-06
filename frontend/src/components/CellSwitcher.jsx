@@ -73,6 +73,10 @@ function rowsFromSnapshot(snapshot) {
         // `verified` e' la conferma di questo poll. Non usare `fresh`: nel
         // roster condiviso significa invece output nuovo e ordina le righe.
         verified: fresh === true,
+        // Poll non verificato ma celle note (dal gruppo): la riga resta
+        // VISIBLE nel drawer come non selezionabile — nasconderla faceva
+        // sparire il nodo dalla lista veloce (l'hub diretto del Pixel).
+        keepVisible: fresh !== true && cells.length > 0,
         working: runtime.working,
         degraded: !!cell.degraded,
         active: cell.active === true,
@@ -255,7 +259,7 @@ export default function CellSwitcher({
     [rows, rosterItems, pins, orders, views, viewFor, nodeOrder, snapshot.nodeGroups],
   );
   const visibleRows = useMemo(
-    () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || (row.degraded && row.active))),
+    () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || (row.degraded && row.active) || row.keepVisible === true)),
     [orderedRows, showAll],
   );
   // La riga selezionata si RIrisolve a ogni lista: mai un fotogramma morto.
