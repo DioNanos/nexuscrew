@@ -34,7 +34,7 @@ test('list-panes su un server vivo e vuoto risponde «no current target»', asyn
   await tmux(['set-option', '-s', 'exit-empty', 'off']);
   await tmux(['kill-session', '-t', 'dummy']);
   t.after(() => tmux(['kill-server']).catch(() => {}));
-  // Ora il server è vivo e VUOTO: è lo stato del Pixel/Asus del report.
+  // Now the server is alive and empty, as on a node right after a restart.
   await assert.doesNotReject(tmux(['list-sessions', '-F', '#{session_name}']),
     'il server resta vivo a zero sessioni (exit-empty off)');
   const probe = await tmux(['list-panes', '-a', '-F', '#{pane_id}']).then(
