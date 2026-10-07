@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, renderHook, cleanup } from '@testing-library/react';
 const api = vi.hoisted(() => ({ getNodes: vi.fn(), getTopology: vi.fn(), getNodeAliases: vi.fn(), getRouteSessions: vi.fn(), fleetStatus: vi.fn(), getVlNodes: vi.fn(), getRouteConfig: vi.fn(), apiFetch: vi.fn(), getDecks: vi.fn(), getRouteTopology: vi.fn(), createDeck: vi.fn(), saveDeck: vi.fn(), renameDeck: vi.fn(), deleteDeck: vi.fn(), saveDeckKeepalive: vi.fn(), ROSTER_READ_TIMEOUT_MS: 8000 }));
 vi.mock('../lib/api.js', () => api);
-import { useNodes } from './useNodes.js';
+import { useNodes, useNodesState } from './useNodes.js';
 import { useDecks } from './useDecks.js';
 import { loadLastRoster } from '../lib/last-roster.js';
 import { emptyLayout } from '../lib/grid-model.js';
@@ -154,4 +154,23 @@ it('checking never makes an unverified remote deck available',async()=>{
   expect(api.getDecks.mock.calls.filter(([,route])=>route?.length)).toEqual([]);
   pending.resolve(session('verified')); await flush(); await tick(0);
   expect(r.result.current.records.some(d=>!d.local && d.available)).toBe(true);
+});
+
+it('an empty first publication finishes loading without requiring a populated roster', async () => {
+  api.getNodes.mockResolvedValue({ nodes: [] });
+  const config = deferred(); api.getRouteConfig.mockReturnValue(config.promise);
+  const r = renderHook(() => useNodesState('token'));
+  expect(r.result.current).toEqual({ groups: [], hasLoaded: false });
+  await flush(); expect(r.result.current.hasLoaded).toBe(false);
+  config.resolve({ instanceId: local }); await flush();
+  expect(r.result.current).toEqual({ groups: [], hasLoaded: true });
+});
+it('loading is scoped to the current token rather than an earlier publication', async () => {
+  const r = renderHook(({ token }) => useNodesState(token), { initialProps: { token: 'first' } });
+  await flush(); expect(r.result.current.hasLoaded).toBe(true);
+  const config = deferred(); api.getRouteConfig.mockReturnValue(config.promise);
+  r.rerender({ token: 'second' }); await flush();
+  expect(r.result.current).toEqual({ groups: [], hasLoaded: false });
+  config.resolve({ instanceId: local }); await flush();
+  expect(r.result.current.hasLoaded).toBe(true);
 });

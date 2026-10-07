@@ -8,7 +8,7 @@ import { buildLocalRoster, buildRemoteRoster } from '../lib/roster-view-model.js
 import { sidebarItems, sidebarOrder, sidebarView } from '../lib/sidebar-model.js';
 import { nodePreferenceKey } from '../lib/node-preferences.js';
 import { useNodePreferences } from '../hooks/useNodePreferences.js';
-import { useNodes } from '../hooks/useNodes.js';
+import { useNodesState } from '../hooks/useNodes.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { hostRouteKey } from '../lib/host-designation.js';
 import { liveHostView } from '../lib/live-host-view.js';
@@ -165,9 +165,8 @@ export default function CellSwitcher({
   // e useNodes non ha ancora pubblicato. Finche' non ha dati, i gruppi sono
   // quelli dell'ultimo snapshot della principale (stessa forma, stesso ordine):
   // un gruppo remoto non compare in ritardo e non manca all'apertura.
-  const liveGroups = useNodes(token);
-  const nodeGroups = Array.isArray(liveGroups) && liveGroups.length > 0
-    ? liveGroups : (snapshot.nodeGroups || []);
+  const { groups: liveGroups, hasLoaded } = useNodesState(token);
+  const nodeGroups = hasLoaded ? liveGroups : (snapshot.nodeGroups || []);
   // Stessa selezione della lista principale (SessionList): le posizioni sono
   // i gruppi di nodo, i device VL restano fuori.
   const groups = useMemo(
@@ -311,10 +310,9 @@ export default function CellSwitcher({
       const latest = await readPosition(token, row.route);
       const cell = (latest.cells || []).find((entry) => entry?.cell === row.cellName
         && entry?.tmuxSession === row.session);
-      // R27 #4, tre esiti: la lettura NON riuscita (fresh false) non ha
-      // trovato la cella spenta — la riga e' quella della lista principale,
-      // che apre con la sola tmux nota: si APRE, come lei. Solo una lettura
-      // RIUSCITA che non vede la cella attiva puo' rifiutare.
+      // A failed read does not establish that the cell stopped. Like the
+      // main list, open its known tmux session. Only a successful read
+      // that confirms an inactive cell can refuse the selection.
       if (latest.fresh !== true) {
         onPick({ session: row.session, ...(row.node ? { node: row.node } : {}), cellName: row.cellName });
         onClose();

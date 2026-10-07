@@ -38,7 +38,7 @@ vi.mock('./CellPanel.jsx', () => ({
 // di api, senza timer da 4 secondi.
 vi.mock('../hooks/useNodes.js', async () => {
   const cache = await import('../lib/cell-switcher-cache.js');
-  return { useNodes: () => (cache.readCellSwitcherSnapshot() || {}).nodeGroups || [] };
+  return { useNodesState: () => ({ groups: (cache.readCellSwitcherSnapshot() || {}).nodeGroups || [], hasLoaded: true }) };
 });
 vi.mock('../lib/fleet-poll.js', async (importOriginal) => {
   const actual = await importOriginal();

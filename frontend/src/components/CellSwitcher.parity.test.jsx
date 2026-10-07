@@ -14,13 +14,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 const mocks = vi.hoisted(() => ({
   apiFetch: vi.fn(), fleetStatus: vi.fn(), getRouteSessions: vi.fn(),
   getLiveHost: vi.fn(), designateHostCell: vi.fn(), clearHostCell: vi.fn(),
-  useNodes: vi.fn(),
+  useNodesState: vi.fn(),
 }));
 vi.mock('../lib/api.js', () => ({
   apiFetch: mocks.apiFetch, fleetStatus: mocks.fleetStatus, getRouteSessions: mocks.getRouteSessions,
   getLiveHost: mocks.getLiveHost, designateHostCell: mocks.designateHostCell, clearHostCell: mocks.clearHostCell,
 }));
-vi.mock('../hooks/useNodes.js', () => ({ useNodes: mocks.useNodes }));
+vi.mock('../hooks/useNodes.js', () => ({ useNodesState: mocks.useNodesState }));
 vi.mock('./Terminal.jsx', () => ({ default: (props) => (
   <div data-testid="peek-term" data-session={props.session} />
 ) }));
@@ -50,13 +50,13 @@ const keyOf = (route, tmux) => positionKey(route, tmux);
 // only its sessions are known; the two-hop node carries a full cell list;
 // the unreachable node keeps its last known cells as preserved.
 const NODE_GROUPS = [
-  { route: HUB, label: 'HUB1', instanceId: hubId, direct: true, status: 'up',
+  { route: HUB, label: 'hub-node', instanceId: hubId, direct: true, status: 'up',
     sessions: [{ name: 'h1', activity: 5, key: 'hub1:h1', node: 'hub1', route: HUB }],
     unmanaged: [{ name: 'h1', activity: 5 }], cells: [] },
   { route: TWO_HOP, label: 'NODE-B', instanceId: nodeBId, direct: false, status: 'up',
     sessions: [{ name: 'm1', activity: 4, key: 'hub1/node-b:m1', node: 'hub1/node-b', route: TWO_HOP }],
     cells: [active('NodeB-One', 'm1'), off('NodeB-Two', 'm2'), active('NodeB-Three', 'm3')] },
-  { route: DEAD, label: 'DEAD1', instanceId: deadId, direct: false, status: 'unreachable',
+  { route: DEAD, label: 'offline-node', instanceId: deadId, direct: false, status: 'unreachable',
     sessions: [], cellsPreserved: true,
     cells: [active('Dead-One', 'd1'), off('Dead-Two', 'd2')].map((c) => ({ ...c, preserved: true })) },
 ];
@@ -80,7 +80,7 @@ beforeEach(() => {
   }));
   localStorage.setItem('nc_pins', JSON.stringify([keyOf(TWO_HOP, 'm1')]));
   localStorage.setItem('nc_sidebar_order_v1', JSON.stringify({ 'hub1/node-b': [keyOf(TWO_HOP, 'm1')] }));
-  mocks.useNodes.mockReturnValue(NODE_GROUPS);
+  mocks.useNodesState.mockReturnValue({ groups: NODE_GROUPS, hasLoaded: true });
   mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: LOCAL_SESSIONS }) });
   mocks.getRouteSessions.mockImplementation(async (_t, route) => {
     if (route.join('/') === 'hub1') return { sessions: [{ name: 'h1', activity: 5 }] };
@@ -96,8 +96,8 @@ beforeEach(() => {
 });
 
 // The main list, computed with its own functions on the same data and prefs.
-function mainListRows({ drawerAll = false } = {}) {
-  const order = orderNodeGroups(NODE_GROUPS, JSON.parse(localStorage.getItem('nc_node_order_v1') || '[]'));
+function mainListRows({ drawerAll = false, nodeGroups = NODE_GROUPS } = {}) {
+  const order = orderNodeGroups(nodeGroups, JSON.parse(localStorage.getItem('nc_node_order_v1') || '[]'));
   const pins = JSON.parse(localStorage.getItem('nc_pins') || '[]');
   const views = loadSidebarViews();
   const orders = loadSidebarOrders();
@@ -135,12 +135,35 @@ async function renderSwitcher() {
 }
 
 describe('cold open: the node groups are there at once', () => {
+  it('retires the cold snapshot when the first published model is empty', async () => {
+    mocks.useNodesState.mockReturnValue({ groups: [], hasLoaded: false });
+    const props = { token: 'token', current: {}, localNodeLabel: 'NODE-LOCAL', onPick: vi.fn(), onClose: vi.fn() };
+    const view = render(<CellSwitcher {...props} />);
+    await screen.findByRole('button', { name: /^Loc-One / });
+    expect(rowKeys()).toEqual(mainListRows().map(r => r.key));
+    mocks.useNodesState.mockReturnValue({ groups: [], hasLoaded: true });
+    view.rerender(<CellSwitcher {...props} />);
+    expect(rowKeys()).toEqual(mainListRows({ nodeGroups: [] }).map(r => r.key));
+  });
+
+  it('follows an empty main model after populated groups without reviving the snapshot', async () => {
+    const props = { token: 'token', current: {}, localNodeLabel: 'NODE-LOCAL', onPick: vi.fn(), onClose: vi.fn() };
+    const view = render(<CellSwitcher {...props} />);
+    await screen.findByRole('button', { name: /^Loc-One / });
+    expect(rowKeys()).toEqual(mainListRows().map(r => r.key));
+    mocks.useNodesState.mockReturnValue({ groups: [], hasLoaded: true });
+    view.rerender(<CellSwitcher {...props} />);
+    expect(rowKeys()).toEqual(mainListRows({ nodeGroups: [] }).map(r => r.key));
+    expect(screen.queryByText('hub-node')).toBeNull();
+    expect(screen.queryByText('NODE-B')).toBeNull();
+  });
+
   it('with useNodes still empty, the snapshot seeds hub and two-hop groups in the main list order', async () => {
     // Apertura a freddo nella vista singola mobile: la lista principale e'
     // smontata e useNodes non ha ancora pubblicato. L'ultimo snapshot della
     // principale porta i gruppi: devono comparire SUBITO, senza attendere un
     // giro, nello stesso ordine e con le stesse righe della principale.
-    mocks.useNodes.mockReturnValue([]);
+    mocks.useNodesState.mockReturnValue({ groups: [], hasLoaded: false });
     const expected = mainListRows();
     render(<CellSwitcher token="token" current={{}} localNodeLabel="NODE-LOCAL"
       onPick={vi.fn()} onClose={vi.fn()} />);
@@ -152,7 +175,7 @@ describe('cold open: the node groups are there at once', () => {
   });
 });
 
-const labelOf = (position) => ({ local: 'NODE-LOCAL', hub1: 'HUB1', 'hub1/node-b': 'NODE-B', dead1: 'DEAD1' }[position]);
+const labelOf = (position) => ({ local: 'NODE-LOCAL', hub1: 'hub-node', 'hub1/node-b': 'NODE-B', dead1: 'offline-node' }[position]);
 
 describe('quick list shows exactly the main list rows', () => {
   it('default mode: same rows, same order, same groups (scoped hub, pinned two-hop, unreachable)', async () => {

@@ -15,7 +15,7 @@ vi.mock('../lib/api.js', () => ({
 // aggiornano lo snapshot a meta' test continuano a vedere il mondo cambiare.
 vi.mock('../hooks/useNodes.js', async () => {
   const cache = await import('../lib/cell-switcher-cache.js');
-  return { useNodes: () => (cache.readCellSwitcherSnapshot() || {}).nodeGroups || [] };
+  return { useNodesState: () => ({ groups: (cache.readCellSwitcherSnapshot() || {}).nodeGroups || [], hasLoaded: true }) };
 });
 // Il locale del drawer vive nel treno condiviso: nei test il treno risponde
 // con i mock di api (sessions + fleet locale), cosi' i casi che cambiano i
@@ -548,11 +548,8 @@ describe('CellSwitcher', () => {
   });
 
   it('a row whose fleet read fails stays, shows its last known state and opens like the main list', async () => {
-    // Lettura flotta locale fallita: il treno tiene l'ultima lista nota
-    // (policy R27: un fallimento NON e' «zero celle») e la riga mostra lo
-    // stato che la lista principale gia' conosce — niente «status not
-    // confirmed»: quella riga non e' un photogramma da confermare, e' la
-    // riga della principale. Il tocco apre con la sola tmux nota.
+    // A failed fleet read preserves the last known list and its state.
+    // Selecting that main-list row opens the known tmux session.
     const onPick = vi.fn();
     mocks.fleetStatus.mockImplementation(async () => { throw new Error('HTTP 502'); });
     render(<Switcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);

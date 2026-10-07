@@ -350,10 +350,6 @@ export default function NotifyCenter({ token }) {
   }, [token]);
   useEffect(() => { refreshCapabilities(); }, [asks, refreshCapabilities]);
   const panelOpened = useRef(false);
-  // Stato SSE (mai aperta finché onopen non arriva) e timer di recupero.
-  const sseOpenedRef = useRef(false);
-  const recoveryTimerRef = useRef(null);
-  const recoveryDelayRef = useRef(ASK_RECOVERY_POLL_MS);
   useEffect(() => {
     if (!panelOpen) return;
     if (panelOpened.current) refreshCapabilities(true);
@@ -449,7 +445,26 @@ export default function NotifyCenter({ token }) {
   // usabile anche senza il canale (gli ask ricompaiono al prossimo mount).
   useEffect(() => {
     if (!token) return undefined;
+    let alive = true;
+    let streamOpen = false;
+    let recoveryTimer = null;
+    let recoveryDelay = ASK_RECOVERY_POLL_MS;
+    const stopRecovery = () => {
+      if (recoveryTimer !== null) clearTimeout(recoveryTimer);
+      recoveryTimer = null;
+    };
+    const scheduleRecovery = () => {
+      if (!alive || streamOpen || recoveryTimer !== null) return;
+      recoveryTimer = setTimeout(() => {
+        recoveryTimer = null;
+        if (!alive || streamOpen) return;
+        setRefreshVersion(v => v + 1);
+        recoveryDelay = Math.min(recoveryDelay * 2, ASK_RECOVERY_POLL_MAX_MS);
+        scheduleRecovery();
+      }, recoveryDelay);
+    };
     const close = connectEvents(token, (frame) => {
+      if (!alive) return;
       if (frame.type === 'feed-state-changed') { setRefreshVersion(v => v + 1); return; }
       if (frame.type === 'notify' && frame.ownerId && frame.eventId) {
         // Importato live: entra nella lista consultabile (dedup con l'arretrato
@@ -477,32 +492,21 @@ export default function NotifyCenter({ token }) {
         removeAsk(identity.id, identity.ownerId, identity.ownerAskId, frame);
       }
     }, () => {
+      if (!alive) return;
       // SSE aperta: — il recupero si ferma e il backoff riparte.
-      sseOpenedRef.current = true;
-      recoveryDelayRef.current = ASK_RECOVERY_POLL_MS;
-      if (recoveryTimerRef.current) { clearTimeout(recoveryTimerRef.current); recoveryTimerRef.current = null; }
+      streamOpen = true;
+      recoveryDelay = ASK_RECOVERY_POLL_MS;
+      stopRecovery();
       refreshCapabilities(true);
       setRefreshVersion(v => v + 1);
+    }, () => {
+      if (!alive) return;
+      streamOpen = false;
+      scheduleRecovery();
     });
-    return () => { close(); };
+    scheduleRecovery();
+    return () => { alive = false; stopRecovery(); close(); };
   }, [token, pushToast, refreshCapabilities]);
-
-  // Il recupero periodico gira SOLO finché la SSE non si è mai aperta:
-  // un tick rilegge /api/asks e /api/feed-state (incrementando refreshVersion)
-  // e ripianifica con backoff; l'apertura della SSE lo ferma (l'open già
-  // rilancia le letture) e riporta il ritardo al base.
-  useEffect(() => {
-    if (!token) return undefined;
-    recoveryDelayRef.current = ASK_RECOVERY_POLL_MS;
-    const tick = () => {
-      if (sseOpenedRef.current) return;
-      setRefreshVersion(v => v + 1);
-      recoveryDelayRef.current = Math.min(recoveryDelayRef.current * 2, ASK_RECOVERY_POLL_MAX_MS);
-      recoveryTimerRef.current = setTimeout(tick, recoveryDelayRef.current);
-    };
-    recoveryTimerRef.current = setTimeout(tick, recoveryDelayRef.current);
-    return () => { if (recoveryTimerRef.current) { clearTimeout(recoveryTimerRef.current); recoveryTimerRef.current = null; } };
-  }, [token]);
 
   useEffect(() => {
     let alive = true;
