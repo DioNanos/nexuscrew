@@ -44,6 +44,12 @@ const feedViewStateOf = (health, ownerId) => {
 // Il tombstone ha un TTL: un id riusato dopo un reset dell'owner non resta
 // nascosto per sempre.
 const DISMISSED_TTL_MS = 10 * 60 * 1000;
+// D-446: recupero senza SSE. Se la SSE non si apre (o resta giù senza
+// riaprirsi), una rilettura periodica limitata di /api/asks e /api/feed-state
+// recupera ASK e notice senza reload; si ferma appena la SSE apre (l'open
+// già rilancia le letture) e il backoff riparte dal base alla riapertura.
+const ASK_RECOVERY_POLL_MS = 30 * 1000;
+const ASK_RECOVERY_POLL_MAX_MS = 5 * 60 * 1000;
 const dismissedAsks = new Map(); // askKeyOf -> timestamp
 const generationTsOf = a => Object.hasOwn(a, 'ownerAskTs') ? a.ownerAskTs : a.ownerAskId || a.originNode ? null : a.ts;
 
@@ -344,6 +350,10 @@ export default function NotifyCenter({ token }) {
   }, [token]);
   useEffect(() => { refreshCapabilities(); }, [asks, refreshCapabilities]);
   const panelOpened = useRef(false);
+  // D-446: stato SSE (mai aperta finché onopen non arriva) e timer di recupero.
+  const sseOpenedRef = useRef(false);
+  const recoveryTimerRef = useRef(null);
+  const recoveryDelayRef = useRef(ASK_RECOVERY_POLL_MS);
   useEffect(() => {
     if (!panelOpen) return;
     if (panelOpened.current) refreshCapabilities(true);
@@ -466,9 +476,33 @@ export default function NotifyCenter({ token }) {
         noteAskDismissed(key, frame.scope === 'local' ? localAsk || { ...frame.askGeneration, ownerAskTs: frame.ownerAskTs } : null);
         removeAsk(identity.id, identity.ownerId, identity.ownerAskId, frame);
       }
-    }, () => { refreshCapabilities(true); setRefreshVersion(v => v + 1); });
+    }, () => {
+      // D-446: la SSE è aperta — il recupero si ferma e il backoff riparte.
+      sseOpenedRef.current = true;
+      recoveryDelayRef.current = ASK_RECOVERY_POLL_MS;
+      if (recoveryTimerRef.current) { clearTimeout(recoveryTimerRef.current); recoveryTimerRef.current = null; }
+      refreshCapabilities(true);
+      setRefreshVersion(v => v + 1);
+    });
     return () => { close(); };
   }, [token, pushToast, refreshCapabilities]);
+
+  // D-446: il recupero periodico gira SOLO finché la SSE non si è mai aperta:
+  // un tick rilegge /api/asks e /api/feed-state (incrementando refreshVersion)
+  // e ripianifica con backoff; l'apertura della SSE lo ferma (l'open già
+  // rilancia le letture) e riporta il ritardo al base.
+  useEffect(() => {
+    if (!token) return undefined;
+    recoveryDelayRef.current = ASK_RECOVERY_POLL_MS;
+    const tick = () => {
+      if (sseOpenedRef.current) return;
+      setRefreshVersion(v => v + 1);
+      recoveryDelayRef.current = Math.min(recoveryDelayRef.current * 2, ASK_RECOVERY_POLL_MAX_MS);
+      recoveryTimerRef.current = setTimeout(tick, recoveryDelayRef.current);
+    };
+    recoveryTimerRef.current = setTimeout(tick, recoveryDelayRef.current);
+    return () => { if (recoveryTimerRef.current) { clearTimeout(recoveryTimerRef.current); recoveryTimerRef.current = null; } };
+  }, [token]);
 
   useEffect(() => {
     let alive = true;
