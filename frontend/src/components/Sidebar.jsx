@@ -641,12 +641,20 @@ export default function Sidebar({
         const dotClass = g.fleetState === 'stale'
           ? 'warn' : hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
         const dotTitle = [g.health ? healthTitle(g.health) : '', fleetNotice].filter(Boolean).join(' · ');
+        // Sotto-riga della riga nodo: conteggio e avviso (o stato) su una riga
+        // SUA, sotto il nome — il nome non compete piu' con il messaggio lungo,
+        // che si tronca lui (il testo intero resta nel title).
+        const subline = g.status === 'up'
+          ? [t('node-sessions').replace('{n}', String(remoteItems.length)), fleetNotice].filter(Boolean).join(' · ')
+          : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g));
         // Gruppo nodo VL (VL_NODES_IN_SIDEBAR): stesso posto degli altri nodi,
         // conteggio onesto (1 se il device dichiara l'attach, 0 altrimenti);
         // offline mostra cio' che mostrano gli altri nodi offline. La riga
         // sessione apre la vista eventi nella vista larga (la sua sede), non
         // un terminale: niente drag, niente kill, niente pin.
         if (g.kind === 'vl') {
+          const vlSubline = nodeStateLabel(g)
+            || [t('node-sessions').replace('{n}', String(g.sessions.length)), fleetNotice].filter(Boolean).join(' · ');
           return (
             <div key={`nodo-vl-${nodeRoute}-${g.name}`} className="nc-node-order-wrap"
               data-node-order-key={nodeKey(g)}>
@@ -658,12 +666,10 @@ export default function Sidebar({
                   onStep={(delta) => stepNode(nodeKey(g), delta, nodeGroups || [])} />
                 <span className="nc-node-chevron">{groupView.open ? '⌄' : '›'}</span>
                 <span className={`nc-dot ${dotClass}`} title={dotTitle} />
-                <b>{g.label || g.name}</b>
-                <small>
-                  {' · '}
-                  {nodeStateLabel(g)
-                    || [t('node-sessions').replace('{n}', String(g.sessions.length)), fleetNotice].filter(Boolean).join(' · ')}
-                </small>
+                <span className="nc-node-main">
+                  <b>{g.label || g.name}</b>
+                  <small title={vlSubline}>{vlSubline}</small>
+                </span>
               </div>
               {g.status === 'up' && groupView.open && (
                 <div className="nc-side-group">
@@ -693,18 +699,10 @@ export default function Sidebar({
               onStep={(delta) => stepNode(nodeKey(g), delta, nodeGroups || [])} />
             <span className="nc-node-chevron">{groupView.open ? '⌄' : '›'}</span>
             <span className={`nc-dot ${dotClass}`} title={dotTitle} />
-            <b>{g.label || g.name}</b>
-            <small>
-              {' · '}
-              {g.status === 'up'
-                ? [t('node-sessions').replace('{n}', String(remoteItems.length)), fleetNotice].filter(Boolean).join(' · ')
-                : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
-            </small>
-            <select className="nc-node-filter" value={groupView.filter} title={t(`view-${groupView.filter}`)}
-              onClick={(e) => e.stopPropagation()} onChange={(e) => updateView(nodeRoute, { filter: e.target.value })}>
-              <option value="all">{t('view-all')}</option><option value="pinned">{t('view-pinned')}</option>
-              <option value="active">{t('view-active')}</option><option value="off">{t('view-off')}</option><option value="technical">{t('view-technical')}</option>
-            </select>
+            <span className="nc-node-main">
+              <b>{g.label || g.name}</b>
+              <small title={subline}>{subline}</small>
+            </span>
             {g.direct && onNodeRename && <button type="button" className="nc-node-rename" title={t('rename-node')}
               aria-label={`${t('rename-node')} ${g.label || g.name}`}
               onClick={(e) => { e.stopPropagation(); promptNodeRename(g); }}>✎</button>}
@@ -713,6 +711,11 @@ export default function Sidebar({
                 title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}
                 onClick={(e) => { e.stopPropagation(); onNodePower && onNodePower(g); }}><Icon name="power" size={14} /></button>
             )}
+            <select className="nc-node-filter" value={groupView.filter} title={t(`view-${groupView.filter}`)}
+              onClick={(e) => e.stopPropagation()} onChange={(e) => updateView(nodeRoute, { filter: e.target.value })}>
+              <option value="all">{t('view-all')}</option><option value="pinned">{t('view-pinned')}</option>
+              <option value="active">{t('view-active')}</option><option value="off">{t('view-off')}</option><option value="technical">{t('view-technical')}</option>
+            </select>
           </div>
           {(g.status === 'up' || g.cellsPreserved) && groupView.open && (
             <div className="nc-side-group">
@@ -927,7 +930,8 @@ function PositionHeader({ label, count, state, onToggle, onFilter }) {
   return <div className="nc-side-group-title nc-node-title" role="button" tabIndex={0}
     onClick={onToggle} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}>
     <span className="nc-node-chevron">{state.open ? '⌄' : '›'}</span>
-    <span className="nc-dot on" /><b>{label}</b><small> · {t('node-sessions').replace('{n}', String(count))}</small>
+    <span className="nc-dot on" />
+    <span className="nc-node-main"><b>{label}</b><small>{t('node-sessions').replace('{n}', String(count))}</small></span>
     <select className="nc-node-filter" value={state.filter} title={t(`view-${state.filter}`)}
       onClick={(e) => e.stopPropagation()} onChange={(e) => onFilter(e.target.value)}>
       <option value="all">{t('view-all')}</option><option value="pinned">{t('view-pinned')}</option>
