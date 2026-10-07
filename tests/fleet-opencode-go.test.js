@@ -115,7 +115,7 @@ test('retired OpenCode Go models never re-enter the catalog', () => {
     for (const client of ['claude', 'codex-vl', 'pi']) {
       assert.equal(
         normalizeManagedSpec({ client, provider: 'opencode-go', model }), null,
-        `${client} rifiuta ${model}: deprecated dal 2026-09-12, NON reinserirlo senza re-audit`,
+        `${client} rifiuta ${model}: deprecated dal 2026-09-12, NON reinserirlo senza una nuova verifica`,
       );
     }
   }

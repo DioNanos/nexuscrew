@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // Comportamento dell'invito, non forma del sorgente. Sostituisce la guardia
-// testuale di tests/ui-fleet-controls.test.js (NC-N), che fissava con una
+// testuale di tests/ui-fleet-controls.test.js, che fissava con una
 // regex un ramo morto: la delega federata risponde 404 dal 2026-08-04, quindi
 // su un'installazione accoppiata a un hub il bottone non poteva mai riuscire,
 // e nessuna lettura del sorgente poteva accorgersene.

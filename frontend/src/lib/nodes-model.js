@@ -1,7 +1,7 @@
-// Modello puro dei gruppi per-nodo (B2, design §5/§7). Nessun React qui.
+// Modello puro dei gruppi per-nodo (B2). Nessun React qui.
 // Input: /api/nodes (read-only, redatto) + fetch best-effort delle sessioni
 // remote via proxy /node/<name>/api/sessions. Output: gruppi renderizzabili
-// con stato esplicito (mai spinner infinito, design §7).
+// con stato esplicito (mai spinner infinito).
 //
 // Stati gruppo:
 //   'up'          tunnel su, sessioni caricate

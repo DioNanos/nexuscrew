@@ -1026,7 +1026,7 @@ test('describeManaged: credenziale presente ma illeggibile -> stesso fail (authC
 // sempre, ma vale come fonte solo per i profili con legacySecrets: per gli altri
 // la sua illeggibilita' non dice nulla sulla chiave cercata, e dichiararla
 // "non verificabile" manda l'operatore a sistemare un permesso irrilevante
-// mentre la chiave e' davvero assente. Rilievo di un audit indipendente, con il
+// mentre la chiave e' davvero assente. Rilievo di una verifica indipendente, con il
 // caso ricostruito.
 test('describeManaged: un file legacy illeggibile non rende "unreadable" un profilo che non lo usa come fonte', () => {
   const home = tmp();
@@ -1092,7 +1092,7 @@ test('launch ollama-cloud genera il catalogo con le capacita dichiarate (niente 
     assert.equal(entry.context_window, 1000000, 'finestra non 1M');
     assert.deepEqual(entry.input_modalities, ['text', 'image'], 'vision non dichiarata');
     // parallel NON dichiarato dalla scheda: default conservativo false
-    // finche' non misurato su device (rilievo audit 0314517).
+    // finche' non misurato su device.
     assert.equal(entry.supports_parallel_tool_calls, false, 'parallel deve restare conservativo');
     assert.ok(r.engine.args.includes('model_context_window=1000000'));
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -1153,7 +1153,7 @@ test('launch ollama-cloud genera kimi-k3 con contesto 1M e vision nativa (niente
 });
 
 test('launch ollama-cloud: generazione impossibile ricade sul file utente (no launch failure)', () => {
-  // Audit 0314517 R2: se il path del catalogo generato e' occupato (es. da
+  // Se il path del catalogo generato e' occupato (es. da
   // una directory), customCatalogFor lancia — il launch NON deve fallire:
   // ricade sul file utente ~/.codex/ollama_cloud_model_catalog.json.
   const home = tmp();

@@ -72,7 +72,7 @@ test('timestamp obbligatorio: oltre la soglia il dato è morto → null', () => 
 test('timestamp nel futuro: oltre la tolleranza il dato è rotto → null, «fresco per sempre» non è fresco', () => {
   const root = tmpRoot();
   // ts NEL FUTURO: `ora - ts` è NEGATIVO e non supera mai la massima età —
-  // il rilievo dell'audit. Un orologio avanti, o uno ts scritto male, e la
+  // il rilievo della verifica. Un orologio avanti, o uno ts scritto male, e la
   // riga mostrerebbe un numero morto che non scadrà mai. La soglia ora
   // guarda anche questo verso.
   scrivi(root, 'cloud-Dev', JSON.stringify({

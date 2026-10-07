@@ -1,7 +1,7 @@
 // R27: la regola della lettura flotta e' ESATTA e vale per due siti
 // (SessionList mobile e App desktop) — la si prova come policy pura, cosi'
 // i due consumatori non possono divergere di nuovo.
-// R27 rev3 (audit): available:false NON e' un fallimento di lettura, e' un
+// R27: available:false NON e' un fallimento di lettura, e' un
 // DATO del server — e il server DICE quale dei due attraverso `reason`
 // (lib/fleet/provider.js:22/23/25, builtin.js:577, route /status lo propaga):
 //   - «fleetEnabled=false»/«builtinEnabled=false» → spento PER SCELTA: zero
@@ -11,7 +11,7 @@
 //   - reject (rete/401/5xx) → non si e' potuto leggere: stale.
 // Fail-safe: available:false con reason NON riconosciuto resta una risposta
 // RIUSCITA → dato (lista vuota): mai celle fantasma su un server che ha
-// parlato (l'audit ha detto che le fantasma sono il caso peggiore).
+// parlato (la verifica ha detto che le fantasma sono il caso peggiore).
 import { describe, expect, it } from 'vitest';
 import { fleetReadOutcome } from './fleet-read-policy.js';
 

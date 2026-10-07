@@ -40,7 +40,7 @@ async function topology(t) {
   const origin = await boot(t), remote = await boot(t);
   pair(origin, remote, 'remote'); pair(remote, origin, 'origin');
   // Event feed disabled on both sides: this suite isolates the fan-out route
-  // from the second transport, exactly like the audit probe did.
+  // from the second transport, exactly like the original probe did.
   nodes.atomicWriteStore(origin.nodesPath, nodes.updateNode(nodes.loadStoreStrict(origin.nodesPath), 'remote', { direction: 'inbound', transport: 'inbound', eventsReceive: false }));
   nodes.atomicWriteStore(remote.nodesPath, nodes.updateNode(nodes.loadStoreStrict(remote.nodesPath), 'origin', { eventsReceive: false }));
   return { origin, remote };

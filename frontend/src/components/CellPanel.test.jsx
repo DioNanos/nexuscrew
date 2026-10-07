@@ -94,7 +94,7 @@ describe('CellPanel (D8: ingresso al pannello via ticket)', () => {
   });
 
   it('node-refused (il nodo owner è in sola lettura): causa propria e NESSUN Riprova', async () => {
-    // Un audit indipendente ha percorso questa catena: peer autorizzato, nodo
+    // Una verifica indipendente ha percorso questa catena: peer autorizzato, nodo
     // owner READONLY, 403 senza `reason` → il frontend lo classificava
     // `denied`, cioè «biglietto scaduto», e offriva Riprova. La richiesta
     // successiva è identica e resta 403 finché non cambia la policy del nodo:

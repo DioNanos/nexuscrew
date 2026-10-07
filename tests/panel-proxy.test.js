@@ -309,7 +309,7 @@ test('panel-proxy: un segmento .. si ferma qui, non lo normalizza il pannello', 
   assert.equal(res2.statusCode, 404, 'anche codificato');
 });
 
-// IL BYPASS, trovato da un audit indipendente ed e' il rilievo migliore della
+// IL BYPASS, trovato da una verifica indipendente ed e' il rilievo migliore della
 // nottata: l'origine di una richiesta veniva dedotta dal PATH. `/api/route` e'
 // il canale del proprietario e non applica gate per-peer — ma un peer poteva
 // fare arrivare quella forma attraverso il pass-through generico, e il nodo di
@@ -318,7 +318,7 @@ test('panel-proxy: un peer non puo\' rientrare dal canale del proprietario', () 
   const { createNodeProxy } = require('../lib/proxy/node-proxy.js');
   const proxy = createNodeProxy({ resolveNode: () => ({ localPort: 1, token: 't' }) });
   // Anche nelle forme codificate: il blocklist confronta il path grezzo E quello
-  // decodificato, e un audit ha fatto notare che il test copriva solo le prime
+  // decodificato, e una verifica ha fatto notare che il test copriva solo le prime
   // due. Una lacuna di copertura su una guardia di sicurezza va chiusa: se un
   // giorno il confronto perdesse la forma decodificata, nessuno se ne
   // accorgerebbe.

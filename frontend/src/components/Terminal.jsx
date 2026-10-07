@@ -392,7 +392,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     // davvero qualcosa di nuovo selezionato, e si svuota soltanto quando
     // l'operatore agisce — copia o annulla. Il riquadro giallo puo' sparire
     // (e' di xterm, non nostro), il testo da copiare no.
-    // handleDrag vive qui sopra perche' onSelection lo chiude (rev5): se
+    // handleDrag vive qui sopra perche' onSelection lo chiude: se
     // xterm azzera la selezione a meta' drag, il gesto finisce li'.
     // R34: scrive l'origine del gesto (ref per le closure + stato per il
     // render). Unico punto di scrittura dentro l'effect: i gesti la marcano,
@@ -406,7 +406,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       // R25: le maniglie seguono la selezione — il range si rilegge a ogni
       // cambiamento (gesto nostro o no); lo snapshot per riga e' la base del
       // confronto per il contenuto sovrascritto sotto il range.
-      // R25-zoom rev3: xterm 6.0 restituisce getSelectionPosition() NON
+      // R25-zoom: xterm 6.0 restituisce getSelectionPosition() NON
       // normalizzato — un drag nativo all'indietro produce start>end. Il
       // range si normalizza QUI, al punto di lettura, cosi' TUTTI i
       // consumatori (maniglie, barra, snapshot) vedono start<=end row-major.
@@ -420,7 +420,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       // R34: selezione sparita → origine sparita. La policy conservativa su
       // null e' touch, ma a selezione assente non c'e' nulla da mostrare.
       if (!range) markOrigin(null);
-      // R25-zoom rev5 (r25rev4-audit): xterm AZZERA la selezione su resize di
+      // R25-zoom: xterm AZZERA la selezione su resize di
       // righe e su trim oltre il top. Se il drag e' in corso, l'ancora
       // congelata risusciterebbe una selezione cancellata al prossimo
       // pointermove: il gesto si CHIUDE qui, non resta a meta'.
@@ -583,7 +583,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       return { col, row: term.buffer.active.viewportY + visibleRow };
     };
     const cellAt = (touch) => cellXY(touch.clientX, touch.clientY);
-    // R25-zoom rev4: questo offset serve SOLO al drag delle maniglie (il
+    // R25-zoom: questo offset serve SOLO al drag delle maniglie (il
     // dito non deve centrare l'ancora che trascina). La selezione touch
     // (long-press, SELECT, tocchi successivi) usa il punto di pressione
     // ESATTO: la barra di zoom mostra la riga ingrandita, l'offset di riga
@@ -642,7 +642,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       if (selectionModeRef.current) {
         e.preventDefault(); e.stopPropagation();
-        // R25-zoom rev4: punto di pressione ESATTO (niente offset di riga —
+        // R25-zoom: punto di pressione ESATTO (niente offset di riga —
         // la barra di zoom mostra la riga ingrandita). Stesso trattamento
         // del long-press: la selezione parte dalla cella premuta, con
         // espansione a parola (Termux).
@@ -671,7 +671,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
         longPressTimer = null; touchSelecting = true; touchMoved = true; lastTerminalTap = null;
         selectionModeRef.current = true;
         onSelectionModeChange?.(true);
-        // R25-zoom rev4: punto di pressione ESATTO — la selezione comincia
+        // R25-zoom: punto di pressione ESATTO — la selezione comincia
         // alla riga premuta, non due righe sopra (l'offset nasceva perche'
         // la cella sotto il polpastrello non si vedeva; la barra di zoom
         // mostra la riga ingrandita, la ragione non esiste piu'). Se il
@@ -697,7 +697,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     const onTouchMove = (e) => {
       if (touchSelecting && selectStart && e.touches.length === 1) {
         e.preventDefault(); e.stopPropagation();
-        // R25-zoom rev4: estremita' mobile = cella ESATTA sotto il dito, con
+        // R25-zoom: estremita' mobile = cella ESATTA sotto il dito, con
         // snap al bordo del glifo largo (mai a meta' di un emoji/CJK).
         const raw = cellXY(e.touches[0].clientX, e.touches[0].clientY);
         const a = selectStart.row * term.cols + selectStart.col;
@@ -715,7 +715,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       if (selectionModeRef.current && selectStart && e.touches.length === 1) {
         e.preventDefault(); e.stopPropagation();
-        // R25-zoom rev4: estremita' mobile = cella ESATTA sotto il dito, con
+        // R25-zoom: estremita' mobile = cella ESATTA sotto il dito, con
         // snap al bordo del glifo largo (mai a meta' di un emoji/CJK).
         const raw = cellXY(e.touches[0].clientX, e.touches[0].clientY);
         const a = selectStart.row * term.cols + selectStart.col;
@@ -899,7 +899,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
     };
     const applyHandlePoint = (px, py, pointerType) => {
       if (!handleDrag || !handleDrag.fixed) return;
-      // R25-zoom rev3-audit: l'ancora e' quella catturata ALLA PRESA dallo
+      // R25-zoom: l'ancora e' quella catturata ALLA PRESA dallo
       // stato normalizzato (selRange), non una rilettura del range grezzo a
       // ogni pointermove: su una selezione nativa invertita la rilettura
       // dava l'estremita' sbagliata (maniglia congelata, lato opposto perso).
@@ -911,7 +911,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       const raw = pointerType === 'mouse'
         ? cellXY(px, py)
         : touchSelectionCellAt({ clientX: px, clientY: py }, touchSelectionOffsetFor());
-      // R25-zoom rev4: la maniglia non si pianta a meta' di un glifo largo
+      // R25-zoom: la maniglia non si pianta a meta' di un glifo largo
       // (variante di getValidCurX: start al bordo sinistro, end al destro).
       const line = term.buffer.active.getLine(raw.row);
       const cell = { row: raw.row, col: snapWideCol({ line, col: raw.col, side: handleDrag.which, cols: term.cols }) };
@@ -970,7 +970,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
           which,
           offsetX: g ? e.clientX - (hostRect.left + g.left) : 0,
           offsetY: g ? e.clientY - (hostRect.top + g.top) : 0,
-          // R25-zoom rev3-audit: l'ancora e' una decisione presa UNA volta,
+          // R25-zoom: l'ancora e' una decisione presa UNA volta,
           // alla presa della maniglia, dallo stato normalizzato (selRange).
           // Rileggerla grezza a ogni pointermove (getSelectionPosition) su
           // una selezione nativa invertita (start>end) dava l'estremita'

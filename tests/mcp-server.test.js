@@ -1334,7 +1334,7 @@ test('subprocess: EOF immediato non tronca una tools/call asincrona', async (t) 
   assert.deepEqual(JSON.parse(toolReply.result.content[0].text), { delivered: { ui: 1, push: 0 } });
 });
 
-// NC-R — aggiornare NexusCrew non aggiorna il bridge MCP di una cella gia' in
+// aggiornare NexusCrew non aggiorna il bridge MCP di una cella gia' in
 // piedi. Il sintomo e' crudele: si installa una correzione, si riprova, e si
 // riceve l'errore VECCHIO. Chi lo subisce conclude che la correzione non
 // funziona. E' successo il 2026-08-07 su rc.26, e ci e' voluto un giro intero
@@ -1385,7 +1385,7 @@ test('se la verifica di versione fallisce, l\'errore originale esce intatto', as
 });
 
 // --- P0: identità fail-closed — pane stantio (prima stesura + rifinitura) ---
-// Modello tmux vero (misurato su 3.4 dall'audit): senza `-t` il CLI risolve il
+// Modello tmux vero (misurato su 3.4 dalla verifica): senza `-t` il CLI risolve il
 // pane dall'ENVIRON DEL PROCESSO FIGLIO; se quel pane è morto (environ stale)
 // ricade sul CLIENT ATTACHED attivo e risponde rc=0 col nome di quel client —
 // l'incidente di partenza. Con `-t $TMUX_PANE` la query è deterministica: un
@@ -1393,7 +1393,7 @@ test('se la verifica di versione fallisce, l\'errore originale esce intatto', as
 // stantio (STALE_PANE). Se tmux e NEXUSCREW_MCP_SESSION sono entrambi validi
 // ma divergono, l'identità è ambigua (SESSION_MISMATCH).
 test('P0: TMUX_PANE inesistente -> identita NON attribuita (fail-closed, STALE_PANE)', async () => {
-  // Finto FEDELE al tmux reale (3.4, probe A1/A2 dell'audit): un pane morto con
+  // Finto FEDELE al tmux reale (3.4, probe A1/A2 della verifica): un pane morto con
   // -t risponde rc=0 con stdout VUOTO, non un errore. Il rilevamento dello
   // stantio deve basarsi sulla stringa vuota.
   const execFileImpl = (bin, args, _opts, cb) => {
@@ -1447,7 +1447,7 @@ test('P0: TMUX_PANE malformato -> STALE_PANE, NESSUNA chiamata tmux (il valore n
 });
 
 test('P0: pane VIVO di un\'altra sessione + NEXUSCREW_MCP_SESSION divergente -> NON attribuire (mismatch)', async () => {
-  // Probe S3 dell'audit: TMUX_PANE=%21 (pane vivo di cloud-Dev) risolve
+  // Probe S3 della verifica: TMUX_PANE=%21 (pane vivo di cloud-Dev) risolve
   // cloud-Dev via tmux anche quando la cella è un'altra (env dice cloud-Research).
   // Due fonti valide in disaccordo: l'identità è ambigua -> fail-closed.
   const execFileImpl = (bin, args, _opts, cb) => {

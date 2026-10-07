@@ -7,7 +7,7 @@
 // nel frame attach come sempre (MAI in URL). Remoto: '/node/<name>/ws' col
 // token LOCALE in query — e' il canale di auth dell'upgrade verso il proxy
 // (il browser non puo' settare Authorization su un WS); il proxy lo strippa
-// prima di inoltrare e inietta lui il token remoto (contratto §4b(2)).
+// prima di inoltrare e inietta lui il token remoto.
 import { terminalRuntimeConfig } from './terminal-runtime-config.js';
 
 export function wsTarget(node, token, attachId = null, session = null) {

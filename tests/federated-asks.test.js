@@ -580,7 +580,7 @@ test('allow-new-attempt: un fallimento parziale non chiude l ask e non fa incoll
   assert.equal(pastes, 0);
 });
 
-// --- FIX 3 (re-audit cf00c8ce): riconciliazione e paste vivo -----------------
+// --- FIX 3: riconciliazione e paste vivo -----------------
 // Il fix e' nel punto di DECISIONE della riconciliazione: qui si prova che il
 // claim di un paste ancora in volo non viene toccato e che un "niente da
 // riconciliare" non viene presentato come successo.

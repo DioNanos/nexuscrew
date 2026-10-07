@@ -190,7 +190,7 @@ test('standalone hub invitations require one explicit reachable SSH endpoint', (
   assert.doesNotMatch(settings, /publishedPort[^\n]*sshPort|sshPort[^\n]*publishedPort/);
 });
 
-// NC-N. Questa guardia leggeva il sorgente con una regex e per costruzione non
+// Questa guardia leggeva il sorgente con una regex e per costruzione non
 // poteva accorgersi che il ramo che fissava era MORTO: la delega federata
 // risponde 404 dal 2026-08-04, quindi su un'installazione accoppiata a un hub
 // il bottone non poteva mai riuscire. Il comportamento e' ora verificato in
@@ -217,7 +217,7 @@ test('Share publishes the local device through the selected hub, not the remote 
     'la remediation strutturata della PATCH Share deve essere visibile nella UI');
   assert.doesNotMatch(settings, /!shareTunnel\?\.up && !shareHub\.shared/,
     'il checkbox Share non deve restare bloccato quando il tunnel e giu');
-  // La riga di un nodo non pubblica il dispositivo locale, e da NC-I non porta
+  // La riga di un nodo non pubblica il dispositivo locale, e ora non porta
   // piu' NESSUN controllo: identita' e riassunto, e basta. I controlli ACL non
   // sono spariti, si sono spostati di un livello — quindi la guardia si sposta
   // con loro invece di essere tolta, altrimenti il giorno in cui qualcuno
@@ -249,7 +249,7 @@ test('node visibility controls appear only where the server exposes them, on a s
   // Questa guardia era scritta come confronto letterale sul sorgente del
   // predicato. Cosi' facendo bloccava anche un INDURIMENTO — aggiungere una
   // condizione lo faceva cadere per differenza di stringa, non di
-  // comportamento. Rilievo di un audit indipendente, e la seconda volta che pinno la
+  // comportamento. Rilievo di una verifica indipendente, e la seconda volta che pinno la
   // forma invece della sostanza. Ora si prova il predicato eseguendolo.
   const { nodeDetailModel } = await import('../frontend/src/lib/node-detail.js');
   const can = (node) => nodeDetailModel({ name: 'peer', ...node }, []).canEditVisibility;

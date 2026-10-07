@@ -7,7 +7,7 @@
 // openai-compat + localhost:11434 e le VL_* ambientali li sovrascriverebbero in
 // silenzio, buttando via il config.toml dell'operatore. Le varianti remote
 // (vl.anthropic, vl.custom) compongono SEMPRE la coppia: la' la variante e' la
-// scelta. Il modello scelto in UI viaggia via VL_MODEL (V-69), il prompt di
+// scelta. Il modello scelto in UI viaggia via VL_MODEL , il prompt di
 // cella via VL_SYSTEM_APPEND_FILE (gate 0.3.1); `vl --profile` esiste ma resta
 // dell'operatore. Standard-only: lancia la TUI senza argomenti, nessun flag di
 // approvazione da cablare.
@@ -60,7 +60,7 @@ test('vl argv: lancia la TUI senza argomenti; nessun prompt su argv; niente toke
   try {
     const eng = () => ({ id: 'vl.native', managed: { client: 'vl', provider: 'native', model: '', permissionPolicy: 'standard' } });
     // TUI: nessun argomento, niente env/token. Lo stub `exit 0` non dichiara
-    // versione: il gate V-69 degrada (dichiarato), quindi NESSUNA env append.
+    // versione: il gate degrada (dichiarato), quindi NESSUNA env append.
     const r0 = resolveManagedEngine(eng(), { id: 'vl.native' }, { home, platform: 'linux', env: {} });
     assert.equal(r0.ok, true);
     assert.deepEqual(r0.engine.args, [], 'vl lancia la TUI senza argomenti');
@@ -75,7 +75,7 @@ test('vl argv: lancia la TUI senza argomenti; nessun prompt su argv; niente toke
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-// --- V-69: prompt per-cella via VL_SYSTEM_APPEND_FILE + modello dalla UI -----
+// --- prompt per-cella via VL_SYSTEM_APPEND_FILE + modello dalla UI -----
 // Il probe di versione e' iniettabile (cfg.vlVersionProbe) perche' i test non
 // dipendano da un vl vero: torna l'output GREZZO di `vl --version`.
 const PROBE_031 = () => 'vl 0.3.1\n';
@@ -86,7 +86,7 @@ function vlResolve(home, cell, cfgExtra = {}) {
   return resolveManagedEngine(engine, cell, { home, platform: 'linux', env: {}, ...cfgExtra });
 }
 
-test('V-69 gate versione regge (0.3.1): file per-cella scritto + env composta, NESSUN degrado', () => {
+test('gate versione regge (0.3.1): file per-cella scritto + env composta, NESSUN degrado', () => {
   const home = homeWithVl();
   try {
     const r = vlResolve(home, { id: 'Dev', prompt: 'You are the Dev cell.' }, { vlVersionProbe: PROBE_031 });
@@ -106,7 +106,7 @@ test('V-69 gate versione regge (0.3.1): file per-cella scritto + env composta, N
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('V-69 CONTROLLO NEGATIVO — versione vecchia (0.1.0): env append NON composta + degrado DICHIARATO (mai silenzio)', () => {
+test('CONTROLLO NEGATIVO — versione vecchia (0.1.0): env append NON composta + degrado DICHIARATO (mai silenzio)', () => {
   const home = homeWithVl();
   try {
     const r = vlResolve(home, { id: 'Dev', prompt: 'You are the Dev cell.' }, { vlVersionProbe: PROBE_010 });
@@ -118,7 +118,7 @@ test('V-69 CONTROLLO NEGATIVO — versione vecchia (0.1.0): env append NON compo
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('V-69 probe non risponde / output non riconosciuto: degrado fail-closed con motivo, cella parte', () => {
+test('probe non risponde / output non riconosciuto: degrado fail-closed con motivo, cella parte', () => {
   const home = homeWithVl();
   try {
     const rNull = vlResolve(home, { id: 'Dev', prompt: 'p' }, { vlVersionProbe: () => null });
@@ -134,7 +134,7 @@ test('V-69 probe non risponde / output non riconosciuto: degrado fail-closed con
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('V-69 senza prompt di cella: il file porta comunque le istruzioni companion (superficie MCP di vl)', () => {
+test('senza prompt di cella: il file porta comunque le istruzioni companion (superficie MCP di vl)', () => {
   const home = homeWithVl();
   try {
     const r = vlResolve(home, { id: 'Dev' }, { vlVersionProbe: PROBE_031 });
@@ -146,7 +146,7 @@ test('V-69 senza prompt di cella: il file porta comunque le istruzioni companion
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('V-69 modello dalla UI: scelto -> SOLO VL_MODEL; vl.native non esporta MAI provider/base_url', () => {
+test('modello dalla UI: scelto -> SOLO VL_MODEL; vl.native non esporta MAI provider/base_url', () => {
   const home = homeWithVl();
   try {
     const r = vlResolve(home, { id: 'Dev', model: 'gemma4:31b' }, { vlVersionProbe: PROBE_031 });
@@ -160,7 +160,7 @@ test('V-69 modello dalla UI: scelto -> SOLO VL_MODEL; vl.native non esporta MAI 
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('V-69 difese del percorso per-cella: id traversal e symlink -> degrado, mai scrittura fuori posto', () => {
+test('difese del percorso per-cella: id traversal e symlink -> degrado, mai scrittura fuori posto', () => {
   const home = homeWithVl();
   try {
     // '..' passa CELL_ID_RE ma come filename e' traversal: rifiutato, degradato
@@ -178,7 +178,7 @@ test('V-69 difese del percorso per-cella: id traversal e symlink -> degrado, mai
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('V-69 budget: companionInstructions sta in poche righe (<= 2048 caratteri) — oltre, la spesa va ridiscussa', () => {
+test('budget: companionInstructions sta in poche righe (<= 2048 caratteri) — oltre, la spesa va ridiscussa', () => {
   // Il testo companion entra nel system di OGNI turno di OGNI cella vl: su un
   // modello locale a 32k non e' gratis. La soglia codifica "poche righe": se il
   // catalogo companions cresce al punto da superarla, questo test cade e la

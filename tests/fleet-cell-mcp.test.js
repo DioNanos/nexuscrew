@@ -98,7 +98,7 @@ test('anche i server di PROGETTO entrano nel complemento', (t) => {
 });
 
 test('il LOCAL SCOPE entra nel complemento: stesso file, ramo diverso', (t) => {
-  // Trovato dall'audit, ed era reale: su questa installazione nove progetti
+  // Trovato dalla verifica, ed era reale: su questa installazione nove progetti
   // hanno server dichiarati in `projects[<cwd>].mcpServers` dentro la stessa
   // configurazione utente. Non enumerarli significava che «solo nexuscrew»
   // lasciava passare server che la sessione carica davvero — e l'operatore

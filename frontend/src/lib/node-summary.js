@@ -8,7 +8,7 @@
 //
 // Il riassunto e' DERIVATO, mai memorizzato. Oggi si deriva dai campi che
 // esistono davvero — `shared`, `visibility`, `selected`. Quando arriveranno i
-// grant (NC-E) si derivera' da quelli, e la classe `user`/`admin`/personalizzato
+// grant si derivera' da quelli, e la classe `user`/`admin`/personalizzato
 // sara' calcolata qui: e' lo slot, ed e' il motivo per cui questa funzione esiste
 // gia' adesso invece di essere due righe dentro il componente.
 //

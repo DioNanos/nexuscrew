@@ -10,7 +10,7 @@ beforeEach(() => { localStorage.clear(); });
 
 describe('removePin — calcola sul valore CORRENTE, no lost update', () => {
   it('un pin aggiunto in un\'altra shell (localStorage) sopravvive a un removePin su stato React stale', () => {
-    // Caso dell\'auditor: clear in volo su AuditCell1, nel mentre aggiunto un
+    // Caso del revisore: clear in volo su AuditCell1, nel mentre aggiunto un
     // preferito su AuditCell2 altrove. Lo stato React di questa istanza e\' stale,
     // ma la fonte di verita\' (localStorage) e\' aggiornata. removePin deve leggere
     // il corrente, non la closure.
@@ -35,7 +35,7 @@ describe('removePin — calcola sul valore CORRENTE, no lost update', () => {
   });
 });
 
-describe('pinError + retry — fallimento SEGNALATO e RITENTABILE (contratto rev6 §2.1)', () => {
+describe('pinError + retry — fallimento SEGNALATO e RITENTABILE', () => {
   it('un localStorage.setItem fallito dopo un clear emerge come pinError', () => {
     const { result } = renderHook(() => useRosterPreferences());
     act(() => result.current.togglePin('A'));                     // ls [A]

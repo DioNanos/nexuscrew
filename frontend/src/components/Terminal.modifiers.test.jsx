@@ -112,7 +112,7 @@ describe('Terminal — modificatori armati e paste nativo', () => {
   it('solo ctrlRef (GridTile/CellPeek): CTRL+c → \\x03 senza toccare altRef assente', () => {
     const ctrlRef = { current: true };
     mountTerminal({ ctrlRef, altRef: undefined, setAltArmed: undefined });
-    // nessun TypeError: la guardia su altRef (da audit) deve reggere
+    // nessun TypeError: la guardia su altRef deve reggere
     fireEvent.keyDown(textarea(), { key: 'c', keyCode: 67, which: 67 });
     expect(ultimaSock.sendInput).toHaveBeenCalledWith('\x03');
   });
@@ -121,7 +121,7 @@ describe('Terminal — modificatori armati e paste nativo', () => {
 describe('Terminal — il marcatore del paste si chiude al primo onData', () => {
   afterEach(() => { vi.restoreAllMocks(); lanciaOpen = false; });
 
-  it('probe audit: paste «ciao» poi keydown a +50 ms → [\'ciao\', \'\x03\'] e CTRL disarmato', async () => {
+  it('probe: paste «ciao» poi keydown a +50 ms → [\'ciao\', \'\x03\'] e CTRL disarmato', async () => {
     const ctrlRef = { current: true };
     mountTerminal({ ctrlRef });
     fireEvent.paste(textarea(), { clipboardData: { getData: () => 'ciao' } });

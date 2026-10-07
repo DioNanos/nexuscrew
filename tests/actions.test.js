@@ -95,7 +95,7 @@ test('runAction: scroll-up/down instradati, allowlist intatta', () => {
   assert.equal(runAction('/bin/true', 'sess1', 'kill-session'), false);
 });
 
-// NC-Q — un messaggio lungo veniva incollato e MAI inviato: l'attesa fra paste
+// un messaggio lungo veniva incollato e MAI inviato: l'attesa fra paste
 // ed Enter era una costante, mentre il tempo che un TUI impiega a ingerire un
 // bracketed paste cresce col payload. Oltre la soglia l'Enter arriva mentre il
 // client sta ancora digerendo e viene mangiato; il testo resta nel composer, la

@@ -6,7 +6,7 @@ import KeyBar from './KeyBar.jsx';
 import * as virtualKeyboard from '../lib/virtual-keyboard.js';
 
 // Spia DELEGANTE del dismiss: esegue il dismiss VERO (blur dell'editable
-// attivo) e resta osservabile nelle asserzioni. Da audit: i test ENTER
+// attivo) e resta osservabile nelle asserzioni. I test ENTER
 // devono poter vedere una regressione del dismiss reale, non un mock cieco.
 vi.mock('../lib/virtual-keyboard.js', async (importOriginal) => {
   const actual = await importOriginal();
@@ -44,7 +44,7 @@ describe('KeyBar mobile Enter column', () => {
     const event = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
     enter.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
-    // da audit: il dismiss qui è quello VERO (spia delegante): il blur
+    // il dismiss qui è quello VERO (spia delegante): il blur
     // dell'input è la prova che la chiusura non è un mock cieco
     expect(virtualKeyboard.dismissVirtualKeyboard).toHaveBeenCalled();
     expect(document.activeElement).not.toBe(input);

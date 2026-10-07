@@ -5,7 +5,7 @@ import './DetailSheet.css';
 
 // Contenitore riga → dettaglio, condiviso.
 //
-// Nasce per il pannello Nodi (NC-I), ma non sa nulla dei nodi: prende
+// Nasce per il pannello Nodi, ma non sa nulla dei nodi: prende
 // un'intestazione e dei figli. E' deliberato — il dettaglio di una riga dovra'
 // poter ospitare un riquadro che NON e' un terminale (grafici, una pagina web,
 // una vista su misura), e un contenitore che conosce il suo contenuto va

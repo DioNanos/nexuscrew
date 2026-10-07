@@ -61,7 +61,7 @@ export default function SessionList({
   // R27: la lettura del fleet non e' riuscita (rete/401/5xx o fleet.json
   // illeggibile) → la lista esposta e' l'ultima nota, non un dato: lo si dichiara.
   const [fleetStale, setFleetStale] = useState(false);
-  // R27 rev3: il fleet e' SPENTO (available:false del server) → zero celle e'
+  // R27: il fleet e' SPENTO (available:false del server) → zero celle e'
   // la verita'; l'indicatore distinto porta il reason del server.
   const [fleetOff, setFleetOff] = useState(null);
   const [bootOverrides, setBootOverrides] = useState({});

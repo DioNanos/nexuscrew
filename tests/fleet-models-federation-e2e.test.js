@@ -106,7 +106,7 @@ test('un modello dichiarato dalla route finisce sul nodo REMOTO, non sul proprio
 
 test('la vista del nodo remoto espone i modelli appena dichiarati', async (t) => {
   // Il giro dell'operatore: dichiara, poi lo vede dove lo vedrebbe lui. Il
-  // difetto trovato in audit era proprio qui — scritto ma non visibile.
+  // il difetto trovato era proprio qui — scritto ma non visibile.
   const { a, b } = await pair(t);
   await a.call('POST', '/api/route/peer-b/_/fleet/define-model', { def: { id: 'qwen3.8-max', engine: 'claude.alibaba-token-plan' } });
   const res = await a.call('GET', '/api/route/peer-b/_/fleet/definitions');
