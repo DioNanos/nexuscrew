@@ -19,10 +19,6 @@ stay yours, and your infrastructure stays under your control.
 > in what order, and what not to do. Every other NexusCrew skill assumes it,
 > and this README alone does not replace it.
 
-<p align="center">
-  <img src="docs/img/fleet-deck-desktop.png" width="960" alt="NexusCrew 0.9.56 desktop deck with multiple live tmux sessions">
-</p>
-
 ## One control plane. Every screen.
 
 The desktop deck keeps the whole fleet visible. Open any cell from a phone and
@@ -38,12 +34,6 @@ an offline cell returns to its place when it reconnects. The rail refreshes
 routed Fleet state while open, keeps a degraded cell visible as a warning, and
 has an explicit all-cells view when you need the complete inventory instead of
 a quick switch.
-
-<p align="center">
-  <img src="docs/img/session-mobile.png" width="360" alt="NexusCrew mobile terminal connected to a real tmux session with touch controls">
-  <br>
-  <sub><strong>Real tmux on mobile.</strong> Terminal keys, dictation and file handoff stay within reach.</sub>
-</p>
 
 ## Install in 30 seconds
 
