@@ -44,7 +44,7 @@ const feedViewStateOf = (health, ownerId) => {
 // Il tombstone ha un TTL: un id riusato dopo un reset dell'owner non resta
 // nascosto per sempre.
 const DISMISSED_TTL_MS = 10 * 60 * 1000;
-// D-446: recupero senza SSE. Se la SSE non si apre (o resta giù senza
+// Recupero senza SSE. Se la SSE non si apre (o resta giù senza
 // riaprirsi), una rilettura periodica limitata di /api/asks e /api/feed-state
 // recupera ASK e notice senza reload; si ferma appena la SSE apre (l'open
 // già rilancia le letture) e il backoff riparte dal base alla riapertura.
@@ -350,7 +350,7 @@ export default function NotifyCenter({ token }) {
   }, [token]);
   useEffect(() => { refreshCapabilities(); }, [asks, refreshCapabilities]);
   const panelOpened = useRef(false);
-  // D-446: stato SSE (mai aperta finché onopen non arriva) e timer di recupero.
+  // Stato SSE (mai aperta finché onopen non arriva) e timer di recupero.
   const sseOpenedRef = useRef(false);
   const recoveryTimerRef = useRef(null);
   const recoveryDelayRef = useRef(ASK_RECOVERY_POLL_MS);
@@ -477,7 +477,7 @@ export default function NotifyCenter({ token }) {
         removeAsk(identity.id, identity.ownerId, identity.ownerAskId, frame);
       }
     }, () => {
-      // D-446: la SSE è aperta — il recupero si ferma e il backoff riparte.
+      // SSE aperta: — il recupero si ferma e il backoff riparte.
       sseOpenedRef.current = true;
       recoveryDelayRef.current = ASK_RECOVERY_POLL_MS;
       if (recoveryTimerRef.current) { clearTimeout(recoveryTimerRef.current); recoveryTimerRef.current = null; }
@@ -487,7 +487,7 @@ export default function NotifyCenter({ token }) {
     return () => { close(); };
   }, [token, pushToast, refreshCapabilities]);
 
-  // D-446: il recupero periodico gira SOLO finché la SSE non si è mai aperta:
+  // Il recupero periodico gira SOLO finché la SSE non si è mai aperta:
   // un tick rilegge /api/asks e /api/feed-state (incrementando refreshVersion)
   // e ripianifica con backoff; l'apertura della SSE lo ferma (l'open già
   // rilancia le letture) e riporta il ritardo al base.

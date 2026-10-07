@@ -5,7 +5,7 @@ const m = vi.hoisted(() => ({ getAsks: vi.fn(), getFeedState: vi.fn(), frame: nu
 vi.mock('../lib/api.js', async original => ({ ...(await original()), getAsks: m.getAsks, getFeedState: m.getFeedState,
   getAskRelayState: vi.fn(async () => ({ attempts: [] })), getAskReplyCapability: vi.fn(async (_t, {ownerId,askId}) => ({ownerId,askId,canReply:false,status:'unreachable',canDismissLocal:false,canDismissRemote:false})) }));
 // La SSE simulata NON si apre mai finché il test non chiama m.open(): è il
-// caso D-446 (EventSource assente o giù senza riapertura).
+// Caso (EventSource assente o giù senza riapertura).
 vi.mock('../lib/events.js', () => ({ connectEvents: (_t, frame, open) => { m.frame = frame; m.open = open; return () => {}; } }));
 vi.mock('../hooks/useNotificationSpeech.js', () => ({ useNotificationSpeech: () => [true, () => {}] }));
 vi.mock('../lib/notification-speech.js', () => ({ NOTIFICATION_SPEECH_PREVIEW_EVENT: 'preview', notificationSpeechFrameLang: () => 'en', createNotificationSpeaker: () => ({ enqueue: vi.fn(), stop: () => {}, dispose: () => {} }) }));
