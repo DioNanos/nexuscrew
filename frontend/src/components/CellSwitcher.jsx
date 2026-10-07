@@ -161,7 +161,13 @@ export default function CellSwitcher({
   // L'ordine dei GRUPPI è quello scelto dall'utente per i nodi nella lista
   // normale (la stessa preferenza che segue la griglia dei deck).
   const { groupsFor } = useNodePreferences();
-  const nodeGroups = useNodes(token);
+  // Apertura a freddo nella vista singola mobile: la lista principale e' smontata
+  // e useNodes non ha ancora pubblicato. Finche' non ha dati, i gruppi sono
+  // quelli dell'ultimo snapshot della principale (stessa forma, stesso ordine):
+  // un gruppo remoto non compare in ritardo e non manca all'apertura.
+  const liveGroups = useNodes(token);
+  const nodeGroups = Array.isArray(liveGroups) && liveGroups.length > 0
+    ? liveGroups : (snapshot.nodeGroups || []);
   // Stessa selezione della lista principale (SessionList): le posizioni sono
   // i gruppi di nodo, i device VL restano fuori.
   const groups = useMemo(
