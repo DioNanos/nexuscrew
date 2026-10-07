@@ -154,3 +154,24 @@ test('import-cell: id esplicito duplicato -> 409 conflitto', async () => {
     });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('import-cell: il nome riservato Live e rifiutato, derivato o esplicito', async () => {
+  const dir = tmp();
+  try {
+    const { fleet, defsPath } = await makeBuiltin(dir, ['Live', 'jarvis']);
+    // id derivato dalla sessione tmux chiamata Live
+    await assert.rejects(
+      () => fleet.importCell({ tmuxSession: 'Live', engine: 'claude.native' }),
+      (e) => e.status === 400 && /riservat/.test(e.message),
+    );
+    // id esplicito, in un'altra grafia
+    await assert.rejects(
+      () => fleet.importCell({ tmuxSession: 'jarvis', engine: 'claude.native', id: 'LIVE' }),
+      (e) => e.status === 400 && /riservat/.test(e.message),
+    );
+    assert.ok(!loadDefinitions(defsPath).cells.some((c) => /^live$/i.test(c.id)), 'nessuna cella Live scritta');
+    // con un id esplicito diverso la stessa sessione si importa
+    const ok = await fleet.importCell({ tmuxSession: 'Live', engine: 'claude.native', id: 'Voce' });
+    assert.equal(ok.id, 'Voce');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

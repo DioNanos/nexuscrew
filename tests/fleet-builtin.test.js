@@ -1238,3 +1238,26 @@ test('status: la cwd reale NON e\' nella vista pubblica, e c\'e\' solo su richie
     assert.equal(conCwd.cwd, w.cwd, 'chi la chiede esplicitamente la riceve, risolta');
   } finally { w.cleanup?.(); }
 });
+
+// ---------------------------------------------------------------------------
+// Il nome `Live` e' riservato: appartiene alla voce di directory della Live,
+// mai a una cella definita dall'operatore.
+// ---------------------------------------------------------------------------
+test('define-cell rifiuta il nome riservato Live in ogni scrittura', async () => {
+  const w = makeWorld({ cellPrompt: undefined });
+  try {
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    await fleet.defineEngine({ id: 'glm', command: w.command, promptMode: 'send-keys' });
+    for (const id of ['Live', 'live', 'LIVE', 'lIvE']) {
+      await assert.rejects(
+        () => fleet.defineCell({ id, cwd: w.cwd, engine: 'glm', boot: false }),
+        (e) => e.status === 400 && /riservat/.test(e.message),
+        `define-cell ${id}`,
+      );
+    }
+    const st = await fleet.status();
+    assert.ok(!st.cells.some((c) => /^live$/i.test(c.cell)), 'nessuna cella Live creata');
+    // un nome vicino resta valido: il divieto e' sul nome, non sul prefisso
+    await fleet.defineCell({ id: 'Liveness', cwd: w.cwd, engine: 'glm', boot: false });
+  } finally { w.cleanup(); }
+});

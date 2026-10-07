@@ -578,3 +578,18 @@ describe('Sidebar — riga nodo: nome, sotto-riga e tendina', () => {
     expect(tendinaCss).toMatch(/width\s*:\s*\d+px/);
   });
 });
+
+describe('Sidebar — badge Live', () => {
+  const props = (hostByRoute, engine = 'codex-vl.native') => ({
+    cells: [{ cell: 'Local Cell', tmuxSession: 'local-cell', engine, tmux: true, active: true }],
+    sessions: [], nodeGroups: [], hostByRoute,
+    onPick: vi.fn(), onAddTile: vi.fn(), onSettings: vi.fn(),
+  });
+
+  it('la striscia Live in testa mostra il badge solo con una Live viva', () => {
+    const { rerender } = render(<Sidebar {...props({ local: { hostCell: 'Local Cell', threadStatus: 'absent' } })} />);
+    expect(screen.queryByTestId('live-badge')).toBeNull();
+    rerender(<Sidebar {...props({ local: { hostCell: 'Local Cell', threadStatus: 'present' } })} />);
+    expect(screen.getByTestId('live-badge').getAttribute('data-mode')).toBe('native');
+  });
+});
