@@ -62,7 +62,10 @@ const NODE_GROUPS = [
 ];
 
 const LOCAL_CELLS = [active('Loc-One', 'loc-one'), off('Loc-Two', 'loc-two')];
-const LOCAL_SESSIONS = [{ name: 'loc-one', activity: 10, working: true }];
+const LOCAL_SESSIONS = [
+  { name: 'loc-one', activity: 10, working: true },
+  { name: 'loc-scratch', activity: 3 }, // tmux unmanaged: nessuna cella la possiede
+];
 
 beforeEach(() => {
   localStorage.clear();
@@ -131,6 +134,24 @@ async function renderSwitcher() {
   return { positions, rowKeys };
 }
 
+describe('cold open: the node groups are there at once', () => {
+  it('with useNodes still empty, the snapshot seeds hub and two-hop groups in the main list order', async () => {
+    // Apertura a freddo nella vista singola mobile: la lista principale e'
+    // smontata e useNodes non ha ancora pubblicato. L'ultimo snapshot della
+    // principale porta i gruppi: devono comparire SUBITO, senza attendere un
+    // giro, nello stesso ordine e con le stesse righe della principale.
+    mocks.useNodes.mockReturnValue([]);
+    const expected = mainListRows();
+    render(<CellSwitcher token="token" current={{}} localNodeLabel="NODE-LOCAL"
+      onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^Loc-One / });
+    // Nessuna attesa aggiuntiva: il seme e' sincrono con il primo render.
+    expect(rowKeys()).toEqual(expected.map((r) => r.key));
+    expect(expected.some((r) => r.position === 'hub1')).toBe(true);
+    expect(expected.some((r) => r.position === 'hub1/node-b')).toBe(true);
+  });
+});
+
 const labelOf = (position) => ({ local: 'NODE-LOCAL', hub1: 'HUB1', 'hub1/node-b': 'NODE-B', dead1: 'DEAD1' }[position]);
 
 describe('quick list shows exactly the main list rows', () => {
@@ -139,7 +160,10 @@ describe('quick list shows exactly the main list rows', () => {
     // Sanity on the expected side: the scoped hub still shows its live
     // session, the pinned two-hop shows only the pinned cell, the
     // unreachable node shows nothing, the local group shows the live cell.
-    expect(expected.map((r) => r.position)).toEqual(['local', 'hub1', 'hub1/node-b']);
+    expect([...new Set(expected.map((r) => r.position))]).toEqual(['local', 'hub1', 'hub1/node-b']);
+    // La tmux unmanaged locale e' una riga della principale in modalita' attiva:
+    // il drawer la mostra perche' e solo perche' la mostra la principale.
+    expect(expected.some((r) => r.key === 'loc-scratch')).toBe(true);
     const { positions: pos, rowKeys: rk } = await renderSwitcher();
     expect(rk()).toEqual(expected.map((r) => r.key));
     const seen = [];
