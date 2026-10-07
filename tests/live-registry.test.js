@@ -1,0 +1,110 @@
+'use strict';
+// tests/live-registry.test.js — registro persistito dei thread Live.
+//
+// Il registro sta accanto a live-host.json e sopravvive al riavvio del server:
+// prima viveva in tre Map in memoria del ponte, quindi dopo un riavvio la Live
+// ancora viva nel daemon risultava «thread assente».
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const http = require('node:http');
+const { WebSocketServer } = require('ws');
+const { createLiveThreadRegistry, liveThreadsPath } = require('../lib/live-host/registry.js');
+const { createLiveBridge } = require('../lib/live-host/bridge.js');
+
+const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'live-reg-'));
+
+test('liveThreadsPath: accanto a live-host.json, stessa convenzione', () => {
+  assert.equal(liveThreadsPath({ tokenPath: '/x/y/token' }), '/x/y/live-threads.json');
+  assert.equal(liveThreadsPath({ liveThreadsPath: '/z/t.json' }), '/z/t.json');
+  assert.equal(liveThreadsPath({ home: '/h' }), '/h/.nexuscrew/live-threads.json');
+});
+
+test('il registro persiste: una nuova istanza rilegge cio\' che l\'altra ha scritto', () => {
+  const file = path.join(dir(), 'live-threads.json');
+  const a = createLiveThreadRegistry({ filePath: file, now: () => 7 });
+  a.set('Dev', { threadId: 'thr-1', ref: 'a'.repeat(32), tmuxSession: 'cloud-Dev' });
+  const b = createLiveThreadRegistry({ filePath: file });
+  assert.deepEqual(b.get('Dev'), { threadId: 'thr-1', ref: 'a'.repeat(32), tmuxSession: 'cloud-Dev', startedAt: 7 });
+  assert.equal(b.findByRef('a'.repeat(32)).cell, 'Dev');
+  assert.equal(b.findByRef('b'.repeat(32)), null);
+  b.remove('Dev');
+  assert.equal(createLiveThreadRegistry({ filePath: file }).get('Dev'), null);
+});
+
+test('il registro rifiuta voci malformate e un file corrotto vale vuoto', () => {
+  const file = path.join(dir(), 'live-threads.json');
+  const r = createLiveThreadRegistry({ filePath: file });
+  assert.throws(() => r.set('../x', { threadId: 't', ref: 'a'.repeat(32) }));
+  assert.throws(() => r.set('Dev', { threadId: '', ref: 'a'.repeat(32) }));
+  assert.throws(() => r.set('Dev', { threadId: 't', ref: 'non-esadecimale' }));
+  fs.writeFileSync(file, '{{{ non json', { mode: 0o600 });
+  assert.deepEqual(createLiveThreadRegistry({ filePath: file }).entries(), []);
+  // un file con permessi larghi non si legge e non si crede: nessun riferimento valido
+  const wide = path.join(dir(), 'live-threads.json');
+  fs.writeFileSync(wide, JSON.stringify({ version: 1, threads: { Dev: { threadId: 't', ref: 'a'.repeat(32) } } }), { mode: 0o666 });
+  fs.chmodSync(wide, 0o666);
+  const w = createLiveThreadRegistry({ filePath: wide });
+  assert.equal(w.get('Dev'), null);
+  assert.equal(w.findByRef('a'.repeat(32)), null);
+});
+
+// Daemon finto minimo: risponde a thread/read con lo stato configurato per id.
+function fakeDaemon(socketPath, statusOf) {
+  const server = http.createServer((_q, res) => { res.writeHead(426); res.end(); });
+  const wss = new WebSocketServer({ noServer: true });
+  server.on('upgrade', (req, socket, head) => wss.handleUpgrade(req, socket, head, (ws) => {
+    ws.on('message', (data) => {
+      const msg = JSON.parse(String(data));
+      if (msg.method === 'initialize') ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { userAgent: 'f', codexHome: '/tmp' } }));
+      else if (msg.method === 'thread/read') {
+        const s = statusOf(msg.params.threadId);
+        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: msg.params.threadId, status: { type: s } } } }));
+      }
+    });
+  }));
+  return {
+    listen: () => new Promise((resolve) => { try { fs.rmSync(socketPath, { force: true }); } catch (_) { /* assente */ } server.listen(socketPath, resolve); }),
+    close: () => new Promise((resolve) => { wss.clients.forEach((c) => c.terminate()); server.close(resolve); }),
+  };
+}
+
+test('dopo un riavvio la Live viva nel daemon resta visibile (registro persistito)', async (t) => {
+  const d = dir();
+  const socketPath = path.join(d, 'c.sock');
+  const daemon = fakeDaemon(socketPath, () => 'idle');
+  await daemon.listen();
+  t.after(() => daemon.close());
+  const file = path.join(d, 'live-threads.json');
+  createLiveThreadRegistry({ filePath: file }).set('Dev', { threadId: 'thr-1', ref: 'c'.repeat(32), tmuxSession: 'cloud-Dev' });
+  // «riavvio»: un ponte nuovo, un registro nuovo sullo stesso file.
+  const cfg = { port: 1, liveBridgeEnabled: true, liveBridgeSocketPath: socketPath, liveBridgeTimeoutMs: 1500, filesRoot: d };
+  const bridge = createLiveBridge({
+    cfg, fleetP: Promise.resolve({ available: true }), tokenGet: () => 't', filesRoot: d,
+    registry: createLiveThreadRegistry({ filePath: file }),
+  });
+  assert.equal(await bridge.threadStatus('Dev'), 'present');
+});
+
+test('reconcile all\'avvio toglie dal registro i thread che il daemon dichiara assenti, tiene gli incerti', async (t) => {
+  const d = dir();
+  const socketPath = path.join(d, 'c.sock');
+  const status = { 'thr-ok': 'idle', 'thr-gone': 'notLoaded', 'thr-err': 'systemError' };
+  const daemon = fakeDaemon(socketPath, (id) => status[id]);
+  await daemon.listen();
+  t.after(() => daemon.close());
+  const file = path.join(d, 'live-threads.json');
+  const reg = createLiveThreadRegistry({ filePath: file });
+  reg.set('Ok', { threadId: 'thr-ok', ref: '1'.repeat(32), tmuxSession: 'cloud-Ok' });
+  reg.set('Gone', { threadId: 'thr-gone', ref: '2'.repeat(32), tmuxSession: 'cloud-Gone' });
+  reg.set('Err', { threadId: 'thr-err', ref: '3'.repeat(32), tmuxSession: 'cloud-Err' });
+  const cfg = { port: 1, liveBridgeEnabled: true, liveBridgeSocketPath: socketPath, liveBridgeTimeoutMs: 1500, filesRoot: d };
+  const bridge = createLiveBridge({ cfg, fleetP: Promise.resolve({ available: true }), tokenGet: () => 't', filesRoot: d, registry: reg });
+  const out = await bridge.reconcile();
+  assert.deepEqual(out.removed, ['Gone']);
+  assert.deepEqual(reg.entries().map((e) => e.cell).sort(), ['Err', 'Ok']);
+  // persistito: la rimozione sopravvive a un'altra istanza
+  assert.deepEqual(createLiveThreadRegistry({ filePath: file }).entries().map((e) => e.cell).sort(), ['Err', 'Ok']);
+});
