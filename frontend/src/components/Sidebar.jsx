@@ -15,6 +15,7 @@ import {
 } from '../lib/roster-view-model.js';
 import { OWNER_ID_RE } from '../lib/grid-model.js';
 import Icon from './Icon.jsx';
+import LiveBadge from './LiveBadge.jsx';
 import CellPeek from './CellPeek.jsx';
 import { CellActionsPopover, cellActionsItems, cellActionsState } from './CellActions.jsx';
 import { applyCellStar, cellStarView } from '../lib/cell-star.js';
@@ -917,6 +918,7 @@ function LiveStrip({ view, notice }) {
       title={notice ? `${frase} · ${t(notice.messageKey)}` : frase}>
       <span className={`nc-live-strip-dot ${liveHostDotClass(view || {})}`} aria-hidden="true" />
       <span className="nc-live-strip-testo">{hasHost ? view.cell : frase}</span>
+      <LiveBadge view={view} />
       {notice && (
         <span className={`nc-live-strip-notice${notice.ok ? ' ok' : ' ko'}`} role="status">
           {t(notice.messageKey).replace('{cell}', notice.cell || view.cell || '')}

@@ -1,0 +1,5 @@
+.nc-live-badge {
+  flex: 0 0 auto; padding: 1px 6px; border: 1px solid #2e7d32; border-radius: 8px;
+  background: #0d2410; color: #7fe0a0; font: 700 10px/1.4 inherit; letter-spacing: .4px;
+}
+.nc-live-badge[data-mode="tmux"] { border-color: #8a7a2e; background: #241f0d; color: #e0d27f; }
