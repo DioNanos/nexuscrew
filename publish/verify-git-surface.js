@@ -49,7 +49,8 @@ function parseRules(file) {
     .filter(([, def]) => def && typeof def.source === 'string')
     .map(([name, def]) => ({
       name,
-      re: new RegExp(def.source, 'g'),
+      // `flags` (such as "i") apply to the family; matchAll needs the global flag as well.
+      re: new RegExp(def.source, def.flags ? `${def.flags}g` : 'g'),
       reason: def.reason || 'internal work code',
       allowLineRe: (def.allowLineRe || []).map((source) => new RegExp(source)),
       allowPathPrefix: def.allowPathPrefix || [],

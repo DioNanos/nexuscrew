@@ -346,6 +346,11 @@ const PROBE_CASES = [
   ['an audit hash in a skill that may talk about audits', 'skills/cellforge/SKILL.md', 'An audit answers one question (reaudit 2a05db2).\n'],
   ['an audit hash on a line that mentions npm audit', 'frontend/src/lib/probe.js', '// npm audit; auditor 43bb3e9e\n'],
   ['an audit hash in a file named after the auditor', 'tests/auditor-probe.test.js', "// audit 3405df0: regression\n"],
+  ['AUDIT in capitals with a hash, in a skill that may talk about audits', 'skills/cellforge/SKILL.md', 'AUDIT 43bb3e9e\n'],
+  ['an audit with an upper-case hash, in a skill that may talk about audits', 'skills/cellforge/SKILL.md', 'audit 43BB3E9E\n'],
+  ['AUDIT in capitals with an upper-case hash, in a skill that may talk about audits', 'skills/cellforge/SKILL.md', 'AUDIT 43BB3E9E\n'],
+  ['Audit with a mixed-case hash in the README', 'README.md', 'Audit 43Bb3E9e\n'],
+  ['a PIANO reference in capitals', 'README.md', 'PIANO V3 :114-117\n'],
   ['a numbered plan with line references', 'README.md', 'See piano v3 :114-117, :222-226 for the rule.\n'],
   ['a plan reference in a workflow header', '.github/workflows/gate.yml', '# gate (piano v3 :114-117).\n'],
   ['a revision with line references', 'docs/note.md', 'contratto rev6 :88-91\n'],
@@ -375,7 +380,7 @@ test('provenance: the legitimate uses of the word audit still pass', () => {
     const files = [
       { rel: 'README.md', data: 'Run `npm audit` and keep the audit trail. A dependency audit is not a release gate.\n' },
       { rel: 'CHANGELOG.md', data: '- New skill (create, modify and audit a cell)\n' },
-      { rel: 'skills/cellforge/SKILL.md', data: 'An audit answers one question: does the cell exist completely?\n' },
+      { rel: 'skills/cellforge/SKILL.md', data: 'An audit answers one question: does the cell exist completely?\nAUDIT is also the heading word; a defaced page and a decade old cafe stay plain words.\n' },
       { rel: 'src/labels.js', data: '// R25 and IC1.1 stay allowed; version 0.9.64 and commit 43bb3e9e are plain data\n' },
     ];
     const manifest = path.join(dir, 'manifest.json');
@@ -407,7 +412,8 @@ test('provenance: the family has no exemption of any kind', () => {
   const rules = JSON.parse(fs.readFileSync(path.join(ROOT, 'publish', 'public-surface-rules.json'), 'utf8'));
   const family = rules.workcodes.families.PROVENANCE;
   assert.ok(family, 'the PROVENANCE family must exist');
-  assert.deepEqual(Object.keys(family).sort(), ['reason', 'source'], 'no allowLineRe, allowPathPrefix or other escape');
+  assert.deepEqual(Object.keys(family).sort(), ['flags', 'reason', 'source'], 'no allowLineRe, allowPathPrefix or other escape');
+  assert.ok(family.flags.includes('i'), 'the family is case-insensitive');
   assert.deepEqual(rules.workcodes.allowLineRe, [], 'no global line exemption that could hide a provenance reference');
   // The AUDIT exemptions are bounded to what legitimately talks about audits, never README, CHANGELOG or every skill.
   const prefixes = rules.workcodes.families.AUDIT.allowPathPrefix;

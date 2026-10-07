@@ -106,6 +106,9 @@ for (const [name, files] of [
   ['an audit hash in the CHANGELOG', { 'README.md': 'ok\n', 'CHANGELOG.md': '- fixed (audit 43bb3e9e)\n' }],
   ['an audit hash in a skill', { 'README.md': 'ok\n', 'skills/nexuscrew/SKILL.md': 'Rule from audit 43bb3e9e.\n' }],
   ['an audit hash on a line that mentions npm audit', { 'README.md': 'ok\n', 'lib/probe.js': '// npm audit; auditor 43bb3e9e\n' }],
+  ['AUDIT in capitals with a hash in a skill that may talk about audits', { 'README.md': 'ok\n', 'skills/cellforge/SKILL.md': 'AUDIT 43bb3e9e\n' }],
+  ['an audit with an upper-case hash in a skill that may talk about audits', { 'README.md': 'ok\n', 'skills/cellforge/SKILL.md': 'audit 43BB3E9E\n' }],
+  ['AUDIT in capitals with an upper-case hash in a skill that may talk about audits', { 'README.md': 'ok\n', 'skills/cellforge/SKILL.md': 'AUDIT 43BB3E9E\n' }],
   ['a numbered plan with line references', { 'README.md': 'See piano v3 :114-117, :222-226 for the rule.\n' }],
 ]) {
   test(`npm gate: ${name} fails`, () => {
