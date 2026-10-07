@@ -2,6 +2,12 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.63 — 2026-10-07
+
+- **The quick cell list is derived from the main list.** It shows exactly the rows of the main list, in the same mode and order, for every node group. A directly connected hub whose fleet view comes back empty for the connected peer no longer disappears, stopped cells and unreachable nodes stay out of the "active" mode like in the main list, and the node groups are available right away when the list is opened cold from the single view. Rows whose read failed open like they do in the main list.
+- **An empty tmux server reads as an empty list.** A tmux server that stays alive with no session answers "no current target" when panes are listed; that reply is now an empty inventory instead of a failed read that made the node vanish from the interface.
+- **Asks and notices are recovered when the live channel never opens.** A bounded recovery poll (30 seconds, backing off up to 5 minutes) re-reads asks and feed state while the event channel has never opened and stops as soon as it opens, so a newly accepted ask no longer stays invisible until a reload.
+
 ## 0.9.62 — 2026-10-06
 
 - **Desktop cell actions refresh the route they touched.** Kill, visibility toggle, boot preference and the power sheet confirmation used to end with a reference error (a removed polling helper was still called there): the action succeeded on the backend but the sheet showed an error and the list stayed still. They now ask the shared fleet poll to refresh the touched route (same guard and train coalescing as the rest of the reads), covered by a render test on all four actions.
