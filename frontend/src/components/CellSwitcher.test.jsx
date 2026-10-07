@@ -767,3 +767,157 @@ describe('CellSwitcher side key', () => {
     expect(onToggleSide).not.toHaveBeenCalled();
   });
 });
+
+describe('quick cell list follows the normal list ordering', () => {
+  const northId = 'a'.repeat(32);
+  const southId = 'b'.repeat(32);
+  const keyOf = (route, tmux) => positionKey([route], tmux);
+  const positionLabels = () => [...document.querySelectorAll('.nc-cell-switcher-position')].map((e) => e.textContent);
+  const groupRole = (text) => (text.includes('Node-Local') ? 'local' : text.includes('South') ? 'south' : 'north');
+  const rowKeys = () => [...document.querySelectorAll('[data-roster-key]')].map((e) => e.dataset.rosterKey);
+  const mgmFeed = [
+    { ...active('Cell-1', 'north-c1'), activity: 40 },
+    { ...active('Cell-2', 'north-c2'), activity: 30 },
+    { ...active('Cell-3', 'north-c3'), activity: 20 },
+    { ...active('Cell-4', 'north-c4'), activity: 10 },
+  ];
+  const vpsFeed = [
+    { ...active('Cell-A', 'south-c1'), activity: 40 },
+    { ...active('Cell-B', 'south-c2'), activity: 30 },
+    { ...active('Cell-C', 'south-c3'), activity: 20 },
+    { ...active('Cell-D', 'south-c4'), activity: 10 },
+  ];
+  // Ordine di arrivo dal feed: il nodo hub prima del nodo edge.
+  const writeFixtureSnapshot = () => writeCellSwitcherSnapshot({
+    sessions: [{ name: 'cloud-cell-One', activity: 10, working: true }],
+    cells: [active('cell-One', 'cloud-cell-One')],
+    localFresh: true,
+    nodeGroups: [
+      { route: ['north'], label: 'North', instanceId: northId, sessions: [], cells: mgmFeed },
+      { route: ['south'], label: 'South', instanceId: southId, sessions: [], cells: vpsFeed },
+    ],
+  });
+
+  it('node groups follow the user node order and pinned cells keep the manual order', async () => {
+    writeFixtureSnapshot();
+    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${southId}`, `id:${northId}`]));
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ south: { filter: 'pinned' } }));
+    const southOrder = [keyOf('south', 'south-c3'), keyOf('south', 'south-c4'), keyOf('south', 'south-c1'), keyOf('south', 'south-c2')];
+    localStorage.setItem('nc_pins', JSON.stringify(southOrder));
+    localStorage.setItem('nc_sidebar_order_v1', JSON.stringify({ south: southOrder }));
+    mocks.getRouteSessions.mockImplementation(async (_token, route) => {
+      if (route.join('/') === 'north') return { sessions: [
+        { name: 'north-c1', activity: 40 }, { name: 'north-c2', activity: 30 },
+        { name: 'north-c3', activity: 20 }, { name: 'north-c4', activity: 10 },
+      ] };
+      if (route.join('/') === 'south') return { sessions: [
+        { name: 'south-c1', activity: 40 }, { name: 'south-c2', activity: 30 },
+        { name: 'south-c3', activity: 20 }, { name: 'south-c4', activity: 10 },
+      ] };
+      return { sessions: [] };
+    });
+    mocks.fleetStatus.mockImplementation(async (_token, route = []) => {
+      if (route.join('/') === 'north') return { available: true, cells: mgmFeed };
+      if (route.join('/') === 'south') return { available: true, cells: vpsFeed };
+      if (!route.length) return { available: true, cells: [active('cell-One', 'cloud-cell-One')] };
+      return { available: true, cells: [] };
+    });
+
+    render(<Switcher token="token" current={{}} localNodeLabel="Node-Local" onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    // Le righe remote arrivano col primo ciclo di refresh verificato.
+    await new Promise((r) => setTimeout(r, 300));
+    await waitFor(() => expect(rowKeys().length).toBe(9), { timeout: 4000 });
+    // Node groups: the locale first, then the user order from the normal list
+    // (the edge node before the hub node), never the arrival order of the feed.
+    expect(groupRole(positionLabels()[0])).toBe('local');
+    expect(positionLabels().map(groupRole)).toEqual(['local', 'south', 'north']);
+    // The edge node is in "pinned" mode in the normal list: the manual pinned order
+    // (Personal, Research, Trading, Dev) governs the quick list too.
+    const southRows = rowKeys().filter((k) => k.startsWith('south:'));
+    expect(southRows).toEqual(southOrder);
+    // The other node has no pins or manual order: the activity fallback keeps the rows
+    // in the received order, exactly like the live cells of the normal list.
+    expect(rowKeys().filter((k) => k.startsWith('north:'))).toEqual([
+      keyOf('north', 'north-c1'), keyOf('north', 'north-c2'), keyOf('north', 'north-c3'), keyOf('north', 'north-c4'),
+    ]);
+
+    // The user reorders the nodes: the quick list follows immediately.
+    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${northId}`, `id:${southId}`]));
+    window.dispatchEvent(new Event('nexuscrew-node-preferences'));
+    await waitFor(() => expect(positionLabels().map(groupRole)).toEqual(['local', 'north', 'south']));
+  });
+});
+
+describe('quick cell list keeps every node visible', () => {
+  const northId = 'c'.repeat(32);
+  const keyOf = (route, tmux) => positionKey([route], tmux);
+  const southId = 'd'.repeat(32);
+  const Switcher = (props) => <CellSwitcher pollMs={20} {...props} />;
+  const positionLabels = () => [...document.querySelectorAll('.nc-cell-switcher-position')].map((e) => e.textContent);
+  const groupRole = (text) => (text.includes('Node-Local') ? 'local' : text.includes('North') ? 'north' : 'south');
+  const rowKeys = () => [...document.querySelectorAll('[data-roster-key]')].map((e) => e.dataset.rosterKey);
+  const northFeed = [
+    { ...active('Hub-Cell-1', 'north-c1'), activity: 40 },
+    { ...active('Hub-Cell-2', 'north-c2'), activity: 30 },
+  ];
+  const southFeed = [
+    { ...active('Far-Cell-1', 'south-c1'), activity: 20 },
+    { ...active('Far-Cell-2', 'south-c2'), activity: 10 },
+  ];
+  // Ordine di arrivo dal feed: il nodo a due salti prima dell'hub diretto.
+  const writeFixtureSnapshot = () => writeCellSwitcherSnapshot({
+    sessions: [{ name: 'cloud-cell-One', activity: 10, working: true }],
+    cells: [active('cell-One', 'cloud-cell-One')],
+    localFresh: true,
+    nodeGroups: [
+      { route: ['south'], label: 'South', instanceId: southId, sessions: [], cells: southFeed },
+      { route: ['north'], label: 'North', instanceId: northId, sessions: [], cells: northFeed },
+    ],
+  });
+
+  it('a direct hub whose reads are not verified stays a visible group, in the user node order', async () => {
+    writeFixtureSnapshot();
+    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${northId}`, `id:${southId}`]));
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ north: { filter: 'all' }, south: { filter: 'all' } }));
+    // Hub diretto: le letture NON si verificano in questo giro (fleet non
+    // available, sessioni vuote). Il gruppo esiste nelle nodeGroups e deve
+    // restare visibile: sparire faceva sembrare il nodo assente.
+    mocks.getRouteSessions.mockImplementation(async (_token, route) => {
+      if (route.join('/') === 'north') return { sessions: [] };
+      if (route.join('/') === 'south') return { sessions: [
+        { name: 'south-c1', activity: 40 }, { name: 'south-c2', activity: 30 },
+      ] };
+      return { sessions: [] };
+    });
+    mocks.fleetStatus.mockImplementation(async (_token, route = []) => {
+      if (route.join('/') === 'north') return { available: false };
+      if (route.join('/') === 'south') return { available: true, cells: southFeed };
+      if (!route.length) return { available: true, cells: [active('cell-One', 'cloud-cell-One')] };
+      return { available: true, cells: [] };
+    });
+
+    const onPick = vi.fn();
+    render(<Switcher token="token" current={{}} localNodeLabel="Node-Local" onPick={onPick} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    await waitFor(() => expect(rowKeys().some((k) => k.startsWith('south:'))).toBe(true));
+    // Tre gruppi nell'ordine scelto dall'utente: locale, hub diretto, nodo
+    // raggiunto attraverso l'hub.
+    expect(positionLabels().map(groupRole)).toEqual(['local', 'north', 'south']);
+    // Le celle dell'hub, anche con letture non verificate, sono SELEZIONABILI
+    // come nella lista normale (tmux noto al gruppo): doppio tocco e apre la
+    // route giusta con la sessione esatta.
+    const hubRow = await screen.findByRole('button', { name: /^Hub-Cell-1 / });
+    expect(hubRow.getAttribute('aria-disabled')).toBe('false');
+    fireEvent.click(hubRow);
+    fireEvent.click(hubRow);
+    await waitFor(() => expect(onPick).toHaveBeenCalledWith({
+      session: 'north-c1', node: 'north', cellName: 'Hub-Cell-1',
+    }));
+    // Col filtro "all" le celle dell'hub restano elencate nell'ordine ricevuto.
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    expect(rowKeys().filter((k) => k.startsWith('north:'))).toEqual([
+      keyOf('north', 'north-c1'), keyOf('north', 'north-c2'),
+    ]);
+  });
+});

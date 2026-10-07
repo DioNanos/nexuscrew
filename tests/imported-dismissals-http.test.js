@@ -185,10 +185,10 @@ test('revoked event access prevents local dismissal through a cached hub route',
   assert.equal((await dismiss(runtime)).code, 404);
   assert.equal(createAsksStore({ dir: runtime.configDir }).listImportedDismissals().length, 0);
 });
-test('a known pair without an unavailable channel cannot use local fallback', async t => {
+test('a known pair with a reachable channel still dismisses locally', async t => {
   const runtime = await boot(t);
   const st = nodes.loadStoreStrict(runtime.nodesPath); st.nodes[0].direction = 'outbound'; st.nodes[0].transport = 'auto'; nodes.atomicWriteStore(runtime.nodesPath, st);
-  const out = await dismiss(runtime); assert.equal(out.code, 409); assert.equal(out.body.reason, 'owner-availability-unknown');
+  const out = await dismiss(runtime); assert.equal(out.code, 200); assert.equal(out.body.scope, 'local');
 });
 test('a failed local write after cache load returns no acknowledgement and rolls back the alias', async t => {
   const runtime = await boot(t);

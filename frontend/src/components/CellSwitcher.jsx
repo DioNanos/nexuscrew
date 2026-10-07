@@ -5,6 +5,8 @@ import { readCellSwitcherSnapshot, writeCellSwitcherSnapshot } from '../lib/cell
 import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-view-model.js';
 import { positionKey } from '../lib/nodes-model.js';
 import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
+import { nodePreferenceKey } from '../lib/node-preferences.js';
+import { useNodePreferences } from '../hooks/useNodePreferences.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { hostRouteKey } from '../lib/host-designation.js';
 import { liveHostView } from '../lib/live-host-view.js';
@@ -71,6 +73,10 @@ function rowsFromSnapshot(snapshot) {
         // `verified` e' la conferma di questo poll. Non usare `fresh`: nel
         // roster condiviso significa invece output nuovo e ordina le righe.
         verified: fresh === true,
+        // Poll non verificato ma celle note (dal gruppo): la riga resta
+        // VISIBLE nel drawer come non selezionabile — nasconderla faceva
+        // sparire il nodo dalla lista veloce (un directly connected hub).
+        keepVisible: fresh !== true && cells.length > 0,
         working: runtime.working,
         degraded: !!cell.degraded,
         active: cell.active === true,
@@ -136,11 +142,25 @@ function rosterItemsByPosition(snapshot) {
   return positions;
 }
 
-// La rail resta una superficie compatta, ma mantiene le stesse sezioni logiche
-// della lista principale: Locale prima, poi ciascuna route nell'ordine ricevuto.
-// Entro una posizione applica esattamente nc_pins/nc_sidebar_order_v1.
-function orderRowsByPosition(rows, rosterItems, pins, orders) {
-  const positions = [...new Set(rows.map((row) => row.node || 'local'))];
+// Il drawer segue la lista normale: Locale prima, poi le route nell'ordine
+// scelto dall'utente per i nodi (nc_node_order_v1, stesso criterio dei deck);
+// entro una posizione vale il modo scelto per quel nodo (le righe fuori modo
+// restano nel drawer, in coda) e l'ordine manuale/pinned di nc_sidebar_order.
+function orderRowsByPosition(rows, rosterItems, pins, orders, views, viewFor, nodeOrder, snapshotGroups) {
+  const groupsByPosition = new Map((snapshotGroups || [])
+    .filter((group) => Array.isArray(group.route) && group.route.length)
+    .map((group) => [group.route.join('/'), group]));
+  const rankOf = (position) => {
+    if (position === 'local') return -1;
+    const group = groupsByPosition.get(position);
+    if (!group) return Number.MAX_SAFE_INTEGER;
+    const rank = nodeOrder.indexOf(nodePreferenceKey(group));
+    return rank >= 0 ? rank : Number.MAX_SAFE_INTEGER;
+  };
+  const positions = [...new Set(rows.map((row) => row.node || 'local'))]
+    .map((position, index) => ({ position, index }))
+    .sort((a, b) => rankOf(a.position) - rankOf(b.position) || a.index - b.index)
+    .map(({ position }) => position);
   return positions.flatMap((position) => {
     const displayRows = rows.filter((row) => (row.node || 'local') === position);
     const canonical = new Map((rosterItems.get(position) || []).map((item) => [item.key, item]));
@@ -155,10 +175,27 @@ function orderRowsByPosition(rows, rosterItems, pins, orders) {
         live: item?.live ?? row.live,
         fresh: item?.fresh === true,
         activity: item?.activity ?? row.activity,
+        // Le righe dei nodi seguono il criterio della lista normale
+        // (roster-view-model: la cella è apribile se ha una tmux nota al
+        // gruppo) senza esigere un poll verificato del drawer. Il locale
+        // resta com'era.
+        selectable: position === 'local' ? row.selectable : item?.live === true,
       };
     });
-    return sidebarItems(sortable, pins, 'all', sidebarOrder(orders, position))
-      .map((item) => byKey.get(item.key));
+    // Lo stesso ordinamento della lista normale per questo nodo: il modo
+    // scelto (Sidebar.jsx usa groupView.filter) governa le prime righe; le
+    // righe fuori modo restano visibili in coda, nel drawer, per non nascondere
+    // celle che il filtro attive/all del drawer si aspetta.
+    const inMode = sidebarItems(sortable, pins, viewFor(position).filter, sidebarOrder(orders, position));
+    const inModeKeys = new Set(inMode.map((item) => item.key));
+    const rest = sidebarItems(
+      sortable.filter((row) => !inModeKeys.has(row.key)),
+      pins, 'all', sidebarOrder(orders, position),
+    );
+    return [...inMode, ...rest].map((item) => {
+      const row = byKey.get(item.key);
+      return row ? { ...row, selectable: item.selectable } : null;
+    }).filter(Boolean);
   });
 }
 
@@ -218,14 +255,17 @@ export default function CellSwitcher({
   const rows = useMemo(() => rowsFromSnapshot(snapshot), [snapshot]);
   const rosterItems = useMemo(() => rosterItemsByPosition(snapshot), [snapshot]);
   const {
-    pins, orders, togglePin, removePin, pinError, canMoveRoster, moveRoster, stepRoster,
+    pins, orders, views, viewFor, togglePin, removePin, pinError, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
+  // L'ordine dei GRUPPI è quello scelto dall'utente per i nodi nella lista
+  // normale (la stessa preferenza che segue la griglia dei deck).
+  const { order: nodeOrder } = useNodePreferences();
   const orderedRows = useMemo(
-    () => orderRowsByPosition(rows, rosterItems, pins, orders),
-    [rows, rosterItems, pins, orders],
+    () => orderRowsByPosition(rows, rosterItems, pins, orders, views, viewFor, nodeOrder, snapshot.nodeGroups),
+    [rows, rosterItems, pins, orders, views, viewFor, nodeOrder, snapshot.nodeGroups],
   );
   const visibleRows = useMemo(
-    () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || (row.degraded && row.active))),
+    () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || (row.degraded && row.active) || row.keepVisible === true)),
     [orderedRows, showAll],
   );
   // La riga selezionata si RIrisolve a ogni lista: mai un fotogramma morto.
@@ -366,6 +406,16 @@ export default function CellSwitcher({
     setNotice('');
     if (!row.selectable) {
       setNotice(row.verified ? t('cell-switcher-not-active') : t('cell-switcher-not-confirmed'));
+      return;
+    }
+    // Riga di un nodo con letture non verificate (l'hub diretto durante la
+    // finestra cieca): l'apertura e' DIRETTA, come la lista normale che apre
+    // con la sola tmux nota — nessuna pretesa di esistenza verificata qui:
+    // se la sessione e' morta, il server risponde col vero stato. Il
+    // ricontrollo fresco resta per le righe verificate.
+    if (row.verified !== true) {
+      onPick({ session: row.session, ...(row.node ? { node: row.node } : {}), cellName: row.cellName });
+      onClose();
       return;
     }
     setPicking(row.key);

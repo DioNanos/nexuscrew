@@ -53,9 +53,11 @@ for (const [label, state] of [
   ['missing dismissal bits', { status: 'unreachable', canDismissLocal: undefined, canDismissRemote: undefined }],
   ['reply permission without dismissal permission', { status: 'open', canReply: true, canDismissLocal: false, canDismissRemote: false }],
   ['nonboolean local permission', { canDismissLocal: 'true' }],
-]) it(`does not infer a local action from ${label}`, async () => {
+]) it(`always offers the local dismissal from ${label}`, async () => {
   mocks.getAskReplyCapability.mockImplementation(async () => cap(state)); await mount();
-  expect(dismissButton().disabled).toBe(true); fireEvent.click(dismissButton()); expect(mocks.relayAskDismissLocal).not.toHaveBeenCalled();
+  expect(dismissButton().disabled).toBe(false); fireEvent.click(dismissButton());
+  await waitFor(() => expect(mocks.relayAskDismissLocal).toHaveBeenCalledWith('fixture-token', { ownerId: OWNER, askId: alias.ownerAskId }));
+  expect(mocks.relayAskDismiss).not.toHaveBeenCalled();
 });
 it('capability loading blocks dismiss even with a live feed grant', async () => {
   const pending = deferred(); mocks.getAskReplyCapability.mockReturnValue(pending.promise);
@@ -160,9 +162,11 @@ it('a local closure received before either snapshot prevents their stale copies 
   const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 11 * 60 * 1000);
   try { await emit({ type: 'ask', ask: alias }); expect(document.querySelector('.nc-ask-badge')).toBeNull(); } finally { clock.mockRestore(); }
 });
-it('unsupported capability never enables local dismissal even with a contradictory bit', async () => {
+it('an unsupported owner still allows the local dismissal', async () => {
   mocks.getAskReplyCapability.mockImplementation(async () => cap({ status: 'unsupported' })); await mount();
-  expect(dismissButton().disabled).toBe(true);
+  expect(dismissButton().disabled).toBe(false); fireEvent.click(dismissButton());
+  await waitFor(() => expect(mocks.relayAskDismissLocal).toHaveBeenCalled());
+  expect(mocks.relayAskDismiss).not.toHaveBeenCalled();
 });
 it('an answered response removes the canonical alias without affecting another owner', async () => {
   mocks.getAsks.mockResolvedValue({ asks: [alias, { ...alias, id: 'other-alias', ownerId: OTHER, question: 'Other owner' }] });

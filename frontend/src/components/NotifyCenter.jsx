@@ -130,9 +130,14 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
   const [blockedOriginal, setBlockedOriginal] = useState(false);
   const requestIdRef = useRef(null);
   useEffect(() => { if (initialUncertainRid) setUncertainRid(initialUncertainRid); }, [initialUncertainRid]);
+  // La X di una card federata è sempre usabile sul nodo che la visualizza:
+  // togliere la card è un intento locale, non una risposta, e non dipende dai
+  // permessi dell'owner. Con il grant remoto la X chiude anche sull'owner,
+  // altrimenti scarta solo qui. Solo il caricamento della capability e una
+  // risposta in volo incerta restano blocchi.
   const dismissBlocked = dismissing || busy || !!uncertainRid || blockedOriginal
-    || (!!ask.ownerId && (['loading', 'unsupported'].includes(capabilityStatus) || (!canDismissLocal && !canDismissRemote)));
-  const dismissLocally = !!ask.ownerId && canDismissLocal === true;
+    || (!!ask.ownerId && capabilityStatus === 'loading');
+  const dismissLocally = !!ask.ownerId && !canDismissRemote;
 
   const send = async (value) => {
     const answer = String(value || '').trim();
