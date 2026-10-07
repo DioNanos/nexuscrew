@@ -124,26 +124,22 @@ test('negative control: dead strings scanner fails closed without output', () =>
   try {
     const fakeBin = path.join(dir, 'bin');
     fs.mkdirSync(fakeBin);
-    const deadStrings = path.join(fakeBin, 'strings');
-    fs.writeFileSync(deadStrings, '#!/bin/sh\nexit 77\n', { mode: 0o755 });
-    const result = runBuilderWithEnv({ PATH: `${fakeBin}:${process.env.PATH}` , dir });
-    assert.notEqual(result.result.status, 0, `${result.result.stdout}\n${result.result.stderr}`);
-    assert.equal(fs.existsSync(result.out), false);
-    assert.equal(fs.existsSync(result.manifest), false);
-    assert.match(result.result.stderr, /scanner binari exited 77|scanner binari non disponibile/);
+    fs.writeFileSync(path.join(fakeBin, 'strings'), '#!/bin/sh\nexit 77\n', { mode: 0o755 });
+    // The public tree may hold no binary at all, so the control carries its own.
+    const payload = Buffer.concat([Buffer.from([0x00, 0x01]), Buffer.from('plain ascii payload\0'), Buffer.from([0xff])]);
+    const files = [{ rel: 'assets/blob.bin', data: payload }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+      env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(fs.existsSync(manifest), false);
+    assert.match(result.stderr, /scanner binari exited 77|scanner binari non disponibile/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
-
-function runBuilderWithEnv({ PATH, dir }) {
-  const out = path.join(dir, 'public');
-  const manifest = path.join(dir, 'manifest.json');
-  const result = spawnSync(BUILDER, [sourceSha(), out, manifest], {
-    cwd: ROOT, encoding: 'utf8', env: { ...process.env, PATH },
-  });
-  return { dir, out, manifest, result };
-}
 
 test('negative control: altered source SHA fails before producing artifacts', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-negative-sha-'));
