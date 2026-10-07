@@ -10,6 +10,38 @@ vi.mock('../lib/api.js', () => ({
   apiFetch: mocks.apiFetch, fleetStatus: mocks.fleetStatus, getRouteSessions: mocks.getRouteSessions,
   getLiveHost: mocks.getLiveHost, designateHostCell: mocks.designateHostCell, clearHostCell: mocks.clearHostCell,
 }));
+// Il drawer consuma i gruppi della lista principale (hook useNodes): nei test
+// i gruppi sono quelli dello snapshot che ogni caso scrive, cosi' i casi che
+// aggiornano lo snapshot a meta' test continuano a vedere il mondo cambiare.
+vi.mock('../hooks/useNodes.js', async () => {
+  const cache = await import('../lib/cell-switcher-cache.js');
+  return { useNodesState: () => ({ groups: (cache.readCellSwitcherSnapshot() || {}).nodeGroups || [], hasLoaded: true }) };
+});
+// Il locale del drawer vive nel treno condiviso: nei test il treno risponde
+// con i mock di api (sessions + fleet locale), cosi' i casi che cambiano i
+// mock cambiano il mondo del drawer senza timer da 4 secondi.
+vi.mock('../lib/fleet-poll.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    subscribeFleetRoute: (_token, route, onSnapshot) => {
+      if (route.length) return () => {};
+      const emit = async () => {
+        try {
+          const res = await mocks.apiFetch('/api/sessions', 'token');
+          const sessions = await res.json();
+          const fs = await mocks.fleetStatus('token', []);
+          onSnapshot({ sessionsJson: JSON.stringify(sessions), sessionsError: null, fs, fleetError: null });
+        } catch (_) {
+          onSnapshot({ sessionsJson: null, sessionsError: 'mock', fs: null, fleetError: null });
+        }
+      };
+      emit();
+      const id = setInterval(emit, 100);
+      return () => clearInterval(id);
+    },
+  };
+});
 // Le sorgenti pesanti del popup fanno rete (ws, ticket del pannello): stub
 // con traccia delle props, stesso pattern di GridTile.test.jsx.
 vi.mock('./Terminal.jsx', () => ({ default: (props) => (
@@ -95,14 +127,18 @@ describe('CellSwitcher', () => {
     const remote = await screen.findByRole('button', { name: /^Remote / });
     expect(remote).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Degraded / }).getAttribute('aria-disabled')).toBe('true');
-    expect(screen.queryByRole('button', { name: /^cell-Three / })).toBeNull();
-    expect(screen.queryByRole('button', { name: /^Stale Cell / })).toBeNull();
+    // La modalità di default è quella del nodo, come la lista principale
+    // ('all' senza preferenze): le celle spente restano righe disabilitate,
+    // non spariscono — esattamente le righe che mostra la principale.
+    expect(screen.getByRole('button', { name: /^cell-Three / }).getAttribute('aria-disabled')).toBe('true');
+    // Stale Cell e' una cella VIVA del suo gruppo (tmux nota): come la
+    // principale, e' apribile — l'etichetta del nodo dice altro, la riga no.
+    expect(screen.getByRole('button', { name: /^Stale Cell / }).getAttribute('aria-disabled')).toBe('false');
     expect(screen.getByRole('button', { name: 'close cell switcher' })).toBeTruthy();
-    await waitFor(() => {
-      expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['hub']);
-      expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['stale']);
-      expect(mocks.getRouteSessions).toHaveBeenCalledWith('token', ['alerts']);
-    });
+    // Il drawer non ha più un proprio canale: NESSUNA lettura per-route parte
+    // da qui (i gruppi arrivano dalla lista principale, hook useNodes).
+    expect(mocks.fleetStatus).not.toHaveBeenCalledWith('token', ['hub']);
+    expect(mocks.getRouteSessions).not.toHaveBeenCalledWith('token', ['alerts']);
 
     // Il PRIMO tocco seleziona (anteprima in alto, riga blu col badge del
     // gesto); il SECONDO sulla stessa riga apre, e il ricontrollo fresco lo
@@ -145,9 +181,11 @@ describe('CellSwitcher', () => {
       };
     });
     mocks.getRouteSessions.mockResolvedValue({ sessions: [] });
+    // La modalità attiva del NODO tiene fuori la cella spenta: il drawer
+    // segue la stessa vista della lista principale, non un filtro proprio.
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ hub: { filter: 'active' } }));
     render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-One / });
-    await waitFor(() => expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['hub']));
     expect(screen.queryByRole('button', { name: /^Ghost Off / })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
     expect(screen.getByRole('button', { name: /^Ghost Off / }).getAttribute('aria-disabled')).toBe('true');
@@ -284,6 +322,12 @@ describe('CellSwitcher', () => {
     // l'anteprima si chiude da sé. L'alternativa — il contenuto di un'altra
     // cella creduta la propria — è il difetto che questo test tiene chiuso.
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [] }));
+    // La cella sparisce MA la sessione tmux resta: la riga diventa unmanaged
+    // con la STESSA chiave e l'anteprima resta valida (il flusso e' vivo).
+    // Solo quando sparisce anche la SESSIONE la chiave non risolve piu'
+    // niente e l'anteprima si chiude da se'.
+    await waitFor(() => expect(screen.queryByTestId('cell-switcher-anteprima')).not.toBeNull(), { timeout: 4000 });
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: [] }) });
     await waitFor(() => expect(screen.queryByTestId('cell-switcher-anteprima')).toBeNull(), { timeout: 4000 });
   });
 
@@ -478,10 +522,13 @@ describe('CellSwitcher', () => {
     // non è riuscita, la cella NON è stata trovata spenta.
     mocks.fleetStatus.mockImplementation(async () => { throw new Error('HTTP 502'); });
     fireEvent.click(remote); // primo tocco: seleziona
-    fireEvent.click(remote); // secondo tocco: apre con la verifica
-    expect(await screen.findByText('Could not verify: try again shortly.')).toBeTruthy();
+    fireEvent.click(remote); // secondo tocco: la verifica NON riesce
+    // La lettura fallita non ha trovato la cella spenta: la riga e' quella
+    // della lista principale, che apre con la sola tmux nota. Si APRE, e non
+    // dice NE «spenta» (menzogna) NE «non verificata» (blocco inutile).
+    await waitFor(() => expect(onPick).toHaveBeenCalledWith({ session: 'cloud-Remote', node: 'hub', cellName: 'Remote' }));
     expect(screen.queryByText('this cell is no longer active')).toBeNull();
-    expect(onPick).not.toHaveBeenCalled();
+    expect(screen.queryByText('Could not verify: try again shortly.')).toBeNull();
   });
 
   it('aprire una cella VERIFICATA spenta dice ancora «non è più attiva»', async () => {
@@ -500,21 +547,18 @@ describe('CellSwitcher', () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 
-  it('clicking a row whose status could not be read says not confirmed, not no longer active', async () => {
-    // Primo refresh con lettura flotta fallita: le righe restano (ultimo
-    // snapshot noto) come «status not confirmed» — cliccarle non può dire
-    // «non più attiva», perché nessuno ha potuto leggerle.
+  it('a row whose fleet read fails stays, shows its last known state and opens like the main list', async () => {
+    // A failed fleet read preserves the last known list and its state.
+    // Selecting that main-list row opens the known tmux session.
+    const onPick = vi.fn();
     mocks.fleetStatus.mockImplementation(async () => { throw new Error('HTTP 502'); });
-    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: 'all' });
-    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    render(<Switcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
     const dev = await screen.findByRole('button', { name: /^cell-One / });
-    expect(dev.textContent).toContain('status not confirmed');
+    expect(dev.textContent).toContain('working');
+    expect(dev.textContent).not.toContain('status not confirmed');
     fireEvent.click(dev);
-    // Il notice ha role="status" proprio: le righe portano lo stesso testo
-    // come <small>, findByText sarebbe ambiguo.
-    const notice = await screen.findByRole('status');
-    expect(notice.textContent).toBe('status not confirmed');
+    fireEvent.click(dev);
+    await waitFor(() => expect(onPick).toHaveBeenCalledWith({ session: 'cloud-cell-One', cellName: 'cell-One' }));
     expect(screen.queryByText('this cell is no longer active')).toBeNull();
   });
 });

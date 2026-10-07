@@ -44,6 +44,12 @@ const feedViewStateOf = (health, ownerId) => {
 // Il tombstone ha un TTL: un id riusato dopo un reset dell'owner non resta
 // nascosto per sempre.
 const DISMISSED_TTL_MS = 10 * 60 * 1000;
+// Recupero senza SSE. Se la SSE non si apre (o resta giù senza
+// riaprirsi), una rilettura periodica limitata di /api/asks e /api/feed-state
+// recupera ASK e notice senza reload; si ferma appena la SSE apre (l'open
+// già rilancia le letture) e il backoff riparte dal base alla riapertura.
+const ASK_RECOVERY_POLL_MS = 30 * 1000;
+const ASK_RECOVERY_POLL_MAX_MS = 5 * 60 * 1000;
 const dismissedAsks = new Map(); // askKeyOf -> timestamp
 const generationTsOf = a => Object.hasOwn(a, 'ownerAskTs') ? a.ownerAskTs : a.ownerAskId || a.originNode ? null : a.ts;
 
@@ -439,7 +445,26 @@ export default function NotifyCenter({ token }) {
   // usabile anche senza il canale (gli ask ricompaiono al prossimo mount).
   useEffect(() => {
     if (!token) return undefined;
+    let alive = true;
+    let streamOpen = false;
+    let recoveryTimer = null;
+    let recoveryDelay = ASK_RECOVERY_POLL_MS;
+    const stopRecovery = () => {
+      if (recoveryTimer !== null) clearTimeout(recoveryTimer);
+      recoveryTimer = null;
+    };
+    const scheduleRecovery = () => {
+      if (!alive || streamOpen || recoveryTimer !== null) return;
+      recoveryTimer = setTimeout(() => {
+        recoveryTimer = null;
+        if (!alive || streamOpen) return;
+        setRefreshVersion(v => v + 1);
+        recoveryDelay = Math.min(recoveryDelay * 2, ASK_RECOVERY_POLL_MAX_MS);
+        scheduleRecovery();
+      }, recoveryDelay);
+    };
     const close = connectEvents(token, (frame) => {
+      if (!alive) return;
       if (frame.type === 'feed-state-changed') { setRefreshVersion(v => v + 1); return; }
       if (frame.type === 'notify' && frame.ownerId && frame.eventId) {
         // Importato live: entra nella lista consultabile (dedup con l'arretrato
@@ -466,8 +491,21 @@ export default function NotifyCenter({ token }) {
         noteAskDismissed(key, frame.scope === 'local' ? localAsk || { ...frame.askGeneration, ownerAskTs: frame.ownerAskTs } : null);
         removeAsk(identity.id, identity.ownerId, identity.ownerAskId, frame);
       }
-    }, () => { refreshCapabilities(true); setRefreshVersion(v => v + 1); });
-    return () => { close(); };
+    }, () => {
+      if (!alive) return;
+      // SSE aperta: — il recupero si ferma e il backoff riparte.
+      streamOpen = true;
+      recoveryDelay = ASK_RECOVERY_POLL_MS;
+      stopRecovery();
+      refreshCapabilities(true);
+      setRefreshVersion(v => v + 1);
+    }, () => {
+      if (!alive) return;
+      streamOpen = false;
+      scheduleRecovery();
+    });
+    scheduleRecovery();
+    return () => { alive = false; stopRecovery(); close(); };
   }, [token, pushToast, refreshCapabilities]);
 
   useEffect(() => {

@@ -33,6 +33,37 @@ vi.mock('./CellPanel.jsx', () => ({
   ),
 }));
 
+// Il drawer consuma i gruppi della lista principale (hook useNodes) e il
+// treno condiviso per il locale: nei test gruppi e locale vengono dai mock
+// di api, senza timer da 4 secondi.
+vi.mock('../hooks/useNodes.js', async () => {
+  const cache = await import('../lib/cell-switcher-cache.js');
+  return { useNodesState: () => ({ groups: (cache.readCellSwitcherSnapshot() || {}).nodeGroups || [], hasLoaded: true }) };
+});
+vi.mock('../lib/fleet-poll.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    subscribeFleetRoute: (_token, route, onSnapshot) => {
+      if (route.length) return () => {};
+      const emit = async () => {
+        try {
+          const res = await mocks.apiFetch('/api/sessions', 'token');
+          const sessions = await res.json();
+          const fs = await mocks.fleetStatus('token', []);
+          onSnapshot({ sessionsJson: JSON.stringify(sessions), sessionsError: null, fs, fleetError: null });
+        } catch (_) {
+          onSnapshot({ sessionsJson: null, sessionsError: 'mock', fs: null, fleetError: null });
+        }
+      };
+      emit();
+      const id = setInterval(emit, 100);
+      return () => clearInterval(id);
+    },
+  };
+});
+
+
 import CellSwitcher from './CellSwitcher.jsx';
 import { writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import { t } from '../lib/i18n.js';

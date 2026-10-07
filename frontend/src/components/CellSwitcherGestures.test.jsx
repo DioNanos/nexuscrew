@@ -28,6 +28,37 @@ vi.mock('./CellPanel.jsx', () => ({
   ),
 }));
 
+// Il drawer consuma i gruppi della lista principale (hook useNodes) e il
+// treno condiviso per il locale: nei test gruppi e locale vengono dai mock
+// di api, senza timer da 4 secondi.
+vi.mock('../hooks/useNodes.js', async () => {
+  const cache = await import('../lib/cell-switcher-cache.js');
+  return { useNodesState: () => ({ groups: (cache.readCellSwitcherSnapshot() || {}).nodeGroups || [], hasLoaded: true }) };
+});
+vi.mock('../lib/fleet-poll.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    subscribeFleetRoute: (_token, route, onSnapshot) => {
+      if (route.length) return () => {};
+      const emit = async () => {
+        try {
+          const res = await mocks.apiFetch('/api/sessions', 'token');
+          const sessions = await res.json();
+          const fs = await mocks.fleetStatus('token', []);
+          onSnapshot({ sessionsJson: JSON.stringify(sessions), sessionsError: null, fs, fleetError: null });
+        } catch (_) {
+          onSnapshot({ sessionsJson: null, sessionsError: 'mock', fs: null, fleetError: null });
+        }
+      };
+      emit();
+      const id = setInterval(emit, 100);
+      return () => clearInterval(id);
+    },
+  };
+});
+
+
 import CellSwitcher from './CellSwitcher.jsx';
 import { writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 
@@ -122,14 +153,22 @@ describe('CellSwitcher — i bordi del gesto e della selezione', () => {
     render(<CellSwitcher token="t" onClose={() => {}} onPick={() => {}} pollMs={20} />);
     fireEvent.click(await screen.findByRole('button', { name: /^cell-One / }));
     expect(screen.queryByTestId('peek-term')).not.toBeNull();
+    // La riga sparisce quando spariscono CELLA e SESSIONE: finché la tmux
+    // vive, la riga unmanaged con la stessa chiave tiene l'anteprima valida
+    // (come la lista principale).
     mocks.fleetStatus.mockResolvedValue({ available: true, cells: [] });
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: [] }) });
     await waitFor(() => expect(screen.queryByTestId('peek-term')).toBeNull(), { timeout: 4000 });
     mocks.fleetStatus.mockResolvedValue({ available: true, cells: [active('cell-One', 'cloud-cell-One')] });
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: [{ name: 'cloud-cell-One', activity: 10 }] }) });
     await screen.findByRole('button', { name: /^cell-One / }, { timeout: 4000 });
     expect(screen.queryByTestId('peek-term')).toBeNull();
   });
 
   it('la cella fermata ma ancora in flotta chiude l\'anteprima (filtro attive)', async () => {
+    // La modalità attiva è quella del NODO, come la lista principale: con la
+    // vista locale su «active» la cella spenta esce dalle righe visibili.
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ local: { filter: 'active' } }));
     render(<CellSwitcher token="t" onClose={() => {}} onPick={() => {}} pollMs={20} />);
     fireEvent.click(await screen.findByRole('button', { name: /^cell-One / }));
     mocks.fleetStatus.mockResolvedValue({ available: true, cells: [
