@@ -60,8 +60,9 @@ function fakeDaemon(socketPath, statusOf) {
       const msg = JSON.parse(String(data));
       if (msg.method === 'initialize') ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { userAgent: 'f', codexHome: '/tmp' } }));
       else if (msg.method === 'thread/read') {
-        const s = statusOf(msg.params.threadId);
-        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: msg.params.threadId, status: { type: s } } } }));
+        Promise.resolve(statusOf(msg.params.threadId)).then((s) => {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: msg.params.threadId, status: { type: s } } } }));
+        });
       }
     });
   }));
@@ -163,4 +164,58 @@ test('the registry is bounded: the oldest entries go when it grows past its limi
   // overwriting an existing cell does not count twice
   reg.set(`cell-${limit + 4}`, { threadId: 'thr-new', ref: 'f'.repeat(32) });
   assert.equal(reg.entries().length, limit);
+});
+
+// A status read started on the old thread must not remove the entry of a newer
+// Live that replaced it while the read was in flight.
+test('a late "gone" answer for the old thread does not remove the replacement entry', async (t) => {
+  const d = dir();
+  const socketPath = path.join(d, 'c.sock');
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const daemon = fakeDaemon(socketPath, async () => { await gate; return 'notLoaded'; });
+  await daemon.listen();
+  t.after(() => daemon.close());
+  const file = path.join(d, 'live-threads.json');
+  const reg = createLiveThreadRegistry({ filePath: file });
+  reg.set('Dev', { threadId: 'thr-old', ref: 'a'.repeat(32), tmuxSession: 'cloud-Dev' });
+  const cfg = { port: 1, liveBridgeEnabled: true, liveBridgeSocketPath: socketPath, liveBridgeTimeoutMs: 5000, liveThreadStatusCacheMs: 0, filesRoot: d };
+  const bridge = createLiveBridge({ cfg, fleetP: Promise.resolve({ available: true }), tokenGet: () => 't', filesRoot: d, registry: reg });
+  const pending = bridge.threadStatus('Dev');
+  await new Promise((r) => setTimeout(r, 50)); // the read is in flight
+  reg.set('Dev', { threadId: 'thr-new', ref: 'b'.repeat(32), tmuxSession: 'cloud-Dev' });
+  release();
+  assert.equal(await pending, 'absent');
+  assert.equal(reg.get('Dev').threadId, 'thr-new', 'the replacement entry survives');
+  assert.equal(reg.findByRef('b'.repeat(32)).cell, 'Dev');
+});
+
+test('startup reconciliation does not remove an entry replaced while it was reading', async (t) => {
+  const d = dir();
+  const socketPath = path.join(d, 'c.sock');
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const daemon = fakeDaemon(socketPath, async () => { await gate; return 'notLoaded'; });
+  await daemon.listen();
+  t.after(() => daemon.close());
+  const reg = createLiveThreadRegistry({ filePath: path.join(d, 'live-threads.json') });
+  reg.set('Dev', { threadId: 'thr-old', ref: 'a'.repeat(32), tmuxSession: 'cloud-Dev' });
+  const cfg = { port: 1, liveBridgeEnabled: true, liveBridgeSocketPath: socketPath, liveBridgeTimeoutMs: 5000, filesRoot: d };
+  const bridge = createLiveBridge({ cfg, fleetP: Promise.resolve({ available: true }), tokenGet: () => 't', filesRoot: d, registry: reg });
+  const running = bridge.reconcile();
+  await new Promise((r) => setTimeout(r, 50));
+  reg.set('Dev', { threadId: 'thr-new', ref: 'b'.repeat(32), tmuxSession: 'cloud-Dev' });
+  release();
+  const out = await running;
+  assert.deepEqual(out.removed, [], 'nothing removed: the entry is not the one that was read');
+  assert.equal(reg.get('Dev').threadId, 'thr-new');
+});
+
+test('remove with an expected thread id only removes that thread', () => {
+  const reg = createLiveThreadRegistry({ filePath: path.join(dir(), 'live-threads.json') });
+  reg.set('Dev', { threadId: 'thr-1', ref: 'a'.repeat(32) });
+  assert.equal(reg.remove('Dev', 'thr-other'), false);
+  assert.ok(reg.get('Dev'));
+  assert.equal(reg.remove('Dev', 'thr-1'), true);
+  assert.equal(reg.get('Dev'), null);
 });
