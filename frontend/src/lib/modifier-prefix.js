@@ -1,10 +1,10 @@
-// D384 commit 2 — prefissi da CTRL/ALT armati sul primo carattere dell'input
+// Prefissi da CTRL/ALT armati sul primo carattere dell'input
 // dalla tastiera del telefono. La conversione di controllo è quella che stava
 // inline in `Terminal.jsx` (a-z → ^A..^Z, @A-Z[\]^_ → ^@..^_, spazio → ^@).
 // Con ALT il carattere (di controllo o no) viene preceduto da ESC (Meta).
 // L'eventuale resto della stringa (IME, parole intere) esce senza prefisso:
 // il modificatore vale solo per il primo carattere (comportamento scelto e
-// dichiarato a Dev, mandato D384 commit 2 punto 4).
+// (richiesta dell'operatore).
 
 export function inputConPrefissi(d, { ctrl = false, alt = false } = {}) {
   if (!d || (!ctrl && !alt)) return d;

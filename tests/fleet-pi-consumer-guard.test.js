@@ -1,6 +1,6 @@
 'use strict';
 
-// Correzione (audit, decimo caso della stessa forma): resolvePiComposer()
+// Correzione (decimo caso della stessa forma): resolvePiComposer()
 // collassava OGNI scostamento a `null`, e il chiamante skippava — "Pi non
 // installato" (legittimo) era INDISTINGUIBILE da "Pi c'e' ma la guardia non
 // riesce a caricarlo" (la guardia stessa e' rotta). Su una macchina senza Pi
@@ -58,7 +58,7 @@ test('DRIFT 9: which esce con un codice che non significa inequivocabilmente "no
   assert.match(r.reason, /codice 2|exit 1|convenzione/i);
 });
 
-// --- Correzione 2 (caso adiacente segnalato dall'audit) --------------------
+// --- Correzione 2 (caso adiacente segnalato dalla verifica) --------------------
 // «which esce non-zero» (lo strumento ha risposto: non trovato) e «which non
 // riesce a partire» (ENOENT/EACCES sullo spawn: lo strumento e' rotto) erano
 // collassati nello stesso catch -> 'not-installed'. Con Pi REALMENTE

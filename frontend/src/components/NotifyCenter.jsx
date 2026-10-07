@@ -11,7 +11,7 @@ import {
 import Icon from './Icon.jsx';
 import './NotifyCenter.css';
 
-// Centro notifiche del MCP bridge (design §3): toast non intrusivi per le
+// Centro notifiche del MCP bridge: toast non intrusivi per le
 // notify delle celle + pannello degli ask aperti (textarea/bottoni opzioni →
 // POST answer) con badge contatore. Presente in OGNI vista (mobile e desktop):
 // App lo monta come overlay, lo stato arriva via SSE (/api/events) con un

@@ -157,7 +157,7 @@ function repairAsks(dir, asks) {
 //   sano    — chiuso (answered): list({open:true}) lo esclude LEGITTIMAMENTE;
 //   rotto   — aperto con `options` non array: supera il filtro di load()
 //             (chiede solo id stringa) e fa lanciare a.options.slice() in
-//             list(), la corruzione con cui l'audit ha riprodotto il difetto.
+//             list(), la corruzione con cui la verifica ha riprodotto il difetto.
 function ownerAsk({ broken }) {
   return {
     id: OWNER_ASK_ID,

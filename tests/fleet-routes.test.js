@@ -163,7 +163,7 @@ test('builtin: /definitions espone campi editabili ma non env values', async (t)
 test('builtin: credential API is write-only, local to the selected node and reports affected cells', async (t) => {
   // La chiave del provider va tolta dall'ambiente: il test verifica lo STATO
   // della credenziale, e una chiave esportata nella shell di chi esegue lo
-  // cambia. Passava qui e falliva nella shell dell'auditor — un test che
+  // cambia. Passava qui e falliva nella shell del revisore — un test che
   // dipende dall'ambiente prova l'ambiente, non il codice.
   const salvata = process.env.OLLAMA_API_KEY;
   delete process.env.OLLAMA_API_KEY;
@@ -195,7 +195,7 @@ test('builtin: credential API is write-only, local to the selected node and repo
 test('builtin: restore-cells usa body cap dedicato e missing engines strutturati', async (t) => {
   const { base, token, dir } = await bootBuiltin(t);
   // cwd portabile sotto la home di test (dir): la vecchia forma '/tmp' era non
-  // portabile e ora viene rifiutata fail-closed in scrittura (design §4.3).
+  // portabile e ora viene rifiutata fail-closed in scrittura
   const cells = Array.from({ length: 32 }, (_, index) => ({
     id: index === 0 ? 'Dev' : `C${index}`, cwd: dir, engine: 'sh', boot: false,
     prompt: 'x'.repeat(7000),
@@ -372,7 +372,7 @@ test('READONLY: builtin blocca mutazioni (403) ma lascia passare letture', async
   assert.equal((await post('up', { cell: 'Dev' })).status, 403);
 });
 
-// --- NC-D: il nome dev'essere anche RIPRISTINABILE --------------------------
+// --- il nome dev'essere anche RIPRISTINABILE --------------------------
 // Aggiungere un campo alla definizione senza aggiungerlo all'allowlist del
 // restore spezza il round-trip di backup proprio sulle celle a cui e' stato
 // dato un nome. Qui si prova SOLO la meta' backend: che l'API accetti la label

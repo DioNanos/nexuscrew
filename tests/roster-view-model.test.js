@@ -47,7 +47,7 @@ test('nodeStateLabel delegates to the shared i18n dictionary and interpolates re
   assert.equal(nodeStateLabel({ status: 'unreachable' }), t('node-unreachable'));
   assert.equal(nodeStateLabel({ status: 'offline' }), t('node-offline'), 'offline without lastSeen');
   assert.equal(nodeStateLabel({ status: 'needs-repair' }), t('node-needs-repair'));
-  // Unknown / absent status is silent (design §7: never an alarm for the model layer).
+  // Unknown / absent status is silent (never an alarm for the model layer).
   assert.equal(nodeStateLabel({ status: 'up' }), '');
   assert.equal(nodeStateLabel({}), '');
   // Time-interpolating branches substitute {t} with rel(). ~90m ago lands in a

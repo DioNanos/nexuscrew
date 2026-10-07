@@ -1,6 +1,6 @@
 'use strict';
 // Fetta 2b — proof HMAC al posto della capability statica nella gestione lease
-// del supervisore (contratto rev1: PREMESSA, A2/B1, D1/D2, C4, C3-sospesa).
+// del supervisore (PREMESSA, A2/B1, D1/D2, C4, C3-sospesa).
 // Il canale e i side effect sono quelli veri del manager (TCP pair come nella
 // suite 2a): qui si prova che il modello di autorizzazione e' cambiato.
 const { test, after } = require('node:test');

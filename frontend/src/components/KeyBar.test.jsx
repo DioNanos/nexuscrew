@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import KeyBar from './KeyBar.jsx';
 import * as virtualKeyboard from '../lib/virtual-keyboard.js';
 
-// D384 — spia DELEGANTE del dismiss: esegue il dismiss VERO (blur dell'editable
-// attivo) e resta osservabile nelle asserzioni. Da audit: i test ENTER
+// Spia DELEGANTE del dismiss: esegue il dismiss VERO (blur dell'editable
+// attivo) e resta osservabile nelle asserzioni. I test ENTER
 // devono poter vedere una regressione del dismiss reale, non un mock cieco.
 vi.mock('../lib/virtual-keyboard.js', async (importOriginal) => {
   const actual = await importOriginal();
@@ -44,7 +44,7 @@ describe('KeyBar mobile Enter column', () => {
     const event = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
     enter.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
-    // da audit: il dismiss qui è quello VERO (spia delegante): il blur
+    // il dismiss qui è quello VERO (spia delegante): il blur
     // dell'input è la prova che la chiusura non è un mock cieco
     expect(virtualKeyboard.dismissVirtualKeyboard).toHaveBeenCalled();
     expect(document.activeElement).not.toBe(input);
@@ -53,7 +53,7 @@ describe('KeyBar mobile Enter column', () => {
     expect(props.onKeyboard).not.toHaveBeenCalled();
   });
 
-  it('preserves sticky ALT semantics for ENTER (stato armato in App, D384 commit 2)', () => {
+  it('preserves sticky ALT semantics for ENTER (stato armato in App)', () => {
     const { props } = renderKeyBar({ altArmed: true, onAlt: vi.fn(), onAltConsume: vi.fn() });
     fireEvent.pointerDown(screen.getByRole('button', { name: 'ENTER' }));
     expect(props.send).toHaveBeenCalledWith('\x1b\r');
@@ -274,7 +274,7 @@ describe('KeyBar navigation repeat', () => {
       expect(props.onCtrl).toHaveBeenCalledOnce();
 
       const alt = screen.getByText('ALT');
-      // D384 commit 2: l'armamento ALT è pilotato dalla prop (vive in App);
+      // L'armamento ALT è pilotato dalla prop (vive in App);
       // il tasto è one-shot per costruzione (press, non repeatPress): segnala
       // il gesto con onAlt una volta sola anche tenendo premuto
       fireEvent.pointerDown(alt);
@@ -299,7 +299,7 @@ describe('KeyBar cell switcher', () => {
 });
 
 
-describe('KeyBar D384 — CTRL e ALT tengono/aprono la tastiera', () => {
+describe('KeyBar — CTRL e ALT tengono/aprono la tastiera', () => {
   beforeEach(() => { vi.mocked(virtualKeyboard.dismissVirtualKeyboard).mockClear(); });
 
   it('CTRL non chiude la tastiera e chiede l\'apertura', () => {

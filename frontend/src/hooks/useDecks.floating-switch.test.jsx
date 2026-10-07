@@ -82,7 +82,7 @@ afterEach(async () => {
   }
 });
 
-describe('audit indipendente — rinomina e navigazione concorrenti', () => {
+describe('verifica indipendente — rinomina e navigazione concorrenti', () => {
   it('non salva il layout del deck di arrivo nel deck rinominato', async () => {
     mocks.getDecks.mockResolvedValue({ decks: [
       { name: 'main', revision: 1, layout: emptyLayout() },
@@ -105,7 +105,7 @@ describe('audit indipendente — rinomina e navigazione concorrenti', () => {
   });
 });
 
-describe('audit indipendente — fallimento del salvataggio staccato', () => {
+describe('verifica indipendente — fallimento del salvataggio staccato', () => {
   // Limite della 0.9.50 (rosso anche su 6303c26): il percorso di salvataggio resta quello
   // della 0.9.50 in questa release. Rimandato alla 0.9.52.
   it.todo('un errore di rete non deve scartare la sola copia dell’ultimo edit del deck lasciato — limite 0.9.50, rimandato alla 0.9.52');

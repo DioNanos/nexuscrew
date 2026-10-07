@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import assert from 'node:assert';
 
-// Audit fix: `timeoutMs` in apiFetch usa il controller di fetchAbortSignal
+// `timeoutMs` in apiFetch usa il controller di fetchAbortSignal
 // (fix del ReferenceError quando signal+timeoutMs arrivano insieme) e la risposta
 // tardiva DOPO il timeout non viene mai consumata: la fetch rispetta il signal.
 const { apiFetch } = await import('./api.js');

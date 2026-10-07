@@ -349,7 +349,7 @@ test('porta: snapshot completo è ok con l\'elenco asks', async (t) => {
 });
 
 test('porta su owner SOTTOSCRITTO: snapshot senza asks è error, non ok', async (t) => {
-  // La via della perdita dati dell'audit: owner sottoscritto, la porta passa
+  // La via della perdita dati della verifica: owner sottoscritto, la porta passa
   // da snapshotOnce. Il validatore rifiuta prima dell'applicazione e la porta
   // NON può rispondere 'ok' con un elenco inesistente.
   const snap = baseSnapshot();

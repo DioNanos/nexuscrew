@@ -3,7 +3,7 @@
 // pura, perche' vale per DUE consumatori (SessionList mobile e poll desktop
 // di App.jsx).
 //
-// rev3 (audit r27lista): available:false NON e' un fallimento di lettura —
+// available:false NON e' un fallimento di lettura —
 // e' il server che parla, e dice PERCHE' nel campo `reason` (la route /status
 // lo propaga sempre: lib/fleet/routes.js). Tre esiti:
 //
@@ -18,7 +18,7 @@
 //    li scrive cosi') o, in fail-safe, available:false con reason non
 //    riconosciuto: la risposta e' comunque RIUSCITA, quindi zero celle e' la
 //    verita' — lista vuota con indicatore distinto, MAI le celle fantasma
-//    dell'ultima lista nota (il caso peggiore secondo l'audit).
+//    dell'ultima lista nota (il caso peggiore secondo la verifica).
 
 // Le classi di reason come le scrive il provider: «spento per scelta» porta il
 // nome della config tra parentesi (fleetEnabled=false / builtinEnabled=false);

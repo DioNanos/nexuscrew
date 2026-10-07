@@ -71,7 +71,7 @@ export default function KeyBar({
   const emit = (seq) => {
     if (altArmed) { send(ESC + seq); if (onAltConsume) onAltConsume(); } else send(seq);
   };
-  // D384 — keepOpen: CTRL e ALT non chiudono la tastiera soft e, nello stesso
+  // keepOpen: CTRL e ALT non chiudono la tastiera soft e, nello stesso
   // gesto (pointerdown), chiedono l'apertura via onKeyboardKeep. Gli altri
   // tasti restano governati da keepKeyboardClosed, com'erano.
   const run = (fn, { keepOpen } = {}) => {

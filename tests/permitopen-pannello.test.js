@@ -438,10 +438,10 @@ test('readPublicKey: una privata cifrata non lascia discendenti askpass', (t) =>
     const pid = pidResiduo();
     return pid !== null && nostro(pid);
   };
-  // P2 (rilievo auditor): `uccidiResidui` cancellava il pidfile PRIMA che
+  // P2 (rilievo revisore): `uccidiResidui` cancellava il pidfile PRIMA che
   // l'assert finale potesse rileggerlo — `vivo()` a quel punto non trova piu'
   // nessun pid e torna false SEMPRE, che l'uccisione sia riuscita o no.
-  // L'auditor ha tolto il SIGKILL sotto e la suite e' rimasta verde: la
+  // L'revisore ha tolto il SIGKILL sotto e la suite e' rimasta verde: la
   // guardia non pinnava niente. Ora il pid si legge e si CATTURA prima di
   // toccare qualunque file, e l'ultimo assert lo riverifica per appartenenza
   // (argv) — non per numero nudo, ne' rileggendolo da un file che non c'e' piu'.

@@ -142,7 +142,7 @@ describe('CellPopup R24: finestra spostabile e ridimensionabile', () => {
   });
 
   it('clamp BASSO: oltre il fondo la barra resta visibile (y <= vh - altezza barra)', () => {
-    // L'audit: la dichiarazione copriva sinistro, destro e alto, ma il
+    // La verifica: la dichiarazione copriva sinistro, destro e alto, ma il
     // vincolo basso (top mai oltre vh - TESTA) non era esercitato da
     // nessuno. Nota: TESTA=44 non e' GRAB=48 — sono due misure per due lati
     // diversi, e il test pretende esattamente quella bassa.

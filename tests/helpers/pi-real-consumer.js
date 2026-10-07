@@ -11,7 +11,7 @@
 // directory dal binario fino al package.json del pacchetto
 // @earendil-works/pi-coding-agent.
 //
-// Correzione (audit): resolvePiComposer() prima collassava OGNI scostamento a
+// Correzione: resolvePiComposer() prima collassava OGNI scostamento a
 // `null`, e il chiamante skippava — indistintamente per "Pi non installato"
 // (legittimo) e per "Pi c'e' ma la guardia non riesce a caricarlo" (la guardia
 // stessa e' rotta). Su una macchina senza Pi la suite usciva verde con 8 pass

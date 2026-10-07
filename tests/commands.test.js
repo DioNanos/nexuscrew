@@ -1423,7 +1423,7 @@ test('update: restart fallito restituisce code 1 e non dichiara successo', () =>
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-// R28-rimedio, difetto 1 (audit): `nexuscrew update` manuale reinstalla e
+// R28-rimedio, difetto 1: `nexuscrew update` manuale reinstalla e
 // riavvia MAI rigenerando le definizioni di boot — due cervelli per lo
 // stesso concetto, uno dei quali sbagliato. La via manuale deve attraversare
 // la STESSA sanazione del runner: un solo cervello per
@@ -1610,7 +1610,7 @@ test('autoupdate: a servizio spento scrive il file e DICE quando varra\'', async
 
 // SU UN RUNTIME GESTITO NON SI AVVIA NIENTE ACCANTO.
 //
-// Difetto mio, trovato rileggendo prima dell'audit: il ritentativo chiamava
+// Difetto mio, trovato rileggendo prima della verifica: il ritentativo chiamava
 // `startPortable` in ogni caso. Su una macchina con systemd significherebbe
 // mettere in piedi un processo che il gestore non conosce, mentre il gestore
 // puo' rialzare la propria unita' — due processi sulla stessa porta, e il
@@ -1646,7 +1646,7 @@ test('dispatch restart: senza token non incolpa la porta, dice che non puo\' ver
   // La sonda di salute fallirebbe per AUTENTICAZIONE, e il messaggio avrebbe
   // dato la colpa alla porta o al processo — mandando a cercare dove il
   // problema non e'. Il riavvio pero' e' partito davvero: non e' un
-  // fallimento, e' una verifica che non si e' potuta fare. Rilievo dell'audit.
+  // fallimento, e' una verifica che non si e' potuta fare.
   const { home } = initHome();
   const logs = [];
   const { tokenPath } = require('../lib/cli/url.js').resolvePaths({ home });
@@ -1672,7 +1672,7 @@ test('dispatch restart: un 401 dice che il servizio C\'E\', non che e\' morto', 
   // `probeNexusCrew` collassa ogni non-200 su false, quindi un token invalido
   // era indistinguibile da «nessun servizio»: si sarebbe dichiarato fallito un
   // riavvio RIUSCITO, mandando a cercare un processo morto che e' vivo.
-  // Rilievo dell'audit: il caso token-ASSENTE era gia' coperto, questo no.
+  // Rilievo della verifica: il caso token-ASSENTE era gia' coperto, questo no.
   const { home } = initHome();
   const logs = [];
   const out = await dispatch(['restart'], {

@@ -1,5 +1,5 @@
 'use strict';
-// tests/live-host-bridge.test.js — ponte Live (fetta 3, contratto rev5).
+// tests/live-host-bridge.test.js — ponte Live (fetta 3).
 //
 // Il test costruisce il sistema REALE e le sue due dipendenze esterne finte:
 //   - hub: server express VERO con le route live-host vere (designazione via
@@ -107,7 +107,7 @@ function makeFakeDaemon({ socketPath, threadId = 'bridge-thread-0001', failThrea
           // esistente, ed e' proprio la ragione per cui il ponte non deve
           // usarli. Un finto che li rifiutasse sarebbe piu' restrittivo del
           // vero e nasconderebbe il pericolo: a provare che il ponte non li usa
-          // e' la spia sui metodi, non un errore di comodo. Rilievo di audit.
+          // e' la spia sui metodi, non un errore di comodo.
           ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { accepted: true } }));
         } else if (msg.method) {
           ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'metodo sconosciuto' } }));
@@ -340,7 +340,7 @@ test('NATIVA con cella OCCUPATA: thread NUOVA del ponte, cwd e prompt per-cella 
       'il prompt arriva integro, in coda',
     );
 
-    // Prompt dichiarato applicato, e il testo NON viaggia in risposta (KC3-audit:
+    // Prompt dichiarato applicato, e il testo NON viaggia in risposta (KC3:
     // il contenuto del prompt resta lato nodo).
     assert.deepEqual(b.prompt, { applied: true, source: 'LIVE_PROMPT.md' });
   } finally { await ctx.close(); }
@@ -810,7 +810,7 @@ test('config: chiavi ponte nei default e negli env override (MC0 isolabile)', ()
 // risposta arriva DOPO che il ponte ha gia' dichiarato il timeout. Il ponte
 // fallisce e la thread esiste: se nessuno la chiude, resta viva senza che
 // nessuno la usi — un successo parziale dichiarato fallimento. Rilievo di un
-// audit indipendente.
+// verifica indipendente.
 test('thread ORFANA: se la risposta arriva dopo il timeout, il ponte chiude comunque la thread', async () => {
   const cwd = path.join(os.tmpdir(), 'cell-orfana');
   fs.mkdirSync(cwd, { recursive: true });
@@ -836,7 +836,7 @@ test('thread ORFANA: se la risposta arriva dopo il timeout, il ponte chiude comu
 });
 
 // Tre condizioni diverse meritano tre nomi: un nome solo mandava a guardare
-// l'hub anche quando il problema era una sessione chiusa. Rilievo di audit.
+// l'hub anche quando il problema era una sessione chiusa.
 test('hub e roster in disaccordo: tre condizioni, tre nomi distinti', async () => {
   // (a) l'hub dichiara eleggibile una cella che il roster NON ha piu'.
   const via = await boot({

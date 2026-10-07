@@ -71,7 +71,7 @@ describe('upActionNotice', () => {
     expect(n.code).toBe('KIMI_AUTH_ACTION_REQUIRED');
   });
 
-  // V-69: /fleet/up risponde vlPromptDegraded:true quando una cella vl parte
+  // /fleet/up risponde vlPromptDegraded:true quando una cella vl parte
   // senza il proprio prompt di cella (runtime < 0.3.1 o file per-cella non
   // scrivibile). La cella e' viva ma senza identita': il fatto deve vedersi,
   // non sparire nel booleano. Strict === true perche' il payload puo' arrivare

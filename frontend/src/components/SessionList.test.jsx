@@ -420,7 +420,7 @@ describe('SessionList — cella ospite Live per nodo', () => {
 // unmanaged — un guasto della lettura svuotava la home e sembrava «tutto
 // offline» mentre server e celle erano vivi. Il refresh manuale (bottone in
 // header) forza il secondo poll senza aspettare l'intervallo da 4s.
-// R27 rev3 (audit): available:false NON e' un fallimento di lettura — e' il
+// R27: available:false NON e' un fallimento di lettura — e' il
 // server che parla. TRE esiti: reject → stale (resta l'ultima lista);
 // available:false + reason di config esplicita → DATO: lista vuota e
 // indicatore «fleet non disponibile» (niente celle fantasma di un fleet
@@ -445,7 +445,7 @@ describe('R27 — tre esiti: non letto, spento per scelta, dato vivo', () => {
     expect(screen.getByText('Live Cell')).toBeTruthy(); // la cella NON e' sparita
   });
 
-  it('CONTROLLO NEGATIVO rev3: fleet SPENTO PER SCELTA (fleetEnabled=false) — lista vuota e indicatore «non disponibile», NON stale e NON celle fantasma', async () => {
+  it('CONTROLLO NEGATIVO: fleet SPENTO PER SCELTA (fleetEnabled=false) — lista vuota e indicatore «non disponibile», NON stale e NON celle fantasma', async () => {
     localOnly();
     renderRoster();
     expect(await screen.findByText('Live Cell')).toBeTruthy();
@@ -503,7 +503,7 @@ describe('R27 — tre esiti: non letto, spento per scelta, dato vivo', () => {
 });
 
 // Badge, rel e stato di una riga REMOTA: da dove vengono?
-// L'audit della parte desktop ha trovato che la sidebar leggeva le sessioni
+// La verifica della parte desktop ha trovato che la sidebar leggeva le sessioni
 // LOCALI per nome, quindi un'omonima locale dava il conteggio sbagliato a una
 // riga di un altro nodo. Qui si fissa il contratto opposto: i tre dati di una
 // riga remota vengono dalle sessioni di QUELLA route, e l'omonima locale — che

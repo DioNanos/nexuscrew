@@ -746,7 +746,7 @@ describe('CellSwitcher side key', () => {
     expect(altra.getAttribute('title')).toBe(t('cell-switcher-side-add'));
     expect(altra.getAttribute('aria-label')).toBe(t('cell-switcher-side-add'));
     // L'icona è a tratto (fill none, currentColor): un SVG senza attributi
-    // qui riempiva il rettangolo di nero — il quadrato pieno dell'audit B4.
+    // qui riempiva il rettangolo di nero — il quadrato pieno di B4.
     const icona = altra.querySelector('svg');
     expect(icona).toBeTruthy();
     expect(icona.getAttribute('fill')).toBe('none');

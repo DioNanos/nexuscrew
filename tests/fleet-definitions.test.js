@@ -379,7 +379,7 @@ test('validateCommandTrust: owner check — proprio utente o root ok, altro owne
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-// --- NC-D: la cella ha un nome leggibile distinto dall'id -------------------
+// --- la cella ha un nome leggibile distinto dall'id -------------------
 // Senza questa distinzione l'id fa anche da nome: un nodo che battezza la
 // propria cella come il motore la espone cosi' a tutta la rete, e chi la riceve
 // non ha modo di sapere che ruolo occupa.
@@ -570,7 +570,7 @@ test('panelUrl: forme non-stringa o vuote rifiutate', () => {
 // lo stesso validPanelUrl del ramo custom. Prima del fix il ramo managed
 // tornava PRIMA della validazione: un valore valido spariva in silenzio e uno
 // invalido veniva accettato (fail-open) — due percorsi divergenti sullo
-// stesso campo, quello che l'audit ha bloccato.
+// stesso campo, quello che la verifica ha bloccato.
 
 test('panelUrl su engine managed valido: validato e CONSERVATO, non scartato', () => {
   const def = {
@@ -589,7 +589,7 @@ test('panelUrl su engine managed valido: validato e CONSERVATO, non scartato', (
 });
 
 test('panelUrl su engine managed INVALIDO: definizione rifiutata (fail-closed, come custom)', () => {
-  // Riproduce il caso dell'auditor: "not a url" sul managed veniva ACCETTATO
+  // Riproduce il caso del revisore: "not a url" sul managed veniva ACCETTATO
   // col campo scartato in silenzio; sul custom dava null. Ora uguali.
   for (const url of ['not a url', 'https://example.com:6901', 'ftp://127.0.0.1:6901', '']) {
     const def = {

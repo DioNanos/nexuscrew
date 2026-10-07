@@ -238,7 +238,7 @@ test('il token scritto da una presa reale porta pid, hex E nascita di questo pro
 });
 
 // ---------------------------------------------------------------------------
-// Rilievo 2 dell'audit pre-release: la scrittura del token può FALLIRE
+// Rilievo 2 della verifica pre-release: la scrittura del token può FALLIRE
 // («catch (_) { /* informativo */ }») — disco pieno, quota, errore transitorio.
 // Il lock esiste ma è VUOTO: nessun pid da interrogare, e dopo 30s il lock di
 // un proprietario VIVO E AL LAVORO viene espropriato, perché per il codice è

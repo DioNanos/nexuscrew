@@ -1,6 +1,6 @@
 'use strict';
 
-// Correzione (audit, stessa forma di tests/helpers/pi-real-consumer.js, qui
+// Correzione (stessa forma di tests/helpers/pi-real-consumer.js, qui
 // nel codice di PRODOTTO): executable()/commandExists() collassavano ogni
 // eccezione a `false`. ENOENT ("il path non c'e' qui", legittimo: continua a
 // cercare sul resto del PATH) ed EACCES/ELOOP/ENOTDIR ("non sono riuscito a

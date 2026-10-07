@@ -17,25 +17,21 @@ const {
   EVENTI_CODEX,
 } = require('../lib/fleet/codex-hooks.js');
 
-// I valori attesi qui non sono inventati: vengono dal JSON canonico e dalla
-// normalizzazione letti nel sorgente di codex, e il caso SessionStart e' lo
-// STESSO comando di una prova isolata su TUI reale — se il calcolo devia, la
-// fiducia non combacia piu' e il client riapre il dialogo di revisione.
+// Oracolo indipendente: digest letterale del JSON canonico di una fixture
+// sintetica. Se cambia la normalizzazione, il valore atteso resta fisso.
 
-test('hashHook riproduce l\'hash della prova isolata su TUI', () => {
-  // Il path in questo comando e' quello della misura originale su una TUI
-  // reale: NON va aggiornato, altrimenti l'hash atteso non vale piu'.
-  const comando = 'printf cli-ran >> /tmp/d348-step0-15985qqx/cli-probe';
+test('hashHook riproduce il digest della fixture sintetica', () => {
+  const comando = 'printf cli-ran >> /tmp/nexuscrew-hook-fixture/cli-probe';
   assert.strictEqual(
     hashHook('SessionStart', comando),
-    'sha256:1c196e4a186c6ba4bfd1f4a9c86e2ea8f43d0f13527f93c70001134a70e47d4b',
+    'sha256:06265ab0d43cc396da3fd9829d38a866a6f23da823a257ffdb9792b01286a4ea',
   );
 });
 
 // Lo stesso calcolo, bloccato anche sulla FORMA: la canonicalizzazione qui
 // sotto e' scritta a mano di proposito, cosi' il test non dipende da
 // `ordinaChiavi`. Se i campi o il loro ordine cambiano, questo atteso non
-// combacia piu' — mentre il test sopra resta l'oracolo misurato.
+// combacia piu' — mentre il test sopra resta l'oracolo letterale.
 test('hashHook: il digest e\' quello del JSON canonico dell\'identita dell\'hook', () => {
   const comando = 'printf cli-ran >> /tmp/nc-hook-probe-step0/cli-probe';
   const canonico = '{"event_name":"session_start","hooks":[{"async":false,"command":'

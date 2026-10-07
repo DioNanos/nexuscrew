@@ -16,7 +16,7 @@ function noteAuth(path, token, response) {
 // sempre, anche solo per un errore).
 export const FEDERATED_FETCH_TIMEOUT_MS = 8000;
 
-// Tetti per le letture del roster (D-394): un nodo VL o una lettura di
+// Tetti per le letture del roster: un nodo VL o una lettura di
 // sessions/fleet senza scadenza client blocca la lista dei nodi per un tempo
 // indeterminato. Sono default applicati DAI CHIAMANTI del fix: nessun tetto
 // globale corto su mutazioni, download o stream.
@@ -37,7 +37,7 @@ export function apiFetch(path, token, opts = {}) {
       headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` },
     }).then((r) => { noteAuth(path, token, r); return r; });
   }
-  // Audit fix: `controller` è di fetchAbortSignal — qui si usa QUELLO (abort di
+  // `controller` è di fetchAbortSignal — qui si usa QUELLO (abort di
   // timeout e abort esterno agiscono sullo stesso controller), mai una variabile
   // locale inesistente.
   const { signal, cancel, controller } = fetchAbortSignal(ms);
@@ -175,7 +175,7 @@ export const killSession = (t, name, route) => jsonFetch(`${routeBase(route)}/se
 export const setSessionTechnical = (t, name, technical, route) => jsonFetch(`${routeBase(route)}/sessions/${encodeURIComponent(name)}/visibility`, t, { method: 'PATCH', body: { technical: !!technical } });
 export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs${p ? `?path=${encodeURIComponent(p)}` : ''}`, t);
 
-// Settings API B2 (design §4b(6)): read-only + mutanti lista chiusa. jsonFetch
+// Settings API B2: read-only + mutanti lista chiusa. jsonFetch
 // propaga la causa esplicita (j.error) su ogni failure — MAI errori muti in UI.
 export const getSettings = (t, opts = {}) => jsonFetch('/api/settings', t, opts);
 export const getNodes = (t, opts = {}) => jsonFetch('/api/nodes', t, opts);
@@ -304,7 +304,7 @@ export const saveDeckKeepalive = (t, name, layout, expectedRevision, route = [],
 export const renameDeck = (t, name, next, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PATCH', body: { name: next, expectedRevision } });
 export const deleteDeck = (t, name, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'DELETE', body: { expectedRevision } });
 
-// Cella ospite Live (contratto rev6 §2): hostCell unico per nodo con CAS. Segue
+// Cella ospite Live: hostCell unico per nodo con CAS. Segue
 // `route` come i deck (0.9.1): instradabile via /api/route dietro un permesso
 // per-peer (liveHostAccess, negato di default, concesso dal nodo che possiede
 // la cella — mai da chi chiede). Resta NON instradabile via /node/<name>: il

@@ -1,6 +1,6 @@
 'use strict';
 // Le prove della perdita di scrittura concorrente sulle definizioni fleet —
-// e della sua chiusura. Un audit indipendente ha riprodotto il difetto su
+// e della sua chiusura. Una verifica indipendente ha riprodotto il difetto su
 // sette percorsi: ognuno fa leggi-modifica-scrivi SENZA lock
 // (lib/fleet/builtin.js: `const defs = loadDefinitions(defsPath)` … draft …
 // `atomicWrite(defsPath, draft)`), così chi scrive nel frattempo viene
@@ -10,7 +10,7 @@
 // Questo file dimostra le due metà, in ordine:
 //   1. il difetto ESISTEVA — la forma vecchia perde la scrittura concorrente
 //      (test 1: iniezione deterministica dentro la finestra, la stessa
-//      tecnica dell'auditor);
+//      tecnica del revisore);
 //   2. NON ESISTE PIU' — la stessa pressione through aggiornaDefinizioni non
 //      perde nulla (test 2 e 5), e i limiti del lock sono DICHIARATI, non
 //      nascosti (test 3 e 4).
@@ -170,7 +170,7 @@ test('forma vecchia (leggi fuori, scrivi dopo): la scrittura concorrente compare
   // Il codice sotto test è la sequenza dei sette percorsi (builtin.js):
   // leggi -> costruisci draft -> scrivi. L'iniezione avviene DOPO la lettura
   // e PRIMA della scrittura: siamo certamente dentro la finestra, senza
-  // alcuna attesa che possa diventare flaky. È la tecnica dell'auditor.
+  // alcuna attesa che possa diventare flaky. È la tecnica del revisore.
   const defs = loadDefinitions(p);                 // 1. leggi, fuori da ogni lock
   assert.ok(defs, 'stato iniziale leggibile');
   const draft = conModel(defs, 'backfill');        // 2. il vecchio costruisce il SUO draft

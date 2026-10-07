@@ -164,10 +164,10 @@ test("IL BOOTSTRAP non AGGIUNGE desktop.local a chi non ce l'ha", async () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-// --- I quattro casi che l'audit indipendente ha riprodotto ------------------
+// --- I quattro casi che la verifica indipendente ha riprodotto ------------------
 
 test("il resolver non propone un eseguibile che il salvataggio rifiuterebbe", () => {
-  // L'audit ha mostrato un docker 0777 scelto dal resolver e poi rifiutato come
+  // La verifica ha mostrato un docker 0777 scelto dal resolver e poi rifiutato come
   // world-writable: il default proposto non superava la validazione che lo
   // attendeva. Ora la decisione la prende la STESSA funzione, quindi le due non
   // possono divergere — e questo test lo verifica sul comportamento, non
@@ -197,7 +197,7 @@ test("il resolver non propone un eseguibile che il salvataggio rifiuterebbe", ()
 
 test("RIPARAZIONE: un percorso relativo scelto dall'utente non e' un residuo", () => {
   // `vendor/docker` ha lo stesso basename del residuo, ma e' una scelta: punta
-  // a un binario proprio. L'audit lo ha visto sovrascritto col Docker di
+  // a un binario proprio. La verifica lo ha visto sovrascritto col Docker di
   // sistema — riparare non deve mai voler dire sostituire.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-vend-'));
   const file = path.join(dir, 'fleet.json');
@@ -236,7 +236,7 @@ test('RIPARAZIONE: se non riesce a scrivere lo DICE, invece di tacere', () => {
 });
 
 test('RIPARAZIONE: una scrittura concorrente non viene persa', () => {
-  // L\'audit ha iniettato un writer fra la lettura e il rename: la riparazione
+  // La verifica ha iniettato un writer fra la lettura e il rename: la riparazione
   // tornava col proprio draft e la modifica altrui spariva. Qui il concorrente
   // scrive PRIMA che la riparazione persista, partendo da uno stato gia\' letto.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-conc-'));
@@ -263,7 +263,7 @@ test('RIPARAZIONE: una scrittura concorrente non viene persa', () => {
 });
 
 test("il resolver guarda TUTTA la catena, non il solo genitore", () => {
-  // Un audit ha mostrato che fermarsi al genitore lascia passare
+  // Una verifica ha mostrato che fermarsi al genitore lascia passare
   // /antenato0777/child0755/docker: il binario e la sua directory sono
   // ineccepibili, ma chi scrive nell'antenato puo' rinominare `child` e
   // sostituire l'intero percorso.
@@ -291,7 +291,7 @@ test("il resolver guarda TUTTA la catena, non il solo genitore", () => {
 });
 
 test("IL BOOTSTRAP passa il logger: il fallimento non resta muto", async () => {
-  // L'audit ha verificato che il callback funziona SE qualcuno lo passa — e che
+  // E' stato verificato che il callback funziona SE qualcuno lo passa — e che
   // il bootstrap non lo passava. Il messaggio si fermava a un parametro che
   // nessuno forniva: esattamente il silenzio che si voleva togliere.
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-log-'));

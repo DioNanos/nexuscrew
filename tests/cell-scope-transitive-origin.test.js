@@ -9,7 +9,7 @@
 // Trattare quell'origine come `none` sembrava prudente ed era una porta chiusa
 // in faccia al traffico legittimo: appena lo scope celle e' arrivato sui peer,
 // il terzo nodo ha smesso di vedere QUALSIASI cella, senza un errore che lo
-// dicesse. Il difetto e' stato segnalato dall'operatore («da AsusRP3 non vedo
+// dicesse. Il difetto e' stato segnalato dall'operatore («da peer-a non vedo
 // le celle del Pixel»), non dai test — che coprivano solo il caso a due nodi.
 const { test } = require('node:test');
 const assert = require('node:assert');

@@ -206,7 +206,7 @@ describe('zoomLineForRange — la barra di zoom spezza la riga della maniglia in
     expect(zoomLineForRange({ range, side: 'end', line: asciiLine(RIGA2), cols: COLS }))
       .toEqual({ row: 5, before: '', sel: '01234', after: '56789abcdefghij' });
   });
-  it('WIDE (CJK): un char da 2 celle non desincronizza le colonne — audit r25zoom', () => {
+  it('WIDE (CJK): un char da 2 celle non desincronizza le colonne', () => {
     // 'a界b': 3 grafi JS, 4 CELLE. La colonna 3 e' la 'b': string.slice(3)
     // leggerrebbe fuori stringa; per colonne legge la cella giusta.
     const line = xtermLine(['a', '界', 'b'], [1, 2, 1], 4);
