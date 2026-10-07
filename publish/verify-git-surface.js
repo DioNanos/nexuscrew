@@ -47,7 +47,13 @@ function parseRules(file) {
   const compile = (list) => list.map(({ source, flags, reason }) => ({ re: new RegExp(source, flags || ''), reason }));
   const families = Object.entries(workcodes.families)
     .filter(([, def]) => def && typeof def.source === 'string')
-    .map(([name, def]) => ({ name, re: new RegExp(def.source, 'g'), reason: def.reason || 'internal work code' }));
+    .map(([name, def]) => ({
+      name,
+      re: new RegExp(def.source, 'g'),
+      reason: def.reason || 'internal work code',
+      allowLineRe: (def.allowLineRe || []).map((source) => new RegExp(source)),
+      allowPathPrefix: def.allowPathPrefix || [],
+    }));
   if (!families.length) throw new Error('rule bundle non valido: nessuna famiglia di workcodes compilabile');
   const allowToken = new Set(workcodes.allowToken || []);
   const allowTokenRe = (workcodes.allowTokenRe || []).map((source) => new RegExp(source));
@@ -136,11 +142,15 @@ function objectRepo(staging) {
 
 // Workcode scan of one entry's text. Line-level allows (`allowLineRe`) exempt a
 // whole line (URL-encoded payloads); `allowPathPrefix` is checked by the caller.
+// A family may also carry its own `allowLineRe`/`allowPathPrefix`, which exempt
+// only that family, so a wide allowance cannot hide a different family.
 // A token neither allowed nor denied fails closed, as the rule bundle declares.
 function scanWorkcodes(rel, text, workcodes, hits) {
   for (const line of text.split(/\r?\n/)) {
     if (workcodes.allowLineRe.some((re) => re.test(line))) continue;
     for (const family of workcodes.families) {
+      if (family.allowPathPrefix.some((prefix) => rel.startsWith(prefix))) continue;
+      if (family.allowLineRe.some((re) => re.test(line))) continue;
       for (const match of line.matchAll(family.re)) {
         const token = match[0];
         if (workcodes.allowToken.has(token) || workcodes.allowTokenRe.some((re) => re.test(token))) continue;

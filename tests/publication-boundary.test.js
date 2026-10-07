@@ -260,48 +260,49 @@ test('workcodes: a rule bundle without the workcodes section is rejected', () =>
   }
 });
 
-test('workcodes: a denied work token in a comment fails the verifier', () => {
+test('workcodes: a work-order code in a comment fails the verifier', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-deny-'));
   try {
-    const files = [{ rel: 'src/demo.js', data: '// per-node groups (B2): polled separately\n' }];
+    const files = [{ rel: 'src/demo.js', data: '// per-node groups (D-392): polled separately\n' }];
     const manifest = path.join(dir, 'manifest.json');
     const result = runVerifier({
       staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
     });
     assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    assert.match(result.stderr, /internal work code/);
-    assert.match(result.stderr, /B2/);
-    assert.doesNotMatch(result.stderr, /unclassified/);
+    assert.match(result.stderr, /internal work-order code/);
+    assert.match(result.stderr, /D-392/);
     assert.equal(fs.existsSync(manifest), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('workcodes: an unclassified token fails closed', () => {
+test('workcodes: a family match that no allow rule names fails closed', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-closed-'));
   try {
-    const files = [{ rel: 'src/demo.js', data: '// QQ9 drafted overnight, not in any list\n' }];
+    const files = [{ rel: 'src/demo.js', data: '// V-77 drafted overnight, not in any list\n' }];
     const manifest = path.join(dir, 'manifest.json');
     const result = runVerifier({
       staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
     });
     assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.match(result.stderr, /fail-closed/);
-    assert.match(result.stderr, /QQ9/);
+    assert.match(result.stderr, /V-77/);
     assert.equal(fs.existsSync(manifest), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('workcodes: allowToken, allowTokenRe, allowLineRe and allowPathPrefix let files pass', () => {
+test('workcodes: short specification labels, lock files and the dist prefix pass', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-allow-'));
   try {
     const files = [
-      { rel: 'src/allowed-tokens.js', data: '// C0 sentinel\n// everything is UTF-8 on the wire\n' },
-      { rel: 'src/encoded-line.js', data: '// B2 token url=%41 percent-encoded line\n' },
-      { rel: 'frontend/dist/bundle.js', data: '// QQ9 under the dist prefix, not scanned\n' },
+      { rel: 'src/short-labels.js', data: '// R25 and IC1.1 are short spec labels; M12 4v10 is path data; T0 is a clock\n' },
+      { rel: 'frontend/package-lock.json', data: '"integrity": "sha512-ab/D123/cd+V-99"\n' },
+      { rel: 'frontend/dist/bundle.js', data: '// D-392 under the dist prefix, not scanned\n' },
+      { rel: 'docs/audit-note.md', data: 'Run the dependency audit before every release.\n' },
+      { rel: 'skills/cellforge/SKILL.md', data: 'An audit answers one question.\n' },
     ];
     const manifest = path.join(dir, 'manifest.json');
     const result = runVerifier({
@@ -309,6 +310,48 @@ test('workcodes: allowToken, allowTokenRe, allowLineRe and allowPathPrefix let f
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.ok(fs.existsSync(manifest), 'manifest missing on allow path');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+for (const [name, line, reason, token] of [
+  ['audit provenance', '// found by an independent audit, see the report\n', /internal audit provenance/, /audit/],
+  ['plan reference', '// formatting as per the plan, come da piano C3\n', /internal plan or mandate reference/, /piano/],
+  ['revision reference', '// R27 rev3: the fleet is off\n', /internal contract revision reference/, /rev3/],
+  ['section with a document name', '// see the contratto rev6 \u00a72.1 for the rule\n', /internal document section reference|internal contract revision reference/, /\u00a72\.1|rev6/],
+  ['work-order variant', '// tracked as D447 in the tracker\n', /internal work-order code/, /D447/],
+  ['legacy work-order prefix', '// scope NC-E, see below\n', /internal work-order code/, /NC-E/],
+]) {
+  test(`workcodes: ${name} fails the verifier`, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-fam-'));
+    try {
+      const files = [{ rel: 'src/demo.js', data: line }];
+      const manifest = path.join(dir, 'manifest.json');
+      const result = runVerifier({
+        staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+      });
+      assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.match(result.stderr, reason);
+      assert.match(result.stderr, token);
+      assert.equal(fs.existsSync(manifest), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('workcodes: a family exemption does not hide another family', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-scope-'));
+  try {
+    const files = [{ rel: 'skills/cellforge/SKILL.md', data: 'An audit of the cell, tracked as D-392.\n' }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /D-392/);
+    assert.doesNotMatch(result.stderr, /audit provenance/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -333,14 +376,14 @@ test('workcodes: a clean binary blob passes through the strings scanner', () => 
 test('workcodes: a denied work token inside a binary blob is caught via strings', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-bin-deny-'));
   try {
-    const payload = Buffer.concat([Buffer.from([0x00]), Buffer.from('note B2 inside the blob\0'), Buffer.from([0xff])]);
+    const payload = Buffer.concat([Buffer.from([0x00]), Buffer.from('note D-392 inside the blob\0'), Buffer.from([0xff])]);
     const files = [{ rel: 'assets/blob.bin', data: payload }];
     const manifest = path.join(dir, 'manifest.json');
     const result = runVerifier({
       staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
     });
     assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    assert.match(result.stderr, /B2/);
+    assert.match(result.stderr, /D-392/);
     assert.equal(fs.existsSync(manifest), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
