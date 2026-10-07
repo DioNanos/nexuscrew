@@ -88,7 +88,7 @@ function rowFromItem(item, route, nodeLabel, sessions = []) {
 }
 export default function CellSwitcher({
   token, current, onPick, onClose, panelPort = 0, nodePanelPorts = {},
-  // Il nome del nodo LOCALE (es. VPSCloud): il gruppo delle celle locali si
+  // Il nome del nodo LOCALE (es. peer-a): il gruppo delle celle locali si
   // chiama come il nodo, come i gruppi remoti col loro nodeLabel.
   localNodeLabel = '',
   // Lo stato dell'host per nodo e le due azioni di designazione arrivano

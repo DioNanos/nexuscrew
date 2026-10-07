@@ -937,7 +937,7 @@ export default function App() {
     deviceDefault: '', localNodeId: '', localNameDefault: '',
     deviceNameNeeded: false, deviceNameSuggestion: '',
   });
-  // Il nome del NOSTRO nodo (es. VPSCloud), per l'intestazione del gruppo
+  // Il nome del NOSTRO nodo (es. peer-a), per l'intestazione del gruppo
   // locale nella lista delle celle: il gruppo locale si chiama come il nodo,
   // non «locale».
   const [localNodeLabel, setLocalNodeLabel] = useState('');
