@@ -18,7 +18,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
-const { packEntries } = require('../publish/pack-json-shape.js'); // D-384 (merge-back 0.9.51): npm 12 torna un oggetto
+const { packEntries } = require('../publish/pack-json-shape.js'); // npm 12 returns an object
 
 const ROOT = path.join(__dirname, '..');
 const ENTRY = path.join(ROOT, 'bin', 'nexuscrew.js');

@@ -78,7 +78,7 @@ test('accepts a valid definition without issues', () => {
 });
 
 test('atomicWrite reports the validation cause in its thrown message', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d143-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-validation-fixture-'));
   try {
     const target = path.join(dir, 'fleet.json');
     assert.throws(

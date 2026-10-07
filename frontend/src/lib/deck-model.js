@@ -200,11 +200,11 @@ export function orderDeckRecords(records, orders = {}, nodeOrder = []) {
     if (!arrival.has(ownerKey)) arrival.set(ownerKey, arrival.size);
     groups.get(ownerKey).push(record);
   }
-  // D-392: l'ordine dei GRUPPI segue la lista nodi/celle scelta dall'utente
+  // l'ordine dei GRUPPI segue la lista nodi/celle scelta dall'utente
   // (nodePreferenceKey: 'local' per il nodo locale, 'id:<instanceId>' per gli
   // owner federati — mai l'etichetta). 'local' resta sempre primo; un gruppo
   // che non sta nella lista va in coda, stabile sull'ordine di prima
-  // apparizione: niente salti mentre i dati arrivano (regola D-330).
+  // apparizione: niente salti mentre i dati arrivano (ordine stabile).
   const listRank = new Map();
   (Array.isArray(nodeOrder) ? nodeOrder : []).forEach((key, index) => {
     if (typeof key === 'string' && !listRank.has(key)) listRank.set(key, index);

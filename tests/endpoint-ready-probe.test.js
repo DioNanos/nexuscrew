@@ -63,7 +63,7 @@ test('prontezza: 2xx -> ready, e il verdetto dice che l\'endpoint ha risposto', 
 test('prontezza: il baseUrl che dichiara /v1 non lo ripete', () => {
   assert.equal(modelsProbeUrl('http://127.0.0.1:18080/v1'), 'http://127.0.0.1:18080/v1/models');
   assert.equal(modelsProbeUrl('http://127.0.0.1:18080/v1/'), 'http://127.0.0.1:18080/v1/models');
-  assert.equal(modelsProbeUrl('http://192.168.0.151:8888'), 'http://192.168.0.151:8888/v1/models');
+  assert.equal(modelsProbeUrl('http://192.168.255.254:8888'), 'http://192.168.255.254:8888/v1/models');
   // Non-HTTP: non si inventa una sonda.
   assert.equal(modelsProbeUrl('file:///tmp/x'), null);
   assert.equal(modelsProbeUrl(''), null);
@@ -90,9 +90,9 @@ test('prontezza: timeout -> non configurato, col motivo e con host:porta', async
       return reply(200, {});
     },
   });
-  const v = await probe.refresh('http://192.168.0.151:8888');
+  const v = await probe.refresh('http://192.168.255.254:8888');
   assert.equal(v.state, 'unreachable');
-  assert.match(v.reason, /^endpoint unreachable: 192\.168\.0\.151:8888 \(timeout \(20ms\)\)$/);
+  assert.match(v.reason, /^endpoint unreachable: 192\.168\.255\.254:8888 \(timeout \(20ms\)\)$/);
 });
 
 test('prontezza: errore di rete e 5xx -> non configurato, con la causa', async () => {
@@ -138,7 +138,7 @@ test('prontezza: il percorso sincrono non attende e non mente', async () => {
 test('prontezza: describeManaged mette il verdetto NEL CAMPO reason, senza toccare altro', async (t) => {
   const home = fakeHome('codex');
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
-  const spec = normalizeManagedSpec(customSpec('http://192.168.0.151:8888'));
+  const spec = normalizeManagedSpec(customSpec('http://192.168.255.254:8888'));
   assert.ok(spec, 'spec custom valida');
   const cfgBase = { home, env: { LOCAL_ROUTER_KEY: 'k' } };
 
@@ -146,23 +146,23 @@ test('prontezza: describeManaged mette il verdetto NEL CAMPO reason, senza tocca
   const before = describeManaged(spec, cfgBase);
   assert.equal(before.configured, true, `atteso pronto: ${before.reason}`);
   assert.equal(before.reason, 'ready');
-  assert.equal(before.endpoint, 'http://192.168.0.151:8888');
+  assert.equal(before.endpoint, 'http://192.168.255.254:8888');
 
   const reachable = describeManaged(spec, { ...cfgBase, endpointVerdict: { state: 'ready', reason: 'ready' } });
   assert.equal(reachable.configured, true);
 
   const down = describeManaged(spec, {
     ...cfgBase,
-    endpointVerdict: { state: 'unreachable', reason: 'endpoint unreachable: 192.168.0.151:8888 (timeout (1500ms))' },
+    endpointVerdict: { state: 'unreachable', reason: 'endpoint unreachable: 192.168.255.254:8888 (timeout (1500ms))' },
   });
   assert.equal(down.configured, false, 'un endpoint spento non e\' pronto');
-  assert.equal(down.reason, 'endpoint unreachable: 192.168.0.151:8888 (timeout (1500ms))');
+  assert.equal(down.reason, 'endpoint unreachable: 192.168.255.254:8888 (timeout (1500ms))');
 });
 
 test('prontezza: senza verdetto il comportamento resta quello di prima', (t) => {
   const home = fakeHome('codex');
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
-  const spec = normalizeManagedSpec(customSpec('http://192.168.0.151:8888'));
+  const spec = normalizeManagedSpec(customSpec('http://192.168.255.254:8888'));
   const info = describeManaged(spec, { home, env: { LOCAL_ROUTER_KEY: 'k' } });
   // La sonda non trasforma un engine sano in un engine rotto solo perche' non
   // e' ancora stata fatta: senza verdetto il motivo resta quello di sempre.
@@ -299,7 +299,7 @@ test('model-test custom: findInCatalog accetta le due forme note, e non indovina
 });
 
 test('prontezza: host:porta nel messaggio, con la porta di default se assente', () => {
-  assert.equal(endpointHost('http://192.168.0.151:8888/v1'), '192.168.0.151:8888');
+  assert.equal(endpointHost('http://192.168.255.254:8888/v1'), '192.168.255.254:8888');
   assert.equal(endpointHost('https://example.com/v1'), 'example.com:443');
   assert.equal(endpointHost('http://example.com'), 'example.com:80');
   assert.equal(endpointHost('non-un-url'), 'non-un-url');

@@ -53,7 +53,7 @@ test('zai-p argv contain the endpoint, credentials, wire, catalog, and context',
   const defs = zaiDefs('zai-p');
   assert.ok(defs, 'la definizione con l\'engine di catalogo e\' valida');
   const extraModels = extraModelsFrom(defs);
-  const home = withBinary(tempHome('nc-d142-zai-'), 'codex-vl');
+  const home = withBinary(tempHome('nc-engines-fixture-zai-'), 'codex-vl');
   try {
     const r = resolveManagedEngine(defs.engines[0], { id: 'Dev' },
       { home, env: { ZAI_API_KEY_P: 'secret-p' }, extraModels });
@@ -78,7 +78,7 @@ test('zai-p argv contain the endpoint, credentials, wire, catalog, and context',
 test('zai-a uses the same wire with the A credential', () => {
   const defs = zaiDefs('zai-a');
   const extraModels = extraModelsFrom(defs);
-  const home = withBinary(tempHome('nc-d142-zai-'), 'codex-vl');
+  const home = withBinary(tempHome('nc-engines-fixture-zai-'), 'codex-vl');
   try {
     const r = resolveManagedEngine(defs.engines[0], { id: 'Dev' },
       { home, env: { ZAI_API_KEY_A: 'secret-a' }, extraModels });

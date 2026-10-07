@@ -112,12 +112,12 @@ test('node-detail: nemmeno il foglio di un nodo outbound porta segreti', async (
 test('node-detail: il picker cerca su etichetta e nome, senza maiuscole', async () => {
   const { selectionCandidates } = await mod();
   const nodes = [
-    { name: 'mac-air', nodeId: 'a', label: 'MacBook' },
-    { name: 'pixel', nodeId: 'b', label: 'Telefono' },
+    { name: 'laptop', nodeId: 'a', label: 'MacBook' },
+    { name: 'phone', nodeId: 'b', label: 'Telefono' },
   ];
   const node = { name: 'peer', visibility: 'selected', selected: [] };
   assert.deepEqual(selectionCandidates(node, nodes, 'macbook').map((x) => x.id), ['a']);
-  assert.deepEqual(selectionCandidates(node, nodes, 'PIXEL').map((x) => x.id), ['b'], 'il nome vale quanto l\'etichetta');
+  assert.deepEqual(selectionCandidates(node, nodes, 'PHONE').map((x) => x.id), ['b'], 'il nome vale quanto l\'etichetta');
   assert.deepEqual(selectionCandidates(node, nodes, 'niente'), []);
 });
 

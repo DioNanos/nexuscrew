@@ -241,7 +241,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       keyboardUnlocked = true;
       return showTerminalVirtualKeyboard(term);
     };
-    // D384 — CTRL/ALT della KeyBar aprono la tastiera nello stesso gesto (pointerdown):
+    // CTRL/ALT della KeyBar aprono la tastiera nello stesso gesto (pointerdown):
     // la funzione vive qui (chiude su `term`), App la raggiunge tramite ref.
     if (keyboardRef) keyboardRef.current = requestTerminalKeyboard;
     lockTerminalKeyboard();
@@ -250,7 +250,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       if (keyboardGestureRef.current === 'double-tap') lockTerminalKeyboard();
     };
     terminalTextarea?.addEventListener('blur', onTerminalTextareaBlur);
-    // D384 commit 4 — il paste NATIVO marca una finestra che si CHIUDE
+    // Il paste NATIVO marca una finestra che si CHIUDE
     // al PRIMO onData dopo l'evento paste (l'emissione è sincrona): un tasto
     // digitato subito dopo torna una digitazione (probe: paste poi
     // keydown a +50 ms → ['ciao', '\x03'], CTRL disarmato). Tetti di sicurezza:
@@ -312,7 +312,7 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       });
     } catch (e) {
       term.write(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`);
-      // D384: il throw sincrono di openTerminalSocket
+      // Il throw sincrono di openTerminalSocket
       // (ws-client: origine non-locale su ws://) non deve lasciare indietro
       // né il ref della tastiera né i listener di blur e paste.
       if (keyboardRef) keyboardRef.current = null;
@@ -338,13 +338,13 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       }
       // sticky Ctrl: fold the next single character into its control code (a-z/@-_).
       // A composer paste is literal and must never consume an armed Ctrl key.
-      // D384 commit 4 — il marcatore si chiude al PRIMO onData dopo
+      // Il marcatore si chiude al PRIMO onData dopo
       // l'evento paste: il primo blocco è letterale, il tasto SUBITO dopo torna
       // una digitazione. (Il keydown in capture su host ha già chiuso il
       // marcatore prima di questo onData, se c'è stato un tasto fisico.)
       const pasteNativo = pasteNativoAperto && Date.now() < pasteNativoScadenza;
       chiudiPasteNativo();
-      // D384 commit 2 — CTRL/ALT armati (anche insieme): il PRIMO carattere
+      // CTRL/ALT armati (anche insieme): il PRIMO carattere
       // dell'input esce con i prefissi (controllo e/o ESC) e entrambe le sticky
       // si disarmano. Le parole intere da IME: prefisso solo sul primo carattere,
       // il resto esce pulito (comportamento scelto e dichiarato a Dev).
