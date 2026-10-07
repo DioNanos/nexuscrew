@@ -1,11 +1,11 @@
 'use strict';
-// tests/tmux-empty-server.test.js — D-444: NexusCrew avvia tmux con
-// `set -s exit-empty off` (il server resta vivo senza sessioni). In quello
-// stato `list-panes -a` risponde «no current target» (NON «no server
-// running»), e il fleet polling scartava il nodo come errore: il nodo
-// spariva dalla flotta (misurato su Asus, 0.9.59/0.9.60, zero sessioni
-// 01:48–04:34 del 7/10). Il test usa un socket PRIVATO (-L) con un server
-// effimero: mai il server tmux della flotta.
+// tests/tmux-empty-server.test.js — NexusCrew starts tmux with
+// `set -s exit-empty off` (the server stays alive with no sessions). In that
+// state `list-panes -a` answers "no current target" (NOT "no server
+// running"), and fleet polling used to discard the node as an error: the node
+// would drop out of the fleet whenever its last session closed. The test uses
+// a PRIVATE socket (-L) with an ephemeral server: never the fleet's tmux
+// server.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFile } = require('node:child_process');
