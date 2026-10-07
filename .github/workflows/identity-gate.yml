@@ -1,4 +1,4 @@
-# NC identity contract gate (piano v3 :114-117, :222-226).
+# NC identity contract gate.
 # Node Linux, isolated suite. No credentials, no production nodes.
 name: identity-gate
 

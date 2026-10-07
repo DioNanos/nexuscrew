@@ -337,6 +337,83 @@ for (const [name, line, reason, token] of [
   });
 }
 
+// --- audit provenance and plan references: never exempt, whatever the file ---
+
+const PROBE_CASES = [
+  ['an audit hash in the README', 'README.md', 'Found by audit 43bb3e9e last week.\n'],
+  ['an audit hash in the CHANGELOG', 'CHANGELOG.md', '- fixed (audit 43bb3e9e)\n'],
+  ['an audit hash in a skill', 'skills/nexuscrew/SKILL.md', 'Rule from audit 43bb3e9e.\n'],
+  ['an audit hash in a skill that may talk about audits', 'skills/cellforge/SKILL.md', 'An audit answers one question (reaudit 2a05db2).\n'],
+  ['an audit hash on a line that mentions npm audit', 'frontend/src/lib/probe.js', '// npm audit; auditor 43bb3e9e\n'],
+  ['an audit hash in a file named after the auditor', 'tests/auditor-probe.test.js', "// audit 3405df0: regression\n"],
+  ['a numbered plan with line references', 'README.md', 'See piano v3 :114-117, :222-226 for the rule.\n'],
+  ['a plan reference in a workflow header', '.github/workflows/gate.yml', '# gate (piano v3 :114-117).\n'],
+  ['a revision with line references', 'docs/note.md', 'contratto rev6 :88-91\n'],
+];
+
+for (const [name, rel, data] of PROBE_CASES) {
+  test(`provenance: ${name} fails the verifier`, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-prov-'));
+    try {
+      const files = [{ rel, data }];
+      const manifest = path.join(dir, 'manifest.json');
+      const result = runVerifier({
+        staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+      });
+      assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.match(result.stderr, /audit hash or plan reference|internal plan or mandate|internal audit provenance/);
+      assert.equal(fs.existsSync(manifest), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('provenance: the legitimate uses of the word audit still pass', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-prov-ok-'));
+  try {
+    const files = [
+      { rel: 'README.md', data: 'Run `npm audit` and keep the audit trail. A dependency audit is not a release gate.\n' },
+      { rel: 'CHANGELOG.md', data: '- New skill (create, modify and audit a cell)\n' },
+      { rel: 'skills/cellforge/SKILL.md', data: 'An audit answers one question: does the cell exist completely?\n' },
+      { rel: 'src/labels.js', data: '// R25 and IC1.1 stay allowed; version 0.9.64 and commit 43bb3e9e are plain data\n' },
+    ];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('provenance: a skill that is not about audits cannot use the word audit either', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-prov-skill-'));
+  try {
+    const files = [{ rel: 'skills/nexuscrew/SKILL.md', data: 'This rule comes from an audit of the first release.\n' }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /internal audit provenance/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('provenance: the family has no exemption of any kind', () => {
+  const rules = JSON.parse(fs.readFileSync(path.join(ROOT, 'publish', 'public-surface-rules.json'), 'utf8'));
+  const family = rules.workcodes.families.PROVENANCE;
+  assert.ok(family, 'the PROVENANCE family must exist');
+  assert.deepEqual(Object.keys(family).sort(), ['reason', 'source'], 'no allowLineRe, allowPathPrefix or other escape');
+  assert.deepEqual(rules.workcodes.allowLineRe, [], 'no global line exemption that could hide a provenance reference');
+  // The AUDIT exemptions are bounded to what legitimately talks about audits, never README, CHANGELOG or every skill.
+  const prefixes = rules.workcodes.families.AUDIT.allowPathPrefix;
+  for (const wide of ['README.md', 'CHANGELOG.md', 'skills/']) assert.ok(!prefixes.includes(wide), `${wide} must not be exempt as a whole`);
+});
+
 test('workcodes: a family exemption does not hide another family', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-scope-'));
   try {

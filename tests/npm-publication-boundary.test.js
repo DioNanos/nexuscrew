@@ -72,3 +72,56 @@ test('la regola text dei nomi cella rifiuta i worker/auditor e lascia le etichet
   const legittimo = 'le fixture usano cell-alfa e le etichette generiche cloud-Dev, cloud-SysAdmin, cloud-Research';
   assert.equal(re.test(legittimo), false, 'il corpus legittimo resta fuori dalla regola');
 });
+
+// The npm gate reads the same rule bundle. A tiny synthetic checkout (no frontend, so no build) is enough to
+// prove that a file which is packed is held to the same rules: the probes of the independent audit.
+function npmProbe(files) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-npm-probe-'));
+  try {
+    const repo = path.join(dir, 'repo');
+    fs.mkdirSync(path.join(repo, 'publish'), { recursive: true });
+    for (const name of ['verify-npm-payload.js', 'public-surface-rules.json', 'pack-json-shape.js']) {
+      fs.copyFileSync(path.join(ROOT, 'publish', name), path.join(repo, 'publish', name));
+    }
+    fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({
+      name: 'probe', version: '1.0.0', files: ['README.md', 'CHANGELOG.md', 'skills', 'lib'],
+    }));
+    for (const [rel, data] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+      fs.writeFileSync(path.join(repo, rel), data);
+    }
+    const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8',
+      env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t.invalid' } });
+    git('init', '-q'); git('add', '-A'); git('commit', '-qm', 'probe');
+    const sha = git('rev-parse', 'HEAD').stdout.trim();
+    const result = spawnSync(process.execPath, [path.join(repo, 'publish', 'verify-npm-payload.js'), sha, path.join(dir, 'out'), path.join(dir, 'manifest.json')], { cwd: repo, encoding: 'utf8' });
+    return { result, manifest: path.join(dir, 'manifest.json') };
+  } finally {
+    // The caller reads the result before the directory goes away: it is cleaned by the OS temp policy.
+  }
+}
+
+for (const [name, files] of [
+  ['an audit hash in the README', { 'README.md': 'Found by audit 43bb3e9e.\n' }],
+  ['an audit hash in the CHANGELOG', { 'README.md': 'ok\n', 'CHANGELOG.md': '- fixed (audit 43bb3e9e)\n' }],
+  ['an audit hash in a skill', { 'README.md': 'ok\n', 'skills/nexuscrew/SKILL.md': 'Rule from audit 43bb3e9e.\n' }],
+  ['an audit hash on a line that mentions npm audit', { 'README.md': 'ok\n', 'lib/probe.js': '// npm audit; auditor 43bb3e9e\n' }],
+  ['a numbered plan with line references', { 'README.md': 'See piano v3 :114-117, :222-226 for the rule.\n' }],
+]) {
+  test(`npm gate: ${name} fails`, () => {
+    const { result, manifest } = npmProbe(files);
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(fs.existsSync(manifest), false);
+    assert.match(result.stderr, /PROVENANCE /, 'the provenance family reports it, not only the audit word');
+  });
+}
+
+test('npm gate: the legitimate uses of audit still pass', () => {
+  const { result, manifest } = npmProbe({
+    'README.md': 'Run `npm audit` and keep the audit trail.\n',
+    'CHANGELOG.md': '- New skill (create, modify and audit a cell)\n',
+    'skills/cellforge/SKILL.md': 'An audit answers one question.\n',
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.ok(fs.existsSync(manifest));
+});

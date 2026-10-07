@@ -69,9 +69,8 @@
         "source": "\\b(?:(?:[Rr]e-?)?[Aa]udit(?:or)?|AUDIT(?:OR)?)\\b",
         "reason": "internal audit provenance",
         "allowPathPrefix": [
-          "skills/",
-          "CHANGELOG.md",
-          "README.md",
+          "skills/cellforge/",
+          "skills/crew/SKILL.md",
           "tests/auditor-",
           "frontend/src/components/AuditorF32"
         ],
@@ -85,7 +84,9 @@
           "cloud-Auditor",
           "cell: 'Auditor'",
           "sei un auditor",
-          "lease-audit-2a-fixes"
+          "lease-audit-2a-fixes",
+          "create, modify and audit a cell",
+          "package/audit verification performed before local installation"
         ]
       },
       "PLAN": {
@@ -103,6 +104,10 @@
       "SECTION": {
         "source": "\\b(?:contratto|piano|spec|specifica|design|documento)\\b[^.\\n§]{0,30}§[0-9]+(?:\\.[0-9]+)?[a-z]?",
         "reason": "internal document section reference"
+      },
+      "PROVENANCE": {
+        "source": "\\b(?:[Rr]e-?)?[Aa]udit(?:or)?\\b[^\\n]{0,40}?\\b(?=[0-9a-f]{7,40}\\b)(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}\\b|\\b[Pp]iano\\s+(?:v[0-9]+|[A-Z]?[0-9]+)\\b|\\b(?:[Pp]iano|[Rr]evisione|[Cc]ontratto|rev ?[0-9]+)\\b[^\\n]{0,40}?\\s:[0-9]{1,5}(?:-[0-9]{1,5})?\\b",
+        "reason": "internal audit hash or plan reference (never exempt)"
       }
     },
     "denyToken": [],
@@ -114,6 +119,6 @@
       "frontend/package-lock.json",
       "frontend/dist/"
     ],
-    "note": "Blocks what identifies work orders, audit provenance and internal plans (D-nnn, Dnnn, V-nn, audit/auditor, plan and revision references, sections cited with a document name). Short specification labels such as R25 or IC1.1 are public since 0.9.61 and are allowed. Any match of a family fails closed unless an allow rule names it. Lock files are exempt because their integrity hashes contain random fragments."
+    "note": "Blocks what identifies work orders, audit provenance and internal plans (D-nnn, Dnnn, V-nn, audit/auditor, plan and revision references, sections cited with a document name). Short specification labels such as R25 or IC1.1 are public since 0.9.61 and are allowed. Any match of a family fails closed unless an allow rule names it. Lock files are exempt because their integrity hashes contain random fragments. The PROVENANCE family (an audit followed by a hash, a numbered plan, plan or revision line references) carries no allow rule of any kind and is checked on every file that is scanned; the AUDIT family exemptions are limited to the files and lines that legitimately talk about audits."
   }
 }
