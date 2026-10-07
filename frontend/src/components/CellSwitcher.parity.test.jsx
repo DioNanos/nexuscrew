@@ -37,11 +37,11 @@ const active = (cell, tmuxSession) => ({ cell, tmuxSession, active: true, tmux: 
 const off = (cell, tmuxSession) => ({ cell, tmuxSession, active: false, tmux: false, engine: 'shell.local' });
 
 const hubId = 'a'.repeat(32);
-const mgmId = 'b'.repeat(32);
+const nodeBId = 'b'.repeat(32);
 const deadId = 'c'.repeat(32);
 
 const HUB = ['hub1'];
-const MGM = ['hub1', 'mgm'];
+const TWO_HOP = ['hub1', 'node-b'];
 const DEAD = ['dead1'];
 const keyOf = (route, tmux) => positionKey(route, tmux);
 
@@ -53,9 +53,9 @@ const NODE_GROUPS = [
   { route: HUB, label: 'HUB1', instanceId: hubId, direct: true, status: 'up',
     sessions: [{ name: 'h1', activity: 5, key: 'hub1:h1', node: 'hub1', route: HUB }],
     unmanaged: [{ name: 'h1', activity: 5 }], cells: [] },
-  { route: MGM, label: 'MGM2', instanceId: mgmId, direct: false, status: 'up',
-    sessions: [{ name: 'm1', activity: 4, key: 'hub1/mgm:m1', node: 'hub1/mgm', route: MGM }],
-    cells: [active('Mgm-One', 'm1'), off('Mgm-Two', 'm2'), active('Mgm-Three', 'm3')] },
+  { route: TWO_HOP, label: 'NODE-B', instanceId: nodeBId, direct: false, status: 'up',
+    sessions: [{ name: 'm1', activity: 4, key: 'hub1/node-b:m1', node: 'hub1/node-b', route: TWO_HOP }],
+    cells: [active('NodeB-One', 'm1'), off('NodeB-Two', 'm2'), active('NodeB-Three', 'm3')] },
   { route: DEAD, label: 'DEAD1', instanceId: deadId, direct: false, status: 'unreachable',
     sessions: [], cellsPreserved: true,
     cells: [active('Dead-One', 'd1'), off('Dead-Two', 'd2')].map((c) => ({ ...c, preserved: true })) },
@@ -71,23 +71,23 @@ beforeEach(() => {
     sessions: LOCAL_SESSIONS, cells: LOCAL_CELLS, localFresh: true,
     nodeGroups: NODE_GROUPS,
   });
-  localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${hubId}`, `id:${mgmId}`, `id:${deadId}`]));
+  localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${hubId}`, `id:${nodeBId}`, `id:${deadId}`]));
   localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({
-    local: { filter: 'active' }, hub1: { filter: 'active' }, 'hub1/mgm': { filter: 'pinned' }, dead1: { filter: 'active' },
+    local: { filter: 'active' }, hub1: { filter: 'active' }, 'hub1/node-b': { filter: 'pinned' }, dead1: { filter: 'active' },
   }));
-  localStorage.setItem('nc_pins', JSON.stringify([keyOf(MGM, 'm1')]));
-  localStorage.setItem('nc_sidebar_order_v1', JSON.stringify({ 'hub1/mgm': [keyOf(MGM, 'm1')] }));
+  localStorage.setItem('nc_pins', JSON.stringify([keyOf(TWO_HOP, 'm1')]));
+  localStorage.setItem('nc_sidebar_order_v1', JSON.stringify({ 'hub1/node-b': [keyOf(TWO_HOP, 'm1')] }));
   mocks.useNodes.mockReturnValue(NODE_GROUPS);
   mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: LOCAL_SESSIONS }) });
   mocks.getRouteSessions.mockImplementation(async (_t, route) => {
     if (route.join('/') === 'hub1') return { sessions: [{ name: 'h1', activity: 5 }] };
-    if (route.join('/') === 'hub1/mgm') return { sessions: [{ name: 'm1', activity: 4 }] };
+    if (route.join('/') === 'hub1/node-b') return { sessions: [{ name: 'm1', activity: 4 }] };
     return { sessions: [] };
   });
   mocks.fleetStatus.mockImplementation(async (_t, route = []) => {
     if (!route.length) return { available: true, cells: LOCAL_CELLS };
     if (route.join('/') === 'hub1') return { available: true, cells: [] };
-    if (route.join('/') === 'hub1/mgm') return { available: true, cells: NODE_GROUPS[1].cells };
+    if (route.join('/') === 'hub1/node-b') return { available: true, cells: NODE_GROUPS[1].cells };
     return Promise.reject(new Error('unreachable'));
   });
 });
@@ -131,7 +131,7 @@ async function renderSwitcher() {
   return { positions, rowKeys };
 }
 
-const labelOf = (position) => ({ local: 'NODE-LOCAL', hub1: 'HUB1', 'hub1/mgm': 'MGM2', dead1: 'DEAD1' }[position]);
+const labelOf = (position) => ({ local: 'NODE-LOCAL', hub1: 'HUB1', 'hub1/node-b': 'NODE-B', dead1: 'DEAD1' }[position]);
 
 describe('quick list shows exactly the main list rows', () => {
   it('default mode: same rows, same order, same groups (scoped hub, pinned two-hop, unreachable)', async () => {
@@ -139,7 +139,7 @@ describe('quick list shows exactly the main list rows', () => {
     // Sanity on the expected side: the scoped hub still shows its live
     // session, the pinned two-hop shows only the pinned cell, the
     // unreachable node shows nothing, the local group shows the live cell.
-    expect(expected.map((r) => r.position)).toEqual(['local', 'hub1', 'hub1/mgm']);
+    expect(expected.map((r) => r.position)).toEqual(['local', 'hub1', 'hub1/node-b']);
     const { positions: pos, rowKeys: rk } = await renderSwitcher();
     expect(rk()).toEqual(expected.map((r) => r.key));
     const seen = [];
