@@ -932,7 +932,7 @@ test('R4: tupla stabile → commit accettato; la riserva in-process serializza s
   } finally { await ctx.close(); }
 });
 
-test('F1: la thread Live viene registrata con thread e riferimento, e il riferimento viaggia nell\'intestazione', async () => {
+test('the Live thread is registered with its thread id and reference, and the reference travels in the header', async () => {
   const { createLiveThreadRegistry } = require('../lib/live-host/registry.js');
   const regFile = path.join(os.tmpdir(), `lh-reg-${process.pid}-${Math.random().toString(36).slice(2)}.json`);
   const registry = createLiveThreadRegistry({ filePath: regFile });
@@ -959,7 +959,7 @@ test('F1: la thread Live viene registrata con thread e riferimento, e il riferim
   } finally { await ctx.close(); fs.rmSync(regFile, { force: true }); }
 });
 
-test('F1: un avvio scartato (lease cambiato in volo) NON lascia nulla nel registro', async () => {
+test('a discarded start leaves nothing in the registry', async () => {
   const { createLiveThreadRegistry } = require('../lib/live-host/registry.js');
   const regFile = path.join(os.tmpdir(), `lh-reg2-${process.pid}-${Math.random().toString(36).slice(2)}.json`);
   const registry = createLiveThreadRegistry({ filePath: regFile });
