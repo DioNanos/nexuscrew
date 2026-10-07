@@ -2,6 +2,12 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.64 — 2026-10-07
+
+- **The active quick list hides stopped cells.** The active mode keeps only live cells and active degraded rows, regardless of each node's saved all or pinned preference; ordering and pins remain intact.
+- **Live has its own directory identity.** A persisted thread registry exposes a reserved Live entry, verifies message labels against the current thread, and removes entries only when the matching thread is gone. The interface shows a Live badge while a thread exists.
+- **Public source and packages use neutral examples.** The README no longer includes screenshots, internal work references have been removed from public files, and source and package checks enforce the publication boundary.
+
 ## 0.9.63 — 2026-10-07
 
 - **Sidebar node names keep their own row.** The mode filter sits below the node name and aligns to the right, leaving the name readable without changing the node controls.
