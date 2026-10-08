@@ -33,6 +33,14 @@ async function fixture(t, opts = {}) {
     name: 'peer', nodeId: PEER, direction: 'inbound', token: 'fixture',
     localPort: 42001, remotePort: 42002, ssh: 'demo@example.invalid', shared: true, visibility: 'network',
   });
+  if (opts.extraPeer) {
+    // A second paired node: the RELAY of a two-hop request.
+    st = nodes.addNode(st, {
+      name: 'relay2', nodeId: opts.extraPeer.nodeId, direction: 'inbound', token: 'fixture2',
+      localPort: 42003, remotePort: 42004, ssh: 'relay@example.invalid', shared: true, visibility: 'network',
+    });
+    st = nodes.setPeerAccessPreset(st, 'relay2', opts.extraPeer.preset || 'admin');
+  }
   if (opts.grants) {
     // The grant vector is written whole, never in pieces: the store refuses a
     // partial one, so the fixture completes it.
@@ -49,8 +57,12 @@ async function fixture(t, opts = {}) {
   nodes.atomicWriteStore(nodesPath, st);
 
   const history = { list: () => (opts.entries || [entry(E1, 'dev'), entry(E2, 'dev')]).slice() };
+  // `brokenStore`: a directory where the file should be, so the atomic rename
+  // fails for real and the degradation has to be declared.
+  const dismissalsPath = path.join(dir, 'notice-dismissals.json');
+  if (opts.brokenStore) fs.mkdirSync(dismissalsPath);
   const dismissals = createNoticeDismissals({
-    filePath: path.join(dir, 'notice-dismissals.json'),
+    filePath: dismissalsPath,
     now: opts.now || (() => 1_700_000_000_000),
   });
   const closed = [];
@@ -184,4 +196,28 @@ test('dismiss-all takes a closed body and clears exactly the visible set', async
   const again = await f.request('POST', '/notices/dismiss-all', {});
   assert.equal(again.code, 200);
   assert.deepStrictEqual(again.body, { dismissed: 0 }, 'a second run clears nothing new');
+});
+
+test('a relayed request is judged by what the ORIGIN sees, like the snapshot does', async (t) => {
+  const ORIGIN = 'c'.repeat(32);
+  const f = await fixture(t, {
+    // The node that ASKS is the origin and sees the whole feed; the node that
+    // DELIVERS (the relay) is narrower and cannot see the cell at all.
+    origin: { ok: true, trust: 'federated', origin: { node: ORIGIN }, visited: [ORIGIN, PEER, OWNER] },
+    extraPeer: { nodeId: ORIGIN, preset: 'admin' },
+    grants: { cellVisibility: 'selected', cells: ['other'] },
+  });
+  const out = await f.request('DELETE', `/notices/${E1}`);
+  assert.equal(out.code, 200, 'the origin sees the entry, so the dismissal is allowed');
+  assert.deepStrictEqual(out.body, { dismissed: true, idempotent: false });
+  assert.equal(f.dismissals.isDismissed(E1), true);
+});
+
+test('a store that cannot write still clears the notice on this node, and declares it', async (t) => {
+  const f = await fixture(t, { brokenStore: true });
+  const out = await f.request('DELETE', `/notices/${E1}`);
+  assert.equal(out.code, 200, 'the operator intent is honoured in-process');
+  assert.deepStrictEqual(out.body, { dismissed: true, idempotent: false });
+  assert.equal(f.dismissals.isDismissed(E1), true);
+  assert.equal(f.dismissals.status().degraded, 'dismissals-write-failed', 'and the loss of durability is visible');
 });
