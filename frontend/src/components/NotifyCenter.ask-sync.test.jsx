@@ -76,9 +76,15 @@ it('a late close cannot erase a newer generation that arrives again after a conf
  await emit({type:'ask',ask:{...ask,ownerAskTs:200,question:'Reopened generation'}});expect(screen.getByText('Reopened generation')).toBeTruthy();
  await emit({type:'ask-answered',id:ask.id,ownerId:owner,ownerAskTs:100});expect(screen.getByText('Reopened generation')).toBeTruthy();
 });
-it('an owner snapshot at the ASK cap is a floor and cannot remove a known absent card',async()=>{
+it('an owner snapshot at the ASK cap is whole and authoritative: the absent card goes',async()=>{
  await mount();await emit({type:'ask',ask});await openPanel();
- const floor=Array.from({length:100},(_,i)=>({...ask,id:'id-'+i,question:'Floor '+i}));m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:floor}]});await act(async()=>m.open());expect(screen.queryByText(ask.question)).not.toBeNull();
+ const whole=Array.from({length:100},(_,i)=>({...ask,id:'id-'+i,question:'Floor '+i}));m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:whole}]});await act(async()=>m.open());expect(screen.queryByText(ask.question)).toBeNull();
+});
+
+it('an owner snapshot past the ASK cap, or flagged resyncRequired, cannot remove a known absent card',async()=>{
+ await mount();await emit({type:'ask',ask});await openPanel();
+ const over=Array.from({length:101},(_,i)=>({...ask,id:'id-'+i,question:'Floor '+i}));m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:over}]});await act(async()=>m.open());expect(screen.queryByText(ask.question)).not.toBeNull();
+ m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:1',asks:[{...ask,id:'id-0',question:'Floor 0'}],resyncRequired:true}]});await act(async()=>m.open());expect(screen.queryByText(ask.question)).not.toBeNull();
 });
 
 it('a late imported alias read cannot resurrect a card after a newer complete owner snapshot',async()=>{

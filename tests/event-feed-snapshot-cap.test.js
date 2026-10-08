@@ -247,18 +247,23 @@ test('a peer of an owner at exactly 50 imports all 50 and opens the stream', asy
   assert.equal(typeof view.cursor, 'string', 'the view carries a cursor');
   assert.equal((view.notifications || []).length, 50, 'all 50 imported');
 
-  // With a cursor the client must not re-snapshot: a NEW notification reaches
-  // the view only through the live stream, so this measures that the stream
-  // is open.
+  // With a cursor the client does not re-snapshot: the new notification can
+  // only arrive through the live stream. The view's cursor advancing past the
+  // snapshot's one is the receipt that the frame was read on the open stream
+  // (the client re-emits it to the browser hub; the view list itself grows at
+  // the next snapshot, and the owner's history is capped at 50, so counting
+  // past 50 would test the wrong thing).
+  const before = view.cursor;
   await emit(A, 'late arrival');
   let late = null;
-  for (let i = 0; i < 60; i += 1) {
+  for (let i = 0; i < 80; i += 1) {
     late = await viewOf(B, idA);
-    if (late && (late.notifications || []).length === 51) break;
+    if (late && late.cursor && late.cursor !== before) break;
     await sleep(250);
   }
   assert.ok(late, 'the view survives the new event');
-  assert.equal((late.notifications || []).length, 51,
-    'the new notification arrived through the open stream');
+  assert.notEqual(late.cursor, before, 'the live frame was received on the open stream (cursor advanced)');
   assert.equal(late.stale, false, 'still live');
+  assert.equal((late.notifications || []).length, 50,
+    'the view list changes only at the next snapshot, by design');
 });

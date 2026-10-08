@@ -143,7 +143,11 @@ test('dismiss-all publishes ONE closure per cleared notice: 50 frames, measured 
   link(A, B);
 
   // Count the closures while the operator clears everything in ONE request.
-  const counting = readStream(`${B.base}/api/route/a-owner/_/event-feed`, H(B.token), { maxMs: 5000 });
+  // The wire measured here is the NODE's hub (`/api/events`): since the cap
+  // fix the peer's own feed client connects to the owner too, and one stream
+  // per pair replaces any hand-opened stream on the same pair — the hub is
+  // where the frames reach this node's browsers anyway.
+  const counting = readStream(`${B.base}/api/events`, H(B.token), { maxMs: 5000 });
   await sleep(600); // the stream must be established BEFORE the burst
   const cleared = await fetch(`${B.base}/api/route/a-owner/_/event-feed/notices/dismiss-all`, {
     method: 'POST', headers: H(B.token), body: JSON.stringify({}),
@@ -152,9 +156,9 @@ test('dismiss-all publishes ONE closure per cleared notice: 50 frames, measured 
   assert.deepStrictEqual(await cleared.json(), { dismissed: BULK }, 'one request clears the whole window');
 
   const frames = await counting;
-  const closures = frames.filter((f) => f && f.frame && f.frame.type === 'notify-closed');
+  const closures = frames.filter((f) => f && f.type === 'notify-dismissed' && f.ownerId === idA);
   assert.equal(closures.length, BULK, 'MEASURED: 50 closures, one per cleared notice');
-  assert.equal(new Set(closures.map((f) => f.frame.eventId)).size, BULK, 'no duplicate, no missing id');
+  assert.equal(new Set(closures.map((f) => f.eventId)).size, BULK, 'no duplicate, no missing id');
 
   // The ingress absorbed the burst: the per-owner budget is 120 frames/min and
   // the client would declare the block (and drop frames) past it.
