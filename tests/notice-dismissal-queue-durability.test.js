@@ -333,3 +333,74 @@ test('on duplicate keys the cache intent outranks the disk', () => {
   assert.equal(onDisk.attempts, 7, 'the cache attempts win on duplicates');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// --- At the cap and across recoveries: the fresh intent and the confirmed
+// --- removals are what the queue must never lose.
+
+test('a cap-full disk never evicts the fresh accepted record during recovery', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncqueuecap-'));
+  const file = path.join(dir, 'notice-dismissal-queue.json');
+  const ownerId = 'a'.repeat(32);
+  const seed = createNoticeDismissalQueue({ filePath: file });
+  for (let i = 0; i < 200; i += 1) {
+    assert.equal(seed.enqueue({ ownerId, eventId: `old-${i}` }).ok, true, `seed ${i}`);
+  }
+
+  // The first read is denied: the queue starts with an incomplete memory list.
+  const q = createNoticeDismissalQueue({ filePath: file });
+  const originalRead = fs.readFileSync;
+  fs.readFileSync = function (p, ...args) {
+    if (p === file) { const e = new Error('read denied'); e.code = 'EACCES'; throw e; }
+    return originalRead.call(this, p, ...args);
+  };
+  try { q.status(); } finally { fs.readFileSync = originalRead; }
+
+  assert.equal(q.enqueue({ ownerId, eventId: 'fresh' }).ok, true);
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf8')).entries.map((e) => e.eventId);
+  assert.equal(onDisk.length, 200, 'the cap holds');
+  assert.ok(onDisk.includes('fresh'), 'the fresh accepted record is NOT evicted by older disk records');
+  assert.ok(!onDisk.includes('old-0'), 'the oldest record is the one the policy evicts');
+  assert.equal(q.status().degraded, null, 'the recovery ends healthy');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a confirmed record during a degradation never comes back from the disk', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncqueueconf-'));
+  const file = path.join(dir, 'notice-dismissal-queue.json');
+  const ownerId = 'a'.repeat(32);
+  const seed = createNoticeDismissalQueue({ filePath: file });
+  assert.equal(seed.enqueue({ ownerId, eventId: 'old' }).ok, true);
+
+  const q = createNoticeDismissalQueue({ filePath: file });
+  const originalRead = fs.readFileSync;
+  fs.readFileSync = function (p, ...args) {
+    if (p === file) { const e = new Error('read denied'); e.code = 'EACCES'; throw e; }
+    return originalRead.call(this, p, ...args);
+  };
+  try { q.status(); } finally { fs.readFileSync = originalRead; }
+
+  // enqueue + recovery where the write is refused once, then confirm 'old'
+  // while still degraded.
+  const originalRename = fs.renameSync;
+  fs.renameSync = function (a, b, ...args) {
+    if (b === file) { const e = new Error('write denied once'); e.code = 'EACCES'; throw e; }
+    return originalRename.call(this, a, b, ...args);
+  };
+  try { assert.equal(q.enqueue({ ownerId, eventId: 'fresh' }).ok, true); } finally { fs.renameSync = originalRename; }
+  const confirmed = q.confirm(ownerId, 'old');
+  assert.equal(confirmed.ok, true);
+
+  // The confirmed record must never reappear on the disk, whatever the
+  // following operations consolidate.
+  assert.equal(q.enqueue({ ownerId, eventId: 'trigger' }).ok, true);
+  let onDisk = JSON.parse(fs.readFileSync(file, 'utf8')).entries.map((e) => e.eventId);
+  assert.equal(onDisk.includes('old'), false, 'the confirmed record stays removed');
+  assert.ok(onDisk.includes('fresh'), 'the fresh intent is on the disk');
+  assert.ok(onDisk.includes('trigger'), 'the trigger is on the disk');
+
+  // And a full restart keeps it removed.
+  fs.rmSync(path.join(dir, 'b'), { recursive: true, force: true });
+  const B2 = createNoticeDismissalQueue({ filePath: file });
+  assert.equal(B2.get(ownerId, 'old'), null, 'the confirmed record stays removed after a restart');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
