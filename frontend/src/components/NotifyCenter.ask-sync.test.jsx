@@ -56,6 +56,36 @@ it('distinct owners and generations each produce one first alert in either ingre
  await mount();const f={type:'notify',ownerId:owner,askId:ask.id,ownerAskTs:100,title:'ASK alert'};
  await emit({...f,eventId:'feed-first'});await emit(f);await emit({...f,ownerId:other});await emit({...f,ownerAskTs:200});expect(m.enqueue).toHaveBeenCalledTimes(3);
 });
+const noticeCards = (title) => [...document.querySelectorAll('.nc-remote-notice')].filter((c) => c.textContent.includes(title)).length;
+
+it('a complete refreshed owner view removes a notice whose live closure was missed', async () => {
+  const notice = { v: 1, ownerId: owner, eventId: '0f8fad5b-d9cb-469f-a165-70867728950e', scope: 'cell', cellId: 'dev', hop: 1, emittedAt: Date.now(), frame: { type: 'notify', title: 'Audit missed closure' } };
+  m.getFeedState.mockResolvedValue({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:1', asks: [], notifications: [notice] }] });
+  await mount(); await openPanel();
+  await waitFor(() => expect(noticeCards('Audit missed closure')).toBe(1));
+  // The closure frame was missed on this browser; the NEXT authoritative read
+  // of the same owner no longer lists the notice: the card must go.
+  m.getFeedState.mockResolvedValue({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:2', asks: [], notifications: [] }] });
+  await act(async () => m.open());
+  await waitFor(() => expect(noticeCards('Audit missed closure')).toBe(0));
+});
+
+it('a live notice arriving after a read started survives that read reconciliation', async () => {
+  const pending = deferred(); m.getFeedState.mockReturnValue(pending.promise); await mount();
+  // The live card lands while the read is in flight: the page is OLDER than
+  // the card, so the reconciliation must not take it away.
+  await emit({ type: 'notify', ownerId: owner, eventId: 'in-flight-1', title: 'Arrived in flight', urgency: 'normal' });
+  await openPanel(); expect(noticeCards('Arrived in flight')).toBe(1);
+  await act(async () => pending.resolve({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:2', asks: [], notifications: [] }] }));
+  expect(noticeCards('Arrived in flight')).toBe(1);
+});
+
+for (const bad of [{ stale: true }, { resyncRequired: true }, { lastError: 'unreachable' }]) it(`a non-authoritative owner snapshot preserves notice cards: ${JSON.stringify(bad)}`, async () => {
+  await mount(); await emit({ type: 'notify', ownerId: owner, eventId: 'kept-1', title: 'Kept while degraded', urgency: 'normal' }); await openPanel();
+  m.getFeedState.mockResolvedValue({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:1', asks: [], notifications: [], ...bad }] });
+  await act(async () => m.open()); expect(noticeCards('Kept while degraded')).toBe(1);
+});
+
 it('a new live generation updates the existing card without duplicating its canonical key', async () => {
  await mount();await emit({type:'ask',ask});await openPanel();
  await emit({type:'ask',ask:{...ask,ownerAskTs:200,question:'New generation'}});

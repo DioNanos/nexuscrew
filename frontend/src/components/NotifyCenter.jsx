@@ -624,6 +624,9 @@ export default function NotifyCenter({ token }) {
   useEffect(() => {
     let alive = true;
     const started = liveRevision.current;
+    // L'istante di avvio della lettura: le card arrivate dopo sono piu' nuove
+    // della pagina e sopravvivono alla riconciliazione (vedi mergeRemoteNotices).
+    const readStartedAt = Date.now();
     getFeedState(token).then((j) => {
       if (!alive) return;
       const health = {};
@@ -663,7 +666,12 @@ export default function NotifyCenter({ token }) {
       setRemoteNotices((cur) => boundedByTs(mergeRemoteNotices(
         cur.filter((n) => !noticeStillDismissed(n.key)),
         [...notices.values()].filter((n) => !noticeStillDismissed(n.key)),
-        keepOwners)));
+        keepOwners,
+        // Una view AUTOREVOLE e fresca e' l'elenco: una card che non elenca e'
+        // una chiusura di cui questo browser ha perso il frame live, e va via
+        // anche se il pannello restava aperto. Le view stale/incomplete/marcate
+        // non riconciliano, e una card arrivata dopo l'avvio della lettura resta.
+        { owners: authoritative, arrivedAfter: (n) => (n.receivedAt || 0) > readStartedAt })));
     }).catch(() => {});
     return () => { alive = false; };
   }, [token, refreshVersion]);

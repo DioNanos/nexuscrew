@@ -139,7 +139,16 @@ browser-side hide; the protocol keeps every view of that owner honest:
   at a time) and hands it over when the owner is back. If the owner has no
   notices surface at all the record stays blocked until the pairing changes.
   In both cases the record — not the browser — is what keeps the card down: a
-  reload or a restart of the node does not bring it back.
+  reload or a restart of the node does not bring it back. If the queue cannot
+  write (disk refusal), the intent is still honoured in memory but it cannot
+  survive a restart: the answer declares it with `durable: false` and the
+  degradation reason, instead of looking like the durable success.
+- **A browser that misses a closure heals at the next read.** The closure
+  frame travels live; a browser that never received it (offline, tab asleep)
+  catches up at the next fresh feed-state read, which reconciles the panel
+  with what the owner still serves. Views that are stale, incomplete or
+  flagged for resync never reconcile, so a degraded feed cannot silently
+  empty the panel.
 - **"Clear" is the whole visible set of that owner.** It closes every notice
   currently shown for him on this node, in one request inside the owner's
   per-request budget — never one request per card.

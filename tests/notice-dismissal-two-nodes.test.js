@@ -80,8 +80,8 @@ async function pair(t, dir, preset = 'admin') {
   return link(A, B, preset);
 }
 
-// Raw SSE read as B, so the closure frames are COUNTED on the wire instead of
-// being inferred from the view they produce.
+// Raw SSE read of the node's own hub feed, so the closure frames are COUNTED
+// on the wire instead of being inferred from the view they produce.
 async function readStream(url, headers, { maxMs = 6000 } = {}) {
   const ctrl = new AbortController();
   const frames = [];
@@ -121,8 +121,8 @@ test('dismiss-all publishes ONE closure per cleared notice: 50 frames, measured 
   // The owner boots first and its durable history is seeded BEFORE any client
   // exists: the store reads the file once, so the window must be on disk before
   // the first snapshot. A window of exactly 50 entries is what the design caps
-  // `dismiss-all` at — and it is also the client's snapshot cap, so the view is
-  // deliberately NOT the instrument here: the closures are counted on the wire.
+  // `dismiss-all` at — and it is also the client's snapshot cap, so the view
+  // alone is not the instrument: the closures are counted on the hub feed.
   const A = await boot(t, path.join(dir, 'a'));
   const idA = nodesStore.loadStoreStrict(A.paths.nodesPath).nodeId;
   const now = Date.now();

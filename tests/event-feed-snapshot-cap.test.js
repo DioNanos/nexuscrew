@@ -1,5 +1,5 @@
 'use strict';
-// tests/event-feed-snapshot-cap.test.js — D-457 acceptance tests: a page at
+// tests/event-feed-snapshot-cap.test.js — the snapshot cap: a page at
 // the EXACT cap is a whole page, not a floor.
 //
 // The producer builds the snapshot by slicing each collection to its cap and
