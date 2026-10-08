@@ -270,3 +270,66 @@ test('an oversize-at-load queue file is never overwritten by a partial cache', (
   assert.ok(fs.readFileSync(file).equals(before), 'the oversize file is untouched');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// --- A refused write after a recovered read must keep the merged list ---
+
+test('a refused write after a successful reload keeps the merged list for the next attempt', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncqueuemrg-'));
+  const file = path.join(dir, 'notice-dismissal-queue.json');
+  const ownerId = 'a'.repeat(32);
+  const seed = createNoticeDismissalQueue({ filePath: file });
+  assert.equal(seed.enqueue({ ownerId, eventId: 'old' }).ok, true);
+
+  const q = createNoticeDismissalQueue({ filePath: file });
+  const originalRead = fs.readFileSync;
+  fs.readFileSync = function (p, ...args) {
+    if (p === file) { const e = new Error('read denied'); e.code = 'EACCES'; throw e; }
+    return originalRead.call(this, p, ...args);
+  };
+  try { q.status(); } finally { fs.readFileSync = originalRead; }
+
+  // The reload succeeds and the merge is built, but THIS write is refused.
+  const originalRename = fs.renameSync;
+  fs.renameSync = function (a, b, ...args) {
+    if (b === file) { const e = new Error('rename denied once'); e.code = 'EACCES'; throw e; }
+    return originalRename.call(this, a, b, ...args);
+  };
+  try { assert.equal(q.enqueue({ ownerId, eventId: 'new' }).ok, true); } finally { fs.renameSync = originalRename; }
+
+  // The next attempt must still know the recovered record: the merged list,
+  // not the partial cache, is what the queue writes.
+  assert.equal(q.enqueue({ ownerId, eventId: 'third' }).ok, true);
+  const ids = JSON.parse(fs.readFileSync(file, 'utf8')).entries.map((e) => e.eventId).sort();
+  assert.deepStrictEqual(ids, ['new', 'old', 'third'], 'nothing the merge recovered is lost');
+  assert.equal(q.status().degraded, null, 'the eventually successful write attests everything');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('on duplicate keys the cache intent outranks the disk', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncqueuedup-'));
+  const file = path.join(dir, 'notice-dismissal-queue.json');
+  const ownerId = 'a'.repeat(32);
+  const seed = createNoticeDismissalQueue({ filePath: file });
+  assert.equal(seed.enqueue({ ownerId, eventId: 'same' }).ok, true); // pending, attempts 0
+
+  const q = createNoticeDismissalQueue({ filePath: file });
+  const originalRead = fs.readFileSync;
+  fs.readFileSync = function (p, ...args) {
+    if (p === file) { const e = new Error('read denied'); e.code = 'EACCES'; throw e; }
+    return originalRead.call(this, p, ...args);
+  };
+  // While the read is denied this node builds its own intent for 'same'.
+  try {
+    q.status();
+    assert.equal(q.enqueue({ ownerId, eventId: 'same' }).ok, true);
+    assert.equal(q.update(ownerId, 'same', { syncState: 'blocked', attempts: 7, lastReason: 'probe' }).ok, true);
+  } finally { fs.readFileSync = originalRead; }
+
+  // The read comes back: the disk still holds 'same' as pending/0. The merge
+  // must keep THE CACHE's intent (state and attempts), not the disk's copy.
+  assert.equal(q.enqueue({ ownerId, eventId: 'trigger' }).ok, true);
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf8')).entries.find((e) => e.eventId === 'same');
+  assert.equal(onDisk.syncState, 'blocked', 'the cache state wins on duplicates');
+  assert.equal(onDisk.attempts, 7, 'the cache attempts win on duplicates');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
