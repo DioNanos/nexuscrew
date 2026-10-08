@@ -22,6 +22,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createServer } = require('../lib/server.js');
 const nodesStore = require('../lib/nodes/store.js');
+const { createNoticeDismissalQueue, SCHEMA } = require('../lib/notify/notice-dismissal-queue.js');
 const { tmuxSessionForCell } = require('../lib/fleet/definitions.js');
 
 const H = (token) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
@@ -206,4 +207,66 @@ test('a healthy write after recovery answers like a healthy write again', async 
   assert.ok(events.includes(first.eventId), 'the healthy record is still there');
   assert.ok(events.includes('22222222-3333-4444-8555-666666666666'), 'the recovery rewrote the temporarily lost record too');
   assert.ok(events.includes(third), 'the new record is on disk');
+});
+
+// --- The three READ-failure causes: a failed load must never cost records ---
+
+// A read denial is TRANSIENT: before any write the queue retries the read and
+// merges, so nothing the file held is lost and a complete merged write ends
+// the degradation.
+test('a transient read denial retries and merges before writing: no record is lost', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncqueuerd-'));
+  const file = path.join(dir, 'notice-dismissal-queue.json');
+  const ownerId = 'a'.repeat(32);
+  const seed = createNoticeDismissalQueue({ filePath: file });
+  assert.equal(seed.enqueue({ ownerId, eventId: 'previous' }).ok, true);
+
+  const q = createNoticeDismissalQueue({ filePath: file });
+  const original = fs.readFileSync;
+  fs.readFileSync = function (p, ...args) {
+    if (p === file) { const e = new Error('temporary read denial'); e.code = 'EACCES'; throw e; }
+    return original.call(this, p, ...args);
+  };
+  try { assert.equal(q.status().degraded, 'queue-read-failed', 'the read denial is declared'); } finally { fs.readFileSync = original; }
+
+  assert.equal(q.enqueue({ ownerId, eventId: 'fresh' }).ok, true);
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf8')).entries.map((e) => e.eventId).sort();
+  assert.deepStrictEqual(onDisk, ['fresh', 'previous'], 'the seeded record survives the write');
+  assert.equal(q.status().degraded, null, 'a complete merged write ends the degradation');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// A file with a foreign schema can hold records this process cannot read:
+// writing a partial list over it would destroy them, so the write is refused
+// and the file stays byte-identical while the degradation is declared.
+test('a foreign-schema queue file is never overwritten by a partial cache', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncqueuesch-'));
+  const file = path.join(dir, 'notice-dismissal-queue.json');
+  const ownerId = 'a'.repeat(32);
+  fs.writeFileSync(file, JSON.stringify({ schema: 'something-else-v9', entries: [{ ownerId, eventId: 'unreadable' }] }), { mode: 0o600 });
+  const before = fs.readFileSync(file);
+
+  const q = createNoticeDismissalQueue({ filePath: file });
+  assert.equal(q.status().degraded, 'queue-schema');
+  assert.equal(q.enqueue({ ownerId, eventId: 'fresh' }).ok, true, 'the intent is honoured in memory');
+  assert.equal(q.status().degraded, 'queue-schema', 'the read degradation stands');
+  assert.ok(fs.readFileSync(file).equals(before), 'the unreadable file is untouched');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// Same for a file too big to load at all.
+test('an oversize-at-load queue file is never overwritten by a partial cache', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncqueuebig-'));
+  const file = path.join(dir, 'notice-dismissal-queue.json');
+  const ownerId = 'a'.repeat(32);
+  const huge = { schema: SCHEMA, savedAt: Date.now(), entries: [{ ownerId, eventId: 'x'.repeat(300000), at: Date.now(), expiresAt: Date.now() + 1000, syncState: 'pending' }] };
+  fs.writeFileSync(file, JSON.stringify(huge), { mode: 0o600 });
+  const before = fs.readFileSync(file);
+
+  const q = createNoticeDismissalQueue({ filePath: file });
+  assert.equal(q.status().degraded, 'queue-oversize');
+  assert.equal(q.enqueue({ ownerId, eventId: 'fresh' }).ok, true, 'the intent is honoured in memory');
+  assert.equal(q.status().degraded, 'queue-oversize', 'the read degradation stands');
+  assert.ok(fs.readFileSync(file).equals(before), 'the oversize file is untouched');
+  fs.rmSync(dir, { recursive: true, force: true });
 });
