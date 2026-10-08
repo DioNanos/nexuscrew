@@ -37,10 +37,12 @@ export function toRemoteNotice(envelope, ownerId) {
     // emittedAt (e il frame chiuso il suo ts); il ts piatto e' la forma live
     // gia' in giro, tollerata come ultima risorsa.
     ts: normalizeTs(envelope.emittedAt ?? (envelope.frame && envelope.frame.ts) ?? envelope.ts),
-    // Quando la card e' arrivata QUI: serve alla riconciliazione per non
-    // scartare un frame live piu' nuovo della pagina che lo sta ancora
-    // leggendo (l'arrivo, non l'emissione, e' l'istante giusto).
-    receivedAt: Date.now(),
+    // Ordine d'arrivo QUI (0 = arrivata da una pagina): la riconciliazione lo
+    // confronta con la soglia catturata all'avvio della lettura, per non
+    // scartare un frame live piu' nuovo della pagina. Un contatore, non un
+    // timestamp: due operazioni nello stesso millisecondo non sono ordinabili
+    // dal clock.
+    arrivalSeq: 0,
   };
 }
 

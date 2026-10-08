@@ -59,15 +59,15 @@ it('distinct owners and generations each produce one first alert in either ingre
 const noticeCards = (title) => [...document.querySelectorAll('.nc-remote-notice')].filter((c) => c.textContent.includes(title)).length;
 
 it('a complete refreshed owner view removes a notice whose live closure was missed', async () => {
-  const notice = { v: 1, ownerId: owner, eventId: '0f8fad5b-d9cb-469f-a165-70867728950e', scope: 'cell', cellId: 'dev', hop: 1, emittedAt: Date.now(), frame: { type: 'notify', title: 'Audit missed closure' } };
+  const notice = { v: 1, ownerId: owner, eventId: '0f8fad5b-d9cb-469f-a165-70867728950e', scope: 'cell', cellId: 'dev', hop: 1, emittedAt: Date.now(), frame: { type: 'notify', title: 'Cleared on the other device' } };
   m.getFeedState.mockResolvedValue({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:1', asks: [], notifications: [notice] }] });
   await mount(); await openPanel();
-  await waitFor(() => expect(noticeCards('Audit missed closure')).toBe(1));
+  await waitFor(() => expect(noticeCards('Cleared on the other device')).toBe(1));
   // The closure frame was missed on this browser; the NEXT authoritative read
   // of the same owner no longer lists the notice: the card must go.
   m.getFeedState.mockResolvedValue({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:2', asks: [], notifications: [] }] });
   await act(async () => m.open());
-  await waitFor(() => expect(noticeCards('Audit missed closure')).toBe(0));
+  await waitFor(() => expect(noticeCards('Cleared on the other device')).toBe(0));
 });
 
 it('a live notice arriving after a read started survives that read reconciliation', async () => {
@@ -78,6 +78,23 @@ it('a live notice arriving after a read started survives that read reconciliatio
   await openPanel(); expect(noticeCards('Arrived in flight')).toBe(1);
   await act(async () => pending.resolve({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:2', asks: [], notifications: [] }] }));
   expect(noticeCards('Arrived in flight')).toBe(1);
+});
+
+it('a live notice survives the reconciliation even when its arrival and the read share one millisecond', async () => {
+  // The wall clock cannot order two operations inside the same millisecond:
+  // with every read and arrival stamped identically, the arrival must still
+  // win (monotonic arrival order, not timestamps).
+  const frozen = Date.now;
+  Date.now = () => 1700000000000;
+  try {
+    const pending = deferred(); m.getFeedState.mockReturnValue(pending.promise); await mount();
+    await act(async () => m.open());
+    await emit({ type: 'notify', ownerId: owner, eventId: 'same-ms-1', title: 'Arrived in the same millisecond', urgency: 'normal' });
+    await openPanel();
+    expect(noticeCards('Arrived in the same millisecond')).toBe(1);
+    await act(async () => pending.resolve({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:2', asks: [], notifications: [] }] }));
+    expect(noticeCards('Arrived in the same millisecond')).toBe(1);
+  } finally { Date.now = frozen; }
 });
 
 for (const bad of [{ stale: true }, { resyncRequired: true }, { lastError: 'unreachable' }]) it(`a non-authoritative owner snapshot preserves notice cards: ${JSON.stringify(bad)}`, async () => {

@@ -165,3 +165,45 @@ test('a refused queue write is declared in the answer, and the restart proves th
   assert.equal(records.some((e) => e.eventId === second.eventId), false,
     'the lost record is really lost: it cannot survive a restart');
 });
+
+test('a healthy write after recovery answers like a healthy write again', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncqueuerec-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const A = await boot(t, path.join(dir, 'a'));
+  const B = await boot(t, path.join(dir, 'b'));
+  const { idA } = link(A, B);
+
+  await fetch(`${A.base}/api/notify`, { method: 'POST', headers: H(A.token), body: JSON.stringify({ title: 'first', session: tmuxSessionForCell('dev') }) });
+  let seen = null;
+  for (let i = 0; i < 40; i += 1) {
+    seen = await viewOf(B, idA);
+    if (seen && (seen.notifications || []).length === 1) break;
+    await sleep(150);
+  }
+  const first = seen.notifications[0];
+
+  A.server.close();
+  await sleep(400);
+  // Healthy: exact durable shape, one record on disk.
+  const healthy = await dismiss(B, idA, first.eventId);
+  assert.deepStrictEqual(healthy.body, { dismissed: true, scope: 'local', ownerSync: 'pending' });
+
+  // The disk refuses the write: the answer declares it.
+  fs.chmodSync(B.paths.configDir, 0o555);
+  const broken = await dismiss(B, idA, '22222222-3333-4444-8555-666666666666');
+  assert.equal(broken.body.durable, false);
+  assert.equal(broken.body.degraded, 'queue-write-failed');
+  fs.chmodSync(B.paths.configDir, 0o755);
+
+  // The disk is healthy again: the NEXT queued write persists everything it
+  // holds, so its answer must go back to the exact healthy shape — not keep
+  // reporting an old failure forever.
+  const third = '11111111-2222-4333-8444-555555555555';
+  const recovered = await dismiss(B, idA, third);
+  assert.deepStrictEqual(recovered.body, { dismissed: true, scope: 'local', ownerSync: 'pending' },
+    'a healthy write after recovery keeps the normal healthy shape');
+  const events = queuedRecords(B).map((e) => e.eventId);
+  assert.ok(events.includes(first.eventId), 'the healthy record is still there');
+  assert.ok(events.includes('22222222-3333-4444-8555-666666666666'), 'the recovery rewrote the temporarily lost record too');
+  assert.ok(events.includes(third), 'the new record is on disk');
+});

@@ -317,6 +317,10 @@ export default function NotifyCenter({ token }) {
   const [refreshVersion, setRefreshVersion] = useState(0);
   const closedAsks = useRef(new Map());
   const liveRevision = useRef(0);
+  // Ordine MONOTONO di arrivo delle card notifiche: un timestamp non distingue
+  // due operazioni nello stesso millisecondo, questo si. Crescente a ogni
+  // frame live; la lettura cattura il valore corrente come soglia.
+  const noticeArrivalSeq = useRef(0);
   const liveAsks = useRef(new Map());
   const ownerSnapshots = useRef(new Map());
   const alertAdmissions = useRef(new Map());
@@ -541,6 +545,7 @@ export default function NotifyCenter({ token }) {
         // per (ownerId,eventId)); nessun toast/speaker aggiuntivo per la card.
         // Una card scartata non rientra, nemmeno se il frame si ripete.
         const card = toRemoteNotice(frame, frame.ownerId);
+        if (card) card.arrivalSeq = ++noticeArrivalSeq.current;
         if (card && !noticeStillDismissed(card.key)) setRemoteNotices((cur) => boundedByTs(mergeRemoteNotices(cur, [card], null)));
       }
       if (frame.type === 'notify-dismissed') {
@@ -624,9 +629,10 @@ export default function NotifyCenter({ token }) {
   useEffect(() => {
     let alive = true;
     const started = liveRevision.current;
-    // L'istante di avvio della lettura: le card arrivate dopo sono piu' nuove
-    // della pagina e sopravvivono alla riconciliazione (vedi mergeRemoteNotices).
-    const readStartedAt = Date.now();
+    // Soglia monotona di avvio lettura: le card con ordine d'arrivo successivo
+    // sono piu' nuove della pagina e sopravvivono alla riconciliazione
+    // (vedi mergeRemoteNotices) — indipendentemente dal wall clock.
+    const readArrivalSeq = noticeArrivalSeq.current;
     getFeedState(token).then((j) => {
       if (!alive) return;
       const health = {};
@@ -671,7 +677,7 @@ export default function NotifyCenter({ token }) {
         // una chiusura di cui questo browser ha perso il frame live, e va via
         // anche se il pannello restava aperto. Le view stale/incomplete/marcate
         // non riconciliano, e una card arrivata dopo l'avvio della lettura resta.
-        { owners: authoritative, arrivedAfter: (n) => (n.receivedAt || 0) > readStartedAt })));
+        { owners: authoritative, arrivedAfter: (n) => (n.arrivalSeq || 0) > readArrivalSeq })));
     }).catch(() => {});
     return () => { alive = false; };
   }, [token, refreshVersion]);
