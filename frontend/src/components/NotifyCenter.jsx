@@ -577,12 +577,7 @@ export default function NotifyCenter({ token }) {
       setAsks(cur => mergeAsks(cur.filter(a => !authoritative.has(a.ownerId) || (liveAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId)) || 0) > started), filterClosed(imported)));
       // Rebuild dall'arretrato: le card di una view revocata cadono qui; le
       // card arrivate via SSE di un owner ancora attivo restano (dedup per key).
-      setRemoteNotices((cur) => {
-        const merged = [];
-        for (const c of cur) if (keepOwners.has(c.ownerId)) merged.push(c);
-        for (const c of notices.values()) merged.push({ ...c, key: c.key });
-        return boundedByTs(merged);
-      });
+      setRemoteNotices((cur) => boundedByTs(mergeRemoteNotices(cur, [...notices.values()], keepOwners)));
     }).catch(() => {});
     return () => { alive = false; };
   }, [token, refreshVersion]);
