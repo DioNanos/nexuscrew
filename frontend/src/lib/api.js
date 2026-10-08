@@ -285,6 +285,17 @@ export const relayAskDismissLocal = (t, { ownerId, askId }) => jsonFetch('/api/a
   method: 'POST', body: { action: 'dismiss-local', ownerId, askId },
 });
 export const getFeedState = (t) => jsonFetch('/api/feed-state', t);
+// Notifiche importate dai feed remoti: la X di una card e «Pulisci» parlano
+// alla superficie operatore LOCALE (mai federata). Il server onora l'intento su
+// questo nodo e poi consegna all'owner: `dismissed:true` con `ownerSync`
+// `pending`/`blocked` significa «qui e' scartata, la consegna all'owner e' in
+// coda / non autorizzata» — non un fallimento, che invece resta un throw.
+export const relayNoticeDismiss = (t, { ownerId, eventId }) => jsonFetch('/api/notices-relay', t, {
+  method: 'POST', body: { action: 'dismiss', ownerId, eventId },
+});
+export const relayNoticeDismissAll = (t, { owners }) => jsonFetch('/api/notices-relay', t, {
+  method: 'POST', body: { action: 'dismiss-all', owners },
+});
 
 // Le deck di un owner REMOTO passano dal proxy federato: timeout di default
 // (senza, un tunnel «su a metà» teneva la UI senza decks per minuti.
