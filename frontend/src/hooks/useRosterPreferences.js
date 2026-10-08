@@ -19,7 +19,7 @@ export function useRosterPreferences() {
   const [pins, setPins] = useState(loadPins);
   const [views, setViews] = useState(loadSidebarViews);
   const [orders, setOrders] = useState(loadSidebarOrders);
-  // Errore di persistenza dell'ultima rimozione (contratto rev6 §2.1: deve essere
+  // Errore di persistenza dell'ultima rimozione (deve essere
   // SEGNALATO e RITENTABILE, non solo loggato in console). null = tutto ok.
   const [pinError, setPinError] = useState(null);
   // Riordino rifiutato perche' la lista e' parziale: {reason, position, at}. Si spegne da solo o al prossimo riordino valido.

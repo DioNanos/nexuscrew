@@ -124,11 +124,11 @@ describe('il nodeLabel sale nell\'intestazione del gruppo', () => {
       sessions: [{ name: 'cloud-cell-One', activity: Date.now() - 60000, working: false }],
     }) });
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
-    render(<Switcher localNodeLabel="VPSCloud" />);
+    render(<Switcher localNodeLabel="peer-a" />);
     await screen.findByRole('button', { name: /^cell-One / });
     const teste = [...document.querySelectorAll('.nc-cell-switcher-position')];
     expect(teste).toHaveLength(1);
-    expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', 'VPSCloud'));
+    expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', 'peer-a'));
   });
 
   it('senza localNodeLabel il gruppo locale resta «locale»', async () => {
@@ -147,13 +147,13 @@ describe('il nodeLabel sale nell\'intestazione del gruppo', () => {
     expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', t('cell-switcher-group-local')));
   });
 
-  it('VPSCloud compare una volta in testa, non su ogni riga', async () => {
+  it('peer-a compare una volta in testa, non su ogni riga', async () => {
     writeCellSwitcherSnapshot({
       sessions: [],
       cells: [],
       localFresh: true,
       nodeGroups: [{
-        route: ['hub'], label: 'VPSCloud', switcherFresh: true,
+        route: ['hub'], label: 'peer-a', switcherFresh: true,
         sessions: [{ name: 'cloud-Remote', activity: Date.now() - 60000, working: false }],
         cells: [active('Remote', 'cloud-Remote')],
       }],
@@ -170,11 +170,11 @@ describe('il nodeLabel sale nell\'intestazione del gruppo', () => {
     const riga = await screen.findByRole('button', { name: /^Remote / });
 
     // Nessuna riga porta l'etichetta del nodo.
-    expect(riga.textContent).not.toContain('VPSCloud');
+    expect(riga.textContent).not.toContain('peer-a');
     // L'intestazione del gruppo la porta, una volta sola.
     const teste = [...document.querySelectorAll('.nc-cell-switcher-position')];
     expect(teste).toHaveLength(1);
-    expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', 'VPSCloud'));
+    expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', 'peer-a'));
   });
 });
 

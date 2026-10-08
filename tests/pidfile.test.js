@@ -144,7 +144,7 @@ test('killPidfile: EPERM rimuove solo il pidfile e non segnala il processo estra
   fs.rmSync(path.dirname(p), { recursive: true, force: true });
 });
 
-// --- removePidfile: la rimozione verifica il SOGGETTO (rilievo di audit) ----
+// --- removePidfile: la rimozione verifica il SOGGETTO ----
 // Un pidfile non è un file qualunque: è la prova che un processo è vivo.
 // Toglierlo quando appartiene a un vivo che non siamo noi cancella quella
 // prova — chi lo governa lo crederebbe morto. I casi legittimi (self, stale,
@@ -361,7 +361,7 @@ test('isAlive: non calcolabile — senza nascita leggibile vale il cmd, nel dubb
   }
 });
 
-// R-pidfile-2 (2026-08-17, audit su 7b6571c/529e32f): primo giro — l'audit
+// R-pidfile-2 (2026-08-17): primo giro — la verifica
 // ha trovato che killPidfile segnalava sul solo pid+cmd quando il meta non
 // aveva processStart, in QUALUNQUE caso. Questo test asseriva `r.killed ===
 // true` per un meta senza processStart ("pidfile senza nascita: il kill
@@ -375,7 +375,7 @@ test('isAlive: non calcolabile — senza nascita leggibile vale il cmd, nel dubb
 //
 // R-pidfile-3: SECONDO giro. Il primo fix chiamava questo ramo "legacy" e lo
 // permetteva SEMPRE quando il meta non aveva ne' processStart ne'
-// attestation. L'auditor ha dimostrato che "nessun campo" non prova la
+// attestation. L'revisore ha dimostrato che "nessun campo" non prova la
 // provenienza (un chiamante puo' scrivere quella stessa forma anche con
 // codice v2 — vedi il test sui campi riservati sotto) — quindi "legacy
 // permanente" lasciava aperti per sempre restore da backup, corruzione e
@@ -406,7 +406,7 @@ test('killPidfile: PRE-migrazione (nessun marker), meta senza attestazione ricad
   }
 });
 
-// Il negativo che l'auditor ha chiesto per il marker one-way: STESSO meta
+// Il negativo che il revisore ha chiesto per il marker one-way: STESSO meta
 // senza attestazione, ma questa volta l'installazione ha GIA' completato una
 // scrittura v2 (marker presente — costruito qui con una writePidfile REALE
 // su un pid diverso, esattamente come farebbe il codice nuovo al primo
@@ -440,8 +440,8 @@ test('killPidfile: POST-migrazione (marker presente), meta senza attestazione NO
   }
 });
 
-// R-pidfile-4 (2026-08-17, audit su develop@437d29f): CONTROLLO NEGATIVO
-// OBBLIGATORIO, la sonda dell'auditor riprodotta alla lettera. PRIMA di
+// R-pidfile-4 (2026-08-17): CONTROLLO NEGATIVO
+// OBBLIGATORIO, la sonda del revisore riprodotta alla lettera. PRIMA di
 // questo giro: .pidfile-schema-v2 come DIRECTORY faceva tornare
 // hasSchemaMarker() false per costruzione (isFile() falso su una directory)
 // — "nessun marker" letto come "assente", cioe' PERMISSIVO — ed
@@ -451,12 +451,12 @@ test('killPidfile: POST-migrazione (marker presente), meta senza attestazione NO
 // un giro in piu' di compatibilita'. PRIMA: killed:true, SIGTERM inviato.
 // DOPO: il meccanismo che non sa determinare il proprio stato chiude invece
 // di concedere — killed:false, motivo che nomina l'ostacolo.
-test('AUDITOR R-pidfile-4: ostacolo DIRECTORY sul marker — PRIMA segnalava sempre, ORA rifiuta (stato non determinabile)', async () => {
+test('R-pidfile-4: ostacolo DIRECTORY sul marker — PRIMA segnalava sempre, ORA rifiuta (stato non determinabile)', async () => {
   const child = figlioCheTieneIlNumero();
   await figlioPronto(child);
   const p = tmpPid();
   try {
-    // Precrea .pidfile-schema-v2 come DIRECTORY, esattamente come l'auditor.
+    // Precrea .pidfile-schema-v2 come DIRECTORY, esattamente come il revisore.
     fs.mkdirSync(schemaMarkerPath(p), { recursive: true });
     // Due writePidfile v2 riuscite di fila in questa stessa directory: il
     // marker non nasce mai (l'ostacolo lo impedisce), ma writePidfile non
@@ -521,7 +521,7 @@ test('killPidfile: ostacolo SYMLINK sul marker — stato non determinabile, rifi
   }
 });
 
-// AUDITOR R-pidfile-5 (2026-08-17, audit su develop@fa8bd90): controllo
+// R-pidfile-5 (2026-08-17): controllo
 // negativo alla lettera. La scrittura del marker fallisce SENZA lasciare
 // traccia (ENOSPC qui — quota, EROFS, permesso transitorio, una race sono
 // la stessa famiglia: nessuno lascia nulla sul filesystem). Due writePidfile
@@ -533,7 +533,7 @@ test('killPidfile: ostacolo SYMLINK sul marker — stato non determinabile, rifi
 // ADESSO (l'errore e' ancora presente) -> rifiuta. DUE BRACCI, non uno:
 // ripristinato l'errore, il kill successivo riprova e concede UNA volta —
 // perche' ORA la scrittura riesce per davvero, non perche' glielo diciamo.
-test('AUDITOR R-pidfile-5: scrittura del marker fallisce con ENOSPC senza lasciare traccia — PRIMA concedeva sempre, ORA rifiuta finche\' l\'errore c\'e\', concede UNA volta quando sparisce', async () => {
+test('R-pidfile-5: scrittura del marker fallisce con ENOSPC senza lasciare traccia — PRIMA concedeva sempre, ORA rifiuta finche\' l\'errore c\'e\', concede UNA volta quando sparisce', async () => {
   const child = figlioCheTieneIlNumero();
   await figlioPronto(child);
   const p = tmpPid();
@@ -626,7 +626,7 @@ test('confine dichiarato: il marker sopravvive alla rimozione del pidfile che lo
   }
 });
 
-// LA DOMANDA CHE DEV HA GIRATO ALL'AUDITOR, MISURATA non dedotta: dopo la
+// LA DOMANDA, MISURATA non dedotta: dopo la
 // migrazione (marker presente per davvero), un nodo che davvero non sa
 // attestare resta fermabile? Si', perche' attestation:'unsupported' e'
 // controllato PRIMA del marker nel codice (killPidfile sopra) — un nodo
@@ -707,16 +707,16 @@ test('killPidfile: attestation indeterminate (tentativo fallito, non mai tentato
 });
 
 // CONTROLLO NEGATIVO OBBLIGATORIO (R-pidfile-2), riscritto per il
-// secondo giro. La sonda ORIGINALE dell'auditor (meta senza NESSUN campo,
+// secondo giro. La sonda ORIGINALE del revisore (meta senza NESSUN campo,
 // pid ereditato, cmd compatibile) rappresentava, senza saperlo, il caso
 // LEGACY — e quel caso ora DEVE tornare a segnalare (test sopra), o
 // l'aggiornamento automatico si rompe per ogni nodo pre-0.9.4. Riscritta con
 // attestation:'indeterminate' esplicito: e' quello il caso che l'intento
-// dell'auditor vuole chiuso (un pid ereditato, verificato solo per
+// del revisore vuole chiuso (un pid ereditato, verificato solo per
 // inclusione di stringa, quando l'identita' avrebbe potuto essere provata e
 // non lo e' stata) — non "qualunque meta senza nascita", che includerebbe
 // anche il legacy onesto. PRIMA (prima del fix): segnala. DOPO: rifiuta.
-test('AUDITOR negativo: pid ereditato + cmd compatibile + attestazione TENTATA E FALLITA — PRIMA segnalava, ORA no', () => {
+test('negativo: pid ereditato + cmd compatibile + attestazione TENTATA E FALLITA — PRIMA segnalava, ORA no', () => {
   const p = tmpPid();
   fs.writeFileSync(p, `${JSON.stringify({ pid: 424242, cmd: 'node same-command', attestation: 'indeterminate' })}\n`);
   const segnali = [];
@@ -761,7 +761,7 @@ test('killPidfile: unsupported dichiarato alla creazione ricade sul cmd, ma lo d
 // macchina ne' /proc ne' ps sono strutturalmente assenti: un pid che
 // semplicemente non esiste fallisce comunque, ma per un motivo che riguarda
 // SOLO quel pid — mai unsupported, sempre indeterminate. E' la distinzione
-// che l'audit ha chiesto: non "ha fallito?" ma "perche'?".
+// che la verifica ha chiesto: non "ha fallito?" ma "perche'?".
 test('probeProcessStart: pid inesistente su una macchina normale e\' indeterminate, mai unsupported', () => {
   const pidInesistente = 999999;
   const { value, cause } = probeProcessStart(pidInesistente);
@@ -777,7 +777,7 @@ test('probeProcessStart: il nostro pid, sempre leggibile qui, attesta', () => {
 });
 
 // Nascita attestata ma non rileggibile: l'identita' non e' verificabile e il
-// segnale NON parte. Trovato dall'audit su codice gia' pubblicato: il ramo
+// segnale NON parte. Trovato dalla verifica su codice gia' pubblicato: il ramo
 // esisteva e proseguiva sul solo cmd, che matcha per inclusioni. La finestra
 // qui non e' di microsecondi come il TOCTOU: dura quanto /proc resta illeggibile.
 test('killPidfile: nascita attestata e ora illeggibile => rinuncia, nessun segnale', () => {

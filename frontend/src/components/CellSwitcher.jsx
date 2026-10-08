@@ -88,7 +88,7 @@ function rowFromItem(item, route, nodeLabel, sessions = []) {
 }
 export default function CellSwitcher({
   token, current, onPick, onClose, panelPort = 0, nodePanelPorts = {},
-  // Il nome del nodo LOCALE (es. VPSCloud): il gruppo delle celle locali si
+  // Il nome del nodo LOCALE (es. peer-a): il gruppo delle celle locali si
   // chiama come il nodo, come i gruppi remoti col loro nodeLabel.
   localNodeLabel = '',
   // Lo stato dell'host per nodo e le due azioni di designazione arrivano
@@ -192,7 +192,9 @@ export default function CellSwitcher({
   }, [snapshot, groups]);
   // Le righe del drawer: per ogni posizione, le righe della lista principale
   // con il suo filtro per nodo (il toggle «tutte» del drawer apre il filtro
-  // 'all' su ogni posizione). Stesse righe, stesso ordine, stessa modalità.
+  // 'all' su ogni posizione). Stesse righe, stesso ordine, stessa modalità —
+  // e con la pillola «Attive» le celle spente restano fuori qualunque sia il
+  // filtro salvato del nodo.
   const visibleRows = useMemo(() => {
     const filterFor = (position) => (showAll ? 'all' : sidebarView(views, position).filter);
     const localSessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
@@ -203,7 +205,15 @@ export default function CellSwitcher({
       const route = g ? g.route : [];
       const sessions = g ? (Array.isArray(g.sessions) ? g.sessions : []) : localSessions;
       const items = sidebarItems(rawItems, pins, filterFor(position), sidebarOrder(orders, position));
-      out.push(...items.map((item) => rowFromItem(item, route, nodeLabel, sessions)));
+      // La pillola «Attive» non e' il filtro del nodo: senza preferenza salvata
+      // la posizione vale 'all' e le celle spente passano il filtro, ma non la
+      // pillola. Qui la riga spenta esce come nel gate della 0.9.62: resta cio'
+      // che e' vivo, piu' le celle degradate ATTIVE (visibili, non
+      // selezionabili). «Tutte» (showAll) non filtra: righe e ordine restano
+      // quelli di sidebarItems.
+      const gated = showAll ? items : items.filter((item) => item.live === true
+        || (item.type === 'cell' && item.value?.degraded === true && item.value?.active === true));
+      out.push(...gated.map((item) => rowFromItem(item, route, nodeLabel, sessions)));
     }
     return out;
   }, [rosterItems, groups, views, orders, pins, showAll, snapshot.sessions]);

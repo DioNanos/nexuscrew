@@ -1,5 +1,5 @@
 'use strict';
-// T1 — cwd portabile fail-closed (design §4.3 / backup v3).
+// T1 — cwd portabile fail-closed (backup v3).
 // Copre: helper puri (normalizeCwdRel, deriveCwdRel), resolveCellCwd (missing
 // dir, symlink escape, mismatch cwd/cwdRel), define/edit/restore fail-closed,
 // vista definitions (cwdRel derivato + needsRepair senza mutare fleet.json),

@@ -1,7 +1,7 @@
-// Hook dei gruppi per-nodo (B2, design §5): polla /api/nodes e, per i soli
+// Hook dei gruppi per-nodo (B2): polla /api/nodes e, per i soli
 // nodi col tunnel su, le sessioni remote via proxy /node/<name>/api/sessions.
 // Best-effort ovunque: un nodo che non risponde diventa gruppo 'unreachable'
-// (design §7, niente spinner infinito); zero nodi configurati -> groups = []
+// (niente spinner infinito); zero nodi configurati -> groups = []
 // e la UI resta identica a oggi.
 //
 // Le fonti non fanno barriera fra loro: la discovery si pubblica quando

@@ -1,5 +1,5 @@
 'use strict';
-// Fetta 2b — verifier per-installazione e proof HMAC (contratto rev1, sezioni
+// Fetta 2b — verifier per-installazione e proof HMAC (sezioni
 // B1/B4/B7/B8, C4/C5). Il modello: solo il server conosce il segreto; il
 // supervisore/child presenta un proof firmato con claims ed expiry.
 const { test } = require('node:test');

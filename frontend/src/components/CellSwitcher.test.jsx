@@ -127,10 +127,10 @@ describe('CellSwitcher', () => {
     const remote = await screen.findByRole('button', { name: /^Remote / });
     expect(remote).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Degraded / }).getAttribute('aria-disabled')).toBe('true');
-    // La modalità di default è quella del nodo, come la lista principale
-    // ('all' senza preferenze): le celle spente restano righe disabilitate,
-    // non spariscono — esattamente le righe che mostra la principale.
-    expect(screen.getByRole('button', { name: /^cell-Three / }).getAttribute('aria-disabled')).toBe('true');
+    // La pillola di default è «Attive»: la cella spenta NON compare, anche se
+    // il filtro del nodo senza preferenze vale 'all' e la lascerebbe passare.
+    // «Tutte» la ripristina come riga disabilitata (vedi i test dedicati).
+    expect(screen.queryByRole('button', { name: /^cell-Three / })).toBeNull();
     // Stale Cell e' una cella VIVA del suo gruppo (tmux nota): come la
     // principale, e' apribile — l'etichetta del nodo dice altro, la riga no.
     expect(screen.getByRole('button', { name: /^Stale Cell / }).getAttribute('aria-disabled')).toBe('false');
@@ -189,6 +189,45 @@ describe('CellSwitcher', () => {
     expect(screen.queryByRole('button', { name: /^Ghost Off / })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
     expect(screen.getByRole('button', { name: /^Ghost Off / }).getAttribute('aria-disabled')).toBe('true');
+  });
+
+  // La pillola «Attive» è un gate DI RIGA, non un filtro del nodo: qualunque
+  // preferenza abbia salvato il nodo (nulla, 'all', 'pinned'), la cella spenta
+  // non compare; «Tutte» la ripristina come riga disabilitata. Il caso
+  // 'active' lo copre il test degradato qui sopra.
+  it('pillola «Attive», nodo SENZA preferenza: la spenta non compare, «Tutte» la ripristina disabilitata', async () => {
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    // Nessuna preferenza salvata: il filtro del nodo vale 'all', ma la pillola
+    // toglie la riga spenta lo stesso.
+    expect(screen.queryByRole('button', { name: /^cell-Three / })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    expect(screen.getByRole('button', { name: /^cell-Three / }).getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('pillola «Attive», nodo su «all»: la spenta non compare, «Tutte» la ripristina disabilitata', async () => {
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ local: { filter: 'all' } }));
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    // Il nodo mostra tutto per scelta: la pillola resta comunque un gate di riga.
+    expect(screen.queryByRole('button', { name: /^cell-Three / })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    expect(screen.getByRole('button', { name: /^cell-Three / }).getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('pillola «Attive», nodo su «pinned» con la spenta pinnata: la spenta non compare, «Tutte» la ripristina disabilitata', async () => {
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ local: { filter: 'pinned' } }));
+    localStorage.setItem('nc_pins', JSON.stringify([positionKey([], 'cloud-cell-Three')]));
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    // Con il filtro 'pinned' del nodo resterebbe SOLO la spenta pinnata: la
+    // pillola la toglie, e del gruppo locale non si vede nessuna riga. Il
+    // gruppo hub (nessuna preferenza) tiene la sua cella viva.
+    await screen.findByRole('button', { name: /^Remote / });
+    expect(screen.queryByRole('button', { name: /^cell-Three / })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^cell-One / })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    expect(screen.getByRole('button', { name: /^cell-Three / }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('button', { name: /^cell-One / })).toBeTruthy();
   });
 
   it('renders each distinct local cell exactly once (no client-side doubling)', async () => {
@@ -746,7 +785,7 @@ describe('CellSwitcher side key', () => {
     expect(altra.getAttribute('title')).toBe(t('cell-switcher-side-add'));
     expect(altra.getAttribute('aria-label')).toBe(t('cell-switcher-side-add'));
     // L'icona è a tratto (fill none, currentColor): un SVG senza attributi
-    // qui riempiva il rettangolo di nero — il quadrato pieno dell'audit B4.
+    // qui riempiva il rettangolo di nero — il quadrato pieno di B4.
     const icona = altra.querySelector('svg');
     expect(icona).toBeTruthy();
     expect(icona.getAttribute('fill')).toBe('none');

@@ -1,4 +1,4 @@
-// Modello puro di settings + first-run wizard (design §5, B2-UI). Nessun React,
+// Modello puro di settings + first-run wizard (B2-UI). Nessun React,
 // nessun fetch: stati, transizioni e validazione form — importabile nei test node
 // (pattern grid-model/deck-model). La validazione RISPECCHIA i contratti server
 // (lib/nodes/store.js: NODE_NAME_RE, parseSsh strict, isPort) così la UI rifiuta

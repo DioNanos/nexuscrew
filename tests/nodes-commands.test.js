@@ -554,10 +554,10 @@ test('dispatch nodes aliases: show/rename/visibility/doctor usano il dominio can
   store.atomicWriteStore(nodesPathFor(home), st);
 
   assert.equal((await dispatch(['nodes', 'show', 'c'.repeat(32)], { home, log: () => {} })).code, 0);
-  assert.equal((await dispatch(['nodes', 'rename', 'c'.repeat(32), '--label', 'AsusRP3'], { home, log: () => {} })).code, 0);
+  assert.equal((await dispatch(['nodes', 'rename', 'c'.repeat(32), '--label', 'peer-a'], { home, log: () => {} })).code, 0);
   assert.equal((await dispatch(['nodes', 'visibility', 'asus', 'relay-only'], { home, log: () => {} })).code, 0);
   const saved = store.loadStore(nodesPathFor(home)).nodes[0];
-  assert.equal(saved.label, 'AsusRP3');
+  assert.equal(saved.label, 'peer-a');
   assert.equal(saved.visibility, 'relay-only');
 
   const logs = [];
@@ -634,7 +634,7 @@ test('dispatch nodes invite/pair: link passa via stdout/stdin, mai come argv', a
   assert.equal(calls[0][0], '/api/settings/peering/invite');
   assert.match(inviteLogs[0], /#pair=/);
   const paired = await dispatch([
-    'nodes', 'pair', '--local-label', 'AsusRP3', '--local-name', 'asus-rp3-5bd6',
+    'nodes', 'pair', '--local-label', 'peer-a', '--local-name', 'peer-a-5bd6',
   ], {
     stdin: `${link.slice(0, 20)}\r\n${link.slice(20)}`, log: () => {},
     localApiImpl: async (pathname, body) => { calls.push([pathname, body]); return { name: body.name, instanceId: 'a'.repeat(32) }; },
@@ -642,8 +642,8 @@ test('dispatch nodes invite/pair: link passa via stdout/stdin, mai come argv', a
   assert.equal(paired.code, 0);
   assert.equal(calls[1][0], '/api/settings/nodes/pair');
   assert.equal(calls[1][1].pairingUrl, link);
-  assert.equal(calls[1][1].localLabel, 'AsusRP3');
-  assert.equal(calls[1][1].localName, 'asus-rp3-5bd6');
+  assert.equal(calls[1][1].localLabel, 'peer-a');
+  assert.equal(calls[1][1].localName, 'peer-a-5bd6');
   const joined = await dispatch(['nodes', 'join'], {
     stdin: link, log: () => {},
     localApiImpl: async () => ({ name: 'asus', instanceId: 'a'.repeat(32) }),

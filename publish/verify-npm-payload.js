@@ -48,7 +48,13 @@ function parseRules(file) {
     const families = Object.entries(wc.families).map(([id, def]) => {
       if (!def || typeof def.source !== 'string') throw new Error(`rule bundle: famiglia workcode ${id} senza source`);
       // matchAll needs the global flag; workcode families are case-sensitive by definition.
-      return { id, re: new RegExp(def.source, def.flags ? `${def.flags}g` : 'g'), reason: def.reason || `internal work code (${id})` };
+      return {
+        id,
+        re: new RegExp(def.source, def.flags ? `${def.flags}g` : 'g'),
+        reason: def.reason || `internal work code (${id})`,
+        allowLineRe: (Array.isArray(def.allowLineRe) ? def.allowLineRe : []).map((source) => new RegExp(source)),
+        allowPathPrefix: Array.isArray(def.allowPathPrefix) ? def.allowPathPrefix : [],
+      };
     });
     workcodes = {
       families,
@@ -122,7 +128,9 @@ function scanWorkcodes(root, entries, workcodes) {
     for (let index = 0; index < lines.length; index += 1) {
       const lineText = lines[index];
       if (workcodes.allowLineRe.some((re) => re.test(lineText))) continue;
-      for (const { id, re } of workcodes.families) {
+      for (const { id, re, allowLineRe, allowPathPrefix } of workcodes.families) {
+        if (allowPathPrefix.some((prefix) => rel.startsWith(prefix))) continue;
+        if (allowLineRe.some((allow) => allow.test(lineText))) continue;
         re.lastIndex = 0;
         for (const match of lineText.matchAll(re)) {
           const token = match[0];

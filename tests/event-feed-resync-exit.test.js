@@ -163,7 +163,7 @@ test('R5+: un frame sano riporta la scala al primo gradino', async (t) => {
 });
 
 test('R5+: un recupero fallito riarma il cooldown — un solo snapshot per scadenza', async (t) => {
-  // La prova dell'audit (reaudit 2026-09-29): snapshotOnce che torna FALSE
+  // La prova della verifica: snapshotOnce che torna FALSE
   // senza throw (oversize qui; anche owner-mismatch o resyncRequired) non
   // armava più il cooldown: 13 snapshot in ~300 ms con poll a 15 ms. Il
   // tentativo di recupero è UNO per scadenza, e il gradino cresce.

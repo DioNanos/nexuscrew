@@ -30,6 +30,7 @@ docs/identity/verify-channel-v1.md
 
 # Referti di audit: nominano chi ha auditato e con che verdetto.
 test-report/
+FIX_AUDIT.md
 
 # Il costruttore, le sue regole e gli scanner sono strumenti interni: non fanno
 # parte del prodotto e non devono diventare la propria superficie da verificare.
@@ -38,6 +39,13 @@ tests/npm-publication-boundary.test.js
 tests/published-tree-is-clean.test.js
 tests/published-tree-clean-rules.json
 tests/publication-boundary.test.js
+
+# Due test caricano l'helper publish/pack-json-shape.js: se resta escluso
+# publish/ per intero, loro non si caricano nel repository pubblico
+# (MODULE_NOT_FOUND prima di qualunque prova). Si escludono i test, non
+# l'helper condiviso: la policy di publish/ resta intatta.
+tests/pack-json-shape.test.js
+tests/entrypoint-portable.test.js
 tools/extract-payload-context.py
 
 # Gate di coerenza versione bundle (parla di come si pubblica, non del prodotto).

@@ -87,8 +87,8 @@ test('D10 (fixture): un modello non dichiarato produce rosso nominando cella, en
   const problems = problemsFor(fleet);
   assert.equal(problems.length, 2, `attesi 2 problemi (cella + default engine), trovati: ${JSON.stringify(problems)}`);
   // I default engine vengono controllati prima delle celle: [0]=engine, [1]=cella.
-  // Il default incoerente deve dare verdetto (non ReferenceError: audit
-  // 0314517 R3 — ramo che prima lanciava client_ is not defined).
+  // Il default incoerente deve dare verdetto (non ReferenceError:
+  // ramo che prima lanciava client_ is not defined).
   assert.match(problems[0], /engine "codex-vl\.opencode-go".*"modello-inesistente"/);
   assert.match(problems[1], /"Probe".*codex-vl\.opencode-go.*"qwen3\.8-flash"/);
 });

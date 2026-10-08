@@ -3,7 +3,7 @@ import {
   cellScopeMode, cellScopeGrants, cellScopeCandidates, nodeDetailModel,
 } from './node-detail.js';
 
-// Lo scope celle in UI (NC-I). Il permesso esisteva gia' lato server ed era
+// Lo scope celle in UI. Il permesso esisteva gia' lato server ed era
 // impostabile solo da riga di comando: chi amministra dalla PWA non poteva
 // restringere un nodo, che e' il caso d'uso per cui il permesso e' nato.
 //

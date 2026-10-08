@@ -28,7 +28,7 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [query, setQuery] = useState('');
   const [picking, setPicking] = useState(false);
-  // Le celle di QUESTA installazione, per lo scope NC-E. `null` = non ancora
+  // Le celle di QUESTA installazione, per lo scope celle. `null` = non ancora
   // chieste: il modello lo distingue da «elenco vuoto» e non marca le
   // concessioni come sconosciute mentre la risposta arriva.
   const [localCells, setLocalCells] = useState(null);
@@ -180,7 +180,7 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   // fallimento. Senza, il flag faceva uscire subito la funzione e il picker si
   // apriva VUOTO con "nessuna cella corrisponde" — un messaggio che dice la
   // cosa sbagliata, perche' il problema non e' che non ci sono celle, e' che
-  // non si e' riusciti a chiederle. Rilievo dell'audit.
+  // non si e' riusciti a chiederle.
   const ensureCells = async ({ retry = false } = {}) => {
     if (retry && cellsFailed) setCellsFailed(false);
     else if (localCells !== null || cellsFailed) return;
@@ -412,7 +412,7 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
         </>}
       </SheetSection>
 
-      {/* Scope celle (NC-E). Sezione a se' e non dentro "vista di rete": la
+      {/* Scope celle. Sezione a se' e non dentro "vista di rete": la
           visibilita' governa il TRANSITO (attraverso chi passa il traffico),
           questo governa l'ACCESSO (cosa quel nodo vede e puo' toccare qui).
           Metterli insieme fa credere che uno implichi l'altro. */}

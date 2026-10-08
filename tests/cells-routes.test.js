@@ -131,7 +131,7 @@ test('READONLY blocca l invio ma lascia leggibile la directory', async (t) => {
   })).status, 403);
 });
 
-// --- NC-D: il nome leggibile deve VIAGGIARE, non restare locale -------------
+// --- il nome leggibile deve VIAGGIARE, non restare locale -------------
 // La directory e' il modo in cui un nodo si presenta agli altri: se porta solo
 // l'id, chi la riceve legge il nome che quel nodo ha scelto per se' e non ha
 // modo di sapere che ruolo occupa quella cella.
@@ -180,7 +180,7 @@ test('directory: una label non stringa non contamina la voce', async (t) => {
   assert.equal(body.cells[0].label, '');
 });
 
-// --- NC-D: la label e' testo auto-dichiarato anche in USCITA ----------------
+// --- la label e' testo auto-dichiarato anche in USCITA ----------------
 // La definizione locale e' gia' validata dal parser, ma il payload esposto e
 // quello ricevuto da un peer vanno delimitati comunque: senza, una stringa
 // lunga e con a capo attraversa la directory e finisce in ogni consumatore che

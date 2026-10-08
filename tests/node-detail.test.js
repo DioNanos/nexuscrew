@@ -26,7 +26,7 @@ test('node-detail: un nodo in transito non ha autorita\' su questa macchina', as
 
 test('node-detail: lo slot dei poteri resta vuoto finche\' i grant non esistono', async () => {
   const { nodeAuthority } = await mod();
-  // Se un giorno questa lista si popola senza che esista NC-E, il foglio sta
+  // Se un giorno questa lista si popola senza che esista il modello di autorita' per-nodo, il foglio sta
   // promettendo poteri che nessuno ha concesso.
   for (const node of [{ name: 'a' }, { name: 'b', kind: 'transitive' }, { name: 'c', shared: true, visibility: 'network' }]) {
     const authority = nodeAuthority(node);
@@ -112,12 +112,12 @@ test('node-detail: nemmeno il foglio di un nodo outbound porta segreti', async (
 test('node-detail: il picker cerca su etichetta e nome, senza maiuscole', async () => {
   const { selectionCandidates } = await mod();
   const nodes = [
-    { name: 'mac-air', nodeId: 'a', label: 'MacBook' },
-    { name: 'pixel', nodeId: 'b', label: 'Telefono' },
+    { name: 'laptop', nodeId: 'a', label: 'MacBook' },
+    { name: 'phone', nodeId: 'b', label: 'Telefono' },
   ];
   const node = { name: 'peer', visibility: 'selected', selected: [] };
   assert.deepEqual(selectionCandidates(node, nodes, 'macbook').map((x) => x.id), ['a']);
-  assert.deepEqual(selectionCandidates(node, nodes, 'PIXEL').map((x) => x.id), ['b'], 'il nome vale quanto l\'etichetta');
+  assert.deepEqual(selectionCandidates(node, nodes, 'PHONE').map((x) => x.id), ['b'], 'il nome vale quanto l\'etichetta');
   assert.deepEqual(selectionCandidates(node, nodes, 'niente'), []);
 });
 

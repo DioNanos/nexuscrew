@@ -3,7 +3,7 @@
 const MAX_TILES = 9;
 const MIN_W = 0.2;
 
-// --- Multi-node (B2, design §5): tile {session, node?} ----------------------
+// --- Multi-node (B2): tile {session, node?} ----------------------
 // node = nome del nodo remoto (chiave strict di nodes.json, come il proxy B1);
 // assente -> sessione locale (retrocompatibilita' con i layout esistenti).
 // Identita' di un tile = refKey "node:session" (tmux vieta ':' nei nomi di

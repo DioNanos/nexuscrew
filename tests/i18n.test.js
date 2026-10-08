@@ -37,7 +37,7 @@ test('i18n: ogni valore di credentialSource prodotto dal backend ha la sua strin
   assert.deepEqual(missing, [], `valori senza stringa: ${missing.join(', ')}`);
 });
 
-// La guardia sopra va in una direzione sola: lista -> stringa. Un audit l'ha
+// La guardia sopra va in una direzione sola: lista -> stringa. Una verifica l'ha
 // rotta in un modo che va chiuso: chi aggiunge `source: 'x'` in credential()
 // senza aggiornare la costante ha il test verde e la chiave tecnica a schermo.
 // La lista sarebbe un contratto fra persone, non una guardia.
@@ -80,7 +80,7 @@ test('i18n: la costante dei credentialSource non diverge dal codice che li produ
 // Stessa forma, seconda famiglia: i codici di errore del backup finiscono in
 // `fleet-backup-<codice>`. Due di essi (i modelli, aggiunti dopo) non avevano
 // stringa in nessuna lingua da quando esistono — nessuno se n'era accorto
-// perche' nessuna guardia legava i codici alle chiavi. Trovata dall'audit.
+// perche' nessuna guardia legava i codici alle chiavi. Trovata dalla verifica.
 test('i18n: ogni codice di errore del backup ha la sua stringa, e la lista non diverge dal codice', async () => {
   const fs = require('node:fs');
   const path = require('node:path');
@@ -121,7 +121,7 @@ test('i18n: t() fallback su IT e su chiave', async () => {
 // riscrittura che nomina i due casi per NEGARLI: «e' falso che un'app che segue
 // il mouse scorre da se'...» passerebbe. Un test su prosa non puo' fare di
 // meglio senza diventare fragile, e fingere che lo faccia e' peggio che
-// ammetterlo. Rilievo di un audit indipendente, con esempi avversari a prova.
+// ammetterlo.
 test('i18n: alternateScreen distingue chi scorre da se\' da chi naviga la storia tmux', async () => {
   const { DICTS } = await import('../frontend/src/lib/i18n.js');
   const it = DICTS.it['alternate-screen-help'];

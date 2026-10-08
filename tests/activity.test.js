@@ -493,10 +493,10 @@ test('NEGATIVO: un hook DOPO l\'uscita rinnova lo stato — l\'uscita non blocca
   assert.equal(leggiAttivita(root, SESSIONE, T0 + 130_000).stato, 'lavora');
 });
 
-// --- i due riproduttori dell'audit, e la compatibilita' col supervisore vecchio
+// --- i due riproduttori della verifica, e la compatibilita' col supervisore vecchio
 
 test("riproduttore: un `Stop` SENZA generazione mentre il lancio sta partendo → null", () => {
-  // E' il caso dell'audit. Durante lo spawn arriva l'ultimo evento di un client
+  // E' il caso della verifica. Durante lo spawn arriva l'ultimo evento di un client
   // che non dichiara la generazione: non deve essere letto. Non e' legato ad
   // alcun lancio, nessuno puo' invalidarlo, e con «ferma» che non scade
   // resterebbe vero per sempre su una cella appena partita.

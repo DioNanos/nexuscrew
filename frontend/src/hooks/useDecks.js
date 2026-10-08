@@ -150,7 +150,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = [], n
   const recordsRef = useRef([]);
   const ownersRef = useRef([]);
   // Ordine della lista nodi/celle (nc_node_order_v1, chiavi nodePreferenceKey):
-  // i GRUPPI della rail lo seguono (D-392). Va in un ref per non rifare il
+  // i GRUPPI della rail lo seguono. Va in un ref per non rifare il
   // caricamento a ogni riordino: il riordino tocca solo l'ordine, non i dati.
   const nodeOrderRef = useRef([]);
   // Da quando un owner manca dalle risposte confermate: passata la grazia le
@@ -402,7 +402,7 @@ export function useDecks(token, current, layout, setLayout, remoteOwners = [], n
     return () => { cancelled = true; };
   }, [install, loadAll, ownersSig, token, findCurrent]);
 
-  // D-392: un riordino nella lista nodi/celle a sinistra si riflette subito
+  // un riordino nella lista nodi/celle a sinistra si riflette subito
   // sui gruppi della rail, senza ricaricare nulla — stessi record, ordine
   // nuovo. Il confronto evita il re-render quando l'ordine non cambia nulla.
   useEffect(() => {

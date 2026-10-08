@@ -85,7 +85,7 @@ describe('nodeRowSummary — shows the owner for a VL node (step 3, invariant 2)
 
   it('two nodes with the SAME label on different owners produce different subtitles', () => {
     const ownerA = { instanceId: 'a'.repeat(16), route: ['node-a'], label: 'Node A' };
-    const ownerB = { instanceId: 'b'.repeat(16), route: ['nova'], label: 'NovaLNX' };
+    const ownerB = { instanceId: 'b'.repeat(16), route: ['node-b'], label: 'Node B' };
     const rowA = nodeRowSummary(vlNodeToPeer(RAW_ONLINE, ownerA));
     const rowB = nodeRowSummary(vlNodeToPeer(RAW_ONLINE, ownerB));
     expect(rowA.title).toBe(rowB.title); // stessa label del device

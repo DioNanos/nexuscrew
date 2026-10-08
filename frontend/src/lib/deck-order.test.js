@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deckId } from './deck-federation.js';
 import { orderDeckRecords } from './deck-model.js';
 
-// D-392: l'ordine dei DECKS in alto segue la lista nodi/celle a sinistra.
+// l'ordine dei DECKS in alto segue la lista nodi/celle a sinistra.
 // Le chiavi della lista sono nodePreferenceKey: 'local' (nodo locale) e
 // 'id:<instanceId>' (owner federati) — mai l'etichetta.
 
@@ -27,7 +27,7 @@ const records = [
   rec(OWNER_A, 'richerche'),
 ];
 
-describe('orderDeckRecords — ordine dei gruppi (D-392)', () => {
+describe('orderDeckRecords — ordine dei gruppi', () => {
   it('senza lista: i gruppi restano in ordine di prima apparizione (comportamento precedente)', () => {
     const out = orderDeckRecords(records, {});
     expect(out.map((d) => d.ownerId)).toEqual([null, null, OWNER_A, OWNER_A, OWNER_B]);

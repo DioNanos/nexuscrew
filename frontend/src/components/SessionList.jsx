@@ -4,6 +4,7 @@ import {
 } from '../lib/api.js';
 import { subscribeFleetRoute, refreshFleetRoute } from '../lib/fleet-poll.js';
 import Icon from './Icon.jsx';
+import LiveBadge from './LiveBadge.jsx';
 import CellPeek from './CellPeek.jsx';
 import { panelPortForRoute } from '../lib/panel-port.js';
 import { sidebarItems, sidebarOrder, sidebarSearchVisible } from '../lib/sidebar-model.js';
@@ -61,7 +62,7 @@ export default function SessionList({
   // R27: la lettura del fleet non e' riuscita (rete/401/5xx o fleet.json
   // illeggibile) → la lista esposta e' l'ultima nota, non un dato: lo si dichiara.
   const [fleetStale, setFleetStale] = useState(false);
-  // R27 rev3: il fleet e' SPENTO (available:false del server) → zero celle e'
+  // R27: il fleet e' SPENTO (available:false del server) → zero celle e'
   // la verita'; l'indicatore distinto porta il reason del server.
   const [fleetOff, setFleetOff] = useState(null);
   const [bootOverrides, setBootOverrides] = useState({});
@@ -721,6 +722,7 @@ function LiveStripMobile({ view, notice }) {
       title={notice ? `${frase} · ${t(notice.messageKey)}` : frase}>
       <span className={`nc-m-live-dot ${liveHostDotClass(view || {})}`} aria-hidden="true" />
       <span className="nc-m-live-testo">{hasHost ? view.cell : frase}</span>
+      <LiveBadge view={view} />
       {notice && (
         <span className={`nc-m-live-notice${notice.ok ? ' ok' : ' ko'}`} role="status">
           {t(notice.messageKey).replace('{cell}', notice.cell || view.cell || '')}

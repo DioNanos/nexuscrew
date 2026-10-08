@@ -247,7 +247,7 @@ describe('terminal double-tap cancellation', () => {
 });
 
 describe('terminal long-press touch selection', () => {
-  it('il punto premuto e\' la cella esatta: la selezione parte li\' e il caret la segue (rev4)', () => {
+  it('il punto premuto e\' la cella esatta: la selezione parte li\' e il caret la segue', () => {
     const onSelectionModeChange = vi.fn();
     const view = renderTerminal('double-tap', { onSelectionModeChange });
     const host = view.container.querySelector('.nc-terminal-host');
@@ -275,7 +275,7 @@ describe('terminal long-press touch selection', () => {
     expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 163 });
   });
 
-  it('il punto esatto vale anche sul bordo alto: caret sulla cella premuta (rev4)', () => {
+  it('il punto esatto vale anche sul bordo alto: caret sulla cella premuta', () => {
     const view = renderTerminal();
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
@@ -296,7 +296,7 @@ describe('terminal long-press touch selection', () => {
   // condividono lo stesso contratto: punto di pressione ESATTO, caret sulla
   // cella premuta, espansione a parola. Prima erano due comportamenti
   // diversi per lo stesso gesto.
-  it('il percorso selectionMode usa lo stesso punto esatto del long-press (rev4)', () => {
+  it('il percorso selectionMode usa lo stesso punto esatto del long-press', () => {
     const view = renderTerminal('double-tap', { selectionMode: true });
     const host = view.container.querySelector('.nc-terminal-host');
     const term = fixture.instances[0];
@@ -690,7 +690,7 @@ describe('terminal selection survives the trip to the Copy button', () => {
 
   // La precondizione della protezione dev'essere LEGGIBILE dal DOM, o una prova
   // nel browser non puo' distinguere «protetta» da «non c'era niente da cui
-  // proteggerla». Trovato provando NC-L con Playwright: il gesto reggeva, ma non
+  // proteggerla». Trovato provando con Playwright: il gesto reggeva, ma non
   // potevo dimostrare che il ramo protettivo si fosse acceso.
   it('says whether the app owns the mouse, both ways', () => {
     const view = renderTerminal();

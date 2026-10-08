@@ -31,7 +31,7 @@ describe('requestPanelTicket: da risposta HTTP a causa', () => {
   });
 
   it('403 SENZA reason (nodo in sola lettura): causa propria, non «denied»', async () => {
-    // È la catena che l'audit ha percorso: `READONLY` blocca ogni mutazione
+    // È la catena che la verifica ha percorso: `READONLY` blocca ogni mutazione
     // federata, e l'emissione del biglietto è una mutazione. La risposta ha il
     // solo campo `error`, quindi non combacia con `panel-not-granted` e
     // finiva nel catch-all.

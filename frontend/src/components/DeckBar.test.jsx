@@ -246,10 +246,10 @@ describe('regressions: navigate / popout / new still wired', () => {
   });
 });
 
-// D-392: i gruppi owner della barra seguono l'ordine dei deck ricevuti —
+// i gruppi owner della barra seguono l'ordine dei deck ricevuti —
 // l'ordine lo decide orderDeckRecords (lista nodi/celle a sinistra), la barra
 // non riordina. Il componente deve rispettare l'ordine di ingresso.
-describe('D-392 — gruppi della barra nell\'ordine della lista nodi', () => {
+describe('gruppi della barra nell\'ordine della lista nodi', () => {
   const ownerA = 'a'.repeat(32);
   const ownerB = 'b'.repeat(32);
   const d = (ownerId, name, local = false) => ({

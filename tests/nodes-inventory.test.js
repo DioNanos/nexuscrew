@@ -34,7 +34,7 @@ test('resolvePeer preferisce identita stabile e rifiuta nomi transitivi ambigui'
   assert.equal(inventory.resolvePeer(peers, 'b'.repeat(32)).peer.route[0], 'hub-b');
 });
 
-// --- NC-D: anche il nome di un nodo in TRANSITO deve viaggiare ---------------
+// --- anche il nome di un nodo in TRANSITO deve viaggiare ---------------
 // Senza label un nodo routed arriva come slug scelto da altri: oggi cinque
 // installazioni si presentano tutte come "NexusCrew". Ma la label di un peer e'
 // testo auto-dichiarato, quindi si accetta solo nella forma valida e resta un

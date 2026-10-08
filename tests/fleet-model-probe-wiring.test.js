@@ -80,7 +80,7 @@ test('senza credenziale configurata: `auth`, e nessuna chiamata parte', async (t
   // non esiste» — che e' tutto il punto di questa prova.
   //
   // La chiave va TOLTA dall'ambiente esplicitamente: questo test passava da me
-  // e falliva nella shell dell'auditor, che aveva ALIBABA_CODE_API_KEY
+  // e falliva nella shell del revisore, che aveva ALIBABA_CODE_API_KEY
   // esportata — la credenziale veniva trovata davvero e l'esito cambiava. Un
   // test che dipende da cosa c'e' nella shell di chi lo esegue non prova
   // niente: prova l'ambiente.

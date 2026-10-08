@@ -317,7 +317,7 @@ test('F5 handleNodeUpgrade: write-failure -> fail(502) operativo (entrambi i soc
     connect: () => up,
   });
   // connect-handler prova upstream.write che lancia -> catch -> fail(502).
-  // Prima dell'audit settled=true era messo PRIMA dei write: fail() era no-op,
+  // Prima della verifica settled=true era messo PRIMA dei write: fail() era no-op,
   // nessun socket distrutto, nessun 502, entrambi i socket vivi (leak).
   up.emit('connect');
   assert.strictEqual(upDestroyed, true, 'upstream va distrutto sul write-failure (no leak upstream)');

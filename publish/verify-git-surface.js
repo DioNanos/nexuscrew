@@ -40,8 +40,37 @@ function validSha(value) { return typeof value === 'string' && /^[0-9a-f]{40}$/i
 function parseRules(file) {
   const defs = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (defs.version !== 1 || !Array.isArray(defs.text) || !Array.isArray(defs.path)) throw new Error('rule bundle non valido');
+  const workcodes = defs.workcodes;
+  if (!workcodes || typeof workcodes !== 'object' || typeof workcodes.families !== 'object' || workcodes.families === null || !Array.isArray(workcodes.denyToken)) {
+    throw new Error('rule bundle non valido: sezione workcodes mancante o incompleta');
+  }
   const compile = (list) => list.map(({ source, flags, reason }) => ({ re: new RegExp(source, flags || ''), reason }));
-  return { text: compile(defs.text), path: compile(defs.path) };
+  const families = Object.entries(workcodes.families)
+    .filter(([, def]) => def && typeof def.source === 'string')
+    .map(([name, def]) => ({
+      name,
+      // `flags` (such as "i") apply to the family; matchAll needs the global flag as well.
+      re: new RegExp(def.source, def.flags ? `${def.flags}g` : 'g'),
+      reason: def.reason || 'internal work code',
+      allowLineRe: (def.allowLineRe || []).map((source) => new RegExp(source)),
+      allowPathPrefix: def.allowPathPrefix || [],
+    }));
+  if (!families.length) throw new Error('rule bundle non valido: nessuna famiglia di workcodes compilabile');
+  const allowToken = new Set(workcodes.allowToken || []);
+  const allowTokenRe = (workcodes.allowTokenRe || []).map((source) => new RegExp(source));
+  const allowLineRe = (workcodes.allowLineRe || []).map((source) => new RegExp(source));
+  return {
+    text: compile(defs.text),
+    path: compile(defs.path),
+    workcodes: {
+      families,
+      denyToken: new Set(workcodes.denyToken),
+      allowToken,
+      allowTokenRe,
+      allowLineRe,
+      allowPathPrefix: workcodes.allowPathPrefix || [],
+    },
+  };
 }
 
 function normalPath(rel) {
@@ -112,6 +141,29 @@ function objectRepo(staging) {
   }
 }
 
+// Workcode scan of one entry's text. Line-level allows (`allowLineRe`) exempt a
+// whole line (URL-encoded payloads); `allowPathPrefix` is checked by the caller.
+// A family may also carry its own `allowLineRe`/`allowPathPrefix`, which exempt
+// only that family, so a wide allowance cannot hide a different family.
+// A token neither allowed nor denied fails closed, as the rule bundle declares.
+function scanWorkcodes(rel, text, workcodes, hits) {
+  for (const line of text.split(/\r?\n/)) {
+    if (workcodes.allowLineRe.some((re) => re.test(line))) continue;
+    for (const family of workcodes.families) {
+      if (family.allowPathPrefix.some((prefix) => rel.startsWith(prefix))) continue;
+      if (family.allowLineRe.some((re) => re.test(line))) continue;
+      for (const match of line.matchAll(family.re)) {
+        const token = match[0];
+        if (workcodes.allowToken.has(token) || workcodes.allowTokenRe.some((re) => re.test(token))) continue;
+        const reason = workcodes.denyToken.has(token)
+          ? `${family.reason}: ${token}`
+          : `unclassified ${family.reason} (fail-closed): ${token}`;
+        hits.push(`${rel}: ${reason}`);
+      }
+    }
+  }
+}
+
 function scan(repo, entries, rules) {
   if (!entries.length) throw new Error('public tree vuoto');
   const seen = new Set();
@@ -136,6 +188,9 @@ function scan(repo, entries, rules) {
     } else text = blob.toString('utf8');
     for (const { re, reason } of rules.path) if (re.test(entry.rel)) hits.push(`${entry.rel}: ${reason}`);
     for (const { re, reason } of rules.text) if (re.test(text)) hits.push(`${entry.rel}: ${reason}`);
+    if (!rules.workcodes.allowPathPrefix.some((prefix) => entry.rel.startsWith(prefix))) {
+      scanWorkcodes(entry.rel, text, rules.workcodes, hits);
+    }
   }
   if (hits.length) throw new Error(`contenuto/percorso vietato:\n  ${hits.join('\n  ')}`);
   return entries.length;

@@ -15,6 +15,7 @@ import {
 } from '../lib/roster-view-model.js';
 import { OWNER_ID_RE } from '../lib/grid-model.js';
 import Icon from './Icon.jsx';
+import LiveBadge from './LiveBadge.jsx';
 import CellPeek from './CellPeek.jsx';
 import { CellActionsPopover, cellActionsItems, cellActionsState } from './CellActions.jsx';
 import { applyCellStar, cellStarView } from '../lib/cell-star.js';
@@ -33,7 +34,7 @@ const SIDE_MAX_W = 480;
 const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'local'}:${cell}`;
 
 // Sidebar presentazionale: mostra la flotta (celle) + le altre sessioni tmux
-// + i gruppi per-nodo remoto (B2, design §5). Il polling e le azioni sono del
+// + i gruppi per-nodo remoto (B2). Il polling e le azioni sono del
 // genitore; qui solo render + callback.
 // Collassabile (mini 48px, solo dot) e ridimensionabile (maniglia bordo destro).
 export default function Sidebar({
@@ -334,7 +335,7 @@ export default function Sidebar({
   const [tip, setTip] = useState(null); // {text, y}
   const showTip = (e, text) => { const r = e.currentTarget.getBoundingClientRect(); setTip({ text, y: r.top + r.height / 2 }); };
   const hideTip = () => setTip(null);
-  // Cleanup listener resize su unmount (audit: come GridView).
+  // Cleanup listener resize su unmount (come GridView).
   const resizeCleanupRef = useRef(null);
   useEffect(() => () => { if (resizeCleanupRef.current) resizeCleanupRef.current(); }, []);
 
@@ -408,7 +409,7 @@ export default function Sidebar({
             >{initial(s.name)}</button>
           ); })())}
           {/* Sessioni dei nodi remoti (B2): iniziali col tooltip "nodo:sessione";
-              nodo degradato = dot warn statico (mai spinner, design §7). */}
+              nodo degradato = dot warn statico (mai spinner). */}
           {remoteRosters.flatMap(({ g, nodeRoute, groupView, items }) => (g.kind === 'vl'
             ? (g.status === 'up' && g.sessions.length
               ? g.sessions.map((s) => (
@@ -496,7 +497,7 @@ export default function Sidebar({
         {/* R27: lettura fleet non riuscita → la lista e' l'ultima nota, non un dato */}
         {reorderBlocked && <span className="nc-side-fleet-stale" role="status" title={t('reorder-blocked')} aria-label={t('reorder-blocked')}>⇅</span>}
         {fleetStale && <span className="nc-side-fleet-stale" role="status" title={t('fleet-stale')} aria-label={t('fleet-stale')}>●</span>}
-        {/* R27 rev3: fleet spento per scelta → zero celle e' la verita' (reason del server) */}
+        {/* R27: fleet spento per scelta → zero celle e' la verita' (reason del server) */}
         {fleetOff !== null && (
           <span className="nc-side-fleet-off" role="status"
             title={`${t('fleet-off')}${fleetOff ? ` (${fleetOff})` : ''}`}
@@ -917,6 +918,7 @@ function LiveStrip({ view, notice }) {
       title={notice ? `${frase} · ${t(notice.messageKey)}` : frase}>
       <span className={`nc-live-strip-dot ${liveHostDotClass(view || {})}`} aria-hidden="true" />
       <span className="nc-live-strip-testo">{hasHost ? view.cell : frase}</span>
+      <LiveBadge view={view} />
       {notice && (
         <span className={`nc-live-strip-notice${notice.ok ? ' ok' : ' ko'}`} role="status">
           {t(notice.messageKey).replace('{cell}', notice.cell || view.cell || '')}

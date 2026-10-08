@@ -27,7 +27,7 @@ test('launch broker delivers a payload once over a private Unix socket and leave
   } finally { await broker.close(); fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-// Audit: il chmod 0600 sul socket era INGOIATO (try/catch/ignora), a
+// Difetto: il chmod 0600 sul socket era INGOIATO (try/catch/ignora), a
 // differenza della directory 15 righe sopra in ensureRuntimeDir, che
 // verifica il mode REALE dopo il proprio chmod e fallisce chiuso se non
 // conforme. MISURA (chmod fatto fallire DAVVERO — si intercetta la vera
@@ -279,7 +279,7 @@ test('launch broker revoke consuma il ticket senza attendere il TTL (cleanup su 
 // managed.js + runtime.js) attraversa il socket VERO del broker, viene
 // ricevuto da receivePayload VERO, validato da validPayload e infine eseguito.
 // Prima del fix si fermava a `invalid launch payload` -> la cella non nasceva.
-const CHILD_REPORT_D242 = `
+const CHILD_REPORT_FIXTURE = `
   const fs = require('node:fs');
   const fds = {};
   for (const fd of [3, 4]) {
@@ -296,16 +296,16 @@ const CHILD_REPORT_D242 = `
 // (managed.js -> runtime.js:289-296). La superficie d'errore e' quella di
 // produzione (lib/fleet/cell-exec.js:768-770): `nexuscrew cell launch failed: ...`.
 async function launchThroughRealBroker(extraPayload = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbroker-d242-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbroker-launch-fixture-'));
   fs.chmodSync(home, 0o700);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d242-child-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-launch-fixture-child-'));
   const out = path.join(dir, 'child.json');
   const broker = createLaunchBroker({ home, launchTokenTtlMs: 15000 });
   const errors = [];
   let stdio = null;
   const payload = {
     command: process.execPath,
-    args: ['-e', CHILD_REPORT_D242, out],
+    args: ['-e', CHILD_REPORT_FIXTURE, out],
     env: { PATH: process.env.PATH },
     supervise: { enabled: false },
     ...extraPayload,

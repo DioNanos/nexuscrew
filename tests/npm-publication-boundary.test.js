@@ -35,24 +35,20 @@ test('npm gate packs and scans the exact source checkout without publishing', ()
   }
 });
 
-test('la classe dei workcode copre la forma lettera+cifra+minuscole e resta chiusa sui token legittimi', () => {
+test('le famiglie dei workcode vedono i riferimenti di processo e lasciano passare i token tecnici', () => {
   const rules = JSON.parse(fs.readFileSync(path.join(ROOT, 'publish', 'public-surface-rules.json'), 'utf8'));
-  // Positivo: la forma con suffisso minuscolo (un marker interno che finisce
-  // in un commento di lib/) deve essere VISTA dalla famiglia — senza, il gate
-  // taceva proprio sul caso che l'ha fatto nascere. Vista e NON classificata:
-  // il gate la segnala unclosed e fallisce, che e' la protezione voluta.
-  const famB = new RegExp(rules.workcodes.families.B.source, 'g');
-  const visti = [...'marker interno A2, forma nuova X1a, composta B12.3x'.matchAll(famB)].map((m) => m[0]);
-  assert.ok(visti.includes('X1a'), 'lettera+cifra+minuscola non coperta dalla famiglia B');
-  assert.ok(visti.includes('A2') && visti.includes('B12.3x'), 'le forme preesistenti restano coperte');
-  assert.equal(classificato(rules, 'X1a'), false, 'la forma nuova resta non classificata: unclosed = gate rosso');
-  // Chiusura sul corpus legittimo: ogni token della famiglia che il payload
-  // legittimo contiene e' classificato (deny/allow), quindi la classe non si
-  // apre a caso con l'estensione.
-  const legittimi = 'K3, ARM64, GLM-5, UTF-8, SHA-256 e versioni come 0.10.0 non sono marker interni';
-  for (const t of [...legittimi.matchAll(new RegExp(rules.workcodes.families.B.source, 'g'))].map((m) => m[0])) {
-    assert.ok(classificato(rules, t), `token legittimo ${t} non classificato: aggiungerlo a denyToken o allowToken, mai ignorarlo`);
+  const vede = (testo) => Object.values(rules.workcodes.families)
+    .flatMap((f) => [...testo.matchAll(new RegExp(f.source, 'g'))].map((m) => m[0]));
+  // Positivo: i codici d'ordine e la provenienza d'audit sono VISTI. Senza,
+  // il gate taceva proprio sui casi che l'hanno fatto nascere.
+  const visti = vede('tracked as D-392, D447, V-69 and NC-E; found by an audit; come da piano C3; R27 rev3');
+  for (const atteso of ['D-392', 'D447', 'V-69', 'NC-E', 'audit', 'come da piano C3', 'rev3']) {
+    assert.ok(visti.includes(atteso), `${atteso} non coperto dalle famiglie`);
   }
+  // Chiusura sul corpus legittimo: licenze, standard, dati SVG, costanti di
+  // test e sigle brevi di specifica non sono marker di processo.
+  const legittimi = 'K3, ARM64, GLM-5, UTF-8, SHA-256, MIT-0, BSD-3, HTML5, X11, T0, M12 4v10, R25, IC1.1, P1 e versioni come 0.10.0';
+  assert.deepEqual(vede(legittimi), [], 'il corpus legittimo non deve essere intercettato');
   // I tasti di frontend (F1/F3 in frontend/src) non entrano nel gate: il
   // sorgente non e' nel pacchetto e il bundle e' escluso per contesto — si
   // esclude il contesto, non la regola.
@@ -61,13 +57,6 @@ test('la classe dei workcode copre la forma lettera+cifra+minuscole e resta chiu
   const wc = rules.workcodes.allowPathPrefix || [];
   assert.ok(wc.some((p) => p.startsWith('frontend/dist')), 'il bundle compilato e\' escluso per contesto');
 });
-
-function classificato(rules, token) {
-  if ((rules.workcodes.denyToken || []).includes(token)) return true;
-  if ((rules.workcodes.allowToken || []).includes(token)) return true;
-  return (rules.workcodes.allowTokenRe || []).some((r) => new RegExp(r.source || r).test(token));
-}
-
 
 test('la regola text dei nomi cella rifiuta i worker/auditor e lascia le etichette generiche', () => {
   const rules = JSON.parse(fs.readFileSync(path.join(ROOT, 'publish', 'public-surface-rules.json'), 'utf8'));
@@ -82,4 +71,60 @@ test('la regola text dei nomi cella rifiuta i worker/auditor e lascia le etichet
   }
   const legittimo = 'le fixture usano cell-alfa e le etichette generiche cloud-Dev, cloud-SysAdmin, cloud-Research';
   assert.equal(re.test(legittimo), false, 'il corpus legittimo resta fuori dalla regola');
+});
+
+// The npm gate reads the same rule bundle. A tiny synthetic checkout (no frontend, so no build) is enough to
+// prove that a file which is packed is held to the same rules: the probes of the independent audit.
+function npmProbe(files) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-npm-probe-'));
+  try {
+    const repo = path.join(dir, 'repo');
+    fs.mkdirSync(path.join(repo, 'publish'), { recursive: true });
+    for (const name of ['verify-npm-payload.js', 'public-surface-rules.json', 'pack-json-shape.js']) {
+      fs.copyFileSync(path.join(ROOT, 'publish', name), path.join(repo, 'publish', name));
+    }
+    fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({
+      name: 'probe', version: '1.0.0', files: ['README.md', 'CHANGELOG.md', 'skills', 'lib'],
+    }));
+    for (const [rel, data] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+      fs.writeFileSync(path.join(repo, rel), data);
+    }
+    const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8',
+      env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t.invalid' } });
+    git('init', '-q'); git('add', '-A'); git('commit', '-qm', 'probe');
+    const sha = git('rev-parse', 'HEAD').stdout.trim();
+    const result = spawnSync(process.execPath, [path.join(repo, 'publish', 'verify-npm-payload.js'), sha, path.join(dir, 'out'), path.join(dir, 'manifest.json')], { cwd: repo, encoding: 'utf8' });
+    return { result, manifest: path.join(dir, 'manifest.json') };
+  } finally {
+    // The caller reads the result before the directory goes away: it is cleaned by the OS temp policy.
+  }
+}
+
+for (const [name, files] of [
+  ['an audit hash in the README', { 'README.md': 'Found by audit 43bb3e9e.\n' }],
+  ['an audit hash in the CHANGELOG', { 'README.md': 'ok\n', 'CHANGELOG.md': '- fixed (audit 43bb3e9e)\n' }],
+  ['an audit hash in a skill', { 'README.md': 'ok\n', 'skills/nexuscrew/SKILL.md': 'Rule from audit 43bb3e9e.\n' }],
+  ['an audit hash on a line that mentions npm audit', { 'README.md': 'ok\n', 'lib/probe.js': '// npm audit; auditor 43bb3e9e\n' }],
+  ['AUDIT in capitals with a hash in a skill that may talk about audits', { 'README.md': 'ok\n', 'skills/cellforge/SKILL.md': 'AUDIT 43bb3e9e\n' }],
+  ['an audit with an upper-case hash in a skill that may talk about audits', { 'README.md': 'ok\n', 'skills/cellforge/SKILL.md': 'audit 43BB3E9E\n' }],
+  ['AUDIT in capitals with an upper-case hash in a skill that may talk about audits', { 'README.md': 'ok\n', 'skills/cellforge/SKILL.md': 'AUDIT 43BB3E9E\n' }],
+  ['a numbered plan with line references', { 'README.md': 'See piano v3 :114-117, :222-226 for the rule.\n' }],
+]) {
+  test(`npm gate: ${name} fails`, () => {
+    const { result, manifest } = npmProbe(files);
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(fs.existsSync(manifest), false);
+    assert.match(result.stderr, /PROVENANCE /, 'the provenance family reports it, not only the audit word');
+  });
+}
+
+test('npm gate: the legitimate uses of audit still pass', () => {
+  const { result, manifest } = npmProbe({
+    'README.md': 'Run `npm audit` and keep the audit trail.\n',
+    'CHANGELOG.md': '- New skill (create, modify and audit a cell)\n',
+    'skills/cellforge/SKILL.md': 'An audit answers one question.\n',
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.ok(fs.existsSync(manifest));
 });
