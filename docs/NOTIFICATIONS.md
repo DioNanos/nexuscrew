@@ -119,6 +119,31 @@ browser, keeps the app fully usable, and never changes the other side's push
 setup. Turning it back on requires the same button, so a device that was asked
 to stay silent does not re-subscribe itself.
 
+## Clearing imported notifications
+
+An imported notice can be closed like a local one, for a single notice or for
+the whole visible set of one owner with a single request. The closure is not a
+browser-side hide; the protocol keeps every view of that owner honest:
+
+- **The owner records it.** The dismissal travels the authorized routes to the
+  owner, is judged by the origin's view, and is answered by one `notify-closed`
+  closure frame per cleared notice. Closures enter the owner's feed history, so
+  a receiver that was offline recovers them from the backlog; the receiving
+  side never turns a closure into a card.
+- **Every receiver empties.** Once the owner has recorded the dismissal he
+  stops serving those notices, so no node that holds a view of him keeps
+  showing them, whether it was live during the clear or reloads afterwards.
+- **The intent survives when the owner cannot take it.** If the owner is
+  unreachable the clear still succeeds: the node records the intent durably
+  (a bounded local queue, retries with backoff, one delivery attempt per owner
+  at a time) and hands it over when the owner is back. If the owner has no
+  notices surface at all the record stays blocked until the pairing changes.
+  In both cases the record — not the browser — is what keeps the card down: a
+  reload or a restart of the node does not bring it back.
+- **"Clear" is the whole visible set of that owner.** It closes every notice
+  currently shown for him on this node, in one request inside the owner's
+  per-request budget — never one request per card.
+
 ## Platform notes
 
 | Platform | Expected behavior |

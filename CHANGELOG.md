@@ -2,6 +2,10 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## Unreleased
+
+- **Notifications from a remote node can be cleared locally, one voice or all at once.** Every imported notice offers the same close action asks already have: one request dismisses a single notice or the whole visible set of an owner. The dismissal travels to the owner over the authorized routes and is judged by the origin's view; the owner records it and publishes one `notify-closed` closure per cleared notice, so every receiver empties, including the ones that were not part of the clear. When the owner cannot take it — unreachable, or without the notices surface — the request still succeeds: the node records the intent durably, as pending with a bounded retry or as blocked until the pairing changes, and the record, not the browser, is what keeps the card down. A reload or a restart of the receiving node does not bring a cleared notice back, and once the owner takes the dismissed intent he stops serving those notices himself. "Clear" means the whole visible set of that owner on this node: every notice currently shown for him, cleared in one request inside the owner's per-request budget.
+
 ## 0.9.64 — 2026-10-07
 
 - **The active quick list hides stopped cells.** The active mode keeps only live cells and active degraded rows, regardless of each node's saved all or pinned preference; ordering and pins remain intact.
