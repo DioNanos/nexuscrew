@@ -81,6 +81,32 @@ describe('cap e taglio per ts', () => {
   });
 });
 
+describe('envelope reale del feed: il ts della card e quello di emissione', () => {
+  // Forma vera del filo (event-feed-producers): l'envelope non ha `ts`, ha
+  // `emittedAt` e il frame chiuso dal produttore con il suo `ts` d'emissione.
+  const T0 = 1760000000000;
+  const REAL = { v: 1, ownerId: 'nodeX', eventId: 'e-real', scope: 'cell', cellId: 'dev',
+    hop: 1, emittedAt: T0,
+    frame: { type: 'notify', title: 'Approva NC 0.9.64 su npmjs.com', body: '', urgency: 'normal', ts: T0 } };
+
+  it('toRemoteNotice porta l ora di emissione: ts === emittedAt, non 0', () => {
+    const c = toRemoteNotice(REAL, 'nodeX');
+    expect(c).not.toBeNull();
+    expect(c.ts).toBe(T0);
+  });
+
+  it('senza emittedAt vale il ts del frame; la forma piatta resta tollerata', () => {
+    expect(toRemoteNotice({ eventId: 'e-frame', frame: { type: 'notify', title: 't', ts: 1234 } }, 'nodeX').ts).toBe(1234);
+    expect(toRemoteNotice(env('e-flat', 42), 'nodeX').ts).toBe(42);
+  });
+
+  it('merge rebuild: la copia in cur e l incoming con la stessa key producono 1 card', () => {
+    const merged = mergeRemoteNotices([toRemoteNotice(REAL, 'nodeX')], [toRemoteNotice(REAL, 'nodeX')], new Set(['nodeX']));
+    expect(merged.length).toBe(1);
+    expect(merged[0].ts).toBe(T0);
+  });
+});
+
 describe('ASK correlation and actual snapshot envelopes', () => {
   it('keeps a generic snapshot envelope equivalent to the same live notice', () => {
     const live = env('generic-1', 1700000000000, { body: 'generic message' });

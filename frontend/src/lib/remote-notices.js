@@ -33,7 +33,10 @@ export function toRemoteNotice(envelope, ownerId) {
     title,
     body,
     urgency: frame.urgency === 'high' ? 'high' : 'normal',
-    ts: normalizeTs(envelope.ts),
+    // L'ora della card e' quella di emissione: l'envelope del feed porta
+    // emittedAt (e il frame chiuso il suo ts); il ts piatto e' la forma live
+    // gia' in giro, tollerata come ultima risorsa.
+    ts: normalizeTs(envelope.emittedAt ?? (envelope.frame && envelope.frame.ts) ?? envelope.ts),
   };
 }
 

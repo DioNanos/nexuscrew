@@ -335,6 +335,27 @@ describe('rebuild dall arretrato: la rilettura compatta per (ownerId,eventId)', 
     expect(cards.length).toBe(1);
     expect([...cards].filter((c) => c.textContent.includes(TITLE)).length).toBe(1);
   });
+
+  it('l ora mostrata e quella di emissione (emittedAt): arretrato e live della stessa notifica', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce(BACKLOG_VIEW);
+    render(<NotifyCenter token="token" />);
+    const badge = await screen.findByTitle('questions from the cells');
+    act(() => badge.click());
+    await screen.findByText(TITLE);
+    // La card dell arretrato mostra T0, l ora in cui l owner ha emesso — non
+    // l ora di chi la legge (fallback n.ts || Date.now() con n.ts = 0).
+    let meta = document.querySelector('.nc-remote-notice-meta');
+    expect(meta.textContent).toContain(new Date(T0).toLocaleString());
+    // La stessa notifica arriva live: il ribroadcast porta il ts di origine
+    // (emittedAt), non l istante in cui e stato ritrasmesso (T1).
+    act(() => mocks.eventHandler({ ...LIVE_FRAME, ts: T0 }));
+    const cards = document.querySelectorAll('.nc-remote-notice');
+    expect(cards.length).toBe(1);
+    meta = cards[0].querySelector('.nc-remote-notice-meta');
+    expect(meta.textContent).toContain(new Date(T0).toLocaleString());
+    expect(meta.textContent).not.toContain(new Date(T1).toLocaleString());
+  });
 });
 
 describe('arretrato: dedup che discrimina e cap per ts', () => {
