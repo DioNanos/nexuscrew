@@ -42,6 +42,9 @@ const CORPUS = [
   '/event-feed/asks/abc12345',
   '/event-feed/asks/abc12345/requests/0f8fad5b-d9cb-469f-a165-70867728950e',
   '/event-feed/node/0123456789abcdef0123456789abcdef',
+  // Owner-side notice dismissals: one sample per new branch of the allowlist.
+  '/event-feed/notices/0f8fad5b-d9cb-469f-a165-70867728950e',
+  '/event-feed/notices/dismiss-all',
   ...FLEET_READ.map((alt) => `/fleet/${alt}`),
   ...FLEET_WRITE.map((alt) => `/fleet/${alt}`),
 ];
