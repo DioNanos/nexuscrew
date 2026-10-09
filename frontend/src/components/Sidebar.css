@@ -46,7 +46,7 @@
 .nc-side-title { font-size: 13px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; opacity: .8; }
 /* R27: la lista celle e' l'ultima nota, la lettura fleet e' fallita */
 .nc-side-fleet-stale { color: #e0b020; font-size: 12px; cursor: help; }
-/* R27 rev3: fleet spento per scelta — zero celle e' la verita' */
+/* R27: fleet spento per scelta — zero celle e' la verita' */
 .nc-side-fleet-off { color: #8fa08f; font-size: 12px; cursor: help; }
 .nc-new-btn {
   background: #2e7d32; color: #fff; border: none; border-radius: 8px;
@@ -66,9 +66,15 @@
 .nc-node-title .nc-dot { width: 7px; height: 7px; flex: 0 0 auto; }
 .nc-node-title b { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .nc-node-title small { text-transform: none; letter-spacing: 0; opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Nome e sotto-riga su righe separate: il nome resta intero, si tronca il
+   solo messaggio. La tendina ha larghezza fissa e chiude la riga per tutti i
+   nodi: stesso x con o senza ✎/power. */
+.nc-node-title .nc-node-main { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.nc-node-title .nc-node-main b { flex: 0 0 auto; max-width: 100%; }
+.nc-node-title .nc-node-main small { min-width: 0; }
 .nc-node-chevron { flex: 0 0 10px; font-size: 13px; }
 .nc-node-filter {
-  flex: 0 0 auto; max-width: 82px; min-width: 58px; padding: 3px 18px 3px 5px;
+  flex: 0 0 76px; width: 76px; margin-left: auto; padding: 3px 18px 3px 5px;
   border: 1px solid #243; border-radius: 6px; background: #0a0e0a; color: #9fd;
   font: 10px/1.2 inherit; text-transform: lowercase;
 }

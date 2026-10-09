@@ -140,7 +140,7 @@ test('zero consegne sul target NON viene etichettato delivered', async (t) => {
   // propaga solo lo status (i conteggi muoiono nel dispatcher, R1/rc.14) e
   // `out.delivered` oltre il dispatcher e' undefined. L'invariante e'
   // protetta in tests/notify-federated-status.test.js, dove la risposta del
-  // TARGET si vede intera (rilievo audit su 44d4f62).
+  // TARGET si vede intera.
 });
 
 test('il mittente e\' derivato dalla catena, non dal campo dichiarato', async (t) => {
@@ -188,7 +188,7 @@ test('un target sconosciuto non diventa una consegna riuscita', async (t) => {
   assert.notEqual(out.status, 'delivered', JSON.stringify(out));
 });
 
-// G1 (rilievo di un audit indipendente su rc.14): l'invariante "un peer rumoroso non affama
+// G1 (rilievo di una verifica indipendente su rc.14): l'invariante "un peer rumoroso non affama
 // le celle di casa" era dichiarata nel commit e nel codice, ma NON protetta.
 // Il budget federato e quello locale sono due limiter distinti; se un domani
 // qualcuno li riunisce, il codice resta plausibile e il danno e' invisibile

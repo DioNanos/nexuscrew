@@ -1,7 +1,7 @@
-// Hook dei gruppi per-nodo (B2, design §5): polla /api/nodes e, per i soli
+// Hook dei gruppi per-nodo (B2): polla /api/nodes e, per i soli
 // nodi col tunnel su, le sessioni remote via proxy /node/<name>/api/sessions.
 // Best-effort ovunque: un nodo che non risponde diventa gruppo 'unreachable'
-// (design §7, niente spinner infinito); zero nodi configurati -> groups = []
+// (niente spinner infinito); zero nodi configurati -> groups = []
 // e la UI resta identica a oggi.
 //
 // Le fonti non fanno barriera fra loro: la discovery si pubblica quando
@@ -72,8 +72,9 @@ function mergeStickyOwners(map, fetchOk, fresh, keyOf, now) {
   return map;
 }
 
-export function useNodes(token, enabled = true, refreshKey = 0) {
+export function useNodesState(token, enabled = true, refreshKey = 0) {
   const [groups, setGroups] = useState([]);
+  const [loadedToken, setLoadedToken] = useState(null);
   const groupsRef = useRef([]);
   const downRef = useRef({});
   // R21: backoff per-peer (stato) + ultima risposta nota (cache). Il peer
@@ -102,7 +103,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
   const abortRef = useRef(null);
 
   useEffect(() => {
-    if (!enabled || !token) { setGroups([]); return undefined; }
+    if (!enabled || !token) { setGroups([]); setLoadedToken(null); return undefined; }
     let alive = true;
     // Cache e backoff sono legati al TOKEN che li ha riempiti: un token
     // diverso e' un'altra sessione, e i suoi dati non sono i nostri. Senza
@@ -207,6 +208,7 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
         // Prima dei componenti: le preferenze per nome si allineano all'identita' (instanceId) del nodo.
         registerRouteIdentities(nextGroups);
         groupsRef.current = nextGroups;
+        setLoadedToken(token);
         setGroups(nextGroups);
         return true;
       };
@@ -578,5 +580,11 @@ export function useNodes(token, enabled = true, refreshKey = 0) {
     };
   }, [token, enabled, refreshKey]);
 
-  return groups;
+  return { groups, hasLoaded: enabled && !!token && loadedToken === token };
+}
+
+// Existing consumers keep the array API; the drawer also needs to distinguish
+// the initial empty state from an empty model that has already published.
+export function useNodes(token, enabled = true, refreshKey = 0) {
+  return useNodesState(token, enabled, refreshKey).groups;
 }

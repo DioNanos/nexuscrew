@@ -37,7 +37,7 @@ export function apiFetch(path, token, opts = {}) {
       headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` },
     }).then((r) => { noteAuth(path, token, r); return r; });
   }
-  // Audit fix: `controller` è di fetchAbortSignal — qui si usa QUELLO (abort di
+  // `controller` è di fetchAbortSignal — qui si usa QUELLO (abort di
   // timeout e abort esterno agiscono sullo stesso controller), mai una variabile
   // locale inesistente.
   const { signal, cancel, controller } = fetchAbortSignal(ms);
@@ -175,7 +175,7 @@ export const killSession = (t, name, route) => jsonFetch(`${routeBase(route)}/se
 export const setSessionTechnical = (t, name, technical, route) => jsonFetch(`${routeBase(route)}/sessions/${encodeURIComponent(name)}/visibility`, t, { method: 'PATCH', body: { technical: !!technical } });
 export const listDirs = (t, p, route) => jsonFetch(`${routeBase(route)}/fs/dirs${p ? `?path=${encodeURIComponent(p)}` : ''}`, t);
 
-// Settings API B2 (design §4b(6)): read-only + mutanti lista chiusa. jsonFetch
+// Settings API B2: read-only + mutanti lista chiusa. jsonFetch
 // propaga la causa esplicita (j.error) su ogni failure — MAI errori muti in UI.
 export const getSettings = (t, opts = {}) => jsonFetch('/api/settings', t, opts);
 export const getNodes = (t, opts = {}) => jsonFetch('/api/nodes', t, opts);
@@ -285,6 +285,17 @@ export const relayAskDismissLocal = (t, { ownerId, askId }) => jsonFetch('/api/a
   method: 'POST', body: { action: 'dismiss-local', ownerId, askId },
 });
 export const getFeedState = (t) => jsonFetch('/api/feed-state', t);
+// Notifiche importate dai feed remoti: la X di una card e «Pulisci» parlano
+// alla superficie operatore LOCALE (mai federata). Il server onora l'intento su
+// questo nodo e poi consegna all'owner: `dismissed:true` con `ownerSync`
+// `pending`/`blocked` significa «qui e' scartata, la consegna all'owner e' in
+// coda / non autorizzata» — non un fallimento, che invece resta un throw.
+export const relayNoticeDismiss = (t, { ownerId, eventId }) => jsonFetch('/api/notices-relay', t, {
+  method: 'POST', body: { action: 'dismiss', ownerId, eventId },
+});
+export const relayNoticeDismissAll = (t, { owners }) => jsonFetch('/api/notices-relay', t, {
+  method: 'POST', body: { action: 'dismiss-all', owners },
+});
 
 // Le deck di un owner REMOTO passano dal proxy federato: timeout di default
 // (senza, un tunnel «su a metà» teneva la UI senza decks per minuti.
@@ -304,7 +315,7 @@ export const saveDeckKeepalive = (t, name, layout, expectedRevision, route = [],
 export const renameDeck = (t, name, next, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'PATCH', body: { name: next, expectedRevision } });
 export const deleteDeck = (t, name, expectedRevision, route = []) => jsonFetch(`${routeBase(route)}/decks/${encodeURIComponent(name)}`, t, { method: 'DELETE', body: { expectedRevision } });
 
-// Cella ospite Live (contratto rev6 §2): hostCell unico per nodo con CAS. Segue
+// Cella ospite Live: hostCell unico per nodo con CAS. Segue
 // `route` come i deck (0.9.1): instradabile via /api/route dietro un permesso
 // per-peer (liveHostAccess, negato di default, concesso dal nodo che possiede
 // la cella — mai da chi chiede). Resta NON instradabile via /node/<name>: il

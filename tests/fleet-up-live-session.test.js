@@ -207,7 +207,7 @@ test('restart: la cella muore e rinasce, con una generazione nuova e coerente', 
 
 // --- 5. IL RIPRODUTTORE: due up concorrenti, e sul disco chi ha vinto -------
 //
-// E' il caso che l'audit ha riprodotto: entrambi vedevano «non viva», il
+// E' il caso che la verifica ha riprodotto: entrambi vedevano «non viva», il
 // vincitore creava la sessione con la generazione A, il perdente scriveva B e
 // solo dopo prendeva il 409 — e sul disco restava B, che non e' la generazione
 // di nessun lancio vivo.

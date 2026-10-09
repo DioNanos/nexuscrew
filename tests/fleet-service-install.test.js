@@ -1,6 +1,6 @@
 'use strict';
 // B4.3 — Test del service companion di boot: installFleetService (speculare a
-// installService) + selectProviderModeSync + wiring runInit (design §4c/§9b/§9d).
+// installService) + selectProviderModeSync + wiring runInit.
 // Stile dei test esistenti (node:test, tmpHome, cleanup fs.rmSync). Commenti in IT.
 const test = require('node:test');
 const assert = require('node:assert');
@@ -234,7 +234,7 @@ test('selectProviderModeSync: auto disabled se fleet.json non esiste', () => {
 });
 
 // ---------------------------------------------------------------------------
-// runInit — integrazione companion (design §9b/§9d). Il companion NON deve mai
+// runInit — integrazione companion. Il companion NON deve mai
 // far fallire l'init principale. selectProvider/migrationGate iniettabili.
 // ---------------------------------------------------------------------------
 

@@ -6,7 +6,7 @@ import {
 } from './host-designation.js';
 import { buildLocalRoster } from './roster-view-model.js';
 
-// FIX (audit): la fixture usa la FORMA DI PRODUZIONE, dove `cell` e `tmuxSession`
+// La fixture usa la FORMA DI PRODUZIONE, dove `cell` e `tmuxSession`
 // sono DIVERSI (runtime.js fa `cell: c.id` con tmuxSession separato). L'iterazione
 // precedente usava cell === tmuxSession, il che collassava item.key e item.value.cell
 // sulla stessa stringa: il test passava IDENTICO anche leggendo item.key, e la
@@ -103,7 +103,7 @@ describe('ciclo end-to-end su item reale (desktop e mobile usano lo stesso model
     expect(hostRenderState({ hostCell: null, pins, item: dev })).toBe(HOST_FAVORITE);
   });
 
-  it('regression auditor: clic 2 accende davvero il rosso (non resta favorite)', () => {
+  it('regression: clic 2 accende davvero il rosso (non resta favorite)', () => {
     // era il difetto misurato: hostCell registrato ma stellina non aggiornata.
     const dev = localItems().find((i) => i.value.cell === 'Dev');
     expect(hostRenderState({ hostCell: 'Dev', pins: [dev.key], item: dev })).toBe(HOST_THREAD_UNKNOWN);

@@ -42,7 +42,7 @@ import './SettingsPanel.css';
 import PreferencesJournal from './PreferencesJournal.jsx';
 import PreferencesBackup from './PreferencesBackup.jsx';
 
-// Pannello settings (design §5, B2-UI). Stessa struttura a schede su desktop
+// Pannello settings (B2-UI). Stessa struttura a schede su desktop
 // (overlay nel workspace) e mobile (full-screen via CSS). Le schede principali:
 //   nodi    — peer Hydra + stato tunnel + azioni
 //   fleet   — engine/celle locali o su una route raggiungibile
@@ -374,7 +374,7 @@ export function NodesTab({ token, nodes, roster, settings, readonly, refresh, re
   );
 }
 
-// Notifiche push del MCP bridge (design §3): richiesta permesso + subscribe
+// Notifiche push del MCP bridge: richiesta permesso + subscribe
 // VAPID + persistenza lato server. Stato per-device; in READONLY il subscribe
 // e' bloccato dal server (403) e il bottone resta disabilitato con motivo.
 function PushRow({ token, readonly }) {

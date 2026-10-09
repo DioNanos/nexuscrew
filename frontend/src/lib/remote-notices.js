@@ -33,7 +33,16 @@ export function toRemoteNotice(envelope, ownerId) {
     title,
     body,
     urgency: frame.urgency === 'high' ? 'high' : 'normal',
-    ts: normalizeTs(envelope.ts),
+    // L'ora della card e' quella di emissione: l'envelope del feed porta
+    // emittedAt (e il frame chiuso il suo ts); il ts piatto e' la forma live
+    // gia' in giro, tollerata come ultima risorsa.
+    ts: normalizeTs(envelope.emittedAt ?? (envelope.frame && envelope.frame.ts) ?? envelope.ts),
+    // Ordine d'arrivo QUI (0 = arrivata da una pagina): la riconciliazione lo
+    // confronta con la soglia catturata all'avvio della lettura, per non
+    // scartare un frame live piu' nuovo della pagina. Un contatore, non un
+    // timestamp: due operazioni nello stesso millisecondo non sono ordinabili
+    // dal clock.
+    arrivalSeq: 0,
   };
 }
 
@@ -45,9 +54,19 @@ export function boundedByTs(list) {
 // Merge dedup: le card correnti di un owner ancora attivo (presente in
 // keepOwners) sopravvivono, le incoming (dallo snapshot) aggiornano per key.
 // keepOwners null = nessun owner viene scartato (arrivo dal canale live).
-export function mergeRemoteNotices(current, incoming, keepOwners) {
+//
+// `reconcile` (opzionale, { owners, arrivedAfter }): per quegli owner la
+// pagina letta e' AUTOREVOLE e fresca, quindi e' l'elenco — una card che la
+// lista non contiene e' una chiusura di cui questo browser ha perso il frame
+// live, e va via. Le card arrivate (receivedAt) DOPO l'avvio della lettura
+// restano: la pagina e' piu' vecchia di loro. Gli owner fuori da `owners`
+// (view stale, incompleta o marcata) mantengono le loro card come prima.
+export function mergeRemoteNotices(current, incoming, keepOwners, reconcile = null) {
+  const incomingKeys = new Set((incoming || []).map((c) => c && c.key));
   const merged = new Map();
   for (const c of current || []) {
+    if (reconcile && reconcile.owners.has(c.ownerId)
+      && !incomingKeys.has(c.key) && !reconcile.arrivedAfter(c)) continue;
     if (!keepOwners || keepOwners.has(c.ownerId)) merged.set(c.key, c);
   }
   for (const c of incoming || []) {

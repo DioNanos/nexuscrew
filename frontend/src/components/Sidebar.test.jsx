@@ -1,4 +1,6 @@
 import React from 'react';
+import fs from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
@@ -500,5 +502,94 @@ describe('Sidebar — badge outbox della riga remota', () => {
     const riga = screen.getByText('Dev').closest('[data-roster-key]');
     expect(within(riga).queryByText('7')).toBeNull();
     expect(within(riga).queryByText('2')).toBeNull();
+  });
+});
+
+// --- riga nodo: nome in una riga sua, sotto-riga e tendina allineata ------
+// Il nome del nodo non deve competere con il messaggio di lettura fallita:
+// ognuno ha la sua riga nel contenitore .nc-node-main (il solo messaggio si
+// tronca, con il testo intero nel title), e la tendina della modalita' chiude
+// la riga per TUTTI i nodi — stesso x con o senza ✎/power. jsdom non fa
+// layout: questi test fissano la struttura, non la larghezza a video.
+describe('Sidebar — riga nodo: nome, sotto-riga e tendina', () => {
+  const NOME_LUNGO = 'SMARTPHONE-LUNGO';
+  const AVVISO_STALE = 'Fleet read failed: the cell list may not be up to date.';
+  const nodoRemoto = (extra = {}) => ({
+    name: NOME_LUNGO, label: NOME_LUNGO, route: ['relay'], instanceId: 'd'.repeat(32),
+    status: 'up', sessions: [], unmanaged: [], capabilities: [], engines: [],
+    cells: [{ cell: 'Dev', tmuxSession: 'host-Dev', tmux: true, active: true }],
+    ...extra,
+  });
+  const propsCon = (extra = {}) => ({
+    cells: [],
+    sessions: [],
+    nodeGroups: [nodoRemoto(extra)],
+    onPick: vi.fn(), onAddTile: vi.fn(), onSettings: vi.fn(),
+    onNodeRename: vi.fn(), onNodePower: vi.fn(),
+  });
+
+  it('con la lettura in errore il nome resta intero e il messaggio va nella sotto-riga', () => {
+    render(<Sidebar {...propsCon({ fleetState: 'stale' })} />);
+    const riga = screen.getByText(NOME_LUNGO).closest('.nc-node-title');
+    const main = riga.querySelector('.nc-node-main');
+    expect(main).toBeTruthy();
+    const nome = main.querySelector('b');
+    const sotto = main.querySelector('small');
+    // Il nome e' quello INTERO, e il messaggio non entra nel <b>.
+    expect(nome.textContent).toBe(NOME_LUNGO);
+    expect(nome.textContent).not.toContain('Fleet read failed');
+    // La sotto-riga porta conteggio e avviso, con il testo intero nel title.
+    expect(sotto.textContent).toContain(AVVISO_STALE);
+    expect(sotto.getAttribute('title')).toContain(AVVISO_STALE);
+    // Ordine nel contenitore: <b> prima, <small> dopo.
+    expect(main.firstElementChild.tagName).toBe('B');
+    expect(main.lastElementChild.tagName).toBe('SMALL');
+    // Il messaggio non e' discendente della riga del nome.
+    expect(nome.contains(sotto)).toBe(false);
+  });
+
+  it('la tendina della modalita\' chiude la riga, dopo il blocco nome e dopo ✎/power', () => {
+    render(<Sidebar {...propsCon({ direct: true, health: { state: 'ok', managed: true }, tunnelStatus: 'up' })} />);
+    const riga = screen.getByText(NOME_LUNGO).closest('.nc-node-title');
+    const main = riga.querySelector('.nc-node-main');
+    const tendina = riga.querySelector('.nc-node-filter');
+    expect(main).toBeTruthy();
+    expect(tendina).toBeTruthy();
+    // Dopo il blocco nome...
+    expect(main.compareDocumentPosition(tendina) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // ...e per ultima, dopo ✎ e power che restano nella riga.
+    expect(riga.querySelector('.nc-node-rename')).toBeTruthy();
+    expect(riga.querySelector('.nc-power')).toBeTruthy();
+    expect(riga.lastElementChild).toBe(tendina);
+  });
+
+  it('guardia CSS: il nome non si tronca da solo e la tendina ha larghezza fissa', () => {
+    const css = fs.readFileSync(resolve(process.cwd(), 'src/components/Sidebar.css'), 'utf8');
+    const blocco = (selettore) => {
+      const i = css.indexOf(`${selettore} {`);
+      expect(i, `${selettore} manca dal CSS`).toBeGreaterThan(-1);
+      return css.slice(i, css.indexOf('}', i));
+    };
+    const nomeCss = blocco('.nc-node-title .nc-node-main b');
+    expect(nomeCss).not.toMatch(/overflow\s*:\s*hidden/);
+    expect(nomeCss).not.toMatch(/text-overflow/);
+    const tendinaCss = blocco('.nc-node-filter');
+    expect(tendinaCss).toMatch(/flex\s*:\s*0\s+0\s+\d+px/);
+    expect(tendinaCss).toMatch(/width\s*:\s*\d+px/);
+  });
+});
+
+describe('Sidebar — badge Live', () => {
+  const props = (hostByRoute, engine = 'codex-vl.native') => ({
+    cells: [{ cell: 'Local Cell', tmuxSession: 'local-cell', engine, tmux: true, active: true }],
+    sessions: [], nodeGroups: [], hostByRoute,
+    onPick: vi.fn(), onAddTile: vi.fn(), onSettings: vi.fn(),
+  });
+
+  it('la striscia Live in testa mostra il badge solo con una Live viva', () => {
+    const { rerender } = render(<Sidebar {...props({ local: { hostCell: 'Local Cell', threadStatus: 'absent' } })} />);
+    expect(screen.queryByTestId('live-badge')).toBeNull();
+    rerender(<Sidebar {...props({ local: { hostCell: 'Local Cell', threadStatus: 'present' } })} />);
+    expect(screen.getByTestId('live-badge').getAttribute('data-mode')).toBe('native');
   });
 });

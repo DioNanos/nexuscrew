@@ -1,5 +1,5 @@
 'use strict';
-// tests/fleet-boot-finestra.test.js — rilievo 3 dell'audit pre-release 093:
+// tests/fleet-boot-finestra.test.js — rilievo 3 della verifica pre-release 093:
 // il draft della migrazione può essere più VECCHIO del confronto che lo
 // autorizza. `boot` nasce da una lettura (1); `migrateLegacyTmuxSessions`
 // gira in mezzo (una catena di chiamate tmux: finestra LARGA); il vecchio

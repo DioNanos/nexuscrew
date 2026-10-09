@@ -1,5 +1,5 @@
 // Banner condiviso (desktop Sidebar + mobile SessionList) per un fallimento di
-// persistenza del pin dopo un clear server riuscito. Il contratto (rev6 §2.1)
+// persistenza del pin dopo un clear server riuscito. Il contratto
 // chiede che l'errore sia SEGNALATO e RITENTABILE: questo e' UI, non console.
 // pinError = null -> non renderizza nulla.
 export default function PinPersistBanner({ pinError, onRetry, onDismiss }) {

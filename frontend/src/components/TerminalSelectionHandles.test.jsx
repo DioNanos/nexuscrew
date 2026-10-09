@@ -19,7 +19,7 @@ vi.mock('@xterm/xterm', () => ({
       this.textarea = document.createElement('textarea');
       this.options = {}; this.cols = 80; this.rows = 24;
       this.lineTexts = new Map(); this.getLineCalls = [];
-      // R25-zoom rev4: celle per glifi larghi (getWidth 2/0) e testo per cella.
+      // R25-zoom: celle per glifi larghi (getWidth 2/0) e testo per cella.
       this.cellMaps = new Map();
       const self = this;
       this.buffer = { active: {
@@ -38,7 +38,7 @@ vi.mock('@xterm/xterm', () => ({
               }
               return trimRight ? out.replace(/\s+$/, '') : out;
             },
-            // R25-zoom rev4: API pubblica di xterm per la parola e lo snap
+            // R25-zoom: API pubblica di xterm per la parola e lo snap
             // wide. Default: 1 char per cella, larghezza 1; i test wide
             // impostano cellMaps (chars + widths per riga).
             getCell(col) {
@@ -654,7 +654,7 @@ describe('R25 — sopravvivenza al redraw e testo sovrascritto', () => {
   });
 });
 
-describe('R25-zoom rev3-audit — drag su selezione nativa INVERTITA preesistente', () => {
+describe('R25-zoom — drag su selezione nativa INVERTITA preesistente', () => {
   it('end tirata verso l\'esterno: la maniglia si muove e il lato opposto (col 3) non sparisce', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
@@ -666,7 +666,7 @@ describe('R25-zoom rev3-audit — drag su selezione nativa INVERTITA preesistent
     term.selectionPosition = { start: { x: 7, y: 1 }, end: { x: 3, y: 1 } };
     term.selectionText = 'invertita';
     act(() => term.emitSelection());
-    // selRange normalizzato (rev3): start (1,3) → 30px, end (1,6) → 70px.
+    // selRange normalizzato: start (1,3) → 30px, end (1,6) → 70px.
     const h = handles(view);
     fireEvent.pointerDown(h.end, { clientX: 70, clientY: 40, pointerType: 'mouse' });
     fireEvent.pointerMove(window, { clientX: 200, clientY: 40, pointerType: 'mouse' });
@@ -698,7 +698,7 @@ describe('R25-zoom rev3-audit — drag su selezione nativa INVERTITA preesistent
   });
 });
 
-describe('R25-zoom rev5 — liveness: il drag non risuscita una selezione cancellata', () => {
+describe('R25-zoom — liveness: il drag non risuscita una selezione cancellata', () => {
   it('selezione cancellata a meta\' drag: il pointermove NON la fa ricomparire', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
@@ -717,7 +717,7 @@ describe('R25-zoom rev5 — liveness: il drag non risuscita una selezione cancel
   });
 });
 
-describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi larghi)', () => {
+describe('R25-zoom — selezione come Termux (punto esatto, parola, glifi larghi)', () => {
   function longPressAt(view, x, y) {
     const host = view.container.querySelector('.nc-terminal-host');
     fireEvent.touchStart(host, { touches: [{ clientX: x, clientY: y }] });
@@ -725,7 +725,7 @@ describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi l
     fireEvent.touchEnd(host, { changedTouches: [{ clientX: x, clientY: y }] });
   }
 
-  it('long-press: la selezione comincia alla riga premuta, non due righe sopra (rev4 #1)', () => {
+  it('long-press: la selezione comincia alla riga premuta, non due righe sopra', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
@@ -734,7 +734,7 @@ describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi l
     expect(term.selectCalls.at(-1).row).toBe(10);
   });
 
-  it('long-press su una parola: selezionata la parola intera (rev4 #2)', () => {
+  it('long-press su una parola: selezionata la parola intera', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
@@ -744,7 +744,7 @@ describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi l
     expect(term.selectCalls.at(-1)).toEqual({ col: 5, row: 10, length: 5 });
   });
 
-  it('long-press su uno spazio: resta una cella (rev4 #2)', () => {
+  it('long-press su uno spazio: resta una cella', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
@@ -754,7 +754,7 @@ describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi l
     expect(term.selectCalls.at(-1)).toEqual({ col: 4, row: 10, length: 1 });
   });
 
-  it('maniglia end trascinata dentro un glifo doppio (界): finisce al bordo destro, mai a meta\' (rev4 #3)', () => {
+  it('maniglia end trascinata dentro un glifo doppio (界): finisce al bordo destro, mai a meta\'', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
@@ -773,7 +773,7 @@ describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi l
     fireEvent.pointerUp(window, { pointerType: 'touch' });
   });
 
-  it('maniglia start trascinata dentro un glifo doppio (emoji): finisce al bordo sinistro (rev4 #3)', () => {
+  it('maniglia start trascinata dentro un glifo doppio (emoji): finisce al bordo sinistro', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
@@ -794,7 +794,7 @@ describe('R25-zoom rev4 — selezione come Termux (punto esatto, parola, glifi l
     fireEvent.pointerUp(window, { pointerType: 'touch' });
   });
 
-  it('long-press a meta\' di un glifo doppio: il punto iniziale va al bordo del glifo (rev4 #3)', () => {
+  it('long-press a meta\' di un glifo doppio: il punto iniziale va al bordo del glifo', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
@@ -939,7 +939,7 @@ describe('R34 — la bolla lente vicino alla maniglia attiva (pezzo 3)', () => {
     fireEvent.pointerUp(window, { pointerType: 'touch' });
   });
 
-  it('selezione invertita sulla stessa riga: la bolla mostra il segmento vero, non la colonna dell\'ancora (R25-zoom rev3)', () => {
+  it('selezione invertita sulla stessa riga: la bolla mostra il segmento vero, non la colonna dell\'ancora', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
@@ -953,7 +953,7 @@ describe('R34 — la bolla lente vicino alla maniglia attiva (pezzo 3)', () => {
     fireEvent.pointerUp(window, { pointerType: 'touch' });
   });
 
-  it('selezione invertita multi-riga: la bolla mostra la riga e lo span della start vera (R25-zoom rev3)', () => {
+  it('selezione invertita multi-riga: la bolla mostra la riga e lo span della start vera', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];
@@ -971,7 +971,7 @@ describe('R34 — la bolla lente vicino alla maniglia attiva (pezzo 3)', () => {
     fireEvent.pointerUp(window, { pointerType: 'touch' });
   });
 
-  it('selezione invertita: le maniglie NON sono scambiate, start a sinistra di end con +1 sulla fine vera (R25-zoom rev3)', () => {
+  it('selezione invertita: le maniglie NON sono scambiate, start a sinistra di end con +1 sulla fine vera', () => {
     const view = renderTerminal();
     terminalBounds(view.container.querySelector('.nc-terminal-host'));
     const term = fixture.instances[0];

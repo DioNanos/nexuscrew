@@ -7,7 +7,7 @@
 // veniva rifiutato al ripristino — fail-closed corretto, ma con i dati persi e
 // nessuna spiegazione. Il requisito era soddisfatto solo dal file grezzo.
 //
-// Rilievo dell'audit indipendente (Q2): la stessa firma del difetto di
+// Rilievo della verifica indipendente (Q2): la stessa firma del difetto di
 // `draftFrom`, a un confine diverso.
 const { test } = require('node:test');
 const assert = require('node:assert');

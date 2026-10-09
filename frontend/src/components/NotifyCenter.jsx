@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
-import { getAsks, answerAsk, dismissAsk, relayAskAnswer, relayAskDismiss, relayAskDismissLocal, relayAskVerify, getFeedState, getAskRelayState, getAskReplyCapability } from '../lib/api.js';
-import { mergeRemoteNotices, toRemoteNotice, normalizeTs, boundedByTs } from '../lib/remote-notices.js';
+import { getAsks, answerAsk, dismissAsk, relayAskAnswer, relayAskDismiss, relayAskDismissLocal, relayAskVerify, getFeedState, getAskRelayState, getAskReplyCapability, relayNoticeDismiss, relayNoticeDismissAll } from '../lib/api.js';
+import { mergeRemoteNotices, toRemoteNotice, normalizeTs, boundedByTs, noticeKeyOf } from '../lib/remote-notices.js';
 import { connectEvents } from '../lib/events.js';
 import { useNotificationSpeech } from '../hooks/useNotificationSpeech.js';
 import {
@@ -11,7 +11,7 @@ import {
 import Icon from './Icon.jsx';
 import './NotifyCenter.css';
 
-// Centro notifiche del MCP bridge (design §3): toast non intrusivi per le
+// Centro notifiche del MCP bridge: toast non intrusivi per le
 // notify delle celle + pannello degli ask aperti (textarea/bottoni opzioni →
 // POST answer) con badge contatore. Presente in OGNI vista (mobile e desktop):
 // App lo monta come overlay, lo stato arriva via SSE (/api/events) con un
@@ -44,7 +44,35 @@ const feedViewStateOf = (health, ownerId) => {
 // Il tombstone ha un TTL: un id riusato dopo un reset dell'owner non resta
 // nascosto per sempre.
 const DISMISSED_TTL_MS = 10 * 60 * 1000;
+// Recupero senza SSE. Se la SSE non si apre (o resta giù senza
+// riaprirsi), una rilettura periodica limitata di /api/asks e /api/feed-state
+// recupera ASK e notice senza reload; si ferma appena la SSE apre (l'open
+// già rilancia le letture) e il backoff riparte dal base alla riapertura.
+const ASK_RECOVERY_POLL_MS = 30 * 1000;
+const ASK_RECOVERY_POLL_MAX_MS = 5 * 60 * 1000;
 const dismissedAsks = new Map(); // askKeyOf -> timestamp
+// Le notifiche IMPORTATE che QUESTA interfaccia ha scartato (dismiss confermato
+// dall'owner, oppure frame di chiusura). Speculare a dismissedAsks: senza
+// memoria, la rilettura dell'arretrato — che funziona — rimette la card al giro
+// successivo, e un frame live ripetuto la rimette subito. Il TTL e' quello dello
+// store dell'owner (15 min): un id riusato dopo un reset non resta nascosto per
+// sempre.
+const DISMISSED_NOTICES_TTL_MS = 15 * 60 * 1000;
+const dismissedNotices = new Map(); // noticeKey -> timestamp
+function noteNoticeDismissed(key) {
+  dismissedNotices.set(key, Date.now());
+  if (dismissedNotices.size > 4096) dismissedNotices.delete(dismissedNotices.keys().next().value);
+}
+function noticeStillDismissed(key) {
+  const at = dismissedNotices.get(key);
+  if (at === undefined) return false;
+  if (Date.now() - at > DISMISSED_NOTICES_TTL_MS) { dismissedNotices.delete(key); return false; }
+  return true;
+}
+// L'area dell'avviso e' una sola per gli ask e per le notifiche: qui si tiene la
+// mappa stato -> chiave i18n, e una chiave gia' completa passa com'e'.
+const DISMISSAL_NOTICE_KEYS = { pending: 'ask-dismiss-local-pending', blocked: 'ask-dismiss-local-blocked' };
+const dismissalNoticeKey = v => DISMISSAL_NOTICE_KEYS[v] || v;
 const generationTsOf = a => Object.hasOwn(a, 'ownerAskTs') ? a.ownerAskTs : a.ownerAskId || a.originNode ? null : a.ts;
 
 function noteAskDismissed(key, localAsk) {
@@ -130,9 +158,14 @@ function AskCard({ ask, token, onAnswered, onDismiss, askReplyAccess = false, fe
   const [blockedOriginal, setBlockedOriginal] = useState(false);
   const requestIdRef = useRef(null);
   useEffect(() => { if (initialUncertainRid) setUncertainRid(initialUncertainRid); }, [initialUncertainRid]);
+  // La X di una card federata è sempre usabile sul nodo che la visualizza:
+  // togliere la card è un intento locale, non una risposta, e non dipende dai
+  // permessi dell'owner. Con il grant remoto la X chiude anche sull'owner,
+  // altrimenti scarta solo qui. Solo il caricamento della capability e una
+  // risposta in volo incerta restano blocchi.
   const dismissBlocked = dismissing || busy || !!uncertainRid || blockedOriginal
-    || (!!ask.ownerId && (['loading', 'unsupported'].includes(capabilityStatus) || (!canDismissLocal && !canDismissRemote)));
-  const dismissLocally = !!ask.ownerId && canDismissLocal === true;
+    || (!!ask.ownerId && capabilityStatus === 'loading');
+  const dismissLocally = !!ask.ownerId && !canDismissRemote;
 
   const send = async (value) => {
     const answer = String(value || '').trim();
@@ -284,6 +317,10 @@ export default function NotifyCenter({ token }) {
   const [refreshVersion, setRefreshVersion] = useState(0);
   const closedAsks = useRef(new Map());
   const liveRevision = useRef(0);
+  // Ordine MONOTONO di arrivo delle card notifiche: un timestamp non distingue
+  // due operazioni nello stesso millisecondo, questo si. Crescente a ogni
+  // frame live; la lettura cattura il valore corrente come soglia.
+  const noticeArrivalSeq = useRef(0);
   const liveAsks = useRef(new Map());
   const ownerSnapshots = useRef(new Map());
   const alertAdmissions = useRef(new Map());
@@ -430,17 +467,97 @@ export default function NotifyCenter({ token }) {
     setAsks((cur) => cur.filter((a) => askKeyOf(a.id, a.ownerId, a.ownerAskId) !== key));
   };
 
+  // X di una card remota: l'intento e' locale e viene onorato subito; la
+  // consegna all'owner puo' restare in coda (`pending`) o non essere autorizzata
+  // (`blocked`) — in entrambi i casi la card esce e l'avviso lo dice. Solo un
+  // rifiuto o un errore vero la lasciano al suo posto.
+  const dismissRemoteNotice = async (n) => {
+    setDismissalNotice(null);
+    try {
+      const out = await relayNoticeDismiss(token, { ownerId: n.ownerId, eventId: n.eventId });
+      if (!out || out.dismissed !== true) throw new Error(t('remote-notices-dismiss-failed'));
+      if (out.ownerSync === 'pending' || out.ownerSync === 'blocked') setDismissalNotice(out.ownerSync);
+      noteNoticeDismissed(n.key);
+      setRemoteNotices((cur) => cur.filter((x) => x.key !== n.key));
+    } catch (_) {
+      setDismissalNotice('remote-notices-dismiss-failed');
+    }
+  };
+
+  // «Pulisci»: UN dismiss-all per gli owner DISTINTI delle card visibili (e' la
+  // richiesta che sta dentro il budget dell'owner). Gli esiti sono per-owner e
+  // possono essere parziali: chi e' stato raggiunto perde le sue card, chi ha
+  // rifiutato le tiene, e la differenza si dichiara invece di sparire.
+  const clearRemoteNotices = async () => {
+    const visible = remoteNotices;
+    const owners = [...new Set(visible.map((n) => n.ownerId))];
+    if (owners.length === 0) return;
+    setDismissalNotice(null);
+    try {
+      const out = await relayNoticeDismissAll(token, { owners });
+      const results = (out && out.results) || {};
+      const cleared = new Set();
+      let outcome = null;
+      for (const ownerId of owners) {
+        const r = results[ownerId];
+        if (!r || r.failed) { if (outcome !== 'blocked') outcome = 'failed'; continue; }
+        if (r.blocked) outcome = 'blocked';
+        else if (r.pending && outcome !== 'blocked' && outcome !== 'failed') outcome = 'pending';
+        cleared.add(ownerId);
+      }
+      for (const n of visible) if (cleared.has(n.ownerId)) noteNoticeDismissed(n.key);
+      setRemoteNotices((cur) => cur.filter((n) => !cleared.has(n.ownerId)));
+      if (outcome === 'blocked') setDismissalNotice('blocked');
+      else if (outcome === 'failed') setDismissalNotice('remote-notices-clear-failed');
+      else if (outcome === 'pending') setDismissalNotice('pending');
+    } catch (_) {
+      setDismissalNotice('remote-notices-clear-failed');
+    }
+  };
+
   // Fetch iniziale ask aperti + canale SSE. Entrambi best-effort: la UI resta
   // usabile anche senza il canale (gli ask ricompaiono al prossimo mount).
   useEffect(() => {
     if (!token) return undefined;
+    let alive = true;
+    let streamOpen = false;
+    let recoveryTimer = null;
+    let recoveryDelay = ASK_RECOVERY_POLL_MS;
+    const stopRecovery = () => {
+      if (recoveryTimer !== null) clearTimeout(recoveryTimer);
+      recoveryTimer = null;
+    };
+    const scheduleRecovery = () => {
+      if (!alive || streamOpen || recoveryTimer !== null) return;
+      recoveryTimer = setTimeout(() => {
+        recoveryTimer = null;
+        if (!alive || streamOpen) return;
+        setRefreshVersion(v => v + 1);
+        recoveryDelay = Math.min(recoveryDelay * 2, ASK_RECOVERY_POLL_MAX_MS);
+        scheduleRecovery();
+      }, recoveryDelay);
+    };
     const close = connectEvents(token, (frame) => {
+      if (!alive) return;
       if (frame.type === 'feed-state-changed') { setRefreshVersion(v => v + 1); return; }
       if (frame.type === 'notify' && frame.ownerId && frame.eventId) {
         // Importato live: entra nella lista consultabile (dedup con l'arretrato
         // per (ownerId,eventId)); nessun toast/speaker aggiuntivo per la card.
+        // Una card scartata non rientra, nemmeno se il frame si ripete.
         const card = toRemoteNotice(frame, frame.ownerId);
-        if (card) setRemoteNotices((cur) => boundedByTs(mergeRemoteNotices(cur, [card], null)));
+        if (card) card.arrivalSeq = ++noticeArrivalSeq.current;
+        if (card && !noticeStillDismissed(card.key)) setRemoteNotices((cur) => boundedByTs(mergeRemoteNotices(cur, [card], null)));
+      }
+      if (frame.type === 'notify-dismissed') {
+        // Chiusura decisa altrove (owner o altro dispositivo): la card di QUELL'owner
+        // sparisce qui e resta nascosta all'arretrato che la contenesse ancora.
+        const ownerId = String(frame.ownerId || ''), eventId = String(frame.eventId || '');
+        if (ownerId && eventId) {
+          const key = noticeKeyOf(ownerId, eventId);
+          noteNoticeDismissed(key);
+          setRemoteNotices((cur) => cur.filter((n) => n.key !== key));
+        }
+        return;
       }
       if (frame.type === 'notify') pushToast(frame);
       else if (frame.type === 'ask' && frame.ask && frame.ask.id) {
@@ -461,8 +578,21 @@ export default function NotifyCenter({ token }) {
         noteAskDismissed(key, frame.scope === 'local' ? localAsk || { ...frame.askGeneration, ownerAskTs: frame.ownerAskTs } : null);
         removeAsk(identity.id, identity.ownerId, identity.ownerAskId, frame);
       }
-    }, () => { refreshCapabilities(true); setRefreshVersion(v => v + 1); });
-    return () => { close(); };
+    }, () => {
+      if (!alive) return;
+      // SSE aperta: — il recupero si ferma e il backoff riparte.
+      streamOpen = true;
+      recoveryDelay = ASK_RECOVERY_POLL_MS;
+      stopRecovery();
+      refreshCapabilities(true);
+      setRefreshVersion(v => v + 1);
+    }, () => {
+      if (!alive) return;
+      streamOpen = false;
+      scheduleRecovery();
+    });
+    scheduleRecovery();
+    return () => { alive = false; stopRecovery(); close(); };
   }, [token, pushToast, refreshCapabilities]);
 
   useEffect(() => {
@@ -499,6 +629,10 @@ export default function NotifyCenter({ token }) {
   useEffect(() => {
     let alive = true;
     const started = liveRevision.current;
+    // Soglia monotona di avvio lettura: le card con ordine d'arrivo successivo
+    // sono piu' nuove della pagina e sopravvivono alla riconciliazione
+    // (vedi mergeRemoteNotices) — indipendentemente dal wall clock.
+    const readArrivalSeq = noticeArrivalSeq.current;
     getFeedState(token).then((j) => {
       if (!alive) return;
       const health = {};
@@ -525,7 +659,7 @@ export default function NotifyCenter({ token }) {
         const cursor = typeof v.cursor === 'string' && /^([1-9]\d*):(\d+)$/.exec(v.cursor);
         return v.stale === false && Number.isSafeInteger(v.viewEpoch) && v.viewEpoch > 0
           && cursor && Number(cursor[1]) === v.viewEpoch && Number.isSafeInteger(Number(cursor[2]))
-          && !v.lastError && !v.error && v.resyncRequired !== true && Array.isArray(v.asks) && v.asks.length < 100;
+          && !v.lastError && !v.error && v.resyncRequired !== true && Array.isArray(v.asks) && v.asks.length <= 100;
       }).map(v => v.ownerId));
       for (const ownerId of authoritative) {
         ownerSnapshots.current.delete(ownerId); ownerSnapshots.current.set(ownerId, ++liveRevision.current);
@@ -534,12 +668,16 @@ export default function NotifyCenter({ token }) {
       setAsks(cur => mergeAsks(cur.filter(a => !authoritative.has(a.ownerId) || (liveAsks.current.get(askKeyOf(a.id, a.ownerId, a.ownerAskId)) || 0) > started), filterClosed(imported)));
       // Rebuild dall'arretrato: le card di una view revocata cadono qui; le
       // card arrivate via SSE di un owner ancora attivo restano (dedup per key).
-      setRemoteNotices((cur) => {
-        const merged = [];
-        for (const c of cur) if (keepOwners.has(c.ownerId)) merged.push(c);
-        for (const c of notices.values()) merged.push({ ...c, key: c.key });
-        return boundedByTs(merged);
-      });
+      // Le scartate non rientrano: il loro tombstone vive in dismissedNotices.
+      setRemoteNotices((cur) => boundedByTs(mergeRemoteNotices(
+        cur.filter((n) => !noticeStillDismissed(n.key)),
+        [...notices.values()].filter((n) => !noticeStillDismissed(n.key)),
+        keepOwners,
+        // Una view AUTOREVOLE e fresca e' l'elenco: una card che non elenca e'
+        // una chiusura di cui questo browser ha perso il frame live, e va via
+        // anche se il pannello restava aperto. Le view stale/incomplete/marcate
+        // non riconciliano, e una card arrivata dopo l'avvio della lettura resta.
+        { owners: authoritative, arrivedAfter: (n) => (n.arrivalSeq || 0) > readArrivalSeq })));
     }).catch(() => {});
     return () => { alive = false; };
   }, [token, refreshVersion]);
@@ -547,7 +685,7 @@ export default function NotifyCenter({ token }) {
   return (
     <>
       {dismissalNotice && <div className="nc-ntf-toasts"><div className="nc-ntf-toast" role="status">
-        <div className="nc-ntf-toast-txt">{t(dismissalNotice === 'blocked' ? 'ask-dismiss-local-blocked' : 'ask-dismiss-local-pending')}</div>
+        <div className="nc-ntf-toast-txt">{t(dismissalNoticeKey(dismissalNotice))}</div>
         <button type="button" className="nc-ntf-x" title={t('close')} onClick={() => setDismissalNotice(null)}><Icon name="x" size={14} /></button>
       </div></div>}
       {toasts.length > 0 && (
@@ -584,10 +722,20 @@ export default function NotifyCenter({ token }) {
               onAnswered={removeAsk} onDismiss={removeAsk} />)}
             {remoteNotices.length > 0 && (
               <div className="nc-remote-notices">
-                <div className="nc-remote-notices-head"><b>{t('remote-notices-title')}</b></div>
+                <div className="nc-remote-notices-head"><b>{t('remote-notices-title')}</b>
+                  <button type="button" className="nc-remote-notices-clear" onClick={clearRemoteNotices}>
+                    {t('remote-notices-clear')}
+                  </button>
+                </div>
                 {remoteNotices.map((n) => (
                   <div key={n.key} className={'nc-remote-notice' + (n.urgency === 'high' ? ' nc-remote-notice-high' : '')}>
-                    {n.title ? <b>{n.title}</b> : null}
+                    <div className="nc-remote-notice-head">
+                      {n.title ? <b>{n.title}</b> : null}
+                      <button type="button" className="nc-ntf-x" title={t('remote-notices-dismiss')}
+                        aria-label={t('remote-notices-dismiss')} onClick={() => dismissRemoteNotice(n)}>
+                        <Icon name="x" size={14} />
+                      </button>
+                    </div>
                     {n.body ? <div>{n.body}</div> : null}
                     <div className="nc-remote-notice-meta">
                       {n.ownerId.slice(0, 8)} · {new Date(n.ts || Date.now()).toLocaleString()}

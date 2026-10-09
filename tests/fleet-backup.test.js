@@ -106,7 +106,7 @@ test('fleet backup: panelUrl engine INVALIDO rifiuta l\'engine, non viene scarta
     'custom con panelUrl invalido: backup rifiutato');
 });
 
-// --- NC-D: il nome deve sopravvivere al round-trip COMPLETO della PWA -------
+// --- il nome deve sopravvivere al round-trip COMPLETO della PWA -------
 // Non basta che lo schema accetti `label` in ingresso: il backup lo perde se
 // l'export non lo scrive o se il restore non lo rimette nella definizione. Il
 // giro qui sotto e' quello vero della PWA — export, serializzazione, parse,

@@ -1,5 +1,5 @@
 'use strict';
-// Fetta 2b — deadline unica D (contratto rev28 IC1, come emendato da rev29).
+// Fetta 2b — deadline unica D (IC1).
 //
 // IC1.1: esiste UNA sola deadline D per (cella, incarnazione): il bound
 // persistito e l'expiry del proof SONO LO STESSO VALORE. Il test T1 lo prova
@@ -9,8 +9,7 @@
 // producibile. I clock congelati delle suite storiche nascondevano il difetto
 // per incidente, non per proprietà.
 //
-// Qui ogni test porta il tag della norma che pinna (T1..T7 del piano fetta 2b,
-// vedi outbox 2026-08-26_piano-fetta2b-ic1.md). I controlli negativi «uno per
+// Qui ogni test porta il tag della norma che pinna (T1..T7 della fetta 2b). I controlli negativi «uno per
 // guardia» vivono nel referto di handoff con l'output incollato.
 
 const { test, after } = require('node:test');

@@ -1,5 +1,5 @@
 'use strict';
-// R31-A3 (seguito dell'audit su 44d4f62): il legame fra etichetta e misura
+// R31-A3 (seguito della verifica su 44d4f62): il legame fra etichetta e misura
 // nella risposta FEDERATA. L'e2e (notify-federation-e2e.test.js) non puo'
 // asserirlo: il dispatcher propaga solo lo status — i conteggi muoiono in
 // forward() (R1/rc.14) — quindi `out.delivered` oltre il dispatcher e'
@@ -63,7 +63,7 @@ test('federata zero consegne: no-delivery CON la misura che lo giustifica', asyn
   const out = await res.json();
   assert.equal(res.status, 200, JSON.stringify(out));
   assert.equal(out.status, 'no-delivery', JSON.stringify(out));
-  // L'etichetta e' legata alla misura (rilievo audit): 'no-delivery' vale
+  // L'etichetta e' legata alla misura: 'no-delivery' vale
   // solo se i conteggi che lo giustificano sono davvero zero.
   assert.strictEqual(out.delivered.ui, 0, JSON.stringify(out));
   assert.strictEqual(out.delivered.push, 0, JSON.stringify(out));

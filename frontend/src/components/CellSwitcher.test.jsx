@@ -10,6 +10,38 @@ vi.mock('../lib/api.js', () => ({
   apiFetch: mocks.apiFetch, fleetStatus: mocks.fleetStatus, getRouteSessions: mocks.getRouteSessions,
   getLiveHost: mocks.getLiveHost, designateHostCell: mocks.designateHostCell, clearHostCell: mocks.clearHostCell,
 }));
+// Il drawer consuma i gruppi della lista principale (hook useNodes): nei test
+// i gruppi sono quelli dello snapshot che ogni caso scrive, cosi' i casi che
+// aggiornano lo snapshot a meta' test continuano a vedere il mondo cambiare.
+vi.mock('../hooks/useNodes.js', async () => {
+  const cache = await import('../lib/cell-switcher-cache.js');
+  return { useNodesState: () => ({ groups: (cache.readCellSwitcherSnapshot() || {}).nodeGroups || [], hasLoaded: true }) };
+});
+// Il locale del drawer vive nel treno condiviso: nei test il treno risponde
+// con i mock di api (sessions + fleet locale), cosi' i casi che cambiano i
+// mock cambiano il mondo del drawer senza timer da 4 secondi.
+vi.mock('../lib/fleet-poll.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    subscribeFleetRoute: (_token, route, onSnapshot) => {
+      if (route.length) return () => {};
+      const emit = async () => {
+        try {
+          const res = await mocks.apiFetch('/api/sessions', 'token');
+          const sessions = await res.json();
+          const fs = await mocks.fleetStatus('token', []);
+          onSnapshot({ sessionsJson: JSON.stringify(sessions), sessionsError: null, fs, fleetError: null });
+        } catch (_) {
+          onSnapshot({ sessionsJson: null, sessionsError: 'mock', fs: null, fleetError: null });
+        }
+      };
+      emit();
+      const id = setInterval(emit, 100);
+      return () => clearInterval(id);
+    },
+  };
+});
 // Le sorgenti pesanti del popup fanno rete (ws, ticket del pannello): stub
 // con traccia delle props, stesso pattern di GridTile.test.jsx.
 vi.mock('./Terminal.jsx', () => ({ default: (props) => (
@@ -95,14 +127,18 @@ describe('CellSwitcher', () => {
     const remote = await screen.findByRole('button', { name: /^Remote / });
     expect(remote).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Degraded / }).getAttribute('aria-disabled')).toBe('true');
+    // La pillola di default è «Attive»: la cella spenta NON compare, anche se
+    // il filtro del nodo senza preferenze vale 'all' e la lascerebbe passare.
+    // «Tutte» la ripristina come riga disabilitata (vedi i test dedicati).
     expect(screen.queryByRole('button', { name: /^cell-Three / })).toBeNull();
-    expect(screen.queryByRole('button', { name: /^Stale Cell / })).toBeNull();
+    // Stale Cell e' una cella VIVA del suo gruppo (tmux nota): come la
+    // principale, e' apribile — l'etichetta del nodo dice altro, la riga no.
+    expect(screen.getByRole('button', { name: /^Stale Cell / }).getAttribute('aria-disabled')).toBe('false');
     expect(screen.getByRole('button', { name: 'close cell switcher' })).toBeTruthy();
-    await waitFor(() => {
-      expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['hub']);
-      expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['stale']);
-      expect(mocks.getRouteSessions).toHaveBeenCalledWith('token', ['alerts']);
-    });
+    // Il drawer non ha più un proprio canale: NESSUNA lettura per-route parte
+    // da qui (i gruppi arrivano dalla lista principale, hook useNodes).
+    expect(mocks.fleetStatus).not.toHaveBeenCalledWith('token', ['hub']);
+    expect(mocks.getRouteSessions).not.toHaveBeenCalledWith('token', ['alerts']);
 
     // Il PRIMO tocco seleziona (anteprima in alto, riga blu col badge del
     // gesto); il SECONDO sulla stessa riga apre, e il ricontrollo fresco lo
@@ -145,12 +181,53 @@ describe('CellSwitcher', () => {
       };
     });
     mocks.getRouteSessions.mockResolvedValue({ sessions: [] });
+    // La modalità attiva del NODO tiene fuori la cella spenta: il drawer
+    // segue la stessa vista della lista principale, non un filtro proprio.
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ hub: { filter: 'active' } }));
     render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
     await screen.findByRole('button', { name: /^cell-One / });
-    await waitFor(() => expect(mocks.fleetStatus).toHaveBeenCalledWith('token', ['hub']));
     expect(screen.queryByRole('button', { name: /^Ghost Off / })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'all' }));
     expect(screen.getByRole('button', { name: /^Ghost Off / }).getAttribute('aria-disabled')).toBe('true');
+  });
+
+  // La pillola «Attive» è un gate DI RIGA, non un filtro del nodo: qualunque
+  // preferenza abbia salvato il nodo (nulla, 'all', 'pinned'), la cella spenta
+  // non compare; «Tutte» la ripristina come riga disabilitata. Il caso
+  // 'active' lo copre il test degradato qui sopra.
+  it('pillola «Attive», nodo SENZA preferenza: la spenta non compare, «Tutte» la ripristina disabilitata', async () => {
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    // Nessuna preferenza salvata: il filtro del nodo vale 'all', ma la pillola
+    // toglie la riga spenta lo stesso.
+    expect(screen.queryByRole('button', { name: /^cell-Three / })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    expect(screen.getByRole('button', { name: /^cell-Three / }).getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('pillola «Attive», nodo su «all»: la spenta non compare, «Tutte» la ripristina disabilitata', async () => {
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ local: { filter: 'all' } }));
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    // Il nodo mostra tutto per scelta: la pillola resta comunque un gate di riga.
+    expect(screen.queryByRole('button', { name: /^cell-Three / })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    expect(screen.getByRole('button', { name: /^cell-Three / }).getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('pillola «Attive», nodo su «pinned» con la spenta pinnata: la spenta non compare, «Tutte» la ripristina disabilitata', async () => {
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ local: { filter: 'pinned' } }));
+    localStorage.setItem('nc_pins', JSON.stringify([positionKey([], 'cloud-cell-Three')]));
+    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
+    // Con il filtro 'pinned' del nodo resterebbe SOLO la spenta pinnata: la
+    // pillola la toglie, e del gruppo locale non si vede nessuna riga. Il
+    // gruppo hub (nessuna preferenza) tiene la sua cella viva.
+    await screen.findByRole('button', { name: /^Remote / });
+    expect(screen.queryByRole('button', { name: /^cell-Three / })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^cell-One / })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    expect(screen.getByRole('button', { name: /^cell-Three / }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('button', { name: /^cell-One / })).toBeTruthy();
   });
 
   it('renders each distinct local cell exactly once (no client-side doubling)', async () => {
@@ -284,6 +361,12 @@ describe('CellSwitcher', () => {
     // l'anteprima si chiude da sé. L'alternativa — il contenuto di un'altra
     // cella creduta la propria — è il difetto che questo test tiene chiuso.
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [] }));
+    // La cella sparisce MA la sessione tmux resta: la riga diventa unmanaged
+    // con la STESSA chiave e l'anteprima resta valida (il flusso e' vivo).
+    // Solo quando sparisce anche la SESSIONE la chiave non risolve piu'
+    // niente e l'anteprima si chiude da se'.
+    await waitFor(() => expect(screen.queryByTestId('cell-switcher-anteprima')).not.toBeNull(), { timeout: 4000 });
+    mocks.apiFetch.mockResolvedValue({ json: vi.fn().mockResolvedValue({ sessions: [] }) });
     await waitFor(() => expect(screen.queryByTestId('cell-switcher-anteprima')).toBeNull(), { timeout: 4000 });
   });
 
@@ -478,10 +561,13 @@ describe('CellSwitcher', () => {
     // non è riuscita, la cella NON è stata trovata spenta.
     mocks.fleetStatus.mockImplementation(async () => { throw new Error('HTTP 502'); });
     fireEvent.click(remote); // primo tocco: seleziona
-    fireEvent.click(remote); // secondo tocco: apre con la verifica
-    expect(await screen.findByText('Could not verify: try again shortly.')).toBeTruthy();
+    fireEvent.click(remote); // secondo tocco: la verifica NON riesce
+    // La lettura fallita non ha trovato la cella spenta: la riga e' quella
+    // della lista principale, che apre con la sola tmux nota. Si APRE, e non
+    // dice NE «spenta» (menzogna) NE «non verificata» (blocco inutile).
+    await waitFor(() => expect(onPick).toHaveBeenCalledWith({ session: 'cloud-Remote', node: 'hub', cellName: 'Remote' }));
     expect(screen.queryByText('this cell is no longer active')).toBeNull();
-    expect(onPick).not.toHaveBeenCalled();
+    expect(screen.queryByText('Could not verify: try again shortly.')).toBeNull();
   });
 
   it('aprire una cella VERIFICATA spenta dice ancora «non è più attiva»', async () => {
@@ -500,21 +586,18 @@ describe('CellSwitcher', () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 
-  it('clicking a row whose status could not be read says not confirmed, not no longer active', async () => {
-    // Primo refresh con lettura flotta fallita: le righe restano (ultimo
-    // snapshot noto) come «status not confirmed» — cliccarle non può dire
-    // «non più attiva», perché nessuno ha potuto leggerle.
+  it('a row whose fleet read fails stays, shows its last known state and opens like the main list', async () => {
+    // A failed fleet read preserves the last known list and its state.
+    // Selecting that main-list row opens the known tmux session.
+    const onPick = vi.fn();
     mocks.fleetStatus.mockImplementation(async () => { throw new Error('HTTP 502'); });
-    render(<Switcher token="token" current={{}} onPick={vi.fn()} onClose={vi.fn()} />);
-    await screen.findByRole('button', { name: 'all' });
-    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    render(<Switcher token="token" current={{}} onPick={onPick} onClose={vi.fn()} />);
     const dev = await screen.findByRole('button', { name: /^cell-One / });
-    expect(dev.textContent).toContain('status not confirmed');
+    expect(dev.textContent).toContain('working');
+    expect(dev.textContent).not.toContain('status not confirmed');
     fireEvent.click(dev);
-    // Il notice ha role="status" proprio: le righe portano lo stesso testo
-    // come <small>, findByText sarebbe ambiguo.
-    const notice = await screen.findByRole('status');
-    expect(notice.textContent).toBe('status not confirmed');
+    fireEvent.click(dev);
+    await waitFor(() => expect(onPick).toHaveBeenCalledWith({ session: 'cloud-cell-One', cellName: 'cell-One' }));
     expect(screen.queryByText('this cell is no longer active')).toBeNull();
   });
 });
@@ -702,7 +785,7 @@ describe('CellSwitcher side key', () => {
     expect(altra.getAttribute('title')).toBe(t('cell-switcher-side-add'));
     expect(altra.getAttribute('aria-label')).toBe(t('cell-switcher-side-add'));
     // L'icona è a tratto (fill none, currentColor): un SVG senza attributi
-    // qui riempiva il rettangolo di nero — il quadrato pieno dell'audit B4.
+    // qui riempiva il rettangolo di nero — il quadrato pieno di B4.
     const icona = altra.querySelector('svg');
     expect(icona).toBeTruthy();
     expect(icona.getAttribute('fill')).toBe('none');
@@ -765,5 +848,159 @@ describe('CellSwitcher side key', () => {
 
     fireEvent.click(tasto);
     expect(onToggleSide).not.toHaveBeenCalled();
+  });
+});
+
+describe('quick cell list follows the normal list ordering', () => {
+  const northId = 'a'.repeat(32);
+  const southId = 'b'.repeat(32);
+  const keyOf = (route, tmux) => positionKey([route], tmux);
+  const positionLabels = () => [...document.querySelectorAll('.nc-cell-switcher-position')].map((e) => e.textContent);
+  const groupRole = (text) => (text.includes('Node-Local') ? 'local' : text.includes('South') ? 'south' : 'north');
+  const rowKeys = () => [...document.querySelectorAll('[data-roster-key]')].map((e) => e.dataset.rosterKey);
+  const mgmFeed = [
+    { ...active('Cell-1', 'north-c1'), activity: 40 },
+    { ...active('Cell-2', 'north-c2'), activity: 30 },
+    { ...active('Cell-3', 'north-c3'), activity: 20 },
+    { ...active('Cell-4', 'north-c4'), activity: 10 },
+  ];
+  const vpsFeed = [
+    { ...active('Cell-A', 'south-c1'), activity: 40 },
+    { ...active('Cell-B', 'south-c2'), activity: 30 },
+    { ...active('Cell-C', 'south-c3'), activity: 20 },
+    { ...active('Cell-D', 'south-c4'), activity: 10 },
+  ];
+  // Ordine di arrivo dal feed: il nodo hub prima del nodo edge.
+  const writeFixtureSnapshot = () => writeCellSwitcherSnapshot({
+    sessions: [{ name: 'cloud-cell-One', activity: 10, working: true }],
+    cells: [active('cell-One', 'cloud-cell-One')],
+    localFresh: true,
+    nodeGroups: [
+      { route: ['north'], label: 'North', instanceId: northId, sessions: [], cells: mgmFeed },
+      { route: ['south'], label: 'South', instanceId: southId, sessions: [], cells: vpsFeed },
+    ],
+  });
+
+  it('node groups follow the user node order and pinned cells keep the manual order', async () => {
+    writeFixtureSnapshot();
+    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${southId}`, `id:${northId}`]));
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ south: { filter: 'pinned' } }));
+    const southOrder = [keyOf('south', 'south-c3'), keyOf('south', 'south-c4'), keyOf('south', 'south-c1'), keyOf('south', 'south-c2')];
+    localStorage.setItem('nc_pins', JSON.stringify(southOrder));
+    localStorage.setItem('nc_sidebar_order_v1', JSON.stringify({ south: southOrder }));
+    mocks.getRouteSessions.mockImplementation(async (_token, route) => {
+      if (route.join('/') === 'north') return { sessions: [
+        { name: 'north-c1', activity: 40 }, { name: 'north-c2', activity: 30 },
+        { name: 'north-c3', activity: 20 }, { name: 'north-c4', activity: 10 },
+      ] };
+      if (route.join('/') === 'south') return { sessions: [
+        { name: 'south-c1', activity: 40 }, { name: 'south-c2', activity: 30 },
+        { name: 'south-c3', activity: 20 }, { name: 'south-c4', activity: 10 },
+      ] };
+      return { sessions: [] };
+    });
+    mocks.fleetStatus.mockImplementation(async (_token, route = []) => {
+      if (route.join('/') === 'north') return { available: true, cells: mgmFeed };
+      if (route.join('/') === 'south') return { available: true, cells: vpsFeed };
+      if (!route.length) return { available: true, cells: [active('cell-One', 'cloud-cell-One')] };
+      return { available: true, cells: [] };
+    });
+
+    render(<Switcher token="token" current={{}} localNodeLabel="Node-Local" onPick={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    // Le righe remote arrivano col primo ciclo di refresh verificato.
+    await new Promise((r) => setTimeout(r, 300));
+    await waitFor(() => expect(rowKeys().length).toBe(9), { timeout: 4000 });
+    // Node groups: the locale first, then the user order from the normal list
+    // (the edge node before the hub node), never the arrival order of the feed.
+    expect(groupRole(positionLabels()[0])).toBe('local');
+    expect(positionLabels().map(groupRole)).toEqual(['local', 'south', 'north']);
+    // The edge node is in "pinned" mode in the normal list: the manual pinned order
+    // (Personal, Research, Trading, Dev) governs the quick list too.
+    const southRows = rowKeys().filter((k) => k.startsWith('south:'));
+    expect(southRows).toEqual(southOrder);
+    // The other node has no pins or manual order: the activity fallback keeps the rows
+    // in the received order, exactly like the live cells of the normal list.
+    expect(rowKeys().filter((k) => k.startsWith('north:'))).toEqual([
+      keyOf('north', 'north-c1'), keyOf('north', 'north-c2'), keyOf('north', 'north-c3'), keyOf('north', 'north-c4'),
+    ]);
+
+    // The user reorders the nodes: the quick list follows immediately.
+    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${northId}`, `id:${southId}`]));
+    window.dispatchEvent(new Event('nexuscrew-node-preferences'));
+    await waitFor(() => expect(positionLabels().map(groupRole)).toEqual(['local', 'north', 'south']));
+  });
+});
+
+describe('quick cell list keeps every node visible', () => {
+  const northId = 'c'.repeat(32);
+  const keyOf = (route, tmux) => positionKey([route], tmux);
+  const southId = 'd'.repeat(32);
+  const Switcher = (props) => <CellSwitcher pollMs={20} {...props} />;
+  const positionLabels = () => [...document.querySelectorAll('.nc-cell-switcher-position')].map((e) => e.textContent);
+  const groupRole = (text) => (text.includes('Node-Local') ? 'local' : text.includes('North') ? 'north' : 'south');
+  const rowKeys = () => [...document.querySelectorAll('[data-roster-key]')].map((e) => e.dataset.rosterKey);
+  const northFeed = [
+    { ...active('Hub-Cell-1', 'north-c1'), activity: 40 },
+    { ...active('Hub-Cell-2', 'north-c2'), activity: 30 },
+  ];
+  const southFeed = [
+    { ...active('Far-Cell-1', 'south-c1'), activity: 20 },
+    { ...active('Far-Cell-2', 'south-c2'), activity: 10 },
+  ];
+  // Ordine di arrivo dal feed: il nodo a due salti prima dell'hub diretto.
+  const writeFixtureSnapshot = () => writeCellSwitcherSnapshot({
+    sessions: [{ name: 'cloud-cell-One', activity: 10, working: true }],
+    cells: [active('cell-One', 'cloud-cell-One')],
+    localFresh: true,
+    nodeGroups: [
+      { route: ['south'], label: 'South', instanceId: southId, sessions: [], cells: southFeed },
+      { route: ['north'], label: 'North', instanceId: northId, sessions: [], cells: northFeed },
+    ],
+  });
+
+  it('a direct hub whose reads are not verified stays a visible group, in the user node order', async () => {
+    writeFixtureSnapshot();
+    localStorage.setItem('nc_node_order_v1', JSON.stringify([`id:${northId}`, `id:${southId}`]));
+    localStorage.setItem('nc_sidebar_views_v1', JSON.stringify({ north: { filter: 'all' }, south: { filter: 'all' } }));
+    // Hub diretto: le letture NON si verificano in questo giro (fleet non
+    // available, sessioni vuote). Il gruppo esiste nelle nodeGroups e deve
+    // restare visibile: sparire faceva sembrare il nodo assente.
+    mocks.getRouteSessions.mockImplementation(async (_token, route) => {
+      if (route.join('/') === 'north') return { sessions: [] };
+      if (route.join('/') === 'south') return { sessions: [
+        { name: 'south-c1', activity: 40 }, { name: 'south-c2', activity: 30 },
+      ] };
+      return { sessions: [] };
+    });
+    mocks.fleetStatus.mockImplementation(async (_token, route = []) => {
+      if (route.join('/') === 'north') return { available: false };
+      if (route.join('/') === 'south') return { available: true, cells: southFeed };
+      if (!route.length) return { available: true, cells: [active('cell-One', 'cloud-cell-One')] };
+      return { available: true, cells: [] };
+    });
+
+    const onPick = vi.fn();
+    render(<Switcher token="token" current={{}} localNodeLabel="Node-Local" onPick={onPick} onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /^cell-One / });
+    await waitFor(() => expect(rowKeys().some((k) => k.startsWith('south:'))).toBe(true));
+    // Tre gruppi nell'ordine scelto dall'utente: locale, hub diretto, nodo
+    // raggiunto attraverso l'hub.
+    expect(positionLabels().map(groupRole)).toEqual(['local', 'north', 'south']);
+    // Le celle dell'hub, anche con letture non verificate, sono SELEZIONABILI
+    // come nella lista normale (tmux noto al gruppo): doppio tocco e apre la
+    // route giusta con la sessione esatta.
+    const hubRow = await screen.findByRole('button', { name: /^Hub-Cell-1 / });
+    expect(hubRow.getAttribute('aria-disabled')).toBe('false');
+    fireEvent.click(hubRow);
+    fireEvent.click(hubRow);
+    await waitFor(() => expect(onPick).toHaveBeenCalledWith({
+      session: 'north-c1', node: 'north', cellName: 'Hub-Cell-1',
+    }));
+    // Col filtro "all" le celle dell'hub restano elencate nell'ordine ricevuto.
+    fireEvent.click(screen.getByRole('button', { name: 'all' }));
+    expect(rowKeys().filter((k) => k.startsWith('north:'))).toEqual([
+      keyOf('north', 'north-c1'), keyOf('north', 'north-c2'),
+    ]);
   });
 });

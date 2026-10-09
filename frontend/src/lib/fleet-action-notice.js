@@ -26,7 +26,7 @@ export function upActionNotice(result) {
       return { code: ar.code, recovery: ar.recovery, text: t(`fleet-recovery-${ar.recovery}`) };
     }
   }
-  // V-69: /fleet/up porta vlPromptDegraded:true quando una cella vl parte
+  // /fleet/up porta vlPromptDegraded:true quando una cella vl parte
   // senza il proprio prompt di cella (il runtime sul nodo non regge
   // VL_SYSTEM_APPEND_FILE, 0.3.1+, o il file per-cella non e' scrivibile in
   // sicurezza). La cella e' viva ma lavora senza la sua identita'. Booleano

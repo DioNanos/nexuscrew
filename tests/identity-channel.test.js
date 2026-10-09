@@ -584,7 +584,7 @@ test('reconnect restores the lease and keeps challenge denial invariant', async 
 
 // (restart hub, decisione Dev): il subject di lancio vive SOLO in memoria nel
 // lease manager. Dopo un restart l'entry nuova non ha subject -> il relay e'
-// fail-closed: NESSUN proof (stabilito dal mandato; il codice stabile osservato
+// fail-closed: NESSUN proof (per specifica; il codice stabile osservato
 // e' REVOKED, piu' severo dei codici indicati come esempi).
 test('hub restart without the in-memory launch subject stays fail-closed (no proof)', async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-identity-channel-'));

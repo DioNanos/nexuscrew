@@ -197,7 +197,7 @@ test('answer F2: dopo un paste fallito (rollback) il retry vince e chiude', asyn
 });
 
 // due answer CONCORRENTI -> un solo paste; la seconda respinta 409.
-// Il paste e' ritardato per tenere aperta la finestra di race che l'audit ha
+// Il paste e' ritardato per tenere aperta la finestra di race che la verifica ha
 // riprodotto (entrambe superavano il check answered prima del mark).
 test('answer F2: race — due answer parallele, un solo paste, l\'altra 409', async (t) => {
   const pasted = [];

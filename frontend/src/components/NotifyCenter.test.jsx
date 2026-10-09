@@ -293,6 +293,71 @@ describe('NotifyCenter — arretrato notifiche importate (lista consultabile sil
   });
 });
 
+describe('rebuild dall arretrato: la rilettura compatta per (ownerId,eventId)', () => {
+  // Le due forme VERE del server per la stessa notifica (owner O, eventId E,
+  // cella dev, emissione T0): l'envelope spedito dallo snapshot (event-feed-routes)
+  // e il ribroadcast live (event-feed-client), con ts del ribroadcast T1 > T0.
+  // Il conteggio va sugli elementi card: il toast live porta lo stesso titolo.
+  const T0 = 1760000000000;
+  const T1 = T0 + 60 * 60 * 1000;
+  const OWNER = '4f0c1d2e3a4b5c6d7e8f9a0b1c2d3e4f';
+  const EVENT = 'd4550000-0000-4000-8000-0000000000e1';
+  const TITLE = 'Approva NC 0.9.64 su npmjs.com';
+  const BACKLOG_VIEW = {
+    views: [{
+      ownerId: OWNER, askReplyAccess: false, stale: false, asks: [],
+      notifications: [{ v: 1, ownerId: OWNER, eventId: EVENT, scope: 'cell', cellId: 'dev',
+        hop: 1, emittedAt: T0, frame: { type: 'notify', title: TITLE, body: '', urgency: 'normal', ts: T0 } }],
+    }],
+  };
+  const LIVE_FRAME = { type: 'notify', title: TITLE, body: '', urgency: 'normal',
+    originNode: OWNER, ownerId: OWNER, originCell: 'dev', eventId: EVENT, ts: T1 };
+
+  it('la stessa notifica riletta dall arretrato non si duplica (merge, non concatenazione)', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce(BACKLOG_VIEW);
+    render(<NotifyCenter token="token" />);
+    await waitFor(() => expect(mocks.eventHandler).toBeTypeOf('function'));
+    const badge = await screen.findByTitle('questions from the cells');
+    act(() => badge.click());
+    await screen.findByText(TITLE);
+    expect(document.querySelectorAll('.nc-remote-notice').length).toBe(1);
+    // La stessa notifica arriva live: il merge per chiave compatta (vero anche oggi).
+    act(() => mocks.eventHandler(LIVE_FRAME));
+    expect(document.querySelectorAll('.nc-remote-notice').length).toBe(1);
+    // La SSE si riapre e feed-state rilegge lo STESSO arretrato con la card
+    // gia in stato: deve restare una card sola.
+    getFeedState.mockResolvedValueOnce(BACKLOG_VIEW);
+    await act(async () => { mocks.openHandler(); });
+    await waitFor(() => expect(getFeedState).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    const cards = document.querySelectorAll('.nc-remote-notice');
+    expect(cards.length).toBe(1);
+    expect([...cards].filter((c) => c.textContent.includes(TITLE)).length).toBe(1);
+  });
+
+  it('l ora mostrata e quella di emissione (emittedAt): arretrato e live della stessa notifica', async () => {
+    const { getFeedState } = await import('../lib/api.js');
+    getFeedState.mockResolvedValueOnce(BACKLOG_VIEW);
+    render(<NotifyCenter token="token" />);
+    const badge = await screen.findByTitle('questions from the cells');
+    act(() => badge.click());
+    await screen.findByText(TITLE);
+    // La card dell arretrato mostra T0, l ora in cui l owner ha emesso — non
+    // l ora di chi la legge (fallback n.ts || Date.now() con n.ts = 0).
+    let meta = document.querySelector('.nc-remote-notice-meta');
+    expect(meta.textContent).toContain(new Date(T0).toLocaleString());
+    // La stessa notifica arriva live: il ribroadcast porta il ts di origine
+    // (emittedAt), non l istante in cui e stato ritrasmesso (T1).
+    act(() => mocks.eventHandler({ ...LIVE_FRAME, ts: T0 }));
+    const cards = document.querySelectorAll('.nc-remote-notice');
+    expect(cards.length).toBe(1);
+    meta = cards[0].querySelector('.nc-remote-notice-meta');
+    expect(meta.textContent).toContain(new Date(T0).toLocaleString());
+    expect(meta.textContent).not.toContain(new Date(T1).toLocaleString());
+  });
+});
+
 describe('arretrato: dedup che discrimina e cap per ts', () => {
   const viewWith = (notices) => ({
     views: [{ ownerId: 'nodeX', askReplyAccess: false, stale: false, notifications: notices, asks: [] }],

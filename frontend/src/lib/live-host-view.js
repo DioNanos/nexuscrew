@@ -40,6 +40,7 @@ export function liveHostView({ liveHost, cells = [], localNodeId = '', ownerId =
     engine,
     mode: liveHostMode(engine),
     state: hostCell ? hostThreadState(liveHost && liveHost.threadStatus) : HOST_NONE,
+    hostActive: !!(cell && cell.active === true && cell.tmux !== false),
     remote: !!(ownerId && localNodeId && ownerId !== localNodeId),
     lease: (liveHost && (liveHost.hostLease
       || (liveHost.host && typeof liveHost.host.lease === 'string' ? liveHost.host.lease : null))) || null,
@@ -66,4 +67,13 @@ export function liveHostDotClass(view) {
   if (state === HOST_NONE) return 'none';
   if (state === 'thread-unknown') return 'unknown';
   return 'designated';
+}
+
+// The badge names a Live that exists, not a designation: a living native thread,
+// or tmux mode with an active host. It never carries the host cell's name.
+export function liveBadgeMode(view) {
+  if (!view || !view.cell || view.remote) return null;
+  if (view.state === 'thread-present' || view.state === 'thread-active') return LIVE_HOST_NATIVE;
+  if (view.mode === LIVE_HOST_TMUX && view.hostActive) return LIVE_HOST_TMUX;
+  return null;
 }

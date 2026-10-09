@@ -26,7 +26,7 @@ test('node-detail: un nodo in transito non ha autorita\' su questa macchina', as
 
 test('node-detail: lo slot dei poteri resta vuoto finche\' i grant non esistono', async () => {
   const { nodeAuthority } = await mod();
-  // Se un giorno questa lista si popola senza che esista NC-E, il foglio sta
+  // Se un giorno questa lista si popola senza che esista il modello di autorita' per-nodo, il foglio sta
   // promettendo poteri che nessuno ha concesso.
   for (const node of [{ name: 'a' }, { name: 'b', kind: 'transitive' }, { name: 'c', shared: true, visibility: 'network' }]) {
     const authority = nodeAuthority(node);

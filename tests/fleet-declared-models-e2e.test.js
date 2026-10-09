@@ -7,7 +7,7 @@
 // e la vista `definitions()` non lo esponeva (quindi la finestra era cieca).
 // Ogni pezzo funzionava, la funzione no.
 //
-// L'ha trovato l'audit indipendente provando il percorso intero. Questo test
+// L'ha trovato la verifica indipendente provando il percorso intero. Questo test
 // e' quel percorso: DICHIARO → lo VEDO nella vista → la cella PARTE.
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -139,7 +139,7 @@ test('ritirato il modello, la vista torna a non esporlo', async (t) => {
 });
 
 test('il modello per-cella non e\' una scorciatoia al catalogo', async (t) => {
-  // La via che l'audit ha trovato aperta: `/fleet/engine` e' federata, quindi
+  // La via che la verifica ha trovato aperta: `/fleet/engine` e' federata, quindi
   // un peer poteva mettere un id arbitrario in una cella di questa
   // installazione e il boot lo usava senza ricontrollarlo.
   const w = mondo(t);

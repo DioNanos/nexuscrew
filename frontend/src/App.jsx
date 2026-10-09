@@ -21,7 +21,7 @@ import { leggiFilesTasto, scriviFilesTasto, leggiTastieraTasto, leggiPannelloTas
 import { readFontSize, writeFontSize } from './lib/terminal-fontsize.js';
 import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import { createPollGuard } from './lib/poll-guard.js';
-import { subscribeFleetRoute, readFleetRoute } from './lib/fleet-poll.js';
+import { subscribeFleetRoute, readFleetRoute, refreshFleetRoute } from './lib/fleet-poll.js';
 import VlSessionView from './components/VlSessionView.jsx';
 import CellPanel from './components/CellPanel.jsx';
 import {
@@ -108,7 +108,7 @@ function loadLayout(deck) {
   catch (_) { return emptyLayout(); }
 }
 
-// Tempo relativo numerico (nessuna localizzazione, come da piano C3).
+// Tempo relativo numerico (nessuna localizzazione).
 function rel(epochSec) {
   if (!epochSec) return '';
   const s = Math.floor(Date.now() / 1000) - epochSec;
@@ -847,7 +847,7 @@ export default function App() {
   const [fleetCapabilities, setFleetCapabilities] = useState([]);
   // R27: lettura fleet non riuscita → lista esposta = ultima nota (stale)
   const [fleetStale, setFleetStale] = useState(false);
-  // R27 rev3: fleet SPENTO (available:false del server) → zero celle vera
+  // R27: fleet SPENTO (available:false del server) → zero celle vera
   const [fleetOff, setFleetOff] = useState(null);
   const [layout, setLayout] = useState(() => initialDeck.ownerId ? emptyLayout() : loadLayout(initialDeck.name));
   const [gridFocus, setGridFocus] = useState(null);   // refKey del tile focato
@@ -856,7 +856,7 @@ export default function App() {
   // Sessione di un nodo VL nella vista larga (VL_NODES_IN_SIDEBAR): il peer
   // arriva dalla sidebar (vlNodeToPeer), la vista riusa VlNodeEvents.
   const [vlSession, setVlSession] = useState(null);
-  // Gruppi per-nodo remoto (B2, design §5): polling separato, best-effort;
+  // Gruppi per-nodo remoto (B2): polling separato, best-effort;
   // zero nodi configurati -> [] e workspace identico a oggi.
   const nodeGroups = useNodes(token, isDesktop);
   const deckOwners = useMemo(() => (nodeGroups || []).filter((g) => g.instanceId).map((g) => ({
@@ -919,7 +919,7 @@ export default function App() {
   // il toggle vive nella DeckBar (in flow, mai sopra la freccia della sidebar).
   const [sideHidden, setSideHidden] = useState(!isMainDeck);
   const [sideMin, setSideMin] = useState(() => (isMainDeck ? localStorage.getItem(SIDE_MIN_KEY) === '1' : true));
-  // Settings + first-run wizard (B2-UI, design §5).
+  // Settings + first-run wizard (B2-UI).
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState('nodes');
   const [settingsNewCell, setSettingsNewCell] = useState(false);
@@ -937,7 +937,7 @@ export default function App() {
     deviceDefault: '', localNodeId: '', localNameDefault: '',
     deviceNameNeeded: false, deviceNameSuggestion: '',
   });
-  // Il nome del NOSTRO nodo (es. VPSCloud), per l'intestazione del gruppo
+  // Il nome del NOSTRO nodo (es. peer-a), per l'intestazione del gruppo
   // locale nella lista delle celle: il gruppo locale si chiama come il nodo,
   // non «locale».
   const [localNodeLabel, setLocalNodeLabel] = useState('');
@@ -1235,7 +1235,7 @@ export default function App() {
   // esattamente la situazione da coprire — il nodo si aggiorna da solo e si
   // riavvia mentre l'app e' aperta davanti a qualcuno. Con un solo controllo
   // iniziale il ricaricamento automatico valeva soltanto riaprendo l'app, cioe'
-  // il gesto che doveva togliere di mezzo. Rilievo dell'audit indipendente.
+  // il gesto che doveva togliere di mezzo.
   //
   // Un minuto: e' una GET piccola verso il proprio hub, e il ritardo massimo
   // fra «il nodo e' ripartito nuovo» e «l'interfaccia se ne accorge» diventa
@@ -1284,18 +1284,18 @@ export default function App() {
     try { await killSession(token, name, route); } catch (_) { return; }
     const key = route.length ? `${route.join('/')}:${name}` : name;
     setLayout((l) => removeTile(l, key));
-    poll();
+    refreshFleetRoute(route, token);
   };
   const onVisibility = async (name, technical, route = []) => {
     try { await setSessionTechnical(token, name, technical, route); } catch (_) { return; }
-    poll();
+    refreshFleetRoute(route, token);
   };
   // Il boot e' una preferenza di riavvio indipendente dal lifecycle corrente:
   // questo toggle non accende ne' spegne la cella. PowerSheet continua a poter
   // aggiornare la stessa proprieta' durante un'azione on/off.
   const onBoot = async (cell, enabled, route = []) => {
     await fleetBoot(token, { cell, enabled: !!enabled }, route);
-    poll();
+    refreshFleetRoute(route, token);
   };
   const onFleetConfirm = async (payload) => {
     if (!powerCell) return;
@@ -1314,7 +1314,7 @@ export default function App() {
         : (payload.boot ? false : !!powerCell.boot);
       setBootSettlement({ id: ++bootSettlementSeq.current, cell, route, enabled });
     }
-    poll();
+    refreshFleetRoute(route, token);
   };
   const onBootSettlementApplied = useCallback((id) => {
     setBootSettlement((current) => (current?.id === id ? null : current));

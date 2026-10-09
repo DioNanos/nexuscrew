@@ -1,4 +1,4 @@
-// Resolver unico per il titolo visibile di una cella (Tranche D, piano 0.8.27).
+// Resolver unico per il titolo visibile di una cella.
 //
 // Il titolo visibile di una cella gestita deriva SEMPRE dal campo Fleet
 // `cell` (es. `Dev`). Per una sessione tmux unmanaged il fallback e' il nome

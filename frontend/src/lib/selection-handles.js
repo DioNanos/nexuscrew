@@ -106,7 +106,7 @@ export function clampDraggedCell({ moving, fixed, which, cols, maxRow }) {
   return { row, col };
 }
 
-// R25-zoom rev4: una colonna bersaglio che cade DENTRO un glifo largo (cella
+// R25-zoom: una colonna bersaglio che cade DENTRO un glifo largo (cella
 // di continuazione, getWidth() === 0) viene portata al bordo del glifo.
 // VARIANTE CONSAPEVOLE di Termux getValidCurX (che porta SEMPRE al bordo
 // destro): qui la maniglia start / il punto iniziale vanno al bordo SINISTRO
@@ -124,7 +124,7 @@ export function snapWideCol({ line, col, side, cols }) {
   return side === 'end' ? Math.min(Number(cols) - 1, c + 1) : Math.max(0, c - 1);
 }
 
-// R25-zoom rev4 (Termux TextSelectionCursorController): espansione a parola
+// R25-zoom (Termux TextSelectionCursorController): espansione a parola
 // del punto premuto. Se la cella contiene una parola (non vuota, non spazio)
 // la selezione si espande ai confini della parola; se e' spazio o vuota
 // resta una cella. Confine = cella vuota o spazio, come in Termux
@@ -259,7 +259,7 @@ export function edgeScrollDirection({ visibleRow, rows }) {
 // leggono con translateToString(trimRight, startColumn, endColumn) — perche'
 // un carattere wide (emoji, CJK) occupa due celle e un combining sta nella
 // cella del base: string.slice sulle colonne leggerebbe il carattere
-// sbagliato o niente (audit r25zoom: colonne tagliate come indici JS).
+// sbagliato o niente.
 // `side` dice quale maniglia guida la barra ('start'|'end').
 // Se la porzione selezionata e' tutta spazi (selezione nata su una riga poi
 // accorciata, o oltre il testo reale) l'evidenziazione e' vuota: le celle

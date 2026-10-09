@@ -17,7 +17,7 @@ const { createEventFeedClient } = require('../lib/notify/event-feed-client.js');
 const OWNER = 'a'.repeat(32);
 const INTERVAL = 1000;   // finestra, in ms finti
 const TICKS = 60;        // round per sequenza
-const SEQUENCES = 200;   // sequenze casuali richieste dal mandato
+const SEQUENCES = 200;   // sequenze casuali richieste
 const SEED = 20260929;
 
 function mulberry32(seed) {

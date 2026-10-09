@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { FMT, parsePaneTitle, parseSessions, isNoTmuxServerError } = require('../lib/tmux/list.js');
+const { FMT, parsePaneTitle, parseSessions, isNoTmuxServerError, isNoCurrentTargetError } = require('../lib/tmux/list.js');
 
 test('parseSessions maps tab-separated tmux output', () => {
   const raw = 'claude_dev\t1\t3\t1718380800\t1751990000\tclaude\t\t⠐ Implement activity UI\nidle_box\t0\t1\t1718384400\t1718390000\tbash\ttechnical\tDev\n';
@@ -51,4 +51,11 @@ test('expected no-tmux-server signatures include the macOS missing socket', () =
   assert.equal(isNoTmuxServerError('error connecting to /private/tmp/tmux-501/default (No such file or directory)'), true);
   assert.equal(isNoTmuxServerError('error connecting to /tmp/tmux-1000/default (Connection refused)'), true);
   assert.equal(isNoTmuxServerError('permission denied while reading tmux config'), false);
+});
+
+test('isNoCurrentTargetError: il riconoscimento è specifico di list-panes (exit-empty off)', () => {
+  // NexusCrew avvia tmux con `set -s exit-empty off`: un server vivo e vuoto
+  // risponde a list-panes -a con «no current target» — è una lista vuota.
+  assert.equal(isNoCurrentTargetError('no current target'), true);
+  assert.equal(isNoCurrentTargetError('no current target'), isNoTmuxServerError('no current target') === false);
 });

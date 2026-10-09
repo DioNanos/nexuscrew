@@ -26,7 +26,7 @@ export function rel(epochSec, nowSec = Math.floor(Date.now() / 1000)) {
   return `${Math.floor(s / 86400)}g`;
 }
 
-// Etichetta di stato di un gruppo nodo degradato (design §7: mai spinner).
+// Etichetta di stato di un gruppo nodo degradato (mai spinner).
 // Usa rel() per i "down since" / "visto ... fa".
 // La lista sessioni di questa posizione e' una LETTURA o una supposizione?
 // Un gruppo «up» con la lettura delle sessioni caduta non lo e': l'inventario

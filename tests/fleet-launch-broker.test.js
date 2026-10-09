@@ -27,7 +27,7 @@ test('launch broker delivers a payload once over a private Unix socket and leave
   } finally { await broker.close(); fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-// Audit: il chmod 0600 sul socket era INGOIATO (try/catch/ignora), a
+// Difetto: il chmod 0600 sul socket era INGOIATO (try/catch/ignora), a
 // differenza della directory 15 righe sopra in ensureRuntimeDir, che
 // verifica il mode REALE dopo il proprio chmod e fallisce chiuso se non
 // conforme. MISURA (chmod fatto fallire DAVVERO — si intercetta la vera

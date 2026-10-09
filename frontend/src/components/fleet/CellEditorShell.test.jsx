@@ -33,7 +33,7 @@ describe('CellEditor — Shell locale', () => {
   });
 });
 
-// --- NC-D: il nome dev'essere SCRIVIBILE, non solo leggibile ---------------
+// --- il nome dev'essere SCRIVIBILE, non solo leggibile ---------------
 // Propagare un campo che l'operatore non puo' impostare lascia la funzione
 // irraggiungibile: la label esisterebbe solo per chi modifica il file a mano.
 describe('CellEditor cell label', () => {

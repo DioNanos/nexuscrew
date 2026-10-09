@@ -222,7 +222,7 @@
 .nc-act.power.warn { color: #e8c547; border-color: rgba(232,197,71,0.55); background: rgba(232,197,71,0.10); }
 /* R27: la lista celle mostrata e' l'ultima nota, non un dato fresco */
 .nc-fleet-stale { color: #e8c547; }
-/* R27 rev3: il fleet e' spento — zero celle e' la verita', indicatore neutro */
+/* R27: il fleet e' spento — zero celle e' la verita', indicatore neutro */
 .nc-fleet-off { color: #b0b8ad; }
 /* .nc-act.boot non c'e' piu': l'avvio al boot e' una voce del foglio, e nella
    riga della cella restano due bersagli soli, ⋯ e power. */

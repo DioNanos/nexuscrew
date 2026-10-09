@@ -1,10 +1,14 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { CellPeekBody, formattaAttività, formattaTelemetria } from './CellPeek.jsx';
 import { apiFetch, clearHostCell, designateHostCell, fleetStatus, getLiveHost, getRouteSessions } from '../lib/api.js';
-import { readCellSwitcherSnapshot, writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
-import { buildLocalRoster, buildRemoteRoster, cellRuntime } from '../lib/roster-view-model.js';
-import { positionKey } from '../lib/nodes-model.js';
-import { sidebarItems, sidebarOrder } from '../lib/sidebar-model.js';
+import { readCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
+import { subscribeFleetRoute } from '../lib/fleet-poll.js';
+import { fleetReadOutcome } from '../lib/fleet-read-policy.js';
+import { buildLocalRoster, buildRemoteRoster } from '../lib/roster-view-model.js';
+import { sidebarItems, sidebarOrder, sidebarView } from '../lib/sidebar-model.js';
+import { nodePreferenceKey } from '../lib/node-preferences.js';
+import { useNodePreferences } from '../hooks/useNodePreferences.js';
+import { useNodesState } from '../hooks/useNodes.js';
 import { useRosterPreferences } from '../hooks/useRosterPreferences.js';
 import { hostRouteKey } from '../lib/host-designation.js';
 import { liveHostView } from '../lib/live-host-view.js';
@@ -18,8 +22,6 @@ import { panelPortForRoute } from '../lib/panel-port.js';
 import { readFontSize, writeFontSize } from '../lib/terminal-fontsize.js';
 import { t } from '../lib/i18n.js';
 import './CellSwitcher.css';
-
-const POLL_MS = 4000;
 
 async function localSessions(token) {
   const response = await apiFetch('/api/sessions', token);
@@ -47,124 +49,46 @@ function isActiveCell(cell, sessions, fresh) {
     && !!cell.tmuxSession && (sessions || []).some((session) => session?.name === cell.tmuxSession);
 }
 
-function rowsFromSnapshot(snapshot) {
-  const localSessions = new Map((snapshot.sessions || []).map((entry) => [entry.name, entry]));
-  const rows = [];
-  const addCells = (cells, sessions, fresh, route = [], nodeLabel = '') => {
-    const byName = new Map((sessions || []).map((entry) => [entry.name, entry]));
-    for (const cell of cells || []) {
-      const session = byName.get(cell.tmuxSession) || {};
-      const runtime = cellRuntime(cell, session);
-      const selectable = isActiveCell(cell, sessions, fresh);
-      rows.push({
-        // Deve corrispondere a SessionList: il locale non ha prefisso, le
-        // route remote restano qualificate. Cosi' pin e ordine sono condivisi.
-        key: positionKey(route, cell.tmuxSession || cell.cell),
-        session: cell.tmuxSession,
-        route,
-        cellName: cell.cell,
-        label: cell.cell,
-        node: route.length ? route.join('/') : '',
-        nodeLabel,
-        live: selectable,
-        selectable,
-        // `verified` e' la conferma di questo poll. Non usare `fresh`: nel
-        // roster condiviso significa invece output nuovo e ordina le righe.
-        verified: fresh === true,
-        working: runtime.working,
-        degraded: !!cell.degraded,
-        active: cell.active === true,
-        activity: session.activity || cell.activity || 0,
-        subtitle: runtime.subtitle,
-        // Il preview esisteva gia' nel roster e non arrivava alla riga: il
-        // popup lo mostra, senza chiedere nulla di nuovo al server.
-        preview: session.preview || cell.preview || '',
-        // Contesto libero e tier usati, se la cella li pubblica. Null per le
-        // non-Claude: la riga non mostra nulla, com'era prima.
-        telemetry: session.telemetry || null,
-        panelUrl: cell.panelUrl || '',
-      });
-    }
+// Una sola fonte: il drawer NON ricostruisce letture, filtri, modalità né
+// ordine. Le righe sono ESATTAMENTE quelle della lista principale, derivate
+// con le sue stesse funzioni (useNodes per i gruppi, buildLocalRoster /
+// buildRemoteRoster per il roster, sidebarItems con il filtro per nodo e
+// l'ordine manuale). Qui resta solo la presentazione: quale riga apre cosa,
+// come si tocca, come si riordina.
+//
+// Il gruppo dell'hub diretto con vista fleet vuota per scope (il server
+// filtra le celle per il peer che chiede) mostra le sue SESSIONI, come fa la
+// principale: il gruppo non sparisce più, e non c'è nessuna seconda lettura
+// /api/route che possa riscriverlo con un elenco vuoto.
+function rowFromItem(item, route, nodeLabel, sessions = []) {
+  if (item.type === 'session') {
+    const s = item.value || {};
+    return {
+      kind: 'session', key: item.key, cellName: item.label, session: item.label,
+      node: route.length ? route.join('/') : '', nodeLabel, route,
+      live: true, selectable: true, working: false, degraded: false, active: true,
+      activity: item.activity || 0, telemetry: s.telemetry || null, preview: s.preview || '',
+      panelUrl: '',
+    };
+  }
+  const c = item.value || {};
+  // La sessione associata alla cella porta telemetria e preview: è la stessa
+  // coppia che legge la riga della lista principale.
+  const s = sessions.find((entry) => entry && entry.name === c.tmuxSession) || {};
+  return {
+    kind: 'cell', key: item.key, cellName: c.cell, session: c.tmuxSession || c.cell,
+    node: route.length ? route.join('/') : '', nodeLabel, route,
+    // Come la lista principale: la cella è apribile se ha una tmux nota e non
+    // è preserved — nessun criterio di selezione parallelo.
+    live: item.live === true, selectable: item.live === true,
+    working: item.working === true, degraded: !!c.degraded, active: c.active === true,
+    activity: item.activity || 0, telemetry: s.telemetry || c.telemetry || null,
+    preview: s.preview || c.preview || '', panelUrl: c.panelUrl || '',
   };
-  addCells(snapshot.cells, [...localSessions.values()], snapshot.localFresh === true);
-  for (const group of snapshot.nodeGroups || []) {
-    const route = Array.isArray(group.route) ? group.route : [];
-    // Un device VL non e' una posizione fleet e non ospita celle: la route
-    // che porta e' quella del suo OWNER, quindi coincide con la posizione
-    // fleet di quell'owner. Discriminare sulla route vuota funzionava solo
-    // finche' il nodo VL era locale; da un client federato la sua route non
-    // e' vuota e le celle dell'owner verrebbero contate due volte, la
-    // seconda sotto l'etichetta del device. Il criterio e' il tipo del
-    // gruppo — lo stesso che usano Sidebar e SessionList.
-    if (group.kind === 'vl' || !route.length) continue;
-    addCells(group.cells, group.sessions, group.switcherFresh === true,
-      route, group.label || group.name || '');
-  }
-  return rows;
 }
-
-// Il drawer visualizza soltanto celle Fleet, ma quando salva un riordino deve
-// conoscere l'intero roster della posizione. In particolare, le tmux unmanaged
-// restano nella lista principale e non devono mai sparire da nc_sidebar_order.
-function rosterItemsByPosition(snapshot) {
-  const positions = new Map();
-  const localSessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
-  const localCells = Array.isArray(snapshot.cells) ? snapshot.cells : [];
-  const localByName = new Map(localSessions.map((entry) => [entry.name, entry]));
-  const localCellSessions = new Set(localCells.map((cell) => cell.tmuxSession).filter(Boolean));
-  positions.set('local', buildLocalRoster(
-    localCells,
-    localSessions.filter((entry) => !localCellSessions.has(entry.name)),
-    localByName,
-  ));
-  for (const group of snapshot.nodeGroups || []) {
-    const route = Array.isArray(group.route) ? group.route : [];
-    // Stesso criterio di rowsFromSnapshot: un device VL condivide la route
-    // del suo owner, e sovrascriverebbe il roster di quella posizione.
-    if (group.kind === 'vl' || !route.length) continue;
-    const cells = Array.isArray(group.cells) ? group.cells : [];
-    const sessions = Array.isArray(group.sessions) ? group.sessions : [];
-    const cellSessions = new Set(cells.map((cell) => cell.tmuxSession).filter(Boolean));
-    positions.set(route.join('/'), buildRemoteRoster({
-      ...group,
-      route,
-      cells,
-      sessions,
-      unmanaged: sessions.filter((entry) => !cellSessions.has(entry.name)),
-    }).rawItems);
-  }
-  return positions;
-}
-
-// La rail resta una superficie compatta, ma mantiene le stesse sezioni logiche
-// della lista principale: Locale prima, poi ciascuna route nell'ordine ricevuto.
-// Entro una posizione applica esattamente nc_pins/nc_sidebar_order_v1.
-function orderRowsByPosition(rows, rosterItems, pins, orders) {
-  const positions = [...new Set(rows.map((row) => row.node || 'local'))];
-  return positions.flatMap((position) => {
-    const displayRows = rows.filter((row) => (row.node || 'local') === position);
-    const canonical = new Map((rosterItems.get(position) || []).map((item) => [item.key, item]));
-    const byKey = new Map(displayRows.map((row) => [row.key, row]));
-    // Per il confronto usa gli stessi live/fresh/activity della home, ma
-    // restituisce la riga del drawer per non alterarne stato e affordance.
-    const sortable = displayRows.map((row) => {
-      const item = canonical.get(row.key);
-      return {
-        ...row,
-        label: item?.label || row.label,
-        live: item?.live ?? row.live,
-        fresh: item?.fresh === true,
-        activity: item?.activity ?? row.activity,
-      };
-    });
-    return sidebarItems(sortable, pins, 'all', sidebarOrder(orders, position))
-      .map((item) => byKey.get(item.key));
-  });
-}
-
 export default function CellSwitcher({
   token, current, onPick, onClose, panelPort = 0, nodePanelPorts = {},
-  // Il nome del nodo LOCALE (es. VPSCloud): il gruppo delle celle locali si
+  // Il nome del nodo LOCALE (es. peer-a): il gruppo delle celle locali si
   // chiama come il nodo, come i gruppi remoti col loro nodeLabel.
   localNodeLabel = '',
   // Lo stato dell'host per nodo e le due azioni di designazione arrivano
@@ -176,15 +100,31 @@ export default function CellSwitcher({
   // il tasto non esiste nel DOM: desktop e liste senza doppia vista restano
   // identiche al pixel e al nodo.
   sideKey = null, onToggleSide,
-  // L'intervallo del poll e' un parametro, non una costante letta dal modulo:
-  // in produzione e' POLL_MS, nei test e' corto, cosi' nessun assert dipende da
-  // un timer da 4 secondi che sotto carico puo' sforare il budget del waitFor.
-  pollMs = POLL_MS,
 }) {
+  // Il locale arriva dall'ultimo snapshot della lista principale (lo scrive
+  // SessionList a ogni suo ciclo) e POI vive nel treno condiviso
+  // (subscribeFleetRoute sulla route locale), lo stesso canale della
+  // principale: con la lista smontata nella vista singola, il giro è uno per
+  // finestra e nessuna lettura è proprietaria del drawer. I gruppi remoti
+  // vivono nell'hook della principale.
   const [snapshot, setSnapshot] = useState(readCellSwitcherSnapshot);
   const [showAll, setShowAll] = useState(false);
-  const [ready, setReady] = useState(false);
   const [notice, setNotice] = useState('');
+  useEffect(() => subscribeFleetRoute(token, [], (snap) => {
+    let sessions = null;
+    if (!snap.sessionsError && snap.sessionsJson) {
+      try {
+        const parsed = JSON.parse(snap.sessionsJson);
+        if (parsed && !parsed.error && Array.isArray(parsed.sessions)) sessions = parsed.sessions;
+      } catch (_) { /* la policy del treno decide, qui si tiene l'ultimo noto */ }
+    }
+    const fleet = fleetReadOutcome({ fs: snap.fs, error: snap.fleetError });
+    setSnapshot((current) => ({
+      ...current,
+      ...(sessions ? { sessions } : {}),
+      ...(fleet.kind === 'data' ? { cells: fleet.cells, localFresh: true } : {}),
+    }));
+  }), [token]);
   // La riga SELEZIONATA dal primo tocco: il gesto dell'operatore. Un tocco
   // seleziona e apre l'anteprima in alto; il secondo tocco sulla STESSA riga
   // apre. Come per il foglio azioni, lo stato tiene una CHIAVE, mai la riga:
@@ -215,19 +155,69 @@ export default function CellSwitcher({
   const [picking, setPicking] = useState('');
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
-  const rows = useMemo(() => rowsFromSnapshot(snapshot), [snapshot]);
-  const rosterItems = useMemo(() => rosterItemsByPosition(snapshot), [snapshot]);
   const {
-    pins, orders, togglePin, removePin, pinError, canMoveRoster, moveRoster, stepRoster,
+    pins, orders, views, viewFor, togglePin, removePin, pinError, canMoveRoster, moveRoster, stepRoster,
   } = useRosterPreferences();
-  const orderedRows = useMemo(
-    () => orderRowsByPosition(rows, rosterItems, pins, orders),
-    [rows, rosterItems, pins, orders],
+  // L'ordine dei GRUPPI è quello scelto dall'utente per i nodi nella lista
+  // normale (la stessa preferenza che segue la griglia dei deck).
+  const { groupsFor } = useNodePreferences();
+  // Apertura a freddo nella vista singola mobile: la lista principale e' smontata
+  // e useNodes non ha ancora pubblicato. Finche' non ha dati, i gruppi sono
+  // quelli dell'ultimo snapshot della principale (stessa forma, stesso ordine):
+  // un gruppo remoto non compare in ritardo e non manca all'apertura.
+  const { groups: liveGroups, hasLoaded } = useNodesState(token);
+  const nodeGroups = hasLoaded ? liveGroups : (snapshot.nodeGroups || []);
+  // Stessa selezione della lista principale (SessionList): le posizioni sono
+  // i gruppi di nodo, i device VL restano fuori.
+  const groups = useMemo(
+    () => groupsFor(nodeGroups || []).filter((g) => Array.isArray(g.route) && g.route.length && g.kind !== 'vl'),
+    [groupsFor, nodeGroups],
   );
-  const visibleRows = useMemo(
-    () => (showAll ? orderedRows : orderedRows.filter((row) => row.selectable || (row.degraded && row.active))),
-    [orderedRows, showAll],
-  );
+  // Il roster per posizione, COME lo calcola la principale: serve anche al
+  // riordino, che scrive nc_sidebar_order sull'intero roster della posizione
+  // (le tmux unmanaged non devono mai sparire dall'ordine salvato).
+  const rosterItems = useMemo(() => {
+    const byPosition = new Map();
+    const localSessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
+    const localCells = Array.isArray(snapshot.cells) ? snapshot.cells : [];
+    const byName = new Map(localSessions.map((entry) => [entry.name, entry]));
+    const localCellSessions = new Set(localCells.map((cell) => cell.tmuxSession).filter(Boolean));
+    byPosition.set('local', buildLocalRoster(
+      localCells,
+      localSessions.filter((entry) => !localCellSessions.has(entry.name)),
+      byName,
+    ));
+    for (const g of groups) byPosition.set(g.route.join('/'), buildRemoteRoster(g).rawItems);
+    return byPosition;
+  }, [snapshot, groups]);
+  // Le righe del drawer: per ogni posizione, le righe della lista principale
+  // con il suo filtro per nodo (il toggle «tutte» del drawer apre il filtro
+  // 'all' su ogni posizione). Stesse righe, stesso ordine, stessa modalità —
+  // e con la pillola «Attive» le celle spente restano fuori qualunque sia il
+  // filtro salvato del nodo.
+  const visibleRows = useMemo(() => {
+    const filterFor = (position) => (showAll ? 'all' : sidebarView(views, position).filter);
+    const localSessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
+    const out = [];
+    for (const [position, rawItems] of rosterItems) {
+      const g = groups.find((entry) => entry.route.join('/') === position);
+      const nodeLabel = g ? (g.label || g.name || '') : '';
+      const route = g ? g.route : [];
+      const sessions = g ? (Array.isArray(g.sessions) ? g.sessions : []) : localSessions;
+      const items = sidebarItems(rawItems, pins, filterFor(position), sidebarOrder(orders, position));
+      // La pillola «Attive» non e' il filtro del nodo: senza preferenza salvata
+      // la posizione vale 'all' e le celle spente passano il filtro, ma non la
+      // pillola. Qui la riga spenta esce come nel gate della 0.9.62: resta cio'
+      // che e' vivo, piu' le celle degradate ATTIVE (visibili, non
+      // selezionabili). «Tutte» (showAll) non filtra: righe e ordine restano
+      // quelli di sidebarItems.
+      const gated = showAll ? items : items.filter((item) => item.live === true
+        || (item.type === 'cell' && item.value?.degraded === true && item.value?.active === true));
+      out.push(...gated.map((item) => rowFromItem(item, route, nodeLabel, sessions)));
+    }
+    return out;
+  }, [rosterItems, groups, views, orders, pins, showAll, snapshot.sessions]);
+  const rows = visibleRows;
   // La riga selezionata si RIrisolve a ogni lista: mai un fotogramma morto.
   // E si ririsolve sulla lista VISTA e selezionabile: la riga che il filtro
   // attivo ha tolto, o la cella fermata, chiude l'anteprima come una riga
@@ -272,56 +262,7 @@ export default function CellSwitcher({
     };
   }, [onClose, menuApertoFoglio]);
 
-  useEffect(() => {
-    let alive = true;
-    let inFlight = false;
-    const refresh = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      const base = readCellSwitcherSnapshot();
-      const groups = Array.isArray(base.nodeGroups) ? base.nodeGroups : [];
-      const localRequest = readPosition(token);
-      // Un device VL non e' una posizione fleet: la route che porta e' quella
-      // del suo OWNER, quindi coincide con la posizione di quell'owner.
-      // Interrogarlo farebbe rispondere l'owner, e il gruppo si riempirebbe
-      // delle celle altrui. Deve restare FUORI dalla mappa per route: e'
-      // chiavata sulla route e l'ultimo scrittore vince, quindi anche un
-      // risultato vuoto qui cancellerebbe quello buono dell'owner.
-      const isFleetPosition = (group) => group.kind !== 'vl'
-        && Array.isArray(group.route) && group.route.length > 0;
-      const remote = await Promise.all(groups.filter(isFleetPosition).map(async (group) => (
-        { group, result: await readPosition(token, group.route) }
-      )));
-      const local = await localRequest;
-      if (!alive) return;
-      const byRoute = new Map(remote.map(({ group, result }) => [JSON.stringify(group.route || []), result]));
-      const nodeGroups = groups.map((group) => {
-        if (!isFleetPosition(group)) return { ...group, switcherFresh: false };
-        const result = byRoute.get(JSON.stringify(group.route || []));
-        if (!result) return { ...group, switcherFresh: false };
-        return {
-          ...group,
-          sessions: result.sessions || group.sessions || [],
-          cells: result.cells || group.cells || [],
-          switcherFresh: result.fresh,
-        };
-      });
-      const next = writeCellSwitcherSnapshot({
-        ...base,
-        sessions: local.sessions || base.sessions || [],
-        cells: local.cells || base.cells || [],
-        localFresh: local.fresh,
-        nodeGroups,
-        refreshedAt: Date.now(),
-      });
-      setSnapshot(next);
-      setReady(true);
-      inFlight = false;
-    };
-    refresh();
-    const id = setInterval(refresh, pollMs);
-    return () => { alive = false; clearInterval(id); };
-  }, [token, pollMs]);
+
 
   // Comando esplicito del Live host: una chiamata sola che legge la revisione
   // fresca e scrive (live-host-command.js). L'esito si vede SEMPRE nella riga di
@@ -348,7 +289,6 @@ export default function CellSwitcher({
 
   const statusFor = (row) => {
     if (row.degraded) return t('cell-degraded');
-    if (!row.verified) return t('cell-switcher-not-confirmed');
     if (!row.selectable) return t('cell-off');
     return row.working ? t('cell-working') : t('cell-idle');
   };
@@ -365,7 +305,14 @@ export default function CellSwitcher({
   const open = async (row) => {
     setNotice('');
     if (!row.selectable) {
-      setNotice(row.verified ? t('cell-switcher-not-active') : t('cell-switcher-not-confirmed'));
+      setNotice(t('cell-switcher-not-active'));
+      return;
+    }
+    // Una tmux unmanaged non e' una cella: si apre come sessione, come fa la
+    // lista principale. Nessun ricontrollo di cella da fare.
+    if (row.kind === 'session') {
+      onPick({ session: row.session, ...(row.node ? { node: row.node } : {}) });
+      onClose();
       return;
     }
     setPicking(row.key);
@@ -373,8 +320,12 @@ export default function CellSwitcher({
       const latest = await readPosition(token, row.route);
       const cell = (latest.cells || []).find((entry) => entry?.cell === row.cellName
         && entry?.tmuxSession === row.session);
+      // A failed read does not establish that the cell stopped. Like the
+      // main list, open its known tmux session. Only a successful read
+      // that confirms an inactive cell can refuse the selection.
       if (latest.fresh !== true) {
-        setNotice(t('cell-switcher-verify-failed'));
+        onPick({ session: row.session, ...(row.node ? { node: row.node } : {}), cellName: row.cellName });
+        onClose();
         return;
       }
       if (!isActiveCell(cell, latest.sessions, latest.fresh)) {
@@ -384,7 +335,10 @@ export default function CellSwitcher({
       onPick({ session: row.session, ...(row.node ? { node: row.node } : {}), cellName: row.cellName });
       onClose();
     } catch (_) {
-      setNotice(t('cell-switcher-verify-failed'));
+      // Rete giu', eccezione: la lettura non e' riuscita e non puo' dire
+      // «spenta». La riga e' della lista principale: si apre, come lei.
+      onPick({ session: row.session, ...(row.node ? { node: row.node } : {}), cellName: row.cellName });
+      onClose();
     } finally {
       setPicking('');
     }
@@ -547,8 +501,7 @@ export default function CellSwitcher({
               </div>
             );
           })()}
-          {!ready && <div className="nc-empty" role="status">{t('cell-switcher-refreshing')}</div>}
-          {ready && visibleRows.length === 0 && <div className="nc-empty" role="status">{t('cell-switcher-empty-active')}</div>}
+          {visibleRows.length === 0 && <div className="nc-empty" role="status">{t('cell-switcher-empty-active')}</div>}
           {visibleRows.map((row, indice) => {
             const currentRow = current?.session === row.session && (current?.node || '') === row.node;
             const menuAperto = !!menuRow && menuRow.key === row.key;

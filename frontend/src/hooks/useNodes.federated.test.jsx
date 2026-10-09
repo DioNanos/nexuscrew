@@ -14,7 +14,7 @@ const PEER_DEVICE_ID = 'aaaaaaaabbbbccccddddeeeeffff0002';
 
 const PHONE_TOPOLOGY = {
   nodes: [
-    { name: 'cloud-example-com', instanceId: VPS_INSTANCE, route: ['cloud-example-com'], stale: false, label: 'VPS_Cloud' },
+    { name: 'cloud-example-com', instanceId: VPS_INSTANCE, route: ['cloud-example-com'], stale: false, label: 'peer-a' },
     { name: 'nexus-crew-remote-a', instanceId: 'aaaaaaaabbbbccccddddeeeeffff0003', route: ['cloud-example-com', 'nexus-crew-remote-a'], stale: false },
   ],
 };

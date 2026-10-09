@@ -939,7 +939,7 @@ test('cell-exec validRestartPrompt: client/readyWaitMs bounded, chiavi estranee 
 });
 
 // ===========================================================================
-// 6. Regression (G5 audit): argv degli altri managed INVARIATO (prompt su argv)
+// 6. Regression (G5): argv degli altri managed INVARIATO (prompt su argv)
 // ===========================================================================
 test('regression: claude.native/codex/pi/agy conservano prompt su argv; solo kimi + kimi-code via delivery', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncpdreg-'));

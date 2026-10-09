@@ -31,7 +31,7 @@ const TOKEN = 'buono';
 // ciò che riceve — path e header — perché i test negativi sui dati inoltrati
 // (ticket, referer, cookie) si provano dal lato del container.
 //
-// P1 (rilievo auditor, poi misura sul pannello REALE — 2026-08-17): `scriptSrc`
+// P1 (rilievo revisore, poi misura sul pannello REALE — 2026-08-17): `scriptSrc`
 // e' configurabile — di default `./assets/app.js`, RELATIVO, com'e' il
 // pannello vero. Misurato dopo che l'operatore ha temporaneamente rimosso la
 // Basic auth davanti al pannello per la verifica: l'HTML servito referenzia
@@ -188,11 +188,11 @@ function browserManderebbeIlCookie(cookiePath, requestPath) {
     || requestPath[cookiePath.length] === '/';
 }
 
-// P1 (rilievo auditor sul MIO test): il path della sotto-risorsa non si
+// P1 (rilievo revisore sul MIO test): il path della sotto-risorsa non si
 // inventa — si estrae dall'HTML che il pannello ha DAVVERO servito. Un test
 // che hardcoda `requestPath` puo' restare verde su un prodotto rotto, se il
 // valore inventato non e' quello che un browser costruirebbe: e' esattamente
-// quello che l'auditor ha dimostrato cambiando solo quel valore.
+// quello che il revisore ha dimostrato cambiando solo quel valore.
 function estraiSrcScript(html) {
   const m = /<script src="([^"]*)">/.exec(String(html || ''));
   return m ? m[1] : null;
@@ -689,7 +689,7 @@ test('dal vivo FEDERATO: la WebSocket del pannello remoto attraversa l\'hub col 
 });
 
 // —— I DUE CASI CATTIVI della via federata (chiusura di sicurezza) ————————
-// ROSSI FINO AL RIMEDIO: riproducono la catena che l'audit ha aperto. Un
+// ROSSI FINO AL RIMEDIO: riproducono la catena che la verifica ha aperto. Un
 // processo locale dell'hub — di qualunque utente, perché il bind su loopback
 // non isola per utente — raggiunge la via federata SENZA alcun token
 // dell'hub. L'ultimo hop entra nell'API del nodo proprietario col BEARER

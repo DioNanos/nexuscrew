@@ -117,7 +117,7 @@ test('identityKey: chiave composita cellId:launchEpoch:generation', () => {
 test('costanti del contratto fissate (non lasciate a Worker)', () => {
   assert.equal(lease.GRACE_MS, 60_000, 'grace 60s (R3.2)');
   assert.equal(lease.REFRESH_MS, 20_000, 'refresh 20s (R3.2)');
-  // >=2 tentativi strettamente dentro la grace (rev13 S3.3): cadenza 20s in 60s
+  // >=2 tentativi strettamente dentro la grace (S3.3): cadenza 20s in 60s
   const attemptsInGrace = Math.floor(lease.GRACE_MS / lease.RECONNECT_CADENCE_MS);
   assert.ok(attemptsInGrace >= 2, 'almeno due tentativi strettamente dentro la grace');
 });

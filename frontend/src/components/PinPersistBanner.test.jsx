@@ -3,7 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import PinPersistBanner from './PinPersistBanner.jsx';
 
 // Banner condiviso dalla Sidebar desktop e dalla SessionList mobile: la UI per
-// un fallimento di persistenza del pin (contratto rev6 §2.1: SEGNALATO +
+// un fallimento di persistenza del pin (SEGNALATO +
 // RITENTABILE). Non e' un console.log.
 
 describe('PinPersistBanner', () => {

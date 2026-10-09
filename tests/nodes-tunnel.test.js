@@ -60,7 +60,7 @@ function serverAperto() {
   });
 }
 
-// --- argv EXACT-MATCH (design §4b(1)) --------------------------------------
+// --- argv EXACT-MATCH --------------------------------------
 
 test('buildForwardArgs: argv esatto dal template §4b(1)', () => {
   const args = tunnel.buildForwardArgs(NODE);
@@ -565,7 +565,7 @@ test('F2 error async: niente crash (uncaught), cleanup pidfile, closeOwnedFd ide
     assert.equal(closeOfOpened, 1, 'la fd di log aperta internamente va chiusa una volta dopo lo spawn');
     assert.ok(fs.existsSync(tunnel.tunnelPidPath(dir, 'err')));
     // race: il binario sparisce tra pre-flight e spawn -> 'error' async.
-    // Prima dell'audit questo evento non aveva listener -> crash Node (unhandled).
+    // Prima della verifica questo evento non aveva listener -> crash Node (unhandled).
     child.emit('error', new Error('ENOENT race'));
     assert.equal(closeOfOpened, 1, 'closeOwnedFd idempotente: nessuna doppia chiusura');
     assert.ok(!fs.existsSync(tunnel.tunnelPidPath(dir, 'err')), 'pidfile rimosso sul cleanup');
@@ -872,7 +872,7 @@ test('F1 supervisor non dichiara ready finche il forward TCP non risponde', asyn
   }
 });
 
-// Il contratto deciso dopo l'audit R19 (regressione: il gate si appendeva su
+// Il contratto deciso dopo la verifica R19 (regressione: il gate si appendeva su
 // IL CAMPO, NON LA FRASE. Il test qui sopra prova che `hint` porta la riga; ma
 // la UI non deve ritagliarla da un testo italiano costruito nel supervisore, e
 // per questo esiste `authorizedKeys`. Questa prova attraversa `enterDegraded`
@@ -999,7 +999,7 @@ function leggiPidRegistrati(p) {
 // l'evento che porta a enterDegraded: child e' gia' null). run()
 // sovrascriveva la variabile `child` con un nuovo spawn senza fermare il
 // precedente: un ssh orfano per ogni ciclo di degraded, titolare dei suoi
-// bind, irraggiungibile da stop(). Sonda dell'auditor riprodotta alla
+// bind, irraggiungibile da stop(). Sonda del revisore riprodotta alla
 // lettera: canale sempre rifiutato, retry breve, max probe 1. Il test conta
 // PROCESSI VIVI (kernel), non lo stato dichiarato dal supervisor: e'
 // esattamente il caso in cui i due raccontano cose diverse.
@@ -1033,7 +1033,7 @@ test('F1 supervisor: canale -L rifiutato PERSISTENTEMENTE non lascia processi or
       NEXUSCREW_TUNNEL_STABLE_MS: '50',
       NEXUSCREW_TUNNEL_CHANNEL_PROBE_MAX: '1', // "max probe 1": degrada al piu' presto
       NEXUSCREW_TUNNEL_TEST_MODE: '1',
-      NEXUSCREW_TUNNEL_STEADY_RETRY_MS: '100', // "retry 100ms": la sonda dell'auditor
+      NEXUSCREW_TUNNEL_STEADY_RETRY_MS: '100', // "retry 100ms": la sonda del revisore
     },
     stdio: 'ignore',
   });

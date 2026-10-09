@@ -349,7 +349,7 @@ test('porta: snapshot completo è ok con l\'elenco asks', async (t) => {
 });
 
 test('porta su owner SOTTOSCRITTO: snapshot senza asks è error, non ok', async (t) => {
-  // La via della perdita dati dell'audit: owner sottoscritto, la porta passa
+  // La via della perdita dati della verifica: owner sottoscritto, la porta passa
   // da snapshotOnce. Il validatore rifiuta prima dell'applicazione e la porta
   // NON può rispondere 'ok' con un elenco inesistente.
   const snap = baseSnapshot();
@@ -460,13 +460,23 @@ test('porta: resyncRequired false è la forma ammessa', async (t) => {
   assert.equal(out.status, 'ok');
 });
 
-// ————————————— cap di pagina: il produttore marca resyncRequired a quota PIENA ——
+// ——— cap di pagina: il marcatore dice che la FONTE superava la pagina ———
 
-test('porta: elenco al cap di pagina (100) senza marcatore non prova nessuna assenza', async (t) => {
-  // buildSnapshot taglia asks a 100 e a quella quota mette SEMPRE
-  // resyncRequired: un elenco al cap SENZA marcatore non è una forma
-  // dell'owner — l'assenza di una domanda lì non è provabile.
+test('porta: elenco ESATTAMENTE al cap di pagina (100) senza marcatore è intero e prova l\'assenza', async (t) => {
+  // Il produttore decide il marcatore sul conteggio della FONTE, prima del
+  // taglio: una pagina di 100 da una fonte non più grande è l'elenco intero
+  // dell'owner, e va a ok. Il marcatore compare solo quando la fonte aveva
+  // più voci della pagina.
   const asks = Array.from({ length: 100 }, (_, i) => ({ id: `a${i}`, question: 'q', session: 'dev' }));
+  const out = await doorResult(t, { ...baseSnapshot(), asks });
+  assert.equal(out.status, 'ok');
+  assert.equal(out.asks.length, 100);
+});
+
+test('porta: elenco OLTRE il cap di pagina (101) senza marcatore non prova nessuna assenza', async (t) => {
+  // Il produttore non emette mai più di 100 voci: un elenco più lungo non è
+  // una forma dell'owner, e l'assenza di una domanda lì non è provabile.
+  const asks = Array.from({ length: 101 }, (_, i) => ({ id: `a${i}`, question: 'q', session: 'dev' }));
   assert.deepEqual(await doorResult(t, { ...baseSnapshot(), asks }),
     { status: 'error', reason: 'snapshot-element-oversize' });
 });

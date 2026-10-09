@@ -56,6 +56,53 @@ it('distinct owners and generations each produce one first alert in either ingre
  await mount();const f={type:'notify',ownerId:owner,askId:ask.id,ownerAskTs:100,title:'ASK alert'};
  await emit({...f,eventId:'feed-first'});await emit(f);await emit({...f,ownerId:other});await emit({...f,ownerAskTs:200});expect(m.enqueue).toHaveBeenCalledTimes(3);
 });
+const noticeCards = (title) => [...document.querySelectorAll('.nc-remote-notice')].filter((c) => c.textContent.includes(title)).length;
+
+it('a complete refreshed owner view removes a notice whose live closure was missed', async () => {
+  const notice = { v: 1, ownerId: owner, eventId: '0f8fad5b-d9cb-469f-a165-70867728950e', scope: 'cell', cellId: 'dev', hop: 1, emittedAt: Date.now(), frame: { type: 'notify', title: 'Cleared on the other device' } };
+  m.getFeedState.mockResolvedValue({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:1', asks: [], notifications: [notice] }] });
+  await mount(); await openPanel();
+  await waitFor(() => expect(noticeCards('Cleared on the other device')).toBe(1));
+  // The closure frame was missed on this browser; the NEXT authoritative read
+  // of the same owner no longer lists the notice: the card must go.
+  m.getFeedState.mockResolvedValue({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:2', asks: [], notifications: [] }] });
+  await act(async () => m.open());
+  await waitFor(() => expect(noticeCards('Cleared on the other device')).toBe(0));
+});
+
+it('a live notice arriving after a read started survives that read reconciliation', async () => {
+  const pending = deferred(); m.getFeedState.mockReturnValue(pending.promise); await mount();
+  // The live card lands while the read is in flight: the page is OLDER than
+  // the card, so the reconciliation must not take it away.
+  await emit({ type: 'notify', ownerId: owner, eventId: 'in-flight-1', title: 'Arrived in flight', urgency: 'normal' });
+  await openPanel(); expect(noticeCards('Arrived in flight')).toBe(1);
+  await act(async () => pending.resolve({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:2', asks: [], notifications: [] }] }));
+  expect(noticeCards('Arrived in flight')).toBe(1);
+});
+
+it('a live notice survives the reconciliation even when its arrival and the read share one millisecond', async () => {
+  // The wall clock cannot order two operations inside the same millisecond:
+  // with every read and arrival stamped identically, the arrival must still
+  // win (monotonic arrival order, not timestamps).
+  const frozen = Date.now;
+  Date.now = () => 1700000000000;
+  try {
+    const pending = deferred(); m.getFeedState.mockReturnValue(pending.promise); await mount();
+    await act(async () => m.open());
+    await emit({ type: 'notify', ownerId: owner, eventId: 'same-ms-1', title: 'Arrived in the same millisecond', urgency: 'normal' });
+    await openPanel();
+    expect(noticeCards('Arrived in the same millisecond')).toBe(1);
+    await act(async () => pending.resolve({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:2', asks: [], notifications: [] }] }));
+    expect(noticeCards('Arrived in the same millisecond')).toBe(1);
+  } finally { Date.now = frozen; }
+});
+
+for (const bad of [{ stale: true }, { resyncRequired: true }, { lastError: 'unreachable' }]) it(`a non-authoritative owner snapshot preserves notice cards: ${JSON.stringify(bad)}`, async () => {
+  await mount(); await emit({ type: 'notify', ownerId: owner, eventId: 'kept-1', title: 'Kept while degraded', urgency: 'normal' }); await openPanel();
+  m.getFeedState.mockResolvedValue({ views: [{ ownerId: owner, stale: false, viewEpoch: 1, cursor: '1:1', asks: [], notifications: [], ...bad }] });
+  await act(async () => m.open()); expect(noticeCards('Kept while degraded')).toBe(1);
+});
+
 it('a new live generation updates the existing card without duplicating its canonical key', async () => {
  await mount();await emit({type:'ask',ask});await openPanel();
  await emit({type:'ask',ask:{...ask,ownerAskTs:200,question:'New generation'}});
@@ -76,9 +123,15 @@ it('a late close cannot erase a newer generation that arrives again after a conf
  await emit({type:'ask',ask:{...ask,ownerAskTs:200,question:'Reopened generation'}});expect(screen.getByText('Reopened generation')).toBeTruthy();
  await emit({type:'ask-answered',id:ask.id,ownerId:owner,ownerAskTs:100});expect(screen.getByText('Reopened generation')).toBeTruthy();
 });
-it('an owner snapshot at the ASK cap is a floor and cannot remove a known absent card',async()=>{
+it('an owner snapshot at the ASK cap is whole and authoritative: the absent card goes',async()=>{
  await mount();await emit({type:'ask',ask});await openPanel();
- const floor=Array.from({length:100},(_,i)=>({...ask,id:'id-'+i,question:'Floor '+i}));m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:floor}]});await act(async()=>m.open());expect(screen.queryByText(ask.question)).not.toBeNull();
+ const whole=Array.from({length:100},(_,i)=>({...ask,id:'id-'+i,question:'Floor '+i}));m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:whole}]});await act(async()=>m.open());expect(screen.queryByText(ask.question)).toBeNull();
+});
+
+it('an owner snapshot past the ASK cap, or flagged resyncRequired, cannot remove a known absent card',async()=>{
+ await mount();await emit({type:'ask',ask});await openPanel();
+ const over=Array.from({length:101},(_,i)=>({...ask,id:'id-'+i,question:'Floor '+i}));m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:0',asks:over}]});await act(async()=>m.open());expect(screen.queryByText(ask.question)).not.toBeNull();
+ m.getFeedState.mockResolvedValue({views:[{ownerId:owner,stale:false,viewEpoch:1,cursor:'1:1',asks:[{...ask,id:'id-0',question:'Floor 0'}],resyncRequired:true}]});await act(async()=>m.open());expect(screen.queryByText(ask.question)).not.toBeNull();
 });
 
 it('a late imported alias read cannot resurrect a card after a newer complete owner snapshot',async()=>{

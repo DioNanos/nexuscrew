@@ -8,7 +8,7 @@
 // completa delle celle dell'hub — non il contenuto, ma l'esistenza e il nome,
 // che e' precisamente cio' che lo scope celle promette di non dare.
 //
-// Trovato dall'audit indipendente su NC-E, non da questo codice. E' il motivo
+// Trovato da una verifica indipendente sullo scope celle, non da questo codice. E' il motivo
 // per cui il filtro dei tre elenchi noti non basta come garanzia: la domanda
 // giusta non e' "ho filtrato gli elenchi?" ma "quale risposta nomina una cella?".
 const { test } = require('node:test');
@@ -165,7 +165,7 @@ test('GET /decks locale: il proprietario della macchina vede tutto', async (t) =
 });
 
 // --- rete di sicurezza sulle route non dichiarate -------------------------
-// L'audit ha misurato il limite della prima versione: `body.cell` veniva
+// La verifica ha misurato il limite della prima versione: `body.cell` veniva
 // fermato, `body.cellId` no. La tabella delle route resta la prima linea; qui
 // si prova che la seconda non dipenda dal nome esatto che qualcuno scegliera'.
 
@@ -221,7 +221,7 @@ test('il locale non passa dalla rete di sicurezza', async (t) => {
 // attestata, e il criterio di forma lo scambiava per il bersaglio di una route
 // dimenticata. Due funzioni sane bloccate da una rete di sicurezza.
 //
-// Trovato dalla riverifica dell'audit, misurato. Da qui in poi la regressione
+// Trovato da una riverifica, misurato. Da qui in poi la regressione
 // e' coperta: le due route sono dichiarate, e una chiave di provenienza non
 // fa scattare la rete nemmeno su una route sconosciuta.
 

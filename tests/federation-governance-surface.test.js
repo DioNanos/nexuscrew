@@ -3,7 +3,7 @@
 // `/settings/` non attraversano la federazione, e questo file le dice per NOME.
 //
 // LA PRETESA E' DELIBERATAMENTE STRETTA. La prima stesura diceva «la superficie
-// di governo», che prometteva piu' di quanto copre: l'audit ha trovato una via
+// di governo», che prometteva piu' di quanto copre: la verifica ha trovato una via
 // di AMMISSIONE federata fuori da `/settings/` — `/vl-nodes/invite`, che conia
 // un invito legato all'owner di QUESTO hub, lo stesso shape di
 // `/settings/peering/invite` che fu tolto il 2026-08-04. E' preesistente e

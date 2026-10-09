@@ -9,7 +9,7 @@ frontend/node_modules/
 mmmbuto-nexuscrew-*.tgz
 __pycache__/
 *.pyc
-# Internal design/audit material is never part of the public repository tree.
+# Internal design and review material is never part of the public repository tree.
 docs/superpowers/
 docs/CURRENT_STATE.md
 test-report/

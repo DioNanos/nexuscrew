@@ -15,6 +15,7 @@ import {
 } from '../lib/roster-view-model.js';
 import { OWNER_ID_RE } from '../lib/grid-model.js';
 import Icon from './Icon.jsx';
+import LiveBadge from './LiveBadge.jsx';
 import CellPeek from './CellPeek.jsx';
 import { CellActionsPopover, cellActionsItems, cellActionsState } from './CellActions.jsx';
 import { applyCellStar, cellStarView } from '../lib/cell-star.js';
@@ -33,7 +34,7 @@ const SIDE_MAX_W = 480;
 const bootCellKey = (cell, route = []) => `${route.length ? route.join('/') : 'local'}:${cell}`;
 
 // Sidebar presentazionale: mostra la flotta (celle) + le altre sessioni tmux
-// + i gruppi per-nodo remoto (B2, design §5). Il polling e le azioni sono del
+// + i gruppi per-nodo remoto (B2). Il polling e le azioni sono del
 // genitore; qui solo render + callback.
 // Collassabile (mini 48px, solo dot) e ridimensionabile (maniglia bordo destro).
 export default function Sidebar({
@@ -334,7 +335,7 @@ export default function Sidebar({
   const [tip, setTip] = useState(null); // {text, y}
   const showTip = (e, text) => { const r = e.currentTarget.getBoundingClientRect(); setTip({ text, y: r.top + r.height / 2 }); };
   const hideTip = () => setTip(null);
-  // Cleanup listener resize su unmount (audit: come GridView).
+  // Cleanup listener resize su unmount (come GridView).
   const resizeCleanupRef = useRef(null);
   useEffect(() => () => { if (resizeCleanupRef.current) resizeCleanupRef.current(); }, []);
 
@@ -408,7 +409,7 @@ export default function Sidebar({
             >{initial(s.name)}</button>
           ); })())}
           {/* Sessioni dei nodi remoti (B2): iniziali col tooltip "nodo:sessione";
-              nodo degradato = dot warn statico (mai spinner, design §7). */}
+              nodo degradato = dot warn statico (mai spinner). */}
           {remoteRosters.flatMap(({ g, nodeRoute, groupView, items }) => (g.kind === 'vl'
             ? (g.status === 'up' && g.sessions.length
               ? g.sessions.map((s) => (
@@ -496,7 +497,7 @@ export default function Sidebar({
         {/* R27: lettura fleet non riuscita → la lista e' l'ultima nota, non un dato */}
         {reorderBlocked && <span className="nc-side-fleet-stale" role="status" title={t('reorder-blocked')} aria-label={t('reorder-blocked')}>⇅</span>}
         {fleetStale && <span className="nc-side-fleet-stale" role="status" title={t('fleet-stale')} aria-label={t('fleet-stale')}>●</span>}
-        {/* R27 rev3: fleet spento per scelta → zero celle e' la verita' (reason del server) */}
+        {/* R27: fleet spento per scelta → zero celle e' la verita' (reason del server) */}
         {fleetOff !== null && (
           <span className="nc-side-fleet-off" role="status"
             title={`${t('fleet-off')}${fleetOff ? ` (${fleetOff})` : ''}`}
@@ -641,12 +642,20 @@ export default function Sidebar({
         const dotClass = g.fleetState === 'stale'
           ? 'warn' : hd || (g.status === 'up' ? 'on' : g.status === 'passive' ? '' : 'warn');
         const dotTitle = [g.health ? healthTitle(g.health) : '', fleetNotice].filter(Boolean).join(' · ');
+        // Sotto-riga della riga nodo: conteggio e avviso (o stato) su una riga
+        // SUA, sotto il nome — il nome non compete piu' con il messaggio lungo,
+        // che si tronca lui (il testo intero resta nel title).
+        const subline = g.status === 'up'
+          ? [t('node-sessions').replace('{n}', String(remoteItems.length)), fleetNotice].filter(Boolean).join(' · ')
+          : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g));
         // Gruppo nodo VL (VL_NODES_IN_SIDEBAR): stesso posto degli altri nodi,
         // conteggio onesto (1 se il device dichiara l'attach, 0 altrimenti);
         // offline mostra cio' che mostrano gli altri nodi offline. La riga
         // sessione apre la vista eventi nella vista larga (la sua sede), non
         // un terminale: niente drag, niente kill, niente pin.
         if (g.kind === 'vl') {
+          const vlSubline = nodeStateLabel(g)
+            || [t('node-sessions').replace('{n}', String(g.sessions.length)), fleetNotice].filter(Boolean).join(' · ');
           return (
             <div key={`nodo-vl-${nodeRoute}-${g.name}`} className="nc-node-order-wrap"
               data-node-order-key={nodeKey(g)}>
@@ -658,12 +667,10 @@ export default function Sidebar({
                   onStep={(delta) => stepNode(nodeKey(g), delta, nodeGroups || [])} />
                 <span className="nc-node-chevron">{groupView.open ? '⌄' : '›'}</span>
                 <span className={`nc-dot ${dotClass}`} title={dotTitle} />
-                <b>{g.label || g.name}</b>
-                <small>
-                  {' · '}
-                  {nodeStateLabel(g)
-                    || [t('node-sessions').replace('{n}', String(g.sessions.length)), fleetNotice].filter(Boolean).join(' · ')}
-                </small>
+                <span className="nc-node-main">
+                  <b>{g.label || g.name}</b>
+                  <small title={vlSubline}>{vlSubline}</small>
+                </span>
               </div>
               {g.status === 'up' && groupView.open && (
                 <div className="nc-side-group">
@@ -693,18 +700,10 @@ export default function Sidebar({
               onStep={(delta) => stepNode(nodeKey(g), delta, nodeGroups || [])} />
             <span className="nc-node-chevron">{groupView.open ? '⌄' : '›'}</span>
             <span className={`nc-dot ${dotClass}`} title={dotTitle} />
-            <b>{g.label || g.name}</b>
-            <small>
-              {' · '}
-              {g.status === 'up'
-                ? [t('node-sessions').replace('{n}', String(remoteItems.length)), fleetNotice].filter(Boolean).join(' · ')
-                : (g.health ? healthTitle(g.health) || nodeStateLabel(g) : nodeStateLabel(g))}
-            </small>
-            <select className="nc-node-filter" value={groupView.filter} title={t(`view-${groupView.filter}`)}
-              onClick={(e) => e.stopPropagation()} onChange={(e) => updateView(nodeRoute, { filter: e.target.value })}>
-              <option value="all">{t('view-all')}</option><option value="pinned">{t('view-pinned')}</option>
-              <option value="active">{t('view-active')}</option><option value="off">{t('view-off')}</option><option value="technical">{t('view-technical')}</option>
-            </select>
+            <span className="nc-node-main">
+              <b>{g.label || g.name}</b>
+              <small title={subline}>{subline}</small>
+            </span>
             {g.direct && onNodeRename && <button type="button" className="nc-node-rename" title={t('rename-node')}
               aria-label={`${t('rename-node')} ${g.label || g.name}`}
               onClick={(e) => { e.stopPropagation(); promptNodeRename(g); }}>✎</button>}
@@ -713,6 +712,11 @@ export default function Sidebar({
                 title={g.tunnelStatus === 'up' ? t('power-off') : t('power-on')}
                 onClick={(e) => { e.stopPropagation(); onNodePower && onNodePower(g); }}><Icon name="power" size={14} /></button>
             )}
+            <select className="nc-node-filter" value={groupView.filter} title={t(`view-${groupView.filter}`)}
+              onClick={(e) => e.stopPropagation()} onChange={(e) => updateView(nodeRoute, { filter: e.target.value })}>
+              <option value="all">{t('view-all')}</option><option value="pinned">{t('view-pinned')}</option>
+              <option value="active">{t('view-active')}</option><option value="off">{t('view-off')}</option><option value="technical">{t('view-technical')}</option>
+            </select>
           </div>
           {(g.status === 'up' || g.cellsPreserved) && groupView.open && (
             <div className="nc-side-group">
@@ -914,6 +918,7 @@ function LiveStrip({ view, notice }) {
       title={notice ? `${frase} · ${t(notice.messageKey)}` : frase}>
       <span className={`nc-live-strip-dot ${liveHostDotClass(view || {})}`} aria-hidden="true" />
       <span className="nc-live-strip-testo">{hasHost ? view.cell : frase}</span>
+      <LiveBadge view={view} />
       {notice && (
         <span className={`nc-live-strip-notice${notice.ok ? ' ok' : ' ko'}`} role="status">
           {t(notice.messageKey).replace('{cell}', notice.cell || view.cell || '')}
@@ -927,7 +932,8 @@ function PositionHeader({ label, count, state, onToggle, onFilter }) {
   return <div className="nc-side-group-title nc-node-title" role="button" tabIndex={0}
     onClick={onToggle} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}>
     <span className="nc-node-chevron">{state.open ? '⌄' : '›'}</span>
-    <span className="nc-dot on" /><b>{label}</b><small> · {t('node-sessions').replace('{n}', String(count))}</small>
+    <span className="nc-dot on" />
+    <span className="nc-node-main"><b>{label}</b><small>{t('node-sessions').replace('{n}', String(count))}</small></span>
     <select className="nc-node-filter" value={state.filter} title={t(`view-${state.filter}`)}
       onClick={(e) => e.stopPropagation()} onChange={(e) => onFilter(e.target.value)}>
       <option value="all">{t('view-all')}</option><option value="pinned">{t('view-pinned')}</option>

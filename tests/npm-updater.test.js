@@ -285,7 +285,7 @@ test('update errors redact registry credentials and local home paths', () => {
   assert.equal(message.includes('Z'.repeat(44)), false);
 });
 
-// NC-S — l'aggiornamento automatico lasciava vivi i supervisori dei tunnel.
+// l'aggiornamento automatico lasciava vivi i supervisori dei tunnel.
 //
 // Il riavvio MANUALE li ferma da sempre (`commands.restart` chiama
 // `stopManagedTunnels`), quindi il ramo gestito era coperto. Il ramo
@@ -417,7 +417,7 @@ test('il riavvio portatile dell\'update attraversa lo STESSO nucleo del manuale:
 // Il fix (lib/cli/pidfile.js) tratta questo caso come COMPATIBILITÀ
 // AMBIGUA, concessa SOLO finché questa installazione non ha mai completato
 // una scrittura v2 (nessun marker di schema — non "legacy" permanente, che
-// l'auditor ha contestato: lasciava aperti per sempre restore/downgrade).
+// il revisore ha contestato: lasciava aperti per sempre restore/downgrade).
 // Questo test copre ENTRAMBI i requisiti del gate 2 e 3: il ciclo di vita
 // reale non fallisce QUI (pre-migrazione), e lo dice sul log VERO — non solo
 // nel valore di ritorno che runner.js:73 ignora quando killed è true
@@ -660,7 +660,7 @@ test('npm update runner: senza il passo di rigenerazione la companion resta punt
     'la companion resta puntata al node morto: exit 78 al prossimo boot, nessun altro passo la sana');
 });
 
-// R28-rimedio, difetto 2 (audit): l'attivazione differita dichiarata dalla
+// R28-rimedio, difetto 2: l'attivazione differita dichiarata dalla
 // regen («il restart dell'aggiornamento la applica») era una promessa FALSA
 // in silenzio: `restart` fa `systemctl --user restart` SENZA daemon-reload,
 // quindi systemd riavviava con la definizione VECCHIA in memoria; e col
@@ -743,7 +743,7 @@ test("npm update runner: mac runtime SPENTO — nessun bootstrap, limite dichiar
     'il limite reale è dichiarato: definizioni scritte, caricate al prossimo boot o con init');
 });
 
-// R28-rimedio, difetto 3 (audit): un file regolare DI TERZI al posto del
+// R28-rimedio, difetto 3: un file regolare DI TERZI al posto del
 // target non va sovrascritto (symlink e directory erano già saltati: il
 // buco era il file regolare non nostro).
 test('npm update runner: un file regolare DI TERZI al posto del target non viene toccato', (t) => {
@@ -765,7 +765,7 @@ test('npm update runner: un file regolare DI TERZI al posto del target non viene
 
 
 // ---------------------------------------------------------------------------
-// R28 proprieta' strutturale (audit rev2): la guardia /nexuscrew/i sovrascriveva
+// R28 proprieta' strutturale: la guardia /nexuscrew/i sovrascriveva
 // un file di terzi che nomina NexusCrew in un commento, e presumeva NOSTRO un
 // file illeggibile. La proprieta' si riconosce da un'ancora STRUTTURALE emessa
 // dal nostro generatore, e cio' che non si riesce a identificare non si tocca.
@@ -842,7 +842,7 @@ test('R28: il generatore vero produce definizioni che il riconoscitore accetta',
   }
 });
 
-// R28, terzo giro (audit): l'ancora era un PREFISSO, quindi un servizio di terzi
+// R28, terzo giro: l'ancora era un PREFISSO, quindi un servizio di terzi
 // che comincia la propria Description col nostro nome veniva riconosciuto come
 // nostro — e sovrascritto. Ora l'ancora e' la RIGA ESATTA, condivisa fra
 // template e riconoscitore. Questo test e' il controcaso del controcaso: se

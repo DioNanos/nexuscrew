@@ -247,7 +247,7 @@ test('E2E (Pixel): view in resync-exhausted + dismiss confermato → la card esc
   assert.ok(gone, 'the confirmed dismiss removes the card from the gated view');
 });
 
-// Il finding dell'audit (reaudit 2026-09-29): alla scadenza del cooldown uno
+// Il finding della verifica: alla scadenza del cooldown uno
 // snapshotOnce FALSE (oversize, owner-mismatch, resyncRequired) non riarmava
 // il cooldown → uno snapshot a ogni tick, all'infinito. Via HTTP reale: un
 // owner che prima fa esaurire il resync (stream 409 perenne) e poi risponde
@@ -337,7 +337,7 @@ test('E2E: recupero fallito → una richiesta di snapshot per scadenza, non uno 
   assert.ok(v2.resyncBlockedUntil, 'the cooldown stays armed while the owner stays broken');
 });
 
-// Terzo giro dell'audit: il recupero può fallire anche LANCIANDO (500, rete,
+// Terzo giro della verifica: il recupero può fallire anche LANCIANDO (500, rete,
 // abort) — tutti gli esiti non riusciti del tentativo passano dallo stesso
 // punto che riarma il cooldown, non da un ramo per tipo di errore.
 function brokenRecoveryTest(label, failureMode, expectLastError) {
@@ -432,7 +432,7 @@ function brokenRecoveryTest(label, failureMode, expectLastError) {
 brokenRecoveryTest('HTTP 500', 'http500', 'snapshot HTTP 500');
 brokenRecoveryTest('socket chiusa', 'socket', null);
 
-// Il caso dell'ultimo giro di audit: un frame SSE malformato dopo uno
+// Il caso dell'ultimo giro di verifica: un frame SSE malformato dopo uno
 // snapshot valido azzera il cursore e, senza l'invariante, ripartiva lo
 // snapshot a ogni tick (12 in 260 ms). Con la finestra minima la richiesta
 // torna a UNA per intervallo, qualunque sia la causa del reset.
@@ -686,7 +686,7 @@ test('E2E: corpo che non finisce — la porta aborta e la GET risponde', async (
     if (url.includes('/event-feed/snapshot')) {
       headersSent += 1;
       // Header FLUSHATI con un pezzo di corpo, poi niente più: è il caso
-      // reale dell'audit (fetch risolve, r.text() resta appeso).
+      // reale della verifica (fetch risolve, r.text() resta appeso).
       res.writeHead(200, { 'content-type': 'application/json' });
       res.write('{"asks":');
       return;
@@ -925,7 +925,7 @@ unsubRejectionTest('resyncRequired', () => JSON.stringify({
 unsubRejectionTest('ownerId sbagliato', () => JSON.stringify({
   ownerId: 'f'.repeat(32), cursor: '1:1', viewEpoch: 1, notifications: [], asks: [],
 }));
-// Il bloccante del re-audit (2026-09-29): uno snapshot senza `asks` (o con
+// Il caso bloccante (2026-09-29): uno snapshot senza `asks` (o con
 // asks non array) passava il validatore come 'ok'; applySnapshot lo trasformava
 // in [] e la riconciliazione chiudeva alias ancora APERTI — l'elenco mancante
 // diventava un elenco vuoto autorevole. Col schema completo la forma è

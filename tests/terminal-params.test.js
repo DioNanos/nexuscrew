@@ -1,7 +1,7 @@
 'use strict';
 // tests/terminal-params.test.js — i parametri del terminale devono AGIRE: se la
 // config del server li cambia, il client che non riceve override li usa. Senza
-// questo cablaggio i parametri restano inerti (il difetto segnalato in audit).
+// questo cablaggio i parametri restano inerti (il difetto segnalato).
 const { test } = require('node:test');
 const assert = require('node:assert');
 

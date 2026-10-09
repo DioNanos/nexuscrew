@@ -1,5 +1,5 @@
 'use strict';
-// tests/settings-routes.test.js — Settings API B2 (design §4b(6)).
+// tests/settings-routes.test.js — Settings API B2
 // Per ogni endpoint: happy path, input garbage -> 400, READONLY -> 403 sui mutanti
 // config/token/service/up/down/restart bloccati, token mai in risposta,
 // atomicita' di config.json (scritture concorrenti non corrompono).

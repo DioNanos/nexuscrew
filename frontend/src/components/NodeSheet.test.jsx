@@ -63,7 +63,7 @@ beforeEach(() => {
   mocks.fleetDefinitions.mockReset().mockResolvedValue({ cells: [{ cell: 'Dev' }, { cell: 'Research' }] });
 });
 
-// --- scope celle (NC-E in UI) --------------------------------------------
+// --- scope celle (in UI) --------------------------------------------
 // Il permesso per-cella esisteva gia' lato server ed era impostabile SOLO da
 // riga di comando: chi amministra dalla PWA non poteva restringere un nodo, che
 // e' il caso d'uso per cui il permesso e' nato.
@@ -166,7 +166,7 @@ describe('scope celle', () => {
   });
 
   it('dopo un fallimento, "aggiungi una cella" RIPROVA invece di aprire un picker muto', async () => {
-    // Rilievo dell'audit: col flag alzato, il click apriva il picker senza
+    // Rilievo della verifica: col flag alzato, il click apriva il picker senza
     // richiedere nulla e mostrava "nessuna cella corrisponde" — che dice la
     // cosa sbagliata: non e' che le celle non ci sono, e' che non si e'
     // riusciti a chiederle.
@@ -206,7 +206,7 @@ describe('scope celle', () => {
   });
 });
 
-describe('NC-I: riga → foglio', () => {
+describe('riga → foglio', () => {
   it('la riga non porta azioni: le mostra il foglio che apre', () => {
     const { container } = renderTab();
     // Prima dell'apertura la riga non deve offrire nulla da premere per
@@ -252,7 +252,7 @@ describe('NC-I: riga → foglio', () => {
   });
 });
 
-describe('NC-I: cosa dice il foglio', () => {
+describe('cosa dice il foglio', () => {
   it('dice che un nodo accoppiato e\' fidato quanto l\'operatore', () => {
     renderSheet();
     // La sezione «cosa puo' fare» e' quella che potrebbe mentire piu'
@@ -281,7 +281,7 @@ describe('NC-I: cosa dice il foglio', () => {
   });
 });
 
-describe('NC-I: concessioni e picker', () => {
+describe('concessioni e picker', () => {
   const altri = [
     { ...peer, visibility: 'selected', selected: ['id-fisso'] },
     { name: 'fisso', label: 'Fisso', nodeId: 'id-fisso', kind: 'direct' },
@@ -315,7 +315,7 @@ describe('NC-I: concessioni e picker', () => {
   });
 });
 
-describe('NC-I: azioni', () => {
+describe('azioni', () => {
   it('la rimozione chiede conferma, poi chiude il foglio', async () => {
     const { onClose } = renderSheet();
     fireEvent.click(screen.getByRole('button', { name: /delete/i }));

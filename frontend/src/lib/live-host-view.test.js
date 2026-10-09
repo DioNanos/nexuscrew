@@ -85,3 +85,38 @@ describe('liveHostIndicatorKeys', () => {
       .toBe('live-host-state-thread-active');
   });
 });
+
+// The Live badge is shown only when there is a Live to name: a living native
+// thread, or tmux mode with an active host. A designation alone is not a Live.
+describe('liveBadgeMode', () => {
+  const cells = (engine, active = true) => [{ cell: 'Dev', engine, active, tmux: active }];
+  const view = (engine, threadStatus, active = true, extra = {}) => liveHostView({
+    liveHost: { hostCell: 'Dev', threadStatus }, cells: cells(engine, active), ...extra,
+  });
+
+  it('thread nativo presente o attivo: badge native', async () => {
+    const { liveBadgeMode } = await import('./live-host-view.js');
+    expect(liveBadgeMode(view('codex-vl.native', 'present'))).toBe('native');
+    expect(liveBadgeMode(view('codex-vl.native', 'active'))).toBe('native');
+  });
+
+  it('thread assente o incerto: nessun badge, anche con la designazione', async () => {
+    const { liveBadgeMode } = await import('./live-host-view.js');
+    expect(liveBadgeMode(view('codex-vl.native', 'absent'))).toBeNull();
+    expect(liveBadgeMode(view('codex-vl.native', 'unknown'))).toBeNull();
+    expect(liveBadgeMode(view('codex-vl.native', undefined))).toBeNull();
+  });
+
+  it('modalita tmux: badge solo con l\'ospite attivo', async () => {
+    const { liveBadgeMode } = await import('./live-host-view.js');
+    expect(liveBadgeMode(view('claude.native', 'absent', true))).toBe('tmux');
+    expect(liveBadgeMode(view('claude.native', 'absent', false))).toBeNull();
+  });
+
+  it('nessuna designazione, o designazione di un altro nodo: nessun badge', async () => {
+    const { liveBadgeMode } = await import('./live-host-view.js');
+    expect(liveBadgeMode(liveHostView({ liveHost: { hostCell: null }, cells: [] }))).toBeNull();
+    expect(liveBadgeMode(view('codex-vl.native', 'present', true, { ownerId: 'b'.repeat(32), localNodeId: 'a'.repeat(32) }))).toBeNull();
+    expect(liveBadgeMode(null)).toBeNull();
+  });
+});

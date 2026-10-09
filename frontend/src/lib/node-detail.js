@@ -7,7 +7,7 @@
 // nulla, ed e' li' che stanno gli errori silenziosi.
 //
 // Regola che vale per tutto il file: si derivano solo campi che ESISTONO. Dove
-// il modello di autorita' per-nodo (NC-E) non c'e' ancora, questo modulo lo
+// il modello di autorita' per-nodo non c'e' ancora, questo modulo lo
 // dichiara mancante invece di riempirlo con qualcosa che gli somiglia.
 
 import { nodeReach, nodeExposure } from './node-summary.js';
@@ -39,7 +39,7 @@ export function nodeIdentity(node) {
 // il nodo VEDE, non cosa PUO': metterla qui da sola la farebbe leggere come un
 // limite di potere che non e'.
 //
-// `grants: []` e' lo slot di NC-E. Quando i grant esisteranno, l'elenco si
+// `grants: []` e' lo slot dei grant per-nodo. Quando i grant esisteranno, l'elenco si
 // riempie qui e la classe derivata (`user`/`admin`/personalizzato) si calcola
 // da questa lista, mai da un campo memorizzato.
 export function nodeAuthority(node) {
@@ -128,7 +128,7 @@ export function nodeActions(node, { readonly = false, busy = false } = {}) {
   return out;
 }
 
-// --- scope celle (NC-E) ---------------------------------------------------
+// --- scope celle ---------------------------------------------------
 // Gemello di selectionGrants/selectionCandidates, e deliberatamente con le
 // stesse regole: chi ha imparato una lista ha imparato l'altra. Cambia il
 // dominio — li' i NODI verso cui questo nodo e' esposto, qui le CELLE di questa

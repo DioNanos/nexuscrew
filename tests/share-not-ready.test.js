@@ -294,7 +294,7 @@ test('peer: anche lo spegnimento dichiara un canale che non si e\' spento in mod
   assert.equal(store.getNode(store.loadStoreStrict(ctx.nodesPath), 'hub').shared, false);
 });
 
-// --- lacune dichiarate al primo audit, ora coperte ---------------------------
+// --- lacune dichiarate al primo giro, ora coperte ---------------------------
 
 // Una chiusura che LANCIA non e' una chiusura riuscita: se fosse l'unico caso
 // silenzioso, l'unica situazione in cui non sappiamo nulla del canale sarebbe
@@ -527,7 +527,7 @@ test('produzione: lo slot dichiara l\'identita\' LOCALE, quella che l\'altro cap
   assert.equal(asWrongIdentity.owned, false, 'un\'identita' + '\' diversa non deve essere provata');
 });
 
-// --- terzo giro di audit: casi che restavano scoperti ------------------------
+// --- terzo giro di verifica: casi che restavano scoperti ------------------------
 
 // Durante la grace di una rotazione due entry coesistono. Dichiarare successo
 // perche' UNA e' stata chiusa lascia l'altra viva mentre chi chiama registra il

@@ -1,6 +1,6 @@
 'use strict';
 // tests/asks-store-unreadable.test.js — store illeggibile (asks.json malformato
-// o con `asks` non array). L'audit ha mostrato che un file ESISTENTE ma
+// o con `asks` non array). La verifica ha mostrato che un file ESISTENTE ma
 // MALFORMATO produceva un list() [] autorevole: readJsonSafe tornava {} su
 // parse error, load() cacheava [] per tutto il processo, le mutazioni
 // sovrascrivevano il file malformato con [] e le domande aperte erano perse.

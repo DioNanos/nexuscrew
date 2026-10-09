@@ -288,7 +288,7 @@ test('dispatch fleet-boot Termux entra in HOME prima di inizializzare Fleet', as
 });
 
 test('runFleetBoot: READONLY emerge come failed 403 -> exit 1 (no short-circuit)', async () => {
-  // up lancerebbe 403 in READONLY: lo simuliamo esplicitamente (design §9d).
+  // up lancerebbe 403 in READONLY: lo simuliamo esplicitamente
   const fleet = mockFleet(
     [{ cell: 'A', boot: true }, { cell: 'B', boot: true }],
     async () => { throw httpError(403, 'READONLY: up bloccato'); },

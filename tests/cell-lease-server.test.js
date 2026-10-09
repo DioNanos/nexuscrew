@@ -152,7 +152,7 @@ test('R3.3.2: il fallimento del chmod sull endpoint stabile NON viene ingoiato (
   } finally { mgr.close(); fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-// F-C (audit 2a @ 142e272): il contratto del mode e' cambiato PER DECISIONE
+// F-C: il contratto del mode e' cambiato PER DECISIONE
 // approvata. Prima: la socket NASCEVA 0o600 via umask(0o177) al bind — atomica
 // rispetto a un umask di processo permissivo, ma process.umask e' GLOBALE e la
 // coppia set/restore non e' atomica sotto openEndpoint concorrenti (40/40 drift,
@@ -229,7 +229,7 @@ test('R3.3.4: reconnect accetta SOLO la transizione legittima (generation === cu
     client.end();
     // EOF attraverso il pair: attesa guidata dall'evento (stato non piu' live),
     // non dal cronometro — 30ms fissi erano una race sotto carico (vedi
-    // untilNotLive). Il gemello «regressione auditor» aspetta gia' cosi'.
+    // untilNotLive). Il gemello «regressione» aspetta gia' cosi'.
     await untilNotLive(mgr, 'Dev');
     // reconnect che AVANZA la generation di ESATTAMENTE 1 (un restart del
     // supervisore, cell-exec.js `generation += 1`): transizione legittima -> lease.
@@ -251,8 +251,8 @@ test('R3.3.4: reconnect accetta SOLO la transizione legittima (generation === cu
   } finally { mgr.close(); }
 });
 
-test('R3.3.4 regressione auditor: generation 0->99 (salto arbitrario) su lease in grace -> deny', async () => {
-  // Sonda diretta del difetto dell audit (requested=0->99, server_state=grace).
+test('R3.3.4 regressione: generation 0->99 (salto arbitrario) su lease in grace -> deny', async () => {
+  // Sonda diretta del difetto (requested=0->99, server_state=grace).
   // Il guard precedente (`incoming >= current`) accettava qualunque salto avanti;
   // il server deve esigere una transizione verificabile, non solo non-decreasing.
   const { clock, mgr } = setup();
@@ -358,7 +358,7 @@ test('R3.3.5 post-restart: reconnect ESATTAMENTE alla graceDeadline rifiutato (b
     await mgr.boot();
     assert.equal(mgr.status('Dev').state, 'none', 'lease null post-restart (fail-closed)');
     // reconnect ESATTAMENTE alla deadline (now === graceDeadline) con proof fresco: deny.
-    // IC1.2 (rev28): il bound non regredisce piu' — il back-step del fixture
+    // IC1.2: il bound non regredisce piu' — il back-step del fixture
     // (clock.t=5_000 prima dell'EOF) non abbassa piu' il bound a 65_000: resta
     // 70_000 (il max). La proprieta' off-by-one pinna da questo test (`>=`,
     // non `>`) si conserva ancorando il reconnect alla deadline REALE su disco,
@@ -538,14 +538,14 @@ test('B3/GC1.2: persistenza fallita nel refresh = nessun ACK e nessun proof (err
   }
 });
 
-// P1-1 (audit 3405df0) nasceva con lo store unico: la RMW del refresh che
+// P1-1 nasceva con lo store unico: la RMW del refresh che
 // rileggeva TUTTO lo store poteva cancellare le altre celle su errore di
 // lettura. Con lo storage per-cell (D1) il refresh non rilegge piu' nulla e
 // scrive solo il proprio file: la garanzia equivalente ("il refresh di una
 // cella non tocca le altre") e' provata in tests/cell-lease-proof.test.js
 // (test D1/E3). Nessuna RMW condivisa, nessuna cancellazione possibile.
 
-// Fixture normativa (FC1 rev26 / P1-3 audit 3405df0): produce lo stato della cella
+// Fixture normativa (FC1 / P1-3): produce lo stato della cella
 // DAL PERCORSO DI PRODUZIONE — track + attachInitial (bindLiveSocket) + almeno un
 // refresh con ACK — verifica che il bound rinfrescato sia un intero riletto da disco,
 // poi restart via boot(). I casi di reconnect (entro/alla deadline/oltre) e la
@@ -628,7 +628,7 @@ test('P1-3 fixture normativa, negativo: bound corroto (non-intero) partito dalla
   } finally { f.cleanup(); }
 });
 
-// P1-1b (audit 2a05db2): la guardia era a livello I/O; il difetto era la FORMA
+// P1-1b: la guardia era a livello I/O; il difetto era la FORMA
 // del dato. Con lo store per-cell la radice non-oggetto riguarda il SINGOLO file
 // della cella: boot() deve saltare quella cella (fail-closed), non trattarla
 // come vuota ne' caricarla.
@@ -656,7 +656,7 @@ test('P1-1b schema: file per-cell con root valida-JSON ma non-oggetto -> cella s
   }
 });
 
-// P1-2b (audit 2a): il record durevole e' essenziale. Con lo store unico la
+// P1-2b: il record durevole e' essenziale. Con lo store unico la
 // lettura illeggibile PROPAGAVA perche' la RMW avrebbe riscritto TUTTO lo store
 // alla cieca. Con lo storage per-cell la lettura illeggibile riguarda SOLO il
 // file di quella cella: track rigenera l'identity e RIPARA il file (il danno e'
@@ -718,7 +718,7 @@ test('P1-2b: reconnect con bound non durevole (persist fallita) -> deny, nessun 
   }
 });
 
-// P1-1 (reaudit dd38c83): __proto__ come cellId produceva un finto successo con
+// P1-1: __proto__ come cellId produceva un finto successo con
 // lo store unico (obj['__proto__'] invocava il setter del prototype invece di
 // creare una proprieta' propria -> JSON.stringify produceva {} -> nessun record
 // durevole). Con lo storage per-cell non esiste piu' NESSUN contenitore mappato
@@ -774,7 +774,7 @@ test('P1-1: __proto__ non inquina altre celle (file separati per construction)',
   } finally { try { mgr.close(); } catch (_) {} try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {} }
 });
 
-// P1-2 (reaudit dd38c83): un secondo track() che non persiste cancella una lease
+// P1-2: un secondo track() che non persiste cancella una lease
 // gia' viva e orfana la socket del supervisore. Fix: il cleanup ripristina l'entry
 // preesistente invece di cancellarla.
 test('P1-2: secondo track() con persist fallita NON cancella lease viva esistente', async () => {
@@ -806,7 +806,7 @@ test('P1-2: secondo track() con persist fallita NON cancella lease viva esistent
   }
 });
 
-// P1-3 (reaudit dd38c83): onLease in builtin.js ignorava il boolean di attachInitial.
+// P1-3: onLease in builtin.js ignorava il boolean di attachInitial.
 // Se la persistenza del bind fallisce, il payload lease non deve essere consegnato:
 // la socket va chiusa (EOF osservabile), non lasciata aperta su un manager vuoto.
 // Test: simula il wiring onLease con pair() (socket TCP throwaway come fa il broker).
@@ -867,7 +867,7 @@ test('P1-3: onLease con attachInitial=true NON chiude la socket (lease vivo, hap
   }
 });
 
-// P1-4 (reaudit dd38c83): forma ≠ semantica. loadPersisted accetta solo cio'
+// P1-4: forma ≠ semantica. loadPersisted accetta solo cio'
 // che il runtime produce: launchEpoch hex-16 e bound entro now+2*GRACE_MS.
 // Fail-closed: entry con valori non producibili = saltata (nessun endpoint,
 // nessun lease). La capability non esiste piu' (A2): l'autenticazione al

@@ -1,5 +1,5 @@
 'use strict';
-// tests/event-feed-fixes.test.js — audit fixes for the federated feed:
+// tests/event-feed-fixes.test.js — fixes for the federated feed:
 // per-peer projection of node frames (R1), capability + snapshot guards on the
 // client (R2), the client ingress budget (R3), the post-build snapshot
 // re-gate (R4) and the reset/idle-timer hygiene (R5).

@@ -33,6 +33,37 @@ vi.mock('./CellPanel.jsx', () => ({
   ),
 }));
 
+// Il drawer consuma i gruppi della lista principale (hook useNodes) e il
+// treno condiviso per il locale: nei test gruppi e locale vengono dai mock
+// di api, senza timer da 4 secondi.
+vi.mock('../hooks/useNodes.js', async () => {
+  const cache = await import('../lib/cell-switcher-cache.js');
+  return { useNodesState: () => ({ groups: (cache.readCellSwitcherSnapshot() || {}).nodeGroups || [], hasLoaded: true }) };
+});
+vi.mock('../lib/fleet-poll.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    subscribeFleetRoute: (_token, route, onSnapshot) => {
+      if (route.length) return () => {};
+      const emit = async () => {
+        try {
+          const res = await mocks.apiFetch('/api/sessions', 'token');
+          const sessions = await res.json();
+          const fs = await mocks.fleetStatus('token', []);
+          onSnapshot({ sessionsJson: JSON.stringify(sessions), sessionsError: null, fs, fleetError: null });
+        } catch (_) {
+          onSnapshot({ sessionsJson: null, sessionsError: 'mock', fs: null, fleetError: null });
+        }
+      };
+      emit();
+      const id = setInterval(emit, 100);
+      return () => clearInterval(id);
+    },
+  };
+});
+
+
 import CellSwitcher from './CellSwitcher.jsx';
 import { writeCellSwitcherSnapshot } from '../lib/cell-switcher-cache.js';
 import { t } from '../lib/i18n.js';
@@ -93,11 +124,11 @@ describe('il nodeLabel sale nell\'intestazione del gruppo', () => {
       sessions: [{ name: 'cloud-cell-One', activity: Date.now() - 60000, working: false }],
     }) });
     mocks.fleetStatus.mockImplementation(async () => ({ available: true, cells: [active('cell-One', 'cloud-cell-One')] }));
-    render(<Switcher localNodeLabel="VPSCloud" />);
+    render(<Switcher localNodeLabel="peer-a" />);
     await screen.findByRole('button', { name: /^cell-One / });
     const teste = [...document.querySelectorAll('.nc-cell-switcher-position')];
     expect(teste).toHaveLength(1);
-    expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', 'VPSCloud'));
+    expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', 'peer-a'));
   });
 
   it('senza localNodeLabel il gruppo locale resta «locale»', async () => {
@@ -116,13 +147,13 @@ describe('il nodeLabel sale nell\'intestazione del gruppo', () => {
     expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', t('cell-switcher-group-local')));
   });
 
-  it('VPSCloud compare una volta in testa, non su ogni riga', async () => {
+  it('peer-a compare una volta in testa, non su ogni riga', async () => {
     writeCellSwitcherSnapshot({
       sessions: [],
       cells: [],
       localFresh: true,
       nodeGroups: [{
-        route: ['hub'], label: 'VPSCloud', switcherFresh: true,
+        route: ['hub'], label: 'peer-a', switcherFresh: true,
         sessions: [{ name: 'cloud-Remote', activity: Date.now() - 60000, working: false }],
         cells: [active('Remote', 'cloud-Remote')],
       }],
@@ -139,11 +170,11 @@ describe('il nodeLabel sale nell\'intestazione del gruppo', () => {
     const riga = await screen.findByRole('button', { name: /^Remote / });
 
     // Nessuna riga porta l'etichetta del nodo.
-    expect(riga.textContent).not.toContain('VPSCloud');
+    expect(riga.textContent).not.toContain('peer-a');
     // L'intestazione del gruppo la porta, una volta sola.
     const teste = [...document.querySelectorAll('.nc-cell-switcher-position')];
     expect(teste).toHaveLength(1);
-    expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', 'VPSCloud'));
+    expect(teste[0].textContent).toBe(t('cell-switcher-group').replace('{node}', 'peer-a'));
   });
 });
 

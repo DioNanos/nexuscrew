@@ -1092,7 +1092,7 @@ test('up non dichiara successo quando il client esce subito, anche senza prompt 
 });
 
 // --- B4: createBuiltinFleet non deve aprire endpoint lease prima del gate fail-closed ---
-// Difetto (auditor 2a fix6): leaseManager.boot() veniva eseguito PRIMA di validare
+// Difetto: leaseManager.boot() veniva eseguito PRIMA di validare
 // fleet.json. Con fleet.json invalido la funzione ritornava l'oggetto `off`
 // (unavailable) MA gli endpoint lease riaperti da boot() restavano vivi, e `off`
 // non esponeva close(). Un reconnect valido otteneva un lease con Fleet non
@@ -1124,7 +1124,7 @@ function tryLeaseReconnect(stablePath, launchEpoch, proof, timeoutMs = 400) {
 }
 
 test('B4: createBuiltinFleet con fleet.json invalido non lascia endpoint lease vivo (gate fail-closed prima di boot)', async () => {
-  // P1-3 (audit 3405df0): NESSUNA identity scritta a mano. Con fleet.json invalido
+  // P1-3: NESSUNA identity scritta a mano. Con fleet.json invalido
   // loadDefinitions ritorna null PRIMA di creare leaseManager/boot (P1-2) -> nessun
   // endpoint. La fixture non costruisce uno stato che in produzione non esisterebbe.
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbi-b4-'));
@@ -1147,7 +1147,7 @@ test('B4: createBuiltinFleet con fleet.json invalido non lascia endpoint lease v
 });
 
 test('P1-2: gate availability post-validazione (migrazione tmux fallita) NON lascia endpoint lease vivo', async () => {
-  // P1-2 (audit 3405df0): il gate B4 copriva solo loadDefinitions. Con fleet.json
+  // P1-2: il gate B4 copriva solo loadDefinitions. Con fleet.json
   // VALIDO ma migrazione tmux fallita DOPO leaseManager.boot(), createBuiltinFleet
   // ritornava off ma l'endpoint restava vivo e close() era no-op -> reconnect otteneva
   // lease. La sonda ATTRAVERSA createBuiltinFleet: cella id 'Dev.Work' (candidato
@@ -1222,7 +1222,7 @@ test('createBuiltinFleet: fleet.json presente ma illeggibile (EACCES) -> same un
 // `GET /fleet/status`, che e' nella allowlist federata con inoltro trasparente:
 // senza il default negato, la directory di ogni cella uscirebbe verso ogni peer.
 // Il backup vieta gia' le cwd assolute per la stessa ragione. Rilievo di un
-// audit indipendente sulla fetta 3.
+// verifica indipendente sulla fetta 3.
 test('status: la cwd reale NON e\' nella vista pubblica, e c\'e\' solo su richiesta esplicita', async () => {
   const w = makeWorld();
   try {
@@ -1237,4 +1237,27 @@ test('status: la cwd reale NON e\' nella vista pubblica, e c\'e\' solo su richie
     const conCwd = interna.cells.find((c) => c.cell === 'Dev');
     assert.equal(conCwd.cwd, w.cwd, 'chi la chiede esplicitamente la riceve, risolta');
   } finally { w.cleanup?.(); }
+});
+
+// ---------------------------------------------------------------------------
+// Il nome `Live` e' riservato: appartiene alla voce di directory della Live,
+// mai a una cella definita dall'operatore.
+// ---------------------------------------------------------------------------
+test('define-cell rifiuta il nome riservato Live in ogni scrittura', async () => {
+  const w = makeWorld({ cellPrompt: undefined });
+  try {
+    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    await fleet.defineEngine({ id: 'glm', command: w.command, promptMode: 'send-keys' });
+    for (const id of ['Live', 'live', 'LIVE', 'lIvE']) {
+      await assert.rejects(
+        () => fleet.defineCell({ id, cwd: w.cwd, engine: 'glm', boot: false }),
+        (e) => e.status === 400 && /riservat/.test(e.message),
+        `define-cell ${id}`,
+      );
+    }
+    const st = await fleet.status();
+    assert.ok(!st.cells.some((c) => /^live$/i.test(c.cell)), 'nessuna cella Live creata');
+    // un nome vicino resta valido: il divieto e' sul nome, non sul prefisso
+    await fleet.defineCell({ id: 'Liveness', cwd: w.cwd, engine: 'glm', boot: false });
+  } finally { w.cleanup(); }
 });
