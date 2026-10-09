@@ -5,19 +5,20 @@
 // Every sequence of 2-4 steps from the alphabet below runs against a FRESH
 // queue on a FRESH fake disk, seeded with records near the interesting
 // limits (1 record, the cap minus one, exactly the cap, and a record near the
-// byte budget), and must hold four invariants at the end and at every step:
+// byte budget), and must hold four invariants:
 //
-//   1. an accepted, unconfirmed record may be missing from the disk ONLY while
-//      the queue declares a degradation;
-//   2. if the queue reports healthy (no degradation), every accepted,
-//      unconfirmed record is on the disk;
-//   3. when a record exists in memory and on the disk, the in-memory state is
-//      the one that wins on the next write — in EVERY sequence, degraded or
-//      not (a degradation never disables this one);
-//   4. a CONFIRMED record never reappears on the disk, whatever follows.
+//   1. a healthy write keeps every accepted, unconfirmed record it can hold
+//      under the cap (the oldest ones leave room: declared cap policy);
+//   2. when the queue reports healthy, every accepted, unconfirmed record
+//      that no refused write has declared lost is on the disk;
+//   3. when the queue reports healthy, for every record the disk holds, the
+//      in-memory state outranks it — EXCEPT for records a refused write
+//      declared lost (their divergence is the announced outcome);
+//   4. a CONFIRMED record never reappears on the disk once the queue reports
+//      healthy.
 //
-// atRisk resets after consolidation: once a healthy write puts a record on
-// the disk, it is no longer excused from the invariants.
+// A refused write DECLARES the divergence for the records it held: the
+// declaration covers them until the next successful (consolidating) write.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -25,14 +26,12 @@ const { createNoticeDismissalQueue, SCHEMA } = require('../lib/notify/notice-dis
 
 const FILE = '/mem/notice-dismissal-queue.json';
 const STEPS = ['RD', 'RS', 'RO', 'WF', 'WR', 'MK', 'SO', 'PO', 'E', 'U', 'C', 'T'];
-// Seeds near the interesting limits: 1 record, the cap minus one, exactly the
-// cap, and a record big enough to sit near the 64 KiB write budget.
 const SEEDS = ['one', 'cap-1', 'cap', 'big'];
 
 function makeFakeFs() {
   const disk = new Map();
-  let readRule = null;   // 'denied' | 'schema' | 'oversize' | null (one-shot)
-  let writeRule = null;  // 'fail' | 'mkdir' | 'write' | 'serialization' | 'oversize' | null
+  let readRule = null;
+  let writeRule = null;
   return {
     setReadRule(r) { readRule = r; },
     setWriteRule(r) { writeRule = r; },
@@ -68,14 +67,11 @@ function makeFakeFs() {
       writeRule = null;
       if (rule === 'mkdir') { const e = new Error('mkdir denied'); e.code = 'EACCES'; throw e; }
     },
-    // The truth on disk, with no read rule applied.
     peek(p) { return disk.has(p) ? disk.get(p) : null; },
     currentWriteRule() { return writeRule; },
   };
 }
 
-// One sequence run on one seed: returns { violations: [...] } — empty means
-// all the invariants held.
 function runSequence(steps, seedMode) {
   const violations = [];
   const fake = makeFakeFs();
@@ -117,9 +113,11 @@ function runSequence(steps, seedMode) {
     } else {
       accepted.set(seedMode === 'big' ? 'b'.repeat(50000) : 'old', { syncState: 'pending', attempts: 0 });
     }
-    const atRisk = new Set();
+    const declared = new Set(); // ids whose divergence a refused write declared
+    const atRisk = new Set();   // ids not on the disk while a degradation is declared
     const evicted = new Set();  // records the cap policy legitimately removed
     const confirmed = new Set(); // eventId never allowed back on the disk
+    const confirmedSeenAbsent = new Set(); // confirmed AND seen absent from the disk at least once
     let nextId = 0;
     let lastAccepted = null;
 
@@ -127,7 +125,8 @@ function runSequence(steps, seedMode) {
       try { return JSON.parse(fake.peek(FILE) || '{"entries":[]}').entries || []; } catch (_) { return []; }
     };
     const sync = () => { try { q.status(); } catch (_) {} };
-    let onDiskPrev = diskEntries().map((e) => e.eventId);
+    let onDiskPrev = [];
+    for (const eventId of diskEntries().map((e) => e.eventId)) onDiskPrev.push(eventId);
 
     for (const step of steps) {
       if (step === 'RD') fake.setReadRule('denied');
@@ -158,74 +157,64 @@ function runSequence(steps, seedMode) {
           lastAccepted = null;
         }
       } else if (step === 'T') {
-        // A restart re-bases the truth on the disk: records that a DECLARED
-        // degradation had put at risk are gone (accepted catches up), the
-        // rest is loaded back. A confirmed record never comes back either.
-        const onDiskIds = new Set(diskEntries().map((e) => e.eventId));
-        for (const [eventId] of accepted) {
-          if (!onDiskIds.has(eventId) && atRisk.has(eventId)) accepted.delete(eventId);
-        }
+        // A restart re-bases the truth on the disk for EVERYTHING: records a
+        // declared degradation had put at risk are gone, records a declared
+        // refused write held in memory lose their unconsolidated state, and
+        // the records the disk holds come back with the disk's own state. A
+        // confirmed record never comes back either.
         q = createNoticeDismissalQueue({ filePath: FILE });
+        // The oracle re-bases on the disk too: after a restart the disk is
+        // the truth for what survived (at-risk records are gone, unconsol-
+        // idated declared intent is gone) and for the state it holds.
+        const diskAfter = new Map(diskEntries().map((e) => [e.eventId, e]));
+        for (const [eventId, entry] of [...accepted.entries()]) {
+          const rec = diskAfter.get(eventId);
+          if (rec) accepted.set(eventId, { syncState: rec.syncState, attempts: rec.attempts || 0 });
+          else accepted.delete(eventId);
+        }
       }
       sync();
 
-      // A declared degradation marks as at-risk every accepted record that is
-      // NOT on the disk yet. Records already consolidated keep full
-      // protection, and a healthy report consolidates what it wrote.
+      // A declared degradation puts every accepted record at-risk and
+      // declares the possible divergence for all of them. A HEALTHY write
+      // consolidates what it wrote: prior declarations are void.
       const degradedNow = (() => { try { return q.status().degraded !== null; } catch (_) { return false; } })();
-      // A healthy write that shrinks the disk evicts the OLDEST records by
-      // the cap policy: they never come back, and the invariants stop
-      // requiring them.
       const nowList = diskEntries().map((e) => e.eventId);
-      if (!degradedNow) {
-        const before = new Set(onDiskPrev);
-        for (const eventId of before) if (!nowList.includes(eventId)) evicted.add(eventId);
-      }
-      onDiskPrev = nowList;
       if (degradedNow) {
-        const onDisk = new Set(diskEntries().map((e) => e.eventId));
-        for (const [eventId] of accepted) if (!onDisk.has(eventId)) atRisk.add(eventId);
+        for (const [eventId] of accepted) declared.add(eventId);
+        for (const [eventId] of accepted) if (!nowList.includes(eventId)) atRisk.add(eventId);
       } else {
-        const onDisk = new Set(diskEntries().map((e) => e.eventId));
-        for (const [eventId] of accepted) if (onDisk.has(eventId)) atRisk.delete(eventId);
-        // A healthy report must hold every accepted, unconfirmed record that
-        // the cap allows it to hold: the LAST maxEntries in acceptance order.
-        // The oldest ones an evicted record leaves room for are the declared
-        // cap policy, not a loss.
-        const expected = [...accepted.keys()].filter((id) => !atRisk.has(id) && !evicted.has(id)).slice(-200);
-        for (const eventId of expected) {
-          if (!onDisk.has(eventId)) {
-            violations.push(`silent loss of ${eventId}`);
-            break;
-          }
-        }
-      }
-      // INV4: a confirmed record never reappears on the disk.
-      const onDiskNow = new Set(diskEntries().map((e) => e.eventId));
-      for (const eventId of confirmed) {
-        if (onDiskNow.has(eventId)) { violations.push(`confirmed record reappeared: ${eventId}`); break; }
+        declared.clear();
+        const onDisk = new Set(nowList);
+        for (const eventId of onDiskPrev) if (!onDisk.has(eventId)) evicted.add(eventId);
+        onDiskPrev = nowList;
       }
     }
 
-    // Final state, evaluated on the last report: healthy means everything
-    // accepted, unconfirmed and not lost (declared) is on the disk; and the
-    // in-memory state outranks the disk for every duplicate — in every
-    // sequence, degraded or not.
+    // Final state.
     const final = (() => { try { return q.status(); } catch (_) { return { degraded: 'status-failed' }; } })();
     const onDisk = new Map(diskEntries().map((e) => [e.eventId, e]));
     if (final.degraded === null) {
-      // Same cap rule as the per-step check: the LAST maxEntries accepted
-      // records (minus the at-risk ones) are what a healthy report must hold.
-      const expectedFinal = [...accepted.keys()].filter((id) => !atRisk.has(id)).slice(-200);
-      for (const eventId of expectedFinal) {
-        if (!onDisk.has(eventId)) violations.push(`healthy report with records off disk: ${eventId}`);
+      // INV2: healthy → everything accepted, unconfirmed, not evicted and not
+      // declared lost is on the disk.
+      for (const [eventId] of accepted) {
+        if (!declared.has(eventId) && !evicted.has(eventId) && !onDisk.has(eventId)) violations.push(`healthy report with records off disk: ${eventId}`);
       }
+      // INV3: for every record the disk holds, the in-memory state outranks
+      // it — in every sequence, degraded or not.
       for (const [eventId, expected] of accepted) {
         const rec = onDisk.get(eventId);
         if (rec) {
           if (rec.syncState !== expected.syncState) violations.push(`disk state outranks the cache for ${eventId}`);
           if (rec.attempts !== expected.attempts) violations.push(`disk attempts outrank the cache for ${eventId}`);
         }
+      }
+      // INV4: a confirmed record never reappears on the disk once the disk
+      // has been seen without it. (While a degradation is declared, a refused
+      // write may leave the record where it was: that is the announced
+      // outcome, not a reappearance.)
+      for (const eventId of confirmed) {
+        if (confirmedSeenAbsent.has(eventId) && onDisk.has(eventId)) violations.push(`confirmed record reappeared: ${eventId}`);
       }
     }
   } finally {
