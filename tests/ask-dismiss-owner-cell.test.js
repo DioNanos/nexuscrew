@@ -221,19 +221,19 @@ test('client: a live ask frame takes the cell from the authenticated cell-scoped
 
 // ---------------------------------------------------------------- the dismissal, end to end
 
-async function boot(t, { grants, session = 'lab-Dev', snapshotCell = 'Dev', alias = null, ownerUp = true, ts = 100, loseReplies = false, previousDismissal = null } = {}) {
+async function boot(t, { grants, session = 'lab-Dev', snapshotCell = 'Dev', alias = null, ownerUp = true, ts = 100, feedTs = ts, loseReplies = false, previousDismissal = null, feedQuestion = null } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-dismiss-cell-'));
   const configDir = path.join(home, '.nexuscrew'); fs.mkdirSync(configDir);
   const nodesPath = path.join(configDir, 'nodes.json'); nodes.initStore(nodesPath);
   const asksDir = configDir;
-  if (alias) createAsksStore({ dir: asksDir }).create({ question: 'Review?', session: alias.session || session, ownerId: OWNER, ownerAskId: ASK, originNode: OWNER, ownerAskTs: ts, ...(alias.originCell ? { originCell: alias.originCell } : {}) });
+  if (alias) createAsksStore({ dir: asksDir }).create({ question: 'Review?', session: alias.session || session, ownerId: OWNER, ownerAskId: ASK, originNode: OWNER, ...(alias.noTs ? {} : { ownerAskTs: alias.ts === undefined ? ts : alias.ts }), ...(alias.originCell ? { originCell: alias.originCell } : {}) });
   if (previousDismissal) {
     // An earlier generation of the same id, already dismissed on this node (persisted).
     const old = { id: ASK, ownerAskId: ASK, question: previousDismissal.question, session: previousDismissal.session, ownerAskTs: previousDismissal.ts, originNode: OWNER };
     const stored = createAsksStore({ dir: asksDir }).dismissImported({ ownerId: OWNER, ownerAskId: ASK, ask: old, cellId: previousDismissal.cellId });
     assert.equal(stored.ok, true, JSON.stringify(stored));
   }
-  const source = { id: ASK, ts, question: alias ? 'Review?' : 'Feed only?', session, ...(snapshotCell ? { cellId: snapshotCell } : {}) };
+  const source = { id: ASK, ...(feedTs === 'absent' ? {} : { ts: feedTs }), question: feedQuestion || (alias ? 'Review?' : 'Feed only?'), session, ...(snapshotCell ? { cellId: snapshotCell } : {}) };
   const owner = http.createServer((req, res) => {
     const json = (b) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(b)); };
     // A reply that is lost after the request went out: the relay cannot know whether the answer landed.
@@ -396,4 +396,93 @@ test('a dismissal persisted before a restart keeps working with the cell it was 
   const out = await rt.dismiss();
   assert.equal(out.code, 200, JSON.stringify(out));
   assert.equal(createAsksStore({ dir: rt.configDir }).listImportedDismissals().length, 1);
+});
+
+// ---------------------------------------------------------------- G1: a cell is lent only between sources of the SAME, KNOWN generation
+
+async function g1(t, { alias, feedTs, snapshotCell, feedQuestion, grants = { cellVisibility: 'selected', cells: ['Dev'] }, session = 'lab-Other' }) {
+  const rt = await boot(t, { grants, alias: { session: 'lab-Other', ...alias }, feedTs, snapshotCell, session, feedQuestion });
+  assert.equal(await rt.waitForCard(), true);
+  return rt;
+}
+const persisted = (rt) => createAsksStore({ dir: rt.configDir }).listImportedDismissals();
+
+test('G1: a legacy alias (cell Dev, no owner timestamp) does not lend its cell to a feed card of a KNOWN generation without one', async (t) => {
+  const rt = await g1(t, { alias: { originCell: 'Dev', noTs: true }, feedTs: 200, snapshotCell: null });
+  assert.equal((await rt.capability()).canDismissLocal, false);
+  const out = await rt.dismiss();
+  assert.equal(out.code, 409, JSON.stringify(out));
+  assert.equal(out.body.reason, 'cell-unresolved');
+  assert.equal(persisted(rt).length, 0, 'nothing was recorded');
+});
+
+test('G1: a card of an OLDER known generation lends nothing to the selected newer one, and a newer one takes nothing from an older alias', async (t) => {
+  // Alias 100 (cell Dev), feed 200 without a cell: the feed card is selected, its generation has no cell of its own.
+  const a = await g1(t, { alias: { originCell: 'Dev', ts: 100 }, feedTs: 200, snapshotCell: null });
+  const outA = await a.dismiss();
+  assert.equal(outA.code, 409, JSON.stringify(outA));
+  assert.equal(outA.body.reason, 'cell-unresolved');
+  assert.equal(persisted(a).length, 0);
+  // Alias 200 (cell Dev), feed 100 with ANOTHER cell: the alias is the selected generation and keeps its own cell;
+  // the older card neither lends its cell nor makes a conflict.
+  const b = await g1(t, { alias: { originCell: 'Dev', ts: 200 }, feedTs: 100, snapshotCell: 'Other', grants: { cellVisibility: 'selected', cells: ['Dev', 'Other'] } });
+  const outB = await b.dismiss();
+  assert.equal(outB.code, 200, JSON.stringify(outB));
+  assert.equal(persisted(b)[0].cellId, 'Dev');
+  assert.equal(persisted(b)[0].ownerAskTs, 200);
+});
+
+test('G1: equal known timestamps and the same content still complete each other (the alias cell serves the feed card)', async (t) => {
+  const rt = await g1(t, { alias: { originCell: 'Dev', ts: 200 }, feedTs: 200, snapshotCell: null });
+  assert.equal((await rt.capability()).canDismissLocal, true);
+  const out = await rt.dismiss();
+  assert.equal(out.code, 200, JSON.stringify(out));
+  assert.equal(persisted(rt)[0].cellId, 'Dev');
+  assert.equal(persisted(rt)[0].ownerAskTs, 200);
+});
+
+test('G1: the selected ask keeps its OWN cell: a feed card with its cell is dismissible whatever the alias lacks', async (t) => {
+  const rt = await g1(t, { alias: { noTs: true }, feedTs: 200, snapshotCell: 'Dev' });
+  const out = await rt.dismiss();
+  assert.equal(out.code, 200, JSON.stringify(out));
+  assert.equal(persisted(rt)[0].cellId, 'Dev');
+  assert.equal(persisted(rt)[0].ownerAskTs, 200);
+});
+
+test('G1: a legacy alias with an attested cell and no feed card at all (owner gone) is its own source and stays dismissible', async (t) => {
+  const rt = await boot(t, { grants: { cellVisibility: 'selected', cells: ['Dev'] }, snapshotCell: null, ownerUp: false,
+    alias: { session: 'lab-Other', originCell: 'Dev', noTs: true } });
+  assert.equal((await rt.capability()).canDismissLocal, true);
+  assert.equal((await rt.dismiss()).code, 200);
+});
+
+test('G1: a cell bound to another generation also cannot widen the scope: the legacy cell Dev is outside selected=[Other]', async (t) => {
+  const rt = await g1(t, { alias: { originCell: 'Dev', ts: 200 }, feedTs: 200, snapshotCell: null, grants: { cellVisibility: 'selected', cells: ['Other'] } });
+  assert.equal((await rt.dismiss()).code, 404);
+});
+
+test('G1: an owner that sends no timestamp (feed side unknown) lends nothing to an alias, and the alias lends nothing to it', async (t) => {
+  // Alias with a known generation and no cell of its own, feed card WITH a cell but no timestamp:
+  // the feed card is not bound to the alias generation, so its cell is not lent to it.
+  const a = await g1(t, { alias: { ts: 200 }, feedTs: 'absent', snapshotCell: 'Dev' });
+  const outA = await a.dismiss();
+  assert.equal(outA.code, 409, JSON.stringify(outA));
+  assert.equal(outA.body.reason, 'cell-unresolved');
+  assert.equal(persisted(a).length, 0);
+  // Both generations unknown: still no cell crosses over (the alias keeps only what it carries itself).
+  const b = await g1(t, { alias: { noTs: true }, feedTs: 'absent', snapshotCell: 'Dev' });
+  const outB = await b.dismiss();
+  assert.equal(outB.code, 409, JSON.stringify(outB));
+  assert.equal(persisted(b).length, 0);
+  // ... and what the alias carries itself is enough.
+  const c = await g1(t, { alias: { noTs: true, originCell: 'Dev' }, feedTs: 'absent', snapshotCell: null });
+  assert.equal((await c.dismiss()).code, 200);
+});
+
+test('G1: a card with the same timestamp but DIFFERENT content is another ask: it lends no cell', async (t) => {
+  const rt = await g1(t, { alias: { ts: 200 }, feedTs: 200, snapshotCell: 'Dev', feedQuestion: 'A different question?' });
+  const out = await rt.dismiss();
+  assert.equal(out.code, 409, JSON.stringify(out));
+  assert.equal(out.body.reason, 'cell-unresolved', 'the cell of the other card is not borrowed, so the reason is the unresolved cell, not an ambiguity');
+  assert.equal(persisted(rt).length, 0);
 });
