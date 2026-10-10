@@ -631,3 +631,103 @@ test('M1 (decks, integrity): a reader that cannot see the references of a deck c
   const ownerPut = await fetch(`${h.base}/api/decks/main`, { method: 'PUT', headers: own(h), body: JSON.stringify({ expectedRevision: 1, layout: { columns: [{ width: 100, tiles: [{ session: 'agent-1', node: 'box', ownerId: BOX, height: 100, fontSize: 13 }] }] } }) });
   assert.equal(ownerPut.status, 200, 'GUARD: the owner is never filtered');
 });
+
+// ------------------------------------------------------------------------- state captured BEFORE a wait
+// A publication that ENDS during a wait must not hand its leaf to a reader that was not entitled to it
+// when the request began (or that is no longer entitled to it when the answer leaves).
+
+test('P3 (publication ended during the fan-out): the protocol topology does not keep the leaf of a peer that stopped being host-only meanwhile', async () => {
+  const dir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'nc-topo-off-'));
+  try {
+    const np = buildStore(dir, { boxPort: 43231, audience: [READER1] });
+    const reader = store.getNode(store.loadStore(np), 'reader1');
+    let release; const pending = new Promise((r) => { release = r; });
+    let reached; const started = new Promise((r) => { reached = r; });
+    const result = fed.collectTopology({ nodesPath: np, ingress: reader, visited: [READER1], timeoutMs: 5000, fetchImpl: async () => { reached(); await pending; return { ok: false }; } });
+    await started;
+    store.setPublishRemoteCas({ filePath: np, name: 'box', enabled: false });
+    release();
+    const top = await result;
+    assert.equal(top.nodes.some((n) => n.instanceId === BOX), false, 'the leaf survived the end of the publication');
+    // GUARD: with the publication still active and the reader still entitled, the leaf stays
+    const dir2 = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'nc-topo-on-'));
+    const np2 = buildStore(dir2, { boxPort: 43232, audience: [READER1] });
+    const r2 = store.getNode(store.loadStore(np2), 'reader1');
+    const top2 = await fed.collectTopology({ nodesPath: np2, ingress: r2, visited: [READER1], timeoutMs: 300, fetchImpl: async () => ({ ok: false }) });
+    assert.equal(top2.nodes.some((n) => n.instanceId === BOX), true, 'GUARD: the entitled reader keeps the leaf');
+    require('node:fs').rmSync(dir2, { recursive: true, force: true });
+  } finally { require('node:fs').rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('P3 (publication ended during the wait, local topology): a reader hidden when it asked is not handed the peer by an off in between', async (t) => {
+  const slowTopology = (req, res) => {
+    if (/\/federation\/topology/.test(req.url)) {
+      return setTimeout(() => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ instanceId: OTHER, nodes: [] })); }, 900);
+    }
+    res.setHeader('content-type', 'application/json'); res.end('{"ok":true}');
+  };
+  const h = await realHub(t, { otherReply: slowTopology, fetchImpl: fetch });
+  const pending = fetch(`${h.base}/federation/route/_/topology`, { headers: admin2 }).then((r) => r.text());
+  await sleep(250);
+  store.setPublishRemoteCas({ filePath: h.nodesPath, name: 'box', enabled: false });
+  const text = await pending;
+  assert.ok(!mentionsBox(text), `an outsider that asked while the peer was host-only learns it because the publication ended: ${text.slice(0, 140)}`);
+});
+
+test('P4 (live host, publication turned on during the wait): the owner is not named to a reader that is outside the audience when the answer leaves', async (t) => {
+  const slowOwner = (req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (/live-host\/designate/.test(req.url)) return res.end(JSON.stringify({ hostCell: 'c1', revision: 1 }));
+    if (/live-host$/.test(req.url.split('?')[0])) return setTimeout(() => res.end(JSON.stringify({ eligible: true, threadStatus: 'present', host: { lease: null } })), 800);
+    return res.end('{"ok":true}');
+  };
+  const h = await realHub(t, { boxReply: slowOwner, hostOnly: false });
+  const own1 = { authorization: `Bearer ${h.token}`, 'content-type': 'application/json' };
+  assert.equal((await post(h, '/api/route/box/_/live-host/designate', { cell: 'c1' }, own1)).status, 200, 'control: designated while the peer was a plain peer');
+  const pending = fetch(`${h.base}/federation/route/_/live-host`, { headers: admin2 }).then((r) => r.text());
+  await sleep(250);
+  store.setPublishRemoteCas({ filePath: h.nodesPath, name: 'box', enabled: true, audience: [READER1] });
+  const text = await pending;
+  assert.ok(!mentionsBox(text), `the owner is named after the publication was turned on: ${text.slice(0, 160)}`);
+});
+
+test('P4 (audio, publication ended while the target is resolved): the dispatcher does not turn a request denied at the start into an allowed one', async () => {
+  const dir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'nc-disp-off-'));
+  try {
+    const np = buildStore(dir, { boxPort: 43233, audience: [READER1] });
+    let fetched = 0; let release; const wait = new Promise((r) => { release = r; });
+    const dispatcher = createDispatcher({
+      localNodeId: () => ID('f'),
+      peers: async () => { await wait; return [{ nodeId: BOX, name: 'box', route: ['box'] }]; },
+      localPort: () => 1234, localToken: () => 't',
+      fetchImpl: async () => { fetched += 1; return { status: 200, json: async () => ({ status: 'spoken' }) }; },
+      federatedGuard: ({ target, route }) => fed.touchesHostOnly(np, { target, route }),
+    });
+    const pending = dispatcher.dispatch({ resource: '/audio/speak', target: BOX, origin: { node: ADMIN2 }, payload: {}, federated: true });
+    await sleep(100);
+    store.setPublishRemoteCas({ filePath: np, name: 'box', enabled: false });
+    release();
+    const out = await pending;
+    assert.equal(out.status, 'refused');
+    assert.equal(fetched, 0, 'a request denied when it began left after the publication ended');
+  } finally { require('node:fs').rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('P4 (live host, publication ended while the owner is resolved): the Live-host federation does not query a peer that was host-only when the request began', async () => {
+  const dir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'nc-lh-off-'));
+  try {
+    const np = buildStore(dir, { boxPort: 43234, audience: [READER1] });
+    let fetched = 0; let release; const wait = new Promise((r) => { release = r; });
+    const lh = createLiveHostFederation({
+      localNodeId: () => ID('f'), peers: async () => { await wait; return [{ nodeId: BOX, name: 'box', route: ['box'] }]; },
+      localPort: () => 1234, localToken: () => 't', fetchImpl: async () => { fetched += 1; return { status: 200, json: async () => ({}) }; },
+      ownerGuard: ({ target, route }) => fed.touchesHostOnly(np, { target, route }),
+    });
+    const pending = lh.getOwnerState({ ownerId: BOX });
+    await sleep(100);
+    store.setPublishRemoteCas({ filePath: np, name: 'box', enabled: false });
+    release();
+    assert.equal((await pending).ok, false);
+    assert.equal(fetched, 0);
+  } finally { require('node:fs').rmSync(dir, { recursive: true, force: true }); }
+});
