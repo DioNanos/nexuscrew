@@ -134,9 +134,10 @@ async function rawHeadUpstream(t, makeHead) {
   return srv.address().port;
 }
 
-async function viaUpgrade(t, { boxPort, headers = { authorization: 'Bearer from-reader1', 'x-nexuscrew-visited': READER1 }, pathname = '/federation/route/box/_/ws', hubAttaches = null } = {}) {
+async function viaUpgrade(t, { boxPort, headers = { authorization: 'Bearer from-reader1', 'x-nexuscrew-visited': READER1 }, pathname = '/federation/route/box/_/ws', hubAttaches = null, hostOnly = true, prepare = null } = {}) {
   const dir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'nc-gates-'));
-  const nodesPath = buildStore(dir, { boxPort, audience: [READER1] });
+  const nodesPath = buildStore(dir, { boxPort, audience: [READER1], hostOnly });
+  if (prepare) prepare(nodesPath);
   const hub = await listen(() => {});
   const activeSockets = new Set();
   hub.on('upgrade', (req, socket, head) => {
@@ -627,6 +628,8 @@ test('M1 (decks, integrity): a reader that cannot see the references of a deck c
   assert.equal(del.status, 403, 'the outsider deleted a deck that holds hidden content');
   assert.equal(JSON.stringify(decksStore.loadStore(file)), before, 'the stored decks changed');
   assert.equal((await put(admin2, 'plain', 0)).status, 200, 'GUARD: a deck without hidden content is edited as before');
+  const created = await fetch(`${h.base}/federation/route/_/decks`, { method: 'POST', headers: admin2, body: JSON.stringify({ name: 'fresh' }) });
+  assert.equal(created.status, 201, 'GUARD: creating a new deck overwrites nothing and is not refused');
   assert.equal((await put(reader1, 'main', 0)).status, 200, 'GUARD: the audience member edits the whole deck');
   const ownerPut = await fetch(`${h.base}/api/decks/main`, { method: 'PUT', headers: own(h), body: JSON.stringify({ expectedRevision: 1, layout: { columns: [{ width: 100, tiles: [{ session: 'agent-1', node: 'box', ownerId: BOX, height: 100, fontSize: 13 }] }] } }) });
   assert.equal(ownerPut.status, 200, 'GUARD: the owner is never filtered');
@@ -729,5 +732,66 @@ test('P4 (live host, publication ended while the owner is resolved): the Live-ho
     release();
     assert.equal((await pending).ok, false);
     assert.equal(fetched, 0);
+  } finally { require('node:fs').rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ------------------------------------------------------------------------- streams opened BEFORE the peer is published, backups
+
+const shareOn = (np) => store.atomicWriteStore(np, store.updateNode(store.loadStore(np), 'box', { shared: true }));
+const activate = (np) => {
+  store.atomicWriteStore(np, store.updateNode(store.loadStore(np), 'box', { shared: false }));    // Share off
+  store.setPublishRemoteCas({ filePath: np, name: 'box', enabled: true, audience: [READER1] });   // then the publication
+};
+
+test('G1 (WS): a federated stream already open through a peer when the publication is turned on ends', async (t) => {
+  const wss = new WebSocket.Server({ host: '127.0.0.1', port: 0 }); const seen = { closes: 0 };
+  wss.on('connection', (ws) => { ws.on('close', () => { seen.closes += 1; }); ws.on('error', () => {}); });
+  await new Promise((r) => wss.once('listening', r));
+  t.after(() => { for (const c of wss.clients) c.terminate(); wss.close(); });
+  const g = await viaUpgrade(t, { boxPort: wss.address().port, hostOnly: false, prepare: shareOn, headers: { authorization: 'Bearer from-admin2', 'x-nexuscrew-visited': ADMIN2 } });
+  const ws = new WebSocket(g.url, { headers: g.headers });
+  await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); setTimeout(() => reject(new Error('no open')), 3000); });
+  await sleep(1500);
+  assert.equal(seen.closes, 0, 'GUARD: with no publication the trusted stream stays as it always did');
+  activate(g.nodesPath);
+  await sleep(2500);
+  assert.equal(seen.closes, 1, 'the stream opened before the publication survived its activation');
+  try { ws.terminate(); } catch (_) { /* gone */ }
+});
+
+test('G1 (SSE): an event stream already open through a peer when the publication is turned on ends', async (t) => {
+  const h = await realHub(t, {
+    hostOnly: false,
+    boxReply: (req, res) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write('data: 1\n\n'); const iv = setInterval(() => res.write(': hb\n\n'), 200); res.on('close', () => clearInterval(iv)); },
+  });
+  shareOn(h.nodesPath);
+  const res = await fetch(`${h.base}/federation/route/box/_/event-feed`, { headers: admin2 });
+  assert.equal(res.status, 200, 'the stream opens through the plain peer');
+  const reader = res.body.getReader();
+  try {
+    await reader.read();
+    const stillOpen = await Promise.race([reader.read().then(() => true, () => false), sleep(1500).then(() => true)]);
+    assert.equal(stillOpen, true, 'GUARD: no publication, the stream stays');
+    activate(h.nodesPath);
+    const ended = await Promise.race([
+      (async () => { for (;;) { const { done } = await reader.read(); if (done) return true; } })().catch(() => true),
+      sleep(2800).then(() => false),
+    ]);
+    assert.equal(ended, true, 'the event stream opened before the publication survived its activation');
+  } finally { try { await reader.cancel(); } catch (_) { /* gone */ } }
+});
+
+test('G4 (backups): two backups of the same bytes in the same second get distinct names instead of failing the opt-in', () => {
+  const dir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'nc-bak-'));
+  try {
+    const np = buildStore(dir, { boxPort: 43301, audience: [READER1], hostOnly: false });
+    const when = new Date('2026-10-10T20:00:00Z');
+    const a = store.backupStoreFile(np, when); const b = store.backupStoreFile(np, when); const c = store.backupStoreFile(np, when);
+    assert.equal(new Set([a.path, b.path, c.path]).size, 3, 'the names collide');
+    for (const x of [a, b, c]) assert.ok(require('node:fs').existsSync(x.path) && (require('node:fs').statSync(x.path).mode & 0o777) === 0o600, 'backup missing or not 0600');
+    assert.equal(a.sha256, b.sha256);
+    store.setPublishRemoteCas({ filePath: np, name: 'box', enabled: true, audience: [READER1] });
+    store.setPublishRemoteCas({ filePath: np, name: 'box', enabled: false });
+    store.setPublishRemoteCas({ filePath: np, name: 'box', enabled: true, audience: [READER1] });
   } finally { require('node:fs').rmSync(dir, { recursive: true, force: true }); }
 });
