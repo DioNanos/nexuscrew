@@ -2,6 +2,14 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.66 — 2026-10-10
+
+- **A remote peer can be published one way to your own admin nodes.** `nexuscrew nodes publish-remote <peer> on --audience <instanceId,...>` (and `off`, `status`) makes a peer you reach over your private `-L` tunnel visible and operable to an explicit audience of your operator nodes, while the peer reaches nothing of yours: no peer, no route, no topology, no protocol endpoint but the health probe. It is separate from Share and never restarts SSH, opens a reverse channel or touches the reverse pool.
+- **Turning it on zeroes every grant towards the peer in the same save, and widening them is refused while it is on.** Cell scope none; events, node events, files, ASK replies, operator, panel and live host off; `eventsReceive` off. `off` ends the publication and leaves the grants at zero.
+- **The topology announces the peer as a leaf, only to the audience.** What the peer reports about its own children is never requested, relayed or cached, and entries cached before the mode was turned on are purged.
+- **The store moves to schema 4 only at the opt-in, after a full protected backup.** Older stores keep loading unchanged; a release before 0.9.66 cannot read a schema 4 store, so going back means restoring the backup taken at the opt-in.
+- **`nodes inspect` shows the real grants.** It read the peer from a redacted view that carried no access fields, so it printed every grant as off and the peer as unconfigured while `nodes access` and the authorization code saw them granted. The redacted record now carries the grants and the configured marker.
+
 ## 0.9.65 — 2026-10-09
 
 - **Notifications from a remote node can be cleared locally, one voice or all at once.** Every imported notice offers the same close action asks already have: one request dismisses a single notice or the whole visible set of an owner. The dismissal travels to the owner over the authorized routes and is judged by the origin's view; the owner records it and publishes one `notify-closed` closure per cleared notice, so every receiver empties, including the ones that were not part of the clear. When the owner cannot take it — unreachable, or without the notices surface — the request still succeeds: the node records the intent durably, as pending with a bounded retry or as blocked until the pairing changes, and the record, not the browser, is what keeps the card down. A reload or a restart of the receiving node does not bring a cleared notice back, and once the owner takes the dismissed intent he stops serving those notices himself. "Clear" means the whole visible set of that owner on this node: every notice currently shown for him, cleared in one request inside the owner's per-request budget.
