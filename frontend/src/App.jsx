@@ -44,7 +44,7 @@ import { loadLastRoster, saveLastRoster } from './lib/last-roster.js';
 import { adoptDeviceId } from './lib/prefs-sync.js';
 import { usePrefsSync } from './hooks/usePrefsSync.js';
 import { fleetReadOutcome } from './lib/fleet-read-policy.js';
-import { panelPortForRoute } from './lib/panel-port.js';
+import { panelPortForRoute, setHostOnlyNodes } from './lib/panel-port.js';
 import { AUTH_INVALID_EVENT, TOKEN_NOT_REMEMBERED_EVENT, loadToken, saveToken } from './lib/token-store.js';
 import LoginScreen from './components/LoginScreen.jsx';
 import {t} from './lib/i18n.js';
@@ -987,6 +987,7 @@ export default function App() {
       setPanelPort(Number.isInteger(c.panelPort) ? c.panelPort : 0);
       setNodePanelPorts(c.nodePanelPorts && typeof c.nodePanelPorts === 'object' && !Array.isArray(c.nodePanelPorts)
         ? c.nodePanelPorts : {});
+      setHostOnlyNodes(c.hostOnlyNodes);
       if (s.firstRun === true && !c.readonlyDefault) setWizardOpen(true);
       else if (pairPending) setWizardOpen(true); // deep-link #pair: apri wizard sul pairing
       else if (s.deviceNameNeeded === true && !c.readonlyDefault) {
