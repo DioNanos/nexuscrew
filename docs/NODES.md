@@ -122,7 +122,11 @@ nexuscrew nodes publish-remote <name|nodeId> status [--json]
   keep loading unchanged. A release older than 0.9.66 cannot read a schema 4
   store (the schema is closed): going back means restoring that backup.
 - Already-open streams (a terminal attached before `off`) are not torn down by
-  `off`; new calls are refused.
+  `off`; new calls are refused. Read `off` as "no new request", not as an
+  instant cut of a channel that is already open.
+- A reader's topology cache is emptied by the **next authoritative answer** from
+  this installation. A reader that cannot reach it keeps showing the peer, marked
+  stale, until then; nothing is pushed to it.
 
 ## Which cells a node may see
 

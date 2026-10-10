@@ -798,7 +798,7 @@ test('nodes inspect reports the same EFFECTIVE grants as nodes access (and as th
     // After the opt-in, all three agree on "everything off".
     store.setPublishRemoteCas({ filePath: h.nodesPath, name: 'box', enabled: true, audience: [READER1] });
     const after = []; cmds.nodesInspect({ home: h.home, log: (m) => after.push(String(m)), ref: 'box' });
-    assert.match(after.find((l) => l.startsWith('grant:')), /^grant:\s+eventsAccess=off nodeEventsAccess=off askReplyAccess=off filesReadAccess=off peerOperatorAccess=off$/);
+    assert.match(after.find((l) => l.startsWith('grant:')), /^grant:\s+eventsAccess=off nodeEventsAccess=off askReplyAccess=off filesReadAccess=off peerOperatorAccess=off panelAccess=off liveHostAccess=off$/);
     assert.ok(after.some((l) => l.startsWith('pubblicato: solo-host')), after.join(' | '));
     const stored2 = boxOf(h.nodesPath);
     for (const cls of resourceAcl.CLASS_NAMES) assert.equal(resourceAcl.allowedByClass(cls, stored2), false, cls);

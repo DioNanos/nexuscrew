@@ -129,9 +129,23 @@ peer to an explicit audience of your own operator nodes and nothing else (see
 - **No Share, no reverse channel.** The mode cannot coexist with Share on the
   same peer, and enabling Share on a published peer is refused before any SSH
   restart is attempted.
-- **Not covered:** a stream opened before `off` stays open until it closes, and
-  an audience member is itself trusted to forward further according to its own
+- **Not covered:** a stream opened before `off` stays open until it closes (the
+  next upgrade is refused), a reader that cannot reach this installation keeps
+  its cached view of the peer until its next authoritative answer, and an
+  audience member is itself trusted to forward further according to its own
   access rules.
+
+### What the access views show
+
+`nodes inspect`, `nodes access` and the node lists of Settings show, for each
+peer, the grants **the resource gate applies** — the stored values, read the way
+the gate reads them — together with a label and a *configured* flag. The label
+and the flag say how the vector was set (a preset, or a record from before the
+grants existed that was never configured); they do not change what is granted.
+A record that is not configured but carries a grant is shown with that grant on
+and the label `unconfigured`. The event stream is stricter than the resource
+gate: it also requires a configured vector. Apply a preset to make a legacy
+record explicit.
 
 ### Cell scope
 

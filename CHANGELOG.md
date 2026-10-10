@@ -10,6 +10,7 @@ All notable changes to NexusCrew are tracked here.
 - **The topology announces the peer as a leaf, only to the audience.** What the peer reports about its own children is never requested, relayed or cached, and entries cached before the mode was turned on are purged.
 - **The store moves to schema 4 only at the opt-in, after a full protected backup.** Older stores keep loading unchanged; a release before 0.9.66 cannot read a schema 4 store, so going back means restoring the backup taken at the opt-in.
 - **`nodes inspect` shows the real grants.** It read the peer from a redacted view that carried no access fields, so it printed every grant as off and the peer as unconfigured while `nodes access` and the authorization code saw them granted. The redacted record now carries the grants and the configured marker.
+- **The access views show the grants the resource gate applies, also for records from before the grants were configured.** `nodes inspect`, `nodes access` and the node lists of Settings printed an all-denied vector for any record without the `accessConfigured` marker, while the gate reads the stored values and ignores the marker: a legacy record with `eventsAccess` and no marker read "unconfigured, off" and was granted. The views now show the real vector (seven flags and the cell scope) and keep the label and the configured flag as provenance; `nodes inspect` adds a note for a record that is not configured. What is granted does not change, and the event stream still requires a configured vector.
 
 ## 0.9.65 — 2026-10-09
 
