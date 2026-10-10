@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { requestPanelTicket, routeBase, setAiDesktop } from '../lib/api.js';
-import { DESKTOP_PANEL_PORT } from '../lib/panel-port.js';
+import { DESKTOP_PANEL_PORT, routeTouchesHostOnly } from '../lib/panel-port.js';
 import './CellPanel.css';
 
 // D8 — pannello per-cella, L'INGRESSO. Il vecchio flusso metteva il `panelUrl`
@@ -54,6 +54,8 @@ import './CellPanel.css';
 //    «apri in una scheda» e l'auto-riprova al ritorno sulla scheda: curavano
 //    un problema che questo flusso non ha.
 
+const SANDBOX_HOST_ONLY = 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock';
+
 export default function CellPanel({
   cellId, panelUrl, route = [], panelPort = 0, token, title, requestTimeoutMs = 4000,
 }) {
@@ -71,6 +73,11 @@ export default function CellPanel({
   const routeKey = Array.isArray(route) ? route.join('\u0000') : '';
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const rotta = useMemo(() => (Array.isArray(route) ? route : []), [routeKey]);
+  // A route through a host-only peer (the server refuses its panel: this is the
+  // second lock) runs in an opaque origin, whatever the panel port. The frames of
+  // trusted remote cells are NOT sandboxed here: that contract changes with the
+  // dedicated panel port, not with a sandbox that would drop the panel cookie.
+  const sandbox = routeTouchesHostOnly(rotta) ? SANDBOX_HOST_ONLY : null;
   // Partita corrente: una risposta tardiva di una richiesta vecchia (cambio
   // cella o retry) non sovrascrive uno stato più fresco.
   const seq = useRef(0);
@@ -270,6 +277,7 @@ export default function CellPanel({
         src={frameUrl}
         title={title || t('panel')}
         allowFullScreen
+        {...(sandbox ? { sandbox } : {})}
       />
     </>
   );

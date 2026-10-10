@@ -7,6 +7,17 @@
 // pannello negoziata (peer accoppiato prima di questa funzione) prende 0, mai
 // in prestito la porta del nodo locale — sarebbe l'origin del pannello
 // sbagliato, non un fallback. Con 0 il frame resta sulla via storica.
+// Peers that this node publishes one way (host-only), as announced by /api/config
+// to the readers allowed to know them. A frame whose route passes through one of
+// them is always sandboxed (the server refuses its panel anyway: defence in depth).
+let hostOnlyNodeNames = new Set();
+export function setHostOnlyNodes(list) {
+  hostOnlyNodeNames = new Set(Array.isArray(list) ? list.filter((n) => typeof n === 'string') : []);
+}
+export function routeTouchesHostOnly(route) {
+  return Array.isArray(route) && route.some((name) => hostOnlyNodeNames.has(name));
+}
+
 export function panelPortForRoute(route, nodePanelPorts, localPanelPort) {
   const prima = (primaPorta) => (Number.isInteger(primaPorta) && primaPorta > 0 && primaPorta < 65536 ? primaPorta : 0);
   // Assente = cella locale (il chiamante senza route); una "route" che non e'

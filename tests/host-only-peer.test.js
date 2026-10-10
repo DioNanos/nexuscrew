@@ -284,12 +284,16 @@ test('opt-in takes a protected full backup BEFORE writing; a failed backup leave
       assert.equal(load(g.nodesPath).schemaVersion, 3);
     } finally { g.cleanup(); }
 
-    // Never overwrite a previous backup.
+    // Never overwrite a previous backup: a second one of the same bytes in the same second gets a distinct name.
     const when = new Date('2026-10-10T12:00:00Z');
     const h = fixture();
     try {
-      store.backupStoreFile(h.nodesPath, when);
-      assert.throws(() => store.backupStoreFile(h.nodesPath, when), /EEXIST/);
+      const first = store.backupStoreFile(h.nodesPath, when);
+      const firstBytes = fs.readFileSync(first.path);
+      const second = store.backupStoreFile(h.nodesPath, when);
+      assert.notEqual(second.path, first.path, 'the second backup must not reuse the name of the first');
+      assert.ok(fs.readFileSync(first.path).equals(firstBytes), 'the first backup was not touched');
+      assert.ok(fs.readFileSync(second.path).equals(firstBytes));
     } finally { h.cleanup(); }
   } finally { f.cleanup(); }
 });
