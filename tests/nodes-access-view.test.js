@@ -103,8 +103,11 @@ test('a peer without grants is "unconfigured" with every grant denied, and the r
   assert.equal(legacy.accessLabel, 'unconfigured', 'a legacy record is never mistaken for a preset');
   assert.equal(legacy.accessConfigured, false);
   assert.deepEqual(Object.keys(legacy.access).sort(), [...GRANT_KEYS].sort());
-  assert.ok(GRANT_KEYS.every((k) => legacy.access[k] === (k === 'cellVisibility' ? 'none' : false)),
-    'an unconfigured record is denied everywhere');
+  // The vector is the EFFECTIVE one (what the gate applies): no grant was ever
+  // stored, so no boolean is on; the scope is the one the parser stored.
+  assert.ok(GRANT_KEYS.every((k) => k === 'cellVisibility' || legacy.access[k] === false),
+    'a record with no grants has none granted');
+  assert.equal(legacy.access.cellVisibility, 'all', 'an absent scope is `all`, as the gate reads it');
   assert.equal(body.accessRevision, 0, 'a store that never wrote grants reads revision 0');
 });
 

@@ -85,6 +85,49 @@ Temporary loss of reachability does not revoke consent. An authorized node
 remains visible as stale/offline until an authoritative refresh restores it or
 confirms withdrawal.
 
+## Publish a remote node, one way (host-only)
+
+Share publishes **this** installation on a peer's hub. The opposite need is
+real too: a remote node you reach over your own private `-L` tunnel (a sandboxed
+box, say) that your own admin nodes must be able to see and operate, while the
+remote node must see nothing of yours. That is the **host-only publication**:
+
+```bash
+nexuscrew nodes publish-remote <name|nodeId> on --audience <instanceId>,<instanceId>
+nexuscrew nodes publish-remote <name|nodeId> off
+nexuscrew nodes publish-remote <name|nodeId> status [--json]
+```
+
+- It is **not Share**. It never calls the Share path, restarts SSH, opens a
+  reverse (`-R`) channel or touches the reverse pool: the tunnel stays the
+  private `-L` it was.
+- The **audience** is an explicit list of `instanceId`s of your own direct peers
+  that already hold the operator grant. Unknown ids, ids of peers without that
+  grant and the published peer itself are refused. There is no wildcard.
+- The boundary is one-way and is decided here, on the installation that owns
+  the tunnel. An audience member (operator grant re-read on every call) reaches
+  the peer; **the peer reaches nothing** — no other peer, no route, no topology,
+  nothing of this installation — whatever grants its record carries or gains.
+  Everyone else, including your other admin nodes, does not see it at all.
+- The topology announces the peer as a **leaf**, only to the audience: what the
+  peer says about its own children is never requested or relayed.
+- Turning it on zeroes, in the same single save, every grant towards the peer
+  (cell scope none; events, node events, files, ASK replies, operator, panel and
+  live host off; `eventsReceive` off), and any later edit that would widen them
+  is refused while the mode is on. `off` ends the publication at once and leaves
+  the grants at zero: reopening anything is an explicit act.
+- Turning it on moves the store to **schema 4**, and only then, after taking a
+  full protected backup next to `nodes.json`
+  (`nodes.json.pre-publish-remote-<time>-<sha>.bak`, mode 0600). Older stores
+  keep loading unchanged. A release older than 0.9.66 cannot read a schema 4
+  store (the schema is closed): going back means restoring that backup.
+- Already-open streams (a terminal attached before `off`) are not torn down by
+  `off`; new calls are refused. Read `off` as "no new request", not as an
+  instant cut of a channel that is already open.
+- A reader's topology cache is emptied by the **next authoritative answer** from
+  this installation. A reader that cannot reach it keeps showing the peer, marked
+  stale, until then; nothing is pushed to it.
+
 ## Which cells a node may see
 
 Sharing decides whether a node is reachable. A **cell scope** decides how much
@@ -200,6 +243,7 @@ nexuscrew nodes test                    # every peer, plus what is only claimed
 nexuscrew nodes up|down|connect|disconnect <name|nodeId>
 nexuscrew nodes restart|reconnect <name|nodeId>
 nexuscrew nodes share <name|nodeId> on|off
+nexuscrew nodes publish-remote <name|nodeId> on --audience <id,...>|off|status
 nexuscrew nodes cells <name|nodeId> all|none|Cell1,Cell2
 nexuscrew nodes remove <name|nodeId> --yes
 ```

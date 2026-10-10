@@ -107,6 +107,46 @@ Federated ASK creation and closure go only to configured `admin` peers, hop by
 hop. Each hub checks its own next peer before forwarding. This rule does not
 change generic notifications or the relay of ASK replies.
 
+### Host-only publication
+
+`nexuscrew nodes publish-remote <peer> on --audience <ids>` publishes a remote
+peer to an explicit audience of your own operator nodes and nothing else (see
+[Connect nodes](NODES.md)). The security properties, each covered by a test:
+
+- **One way.** The check is on the authenticated peer record found by its token,
+  never on a header, a query or the visited chain. Audience → peer is allowed;
+  peer → anything is refused in the route relay, in the WebSocket upgrade, in
+  the topology collector and on every protocol endpoint except the health
+  probe.
+- **Two locks on the peer's own access.** All grants towards it are zeroed in
+  the same save that turns the mode on, and the class gate refuses a host-only
+  peer regardless of the grants its record shows. The `user` preset with no
+  visible cell does **not** give this: it keeps events, node events and file
+  reads granted. Do not use it as an isolation boundary.
+- **Re-read, not remembered.** Audience membership and the operator grant are
+  read from the store on every call; revoking either, or turning the mode off,
+  takes effect on the next request.
+- **No Share, no reverse channel.** The mode cannot coexist with Share on the
+  same peer, and enabling Share on a published peer is refused before any SSH
+  restart is attempted.
+- **Not covered:** a stream opened before `off` stays open until it closes (the
+  next upgrade is refused), a reader that cannot reach this installation keeps
+  its cached view of the peer until its next authoritative answer, and an
+  audience member is itself trusted to forward further according to its own
+  access rules.
+
+### What the access views show
+
+`nodes inspect`, `nodes access` and the node lists of Settings show, for each
+peer, the grants **the resource gate applies** — the stored values, read the way
+the gate reads them — together with a label and a *configured* flag. The label
+and the flag say how the vector was set (a preset, or a record from before the
+grants existed that was never configured); they do not change what is granted.
+A record that is not configured but carries a grant is shown with that grant on
+and the label `unconfigured`. The event stream is stricter than the resource
+gate: it also requires a configured vector. Apply a preset to make a legacy
+record explicit.
+
 ### Cell scope
 
 A per-node cell scope narrows what one paired node sees and can act on. It is
