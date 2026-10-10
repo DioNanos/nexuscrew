@@ -328,6 +328,7 @@ test('L1 (originating publication): a stream dies when anything of the authoriza
     ['mode off, then plain sharing turned on before the next check', (np) => { off(np); store.atomicWriteStore(np, store.updateNode(store.loadStore(np), 'box', { shared: true })); }],
     ['mode off, then on again with the same audience (another generation)', (np) => { off(np); on(np, [READER1]); }],
     ['mode off, then on for a different audience', (np) => { off(np); on(np, [READER2]); }],
+    ['another opt-in whose backup name sorts BEFORE the previous one (same second)', (np) => require('node:fs').writeFileSync(`${np}.pre-publish-remote-20000101T000000Z-00000000.bak`, '{}', { mode: 0o600 })],
     ['mode off', (np) => off(np)],
     ['peer moved to another port', (np) => store.atomicWriteStore(np, store.updateNode(store.loadStore(np), 'box', { localPort: 43998 }))],
   ];
