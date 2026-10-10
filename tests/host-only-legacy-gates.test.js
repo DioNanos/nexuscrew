@@ -167,6 +167,30 @@ test('P2 (WS head, non-101): a refusal head from a host-only peer is filtered to
   assert.equal(res.headers['content-security-policy'], undefined);
 });
 
+test('P2 (legacy /node WebSocket): the 101 answer of a host-only peer is filtered for the owner too, frames intact; a trusted peer\'s head is untouched (GUARD)', async (t) => {
+  const hostileFor = { box: await hostileWsUpstream(t), other: await hostileWsUpstream(t) };
+  const h = await realHub(t);
+  const through = async (peerName) => {
+    store.atomicWriteStore(h.nodesPath, store.updateNode(store.loadStore(h.nodesPath), peerName, { localPort: hostileFor[peerName] }));
+    return new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${h.port}/node/${peerName}/ws`, { headers: { authorization: `Bearer ${h.token}` } });
+      const out = { headers: null, message: null };
+      ws.on('upgrade', (res) => { out.headers = res.headers; });
+      ws.on('message', (m) => { out.message = String(m); ws.terminate(); resolve(out); });
+      ws.on('error', () => resolve(out));
+      setTimeout(() => { try { ws.terminate(); } catch (_) { /* gone */ } resolve(out); }, 3000);
+    });
+  };
+  const box = await through('box');
+  assert.ok(box.headers, 'the upgrade was answered');
+  assert.equal(box.message, 'first-frame', 'the frame after the head is intact');
+  assert.equal(box.headers['set-cookie'], undefined, 'Set-Cookie of a host-only peer reached the owner origin');
+  assert.equal(box.headers['clear-site-data'], undefined, 'Clear-Site-Data of a host-only peer reached the owner origin');
+  assert.equal(box.headers['content-security-policy'], undefined);
+  const trusted = await through('other');
+  assert.ok(trusted.headers && trusted.headers['set-cookie'], 'GUARD: a trusted peer\'s head is forwarded as it always was');
+});
+
 test('P2 (protective headers): they are imposed after the stripping, also when Connection names them', async (t) => {
   const h = await realHub(t, {
     boxReply: (req, res) => {
@@ -225,6 +249,42 @@ test('L1 (identity): a stream dies when the credential of the reader rotates, or
   }
 });
 
+test('L1 (originating publication): a stream dies when anything of the authorization it was opened under changes', async (t) => {
+  const off = (np) => store.setPublishRemoteCas({ filePath: np, name: 'box', enabled: false });
+  const on = (np, audience) => store.setPublishRemoteCas({ filePath: np, name: 'box', enabled: true, audience });
+  const cases = [
+    ['credential of the peer rotated', (np) => store.atomicWriteStore(np, store.updateNode(store.loadStore(np), 'box', { token: 'rotated-peer-credential' }))],
+    ['mode off, then plain sharing turned on before the next check', (np) => { off(np); store.atomicWriteStore(np, store.updateNode(store.loadStore(np), 'box', { shared: true })); }],
+    ['mode off, then on again with the same audience (another generation)', (np) => { off(np); on(np, [READER1]); }],
+    ['mode off, then on for a different audience', (np) => { off(np); on(np, [READER2]); }],
+    ['mode off', (np) => off(np)],
+    ['peer moved to another port', (np) => store.atomicWriteStore(np, store.updateNode(store.loadStore(np), 'box', { localPort: 43998 }))],
+  ];
+  for (const [label, mutate] of cases) {
+    const { upstream, g } = await heldAttachFixture(t);
+    const ws = new WebSocket(g.url, { headers: g.headers });
+    await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); setTimeout(() => reject(new Error('no open')), 3000); });
+    await sleep(200);
+    assert.equal(upstream.connections, 1, label);
+    mutate(g.nodesPath);
+    await sleep(2500);
+    assert.equal(upstream.closes, 1, `the stream is still open after: ${label}`);
+    try { ws.terminate(); } catch (_) { /* gone */ }
+  }
+});
+
+test('L1 (originating publication) GUARD: an unrelated change in the store does not close the stream', async (t) => {
+  const { upstream, g } = await heldAttachFixture(t);
+  const ws = new WebSocket(g.url, { headers: g.headers });
+  await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); setTimeout(() => reject(new Error('no open')), 3000); });
+  await sleep(200);
+  store.atomicWriteStore(g.nodesPath, store.updateNode(store.loadStore(g.nodesPath), 'intruder', { label: 'renamed' }));
+  await sleep(2500);
+  assert.equal(upstream.closes, 0, 'a change that does not touch the authorization must not cut the stream');
+  assert.equal(ws.readyState, WebSocket.OPEN);
+  try { ws.terminate(); } catch (_) { /* gone */ }
+});
+
 // ------------------------------------------------------------------------- P3
 
 test('P3 (verified origin): a hop header that does not verify is never the owner: the host-only peer stays hidden (and the bare owner call is unchanged)', async (t) => {
@@ -262,6 +322,43 @@ test('P3 (config): the list of host-only peers announced to the UI follows the s
   assert.deepEqual(await names(admin2, '/federation/route/_'), [], 'the outsider is not');
 });
 
+test('P3 (protocol topology): the reader is judged again after the fan-out wait: a grant revoked meanwhile removes the host-only leaf', async (t) => {
+  const slowTopology = (req, res) => {
+    if (/\/federation\/topology/.test(req.url)) {
+      return setTimeout(() => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ instanceId: OTHER, nodes: [] })); }, 900);
+    }
+    res.setHeader('content-type', 'application/json'); res.end('{"ok":true}');
+  };
+  const h = await realHub(t, { otherReply: slowTopology, fetchImpl: fetch });
+  const ask = () => fetch(`${h.base}/federation/topology`, { headers: reader1 }).then((r) => r.text());
+  assert.ok(mentionsBox(await ask()), 'control: the audience member gets the leaf');
+  const pending = ask();
+  await sleep(250);
+  store.atomicWriteStore(h.nodesPath, store.updateNode(store.loadStore(h.nodesPath), 'reader1', { peerOperatorAccess: false }));
+  const text = await pending;
+  assert.ok(!mentionsBox(text), `the leaf is still served after the operator grant was revoked: ${text.slice(0, 140)}`);
+});
+
+test('P3 (protocol topology): an audience change during the wait also removes the leaf; an unrelated change does not (GUARD)', async (t) => {
+  const slowTopology = (req, res) => {
+    if (/\/federation\/topology/.test(req.url)) {
+      return setTimeout(() => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ instanceId: OTHER, nodes: [] })); }, 900);
+    }
+    res.setHeader('content-type', 'application/json'); res.end('{"ok":true}');
+  };
+  const h = await realHub(t, { otherReply: slowTopology, fetchImpl: fetch });
+  const ask = () => fetch(`${h.base}/federation/topology`, { headers: reader1 }).then((r) => r.text());
+  let pending = ask();
+  await sleep(250);
+  store.atomicWriteStore(h.nodesPath, store.updateNode(store.loadStore(h.nodesPath), 'intruder', { label: 'renamed' }));
+  assert.ok(mentionsBox(await pending), 'GUARD: an unrelated change keeps the leaf');
+  pending = ask();
+  await sleep(250);
+  store.setPublishRemoteCas({ filePath: h.nodesPath, name: 'box', enabled: false });
+  store.setPublishRemoteCas({ filePath: h.nodesPath, name: 'box', enabled: true, audience: [READER2] });
+  assert.ok(!mentionsBox(await pending), 'the leaf is served to a reader that left the audience during the wait');
+});
+
 test('P3 (unreadable store): the owner is never filtered; a federated reader is denied everything', () => {
   const gone = '/nonexistent/nodes.json';
   const owner = fed.hostOnlyVisibility(gone, { headers: {} }, () => Buffer.from('s'));
@@ -290,7 +387,7 @@ test('P3 (revocation during the wait): the audience is revoked while the topolog
     }
     res.setHeader('content-type', 'application/json'); res.end('{"ok":true}');
   };
-  const h = await realHub(t, { otherReply: slowTopology });
+  const h = await realHub(t, { otherReply: slowTopology, fetchImpl: fetch });
   const pending = fetch(`${h.base}/federation/route/_/topology`, { headers: reader1 }).then((r) => r.text());
   await sleep(250);
   // the audience changes to somebody else (off, then on for another reader)

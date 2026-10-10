@@ -63,7 +63,7 @@ function buildStore(dir, { boxPort, otherPort = 43120, audience = [READER1], hos
 
 // A REAL hub (createServer) with stub upstreams standing for "Box" (host-only)
 // and for a trusted peer ("other"). Both record what reaches them.
-async function realHub(t, { boxReply, otherReply, hostOnly = true } = {}) {
+async function realHub(t, { boxReply, otherReply, hostOnly = true, fetchImpl = null } = {}) {
   const boxCalls = []; const otherCalls = []; const boxUpgrades = [];
   const reply = (calls, custom) => (req, res) => {
     calls.push({ method: req.method, url: req.url, auth: req.headers.authorization || null, cookie: req.headers.cookie || null });
@@ -81,7 +81,7 @@ async function realHub(t, { boxReply, otherReply, hostOnly = true } = {}) {
     home: dir, configDir, nodesPath,
     configPath: path.join(configDir, 'config.json'), tokenPath: path.join(configDir, 'token'),
     filesRoot: path.join(dir, 'files'), fleetEnabled: false, port: 41840, panelPort: 0,
-    fetchImpl: async () => { throw new Error('no network in this test'); },
+    fetchImpl: fetchImpl || (async () => { throw new Error('no network in this test'); }),
   });
   await new Promise((resolve, reject) => { made.server.once('error', reject); made.server.listen(0, '127.0.0.1', resolve); });
   made.cfg.port = made.server.address().port;
