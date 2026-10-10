@@ -92,7 +92,7 @@ async function realHub(t, { boxReply, otherReply, hostOnly = true, fetchImpl = n
   });
   const base = `http://127.0.0.1:${made.server.address().port}`;
   const st = store.loadStore(nodesPath);
-  return { base, port: made.server.address().port, token: made.token, nodesPath, boxCalls, otherCalls, boxUpgrades, st, diagnostics: made.diagnostics, made };
+  return { base, port: made.server.address().port, token: made.token, nodesPath, boxCalls, otherCalls, boxUpgrades, st, diagnostics: made.diagnostics, made, home: dir };
 }
 
 const status = async (url, headers = {}, init = {}) => (await fetch(url, { headers, redirect: 'manual', ...init }));

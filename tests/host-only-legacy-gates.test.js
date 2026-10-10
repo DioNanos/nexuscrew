@@ -24,6 +24,8 @@ const WebSocket = require('ws');
 const store = require('../lib/nodes/store.js');
 const fed = require('../lib/proxy/federation.js');
 const { createDispatcher } = require('../lib/audio/dispatch.js');
+const { hostOnlyHeadFilter } = require('../lib/proxy/node-proxy.js');
+const decksStore = require('../lib/decks/store.js');
 const { createLiveHostFederation } = require('../lib/live-host/federation.js');
 const {
   ID, BOX, READER1, READER2, INTRUDER, ADMIN2, OTHER, listen, closeServer, sleep, buildStore, realHub, status, wsAttempt,
@@ -92,7 +94,7 @@ const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const frameText = (text) => Buffer.concat([Buffer.from([0x81, text.length]), Buffer.from(text)]);
 
 // An upstream that answers the upgrade with a hostile head and then a frame in the SAME chunk.
-async function hostileWsUpstream(t, { status101 = true } = {}) {
+async function hostileWsUpstream(t, { status101 = true, mode = null } = {}) {
   const srv = net.createServer((sock) => {
     sock.on('error', () => {});
     let buf = '';
@@ -107,6 +109,24 @@ async function hostileWsUpstream(t, { status101 = true } = {}) {
         : ['HTTP/1.1 403 Forbidden', 'Content-Type: text/html', 'Content-Length: 4', ...hostile];
       sock.write(Buffer.concat([Buffer.from(`${head.join('\r\n')}\r\n\r\n`, 'latin1'), status101 ? frameText('first-frame') : Buffer.from('nope')]));
       if (!status101) sock.end();
+    });
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => { srv.close(r); }));
+  return srv.address().port;
+}
+
+// An upstream that speaks a raw head of our choosing (bytes), for the parser-differential cases.
+async function rawHeadUpstream(t, makeHead) {
+  const srv = net.createServer((sock) => {
+    sock.on('error', () => {});
+    let buf = '';
+    sock.on('data', (c) => {
+      buf += c.toString('latin1');
+      if (!buf.includes('\r\n\r\n')) return;
+      const key = /sec-websocket-key:\s*(\S+)/i.exec(buf);
+      const accept = crypto.createHash('sha1').update(`${key ? key[1] : ''}${GUID}`).digest('base64');
+      sock.write(Buffer.concat([Buffer.from(makeHead(accept), 'latin1'), frameText('first-frame')]));
     });
   });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -151,44 +171,95 @@ test('P2 (WS head): the 101 answer of a host-only peer loses cookies, Clear-Site
   assert.equal(String(seen.headers.upgrade).toLowerCase(), 'websocket', 'the upgrade headers survive');
 });
 
-test('P2 (WS head, non-101): a refusal head from a host-only peer is filtered too', async (t) => {
+test('P2 (WS head, non-101): a refusal head from a host-only peer is NOT passed along: the client gets our answer, never the peer\'s headers', async (t) => {
   const boxPort = await hostileWsUpstream(t, { status101: false });
   const g = await viaUpgrade(t, { boxPort });
-  const res = await new Promise((resolve) => {
+  const outcome = await new Promise((resolve) => {
     const ws = new WebSocket(g.url, { headers: g.headers });
-    ws.on('unexpected-response', (_q, r) => resolve(r));
-    ws.on('error', () => resolve(null));
-    setTimeout(() => resolve(null), 3000);
+    const done = (o) => { try { ws.terminate(); } catch (_) { /* gone */ } resolve(o); };
+    ws.on('unexpected-response', (_q, r) => done({ kind: 'http', headers: r.headers, status: r.statusCode }));
+    ws.on('message', (m) => done({ kind: 'message', message: String(m) }));
+    ws.on('error', () => done({ kind: 'error' }));
+    ws.on('close', () => done({ kind: 'closed' }));
+    setTimeout(() => done({ kind: 'timeout' }), 3000);
   });
-  assert.ok(res, 'the refusal reached the client');
-  assert.equal(res.statusCode, 403);
-  assert.equal(res.headers['set-cookie'], undefined);
-  assert.equal(res.headers['clear-site-data'], undefined);
-  assert.equal(res.headers['content-security-policy'], undefined);
+  assert.notEqual(outcome.message, 'first-frame', 'the frame of the refused peer reached the client');
+  if (outcome.kind === 'http') {
+    assert.equal(outcome.headers['set-cookie'], undefined);
+    assert.equal(outcome.headers['clear-site-data'], undefined);
+    assert.equal(outcome.headers['content-security-policy'], undefined);
+    assert.notEqual(outcome.status, 403, 'the peer\'s own refusal must not reach the client as it is');
+  }
 });
 
-test('P2 (legacy /node WebSocket): the 101 answer of a host-only peer is filtered for the owner too, frames intact; a trusted peer\'s head is untouched (GUARD)', async (t) => {
-  const hostileFor = { box: await hostileWsUpstream(t), other: await hostileWsUpstream(t) };
+const clientSees = (url, headers) => new Promise((resolve) => {
+  const ws = new WebSocket(url, { headers });
+  const out = { headers: null, message: null, status: null, kind: 'pending' };
+  ws.on('upgrade', (res) => { out.headers = res.headers; });
+  ws.on('message', (m) => { out.message = String(m); out.kind = 'message'; ws.terminate(); resolve(out); });
+  ws.on('unexpected-response', (_q, r) => { out.status = r.statusCode; out.headers = r.headers; out.kind = 'http'; resolve(out); });
+  ws.on('error', () => { out.kind = 'error'; resolve(out); });
+  setTimeout(() => { try { ws.terminate(); } catch (_) { /* gone */ } resolve(out); }, 3000);
+});
+
+test('M2 (interim head): a 100 Continue followed by a 101 carrying cookies is refused on the federated route and on /node', async (t) => {
+  const port = await rawHeadUpstream(t, (accept) => `HTTP/1.1 100 Continue\r\nX-A: 1\r\n\r\nHTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\nSet-Cookie: evil=1; Path=/\r\nClear-Site-Data: "storage"\r\n\r\n`);
+  const g = await viaUpgrade(t, { boxPort: port });
+  const fed1 = await clientSees(g.url, g.headers);
+  assert.notEqual(fed1.message, 'first-frame', 'the interim answer let a second head through on the federated route');
+  assert.equal(fed1.headers && fed1.headers['set-cookie'], undefined);
   const h = await realHub(t);
-  const through = async (peerName) => {
-    store.atomicWriteStore(h.nodesPath, store.updateNode(store.loadStore(h.nodesPath), peerName, { localPort: hostileFor[peerName] }));
-    return new Promise((resolve) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${h.port}/node/${peerName}/ws`, { headers: { authorization: `Bearer ${h.token}` } });
-      const out = { headers: null, message: null };
-      ws.on('upgrade', (res) => { out.headers = res.headers; });
-      ws.on('message', (m) => { out.message = String(m); ws.terminate(); resolve(out); });
-      ws.on('error', () => resolve(out));
-      setTimeout(() => { try { ws.terminate(); } catch (_) { /* gone */ } resolve(out); }, 3000);
-    });
+  store.atomicWriteStore(h.nodesPath, store.updateNode(store.loadStore(h.nodesPath), 'box', { localPort: port }));
+  const legacy = await clientSees(`ws://127.0.0.1:${h.port}/node/box/ws`, { authorization: `Bearer ${h.token}` });
+  assert.notEqual(legacy.message, 'first-frame', 'the interim answer let a second head through on /node');
+  assert.equal(legacy.headers && legacy.headers['set-cookie'], undefined);
+});
+
+test('P2 (parser differential): the head is read as the most lenient consumer would read it (bare LF, folded lines, odd names, bare CR, NUL)', async (t) => {
+  const heads = {
+    'bare LF line endings': (a) => `HTTP/1.1 101 Switching Protocols\nUpgrade: websocket\nConnection: Upgrade\nSec-WebSocket-Accept: ${a}\nSet-Cookie: evil=1; Path=/\nClear-Site-Data: "storage"\n\n`,
+    'mixed endings': (a) => `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${a}\nset-cookie: evil=1\r\n\r\n`,
+    'folded continuation of a dropped header': (a) => `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${a}\r\nSet-Cookie: a=b;\r\n\tevil=1; Path=/\r\n\r\n`,
+    'space before the colon': (a) => `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${a}\r\nSet-Cookie : evil=1\r\nCLEAR-SITE-DATA\t: "*"\r\n\r\n`,
   };
-  const box = await through('box');
-  assert.ok(box.headers, 'the upgrade was answered');
-  assert.equal(box.message, 'first-frame', 'the frame after the head is intact');
-  assert.equal(box.headers['set-cookie'], undefined, 'Set-Cookie of a host-only peer reached the owner origin');
-  assert.equal(box.headers['clear-site-data'], undefined, 'Clear-Site-Data of a host-only peer reached the owner origin');
-  assert.equal(box.headers['content-security-policy'], undefined);
-  const trusted = await through('other');
-  assert.ok(trusted.headers && trusted.headers['set-cookie'], 'GUARD: a trusted peer\'s head is forwarded as it always was');
+  for (const [label, make] of Object.entries(heads)) {
+    const port = await rawHeadUpstream(t, make);
+    const g = await viaUpgrade(t, { boxPort: port });
+    const seen = await clientSees(g.url, g.headers);
+    assert.equal(seen.kind, 'message', `${label}: the upgrade must still work (${seen.kind})`);
+    assert.equal(seen.message, 'first-frame', label);
+    assert.equal(seen.headers['set-cookie'], undefined, `${label}: Set-Cookie reached the client`);
+    assert.equal(seen.headers['clear-site-data'], undefined, `${label}: Clear-Site-Data reached the client`);
+    assert.equal(seen.headers.evil, undefined, label);
+  }
+  // heads that must be REFUSED, not passed: bare CR, NUL, no colon, bad name, no status line
+  const filterRun = (chunks) => new Promise((resolve) => {
+    const f = hostOnlyHeadFilter(); const out = [];
+    f.on('data', (c) => out.push(c)); f.on('error', (e) => resolve({ error: e.message })); f.on('end', () => resolve({ out: Buffer.concat(out) }));
+    for (const c of chunks) f.write(c); f.end();
+  });
+  const bad = {
+    'bare CR': 'HTTP/1.1 101 X\r\nUpgrade: websocket\rSet-Cookie: a=b\r\n\r\n',
+    'NUL': 'HTTP/1.1 101 X\r\nUpgrade: websocket\r\nX: a\0b\r\n\r\n',
+    'no colon': 'HTTP/1.1 101 X\r\nUpgrade websocket\r\n\r\n',
+    'bad header name': 'HTTP/1.1 101 X\r\nUp grade: websocket\r\n\r\n',
+    'no status line': 'Upgrade: websocket\r\n\r\n',
+    'not a 101': 'HTTP/1.1 200 OK\r\nX: 1\r\n\r\n',
+    'interim 100': 'HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 101 X\r\n\r\n',
+    'continuation before any header': 'HTTP/1.1 101 X\r\n  stray\r\n\r\n',
+  };
+  for (const [label, head] of Object.entries(bad)) assert.ok((await filterRun([Buffer.from(head, 'latin1')])).error, `${label} must be refused`);
+  assert.ok((await filterRun([Buffer.alloc(20000, 0x41)])).error, 'a head over 16 KB is refused');
+  // chunking: the terminator split across chunks, binary after the head untouched
+  const good = Buffer.from('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nSet-Cookie: a=b\r\n\r\n', 'latin1');
+  const tail = Buffer.from([0x81, 0x05, 0x00, 0xff, 0x7f, 0x80, 0x0d, 0x0a, 0x0d, 0x0a]);
+  const whole = Buffer.concat([good, tail]);
+  for (let cut = 1; cut < good.length + 3; cut += 7) {
+    const r = await filterRun([whole.subarray(0, cut), whole.subarray(cut)]);
+    assert.ok(r.out, `cut ${cut}: ${r.error}`);
+    assert.ok(r.out.subarray(r.out.length - tail.length).equals(tail), `cut ${cut}: the bytes after the head changed`);
+    assert.ok(!r.out.toString('latin1').toLowerCase().includes('set-cookie'), `cut ${cut}: cookie kept`);
+  }
 });
 
 test('P2 (protective headers): they are imposed after the stripping, also when Connection names them', async (t) => {
@@ -479,4 +550,62 @@ test('P4 (stale designation): a designation recorded BEFORE the mode was turned 
   const ownerView = await (await fetch(`${h.base}/api/live-host`, { headers: own(h) })).json();
   assert.equal(ownerView.hostCell, 'c1', 'GUARD: the owner still sees what is recorded');
   assert.equal(h.boxCalls.length, before, 'and even the owner\'s read does not query the host-only peer');
+});
+
+// ------------------------------------------------------------------------- R5 (redirects) and M1 (decks)
+
+const REDIRECT = (status, location) => (req, res) => { res.writeHead(status, { location, 'content-type': 'text/plain' }); res.end(); };
+
+test('R5 (redirects): a 3xx from a host-only peer is never passed along, so the browser cannot repeat the owner\'s call elsewhere', async (t) => {
+  for (const [status, location, label] of [[307, '/api/route/other/_/cells/send', '307 towards a trusted peer'], [302, '/api/config', '302 towards this node']]) {
+    const h = await realHub(t, { boxReply: REDIRECT(status, location) });
+    const own = { authorization: `Bearer ${h.token}`, 'content-type': 'application/json' };
+    for (const [url, method] of [['/api/route/box/_/cells/send', 'POST'], ['/api/route/box/_/sessions', 'GET'], ['/node/box/api/sessions', 'GET']]) {
+      const before = h.otherCalls.length;
+      const manual = await fetch(`${h.base}${url}`, { method, headers: own, body: method === 'POST' ? '{"id":"x"}' : undefined, redirect: 'manual' });
+      assert.equal(manual.status, 502, `${label} ${url}: the redirect reached the client (status ${manual.status})`);
+      assert.equal(manual.headers.get('location'), null, `${label} ${url}: Location reached the client`);
+      const followed = await fetch(`${h.base}${url}`, { method, headers: own, body: method === 'POST' ? '{"id":"x"}' : undefined, redirect: 'follow' });
+      assert.equal(followed.status, 502, `${label} ${url}: following ended somewhere else (${followed.url})`);
+      assert.equal(h.otherCalls.length, before, `${label} ${url}: the redirected call reached the trusted peer`);
+    }
+    // the audience member through the federated route
+    const viaFed = await fetch(`${h.base}/federation/route/box/_/sessions`, { headers: reader1, redirect: 'manual' });
+    assert.equal(viaFed.status, 502, `${label}: federated route`);
+  }
+});
+
+test('R5 (headers that redirect without a 3xx): Location, Content-Location and Refresh of a host-only peer are dropped', async (t) => {
+  const h = await realHub(t, { boxReply: (req, res) => { res.writeHead(200, { 'content-type': 'text/plain', refresh: '0;url=/api/config', location: '/api/config', 'content-location': '/api/config' }); res.end('x'); } });
+  for (const url of ['/api/route/box/_/sessions', '/node/box/api/sessions']) {
+    const r = await fetch(`${h.base}${url}`, { headers: { authorization: `Bearer ${h.token}` } });
+    assert.equal(r.status, 200, url);
+    for (const name of ['refresh', 'location', 'content-location']) assert.equal(r.headers.get(name), null, `${url}: ${name} reached the client`);
+  }
+});
+
+test('R5 GUARD: a trusted peer\'s redirect is forwarded as it always was', async (t) => {
+  const h = await realHub(t, { otherReply: REDIRECT(302, '/somewhere') });
+  const r = await fetch(`${h.base}/api/route/other/_/sessions`, { headers: { authorization: `Bearer ${h.token}` }, redirect: 'manual' });
+  assert.equal(r.status, 302);
+  assert.equal(r.headers.get('location'), '/somewhere');
+});
+
+test('M1 (decks): tiles and windows that point at a host-only peer are not served to a reader outside its audience, in any answer', async (t) => {
+  const h = await realHub(t);
+  const st = decksStore.emptyStore();
+  st.decks[0].layout = { columns: [{ width: 100, tiles: [
+    { session: 'agent-1', node: 'box', ownerId: BOX, height: 50, fontSize: 13 },
+    { session: 'agent-2', node: 'other', ownerId: OTHER, height: 50, fontSize: 13 },
+  ] }] };
+  decksStore.atomicWrite(decksStore.defaultDecksPath(h.home), st);
+  const read = async (headers, prefix) => (await (await fetch(`${h.base}${prefix}/decks`, { headers })).text());
+  assert.ok(mentionsBox(await read({ authorization: `Bearer ${h.token}` }, '/api')), 'control: the owner sees the tile');
+  assert.ok(mentionsBox(await read(reader1, '/federation/route/_')), 'GUARD: the audience member sees it');
+  const out = await read(admin2, '/federation/route/_');
+  assert.ok(!mentionsBox(out), `the outsider reads the tile: ${out.slice(0, 200)}`);
+  assert.ok(out.includes('agent-2'), 'the tile of a trusted peer is still there');
+  // the 409 answer carries the current deck too
+  const conflict = await fetch(`${h.base}/federation/route/_/decks/main`, { method: 'PUT', headers: admin2, body: JSON.stringify({ expectedRevision: 99, layout: { columns: [] } }) });
+  assert.ok(!mentionsBox(await conflict.text()), 'the conflict answer names the host-only peer');
 });
