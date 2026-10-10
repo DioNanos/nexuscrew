@@ -46,7 +46,9 @@ test('parseStore: schemaVersion/nodeId invalidi -> null', () => {
   const b = validStore();
   assert.ok(store.parseStore({ ...b, schemaVersion: 2 }));
   assert.ok(store.parseStore({ ...b, schemaVersion: 3 }));
-  assert.equal(store.parseStore({ ...b, schemaVersion: 4 }), null);
+  // Schema 4 (host-only publication) is valid since 0.9.66; the first unknown one is 5.
+  assert.ok(store.parseStore({ ...b, schemaVersion: 4 }));
+  assert.equal(store.parseStore({ ...b, schemaVersion: 5 }), null);
   assert.equal(store.parseStore({ ...b, schemaVersion: '1' }), null);
   assert.equal(store.parseStore({ ...b, nodeId: undefined }), null);
   assert.equal(store.parseStore({ ...b, nodeId: 'NOT-HEX!!' }), null);
