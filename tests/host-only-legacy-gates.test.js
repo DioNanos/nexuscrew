@@ -331,7 +331,7 @@ test('L1 (originating publication): a stream dies when anything of the authoriza
     ['mode off, then on for a different audience', (np) => { off(np); on(np, [READER2]); }],
     ['another opt-in whose backup name sorts BEFORE the previous one (same second)', (np) => require('node:fs').writeFileSync(`${np}.pre-publish-remote-20000101T000000Z-00000000.bak`, '{}', { mode: 0o600 })],
     ['mode off', (np) => off(np)],
-    ['peer moved to another port', (np) => store.atomicWriteStore(np, store.updateNode(store.loadStore(np), 'box', { localPort: 43998 }))],
+    ['peer moved to another port', (np) => { const st = store.loadStore(np); const used = new Set(st.nodes.flatMap((n) => [n.localPort, n.panelLocalPort])); let port = 43998; while (used.has(port)) port -= 1; store.atomicWriteStore(np, store.updateNode(st, 'box', { localPort: port })); }],
   ];
   for (const [label, mutate] of cases) {
     const { upstream, g } = await heldAttachFixture(t);
@@ -793,5 +793,14 @@ test('G4 (backups): two backups of the same bytes in the same second get distinc
     store.setPublishRemoteCas({ filePath: np, name: 'box', enabled: true, audience: [READER1] });
     store.setPublishRemoteCas({ filePath: np, name: 'box', enabled: false });
     store.setPublishRemoteCas({ filePath: np, name: 'box', enabled: true, audience: [READER1] });
+  } finally { require('node:fs').rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('fixture: an ephemeral stub port that equals one of the fixed peer ports does not break the fixture', () => {
+  const dir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'nc-port-'));
+  try {
+    const np = buildStore(dir, { boxPort: 43101, otherPort: 43150, audience: [READER1] });
+    const ports = store.loadStore(np).nodes.flatMap((n) => [n.localPort, n.panelLocalPort]).filter(Boolean);
+    assert.equal(new Set(ports).size, ports.length, 'two peers share a port');
   } finally { require('node:fs').rmSync(dir, { recursive: true, force: true }); }
 });

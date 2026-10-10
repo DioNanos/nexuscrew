@@ -47,15 +47,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function buildStore(dir, { boxPort, otherPort = 43120, audience = [READER1], hostOnly = true }) {
   const nodesPath = path.join(dir, '.nexuscrew', 'nodes.json');
   fs.mkdirSync(path.dirname(nodesPath), { recursive: true });
+  // The stub peers listen on ephemeral ports, which can land on one of the fixed ports below: those are moved aside
+  // (an exact collision made the fixture throw, and a throw used to leave the stubs listening).
+  const taken = new Set([boxPort, otherPort]);
+  const fixed = (p) => { let v = p; while (taken.has(v)) v += 11; taken.add(v); return v; };
   let st = store.emptyStore(SELF);
-  st = store.addNode(st, peer('reader1', READER1, { localPort: 43101 }));
-  st = store.addNode(st, peer('reader2', READER2, { localPort: 43102 }));
-  st = store.addNode(st, peer('intruder', INTRUDER, { localPort: 43103 }));
-  st = store.addNode(st, LIMITED_PEER());
-  st = store.addNode(st, peer('admin2', ADMIN2, { localPort: 43160 }));
+  st = store.addNode(st, peer('reader1', READER1, { localPort: fixed(43101) }));
+  st = store.addNode(st, peer('reader2', READER2, { localPort: fixed(43102) }));
+  st = store.addNode(st, peer('intruder', INTRUDER, { localPort: fixed(43103) }));
+  st = store.addNode(st, LIMITED_PEER({ localPort: fixed(43150) }));
+  st = store.addNode(st, peer('admin2', ADMIN2, { localPort: fixed(43160) }));
   st = store.setPeerAccessPreset(st, 'admin2', 'admin');
   st = store.addNode(st, peer('other', OTHER, { localPort: otherPort }));
-  st = store.addNode(st, BOX_PEER({ localPort: boxPort }));
+  st = store.addNode(st, BOX_PEER({ localPort: boxPort, panelLocalPort: fixed(43999) }));
   store.atomicWriteStore(nodesPath, st);
   if (hostOnly) store.setPublishRemoteCas({ filePath: nodesPath, name: 'box', enabled: true, audience });
   return nodesPath;
@@ -74,7 +78,11 @@ async function realHub(t, { boxReply, otherReply, hostOnly = true, fetchImpl = n
   box.on('upgrade', (req, socket) => { boxUpgrades.push({ url: req.url, auth: req.headers.authorization || null }); socket.destroy(); });
   const other = await listen(reply(otherCalls, otherReply));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-hostonly-legacy-'));
-  const nodesPath = buildStore(dir, { boxPort: box.address().port, otherPort: other.address().port, hostOnly });
+  let nodesPath;
+  try { nodesPath = buildStore(dir, { boxPort: box.address().port, otherPort: other.address().port, hostOnly }); } catch (e) {
+    await closeServer(box); await closeServer(other); fs.rmSync(dir, { recursive: true, force: true });
+    throw e;
+  }
   const configDir = path.join(dir, '.nexuscrew');
   fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({ roles: { client: true, node: false } }));
   const made = createServer({
