@@ -609,3 +609,24 @@ test('M1 (decks): tiles and windows that point at a host-only peer are not serve
   const conflict = await fetch(`${h.base}/federation/route/_/decks/main`, { method: 'PUT', headers: admin2, body: JSON.stringify({ expectedRevision: 99, layout: { columns: [] } }) });
   assert.ok(!mentionsBox(await conflict.text()), 'the conflict answer names the host-only peer');
 });
+
+test('M1 (decks, integrity): a reader that cannot see the references of a deck cannot save it back and erase them; decks without them and the audience are unaffected', async (t) => {
+  const h = await realHub(t);
+  const file = decksStore.defaultDecksPath(h.home);
+  const st = decksStore.emptyStore();
+  st.decks[0].layout = { columns: [{ width: 100, tiles: [{ session: 'agent-1', node: 'box', ownerId: BOX, height: 100, fontSize: 13 }] }] };
+  st.decks.push({ name: 'plain', revision: 0, layout: { columns: [{ width: 100, tiles: [{ session: 'agent-2', node: 'other', ownerId: OTHER, height: 100, fontSize: 13 }] }] } });
+  decksStore.atomicWrite(file, st);
+  const before = JSON.stringify(decksStore.loadStore(file));
+  const put = (headers, name, revision) => fetch(`${h.base}/federation/route/_/decks/${name}`, { method: 'PUT', headers, body: JSON.stringify({ expectedRevision: revision, layout: { columns: [{ width: 100, tiles: [{ session: 'agent-3', node: 'other', ownerId: OTHER, height: 100, fontSize: 13 }] }] } }) });
+  const refused = await put(admin2, 'main', 0);
+  assert.equal(refused.status, 403, 'the outsider saved the filtered copy of a deck that holds hidden content');
+  assert.ok(!mentionsBox(await refused.text()), 'the refusal names the host-only peer');
+  const del = await fetch(`${h.base}/federation/route/_/decks/main`, { method: 'DELETE', headers: admin2 });
+  assert.equal(del.status, 403, 'the outsider deleted a deck that holds hidden content');
+  assert.equal(JSON.stringify(decksStore.loadStore(file)), before, 'the stored decks changed');
+  assert.equal((await put(admin2, 'plain', 0)).status, 200, 'GUARD: a deck without hidden content is edited as before');
+  assert.equal((await put(reader1, 'main', 0)).status, 200, 'GUARD: the audience member edits the whole deck');
+  const ownerPut = await fetch(`${h.base}/api/decks/main`, { method: 'PUT', headers: own(h), body: JSON.stringify({ expectedRevision: 1, layout: { columns: [{ width: 100, tiles: [{ session: 'agent-1', node: 'box', ownerId: BOX, height: 100, fontSize: 13 }] }] } }) });
+  assert.equal(ownerPut.status, 200, 'GUARD: the owner is never filtered');
+});
