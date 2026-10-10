@@ -25,6 +25,7 @@ vi.mock('../lib/api.js', () => ({
     ? `/api/route/${route.map(encodeURIComponent).join('/')}/_` : '',
 }));
 
+import { setHostOnlyNodes } from '../lib/panel-port.js';
 import CellPanel from './CellPanel.jsx';
 import { requestPanelTicket, setAiDesktop } from '../lib/api.js';
 
@@ -62,6 +63,30 @@ describe('CellPanel (D8: ingresso al pannello via ticket)', () => {
     expect(requestPanelTicket).toHaveBeenCalledWith('t', ['Pixel'], 'A', expect.anything());
     const src = container.querySelector('iframe').getAttribute('src');
     expect(src.startsWith('/api/route/Pixel/_/panel/A/?ticket=TK-REMOTE')).toBe(true);
+  });
+
+  it('sandbox: solo un percorso che attraversa un nodo solo-host gira in origine opaca; i pannelli dei nodi fidati restano com\'erano', async () => {
+    ticketOk('TK-1');
+    const trusted = render(<CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={['Pixel']} token="t" title="A" />);
+    await waitFor(() => { expect(trusted.container.querySelector('iframe')).toBeTruthy(); });
+    expect(trusted.container.querySelector('iframe').hasAttribute('sandbox')).toBe(false);
+    trusted.unmount();
+    setHostOnlyNodes(['Box']);
+    try {
+      const hostOnly = render(<CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={['Pixel', 'Box']} token="t" title="A" />);
+      await waitFor(() => { expect(hostOnly.container.querySelector('iframe')).toBeTruthy(); });
+      const sb = hostOnly.container.querySelector('iframe').getAttribute('sandbox');
+      expect(sb).toContain('allow-scripts');
+      expect(sb.split(' ')).not.toContain('allow-same-origin');
+      hostOnly.unmount();
+      const withPort = render(<CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={['Box']} panelPort={43002} token="t" title="A" />);
+      await waitFor(() => { expect(withPort.container.querySelector('iframe')).toBeTruthy(); });
+      expect(withPort.container.querySelector('iframe').getAttribute('sandbox').split(' ')).not.toContain('allow-same-origin');
+      withPort.unmount();
+    } finally { setHostOnlyNodes([]); }
+    const local = render(<CellPanel cellId="A" panelUrl="https://127.0.0.1:6901/" route={[]} token="t" title="A" />);
+    await waitFor(() => { expect(local.container.querySelector('iframe')).toBeTruthy(); });
+    expect(local.container.querySelector('iframe').hasAttribute('sandbox')).toBe(false);
   });
 
   it('not-granted: causa NOMINATA con la sua azione (concedere sul nodo), non collassata', async () => {

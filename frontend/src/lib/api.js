@@ -29,11 +29,18 @@ export function fetchAbortSignal(ms) {
   return { signal: controller.signal, cancel: () => clearTimeout(timer), controller };
 }
 
+// A call that goes through a peer (/api/route/..., /node/...) carries the owner's Authorization: an answer
+// that redirects must never be followed with it. The caller can still choose (an explicit `redirect` wins).
+function noRedirectsTowardsPeers(path, opts) {
+  if (opts.redirect !== undefined) return opts;
+  return /^\/(?:api\/route|node)\//.test(String(path)) ? { ...opts, redirect: 'error' } : opts;
+}
+
 export function apiFetch(path, token, opts = {}) {
   const ms = Number(opts.timeoutMs);
   if (!Number.isFinite(ms) || ms <= 0) {
     return fetch(path, {
-      ...opts,
+      ...noRedirectsTowardsPeers(path, opts),
       headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` },
     }).then((r) => { noteAuth(path, token, r); return r; });
   }
@@ -57,7 +64,7 @@ export function apiFetch(path, token, opts = {}) {
   }
   const { timeoutMs: _timeoutMs, ...rest } = opts;
   return fetch(path, {
-    ...rest,
+    ...noRedirectsTowardsPeers(path, rest),
     signal,
     headers: { ...(rest.headers || {}), Authorization: `Bearer ${token}` },
   }).then((r) => {

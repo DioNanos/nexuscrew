@@ -121,9 +121,20 @@ nexuscrew nodes publish-remote <name|nodeId> status [--json]
   (`nodes.json.pre-publish-remote-<time>-<sha>.bak`, mode 0600). Older stores
   keep loading unchanged. A release older than 0.9.66 cannot read a schema 4
   store (the schema is closed): going back means restoring that backup.
-- Already-open streams (a terminal attached before `off`) are not torn down by
-  `off`; new calls are refused. Read `off` as "no new request", not as an
-  instant cut of a channel that is already open.
+- Streams opened towards the peer by a reader (event streams, terminals, held
+  terminal attaches) are re-checked about once a second against the audience, the
+  operator grant, the publication state, the identity of both nodes and the store:
+  after `off`, an audience change or a revoked grant they are closed within a couple
+  of seconds, and a held attach cannot be resumed. Read it as a short, bounded
+  delay, not as an instant cut. (Before 0.9.67 they stayed open.)
+- The peer has **no panel and no Live host**: the panel, its ticket and every
+  Live-host resource towards it are refused, and a Live designation recorded
+  before the mode was turned on stops being used. What the peer answers is served
+  without its cookies, `Clear-Site-Data` and CSP, sandboxed and with `nosniff`.
+  A federated audio command that terminates here is not re-sent to it, and
+  topology, configuration and diagnostics served to a federated reader outside
+  the audience do not name it. The audience is checked on every hop of a request,
+  not only on the last one.
 - A reader's topology cache is emptied by the **next authoritative answer** from
   this installation. A reader that cannot reach it keeps showing the peer, marked
   stale, until then; nothing is pushed to it.
