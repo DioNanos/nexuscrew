@@ -38,6 +38,7 @@ const ESEMPI = Object.freeze({
   'events-receive': 'on',
   'access-role': 'user',
   'access-revision': '7',
+  audience: '0123456789abcdef0123456789abcdef,fedcba9876543210fedcba9876543210',
   'events-access': 'off',
   'node-events-access': 'on',
   'ask-reply-access': 'off',
