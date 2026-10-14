@@ -20,6 +20,7 @@ import './FilesPanel.desktop.css';
 // `↑`/`↓` muovono la selezione, `Invio` apre il foglio azioni del file
 // selezionato — l'equivalente tastiera del «⋯», vale per ogni tipo di file.
 const TEXT_PREVIEW_EXTS = new Set(['TXT', 'MD', 'JSON']);
+const IMAGE_PREVIEW_EXTS = new Set(['PNG', 'JPG', 'JPEG', 'GIF', 'WEBP', 'SVG', 'BMP', 'ICO', 'AVIF']);
 const PREVIEW_MAX_CHARS = 8000;
 
 export default function FilesPanelDesktop({
@@ -69,10 +70,13 @@ export default function FilesPanelDesktop({
     (async () => {
       const blob = await fetchBlob(selNameLive);
       if (!alive || !blob) return;
-      if (TEXT_PREVIEW_EXTS.has(fileExt(selNameLive))) {
+      const ext = fileExt(selNameLive);
+      if (TEXT_PREVIEW_EXTS.has(ext)) {
         const text = await blob.text();
         if (alive) setPreview({ kind: 'text', text: text.slice(0, PREVIEW_MAX_CHARS) });
-      } else {
+      } else if (IMAGE_PREVIEW_EXTS.has(ext)) {
+        // Solo le immagini hanno miniatura inline: un pdf non è né testo né
+        // <img> — per quello c'è «Apri» in una scheda nuova.
         objectUrl = URL.createObjectURL(blob);
         if (alive) setPreview({ kind: 'img', url: objectUrl });
       }
