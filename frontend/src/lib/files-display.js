@@ -107,6 +107,14 @@ function dayKey(date) {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
+// Tipi di cui il browser sa fare un'anteprima in linea dalla route di
+// download autenticata (blob + object URL): immagini, pdf, testo. Per ogni
+// altro tipo la voce Anteprima del foglio azioni è omessa, come da mandato.
+const PREVIEWABLE = new Set(['PNG', 'JPG', 'JPEG', 'GIF', 'WEBP', 'SVG', 'PDF', 'TXT', 'MD', 'JSON']);
+export function isPreviewable(name) {
+  return PREVIEWABLE.has(fileExt(name));
+}
+
 // Raggruppamento per giorno in ordine recente, con i file di ogni giorno
 // ordinati dal più recente. Pura: l'ordine d'ingresso non conta.
 export function groupFilesByDay(files, now, lang, todayWord = '') {

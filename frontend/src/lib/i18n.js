@@ -223,6 +223,7 @@ export const DICTS = {
     'windows': '{n} finestre',
     'empty-files': 'vuota',
     'files-download': 'scarica file',
+    'files-download-action': 'Scarica',
     // Pannello file 0.9.69: righe leggibili, giorni, ricerca, foglio azioni.
     'files-outbox': 'Outbox · {n}',
     'files-inbox': 'Inbox · {n}',
@@ -1133,6 +1134,7 @@ export const DICTS = {
     'windows': '{n} windows',
     'empty-files': 'empty',
     'files-download': 'download file',
+    'files-download-action': 'Download',
     // File panel 0.9.69: readable rows, days, search, actions sheet.
     'files-outbox': 'Outbox · {n}',
     'files-inbox': 'Inbox · {n}',
@@ -2042,6 +2044,7 @@ export const DICTS = {
     'windows': '{n} ventanas',
     'empty-files': 'vacía',
     'files-download': 'descargar archivo',
+    'files-download-action': 'Descargar',
     // Panel de archivos 0.9.69: filas legibles, días, búsqueda, hoja de acciones.
     'files-outbox': 'Outbox · {n}',
     'files-inbox': 'Inbox · {n}',

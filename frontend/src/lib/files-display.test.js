@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   fileDisplayName, fileStampDate, fileWhen, formatFileSize, fileExt,
-  formatRowTime, formatDayLabel, formatFullWhen, groupFilesByDay,
+  formatRowTime, formatDayLabel, formatFullWhen, groupFilesByDay, isPreviewable,
 } from './files-display.js';
 
 // Le date sono costruite locali (new Date(anno, mese, giorno, …)): il
@@ -122,6 +122,15 @@ describe('fileExt — badge tipo della riga', () => {
     expect(fileExt('20261014-0930_note')).toBe('');
     expect(fileExt('.hidden')).toBe('');
     expect(fileExt('')).toBe('');
+  });
+
+  it('isPreviewable: i tipi che il browser mostra in linea, gli altri no', () => {
+    expect(isPreviewable('20261014-0930_foto.png')).toBe(true);
+    expect(isPreviewable('20261014-0930_doc.pdf')).toBe(true);
+    expect(isPreviewable('20261014-0930_note.md')).toBe(true);
+    expect(isPreviewable('20261014-0930_archivio.zip')).toBe(false);
+    expect(isPreviewable('20261014-0930_app.bin')).toBe(false);
+    expect(isPreviewable('senza')).toBe(false);
   });
 });
 
