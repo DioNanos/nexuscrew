@@ -1,0 +1,199 @@
+/* Vista DESKTOP del pannello file (0.9.69): drawer largo a destra con lista a
+   griglia e pannello dettaglio da 340 px. Attivata dal criterio condiviso R34
+   (useDesktop: min-1024 + pointer fine) tramite la classe nc-files-d sul root:
+   la larghezza non passa da una media query nuova, così il canone mobile di
+   .nc-files resta intatto. Colori: stessi token del pannello mobile (#0a0e0a,
+   #2e7d32, #243/#1c231c, #d8ffe8, #7fb89a, #9fd, #7ee787, #ff8a80). */
+
+.nc-files.nc-files-d { width: min(940px, 94vw); }
+
+/* --- Intestazione: «File di <cella>», nodo + percorso in mono, caricamento, X --- */
+.nc-filesd-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #243; }
+.nc-filesd-titolo { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.nc-filesd-titolo b { color: #d8ffe8; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-filesd-percorso {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; color: #7fb89a;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* «Carica file»: stessa route degli allegati del composer, qui con etichetta. */
+.nc-filesd-upload {
+  flex: 0 0 auto; min-height: 36px; padding: 0 12px;
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid #2e7d32; border-radius: 8px;
+  background: #1a241a; color: #7ee787;
+  font-size: 13px; cursor: pointer;
+}
+.nc-filesd-upload:hover { background: #223022; }
+.nc-filesd-upload-input { display: none; }
+.nc-filesd-head .nc-ntf-x { min-width: 44px; min-height: 44px; }
+
+/* --- Barra: schede a segmenti, ricerca (scorciatoia «/»), pillole di filtro --- */
+.nc-filesd-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px; border-bottom: 1px solid #1c231c;
+}
+.nc-filesd-seg { display: inline-flex; border: 1px solid #243; border-radius: 8px; overflow: hidden; }
+.nc-filesd-seg button {
+  min-height: 36px; padding: 0 14px;
+  background: none; border: none; border-right: 1px solid #243;
+  color: #9fd; font-size: 13px; cursor: pointer;
+}
+.nc-filesd-seg button:last-child { border-right: none; }
+.nc-filesd-seg button.on { background: #1a241a; color: #7ee787; }
+
+.nc-filesd-search {
+  flex: 1 1 220px; max-width: 420px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 10px; border: 1px solid #243; border-radius: 8px; color: #7fb89a;
+}
+.nc-filesd-search input {
+  flex: 1; min-width: 0; min-height: 36px;
+  background: none; border: none; outline: none;
+  color: #d8ffe8; font-size: 13px;
+}
+.nc-filesd-search input::placeholder { color: #7fb89a; }
+.nc-filesd-search input::-webkit-search-cancel-button { filter: invert(0.8); }
+/* Il suggerimento della scorciatoia sparisce mentre si scrive. */
+.nc-filesd-kbd {
+  flex: 0 0 auto; padding: 1px 6px;
+  border: 1px solid #243; border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; color: #7fb89a;
+}
+.nc-filesd-search:focus-within .nc-filesd-kbd { display: none; }
+
+.nc-filesd-filtri { display: inline-flex; gap: 6px; margin-left: auto; }
+.nc-filesd-filtri button {
+  min-height: 36px; padding: 0 12px;
+  border: 1px solid #243; border-radius: 999px; background: none;
+  color: #9fd; font-size: 12px; cursor: pointer;
+}
+.nc-filesd-filtri button.on { border-color: #2e7d32; background: #1a241a; color: #7ee787; }
+
+/* --- Corpo: lista a sinistra, dettaglio 340 px a destra --- */
+.nc-filesd-main { flex: 1 1 auto; min-height: 0; display: flex; }
+.nc-filesd-list { flex: 1 1 auto; min-width: 0; overflow-y: auto; }
+.nc-filesd-daygroup { display: flex; flex-direction: column; }
+.nc-files-d .nc-files-day { padding: 8px 14px 6px; }
+.nc-files-d .nc-files-empty { padding: 24px 14px; }
+
+/* Riga della griglia: badge-tipo · NOME · ORA · DIMENS. · Scarica · «⋯».
+   Il NOME non si tronca MAI: a capo ovunque, tutte le righe che servono.
+   La riga selezionata porta la barra a sinistra. */
+.nc-filesd-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto auto 44px 44px;
+  gap: 10px; align-items: center;
+  min-height: 44px; padding: 6px 14px;
+  border-bottom: 1px solid #1c231c;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+}
+.nc-filesd-row:hover { background: #0e140e; }
+.nc-filesd-row.sel { background: #14231a; border-left-color: #7ee787; }
+.nc-filesd-name {
+  color: #d8ffe8; font-size: 13px; line-height: 1.3; user-select: text;
+  overflow-wrap: anywhere;
+}
+.nc-filesd-quando, .nc-filesd-dim {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; color: #7fb89a; white-space: nowrap;
+}
+.nc-filesd-cella { display: inline-flex; justify-content: center; }
+.nc-filesd-row .nc-filesd-dl, .nc-filesd-row .nc-filesd-more {
+  min-width: 36px; min-height: 36px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 1px solid #243; border-radius: 8px;
+  color: #9fd; cursor: pointer;
+}
+.nc-filesd-row .nc-filesd-dl:hover, .nc-filesd-row .nc-filesd-more:hover { border-color: #2e7d32; color: #7ee787; }
+
+/* --- Dettaglio del file selezionato (340 px) --- */
+.nc-filesd-detail {
+  flex: 0 0 340px; width: 340px;
+  border-left: 1px solid #243;
+  overflow-y: auto; padding: 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.nc-filesd-detail-none { margin: auto; padding: 24px 10px; text-align: center; color: #7fb89a; font-size: 13px; }
+
+/* Anteprima: testo dei tipi testuali, miniatura delle immagini. */
+.nc-filesd-prev-text {
+  margin: 0; padding: 10px;
+  border: 1px solid #1c231c; border-radius: 8px; background: #0e140e;
+  color: #d8ffe8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.45;
+  max-height: 280px; overflow: auto;
+  white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+}
+.nc-filesd-prev-img {
+  display: block; max-width: 100%; max-height: 280px; object-fit: contain;
+  border: 1px solid #1c231c; border-radius: 8px; background: #0e140e;
+}
+
+.nc-filesd-nome { color: #d8ffe8; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.nc-filesd-originale { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.nc-filesd-label { font-size: 11px; color: #7fb89a; }
+.nc-filesd-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; color: #b8e6c8; overflow-wrap: anywhere; user-select: text;
+}
+.nc-filesd-meta { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.nc-filesd-meta > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; }
+.nc-filesd-meta dt { color: #7fb89a; font-size: 12px; }
+.nc-filesd-meta dd {
+  margin: 0; color: #d8ffe8; font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+/* Azioni del dettaglio: Scarica primario, Apri (solo tipi in linea),
+   Copia nome, Elimina… (con conferma qui accanto). */
+.nc-filesd-azioni { display: flex; flex-direction: column; gap: 8px; }
+.nc-filesd-azioni button {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 40px; padding: 0 12px;
+  border: 1px solid #243; border-radius: 8px; background: none;
+  color: #9fd; font-size: 13px; text-align: left; cursor: pointer;
+}
+.nc-filesd-azioni button.primario { background: #2e7d32; border-color: #2e7d32; color: #d8ffe8; font-weight: 600; }
+.nc-filesd-azioni button:hover { border-color: #2e7d32; }
+.nc-filesd-azioni button.primario:hover { background: #35913b; color: #ffffff; }
+.nc-filesd-azioni button.danger { color: #ff8a80; }
+
+/* Conferma di eliminazione: stessa domanda del foglio azioni. */
+.nc-filesd-conferma {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 10px; border: 1px solid #4a2a2a; border-radius: 10px;
+  background: rgba(255, 138, 128, 0.05);
+}
+.nc-filesd-conferma-titolo { color: #ffd6d1; font-size: 14px; overflow-wrap: anywhere; }
+.nc-filesd-conferma-aiuto { color: #9aa89a; font-size: 12px; }
+.nc-filesd-conferma-azioni { display: flex; gap: 8px; }
+.nc-filesd-conferma-azioni button {
+  flex: 1; min-height: 44px; padding: 10px 12px;
+  border: 1px solid #243; border-radius: 8px; background: none;
+  color: #9fd; font-size: 14px; cursor: pointer;
+}
+.nc-filesd-conferma-azioni button.danger { border-color: #6d3a34; background: #3a1d19; color: #ff8a80; font-weight: 600; }
+.nc-filesd-conferma-azioni button:disabled { opacity: 0.55; cursor: wait; }
+
+/* --- Piè di pagina: conteggio/size e scorciatoie --- */
+.nc-filesd-foot {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 6px 14px; border-top: 1px solid #1c231c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; color: #7fb89a;
+}
+.nc-filesd-tasti kbd {
+  margin-left: 4px; padding: 0 5px;
+  border: 1px solid #243; border-radius: 4px;
+  font-family: inherit; font-size: 10px; color: #9fd;
+}
+
+/* Focus visibile per la navigazione da tastiera della barra e del dettaglio. */
+.nc-files-d button:focus-visible, .nc-files-d .nc-filesd-row:focus-visible {
+  outline: 1px solid #7ee787; outline-offset: 1px;
+}

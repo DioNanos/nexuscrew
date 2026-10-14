@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { apiFetch, seenKey } from '../lib/api.js';
 import { t, getLang } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
+import { useDesktop } from '../lib/desktop.js';
 import Icon from './Icon.jsx';
 import FileActionsSheet from './FileActionsSheet.jsx';
+import FilesPanelDesktop from './FilesPanelDesktop.jsx';
 import {
   fileDisplayName, fileWhen, fileExt, formatRowTime, formatFileSize,
   groupFilesByDay, isPreviewable,
@@ -24,6 +26,9 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   // nome ORIGINALE del file col foglio azioni aperto: è la chiave su disco,
   // sopravvive al refresh finché il file resta nell'elenco.
   const [sheetName, setSheetName] = useState('');
+  // 0.9.69 desktop: stesso criterio condiviso dell'app (R34, schermo largo E
+  // puntatore fine). Stato e azioni restano UNO solo: cambia la vista.
+  const desktop = useDesktop();
 
   async function refresh() {
     try {
@@ -99,6 +104,40 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   const groups = groupFilesByDay(visible, now, lang, t('files-today'));
   const sheetFile = sheetName ? rows.find((f) => f.name === sheetName) : null;
 
+  // Il foglio azioni «⋯» è uno solo per entrambe le viste (mobile e desktop).
+  const sheet = sheetFile ? (
+    <FileActionsSheet
+      file={sheetFile} box={box} session={node ? `${node}:${session}` : session}
+      previewable={isPreviewable(sheetFile.name)}
+      notice={busy} busy={!!busy}
+      onClose={() => setSheetName('')}
+      onDownload={(f) => { setSheetName(''); download(f.name); }}
+      onPreview={(f) => preview(f.name)}
+      onDelete={(f) => del(f.name)}
+    />
+  ) : null;
+
+  // Vista desktop: drawer largo con lista a griglia e pannello dettaglio.
+  // Tutto ciò che fa rete resta qui (stesse funzioni della vista mobile),
+  // il nome ORIGINALE continua a viaggiare in ogni operazione.
+  if (desktop) {
+    return (
+      <div className="nc-files nc-files-d">
+        <FilesPanelDesktop
+          session={session} node={node} token={token}
+          box={box} onBox={setBox}
+          counts={{ outbox: (data.outbox || []).length, inbox: (data.inbox || []).length }}
+          rows={rows} visible={visible} busy={busy} onNotice={setBusy}
+          sheetFile={sheetFile} onSheet={setSheetName}
+          onClose={onClose} onRefresh={refresh}
+          fetchBlob={fetchFileBlob} onDownload={download} onPreview={preview} onDelete={del}
+          query={query} onQuery={setQuery}
+        />
+        {sheet}
+      </div>
+    );
+  }
+
   return (
     <div className="nc-files">
       <header>
@@ -170,17 +209,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
           <div className="nc-files-empty">{t('files-no-match').replace('{q}', query.trim())}</div>
         )}
       </div>
-      {sheetFile && (
-        <FileActionsSheet
-          file={sheetFile} box={box} session={node ? `${node}:${session}` : session}
-          previewable={isPreviewable(sheetFile.name)}
-          notice={busy} busy={!!busy}
-          onClose={() => setSheetName('')}
-          onDownload={(f) => { setSheetName(''); download(f.name); }}
-          onPreview={(f) => preview(f.name)}
-          onDelete={(f) => del(f.name)}
-        />
-      )}
+      {sheet}
     </div>
   );
 }
