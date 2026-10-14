@@ -2,6 +2,11 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.68 — 2026-10-14
+
+- **The web terminal no longer goes black on the first mode query from the session.** @xterm/xterm 6.0.0's `requestMode` (the DECRQM handler, `CSI ? Ps $ p` and `CSI Ps $ p`) ships a compiled const-enum emulation that this repo's build pipeline rewrites into an assignment to an identifier nothing declares: in the shipped ES module the first DECRQM written to the terminal throws `ReferenceError: n is not defined`, the write buffer never drains again, and the terminal stops rendering while the WebSocket stays healthy — the black terminal of the phone-hosted cells, seen from any client. The web terminal now registers its own CSI handlers for both DECRQM forms ahead of the defective built-in, answers DECRPM (`Pm=0`, not recognized) over the input channel, and swallows the sequence; a view-only terminal swallows it without answering, like any other input. No published release of @xterm/xterm changes the pattern (latest is 6.0.0; the 6.1.0-beta line still carries it), so the shield lives in the app and the test that pins the rewritten bundle fails loudly the day an upgrade makes it unnecessary.
+- **A parser exception can no longer take the output stream down silently.** The writes that carry the channel's output to the terminal go through a guarded helper: an exception is logged to the console, together with what was discarded, instead of escaping into the message handler and leaving a live channel with a terminal that never draws again.
+
 ## 0.9.67 — 2026-10-10
 
 - **A host-only peer is closed to every legacy door.** The audience gate of 0.9.66 covered the peer-facing protocol only; the older paths that re-enter the local API with the node's own authority did not look at it. They now do, and the owner's view and the trusted peers keep their behaviour.
