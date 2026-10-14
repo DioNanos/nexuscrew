@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/api.js', () => ({
@@ -373,7 +373,84 @@ describe('FilesPanel anteprima nel foglio', () => {
     apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x'], { type: 'image/png' }) });
     fireEvent.click(await screen.findByText('Preview'));
     expect(await screen.findByText('preview failed')).toBeTruthy();
+    // apertura fallita = nessun consumatore: l'object URL è revocato subito
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:img');
     open.mockRestore();
+  });
+});
+
+describe('FilesPanel anteprima sicura (SVG e MIME del blob)', () => {
+  // Un SVG ostile con script e handler: la sicurezza è NON navigarci mai come
+  // documento (in <img> gli script non girano; da scaricato è un file qualunque).
+  const SVG_CON_SCRIPT = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(2)</script></svg>';
+
+  function montaConFile(file) {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ inbox: [], outbox: [file] }) });
+    return render(<FilesPanel session="cloud-Dev" token="t" onClose={() => {}} />);
+  }
+
+  it('SVG: nel foglio azioni non c\'è la voce Anteprima — si scarica e basta', async () => {
+    await montaConFile({ name: '20261014-0930_logo.svg', size: 300, mtime: Date.now() });
+    await screen.findByText('logo.svg');
+    fireEvent.click(screen.getByTitle('file actions'));
+    await screen.findByTestId('file-actions-sheet');
+    expect(screen.queryByText('Preview')).toBeNull();
+    expect(screen.getByText('Download')).toBeTruthy();
+  });
+
+  it('blob SVG arrivato sotto nome .png: nessuna navigazione, avviso esplicito, nessun object URL', async () => {
+    await montaConFile({ name: '20261014-0930_foto.png', size: 300, mtime: Date.now() });
+    await screen.findByText('foto.png');
+    fireEvent.click(screen.getByTitle('file actions'));
+    URL.createObjectURL = vi.fn(() => 'blob:svg');
+    URL.revokeObjectURL = vi.fn();
+    const open = vi.spyOn(window, 'open').mockImplementation(() => ({}));
+    apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob([SVG_CON_SCRIPT], { type: 'image/svg+xml' }) });
+    fireEvent.click(await screen.findByText('Preview'));
+    expect(await screen.findByText('preview unavailable for this type: download it')).toBeTruthy();
+    expect(open).not.toHaveBeenCalled();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it('MIME assente sul blob: chiuso lo stesso (fail closed), niente navigazione', async () => {
+    await montaConFile({ name: '20261014-0930_nota.txt', size: 12, mtime: Date.now() });
+    await screen.findByText('nota.txt');
+    fireEvent.click(screen.getByTitle('file actions'));
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    const open = vi.spyOn(window, 'open').mockImplementation(() => ({}));
+    apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x']) });
+    fireEvent.click(await screen.findByText('Preview'));
+    expect(await screen.findByText('preview unavailable for this type: download it')).toBeTruthy();
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it('l\'object URL dell\'anteprima aperta viene revocato dopo un ritardo prudente', async () => {
+    await montaConFile({ name: '20261014-0930_foto.png', size: 9, mtime: Date.now() });
+    await screen.findByText('foto.png');
+    fireEvent.click(screen.getByTitle('file actions'));
+    await screen.findByTestId('file-actions-sheet');
+    URL.createObjectURL = vi.fn(() => 'blob:img');
+    URL.revokeObjectURL = vi.fn();
+    const open = vi.spyOn(window, 'open').mockImplementation(() => ({}));
+    apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x'], { type: 'image/png' }) });
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByText('Preview'));
+      await act(async () => {});
+      expect(open).toHaveBeenCalledWith('blob:img', '_blank', 'noopener');
+      // la nuova scheda deve averne il tempo: niente revoca immediata…
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+      // …ma dopo il ritardo l'URL non resta appeso per la vita della PWA
+      act(() => { vi.advanceTimersByTime(60_000); });
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:img');
+    } finally {
+      vi.useRealTimers();
+      open.mockRestore();
+    }
   });
 });
 

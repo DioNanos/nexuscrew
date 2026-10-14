@@ -8,9 +8,15 @@ import FileActionsSheet from './FileActionsSheet.jsx';
 import FilesPanelDesktop from './FilesPanelDesktop.jsx';
 import {
   fileDisplayName, fileWhen, fileExt, formatRowTime, formatFileSize,
-  groupFilesByDay, isPreviewable,
+  groupFilesByDay, isPreviewable, isOpenable, isNavigableMime,
 } from '../lib/files-display.js';
 import './FilesPanel.css';
+
+// Quanto lasciar vivere l'object URL dell'anteprima dopo l'apertura: la
+// nuova scheda consuma il blob alla navigazione, e un ritardo prudente
+// copre anche i dispositivi lenti senza trattenere il blob per la vita
+// della PWA.
+const PREVIEW_URL_TTL_MS = 60_000;
 
 // node (opzionale): file exchange di un nodo remoto — stesse route, prefissate
 // dal proxy /node/<name> (B1). Il marker "visto" resta scopato per nodo per non
@@ -69,15 +75,28 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
     URL.revokeObjectURL(url);
   }
 
-  // Anteprima dei tipi che il browser sa mostrare in linea: stesso blob della
-  // route di download, aperto in una scheda invece che salvato. Per gli altri
-  // tipi la voce non esiste (isPreviewable nel foglio).
+  // Anteprima dei tipi navigabili come documento: stesso blob della route di
+  // download, aperto in una scheda invece che salvato. Due gate, entrambi
+  // devono passare: il nome (isOpenable: la voce non esiste per l'SVG) e il
+  // MIME effettivo del blob (isNavigableMime). Un blob SVG o HTML navigato
+  // come documento eseguirebbe i propri script nell'origine dell'app; con
+  // MIME assente o insolito si resta chiusi: si scarica e basta.
   async function preview(name) {
     const blob = await fetchFileBlob(name);
     if (!blob) return;
+    if (!isNavigableMime(blob.type)) {
+      setBusy(t('files-preview-blocked'));
+      return;
+    }
     const url = URL.createObjectURL(blob);
     const win = window.open(url, '_blank', 'noopener');
-    if (!win) setBusy(t('files-preview-failed'));
+    if (win) {
+      setTimeout(() => URL.revokeObjectURL(url), PREVIEW_URL_TTL_MS);
+    } else {
+      // apertura fallita: nessun consumatore, l'object URL si revoca subito
+      URL.revokeObjectURL(url);
+      setBusy(t('files-preview-failed'));
+    }
   }
 
   async function del(name) {
@@ -108,7 +127,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   const sheet = sheetFile ? (
     <FileActionsSheet
       file={sheetFile} box={box} session={node ? `${node}:${session}` : session}
-      previewable={isPreviewable(sheetFile.name)}
+      previewable={isOpenable(sheetFile.name)}
       notice={busy} busy={!!busy}
       onClose={() => setSheetName('')}
       onDownload={(f) => { setSheetName(''); download(f.name); }}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/api.js', () => ({
@@ -24,8 +24,9 @@ const PNG = { name: '20261014-1000_foto.png', size: 2048, mtime: ADESSO - 3600_0
 const ZIP = { name: '20261013-0900_archivio.zip', size: 999, mtime: ADESSO - 86_400_000 };
 
 // Rete di ripiego dopo la prima lista: le selezioni del dettaglio chiedono il
-// blob d'anteprima senza che ogni test debba pensarci.
-const BLOB_TESTO = { ok: true, blob: async () => ({ text: async () => 'contenuto' }) };
+// blob d'anteprima senza che ogni test debba pensarci. Il type è quello che
+// il server spedirebbe davvero per un .md: la preview navigabile lo guarda.
+const BLOB_TESTO = { ok: true, blob: async () => ({ text: async () => 'contenuto', type: 'text/plain' }) };
 
 async function apri(outbox, inbox = []) {
   apiFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ inbox, outbox }) });
@@ -362,5 +363,66 @@ describe('FilesPanel desktop — parità mobile', () => {
     expect(container.querySelector('.nc-filesd-detail')).toBeNull();
     expect(screen.queryByText('Upload file')).toBeNull();
     expect(screen.queryByTestId('files-search-input')).toBeNull();
+  });
+});
+
+describe('FilesPanel desktop — «Apri» sicuro (SVG, MIME del blob, revoca)', () => {
+  const SVG = { name: '20261014-1030_logo.svg', size: 512, mtime: ADESSO - 1800_000 };
+  const SVG_CON_SCRIPT = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(2)</script></svg>';
+
+  function dettaglio(container) { return container.querySelector('.nc-filesd-detail'); }
+
+  it('SVG: miniatura <img> nel dettaglio, ma NESSUN tasto Open che lo navighi', async () => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ inbox: [], outbox: [SVG] }) });
+    apiFetch.mockResolvedValue({ ok: true, blob: async () => new Blob([SVG_CON_SCRIPT], { type: 'image/svg+xml' }) });
+    const { container } = render(<FilesPanel session="cloud-Dev" token="t" onClose={() => {}} />);
+    await screen.findAllByRole('row');
+    fireEvent.click(screen.getByText('logo.svg'));
+    // l'anteprima inline è un <img>: l'SVG non è mai un documento attivo
+    const img = await screen.findByTestId('files-detail-img');
+    expect(img.tagName).toBe('IMG');
+    expect(within(dettaglio(container)).queryByText('Open')).toBeNull();
+    expect(within(dettaglio(container)).getByText('Download')).toBeTruthy();
+  });
+
+  it('blob SVG arrivato sotto nome .png: «Apri» non naviga, avvisa e non crea object URL', async () => {
+    const { container } = await apri([PNG]);
+    fireEvent.click(screen.getByText('foto.png'));
+    await within(dettaglio(container)).findByText('Open');
+    const open = vi.spyOn(window, 'open').mockImplementation(() => ({}));
+    // la miniatura <img> inline crea già il suo object URL: quello è legittimo,
+    // ciò che non deve accadere è che ne crei un ALTRO il click su «Apri»
+    const createPrima = URL.createObjectURL.mock.calls.length;
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob([SVG_CON_SCRIPT], { type: 'image/svg+xml' }) });
+    fireEvent.click(within(dettaglio(container)).getByText('Open'));
+    expect(await screen.findByText('preview unavailable for this type: download it')).toBeTruthy();
+    expect(open).not.toHaveBeenCalled();
+    expect(URL.createObjectURL.mock.calls.length).toBe(createPrima);
+    open.mockRestore();
+  });
+
+  it('«Apri» revoca l\'object URL dopo un ritardo prudente, non prima', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => ({}));
+    let n = 0;
+    URL.createObjectURL = vi.fn(() => `blob:open-${++n}`);
+    URL.revokeObjectURL = vi.fn();
+    const { container } = await apri([PNG]);
+    fireEvent.click(screen.getByText('foto.png'));
+    await within(dettaglio(container)).findByText('Open');
+    apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x'], { type: 'image/png' }) });
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(within(dettaglio(container)).getByText('Open'));
+      await act(async () => {});
+      expect(open).toHaveBeenCalledWith('blob:open-2', '_blank', 'noopener');
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+      act(() => { vi.advanceTimersByTime(60_000); });
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:open-2');
+    } finally {
+      vi.useRealTimers();
+      open.mockRestore();
+    }
   });
 });

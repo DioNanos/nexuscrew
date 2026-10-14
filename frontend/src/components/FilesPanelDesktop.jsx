@@ -5,7 +5,7 @@ import { uploadSessionFiles } from '../lib/attachments.js';
 import Icon from './Icon.jsx';
 import {
   fileDisplayName, fileWhen, fileExt, fileKind, formatRowTime, formatFileSize,
-  formatFullWhen, groupFilesByDay, isPreviewable,
+  formatFullWhen, groupFilesByDay, isPreviewable, isOpenable,
 } from '../lib/files-display.js';
 import './FilesPanel.desktop.css';
 
@@ -270,7 +270,7 @@ export default function FilesPanelDesktop({
                 <button type="button" className="primario" onClick={() => onDownload(selFile.name)}>
                   <Icon name="download" size={16} /><span>{t('files-download-action')}</span>
                 </button>
-                {isPreviewable(selFile.name) && (
+                {isOpenable(selFile.name) && (
                   <button type="button" onClick={() => onPreview(selFile.name)}>
                     <Icon name="eye" size={16} /><span>{t('files-open')}</span>
                   </button>
