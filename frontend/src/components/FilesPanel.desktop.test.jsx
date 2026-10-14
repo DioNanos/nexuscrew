@@ -234,7 +234,8 @@ describe('FilesPanel desktop — pannello dettaglio', () => {
   it('«Apri» apre il blob del nome ORIGINALE in una nuova scheda', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:img');
     URL.revokeObjectURL = vi.fn();
-    const open = vi.spyOn(window, 'open').mockImplementation(() => ({}));
+    // noopener: il ritorno reale è null anche quando la scheda si apre
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     const { container } = await apri([PNG]);
     fireEvent.click(screen.getByText('foto.png'));
     fireEvent.click(await within(dettaglio(container)).findByText('Open'));
@@ -390,7 +391,7 @@ describe('FilesPanel desktop — «Apri» sicuro (SVG, MIME del blob, revoca)', 
     const { container } = await apri([PNG]);
     fireEvent.click(screen.getByText('foto.png'));
     await within(dettaglio(container)).findByText('Open');
-    const open = vi.spyOn(window, 'open').mockImplementation(() => ({}));
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     // la miniatura <img> inline crea già il suo object URL: quello è legittimo,
     // ciò che non deve accadere è che ne crei un ALTRO il click su «Apri»
     const createPrima = URL.createObjectURL.mock.calls.length;
@@ -404,7 +405,8 @@ describe('FilesPanel desktop — «Apri» sicuro (SVG, MIME del blob, revoca)', 
   });
 
   it('«Apri» revoca l\'object URL dopo un ritardo prudente, non prima', async () => {
-    const open = vi.spyOn(window, 'open').mockImplementation(() => ({}));
+    // noopener: il ritorno reale è null anche quando la scheda si apre
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     let n = 0;
     URL.createObjectURL = vi.fn(() => `blob:open-${++n}`);
     URL.revokeObjectURL = vi.fn();

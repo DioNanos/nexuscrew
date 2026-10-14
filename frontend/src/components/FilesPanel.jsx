@@ -89,14 +89,21 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
       return;
     }
     const url = URL.createObjectURL(blob);
-    const win = window.open(url, '_blank', 'noopener');
-    if (win) {
-      setTimeout(() => URL.revokeObjectURL(url), PREVIEW_URL_TTL_MS);
-    } else {
-      // apertura fallita: nessun consumatore, l'object URL si revoca subito
+    try {
+      // Con «noopener» window.open torna SEMPRE null, anche quando la scheda
+      // si apre davvero: il valore di ritorno non dice nulla e non si usa
+      // per scegliere il ramo. L'unica certezza di fallimento qui è
+      // l'eccezione lanciata dalla chiamata stessa.
+      window.open(url, '_blank', 'noopener');
+    } catch (e) {
+      // fallimento certo: nessun consumatore, l'object URL si revoca subito
       URL.revokeObjectURL(url);
       setBusy(t('files-preview-failed'));
+      return;
     }
+    // La revoca è SEMPRE ritardata: il caricamento della nuova scheda è
+    // asincrono e il null di noopener non lascia nulla da distinguere.
+    setTimeout(() => URL.revokeObjectURL(url), PREVIEW_URL_TTL_MS);
   }
 
   async function del(name) {

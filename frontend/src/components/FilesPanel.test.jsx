@@ -349,7 +349,7 @@ describe('FilesPanel anteprima nel foglio', () => {
     fireEvent.click(screen.getByTitle('file actions'));
     URL.createObjectURL = vi.fn(() => 'blob:img');
     URL.revokeObjectURL = vi.fn();
-    const open = vi.spyOn(window, 'open').mockImplementation(() => ({}));
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x'], { type: 'image/png' }) });
     fireEvent.click(await screen.findByText('Preview'));
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
@@ -358,7 +358,10 @@ describe('FilesPanel anteprima nel foglio', () => {
     open.mockRestore();
   });
 
-  it('popup bloccato: lo dice, non scarica di nascosto', async () => {
+  // Con «noopener» window.open torna SEMPRE null, anche quando la scheda si
+  // apre davvero (comportamento documentato dell'API): il null NON è una
+  // prova di fallimento e non deve produrre errori né revoca immediata.
+  it('null di noopener: nessun falso errore, l\'object URL è revocato solo dopo il ritardo', async () => {
     apiFetch.mockReset();
     apiFetch.mockResolvedValueOnce({
       ok: true,
@@ -371,9 +374,43 @@ describe('FilesPanel anteprima nel foglio', () => {
     URL.revokeObjectURL = vi.fn();
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x'], { type: 'image/png' }) });
+    // il bottone si trova PRIMA dei fake timers: findByText dentro waitFor
+    // userebbe i timer beffati e resterebbe appeso
+    const bottone = await screen.findByText('Preview');
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(bottone);
+      await act(async () => {});
+      expect(open).toHaveBeenCalledWith('blob:img', '_blank', 'noopener');
+      // nessun falso «preview failed»: il null di noopener non è un errore
+      expect(screen.queryByText('preview failed')).toBeNull();
+      // la scheda aperta deve avere il tempo di consumare il blob…
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+      // …ma dopo il ritardo l'URL non resta appeso per la vita della PWA
+      act(() => { vi.advanceTimersByTime(60_000); });
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:img');
+    } finally {
+      vi.useRealTimers();
+      open.mockRestore();
+    }
+  });
+
+  it('window.open che lancia: lo dice e revoca subito l\'object URL', async () => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ inbox: [], outbox: [{ name: '20261014-0930_foto.png', size: 9, mtime: Date.now() }] }),
+    });
+    render(<FilesPanel session="cloud-Dev" token="t" onClose={() => {}} />);
+    await screen.findByText('foto.png');
+    fireEvent.click(screen.getByTitle('file actions'));
+    URL.createObjectURL = vi.fn(() => 'blob:img');
+    URL.revokeObjectURL = vi.fn();
+    const open = vi.spyOn(window, 'open').mockImplementation(() => { throw new Error('open failed'); });
+    apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x'], { type: 'image/png' }) });
     fireEvent.click(await screen.findByText('Preview'));
     expect(await screen.findByText('preview failed')).toBeTruthy();
-    // apertura fallita = nessun consumatore: l'object URL è revocato subito
+    // fallimento certo (eccezione): nessun consumatore, revoca subito
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:img');
     open.mockRestore();
   });
@@ -405,7 +442,7 @@ describe('FilesPanel anteprima sicura (SVG e MIME del blob)', () => {
     fireEvent.click(screen.getByTitle('file actions'));
     URL.createObjectURL = vi.fn(() => 'blob:svg');
     URL.revokeObjectURL = vi.fn();
-    const open = vi.spyOn(window, 'open').mockImplementation(() => ({}));
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob([SVG_CON_SCRIPT], { type: 'image/svg+xml' }) });
     fireEvent.click(await screen.findByText('Preview'));
     expect(await screen.findByText('preview unavailable for this type: download it')).toBeTruthy();
@@ -420,7 +457,7 @@ describe('FilesPanel anteprima sicura (SVG e MIME del blob)', () => {
     fireEvent.click(screen.getByTitle('file actions'));
     URL.createObjectURL = vi.fn(() => 'blob:x');
     URL.revokeObjectURL = vi.fn();
-    const open = vi.spyOn(window, 'open').mockImplementation(() => ({}));
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x']) });
     fireEvent.click(await screen.findByText('Preview'));
     expect(await screen.findByText('preview unavailable for this type: download it')).toBeTruthy();
@@ -435,7 +472,8 @@ describe('FilesPanel anteprima sicura (SVG e MIME del blob)', () => {
     await screen.findByTestId('file-actions-sheet');
     URL.createObjectURL = vi.fn(() => 'blob:img');
     URL.revokeObjectURL = vi.fn();
-    const open = vi.spyOn(window, 'open').mockImplementation(() => ({}));
+    // noopener: il ritorno reale è null anche quando la scheda si apre
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x'], { type: 'image/png' }) });
     vi.useFakeTimers();
     try {
