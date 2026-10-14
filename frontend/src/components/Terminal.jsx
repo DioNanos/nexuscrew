@@ -10,6 +10,7 @@ import {
   LINK_OVERLAY_DELAY_MS, boundaryNoticeLine, overlayAfterDrop, scrollRestorePlan,
 } from '../lib/link-overlay.js';
 import { terminalRuntimeConfig } from '../lib/terminal-runtime-config.js';
+import { shieldDecrqm, safeTermWrite } from '../lib/terminal-decrqm.js';
 import { inputConPrefissi } from '../lib/modifier-prefix.js';
 import { copyText } from '../lib/clipboard.js';
 import { createComposerSubmitter } from '../lib/composer-input.js';
@@ -210,6 +211,15 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       sgrPixelEncoding = false;
       return false;
     });
+    // Scudo DECRQM: requestMode di xterm 6.0.0, dopo la minificazione del
+    // build, lancia alla prima `CSI ? Ps $ p` e da lì il terminale non
+    // disegna più (le celle nere dei telefoni — il perché è in
+    // lib/terminal-decrqm.js). Va registrato PRIMA che il socket possa
+    // consegnare output; la risposta viaggia sul canale di input, che qui
+    // non esiste ancora: si aggancia al socket quando nasce. In sola lettura
+    // niente risposte — come ogni input — ma la sequenza si ingoia lo stesso.
+    let sendToPty = null;
+    shieldDecrqm(term, readonly ? null : (d) => sendToPty && sendToPty(d));
     // La precondizione di tutta la protezione della selezione, resa OSSERVABILE.
     // Vive nell'istanza xterm e dal DOM non si vede: senza questo, una prova nel
     // browser non puo' distinguere «la selezione e' sopravvissuta perche' la
@@ -269,8 +279,8 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
       sock = openTerminalSocket({
         session, node, token, readonly, takeSize, focused: focusedRef.current, onFiles,
         cols: term.cols, rows: term.rows,
-        onData: (bytes) => term.write(dec.decode(bytes)),
-        onExit: () => term.write('\r\n\x1b[33m[sessione finita]\x1b[0m\r\n'),
+        onData: (bytes) => safeTermWrite(term, dec.decode(bytes)),
+        onExit: () => safeTermWrite(term, '\r\n\x1b[33m[sessione finita]\x1b[0m\r\n'),
         // Resync post-riconnessione: il ridipintura dal capture-pane del
         // server sostituisce il buffer in UNA battuta (reset+write nello
         // stesso turno di rendering: l'utente non vede mai lo schermo vuoto).
@@ -310,6 +320,9 @@ export default function Terminal({ session, node, token, readonly, takeSize, foc
           }, terminalRuntimeConfig().overlayDelayMs || LINK_OVERLAY_DELAY_MS);
         },
       });
+      // Ora il canale di input esiste: lo scudo DECRQM può rispondere alle
+      // query di modo con lo stesso mezzo dei tasti.
+      sendToPty = (d) => sock.sendInput(d);
     } catch (e) {
       term.write(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`);
       // Il throw sincrono di openTerminalSocket
