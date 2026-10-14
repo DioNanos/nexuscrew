@@ -2,7 +2,7 @@
 
 All notable changes to NexusCrew are tracked here.
 
-## 0.9.69 — 2026-10-14
+## 0.9.70 — 2026-10-14
 
 - **The file panel is readable on a phone.** The list now takes the full width of the drawer with two-level rows: the file's name on one line, its arrival time and size on the next, instead of a single line that truncated the name. The arrival stamp and the sender's date prefix are stripped from what is displayed, files are grouped under day headers, and a search box filters the list as you type. The actions on a file moved into an actions sheet opened from the row's «⋯» menu, and the destructive one never fires on the first tap: deleting a file asks for a confirmation inside the sheet.
 - **A desktop view joins the mobile one.** On a wide screen with a fine pointer the same panel opens as a wide drawer with a columned list — the name is never cut, next to size and arrival — filter pills for all, documents and images, and a detail pane with a preview of text files and images (a PDF is left to the browser's Open); `/` focuses the search and the arrow keys walk the list, Enter opens the actions sheet.
