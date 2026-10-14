@@ -1,0 +1,188 @@
+/* FileActionsSheet: il foglio dal basso delle azioni di UN file.
+   Stesso guscio e stesso linguaggio di CellActions.css (velo scuro, foglio
+   #0e140e, bordo sottile, verde per l'attivo, bersagli ≥44 px); qui in più
+   c'è la carta del file: nome visualizzato, nome originale in mono, meta. */
+
+.nc-filesheet-velo {
+  position: fixed;
+  inset: 0;
+  z-index: 70; /* sotto i popup fissi, come il foglio azioni cella */
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.nc-filesheet {
+  width: 100%;
+  max-height: 80vh;
+  overflow: auto;
+  background: #0e140e;
+  border-top: 1px solid #1c241c;
+  border-radius: 14px 14px 0 0;
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nc-filesheet-testa {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.nc-filesheet-titolo {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #d8ffe8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-filesheet-chiudi {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  color: #9aa89a;
+  cursor: pointer;
+}
+
+/* La carta del file: nome visualizzato su più righe (a capo ovunque, i nomi
+   sono lunghi), il nome ORIGINALE completo in mono, la riga meta. */
+.nc-filesheet-file {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid #1c241c;
+  border-radius: 10px;
+}
+
+.nc-filesheet-nome {
+  color: #d8ffe8;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.nc-filesheet-originale {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nc-filesheet-label {
+  font-size: 11px;
+  color: #7fb89a;
+}
+
+.nc-filesheet-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #b8e6c8;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.nc-filesheet-meta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: #7fb89a;
+  overflow-wrap: anywhere;
+}
+
+.nc-filesheet-notice {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #e0a030;
+  border: 1px solid #4a3a1a;
+  border-radius: 8px;
+}
+
+.nc-filesheet-azioni {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+}
+
+.nc-filesheet-azioni button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: #d8ffe8;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nc-filesheet-azioni button:hover { background: rgba(255, 255, 255, 0.07); }
+.nc-filesheet-azioni button:disabled { opacity: 0.55; cursor: wait; }
+/* L'azione distruttiva si vede prima di toccarla, non dopo. */
+.nc-filesheet-azioni button.danger { color: #ff8a80; }
+
+/* La conferma di eliminazione: domanda, conseguenza, due bersagli. */
+.nc-filesheet-conferma {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 10px;
+  border: 1px solid #4a2a2a;
+  border-radius: 10px;
+  background: rgba(255, 138, 128, 0.05);
+}
+
+.nc-filesheet-conferma-titolo {
+  color: #ffd6d1;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.nc-filesheet-conferma-aiuto {
+  color: #9aa89a;
+  font-size: 12px;
+}
+
+.nc-filesheet-conferma-azioni {
+  display: flex;
+  gap: 8px;
+}
+
+.nc-filesheet-conferma-azioni button {
+  flex: 1;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #243;
+  background: none;
+  color: #9fd;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.nc-filesheet-conferma-azioni button.danger {
+  border-color: #6d3a34;
+  background: #3a1d19;
+  color: #ff8a80;
+  font-weight: 600;
+}
+
+.nc-filesheet-conferma-azioni button:disabled { opacity: 0.55; cursor: wait; }

@@ -2,6 +2,12 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.70 — 2026-10-14
+
+- **The file panel is readable on a phone.** The list now takes the full width of the drawer with two-level rows: the file's name on one line, its arrival time and size on the next, instead of a single line that truncated the name. The arrival stamp and the sender's date prefix are stripped from what is displayed, files are grouped under day headers, and a search box filters the list as you type. The actions on a file moved into an actions sheet opened from the row's «⋯» menu, and the destructive one never fires on the first tap: deleting a file asks for a confirmation inside the sheet.
+- **A desktop view joins the mobile one.** On a wide screen with a fine pointer the same panel opens as a wide drawer with a columned list — the name is never cut, next to size and arrival — filter pills for all, documents and images, and a detail pane with a preview of text files and images (a PDF is left to the browser's Open); `/` focuses the search and the arrow keys walk the list, Enter opens the actions sheet.
+- **Every action keeps using the file's real name.** What the panel shows strips the arrival stamp and the date prefix; what travels in every request — download, preview, delete — is always the original on-disk name, and the actions sheet spells that name out in full before anything is acted on.
+
 ## 0.9.68 — 2026-10-14
 
 - **The web terminal no longer goes black on the first mode query from the session.** @xterm/xterm 6.0.0's `requestMode` (the DECRQM handler, `CSI ? Ps $ p` and `CSI Ps $ p`) ships a compiled const-enum emulation that this repo's build pipeline rewrites into an assignment to an identifier nothing declares: in the shipped ES module the first DECRQM written to the terminal throws `ReferenceError: n is not defined`, the write buffer never drains again, and the terminal stops rendering while the WebSocket stays healthy — the black terminal of the phone-hosted cells, seen from any client. The web terminal now registers its own CSI handlers for both DECRQM forms ahead of the defective built-in, answers DECRPM (`Pm=0`, not recognized) over the input channel, and swallows the sequence; a view-only terminal swallows it without answering, like any other input. No published release of @xterm/xterm changes the pattern (latest is 6.0.0; the 6.1.0-beta line still carries it), so the shield lives in the app and the test that pins the rewritten bundle fails loudly the day an upgrade makes it unnecessary.

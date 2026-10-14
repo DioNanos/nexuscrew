@@ -12,9 +12,19 @@ import { useEffect, useState } from 'react';
 export const MQ_DESKTOP = '(min-width:1024px) and (pointer:fine)';
 
 // Desktop = schermo largo E puntatore fine (mouse). Risponde al cambio (resize/rotate).
+// matchMedia può mancare (jsdom senza polyfill): il hook resta totale e risponde
+// «non desktop» invece di lanciare — nei browser nulla cambia.
+function desktopMatches() {
+  try {
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia(MQ_DESKTOP).matches;
+  } catch (_) { return false; }
+}
+
 export function useDesktop() {
-  const [d, setD] = useState(() => window.matchMedia(MQ_DESKTOP).matches);
+  const [d, setD] = useState(desktopMatches);
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
     const mq = window.matchMedia(MQ_DESKTOP);
     const h = (e) => setD(e.matches);
     mq.addEventListener('change', h);

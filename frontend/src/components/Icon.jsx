@@ -173,6 +173,29 @@ const PATHS = {
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </>
   ),
+  // Altre azioni (feather "more-horizontal"): i tre punti della riga file
+  // che aprono il foglio delle azioni del file.
+  more: (
+    <>
+      <circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none" />
+    </>
+  ),
+  // Occhio (feather "eye"): voce Anteprima del foglio azioni file.
+  eye: (
+    <>
+      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  // Lente (feather "search"): campo di ricerca del pannello file.
+  search: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.35-4.35" />
+    </>
+  ),
 };
 
 export default function Icon({ name, size = 20 }) {
