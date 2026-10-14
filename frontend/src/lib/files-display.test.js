@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   fileDisplayName, fileStampDate, fileWhen, formatFileSize, fileExt,
   formatRowTime, formatDayLabel, formatFullWhen, groupFilesByDay, isPreviewable,
+  fileKind,
 } from './files-display.js';
 
 // Le date sono costruite locali (new Date(anno, mese, giorno, …)): il
@@ -202,5 +203,35 @@ describe('groupFilesByDay — giorni recenti prima, file recenti prima', () => {
     // lo stamp (13/10 22:00) vince sull'mtime del 14: il gruppo è del 13
     expect(groups[0].label).toBe('13 ottobre');
     expect(groups[0].files[0].when.getHours()).toBe(22);
+  });
+});
+
+describe('fileKind — filtri a pillola del desktop', () => {
+  it('le immagini comuni sono immagini', () => {
+    for (const n of ['foto.png', 'IMG_0001.jpg', 'clip.gif', 'schermo.webp', 'logo.svg', 'icona.ico']) {
+      expect(fileKind(n)).toBe('image');
+    }
+  });
+
+  it('i documenti comuni sono documenti', () => {
+    for (const n of ['report.md', 'note.txt', 'dump.json', 'fattura.pdf', 'tabella.csv', 'verbale.docx', 'dati.xlsx']) {
+      expect(fileKind(n)).toBe('document');
+    }
+  });
+
+  it('tutto il resto è «altro»: sta solo in Tutti', () => {
+    for (const n of ['archivio.zip', 'backup.tar', 'exec.bin', 'senzaestensione']) {
+      expect(fileKind(n)).toBe('other');
+    }
+  });
+
+  it('guarda l\'estensione del nome VISUALIZZATO, non lo stamp del server', () => {
+    expect(fileKind('20261014-0930_foto.png')).toBe('image');
+    expect(fileKind('20261014-0930_2026-10-13_report.md')).toBe('document');
+  });
+
+  it('il nome degenere non lancia e non è un documento', () => {
+    expect(fileKind('')).toBe('other');
+    expect(fileKind(undefined)).toBe('other');
   });
 });

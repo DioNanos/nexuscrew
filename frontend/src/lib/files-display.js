@@ -115,6 +115,19 @@ export function isPreviewable(name) {
   return PREVIEWABLE.has(fileExt(name));
 }
 
+// Classificazione per i filtri a pillola del pannello desktop
+// (Tutti / Documenti / Immagini): sull'estensione del nome VISUALIZZATO,
+// perché è quella che l'utente legge. «altro» non ha pillola: resta solo
+// in «Tutti».
+const IMAGE_EXTS = new Set(['PNG', 'JPG', 'JPEG', 'GIF', 'WEBP', 'SVG', 'BMP', 'ICO', 'AVIF', 'HEIC']);
+const DOC_EXTS = new Set(['TXT', 'MD', 'JSON', 'PDF', 'CSV', 'LOG', 'HTML', 'HTM', 'XML', 'YML', 'YAML', 'DOC', 'DOCX', 'ODT', 'RTF', 'XLS', 'XLSX', 'PPT', 'PPTX']);
+export function fileKind(name) {
+  const ext = fileExt(name);
+  if (IMAGE_EXTS.has(ext)) return 'image';
+  if (DOC_EXTS.has(ext)) return 'document';
+  return 'other';
+}
+
 // Raggruppamento per giorno in ordine recente, con i file di ogni giorno
 // ordinati dal più recente. Pura: l'ordine d'ingresso non conta.
 export function groupFilesByDay(files, now, lang, todayWord = '') {
