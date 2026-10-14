@@ -115,6 +115,30 @@ export function isPreviewable(name) {
   return PREVIEWABLE.has(fileExt(name));
 }
 
+// Tipi che possono essere NAVIGATI come documento in una scheda nuova
+// (object URL + window.open): immagini raster, pdf, testo. L'SVG è escluso:
+// aperto come documento un SVG non fidato esegue i propri script ed event
+// handler nell'origine dell'app che ha creato il blob, cosa che dentro un
+// <img> non avviene. Gli SVG si scaricano, oppure restano nella miniatura
+// <img> del dettaglio desktop (isPreviewable li tiene per quello).
+const OPENABLE = new Set(['PNG', 'JPG', 'JPEG', 'GIF', 'WEBP', 'PDF', 'TXT', 'MD', 'JSON']);
+export function isOpenable(name) {
+  return OPENABLE.has(fileExt(name));
+}
+
+// Il MIME effettivo del blob — quello del Content-Type della risposta, non
+// quello suggerito dal nome — decide se la navigazione è sicura. Fail closed
+// su tutto ciò che non è esplicitamente nella lista: SVG e HTML inclusi
+// (eseguirebbero script), MIME assente o insolito incluso.
+const NAVIGABLE_MIME = new Set([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'image/bmp',
+  'application/pdf', 'text/plain', 'text/markdown', 'application/json',
+]);
+export function isNavigableMime(type) {
+  const base = String(type || '').split(';')[0].trim().toLowerCase();
+  return NAVIGABLE_MIME.has(base);
+}
+
 // Classificazione per i filtri a pillola del pannello desktop
 // (Tutti / Documenti / Immagini): sull'estensione del nome VISUALIZZATO,
 // perché è quella che l'utente legge. «altro» non ha pillola: resta solo

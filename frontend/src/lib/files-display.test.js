@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   fileDisplayName, fileStampDate, fileWhen, formatFileSize, fileExt,
   formatRowTime, formatDayLabel, formatFullWhen, groupFilesByDay, isPreviewable,
-  fileKind,
+  fileKind, isOpenable, isNavigableMime,
 } from './files-display.js';
 
 // Le date sono costruite locali (new Date(anno, mese, giorno, …)): il
@@ -132,6 +132,62 @@ describe('fileExt — badge tipo della riga', () => {
     expect(isPreviewable('20261014-0930_archivio.zip')).toBe(false);
     expect(isPreviewable('20261014-0930_app.bin')).toBe(false);
     expect(isPreviewable('senza')).toBe(false);
+  });
+});
+
+describe('isOpenable — tipi navigabili come documento in una scheda', () => {
+  it('immagini raster, pdf e testo si aprono', () => {
+    for (const n of ['foto.png', 'IMG_0001.jpg', 'clip.jpeg', 'schermo.webp', 'fattura.pdf', 'note.txt', 'report.md', 'dump.json']) {
+      expect(isOpenable(`20261014-0930_${n}`)).toBe(true);
+    }
+  });
+
+  it('l\'SVG non si apre come documento: si scarica, o resta nel <img> del dettaglio', () => {
+    // Aperto come documento un SVG non fidato esegue script e handler; in
+    // <img> no. Quindi: mai voce «Apri»/«Anteprima» che navighi un SVG.
+    expect(isOpenable('20261014-0930_logo.svg')).toBe(false);
+  });
+
+  it('isPreviewable resta vera per l\'SVG: il dettaglio desktop lo mostra in <img>', () => {
+    expect(isPreviewable('20261014-0930_logo.svg')).toBe(true);
+  });
+
+  it('ciò che non è anteprimabile non è nemmeno apribile', () => {
+    expect(isOpenable('20261014-0930_archivio.zip')).toBe(false);
+    expect(isOpenable('20261014-0930_app.bin')).toBe(false);
+    expect(isOpenable('senza')).toBe(false);
+  });
+});
+
+describe('isNavigableMime — il MIME effettivo del blob decide la navigazione', () => {
+  it('immagini raster, pdf e testo passano', () => {
+    for (const m of ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'image/bmp', 'application/pdf', 'text/plain', 'text/markdown', 'application/json']) {
+      expect(isNavigableMime(m)).toBe(true);
+    }
+  });
+
+  it('l\'SVG non passa, quale che sia il nome del file', () => {
+    expect(isNavigableMime('image/svg+xml')).toBe(false);
+  });
+
+  it('l\'HTML non passa: un blob html navigato eseguirebbe script nell\'origine dell\'app', () => {
+    expect(isNavigableMime('text/html')).toBe(false);
+    expect(isNavigableMime('application/xhtml+xml')).toBe(false);
+  });
+
+  it('parametri e maiuscole non contano: si guarda il tipo base, ripulito', () => {
+    expect(isNavigableMime('image/PNG')).toBe(true);
+    expect(isNavigableMime('text/plain;charset=utf-8')).toBe(true);
+    expect(isNavigableMime('  application/json  ')).toBe(true);
+    expect(isNavigableMime('image/svg+xml;charset=utf-8')).toBe(false);
+  });
+
+  it('MIME vuoto, assente o sconosciuto: chiuso (fail closed)', () => {
+    expect(isNavigableMime('')).toBe(false);
+    expect(isNavigableMime(undefined)).toBe(false);
+    expect(isNavigableMime(null)).toBe(false);
+    expect(isNavigableMime('application/octet-stream')).toBe(false);
+    expect(isNavigableMime('image/tiff')).toBe(false);
   });
 });
 
