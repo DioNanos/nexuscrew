@@ -109,7 +109,7 @@ function dayKey(date) {
 
 // Tipi di cui il browser sa fare un'anteprima in linea dalla route di
 // download autenticata (blob + object URL): immagini, pdf, testo. Per ogni
-// altro tipo la voce Anteprima del foglio azioni è omessa, come da mandato.
+// altro tipo la voce Anteprima del foglio azioni è omessa.
 const PREVIEWABLE = new Set(['PNG', 'JPG', 'JPEG', 'GIF', 'WEBP', 'SVG', 'PDF', 'TXT', 'MD', 'JSON']);
 export function isPreviewable(name) {
   return PREVIEWABLE.has(fileExt(name));
