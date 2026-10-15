@@ -277,7 +277,7 @@ export function SingleView({
   // I file caduti/aperti riguardano il pannello di origine, non la vista.
   const [files, setFiles] = useState(null); // {source:'main'|'side', ev} | null
   // Un file arrivato per la cella a fuoco NON apre piu' la lista (segnalazione
-  // di DAG, 15/10: «si apre la lista ogni volta che mi mandi un file»). Il
+  // dell'operatore, 15/10: «si apre la lista ogni volta che mi mandi un file»). Il
   // pannello si apre SOLO quando lo apre l'operatore; l'arrivo lascia un
   // pallino sul tasto cartella, che si spegne quando la lista viene aperta.
   // La notifica di invio e il badge «nuovi file» della lista sessioni restano.
@@ -706,7 +706,7 @@ export function SingleView({
               aria-pressed={files?.source === cellaFoca ? 'true' : 'false'}>
               <Icon name="folder" size={18} />
               {/* File nuovi per la cella a fuoco, lista chiusa: il segnale e' il
-                  pallino, non l'apertura (segnalazione DAG 15/10). */}
+                  pallino, non l'apertura (segnalazione dell'operatore, 15/10). */}
               {filesNuovi[cellaFoca] && files?.source !== cellaFoca && (
                 <span className="nc-bar-dot-nuovi" data-testid="bar-files-dot"
                   title={t('new-files-outbox')} aria-label={t('new-files-outbox')} />

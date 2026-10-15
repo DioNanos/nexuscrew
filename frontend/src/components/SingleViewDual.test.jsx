@@ -413,7 +413,7 @@ describe('doppia vista: chiusura con il focus sulla seconda', () => {
     // L'evento che il socket consegna all'arrivo di un file per questa cella.
     await waitFor(() => expect(spie.perSessione['cloud-Dev'].props.onFiles).toBeTypeOf('function'));
     act(() => { spie.perSessione['cloud-Dev'].props.onFiles({ type: 'files', session: 'cloud-Dev', files: [] }); });
-    // Segnalazione DAG 15/10: la lista NON si apre da sola…
+    // Segnalazione dell'operatore, 15/10: la lista NON si apre da sola…
     expect(screen.queryByTestId('files')).toBeNull();
     // …ma il segnale resta: pallino sul tasto cartella della cella col focus.
     expect(screen.getByTestId('bar-files-dot')).toBeTruthy();

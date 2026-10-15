@@ -2,6 +2,11 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.71 — 2026-10-15
+
+- **The file panel no longer opens by itself when a file arrives.** Delivering a file used to open the list in the cell's pane on its own, every time. The arrival is now a signal and not a change of view: the folder button in the bar gets a dot for the cell that received it, the dot is cleared when the list is opened, and a list that is already open still refreshes as before. The send notification and the "new files in outbox" badge of the session list are unchanged, and the list itself opens only when the operator opens it.
+- **The tunnel tests no longer leave orphaned processes behind.** The two refused-channel supervisor tests stopped the supervisor with SIGKILL, which cannot run its own cleanup — the only place that terminates the fake ssh child, which is not detached and therefore survives its parent. They now stop it with SIGTERM (SIGKILL only as a fallback) and, as a belt, terminate by recorded pid the child the fixture started.
+
 ## 0.9.70 — 2026-10-14
 
 - **The file panel is readable on a phone.** The list now takes the full width of the drawer with two-level rows: the file's name on one line, its arrival time and size on the next, instead of a single line that truncated the name. The arrival stamp and the sender's date prefix are stripped from what is displayed, files are grouped under day headers, and a search box filters the list as you type. The actions on a file moved into an actions sheet opened from the row's «⋯» menu, and the destructive one never fires on the first tap: deleting a file asks for a confirmation inside the sheet.
