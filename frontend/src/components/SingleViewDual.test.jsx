@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // Doppia vista nella singola mobile: la garanzia centrale è che l'input di
 // una cella non finisca MAI nell'altra. Il mock di Terminal è la spia sui
@@ -28,7 +28,7 @@ vi.mock('./Terminal.jsx', () => ({
   default: function TermSpia({ session, composerRef, sendRef, actionRef, focused, readonly, takeSize, onFiles }) {
     const spia = spie.perSessione[session]
       || (spie.perSessione[session] = { pastes: [], keys: [], actions: [], props: {}, socket: 0, istanze: 0 });
-    spia.props = { focused, readonly, takeSize };
+    spia.props = { focused, readonly, takeSize, onFiles };
     // Replica il contratto di connessione del vero terminale: l'effetto che
     // crea e distrugge terminale+socket dipende da queste props (lo stesso
     // elenco di Terminal.jsx, ridotto alle prop che possono cambiare identità
@@ -405,6 +405,35 @@ describe('doppia vista: chiusura con il focus sulla seconda', () => {
     fireEvent.click(screen.getByTestId('invio'));
     expect(spie.perSessione['cloud-Dev'].pastes).toEqual(['ping']);
     expect(spie.perSessione['cloud-Fork'].pastes).toEqual([]);
+  });
+
+  it('l’arrivo di un file NON apre la lista: pallino sul tasto, la lista la apre l’operatore', async () => {
+    localStorage.setItem('nc_bar_files_button', 'on');
+    monta();
+    // L'evento che il socket consegna all'arrivo di un file per questa cella.
+    await waitFor(() => expect(spie.perSessione['cloud-Dev'].props.onFiles).toBeTypeOf('function'));
+    act(() => { spie.perSessione['cloud-Dev'].props.onFiles({ type: 'files', session: 'cloud-Dev', files: [] }); });
+    // Segnalazione DAG 15/10: la lista NON si apre da sola…
+    expect(screen.queryByTestId('files')).toBeNull();
+    // …ma il segnale resta: pallino sul tasto cartella della cella col focus.
+    expect(screen.getByTestId('bar-files-dot')).toBeTruthy();
+    // La lista si apre quando la apre l'operatore, e allora il pallino si spegne.
+    fireEvent.click(screen.getByLabelText('bar-menu-files'));
+    expect(screen.getByTestId('files').getAttribute('data-files-session')).toBe('cloud-Dev');
+    expect(screen.queryByTestId('bar-files-dot')).toBeNull();
+    // Il pannello aperto continua a rinfrescarsi sugli eventi (nessuna lista stantia).
+    act(() => { spie.perSessione['cloud-Dev'].props.onFiles({ type: 'files', session: 'cloud-Dev', files: [] }); });
+    expect(screen.getByTestId('files').getAttribute('data-files-session')).toBe('cloud-Dev');
+  });
+
+  it('l’arrivo di un file per la SECONDA cella non apre la lista e non tocca il pallino della prima', async () => {
+    localStorage.setItem('nc_bar_files_button', 'on');
+    monta();
+    await waitFor(() => expect(spie.perSessione['cloud-Fork'].props.onFiles).toBeTypeOf('function'));
+    act(() => { spie.perSessione['cloud-Fork'].props.onFiles({ type: 'files', session: 'cloud-Fork', files: [] }); });
+    expect(screen.queryByTestId('files')).toBeNull();
+    // Il focus e' sulla prima cella: nessun pallino per la seconda (lista = cella col focus).
+    expect(screen.queryByTestId('bar-files-dot')).toBeNull();
   });
 
   it('lista file della seconda aperta + ✕: nessun crollo e nessuna lista orfana', async () => {

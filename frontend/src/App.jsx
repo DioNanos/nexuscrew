@@ -276,15 +276,36 @@ export function SingleView({
   const dualBoxRef = useRef(null);
   // I file caduti/aperti riguardano il pannello di origine, non la vista.
   const [files, setFiles] = useState(null); // {source:'main'|'side', ev} | null
+  // Un file arrivato per la cella a fuoco NON apre piu' la lista (segnalazione
+  // di DAG, 15/10: «si apre la lista ogni volta che mi mandi un file»). Il
+  // pannello si apre SOLO quando lo apre l'operatore; l'arrivo lascia un
+  // pallino sul tasto cartella, che si spegne quando la lista viene aperta.
+  // La notifica di invio e il badge «nuovi file» della lista sessioni restano.
+  const [filesNuovi, setFilesNuovi] = useState({ main: false, side: false });
   // Stabili per contratto: onFiles sta nelle dipendenze dell'effetto del
   // terminale che crea e distrugge socket (stesso elenco di Terminal.jsx):
   // una funzione nuova a ogni render farebbe ripartire la connessione,
   // svuotando e ridisegnando il terminale a ogni ciclo di poll.
-  const onFilesCella = useCallback((ev) => setFiles({ source: 'main', ev }), []);
-  const onFilesSide = useCallback((ev) => setFiles({ source: 'side', ev }), []);
+  // Se la lista di quella cella e' GIA' aperta l'evento la fa rinfrescare (il
+  // `filesEvent` che FilesPanel consuma); se e' chiusa si accende solo il
+  // pallino. Nessuna apertura automatica.
+  const onFilesCella = useCallback((ev) => {
+    setFiles((cur) => (cur && cur.source === 'main' ? { source: 'main', ev } : cur));
+    setFilesNuovi((cur) => (cur.main ? cur : { ...cur, main: true }));
+  }, []);
+  const onFilesSide = useCallback((ev) => {
+    setFiles((cur) => (cur && cur.source === 'side' ? { source: 'side', ev } : cur));
+    setFilesNuovi((cur) => (cur.side ? cur : { ...cur, side: true }));
+  }, []);
   // La lista file della side vale solo finché la side esiste: chiusura e
   // sparitura non devono lasciarla puntare a una sessione morta.
   const filesSide = !!side && files?.source === 'side';
+  // Chiusura della lista (✕, cambio cella): il pallino si spegne con lei, cosi'
+  // non resta appeso a una sessione che non c'e' piu'.
+  const chiudiFiles = useCallback(() => {
+    setFiles(null);
+    setFilesNuovi({ main: false, side: false });
+  }, []);
   const foca = (secondario) => {
     setFocusSide(secondario);
     setCtrlArmed((secondario ? sideCtrlRef : ctrlRef).current);
@@ -300,6 +321,7 @@ export function SingleView({
     setPesi({ v: { main: 1, side: 1 }, h: { main: 1, side: 1 } });
     setSideInfo(null);
     setFiles((cur) => (cur && cur.source === 'side' ? null : cur));
+    setFilesNuovi((cur) => (cur.side ? { ...cur, side: false } : cur));
   }, [sideKey]);
   // Soglia del design della doppia vista orizzontale: in orizzontale, se la cella PIÙ
   // STRETTA scende sotto ~40 colonne al font corrente, si vede solo la cella
@@ -482,7 +504,11 @@ export function SingleView({
   // Il tasto, quando c'è, fa ciò che faceva la voce: apre/chiude la lista
   // della cella col focus. Il desktop resta com'era, voce = lista.
   const cellaFoca = focaLaSide ? 'side' : 'main';
-  const apriChiudiFiles = () => setFiles((cur) => (cur && cur.source === cellaFoca ? null : { source: cellaFoca, ev: null }));
+  const apriChiudiFiles = () => {
+    // Aprire la lista e' anche l'aver visto: il pallino di quella cella si spegne.
+    setFilesNuovi((cur) => (cur[cellaFoca] ? { ...cur, [cellaFoca]: false } : cur));
+    setFiles((cur) => (cur && cur.source === cellaFoca ? null : { source: cellaFoca, ev: null }));
+  };
   // I tre tasti diretti fuori dal menu sono opzioni per dispositivo (vedi
   // lib/bar-files-tasto.js): cartella e tastiera ACCESI di default, AI Desktop
   // SPENTO. Un valore gia' salvato vince sul default nuovo.
@@ -675,10 +701,16 @@ export function SingleView({
               salvato che vince sul default nuovo.
               Ordine del design: − + [cartella] [tastiera] [pannello] ⋯. */}
           {filesTasto && (
-            <button type="button" onClick={apriChiudiFiles}
+            <button type="button" className="nc-bar-files" onClick={apriChiudiFiles}
               title={t('bar-menu-files')} aria-label={t('bar-menu-files')}
               aria-pressed={files?.source === cellaFoca ? 'true' : 'false'}>
               <Icon name="folder" size={18} />
+              {/* File nuovi per la cella a fuoco, lista chiusa: il segnale e' il
+                  pallino, non l'apertura (segnalazione DAG 15/10). */}
+              {filesNuovi[cellaFoca] && files?.source !== cellaFoca && (
+                <span className="nc-bar-dot-nuovi" data-testid="bar-files-dot"
+                  title={t('new-files-outbox')} aria-label={t('new-files-outbox')} />
+              )}
             </button>
           )}
           {tastieraTasto && (
@@ -755,9 +787,9 @@ export function SingleView({
           keepKeyboardClosedOnVoice={inputPreferences.voiceKeepsKeyboardClosed} />
       )}
       {files && (filesSide ? (
-        <FilesPanel session={side.session} node={side.node} token={token} filesEvent={files.ev} onClose={() => setFiles(null)} />
+        <FilesPanel session={side.session} node={side.node} token={token} filesEvent={files.ev} onClose={chiudiFiles} />
       ) : files.source === 'main' ? (
-        <FilesPanel session={session} node={node} token={token} filesEvent={files.ev} onClose={() => setFiles(null)} />
+        <FilesPanel session={session} node={node} token={token} filesEvent={files.ev} onClose={chiudiFiles} />
       ) : null)}
       {/* le quattro azioni della barra. Su mobile un foglio dal basso, su
           desktop un popover ancorato al ⋯: gli stessi due gusci delle azioni
