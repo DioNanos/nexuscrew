@@ -62,8 +62,15 @@ vi.mock('./ComposerBar.jsx', () => ({
     <button data-testid="invio" data-target={session} onClick={() => submitText('ping')}>invia</button>
   ),
 }));
+// Il mock espone anche filesEvent (per vedere che la lista APERTA riceve il
+// rinfresco) e onClose (il ✕ vero del pannello): il pallino «file nuovi» si
+// prova su entrambi i fronti.
 vi.mock('./FilesPanel.jsx', () => ({
-  default: ({ session }) => <div data-testid="files" data-files-session={session} />,
+  default: ({ session, filesEvent, onClose }) => (
+    <div data-testid="files" data-files-session={session} data-event-id={filesEvent?.arrivoId || ''}>
+      <button data-testid="files-close" onClick={onClose}>chiudi</button>
+    </div>
+  ),
 }));
 vi.mock('./Icon.jsx', () => ({ default: () => null }));
 vi.mock('./SessionList.jsx', () => ({ default: () => null }));
@@ -451,5 +458,72 @@ describe('doppia vista: chiusura con il focus sulla seconda', () => {
     expect(screen.getByTestId('term').getAttribute('data-term-session')).toBe('cloud-Dev');
     // la lista muore con la sua cella: nessun pannello sulla sessione sparita
     await waitFor(() => expect(screen.queryByTestId('files')).toBeNull());
+  });
+});
+
+// Il pallino «file nuovi» è del DESTINATARIO (identità nodo+sessione), non
+// dello slot main/side. Tre contratti:
+// — chiudere la lista di una cella spegne solo il segnale di quella cella;
+// — il cambio di cella o di nodo principale non fa ereditare il segnale a
+//   chi arriva dopo sulla stessa posizione React (il parent riusa SingleView
+//   senza key);
+// — un arrivo consegnato a una lista GIÀ APERTA (che quindi la rinfresca) non
+//   lascia un segnale latente che ricompare al cambio di pannello.
+describe('pallino file nuovi: il segnale segue il destinatario, non lo slot', () => {
+  it('chiudere con ✕ la lista della principale non spegne il pallino della secondaria', async () => {
+    localStorage.setItem('nc_bar_files_button', 'on');
+    monta();
+    await waitFor(() => expect(spie.perSessione['cloud-Fork'].props.onFiles).toBeTypeOf('function'));
+    // un file arriva alla secondaria, la sua lista resta chiusa: il suo
+    // pallino si accende (il focus è sull'altra, quindi non si vede ancora)
+    act(() => spie.perSessione['cloud-Fork'].props.onFiles({ type: 'files', session: 'cloud-Fork', files: [] }));
+    // l'operatore apre la lista della PRINCIPALE e la chiude con il suo ✕
+    fireEvent.click(screen.getByLabelText('bar-menu-files'));
+    expect(screen.getByTestId('files').dataset.filesSession).toBe('cloud-Dev');
+    fireEvent.click(screen.getByTestId('files-close'));
+    // focus alla secondaria: il suo pallino dev'esserci ancora, non è mai
+    // stata aperta la sua lista
+    fireEvent.pointerDown(screen.getByTestId('pane-side'));
+    expect(screen.queryByTestId('bar-files-dot')).not.toBeNull();
+  });
+
+  it('il cambio della cella principale non eredita il pallino della cella precedente', async () => {
+    localStorage.setItem('nc_bar_files_button', 'on');
+    const view = monta({ side: null });
+    await waitFor(() => expect(spie.perSessione['cloud-Dev'].props.onFiles).toBeTypeOf('function'));
+    act(() => spie.perSessione['cloud-Dev'].props.onFiles({ type: 'files', session: 'cloud-Dev', files: [] }));
+    expect(screen.getByTestId('bar-files-dot')).toBeTruthy();
+    // stessa posizione React, cella diversa: il destinatario è un altro
+    view.rerender(<SingleView session="cloud-Fork" cellName="Fork" token="t" onBack={vi.fn()} side={null} />);
+    expect(screen.queryByTestId('bar-files-dot')).toBeNull();
+  });
+
+  it('il cambio del nodo principale non eredita il pallino della sessione omonima remota', async () => {
+    localStorage.setItem('nc_bar_files_button', 'on');
+    const view = monta({ side: null });
+    await waitFor(() => expect(spie.perSessione['cloud-Dev'].props.onFiles).toBeTypeOf('function'));
+    act(() => spie.perSessione['cloud-Dev'].props.onFiles({ type: 'files', session: 'cloud-Dev', files: [] }));
+    expect(screen.getByTestId('bar-files-dot')).toBeTruthy();
+    // stessa sessione, nodo diverso: destinatario diverso, segnale non suo
+    view.rerender(<SingleView session="cloud-Dev" cellName="Dev" node="altro-nodo" token="t" onBack={vi.fn()} side={null} />);
+    expect(screen.queryByTestId('bar-files-dot')).toBeNull();
+  });
+
+  it('un arrivo già rinfrescato nella lista aperta non torna nuovo dopo il cambio di lista', async () => {
+    localStorage.setItem('nc_bar_files_button', 'on');
+    monta();
+    // lista della principale APERTA: l'arrivo la rinfresca davvero (il
+    // pannello riceve l'evento) — ed è questo il caso in cui NON deve
+    // accendersi nessun pallino
+    fireEvent.click(screen.getByLabelText('bar-menu-files'));
+    act(() => spie.perSessione['cloud-Dev'].props.onFiles({ type: 'files', session: 'cloud-Dev', arrivoId: 'gia-mostrato' }));
+    expect(screen.getByTestId('files').dataset.eventId).toBe('gia-mostrato');
+    // apre la lista della secondaria, poi torna col focus sulla principale
+    fireEvent.pointerDown(screen.getByTestId('pane-side'));
+    fireEvent.click(screen.getByLabelText('bar-menu-files'));
+    expect(screen.getByTestId('files').dataset.filesSession).toBe('cloud-Fork');
+    fireEvent.pointerDown(screen.getByTestId('pane-main'));
+    // l'arrivo era già stato mostrato nella lista aperta: nessun pallino
+    expect(screen.queryByTestId('bar-files-dot')).toBeNull();
   });
 });
