@@ -242,6 +242,7 @@ export const DICTS = {
     'files-delete-confirm': 'Eliminare "{name}"?',
     'files-delete-confirm-help': 'Il file viene eliminato definitivamente dalla cartella della cella.',
     'files-today': 'Oggi',
+    'files-dupes': '{n} copie',
     // Pannello file desktop 0.9.69: drawer largo, griglia, dettaglio.
     'files-of': 'File di {session}',
     'files-upload': 'Carica file',
@@ -1170,6 +1171,7 @@ export const DICTS = {
     'files-delete-confirm': 'Delete "{name}"?',
     'files-delete-confirm-help': 'The file is permanently deleted from the cell folder.',
     'files-today': 'Today',
+    'files-dupes': '{n} copies',
     // Desktop file panel 0.9.69: wide drawer, grid, detail pane.
     'files-of': 'Files of {session}',
     'files-upload': 'Upload file',
@@ -2097,6 +2099,7 @@ export const DICTS = {
     'files-delete-confirm': '¿Eliminar "{name}"?',
     'files-delete-confirm-help': 'El archivo se elimina definitivamente de la carpeta de la celda.',
     'files-today': 'Hoy',
+    'files-dupes': '{n} copias',
     // Panel de archivos de escritorio 0.9.69: cajón ancho, cuadrícula, detalle.
     'files-of': 'Archivos de {session}',
     'files-upload': 'Subir archivo',

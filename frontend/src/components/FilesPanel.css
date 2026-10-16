@@ -90,3 +90,36 @@
 .nc-files li button { min-height: 44px; min-width: 44px; }
 
 .nc-files header button, .nc-files nav button, .nc-files li button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+
+/* Marcatore «×N» accanto al nome: righe che mostrano lo stesso nome dopo lo
+   strip dei prefissi (originale + copia timbrata, upload ripetuti). Il glifo
+   è decorativo (aria-hidden): l'etichetta leggibile «N copie» sta nell'sr-only
+   dentro il marcatore. Stessa palette della sottoriga, non del nome. */
+.nc-files-dup {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid rgba(46, 160, 67, 0.4);
+  border-radius: 8px;
+  color: #7fb89a;
+  font-size: 10px;
+  line-height: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+  vertical-align: 1px;
+  user-select: none;
+}
+
+/* Testo solo per screen reader: visivamente tagliato, announcements interi. */
+.nc-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

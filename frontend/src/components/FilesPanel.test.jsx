@@ -506,3 +506,28 @@ describe('FilesPanel X di chiusura', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('FilesPanel marcatore ×N per nomi mostrati uguali', () => {
+  it('due file con lo stesso nome visualizzato: ×2 accanto al nome, etichetta leggibile', async () => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        inbox: [],
+        outbox: [
+          { name: '20261016-1317_a.epub', size: 10, mtime: 2 },
+          { name: 'a.epub', size: 10, mtime: 1 },
+          { name: 'b.md', size: 10, mtime: 1 },
+        ],
+      }),
+    });
+    await render(<FilesPanel session="cloud-Dev" token="t" onClose={() => {}} />);
+    // b.md è l'ancora: 'a.epub' compare su due righe e getByText singles fallirebbe
+    await screen.findByText('b.md');
+    // il glifo ×2 su ENTRAMBE le righe gemelle e l'etichetta accessibile «2 copies»
+    expect(screen.getAllByText('×2')).toHaveLength(2);
+    expect(screen.getAllByText('2 copies')).toHaveLength(2);
+    // il nome unico non porta marcatore
+    expect(screen.queryByText('×1')).toBeNull();
+  });
+});

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   fileDisplayName, fileStampDate, fileWhen, formatFileSize, fileExt,
   formatRowTime, formatDayLabel, formatFullWhen, groupFilesByDay, isPreviewable,
-  fileKind, isOpenable, isNavigableMime,
+  fileKind, isOpenable, isNavigableMime, duplicateCounts,
 } from './files-display.js';
 
 // Le date sono costruite locali (new Date(anno, mese, giorno, …)): il
@@ -259,6 +259,38 @@ describe('groupFilesByDay — giorni recenti prima, file recenti prima', () => {
     // lo stamp (13/10 22:00) vince sull'mtime del 14: il gruppo è del 13
     expect(groups[0].label).toBe('13 ottobre');
     expect(groups[0].files[0].when.getHours()).toBe(22);
+  });
+});
+
+describe('duplicateCounts — i doppi per NOME VISUALIZZATO', () => {
+  const f = (name) => ({ name, size: 10, mtime: 0 });
+
+  it('l\'epub consegnato due volte: originale e copia timbrata contano 2', () => {
+    const counts = duplicateCounts([f('20261016-1317_a.epub'), f('a.epub'), f('b.md')]);
+    expect(counts.get('a.epub')).toBe(2);
+    expect(counts.get('b.md')).toBe(1);
+  });
+
+  it('è una Map completa: ogni nome visualizzato ha il suo conteggio', () => {
+    const counts = duplicateCounts([f('20261016-1317_a.epub'), f('a.epub'), f('b.md')]);
+    expect(counts.size).toBe(2);
+    expect([...counts.entries()]).toEqual([['a.epub', 2], ['b.md', 1]]);
+  });
+
+  it('l\'indice di dedup del server tiene i gemelli distinti: nomi diversi', () => {
+    const counts = duplicateCounts([f('1-20261014-0930_report.md'), f('20261014-0930_report.md')]);
+    expect(counts.get('1-report.md')).toBe(1);
+    expect(counts.get('report.md')).toBe(1);
+  });
+
+  it('il secondo prefisso data del mittente non crea falsi doppioni', () => {
+    const counts = duplicateCounts([f('20261014-0930_2026-10-13_report.md'), f('20261014-0940_report.md')]);
+    expect(counts.get('report.md')).toBe(2);
+  });
+
+  it('lista vuota o assente: Map vuota, nessun lancio', () => {
+    expect(duplicateCounts([]).size).toBe(0);
+    expect(duplicateCounts(undefined).size).toBe(0);
   });
 });
 

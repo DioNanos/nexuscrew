@@ -8,7 +8,7 @@ import FileActionsSheet from './FileActionsSheet.jsx';
 import FilesPanelDesktop from './FilesPanelDesktop.jsx';
 import {
   fileDisplayName, fileWhen, fileExt, formatRowTime, formatFileSize,
-  groupFilesByDay, isPreviewable, isOpenable, isNavigableMime,
+  groupFilesByDay, isPreviewable, isOpenable, isNavigableMime, duplicateCounts,
 } from '../lib/files-display.js';
 import { saveBlobAs } from '../lib/download-blob.js';
 import './FilesPanel.css';
@@ -177,6 +177,9 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   const needle = query.trim().toLowerCase();
   const visible = needle ? rows.filter((f) => String(f.name || '').toLowerCase().includes(needle)) : rows;
   const groups = groupFilesByDay(visible, now, lang, t('files-today'));
+  // Doppi per NOME VISUALIZZATO: le righe che mostrano lo stesso nome portano
+  // «×N» — nessuna riga nascosta o fusa, ogni azione usa il nome reale.
+  const dupCounts = duplicateCounts(visible);
   const sheetFile = sheetName ? rows.find((f) => f.name === sheetName) : null;
 
   // Il foglio azioni «⋯» è uno solo per entrambe le viste (mobile e desktop).
@@ -253,6 +256,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
             <ul>
               {g.files.map((f) => {
                 const display = fileDisplayName(f.name);
+                const dup = dupCounts.get(display) || 1;
                 return (
                   <li key={f.name}>
                     {/* Badge-tipo: l'estensione del nome visualizzato, 40×40.
@@ -263,7 +267,17 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
                     <span className="nc-files-info">
                       {/* Il nome è testo, leggibile e selezionabile, mai un
                           comando: due righe al massimo, a capo ovunque. */}
-                      <span className="nc-files-name">{display}</span>
+                      <span className="nc-files-name">
+                        {display}
+                        {dup > 1 && (
+                          /* «×N» per i doppi di nome mostrato; il glifo è
+                             decorativo, l'etichetta leggibile è sr-only */
+                          <span className="nc-files-dup">
+                            <span aria-hidden="true">{`×${dup}`}</span>
+                            <span className="nc-sr-only">{t('files-dupes').replace('{n}', String(dup))}</span>
+                          </span>
+                        )}
+                      </span>
                       <small className="nc-files-meta">
                         {formatRowTime(fileWhen(f.name, f.mtime), now, lang)} · {formatFileSize(f.size)}
                       </small>
