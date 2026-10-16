@@ -26,7 +26,7 @@ const PREVIEW_MAX_CHARS = 8000;
 export default function FilesPanelDesktop({
   session, node, token,
   box, onBox, counts,
-  rows, visible, busy, onNotice,
+  rows, visible, busy, notice = '', error = '', onNotice,
   sheetFile, onSheet, onClose, onRefresh,
   fetchBlob, onDownload, onPreview, onDelete,
   query, onQuery,
@@ -300,7 +300,7 @@ export default function FilesPanelDesktop({
         </aside>
       </div>
 
-      {busy && !sheetFile && <div className="nc-busy" role="status">{busy}</div>}
+      {(error || notice) && !sheetFile && <div className="nc-busy" role="status">{error || notice}</div>}
 
       <footer className="nc-filesd-foot">
         <span>{t('files-footer-count').replace('{n}', String(kindVisible.length)).replace('{size}', formatFileSize(totalBytes))}</span>

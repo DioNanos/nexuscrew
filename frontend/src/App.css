@@ -82,6 +82,16 @@ body, #root { margin: 0; height: 100vh; height: 100dvh; background: #0a0e0a; fon
 /* Il ⋯ della barra: stesso tondo dei suoi vicini, glifo centrato. */
 .nc-bar-menu { font-size: 18px; line-height: 1; }
 
+/* Pallino «file nuovi» sul tasto cartella: l'arrivo di un file non apre piu' la
+   lista (segnalazione dell'operatore, 15/10). Il pallino e' un segnale, la lista si apre
+   quando la apre l'operatore; si spegne quando la lista viene aperta. */
+.nc-bar-files { position: relative; }
+.nc-bar-dot-nuovi {
+  position: absolute; top: 5px; right: 5px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #e5484d;
+}
+
 /* Transizione slide-in della vista singola (transform 0.2s). */
 .nc-app { animation: nc-slide-in 0.2s ease-out; }
 @keyframes nc-slide-in {

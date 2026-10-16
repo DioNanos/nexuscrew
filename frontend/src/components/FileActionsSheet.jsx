@@ -15,10 +15,12 @@ import './FileActionsSheet.css';
 // Il foglio non fa rete:Scarica/Anteprima/Elimina risalgono al pannello con
 // l'oggetto file (che porta il nome ORIGINALE: è quello che viaggia nelle
 // richieste, il prefisso si toglie solo dove si legge). «Copia nome completo»
-// è pura UI e vive qui, con il suo feedback.
+// è pura UI e vive qui, con il suo feedback. onActionStart (opzionale) scatta
+// all'inizio di OGNI azione: il pannello ci azzera l'errore precedente, così
+// una notifica vecchia non tiene i bottoni disabilitati per sempre.
 export default function FileActionsSheet({
   file, box, session, previewable = false, notice = '', busy = false,
-  onClose, onDownload, onPreview, onDelete,
+  onClose, onActionStart, onDownload, onPreview, onDelete,
 }) {
   const [confirming, setConfirming] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -36,6 +38,7 @@ export default function FileActionsSheet({
   }, [onClose]);
 
   async function copiaNome() {
+    onActionStart && onActionStart();
     // il feedback resta finché il foglio è aperto: niente timer da pulire
     setCopied(await copyText(file ? file.name : ''));
   }
@@ -95,12 +98,12 @@ export default function FileActionsSheet({
             {previewable && (
               <button
                 type="button" role="menuitem" disabled={busy} data-fileaction="preview"
-                onClick={() => onPreview(file)}
+                onClick={() => { onActionStart && onActionStart(); onPreview(file); }}
               ><Icon name="eye" size={20} /><span>{t('files-preview')}</span></button>
             )}
             <button
               type="button" role="menuitem" disabled={busy} data-fileaction="download"
-              onClick={() => onDownload(file)}
+              onClick={() => { onActionStart && onActionStart(); onDownload(file); }}
             ><Icon name="download" size={20} /><span>{t('files-download-action')}</span></button>
             <button
               type="button" role="menuitem" disabled={busy} data-fileaction="copy"

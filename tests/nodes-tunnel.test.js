@@ -33,6 +33,31 @@ async function aspettaChe(condizione, passoMs = 25) {
   }
 }
 
+// Chiusura di un supervisore che ha un ssh finto VIVO come figlio. Un SIGKILL
+// al supervisore non gli lascia eseguire stop() — l'UNICO punto che termina il
+// suo ssh (SIGTERM, poi SIGKILL dopo 1.5 s) — e il figlio resta orfano, perche'
+// non e' detached e nessuno lo raccoglie. Qui: SIGTERM (basta a far girare
+// stop()), SIGKILL solo come ripiego, e in piu' il pid che la fixture registra:
+// se il nipote e' ancora vivo si termina quello, senza toccare altri processi.
+async function fermaSupervisor(child, nipotePidPath) {
+  try { child.kill('SIGTERM'); } catch (_) { /* gia' andato */ }
+  await new Promise((resolve) => {
+    if (child.exitCode !== null) return resolve();
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} resolve(); }, 2500);
+    child.once('exit', () => { clearTimeout(timer); resolve(); });
+  });
+  let pid = 0;
+  try { pid = Number(fs.readFileSync(nipotePidPath, 'utf8').trim()); } catch (_) { return; }
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  try { process.kill(pid, 'SIGTERM'); } catch (_) { return; }
+  const scadenza = Date.now() + 2000;
+  while (Date.now() < scadenza) {
+    try { process.kill(pid, 0); } catch (_) { return; }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  try { process.kill(pid, 'SIGKILL'); } catch (_) { /* sparito */ }
+}
+
 // Lo stand-in giusto per "il servizio remoto e' su e raggiungibile" sotto la
 // sonda a finestra di grazia (R19, tunnel-supervisor.js): un canale APERTO
 // per davvero, nessuna chiusura lato server. Un .end() immediato appena
@@ -891,7 +916,14 @@ test('F1 supervisor: il degraded per canale scrive authorizedKeys come CAMPO, no
   // Coppia VERA: il prodotto deriva la pubblica dalla privata, quindi un .pub
   // scritto a mano non servirebbe a niente.
   const key = generaCoppia(dir, 'id_ed25519', 'TestCampo');
-  fs.writeFileSync(fakeSsh, "setInterval(() => {}, 1000);\n", { mode: 0o700 });
+  const nipotePidPath = path.join(dir, 'campo.nipote.pid');
+  fs.writeFileSync(fakeSsh, [
+    "'use strict';",
+    "const fs = require('node:fs');",
+    `fs.writeFileSync(${JSON.stringify(nipotePidPath)}, String(process.pid));`,
+    'setInterval(() => {}, 1000);',
+    '',
+  ].join('\n'), { mode: 0o700 });
   const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
   const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh,
     '-i', key,
@@ -923,11 +955,7 @@ test('F1 supervisor: il degraded per canale scrive authorizedKeys come CAMPO, no
     assert.ok(state.hint.includes(state.authorizedKeys),
       'la frase continua a contenere la stessa riga, per chi legge un log');
   } finally {
-    child.kill('SIGKILL');
-    await new Promise((resolve) => {
-      if (child.exitCode !== null) return resolve();
-      child.once('exit', resolve);
-    });
+    await fermaSupervisor(child, nipotePidPath);
     await new Promise((resolve) => rifiuta.close(resolve));
   }
 });
@@ -948,7 +976,14 @@ test('F1 supervisor: canale -L rifiutato PERSISTENTEMENTE degrada invece di sond
   const statePath = path.join(dir, 'refused.state.json');
   const pidPath = path.join(dir, 'refused.pid');
   const runId = 'refused-generation';
-  fs.writeFileSync(fakeSsh, "setInterval(() => {}, 1000);\n", { mode: 0o700 });
+  const nipotePidPath = path.join(dir, 'refused.nipote.pid');
+  fs.writeFileSync(fakeSsh, [
+    "'use strict';",
+    "const fs = require('node:fs');",
+    `fs.writeFileSync(${JSON.stringify(nipotePidPath)}, String(process.pid));`,
+    'setInterval(() => {}, 1000);',
+    '',
+  ].join('\n'), { mode: 0o700 });
   const supervisor = path.join(__dirname, '..', 'lib', 'nodes', 'tunnel-supervisor.js');
   const child = spawn(process.execPath, [supervisor, process.execPath, fakeSsh,
     '-L', `127.0.0.1:${forwardPort}:127.0.0.1:41777`], {
@@ -978,11 +1013,7 @@ test('F1 supervisor: canale -L rifiutato PERSISTENTEMENTE degrada invece di sond
     assert.equal(state.terminal, false, 'degraded resta vivo, mai un dead-end silenzioso');
     assert.equal(child.exitCode, null, 'il supervisor resta vivo in degraded (auto-guarigione, niente OFF/ON)');
   } finally {
-    child.kill('SIGKILL');
-    await new Promise((resolve) => {
-      if (child.exitCode !== null) return resolve();
-      child.once('exit', resolve);
-    });
+    await fermaSupervisor(child, nipotePidPath);
     await new Promise((resolve) => rifiuta.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });
   }

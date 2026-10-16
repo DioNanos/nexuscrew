@@ -192,6 +192,16 @@ function parolaStatoCella(cell, session) {
   return '';
 }
 
+// Updater del registro dei file non letti che spegne UNA sola voce (la chiave
+// del destinatario) e lascia intatte tutte le altre; invariato se la chiave
+// non e' accesa. Puro: riusabile in ogni setter functional.
+const spegniFilesNuovi = (chiave) => (cur) => {
+  if (!chiave || !cur[chiave]) return cur;
+  const prossima = { ...cur };
+  delete prossima[chiave];
+  return prossima;
+};
+
 export function SingleView({
   session, node, ownerId, cellName, token, readonly = false, panelPort = 0, onBack, onCellSwitcher, cellSwitcherOpen = false,
   // Live host della cella aperta (gia' risolto da App per la route giusta):
@@ -276,15 +286,52 @@ export function SingleView({
   const dualBoxRef = useRef(null);
   // I file caduti/aperti riguardano il pannello di origine, non la vista.
   const [files, setFiles] = useState(null); // {source:'main'|'side', ev} | null
+  // Un file arrivato per la cella a fuoco NON apre piu' la lista (segnalazione
+  // dell'operatore, 15/10: «si apre la lista ogni volta che mi mandi un file»). Il
+  // pannello si apre SOLO quando lo apre l'operatore; l'arrivo lascia un
+  // pallino sul tasto cartella, che si spegne quando la lista viene aperta.
+  // La notifica di invio e il badge «nuovi file» della lista sessioni restano.
+  // Il pallino e' PER DESTINATARIO (identita' nodo+sessione della cella che
+  // riceve), non per slot main/side: chiudere la lista di una cella non tocca
+  // il segnale delle altre, e il destinatario nuovo (cambio cella o nodo,
+  // anche alla stessa posizione React) non eredita il segnale di chi c'era
+  // prima.
+  const [filesNuovi, setFilesNuovi] = useState({}); // sole chiavi destinatario accese
+  const chiaveMain = `${node || ''}:${session}`;
+  const sideKey = side ? `${side.node || ''}:${side.session}` : '';
+  // Le callback onFiles* sono stabili per contratto (dipendono dall'effetto
+  // che crea e distrugge il socket del terminale): chiave destinatario e
+  // lista aperta si leggono da ref, non dalla closure del render.
+  const mainKeyRef = useRef(chiaveMain); mainKeyRef.current = chiaveMain;
+  const sideKeyRef = useRef(sideKey); sideKeyRef.current = sideKey;
+  const filesRef = useRef(files); filesRef.current = files;
   // Stabili per contratto: onFiles sta nelle dipendenze dell'effetto del
   // terminale che crea e distrugge socket (stesso elenco di Terminal.jsx):
   // una funzione nuova a ogni render farebbe ripartire la connessione,
   // svuotando e ridisegnando il terminale a ogni ciclo di poll.
-  const onFilesCella = useCallback((ev) => setFiles({ source: 'main', ev }), []);
-  const onFilesSide = useCallback((ev) => setFiles({ source: 'side', ev }), []);
+  // Se la lista di quella cella e' GIA' aperta l'evento la fa rinfrescare (il
+  // `filesEvent` che FilesPanel consuma) e NON accende nessun pallino: era
+  // gia' visto, non deve tornare «nuovo» al prossimo cambio di pannello. Se
+  // la lista e' chiusa si accende solo il pallino del destinatario che ha
+  // ricevuto. Nessuna apertura automatica.
+  const onFilesCella = useCallback((ev) => {
+    setFiles((cur) => (cur && cur.source === 'main' ? { source: 'main', ev } : cur));
+    setFilesNuovi((cur) => (filesRef.current?.source === 'main' ? cur : { ...cur, [mainKeyRef.current]: true }));
+  }, []);
+  const onFilesSide = useCallback((ev) => {
+    setFiles((cur) => (cur && cur.source === 'side' ? { source: 'side', ev } : cur));
+    setFilesNuovi((cur) => (filesRef.current?.source === 'side' ? cur : { ...cur, [sideKeyRef.current]: true }));
+  }, []);
   // La lista file della side vale solo finché la side esiste: chiusura e
   // sparitura non devono lasciarla puntare a una sessione morta.
   const filesSide = !!side && files?.source === 'side';
+  // Chiusura della lista (✕, cambio cella): spegne SOLO il pallino del
+  // destinatario la cui lista si chiude; i segnali delle altre celle restano.
+  const chiudiFiles = useCallback(() => {
+    const aperta = filesRef.current;
+    setFiles(null);
+    if (aperta) setFilesNuovi(spegniFilesNuovi(aperta.source === 'side' ? sideKeyRef.current : mainKeyRef.current));
+  }, []);
   const foca = (secondario) => {
     setFocusSide(secondario);
     setCtrlArmed((secondario ? sideCtrlRef : ctrlRef).current);
@@ -292,14 +339,19 @@ export function SingleView({
   };
   // Cambio della cella affiancata: focus, ordine, altezze e lista file
   // ripartono puliti (la chiave è la stringa, non l'oggetto: il ripristino
-  // della stessa coppia non rimonta nulla).
-  const sideKey = side ? `${side.node || ''}:${side.session}` : '';
+  // della stessa coppia non rimonta nulla). Il pallino del vecchio
+  // destinatario va via con lui: non resta appeso a una cella che non c'e'
+  // piu' e non passa a quella nuova.
+  const sideKeyPrecRef = useRef(sideKey);
   useEffect(() => {
+    const vecchia = sideKeyPrecRef.current;
+    sideKeyPrecRef.current = sideKey;
     setFocusSide(false);
     setSideOnTop(false);
     setPesi({ v: { main: 1, side: 1 }, h: { main: 1, side: 1 } });
     setSideInfo(null);
     setFiles((cur) => (cur && cur.source === 'side' ? null : cur));
+    if (vecchia && vecchia !== sideKey) setFilesNuovi(spegniFilesNuovi(vecchia));
   }, [sideKey]);
   // Soglia del design della doppia vista orizzontale: in orizzontale, se la cella PIÙ
   // STRETTA scende sotto ~40 colonne al font corrente, si vede solo la cella
@@ -375,6 +427,17 @@ export function SingleView({
   // switches cells. Synchronize immediately instead of showing the previous
   // title until the first fleetStatus poll completes.
   useEffect(() => { setTitle(cellName || session); setShowPanel(false); }, [cellName, session]);
+
+  // Il destinatario principale puo' cambiare (cella o nodo) senza che questa
+  // vista si rimonti: il pallino «file nuovi» del destinatario precedente si
+  // spegne con lui, cosi' chi arriva non eredita un segnale non suo.
+  const mainKeyPrecRef = useRef(chiaveMain);
+  useEffect(() => {
+    const vecchia = mainKeyPrecRef.current;
+    mainKeyPrecRef.current = chiaveMain;
+    if (vecchia === chiaveMain) return;
+    setFilesNuovi(spegniFilesNuovi(vecchia));
+  }, [chiaveMain]);
 
   // Sottotitolo header: "engine·key" se la sessione è una cella, altrimenti
   // "attached · Nm" (o tempo relativo). Dati da /api/sessions + /api/fleet/status
@@ -482,7 +545,14 @@ export function SingleView({
   // Il tasto, quando c'è, fa ciò che faceva la voce: apre/chiude la lista
   // della cella col focus. Il desktop resta com'era, voce = lista.
   const cellaFoca = focaLaSide ? 'side' : 'main';
-  const apriChiudiFiles = () => setFiles((cur) => (cur && cur.source === cellaFoca ? null : { source: cellaFoca, ev: null }));
+  const chiaveFoca = focaLaSide ? sideKey : chiaveMain;
+  const apriChiudiFiles = () => {
+    // Aprire la lista e' anche l'aver visto: si spegne il pallino DEL
+    // destinatario la cui lista si apre (o si richiude: era aperta, quindi
+    // gia' vista). I segnali degli altri destinatari non si toccano.
+    setFilesNuovi(spegniFilesNuovi(chiaveFoca));
+    setFiles((cur) => (cur && cur.source === cellaFoca ? null : { source: cellaFoca, ev: null }));
+  };
   // I tre tasti diretti fuori dal menu sono opzioni per dispositivo (vedi
   // lib/bar-files-tasto.js): cartella e tastiera ACCESI di default, AI Desktop
   // SPENTO. Un valore gia' salvato vince sul default nuovo.
@@ -675,10 +745,17 @@ export function SingleView({
               salvato che vince sul default nuovo.
               Ordine del design: − + [cartella] [tastiera] [pannello] ⋯. */}
           {filesTasto && (
-            <button type="button" onClick={apriChiudiFiles}
+            <button type="button" className="nc-bar-files" onClick={apriChiudiFiles}
               title={t('bar-menu-files')} aria-label={t('bar-menu-files')}
               aria-pressed={files?.source === cellaFoca ? 'true' : 'false'}>
               <Icon name="folder" size={18} />
+              {/* File nuovi per la cella a fuoco, lista chiusa: il segnale e' il
+                  pallino, non l'apertura (segnalazione dell'operatore, 15/10).
+                  La chiave e' il destinatario (nodo+sessione), non lo slot. */}
+              {filesNuovi[chiaveFoca] && files?.source !== cellaFoca && (
+                <span className="nc-bar-dot-nuovi" data-testid="bar-files-dot"
+                  title={t('new-files-outbox')} aria-label={t('new-files-outbox')} />
+              )}
             </button>
           )}
           {tastieraTasto && (
@@ -755,9 +832,9 @@ export function SingleView({
           keepKeyboardClosedOnVoice={inputPreferences.voiceKeepsKeyboardClosed} />
       )}
       {files && (filesSide ? (
-        <FilesPanel session={side.session} node={side.node} token={token} filesEvent={files.ev} onClose={() => setFiles(null)} />
+        <FilesPanel session={side.session} node={side.node} token={token} filesEvent={files.ev} onClose={chiudiFiles} />
       ) : files.source === 'main' ? (
-        <FilesPanel session={session} node={node} token={token} filesEvent={files.ev} onClose={() => setFiles(null)} />
+        <FilesPanel session={session} node={node} token={token} filesEvent={files.ev} onClose={chiudiFiles} />
       ) : null)}
       {/* le quattro azioni della barra. Su mobile un foglio dal basso, su
           desktop un popover ancorato al ⋯: gli stessi due gusci delle azioni

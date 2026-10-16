@@ -10,6 +10,7 @@ import {
   fileDisplayName, fileWhen, fileExt, formatRowTime, formatFileSize,
   groupFilesByDay, isPreviewable, isOpenable, isNavigableMime,
 } from '../lib/files-display.js';
+import { saveBlobAs } from '../lib/download-blob.js';
 import './FilesPanel.css';
 
 // Quanto lasciar vivere l'object URL dell'anteprima dopo l'apertura: la
@@ -27,7 +28,16 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   const seen = node ? `${node}:${session}` : session;
   const [box, setBox] = useState('outbox');
   const [data, setData] = useState({ inbox: [], outbox: [] });
-  const [busy, setBusy] = useState('');
+  // busy è BOOLEANO e vale SOLO mentre una richiesta è davvero in volo:
+  // a fine operazione torna sempre falso — nel finally, anche quando fallisce.
+  // Gli ERRORI non vivono qui: un errore è un messaggio (stato error) che si
+  // vede ma non disabilita niente, così il foglio «⋯» resta usabile e il
+  // retry parte dallo stesso percorso. notice porta gli esiti informativi.
+  // error e notice si azzerano all'inizio di ogni azione e a ogni refresh
+  // riuscito.
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [query, setQuery] = useState('');
   // nome ORIGINALE del file col foglio azioni aperto: è la chiave su disco,
   // sopravvive al refresh finché il file resta nell'elenco.
@@ -40,11 +50,14 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
     try {
       const r = await apiFetch(`${base}/files?session=${encodeURIComponent(session)}`, token);
       const j = await r.json();
-      if (j.error) { setBusy(j.error); return; }
+      if (j.error) { setError(j.error); return; }
+      // refresh riuscito: un messaggio vecchio non resta appeso
+      setError('');
+      setNotice('');
       setData(j);
       const latest = j.outbox[0] ? j.outbox[0].mtime : 0;
       localStorage.setItem(seenKey(seen), String(latest));
-    } catch (e) { setBusy(String(e)); }
+    } catch (e) { setError(String(e)); }
   }
   useEffect(() => { refresh(); }, [session, node]);
   useEffect(() => { if (filesEvent && filesEvent.session === session) refresh(); }, [filesEvent]);
@@ -52,27 +65,45 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   // Tutte le operazioni viaggiano col nome ORIGINALE (f.name): il prefisso
   // dello stamp si toglie SOLO dove si legge. 0.9.69.
   async function fetchFileBlob(name) {
-    const r = await apiFetch(
-      `${base}/files/download?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
-    );
-    if (!r.ok) {
-      // R27 #7: come l'upload — il body porta la causa vera (401/404/5xx),
-      // non un generico 'errore download' che manda a cercare un guasto
-      // di rete inesistente.
-      const j = await r.json().catch(() => ({}));
-      setBusy(j.error ? `errore: ${j.error}` : 'errore download');
+    try {
+      const r = await apiFetch(
+        `${base}/files/download?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
+      );
+      if (!r.ok) {
+        // R27 #7: come l'upload — il body porta la causa vera (401/404/5xx),
+        // non un generico 'errore download' che manda a cercare un guasto
+        // di rete inesistente.
+        const j = await r.json().catch(() => ({}));
+        setError(j.error ? `errore: ${j.error}` : 'errore download');
+        return null;
+      }
+      return await r.blob();
+    } catch (_) {
+      // reject di rete (tunnel caduto, offline un attimo): senza questo il
+      // tocco resta muto — promise rejection non gestita, zero feedback.
+      setError('errore download');
       return null;
     }
-    return r.blob();
   }
 
   async function download(name) {
-    const blob = await fetchFileBlob(name);
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = name; a.click();
-    URL.revokeObjectURL(url);
+    setError('');
+    setNotice('');
+    setBusy(true);
+    try {
+      const blob = await fetchFileBlob(name);
+      if (!blob) return;
+      // anchor nel DOM e revoca ritardata (lib/download-blob.js): la revoca
+      // sincrona dopo il click uccide il download in silenzio e da mobile
+      // lascia i tocchi successivi morti finché la PWA non si riavvia.
+      saveBlobAs(blob, name);
+    } catch (_) {
+      setError('errore download');
+    } finally {
+      // il lucchetto si toglie SEMPRE, anche quando la richiesta fallisce:
+      // l'eventuale errore è già in errore (visibile, non bloccante)
+      setBusy(false);
+    }
   }
 
   // Anteprima dei tipi navigabili come documento: stesso blob della route di
@@ -82,44 +113,62 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   // come documento eseguirebbe i propri script nell'origine dell'app; con
   // MIME assente o insolito si resta chiusi: si scarica e basta.
   async function preview(name) {
-    const blob = await fetchFileBlob(name);
-    if (!blob) return;
-    if (!isNavigableMime(blob.type)) {
-      setBusy(t('files-preview-blocked'));
-      return;
-    }
-    const url = URL.createObjectURL(blob);
+    setError('');
+    setNotice('');
+    setBusy(true);
     try {
-      // Con «noopener» window.open torna SEMPRE null, anche quando la scheda
-      // si apre davvero: il valore di ritorno non dice nulla e non si usa
-      // per scegliere il ramo. L'unica certezza di fallimento qui è
-      // l'eccezione lanciata dalla chiamata stessa.
-      window.open(url, '_blank', 'noopener');
-    } catch (e) {
-      // fallimento certo: nessun consumatore, l'object URL si revoca subito
-      URL.revokeObjectURL(url);
-      setBusy(t('files-preview-failed'));
-      return;
+      const blob = await fetchFileBlob(name);
+      if (!blob) return;
+      if (!isNavigableMime(blob.type)) {
+        // esito informativo, non un errore: si vede ma non disabilita le azioni
+        setNotice(t('files-preview-blocked'));
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      try {
+        // Con «noopener» window.open torna SEMPRE null, anche quando la scheda
+        // si apre davvero: il valore di ritorno non dice nulla e non si usa
+        // per scegliere il ramo. L'unica certezza di fallimento qui è
+        // l'eccezione lanciata dalla chiamata stessa.
+        window.open(url, '_blank', 'noopener');
+      } catch (e) {
+        // fallimento certo: nessun consumatore, l'object URL si revoca subito
+        URL.revokeObjectURL(url);
+        setError(t('files-preview-failed'));
+        return;
+      }
+      // La revoca è SEMPRE ritardata: il caricamento della nuova scheda è
+      // asincrono e il null di noopener non lascia nulla da distinguere.
+      setTimeout(() => URL.revokeObjectURL(url), PREVIEW_URL_TTL_MS);
+    } finally {
+      setBusy(false);
     }
-    // La revoca è SEMPRE ritardata: il caricamento della nuova scheda è
-    // asincrono e il null di noopener non lascia nulla da distinguere.
-    setTimeout(() => URL.revokeObjectURL(url), PREVIEW_URL_TTL_MS);
   }
 
   async function del(name) {
-    const r = await apiFetch(
-      `${base}/files?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
-      { method: 'DELETE' },
-    );
-    if (!r.ok) {
-      // R27 #7: prima il delete taceva e dopo refresh() il file ricompariva
-      // senza spiegazione. Ora si legge il body e si dice cosa e' fallito.
-      const j = await r.json().catch(() => ({}));
-      setBusy(j.error ? `errore: ${j.error}` : 'errore delete');
-      return;
+    setError('');
+    setNotice('');
+    setBusy(true);
+    try {
+      const r = await apiFetch(
+        `${base}/files?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
+        { method: 'DELETE' },
+      );
+      if (!r.ok) {
+        // R27 #7: prima il delete taceva e dopo refresh() il file ricompariva
+        // senza spiegazione. Ora si legge il body e si dice cosa e' fallito.
+        const j = await r.json().catch(() => ({}));
+        setError(j.error ? `errore: ${j.error}` : 'errore delete');
+        return;
+      }
+      if (sheetName === name) setSheetName('');
+      refresh();
+    } catch (_) {
+      // reject di rete sul DELETE: come il download, niente tocchi muti
+      setError('errore delete');
+    } finally {
+      setBusy(false);
     }
-    if (sheetName === name) setSheetName('');
-    refresh();
   }
 
   const lang = getLang();
@@ -131,12 +180,15 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   const sheetFile = sheetName ? rows.find((f) => f.name === sheetName) : null;
 
   // Il foglio azioni «⋯» è uno solo per entrambe le viste (mobile e desktop).
+  // L'errore passa dallo slot notice (si vede DENTRO il foglio aperto) ma non
+  // è un lucchetto: busy vale solo col volo di una richiesta.
   const sheet = sheetFile ? (
     <FileActionsSheet
       file={sheetFile} box={box} session={node ? `${node}:${session}` : session}
       previewable={isOpenable(sheetFile.name)}
-      notice={busy} busy={!!busy}
+      notice={error || notice} busy={busy}
       onClose={() => setSheetName('')}
+      onActionStart={() => { setError(''); setNotice(''); }}
       onDownload={(f) => { setSheetName(''); download(f.name); }}
       onPreview={(f) => preview(f.name)}
       onDelete={(f) => del(f.name)}
@@ -153,7 +205,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
           session={session} node={node} token={token}
           box={box} onBox={setBox}
           counts={{ outbox: (data.outbox || []).length, inbox: (data.inbox || []).length }}
-          rows={rows} visible={visible} busy={busy} onNotice={setBusy}
+          rows={rows} visible={visible} busy={busy} notice={notice} error={error} onNotice={setError}
           sheetFile={sheetFile} onSheet={setSheetName}
           onClose={onClose} onRefresh={refresh}
           fetchBlob={fetchFileBlob} onDownload={download} onPreview={preview} onDelete={del}
@@ -193,7 +245,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
           enterKeyHint="search"
         />
       </div>
-      {busy && !sheetFile && <div className="nc-busy" role="status">{busy}</div>}
+      {(error || notice) && !sheetFile && <div className="nc-busy" role="status">{error || notice}</div>}
       <div className="nc-files-list">
         {groups.map((g) => (
           <section key={g.key} className="nc-files-daygroup">
