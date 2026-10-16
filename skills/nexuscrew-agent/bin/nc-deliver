@@ -16,6 +16,14 @@ mkdir -p "$dir"
 
 for f in "$@"; do
   [ -f "$f" ] || { echo "nc-deliver: not a file: $f" >&2; exit 1; }
+  # Already in the destination outbox (realpath on both sides: a symlink back
+  # into the box is the same file): the existing file IS the delivery — print
+  # it and move on, no stamped copy next to the original.
+  real_f="$(realpath -- "$f")"
+  if [ "$(dirname -- "$real_f")" = "$(realpath -- "$dir")" ]; then
+    echo "already in outbox → $real_f"
+    continue
+  fi
   dest="$dir/$(date +%Y%m%d-%H%M)_$(basename -- "$f")"
   i=1; while [ -e "$dest" ]; do dest="$dir/$(date +%Y%m%d-%H%M)_${i}-$(basename -- "$f")"; i=$((i+1)); done
   cp -- "$f" "$dest"
