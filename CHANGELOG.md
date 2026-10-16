@@ -2,6 +2,11 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.72 — 2026-10-16
+
+- **File downloads from the phone are repeatable.** Saving a file used to click a download anchor that was never attached to the document and to revoke the blob URL immediately after the click, which the phone's download manager can treat as a link that disappeared: the first download worked and the next tap did nothing until the app was restarted. Downloads now go through a shared save helper that attaches the anchor to the page for the click and keeps the URL alive for a minute before revoking it, so the second download works too, with no restart.
+- **A failed download says so instead of staying silent.** A network error while fetching a file used to leave the tap with no feedback at all, and the error of one action used to keep the actions disabled forever. Every action now clears the message state when it starts, a fetch failure shows an error message in the panel, an informational outcome ("preview not available") no longer disables the buttons, and the diagnostics export saves through the same helper.
+
 ## 0.9.71 — 2026-10-15
 
 - **The file panel no longer opens by itself when a file arrives.** Delivering a file used to open the list in the cell's pane on its own, every time. The arrival is now a signal and not a change of view: the folder button in the bar gets a dot for the cell that received it, the dot is cleared when the list is opened, and a list that is already open still refreshes as before. The send notification and the "new files in outbox" badge of the session list are unchanged, and the list itself opens only when the operator opens it.
