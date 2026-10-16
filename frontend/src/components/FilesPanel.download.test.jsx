@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/api.js', () => ({
   apiFetch: vi.fn(),
@@ -86,35 +86,7 @@ describe('FilesPanel download — anchor nel DOM e revoca ritardata', () => {
   });
 });
 
-describe('FilesPanel busy — un errore vecchio non disabilita per sempre', () => {
-  it('dopo un errore di download, l\'azione successiva riabilita i bottoni del foglio', async () => {
-    await apriPannello();
-    // dal foglio: il download fallisce con errore del server -> busy impostato
-    apiFetch.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ error: 'box non trovato' }) });
-    fireEvent.click(screen.getByTitle('file actions'));
-    await screen.findByTestId('file-actions-sheet');
-    fireEvent.click(screen.getByText('Download'));
-    expect(await screen.findByText('errore: box non trovato')).toBeTruthy();
-    // il foglio si è chiuso col tap; riaprendolo i bottoni sono disabilitati
-    // dall'errore rimasto in busy…
-    fireEvent.click(screen.getByTitle('file actions'));
-    await screen.findByTestId('file-actions-sheet');
-    expect(screen.getByText('Download').closest('button').disabled).toBe(true);
-    fireEvent.keyDown(document, { key: 'Escape' });
-    // …ma l'azione SUCCESSIVA lo azzera: il tastino di riga non è mai
-    // disabilitato e il download riparte
-    const click = preparaDownload('blob:x');
-    apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x']) });
-    fireEvent.click(screen.getByTitle('download file'));
-    await act(async () => {});
-    fireEvent.click(screen.getByTitle('file actions'));
-    await screen.findByTestId('file-actions-sheet');
-    expect(screen.getByText('Download').closest('button').disabled).toBe(false);
-    expect(screen.getByText('Copy full name').closest('button').disabled).toBe(false);
-    expect(screen.getByText('Delete…').closest('button').disabled).toBe(false);
-    click.mockRestore();
-  });
-
+describe('FilesPanel busy — l\'errore è un messaggio, non un lucchetto', () => {
   it('un refresh riuscito dopo un errore riabilita i bottoni del foglio', async () => {
     const { rerender } = await apriPannello();
     // rete caduta: il download rejecta e lascia l'errore in busy
@@ -151,6 +123,86 @@ describe('FilesPanel busy — un errore vecchio non disabilita per sempre', () =
     expect(screen.getByText('Delete…').closest('button').disabled).toBe(false);
     open.mockRestore();
   });
+});
+
+// R1 (audit 0.9.72): dopo un errore il foglio «⋯» deve restare USABILE.
+// L'errore è un messaggio visibile e non disabilita nulla: il retry parte
+// dallo stesso foglio, senza chiuderlo, senza refresh e senza aggirare col
+// pulsante di riga. Vale per entrambe le viste (il foglio è comune).
+describe('FilesPanel foglio — dopo un errore il foglio resta usabile (entrambe le viste)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  for (const desktop of [false, true]) {
+    describe(desktop ? 'vista desktop' : 'vista mobile', () => {
+      beforeEach(() => {
+        vi.stubGlobal('matchMedia', vi.fn(() => ({
+          matches: desktop, addEventListener() {}, removeEventListener() {},
+        })));
+      });
+
+      async function apriFoglio() {
+        render(<FilesPanel session="cloud-Dev" token="t" onClose={() => {}} />);
+        await screen.findByText('a.txt');
+        fireEvent.click(screen.getByTitle('file actions'));
+        await screen.findByTestId('file-actions-sheet');
+      }
+
+      // in vista desktop il click su «⋯» seleziona anche la riga e il
+      // pannello dettaglio ha i SUOI Scarica/Copia/Elimina: i selettori
+      // puntano sempre l'azione DEL FOGLIO, come l'harness di audit.
+      const azione = (name) => screen.getByTestId('file-actions-sheet')
+        .querySelector(`[data-fileaction="${name}"]`);
+
+      it('download fallito (HTTP): retry dallo stesso foglio, senza refresh', async () => {
+        await apriFoglio();
+        apiFetch.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ error: 'box non trovato' }) });
+        const click = preparaDownload('blob:x');
+        fireEvent.click(azione('download'));
+        expect(await screen.findByText('errore: box non trovato')).toBeTruthy();
+        // il download dal foglio lo chiude: lo si riapre sullo stesso file e
+        // i bottoni devono essere GIÀ abilitati — l'errore non è un lucchetto
+        fireEvent.click(screen.getByTitle('file actions'));
+        await screen.findByTestId('file-actions-sheet');
+        expect(azione('download').disabled).toBe(false);
+        expect(azione('copy').disabled).toBe(false);
+        expect(azione('delete').disabled).toBe(false);
+        // la SECONDA richiesta parte dal foglio e arriva fino al click
+        apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x']) });
+        fireEvent.click(azione('download'));
+        await act(async () => {});
+        expect(click).toHaveBeenCalledTimes(1);
+        click.mockRestore();
+      });
+
+      it('download fallito (reject di rete): retry dallo stesso foglio, senza refresh', async () => {
+        await apriFoglio();
+        apiFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
+        const click = preparaDownload('blob:y');
+        fireEvent.click(azione('download'));
+        expect(await screen.findByText('errore download')).toBeTruthy();
+        fireEvent.click(screen.getByTitle('file actions'));
+        await screen.findByTestId('file-actions-sheet');
+        expect(azione('download').disabled).toBe(false);
+        apiFetch.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['y']) });
+        fireEvent.click(azione('download'));
+        await act(async () => {});
+        expect(click).toHaveBeenCalledTimes(1);
+        click.mockRestore();
+      });
+
+      it('anteprima fallita: Scarica, Copia ed Elimina abilitati nello stesso foglio', async () => {
+        await apriFoglio();
+        apiFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
+        fireEvent.click(screen.getByText('Preview'));
+        // l'errore si vede DENTRO il foglio, che l'anteprima non chiude
+        expect(await screen.findByText('errore download')).toBeTruthy();
+        const sheet = screen.getByTestId('file-actions-sheet');
+        for (const action of ['download', 'copy', 'delete']) {
+          expect(sheet.querySelector(`[data-fileaction="${action}"]`).disabled).toBe(false);
+        }
+      });
+    });
+  }
 });
 
 describe('FilesPanel download — gli errori di rete non sono muti', () => {
