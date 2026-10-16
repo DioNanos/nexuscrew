@@ -14,6 +14,7 @@ import {
   getRouteConfig, ROSTER_READ_TIMEOUT_MS,
 } from '../lib/api.js';
 import { createPollGuard } from '../lib/poll-guard.js';
+import { saveBlobAs } from '../lib/download-blob.js';
 import { validateNodeForm, tunnelInfo, toSlug, isValidLabel } from '../lib/settings-model.js';
 import PairingCard from './PairingCard.jsx';
 import NodeSheet from './NodeSheet.jsx';
@@ -899,8 +900,10 @@ export function DiagnosticsTab({ token, roster = [], readonly }) {
   const exportLogs = () => {
     try {
       const blob = new Blob([`${JSON.stringify(visible, null, 2)}\n`], { type: 'application/json' });
-      const url = URL.createObjectURL(blob); const link = document.createElement('a');
-      link.href = url; link.download = 'nexuscrew-diagnostics.json'; link.click(); URL.revokeObjectURL(url);
+      // anchor nel body e revoca ritardata (lib/download-blob.js): la revoca
+      // sincrona dopo il click gareggia col download manager e può uccidere
+      // il salvataggio in silenzio, da mobile.
+      saveBlobAs(blob, 'nexuscrew-diagnostics.json');
     } catch (_) { setError(t('diagnostics-export-failed')); }
   };
 

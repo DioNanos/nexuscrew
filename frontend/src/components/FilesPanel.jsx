@@ -10,6 +10,7 @@ import {
   fileDisplayName, fileWhen, fileExt, formatRowTime, formatFileSize,
   groupFilesByDay, isPreviewable, isOpenable, isNavigableMime,
 } from '../lib/files-display.js';
+import { saveBlobAs } from '../lib/download-blob.js';
 import './FilesPanel.css';
 
 // Quanto lasciar vivere l'object URL dell'anteprima dopo l'apertura: la
@@ -27,7 +28,13 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   const seen = node ? `${node}:${session}` : session;
   const [box, setBox] = useState('outbox');
   const [data, setData] = useState({ inbox: [], outbox: [] });
+  // busy porta SOLO gli errori (disabilita le azioni del foglio «⋯»);
+  // notice gli esiti informativi, che si vedono ma non bloccano niente.
+  // Entrambi si azzerano all'inizio di ogni azione e a ogni refresh riuscito:
+  // un errore vecchio non deve tenere i bottoni spenti finché il pannello
+  // non si smonta (secondo download da mobile «morto», 16/10).
   const [busy, setBusy] = useState('');
+  const [notice, setNotice] = useState('');
   const [query, setQuery] = useState('');
   // nome ORIGINALE del file col foglio azioni aperto: è la chiave su disco,
   // sopravvive al refresh finché il file resta nell'elenco.
@@ -41,6 +48,8 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
       const r = await apiFetch(`${base}/files?session=${encodeURIComponent(session)}`, token);
       const j = await r.json();
       if (j.error) { setBusy(j.error); return; }
+      setBusy('');
+      setNotice('');
       setData(j);
       const latest = j.outbox[0] ? j.outbox[0].mtime : 0;
       localStorage.setItem(seenKey(seen), String(latest));
@@ -52,27 +61,40 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   // Tutte le operazioni viaggiano col nome ORIGINALE (f.name): il prefisso
   // dello stamp si toglie SOLO dove si legge. 0.9.69.
   async function fetchFileBlob(name) {
-    const r = await apiFetch(
-      `${base}/files/download?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
-    );
-    if (!r.ok) {
-      // R27 #7: come l'upload — il body porta la causa vera (401/404/5xx),
-      // non un generico 'errore download' che manda a cercare un guasto
-      // di rete inesistente.
-      const j = await r.json().catch(() => ({}));
-      setBusy(j.error ? `errore: ${j.error}` : 'errore download');
+    try {
+      const r = await apiFetch(
+        `${base}/files/download?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
+      );
+      if (!r.ok) {
+        // R27 #7: come l'upload — il body porta la causa vera (401/404/5xx),
+        // non un generico 'errore download' che manda a cercare un guasto
+        // di rete inesistente.
+        const j = await r.json().catch(() => ({}));
+        setBusy(j.error ? `errore: ${j.error}` : 'errore download');
+        return null;
+      }
+      return await r.blob();
+    } catch (_) {
+      // reject di rete (tunnel caduto, offline un attimo): senza questo il
+      // tocco resta muto — promise rejection non gestita, zero feedback.
+      setBusy('errore download');
       return null;
     }
-    return r.blob();
   }
 
   async function download(name) {
-    const blob = await fetchFileBlob(name);
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = name; a.click();
-    URL.revokeObjectURL(url);
+    setBusy('');
+    setNotice('');
+    try {
+      const blob = await fetchFileBlob(name);
+      if (!blob) return;
+      // anchor nel DOM e revoca ritardata (lib/download-blob.js): la revoca
+      // sincrona dopo il click uccide il download in silenzio e da mobile
+      // lascia i tocchi successivi morti finché la PWA non si riavvia.
+      saveBlobAs(blob, name);
+    } catch (_) {
+      setBusy('errore download');
+    }
   }
 
   // Anteprima dei tipi navigabili come documento: stesso blob della route di
@@ -82,10 +104,13 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   // come documento eseguirebbe i propri script nell'origine dell'app; con
   // MIME assente o insolito si resta chiusi: si scarica e basta.
   async function preview(name) {
+    setBusy('');
+    setNotice('');
     const blob = await fetchFileBlob(name);
     if (!blob) return;
     if (!isNavigableMime(blob.type)) {
-      setBusy(t('files-preview-blocked'));
+      // esito informativo, non un errore: si vede ma non disabilita le azioni
+      setNotice(t('files-preview-blocked'));
       return;
     }
     const url = URL.createObjectURL(blob);
@@ -107,6 +132,8 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   }
 
   async function del(name) {
+    setBusy('');
+    setNotice('');
     const r = await apiFetch(
       `${base}/files?session=${encodeURIComponent(session)}&box=${box}&name=${encodeURIComponent(name)}`, token,
       { method: 'DELETE' },
@@ -135,8 +162,9 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
     <FileActionsSheet
       file={sheetFile} box={box} session={node ? `${node}:${session}` : session}
       previewable={isOpenable(sheetFile.name)}
-      notice={busy} busy={!!busy}
+      notice={busy || notice} busy={!!busy}
       onClose={() => setSheetName('')}
+      onActionStart={() => { setBusy(''); setNotice(''); }}
       onDownload={(f) => { setSheetName(''); download(f.name); }}
       onPreview={(f) => preview(f.name)}
       onDelete={(f) => del(f.name)}
@@ -153,7 +181,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
           session={session} node={node} token={token}
           box={box} onBox={setBox}
           counts={{ outbox: (data.outbox || []).length, inbox: (data.inbox || []).length }}
-          rows={rows} visible={visible} busy={busy} onNotice={setBusy}
+          rows={rows} visible={visible} busy={busy} notice={notice} onNotice={setBusy}
           sheetFile={sheetFile} onSheet={setSheetName}
           onClose={onClose} onRefresh={refresh}
           fetchBlob={fetchFileBlob} onDownload={download} onPreview={preview} onDelete={del}
@@ -193,7 +221,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
           enterKeyHint="search"
         />
       </div>
-      {busy && !sheetFile && <div className="nc-busy" role="status">{busy}</div>}
+      {(busy || notice) && !sheetFile && <div className="nc-busy" role="status">{busy || notice}</div>}
       <div className="nc-files-list">
         {groups.map((g) => (
           <section key={g.key} className="nc-files-daygroup">

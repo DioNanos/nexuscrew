@@ -69,4 +69,32 @@ describe('DiagnosticsTab', () => {
     expect(screen.getByText('diagnostics-clear').disabled).toBe(true);
     await act(async () => readonlyView.unmount());
   });
+
+  // L'export dei log usa lo stesso contratto del download dei file: anchor
+  // attaccato al body e revoca dell'object URL ritardata, non sincrona col
+  // click (una revoca immediata gareggia col download manager e può uccidere
+  // il salvataggio in silenzio).
+  it('export dei log: anchor nel body al click, revoca solo dopo il ritardo', async () => {
+    render(<DiagnosticsTab token="token" roster={roster} readonly={false} />);
+    await act(async () => { await Promise.resolve(); });
+    URL.createObjectURL = vi.fn(() => 'blob:diag');
+    URL.revokeObjectURL = vi.fn();
+    const alClick = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function () {
+      // la presenza nel DOM si cattura DENTRO il click: dopo il ritorno
+      // l'anchor è già stato rimosso (che è il comportamento voluto)
+      alClick.push({ a: this, inBody: document.body.contains(this) });
+    });
+    fireEvent.click(screen.getByText('diagnostics-export'));
+    expect(click).toHaveBeenCalledTimes(1);
+    // al click l'anchor sta nel documento, e il nome file è quello dell'export
+    expect(alClick[0].inBody).toBe(true);
+    expect(alClick[0].a.download).toBe('nexuscrew-diagnostics.json');
+    // la revoca non è sincrona col click…
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    // …arriva dopo il ritardo prudente
+    act(() => { vi.advanceTimersByTime(60_000); });
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:diag');
+    click.mockRestore();
+  });
 });
