@@ -34,7 +34,7 @@ export default function FilesPanel({ session, node, token, filesEvent, onClose }
   // vede ma non disabilita niente, così il foglio «⋯» resta usabile e il
   // retry parte dallo stesso percorso. notice porta gli esiti informativi.
   // error e notice si azzerano all'inizio di ogni azione e a ogni refresh
-  // riuscito (R1, audit pre-publish 0.9.72).
+  // riuscito.
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');

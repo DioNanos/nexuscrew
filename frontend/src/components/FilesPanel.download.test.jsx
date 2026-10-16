@@ -125,7 +125,7 @@ describe('FilesPanel busy — l\'errore è un messaggio, non un lucchetto', () =
   });
 });
 
-// R1 (audit 0.9.72): dopo un errore il foglio «⋯» deve restare USABILE.
+// Dopo un errore il foglio «⋯» deve restare USABILE.
 // L'errore è un messaggio visibile e non disabilita nulla: il retry parte
 // dallo stesso foglio, senza chiuderlo, senza refresh e senza aggirare col
 // pulsante di riga. Vale per entrambe le viste (il foglio è comune).
@@ -149,7 +149,7 @@ describe('FilesPanel foglio — dopo un errore il foglio resta usabile (entrambe
 
       // in vista desktop il click su «⋯» seleziona anche la riga e il
       // pannello dettaglio ha i SUOI Scarica/Copia/Elimina: i selettori
-      // puntano sempre l'azione DEL FOGLIO, come l'harness di audit.
+      // puntano sempre l'azione DEL FOGLIO.
       const azione = (name) => screen.getByTestId('file-actions-sheet')
         .querySelector(`[data-fileaction="${name}"]`);
 
