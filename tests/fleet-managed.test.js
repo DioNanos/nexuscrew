@@ -36,7 +36,7 @@ test('app defaults: seed invariato come INTENTO (claude primo, shell ultimo, cod
   assert.equal(ids[ids.length - 1], 'shell.local', 'shell.local resta ultimo default');
   assert.deepEqual([...ids].sort(), ['claude.native', 'codex-vl.native', 'codex.native', 'pi.native', 'shell.local'], 'insieme dei 5 default invariato');
   assert.ok(ids.indexOf('codex-vl.native') < ids.indexOf('codex.native'), 'codex-vl precede codex nel seed');
-  assert.deepEqual(d.engines.map((e) => e.label), ['Claude Code', 'Codex-VL', 'Codex', 'Pi', 'Shell']);
+  assert.deepEqual(d.engines.map((e) => e.label), ['claude', 'codex-vl', 'codex', 'pi', 'shell']);
   assert.equal(d.engines.find((e) => e.id === 'claude.native').managed.permissionPolicy, 'unsafe');
   assert.ok(d.engines.filter((e) => e.id !== 'claude.native').every((e) => e.managed.permissionPolicy === 'standard'));
   assert.deepEqual(d.cells, []);

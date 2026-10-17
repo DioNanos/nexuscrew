@@ -11,7 +11,7 @@ vi.mock('../../lib/i18n.js', () => ({ t: (k) => k }));
 const fixture = vi.hoisted(() => ({
   status: { available: true, provider: 'builtin', capabilities: ['status', 'up', 'down', 'restart', 'edit', 'define', 'remove', 'definitions', 'credentials'], cells: [], engines: [] },
   defs: {
-    engines: [{ id: 'claude', label: 'Claude' }],
+    engines: [{ id: 'claude', label: 'claude', standard: true }],
     cells: [{ id: 'Orphan', engine: 'claude', cwd: '/home/foreign/secret/device/path', needsRepair: true }],
   },
 }));

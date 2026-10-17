@@ -21,7 +21,7 @@ describe('PowerSheet Agy primary', () => {
     });
     fleetDefinitions.mockResolvedValue({
       engines: [{
-        id: 'agy.native', label: 'Agy',
+        id: 'agy.native', label: 'agy', standard: true,
         managed: { client: 'agy', provider: 'native', model: '', permissionPolicy: 'standard' },
         managedInfo: { configured: true, models: [] },
       }],

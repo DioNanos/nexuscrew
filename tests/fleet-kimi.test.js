@@ -31,7 +31,7 @@ test('kimi: normalizeManagedSpec ammette standard e unsafe; catalogo/publicCatal
   assert.equal(normalizeManagedSpec({ client: 'kimi', provider: 'kimi-code' }), null, 'provider inesistente per il client kimi');
   const cat = publicCatalog().find((p) => p.id === 'kimi.native');
   assert.ok(cat, 'kimi.native nel catalogo');
-  assert.equal(cat.clientLabel, 'Kimi Code CLI');
+  assert.equal(cat.clientLabel, 'kimi');
   assert.equal(cat.supportsUnsafe, true);
   assert.equal(cat.permissionPolicyDefault, 'standard');
   assert.equal(cat.rc, false);
@@ -109,7 +109,7 @@ test('kimi backfill: idempotente, senza platform gate, non distruttivo su collis
     const a1 = backfillKimiEngine(p1, loadDefinitions(p1));
     assert.ok(a1.engines.some((e) => e.id === 'kimi.native'));
     const kimi = a1.engines.find((e) => e.id === 'kimi.native');
-    assert.equal(kimi.label, 'Kimi Code CLI');
+    assert.equal(kimi.label, 'kimi');
     assert.deepEqual(kimi.managed, { client: 'kimi', provider: 'native', model: '', permissionPolicy: 'standard' });
     // idempotente
     const a1b = backfillKimiEngine(p1, a1);
