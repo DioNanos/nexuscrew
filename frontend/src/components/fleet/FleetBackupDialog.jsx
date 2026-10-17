@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { t } from '../../lib/i18n.js';
 import { createFleetBackup, parseFleetBackup } from '../../lib/fleet-backup.js';
+import EngineOptions from './EngineOptions.jsx';
 
 // Dialog di backup/restore: export selettivo (engine + cell, prompt si, segreti
 // mai) e import da file con conferme di sovrascrittura. Estratto invariato da
@@ -66,10 +67,13 @@ export default function FleetBackupDialog({ cells = [], engines = [], models = [
   ]);
   const selectedCellRows = cellRows.filter((row) => row.selected && row.engine && selectedImportEngineIds.has(row.engine));
   const selectedEngineRows = engineRows.filter((row) => row.selected);
+  // Engine disponibili per rimappare le celle importate: quelli dichiarati
+  // (col flag `standard` del payload) piu' quelli selezionati dal backup
+  // (senza flag: finiscono negli «altri»). Dedup per id, vince il dichiarato.
   const importEngineOptions = [...new Map([
-    ...engines.map((engine) => [engine.id, engine.label || engine.id]),
-    ...engineRows.filter((row) => row.selected).map((row) => [row.engine.id, row.engine.label || row.engine.id]),
-  ]).entries()];
+    ...engines.map((engine) => [engine.id, engine]),
+    ...engineRows.filter((row) => row.selected).map((row) => [row.engine.id, row.engine]),
+  ]).values()];
 
   return (
     <div className="nc-set-form nc-fleet-form nc-backup-dialog">
@@ -123,7 +127,7 @@ export default function FleetBackupDialog({ cells = [], engines = [], models = [
             </label>
             <select value={row.engine} onChange={(e) => updateCellRow(index, { engine: e.target.value, selected: !!e.target.value })}>
               <option value="">{t('fleet-backup-engine-missing')}</option>
-              {importEngineOptions.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              <EngineOptions engines={importEngineOptions} />
             </select>
           </div>)}
         </div>
