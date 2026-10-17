@@ -152,6 +152,21 @@ export function fileKind(name) {
   return 'other';
 }
 
+// Conteggio dei DOPPIONI PER NOME VISUALIZZATO: quante righe della lista
+// mostrano lo stesso nome dopo lo strip dei prefissi (l'originale e la copia
+// timbrata di una consegna, due upload dello stesso documento). Pura: riceve
+// la lista della API, ritorna una Map displayName -> occorrenze; la vista
+// marca «×N» le righe il cui conteggio supera 1. Chiave sul solo nome
+// visualizzato, non sulla size: è ciò che l'utente percepisce come doppio.
+export function duplicateCounts(files) {
+  const counts = new Map();
+  for (const f of files || []) {
+    const key = fileDisplayName(f && f.name);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
 // Raggruppamento per giorno in ordine recente, con i file di ogni giorno
 // ordinati dal più recente. Pura: l'ordine d'ingresso non conta.
 export function groupFilesByDay(files, now, lang, todayWord = '') {

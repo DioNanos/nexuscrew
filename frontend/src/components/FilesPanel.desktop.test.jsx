@@ -428,3 +428,14 @@ describe('FilesPanel desktop — «Apri» sicuro (SVG, MIME del blob, revoca)', 
     }
   });
 });
+
+describe('FilesPanel desktop: marcatore ×N per nomi mostrati uguali', () => {
+  it('la riga col doppione porta ×2 accanto al nome, con etichetta leggibile', async () => {
+    await apri([
+      { name: '20261016-1317_a.epub', size: 10, mtime: ADESSO },
+      { name: 'a.epub', size: 10, mtime: ADESSO - 1000 },
+    ]);
+    expect(screen.getAllByText('×2')).toHaveLength(2);
+    expect(screen.getAllByText('2 copies')).toHaveLength(2);
+  });
+});

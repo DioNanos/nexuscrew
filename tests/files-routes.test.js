@@ -50,6 +50,48 @@ test('outbox bridge labels its fixed Italian service text explicitly', async (t)
   assert.match(notified[0].title, /file da sess1/);
 });
 
+// Sorgente già nell'outbox della sessione mittente (la cella scrive il file
+// nella propria outbox e lo consegna): la route risponde col file esistente,
+// senza timbro e con already, la notifica parte lo stesso, e la lista non
+// cresce. Un sorgente altrove resta una copia timbrata (comportamento di oggi).
+test('outbox bridge: sorgente già nell\'outbox -> already, zero file nuovi, notifica comunque', async (t) => {
+  const { root, notified, base } = await setup(t);
+  const dir = store.ensureBox(root, 'sess1', 'outbox');
+  fs.writeFileSync(path.join(dir, 'report.md'), 'report');
+  const post = (p) => fetch(`${base}/outbox`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ session: 'sess1', path: p }),
+  });
+
+  const r1 = await post(path.join(dir, 'report.md'));
+  assert.equal(r1.status, 200);
+  const j1 = await r1.json();
+  assert.equal(j1.name, 'report.md', 'nome senza timbro: il file esistente è la consegna');
+  assert.equal(j1.already, true);
+
+  // due volte di fila: idempotente, zero file nuovi in totale
+  const j2 = await (await post(path.join(dir, 'report.md'))).json();
+  assert.equal(j2.already, true);
+  const list = await (await fetch(`${base}/?session=sess1`)).json();
+  assert.equal(list.outbox.length, 1);
+  assert.equal(list.outbox[0].name, 'report.md');
+
+  // la notifica parte a OGNI consegna, anche quando non si copia nulla
+  assert.equal(notified.length, 2);
+  assert.equal(notified[0].body, 'report.md', 'il body porta il nome mostrato nel pannello');
+
+  // un sorgente fuori dall'outbox resta una copia timbrata: oggi com'era
+  const src = path.join(root, 'esterno.md');
+  fs.writeFileSync(src, 'x');
+  const j3 = await (await post(src)).json();
+  assert.notEqual(j3.name, 'esterno.md');
+  assert.ok(j3.name.endsWith('_esterno.md'), `nome timbrato, ieri come oggi: ${j3.name}`);
+  assert.equal(j3.already, undefined);
+  const list2 = await (await fetch(`${base}/?session=sess1`)).json();
+  assert.equal(list2.outbox.length, 2);
+});
+
 function form(name, content) {
   const fd = new FormData();
   fd.append('session', 'sess1');

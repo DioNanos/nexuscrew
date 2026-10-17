@@ -5,7 +5,7 @@ import { uploadSessionFiles } from '../lib/attachments.js';
 import Icon from './Icon.jsx';
 import {
   fileDisplayName, fileWhen, fileExt, fileKind, formatRowTime, formatFileSize,
-  formatFullWhen, groupFilesByDay, isPreviewable, isOpenable,
+  formatFullWhen, groupFilesByDay, isPreviewable, isOpenable, duplicateCounts,
 } from '../lib/files-display.js';
 import './FilesPanel.desktop.css';
 
@@ -44,6 +44,9 @@ export default function FilesPanelDesktop({
   const now = new Date();
   const kindVisible = kind === 'all' ? visible : visible.filter((f) => fileKind(f.name) === kind);
   const groups = groupFilesByDay(kindVisible, now, lang, t('files-today'));
+  // Doppi per NOME VISUALIZZATO nella lista mostrata ( filtro compreso ):
+  // «×N» accanto al nome, nessuna riga fusa, azioni sul nome reale.
+  const dupCounts = duplicateCounts(kindVisible);
   const flat = groups.flatMap((g) => g.files);
   const selFile = selName ? rows.find((f) => f.name === selName) : null;
   const selNameLive = selFile ? selFile.name : '';
@@ -205,6 +208,7 @@ export default function FilesPanelDesktop({
               <div className="nc-filesd-rows" role="grid" aria-label={g.label}>
                 {g.files.map((f) => {
                   const disp = fileDisplayName(f.name);
+                  const dup = dupCounts.get(disp) || 1;
                   const sel = f.name === selName;
                   return (
                     // Riga della griglia: selezionabile al click (il dettaglio
@@ -217,7 +221,17 @@ export default function FilesPanelDesktop({
                       onClick={() => setSelName(f.name)}
                     >
                       <span className="nc-files-type" aria-hidden="true">{fileExt(f.name) || <Icon name="file" size={18} />}</span>
-                      <span className="nc-filesd-name">{disp}</span>
+                      <span className="nc-filesd-name">
+                        {disp}
+                        {dup > 1 && (
+                          /* «×N» per i doppi di nome mostrato; il glifo è
+                             decorativo, l'etichetta leggibile è sr-only */
+                          <span className="nc-files-dup">
+                            <span aria-hidden="true">{`×${dup}`}</span>
+                            <span className="nc-sr-only">{t('files-dupes').replace('{n}', String(dup))}</span>
+                          </span>
+                        )}
+                      </span>
                       <span className="nc-filesd-quando">{formatRowTime(fileWhen(f.name, f.mtime), now, lang)}</span>
                       <span className="nc-filesd-dim">{formatFileSize(f.size)}</span>
                       <span className="nc-filesd-cella">

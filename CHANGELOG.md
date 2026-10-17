@@ -2,6 +2,11 @@
 
 All notable changes to NexusCrew are tracked here.
 
+## 0.9.73 — 2026-10-16
+
+- **Delivering a file that is already in the outbox no longer duplicates it.** The delivery path (the MCP tool and the `nc-deliver` fallback) stamped and copied every source, including one already sitting in the destination outbox — a file the cell had written there directly, or a delivered copy being resent — leaving a prefixed duplicate next to the original, which the panel showed as two identical rows. When the realpath of the source directory is the realpath of the destination outbox, the existing file is the delivery: nothing is copied, the route answers with the existing name and `already: true`, and the notification still fires. Sources from anywhere else keep today's stamped copy, and historical duplicates are left untouched.
+- **The panel marks duplicate display names with «×N».** Rows that show the same name after the panel strips the arrival stamp now carry an «×N» chip next to the name (mobile and desktop), with a readable label in the panel's languages. No row is hidden or merged, and every action keeps using the real on-disk name.
+
 ## 0.9.72 — 2026-10-16
 
 - **File downloads from the phone are repeatable.** Saving a file used to click a download anchor that was never attached to the document and to revoke the blob URL immediately after the click, which the phone's download manager can treat as a link that disappeared: the first download worked and the next tap did nothing until the app was restarted. Downloads now go through a shared save helper that attaches the anchor to the page for the click and keeps the URL alive for a minute before revoking it, so the second download works too, with no restart.
