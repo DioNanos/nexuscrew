@@ -1,7 +1,7 @@
 'use strict';
-// NC-0974 lotto 1 — ordine degli engine, flag `standard`, etichette in
-// minuscolo, tetto del restore. Tutto in SOLA LETTURA sul fleet.json: un file
-// vecchio non viene mai migrato, e' il payload che si ordina in uscita.
+// Ordine degli engine, flag `standard`, etichette in minuscolo, tetto del
+// restore. Tutto in SOLA LETTURA sul fleet.json: un file vecchio non viene
+// mai migrato, e' il payload che si ordina in uscita.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -109,12 +109,12 @@ test('fleet.definitions(): i derivati restano attaccati al loro client', async (
   const w = mondo(t);
   const defsPath = scriviFleet(w, [
     engineDi('claude.native', 'claude'),
-    engineDi('claude.mgm', 'claude'),
+    engineDi('claude.hosted', 'claude'),
     engineDi('codex-vl.native', 'codex-vl'),
     engineDi('codex-vl.ollama-cloud', 'codex-vl'),
     engineDi('codex.native', 'codex'),
     engineDi('pi.native', 'pi'),
-    engineDi('pi.elnino', 'pi'),
+    engineDi('pi.edge', 'pi'),
     engineDi('zz.custom', null),
   ]);
   const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: defsPath, tmuxBin: w.tmuxBin });
@@ -123,10 +123,10 @@ test('fleet.definitions(): i derivati restano attaccati al loro client', async (
   // (agy, grok, shell, poi i fuori lista kimi e vl): il custom scritto nel
   // file resta prima dei backfillati, perche' era gia' nell'array.
   assert.deepEqual(ids, [
-    'claude.native', 'claude.mgm',
+    'claude.native', 'claude.hosted',
     'codex-vl.native', 'codex-vl.ollama-cloud',
     'codex.native',
-    'pi.native', 'pi.elnino',
+    'pi.native', 'pi.edge',
     'agy.native', 'grok.native', 'shell.local',
     'zz.custom', 'kimi.native', 'vl.native',
   ], 'derivati dentro il gruppo del loro client, custom in coda');

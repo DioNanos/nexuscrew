@@ -154,9 +154,12 @@ test('builtin: /definitions espone campi editabili ma non env values', async (t)
   const r = await fetch(`${base}/api/fleet/definitions`, { headers: H(token) });
   assert.equal(r.status, 200);
   const d = await r.json();
-  assert.equal(d.engines[0].command, FAKE_TMUX);
-  assert.deepEqual(d.engines[0].envKeys, []);
-  assert.equal(d.engines[0].env, undefined);
+  // Il payload e' ordinato per client (i custom in coda): si seleziona per id,
+  // non per posizione.
+  const sh = d.engines.find((e) => e.id === 'sh');
+  assert.equal(sh.command, FAKE_TMUX);
+  assert.deepEqual(sh.envKeys, []);
+  assert.equal(sh.env, undefined);
   assert.equal(d.cells[0].id, 'Dev');
 });
 
