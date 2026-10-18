@@ -125,7 +125,7 @@ test('collector ollama: /api/tags elenca, /api/show SOLO per gli id richiesti', 
   } finally { await closeFakeServer(fake); }
 });
 
-test('collector llama-server (vincolo MGM): SOLO /v1/models e /props, mai richieste per modello', async () => {
+test('collector llama-server (router --models-max 1): SOLO /v1/models e /props, mai richieste per modello', async () => {
   const fake = await startFakeServer((req, res) => {
     if (req.url === '/v1/models') {
       return json(res, 200, {
