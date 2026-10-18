@@ -18,20 +18,55 @@ const MODEL_FIELDS = [
   ['vision', 'fleet-models-field-vision'],
   ['reasoning', 'fleet-models-field-reasoning'],
 ];
+// I campi che l'engine DIPENDE da avere (piano, punto 2): gli altri del record
+// sono opzionali. Se il modello attivo non li ha da nessun layer, il dialogo
+// sotto chiede il dato e il valore confermato diventa un valore dell'utente.
+const REQUIRED_MODEL_FIELDS = [
+  ['contextWindow', 'fleet-models-field-context'],
+  ['maxTokens', 'fleet-models-field-output'],
+];
 const SOURCE_LABELS = { user: 'fleet-models-source-user', api: 'fleet-models-source-api', public: 'fleet-models-source-public', backup: 'fleet-models-source-backup' };
 
-function ModelDiscoverySection({ engineId, fetchModels, onPick }) {
+// Finestra dei dati mancanti (piano, punto 3): dice COSA manca, mostra il
+// valore di backup proposto dal catalogo interno (precompilato, «se c'è») e
+// offre le tre strade: confermare così com'è, cambiarlo, lasciarlo vuoto.
+// Confermare chiama il parent, che scrive il valore come dichiarazione utente
+// (fleet.json): precedenza più alta, mai riscritta dalla scoperta.
+function MissingFieldsDialog({ model, missing, busy, onConfirm, onLeaveEmpty }) {
+  const [values, setValues] = useState(() => Object.fromEntries(
+    missing.map(({ field, backup }) => [field, backup !== undefined ? String(backup) : '']),
+  ));
+  return <div className="nc-fleet-missing" role="dialog" aria-label={t('fleet-models-missing-title')}>
+    <b className="nc-err">{t('fleet-models-missing-title')}</b>
+    <small>{t('fleet-models-missing-why').replace('{model}', model)}</small>
+    {missing.map(({ field, label, backup }) => <label key={field} className="nc-field">
+      {t(label)}
+      <input inputMode="numeric" value={values[field] || ''} disabled={busy} aria-label={t(label)}
+        placeholder={backup !== undefined ? String(backup) : ''} autoComplete="off"
+        onChange={(e) => setValues({ ...values, [field]: e.target.value.replace(/[^0-9]/g, '').slice(0, 9) })} />
+      {backup !== undefined && <small className="nc-fleet-models-note">{t('fleet-models-missing-backup').replace('{value}', String(backup))}</small>}
+    </label>)}
+    <small>{t('fleet-models-missing-user')}</small>
+    <div className="nc-sheet-actions">
+      <button type="button" className="nc-btn ghost" disabled={busy} onClick={onLeaveEmpty}>{t('fleet-models-missing-empty')}</button>
+      <button type="button" className="nc-btn primary" disabled={busy} onClick={() => onConfirm(values)}>{t('fleet-models-missing-confirm')}</button>
+    </div>
+  </div>;
+}
+
+function ModelDiscoverySection({ engineId, fetchModels, onPick, activeModel, onSetModelValue, busy }) {
   const [view, setView] = useState({ loading: true, refreshing: false, result: null, error: '' });
   // Il parent puo' passare una funzione inline (nuova identita' a ogni suo
   // render): l'effetto dipende SOLO dall'engine, la funzione la legge via ref.
   const fetchRef = useRef(fetchModels);
   fetchRef.current = fetchModels;
+  const load = (refresh) => fetchRef.current(engineId, refresh)
+    .then((result) => ({ loading: false, refreshing: false, result, error: '' }))
+    .catch(() => ({ loading: false, refreshing: false, result: null, error: t('fleet-models-error') }));
   useEffect(() => {
     let alive = true;
     setView({ loading: true, refreshing: false, result: null, error: '' });
-    fetchRef.current(engineId, false)
-      .then((result) => { if (alive) setView({ loading: false, refreshing: false, result, error: '' }); })
-      .catch(() => { if (alive) setView({ loading: false, refreshing: false, result: null, error: t('fleet-models-error') }); });
+    load(false).then((next) => { if (alive) setView(next); });
     return () => { alive = false; };
   }, [engineId]);
   const refresh = () => {
@@ -41,8 +76,44 @@ function ModelDiscoverySection({ engineId, fetchModels, onPick }) {
       .then((result) => { setView({ loading: false, refreshing: false, result, error: '' }); })
       .catch(() => { setView({ loading: false, refreshing: false, result: view.result, error: t('fleet-models-error') }); });
   };
+  // Dati mancanti del modello ATTIVO: campi richiesti che nessun layer ha
+  // riempito (record assente = mancano tutti). La proposta di backup arriva
+  // dal catalogo interno via `backupValues`, e resta una PROPOSTA: entra nel
+  // form solo se l'operatore conferma.
+  const active = String(activeModel || '').trim();
   const result = view.result;
   const models = result && Array.isArray(result.models) ? result.models : [];
+  const activeRecord = active ? models.find((m) => m.id === active) : null;
+  const missing = !view.loading && !view.error && result && result.supported !== false && active
+    ? REQUIRED_MODEL_FIELDS
+      .filter(([field]) => !activeRecord || activeRecord[field] === undefined)
+      .map(([field, label]) => ({
+        field, label,
+        backup: activeRecord && activeRecord.backupValues ? activeRecord.backupValues[field] : undefined,
+      }))
+    : [];
+  const missingKey = `${active}:${missing.map((x) => x.field).join(',')}`;
+  // Si apre DA SOLO una volta per combinazione modello+campi: dopo un
+  // «lascia vuoto» non si ripresenta per lo stesso difetto, resta il bottone.
+  const askedRef = useRef('');
+  const [dialog, setDialog] = useState(false);
+  useEffect(() => {
+    if (!missing.length || !onSetModelValue) return;
+    if (askedRef.current === missingKey) return;
+    askedRef.current = missingKey;
+    setDialog(true);
+  }, [missingKey, onSetModelValue]);
+  const closeDialog = () => setDialog(false);
+  const confirmMissing = (values) => {
+    setDialog(false);
+    // Riletta non-forzata DOPO la scrittura: il valore utente appena confermato
+    // deve comparire nel record con la sua provenienza. Un errore della
+    // scrittura e' del parent (la sua riga d'errore): qui non si nasconde nulla.
+    Promise.resolve(onSetModelValue(engineId, active, values))
+      .then(() => { setView({ loading: true, refreshing: false, result: null, error: '' }); return load(false); })
+      .then((next) => { setView(next); })
+      .catch(() => {});
+  };
   return <section className="nc-fleet-models" aria-label={t('fleet-models-title')}>
     <div className="nc-fleet-models-head">
       <b>{t('fleet-models-usable')}</b>
@@ -53,6 +124,8 @@ function ModelDiscoverySection({ engineId, fetchModels, onPick }) {
     {!view.loading && !view.error && result && result.stale === true && <small className="nc-fleet-models-note">{t('fleet-models-stale')}</small>}
     {!view.loading && result && result.supported === false && <small>{t('fleet-models-unsupported')}</small>}
     {!view.loading && result && result.supported !== false && !models.length && <small>{t('fleet-models-none')}</small>}
+    {dialog && missing.length > 0 && <MissingFieldsDialog model={active} missing={missing} busy={busy} onConfirm={confirmMissing} onLeaveEmpty={closeDialog} />}
+    {!dialog && missing.length > 0 && onSetModelValue && <button type="button" className="nc-btn ghost nc-fleet-missing-open" onClick={() => setDialog(true)}>{t('fleet-models-missing-open').replace('{model}', active)}</button>}
     {models.map((m) => <div key={m.id} className={`nc-fleet-model-row${m.inApi === false ? ' nc-model-not-in-api' : ''}`}>
       <button type="button" className="nc-btn ghost nc-fleet-model-pick" aria-label={t('fleet-models-use').replace('{model}', m.id)} onClick={() => onPick(m.id)}>{m.id}</button>
       {m.inApi === false && <b className="nc-err">{t('fleet-models-not-in-api')}</b>}
@@ -71,7 +144,7 @@ function ModelDiscoverySection({ engineId, fetchModels, onPick }) {
 // Editor di un engine (managed o custom). State-less rispetto alle API: riceve
 // lo stato del form e lo risolleva al parent (FleetTab), che è l'unico a
 // eseguire le mutazioni. Estratto invariato da FleetTab.jsx.
-export default function EngineEditor({ state, setState, busy, onSave, catalog, fetchModels }) {
+export default function EngineEditor({ state, setState, busy, onSave, catalog, fetchModels, onSetModelValue }) {
   const f = state.form; const set = (patch) => setState({ ...state, form: { ...f, ...patch } });
   const rows = f.envRows || [];
   const clients = [...new Map(catalog.map((p) => [p.client, p.clientLabel || p.client])).entries()];
@@ -108,6 +181,9 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog, f
           engineId={state.mode === 'edit' ? f.id : selectedProfile?.id}
           fetchModels={fetchModels}
           onPick={(id) => set({ managedModel: id })}
+          activeModel={f.managedModel}
+          onSetModelValue={onSetModelValue}
+          busy={busy}
         />}
       </>}
       {selectedProfile?.supportsUnsafe ? <select value={f.permissionPolicy} onChange={(e) => set({ permissionPolicy: e.target.value })}><option value="standard">{t('fleet-standard-permissions')}</option><option value="unsafe">{t('fleet-unsafe-permissions')}</option></select> : <small>{t('fleet-standard-permissions')}</small>}

@@ -132,6 +132,10 @@
 .nc-fleet-model-field { font-size: 11px; opacity: .85; white-space: nowrap; }
 .nc-fleet-model-src { display: inline-block; margin-left: 3px; padding: 0 4px; border-radius: 4px; font-size: 9px; letter-spacing: .04em; background: #1c2a1e; opacity: .8; }
 .nc-fleet-models-note { font-size: 10px; opacity: .65; }
+/* Finestra dei dati mancanti: dentro la sezione, bordo d'avviso, input corti. */
+.nc-fleet-missing { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid rgba(255, 187, 68, .45); border-radius: 8px; background: rgba(255, 187, 68, .07); }
+.nc-fleet-missing .nc-field input { max-width: 160px; }
+.nc-fleet-missing-open { font-size: 11px; padding: 2px 8px; align-self: flex-start; }
 .nc-fleet-modal {
   position: fixed; inset: 0; z-index: 75; padding: 16px;
   display: flex; align-items: center; justify-content: center;
