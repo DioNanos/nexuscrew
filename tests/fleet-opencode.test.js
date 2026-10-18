@@ -2,7 +2,7 @@
 // OpenCode client nativo (opencode.native) managed adapter — catalogo, argv
 // (-m provider/model col prefisso gateway, --prompt, --auto solo unsafe),
 // env vuoto di default, envPassthrough OPENCODE_CONFIG opt-in per nome.
-// Tutto MISURATO su opencode 1.18.33 (VPS3, 2026-10-18): --standalone non
+// Tutto MISURATO su opencode 1.18.33: --standalone non
 // esiste, ogni invocazione ha il proprio server; il posizionale e' il PATH di
 // progetto, quindi il prompt di cella viaggia su --prompt.
 const { test } = require('node:test');
