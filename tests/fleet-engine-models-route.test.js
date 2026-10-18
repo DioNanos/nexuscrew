@@ -212,3 +212,67 @@ test('engine senza listing HTTP (login/native): supported=false, zero rete', asy
     assert.equal(fake.requests.length, 0, 'no HTTP request at all');
   } finally { await closeFakeServer(fake); }
 });
+
+// --- Lotto 3b: proposte del catalogo interno per i campi mancanti --------------
+// Provider builtin chiamato DIRETTAMENTE con fetch stubbata: la rete non esiste,
+// nessun provider vero, nemmeno il catalogo pubblico (la fetch iniettata serve
+// anche quello e risponde con uno snapshot non valido, quindi lo skip è netto).
+const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
+
+test('backupValues: il catalogo interno propone i campi che nessun layer ha riempito', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncembv-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const defsPath = path.join(dir, 'fleet.json');
+  fs.writeFileSync(defsPath, JSON.stringify({ schemaVersion: 1, engines: [], cells: [] }), { mode: 0o600 });
+  fs.chmodSync(defsPath, 0o600);
+  const fleet = await createBuiltinFleet({ home: dir, fleetDefsPath: defsPath });
+  t.after(() => fleet.close());
+  const calls = [];
+  const fetchImpl = async (url, opts = {}) => {
+    calls.push(String(url));
+    // Listing Anthropic-style: id nudi, nessun descrittore.
+    return { ok: true, status: 200, json: async () => ({ data: [{ id: 'qwen3.8-max' }, { id: 'unknown-model' }] }) };
+  };
+  const out = await fleet.discoverEngineModels('claude.alibaba-token-plan', { fetchImpl });
+  assert.equal(out.supported, true);
+  const byId = new Map(out.models.map((m) => [m.id, m]));
+  const qwen = byId.get('qwen3.8-max');
+  assert.ok(qwen, 'il modello del listing è nella proposta');
+  assert.ok(!('contextWindow' in qwen), 'l\'API non ha dato il campo: resta assente');
+  // La proposta del catalogo interno viaggia separata: non è un valore, è il
+  // valore di backup che il dialogo mostra già pronto.
+  assert.equal(qwen.backupValues.contextWindow, 983616);
+  assert.equal(qwen.backupValues.maxTokens, 131072);
+  assert.ok(!('backupValues' in byId.get('unknown-model')), 'ciò che il database interno non conosce non ha proposte');
+  // Nessuna rete: la sola fetch è lo stub, e nessuna risposta porta la chiave.
+  assert.ok(calls.length >= 1);
+  assert.ok(!JSON.stringify(out).includes(KEY));
+});
+
+test('backupValues: variante con tag dell\'engine cloud risale al nome base del catalogo interno', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncembv2-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const defsPath = path.join(dir, 'fleet.json');
+  fs.writeFileSync(defsPath, JSON.stringify({ schemaVersion: 1, engines: [], cells: [] }), { mode: 0o600 });
+  fs.chmodSync(defsPath, 0o600);
+  const fleet = await createBuiltinFleet({ home: dir, fleetDefsPath: defsPath });
+  t.after(() => fleet.close());
+  const fetchImpl = async (url, opts = {}) => {
+    // /api/tags elenca la variante col tag; il catalogo cablato conosce il
+    // nome base: il merge (id esatti) non li unisce, la proposta sì.
+    if (String(url).includes('/api/tags')) {
+      return { ok: true, status: 200, json: async () => ({ models: [{ name: 'deepseek-v4-flash:0731' }] }) };
+    }
+    if (String(url).includes('/api/show')) {
+      return { ok: true, status: 200, json: async () => ({ model_info: {} }) };
+    }
+    // Catalogo pubblico: snapshot non valido -> layer saltato, zero digressioni.
+    return { ok: true, status: 200, json: async () => ({ data: [] }) };
+  };
+  const out = await fleet.discoverEngineModels('codex-vl.ollama-cloud', { fetchImpl, ttlMs: 60000 });
+  assert.equal(out.supported, true);
+  const variant = out.models.find((m) => m.id === 'deepseek-v4-flash:0731');
+  assert.ok(variant, 'la variante del listing è nella proposta');
+  assert.ok(!('contextWindow' in variant), 'nessun layer ha riempito il campo');
+  assert.equal(variant.backupValues.contextWindow, 1048576, 'la proposta risale al nome base del catalogo interno');
+});

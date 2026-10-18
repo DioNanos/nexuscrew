@@ -368,3 +368,69 @@ test('engineModelDiscoveryPlan: endpoint e chiave dello stesso motore, senza mai
     {}, { env: {} }, home,
   ), null);
 });
+
+// --- Lotto 3b: i modelli spariti restano --------------------------------------
+
+test('un modello che era nelle API e non c\'è più resta nella proposta: layer known, inApi false', async () => {
+  let listing = [{ id: 'gone-soon', contextWindow: 4096 }, { id: 'stays' }];
+  const fake = await startFakeServer((req, res) => { json(res, 200, { data: listing }); });
+  const home = isolatedHome();
+  try {
+    const md = createModelDiscovery();
+    const first = await md.discoverEngine({ engine: 'e-gone', collector: 'openai-compat', baseUrl: fake.baseUrl, home, ttlMs: 0 });
+    assert.deepEqual(first.models.map((m) => m.id), ['gone-soon', 'stays']);
+    // Il provider ritira il modello: il listing fresco non lo contiene più e
+    // NESSUN layer (utente, backup) lo dichiara. Senza il delta della cache
+    // sparirebbe dalla proposta in silenzio.
+    listing = [{ id: 'stays' }];
+    const second = await md.discoverEngine({ engine: 'e-gone', collector: 'openai-compat', baseUrl: fake.baseUrl, home, ttlMs: 0 });
+    const byId = Object.fromEntries(second.models.map((m) => [m.id, m]));
+    const gone = byId['gone-soon'];
+    assert.ok(gone, 'il modello sparito NON sparisce dalla proposta');
+    assert.equal(gone.inApi, false);
+    assert.equal(gone.source, 'known');
+    assert.ok(!('contextWindow' in gone), 'il layer known porta solo l\'id: nessun campo, nessuna invenzione');
+    // la cache appena scritta conserva SOLO il listing nuovo: la storia no
+    const raw = JSON.parse(fs.readFileSync(path.join(home, '.nexuscrew', 'model-discovery', 'e-gone.json'), 'utf8'));
+    assert.deepEqual(raw.models.map((m) => m.id), ['stays']);
+    // la lettura successiva confronta col listing NUOVO: il delta si esaurisce,
+    // il modello non risuscita per sempre
+    const third = await md.discoverEngine({ engine: 'e-gone', collector: 'openai-compat', baseUrl: fake.baseUrl, home, ttlMs: 0 });
+    assert.deepEqual(third.models.map((m) => m.id), ['stays']);
+  } finally { await closeFakeServer(fake); }
+});
+
+test('noCache calcola comunque il delta degli spariti, ma la risposta non esce mai dal file', async () => {
+  let listing = [{ id: 'v-1' }, { id: 'v-2' }];
+  const fake = await startFakeServer((req, res) => { json(res, 200, { data: listing }); });
+  const home = isolatedHome();
+  try {
+    const md = createModelDiscovery();
+    await md.discoverEngine({ engine: 'e-nc', collector: 'openai-compat', baseUrl: fake.baseUrl, home, ttlMs: 5000 });
+    listing = [{ id: 'v-1' }];
+    const forced = await md.discoverEngine({ engine: 'e-nc', collector: 'openai-compat', baseUrl: fake.baseUrl, home, ttlMs: 5000, noCache: true });
+    assert.equal(forced.source, 'api');
+    const byId = Object.fromEntries(forced.models.map((m) => [m.id, m]));
+    assert.equal(byId['v-1'].inApi, true);
+    assert.equal(byId['v-2'].inApi, false, 'il rinfresco manuale vede comunque chi è sparito');
+    // e con noCache il file non si è toccato: resta il listing di ieri
+    const raw = JSON.parse(fs.readFileSync(path.join(home, '.nexuscrew', 'model-discovery', 'e-nc.json'), 'utf8'));
+    assert.deepEqual(raw.models.map((m) => m.id), ['v-1', 'v-2']);
+  } finally { await closeFakeServer(fake); }
+});
+
+test('layer known: id nudi, sotto ogni altro layer, non vincono mai un campo', () => {
+  const merged = mergeModelRecords({
+    userModels: [{ id: 'k-1', contextWindow: 111 }],
+    apiModels: [{ id: 'k-1', maxTokens: 222 }],
+    knownModels: [{ id: 'k-1' }, { id: 'k-2' }],
+    apiKnown: true,
+  });
+  const byId = Object.fromEntries(merged.map((m) => [m.id, m]));
+  assert.equal(byId['k-1'].contextWindow, 111);
+  assert.equal(byId['k-1'].maxTokens, 222);
+  assert.equal(byId['k-1'].source, 'user');
+  assert.equal(byId['k-2'].inApi, false);
+  assert.equal(byId['k-2'].source, 'known');
+  assert.ok(!('contextWindow' in byId['k-2']));
+});
