@@ -69,7 +69,7 @@ async function pair(t, destPeerExtra) {
     ...destPeerExtra,
   });
   store.atomicWriteStore(destNodes, ds);
-  const dest = createServer({
+  const dest = createServer({ protectSharedTmuxServer: false,
     home: dir, nodesPath: destNodes, tokenPath: path.join(dir, 'dest.token'),
     filesRoot: path.join(dir, 'dest-files'), fleetEnabled: false, port: destPort,
     // Sulle sessioni di cella il gate deve poter dire di no: qui esistono tutte.
@@ -85,7 +85,7 @@ async function pair(t, destPeerExtra) {
     token: 'root-to-dest', acceptToken: 'dest-to-root',
   });
   store.atomicWriteStore(rootNodes, rs);
-  const root = createServer({
+  const root = createServer({ protectSharedTmuxServer: false,
     home: dir, nodesPath: rootNodes, tokenPath: path.join(dir, 'root.token'),
     filesRoot: path.join(dir, 'root-files'), fleetEnabled: false, port: rootPort,
   });

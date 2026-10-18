@@ -21,7 +21,7 @@ async function binding(t, credential) {
   nodes.atomicWriteStore(nodesPath, st);
   createAsksStore({ dir: configDir }).create({ question: 'Review?', session: tmuxSessionForCell('reviewer'),
     ownerId: OWNER, ownerAskId: ID, originNode: OWNER, ownerAskTs: 100 });
-  const runtime = createServer({ home, configDir, nodesPath, port: 0, fleetEnabled: false,
+  const runtime = createServer({ protectSharedTmuxServer: false, home, configDir, nodesPath, port: 0, fleetEnabled: false,
     filesRoot: path.join(home, 'files'), configPath: path.join(configDir, 'config.json'), tokenPath: path.join(configDir, 'token'),
     sessionExistsSeam: () => true, pasteSeam: () => true,
     settingsSeams: { platform: 'linux', uid: 1000, execImpl: () => { throw new Error('disabled'); }, serviceInstallPath: path.join(home, 'service'),

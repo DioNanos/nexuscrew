@@ -52,7 +52,7 @@ if(a[0]==='display-message'){ const ti=a.indexOf('-t'); const tgt=ti>=0?String(a
   const status = { value: threadStatus };
   const daemon = fakeDaemon(socketPath, status);
   await daemon.listen();
-  const runtime = createServer({
+  const runtime = createServer({ protectSharedTmuxServer: false,
     home, configDir, nodesPath, configPath: path.join(configDir, 'config.json'), tokenPath: path.join(configDir, 'token'),
     port: 0, tmuxBin: binary, fleetEnabled: false, sessionExistsSeam: () => true, filesRoot: path.join(home, 'files'),
     liveBridgeEnabled: true, liveBridgeSocketPath: socketPath, liveBridgeTimeoutMs: 1500, liveThreadStatusCacheMs: 0,

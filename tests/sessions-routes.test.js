@@ -15,7 +15,7 @@ function boot(t, over = {}) {
   process.env.FAKE_TMUX_LOG = path.join(dir, 'tmux.log');
   const previousStateHome = process.env.XDG_STATE_HOME;
   process.env.XDG_STATE_HOME = dir;
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'),
     tmuxBin: FAKE_TMUX, fleetEnabled: false, ...over,
   });
@@ -257,13 +257,13 @@ test('visibility marks only unmanaged sessions using explicit tmux metadata', as
 test('destination READONLY also wins through the compatible /node path', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncsl-node-ro-'));
   process.env.FAKE_TMUX_LOG = path.join(dir, 'tmux.log');
-  const dest = createServer({ home: dir, tokenPath: path.join(dir, 'dest-token'), nodesPath: path.join(dir, 'dest-nodes.json'), filesRoot: path.join(dir, 'dest-files'), tmuxBin: FAKE_TMUX, fleetEnabled: false, readonlyDefault: true });
+  const dest = createServer({ protectSharedTmuxServer: false, home: dir, tokenPath: path.join(dir, 'dest-token'), nodesPath: path.join(dir, 'dest-nodes.json'), filesRoot: path.join(dir, 'dest-files'), tmuxBin: FAKE_TMUX, fleetEnabled: false, readonlyDefault: true });
   await new Promise((resolve) => dest.server.listen(0, '127.0.0.1', resolve));
   const rootNodes = path.join(dir, 'root-nodes.json');
   let st = nodesStore.emptyStore('a'.repeat(32));
   st = nodesStore.addNode(st, { name: 'dest', ssh: 'dest', remotePort: dest.server.address().port, localPort: dest.server.address().port, direction: 'outbound', transport: 'ssh', autostart: false, visibility: 'network', nodeId: 'b'.repeat(32), token: dest.token, acceptToken: 'dest-back' });
   nodesStore.atomicWriteStore(rootNodes, st);
-  const root = createServer({ home: dir, tokenPath: path.join(dir, 'root-token'), nodesPath: rootNodes, filesRoot: path.join(dir, 'root-files'), tmuxBin: FAKE_TMUX, fleetEnabled: false });
+  const root = createServer({ protectSharedTmuxServer: false, home: dir, tokenPath: path.join(dir, 'root-token'), nodesPath: rootNodes, filesRoot: path.join(dir, 'root-files'), tmuxBin: FAKE_TMUX, fleetEnabled: false });
   await new Promise((resolve) => root.server.listen(0, '127.0.0.1', resolve));
   t.after(() => { root.server.close(); dest.server.close(); fs.rmSync(dir, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${root.server.address().port}`;

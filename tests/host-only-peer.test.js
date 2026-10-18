@@ -663,7 +663,7 @@ test('Settings Share ON on a published peer is refused at once (409) and touches
   store.setPublishRemoteCas({ filePath: paths.nodesPath, name: 'box', enabled: true, audience: [READER1] });
   const effects = [];
   const { createServer } = require('../lib/server.js');
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths, filesRoot: path.join(dir, 'files'), port: 41999, fleetEnabled: false,
     settingsSeams: { platform: 'linux', uid: 1000, execImpl: () => { effects.push('exec'); throw new Error('no exec'); }, spawnImpl: () => { effects.push('spawn'); return { pid: 4193999, unref() {} }; },
       fetchImpl: async () => { effects.push('fetch'); throw new Error('no network'); }, sshVersion: () => ({ major: 9, minor: 6 }) },

@@ -18,12 +18,18 @@ const { createServer } = require('../lib/server.js');
 
 const TOKEN = 'origin-separata';
 
+let tmuxDirDiProva;
 {
-  const tmuxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-panel-origin-tmux-'));
-  process.env.TMUX_TMPDIR = tmuxDir;
+  tmuxDirDiProva = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-panel-origin-tmux-'));
+  process.env.TMUX_TMPDIR = tmuxDirDiProva;
   delete process.env.TMUX;
   delete process.env.TMUX_PANE;
 }
+// La dir del tmux di prova non resta in /tmp quando il processo esce. Su
+// 'exit' e non su un hook del runner: con l'isolamento per processo ogni test
+// ricarica il modulo (e ricrea la dir), e l'hook top-level non e' garantito
+// in ogni modalita' — l'exit handler sincrono si'.
+process.on('exit', () => { try { fs.rmSync(tmuxDirDiProva, { recursive: true, force: true }); } catch (_) { /* assente */ } });
 
 // fetch() (undici) tiene i socket keep-alive aperti: senza chiuderli a forza,
 // server.close() aspetta connessioni che non si chiuderanno mai da sole
@@ -69,7 +75,7 @@ function homeConCella(panelUrl) {
 // resta comunque tracciato dal chiamante e non diventa un handle orfano.
 async function serverDiProva(panelUrl, onListen) {
   const p = homeConCella(panelUrl);
-  const made = createServer({
+  const made = createServer({ protectSharedTmuxServer: false,
     home: p.home, configDir: p.state, configPath: path.join(p.state, 'config.json'),
     nodesPath: path.join(p.state, 'nodes.json'), tokenPath: path.join(p.state, 'token'),
     filesRoot: path.join(p.root, 'files'),

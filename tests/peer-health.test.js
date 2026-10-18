@@ -188,7 +188,7 @@ async function boot(t, over = {}) {
   store.initStore(nodesPath);
   const configPath = path.join(dir, 'config.json');
   fs.writeFileSync(configPath, JSON.stringify({ roles: { client: false, node: false } }));
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     home: dir, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'),
     nodesPath, configPath, fleetEnabled: false, ...over,
   });

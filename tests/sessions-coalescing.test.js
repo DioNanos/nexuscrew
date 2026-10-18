@@ -20,7 +20,7 @@ function boot(t, over = {}) {
   process.env.FAKE_TMUX_LOG = path.join(dir, 'tmux.log');
   const previousStateHome = process.env.XDG_STATE_HOME;
   process.env.XDG_STATE_HOME = dir;
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'),
     tmuxBin: FAKE_TMUX, fleetEnabled: false, ...over,
   });

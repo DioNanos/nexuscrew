@@ -30,7 +30,7 @@ async function bootNode(t, { session, cell }) {
     topologyCachePath: path.join(configDir, 'topology-cache.json'),
   };
   nodesStore.initStore(paths.nodesPath);
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths, filesRoot: path.join(dir, 'files'), port: 0,
     fleetSeam: {
       available: true, isCellSession: () => true, capabilities: () => [],

@@ -56,7 +56,7 @@ async function bootNode(t, { readonlyDefault = false } = {}) {
   };
   nodesStore.initStore(paths.nodesPath);
   const { seen, seam } = fleetSeam();
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths, filesRoot: path.join(dir, 'files'), port: 0, readonlyDefault, fleetSeam: seam,
   });
   await new Promise((res) => server.listen(0, '127.0.0.1', res));

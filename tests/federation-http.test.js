@@ -408,14 +408,14 @@ test('federated WebSocket uses scoped hop auth and reaches destination PTY gate'
   let ds = store.emptyStore('d'.repeat(32));
   ds = store.addNode(ds, { name: 'root', remotePort: rootPort, localPort: 44001, direction: 'inbound', transport: 'inbound', autostart: true, visibility: 'network', peerOperatorAccess: true, nodeId: 'a'.repeat(32), token: 'dest-to-root', acceptToken: 'root-to-dest' });
   store.atomicWriteStore(destNodes, ds);
-  const dest = createServer({ home: dir, nodesPath: destNodes, tokenPath: path.join(dir, 'dest.token'), filesRoot: path.join(dir, 'dest-files'), fleetEnabled: false, port: destPort });
+  const dest = createServer({ protectSharedTmuxServer: false, home: dir, nodesPath: destNodes, tokenPath: path.join(dir, 'dest.token'), filesRoot: path.join(dir, 'dest-files'), fleetEnabled: false, port: destPort });
   await new Promise((resolve) => dest.server.listen(destPort, '127.0.0.1', resolve));
 
   const rootNodes = path.join(dir, 'root-nodes.json');
   let rs = store.emptyStore('a'.repeat(32));
   rs = store.addNode(rs, { name: 'mac', ssh: 'mac', remotePort: destPort, localPort: destPort, direction: 'outbound', transport: 'ssh', autostart: false, visibility: 'network', peerOperatorAccess: true, nodeId: 'd'.repeat(32), token: 'root-to-dest', acceptToken: 'dest-to-root' });
   store.atomicWriteStore(rootNodes, rs);
-  const root = createServer({ home: dir, nodesPath: rootNodes, tokenPath: path.join(dir, 'root.token'), filesRoot: path.join(dir, 'root-files'), fleetEnabled: false, port: rootPort });
+  const root = createServer({ protectSharedTmuxServer: false, home: dir, nodesPath: rootNodes, tokenPath: path.join(dir, 'root.token'), filesRoot: path.join(dir, 'root-files'), fleetEnabled: false, port: rootPort });
   await new Promise((resolve) => root.server.listen(rootPort, '127.0.0.1', resolve));
   t.after(async () => { await close(root.server); await close(dest.server); fs.rmSync(dir, { recursive: true, force: true }); });
 
@@ -444,7 +444,7 @@ test('main-token rotation closes an active federated raw WebSocket', async (t) =
   let st = store.emptyStore('a'.repeat(32));
   st = store.addNode(st, { name: 'peer', ssh: 'peer', remotePort: upstreamPort, localPort: upstreamPort, direction: 'outbound', transport: 'ssh', autostart: false, visibility: 'network', peerOperatorAccess: true, nodeId: 'b'.repeat(32), token: 'peer-scope', acceptToken: 'back-scope' });
   store.atomicWriteStore(nodesPath, st);
-  const root = createServer({ home: dir, nodesPath, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, port: 0 });
+  const root = createServer({ protectSharedTmuxServer: false, home: dir, nodesPath, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, port: 0 });
   await new Promise((resolve) => root.server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { upstreamWs.close(); await close(root.server); await close(upstreamHttp); fs.rmSync(dir, { recursive: true, force: true }); });
   const port = root.server.address().port;

@@ -34,7 +34,7 @@ test('real HTTP server pairs, delivers live-only, acks, supersedes stale session
   const tokenPath = path.join(configDir, 'token');
   const ownerId = 'a'.repeat(32);
   nodesStore.atomicWriteStore(nodesPath, nodesStore.emptyStore(ownerId));
-  const made = createServer({
+  const made = createServer({ protectSharedTmuxServer: false,
     home, configDir, nodesPath, vlNodesPath, tokenPath,
     filesRoot: path.join(home, 'files'), fleetEnabled: false, autoUpdate: false,
     bind: '127.0.0.1', port: 0, log: () => {},
@@ -177,7 +177,7 @@ test('the declared VL session flows from heartbeat to the nodes API', async (t) 
   const configDir = path.join(home, '.nexuscrew');
   const ownerId = 'a'.repeat(32);
   nodesStore.atomicWriteStore(path.join(configDir, 'nodes.json'), nodesStore.emptyStore(ownerId));
-  const made = createServer({
+  const made = createServer({ protectSharedTmuxServer: false,
     home, configDir,
     nodesPath: path.join(configDir, 'nodes.json'),
     vlNodesPath: path.join(configDir, 'vl-nodes.json'),

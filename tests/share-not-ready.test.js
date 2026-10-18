@@ -153,7 +153,7 @@ function bootPeer(t, seams = {}) {
     tokenPath: path.join(configDir, 'token'),
   };
   store.initStore(paths.nodesPath);
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths, filesRoot: path.join(dir, 'files'), fleetEnabled: false,
     settingsSeams: {
       platform: 'linux', uid: 1000,
@@ -382,7 +382,7 @@ test('produzione: lo slot aperto dal server reale onora un upgrade', async (t) =
   const nodesPath = path.join(configDir, 'nodes.json');
   store.initStore(nodesPath);
 
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     home: dir, configDir, nodesPath,
     configPath: path.join(configDir, 'config.json'),
     tokenPath: path.join(configDir, 'token'),
@@ -466,7 +466,7 @@ test('produzione: lo slot dichiara l\'identita\' LOCALE, quella che l\'altro cap
   const localInstanceId = store.loadStoreStrict(nodesPath).nodeId;
   assert.ok(localInstanceId && localInstanceId !== remoteInstanceId, 'i due id devono essere distinti');
 
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     home: dir, configDir, nodesPath,
     configPath: path.join(configDir, 'config.json'),
     tokenPath: path.join(configDir, 'token'),

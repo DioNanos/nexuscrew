@@ -6,69 +6,18 @@
 // set-option su @N -> respawn-pane su %N) arma inoltre la diagnostica prima di
 // avviare il vero child e conserva il suo exit reale.
 //
-// NESSUN contatto col server tmux dell'utente: ogni comando usa -S <socket
-// isolato>, kill-server in finally.
+// NESSUN contatto col server tmux dell'utente: ogni comando passa dalla
+// fabbrica condivisa (tests/tmux-test-server.js): socket dedicato -L con
+// -f /dev/null, chiusura per PID in finally. Mai kill-server.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const os = require('node:os');
-const { execFileSync } = require('node:child_process');
 const { performance } = require('node:perf_hooks');
 const path = require('node:path');
 const { parseDefinitions, tmuxSessionForCell } = require('../lib/fleet/definitions.js');
 const { migrateLegacyTmuxSessions } = require('../lib/fleet/launch.js');
+const { avviaTmuxTest } = require('./tmux-test-server.js');
 
-const TMUX = '/usr/bin/tmux';
 const CELL_HOLD = path.join(__dirname, '..', 'lib', 'fleet', 'cell-hold.js');
-
-function sockName() { return `ncrace-${process.pid}`; }
-
-function socketPath(socket) {
-  return path.join(os.tmpdir(), `${socket}.sock`);
-}
-
-function tmuxClientArgs(socket, args) {
-  // Non caricare ~/.tmux.conf: i server di prova devono essere isolati anche
-  // dalle command-alias e dalle policy del server operativo. -S rende inoltre
-  // il socket esplicito e ripulibile senza dipendere dal TMPDIR interno di tmux.
-  return ['-f', '/dev/null', '-S', socketPath(socket), ...args];
-}
-
-// Esegue tmux sul socket isolato. Ritorna {code, stdout, stderr}.
-function tmux(socket, args, { timeout = 5000 } = {}) {
-  try {
-    const out = execFileSync(TMUX, tmuxClientArgs(socket, args), {
-      encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, TMUX: '' },
-    });
-    return { code: 0, stdout: String(out || ''), stderr: '' };
-  } catch (e) {
-    return {
-      code: typeof e.status === 'number' ? e.status : 1,
-      stdout: String(e.stdout || ''),
-      stderr: String(e.stderr || ''),
-    };
-  }
-}
-
-function cleanup(socket) {
-  try {
-    execFileSync(TMUX, tmuxClientArgs(socket, ['kill-server']), {
-      stdio: 'ignore', timeout: 3000, env: { ...process.env, TMUX: '' },
-    });
-  } catch (_) { /* already gone */ }
-  // tmux puo lasciare il socket dopo un arresto anomalo; il nome e confinato al
-  // namespace ncrace-<pid>-* creato da questo file.
-  try { fs.unlinkSync(socketPath(socket)); } catch (_) { /* absent */ }
-}
-
-function migrationWrapper(socket) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nctmuxwrap-'));
-  const bin = path.join(dir, 'tmux');
-  fs.writeFileSync(bin, `#!/bin/sh\nexec ${TMUX} -f /dev/null -S ${JSON.stringify(socketPath(socket))} "$@"\n`, { mode: 0o755 });
-  fs.chmodSync(bin, 0o755);
-  return { bin, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
-}
 
 function dottedDefs(id) {
   return parseDefinitions({
@@ -112,13 +61,13 @@ function parsePaneDeadState(stdout) {
 // status pending», si concede una proroga UNA volta e la si dichiara nel
 // messaggio: cosi' un rosso resta un rosso, e una macchina occupata non
 // diventa un difetto del prodotto.
-async function waitForDeadPane(socket, paneId, timeoutMs = 8000, prorogaMs = 12000, impl = {}) {
+async function waitForDeadPane(tmux, paneId, timeoutMs = 8000, prorogaMs = 12000, impl = {}) {
   let deadline = performance.now() + timeoutMs;
   let prorogato = false;
   const poll = 25;
   let last = { code: -1, dead: null, status: undefined, raw: '', stderr: '' };
   do {
-    const state = (impl.tmuxImpl || tmux)(socket, ['display-message', '-p', '-t', paneId,
+    const state = (impl.tmuxImpl || tmux)(['display-message', '-p', '-t', paneId,
       '#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}']);
     const parsed = parsePaneDeadState(state.stdout);
     last = {
@@ -166,129 +115,143 @@ test('parser pane_dead preserva i campi pending e rifiuta risposte malformate', 
   assert.equal(parsePaneDeadState('1\t1\t\textra\n').wellFormed, false, 'campi extra sono malformati');
 });
 
-test('controllo negativo: il nome con punto viene normalizzato da tmux (.->_)', () => {
-  const socket = `${sockName()}-neg`;
+test('controllo negativo: il nome con punto viene normalizzato da tmux (.->_)', async () => {
+  const server = await avviaTmuxTest();
+  const tmux = (args, opts) => server.runSync(args, opts);
   try {
-    tmux(socket, ['new-session', '-d', '-s', 'cloud-agy.native']);
-    const ls = tmux(socket, ['list-sessions', '-F', '#{session_name}']).stdout.trim();
+    tmux(['new-session', '-d', '-s', 'cloud-agy.native']);
+    server.uccidiSessioneBoot();
+    const ls = tmux(['list-sessions', '-F', '#{session_name}']).stdout.trim();
     assert.equal(ls, 'cloud-agy_native', 'tmux ha normalizzato il punto in underscore');
     // targettare il nome col punto fallisce: tmux cerca cloud-agy.native (inesistente)
-    const has = tmux(socket, ['has-session', '-t', '=cloud-agy.native']);
+    const has = tmux(['has-session', '-t', '=cloud-agy.native']);
     assert.notEqual(has.code, 0, 'has-session sul nome col punto fallisce');
-  } finally { cleanup(socket); }
+  } finally { await server.chiudi(); }
 });
 
-test('anti-falso-verde: tornando al vecchio target nominale puntato il setup fallisce deterministicamente', () => {
-  const socket = `${sockName()}-old`;
+test('anti-falso-verde: tornando al vecchio target nominale puntato il setup fallisce deterministicamente', async () => {
+  const server = await avviaTmuxTest();
+  const tmux = (args, opts) => server.runSync(args, opts);
   try {
     // Usa un child longevo per isolare il mangling del nome da qualunque timing:
     // tmux crea cloud-agy_native, poi il target =cloud-agy.native: non puo matchare.
-    const r = tmux(socket, [
-      'new-session', '-d', '-s', 'cloud-agy.native', '-c', '/tmp', '/usr/bin/sleep', '30',
+    const r = tmux([
+      'new-session', '-d', '-s', 'cloud-agy.native', '-c', server.socketDir, '/usr/bin/sleep', '30',
       ';', 'set-option', '-w', '-t', '=cloud-agy.native:', 'remain-on-exit', 'on',
     ]);
     assert.notEqual(r.code, 0, 'il vecchio target puntato deve fallire');
     assert.match(r.stderr, /no such window|can.?t find pane/i, 'firma del target normalizzato non risolto');
-    const ls = tmux(socket, ['list-sessions', '-F', '#{session_name}']).stdout.trim();
+    server.uccidiSessioneBoot();
+    const ls = tmux(['list-sessions', '-F', '#{session_name}']).stdout.trim();
     assert.equal(ls, 'cloud-agy_native', 'la sessione reale prova il mangling . -> _');
-  } finally { cleanup(socket); }
+  } finally { await server.chiudi(); }
 });
 
 test('nuovo ordine staged con nome v2 safe + child rapido: exit reale preservato', async () => {
-  const socket = `${sockName()}-new`;
+  const server = await avviaTmuxTest();
+  const tmux = (args, opts) => server.runSync(args, opts);
   const safe = tmuxSessionForCell('agy.native');
   try {
     // 1) new-session con placeholder inerte (cell-hold), -P -F 3 ID
-    const create = tmux(socket, [
-      'new-session', '-d', '-s', safe, '-c', '/tmp',
+    const create = tmux([
+      'new-session', '-d', '-s', safe, '-c', server.socketDir,
       '-P', '-F', '#{session_id}\t#{window_id}\t#{pane_id}',
       process.execPath, CELL_HOLD,
     ]);
     assert.equal(create.code, 0, `new-session ok: ${create.stderr}`);
     const [sid, wid, pid] = create.stdout.trim().split('\t');
     assert.ok(sid.startsWith('$') && wid.startsWith('@') && pid.startsWith('%'), '3 ID restituiti');
+    server.uccidiSessioneBoot();
     // 2) remain-on-exit window-local sul @N mentre il placeholder tiene viva la window
-    const arm = tmux(socket, ['set-option', '-w', '-t', wid, 'remain-on-exit', 'on']);
+    const arm = tmux(['set-option', '-w', '-t', wid, 'remain-on-exit', 'on']);
     assert.equal(arm.code, 0, `set-option ok: ${arm.stderr}`);
     // 3) respawn-pane -k verso un child rapido non-zero (false) sul %N
-    const respawn = tmux(socket, ['respawn-pane', '-k', '-c', '/tmp', '-t', pid, '/usr/bin/false']);
+    const respawn = tmux(['respawn-pane', '-k', '-c', server.socketDir, '-t', pid, '/usr/bin/false']);
     assert.equal(respawn.code, 0, `respawn ok: ${respawn.stderr}`);
     // remain-on-exit e' ARMATO: il %N resta (dead) con il suo exit reale (1),
     // la sessione NON sparisce, nessun NEW_SESSION_FAILED.
-    const dead = await waitForDeadPane(socket, pid);
+    const dead = await waitForDeadPane(tmux, pid);
     assert.equal(dead.dead, '1', 'pane morto (false exit)');
     assert.equal(dead.status, '1', 'exit reale 1 preservato (non mascherato)');
     // cleanup con $N
-    const kill = tmux(socket, ['kill-session', '-t', sid]);
+    const kill = tmux(['kill-session', '-t', sid]);
     assert.equal(kill.code, 0);
-    assert.equal(tmux(socket, ['list-sessions', '-F', '#{session_name}']).stdout.trim(), '', 'nessuna sessione orfana');
-  } finally { cleanup(socket); }
+    assert.equal(tmux(['list-sessions', '-F', '#{session_name}']).stdout.trim(), '', 'nessuna sessione orfana');
+  } finally { await server.chiudi(); }
 });
 
-test('nuovo ordine: child longevo (sleep) resta vivo; pane ID preservato da respawn-pane', () => {
-  const socket = `${sockName()}-live`;
+test('nuovo ordine: child longevo (sleep) resta vivo; pane ID preservato da respawn-pane', async () => {
+  const server = await avviaTmuxTest();
+  const tmux = (args, opts) => server.runSync(args, opts);
   const safe = tmuxSessionForCell('agy.long');
   try {
-    const create = tmux(socket, ['new-session', '-d', '-s', safe, '-c', '/tmp',
+    const create = tmux(['new-session', '-d', '-s', safe, '-c', server.socketDir,
       '-P', '-F', '#{session_id}\t#{window_id}\t#{pane_id}', process.execPath, CELL_HOLD]);
     const [, wid, pid] = create.stdout.trim().split('\t');
-    tmux(socket, ['set-option', '-w', '-t', wid, 'remain-on-exit', 'on']);
-    tmux(socket, ['respawn-pane', '-k', '-c', '/tmp', '-t', pid, '/usr/bin/sleep', '10']);
-    const dead = tmux(socket, ['display-message', '-p', '-t', pid, '#{pane_dead}']).stdout.trim();
+    server.uccidiSessioneBoot();
+    tmux(['set-option', '-w', '-t', wid, 'remain-on-exit', 'on']);
+    tmux(['respawn-pane', '-k', '-c', server.socketDir, '-t', pid, '/usr/bin/sleep', '10']);
+    const dead = tmux(['display-message', '-p', '-t', pid, '#{pane_dead}']).stdout.trim();
     assert.equal(dead, '0', 'child longevo vivo');
-    assert.equal(tmux(socket, ['list-sessions', '-F', '#{session_name}']).stdout.trim(), safe);
-  } finally { cleanup(socket); }
+    assert.equal(tmux(['list-sessions', '-F', '#{session_name}']).stdout.trim(), safe);
+  } finally { await server.chiudi(); }
 });
 
 test('migrazione attiva: helper reale rinomina via $N e preserva il session ID', async () => {
-  const socket = `${sockName()}-mig`;
+  const server = await avviaTmuxTest();
+  const tmux = (args, opts) => server.runSync(args, opts);
   const safe = tmuxSessionForCell('agy.native');
   const legacy = 'cloud-agy_native'; // forma con cui tmux aveva creato la legacy
-  const wrapper = migrationWrapper(socket);
+  const wrapperBin = server.wrapper();
   try {
-    tmux(socket, ['new-session', '-d', '-s', legacy]);
-    const beforeId = tmux(socket, ['display-message', '-p', '-t', `=${legacy}`, '#{session_id}']).stdout.trim();
-    const result = await migrateLegacyTmuxSessions(wrapper.bin, dottedDefs('agy.native'));
+    tmux(['new-session', '-d', '-s', legacy]);
+    server.uccidiSessioneBoot();
+    const beforeId = tmux(['display-message', '-p', '-t', `=${legacy}`, '#{session_id}']).stdout.trim();
+    const result = await migrateLegacyTmuxSessions(wrapperBin, dottedDefs('agy.native'));
     assert.deepEqual(result.migrated, [{ id: 'agy.native', from: legacy, to: safe }]);
-    const afterId = tmux(socket, ['display-message', '-p', '-t', `=${safe}`, '#{session_id}']).stdout.trim();
+    const afterId = tmux(['display-message', '-p', '-t', `=${safe}`, '#{session_id}']).stdout.trim();
     assert.equal(afterId, beforeId, 'session ID preservato (stessa sessione, stesso attach)');
-    const ls = tmux(socket, ['list-sessions', '-F', '#{session_name}']).stdout.trim();
+    const ls = tmux(['list-sessions', '-F', '#{session_name}']).stdout.trim();
     assert.equal(ls, safe, 'sessione ora al nome v2 safe');
-  } finally { cleanup(socket); wrapper.cleanup(); }
+  } finally { await server.chiudi(); }
 });
 
 test('collisione reale: helper fallisce chiuso se legacy e v2 coesistono', async () => {
-  const socket = `${sockName()}-coll`;
+  const server = await avviaTmuxTest();
+  const tmux = (args, opts) => server.runSync(args, opts);
   const safe = tmuxSessionForCell('agy.native');
-  const wrapper = migrationWrapper(socket);
+  const wrapperBin = server.wrapper();
   try {
-    tmux(socket, ['new-session', '-d', '-s', safe]);             // target v2 gia' esistente
-    tmux(socket, ['new-session', '-d', '-s', 'cloud-agy_native']); // legacy da migrare
+    tmux(['new-session', '-d', '-s', safe]);             // target v2 gia' esistente
+    tmux(['new-session', '-d', '-s', 'cloud-agy_native']); // legacy da migrare
+    server.uccidiSessioneBoot();
     await assert.rejects(
-      () => migrateLegacyTmuxSessions(wrapper.bin, dottedDefs('agy.native')),
+      () => migrateLegacyTmuxSessions(wrapperBin, dottedDefs('agy.native')),
       (error) => error.code === 'TMUX_MIGRATION_TARGET_EXISTS',
     );
     // esito osservabile: due sessioni distinte, nessun merge/overwrite
-    const names = tmux(socket, ['list-sessions', '-F', '#{session_name}']).stdout.trim().split('\n').sort();
+    const names = tmux(['list-sessions', '-F', '#{session_name}']).stdout.trim().split('\n').sort();
     assert.deepEqual(names, [safe, 'cloud-agy_native'].sort(), 'nessuna seconda sessione sovrascritta');
-  } finally { cleanup(socket); wrapper.cleanup(); }
+  } finally { await server.chiudi(); }
 });
 
-test('start e stop di una cella con id puntato non lasciano sessioni orfane', () => {
-  const socket = `${sockName()}-ss`;
+test('start e stop di una cella con id puntato non lasciano sessioni orfane', async () => {
+  const server = await avviaTmuxTest();
+  const tmux = (args, opts) => server.runSync(args, opts);
   const safe = tmuxSessionForCell('cell.dotted');
   try {
     // start (crea safe + child longevo)
-    const create = tmux(socket, ['new-session', '-d', '-s', safe, '-c', '/tmp',
+    const create = tmux(['new-session', '-d', '-s', safe, '-c', server.socketDir,
       '-P', '-F', '#{session_id}\t#{window_id}\t#{pane_id}', process.execPath, CELL_HOLD]);
     const [sid, wid, pid] = create.stdout.trim().split('\t');
-    tmux(socket, ['set-option', '-w', '-t', wid, 'remain-on-exit', 'on']);
-    tmux(socket, ['respawn-pane', '-k', '-c', '/tmp', '-t', pid, '/usr/bin/sleep', '30']);
-    assert.equal(tmux(socket, ['list-sessions', '-F', '#{session_name}']).stdout.trim(), safe, 'avviata');
+    server.uccidiSessioneBoot();
+    tmux(['set-option', '-w', '-t', wid, 'remain-on-exit', 'on']);
+    tmux(['respawn-pane', '-k', '-c', server.socketDir, '-t', pid, '/usr/bin/sleep', '30']);
+    assert.equal(tmux(['list-sessions', '-F', '#{session_name}']).stdout.trim(), safe, 'avviata');
     // stop (kill-session -t $N)
-    tmux(socket, ['kill-session', '-t', sid]);
-    assert.equal(tmux(socket, ['list-sessions', '-F', '#{session_name}']).stdout.trim(), '', 'stop pulito, nessuna orfana');
-  } finally { cleanup(socket); }
+    tmux(['kill-session', '-t', sid]);
+    assert.equal(tmux(['list-sessions', '-F', '#{session_name}']).stdout.trim(), '', 'stop pulito, nessuna orfana');
+  } finally { await server.chiudi(); }
 });
 
 // IL RAMO DELLA PROROGA, pinnato in modo deterministico. L'integrazione tmux

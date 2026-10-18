@@ -14,7 +14,7 @@ async function boot(t, extra = {}) {
   const nodesPath = path.join(configDir, 'nodes.json'); nodes.initStore(nodesPath);
   const fleetDefsPath = path.join(configDir, 'fleet.json');
   fs.writeFileSync(fleetDefsPath, JSON.stringify({ schemaVersion:1, engines:[{id:'fixture',label:'fixture',command:'/bin/true',args:[],env:{},promptMode:'send-keys'}], cells:extra.cells || [{id:'reviewer',engine:'fixture',cwd:'/tmp',boot:false,tmuxSession:'lab-reviewer'}] }));
-  const runtime = createServer({ home, configDir, nodesPath, configPath: path.join(configDir, 'config.json'), tokenPath: path.join(configDir, 'token'),
+  const runtime = createServer({ protectSharedTmuxServer: false, home, configDir, nodesPath, configPath: path.join(configDir, 'config.json'), tokenPath: path.join(configDir, 'token'),
     ...extra, fleetDefsPath, fleetSeam: { available:true, cellStatus:async()=>({available:true,cells:(parseDefinitions(fs.readFileSync(fleetDefsPath,'utf8'))?.cells||[]).map(c=>({cell:c.id,tmuxSession:c.tmuxSession,active:false}))}) }, filesRoot: path.join(home, 'files'), port: 0, fleetEnabled: extra.fleetEnabled ?? true, tmuxBin: '/bin/true', sessionExistsSeam: () => true, pasteSeam: () => true,
     askSubmit: async () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: { platform: 'linux', uid: 1000, execImpl: () => { throw new Error('disabled'); }, serviceInstallPath: path.join(home, 'service'),

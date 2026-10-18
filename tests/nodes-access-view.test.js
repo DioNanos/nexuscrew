@@ -43,7 +43,7 @@ function boot(t) {
     spawnImpl: () => ({ pid: 4193999, unref() {} }),
     sshVersion: () => ({ major: 9, minor: 6 }),
   };
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,

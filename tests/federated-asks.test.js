@@ -253,7 +253,7 @@ function boot(t, { pasteCalls = null, seed = null } = {}) {
   };
   nodesStore.initStore(paths.nodesPath);
   if (seed) seed(configDir); // seed PRIMA di createServer: le ricevute si leggono al boot
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,

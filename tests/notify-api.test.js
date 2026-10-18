@@ -32,7 +32,7 @@ function fakeWebpush(behavior = {}) {
 async function startSrv(t, extra = {}) {
   const dir = tmpdir();
   const webpush = extra.webpush || fakeWebpush(extra.pushBehavior);
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     tokenPath: path.join(dir, 'token'),
     filesRoot: path.join(dir, 'files'),
     fleetEnabled: false,

@@ -36,7 +36,7 @@ test('fresh install -> background orchestration -> authenticated PWA wizard reac
     portAvailableImpl: async () => true,
     runInitImpl: (opts) => runInit(opts),
     startPortableImpl: () => {
-      runtime = createServer({
+      runtime = createServer({ protectSharedTmuxServer: false,
         home, configDir, configPath, tokenPath, port,
         filesRoot: path.join(home, 'NexusFiles'),
       });

@@ -8,45 +8,35 @@
 // puo' provarlo: qui la sessione ha DUE finestre, una morta (il supervisore) e
 // una viva, esattamente come sul campo.
 //
-// SICUREZZA: si usa una socket TEMPORANEA (`tmux -L <nome casuale>`), mai la
-// socket delle celle. Alla fine si uccide SOLO quel server di prova. Se `tmux`
+// SICUREZZA: si usa la fabbrica condivisa dei server di test (socket dedicato
+// `-L`, `-f /dev/null`, chiusura per PID): mai la socket delle celle. Se `tmux`
 // non c'e', il test si dichiara saltato invece di fallire.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const { PANES_FMT, NC_SUPERVISOR_OPT, statiSupervisore } = require('../lib/tmux/supervisor-pane.js');
+const { avviaTmuxTest } = require('./tmux-test-server.js');
 
 function tmuxDisponibile() {
   const r = spawnSync('tmux', ['-V'], { encoding: 'utf8' });
   return !r.error && r.status === 0;
 }
 
-function nuovoServer(t) {
-  // Una socket per test, con un nome che non puo' collidere con quelle vere.
-  const socket = `nc-test-${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
-  const tmux = (args, opts = {}) => execFileSync('tmux', ['-L', socket, ...args], { encoding: 'utf8', ...opts });
-  t.after(() => {
-    // SOLO questo server di prova, mai quello delle celle: `-L <socket>` e' una
-    // socket separata. E si cancella anche il FILE della socket: `kill-server`
-    // uccide il server ma lascia il file, e un test che gira spesso riempirebbe
-    // /tmp di socket morte (`tmux` la mette in `<tmpdir>/tmux-<uid>/`).
-    spawnSync('tmux', ['-L', socket, 'kill-server'], { encoding: 'utf8' });
-    for (const base of new Set([os.tmpdir(), '/tmp'])) {
-      let voci = [];
-      try { voci = fs.readdirSync(base); } catch (_) { continue; }
-      for (const voce of voci.filter((v) => v.startsWith('tmux-'))) {
-        try { fs.unlinkSync(path.join(base, voce, socket)); } catch (_) { /* non c'era */ }
-      }
-    }
-  });
-  return { socket, tmux };
+async function nuovoServer(t) {
+  const server = await avviaTmuxTest();
+  // La chiusura e' per PID con rimozione di socket e dir: mai kill-server.
+  t.after(() => server.chiudi());
+  // Convenzione del file: stdout come stringa, lancio su comando fallito.
+  const tmux = (args, opts = {}) => {
+    const r = server.runSync(args, opts);
+    if (r.code !== 0) throw new Error(`tmux ${args.join(' ')} fallito: ${r.stderr.trim() || r.stdout.trim()}`);
+    return r.stdout;
+  };
+  return { socket: server.socketName, tmux };
 }
 
-test('tmux vero: supervisore morto + seconda finestra viva → sessione senza supervisore', { skip: !tmuxDisponibile() && 'tmux non installato' }, (t) => {
-  const server = nuovoServer(t);
+test('tmux vero: supervisore morto + seconda finestra viva → sessione senza supervisore', { skip: !tmuxDisponibile() && 'tmux non installato' }, async (t) => {
+  const server = await nuovoServer(t);
   const { tmux } = server;
 
   // La sessione della cella: la prima finestra e' il supervisore, la seconda una
@@ -94,8 +84,8 @@ test('tmux vero: supervisore morto + seconda finestra viva → sessione senza su
   assert.equal(paneAttivoMorto, '0', 'il pane attivo della sessione e vivo: e proprio per questo il suo pane_dead non basta');
 });
 
-test('tmux vero: supervisore vivo → la sessione NON e senza supervisore', { skip: !tmuxDisponibile() && 'tmux non installato' }, (t) => {
-  const { tmux } = nuovoServer(t);
+test('tmux vero: supervisore vivo → la sessione NON e senza supervisore', { skip: !tmuxDisponibile() && 'tmux non installato' }, async (t) => {
+  const { tmux } = await nuovoServer(t);
   tmux(['new-session', '-d', '-s', 'cloud-Viva', '-x', '80', '-y', '24', 'sh', '-c', 'sleep 300']);
   const pane = tmux(['list-panes', '-t', 'cloud-Viva', '-F', '#{pane_id}']).trim();
   tmux(['set-option', '-p', '-t', pane, NC_SUPERVISOR_OPT, '1']);

@@ -157,7 +157,7 @@ test('reverse slot: il router reale del server porta un upgrade federato a 101',
   });
   store.atomicWriteStore(nodesPath, st);
 
-  const { server, app, watcher } = createServer({
+  const { server, app, watcher } = createServer({ protectSharedTmuxServer: false,
     home: dir, configDir, nodesPath,
     configPath: path.join(configDir, 'config.json'),
     tokenPath: path.join(configDir, 'token'),

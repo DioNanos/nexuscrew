@@ -45,7 +45,7 @@ test('server reale: lease introspect live espone il nodeId del node store', asyn
     launchGrant: grant.grant, challenge: challenge.challenge,
   });
 
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     home,
     configPath: path.join(configDir, 'config.json'),
     nodesPath,

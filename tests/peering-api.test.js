@@ -18,7 +18,7 @@ test('PWA invite -> public one-time join creates an inbound scoped peer', async 
   fs.writeFileSync(configPath, JSON.stringify({ roles: { client: true, node: false } }));
   const clientAcceptToken = 'pixel-accept-secret';
   let reverseProofReady = false;
-  const made = createServer({
+  const made = createServer({ protectSharedTmuxServer: false,
     home, configDir, configPath, nodesPath, tokenPath: path.join(configDir, 'token'),
     filesRoot: path.join(home, 'files'), fleetEnabled: false, port: 41820,
     fetchImpl: async (url, init = {}) => {
@@ -165,7 +165,7 @@ test('/pair/confirm maps a lost reverse-port allocation race to actionable 409',
   const configDir = path.join(home, '.nexuscrew');
   const nodesPath = path.join(configDir, 'nodes.json');
   store.atomicWriteStore(nodesPath, store.emptyStore('a'.repeat(32)));
-  const made = createServer({
+  const made = createServer({ protectSharedTmuxServer: false,
     home, configDir, nodesPath, tokenPath: path.join(configDir, 'token'),
     filesRoot: path.join(home, 'files'), fleetEnabled: false,
   });
@@ -211,7 +211,7 @@ test('PWA invite ignores retired rendezvous state and requires an explicit reach
   let st = store.emptyStore('c'.repeat(32));
   st = store.parseStore({ ...st, rendezvous: { ssh: 'user@relay.example', publishedPort: 43001, localPort: 41820, keyPath: path.join(configDir, 'rdv') } });
   store.atomicWriteStore(nodesPath, st);
-  const made = createServer({ home, configDir, configPath: path.join(configDir, 'config.json'), nodesPath,
+  const made = createServer({ protectSharedTmuxServer: false, home, configDir, configPath: path.join(configDir, 'config.json'), nodesPath,
     tokenPath: path.join(configDir, 'token'), filesRoot: path.join(home, 'files'), fleetEnabled: false, port: 41820 });
   await new Promise((resolve) => made.server.listen(0, '127.0.0.1', resolve));
   t.after(() => { made.server.close(); fs.rmSync(home, { recursive: true, force: true }); });

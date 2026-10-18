@@ -39,7 +39,7 @@ function boot(t, over = {}, seams = {}) {
     sshVersion: () => ({ major: 9, minor: 6 }),
     ...seams,
   };
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths, filesRoot: path.join(dir, 'files'), port: 41999,
     fleetEnabled: false, settingsSeams, ...over,
   });

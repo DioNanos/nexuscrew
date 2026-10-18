@@ -19,7 +19,7 @@ async function boot(t, over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncflt-'));
   const decksPath = path.join(dir, '.nexuscrew', 'decks.json');
   decksStore.initStore(decksPath);
-  const made = createServer({ home: dir, decksPath, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, ...over });
+  const made = createServer({ protectSharedTmuxServer: false, home: dir, decksPath, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, ...over });
   await new Promise((r) => made.server.listen(0, '127.0.0.1', r));
   t.after(() => { made.server.close(); fs.rmSync(dir, { recursive: true, force: true }); });
   return { base: `http://127.0.0.1:${made.server.address().port}`, token: made.token, decksPath };

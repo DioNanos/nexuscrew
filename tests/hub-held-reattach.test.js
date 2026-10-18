@@ -44,7 +44,7 @@ async function bootHub(t) {
     topologyCachePath: path.join(configDir, 'topology-cache.json'),
   };
   nodesStore.initStore(paths.nodesPath);
-  const { server, token } = createServer({ ...paths, filesRoot: path.join(dir, 'files'), port: 0 });
+  const { server, token } = createServer({ protectSharedTmuxServer: false, ...paths, filesRoot: path.join(dir, 'files'), port: 0 });
   await new Promise((res) => server.listen(0, '127.0.0.1', res));
   t.after(() => { try { server.close(); } catch (_) { /* already closed */ } });
   return { nodesPath: paths.nodesPath, port: server.address().port, token };

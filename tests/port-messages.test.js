@@ -77,7 +77,7 @@ test('il nodo (start) con la porta occupata: onListenError riceve il messaggio n
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncpm-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
     const port = await freePort(); const blocker = await occupy(port); t.after(() => blocker.close());
     const error = await new Promise((resolve) => {
-      const s = start({ home: dir, configDir: dir, configPath: path.join(dir, 'config.json'), tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'),
+      const s = start({ protectSharedTmuxServer: false, home: dir, configDir: dir, configPath: path.join(dir, 'config.json'), tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'),
         port, panelPort: 0, fleetEnabled: false, autoUpdate: false, log: () => {}, ownPortWaitMs: 0, lang, onListenError: resolve });
       t.after(() => { try { s.close(); } catch (_) { /* non in ascolto */ } });
     });

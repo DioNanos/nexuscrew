@@ -498,7 +498,7 @@ const { createServer } = require('../lib/server.js');
 
 async function bootServer(t, { nodesPath } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncproxy-'));
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     home: dir,
     tokenPath: path.join(dir, 'token'),
     filesRoot: path.join(dir, 'files'),

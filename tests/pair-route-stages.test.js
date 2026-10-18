@@ -98,7 +98,7 @@ function boot(t, fetchScript) {
       return { ready: false, attempts: 6, code: 'transport-not-ready', lastError };
     },
   };
-  const made = createServer({
+  const made = createServer({ protectSharedTmuxServer: false,
     home: dir, configDir, nodesPath,
     configPath: path.join(configDir, 'config.json'),
     tokenPath: path.join(configDir, 'token'),

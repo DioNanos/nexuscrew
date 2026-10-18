@@ -27,7 +27,7 @@ const BUILTIN_DEFS = {
 function boot(t, over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncflr-'));
   process.env.FAKE_TMUX_LOG = path.join(dir, 'tmux.log');
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     home: dir, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'), tmuxBin: FAKE_TMUX, ...over,
   });
   return new Promise((res) => server.listen(0, '127.0.0.1', () => {

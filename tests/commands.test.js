@@ -1070,7 +1070,7 @@ test('token rotate end-to-end: vecchio token 401, nuovo 200 (restart = reload cr
   const { createServer } = require('../lib/server.js');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-rot-'));
   const tokenPath = path.join(dir, 'token');
-  const s1 = createServer({ home: dir, tokenPath, nodesPath: path.join(dir, 'nodes.json'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, autoUpdate: false });
+  const s1 = createServer({ protectSharedTmuxServer: false, home: dir, tokenPath, nodesPath: path.join(dir, 'nodes.json'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, autoUpdate: false });
   await new Promise((res) => s1.server.listen(0, '127.0.0.1', res));
   const oldTok = s1.token;
   const base1 = `http://127.0.0.1:${s1.server.address().port}`;
@@ -1079,7 +1079,7 @@ test('token rotate end-to-end: vecchio token 401, nuovo 200 (restart = reload cr
   // rotazione atomica del file token (service non attivo nel test -> nessun restart reale)
   tokenRotate({ home: dir, configDir: dir, tokenPath, platform: 'linux', log: () => {}, execImpl: () => { throw new Error('inactive'); } });
   // restart-equivalente: un nuovo server rilegge il file -> nuove credenziali
-  const s2 = createServer({ home: dir, tokenPath, nodesPath: path.join(dir, 'nodes.json'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, autoUpdate: false });
+  const s2 = createServer({ protectSharedTmuxServer: false, home: dir, tokenPath, nodesPath: path.join(dir, 'nodes.json'), filesRoot: path.join(dir, 'files'), fleetEnabled: false, autoUpdate: false });
   await new Promise((res) => s2.server.listen(0, '127.0.0.1', res));
   t.after(() => { s2.server.close(); s2.watcher.close(); });
   const base2 = `http://127.0.0.1:${s2.server.address().port}`;

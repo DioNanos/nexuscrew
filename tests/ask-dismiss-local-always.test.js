@@ -40,7 +40,7 @@ async function boot(t, { withReplyGrant = false } = {}) {
     askReplyAccess: withReplyGrant, filesReadAccess: false, liveHostAccess: false, panelAccess: false, peerOperatorAccess: false,
   });
   nodes.atomicWriteStore(nodesPath, st);
-  const runtime = createServer({
+  const runtime = createServer({ protectSharedTmuxServer: false,
     home, configDir, nodesPath, configPath: path.join(configDir, 'config.json'), tokenPath: path.join(configDir, 'token'),
     readonlyDefault: false, eventFeedClientPollMs: 20, filesRoot: path.join(home, 'files'), port: 0, fleetEnabled: false,
     sessionExistsSeam: () => true, pasteSeam: () => true,
