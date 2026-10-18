@@ -139,7 +139,12 @@ test('IL BOOTSTRAP ripara: la correzione arriva ad avvio, non solo chiamando la 
     cells: [],
   });
 
-  await createBuiltinFleet({ home, fleetDefsPath: defsPath });
+  // protectSharedTmuxServer: false — questo file collauda il backfill di
+  // desktop.local, non la guardia dello shared server: con il default (true)
+  // l'avvio del provider esegue `tmux start-server ; exit-empty off` col
+  // tmuxBin reale sulla socket DI DEFAULT, e partorisce un server orfano che
+  // nessun teardown di questo file conosce (0 sessioni, immortale).
+  await createBuiltinFleet({ home, fleetDefsPath: defsPath, protectSharedTmuxServer: false });
 
   const daDisco = loadDefinitions(defsPath).engines.find((e) => e.id === 'desktop.local');
   assert.ok(path.isAbsolute(daDisco.command),
@@ -157,7 +162,7 @@ test("IL BOOTSTRAP non AGGIUNGE desktop.local a chi non ce l'ha", async () => {
   const defsPath = path.join(home, 'fleet.json');
   atomicWrite(defsPath, { schemaVersion: 1, engines: [], cells: [] });
 
-  await createBuiltinFleet({ home, fleetDefsPath: defsPath });
+  await createBuiltinFleet({ home, fleetDefsPath: defsPath, protectSharedTmuxServer: false });
 
   const dopo = loadDefinitions(defsPath).engines.find((e) => e.id === 'desktop.local');
   assert.equal(dopo, undefined, 'il bootstrap ha aggiunto un engine che deve restare manuale');
@@ -304,7 +309,7 @@ test("IL BOOTSTRAP passa il logger: il fallimento non resta muto", async () => {
   const detto = [];
   fs.chmodSync(home, 0o500); // lo store non e' scrivibile: la riparazione fallisce
   try {
-    await createBuiltinFleet({ home, fleetDefsPath: defsPath, log: (m) => detto.push(String(m)) });
+    await createBuiltinFleet({ home, fleetDefsPath: defsPath, protectSharedTmuxServer: false, log: (m) => detto.push(String(m)) });
     assert.ok(detto.some((m) => /desktop\.local/.test(m)),
       `l'avvio non ha detto nulla del fallimento: ${JSON.stringify(detto.slice(0, 5))}`);
   } finally {
