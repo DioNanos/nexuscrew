@@ -1,13 +1,77 @@
+import { useEffect, useRef, useState } from 'react';
 import { t } from '../../lib/i18n.js';
 import { catalogEntry } from '../../lib/fleet-forms.js';
 // Anticipazione lato UI: stesso validatore del round-trip di backup (gia'
 // sorvegliato contro il validatore autorevole del backend), v. CellEditor.jsx.
 import { validBackupPanelUrl } from '../../lib/fleet-backup.js';
 
+// Sezione «puoi usare questi»: l'elenco dei modelli scoperti per l'engine, con
+// la provenienza DISCRETA di ogni campo (utente / API / catalogo / backup) e
+// il modello non più nelle API evidenziato in rosso ma comunque selezionabile
+// e provabile. `fetchModels(engineId, refresh)` è iniettata dal parent: nei
+// test è un fake, mai un provider vero. Stale ed errori di rete sono una
+// riga: l'editor non si blocca mai per la scoperta.
+const MODEL_FIELDS = [
+  ['contextWindow', 'fleet-models-field-context'],
+  ['maxTokens', 'fleet-models-field-output'],
+  ['tools', 'fleet-models-field-tools'],
+  ['vision', 'fleet-models-field-vision'],
+  ['reasoning', 'fleet-models-field-reasoning'],
+];
+const SOURCE_LABELS = { user: 'fleet-models-source-user', api: 'fleet-models-source-api', public: 'fleet-models-source-public', backup: 'fleet-models-source-backup' };
+
+function ModelDiscoverySection({ engineId, fetchModels, onPick }) {
+  const [view, setView] = useState({ loading: true, refreshing: false, result: null, error: '' });
+  // Il parent puo' passare una funzione inline (nuova identita' a ogni suo
+  // render): l'effetto dipende SOLO dall'engine, la funzione la legge via ref.
+  const fetchRef = useRef(fetchModels);
+  fetchRef.current = fetchModels;
+  useEffect(() => {
+    let alive = true;
+    setView({ loading: true, refreshing: false, result: null, error: '' });
+    fetchRef.current(engineId, false)
+      .then((result) => { if (alive) setView({ loading: false, refreshing: false, result, error: '' }); })
+      .catch(() => { if (alive) setView({ loading: false, refreshing: false, result: null, error: t('fleet-models-error') }); });
+    return () => { alive = false; };
+  }, [engineId]);
+  const refresh = () => {
+    if (view.loading || view.refreshing) return;
+    setView({ ...view, refreshing: true });
+    fetchRef.current(engineId, true)
+      .then((result) => { setView({ loading: false, refreshing: false, result, error: '' }); })
+      .catch(() => { setView({ loading: false, refreshing: false, result: view.result, error: t('fleet-models-error') }); });
+  };
+  const result = view.result;
+  const models = result && Array.isArray(result.models) ? result.models : [];
+  return <section className="nc-fleet-models" aria-label={t('fleet-models-title')}>
+    <div className="nc-fleet-models-head">
+      <b>{t('fleet-models-usable')}</b>
+      <button type="button" className="nc-btn ghost" disabled={view.loading || view.refreshing} onClick={refresh}>{t(view.refreshing ? 'fleet-models-refreshing' : 'fleet-models-refresh')}</button>
+    </div>
+    {view.loading && <small>{t('fleet-models-loading')}</small>}
+    {!view.loading && view.error && <small className="nc-err">{view.error}</small>}
+    {!view.loading && !view.error && result && result.stale === true && <small className="nc-fleet-models-note">{t('fleet-models-stale')}</small>}
+    {!view.loading && result && result.supported === false && <small>{t('fleet-models-unsupported')}</small>}
+    {!view.loading && result && result.supported !== false && !models.length && <small>{t('fleet-models-none')}</small>}
+    {models.map((m) => <div key={m.id} className={`nc-fleet-model-row${m.inApi === false ? ' nc-model-not-in-api' : ''}`}>
+      <button type="button" className="nc-btn ghost nc-fleet-model-pick" aria-label={t('fleet-models-use').replace('{model}', m.id)} onClick={() => onPick(m.id)}>{m.id}</button>
+      {m.inApi === false && <b className="nc-err">{t('fleet-models-not-in-api')}</b>}
+      {MODEL_FIELDS.map(([field, label]) => {
+        const src = m.fieldSources ? m.fieldSources[field] : undefined;
+        return <span key={field} className="nc-fleet-model-field">
+          {t(label)}: {m[field] === undefined ? '–' : String(m[field])}
+          {src && <small className="nc-fleet-model-src" title={t('fleet-models-source-of').replace('{source}', t(SOURCE_LABELS[src] || src))}>{t(SOURCE_LABELS[src] || src)}</small>}
+        </span>;
+      })}
+    </div>)}
+    {result && result.supported !== false && <small className="nc-fleet-models-note">{t('fleet-models-cap').replace('{cap}', String(result.cap || 128))}</small>}
+  </section>;
+}
+
 // Editor di un engine (managed o custom). State-less rispetto alle API: riceve
 // lo stato del form e lo risolleva al parent (FleetTab), che è l'unico a
 // eseguire le mutazioni. Estratto invariato da FleetTab.jsx.
-export default function EngineEditor({ state, setState, busy, onSave, catalog }) {
+export default function EngineEditor({ state, setState, busy, onSave, catalog, fetchModels }) {
   const f = state.form; const set = (patch) => setState({ ...state, form: { ...f, ...patch } });
   const rows = f.envRows || [];
   const clients = [...new Map(catalog.map((p) => [p.client, p.clientLabel || p.client])).entries()];
@@ -40,6 +104,11 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog })
       {f.client !== 'shell' && <>
         <input value={f.managedModel} list="nc-managed-models" placeholder={t(selectedProfile?.requiresModel ? 'fleet-model-required' : 'fleet-model-default')} onChange={(e) => set({ managedModel: e.target.value })} />
         <datalist id="nc-managed-models">{[...(selectedProfile?.models || []), ...(f.modelOptions || [])].filter((value, index, all) => value && all.indexOf(value) === index).map((model) => <option key={model} value={model} />)}</datalist>
+        {fetchModels && (state.mode === 'edit' ? f.id : selectedProfile?.id) && <ModelDiscoverySection
+          engineId={state.mode === 'edit' ? f.id : selectedProfile?.id}
+          fetchModels={fetchModels}
+          onPick={(id) => set({ managedModel: id })}
+        />}
       </>}
       {selectedProfile?.supportsUnsafe ? <select value={f.permissionPolicy} onChange={(e) => set({ permissionPolicy: e.target.value })}><option value="standard">{t('fleet-standard-permissions')}</option><option value="unsafe">{t('fleet-unsafe-permissions')}</option></select> : <small>{t('fleet-standard-permissions')}</small>}
       {selectedProfile?.supportsUnsafe && f.permissionPolicy === 'unsafe' && <small className="nc-err">{t('fleet-unsafe-warning')}</small>}

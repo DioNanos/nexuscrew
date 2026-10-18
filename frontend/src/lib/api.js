@@ -168,6 +168,13 @@ export const fleetRemoveModel = (t, id, engine, route) => jsonFetch(fleetPath(ro
 // si sta guardando, con la credenziale di QUEL nodo — provarlo sul proprio non
 // risponderebbe alla domanda che ci si sta facendo.
 export const fleetModelTest = (t, engine, model, route) => jsonFetch(fleetPath(route, 'model-test'), t, { method: 'POST', body: { engine, model } });
+// «Puoi usare questi»: la scoperta modelli dell'engine (con provenienza campo
+// per campo). `refresh` salta la cache lato nodo. La chiave dell'engine resta
+// sul nodo: la risposta non la contiene per costruzione.
+export const fleetEngineModels = (t, engine, refresh = false, route) => jsonFetch(
+  `${fleetPath(route, 'engine-models')}?engine=${encodeURIComponent(engine)}${refresh ? '&refresh=1' : ''}`, t,
+  { timeoutMs: FLEET_ACTION_TIMEOUT_MS },
+);
 export const fleetDefineCell = (t, def, route) => jsonFetch(fleetPath(route, 'define-cell'), t, { method: 'POST', body: { def } });
 export const fleetEditCell = (t, id, patch, route) => jsonFetch(fleetPath(route, 'edit-cell'), t, { method: 'POST', body: { id, patch } });
 export const fleetRemoveCell = (t, id, stop = false, route) => jsonFetch(fleetPath(route, 'remove-cell'), t, { method: 'POST', body: { id, stop } });
