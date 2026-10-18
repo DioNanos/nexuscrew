@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/api.js', () => ({
   apiFetch: vi.fn(),
@@ -110,7 +110,24 @@ describe('FilesPanel riga file e scatole', () => {
 });
 
 describe('FilesPanel riga a due livelli e gruppi per giorno', () => {
-  const oggi = Date.now();
+  // Fixed clock at local noon: the day group of an mtime-driven file (no name
+  // stamp) must not depend on when the suite runs. Between midnight and 01:00
+  // an mtime of "one hour ago" falls on the previous day and the "raggruppa
+  // per giorno" expectations break. Only Date is faked, so testing-library
+  // waits keep using real timers.
+  let oggi;
+
+  beforeEach(() => {
+    const mezzogiorno = new Date();
+    mezzogiorno.setHours(12, 0, 0, 0);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(mezzogiorno);
+    oggi = Date.now();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   function lista(files) {
     return { ok: true, json: async () => ({ inbox: [], outbox: files }) };
