@@ -12,6 +12,7 @@ const { spawn } = require('node:child_process');
 const pidf = require('../lib/cli/pidfile.js');
 const { sorvegliaStallo } = require('./stall-watchdog.js');
 const { elencaServerTmuxLeak, chiudiServerTmux } = require('./tmux-containment.js');
+const { elencaSupervisorTunnelLeak, chiudiSupervisorTunnel } = require('./tunnel-supervisor-containment.js');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-tests-'));
 const tmuxRoot = path.join(root, 'tmux');
@@ -119,6 +120,17 @@ async function main() {
   const tmuxLeaks = elencaServerTmuxLeak(root);
   const tmuxChiusi = tmuxLeaks.length ? await chiudiServerTmux(tmuxLeaks) : [];
 
+  // Terzo invariante, la rete che chiude il punto cieco della prima: nessun
+  // supervisor dei tunnel con environ (HOME o TMPDIR) sotto la root della
+  // suite puo' restare vivo, QUALUNQUE sia il posto dove e' finito il suo
+  // pidfile. La prima rete legge i pidfile sotto root; un test che piazza la
+  // fixture home fuori dalla root (mkdtemp dritta in TMPDIR) le sfugge, ma il
+  // supervisor eredita comunque la HOME del worker che l'ha partorito, e
+  // quella sta sotto root. Chiusura per PID e per segnale, come i tmux; il
+  // supervisor di produzione (HOME reale) e' fuori dal filtro per costruzione.
+  const tunnelLeaks = elencaSupervisorTunnelLeak(root);
+  const tunnelChiusi = tunnelLeaks.length ? await chiudiSupervisorTunnel(tunnelLeaks) : [];
+
   fs.rmSync(root, { recursive: true, force: true });
   if (leaked.length) {
     process.stderr.write(`\nNexusCrew test containment failure: ${leaked.length} detached tunnel supervisor(s) were cleaned up.\n`);
@@ -126,7 +138,10 @@ async function main() {
   if (tmuxLeaks.length) {
     process.stderr.write(`\nNexusCrew test containment failure: ${tmuxChiusi.length} tmux server(s) were cleaned up (${tmuxLeaks.map((l) => `${l.pid} ${l.prova}`).join('; ')}).\n`);
   }
-  if (leaked.length || tmuxLeaks.length) process.exit(1);
+  if (tunnelLeaks.length) {
+    process.stderr.write(`\nNexusCrew test containment failure: ${tunnelChiusi.length} tunnel supervisor(s) were cleaned up by environ (${tunnelLeaks.map((l) => `${l.pid} ${l.prova}`).join('; ')}).\n`);
+  }
+  if (leaked.length || tmuxLeaks.length || tunnelLeaks.length) process.exit(1);
   process.exit(code);
 }
 
