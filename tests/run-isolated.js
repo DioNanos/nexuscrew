@@ -1,15 +1,17 @@
 'use strict';
 
 // Official test entrypoint.  Besides per-worker HOME isolation, this enforces
-// the most important containment invariant: a passing suite may not leave a
-// detached NexusCrew tunnel supervisor alive.  Any owned leak is terminated
-// by its exact pid/cmd metadata and still makes the suite fail.
+// the most important containment invariants: a passing suite may not leave a
+// detached NexusCrew tunnel supervisor alive, NOR a tmux server alive.  Any
+// owned leak is terminated by its exact pid/cmd or environ metadata and still
+// makes the suite fail.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const pidf = require('../lib/cli/pidfile.js');
 const { sorvegliaStallo } = require('./stall-watchdog.js');
+const { elencaServerTmuxLeak, chiudiServerTmux } = require('./tmux-containment.js');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-tests-'));
 const tmuxRoot = path.join(root, 'tmux');
@@ -107,11 +109,24 @@ async function main() {
     if (await terminateOwnedLeak(pidPath, meta)) leaked.push({ pid: meta.pid, pidPath });
   }
 
+  // Secondo invariante: nessun server tmux con environ sotto la root della
+  // suite puo' restare vivo. Il match e' sull'ENVIRON (TMUX_TMPDIR/HOME sotto
+  // root), non sulla cmdline: un server tmux conserva la cmdline del client
+  // che l'ha partorito. Per PID e per segnale: `kill-server` sugli orfani puo'
+  // essere negato dall'alias della guardia. Il filtro per prefisso sotto la
+  // mkdtemp fresca di QUESTA run rende impossibile toccare il server
+  // dell'operatore (HOME reale, fuori da qui).
+  const tmuxLeaks = elencaServerTmuxLeak(root);
+  const tmuxChiusi = tmuxLeaks.length ? await chiudiServerTmux(tmuxLeaks) : [];
+
   fs.rmSync(root, { recursive: true, force: true });
   if (leaked.length) {
     process.stderr.write(`\nNexusCrew test containment failure: ${leaked.length} detached tunnel supervisor(s) were cleaned up.\n`);
-    process.exit(1);
   }
+  if (tmuxLeaks.length) {
+    process.stderr.write(`\nNexusCrew test containment failure: ${tmuxChiusi.length} tmux server(s) were cleaned up (${tmuxLeaks.map((l) => `${l.pid} ${l.prova}`).join('; ')}).\n`);
+  }
+  if (leaked.length || tmuxLeaks.length) process.exit(1);
   process.exit(code);
 }
 
