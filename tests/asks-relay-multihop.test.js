@@ -16,7 +16,7 @@ async function boot(t, label) {
   const configDir = path.join(home, '.nexuscrew'); fs.mkdirSync(configDir);
   const nodesPath = path.join(configDir, 'nodes.json'); store.initStore(nodesPath);
   const pastes = [];
-  const runtime = createServer({ home, configDir, nodesPath, configPath: path.join(configDir, 'config.json'),
+  const runtime = createServer({ protectSharedTmuxServer: false, home, configDir, nodesPath, configPath: path.join(configDir, 'config.json'),
     tokenPath: path.join(configDir, 'token'), filesRoot: path.join(home, 'files'),
     port: 0, fleetEnabled: false, sessionExistsSeam: () => true,
     pasteSeam: async (session, text) => { pastes.push({ session, text }); return true; },

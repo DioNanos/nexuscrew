@@ -90,7 +90,7 @@ test('createServer mounts authenticated diagnostics and records lifecycle only i
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-diag-server-'));
   const diagnostics = createDiagnostics();
   diagnostics.setVerbose(true, 300);
-  const instance = createServer({
+  const instance = createServer({ protectSharedTmuxServer: false,
     home: dir, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'),
     fleetEnabled: false, diagnostics, autoUpdate: false,
   });

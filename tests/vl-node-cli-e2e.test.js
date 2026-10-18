@@ -67,7 +67,7 @@ test('compiled VL pairs, manages one cell, reconnects and exits stale session fa
 
   let made;
   const startServer = async (port = 0) => {
-    made = createServer({
+    made = createServer({ protectSharedTmuxServer: false,
       home, configDir, nodesPath, vlNodesPath, tokenPath,
       filesRoot: path.join(home, 'files'), fleetEnabled: false, autoUpdate: false,
       bind: '127.0.0.1', port, log: () => {},

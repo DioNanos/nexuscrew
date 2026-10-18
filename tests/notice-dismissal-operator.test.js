@@ -29,7 +29,7 @@ function serverFor(dir, extra = {}) {
     tokenPath: path.join(configDir, 'token'),
   };
   if (!fs.existsSync(paths.nodesPath)) nodesStore.initStore(paths.nodesPath);
-  const made = createServer({
+  const made = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,

@@ -45,7 +45,7 @@ async function boot(t, over = {}) {
   nodesStore.initStore(paths.nodesPath);
   const nodeId = nodesStore.loadStore(paths.nodesPath).nodeId;
   const adapter = fakeAdapter();
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 0,

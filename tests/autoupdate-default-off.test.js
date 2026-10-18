@@ -60,7 +60,7 @@ async function boot(t, cfgOver = {}) {
     if (prevFile === undefined) delete process.env.NEXUSCREW_CONFIG_FILE; else process.env.NEXUSCREW_CONFIG_FILE = prevFile;
     if (prevAu === undefined) delete process.env.NEXUSCREW_AUTO_UPDATE; else process.env.NEXUSCREW_AUTO_UPDATE = prevAu;
   };
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     home: dir, configDir, configPath, nodesPath, tokenPath: path.join(configDir, 'token'),
     filesRoot: path.join(dir, 'files'), port: 41999, fleetEnabled: false, settingsSeams,
   });

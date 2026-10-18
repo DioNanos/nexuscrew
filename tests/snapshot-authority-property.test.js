@@ -282,7 +282,7 @@ async function runCase(c, fakeOwnerPort, rootDir) {
   };
   fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks: [alias] }), { mode: 0o600 });
 
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,

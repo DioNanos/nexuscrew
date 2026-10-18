@@ -26,7 +26,7 @@ function home(t) {
 const serverOpts = (dir, port, extra = {}) => ({
   home: dir, configDir: path.join(dir, '.nexuscrew'), configPath: path.join(dir, '.nexuscrew', 'config.json'),
   tokenPath: path.join(dir, '.nexuscrew', 'token'), nodesPath: path.join(dir, '.nexuscrew', 'nodes.json'),
-  filesRoot: path.join(dir, 'files'), bind: '127.0.0.1', port, panelPort: 0, autoUpdate: false, fleetEnabled: false, log: () => {}, lang: 'en', ...extra,
+  filesRoot: path.join(dir, 'files'), bind: '127.0.0.1', port, panelPort: 0, autoUpdate: false, fleetEnabled: false, log: () => {}, lang: 'en', protectSharedTmuxServer: false, ...extra,
 });
 
 // ---- P1: il ripiego della porta principale non si persiste piu' -------------------------------------------------

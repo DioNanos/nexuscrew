@@ -7,9 +7,10 @@ vi.mock('../../lib/api.js', () => ({ listDirs: vi.fn() }));
 
 import CellEditor from './CellEditor.jsx';
 
+// Le label sono minuscole come nel payload reale delle definizioni.
 const engines = [
-  { id: 'claude.native', label: 'Claude', managed: { client: 'claude', model: '' } },
-  { id: 'shell.local', label: 'Shell', managed: { client: 'shell', model: '' } },
+  { id: 'claude.native', label: 'claude', managed: { client: 'claude', model: '' } },
+  { id: 'shell.local', label: 'shell', managed: { client: 'shell', model: '' } },
 ];
 
 describe('CellEditor — Shell locale', () => {

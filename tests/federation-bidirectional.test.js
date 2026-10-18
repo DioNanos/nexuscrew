@@ -36,7 +36,7 @@ async function boot(t, tag, peerName, peerPort, peerId, creds) {
     nodeId: peerId, token: creds.token, acceptToken: creds.acceptToken,
   });
   store.atomicWriteStore(nodesPath, st);
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     home: dir, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'),
     nodesPath, tmuxBin: FAKE_TMUX, fleetEnabled: false,
   });

@@ -94,7 +94,7 @@ test('createServer: legacy roles.node/rendezvous non apre una seconda connession
   } });
   nodesStore.atomicWriteStore(nodesPath, st);
   const calls = [];
-  const made = createServer({
+  const made = createServer({ protectSharedTmuxServer: false,
     home: dir, configDir, nodesPath, tokenPath: path.join(configDir, 'token'),
     filesRoot: path.join(dir, 'files'), fleetEnabled: false, roles: { client: false, node: true },
     tunnelLogFd: null,
@@ -124,7 +124,7 @@ test('createServer: outbound autostart usa SSH reale dopo listen; -R solo con Sh
     const reconciled = [];
     const shareReconciled = [];
     const revokeBoot = [];
-    const made = createServer({
+    const made = createServer({ protectSharedTmuxServer: false,
       home: dir, configDir, nodesPath, tokenPath: path.join(configDir, 'token'),
       filesRoot: path.join(dir, 'files'), fleetEnabled: false, tunnelLogFd: null,
       tunnelSpawnSyncImpl: () => ({ stderr: 'OpenSSH_9.6p1\n' }),

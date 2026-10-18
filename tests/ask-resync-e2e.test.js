@@ -34,7 +34,7 @@ function boot(t, dir, { cleanup = true } = {}) {
     tokenPath: path.join(configDir, 'token'),
   };
   nodesStore.initStore(paths.nodesPath);
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,
@@ -283,7 +283,7 @@ test('E2E: recupero fallito → una richiesta di snapshot per scadenza, non uno 
     tokenPath: path.join(configDir, 'token'),
   };
   nodesStore.initStore(paths.nodesPath);
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,
@@ -372,7 +372,7 @@ function brokenRecoveryTest(label, failureMode, expectLastError) {
       tokenPath: path.join(configDir, 'token'),
     };
     nodesStore.initStore(paths.nodesPath);
-    const { server, token, watcher } = createServer({
+    const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
       ...paths,
       filesRoot: path.join(dir, 'files'),
       port: 41999,
@@ -466,7 +466,7 @@ test('E2E: frame malformato dopo snapshot valido — uno snapshot per finestra',
     tokenPath: path.join(configDir, 'token'),
   };
   nodesStore.initStore(paths.nodesPath);
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,
@@ -552,7 +552,7 @@ test('E2E: N GET /api/asks in 1 s → al massimo uno snapshot per owner', async 
     originNode: OWNER, ownerId: OWNER, ownerAskId: 'a3977abd',
   };
   fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks: [alias] }), { mode: 0o600 });
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,
@@ -633,7 +633,7 @@ test('E2E: snapshot in volo — lo skip non chiude alias aperti', async (t) => {
     originNode: OWNER, ownerId: OWNER, ownerAskId: 'a3977abd',
   };
   fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks: [alias] }), { mode: 0o600 });
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,
@@ -713,7 +713,7 @@ test('E2E: corpo che non finisce — la porta aborta e la GET risponde', async (
     originNode: OWNER, ownerId: OWNER, ownerAskId: 'h4ng1ng',
   };
   fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks: [alias] }), { mode: 0o600 });
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,
@@ -800,7 +800,7 @@ test('E2E: skip in finestra → un retry alla scadenza chiude l\'alias senza nuo
     originNode: OWNER, ownerId: OWNER, ownerAskId: 'a3977abd',
   };
   fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks: [alias] }), { mode: 0o600 });
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,
@@ -880,7 +880,7 @@ function unsubRejectionTest(label, snapBody, subscribed = false) {
       originNode: OWNER, ownerId: OWNER, ownerAskId: 'a3977abd',
     };
     fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks: [alias] }), { mode: 0o600 });
-    const { server, token, watcher } = createServer({
+    const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
       ...paths,
       filesRoot: path.join(dir, 'files'),
       port: 41999,
@@ -985,7 +985,7 @@ test('E2E: retry programmato del reconcile — skipped in finestra arma un secon
     originNode: OWNER, ownerId: OWNER, ownerAskId: 'a3977abd',
   };
   fs.writeFileSync(path.join(configDir, 'asks.json'), JSON.stringify({ asks: [alias] }), { mode: 0o600 });
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,

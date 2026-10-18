@@ -1,15 +1,19 @@
 'use strict';
 
 // Official test entrypoint.  Besides per-worker HOME isolation, this enforces
-// the most important containment invariant: a passing suite may not leave a
-// detached NexusCrew tunnel supervisor alive.  Any owned leak is terminated
-// by its exact pid/cmd metadata and still makes the suite fail.
+// the most important containment invariants: a passing suite may not leave a
+// detached NexusCrew tunnel supervisor alive, NOR a tmux server alive.  Any
+// owned leak is terminated by its exact pid/cmd or environ metadata and still
+// makes the suite fail.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const pidf = require('../lib/cli/pidfile.js');
 const { sorvegliaStallo } = require('./stall-watchdog.js');
+const { elencaServerTmuxLeak, chiudiServerTmux } = require('./tmux-containment.js');
+const { elencaSupervisorTunnelLeak, chiudiSupervisorTunnel } = require('./tunnel-supervisor-containment.js');
+const { allPidfiles, chiudiLeakDaPidfile } = require('./pidfile-containment.js');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-tests-'));
 const tmuxRoot = path.join(root, 'tmux');
@@ -19,37 +23,6 @@ const testFiles = fs.readdirSync(__dirname)
   .filter((name) => name.endsWith('.test.js'))
   .sort()
   .map((name) => path.join(__dirname, name));
-
-function allPidfiles(dir, found = []) {
-  let entries = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return found; }
-  for (const entry of entries) {
-    const target = path.join(dir, entry.name);
-    if (entry.isDirectory()) allPidfiles(target, found);
-    else if (entry.isFile() && entry.name.endsWith('.pid') && path.basename(path.dirname(target)) === 'tunnels') found.push(target);
-  }
-  return found;
-}
-
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function terminateOwnedLeak(pidPath, meta) {
-  if (!meta || !pidf.isAlive(meta)) return false;
-  const live = pidf.readCmdline(meta.pid);
-  if (!live.includes('tunnel-supervisor.js')) return false;
-
-  try { process.kill(meta.pid, 'SIGTERM'); } catch (_) {}
-  const deadline = Date.now() + 2500;
-  while (Date.now() < deadline && pidf.pidExists(meta.pid)) await delay(50);
-  if (pidf.pidExists(meta.pid)) {
-    const still = pidf.readCmdline(meta.pid);
-    if (still.includes('tunnel-supervisor.js')) {
-      try { process.kill(meta.pid, 'SIGKILL'); } catch (_) {}
-    }
-  }
-  pidf.removePidfile(pidPath);
-  return true;
-}
 
 async function main() {
   const childEnv = {
@@ -102,16 +75,64 @@ async function main() {
   });
 
   const leaked = [];
+  const anomali = [];
   for (const pidPath of allPidfiles(root)) {
-    const meta = pidf.readPidfile(pidPath);
-    if (await terminateOwnedLeak(pidPath, meta)) leaked.push({ pid: meta.pid, pidPath });
+    const esito = await chiudiLeakDaPidfile(pidPath, pidf.readPidfile(pidPath), root);
+    if (!esito) continue;
+    if (esito.esito === 'chiuso') leaked.push({ pid: esito.pid, pidPath: esito.pidPath });
+    else anomali.push(esito);
   }
 
-  fs.rmSync(root, { recursive: true, force: true });
+  // Secondo invariante: nessun server tmux con environ sotto la root della
+  // suite puo' restare vivo. Il match e' sull'ENVIRON (TMUX_TMPDIR/HOME sotto
+  // root), non sulla cmdline: un server tmux conserva la cmdline del client
+  // che l'ha partorito. Per PID e per segnale: `kill-server` sugli orfani puo'
+  // essere negato dall'alias della guardia. Il filtro per prefisso sotto la
+  // mkdtemp fresca di QUESTA run rende impossibile toccare il server
+  // dell'operatore (HOME reale, fuori da qui).
+  const tmuxLeaks = elencaServerTmuxLeak(root);
+  const tmuxChiusi = tmuxLeaks.length ? await chiudiServerTmux(tmuxLeaks) : [];
+
+  // Terzo invariante, la rete che chiude il punto cieco della prima: nessun
+  // supervisor dei tunnel con environ (HOME o TMPDIR) sotto la root della
+  // suite puo' restare vivo, QUALUNQUE sia il posto dove e' finito il suo
+  // pidfile. La prima rete legge i pidfile sotto root; un test che piazza la
+  // fixture home fuori dalla root (mkdtemp dritta in TMPDIR) le sfugge, ma il
+  // supervisor eredita comunque la HOME del worker che l'ha partorito, e
+  // quella sta sotto root. Chiusura per PID e per segnale, come i tmux; il
+  // supervisor di produzione (HOME reale) e' fuori dal filtro per costruzione.
+  const tunnelLeaks = elencaSupervisorTunnelLeak(root);
+  const tunnelChiusi = tunnelLeaks.length ? await chiudiSupervisorTunnel(tunnelLeaks) : [];
+
+  // L'EVIDENZA DEVE SOPRAVVIVERE ALLA RUN. Il modulo conserva il pidfile quando
+  // trova un'anomalia (tests/pidfile-containment.js), ma quel pidfile sta SOTTO
+  // la root: cancellare la root qui lo porta via con lei, e di un'anomalia resta
+  // solo una riga di stderr su una run gia' finita — cioe' niente da guardare.
+  // Con un'anomalia la root si CONSERVA e il suo path si stampa, dicendo che va
+  // rimossa a mano; in tutti gli altri casi la pulizia resta com'e', leak chiusi
+  // compresi: un leak chiuso e' risolto, e lasciare la root a ogni rosso
+  // riempirebbe TMPDIR di rifiuti.
+  const rootConservata = anomali.length > 0;
+  if (!rootConservata) fs.rmSync(root, { recursive: true, force: true });
   if (leaked.length) {
     process.stderr.write(`\nNexusCrew test containment failure: ${leaked.length} detached tunnel supervisor(s) were cleaned up.\n`);
-    process.exit(1);
   }
+  if (tmuxLeaks.length) {
+    process.stderr.write(`\nNexusCrew test containment failure: ${tmuxChiusi.length} tmux server(s) were cleaned up (${tmuxLeaks.map((l) => `${l.pid} ${l.prova}`).join('; ')}).\n`);
+  }
+  if (tunnelLeaks.length) {
+    process.stderr.write(`\nNexusCrew test containment failure: ${tunnelChiusi.length} tunnel supervisor(s) were cleaned up by environ (${tunnelLeaks.map((l) => `${l.pid} ${l.prova}`).join('; ')}).\n`);
+  }
+  // Un pidfile che descrive un processo NON appartenente alla run e' un'anomalia:
+  // non si tocca il processo (potrebbe essere il supervisor di produzione) e la
+  // suite fallisce lo stesso, cosi' la fixture non passa in silenzio.
+  if (anomali.length) {
+    process.stderr.write(`\nNexusCrew test containment anomaly: ${anomali.length} pidfile(s) under the run root describe a process that does not belong to it; no signal was sent (${anomali.map((a) => `${a.pid} ${a.pidPath}: ${a.motivo}`).join('; ')}).\n`);
+    if (rootConservata) {
+      process.stderr.write(`The run root was KEPT as evidence: ${root}\nRemove it by hand after the analysis: the preserved pidfiles and the processes they describe are the evidence.\n`);
+    }
+  }
+  if (leaked.length || tmuxLeaks.length || tunnelLeaks.length || anomali.length) process.exit(1);
   process.exit(code);
 }
 

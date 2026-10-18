@@ -45,7 +45,7 @@ function boot(t, dir, extra = {}) {
     tokenPath: path.join(configDir, 'token'),
   };
   nodesStore.initStore(paths.nodesPath);
-  const created = createServer({
+  const created = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,

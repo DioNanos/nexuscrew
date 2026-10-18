@@ -38,7 +38,7 @@ async function bootNode(t, { session, cell, extraCells = [] }) {
   };
   nodesStore.initStore(paths.nodesPath);
   const adapter = fakeAdapter();
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths, filesRoot: path.join(dir, 'files'), port: 0,
     audioAdapterSeam: adapter,
     fleetSeam: {
@@ -285,7 +285,7 @@ test('READONLY sul target: rifiuto esplicito che raggiunge l origine', async (t)
   };
   nodesStore.initStore(paths.nodesPath);
   const adapter = fakeAdapter();
-  const { server, watcher } = createServer({
+  const { server, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths, filesRoot: path.join(dir, 'files'), port: 0, readonlyDefault: true,
     audioAdapterSeam: adapter,
     fleetSeam: { available: true, isCellSession: () => true, capabilities: () => [], status: async () => ({ available: true, cells: [] }) },

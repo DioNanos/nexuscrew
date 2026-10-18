@@ -25,7 +25,7 @@ async function hub(t) {
   store.atomicWriteStore(nodesPath, store.emptyStore('a'.repeat(32)));
   const configPath = path.join(configDir, 'config.json');
   fs.writeFileSync(configPath, JSON.stringify({ roles: { client: true, node: false } }));
-  const made = createServer({
+  const made = createServer({ protectSharedTmuxServer: false,
     home, configDir, configPath, nodesPath, tokenPath: path.join(configDir, 'token'),
     filesRoot: path.join(home, 'files'), fleetEnabled: false, port: 41830,
     fetchImpl: async () => ({ status: 200, json: async () => ({ ok: true, instanceId: 'b'.repeat(32) }) }),

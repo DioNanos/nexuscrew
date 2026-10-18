@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { t } from '../../lib/i18n.js';
 import { fleetDefinitions, listDirs } from '../../lib/api.js';
+import EngineOptions from './EngineOptions.jsx';
 
 // Import esplicito di una sessione tmux unmanaged (cella Fleet legacy orfana, es
 // "jarvis") in una cella GESTITA. Prefilla id/tmuxSession; l'engine è OBBLIGATORIO
@@ -36,7 +37,7 @@ export default function ImportEditor({ token, route = [], state, setState, busy,
     </div></div>}
     <select value={f.engine} onChange={(e) => set({ engine: e.target.value })}>
       <option value="">{t('import-engine-required')}</option>
-      {engines.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
+      <EngineOptions engines={engines} />
     </select>
     <label className="nc-check"><input type="checkbox" checked={!!f.boot} onChange={(e) => set({ boot: e.target.checked })} /> {t('fleet-boot')}</label>
     {(state.err || loadErr) && <div className="nc-err">{state.err || loadErr}</div>}

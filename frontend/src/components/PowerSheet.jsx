@@ -3,6 +3,7 @@ import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { fleetStatus, fleetDefinitions } from '../lib/api.js';
 import './PowerSheet.css';
+import EngineOptions from './fleet/EngineOptions.jsx';
 
 // Launch editor CONDIVISO da Home (SessionList), Sidebar (App) e Impostazioni
 // (FleetTab). Un solo posto per accendere/spegnere una cella, così non si
@@ -148,7 +149,7 @@ export default function PowerSheet({ cell, token, route = [], onConfirm, onClose
               <div className="nc-launch-fields">
                 <label className="nc-field">{t('engine')}
                   <select value={engine} onChange={(e) => chooseEngine(e.target.value)}>
-                    {engines.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
+                    <EngineOptions engines={engines} />
                   </select>
                 </label>
                 {!isShell && <label className="nc-field">{t('model')}

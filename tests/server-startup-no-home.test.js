@@ -15,7 +15,7 @@ test('createServer starts and serves with no explicit home, like a production in
   const previousHome = process.env.HOME;
   process.env.HOME = home; // os.homedir() follows HOME on Linux
   fs.mkdirSync(path.join(home, '.nexuscrew'));
-  const runtime = createServer({
+  const runtime = createServer({ protectSharedTmuxServer: false,
     configDir: path.join(home, '.nexuscrew'),
     nodesPath: path.join(home, '.nexuscrew', 'nodes.json'),
     configPath: path.join(home, '.nexuscrew', 'config.json'),

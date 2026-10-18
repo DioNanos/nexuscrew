@@ -8,7 +8,7 @@ const { createServer } = require('../lib/server.js');
 
 async function boot(t, updateManager, over = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-update-routes-'));
-  const made = createServer({ home, configPath: path.join(home, 'config.json'), tokenPath: path.join(home, 'token'),
+  const made = createServer({ protectSharedTmuxServer: false, home, configPath: path.join(home, 'config.json'), tokenPath: path.join(home, 'token'),
     filesRoot: path.join(home, 'files'), fleetEnabled: false, updateManager, ...over });
   await new Promise((resolve) => made.server.listen(0, '127.0.0.1', resolve));
   t.after(() => { made.server.close(); fs.rmSync(home, { recursive: true, force: true }); });

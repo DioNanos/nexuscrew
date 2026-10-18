@@ -11,6 +11,7 @@ const {
   protectionArgs,
   protectSharedTmuxServer,
 } = require('../lib/tmux/shared-server.js');
+const { terminaPerPid } = require('./tmux-test-server.js');
 
 test('protectionArgs contains only safe server setup, never a kill-server command', () => {
   const args = protectionArgs();
@@ -40,23 +41,33 @@ test('real isolated server neutralizes kill-server while exact cell down/restart
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-tmux-guard-'));
   const socket = `nc-guard-${process.pid}-${Date.now()}`;
   assert.match(socket, /^[A-Za-z0-9_-]+$/, 'dedicated tmux -L socket must be safe');
-  const tmuxArgs = (...args) => ['-L', socket, ...args];
+  // Il server nasce da QUESTO wrapper con -f /dev/null: niente ~/.tmux.conf,
+  // cosi' fuori harness il collaudo riguarda SOLO la guardia del repo. Il
+  // socket vive nella root del test (TMUX_TMPDIR fissato): rmSync(root) e la
+  // chiusura per PID ripuliscono tutto.
+  const tmuxEnv = { ...process.env, TMUX_TMPDIR: root, TMUX: '', TMUX_PANE: '' };
+  const tmuxArgs = (...args) => ['-f', '/dev/null', '-L', socket, ...args];
   const wrapper = path.join(root, 'tmux-isolated');
-  fs.writeFileSync(wrapper, `#!/bin/sh\nexec tmux -L '${socket}' "$@"\n`, { mode: 0o700 });
+  fs.writeFileSync(wrapper, `#!/bin/sh\nTMUX_TMPDIR='${root}' exec tmux -f /dev/null -L '${socket}' "$@"\n`, { mode: 0o700 });
   fs.chmodSync(wrapper, 0o700);
-  t.after(() => {
-    try { execFileSync('tmux', tmuxArgs('set-option', '-s', '-u', 'command-alias[100]'), { stdio: 'ignore' }); } catch (_) {}
-    try { execFileSync('tmux', tmuxArgs('kill-server'), { stdio: 'ignore' }); } catch (_) {}
+  let serverPid = 0;
+  t.after(async () => {
+    // La guardia e' attiva SU QUESTO SERVER: kill-server qui e' negato per
+    // costruzione (e' cio' che il test dimostra). L'unica chiusura e' il
+    // SEGNALE al PID del server.
+    await terminaPerPid(serverPid);
     fs.rmSync(root, { recursive: true, force: true });
   });
 
   const guarded = await protectSharedTmuxServer(wrapper);
   assert.equal(guarded.ok, true);
   const pidBefore = execFileSync(wrapper, ['display-message', '-p', '#{pid}'], { encoding: 'utf8' }).trim();
+  serverPid = Number(pidBefore);
+  assert.ok(Number.isInteger(serverPid) && serverPid > 0, `PID del server non letto: "${pidBefore}"`);
   assert.equal(execFileSync(wrapper, ['show-options', '-s', 'exit-empty'], { encoding: 'utf8' }).trim(), 'exit-empty off');
   assert.match(execFileSync(wrapper, ['show-options', '-s', 'command-alias[100]'], { encoding: 'utf8' }), /kill-server=display-message/);
 
-  execFileSync('tmux', tmuxArgs('kill-server'));
+  execFileSync('tmux', tmuxArgs('kill-server'), { env: tmuxEnv });
   const pidAfterDeniedKill = execFileSync(wrapper, ['display-message', '-p', '#{pid}'], { encoding: 'utf8' }).trim();
   assert.equal(pidAfterDeniedKill, pidBefore, 'guarded kill-server must not replace or terminate the server');
 

@@ -19,7 +19,7 @@ if(a[0]==='load-buffer') { const p=a.at(-1); fs.appendFileSync(${JSON.stringify(
 if(a[0]===${JSON.stringify(failure)})process.exit(1);
 if(a[0]==='display-message')process.stdout.write(a.at(-1)==='#{pane_id}'?'%7\\n':'cell-reviewer\\t0\\t%7\\n');
 `,{mode:0o700});
- const runtime=createServer({ home,configDir,nodesPath,configPath:path.join(configDir,'config.json'),tokenPath:path.join(configDir,'token'),
+ const runtime=createServer({ protectSharedTmuxServer: false, home,configDir,nodesPath,configPath:path.join(configDir,'config.json'),tokenPath:path.join(configDir,'token'),
  port:0,tmuxBin:binary,fleetEnabled:false,sessionExistsSeam:()=>presence.value,filesRoot:path.join(home,'files'),
  settingsSeams:{platform:'linux',uid:1000,execImpl:()=>{throw Error('disabled');},serviceInstallPath:path.join(home,'service'),keygen:()=> 'ssh-ed25519 AAAAFIXTURE demo',spawnImpl:()=>({pid:4100000,unref(){}}),sshVersion:()=>({major:9,minor:6})}});
  const fleet=await runtime.fleetP; fleet.available=true; fleet.cellStatus=async()=>({available:true,cells:[{cell:'Reviewer',tmuxSession:'cell-reviewer',engine,active:true,tmux:true}]});

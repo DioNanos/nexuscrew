@@ -11,9 +11,10 @@ import CellEditor from './CellEditor.jsx';
 // è cosmetica: ASSENTE significa «eredita tutto», che è il comportamento di
 // sempre; `[]` significa «nessuno strumento». Se l'editor li confondesse,
 // aprire una cella e salvarla senza toccare nulla le cambierebbe i poteri.
+// Le label sono minuscole come nel payload reale delle definizioni.
 const engines = [
-  { id: 'claude.native', label: 'Claude', managed: { client: 'claude', model: '' } },
-  { id: 'shell.local', label: 'Shell', managed: { client: 'shell', model: '' } },
+  { id: 'claude.native', label: 'claude', managed: { client: 'claude', model: '' } },
+  { id: 'shell.local', label: 'shell', managed: { client: 'shell', model: '' } },
 ];
 const SERVERS = ['nexuscrew', 'webfetch', 'nextcloud'];
 
@@ -86,7 +87,7 @@ describe('CellEditor — strumenti MCP per cella', () => {
   // vista lo dice (mcpManaged dal catalogo) e l'editor avverte NEL PUNTO in cui
   // si sceglie, invece di confermare un no-op silenzioso.
   it('DEC2: una cella non-claude avverte che cell.mcp e\' inerte', () => {
-    const enginesVl = [...engines, { id: 'vl.native', label: 'VL', managed: { client: 'vl', model: '' } }];
+    const enginesVl = [...engines, { id: 'vl.native', label: 'vl', managed: { client: 'vl', model: '' } }];
     const managedCatalog = [
       { client: 'claude', mcpManaged: true },
       { client: 'shell', mcpManaged: false },

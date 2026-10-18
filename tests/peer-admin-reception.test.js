@@ -23,7 +23,7 @@ function fixture(t) {
 }
 const peer = f => store.loadStoreStrict(f.nodesPath).nodes[0];
 async function startup(t, f, extra = {}) {
-  const { server, token, watcher } = createServer({ ...f, port: 0, fleetEnabled: false, filesRoot: path.join(f.home, 'files'), ...extra });
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false, ...f, port: 0, fleetEnabled: false, filesRoot: path.join(f.home, 'files'), ...extra });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { const closed = new Promise(resolve => server.close(resolve)); server.closeAllConnections(); await closed; watcher?.close(); });
   server.testToken = token;

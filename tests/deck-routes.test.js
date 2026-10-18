@@ -11,7 +11,7 @@ const FAKE_TMUX = path.join(__dirname, 'fixtures', 'fake-tmux.sh');
 function boot(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncdk-'));
   process.env.FAKE_TMUX_LOG = path.join(dir, 'tmux.log');
-  const { server, watcher } = createServer({
+  const { server, watcher } = createServer({ protectSharedTmuxServer: false,
     tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'),
     tmuxBin: FAKE_TMUX, fleetEnabled: false,
   });

@@ -49,7 +49,7 @@ async function bootWithPool(t, { verifyOutcome }) {
     return { ok: true, status: 200, json: async () => ({ ok: true }) };
   };
 
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     home: dir, configDir, nodesPath,
     configPath: path.join(configDir, 'config.json'),
     tokenPath: path.join(configDir, 'token'),

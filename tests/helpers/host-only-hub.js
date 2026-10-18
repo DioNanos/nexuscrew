@@ -8,7 +8,15 @@ const os = require('node:os');
 const path = require('node:path');
 const WebSocket = require('ws');
 const store = require('../../lib/nodes/store.js');
+const nodesTunnel = require('../../lib/nodes/tunnel.js');
 const { createServer } = require('../../lib/server.js');
+
+// Fixture homes go under the harness per-suite root when it exists: a hub
+// really starts a detached tunnel supervisor per autostart peer, and the
+// pidfile of every supervisor must live inside the root tests/run-isolated.js
+// scans. A mkdtemp straight in TMPDIR hides them from the gate. Plain TMPDIR
+// stays as the fallback for runs outside the official harness.
+const fixtureRoot = () => process.env.NEXUSCREW_TEST_HOME_ROOT || os.tmpdir();
 
 const ID = (c) => c.repeat(32);
 const SELF = ID('f');
@@ -77,7 +85,7 @@ async function realHub(t, { boxReply, otherReply, hostOnly = true, fetchImpl = n
   const box = await listen(reply(boxCalls, boxReply));
   box.on('upgrade', (req, socket) => { boxUpgrades.push({ url: req.url, auth: req.headers.authorization || null }); socket.destroy(); });
   const other = await listen(reply(otherCalls, otherReply));
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-hostonly-legacy-'));
+  const dir = fs.mkdtempSync(path.join(fixtureRoot(), 'nc-hostonly-legacy-'));
   let nodesPath;
   try { nodesPath = buildStore(dir, { boxPort: box.address().port, otherPort: other.address().port, hostOnly }); } catch (e) {
     await closeServer(box); await closeServer(other); fs.rmSync(dir, { recursive: true, force: true });
@@ -94,6 +102,13 @@ async function realHub(t, { boxReply, otherReply, hostOnly = true, fetchImpl = n
   await new Promise((resolve, reject) => { made.server.once('error', reject); made.server.listen(0, '127.0.0.1', resolve); });
   made.cfg.port = made.server.address().port;
   t.after(async () => {
+    // The hub starts a REAL detached supervisor per autostart peer: stop them
+    // by pidfile (verified kill, product API) BEFORE the fixture home goes
+    // away. Without this the supervisors survive rmSync and keep retrying ssh
+    // detached — invisible to the suite gate when the fixture home sat outside
+    // its root. Best effort by design: the enforcing layer is the suite gate,
+    // not this teardown.
+    nodesTunnel.reconcileTunnelSupervisors({ home: dir, configuredNames: [] });
     await closeServer(made.server); if (made.panelServer && made.panelServer.listening) await closeServer(made.panelServer);
     if (made.watcher) made.watcher.close();
     await closeServer(box); await closeServer(other); fs.rmSync(dir, { recursive: true, force: true });

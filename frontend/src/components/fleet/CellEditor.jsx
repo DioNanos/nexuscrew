@@ -9,6 +9,7 @@ import { listDirs } from '../../lib/api.js';
 // l'utente non prova tre volte alla cieca (v. docs/CELL_PANEL.md, "Why
 // loopback only").
 import { validBackupPanelUrl } from '../../lib/fleet-backup.js';
+import EngineOptions from './EngineOptions.jsx';
 
 // Editor di una cella. State-less rispetto alle API: la posizione di creazione
 // è un campo obbligatorio DENTRO il form e riceve/solleva stato al parent.
@@ -82,7 +83,7 @@ export default function CellEditor({ token, route, targets = [], location, setLo
       {(picker.dirs || []).map((d) => <button className="nc-fs-item" key={d} onClick={() => browse(`${picker.path.replace(/\/$/, '')}/${d}`)}>📁 {d}</button>)}
     </div></div>}
     {pickErr && <div className="nc-err">{pickErr}</div>}
-    <select value={f.engine} onChange={(e) => chooseEngine(e.target.value)}>{engines.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}</select>
+    <select value={f.engine} onChange={(e) => chooseEngine(e.target.value)}><EngineOptions engines={engines} /></select>
     <label className="nc-check"><input type="checkbox" checked={!!f.boot} onChange={(e) => set({ boot: e.target.checked })} /> {t('fleet-boot')}</label>
     {/* panelUrl: comune a qualunque engine (Shell incluso — un container puo'
         avere un pannello anche se la cella lancia solo un comando). Fuori dai

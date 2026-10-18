@@ -27,7 +27,7 @@ const BUILTIN_DEFS = {
 function boot(t, over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncflr-'));
   process.env.FAKE_TMUX_LOG = path.join(dir, 'tmux.log');
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     home: dir, tokenPath: path.join(dir, 'token'), filesRoot: path.join(dir, 'files'), tmuxBin: FAKE_TMUX, ...over,
   });
   return new Promise((res) => server.listen(0, '127.0.0.1', () => {
@@ -154,9 +154,12 @@ test('builtin: /definitions espone campi editabili ma non env values', async (t)
   const r = await fetch(`${base}/api/fleet/definitions`, { headers: H(token) });
   assert.equal(r.status, 200);
   const d = await r.json();
-  assert.equal(d.engines[0].command, FAKE_TMUX);
-  assert.deepEqual(d.engines[0].envKeys, []);
-  assert.equal(d.engines[0].env, undefined);
+  // Il payload e' ordinato per client (i custom in coda): si seleziona per id,
+  // non per posizione.
+  const sh = d.engines.find((e) => e.id === 'sh');
+  assert.equal(sh.command, FAKE_TMUX);
+  assert.deepEqual(sh.envKeys, []);
+  assert.equal(sh.env, undefined);
   assert.equal(d.cells[0].id, 'Dev');
 });
 

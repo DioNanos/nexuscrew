@@ -250,7 +250,7 @@ async function boot(t, { grants, session = 'lab-Dev', snapshotCell = 'Dev', alia
     ssh: 'demo@example.invalid', localPort: owner.address().port, remotePort: 42002 });
   st = nodes.setPeerAccessGrants(st, 'owner', { cellVisibility: 'all', eventsAccess: true, nodeEventsAccess: false, askReplyAccess: true, filesReadAccess: false, liveHostAccess: false, panelAccess: false, peerOperatorAccess: false, ...(grants || {}) });
   nodes.atomicWriteStore(nodesPath, st);
-  const runtime = createServer({ home, configDir, nodesPath, configPath: path.join(configDir, 'config.json'), tokenPath: path.join(configDir, 'token'),
+  const runtime = createServer({ protectSharedTmuxServer: false, home, configDir, nodesPath, configPath: path.join(configDir, 'config.json'), tokenPath: path.join(configDir, 'token'),
     eventFeedClientPollMs: 20, filesRoot: path.join(home, 'files'), port: 0, fleetEnabled: false, sessionExistsSeam: () => true, pasteSeam: () => true,
     askSubmit: async () => ({ outcome: 'submitted', submitted: true }),
     settingsSeams: { platform: 'linux', uid: 1000, execImpl: () => { throw new Error('disabled'); }, serviceInstallPath: path.join(home, 'service'),

@@ -27,7 +27,7 @@ test('createServer: /api/* gated, static libero', async (t) => {
   const path = require('node:path');
   const { createServer } = require('../lib/server.js');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncsrv-'));
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     tokenPath: path.join(dir, 'token'),
     filesRoot: path.join(dir, 'files'),
     fleetEnabled: false,

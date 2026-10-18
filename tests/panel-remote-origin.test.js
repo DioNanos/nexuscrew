@@ -73,7 +73,7 @@ function scriviStoreNuovo(dir) {
 
 async function serverConStore(nodesPath, dir) {
   const configDir = path.join(dir, '.nexuscrew');
-  const made = createServer({
+  const made = createServer({ protectSharedTmuxServer: false,
     home: dir, configDir, nodesPath,
     configPath: path.join(configDir, 'config.json'),
     tokenPath: path.join(configDir, 'token'),

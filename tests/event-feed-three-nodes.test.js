@@ -31,7 +31,7 @@ function boot(t, dir) {
     tokenPath: path.join(configDir, 'token'),
   };
   nodesStore.initStore(paths.nodesPath);
-  const { server, token, watcher } = createServer({
+  const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     ...paths,
     filesRoot: path.join(dir, 'files'),
     port: 41999,
@@ -146,7 +146,7 @@ test('reconnection replays in order and a snapshot after the owner restart is re
 
   // Owner restart: same store/token/history, new process.
   const server2 = await (async () => {
-    const { server, token, watcher } = createServer({
+    const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
       ...A.paths, filesRoot: path.join(A.paths.home, 'files'), port: 41999, fleetEnabled: false,
       sessionExistsSeam: () => true,
       settingsSeams: { platform: 'linux', uid: 1000, execImpl: () => { throw new Error('x'); }, serviceInstallPath: path.join(A.paths.home, 'systemd', 'svc'), keygen: () => 'ssh-ed25519 AAAA k', spawnImpl: () => ({ pid: 4193999, unref() {} }), sshVersion: () => ({ major: 9, minor: 6 }) },

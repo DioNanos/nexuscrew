@@ -167,7 +167,7 @@ test('end-to-end HTTP: gli eventi entrano col poll ed escono dalla route di lett
   const tokenPath = path.join(configDir, 'token');
   const ownerId = 'a'.repeat(32);
   nodesStore.atomicWriteStore(nodesPath, nodesStore.emptyStore(ownerId));
-  const made = createServer({
+  const made = createServer({ protectSharedTmuxServer: false,
     home, configDir, nodesPath, vlNodesPath, tokenPath,
     filesRoot: path.join(home, 'files'), fleetEnabled: false, autoUpdate: false,
     bind: '127.0.0.1', port: 0, log: () => {},

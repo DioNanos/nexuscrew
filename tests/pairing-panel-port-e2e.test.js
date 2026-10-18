@@ -32,7 +32,7 @@ async function hub(t, { conPanello = true } = {}) {
   store.atomicWriteStore(nodesPath, store.emptyStore('a'.repeat(32)));
   fs.writeFileSync(path.join(configDir, 'config.json'),
     JSON.stringify({ roles: { client: true, node: false } }));
-  const made = createServer({
+  const made = createServer({ protectSharedTmuxServer: false,
     home, configDir, nodesPath,
     configPath: path.join(configDir, 'config.json'),
     tokenPath: path.join(configDir, 'token'),

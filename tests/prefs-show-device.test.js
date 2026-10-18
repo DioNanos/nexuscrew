@@ -35,7 +35,7 @@ async function up(t, extra = {}) {
     execImpl: () => '', portAvailableImpl: async () => true,
     runInitImpl: (o) => runInit(o),
     startPortableImpl: () => {
-      runtime = createServer({ home, configDir, configPath: path.join(configDir, 'config.json'), tokenPath, port, filesRoot: path.join(home, 'NexusFiles') });
+      runtime = createServer({ protectSharedTmuxServer: false, home, configDir, configPath: path.join(configDir, 'config.json'), tokenPath, port, filesRoot: path.join(home, 'NexusFiles') });
       runtime.server.listen(port, '127.0.0.1');
       return { started: true };
     },
