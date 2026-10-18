@@ -104,7 +104,16 @@ async function main() {
   const tunnelLeaks = elencaSupervisorTunnelLeak(root);
   const tunnelChiusi = tunnelLeaks.length ? await chiudiSupervisorTunnel(tunnelLeaks) : [];
 
-  fs.rmSync(root, { recursive: true, force: true });
+  // L'EVIDENZA DEVE SOPRAVVIVERE ALLA RUN. Il modulo conserva il pidfile quando
+  // trova un'anomalia (tests/pidfile-containment.js), ma quel pidfile sta SOTTO
+  // la root: cancellare la root qui lo porta via con lei, e di un'anomalia resta
+  // solo una riga di stderr su una run gia' finita — cioe' niente da guardare.
+  // Con un'anomalia la root si CONSERVA e il suo path si stampa, dicendo che va
+  // rimossa a mano; in tutti gli altri casi la pulizia resta com'e', leak chiusi
+  // compresi: un leak chiuso e' risolto, e lasciare la root a ogni rosso
+  // riempirebbe TMPDIR di rifiuti.
+  const rootConservata = anomali.length > 0;
+  if (!rootConservata) fs.rmSync(root, { recursive: true, force: true });
   if (leaked.length) {
     process.stderr.write(`\nNexusCrew test containment failure: ${leaked.length} detached tunnel supervisor(s) were cleaned up.\n`);
   }
@@ -119,6 +128,9 @@ async function main() {
   // suite fallisce lo stesso, cosi' la fixture non passa in silenzio.
   if (anomali.length) {
     process.stderr.write(`\nNexusCrew test containment anomaly: ${anomali.length} pidfile(s) under the run root describe a process that does not belong to it; no signal was sent (${anomali.map((a) => `${a.pid} ${a.pidPath}: ${a.motivo}`).join('; ')}).\n`);
+    if (rootConservata) {
+      process.stderr.write(`The run root was KEPT as evidence: ${root}\nRemove it by hand after the analysis: the preserved pidfiles and the processes they describe are the evidence.\n`);
+    }
   }
   if (leaked.length || tmuxLeaks.length || tunnelLeaks.length || anomali.length) process.exit(1);
   process.exit(code);
