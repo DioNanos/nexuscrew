@@ -4,7 +4,7 @@
 //
 // PERCHE' ESISTE, con la data. Il 18/10 un `node --test` lanciato a mano, senza
 // HOME isolata, ha scritto `~/.nexuscrew/model-discovery/ollama-cloud.json`
-// nella home vera di VPS3 — con dentro i modelli finti della fixture. Il file
+// nella home vera del nodo — con dentro i modelli finti della fixture. Il file
 // l'ha rimosso un umano; in produzione un file cosi' avvelena la scoperta vera,
 // perche' quella cache e' la prima ricaduta della catena.
 //

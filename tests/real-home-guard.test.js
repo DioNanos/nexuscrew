@@ -27,11 +27,11 @@ test('la guardia e\' installata in questo processo di test', (t) => {
 });
 
 test('sottoRadice: solo dentro, non i fratelli con lo stesso prefisso', () => {
-  assert.equal(sottoRadice('/home/dag/.nexuscrew/x.json', '/home/dag'), true);
-  assert.equal(sottoRadice('/home/dag', '/home/dag'), true);
-  assert.equal(sottoRadice('/home/dag-prova/x', '/home/dag'), false, 'prefisso non basta');
-  assert.equal(sottoRadice('/tmp/x', '/home/dag'), false);
-  assert.equal(sottoRadice('/home/dag/x', ''), false);
+  assert.equal(sottoRadice('/home/operatore/.nexuscrew/x.json', '/home/operatore'), true);
+  assert.equal(sottoRadice('/home/operatore', '/home/operatore'), true);
+  assert.equal(sottoRadice('/home/operatore-prova/x', '/home/operatore'), false, 'prefisso non basta');
+  assert.equal(sottoRadice('/tmp/x', '/home/operatore'), false);
+  assert.equal(sottoRadice('/home/operatore/x', ''), false);
 });
 
 test('bita: una scrittura sotto la home reale viene RIFIUTATA (su un fs iniettato)', () => {
