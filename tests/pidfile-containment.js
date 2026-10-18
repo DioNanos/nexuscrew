@@ -43,9 +43,21 @@ function allPidfiles(dir, found = []) {
 // root o dentro una sua sottodirectory. Nessuna prova — environ illeggibile
 // compreso — significa nessun segnale: fail-closed.
 //
+// E SI RINNOVA PRIMA DI OGNI SEGNALE, SIGKILL COMPRESO. Una prova letta una
+// volta sola prima del SIGTERM non dice niente sull'istante del secondo
+// segnale: il riaudit del 2026-10-18 ha misurato un processo che si rende non
+// dumpable nel proprio handler di SIGTERM (prctl PR_SET_DUMPABLE, 0) — da quel
+// momento /proc/<pid>/environ e' EACCES anche per il nostro stesso UID — e il
+// fallback, che guardava solo PID e cmdline, gli mandava comunque SIGKILL.
+// Fra SIGTERM e SIGKILL l'identita' attestata e l'appartenenza si rileggono;
+// se la prova non c'e' piu', non parte nessun altro segnale, l'esito e'
+// `anomalia` e il pidfile RESTA come evidenza, cosi' la suite fallisce invece
+// di passare. Resta la finestra non atomica fra controllo e syscall: quella e'
+// intrinseca a pid+segnale e non si chiude qui (vedi lib/cli/pidfile.js).
+//
 // Ritorna:
 //   { esito: 'chiuso', pid, pidPath }                  -> segnalato e pidfile rimosso
-//   { esito: 'anomalia', pid, pidPath, motivo }        -> nessun segnale
+//   { esito: 'anomalia', pid, pidPath, motivo }        -> nessun segnale (pidfile conservato)
 //   null                                               -> niente da chiudere
 async function chiudiLeakDaPidfile(pidPath, meta, root) {
   if (!meta || !pidf.isAlive(meta)) return null;
@@ -67,6 +79,18 @@ async function chiudiLeakDaPidfile(pidPath, meta, root) {
   if (pidf.pidExists(meta.pid)) {
     const still = pidf.readCmdline(meta.pid);
     if (still.includes('tunnel-supervisor.js')) {
+      // Prima di SIGKILL la prova si rifa': identita' attestata (pid vivo,
+      // nascita, cmdline) E appartenenza alla run. Un processo puo' averla
+      // persa nell'attesa — l'environ che diventa illeggibile e' il caso
+      // misurato dal riaudit — e in quel momento non sappiamo piu' chi sia.
+      const provaDopo = pidf.isAlive(meta) ? vociSottoRoot(meta.pid, root) : [];
+      if (!provaDopo.length) {
+        return {
+          esito: 'anomalia', pid: meta.pid, pidPath,
+          motivo: 'prova persa dopo SIGTERM: identita` attestata o appartenenza alla run (HOME/TMPDIR sotto '
+            + 'la root) non piu` dimostrabili. Nessun altro segnale inviato; il pidfile resta come evidenza.',
+        };
+      }
       try { process.kill(meta.pid, 'SIGKILL'); } catch (_) {}
     }
   }
