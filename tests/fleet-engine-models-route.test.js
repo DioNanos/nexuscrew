@@ -225,7 +225,11 @@ test('backupValues: il catalogo interno propone i campi che nessun layer ha riem
   const defsPath = path.join(dir, 'fleet.json');
   fs.writeFileSync(defsPath, JSON.stringify({ schemaVersion: 1, engines: [], cells: [] }), { mode: 0o600 });
   fs.chmodSync(defsPath, 0o600);
-  const fleet = await createBuiltinFleet({ home: dir, fleetDefsPath: defsPath });
+  // Engines and cells are empty: this test reads the discovery plan and never
+  // touches a session. Without the explicit opt-out the fleet bootstrap guards
+  // the shared server with the REAL tmux binary and leaves an empty, guarded,
+  // immortal server behind (suite containment failure, reproduced 2026-10-19).
+  const fleet = await createBuiltinFleet({ home: dir, fleetDefsPath: defsPath, protectSharedTmuxServer: false });
   t.after(() => fleet.close());
   const calls = [];
   const fetchImpl = async (url, opts = {}) => {
@@ -255,7 +259,7 @@ test('backupValues: variante con tag dell\'engine cloud risale al nome base del 
   const defsPath = path.join(dir, 'fleet.json');
   fs.writeFileSync(defsPath, JSON.stringify({ schemaVersion: 1, engines: [], cells: [] }), { mode: 0o600 });
   fs.chmodSync(defsPath, 0o600);
-  const fleet = await createBuiltinFleet({ home: dir, fleetDefsPath: defsPath });
+  const fleet = await createBuiltinFleet({ home: dir, fleetDefsPath: defsPath, protectSharedTmuxServer: false });
   t.after(() => fleet.close());
   const fetchImpl = async (url, opts = {}) => {
     // /api/tags elenca la variante col tag; il catalogo cablato conosce il
