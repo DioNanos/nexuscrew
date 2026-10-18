@@ -75,9 +75,12 @@ async function main() {
   });
 
   const leaked = [];
+  const anomali = [];
   for (const pidPath of allPidfiles(root)) {
-    const esito = await chiudiLeakDaPidfile(pidPath, pidf.readPidfile(pidPath));
-    if (esito && esito.esito === 'chiuso') leaked.push({ pid: esito.pid, pidPath: esito.pidPath });
+    const esito = await chiudiLeakDaPidfile(pidPath, pidf.readPidfile(pidPath), root);
+    if (!esito) continue;
+    if (esito.esito === 'chiuso') leaked.push({ pid: esito.pid, pidPath: esito.pidPath });
+    else anomali.push(esito);
   }
 
   // Secondo invariante: nessun server tmux con environ sotto la root della
@@ -111,7 +114,13 @@ async function main() {
   if (tunnelLeaks.length) {
     process.stderr.write(`\nNexusCrew test containment failure: ${tunnelChiusi.length} tunnel supervisor(s) were cleaned up by environ (${tunnelLeaks.map((l) => `${l.pid} ${l.prova}`).join('; ')}).\n`);
   }
-  if (leaked.length || tmuxLeaks.length || tunnelLeaks.length) process.exit(1);
+  // Un pidfile che descrive un processo NON appartenente alla run e' un'anomalia:
+  // non si tocca il processo (potrebbe essere il supervisor di produzione) e la
+  // suite fallisce lo stesso, cosi' la fixture non passa in silenzio.
+  if (anomali.length) {
+    process.stderr.write(`\nNexusCrew test containment anomaly: ${anomali.length} pidfile(s) under the run root describe a process that does not belong to it; no signal was sent (${anomali.map((a) => `${a.pid} ${a.pidPath}: ${a.motivo}`).join('; ')}).\n`);
+  }
+  if (leaked.length || tmuxLeaks.length || tunnelLeaks.length || anomali.length) process.exit(1);
   process.exit(code);
 }
 

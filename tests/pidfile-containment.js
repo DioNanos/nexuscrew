@@ -12,6 +12,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const pidf = require('../lib/cli/pidfile.js');
+const { vociSottoRoot } = require('./tunnel-supervisor-containment.js');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -30,13 +31,35 @@ function allPidfiles(dir, found = []) {
 
 // Chiude il supervisor descritto da `pidPath` quando i metadati (pid vivo,
 // nascita attestata, cmdline che nomina tunnel-supervisor.js) lo attribuiscono
-// a NexusCrew. SIGTERM, poi SIGKILL come ripiego, poi il pidfile.
-// Ritorna { esito: 'chiuso', pid, pidPath } oppure null se non c'e' niente da
-// chiudere (pidfile stale o di un altro processo).
-async function chiudiLeakDaPidfile(pidPath, meta) {
+// a NexusCrew **e** l'appartenenza alla run e' dimostrata dall'environ. SIGTERM,
+// poi SIGKILL come ripiego, poi il pidfile.
+//
+// L'APPARTENENZA VIENE PRIMA DI OGNI SEGNALE. Un pidfile valido sotto la root
+// dice dove sta il FILE, non dove e' nato il processo: un pidfile copiato (o la
+// fixture di un test che ha scritto la sua home altrove) descriverebbe un
+// processo estraneo, e mandargli un segnale chiuderebbe il lavoro di qualcun
+// altro — sulla macchina di sviluppo, il supervisor di produzione. La prova e'
+// la stessa delle reti environ (`vociSottoRoot`): HOME o TMPDIR uguali alla
+// root o dentro una sua sottodirectory. Nessuna prova — environ illeggibile
+// compreso — significa nessun segnale: fail-closed.
+//
+// Ritorna:
+//   { esito: 'chiuso', pid, pidPath }                  -> segnalato e pidfile rimosso
+//   { esito: 'anomalia', pid, pidPath, motivo }        -> nessun segnale
+//   null                                               -> niente da chiudere
+async function chiudiLeakDaPidfile(pidPath, meta, root) {
   if (!meta || !pidf.isAlive(meta)) return null;
   const live = pidf.readCmdline(meta.pid);
   if (!live.includes('tunnel-supervisor.js')) return null;
+
+  const prova = vociSottoRoot(meta.pid, root);
+  if (!prova.length) {
+    return {
+      esito: 'anomalia', pid: meta.pid, pidPath,
+      motivo: 'appartenenza alla run non dimostrata: nessuna voce environ HOME/TMPDIR sotto la root '
+        + '(o /proc/<pid>/environ non leggibile). Nessun segnale inviato.',
+    };
+  }
 
   try { process.kill(meta.pid, 'SIGTERM'); } catch (_) {}
   const deadline = Date.now() + 2500;
