@@ -69,11 +69,17 @@ export default function FleetBackupDialog({ cells = [], engines = [], models = [
   const selectedEngineRows = engineRows.filter((row) => row.selected);
   // Engine disponibili per rimappare le celle importate: quelli dichiarati
   // (col flag `standard` del payload) piu' quelli selezionati dal backup
-  // (senza flag: finiscono negli «altri»). Dedup per id, vince il dichiarato.
-  const importEngineOptions = [...new Map([
-    ...engines.map((engine) => [engine.id, engine]),
-    ...engineRows.filter((row) => row.selected).map((row) => [row.engine.id, row.engine]),
-  ]).values()];
+  // (senza flag: finiscono negli «altri»). Dedup per id, vince il DICHIARATO:
+  // il backup non porta il flag, e lasciarlo vincere sposterebbe nel gruppo
+  // «altri» un engine che era standard. Si aggiunge solo cio' che non c'e' gia'.
+  const importEngineOptions = [...(() => {
+    const perId = new Map(engines.map((engine) => [engine.id, engine]));
+    for (const row of engineRows) {
+      if (!row.selected || perId.has(row.engine.id)) continue;
+      perId.set(row.engine.id, row.engine);
+    }
+    return perId;
+  })().values()];
 
   return (
     <div className="nc-set-form nc-fleet-form nc-backup-dialog">
