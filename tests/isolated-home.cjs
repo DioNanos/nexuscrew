@@ -9,6 +9,26 @@ const path = require('node:path');
 const root = process.env.NEXUSCREW_TEST_HOME_ROOT;
 if (!root) throw new Error('NEXUSCREW_TEST_HOME_ROOT is required by the test harness');
 
+// La home da cui stiamo per allontanarci e' QUELLA VERA dell'operatore. Da qui
+// in poi nessuna scrittura deve piu' cadere li' dentro: la guardia avvolge i
+// punti di scrittura di fs e, se succede, il processo di test esce con 1 anche
+// se i suoi test sono verdi - cosi' una HOME dimenticata fa rumore invece di
+// lasciare un file finto nella home di chi lavora (e' successo il 18/10 con la
+// cache della scoperta modelli). Vedi tests/real-home-guard.cjs.
+const { creaGuardia } = require('./real-home-guard.cjs');
+const guardia = creaGuardia({
+  testRoot: root,
+  cwd: path.join(__dirname, '..'),
+});
+guardia.installa();
+globalThis.__ncRealHomeGuard = guardia;
+process.on('exit', () => {
+  const motivo = guardia.verifica();
+  if (!motivo) return;
+  process.stderr.write(`\nNexusCrew test containment: ${motivo}\n`);
+  process.exitCode = 1;
+});
+
 const home = path.join(root, `pid-${process.pid}`);
 const configHome = path.join(home, '.config');
 fs.mkdirSync(configHome, { recursive: true, mode: 0o700 });

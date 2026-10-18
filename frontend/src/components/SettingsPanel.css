@@ -122,6 +122,20 @@
 .nc-fleet-key-input > input { flex: 1; min-width: 0; }
 .nc-fleet-key-missing { align-items: flex-start; color: #ffca80; }
 .nc-fleet-provider-notice { border-left: 2px solid #6b7f3e; padding-left: 8px; line-height: 1.35; }
+/* «Puoi usare questi»: righe compatte, campi con provenienza discreta,
+   rosso SOLO evidenziale per i modelli non più nelle API (restano cliccabili). */
+.nc-fleet-models { border: 1px solid #36523b; border-radius: 9px; padding: 10px; display: flex; flex-direction: column; gap: 7px; background: #0a100b; }
+.nc-fleet-models-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.nc-fleet-model-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 3px 2px; border-radius: 6px; }
+.nc-fleet-model-row .nc-fleet-model-pick { padding: 2px 8px; font-size: 12px; }
+.nc-fleet-model-row.nc-model-not-in-api { background: rgba(255, 68, 68, .12); border: 1px solid rgba(255, 68, 68, .35); }
+.nc-fleet-model-field { font-size: 11px; opacity: .85; white-space: nowrap; }
+.nc-fleet-model-src { display: inline-block; margin-left: 3px; padding: 0 4px; border-radius: 4px; font-size: 9px; letter-spacing: .04em; background: #1c2a1e; opacity: .8; }
+.nc-fleet-models-note { font-size: 10px; opacity: .65; }
+/* Finestra dei dati mancanti: dentro la sezione, bordo d'avviso, input corti. */
+.nc-fleet-missing { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid rgba(255, 187, 68, .45); border-radius: 8px; background: rgba(255, 187, 68, .07); }
+.nc-fleet-missing .nc-field input { max-width: 160px; }
+.nc-fleet-missing-open { font-size: 11px; padding: 2px 8px; align-self: flex-start; }
 .nc-fleet-modal {
   position: fixed; inset: 0; z-index: 75; padding: 16px;
   display: flex; align-items: center; justify-content: center;

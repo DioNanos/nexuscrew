@@ -19,9 +19,20 @@ function matchMediaFisso(matches) {
 }
 
 const ADESSO = Date.now();
-const MD = { name: '20261014-0930_2026-10-13_report.md', size: 348160, mtime: ADESSO };
-const PNG = { name: '20261014-1000_foto.png', size: 2048, mtime: ADESSO - 3600_000 };
-const ZIP = { name: '20261013-0900_archivio.zip', size: 999, mtime: ADESSO - 86_400_000 };
+// Gli stamp sono RELATIVI alla data corrente: il raggruppamento per giorno e
+// l'ora mostrata derivano dal nome, e date fisse marcivano il giorno dopo
+// (gruppo «Today» assente, orario reso come data). Stessa forma del server:
+// `YYYYMMDD-HHMM_` + nome originale.
+const pad2 = (n) => String(n).padStart(2, '0');
+const stamp = (giorniFa, hh, mm) => {
+  const d = new Date(ADESSO);
+  d.setDate(d.getDate() - giorniFa);
+  d.setHours(hh, mm, 0, 0);
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(hh)}${pad2(mm)}`;
+};
+const MD = { name: `${stamp(0, 9, 30)}_2026-10-13_report.md`, size: 348160, mtime: ADESSO };
+const PNG = { name: `${stamp(0, 10, 0)}_foto.png`, size: 2048, mtime: ADESSO - 3600_000 };
+const ZIP = { name: `${stamp(1, 9, 0)}_archivio.zip`, size: 999, mtime: ADESSO - 86_400_000 };
 
 // Rete di ripiego dopo la prima lista: le selezioni del dettaglio chiedono il
 // blob d'anteprima senza che ogni test debba pensarci. Il type è quello che
@@ -241,7 +252,7 @@ describe('FilesPanel desktop — pannello dettaglio', () => {
     fireEvent.click(await within(dettaglio(container)).findByText('Open'));
     // lista + anteprima selezione + Apri: la chiamata d'azione è la terza
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(3));
-    expect(String(apiFetch.mock.calls[2][0])).toContain('name=20261014-1000_foto.png');
+    expect(String(apiFetch.mock.calls[2][0])).toContain(`name=${PNG.name}`);
     expect(open).toHaveBeenCalledWith('blob:img', '_blank', 'noopener');
     open.mockRestore();
   });
@@ -321,7 +332,7 @@ describe('FilesPanel desktop — caricamento file', () => {
     apiFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ path: '/upload/nota.txt' }) }); // POST
     apiFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ inbox: [{ name: '20261014-1111_nota.txt', size: 10, mtime: Date.now() }], outbox: [MD] }),
+      json: async () => ({ inbox: [{ name: `${stamp(0, 11, 11)}_nota.txt`, size: 10, mtime: Date.now() }], outbox: [MD] }),
     }); // refresh
     fireEvent.change(input);
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(3));
@@ -368,7 +379,7 @@ describe('FilesPanel desktop — parità mobile', () => {
 });
 
 describe('FilesPanel desktop — «Apri» sicuro (SVG, MIME del blob, revoca)', () => {
-  const SVG = { name: '20261014-1030_logo.svg', size: 512, mtime: ADESSO - 1800_000 };
+  const SVG = { name: `${stamp(0, 10, 30)}_logo.svg`, size: 512, mtime: ADESSO - 1800_000 };
   const SVG_CON_SCRIPT = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(2)</script></svg>';
 
   function dettaglio(container) { return container.querySelector('.nc-filesd-detail'); }

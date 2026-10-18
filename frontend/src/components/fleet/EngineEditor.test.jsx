@@ -28,10 +28,10 @@ function profileForm(id) {
   };
 }
 
-function Harness({ initial, onSave = vi.fn(), mode = 'new' }) {
+function Harness({ initial, onSave = vi.fn(), mode = 'new', fetchModels, onSetModelValue }) {
   const [state, setState] = useState({ mode, form: initial });
   if (!state) return <div>closed</div>;
-  return <EngineEditor state={state} setState={setState} busy={false} onSave={onSave} catalog={catalog} />;
+  return <EngineEditor state={state} setState={setState} busy={false} onSave={onSave} catalog={catalog} fetchModels={fetchModels} onSetModelValue={onSetModelValue} />;
 }
 
 describe('EngineEditor KEY section', () => {
@@ -174,5 +174,170 @@ describe('EngineEditor panelUrl', () => {
     const state = { mode: 'edit', form: { ...profileForm('claude.native'), panelUrl: 'https://127.0.0.1:6901' } };
     render(<EngineEditor state={state} setState={vi.fn()} busy={false} onSave={vi.fn()} catalog={catalog} />);
     expect(screen.queryByText(t('fleet-panel-url-invalid'))).toBeNull();
+  });
+});
+
+// --- modelli dinamici (lotto 3a): «puoi usare questi» ------------------------
+// Il fetcher è SEMPRE un fake iniettato: nessun provider vero, mai.
+const DISCOVERY = {
+  engine: 'claude.kimi-code', supported: true, source: 'api', status: 'api',
+  stale: false, error: '', fetchedAt: 1, cap: 128,
+  models: [
+    { id: 'k3[1m]', contextWindow: 1048576, fieldSources: { contextWindow: 'user' }, inApi: true },
+    { id: 'k3', contextWindow: 262144, tools: true, fieldSources: { contextWindow: 'public', tools: 'api' }, inApi: true },
+    { id: 'kimi-for-coding', maxTokens: 8192, fieldSources: { maxTokens: 'backup' }, inApi: false },
+  ],
+};
+
+describe('EngineEditor model discovery section', () => {
+  beforeEach(() => localStorage.setItem('nc_lang', 'en'));
+
+  it('lists the usable models with the per-field provenience, discrete', async () => {
+    const fetchModels = vi.fn().mockResolvedValue(DISCOVERY);
+    render(<Harness initial={profileForm('claude.kimi-code')} fetchModels={fetchModels} />);
+    expect(fetchModels).toHaveBeenCalledWith('claude.kimi-code', false);
+    const section = await screen.findByRole('region', { name: 'Models' });
+    expect(within(section).getByText('You can use these')).toBeTruthy();
+    // Provenienza di ogni campo: etichetta piccola + tooltip.
+    expect(within(section).getByTitle('source: user')).toBeTruthy();
+    expect(within(section).getByTitle('source: API')).toBeTruthy();
+    expect(within(section).getByTitle('source: catalog')).toBeTruthy();
+    expect(within(section).getByTitle('source: backup')).toBeTruthy();
+    expect(within(section).getByText('context: 1048576')).toBeTruthy();
+    expect(within(section).getByText('context: 262144')).toBeTruthy();
+    expect(within(section).getByText('tools: true')).toBeTruthy();
+    expect(within(section).getByText('output: 8192')).toBeTruthy();
+    // Il tetto resta dichiarato: si attivano solo i modelli scelti.
+    expect(within(section).getByText(/within the 128-model-per-engine cap/)).toBeTruthy();
+  });
+
+  it('marks a model missing from the APIs in RED, still selectable and provable', async () => {
+    const fetchModels = vi.fn().mockResolvedValue(DISCOVERY);
+    const { container } = render(<Harness initial={profileForm('claude.kimi-code')} fetchModels={fetchModels} />);
+    await screen.findByRole('region', { name: 'Models' });
+    const row = container.querySelector('.nc-fleet-model-row.nc-model-not-in-api');
+    expect(row).toBeTruthy();
+    expect(within(row).getByText('not available in the APIs')).toBeTruthy();
+    // Nessun blocco: il modello resta impostabile come modello dell'engine.
+    const pick = within(row).getByRole('button', { name: 'Use model kimi-for-coding' });
+    expect(pick.disabled).toBe(false);
+    await userEvent.setup().click(pick);
+    expect(screen.getByDisplayValue('kimi-for-coding')).toBeTruthy();
+  });
+
+  it('the update button re-fetches with refresh=1 and shows the fresh result', async () => {
+    const user = userEvent.setup();
+    const fetchModels = vi.fn()
+      .mockResolvedValueOnce(DISCOVERY)
+      .mockResolvedValueOnce({ ...DISCOVERY, models: [{ id: 'fresh-1', inApi: true }] });
+    render(<Harness initial={profileForm('claude.kimi-code')} fetchModels={fetchModels} />);
+    await screen.findByRole('region', { name: 'Models' });
+    await user.click(screen.getByRole('button', { name: 'Update models' }));
+    expect(await screen.findByText('fresh-1')).toBeTruthy();
+    expect(fetchModels).toHaveBeenNthCalledWith(2, 'claude.kimi-code', true);
+  });
+
+  it('stale data and a network failure are one line each and never block the editor', async () => {
+    const stale = { ...DISCOVERY, source: 'cache', stale: true, error: 'network error' };
+    const { unmount } = render(<Harness initial={profileForm('claude.kimi-code')} fetchModels={vi.fn().mockResolvedValue(stale)} />);
+    expect(await screen.findByText('Stale data: showing the last successful fetch')).toBeTruthy();
+    unmount();
+    render(<Harness initial={profileForm('agy.native')} fetchModels={vi.fn().mockRejectedValue(new Error('offline'))} />);
+    expect(await screen.findByText(/the editor stays usable/)).toBeTruthy();
+    // L'editor resta pienamente usabile: il campo modello e il salvataggio non
+    // si bloccano (agy: nessun gate di credenziale, quindi save abilitato).
+    expect(screen.getByPlaceholderText('default model (optional)').disabled).toBe(false);
+    expect(screen.getByRole('button', { name: 'save' }).disabled).toBe(false);
+  });
+
+  it('an engine without an HTTP listing says so, and without fetchModels the section stays hidden', async () => {
+    render(<Harness initial={profileForm('claude.kimi-code')} fetchModels={vi.fn().mockResolvedValue({ engine: 'claude.kimi-code', supported: false, source: 'unsupported', models: [] })} />);
+    expect(await screen.findByText('This engine does not expose a model listing')).toBeTruthy();
+    // Senza fetcher (nodo senza capability) la sezione non appare e nulla crasha.
+    const bare = render(<Harness initial={profileForm('kimi.native')} />);
+    expect(bare.container.querySelector('.nc-fleet-models')).toBeNull();
+  });
+});
+
+// --- lotto 3b: la finestra dei dati mancanti del modello attivo ---------------
+// Il dialogo apre da solo quando il modello ATTIVO non ha un campo che serve
+// (context/output; gli altri sono opzionali), mostra la proposta del catalogo
+// interno GIA' PRECOMPILATA e consegna la conferma al parent, che la scrive
+// come valore utente. Il fetcher resta un fake: mai provider veri.
+describe('EngineEditor missing-fields dialog', () => {
+  beforeEach(() => localStorage.setItem('nc_lang', 'en'));
+
+  const ACTIVE_RESULT = {
+    engine: 'claude.kimi-code', supported: true, source: 'api', status: 'api',
+    stale: false, error: '', fetchedAt: 1, cap: 128,
+    models: [
+      // Modello attivo: contesto coperto dall'utente, output mancante, e il
+      // catalogo interno propone 8192.
+      { id: 'k3[1m]', contextWindow: 1048576, fieldSources: { contextWindow: 'user' }, backupValues: { maxTokens: 8192 }, inApi: true },
+      { id: 'k3', contextWindow: 262144, maxTokens: 4096, fieldSources: { contextWindow: 'public', maxTokens: 'api' }, inApi: true },
+    ],
+  };
+
+  it('opens by itself when the active model lacks a needed field, with the backup pre-filled', async () => {
+    const fetchModels = vi.fn().mockResolvedValue(ACTIVE_RESULT);
+    render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3[1m]' }} fetchModels={fetchModels} onSetModelValue={vi.fn().mockResolvedValue({ ok: true })} />);
+    const dialog = await screen.findByRole('dialog', { name: 'Missing data' });
+    expect(within(dialog).getByText(/The engine needs a datum for k3\[1m\]/)).toBeTruthy();
+    // Dice COSA manca: solo l'output, non il contesto che l'utente ha già.
+    expect(within(dialog).getByLabelText('output')).toBeTruthy();
+    expect(within(dialog).queryByLabelText('context')).toBeNull();
+    // La proposta di backup arriva precompilata e dichiarata come tale.
+    expect(within(dialog).getByLabelText('output').value).toBe('8192');
+    expect(within(dialog).getByText('proposed backup: 8192')).toBeTruthy();
+    expect(within(dialog).getByText(/top precedence, never rewritten/)).toBeTruthy();
+  });
+
+  it('confirm hands the values to the parent, which owns the user-value write', async () => {
+    const onSetModelValue = vi.fn().mockResolvedValue({ ok: true });
+    const fetchModels = vi.fn().mockResolvedValue(ACTIVE_RESULT);
+    const user = userEvent.setup();
+    render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3[1m]' }} fetchModels={fetchModels} onSetModelValue={onSetModelValue} />);
+    await screen.findByRole('dialog', { name: 'Missing data' });
+    // L'operatore CAMBIA la proposta prima di confermare.
+    const input = screen.getByLabelText('output');
+    await user.clear(input);
+    await user.type(input, '4096');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(onSetModelValue).toHaveBeenCalledWith('claude.kimi-code', 'k3[1m]', { maxTokens: '4096' });
+  });
+
+  it('«leave empty» writes nothing and does not nag again for the same defect', async () => {
+    const onSetModelValue = vi.fn();
+    const fetchModels = vi.fn().mockResolvedValue(ACTIVE_RESULT);
+    const user = userEvent.setup();
+    render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3[1m]' }} fetchModels={fetchModels} onSetModelValue={onSetModelValue} />);
+    await screen.findByRole('dialog', { name: 'Missing data' });
+    await user.click(screen.getByRole('button', { name: 'Leave empty' }));
+    expect(onSetModelValue).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // Resta la via d'ingresso, il dialogo non si riapre da solo.
+    expect(screen.getByRole('button', { name: 'Missing data for k3[1m]' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a complete active model opens nothing, and without the write capability nothing opens either', async () => {
+    const fetchModels = vi.fn().mockResolvedValue(ACTIVE_RESULT);
+    const clean = render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3' }} fetchModels={fetchModels} onSetModelValue={vi.fn()} />);
+    await clean.findByRole('region', { name: 'Models' });
+    expect(clean.queryByRole('dialog')).toBeNull();
+    clean.unmount();
+    const noCap = render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3[1m]' }} fetchModels={fetchModels} />);
+    await noCap.findByRole('region', { name: 'Models' });
+    expect(noCap.queryByRole('dialog')).toBeNull();
+    expect(noCap.queryByRole('button', { name: 'Missing data for k3[1m]' })).toBeNull();
+  });
+
+  it('an active model absent from the listing is missing BOTH fields, with no invented backup', async () => {
+    const fetchModels = vi.fn().mockResolvedValue(ACTIVE_RESULT);
+    render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'ghost-model' }} fetchModels={fetchModels} onSetModelValue={vi.fn().mockResolvedValue({ ok: true })} />);
+    const dialog = await screen.findByRole('dialog', { name: 'Missing data' });
+    expect(within(dialog).getByLabelText('context').value).toBe('');
+    expect(within(dialog).getByLabelText('output').value).toBe('');
+    expect(within(dialog).queryByText(/proposed backup/)).toBeNull();
   });
 });
