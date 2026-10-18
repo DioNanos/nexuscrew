@@ -13,6 +13,7 @@ const pidf = require('../lib/cli/pidfile.js');
 const { sorvegliaStallo } = require('./stall-watchdog.js');
 const { elencaServerTmuxLeak, chiudiServerTmux } = require('./tmux-containment.js');
 const { elencaSupervisorTunnelLeak, chiudiSupervisorTunnel } = require('./tunnel-supervisor-containment.js');
+const { allPidfiles, chiudiLeakDaPidfile } = require('./pidfile-containment.js');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-tests-'));
 const tmuxRoot = path.join(root, 'tmux');
@@ -22,37 +23,6 @@ const testFiles = fs.readdirSync(__dirname)
   .filter((name) => name.endsWith('.test.js'))
   .sort()
   .map((name) => path.join(__dirname, name));
-
-function allPidfiles(dir, found = []) {
-  let entries = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return found; }
-  for (const entry of entries) {
-    const target = path.join(dir, entry.name);
-    if (entry.isDirectory()) allPidfiles(target, found);
-    else if (entry.isFile() && entry.name.endsWith('.pid') && path.basename(path.dirname(target)) === 'tunnels') found.push(target);
-  }
-  return found;
-}
-
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function terminateOwnedLeak(pidPath, meta) {
-  if (!meta || !pidf.isAlive(meta)) return false;
-  const live = pidf.readCmdline(meta.pid);
-  if (!live.includes('tunnel-supervisor.js')) return false;
-
-  try { process.kill(meta.pid, 'SIGTERM'); } catch (_) {}
-  const deadline = Date.now() + 2500;
-  while (Date.now() < deadline && pidf.pidExists(meta.pid)) await delay(50);
-  if (pidf.pidExists(meta.pid)) {
-    const still = pidf.readCmdline(meta.pid);
-    if (still.includes('tunnel-supervisor.js')) {
-      try { process.kill(meta.pid, 'SIGKILL'); } catch (_) {}
-    }
-  }
-  pidf.removePidfile(pidPath);
-  return true;
-}
 
 async function main() {
   const childEnv = {
@@ -106,8 +76,8 @@ async function main() {
 
   const leaked = [];
   for (const pidPath of allPidfiles(root)) {
-    const meta = pidf.readPidfile(pidPath);
-    if (await terminateOwnedLeak(pidPath, meta)) leaked.push({ pid: meta.pid, pidPath });
+    const esito = await chiudiLeakDaPidfile(pidPath, pidf.readPidfile(pidPath));
+    if (esito && esito.esito === 'chiuso') leaked.push({ pid: esito.pid, pidPath: esito.pidPath });
   }
 
   // Secondo invariante: nessun server tmux con environ sotto la root della
