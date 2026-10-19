@@ -58,10 +58,10 @@ function frame({ target, sessionId, sourceKind = 'vl_host', bootId = 'boot-a', g
   };
 }
 
-function approvalSummary(approvalId, remainingMs = 96000) {
+function approvalSummary(approvalId, remainingMs = 96000, commandHash = hex64) {
   return {
     approvalId,
-    commandHash: hex64,
+    commandHash,
     epoch: 1,
     ruleIds: ['d2.rm-recursive'],
     coverage: 'complete',
@@ -217,6 +217,8 @@ export function oldResetEvents(sessionId = 'sess-oldreset') {
   const a = { target: TARGETS.vl, sessionId, sourceKind: 'vl_host', bootId: 'boot-a', generation: 1 };
   const b = { target: TARGETS.vl, sessionId, sourceKind: 'vl_host', bootId: 'boot-b', generation: 2 };
   return [
+    frame({ ...a, seq: 1, type: 'run_started', data: {} }),
+    frame({ ...a, seq: 2, type: 'text_delta', data: { text: 'vecchio', fragmentIndex: 0 } }),
     frame({
       ...b,
       seq: 10,
@@ -237,7 +239,7 @@ export function oldResetEvents(sessionId = 'sess-oldreset') {
         currentCursor: { ownerId: OWNER, nodeId: NODE, sessionId, bootId: 'boot-a', generation: 1, seq: 50 },
       },
     }),
-    frame({ ...b, seq: 11, type: 'text_delta', data: { text: 'nuovo', fragmentIndex: 0 } }),
+    frame({ ...b, seq: 11, type: 'text_delta', data: { text: 'nuovo', fragmentIndex: 1 } }),
   ];
 }
 
@@ -419,4 +421,65 @@ export const FIXTURE_BUILDERS = Object.freeze({
   approvalReplay: () => approvalReplayEvents(),
   incompleteReview: () => incompleteReviewEvents(),
   approvalThenTerminal: () => approvalThenTerminalEvents(),
+  approvalConflict: () => approvalConflictEvents(),
+  generationRestart: () => generationRestartEvents(),
+  topLevelOldReset: () => topLevelOldResetEvents(),
 });
+
+// R5/R6 residual sequences from the re-audit.
+export function approvalConflictEvents(sessionId = 'sess-approval-conflict') {
+  const t = { target: TARGETS.cli, sessionId, sourceKind: 'cli_adapter', seq: 0 };
+  return [
+    frame({ ...t, seq: 1, type: 'run_started', data: {} }),
+    frame({ ...t, seq: 2, type: 'approval_requested', data: approvalSummary('ap-1') }),
+    // Same key, different command: the pending snapshot is ambiguous.
+    frame({ ...t, seq: 2, type: 'approval_requested', data: approvalSummary('ap-1', 96000, 'b'.repeat(64)) }),
+  ];
+}
+
+export function generationRestartEvents(sessionId = 'sess-gen-restart') {
+  const a = { target: TARGETS.vl, sessionId, sourceKind: 'vl_host', bootId: 'boot-a', generation: 7 };
+  const b = { target: TARGETS.vl, sessionId, sourceKind: 'vl_host', bootId: 'boot-b', generation: 1 };
+  return [
+    frame({ ...a, seq: 1, type: 'run_started', data: {} }),
+    frame({ ...a, seq: 2, type: 'text_delta', data: { text: 'host vecchio', fragmentIndex: 0 } }),
+    {
+      protocol: 'nc-chat/1',
+      type: 'reset',
+      target: TARGETS.vl,
+      sessionId,
+      scope: 'source',
+      reason: 'host_restart',
+      currentCursor: { ownerId: OWNER, nodeId: NODE, sessionId, bootId: 'boot-b', generation: 1, seq: 0 },
+    },
+    frame({ ...b, seq: 1, type: 'text_delta', data: { text: 'host nuovo', fragmentIndex: 1 } }),
+  ];
+}
+
+export function topLevelOldResetEvents(sessionId = 'sess-top-old-reset') {
+  const a = { target: TARGETS.vl, sessionId, sourceKind: 'vl_host', bootId: 'boot-a', generation: 1 };
+  const b = { target: TARGETS.vl, sessionId, sourceKind: 'vl_host', bootId: 'boot-b', generation: 2 };
+  return [
+    frame({ ...a, seq: 1, type: 'run_started', data: {} }),
+    {
+      protocol: 'nc-chat/1',
+      type: 'reset',
+      target: TARGETS.vl,
+      sessionId,
+      scope: 'source',
+      reason: 'host_restart',
+      currentCursor: { ownerId: OWNER, nodeId: NODE, sessionId, bootId: 'boot-b', generation: 2, seq: 10 },
+    },
+    frame({ ...b, seq: 11, type: 'text_delta', data: { text: 'nuovo', fragmentIndex: 0 } }),
+    // Replay of an older top-level control: must not bring boot-a back.
+    {
+      protocol: 'nc-chat/1',
+      type: 'reset',
+      target: TARGETS.vl,
+      sessionId,
+      scope: 'source',
+      reason: 'host_restart',
+      currentCursor: { ownerId: OWNER, nodeId: NODE, sessionId, bootId: 'boot-a', generation: 1, seq: 50 },
+    },
+  ];
+}

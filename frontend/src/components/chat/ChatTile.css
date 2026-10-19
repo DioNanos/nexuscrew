@@ -63,6 +63,8 @@
   color: var(--text-secondary); font-size: 11.5px;
 }
 .nc-chat-notice-warn { color: var(--warning); border-color: var(--warning); }
+.nc-chat-conflict ul { margin: 4px 0 0; padding-left: 16px; }
+.nc-chat-conflict li { font-size: 11.5px; }
 
 .nc-chat-approval {
   border: 1px solid var(--warning); background: var(--bg-secondary);

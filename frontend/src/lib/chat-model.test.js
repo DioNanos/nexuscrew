@@ -3,11 +3,11 @@ import {
   RUN_STATE, applyEvents, applyEvent, createView, markCancelRequested, toolDuration,
 } from './chat-model.js';
 import {
-  BASE, REVIEWS, TARGETS, approvalReplayEvents, approvalThenTerminalEvents, cliApprovalEvents,
+  BASE, REVIEWS, TARGETS, approvalConflictEvents, approvalReplayEvents, approvalThenTerminalEvents, cliApprovalEvents,
   cliApprovalResolvedEvents, cliCancelledEvents, cliErrorEvents, cliNoRunStartedEvents,
   cliRunningEvents, duplicateSeqEvents, gapEvents, identicalReplayEvents, incompleteReviewEvents,
   longTextEvents, markupEvents, oldBootEvents, oldResetEvents, repeatedFragmentEvents,
-  resetEvents, terminalConflictEvents, topLevelGapEvents, topLevelResetEvents,
+  generationRestartEvents, resetEvents, terminalConflictEvents, topLevelGapEvents, topLevelOldResetEvents, topLevelResetEvents,
   turnEndThenToolEvents, twoApprovalsEvents, twoRunsEvents, vlDoneEvents, vlNoStartEvents,
 } from './chat-fixtures.js';
 
@@ -146,7 +146,23 @@ describe('chat-model ordering and integrity', () => {
     const view = viewOf(oldResetEvents());
     expect(view.bootId).toBe('boot-b');
     expect(view.conflicts.some((c) => c.kind === 'stale-reset')).toBe(true);
+    expect(view.messages.map((m) => m.text).join('')).toContain('nuovo');
+  });
+
+  it('refuses a replayed top-level reset back to a retired boot', () => {
+    const view = viewOf(topLevelOldResetEvents());
+    expect(view.bootId).toBe('boot-b');
+    expect(view.generation).toBe(2);
     expect(view.messages.map((m) => m.text).join('')).toBe('nuovo');
+    expect(view.conflicts.some((c) => c.kind === 'stale-reset' && c.reason === 'retired-epoch')).toBe(true);
+  });
+
+  it('accepts a new boot whose generation restarts lower', () => {
+    const view = viewOf(generationRestartEvents());
+    expect(view.bootId).toBe('boot-b');
+    expect(view.generation).toBe(1);
+    expect(view.conflicts.some((c) => c.kind === 'stale-reset')).toBe(false);
+    expect(view.messages.map((m) => m.text).join('')).toContain('host nuovo');
   });
 
   it('ignores a top-level gap frame for another target', () => {
@@ -187,7 +203,7 @@ describe('chat-model approval lifecycle', () => {
     expect(view.approval.approvalId).toBe('ap-2');
     expect(view.approval.resolved).toBeNull();
     expect(view.approvals['ap-1'].resolved).toBe('denied');
-    expect(view.state).not.toBe(RUN_STATE.DONE);
+    expect(view.state).toBe(RUN_STATE.AWAITING_APPROVAL);
   });
 
   it('does not reopen a consumed decision at replay', () => {
@@ -211,6 +227,20 @@ describe('chat-model approval lifecycle', () => {
     const incomplete = viewOf(incompleteReviewEvents(), { canApprove: true }, REVIEWS);
     expect(incomplete.approval.review.complete).toBe(false);
     expect(incomplete.approval.actionable).toBe(false);
+  });
+
+  it('invalidates the pending approval on an integrity conflict', () => {
+    const view = viewOf(approvalConflictEvents(), { canApprove: true }, REVIEWS);
+    expect(view.approval.actionable).toBe(false);
+    expect(view.approval.invalidated).toBe('seq-payload');
+    expect(view.conflicts.some((c) => c.kind === 'seq-payload')).toBe(true);
+  });
+
+  it('invalidates the pending approval when cancel is requested', () => {
+    const view = markCancelRequested(viewOf(cliApprovalEvents(), { canApprove: true }, REVIEWS));
+    expect(view.state).toBe(RUN_STATE.CANCEL_REQUESTED);
+    expect(view.approval.actionable).toBe(false);
+    expect(view.approval.invalidated).toBe('cancel_requested');
   });
 
   it('keeps the approval when a terminal arrives (no fake reopen)', () => {

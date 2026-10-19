@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import ChatTileView from './ChatTileView.jsx';
 import {
-  BASE, REVIEWS, TARGETS, approvalThenTerminalEvents, cliApprovalEvents,
+  BASE, REVIEWS, TARGETS, approvalConflictEvents, approvalThenTerminalEvents, cliApprovalEvents,
   cliApprovalResolvedEvents, cliCancelledEvents, cliErrorEvents, cliRunningEvents,
-  gapEvents, incompleteReviewEvents, longTextEvents, markupEvents, vlDoneEvents,
+  duplicateSeqEvents, gapEvents, identicalReplayEvents, incompleteReviewEvents, longTextEvents,
+  markupEvents, terminalConflictEvents, vlDoneEvents,
 } from '../../lib/chat-fixtures.js';
 
 function renderChat(props = {}) {
@@ -147,6 +148,47 @@ describe('ChatTileView approval', () => {
     });
     expect(container.querySelector('.nc-chat-approval').getAttribute('data-state')).toBe('resolved');
     expect(screen.getByRole('button', { name: 'Approva una volta' }).disabled).toBe(true);
+  });
+});
+
+describe('ChatTileView integrity notice', () => {
+  it('shows the conflict for a duplicate seq with different payload', () => {
+    const { container } = renderChat({ target: TARGETS.cli, events: duplicateSeqEvents() });
+    const notice = container.querySelector('[data-testid="chat-conflicts"]');
+    expect(notice).toBeTruthy();
+    expect(notice.textContent).toContain("conflitto d'integrità");
+    expect(notice.textContent).toContain('evento duplicato con contenuto diverso');
+  });
+
+  it('shows the conflict for a second, different terminal', () => {
+    const { container } = renderChat({ target: TARGETS.cli, events: terminalConflictEvents() });
+    expect(container.querySelector('[data-testid="chat-conflicts"]').textContent)
+      .toContain('terminale in conflitto');
+  });
+
+  it('does not show a conflict for an identical replay', () => {
+    const { container } = renderChat({ target: TARGETS.cli, events: identicalReplayEvents() });
+    expect(container.querySelector('[data-testid="chat-conflicts"]')).toBeNull();
+  });
+});
+
+describe('ChatTileView approval invalidation', () => {
+  it('disables the action and declares the conflict', () => {
+    const { container } = renderChat({
+      target: TARGETS.cli, events: approvalConflictEvents(), viewer: { canApprove: true },
+    });
+    expect(screen.getByRole('button', { name: 'Approva una volta' }).disabled).toBe(true);
+    expect(screen.getByTestId('approval-invalidated').textContent).toContain('seq-payload');
+    expect(container.querySelector('[data-testid="chat-conflicts"]')).toBeTruthy();
+  });
+
+  it('disables the action when cancel is requested', () => {
+    const { container } = renderChat({
+      target: TARGETS.cli, events: cliApprovalEvents(), viewer: { canApprove: true }, cancelRequested: true,
+    });
+    expect(container.querySelector('.nc-chat').getAttribute('data-state')).toBe('cancel_requested');
+    expect(screen.getByRole('button', { name: 'Approva una volta' }).disabled).toBe(true);
+    expect(screen.getByTestId('approval-invalidated').textContent).toContain('cancel_requested');
   });
 });
 

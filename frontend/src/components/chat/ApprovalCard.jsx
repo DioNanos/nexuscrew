@@ -49,6 +49,11 @@ export default function ApprovalCard({ approval, viewer = { canApprove: false },
           Approva una volta
         </button>
       </div>
+      {approval.invalidated ? (
+        <small className="nc-chat-demo-hint" data-testid="approval-invalidated">
+          richiesta non più valida: {approval.invalidated}
+        </small>
+      ) : null}
       {demo && actionable ? <small className="nc-chat-demo-hint">demo: nessuna azione</small> : null}
     </section>
   );

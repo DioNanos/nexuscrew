@@ -133,8 +133,28 @@ function isRetired(view, bootId, generation) {
   return view.retired.some((entry) => entry.bootId === bootId && entry.generation === generation);
 }
 
+/// Why a reset destination is refused, or null when it may be applied.
+/// Generations are monotonic only inside one boot: a new boot may restart
+/// at 1, while a retired epoch is never reactivated by a replayed control.
+function resetRefusal(view, cursor, source) {
+  if (!cursor || !cursor.bootId) return 'missing-cursor';
+  if (source && source.bootId && source.bootId !== cursor.bootId) return 'cursor-source-mismatch';
+  if (isRetired(view, cursor.bootId, cursor.generation)) return 'retired-epoch';
+  if (view.bootId && cursor.bootId === view.bootId
+      && Number.isInteger(cursor.generation) && Number.isInteger(view.generation)
+      && cursor.generation < view.generation) {
+    return 'older-same-boot';
+  }
+  return null;
+}
+
 function addConflict(view, kind, detail) {
-  return { ...view, conflicts: [...view.conflicts, { kind, ...detail }] };
+  // A conflict makes the pending request ambiguous: keep the card visible but
+  // non-actionable until reconciliation, and keep the conflict for the UI.
+  const approval = view.approval
+    ? { ...view.approval, actionable: false, invalidated: kind }
+    : null;
+  return { ...view, conflicts: [...view.conflicts, { kind, ...detail }], approval };
 }
 
 function upsertDelta(messages, items, data, runId) {
@@ -281,17 +301,9 @@ export function applyEvent(view, frame) {
   // Epoch handling. Only stream_reset may switch epoch, and only forward:
   // a reset back to a retired/older boot is refused.
   if (bootId && next.bootId && (bootId !== next.bootId || generation !== next.generation)) {
+    // Events from another epoch are dropped; only a reset may switch epoch,
+    // and its destination is validated below (source and top-level form).
     if (event.type !== 'stream_reset') return { ...next, dropped: next.dropped + 1 };
-    const cursor = event.data?.currentCursor || {};
-    const targetGen = Number.isInteger(cursor.generation) ? cursor.generation : -1;
-    if (isRetired(next, cursor.bootId, cursor.generation)
-        || targetGen < (next.generation ?? -1)
-        || (targetGen === next.generation && cursor.bootId !== next.bootId)) {
-      return addConflict({ ...next, dropped: next.dropped + 1 }, 'stale-reset', {
-        from: `${bootId}:${generation}`,
-        to: `${cursor.bootId}:${cursor.generation}`,
-      });
-    }
   }
 
   const base = {
@@ -396,14 +408,18 @@ export function applyEvent(view, frame) {
         ...base.approvals,
         [id]: { resolved: data.decision || 'resolved' },
       };
-      const current = base.approval && base.approval.approvalId === id
+      const isCurrent = Boolean(base.approval && base.approval.approvalId === id);
+      const current = isCurrent
         ? { ...base.approval, resolved: data.decision || 'resolved', actionable: false }
         : base.approval;
       return {
         ...base,
         approvals,
         approval: current,
-        state: isTerminal(base) ? base.state : RUN_STATE.RUNNING,
+        // A different, still-pending approval keeps the run in the wait state.
+        state: isTerminal(base)
+          ? base.state
+          : (base.approval && !isCurrent ? RUN_STATE.AWAITING_APPROVAL : RUN_STATE.RUNNING),
       };
     }
 
@@ -420,7 +436,19 @@ export function applyEvent(view, frame) {
 
     case 'stream_reset': {
       const cursor = data.currentCursor || {};
-      const previous = { bootId: base.bootId, generation: base.generation };
+      const refusal = resetRefusal(base, cursor, source);
+      if (refusal) {
+        // Refuse before adopting the destination: the view keeps the epoch it
+        // had before this frame, never the one carried by the bad reset.
+        return addConflict({ ...next, dropped: next.dropped + 1 }, 'stale-reset', {
+          reason: refusal,
+          from: `${next.bootId}:${next.generation}`,
+          to: `${cursor.bootId}:${cursor.generation}`,
+        });
+      }
+      // Retire the epoch that was current BEFORE this frame adopted the
+      // source: base already carries the destination.
+      const previous = { bootId: next.bootId, generation: next.generation };
       return {
         ...base,
         reset: { scope: data.scope || 'broker_view', reason: data.reason || 'unknown' },
@@ -473,7 +501,14 @@ export function applyEvents(view, frames) {
 /// Local UI state only: it does not send or cancel anything.
 export function markCancelRequested(view) {
   if (isTerminal(view)) return view;
-  return { ...view, state: RUN_STATE.CANCEL_REQUESTED };
+  return {
+    ...view,
+    state: RUN_STATE.CANCEL_REQUESTED,
+    // A reply during cancel must not reopen the execution.
+    approval: view.approval
+      ? { ...view.approval, actionable: false, invalidated: 'cancel_requested' }
+      : null,
+  };
 }
 
 export function toolDuration(tool) {

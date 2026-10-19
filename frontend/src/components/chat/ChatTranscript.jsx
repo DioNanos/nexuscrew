@@ -11,11 +11,31 @@ function Message({ message }) {
   );
 }
 
+const CONFLICT_LABEL = {
+  'seq-payload': 'evento duplicato con contenuto diverso',
+  'terminal-conflict': 'terminale in conflitto (mantenuto il primo)',
+  'stale-reset': 'reset rifiutato (epoch ritirato o precedente)',
+};
+
+function conflictLabel(conflict) {
+  return CONFLICT_LABEL[conflict.kind] || conflict.kind;
+}
+
 // Renders items in event order. Text is inert data: no HTML, no markdown.
 export default function ChatTranscript({ view, viewer, now = Date.now(), demo = true }) {
   const byId = (list, key, id) => list.find((entry) => entry[key] === id);
   return (
     <div className="nc-chat-log" data-testid="chat-transcript">
+      {view.conflicts.length > 0 ? (
+        <div className="nc-chat-notice nc-chat-notice-warn nc-chat-conflict" role="alert" data-testid="chat-conflicts">
+          <strong>conflitto d'integrità</strong>
+          <ul>
+            {view.conflicts.map((conflict, index) => (
+              <li key={`${conflict.kind}:${index}`}>{conflictLabel(conflict)}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {view.gap ? (
         <div className="nc-chat-notice" role="status">
           {view.gap.count ? `${view.gap.count} eventi mancanti` : 'eventi mancanti'} · {view.gap.reason}
