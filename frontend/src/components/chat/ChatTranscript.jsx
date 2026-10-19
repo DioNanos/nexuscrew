@@ -56,7 +56,7 @@ export default function ChatTranscript({ view, viewer, now = Date.now(), demo = 
           return tool ? <ToolCardInline key={`t:${item.toolCallId}`} tool={tool} /> : null;
         }
         if (item.kind === 'approval') {
-          return <ApprovalCard key="approval" approval={view.approval} viewer={viewer} now={now} demo={demo} />;
+          return <ApprovalCard key="approval" run={view} approval={view.approval} viewer={viewer} now={now} demo={demo} />;
         }
         return null;
       })}

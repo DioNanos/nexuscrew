@@ -600,6 +600,34 @@ export function applyEvents(view, frames) {
   return (frames || []).reduce((acc, frame) => applyEvent(acc, frame), view);
 }
 
+// --- approval guard ---------------------------------------------------------
+// One function, independent from the run label alone: a foreign resolution or
+// a stale view can change `state` while the request is no longer decidable.
+// `state` is the run snapshot (the view): state, gap, reset, fenced, terminal.
+const INELIGIBLE_STATES = new Set([
+  RUN_STATE.SUBMITTED,
+  RUN_STATE.UNKNOWN,
+  RUN_STATE.DONE,
+  RUN_STATE.ERROR,
+  RUN_STATE.CANCELLED,
+  RUN_STATE.CANCEL_REQUESTED,
+]);
+
+export function canApprove(state, approval, viewer = {}) {
+  if (!state || !approval) return false;
+  if (viewer?.canApprove !== true) return false;
+  if (approval.resolved != null) return false;
+  if (approval.invalidated) return false;
+  if (approval.actionable === false) return false;
+  if (!approval.review || approval.review.complete !== true) return false;
+  if (!state.state || INELIGIBLE_STATES.has(state.state)) return false;
+  if (state.terminal) return false;
+  if (state.fenced) return false;
+  if (state.gap) return false;
+  if (state.reset) return false;
+  return true;
+}
+
 /// Local UI action: the same reducer path as the `cancel_requested` frame.
 export function markCancelRequested(view) {
   return applyEvent(view, { type: 'cancel_requested' });

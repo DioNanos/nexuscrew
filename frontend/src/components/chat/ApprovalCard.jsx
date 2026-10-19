@@ -1,3 +1,5 @@
+import { canApprove } from '../../lib/chat-model.js';
+
 function secondsLeft(expiresAt, now) {
   if (!Number.isFinite(expiresAt)) return null;
   return Math.max(0, Math.ceil((expiresAt - now) / 1000));
@@ -12,12 +14,12 @@ function mmss(total) {
 // One card, two readers. The command and the review fields exist only for a
 // viewer allowed to approve; everyone else sees a bounded state. Buttons are
 // "Approva una volta" / "Nega" — never "sempre per la sessione".
-export default function ApprovalCard({ approval, viewer = { canApprove: false }, now = Date.now(), demo = true }) {
+export default function ApprovalCard({ run, approval, viewer = { canApprove: false }, now = Date.now(), demo = true }) {
   if (!approval) return null;
   const left = secondsLeft(approval.expiresAt, now);
   const expired = left === 0;
   const resolved = Boolean(approval.resolved);
-  const actionable = approval.actionable === true && !expired && !resolved;
+  const actionable = canApprove(run, approval, viewer) && !expired && !resolved;
   const canReview = viewer.canApprove === true && Boolean(approval.review);
   const status = resolved ? `risolta: ${approval.resolved}` : expired ? 'scaduta' : `scade ${mmss(left)}`;
 

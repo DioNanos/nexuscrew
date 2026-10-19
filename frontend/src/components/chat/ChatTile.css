@@ -19,6 +19,11 @@
 .nc-chat-state[data-state="done"] { color: var(--success); border-color: var(--success); }
 .nc-chat-stop { color: var(--text-tertiary); }
 
+.nc-chat-demo-notice {
+  flex: 0 0 auto; margin: 0; padding: 3px 10px;
+  font-size: 10.5px; color: var(--warning);
+  background: var(--bg-secondary); border-bottom: 1px dashed var(--border);
+}
 .nc-chat-tools-menu { margin-left: auto; position: relative; }
 .nc-chat-tools-toggle {
   min-height: 32px; min-width: 44px;

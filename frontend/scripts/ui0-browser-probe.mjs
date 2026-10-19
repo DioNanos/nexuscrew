@@ -150,6 +150,8 @@ const MEASURE = `(() => {
       composer: rect(tile.querySelector('.nc-chat-composer')),
       send: rect(tile.querySelector('.nc-chat-send')),
       toggle: rect(tile.querySelector('.nc-chat-tools-toggle')),
+      notice: rect(tile.querySelector('[data-testid="chat-demo-notice"]')),
+      noticeText: (tile.querySelector('[data-testid="chat-demo-notice"]') || {}).textContent || '',
     })),
   };
 })()`;
@@ -199,6 +201,16 @@ async function run() {
         }
         if (geo.toggle && geo.toggle.height < 44 - 0.5) {
           failures.push(`tile ${index}: tool toggle height ${geo.toggle.height} < 44`);
+        }
+        if (!geo.notice) {
+          failures.push(`tile ${index}: demo approval notice missing`);
+        } else {
+          if (!geo.noticeText.includes('semantica non qualificata')) {
+            failures.push(`tile ${index}: notice text unexpected`);
+          }
+          if (geo.notice.bottom > data.viewport.height + 1) {
+            failures.push(`tile ${index}: notice below the viewport`);
+          }
         }
         if (geo.send && geo.composer
             && (geo.send.bottom > geo.composer.bottom + 0.5 || geo.send.top < geo.composer.top - 0.5)) {

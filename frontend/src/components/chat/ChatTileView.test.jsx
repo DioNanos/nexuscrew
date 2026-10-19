@@ -34,9 +34,10 @@ describe('ChatTileView states', () => {
   });
 
   it('shows the terminal stop reason', () => {
-    renderChat({ events: cliErrorEvents(), target: TARGETS.cli });
-    expect(screen.getByRole('status').textContent).toContain('errore');
-    expect(screen.getByRole('status').textContent).toContain('provider_error');
+    const { container } = renderChat({ events: cliErrorEvents(), target: TARGETS.cli });
+    const pill = container.querySelector('.nc-chat-state');
+    expect(pill.textContent).toContain('errore');
+    expect(pill.textContent).toContain('provider_error');
   });
 });
 

@@ -51,6 +51,11 @@ export default function ChatTileView({
         <RunStatusBar state={view.state} terminal={view.terminal} />
         <ToolHistoryMenu tools={view.tools} />
       </div>
+      {demo ? (
+        <p className="nc-chat-demo-notice" role="status" data-testid="chat-demo-notice">
+          approvazioni dimostrative, semantica non qualificata
+        </p>
+      ) : null}
       <ChatTranscript view={view} viewer={viewer} now={Number.isFinite(now) ? now : clock} demo={demo} />
       <ChatStatusLine context={view.context} capabilities={capabilities} />
       <ChatComposerPreview label={label} running={RUNNING_STATES.has(view.state)} demo={demo} />
