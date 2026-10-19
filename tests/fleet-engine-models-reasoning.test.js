@@ -32,7 +32,7 @@ async function fleetWithDeclaredModel(t, declaration) {
       id: 'api-a', label: 'api-a', managed: {
         client: 'codex-vl', provider: 'custom', model: 'm1', permissionPolicy: 'standard',
         displayName: 'api-a', baseUrl: 'https://api-a.example.test', protocol: 'openai_responses',
-        envKey: 'NC_REASONING_TEST_KEY', providerId: 'api-a',
+        envKey: 'REASONING_PROBE_KEY', providerId: 'api-a',
       },
     }],
     models: [{ id: 'm1', engine: 'api-a', ...declaration }],
