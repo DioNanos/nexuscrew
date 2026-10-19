@@ -18,8 +18,11 @@ const {
   createModelDiscovery,
   mergeModelRecords,
   publicCatalogProviderId,
-  publicCatalogIdCandidates,
+  publicCatalogVendorProviderId,
+  publicCatalogVendorSplit,
   publicCatalogRecords,
+  resolvePublicCatalogRecords,
+  DISCOVERY_PROPOSAL_CAP,
   PUBLIC_CATALOG_TTL_MS,
   PUBLIC_CATALOG_URL,
 } = require('../lib/fleet/model-discovery.js');
@@ -273,15 +276,27 @@ test('mappatura provider: tabella esplicita, host esatto, e il resto = nessun da
   assert.equal(publicCatalogProviderId({}), null);
 });
 
-test('mappatura id modello: maiuscole, prefisso vendor/, suffissi :cloud e -cloud; il resto non si tocca', () => {
-  // candidati in ordine: esatto, minuscolo, senza prefisso, senza suffisso
-  assert.deepEqual(publicCatalogIdCandidates('GLM-5.3'), ['GLM-5.3', 'glm-5.3']);
-  assert.deepEqual(publicCatalogIdCandidates('z-ai/glm-5.3'), ['z-ai/glm-5.3', 'glm-5.3']);
-  assert.ok(publicCatalogIdCandidates('glm-5.3:cloud').includes('glm-5.3'));
-  assert.ok(publicCatalogIdCandidates('glm-5.3-cloud').includes('glm-5.3'));
-  // il marker di variante di contesto NON si normalizza: ereditare i limiti
-  // del modello base sarebbero numeri sbagliati
-  assert.deepEqual(publicCatalogIdCandidates('glm-5.3[1m]'), ['glm-5.3[1m]']);
+test('mappatura id modello: vendor riconosciuto da tabella esplicita, il resto non si tocca', () => {
+  // prefisso vendor: SOLO la tabella esplicita decide chi è un vendor
+  assert.deepEqual(publicCatalogVendorSplit('z-ai/glm-5.3'), { providerId: 'zai', rest: 'glm-5.3' });
+  assert.equal(publicCatalogVendorProviderId('zai'), 'zai');
+  assert.equal(publicCatalogVendorProviderId('ANTHROPIC'), 'anthropic');
+  assert.equal(publicCatalogVendorProviderId('openai'), 'openai');
+  // primo segmento NON in tabella: non è un vendor, non si rimuove mai
+  assert.equal(publicCatalogVendorProviderId('mystery'), null);
+  assert.equal(publicCatalogVendorSplit('mystery/glm-5.3'), null);
+  assert.equal(publicCatalogVendorSplit('glm-5.3'), null);
+  assert.equal(publicCatalogVendorSplit('/glm-5.3'), null);
+  // comportamento: il namespace del vendor riconosciuto batte la chiave
+  // esatta globale di un gateway, e il vendor si riconosce anche a maiuscole
+  const cat = {
+    gateway: { models: { 'z-ai/glm-5.3': { limit: { context: 111 } } } },
+    zai: { models: { 'glm-5.3': { limit: { context: 200000 } } } },
+  };
+  const out = publicCatalogRecords(cat, null, ['z-ai/glm-5.3', 'Z-AI/glm-5.3', 'mystery/glm-5.3']);
+  assert.deepEqual(out.map((r) => r.id), ['z-ai/glm-5.3', 'Z-AI/glm-5.3']);
+  assert.equal(out[0].contextWindow, 200000); // namespace z-ai, non il gateway
+  assert.equal(out[1].contextWindow, 200000);
 });
 
 test('mappatura record: campi normalizzati, assenti restano assenti, senza match nessun dato', () => {
@@ -305,8 +320,12 @@ test('mappatura record: campi normalizzati, assenti restano assenti, senza match
   assert.equal(upper.deprecated, true);       // status deprecated
   assert.equal('maxTokens' in upper, false);  // limit.output assente → assente
   assert.equal('reasoning' in upper, false);  // assente → assente
-  // provider senza modelli / id provider inesistente: nessun dato
-  assert.deepEqual(publicCatalogRecords(CATALOG, 'nope', ['glm-5.3']), []);
+  // provider assente dal catalogo: il fallback per id risolve comunque
+  // globalmente, l'id della riga resta quello dell'API
+  const byId = publicCatalogRecords(CATALOG, 'nope', ['glm-5.3']);
+  assert.equal(byId.length, 1);
+  assert.equal(byId[0].id, 'glm-5.3');
+  assert.equal(byId[0].contextWindow, 200000);
   assert.deepEqual(publicCatalogRecords(null, 'zai', ['glm-5.3']), []);
   // suffisso cloud: l'id dell'API resta quello, i dati arrivano dal catalogo
   const cloud = publicCatalogRecords(CATALOG, 'ollama-cloud', ['qwen3.5:397b']);
@@ -393,14 +412,15 @@ test('innesto end-to-end: discoverEngine con publicCatalog, cache valida = zero 
   }
 });
 
-test('innesto: provider senza mappatura = nessuna rete, nessun layer pubblico', async () => {
+test('provider senza mappatura: fallback per id con UN solo fetch fisso e keyless; senza id nessun fetch', async () => {
   let clock = 1_000_000;
   let catalogHits = 0;
   const engineServer = await startFakeServer((req, res) => json(res, 200, { data: [{ id: 'm-1' }] }));
+  const emptyServer = await startFakeServer((req, res) => json(res, 200, { data: [] }));
   const catalogServer = await startFakeServer((req, res) => { catalogHits += 1; json(res, 200, CATALOG); });
-  const home = isolatedHome();
   try {
     const md = createModelDiscovery({ now: () => clock });
+    const home = isolatedHome();
     const out = await md.discoverEngine({
       engine: 'pc-unmapped', collector: 'openai-compat', baseUrl: engineServer.baseUrl,
       home, ttlMs: 5000, timeoutMs: 500,
@@ -408,11 +428,275 @@ test('innesto: provider senza mappatura = nessuna rete, nessun layer pubblico', 
     });
     assert.equal(out.source, 'api');
     assert.equal(out.publicCatalog.providerId, null);
-    assert.equal(out.publicCatalog.status, 'skipped');
+    assert.equal(out.publicCatalog.status, 'api');
+    // m-1 non è nel catalogo: zero record, ma il by-id è stato tentato
     assert.equal(out.publicCatalog.records, 0);
-    // l'engine ha risposto; il catalogo non è stato nemmeno richiesto
-    assert.equal(catalogHits, 0);
-    assert.ok(!fs.existsSync(path.join(home, '.nexuscrew', 'model-discovery', 'public-catalog.json')));
+    assert.deepEqual(out.publicCatalog.byId, { rows: 0, enriched: 0, conflicts: 0, noData: 0 });
+    assert.equal(catalogHits, 1);
+    // la richiesta al catalogo è l'URL pubblico fisso: nessun nome di modello
+    // locale, nessun URL/chiave dell'endpoint dentro la richiesta
+    assert.equal(catalogServer.requests[0].url, '/api.json');
+    assert.equal(catalogServer.requests[0].method, 'GET');
+    assert.ok(!catalogServer.requests[0].headers.authorization);
+    assert.ok(!catalogServer.requests[0].headers['x-api-key']);
+    assert.equal(catalogServer.requests[0].body, '');
+
+    // proposal vuota (nessun id da arricchire): NESSUN fetch, status skipped
+    const home2 = isolatedHome();
+    const skipped = await md.discoverEngine({
+      engine: 'pc-empty', collector: 'openai-compat', baseUrl: emptyServer.baseUrl,
+      home: home2, ttlMs: 5000, timeoutMs: 500,
+      publicCatalog: { provider: 'ollama', baseUrl: 'http://127.0.0.1:11434', fetchImpl: fakeFetchFor(catalogServer) },
+    });
+    assert.equal(skipped.publicCatalog.status, 'skipped');
+    assert.equal(skipped.publicCatalog.records, 0);
+    assert.equal(catalogHits, 1);
+    assert.ok(!fs.existsSync(path.join(home2, '.nexuscrew', 'model-discovery', 'public-catalog.json')));
+  } finally {
+    await closeFakeServer(engineServer);
+    await closeFakeServer(emptyServer);
+    await closeFakeServer(catalogServer);
+  }
+});
+
+// --- By-id fallback: tiers, consensus, conflicts ------------------------------
+
+test('global tiers: exact beats folded, folded collects all case variants, cloud suffix strips', () => {
+  const cat = {
+    a: { models: { 'm-x': { limit: { context: 128000, output: 8192 }, reasoning: false } } },
+    b: { models: { 'm-X': { limit: { context: 128000, output: 16384 } } } },
+    c: { models: { 'm-y': { limit: { context: 99000 }, tool_call: true } } },
+  };
+  // exact tier wins alone: the folded 'M-X' of provider b is never consulted
+  const exact = resolvePublicCatalogRecords(cat, null, ['m-x']);
+  assert.equal(exact.records.length, 1);
+  assert.equal(exact.records[0].contextWindow, 128000);
+  assert.equal(exact.records[0].maxTokens, 8192);
+  assert.equal(exact.records[0].reasoning, false);
+  // case-folded tier takes ALL case variants as candidates and agrees per field
+  const folded = resolvePublicCatalogRecords(cat, null, ['M-X']);
+  assert.equal(folded.records.length, 1);
+  assert.equal(folded.records[0].contextWindow, 128000);  // 128000/128000 agree
+  assert.equal('maxTokens' in folded.records[0], false);  // 8192 vs 16384: conflict
+  assert.equal(folded.records[0].reasoning, false);       // one value, one abstains
+  assert.equal(folded.byId.conflicts, 1);
+  // ':cloud' service suffix is the ONLY stripped form
+  const cloud = resolvePublicCatalogRecords(cat, null, ['m-y:cloud', 'm-y-cloud']);
+  assert.deepEqual(cloud.records.map((r) => r.id), ['m-y:cloud', 'm-y-cloud']);
+  assert.equal(cloud.records[0].contextWindow, 99000);
+  assert.equal(cloud.records[0].tools, true);
+  // context-variant markers and tag/version suffixes are never stripped
+  const intact = resolvePublicCatalogRecords(cat, null, ['m-x[1m]', 'm-x:397b', 'm-x-v2']);
+  assert.deepEqual(intact.records, []);
+});
+
+test('per-field consensus: absent abstains, false is a value, disagreement leaves the field out', () => {
+  const cat = {
+    a: { models: { 'm': { limit: { context: 128000 }, reasoning: false } } },
+    b: { models: { 'm': { limit: { context: 128000, output: 8192 } } } },
+    c: { models: { 'm': { limit: { output: 16384 } } } },
+  };
+  const { records, byId } = resolvePublicCatalogRecords(cat, null, ['m']);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].id, 'm');
+  assert.equal(records[0].contextWindow, 128000); // 128k/128k/absent -> 128k
+  assert.equal('maxTokens' in records[0], false); // 8k/16k -> absent
+  assert.equal(records[0].reasoning, false);      // false/absent -> false
+  assert.equal('tools' in records[0], false);
+  assert.equal('vision' in records[0], false);
+  assert.equal('deprecated' in records[0], false);
+  assert.deepEqual(byId, { rows: 1, enriched: 1, conflicts: 1, noData: 3 });
+});
+
+test('a conflict does not descend to a weaker tier to dodge itself', () => {
+  const cat = {
+    p1: { models: { 'm-x': { limit: { context: 128000, output: 8192 } } } },
+    p2: { models: { 'm-x': { limit: { context: 128000, output: 16384 }, tool_call: true } } },
+    // weaker (case-folded) tier: agrees on output with p2 and has vision, but
+    // the exact tier already has candidates, so this is never consulted
+    p3: { models: { 'M-X': { limit: { context: 128000, output: 16384 }, modalities: { input: ['text', 'image'] } } } },
+  };
+  const { records, byId } = resolvePublicCatalogRecords(cat, null, ['m-x']);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].contextWindow, 128000);       // agreed in the exact tier
+  assert.equal('maxTokens' in records[0], false);       // 8k vs 16k conflict, NOT resolved via p3
+  assert.equal(records[0].tools, true);                 // true/absent -> true
+  assert.equal('vision' in records[0], false);          // only the weaker tier knows it
+  assert.equal(byId.conflicts, 1);
+});
+
+test('mapped field wins and is never replaced by global consensus; missing fields are completed', () => {
+  const cat = {
+    zai: {
+      models: {
+        'glm-5.3': { limit: { context: 200000, output: 32000 }, tool_call: true },
+      },
+    },
+    gateway: {
+      models: {
+        'glm-5.3': { limit: { context: 999999 }, modalities: { input: ['text', 'image'] }, reasoning: false },
+      },
+    },
+    gateway2: { models: { 'glm-5.3': { limit: { context: 888888 } } } },
+  };
+  const { records, byId } = resolvePublicCatalogRecords(cat, 'zai', ['glm-5.3']);
+  assert.equal(records.length, 1);
+  // fields present in the mapped namespace stay, even where the global
+  // candidates disagree (999999 vs 888888 never touches contextWindow)
+  assert.equal(records[0].contextWindow, 200000);
+  assert.equal(records[0].maxTokens, 32000);
+  assert.equal(records[0].tools, true);
+  // fields the mapped namespace lacks are completed by the by-id fallback
+  assert.equal(records[0].vision, true);   // zai abstains, gateway says true
+  assert.equal(records[0].reasoning, false);
+  assert.deepEqual(byId, { rows: 1, enriched: 1, conflicts: 0, noData: 1 });
+});
+
+test('inverted provider and key order in the snapshot: same records, same counters', () => {
+  const direct = {
+    a: { models: { 'm-x': { limit: { context: 128000, output: 8192 }, reasoning: false } } },
+    b: { models: { 'm-x': { limit: { context: 128000 }, tool_call: true } } },
+    c: { models: { 'other': { limit: { context: 4096 } } } },
+  };
+  const reversed = {};
+  for (const provId of Object.keys(direct).reverse()) {
+    const models = {};
+    for (const key of Object.keys(direct[provId].models).reverse()) models[key] = direct[provId].models[key];
+    reversed[provId] = { ...direct[provId], models };
+  }
+  const ids = ['m-x', 'other', 'absent-model'];
+  const one = resolvePublicCatalogRecords(direct, null, ids);
+  const two = resolvePublicCatalogRecords(reversed, null, ids);
+  assert.deepEqual(two.records, one.records);
+  assert.deepEqual(two.byId, one.byId);
+  assert.equal(one.records.length, 2);
+  assert.equal(one.records[0].contextWindow, 128000);
+  assert.equal(one.records[0].maxTokens, 8192); // one value, the other abstains
+  assert.equal(one.records[0].tools, true);
+  assert.equal(one.records[0].reasoning, false);
+});
+
+test('no new models: only proposal ids come out, and cap/order are untouched', async () => {
+  const cat = {
+    p: {
+      models: Object.fromEntries([
+        ...Array.from({ length: 130 }, (_, i) => [`api-${i}`, { limit: { context: 4096 } }]),
+        ['user-1', { limit: { context: 8192 } }],
+        ['user-2', { limit: { context: 8192 } }],
+        ['ghost', { limit: { context: 1000000 } }],
+      ]),
+    },
+  };
+  const proposal = [
+    ...Array.from({ length: 130 }, (_, i) => ({ id: `api-${i}` })),
+  ];
+  const userModels = [{ id: 'user-1' }, { id: 'user-2' }];
+  // the resolver only ever returns ids it was given
+  const { records } = resolvePublicCatalogRecords(cat, null, [...userModels, ...proposal].map((m) => m.id));
+  const outIds = new Set(records.map((r) => r.id));
+  assert.equal(outIds.has('ghost'), false);
+  const merged = mergeModelRecords({
+    userModels,
+    apiModels: proposal,
+    publicCatalogModels: records,
+    apiKnown: true,
+    fetchedAt: 42,
+  });
+  assert.equal(merged.length, DISCOVERY_PROPOSAL_CAP); // cap unchanged
+  assert.deepEqual(merged.slice(0, 2).map((m) => m.id), ['user-1', 'user-2']); // order: user first
+  assert.equal(merged[2].contextWindow, 4096); // public default arrived on an api row
+  assert.ok(merged.every((m) => m.id.startsWith('api-') || m.id === 'user-1' || m.id === 'user-2'));
+
+  // end to end: the merged proposal never grows a catalog-only id
+  let clock = 1_000_000;
+  const engineServer = await startFakeServer((req, res) => json(res, 200, { data: [{ id: 'm-x' }] }));
+  const catalogServer = await startFakeServer((req, res) => json(res, 200, {
+    a: { models: { 'm-x': { limit: { context: 128000 } } } },
+    b: { models: { ghost: { limit: { context: 1000000 } } } },
+  }));
+  try {
+    const md = createModelDiscovery({ now: () => clock });
+    const out = await md.discoverEngine({
+      engine: 'pc-noghost', collector: 'openai-compat', baseUrl: engineServer.baseUrl,
+      home: isolatedHome(), ttlMs: 5000, timeoutMs: 500,
+      publicCatalog: { provider: 'custom', baseUrl: engineServer.baseUrl, fetchImpl: fakeFetchFor(catalogServer) },
+    });
+    assert.deepEqual(out.models.map((m) => m.id), ['m-x']);
+    assert.equal(out.models[0].contextWindow, 128000);
+    assert.equal(out.models[0].fieldSources.contextWindow, 'public');
+  } finally {
+    await closeFakeServer(engineServer);
+    await closeFakeServer(catalogServer);
+  }
+});
+
+test('local endpoints join by id, user values stay on top, nothing local reaches the catalog', async () => {
+  let clock = 1_000_000;
+  const engineServer = await startFakeServer((req, res) => {
+    // ollama collector: /api/tags with local model names
+    json(res, 200, { models: [{ name: 'glm-5.3' }, { name: 'local-only-model' }] });
+  });
+  const catalogServer = await startFakeServer((req, res) => json(res, 200, CATALOG));
+  const home = isolatedHome();
+  try {
+    const md = createModelDiscovery({ now: () => clock });
+    const out = await md.discoverEngine({
+      engine: 'pc-local', collector: 'ollama', baseUrl: engineServer.baseUrl,
+      home, ttlMs: 5000, timeoutMs: 500,
+      userModels: [{ id: 'glm-5.3', contextWindow: 111 }],
+      publicCatalog: { provider: 'ollama', baseUrl: engineServer.baseUrl, fetchImpl: fakeFetchFor(catalogServer) },
+    });
+    assert.equal(out.source, 'api');
+    assert.equal(out.publicCatalog.providerId, null); // local runtime: unmapped
+    assert.equal(out.publicCatalog.records, 1);       // glm-5.3 resolved by id
+    assert.deepEqual(out.publicCatalog.byId, { rows: 1, enriched: 1, conflicts: 0, noData: 1 });
+    const enriched = out.models.find((m) => m.id === 'glm-5.3');
+    assert.equal(enriched.contextWindow, 111); // user declaration beats the default
+    assert.equal(enriched.fieldSources.contextWindow, 'user');
+    assert.equal(enriched.maxTokens, 32000);   // completed from the catalog
+    assert.equal(enriched.fieldSources.maxTokens, 'public');
+    const localOnly = out.models.find((m) => m.id === 'local-only-model');
+    assert.ok(localOnly, 'a model unknown to the catalog stays in the proposal');
+    assert.equal('contextWindow' in localOnly, false);
+    // the one catalog request is the fixed public snapshot: no local model
+    // names, no local URL, no key anywhere in it
+    assert.equal(catalogServer.requests.length, 1);
+    assert.equal(catalogServer.requests[0].url, '/api.json');
+    assert.ok(!catalogServer.requests[0].headers.authorization);
+    assert.equal(catalogServer.requests[0].body, '');
+  } finally {
+    await closeFakeServer(engineServer);
+    await closeFakeServer(catalogServer);
+  }
+});
+
+test('known-gone ids of the proposal are enrichable too', async () => {
+  let clock = 1_000_000;
+  let engineListing = [{ id: 'm-x' }, { id: 'm-old' }];
+  const engineServer = await startFakeServer((req, res) => json(res, 200, { data: engineListing }));
+  const catalogServer = await startFakeServer((req, res) => json(res, 200, {
+    a: { models: { 'm-x': { limit: { context: 128000 } }, 'm-old': { limit: { context: 99000 } } } },
+  }));
+  const home = isolatedHome();
+  try {
+    const md = createModelDiscovery({ now: () => clock });
+    const opts = () => ({
+      engine: 'pc-known', collector: 'openai-compat', baseUrl: engineServer.baseUrl,
+      home, ttlMs: 5000, timeoutMs: 500,
+      publicCatalog: { provider: 'custom', baseUrl: engineServer.baseUrl, fetchImpl: fakeFetchFor(catalogServer) },
+    });
+    const first = await md.discoverEngine(opts());
+    assert.deepEqual(first.models.map((m) => m.id), ['m-x', 'm-old']);
+    // the API drops m-old: a fresh read turns it into a known-gone row, and
+    // the by-id fallback still enriches it
+    engineListing = [{ id: 'm-x' }];
+    clock += 6000;
+    const second = await md.discoverEngine(opts());
+    const old = second.models.find((m) => m.id === 'm-old');
+    assert.ok(old, 'the known-gone row stays in the proposal');
+    assert.equal(old.inApi, false);
+    assert.equal(old.contextWindow, 99000);
+    assert.equal(old.fieldSources.contextWindow, 'public');
   } finally {
     await closeFakeServer(engineServer);
     await closeFakeServer(catalogServer);
