@@ -2,7 +2,7 @@ import ChatTileView from './ChatTileView.jsx';
 import { DEMO } from '../../lib/chat-fixtures.js';
 import './ChatDemo.css';
 
-function DemoTile({ fixture, label }) {
+function DemoTile({ fixture }) {
   return (
     <section className="nc-tile nc-ui0-tile" aria-label={`${fixture.label}, chat`}>
       <header className="nc-tile-head">
@@ -17,11 +17,11 @@ function DemoTile({ fixture, label }) {
           target={fixture.target}
           events={fixture.events}
           viewer={fixture.viewer}
+          reviews={fixture.reviews}
           label={fixture.label}
           capabilities={{ permissionPolicy: 'yolo' }}
         />
       </div>
-      <span className="nc-ui0-tile-label">{label}</span>
     </section>
   );
 }
@@ -37,8 +37,8 @@ export default function ChatDemoGrid() {
         <span>fixture nc-chat/1 statiche · nessuna rete</span>
       </header>
       <main className="nc-ui0-grid">
-        <DemoTile fixture={DEMO.vl} label="nodo VL remoto" />
-        <DemoTile fixture={DEMO.cli} label="cella CLI locale" />
+        <DemoTile fixture={DEMO.vl} />
+        <DemoTile fixture={DEMO.cli} />
       </main>
     </div>
   );

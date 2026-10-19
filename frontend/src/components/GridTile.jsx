@@ -11,7 +11,7 @@ import { advanceTileRuntime, initialTileRuntime, PRESENZA } from '../lib/termina
 import { useInputPreferences } from '../hooks/useInputPreferences.js';
 import ChatTileView from './chat/ChatTileView.jsx';
 import { DEMO } from '../lib/chat-fixtures.js';
-import { isUi0DemoSession, ui0ChatEnabled } from '../lib/ui0-chat-demo.js';
+import { ui0ChatEnabled } from '../lib/ui0-chat-demo.js';
 import './GridTile.css';
 
 // Un tile della griglia. Ogni tile ha i PROPRI ref (mai condivisi
@@ -26,7 +26,7 @@ import './GridTile.css';
 // cellName (Tranche D): titolo visibile risolto dal campo Fleet `cell` (es.
 // `Dev`). node/route/tmuxSession restano identita' tecniche e non compaiono
 // nel titolo visibile; solo il tooltip porta un identificativo tecnico.
-export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, onDragTileStart, floating = false, minimized = false, takeSize = false, onDetach, onReattach, onToggleMinimize, onFloatDragStart, alive = true, sessionAlive = alive, available = true, stale = false, presence = null, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0 }) {
+export default function GridTile({ session, node, ownerId, cellName, token, readonly = false, focused, onFocus, onClose, onOpenSingle, onDragTileStart, floating = false, minimized = false, takeSize = false, onDetach, onReattach, onToggleMinimize, onFloatDragStart, alive = true, sessionAlive = alive, available = true, stale = false, presence = null, fontSize = TILE_FONT_DEF, onZoom, decks = [], currentDeck, onSendToDeck, panelUrl = '', panelCellId = '', panelPort = 0, chatPreview = null }) {
   const [inputPreferences] = useInputPreferences();
   // Titolo visibile = nome logico Fleet (gestita) o nome sessione (unmanaged).
   // session (tmuxSession reale) resta l'identita' del tile per attach/drag.
@@ -47,9 +47,10 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
   const [terminalGeneration, setTerminalGeneration] = useState(0);
   const runtimeRef = useRef(initialTileRuntime());
   const tileKey = node ? `${node}:${session}` : session;
-  // UI-0 demo branch: OFF by default and only for synthetic `ui0-demo*`
-  // sessions. A real cell never matches the prefix, so the PTY path is intact.
-  const chatDemo = ui0ChatEnabled() && isUi0DemoSession(session);
+  // UI-0 preview branch: OFF by default and reachable only through an
+  // explicit preview descriptor passed by a demo entry point. Never inferred
+  // from a session name, so a live cell cannot be classified as synthetic.
+  const chatDemo = ui0ChatEnabled() && Boolean(chatPreview);
   const deckTargets = decks.filter((deck) => deck.id !== currentDeck && deck.available !== false);
 
   // `alive` is the node-health indicator. Solo due cose possono creare una
@@ -159,11 +160,12 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
             un overlay SOPRA il contenuto, mai un sostituto. */}
         {chatDemo ? (
           <ChatTileView
-            target={DEMO.vl.target}
-            events={DEMO.vl.events}
-            viewer={DEMO.vl.viewer}
-            label={visibleName}
-            capabilities={{ permissionPolicy: 'yolo' }}
+            target={chatPreview.target || DEMO.vl.target}
+            events={chatPreview.events || DEMO.vl.events}
+            viewer={chatPreview.viewer || DEMO.vl.viewer}
+            reviews={chatPreview.reviews || {}}
+            label={chatPreview.label || visibleName}
+            capabilities={chatPreview.capabilities || { permissionPolicy: 'yolo' }}
           />
         ) : (
           <>

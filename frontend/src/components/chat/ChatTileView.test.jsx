@@ -1,15 +1,16 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import ChatTileView from './ChatTileView.jsx';
 import {
-  BASE, TARGETS, cliApprovalEvents, cliApprovalResolvedEvents, cliCancelledEvents, cliErrorEvents,
-  cliRunningEvents, gapEvents, longTextEvents, markupEvents, resetEvents, vlDoneEvents,
+  BASE, REVIEWS, TARGETS, approvalThenTerminalEvents, cliApprovalEvents,
+  cliApprovalResolvedEvents, cliCancelledEvents, cliErrorEvents, cliRunningEvents,
+  gapEvents, incompleteReviewEvents, longTextEvents, markupEvents, vlDoneEvents,
 } from '../../lib/chat-fixtures.js';
 
 function renderChat(props = {}) {
   return render(
-    <ChatTileView target={TARGETS.vl} events={vlDoneEvents()} now={BASE} {...props} />,
+    <ChatTileView target={TARGETS.vl} events={vlDoneEvents()} now={BASE} reviews={REVIEWS} {...props} />,
   );
 }
 
@@ -42,7 +43,7 @@ describe('ChatTileView source kinds', () => {
   it('renders CLI and VL with the same components', () => {
     const { container: vl } = renderChat({ events: vlDoneEvents() });
     const { container: cli } = render(
-      <ChatTileView target={TARGETS.cli} events={cliApprovalEvents()} now={BASE} viewer={{ canApprove: true }} />,
+      <ChatTileView target={TARGETS.cli} events={cliApprovalEvents()} now={BASE} viewer={{ canApprove: true }} reviews={REVIEWS} />,
     );
     expect(vl.querySelector('.nc-chat').getAttribute('data-target-kind')).toBe('vl_node');
     expect(cli.querySelector('.nc-chat').getAttribute('data-target-kind')).toBe('cli_cell');
@@ -53,8 +54,8 @@ describe('ChatTileView source kinds', () => {
   it('does not mix two targets sharing a sessionId', () => {
     render(
       <>
-        <ChatTileView target={TARGETS.vl} events={vlDoneEvents('sess-shared')} now={BASE} />
-        <ChatTileView target={TARGETS.cli} events={cliApprovalEvents('sess-shared')} now={BASE} viewer={{ canApprove: true }} />
+        <ChatTileView target={TARGETS.vl} events={vlDoneEvents('sess-shared')} now={BASE} reviews={REVIEWS} />
+        <ChatTileView target={TARGETS.cli} events={cliApprovalEvents('sess-shared')} now={BASE} viewer={{ canApprove: true }} reviews={REVIEWS} />
       </>,
     );
     expect(screen.getByText('Ciao dal nodo')).toBeTruthy();
@@ -78,8 +79,7 @@ describe('ChatTileView tool cards', () => {
   });
 
   it('says the duration is unknown when the source has no times', () => {
-    const events = cliRunningEvents();
-    const { container } = renderChat({ target: TARGETS.cli, events });
+    const { container } = renderChat({ target: TARGETS.cli, events: cliRunningEvents() });
     expect(container.querySelector('.nc-chat-tool').textContent).toContain('durata sconosciuta');
   });
 
@@ -96,19 +96,41 @@ describe('ChatTileView tool cards', () => {
 });
 
 describe('ChatTileView approval', () => {
-  it('shows the full review only to an approver', () => {
-    const { container, unmount } = renderChat({
+  it('enables once/deny only for an approver with a complete review', () => {
+    const { container } = renderChat({
       target: TARGETS.cli, events: cliApprovalEvents(), viewer: { canApprove: true },
     });
     expect(container.querySelector('.nc-chat-approval-command').textContent).toBe('rm -rf build/tmp');
     expect(screen.getByRole('button', { name: 'Approva una volta' }).disabled).toBe(false);
+    expect(screen.getByRole('button', { name: 'Nega' }).disabled).toBe(false);
     expect(screen.queryByText('sempre per la sessione')).toBeNull();
-    unmount();
+  });
 
-    const reader = renderChat({ target: TARGETS.cli, events: cliApprovalEvents(), viewer: { canApprove: false } });
-    expect(reader.container.querySelector('.nc-chat-approval-command')).toBeNull();
-    expect(reader.container.textContent).toContain('Dettaglio non disponibile a questo lettore.');
-    expect(reader.container.textContent).not.toContain('rm -rf');
+  it('gives a reader no active action and no command', () => {
+    const { container } = renderChat({
+      target: TARGETS.cli, events: cliApprovalEvents(), viewer: { canApprove: false },
+    });
+    expect(container.querySelector('.nc-chat-approval-command')).toBeNull();
+    expect(container.textContent).toContain('Dettaglio non disponibile a questo lettore.');
+    expect(container.textContent).not.toContain('rm -rf');
+    expect(screen.getByRole('button', { name: 'Approva una volta' }).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Nega' }).disabled).toBe(true);
+  });
+
+  it('disables the action when the review is incomplete', () => {
+    const { container } = renderChat({
+      target: TARGETS.cli, events: incompleteReviewEvents(), viewer: { canApprove: true },
+    });
+    expect(container.querySelector('.nc-chat-approval').getAttribute('data-state')).toBe('pending');
+    expect(screen.getByRole('button', { name: 'Approva una volta' }).disabled).toBe(true);
+  });
+
+  it('disables the action when the run already ended', () => {
+    const { container } = renderChat({
+      target: TARGETS.cli, events: approvalThenTerminalEvents(), viewer: { canApprove: true },
+    });
+    expect(container.querySelector('.nc-chat').getAttribute('data-state')).toBe('done');
+    expect(screen.getByRole('button', { name: 'Approva una volta' }).disabled).toBe(true);
   });
 
   it('cannot approve an expired request', () => {
@@ -149,8 +171,7 @@ describe('ChatTileView composer preview', () => {
   it('has exactly one composer, local and inert', () => {
     const { container } = renderChat();
     expect(container.querySelectorAll('textarea')).toHaveLength(1);
-    const attach = screen.getByRole('button', { name: 'Allega' });
-    expect(attach.disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Allega' }).disabled).toBe(true);
     expect(screen.getByRole('button', { name: 'Invia' }).disabled).toBe(true);
     const textarea = screen.getByRole('textbox');
     fireEvent.change(textarea, { target: { value: 'bozza locale' } });

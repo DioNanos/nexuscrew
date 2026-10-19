@@ -17,7 +17,7 @@ export default function ApprovalCard({ approval, viewer = { canApprove: false },
   const left = secondsLeft(approval.expiresAt, now);
   const expired = left === 0;
   const resolved = Boolean(approval.resolved);
-  const actionable = !expired && !resolved;
+  const actionable = approval.actionable === true && !expired && !resolved;
   const canReview = viewer.canApprove === true && Boolean(approval.review);
   const status = resolved ? `risolta: ${approval.resolved}` : expired ? 'scaduta' : `scade ${mmss(left)}`;
 

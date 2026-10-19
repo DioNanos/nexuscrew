@@ -45,6 +45,15 @@ describe('ChatDemoGrid', () => {
     expect(socketSpy).not.toHaveBeenCalled();
   });
 
+  it('uses synthetic identities, never the live fleet ids', () => {
+    const { container } = render(<ChatDemoGrid />);
+    const text = container.textContent;
+    expect(text).not.toContain('82dffb30');
+    expect(text).not.toContain('36b876f2');
+    expect(text).toContain('N900 (demo)');
+    expect(text).toContain('Dev (demo)');
+  });
+
   it('shows both source kinds in the same renderer', () => {
     const { container } = render(<ChatDemoGrid />);
     const kinds = Array.from(container.querySelectorAll('.nc-chat')).map((el) => el.getAttribute('data-target-kind'));

@@ -1,5 +1,5 @@
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 vi.mock('./Terminal.jsx', () => ({ default: () => <div data-testid="term" /> }));
@@ -11,27 +11,38 @@ vi.mock('./Icon.jsx', () => ({ default: () => null }));
 vi.mock('../lib/i18n.js', () => ({ t: (k) => k }));
 
 import GridTile from './GridTile.jsx';
+import { TARGETS, vlDoneEvents } from '../lib/chat-fixtures.js';
 
 afterEach(() => {
-  delete globalThis.__NC_UI0_CHAT_DEMO__;
+  vi.unstubAllEnvs();
 });
 
-function renderTile(session) {
-  return render(<GridTile session={session} token="t" />);
+function preview() {
+  return { target: TARGETS.vl, events: vlDoneEvents(), viewer: { canApprove: false }, reviews: {} };
 }
 
-describe('GridTile UI-0 branch', () => {
-  it('keeps the PTY when the flag is OFF, even for a demo session', () => {
-    globalThis.__NC_UI0_CHAT_DEMO__ = false;
-    const { container } = renderTile('ui0-demo-vl');
+function renderTile(props = {}) {
+  return render(<GridTile session="cloud-Dev" token="t" {...props} />);
+}
+
+describe('GridTile UI-0 preview branch', () => {
+  it('keeps the PTY when the build flag is OFF, even with a preview descriptor', () => {
+    const { container } = renderTile({ chatPreview: preview() });
     expect(screen.getByTestId('term')).toBeTruthy();
     expect(container.querySelector('.nc-chat')).toBeNull();
-    expect(container.querySelector('button[title="composer"]')).toBeTruthy();
   });
 
-  it('renders the chat tile for a demo session when the flag is ON', () => {
-    globalThis.__NC_UI0_CHAT_DEMO__ = true;
-    const { container } = renderTile('ui0-demo-vl');
+  it('keeps the PTY for a session named like the old demo prefix', () => {
+    vi.stubEnv('VITE_UI0_CHAT_DEMO', '1');
+    const { container } = renderTile({ session: 'ui0-demo-vl' });
+    // No explicit preview descriptor: the name is not a discriminator.
+    expect(screen.getByTestId('term')).toBeTruthy();
+    expect(container.querySelector('.nc-chat')).toBeNull();
+  });
+
+  it('renders the chat tile only with an explicit preview descriptor', () => {
+    vi.stubEnv('VITE_UI0_CHAT_DEMO', '1');
+    const { container } = renderTile({ chatPreview: preview() });
     expect(screen.queryByTestId('term')).toBeNull();
     expect(container.querySelector('.nc-chat')).toBeTruthy();
     expect(container.querySelector('.nc-chat-state').textContent).toContain('terminato');
@@ -39,12 +50,5 @@ describe('GridTile UI-0 branch', () => {
     expect(container.querySelector('button[title="composer"]')).toBeNull();
     expect(screen.queryByTestId('composer')).toBeNull();
     expect(container.querySelectorAll('textarea')).toHaveLength(1);
-  });
-
-  it('never switches a real cell to chat', () => {
-    globalThis.__NC_UI0_CHAT_DEMO__ = true;
-    const { container } = renderTile('cloud-Dev');
-    expect(screen.getByTestId('term')).toBeTruthy();
-    expect(container.querySelector('.nc-chat')).toBeNull();
   });
 });

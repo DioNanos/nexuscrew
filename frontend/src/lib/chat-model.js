@@ -7,7 +7,8 @@
 // Event names and payloads follow the contracts (VL lotto 0 v2, §4.1/§9.3):
 // run_started, text_delta, message, tool_start, tool_end, turn_end,
 // approval_requested, approval_resolved, context_status, run_done, run_error,
-// run_cancelled, gap, stream_reset.
+// run_cancelled, gap, stream_reset. Top-level control frames `gap`/`reset`
+// (server type, not event envelope) are accepted too.
 
 export const RUN_STATE = Object.freeze({
   SUBMITTED: 'submitted',
@@ -33,31 +34,47 @@ export const RUN_STATE_LABEL = Object.freeze({
   [RUN_STATE.UNKNOWN]: 'esito incerto',
 });
 
-const TERMINALS = new Set(['run_done', 'run_error', 'run_cancelled']);
 const TERMINAL_STATE = {
   run_done: RUN_STATE.DONE,
   run_error: RUN_STATE.ERROR,
   run_cancelled: RUN_STATE.CANCELLED,
 };
 
-function isTerminal(state) {
-  return state.terminal !== null;
+const CONTROL_TYPES = new Set(['gap', 'reset']);
+
+function isTerminal(view) {
+  return view.terminal !== null;
 }
 
-function withState(view, state) {
-  return isTerminal(view) ? view : { ...view, state };
-}
-
-/// Accepts either the nc-chat/1 envelope
-/// `{protocol,type:'event',target,event}` or the bare inner event.
+/// Accepts the nc-chat/1 envelope `{protocol,type:'event',target,event}`,
+/// a top-level control frame `{protocol,type:'gap'|'reset',target,…}` and the
+/// bare inner event. The target is preserved whenever it exists.
 export function normalizeFrame(frame) {
   if (!frame || typeof frame !== 'object') return null;
-  if (frame.protocol === 'nc-chat/1' && frame.type === 'event') {
-    if (!frame.target || !frame.event) return null;
-    return { target: frame.target, event: frame.event };
+  if (frame.type === 'event' && frame.event) {
+    return { target: frame.target || null, event: frame.event };
+  }
+  if (frame.target && CONTROL_TYPES.has(frame.type)) {
+    return { target: frame.target, event: controlEvent(frame) };
   }
   if (frame.event && frame.target) return { target: frame.target, event: frame.event };
   return { target: null, event: frame };
+}
+
+function controlEvent(frame) {
+  const data = frame.data || {
+    ...(frame.count !== undefined ? { count: frame.count } : {}),
+    ...(frame.reason !== undefined ? { reason: frame.reason } : {}),
+    ...(frame.scope !== undefined ? { scope: frame.scope } : {}),
+    ...(frame.currentCursor !== undefined ? { currentCursor: frame.currentCursor } : {}),
+  };
+  return {
+    sessionId: frame.sessionId,
+    runId: frame.runId,
+    source: frame.source || {},
+    type: frame.type === 'reset' ? 'stream_reset' : 'gap',
+    data,
+  };
 }
 
 export function targetKey(target) {
@@ -65,7 +82,21 @@ export function targetKey(target) {
   return `${target.kind || 'unknown'}:${target.ref || ''}`;
 }
 
-export function createView({ target, viewer = { canApprove: false }, now = Date.now() } = {}) {
+function emptyRun(runId) {
+  return {
+    runId: runId || null,
+    state: RUN_STATE.SUBMITTED,
+    started: false,
+    turnEnded: false,
+    terminal: null,
+    messages: [],
+    tools: [],
+    items: [],
+    limit: null,
+  };
+}
+
+export function createView({ target, viewer = { canApprove: false }, now = Date.now(), reviews = {} } = {}) {
   return {
     target: target || null,
     targetKey: targetKey(target),
@@ -73,63 +104,96 @@ export function createView({ target, viewer = { canApprove: false }, now = Date.
     bootId: null,
     generation: null,
     lastSeq: -1,
-    runId: null,
-    state: RUN_STATE.SUBMITTED,
-    started: false,
-    turnEnded: false,
-    messages: [],
-    tools: [],
-    items: [],
+    ...emptyRun(null),
     approval: null,
+    approvals: {},
     gap: null,
     reset: null,
-    terminal: null,
     context: null,
     dropped: 0,
+    conflicts: [],
     viewer,
     now,
+    reviews,
+    // Integrity bookkeeping (bounded in a real ring; small here).
+    seen: {},
+    retired: [],
   };
 }
 
-function findApprovalItem(view) {
-  return view.items.findIndex((item) => item.kind === 'approval');
+function fingerprint(event) {
+  try {
+    return JSON.stringify(event);
+  } catch {
+    return String(event);
+  }
+}
+
+function isRetired(view, bootId, generation) {
+  return view.retired.some((entry) => entry.bootId === bootId && entry.generation === generation);
+}
+
+function addConflict(view, kind, detail) {
+  return { ...view, conflicts: [...view.conflicts, { kind, ...detail }] };
 }
 
 function upsertDelta(messages, items, data, runId) {
   const messageId = data.messageId || `${runId || 'run'}:assistant`;
-  const text = typeof data.text === 'string' ? data.text : '';
+  const fragment = Number.isInteger(data.fragmentIndex) ? data.fragmentIndex : null;
   const index = messages.findIndex((m) => m.messageId === messageId);
   if (index < 0) {
     return {
-      messages: [...messages, { messageId, role: 'assistant', text, streaming: true }],
+      messages: [...messages, {
+        messageId,
+        role: 'assistant',
+        text: typeof data.text === 'string' ? data.text : '',
+        streaming: true,
+        fragments: fragment === null ? [] : [fragment],
+      }],
       items: [...items, { kind: 'message', messageId }],
+      applied: true,
     };
   }
+  const current = messages[index];
+  // A delta after the final message, or with an already applied fragment
+  // index, does not append: the final message is authoritative.
+  if (!current.streaming) return { messages, items, applied: false };
+  if (fragment !== null && current.fragments.includes(fragment)) {
+    return { messages, items, applied: false };
+  }
   const next = messages.slice();
-  next[index] = { ...next[index], text: next[index].text + text, streaming: true };
-  return { messages: next, items };
+  next[index] = {
+    ...current,
+    text: current.text + (typeof data.text === 'string' ? data.text : ''),
+    fragments: fragment === null ? current.fragments : [...current.fragments, fragment],
+  };
+  return { messages: next, items, applied: true };
 }
 
-function upsertFinal(messages, items, data) {
-  const messageId = data.messageId || 'assistant';
+function upsertFinal(messages, items, data, runId) {
+  const messageId = data.messageId || `${runId || 'run'}:assistant`;
   const role = data.role === 'user' ? 'user' : 'assistant';
   const text = typeof data.text === 'string' ? data.text : '';
   const index = messages.findIndex((m) => m.messageId === messageId);
   if (index >= 0) {
     const next = messages.slice();
-    // The final message replaces the deltas already shown: one bubble, no
-    // duplicate. Delivered deltas that belong to another messageId stay.
     next[index] = { ...next[index], role, text, streaming: false };
     return { messages: next, items };
   }
   return {
-    messages: [...messages, { messageId, role, text, streaming: false }],
+    messages: [...messages, { messageId, role, text, streaming: false, fragments: [] }],
     items: [...items, { kind: 'message', messageId }],
   };
 }
 
-function applyToTools(tools, type, data) {
-  const id = data.toolCallId || data.toolCallId === '' ? data.toolCallId : '';
+function canonicalToolCallId(event, data) {
+  // The contract puts the id on the event; `data.toolCallId` is tolerated for
+  // older fixtures but never required.
+  return event.toolCallId || data.toolCallId || '';
+}
+
+function applyToTools(tools, type, data, event) {
+  const id = canonicalToolCallId(event, data);
   if (type === 'tool_start') {
     return [
       ...tools,
@@ -155,6 +219,35 @@ function applyToTools(tools, type, data) {
   return next;
 }
 
+function approvalFrom(view, event, data) {
+  const approvalId = data.approvalId || 'approval';
+  const ledger = view.approvals[approvalId];
+  if (ledger?.resolved) return view; // a consumed decision is not reopened
+  if (isTerminal(view)) return view;  // a finished run does not accept a new ask
+  const remainingMs = Number.isFinite(data.remainingMs) ? data.remainingMs : 0;
+  const review = view.viewer.canApprove === true ? (view.reviews[approvalId] || null) : null;
+  const actionable = view.viewer.canApprove === true
+    && review !== null
+    && review.complete === true
+    && !isTerminal(view)
+    && view.gap === null
+    && view.reset === null;
+  const approval = {
+    approvalId,
+    runId: event.runId || view.runId,
+    summary: data,
+    review,
+    expiresAt: view.now + remainingMs,
+    resolved: null,
+    actionable,
+  };
+  const items = view.items.some((item) => item.kind === 'approval' && item.approvalId === approvalId)
+    ? view.items
+    : [...view.items, { kind: 'approval', approvalId }];
+  return { ...view, approval, items, state: RUN_STATE.AWAITING_APPROVAL };
+}
+
+/// Applies one frame. Returns a new view; never mutates the input.
 export function applyEvent(view, frame) {
   const normalized = normalizeFrame(frame);
   if (!normalized || !normalized.event) return view;
@@ -162,115 +255,154 @@ export function applyEvent(view, frame) {
   const source = event.source || {};
 
   if (normalized.target && view.targetKey && targetKey(normalized.target) !== view.targetKey) {
-    return view;
+    return { ...view, dropped: view.dropped + 1 };
   }
   if (view.sessionId && event.sessionId && event.sessionId !== view.sessionId) {
-    return view;
-  }
-
-  // A new boot/generation is not ordered against the old one. Only an
-  // explicit stream_reset may switch epoch; anything else from another boot
-  // is discarded instead of being merged into the current timeline.
-  if (source.bootId && view.bootId
-      && (source.bootId !== view.bootId || source.generation !== view.generation)
-      && event.type !== 'stream_reset') {
     return { ...view, dropped: view.dropped + 1 };
   }
 
-  if (typeof source.seq === 'number' && view.bootId === source.bootId
-      && view.generation === source.generation && source.seq <= view.lastSeq) {
-    return { ...view, dropped: view.dropped + 1 };
+  const bootId = source.bootId || view.bootId;
+  const generation = Number.isInteger(source.generation) ? source.generation : view.generation;
+  const seq = typeof source.seq === 'number' ? source.seq : null;
+
+  // Dedup by the full key. Identical replay is inert; same key with a
+  // different payload is an integrity conflict, not a silent drop.
+  let next = view;
+  if (seq !== null && bootId) {
+    const key = `${bootId}:${generation}:${seq}`;
+    const print = fingerprint(event);
+    if (next.seen[key] !== undefined) {
+      if (next.seen[key] === print) return { ...next, dropped: next.dropped + 1 };
+      return addConflict({ ...next, dropped: next.dropped + 1 }, 'seq-payload', { key });
+    }
+    next = { ...next, seen: { ...next.seen, [key]: print } };
+  }
+
+  // Epoch handling. Only stream_reset may switch epoch, and only forward:
+  // a reset back to a retired/older boot is refused.
+  if (bootId && next.bootId && (bootId !== next.bootId || generation !== next.generation)) {
+    if (event.type !== 'stream_reset') return { ...next, dropped: next.dropped + 1 };
+    const cursor = event.data?.currentCursor || {};
+    const targetGen = Number.isInteger(cursor.generation) ? cursor.generation : -1;
+    if (isRetired(next, cursor.bootId, cursor.generation)
+        || targetGen < (next.generation ?? -1)
+        || (targetGen === next.generation && cursor.bootId !== next.bootId)) {
+      return addConflict({ ...next, dropped: next.dropped + 1 }, 'stale-reset', {
+        from: `${bootId}:${generation}`,
+        to: `${cursor.bootId}:${cursor.generation}`,
+      });
+    }
   }
 
   const base = {
-    ...view,
-    sessionId: event.sessionId || view.sessionId,
-    bootId: source.bootId || view.bootId,
-    generation: Number.isInteger(source.generation) ? source.generation : view.generation,
-    lastSeq: typeof source.seq === 'number' ? source.seq : view.lastSeq,
-    runId: event.runId || view.runId,
+    ...next,
+    sessionId: event.sessionId || next.sessionId,
+    bootId,
+    generation,
+    lastSeq: seq !== null ? seq : next.lastSeq,
   };
   const data = event.data || {};
+  const eventRun = event.runId || data.runId || base.runId;
+
+  // A frame for another run never touches the current run's state.
+  if (eventRun && base.runId && eventRun !== base.runId && event.type !== 'run_started') {
+    return { ...base, dropped: base.dropped + 1 };
+  }
 
   switch (event.type) {
-    case 'run_started':
-      return { ...base, started: true, state: isTerminal(base) ? base.state : RUN_STATE.ADMITTED };
-
-    case 'text_delta': {
-      // For CLI, run_started only exists when a correlated update proves
-      // activity: the first delta is that proof.
-      const admitted = base.started || base.state !== RUN_STATE.SUBMITTED;
-      const patched = upsertDelta(base.messages, base.items, data, base.runId);
-      return {
-        ...base,
-        started: true,
-        messages: patched.messages,
-        items: patched.items,
-        state: isTerminal(base) ? base.state : (admitted ? RUN_STATE.RUNNING : RUN_STATE.ADMITTED),
-      };
+    case 'run_started': {
+      if (eventRun && base.runId && eventRun === base.runId) return base; // duplicate start
+      if (eventRun && base.runId && eventRun !== base.runId) {
+        // New run: the previous terminal stays with the previous run.
+        return { ...base, ...emptyRun(eventRun), state: RUN_STATE.ADMITTED, started: true };
+      }
+      return { ...base, ...emptyRun(eventRun), state: RUN_STATE.ADMITTED, started: true };
     }
 
+    case 'text_delta':
     case 'message': {
-      const patched = upsertFinal(base.messages, base.items, data);
+      if (isTerminal(base)) return base;
+      let started = base.started;
+      let limit = base.limit;
+      let state = base.state;
+      const wasStarted = started;
+      if (!started) {
+        if (source.kind === 'cli_adapter') {
+          // CLI admission: the first correlated update proves activity.
+          started = true;
+          state = RUN_STATE.ADMITTED;
+        } else {
+          // VL admission exists only via the host's run_started.
+          limit = 'missing_run_started';
+          state = RUN_STATE.UNKNOWN;
+        }
+      }
+      const patched = event.type === 'text_delta'
+        ? upsertDelta(base.messages, base.items, data, base.runId)
+        : { ...upsertFinal(base.messages, base.items, data, base.runId), applied: true };
       return {
         ...base,
-        started: true,
+        runId: eventRun || base.runId,
+        started,
+        limit,
         messages: patched.messages,
         items: patched.items,
-        state: isTerminal(base) ? base.state : RUN_STATE.RUNNING,
+        state: state === RUN_STATE.UNKNOWN
+          ? state
+          : (wasStarted ? RUN_STATE.RUNNING : RUN_STATE.ADMITTED),
       };
     }
 
     case 'tool_start': {
-      const tools = applyToTools(base.tools, 'tool_start', data);
+      if (isTerminal(base)) return base;
+      if (!base.started) {
+        if (source.kind === 'cli_adapter') {
+          // first correlated update: admitted, then running
+        } else {
+          return { ...base, limit: 'missing_run_started', state: RUN_STATE.UNKNOWN };
+        }
+      }
+      const tools = applyToTools(base.tools, 'tool_start', data, event);
       return {
         ...base,
+        runId: eventRun || base.runId,
         started: true,
-        // A tool after turn_end means the run continues.
         turnEnded: false,
         tools,
         items: [...base.items, { kind: 'tool', toolCallId: tools[tools.length - 1].toolCallId }],
-        state: isTerminal(base) ? base.state : RUN_STATE.RUNNING,
+        state: RUN_STATE.RUNNING,
       };
     }
 
-    case 'tool_end':
+    case 'tool_end': {
+      if (isTerminal(base)) return base;
       return {
         ...base,
-        tools: applyToTools(base.tools, 'tool_end', data),
-        state: isTerminal(base) ? base.state : RUN_STATE.RUNNING,
+        tools: applyToTools(base.tools, 'tool_end', data, event),
+        state: base.state === RUN_STATE.UNKNOWN ? base.state : RUN_STATE.RUNNING,
       };
+    }
 
     case 'turn_end':
-      // Closes one model response, not the run.
-      return { ...base, turnEnded: true };
+      return isTerminal(base) ? base : { ...base, turnEnded: true };
 
-    case 'approval_requested': {
-      const remainingMs = Number.isFinite(data.remainingMs) ? data.remainingMs : 0;
-      const approval = {
-        approvalId: data.approvalId || 'approval',
-        summary: data,
-        review: data.review || null,
-        expiresAt: base.now + remainingMs,
-        resolved: null,
-      };
-      const items = findApprovalItem(base) < 0
-        ? [...base.items, { kind: 'approval', approvalId: approval.approvalId }]
-        : base.items;
-      return {
-        ...base,
-        approval,
-        items,
-        state: isTerminal(base) ? base.state : RUN_STATE.AWAITING_APPROVAL,
-      };
-    }
+    case 'approval_requested':
+      return approvalFrom(base, event, data);
 
     case 'approval_resolved': {
-      if (!base.approval) return base;
-      const approval = { ...base.approval, resolved: data.decision || 'resolved' };
+      const id = data.approvalId;
+      if (!id) return base;
+      const approvals = {
+        ...base.approvals,
+        [id]: { resolved: data.decision || 'resolved' },
+      };
+      const current = base.approval && base.approval.approvalId === id
+        ? { ...base.approval, resolved: data.decision || 'resolved', actionable: false }
+        : base.approval;
       return {
         ...base,
-        approval,
+        approvals,
+        approval: current,
         state: isTerminal(base) ? base.state : RUN_STATE.RUNNING,
       };
     }
@@ -279,28 +411,43 @@ export function applyEvent(view, frame) {
       return { ...base, context: { ...data } };
 
     case 'gap':
-      // A hole is declared, never treated as "finished".
       return {
         ...base,
         gap: { count: data.count ?? null, reason: data.reason || 'unknown' },
+        approval: base.approval ? { ...base.approval, actionable: false } : null,
         state: isTerminal(base) ? base.state : RUN_STATE.UNKNOWN,
       };
 
     case 'stream_reset': {
       const cursor = data.currentCursor || {};
+      const previous = { bootId: base.bootId, generation: base.generation };
       return {
         ...base,
         reset: { scope: data.scope || 'broker_view', reason: data.reason || 'unknown' },
+        retired: previous.bootId && !isRetired(base, previous.bootId, previous.generation)
+          ? [...base.retired, previous]
+          : base.retired,
         bootId: cursor.bootId || base.bootId,
         generation: Number.isInteger(cursor.generation) ? cursor.generation : base.generation,
         lastSeq: Number.isInteger(cursor.seq) ? cursor.seq : -1,
+        approval: base.approval ? { ...base.approval, actionable: false } : null,
         state: isTerminal(base) ? base.state : RUN_STATE.UNKNOWN,
       };
     }
 
     case 'run_done':
     case 'run_error':
-    case 'run_cancelled':
+    case 'run_cancelled': {
+      if (base.terminal) {
+        // One logical terminal per run: a later, different one is a
+        // conflict, never a silent replacement.
+        if (base.terminal.type === event.type) return { ...base, dropped: base.dropped + 1 };
+        return addConflict(base, 'terminal-conflict', {
+          runId: base.runId,
+          kept: base.terminal.type,
+          late: event.type,
+        });
+      }
       return {
         ...base,
         terminal: {
@@ -309,11 +456,12 @@ export function applyEvent(view, frame) {
           effectsState: data.effectsState || null,
           at: Number.isFinite(data.at) ? data.at : null,
         },
+        approval: base.approval ? { ...base.approval, actionable: false } : null,
         state: TERMINAL_STATE[event.type],
       };
+    }
 
     default:
-      // Unknown event types are inert: no invention, no state change.
       return base;
   }
 }
@@ -333,8 +481,4 @@ export function toolDuration(tool) {
     return null; // "sconosciuta": the source did not carry both times
   }
   return Math.max(0, tool.endedAt - tool.startedAt);
-}
-
-export function isTerminalType(type) {
-  return TERMINALS.has(type);
 }

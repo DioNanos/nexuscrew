@@ -25,6 +25,7 @@ export default function ChatTileView({
   capabilities = null,
   demo = true,
   cancelRequested = false,
+  reviews = {},
 }) {
   const [anchor] = useState(() => (Number.isFinite(now) ? now : Date.now()));
   const pending = useMemo(() => hasPendingApproval(events), [events]);
@@ -37,9 +38,9 @@ export default function ChatTileView({
   }, [now, pending]);
 
   const view = useMemo(() => {
-    const base = applyEvents(createView({ target, viewer, now: anchor }), events);
+    const base = applyEvents(createView({ target, viewer, now: anchor, reviews }), events);
     return cancelRequested ? markCancelRequested(base) : base;
-  }, [target, viewer, events, anchor, cancelRequested]);
+  }, [target, viewer, events, anchor, cancelRequested, reviews]);
 
   return (
     <div className="nc-chat" data-state={view.state} data-target-kind={target?.kind || 'unknown'}>

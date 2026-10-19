@@ -25,7 +25,7 @@ import { subscribeFleetRoute, readFleetRoute, refreshFleetRoute } from './lib/fl
 import VlSessionView from './components/VlSessionView.jsx';
 import ChatTileView from './components/chat/ChatTileView.jsx';
 import { DEMO } from './lib/chat-fixtures.js';
-import { isUi0DemoSession, ui0ChatEnabled } from './lib/ui0-chat-demo.js';
+import { ui0ChatEnabled } from './lib/ui0-chat-demo.js';
 import CellPanel from './components/CellPanel.jsx';
 import {
   apiFetch, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
@@ -206,7 +206,7 @@ const spegniFilesNuovi = (chiave) => (cur) => {
 };
 
 export function SingleView({
-  session, node, ownerId, cellName, token, readonly = false, panelPort = 0, onBack, onCellSwitcher, cellSwitcherOpen = false,
+  session, node, ownerId, cellName, token, readonly = false, panelPort = 0, onBack, onCellSwitcher, cellSwitcherOpen = false, chatPreview = null,
   // Live host della cella aperta (gia' risolto da App per la route giusta):
   // the phone header has room for a dot only; the sentence lives in the title.
   liveHost = null,
@@ -409,8 +409,8 @@ export function SingleView({
   const actionRef = useRef(() => {});
   const ctrlRef = useRef(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
-  // UI-0 demo branch: OFF by default, synthetic sessions only.
-  const chatDemo = ui0ChatEnabled() && isUi0DemoSession(session);
+  // UI-0 preview branch: explicit descriptor only, never inferred from a name.
+  const chatDemo = ui0ChatEnabled() && Boolean(chatPreview);
   const altRef = useRef(false);
   const [altArmed, setAltArmed] = useState(false);
   const keyboardRef = useRef(null);   // requestTerminalKeyboard del terminale attivo
@@ -803,11 +803,12 @@ export function SingleView({
         ) : (
           chatDemo ? (
             <ChatTileView
-              target={DEMO.vl.target}
-              events={DEMO.vl.events}
-              viewer={DEMO.vl.viewer}
-              label={title}
-              capabilities={{ permissionPolicy: 'yolo' }}
+              target={chatPreview.target || DEMO.vl.target}
+              events={chatPreview.events || DEMO.vl.events}
+              viewer={chatPreview.viewer || DEMO.vl.viewer}
+              reviews={chatPreview.reviews || {}}
+              label={chatPreview.label || title}
+              capabilities={chatPreview.capabilities || { permissionPolicy: 'yolo' }}
             />
           ) : (
             <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}

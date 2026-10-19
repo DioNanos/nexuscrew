@@ -3,17 +3,22 @@ import {
   RUN_STATE, applyEvents, applyEvent, createView, markCancelRequested, toolDuration,
 } from './chat-model.js';
 import {
-  BASE, TARGETS, cliApprovalEvents, cliNoRunStartedEvents, cliApprovalResolvedEvents, cliCancelledEvents, cliErrorEvents,
-  cliRunningEvents, duplicateSeqEvents, gapEvents, longTextEvents, markupEvents, oldBootEvents,
-  resetEvents, turnEndThenToolEvents, vlDoneEvents,
+  BASE, REVIEWS, TARGETS, approvalReplayEvents, approvalThenTerminalEvents, cliApprovalEvents,
+  cliApprovalResolvedEvents, cliCancelledEvents, cliErrorEvents, cliNoRunStartedEvents,
+  cliRunningEvents, duplicateSeqEvents, gapEvents, identicalReplayEvents, incompleteReviewEvents,
+  longTextEvents, markupEvents, oldBootEvents, oldResetEvents, repeatedFragmentEvents,
+  resetEvents, terminalConflictEvents, topLevelGapEvents, topLevelResetEvents,
+  turnEndThenToolEvents, twoApprovalsEvents, twoRunsEvents, vlDoneEvents, vlNoStartEvents,
 } from './chat-fixtures.js';
 
 // Target from the fixture itself: CLI fixtures must not be applied to a VL
 // view (the reducer drops frames for another target, by design).
-const viewOf = (events, viewer = { canApprove: false }) => applyEvents(
-  createView({ target: events[0]?.target || TARGETS.vl, viewer, now: BASE }),
-  events,
-);
+function viewOf(events, viewer = { canApprove: false }, reviews = {}) {
+  return applyEvents(
+    createView({ target: events[0]?.target || TARGETS.vl, viewer, now: BASE, reviews }),
+    events,
+  );
+}
 
 describe('chat-model states', () => {
   it('starts submitted with no events', () => {
@@ -36,11 +41,22 @@ describe('chat-model states', () => {
     expect(viewOf(events).state).toBe(RUN_STATE.DONE);
   });
 
-  it('exposes awaiting approval and keeps the review for approvers', () => {
-    const view = viewOf(cliApprovalEvents('sess-cli-1'));
-    expect(view.state).toBe(RUN_STATE.AWAITING_APPROVAL);
-    expect(view.approval.approvalId).toBe('ap-1');
-    expect(view.approval.review.displayCommand).toBe('rm -rf build/tmp');
+  it('does not admit a VL run without the host run_started', () => {
+    const view = viewOf(vlNoStartEvents());
+    expect(view.started).toBe(false);
+    expect(view.state).toBe(RUN_STATE.UNKNOWN);
+    expect(view.limit).toBe('missing_run_started');
+  });
+
+  it('exposes awaiting approval and keeps the review only for approvers', () => {
+    const approver = viewOf(cliApprovalEvents(), { canApprove: true }, REVIEWS);
+    expect(approver.state).toBe(RUN_STATE.AWAITING_APPROVAL);
+    expect(approver.approval.review.displayCommand).toBe('rm -rf build/tmp');
+    expect(approver.approval.actionable).toBe(true);
+
+    const reader = viewOf(cliApprovalEvents(), { canApprove: false }, REVIEWS);
+    expect(reader.approval.review).toBeNull();
+    expect(reader.approval.actionable).toBe(false);
   });
 
   it('closes on error and on cancel, not on turn_end', () => {
@@ -67,12 +83,53 @@ describe('chat-model states', () => {
   });
 });
 
-describe('chat-model ordering and duplicates', () => {
-  it('drops a duplicate seq', () => {
-    const view = viewOf(duplicateSeqEvents());
+describe('chat-model runs and terminals', () => {
+  it('does not let a new run inherit the previous terminal', () => {
+    const view = viewOf(twoRunsEvents());
+    expect(view.runId).toBe('r2');
+    expect(view.state).toBe(RUN_STATE.ADMITTED);
+    expect(view.terminal).toBeNull();
+    expect(view.messages).toHaveLength(0);
+  });
+
+  it('ignores a late terminal from the previous run', () => {
+    const events = twoRunsEvents().filter((f) => f.event.type !== 'run_error');
+    const withLate = [...events, twoRunsEvents()[4]];
+    const view = viewOf(withLate);
+    expect(view.runId).toBe('r2');
+    expect(view.terminal).toBeNull();
+    expect(view.state).toBe(RUN_STATE.ADMITTED);
+  });
+
+  it('keeps one logical terminal and reports a conflict instead of replacing it', () => {
+    const view = viewOf(terminalConflictEvents());
+    expect(view.state).toBe(RUN_STATE.DONE);
+    expect(view.terminal.type).toBe('run_done');
+    expect(view.conflicts.some((c) => c.kind === 'terminal-conflict')).toBe(true);
+  });
+});
+
+describe('chat-model ordering and integrity', () => {
+  it('drops an identical replay without changing the view', () => {
+    const view = viewOf(identicalReplayEvents());
     const texts = view.messages.map((m) => m.text).join('');
-    expect(texts).toBe('primo');
-    expect(view.dropped).toBe(1);
+    expect(texts).toBe('una volta');
+    expect(view.dropped).toBeGreaterThanOrEqual(1);
+    expect(view.conflicts).toHaveLength(0);
+  });
+
+  it('reports the same seq with a different payload as an integrity conflict', () => {
+    const view = viewOf(duplicateSeqEvents());
+    expect(view.messages.map((m) => m.text).join('')).toBe('primo');
+    expect(view.conflicts.some((c) => c.kind === 'seq-payload')).toBe(true);
+    // The conflict does not turn the run into a success or a failure.
+    expect(view.state).toBe(RUN_STATE.DONE);
+  });
+
+  it('does not duplicate text when a fragment is repeated after the final message', () => {
+    const view = viewOf(repeatedFragmentEvents());
+    expect(view.messages).toHaveLength(1);
+    expect(view.messages[0].text).toBe('A');
   });
 
   it('drops events from an old boot after a source reset', () => {
@@ -85,63 +142,79 @@ describe('chat-model ordering and duplicates', () => {
     expect(view.generation).toBe(2);
   });
 
-  it('renders one message when deltas are followed by the final message', () => {
-    const view = viewOf(vlDoneEvents());
-    expect(view.messages).toHaveLength(1);
-    expect(view.messages[0].text).toBe('Ciao dal nodo');
-    expect(view.messages[0].streaming).toBe(false);
-    expect(view.items.filter((i) => i.kind === 'message')).toHaveLength(1);
+  it('refuses a reset back to a retired boot', () => {
+    const view = viewOf(oldResetEvents());
+    expect(view.bootId).toBe('boot-b');
+    expect(view.conflicts.some((c) => c.kind === 'stale-reset')).toBe(true);
+    expect(view.messages.map((m) => m.text).join('')).toBe('nuovo');
   });
 
-  it('does not close the run on turn_end when a tool follows', () => {
-    const view = viewOf(turnEndThenToolEvents());
-    expect(view.state).toBe(RUN_STATE.DONE);
-    expect(view.tools).toHaveLength(1);
-    expect(view.terminal.type).toBe('run_done');
-    const partial = applyEvents(createView({ target: TARGETS.cli, now: BASE }), turnEndThenToolEvents().slice(0, 3));
-    expect(partial.turnEnded).toBe(true);
-    expect(partial.state).not.toBe(RUN_STATE.DONE);
-  });
-
-  it('keeps two targets with the same sessionId independent', () => {
-    const a = applyEvents(createView({ target: TARGETS.vl, now: BASE }), vlDoneEvents('sess-shared'));
-    const b = applyEvents(createView({ target: TARGETS.cli, now: BASE }), cliApprovalEvents('sess-shared'));
-    expect(a.targetKey).not.toBe(b.targetKey);
-    expect(a.state).toBe(RUN_STATE.DONE);
-    expect(b.state).toBe(RUN_STATE.AWAITING_APPROVAL);
-    expect(a.messages[0].text).toBe('Ciao dal nodo');
-    expect(b.messages[0].text).toBe('Serve il tuo OK');
-  });
-
-  it('ignores frames for another target', () => {
+  it('ignores a top-level gap frame for another target', () => {
     const view = createView({ target: TARGETS.vl, now: BASE });
-    const next = applyEvent(view, vlDoneEvents()[0]);
-    const foreign = { ...vlDoneEvents()[1], target: TARGETS.cli };
-    expect(applyEvent(next, foreign)).toBe(next);
+    const withStart = applyEvent(view, vlDoneEvents()[0]);
+    const next = applyEvent(withStart, topLevelGapEvents()[0]);
+    expect(next.gap).toBeNull();
+    expect(next.state).not.toBe(RUN_STATE.UNKNOWN);
+  });
+
+  it('applies a top-level reset frame for the current target', () => {
+    const view = viewOf([vlDoneEvents()[0], topLevelResetEvents('sess-vl-1')[0]]);
+    expect(view.reset.reason).toBe('broker_restart');
+    expect(view.state).toBe(RUN_STATE.UNKNOWN);
+  });
+
+  it('uses the canonical toolCallId on the event', () => {
+    const ev = (seq, type, extra = {}) => ({
+      protocol: 'nc-chat/1',
+      type: 'event',
+      target: TARGETS.cli,
+      event: { sessionId: 's', runId: 'r', type, source: { kind: 'cli_adapter', bootId: 'b', generation: 1, seq }, ...extra },
+    });
+    const view = viewOf([
+      ev(1, 'run_started'),
+      ev(2, 'tool_start', { toolCallId: 'tc-9', data: { name: 'bash', at: 10 } }),
+      ev(3, 'tool_end', { toolCallId: 'tc-9', data: { name: 'bash', at: 20, isError: false } }),
+    ]);
+    expect(view.tools[0].toolCallId).toBe('tc-9');
+    expect(view.tools[0].state).toBe('ok');
+    expect(view.tools[0].endedAt).toBe(20);
   });
 });
 
 describe('chat-model approval lifecycle', () => {
-  it('resolves an approval and returns to running', () => {
-    const view = viewOf(cliApprovalResolvedEvents());
-    expect(view.approval.resolved).toBe('denied');
-    expect(view.state).toBe(RUN_STATE.DONE);
+  it('correlates a resolution to its approvalId', () => {
+    const view = viewOf(twoApprovalsEvents(), { canApprove: true }, REVIEWS);
+    expect(view.approval.approvalId).toBe('ap-2');
+    expect(view.approval.resolved).toBeNull();
+    expect(view.approvals['ap-1'].resolved).toBe('denied');
+    expect(view.state).not.toBe(RUN_STATE.DONE);
+  });
+
+  it('does not reopen a consumed decision at replay', () => {
+    const view = viewOf(approvalReplayEvents(), { canApprove: true }, REVIEWS);
+    expect(view.approval.resolved).toBe('approved');
+    expect(view.approval.actionable).toBe(false);
+    expect(view.state).not.toBe(RUN_STATE.AWAITING_APPROVAL);
+  });
+
+  it('removes the action when the run ends, the source gaps or a review is incomplete', () => {
+    const terminal = viewOf(approvalThenTerminalEvents(), { canApprove: true }, REVIEWS);
+    expect(terminal.approval.actionable).toBe(false);
+
+    const cliGap = { protocol: 'nc-chat/1', type: 'gap', target: TARGETS.cli, sessionId: 'sess-cli-1', count: 2, reason: 'overflow' };
+    const gapped = applyEvents(
+      createView({ target: TARGETS.cli, viewer: { canApprove: true }, now: BASE, reviews: REVIEWS }),
+      [...cliApprovalEvents(), cliGap],
+    );
+    expect(gapped.approval.actionable).toBe(false);
+
+    const incomplete = viewOf(incompleteReviewEvents(), { canApprove: true }, REVIEWS);
+    expect(incomplete.approval.review.complete).toBe(false);
+    expect(incomplete.approval.actionable).toBe(false);
   });
 
   it('keeps the approval when a terminal arrives (no fake reopen)', () => {
-    const done = {
-      protocol: 'nc-chat/1',
-      type: 'event',
-      target: TARGETS.cli,
-      event: {
-        sessionId: 'sess-cli-1',
-        runId: 'run-1',
-        type: 'run_done',
-        source: { kind: 'cli_adapter', bootId: 'boot-a', generation: 1, seq: 7 },
-        data: { stopReason: 'stop', effectsState: 'none' },
-      },
-    };
-    const view = viewOf([...cliApprovalEvents(), done]);
+    const view = viewOf(approvalThenTerminalEvents(), { canApprove: true }, REVIEWS);
     expect(view.approval).not.toBeNull();
     expect(view.state).toBe(RUN_STATE.DONE);
   });
@@ -149,12 +222,8 @@ describe('chat-model approval lifecycle', () => {
 
 describe('chat-model tool duration', () => {
   it('returns null when the source has no both timestamps', () => {
-    const view = applyEvents(createView({ target: TARGETS.cli, now: BASE }), [
-      { protocol: 'nc-chat/1', type: 'event', target: TARGETS.cli, event: { sessionId: 's', runId: 'r', type: 'tool_start', source: { kind: 'cli_adapter', bootId: 'b', generation: 1, seq: 1 }, data: { name: 'bash', toolCallId: 't1' } } },
-      { protocol: 'nc-chat/1', type: 'event', target: TARGETS.cli, event: { sessionId: 's', runId: 'r', type: 'tool_end', source: { kind: 'cli_adapter', bootId: 'b', generation: 1, seq: 2 }, data: { name: 'bash', toolCallId: 't1', isError: false } } },
-    ]);
+    const view = viewOf(cliRunningEvents());
     expect(toolDuration(view.tools[0])).toBeNull();
-    expect(view.tools[0].state).toBe('ok');
   });
 
   it('computes the duration when both times exist', () => {
