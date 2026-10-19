@@ -526,3 +526,41 @@ describe('EngineEditor make-it-mine', () => {
     expect(screen.queryByRole('button', { name: /Make it mine:/ })).toBeNull();
   });
 });
+
+// --- an engine without a listing still shows its known ids and defaults ----
+// The section is fed by the merge layers: with no API layer, `supported` stays
+// false and the note stays honest, but the declared/backup ids and the public
+// defaults are there — and the missing-fields dialog must work on them.
+describe('EngineEditor discovery without a listing', () => {
+  beforeEach(() => localStorage.setItem('nc_lang', 'en'));
+
+  const UNSUPPORTED = {
+    engine: 'pi.native', supported: false, source: 'unsupported', status: 'unsupported',
+    stale: false, error: '', cap: 128,
+    auth: { credentialState: 'none', attempted: false, credentialSent: false },
+    models: [{
+      id: 'k3', contextWindow: 8192,
+      fieldSources: { contextWindow: 'public' },
+    }],
+  };
+
+  it('shows the note and the catalog default together', async () => {
+    render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3' }} fetchModels={vi.fn().mockResolvedValue(UNSUPPORTED)} />);
+    const section = await screen.findByRole('region', { name: 'Models' });
+    expect(within(section).getByText('This engine does not expose a model listing')).toBeTruthy();
+    expect(within(section).getByText('k3')).toBeTruthy();
+    expect(within(section).getByText('models.dev · default')).toBeTruthy();
+    expect(within(section).getByText('context: 8192')).toBeTruthy();
+  });
+
+  it('opens the missing-fields dialog and writes through the same path', async () => {
+    const onSetModelValue = vi.fn().mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3' }} fetchModels={vi.fn().mockResolvedValue(UNSUPPORTED)} onSetModelValue={onSetModelValue} />);
+    const dialog = await screen.findByRole('dialog', { name: 'Missing data' });
+    expect(within(dialog).getByLabelText('output').value).toBe('');
+    await user.type(within(dialog).getByLabelText('output'), '4096');
+    await user.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+    expect(onSetModelValue).toHaveBeenCalledWith('claude.kimi-code', 'k3', { maxTokens: '4096' });
+  });
+});

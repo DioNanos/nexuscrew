@@ -134,7 +134,10 @@ function ModelDiscoverySection({ engineId, fetchModels, onPick, activeModel, onS
   const authCause = auth && AUTH_CAUSES.includes(auth.cause) ? auth.cause : '';
   const authEnvKey = auth && typeof auth.envKey === 'string' ? auth.envKey : '';
   const activeRecord = active ? models.find((m) => m.id === active) : null;
-  const missing = !view.loading && !view.error && result && result.supported !== false && active
+  // The known ids carry defaults even when the engine exposes no listing:
+  // `supported: false` describes the API layer, not the proposal. The dialog
+  // must work on that proposal too.
+  const missing = !view.loading && !view.error && result && active
     ? REQUIRED_MODEL_FIELDS
       .filter(([field]) => !activeRecord || activeRecord[field] === undefined)
       .map(([field, label]) => ({
