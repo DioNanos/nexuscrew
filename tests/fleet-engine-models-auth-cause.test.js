@@ -4,9 +4,12 @@
 // asked for a key: a fixed cause composed from the credential state, the
 // attempt facts (status/category/credential applied) and the cache status.
 // Every endpoint answer comes from an injected fake fetch: no provider, no
-// real network, not even the public catalog (the fake answers an invalid
-// snapshot for it, so the public layer skips cleanly). The credential VALUE
-// is a sentinel: it must never surface in a response, an error or the cache.
+// real network, not even the public catalog. Most cases answer an invalid
+// snapshot for it, so the public layer skips cleanly; the cache-counting
+// family below routes a VALID snapshot and counts the listing and the
+// catalog requests separately, because the two caches keep separate TTLs.
+// The credential VALUE is a sentinel: it must never surface in a response,
+// an error or the cache.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,6 +19,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
 const { createServer } = require('../lib/server.js');
+const { PUBLIC_CATALOG_URL } = require('../lib/fleet/model-discovery.js');
 
 const FAKE_TMUX = path.join(__dirname, 'fixtures', 'fake-tmux.sh');
 const KEY = 'sekret-auth-cause-sentinel';
@@ -77,6 +81,33 @@ function fakeFetch(handler) {
 }
 
 const cacheFile = (dir, engine) => path.join(dir, '.nexuscrew', 'model-discovery', `${engine}.json`);
+const publicCatalogFile = (dir) => path.join(dir, '.nexuscrew', 'model-discovery', 'public-catalog.json');
+
+// A valid public catalog snapshot: one provider whose model map carries the
+// engine's listing id. The engine host maps to no catalog namespace of its
+// own, so the by-id fallback across the whole snapshot is what enriches it.
+const snapshotWith = (context) => ({
+  acme: { id: 'acme', name: 'Acme', models: { 'm-1': { limit: { context, output: 4096 } } } },
+});
+
+// URL-routed fake with SEPARATE counters. The listing endpoint and the public
+// catalog answer different shapes and keep different caches with different
+// TTLs: what the cache-counting cases pin is which of the two a discovery is
+// allowed to re-read. `listing` and `snapshot` may be reassigned between
+// discoveries to change what the endpoint says over time.
+function routedFetch({ listing, snapshot }) {
+  const calls = { listing: 0, snapshot: 0 };
+  const fn = async (url, opts = {}) => {
+    if (String(url) === PUBLIC_CATALOG_URL) {
+      calls.snapshot += 1;
+      return snapshot(opts);
+    }
+    calls.listing += 1;
+    return listing(opts);
+  };
+  fn.calls = calls;
+  return fn;
+}
 
 test('401 without any credential: missing-key with the env key, request anonymous', async (t) => {
   const fleet = await bootFleet(t, isolatedHome(t));
@@ -168,16 +199,97 @@ test('a fixed-env catalog engine names its public key: OPENCODE_API_KEY, missing
   });
 });
 
-test('fresh cache: attempted=false, no cause, and no new request at all', async (t) => {
+test('fresh cache: attempted=false, no cause, and no new listing request', async (t) => {
   const fleet = await bootFleet(t, isolatedHome(t));
-  const fetchImpl = fakeFetch(() => reply(200, { data: [{ id: 'm-1' }] }));
+  const fetchImpl = routedFetch({
+    listing: () => reply(200, { data: [{ id: 'm-1' }] }),
+    snapshot: () => reply(200, snapshotWith(8192)),
+  });
   await fleet.discoverEngineModels('myapi', { fetchImpl });
+  assert.equal(fetchImpl.calls.listing, 1, 'the first discovery read the listing once');
+  assert.equal(fetchImpl.calls.snapshot, 1, 'and the catalog snapshot once');
   const cached = await fleet.discoverEngineModels('myapi', { fetchImpl });
-  assert.equal(fetchImpl.calls.length, 1, 'the cache served: zero new requests');
+  assert.equal(fetchImpl.calls.listing, 1, 'the listing cache served: no new listing request');
+  assert.equal(fetchImpl.calls.snapshot, 1, 'the snapshot memo served too: no new catalog request');
+  assert.equal(fetchImpl.calls.listing + fetchImpl.calls.snapshot, 2, 'nothing else went out');
   assert.equal(cached.status, 'cache');
   assert.deepEqual(cached.auth, {
     credentialState: 'missing', envKey: 'MY_API_KEY', attempted: false, credentialSent: false,
   }, 'no fresh claim about the key: no cause key at all');
+});
+
+test('an invalid public snapshot: the second read may retry the catalog alone, never the listing', async (t) => {
+  const fleet = await bootFleet(t, isolatedHome(t));
+  const fetchImpl = routedFetch({
+    listing: () => reply(200, { data: [{ id: 'm-1' }] }),
+    snapshot: () => reply(200, { data: [] }), // not a catalog: nothing memoized, nothing cached
+  });
+  await fleet.discoverEngineModels('myapi', { fetchImpl });
+  const retried = await fleet.discoverEngineModels('myapi', { fetchImpl });
+  assert.equal(fetchImpl.calls.listing, 1, 'the fresh listing cache served: still exactly one listing request');
+  assert.equal(fetchImpl.calls.snapshot, 2, 'only the catalog was retried');
+  assert.equal(retried.status, 'cache');
+  assert.deepEqual(retried.auth, {
+    credentialState: 'missing', envKey: 'MY_API_KEY', attempted: false, credentialSent: false,
+  }, 'a catalog retry is not a listing attempt: no new diagnosis');
+});
+
+test('an expired catalog with a fresh listing: only the snapshot is refetched and the enriched default updates', async (t) => {
+  const dir = isolatedHome(t);
+  let context = 8192;
+  const fetchImpl = routedFetch({
+    listing: () => reply(200, { data: [{ id: 'm-1' }] }),
+    snapshot: () => reply(200, snapshotWith(context)),
+  });
+  const firstFleet = await bootFleet(t, dir);
+  const first = await firstFleet.discoverEngineModels('myapi', { fetchImpl });
+  const before = first.models.find((m) => m.id === 'm-1');
+  assert.equal(before.contextWindow, 8192, 'the snapshot enriched the listing id');
+  assert.equal(before.fieldSources.contextWindow, 'public');
+  // Expire the on-disk snapshot past its own TTL; the listing cache stays fresh.
+  const file = publicCatalogFile(dir);
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  parsed.fetchedAt -= 25 * 3600 * 1000;
+  fs.writeFileSync(file, JSON.stringify(parsed));
+  context = 16384; // the refreshed snapshot knows a bigger window
+  // A new fleet on the same home: its in-process snapshot memo is empty, so
+  // the expired disk snapshot is the only thing left to consult.
+  const secondFleet = await bootFleet(t, dir);
+  const second = await secondFleet.discoverEngineModels('myapi', { fetchImpl });
+  assert.equal(fetchImpl.calls.listing, 1, 'the fresh listing cache served: no new listing request');
+  assert.equal(fetchImpl.calls.snapshot, 2, 'only the snapshot was refetched');
+  assert.equal(second.status, 'cache');
+  const after = second.models.find((m) => m.id === 'm-1');
+  assert.equal(after.contextWindow, 16384, 'the enriched default follows the refreshed snapshot');
+  assert.equal(after.fieldSources.contextWindow, 'public');
+  assert.deepEqual(second.auth, {
+    credentialState: 'missing', envKey: 'MY_API_KEY', attempted: false, credentialSent: false,
+  }, 'a catalog refresh is not a listing attempt: the diagnosis does not move');
+});
+
+test('a stale listing with a failed attempt keeps the diagnosis while the catalog stays silent', async (t) => {
+  const dir = isolatedHome(t);
+  let answer = () => reply(200, { data: [{ id: 'm-1' }] });
+  const fetchImpl = routedFetch({
+    listing: () => answer(),
+    snapshot: () => reply(200, snapshotWith(8192)),
+  });
+  const fleet = await bootFleet(t, dir);
+  await fleet.discoverEngineModels('myapi', { fetchImpl });
+  // Expire the listing past its TTL; the snapshot memo is still fresh.
+  const file = cacheFile(dir, 'myapi');
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  parsed.fetchedAt -= 13 * 3600 * 1000;
+  fs.writeFileSync(file, JSON.stringify(parsed));
+  answer = () => reply(401, { error: 'unauthorized' });
+  const out = await fleet.discoverEngineModels('myapi', { fetchImpl });
+  assert.equal(fetchImpl.calls.listing, 2, 'the stale listing was attempted again');
+  assert.equal(fetchImpl.calls.snapshot, 1, 'the fresh snapshot memo added no request');
+  assert.equal(out.status, 'cache');
+  assert.equal(out.stale, true);
+  assert.deepEqual(out.auth, {
+    credentialState: 'missing', envKey: 'MY_API_KEY', attempted: true, credentialSent: false, cause: 'missing-key',
+  }, 'the failed attempt is diagnosed even with a live catalog layer');
 });
 
 test('rejection with stale data: the diagnosis stays visible and the listing still serves', async (t) => {
