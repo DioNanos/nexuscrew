@@ -481,6 +481,46 @@ test('noCache calcola comunque il delta degli spariti, ma la risposta non esce m
   } finally { await closeFakeServer(fake); }
 });
 
+test('una risposta API riuscita ma vuota sostituisce il listing precedente', async () => {
+  let listing = [{ id: 'm1' }];
+  let fail = false;
+  const fake = await startFakeServer((req, res) => {
+    if (fail) return json(res, 500, { error: 'boom' });
+    json(res, 200, { data: listing });
+  });
+  const home = isolatedHome();
+  const cacheFile = path.join(home, '.nexuscrew', 'model-discovery', 'e-empty.json');
+  try {
+    const md = createModelDiscovery();
+    const first = await md.discoverEngine({ engine: 'e-empty', collector: 'openai-compat', baseUrl: fake.baseUrl, home, ttlMs: 0 });
+    assert.equal(first.source, 'api');
+    assert.deepEqual(first.models.map((m) => m.id), ['m1']);
+
+    // the provider dropped EVERY model: a successful empty listing is a valid
+    // answer — it replaces the previous one on disk, and the delta burns down
+    listing = [];
+    const second = await md.discoverEngine({ engine: 'e-empty', collector: 'openai-compat', baseUrl: fake.baseUrl, home, ttlMs: 0 });
+    assert.equal(second.source, 'api');
+    assert.deepEqual(second.disappeared, ['m1'], 'primo delta: m1 è sparito');
+    const raw = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+    assert.deepEqual(raw.models, [], 'la cache registra il listing vuoto riuscito');
+
+    const third = await md.discoverEngine({ engine: 'e-empty', collector: 'openai-compat', baseUrl: fake.baseUrl, home, ttlMs: 0 });
+    assert.deepEqual(third.disappeared || [], [], 'secondo delta: esaurito');
+    assert.deepEqual(third.models.map((m) => m.id), [], 'la proposta segue il listing vuoto');
+
+    // an ERROR is still different from a successful empty listing: it rewrites
+    // nothing, and the last good value (the empty one) serves as stale
+    fail = true;
+    const beforeError = fs.readFileSync(cacheFile, 'utf8');
+    const fourth = await md.discoverEngine({ engine: 'e-empty', collector: 'openai-compat', baseUrl: fake.baseUrl, home, ttlMs: 0 });
+    assert.equal(fourth.source, 'cache');
+    assert.equal(fourth.stale, true);
+    assert.deepEqual(fourth.models.map((m) => m.id), [], 'l\'ultimo valore buono era il listing vuoto');
+    assert.equal(fs.readFileSync(cacheFile, 'utf8'), beforeError, 'un errore non riscrive niente');
+  } finally { await closeFakeServer(fake); }
+});
+
 test('layer known: id nudi, sotto ogni altro layer, non vincono mai un campo', () => {
   const merged = mergeModelRecords({
     userModels: [{ id: 'k-1', contextWindow: 111 }],
