@@ -3,7 +3,7 @@ import {
   RUN_STATE, applyEvents, applyEvent, createView, markCancelRequested, toolDuration,
 } from './chat-model.js';
 import {
-  BASE, TARGETS, cliApprovalEvents, cliApprovalResolvedEvents, cliCancelledEvents, cliErrorEvents,
+  BASE, TARGETS, cliApprovalEvents, cliNoRunStartedEvents, cliApprovalResolvedEvents, cliCancelledEvents, cliErrorEvents,
   cliRunningEvents, duplicateSeqEvents, gapEvents, longTextEvents, markupEvents, oldBootEvents,
   resetEvents, turnEndThenToolEvents, vlDoneEvents,
 } from './chat-fixtures.js';
@@ -24,6 +24,15 @@ describe('chat-model states', () => {
     const events = vlDoneEvents();
     expect(viewOf(events.slice(0, 1)).state).toBe(RUN_STATE.ADMITTED);
     expect(viewOf(events.slice(0, 2)).state).toBe(RUN_STATE.RUNNING);
+    expect(viewOf(events).state).toBe(RUN_STATE.DONE);
+  });
+
+  it('admits a CLI run from its first correlated update when run_started is absent', () => {
+    const events = cliNoRunStartedEvents();
+    const partial = viewOf(events.slice(0, 1));
+    expect(partial.started).toBe(true);
+    // The first correlated update is the admission proof; the next one runs.
+    expect(partial.state).toBe(RUN_STATE.ADMITTED);
     expect(viewOf(events).state).toBe(RUN_STATE.DONE);
   });
 

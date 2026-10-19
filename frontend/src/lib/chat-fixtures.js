@@ -91,6 +91,16 @@ export function cliApprovalResolvedEvents(sessionId = 'sess-cli-1') {
   ];
 }
 
+// A CLI adapter that has no start ACK: the first correlated update proves
+// activity, so the view admits the run without a synthetic run_started.
+export function cliNoRunStartedEvents(sessionId = 'sess-cli-admit') {
+  const t = { target: TARGETS.cli, sessionId, sourceKind: 'cli_adapter', seq: 0 };
+  return [
+    frame({ ...t, seq: 1, type: 'text_delta', data: { text: 'attività', fragmentIndex: 0 } }),
+    frame({ ...t, seq: 2, type: 'run_done', data: { stopReason: 'stop', effectsState: 'none' } }),
+  ];
+}
+
 export function cliErrorEvents(sessionId = 'sess-cli-err') {
   const t = { target: TARGETS.cli, sessionId, sourceKind: 'cli_adapter', seq: 0 };
   return [
