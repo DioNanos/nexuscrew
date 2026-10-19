@@ -21,6 +21,7 @@ import FleetInventory from './fleet/FleetInventory.jsx';
 import FleetBackupDialog from './fleet/FleetBackupDialog.jsx';
 import EngineEditor from './fleet/EngineEditor.jsx';
 import ModelEditor from './fleet/ModelEditor.jsx';
+import { modelPatchFromValues } from '../lib/model-fields.js';
 import CellEditor from './fleet/CellEditor.jsx';
 import ImportEditor from './fleet/ImportEditor.jsx';
 import CwdRepairDialog from './fleet/CwdRepairDialog.jsx';
@@ -96,15 +97,10 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   };
 
   const saveModel = (form) => run(async () => {
-    const def = { id: String(form.id || '').trim(), engine: String(form.engine || '').trim() };
-    // I campi numerici arrivano dal form come stringhe: si convertono qui, e
-    // si OMETTONO quando vuoti — il parser rifiuta un campo presente e non
-    // valido, ed e' giusto cosi'.
-    for (const key of ['contextWindow', 'maxTokens']) {
-      const value = String(form[key] || '').trim();
-      if (value) def[key] = Number(value);
-    }
-    if (form.reasoning === true) def.reasoning = true;
+    // I cinque parametri passano da UNA sola conversione: numeri tipizzati e
+    // booleani a tre stati (assente / true / false). Vuoto non scrive; `false`
+    // e' una risposta e resta tale anche quando il form lo rappresenta a stringa.
+    const def = { id: String(form.id || '').trim(), engine: String(form.engine || '').trim(), ...modelPatchFromValues(form) };
     await fleetDefineModel(token, def, route);
     setModelEdit(null);
     await refresh();
@@ -115,11 +111,10 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   // riscritta dalla scoperta. Dichiarazione esistente -> patch, altrimenti si
   // crea con i soli campi riempiti: un «lascia vuoto» non scrive nulla.
   const saveModelValue = (engine, model, values) => run(async () => {
-    const patch = {};
-    for (const key of ['contextWindow', 'maxTokens']) {
-      const value = String((values && values[key]) || '').trim();
-      if (value) patch[key] = Number(value);
-    }
+    // La stessa conversione del dialogo di dichiarazione: qui arrivano anche
+    // tools/vision/reasoning, e un `false` confermato deve essere scritto, non
+    // scambiato per «lascia vuoto».
+    const patch = modelPatchFromValues(values);
     if (!Object.keys(patch).length) return;
     const existing = (defs.models || []).find((m) => m.id === model && m.engine === engine);
     if (existing) await fleetEditModel(token, model, engine, patch, route);

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import EngineEditor from './EngineEditor.jsx';
 import { blankEngine } from '../../lib/fleet-forms.js';
@@ -435,5 +435,79 @@ describe('EngineEditor listing auth diagnosis', () => {
     for (const fragment of ['requires authentication', 'was not accepted', 'was denied', 'cannot be read or verified', 'unreachable', 'answered with an error', 'is not valid', 'without a key']) {
       expect(text).not.toContain(fragment);
     }
+  });
+});
+
+// --- promozione esplicita: «rendilo mio» e la marca del default -------------
+// La marca resta nella VISTA: il campo che viene da models.dev si dichiara
+// default, e ogni campo/riga ha un'azione che lo modifica o lo conferma. La
+// scrittura passa dallo stesso percorso del dato mancante, e dopo la conferma
+// la vista si ricarica: la fonte diventa «utente» per davvero.
+describe('EngineEditor make-it-mine', () => {
+  beforeEach(() => localStorage.setItem('nc_lang', 'en'));
+
+  const RESULT = {
+    engine: 'claude.kimi-code', supported: true, source: 'api', status: 'api',
+    stale: false, error: '', fetchedAt: 1, cap: 128,
+    models: [{
+      id: 'k3', contextWindow: 262144, maxTokens: 4096, tools: true,
+      fieldSources: { contextWindow: 'public', maxTokens: 'public', tools: 'api' },
+      inApi: true,
+    }],
+  };
+
+  it('a field from the catalog says «models.dev · default»', async () => {
+    render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3' }} fetchModels={vi.fn().mockResolvedValue(RESULT)} />);
+    const section = await screen.findByRole('region', { name: 'Models' });
+    expect(within(section).getAllByText('models.dev · default')).toHaveLength(2);
+  });
+
+  it('a per-field action confirms that field only, on the same write path, and reloads', async () => {
+    const onSetModelValue = vi.fn().mockResolvedValue({ ok: true });
+    const fetchModels = vi.fn().mockResolvedValue(RESULT);
+    const user = userEvent.setup();
+    render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3' }} fetchModels={fetchModels} onSetModelValue={onSetModelValue} />);
+    await screen.findByRole('region', { name: 'Models' });
+    await user.click(screen.getByRole('button', { name: 'Make it mine: context of k3' }));
+    const dialog = screen.getByRole('dialog', { name: 'Confirm the values of k3' });
+    expect(within(dialog).getByLabelText('context').value).toBe('262144');
+    await user.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+    expect(onSetModelValue).toHaveBeenCalledWith('claude.kimi-code', 'k3', { contextWindow: '262144' });
+    // La vista si ricarica DOPO la scrittura: non basta un badge in memoria.
+    await waitFor(() => expect(fetchModels).toHaveBeenCalledTimes(2));
+  });
+
+  it('a row action groups all five controls, and an explicit No is sent as false', async () => {
+    const onSetModelValue = vi.fn().mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3' }} fetchModels={vi.fn().mockResolvedValue(RESULT)} onSetModelValue={onSetModelValue} />);
+    await screen.findByRole('region', { name: 'Models' });
+    await user.click(screen.getByRole('button', { name: 'Make it mine: k3' }));
+    const dialog = screen.getByRole('dialog', { name: 'Confirm the values of k3' });
+    expect(within(dialog).getByLabelText('context')).toBeTruthy();
+    expect(within(dialog).getByLabelText('output')).toBeTruthy();
+    expect(within(dialog).getByLabelText('tools').value).toBe('true');
+    expect(within(dialog).getByLabelText('vision').value).toBe('');
+    await user.selectOptions(within(dialog).getByLabelText('tools'), 'false');
+    await user.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+    expect(onSetModelValue).toHaveBeenCalledWith('claude.kimi-code', 'k3', {
+      contextWindow: '262144', maxTokens: '4096', tools: 'false', vision: '', reasoning: '',
+    });
+  });
+
+  it('cancel writes nothing, and without the write capability there are no actions', async () => {
+    const onSetModelValue = vi.fn();
+    const user = userEvent.setup();
+    const { unmount } = render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3' }} fetchModels={vi.fn().mockResolvedValue(RESULT)} onSetModelValue={onSetModelValue} />);
+    await screen.findByRole('region', { name: 'Models' });
+    await user.click(screen.getByRole('button', { name: 'Make it mine: k3' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'cancel' }));
+    expect(onSetModelValue).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    unmount();
+    render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3' }} fetchModels={vi.fn().mockResolvedValue(RESULT)} />);
+    await screen.findByRole('region', { name: 'Models' });
+    expect(screen.queryByRole('button', { name: 'Make it mine: k3' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Make it mine:/ })).toBeNull();
   });
 });
