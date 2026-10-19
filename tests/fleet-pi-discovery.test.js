@@ -185,3 +185,46 @@ test('a native or login pi profile stays unsupported and is never probed', async
   assert.equal(out.models[0].contextWindow, 1000000, 'the catalog still fills the known id');
   assert.deepEqual(fetchImpl.calls, [PUBLIC_CATALOG_URL], 'no listing probe for a native provider');
 });
+
+// The active model of an engine is part of what the operator already knows:
+// when it is the ONLY known id, it must receive the catalog defaults too.
+test('the active model alone is a known id and gets the catalog defaults', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineEngine({
+    id: 'active-only', label: 'Active only',
+    managed: { client: 'pi', provider: 'native', model: 'glm-5.3', permissionPolicy: 'standard' },
+  });
+  const fetchImpl = catalogFetch();
+  const out = await fleet.discoverEngineModels('active-only', { fetchImpl });
+
+  assert.equal(out.supported, false);
+  assert.deepEqual(out.models.map((m) => m.id), ['glm-5.3']);
+  const row = out.models[0];
+  assert.equal(row.contextWindow, 1000000);
+  assert.equal(row.maxTokens, 128000);
+  assert.equal(row.fieldSources.contextWindow, 'public');
+  assert.ok(!Object.hasOwn(row, 'inApi'));
+  assert.deepEqual(fetchImpl.calls, [PUBLIC_CATALOG_URL], 'one snapshot fetch, no listing probe');
+});
+
+test('with another known id the active model is neither added nor reordered', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineEngine({
+    id: 'active-plus', label: 'Active plus',
+    managed: { client: 'pi', provider: 'native', model: 'glm-5.3', permissionPolicy: 'standard' },
+  });
+  await fleet.defineModel({ id: 'other-model', engine: 'active-plus' });
+  const out = await fleet.discoverEngineModels('active-plus', { fetchImpl: catalogFetch() });
+  assert.deepEqual(out.models.map((m) => m.id), ['other-model']);
+});
+
+test('no known id and no active model means no catalog fetch', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  const fetchImpl = catalogFetch();
+  const out = await fleet.discoverEngineModels('pi.native', { fetchImpl });
+  assert.deepEqual(out.models, []);
+  assert.deepEqual(fetchImpl.calls, []);
+});
