@@ -34,10 +34,33 @@ function sottoRadice(percorso, radice) {
 
 // Nomi che possono creare, modificare o cancellare qualcosa. `readFileSync` &
 // co. non sono qui: leggere la home reale e' un difetto diverso e non e' questo.
-const NOMI_CHE_SCRIVONO = Object.freeze([
+//
+// Due FORME, perche' l'argomento che scrive non e' sempre il primo:
+// - un solo bersaglio: il 1° argomento e' il percorso scritto;
+// - due bersagli: copy e rename scrivono ENTRAMBE le estremita' (la sorgente
+//   viene spostata o sostituita, la destinazione viene creata o sovrascritta).
+//   Sorvegliare solo il primo argomento lasciava passare la copia che FINISCE
+//   nella home reale partendo da una sorgente legittima.
+const NOMI_UN_BERSAGLIO = Object.freeze([
   'writeFileSync', 'appendFileSync', 'mkdirSync', 'rmSync', 'rmdirSync',
-  'unlinkSync', 'renameSync', 'chmodSync', 'copyFileSync', 'createWriteStream',
+  'unlinkSync', 'chmodSync', 'createWriteStream',
 ]);
+const NOMI_DUE_BERSAGLI = Object.freeze(['renameSync', 'copyFileSync']);
+// Varianti asincrone a callback (bersaglio primo, callback ultima).
+const NOMI_ASYNC_UN_BERSAGLIO = Object.freeze(['writeFile', 'appendFile', 'mkdir', 'rm']);
+const NOMI_ASYNC_DUE_BERSAGLI = Object.freeze(['rename', 'copyFile']);
+// Le stesse forme sull'API promises (fs.promises.*, unico oggetto insieme a
+// require('node:fs/promises')): promesse, non callback.
+const NOMI_PROMISES_UN_BERSAGLIO = Object.freeze(['writeFile', 'appendFile', 'mkdir', 'rm']);
+const NOMI_PROMISES_DUE_BERSAGLI = Object.freeze(['rename', 'copyFile']);
+// Compat: l'unione dei nomi sincroni, com'era prima della suddivisione.
+const NOMI_CHE_SCRIVONO = Object.freeze([...NOMI_UN_BERSAGLIO, ...NOMI_DUE_BERSAGLI]);
+// LIMITI DICHIARATI (cosa questa lista NON copre): le scritture via file
+// descriptor (openSync + writeSync, fs.promises.open e i FileHandle), i nomi
+// che codice e test di questo repo non usano per scrivere (symlink, link, cp,
+// mkdtemp, truncate, chown, utimes) e le controparti async/promises di
+// rmdir/unlink/chmod. La lista resta volutamente sui punti di scrittura
+// davvero percorsi; aggiungere una voce e' una riga in piu', qui sopra.
 
 // QUALE home e' quella "reale". Non basta `process.env.HOME`: nel gate la HOME
 // del processo e' gia' quella di prova, e il runner la sovrascrive ancora. La
@@ -75,7 +98,9 @@ function risolviProtezione({ home, testRoot = '', cwd = process.cwd(), fsImpl = 
 
 function creaGuardia({ homeReale, fsImpl = require('node:fs'), pathSep = path.sep, testRoot = '', cwd, eccezioni = [] } = {}) {
   const violazioni = [];
-  const originali = new Map();
+  // Ogni voce: { contenitore, nome, originale } — il contenitore serve per
+  // rimettere a posto anche le funzioni dell'oggetto `promises`.
+  const originali = [];
   let installata = false;
   const protezione = risolviProtezione({ home: homeReale, testRoot, cwd, fsImpl });
   const radice = eccezioni.length ? protezione.homeReale : protezione.homeReale;
@@ -98,27 +123,46 @@ function creaGuardia({ homeReale, fsImpl = require('node:fs'), pathSep = path.se
     return true;
   };
 
-  function installa() {
-    if (installata) return;
-    for (const nome of NOMI_CHE_SCRIVONO) {
-      const originale = fsImpl[nome];
-      if (typeof originale !== 'function') continue;
-      originali.set(nome, originale);
-      fsImpl[nome] = function (target, ...resto) {
-        if (registra(nome, target)) {
+  // Un wrapper per nome avvolto: `indici` sono i numeri d'argomento che
+  // portano un percorso scritto (0 per quasi tutte le chiamate, 0 e 1 per
+  // copy/rename). Il rifiuto resta SINCRONO, anche sull'API promises: il
+  // rumore deve arrivare a chi ha scritto, subito, non a fine processo.
+  function wrap(contenitore, nome, indici) {
+    const originale = contenitore[nome];
+    if (typeof originale !== 'function') return;
+    originali.push({ contenitore, nome, originale });
+    contenitore[nome] = function (...args) {
+      for (const indice of indici) {
+        const bersaglio = args[indice];
+        if (bersaglio === undefined || bersaglio === null) continue;
+        if (registra(nome, bersaglio)) {
           const ultima = violazioni[violazioni.length - 1];
           throw new Error(`scrittura rifiutata sotto la home reale: ${nome} ${ultima.path}`
             + ' (isola la HOME dei test, oppure passa una home temporanea esplicita)');
         }
-        return originale.call(this, target, ...resto);
-      };
+      }
+      return originale.apply(this, args);
+    };
+  }
+
+  function installa() {
+    if (installata) return;
+    for (const nome of NOMI_UN_BERSAGLIO) wrap(fsImpl, nome, [0]);
+    for (const nome of NOMI_DUE_BERSAGLI) wrap(fsImpl, nome, [0, 1]);
+    for (const nome of NOMI_ASYNC_UN_BERSAGLIO) wrap(fsImpl, nome, [0]);
+    for (const nome of NOMI_ASYNC_DUE_BERSAGLI) wrap(fsImpl, nome, [0, 1]);
+    const promises = fsImpl && typeof fsImpl.promises === 'object' && fsImpl.promises !== null
+      ? fsImpl.promises : null;
+    if (promises) {
+      for (const nome of NOMI_PROMISES_UN_BERSAGLIO) wrap(promises, nome, [0]);
+      for (const nome of NOMI_PROMISES_DUE_BERSAGLI) wrap(promises, nome, [0, 1]);
     }
     installata = true;
   }
 
   function ripristina() {
-    for (const [nome, originale] of originali) fsImpl[nome] = originale;
-    originali.clear();
+    for (const { contenitore, nome, originale } of originali) contenitore[nome] = originale;
+    originali.length = 0;
     installata = false;
   }
 
