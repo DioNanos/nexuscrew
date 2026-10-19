@@ -525,6 +525,20 @@ test('a conflict does not descend to a weaker tier to dodge itself', () => {
   assert.equal(byId.conflicts, 1);
 });
 
+test('a conflict inside the mapped provider namespace is counted, once', () => {
+  // Case-folded collision in the engine's own provider: the field stays absent
+  // (a weaker tier must not dodge it) and the diagnostic counter must see it.
+  const cat = {
+    openai: { models: { Foo: { limit: { context: 8192 } }, foo: { limit: { context: 16384 } } } },
+    // A global candidate for the same id would agree on nothing useful here:
+    // the blocked field is not consulted again, so it cannot be counted twice.
+    acme: { models: { fOo: { limit: { context: 4096 } } } },
+  };
+  const out = resolvePublicCatalogRecords(cat, 'openai', ['fOo']);
+  assert.deepEqual(out.records, []);
+  assert.equal(out.byId.conflicts, 1);
+});
+
 test('mapped field wins and is never replaced by global consensus; missing fields are completed', () => {
   const cat = {
     zai: {
