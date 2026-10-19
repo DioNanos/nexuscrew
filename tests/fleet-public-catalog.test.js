@@ -172,6 +172,79 @@ test('snapshot: errore = ultimo buono (stale), poi niente; mai obbligatorio', as
   } finally { await closeFakeServer(badJson); }
 });
 
+// --- noCache: stesso contratto del layer API -----------------------------------
+
+test('noCache vale anche per lo snapshot pubblico: niente scrittura, niente ripiego, status none', async () => {
+  let clock = 1_000_000;
+  let broken = false;
+  const fake = await startFakeServer((req, res) => {
+    if (broken) return json(res, 500, { error: 'boom' });
+    json(res, 200, CATALOG);
+  });
+  const home = isolatedHome();
+  try {
+    const md = createModelDiscovery({ now: () => clock });
+    // populate the disk snapshot the normal way
+    const good = await md.fetchPublicCatalogSnapshot({ home, fetchImpl: fakeFetchFor(fake), ttlMs: 1000, timeoutMs: 500 });
+    assert.equal(good.status, 'api');
+    const cached = path.join(home, '.nexuscrew', 'model-discovery', 'public-catalog.json');
+    const before = fs.readFileSync(cached, 'utf8');
+
+    // network down + noCache: the stale snapshot is NOT a ripiego — status none
+    broken = true;
+    clock += 2000;
+    const forced = await md.fetchPublicCatalogSnapshot({ home, fetchImpl: fakeFetchFor(fake), ttlMs: 1000, timeoutMs: 500, noCache: true });
+    assert.equal(forced.status, 'none');
+    assert.equal(forced.catalog, null);
+    assert.ok(forced.error.length > 0);
+    assert.equal(fs.readFileSync(cached, 'utf8'), before, 'a forced attempt never touches the file');
+
+    // network back + noCache: answers 'api' but does not write the snapshot
+    broken = false;
+    clock += 2000;
+    const fresh = await md.fetchPublicCatalogSnapshot({ home, fetchImpl: fakeFetchFor(fake), ttlMs: 1000, timeoutMs: 500, noCache: true });
+    assert.equal(fresh.status, 'api');
+    assert.ok(fresh.catalog);
+    assert.equal(fs.readFileSync(cached, 'utf8'), before, 'a forced read must not rewrite the snapshot');
+  } finally { await closeFakeServer(fake); }
+});
+
+test('il noCache del wrapper raggiunge il layer pubblico: il catalogo si riscarica, senza riscrivere il file', async () => {
+  let clock = 1_000_000;
+  let engineHits = 0;
+  let catalogHits = 0;
+  const engineServer = await startFakeServer((req, res) => { engineHits += 1; json(res, 200, { data: [{ id: 'glm-5.3' }] }); });
+  const catalogServer = await startFakeServer((req, res) => { catalogHits += 1; json(res, 200, CATALOG); });
+  const home = isolatedHome();
+  try {
+    const md = createModelDiscovery({ now: () => clock });
+    const opts = () => ({
+      engine: 'pc-refresh', collector: 'openai-compat', baseUrl: engineServer.baseUrl,
+      home, ttlMs: 5000, timeoutMs: 500,
+      publicCatalog: { provider: 'zai', ttlMs: 5000, timeoutMs: 500, fetchImpl: fakeFetchFor(catalogServer) },
+    });
+    const first = await md.discoverEngine(opts());
+    assert.equal(first.source, 'api');
+    assert.equal(first.publicCatalog.status, 'api');
+    assert.equal(engineHits, 1);
+    assert.equal(catalogHits, 1);
+    const cached = path.join(home, '.nexuscrew', 'model-discovery', 'public-catalog.json');
+    const before = fs.readFileSync(cached, 'utf8');
+
+    // still inside both TTLs: a forced refresh must re-fetch BOTH layers
+    clock += 1000;
+    const forced = await md.discoverEngine({ ...opts(), noCache: true });
+    assert.equal(forced.source, 'api');
+    assert.equal(engineHits, 2);
+    assert.equal(catalogHits, 2, 'the forced refresh reaches the public layer too');
+    assert.equal(forced.publicCatalog.status, 'api');
+    assert.equal(fs.readFileSync(cached, 'utf8'), before, 'the forced read leaves the snapshot alone');
+  } finally {
+    await closeFakeServer(engineServer);
+    await closeFakeServer(catalogServer);
+  }
+});
+
 // --- Mappatura -----------------------------------------------------------------
 
 test('mappatura provider: tabella esplicita, host esatto, e il resto = nessun dato', () => {

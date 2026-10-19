@@ -291,6 +291,40 @@ test('backupValues: il catalogo interno propone i campi che nessun layer ha riem
   assert.ok(!JSON.stringify(out).includes(KEY));
 });
 
+test('refresh della scoperta arriva fino al layer pubblico: il catalogo si riscarica davvero', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncempr-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const defsPath = path.join(dir, 'fleet.json');
+  fs.writeFileSync(defsPath, JSON.stringify({ schemaVersion: 1, engines: [], cells: [] }), { mode: 0o600 });
+  fs.chmodSync(defsPath, 0o600);
+  // Engines and cells are empty: this test only drives model discovery. See
+  // the note in the backupValues test about the shared-server opt-out.
+  const fleet = await createBuiltinFleet({ home: dir, fleetDefsPath: defsPath, protectSharedTmuxServer: false });
+  t.after(() => fleet.close());
+  let context = 100;
+  let publicCalls = 0;
+  let engineCalls = 0;
+  const fetchImpl = async (url) => {
+    if (String(url).includes('models.dev')) {
+      publicCalls += 1;
+      return { ok: true, status: 200, json: async () => ({ zai: { id: 'zai', models: { 'glm-5.3': { limit: { context } } } } }) };
+    }
+    engineCalls += 1;
+    return { ok: true, status: 200, json: async () => ({ data: [{ id: 'glm-5.3' }] }) };
+  };
+  const first = await fleet.discoverEngineModels('claude.zai', { fetchImpl });
+  assert.equal(first.source, 'api');
+  assert.equal(first.models.find((m) => m.id === 'glm-5.3').contextWindow, 100, 'il contesto arriva dal catalogo pubblico');
+  context = 200;
+  // refresh: must reach BOTH layers; the public catalog cannot stay on the
+  // previous snapshot while the engine listing is re-read
+  const forced = await fleet.discoverEngineModels('claude.zai', { fetchImpl, refresh: true });
+  assert.equal(forced.source, 'api');
+  assert.equal(publicCalls, 2, 'il refresh raggiunge anche il fetch del catalogo pubblico');
+  assert.equal(engineCalls, 2);
+  assert.equal(forced.models.find((m) => m.id === 'glm-5.3').contextWindow, 200, 'il valore nuovo del catalogo entra nella risposta');
+});
+
 test('backupValues: variante con tag dell\'engine cloud risale al nome base del catalogo interno', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncembv2-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
