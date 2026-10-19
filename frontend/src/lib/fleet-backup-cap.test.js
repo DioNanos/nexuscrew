@@ -81,3 +81,31 @@ describe('fleet backup model cap — parità col backend e frontiera 64/65/128/1
     expect(parsed.error).toBe('invalid-model');
   });
 });
+
+// I cinque parametri del modello attraversano il backup con la stessa forma
+// del file: `false` e' un valore e deve tornare `false`, non sparire.
+describe('fleet backup — i cinque parametri dei modelli dichiarati', () => {
+  // Un engine gestito: il backup porta con se' le dichiarazioni del suo profilo.
+  const managed = [{ id: 'e1', label: 'E', managed: { client: 'claude', provider: 'alibaba-token-plan', permissionPolicy: 'unsafe' } }];
+  const PROFILE = 'claude.alibaba-token-plan';
+  it('round-trip con tools/vision/reasoning, `false` incluso', () => {
+    const backup = createFleetBackup(
+      cells, new Set(['Ops']), managed, new Set(['e1']), new Date('2026-08-28T00:00:00Z'),
+      [{ id: 'm1', engine: PROFILE, contextWindow: 131072, maxTokens: 8192, tools: false, vision: true, reasoning: false }],
+    );
+    const parsed = parseFleetBackup(JSON.stringify(backup));
+    expect(parsed.ok).toBe(true);
+    expect(parsed.models[0]).toMatchObject({ tools: false, vision: true, reasoning: false });
+  });
+
+  it('rifiuta un booleano non tipizzato e un limite fuori scala', () => {
+    const base = createFleetBackup(
+      cells, new Set(['Ops']), managed, new Set(['e1']), new Date('2026-08-28T00:00:00Z'),
+      [{ id: 'm1', engine: PROFILE }],
+    );
+    const badBool = { ...base, models: [{ ...base.models[0], tools: 'no' }] };
+    expect(parseFleetBackup(JSON.stringify(badBool)).ok).toBe(false);
+    const badLimit = { ...base, models: [{ ...base.models[0], contextWindow: 999 }] };
+    expect(parseFleetBackup(JSON.stringify(badLimit)).ok).toBe(false);
+  });
+});
