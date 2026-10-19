@@ -9,6 +9,9 @@ import { t } from '../lib/i18n.js';
 import { TILE_FONT_DEF } from '../lib/grid-model.js';
 import { advanceTileRuntime, initialTileRuntime, PRESENZA } from '../lib/terminal-lifecycle.js';
 import { useInputPreferences } from '../hooks/useInputPreferences.js';
+import ChatTileView from './chat/ChatTileView.jsx';
+import { DEMO } from '../lib/chat-fixtures.js';
+import { isUi0DemoSession, ui0ChatEnabled } from '../lib/ui0-chat-demo.js';
 import './GridTile.css';
 
 // Un tile della griglia. Ogni tile ha i PROPRI ref (mai condivisi
@@ -44,6 +47,9 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
   const [terminalGeneration, setTerminalGeneration] = useState(0);
   const runtimeRef = useRef(initialTileRuntime());
   const tileKey = node ? `${node}:${session}` : session;
+  // UI-0 demo branch: OFF by default and only for synthetic `ui0-demo*`
+  // sessions. A real cell never matches the prefix, so the PTY path is intact.
+  const chatDemo = ui0ChatEnabled() && isUi0DemoSession(session);
   const deckTargets = decks.filter((deck) => deck.id !== currentDeck && deck.available !== false);
 
   // `alive` is the node-health indicator. Solo due cose possono creare una
@@ -122,7 +128,7 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
               ))}
             </select>
           )}
-          <button onClick={() => setShowComposer((v) => !v)} title={t('composer')}>⌨</button>
+          {!chatDemo && <button onClick={() => setShowComposer((v) => !v)} title={t('composer')}>⌨</button>}
           <button onClick={() => setShowFiles((v) => !v)} title={t('files')}>📁</button>
           {panelUrl && (
             <button onClick={() => setShowPanel((v) => !v)} title={t('panel')} aria-pressed={showPanel}><Icon name="monitor" size={14} /></button>
@@ -151,29 +157,41 @@ export default function GridTile({ session, node, ownerId, cellName, token, read
         {/* Il terminale resta SEMPRE montato: la disponibilità dell'owner non
             è un motivo per distruggere il buffer xterm. L'indisponibilità è
             un overlay SOPRA il contenuto, mai un sostituto. */}
-        <Terminal
-          key={`${tileKey}:${terminalGeneration}`}
-          session={session} node={node} token={token} readonly={readonly} takeSize={takeSize} focused={focused}
-          sendRef={sendRef} composerRef={composerRef} actionRef={actionRef} ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
-          onFiles={setFilesEvent} fontSize={fontSize}
-          keyboardGesture={inputPreferences.terminalKeyboardGesture}
-        />
-        {!available && (
-          <div className="nc-tile-unavailable" title={t('deck-owner-unavailable')}>
-            {t('deck-owner-reconnecting')}
-          </div>
-        )}
-        {available && stale && (
-          <div className="nc-tile-stale" title={t('deck-owner-stale')}>{t('deck-owner-stale')}</div>
-        )}
-        {available && showFiles && (
-          <div className="nc-tile-files" onMouseDown={(e) => e.stopPropagation()}>
-            <FilesPanel session={session} node={node} token={token} filesEvent={filesEvent} onClose={() => setShowFiles(false)} />
-          </div>
+        {chatDemo ? (
+          <ChatTileView
+            target={DEMO.vl.target}
+            events={DEMO.vl.events}
+            viewer={DEMO.vl.viewer}
+            label={visibleName}
+            capabilities={{ permissionPolicy: 'yolo' }}
+          />
+        ) : (
+          <>
+            <Terminal
+              key={`${tileKey}:${terminalGeneration}`}
+              session={session} node={node} token={token} readonly={readonly} takeSize={takeSize} focused={focused}
+              sendRef={sendRef} composerRef={composerRef} actionRef={actionRef} ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed}
+              onFiles={setFilesEvent} fontSize={fontSize}
+              keyboardGesture={inputPreferences.terminalKeyboardGesture}
+            />
+            {!available && (
+              <div className="nc-tile-unavailable" title={t('deck-owner-unavailable')}>
+                {t('deck-owner-reconnecting')}
+              </div>
+            )}
+            {available && stale && (
+              <div className="nc-tile-stale" title={t('deck-owner-stale')}>{t('deck-owner-stale')}</div>
+            )}
+            {available && showFiles && (
+              <div className="nc-tile-files" onMouseDown={(e) => e.stopPropagation()}>
+                <FilesPanel session={session} node={node} token={token} filesEvent={filesEvent} onClose={() => setShowFiles(false)} />
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      {available && showComposer && (
+      {available && !chatDemo && showComposer && (
         <div className="nc-tile-composer" onMouseDown={(e) => e.stopPropagation()}>
           <ComposerBar submitText={(text) => composerRef.current(text)} token={token} session={session} node={node} ownerId={ownerId} readonly={readonly}
             keepKeyboardClosedOnVoice={inputPreferences.voiceKeepsKeyboardClosed} />

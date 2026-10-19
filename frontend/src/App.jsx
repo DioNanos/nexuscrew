@@ -23,6 +23,9 @@ import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import { createPollGuard } from './lib/poll-guard.js';
 import { subscribeFleetRoute, readFleetRoute, refreshFleetRoute } from './lib/fleet-poll.js';
 import VlSessionView from './components/VlSessionView.jsx';
+import ChatTileView from './components/chat/ChatTileView.jsx';
+import { DEMO } from './lib/chat-fixtures.js';
+import { isUi0DemoSession, ui0ChatEnabled } from './lib/ui0-chat-demo.js';
 import CellPanel from './components/CellPanel.jsx';
 import {
   apiFetch, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
@@ -406,6 +409,8 @@ export function SingleView({
   const actionRef = useRef(() => {});
   const ctrlRef = useRef(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
+  // UI-0 demo branch: OFF by default, synthetic sessions only.
+  const chatDemo = ui0ChatEnabled() && isUi0DemoSession(session);
   const altRef = useRef(false);
   const [altArmed, setAltArmed] = useState(false);
   const keyboardRef = useRef(null);   // requestTerminalKeyboard del terminale attivo
@@ -796,10 +801,20 @@ export function SingleView({
               : (sideOnTop ? [paneSecondario, maniglia, panePrincipale] : [panePrincipale, maniglia, paneSecondario])}
           </div>
         ) : (
-          <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
-            ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} altRef={altRef} setAltArmed={setAltArmed} keyboardRef={keyboardRef} onFiles={onFilesCella} fontSize={fontSize}
-            selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
-            keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
+          chatDemo ? (
+            <ChatTileView
+              target={DEMO.vl.target}
+              events={DEMO.vl.events}
+              viewer={DEMO.vl.viewer}
+              label={title}
+              capabilities={{ permissionPolicy: 'yolo' }}
+            />
+          ) : (
+            <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
+              ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} altRef={altRef} setAltArmed={setAltArmed} keyboardRef={keyboardRef} onFiles={onFilesCella} fontSize={fontSize}
+              selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
+              keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
+          )
         )}
         {/* D8: pannello in alternativa al terminale, overlay assoluto — il
             terminale resta montato (PTY vivo, nessun reflow al toggle).
@@ -816,7 +831,7 @@ export function SingleView({
           />
         )}
       </div>
-      <KeyBar onKeyboard={() => setShowComposer((v) => !v)} onCellSwitcher={onCellSwitcher} cellSwitcherOpen={cellSwitcherOpen}
+      {!chatDemo && <KeyBar onKeyboard={() => setShowComposer((v) => !v)} onCellSwitcher={onCellSwitcher} cellSwitcherOpen={cellSwitcherOpen}
         send={(seq) => (focaLaSide ? sideSendRef : sendRef).current(seq)}
         action={(name) => (focaLaSide ? sideActionRef : actionRef).current(name)}
         ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} altArmed={altArmed} onAlt={toggleAlt}
@@ -824,8 +839,8 @@ export function SingleView({
         onKeyboardKeep={() => (focaLaSide ? sideKeyboardRef : keyboardRef).current?.()}
         selectionMode={selectionMode} onSelectionMode={setSelectionMode}
         keepKeyboardClosed={inputPreferences.keybarKeepsKeyboardClosed} showEnter={inputPreferences.showKeybarEnter}
-        keybarLayout={inputPreferences.keybarLayout} />
-      {showComposer && (
+        keybarLayout={inputPreferences.keybarLayout} />}
+      {!chatDemo && showComposer && (
         <ComposerBar submitText={(text) => (focaLaSide ? sideComposerRef : composerRef).current(text)}
           token={token} session={focaLaSide ? side.session : session} node={focaLaSide ? side.node : node}
           ownerId={focaLaSide ? side.ownerId : ownerId} readonly={readonly}
