@@ -4,7 +4,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import EngineEditor from './EngineEditor.jsx';
 import { blankEngine } from '../../lib/fleet-forms.js';
-import { t } from '../../lib/i18n.js';
+import { t, DICTS } from '../../lib/i18n.js';
 
 const catalog = [
   { id: 'claude.native', client: 'claude', clientLabel: 'claude', provider: 'native', label: 'Anthropic', default: true, protocol: 'anthropic_messages', permissionPolicyDefault: 'unsafe', supportsUnsafe: true, rc: true },
@@ -339,5 +339,101 @@ describe('EngineEditor missing-fields dialog', () => {
     expect(within(dialog).getByLabelText('context').value).toBe('');
     expect(within(dialog).getByLabelText('output').value).toBe('');
     expect(within(dialog).queryByText(/proposed backup/)).toBeNull();
+  });
+});
+
+// --- diagnosi dell'autenticazione del listing --------------------------------
+// Il blocco `auth` arriva già curato dal nodo: stato della credenziale, envKey
+// solo quando l'editor la mostra già, tentativo effettuato e causa a stringa
+// fissa. Ogni causa ha la SUA riga, in tutte le lingue del pannello, e la
+// riga sopravvive a stale/backup e a un elenco vuoto: non è «nessun modello».
+describe('EngineEditor listing auth diagnosis', () => {
+  beforeEach(() => localStorage.setItem('nc_lang', 'en'));
+
+  const AUTH_CAUSES = ['missing-key', 'key-rejected', 'access-denied', 'credential-unavailable', 'endpoint-unreachable', 'provider-error', 'invalid-response', 'anonymous-success'];
+  const AUTH_I18N_KEYS = [...AUTH_CAUSES.map((c) => `fleet-models-auth-${c}`), 'fleet-models-auth-missing-key-anonymous'];
+
+  const authResult = (auth) => ({
+    engine: 'claude.kimi-code', supported: true, source: 'api', status: 'api',
+    stale: false, error: '', fetchedAt: 1, cap: 128, auth,
+    models: [{ id: 'k3', inApi: true }],
+  });
+
+  it('every cause gets its own dedicated fixed line', async () => {
+    const lines = {
+      'missing-key': /requires authentication: the MY_API_KEY key is not configured/,
+      'key-rejected': /submitted key was not accepted/,
+      'access-denied': /was denied: it may be permissions or policy/,
+      'credential-unavailable': /cannot be read or verified/,
+      'endpoint-unreachable': /unreachable \(network or timeout\)/,
+      'provider-error': /answered with an error/,
+      'invalid-response': /response .* is not valid/,
+      'anonymous-success': /obtained without a key/,
+    };
+    for (const cause of AUTH_CAUSES) {
+      const fetchModels = vi.fn().mockResolvedValue(authResult({
+        credentialState: 'missing', envKey: 'MY_API_KEY', attempted: true, credentialSent: false, cause,
+      }));
+      const { unmount } = render(<Harness initial={profileForm('claude.kimi-code')} fetchModels={fetchModels} />);
+      const section = await screen.findByRole('region', { name: 'Models' });
+      expect(within(section).getByText(lines[cause])).toBeTruthy();
+      unmount();
+    }
+  });
+
+  it('every panel language carries the fixed strings', () => {
+    for (const lang of ['it', 'en', 'es']) {
+      for (const key of AUTH_I18N_KEYS) {
+        expect(typeof DICTS[lang][key]).toBe('string');
+        expect(DICTS[lang][key].length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('missing-key without an env key explains the anonymous request, and invents no name', async () => {
+    const fetchModels = vi.fn().mockResolvedValue(authResult({
+      credentialState: 'none', attempted: true, credentialSent: false, cause: 'missing-key',
+    }));
+    render(<Harness initial={profileForm('claude.kimi-code')} fetchModels={fetchModels} />);
+    const section = await screen.findByRole('region', { name: 'Models' });
+    expect(within(section).getByText(/requests it anonymously: no key is configured/)).toBeTruthy();
+    expect(within(section).queryByText(/\{key\}/)).toBeNull();
+  });
+
+  it('the diagnosis stays visible over stale data and an empty listing, never replaced by «No models found»', async () => {
+    const fetchModels = vi.fn().mockResolvedValue({
+      ...authResult({ credentialState: 'configured', envKey: 'MY_API_KEY', attempted: true, credentialSent: true, cause: 'key-rejected' }),
+      source: 'cache', status: 'cache', stale: true, error: 'HTTP 401', models: [],
+    });
+    render(<Harness initial={profileForm('claude.kimi-code')} fetchModels={fetchModels} />);
+    const section = await screen.findByRole('region', { name: 'Models' });
+    expect(within(section).getByText('Stale data: showing the last successful fetch')).toBeTruthy();
+    expect(within(section).getByText(/submitted key was not accepted/)).toBeTruthy();
+    expect(within(section).getByText('No models found')).toBeTruthy();
+  });
+
+  it('backup data shows the same dedicated line: empty listing, no stale flag', async () => {
+    // Backup: nessun dato precedente da servire, ma il tentativo è avvenuto
+    // e la sua diagnosi vale quanto sopra i dati stantii.
+    const fetchModels = vi.fn().mockResolvedValue({
+      ...authResult({ credentialState: 'missing', envKey: 'MY_API_KEY', attempted: true, credentialSent: false, cause: 'missing-key' }),
+      source: 'backup', status: 'backup', stale: false, error: 'HTTP 401', models: [],
+    });
+    render(<Harness initial={profileForm('claude.kimi-code')} fetchModels={fetchModels} />);
+    const section = await screen.findByRole('region', { name: 'Models' });
+    expect(within(section).getByText(/requires authentication: the MY_API_KEY key is not configured/)).toBeTruthy();
+    expect(within(section).getByText('No models found')).toBeTruthy();
+  });
+
+  it('no cause, no line: a fresh cache claims nothing about the key', async () => {
+    const fetchModels = vi.fn().mockResolvedValue(authResult({
+      credentialState: 'missing', envKey: 'MY_API_KEY', attempted: false, credentialSent: false,
+    }));
+    const { container } = render(<Harness initial={profileForm('claude.kimi-code')} fetchModels={fetchModels} />);
+    await screen.findByRole('region', { name: 'Models' });
+    const text = container.querySelector('.nc-fleet-models').textContent;
+    for (const fragment of ['requires authentication', 'was not accepted', 'was denied', 'cannot be read or verified', 'unreachable', 'answered with an error', 'is not valid', 'without a key']) {
+      expect(text).not.toContain(fragment);
+    }
   });
 });
