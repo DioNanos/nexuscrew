@@ -228,3 +228,55 @@ test('no known id and no active model means no catalog fetch', async (t) => {
   assert.deepEqual(out.models, []);
   assert.deepEqual(fetchImpl.calls, []);
 });
+
+// Model ids that the fleet file accepts may carry a marker such as `[1m]`.
+// Discovery must keep them intact: never strip the marker, never drop the row.
+const MARKED_SNAPSHOT = {
+  zai: { id: 'zai', name: 'Z.AI', models: { 'sonnet[1m]': { limit: { context: 1000000, output: 64000 } } } },
+};
+
+test('an active model with a bracketed marker keeps the row and gets exact-match defaults', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineEngine({
+    id: 'marked', label: 'Marker',
+    managed: { client: 'claude', provider: 'native', model: 'sonnet[1m]', permissionPolicy: 'standard' },
+  });
+  const fetchImpl = catalogFetch(MARKED_SNAPSHOT);
+  const out = await fleet.discoverEngineModels('marked', { fetchImpl });
+  assert.deepEqual(out.models.map((m) => m.id), ['sonnet[1m]']);
+  assert.equal(out.models[0].contextWindow, 1000000);
+  assert.equal(out.models[0].maxTokens, 64000);
+  assert.equal(out.models[0].fieldSources.contextWindow, 'public');
+  assert.ok(!Object.hasOwn(out.models[0], 'inApi'));
+});
+
+test('the same marked id without a catalog match stays as a row without fields', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineEngine({
+    id: 'marked-miss', label: 'Marker miss',
+    managed: { client: 'claude', provider: 'native', model: 'sonnet[1m]', permissionPolicy: 'standard' },
+  });
+  const before = fs.readFileSync(w.defsPath, 'utf8');
+  const out = await fleet.discoverEngineModels('marked-miss', { fetchImpl: catalogFetch() });
+  assert.deepEqual(out.models.map((m) => m.id), ['sonnet[1m]']);
+  assert.equal(out.models[0].contextWindow, undefined);
+  assert.equal(fs.readFileSync(w.defsPath, 'utf8'), before, 'discovery writes nothing');
+});
+
+test('a declared model with a bracketed marker survives the merge', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineModel({ id: 'glm-5.3[1m]', engine: 'pi.native', tools: false });
+  const out = await fleet.discoverEngineModels('pi.native', { fetchImpl: catalogFetch() });
+  const row = out.models.find((m) => m.id === 'glm-5.3[1m]');
+  assert.ok(row, 'the declared marked id is in the proposal');
+  assert.equal(row.tools, false);
+});
+
+test('an API id with a space or a control byte is still rejected', async () => {
+  const { mergeModelRecords } = require('../lib/fleet/model-discovery.js');
+  const rows = mergeModelRecords({ apiModels: [{ id: 'bad id' }, { id: 'bad\u0001id' }, { id: 'good-id' }] });
+  assert.deepEqual(rows.map((m) => m.id), ['good-id']);
+});
