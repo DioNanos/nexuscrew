@@ -162,6 +162,42 @@ test('refresh=1 salta la cache: richiesta nuova, la lettura normale no', async (
   } finally { await closeFakeServer(fake); }
 });
 
+test('due engine custom dello stesso client: cache separata, ognuno riceve i modelli del SUO endpoint', async (t) => {
+  const fakeA = await startFakeServer((_req, res) => res.writeHead(200, { 'content-type': 'application/json' })
+    .end(JSON.stringify({ data: [{ id: 'only-a' }] })));
+  const fakeB = await startFakeServer((_req, res) => res.writeHead(200, { 'content-type': 'application/json' })
+    .end(JSON.stringify({ data: [{ id: 'only-b' }] })));
+  try {
+    const { base, H, dir } = await bootWithCustomEngine(t, fakeA.baseUrl, [
+      {
+        id: 'myapi-b', label: 'My API B', managed: {
+          client: 'codex-vl', provider: 'custom', model: 'm-1', permissionPolicy: 'standard',
+          displayName: 'My API B', baseUrl: fakeB.baseUrl, protocol: 'openai_responses',
+          envKey: 'MY_API_KEY', providerId: 'my-api-b',
+        },
+      },
+    ]);
+    const a = await (await fetch(`${base}/api/fleet/engine-models?engine=myapi`, { headers: H })).json();
+    assert.equal(a.source, 'api');
+    assert.ok(a.models.some((m) => m.id === 'only-a'));
+    assert.equal(fakeA.requests.length, 1);
+    // Same client, same shared profile, different endpoint: the second engine
+    // must interrogate ITS endpoint — not serve the first engine's cache.
+    const b = await (await fetch(`${base}/api/fleet/engine-models?engine=myapi-b`, { headers: H })).json();
+    assert.equal(b.source, 'api');
+    assert.equal(fakeB.requests.length, 1, 'myapi-b interrogates its own endpoint');
+    assert.ok(b.models.some((m) => m.id === 'only-b'), 'its own models');
+    assert.ok(!b.models.some((m) => m.id === 'only-a'), 'never the other endpoint\'s models');
+    // the cache files are per declared engine: no shared profile-keyed file
+    assert.ok(fs.existsSync(path.join(dir, '.nexuscrew', 'model-discovery', 'myapi.json')));
+    assert.ok(fs.existsSync(path.join(dir, '.nexuscrew', 'model-discovery', 'myapi-b.json')));
+    assert.ok(!fs.existsSync(path.join(dir, '.nexuscrew', 'model-discovery', 'codex-vl.custom.json')));
+  } finally {
+    await closeFakeServer(fakeA);
+    await closeFakeServer(fakeB);
+  }
+});
+
 test('errore di rete: risposta 200 con esito honest (backup/stale) e messaggio a stringa fissa', async (t) => {
   const fake = await startFakeServer((_req, res) => res.writeHead(200, { 'content-type': 'application/json' })
     .end(JSON.stringify({ data: [{ id: 'm-1' }] })));
@@ -173,7 +209,9 @@ test('errore di rete: risposta 200 con esito honest (backup/stale) e messaggio a
     // Entro il TTL la cache buona serve senza rete; forzando la SCADENZA sul
     // file (fetchedAt indietro) con endpoint morto, torna l'ultimo valore
     // buono marcato stale.
-    const cacheFile = path.join(dir, '.nexuscrew', 'model-discovery', 'codex-vl.custom.json');
+    // The cache file is keyed by the DECLARED engine id (myapi), not by the
+    // shared custom profile: two custom engines never share a listing.
+    const cacheFile = path.join(dir, '.nexuscrew', 'model-discovery', 'myapi.json');
     const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
     cached.fetchedAt -= 48 * 3600 * 1000;
     fs.writeFileSync(cacheFile, JSON.stringify(cached));

@@ -367,6 +367,68 @@ test('engineModelDiscoveryPlan: endpoint e chiave dello stesso motore, senza mai
     { id: 'claude.native', provider: 'native', auth: 'login', protocol: 'anthropic_messages', endpoint: 'Anthropic account' },
     {}, { env: {} }, home,
   ), null);
+  // the cache key follows the DECLARED engine id: two custom engines sharing
+  // one profile must never share a cache file
+  const declared = managed.engineModelDiscoveryPlan(
+    { id: 'codex-vl.custom', provider: 'custom', protocol: 'openai_responses', endpoint: 'https://gw.example.test/v1' },
+    { baseUrl: 'https://gw.example.test/v1' }, { env: {} }, home, 'my-api-b',
+  );
+  assert.equal(declared.engine, 'my-api-b');
+  assert.equal(declared.collector, 'openai-compat');
+  assert.equal(declared.baseUrl, 'https://gw.example.test/v1');
+});
+
+test('cache per engine dichiarato: endpoint cambiato si rilegge, il record porta l\'impronta e non la chiave', async () => {
+  const fakeA = await startFakeServer((req, res) => json(res, 200, { data: [{ id: 'from-a' }] }));
+  const fakeB = await startFakeServer((req, res) => json(res, 200, { data: [{ id: 'from-b' }] }));
+  const home = isolatedHome();
+  try {
+    const md = createModelDiscovery();
+    const first = await md.discoverEngine({
+      engine: 'e-ep', collector: 'openai-compat', baseUrl: fakeA.baseUrl,
+      apiKey: KEY, home, ttlMs: 60000,
+    });
+    assert.equal(first.source, 'api');
+    assert.deepEqual(first.models.map((m) => m.id), ['from-a']);
+    // the record stores a truncated sha256 of the normalized base URL: enough
+    // to detect a config change, never the key nor anything derived from it
+    const raw = JSON.parse(fs.readFileSync(path.join(home, '.nexuscrew', 'model-discovery', 'e-ep.json'), 'utf8'));
+    assert.match(raw.endpoint, /^[0-9a-f]{16}$/u);
+    assert.ok(!JSON.stringify(raw).includes(KEY));
+    assert.ok(!JSON.stringify(raw).includes(fakeA.baseUrl), 'the endpoint travels as a fingerprint, not as a URL');
+    // same engine, DIFFERENT endpoint, TTL still valid: the record does not
+    // apply — the new endpoint is interrogated and the old listing is not served
+    const second = await md.discoverEngine({
+      engine: 'e-ep', collector: 'openai-compat', baseUrl: fakeB.baseUrl,
+      apiKey: KEY, home, ttlMs: 60000,
+    });
+    assert.equal(second.source, 'api');
+    assert.deepEqual(second.models.map((m) => m.id), ['from-b']);
+    assert.equal(fakeB.requests.length, 1);
+    // legacy record without a fingerprint: ignored without errors, not served,
+    // not used as last-good, not force-deleted
+    const legacyPath = path.join(home, '.nexuscrew', 'model-discovery', 'e-legacy.json');
+    fs.mkdirSync(path.dirname(legacyPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(legacyPath, JSON.stringify({
+      version: 1, engine: 'e-legacy', collector: 'openai-compat',
+      fetchedAt: Date.now(), models: [{ id: 'stale-legacy' }],
+    }));
+    const legacy = await md.discoverEngine({
+      engine: 'e-legacy', collector: 'openai-compat', baseUrl: fakeA.baseUrl,
+      apiKey: KEY, home, ttlMs: 60000,
+    });
+    assert.equal(legacy.source, 'api', 'the legacy record is not a usable cache hit');
+    assert.deepEqual(legacy.models.map((m) => m.id), ['from-a']);
+    assert.ok(fs.existsSync(legacyPath));
+    const dead = await md.discoverEngine({
+      engine: 'e-legacy', collector: 'openai-compat', baseUrl: 'http://127.0.0.1:1',
+      apiKey: KEY, home, ttlMs: 60000, timeoutMs: 250,
+    });
+    assert.equal(dead.source, 'backup', 'a record from another endpoint is never the last-good value');
+  } finally {
+    await closeFakeServer(fakeA);
+    await closeFakeServer(fakeB);
+  }
 });
 
 // --- Lotto 3b: i modelli spariti restano --------------------------------------
