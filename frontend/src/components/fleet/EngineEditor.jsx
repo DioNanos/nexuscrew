@@ -26,6 +26,14 @@ const REQUIRED_MODEL_FIELDS = [
   ['maxTokens', 'fleet-models-field-output'],
 ];
 const SOURCE_LABELS = { user: 'fleet-models-source-user', api: 'fleet-models-source-api', public: 'fleet-models-source-public', backup: 'fleet-models-source-backup' };
+// Cause dell'autenticazione del listing, dal blocco `auth` curato dal nodo.
+// Ogni causa ha la SUA riga a stringa fissa; «missing-key» senza envKey (auth
+// none) ha la sua variante: la richiesta era anonima, e nessun nome va inventato.
+const AUTH_CAUSES = ['missing-key', 'key-rejected', 'access-denied', 'credential-unavailable', 'endpoint-unreachable', 'provider-error', 'invalid-response', 'anonymous-success'];
+function authCauseLabel(cause, envKey) {
+  if (cause === 'missing-key' && !envKey) return 'fleet-models-auth-missing-key-anonymous';
+  return `fleet-models-auth-${cause}`;
+}
 
 // Finestra dei dati mancanti (piano, punto 3): dice COSA manca, mostra il
 // valore di backup proposto dal catalogo interno (precompilato, «se c'è») e
@@ -83,6 +91,13 @@ function ModelDiscoverySection({ engineId, fetchModels, onPick, activeModel, onS
   const active = String(activeModel || '').trim();
   const result = view.result;
   const models = result && Array.isArray(result.models) ? result.models : [];
+  // Diagnosi dell'autenticazione del listing: una riga dedicata, visibile
+  // anche su dati stantii/di riserva e con un elenco vuoto — non la sostituisce
+  // mai «nessun modello trovato». La envKey si mostra solo se il nodo la manda
+  // (è già pubblica nell'editor); nessun valore, mai.
+  const auth = result && result.auth && typeof result.auth === 'object' ? result.auth : null;
+  const authCause = auth && AUTH_CAUSES.includes(auth.cause) ? auth.cause : '';
+  const authEnvKey = auth && typeof auth.envKey === 'string' ? auth.envKey : '';
   const activeRecord = active ? models.find((m) => m.id === active) : null;
   const missing = !view.loading && !view.error && result && result.supported !== false && active
     ? REQUIRED_MODEL_FIELDS
@@ -122,6 +137,13 @@ function ModelDiscoverySection({ engineId, fetchModels, onPick, activeModel, onS
     {view.loading && <small>{t('fleet-models-loading')}</small>}
     {!view.loading && view.error && <small className="nc-err">{view.error}</small>}
     {!view.loading && !view.error && result && result.stale === true && <small className="nc-fleet-models-note">{t('fleet-models-stale')}</small>}
+    {/* Diagnosi dell'autenticazione del listing: una riga dedicata per causa.
+        Sta sopra i dati, non al loro posto: resta visibile con stale/backup e
+        con elenco vuoto, e «nessun modello trovato» continua a dire il suo.
+        La envKey entra solo se il nodo la manda (già pubblica nell'editor):
+        mai un valore, mai un nome inventato per auth none. */}
+    {!view.loading && !view.error && result && result.supported !== false && authCause
+      && <small className="nc-fleet-models-note nc-fleet-models-auth">{t(authCauseLabel(authCause, authEnvKey)).replace('{key}', authEnvKey)}</small>}
     {!view.loading && result && result.supported === false && <small>{t('fleet-models-unsupported')}</small>}
     {!view.loading && result && result.supported !== false && !models.length && <small>{t('fleet-models-none')}</small>}
     {dialog && missing.length > 0 && <MissingFieldsDialog model={active} missing={missing} busy={busy} onConfirm={confirmMissing} onLeaveEmpty={closeDialog} />}
