@@ -171,7 +171,7 @@ test('lo schema DESCRIVE il modello, e la descrizione e\' quella vera', async (t
   const forma = fleet.schema().model;
   assert.ok(forma, 'lo schema deve descrivere il modello dichiarato');
   assert.deepEqual(Object.keys(forma).sort(),
-    ['contextWindow', 'engine', 'id', 'label', 'maxTokens', 'reasoning'],
+    ['contextWindow', 'engine', 'id', 'label', 'maxTokens', 'reasoning', 'tools', 'vision'],
     'i campi descritti sono esattamente quelli che il parser accetta');
   assert.equal(forma.id.required, true);
   assert.equal(forma.engine.required, true);
@@ -182,6 +182,13 @@ test('lo schema DESCRIVE il modello, e la descrizione e\' quella vera', async (t
   await con({ contextWindow: forma.contextWindow.min });
   await assert.rejects(() => con({ maxTokens: forma.maxTokens.max + 1 }));
   await con({ maxTokens: forma.maxTokens.max });
+  // I tre booleani dichiarati nello schema sono quelli applicati: `false` e'
+  // un valore, una stringa no.
+  assert.equal(forma.tools.type, 'boolean');
+  assert.equal(forma.vision.type, 'boolean');
+  await con({ tools: false });
+  await con({ vision: true });
+  await assert.rejects(() => con({ tools: 'no' }));
   // Un campo NON descritto non entra: lo schema e' chiuso da entrambe le parti.
   await assert.rejects(() => fleet.defineModel({ id: 'm-extra', engine: PROFILO, prezzo: 3 }));
 });
