@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { t } from '../../lib/i18n.js';
+import { MODEL_BOOLEAN_FIELDS, validModelLimit } from '../../lib/model-fields.js';
 
 // Dichiarazione di un modello, con la prova sull'API accanto al campo.
 //
@@ -19,7 +20,13 @@ export default function ModelEditor({
   const form = state.form;
   const set = (patch) => setState({ ...state, form: { ...form, ...patch } });
   const idOk = /^[^\x00-\x1f\x7f]{1,128}$/.test(form.id || '');
-  const pronto = !!(form.id || '').trim() && !!(form.engine || '').trim() && idOk;
+  // I limiti fuori scala si fermano qui, con la stessa scala del parser: il
+  // salvataggio non deve fallire dopo, davanti a un messaggio sul file.
+  const limitsOk = ['contextWindow', 'maxTokens'].every((key) => {
+    const raw = String(form[key] === undefined ? '' : form[key]).trim();
+    return !raw || validModelLimit(raw);
+  });
+  const pronto = !!(form.id || '').trim() && !!(form.engine || '').trim() && idOk && limitsOk;
 
   const prova = async () => {
     setTest(null); setTesting(true);
@@ -44,17 +51,26 @@ export default function ModelEditor({
       <small className="nc-set-hint">{t('model-editor-id-help')}</small>
 
       <label className="nc-field">{t('model-editor-context')}
-        <input inputMode="numeric" value={form.contextWindow || ''} disabled={busy}
+        <input inputMode="numeric" aria-label={t('fleet-models-field-context')} value={form.contextWindow || ''} disabled={busy} aria-invalid={form.contextWindow && !validModelLimit(form.contextWindow) ? 'true' : 'false'}
           onChange={(e) => set({ contextWindow: e.target.value.replace(/[^0-9]/g, '').slice(0, 9) })} />
       </label>
+      {form.contextWindow && !validModelLimit(form.contextWindow) && <small className="nc-err">{t('model-editor-limit-invalid')}</small>}
       <label className="nc-field">{t('model-editor-max-tokens')}
-        <input inputMode="numeric" value={form.maxTokens || ''} disabled={busy}
+        <input inputMode="numeric" aria-label={t('fleet-models-field-output')} value={form.maxTokens || ''} disabled={busy} aria-invalid={form.maxTokens && !validModelLimit(form.maxTokens) ? 'true' : 'false'}
           onChange={(e) => set({ maxTokens: e.target.value.replace(/[^0-9]/g, '').slice(0, 9) })} />
       </label>
-      <label className="nc-check">
-        <input type="checkbox" checked={form.reasoning === true} disabled={busy}
-          onChange={(e) => set({ reasoning: e.target.checked })} /> {t('model-editor-reasoning')}
-      </label>
+      {form.maxTokens && !validModelLimit(form.maxTokens) && <small className="nc-err">{t('model-editor-limit-invalid')}</small>}
+      {/* I booleani sono a TRE stati, non una casella: «lascia vuoto» e'
+          un'assenza, e non deve diventare un `false` che nessuno ha scelto. */}
+      {MODEL_BOOLEAN_FIELDS.map((key) => <label key={key} className="nc-field">
+        {t(`model-editor-${key === 'reasoning' ? 'reasoning' : key}`)}
+        <select value={form[key] === undefined || form[key] === null ? '' : String(form[key])} disabled={busy}
+          onChange={(e) => set({ [key]: e.target.value === '' ? undefined : e.target.value === 'true' })}>
+          <option value="">{t('model-editor-absent')}</option>
+          <option value="true">{t('model-editor-true')}</option>
+          <option value="false">{t('model-editor-false')}</option>
+        </select>
+      </label>)}
 
       <div className="nc-set-row">
         {/* Su un nodo che non espone la capability la prova non esiste: si

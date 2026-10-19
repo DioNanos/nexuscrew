@@ -350,11 +350,23 @@ export function parseFleetBackup(text) {
     const visti = new Set();
     for (const raw of value.models) {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'invalid-model', cells: [], engines: [] };
-      const ammessi = new Set(['id', 'engine', 'label', 'contextWindow', 'maxTokens', 'reasoning']);
+      const ammessi = new Set(['id', 'engine', 'label', 'contextWindow', 'maxTokens', 'tools', 'vision', 'reasoning']);
       if (Object.keys(raw).some((k) => !ammessi.has(k))) return { ok: false, error: 'invalid-model', cells: [], engines: [] };
       const id = typeof raw.id === 'string' ? raw.id.trim() : '';
       const engine = typeof raw.engine === 'string' ? raw.engine.trim() : '';
       if (!id || !engine) return { ok: false, error: 'invalid-model', cells: [], engines: [] };
+      // Stessa forma del parser del file: limiti interi nella scala, i tre
+      // booleani tipizzati. Un backup con `false` deve passare, non sparire.
+      for (const key of ['contextWindow', 'maxTokens']) {
+        if (raw[key] !== undefined && (!Number.isSafeInteger(raw[key]) || raw[key] < 1024 || raw[key] > 100000000)) {
+          return { ok: false, error: 'invalid-model', cells: [], engines: [] };
+        }
+      }
+      for (const key of ['tools', 'vision', 'reasoning']) {
+        if (raw[key] !== undefined && typeof raw[key] !== 'boolean') {
+          return { ok: false, error: 'invalid-model', cells: [], engines: [] };
+        }
+      }
       const key = `${engine}::${id}`;
       if (visti.has(key)) return { ok: false, error: 'duplicate-model', cells: [], engines: [] };
       visti.add(key);

@@ -20,8 +20,13 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const TESTS_DIR = __dirname;
+// The harness travels WITH the runner: every file the copied runner (or its
+// bootstrap) requires must be listed here, or the fixture dies on its first
+// require. real-home-guard.cjs joined the set when isolated-home.cjs started
+// to install the guard (model discovery): without it the copied bootstrap
+// cannot even load.
 const HARNESS_FILES = Object.freeze([
-  'run-isolated.js', 'isolated-home.cjs', 'stall-watchdog.js',
+  'run-isolated.js', 'isolated-home.cjs', 'real-home-guard.cjs', 'stall-watchdog.js',
   'tmux-containment.js', 'tunnel-supervisor-containment.js', 'pidfile-containment.js',
 ]);
 

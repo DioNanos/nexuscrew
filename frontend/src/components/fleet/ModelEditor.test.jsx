@@ -115,3 +115,34 @@ describe('ModelEditor — si puo\' uscire senza salvare', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 });
+
+describe('ModelEditor — i cinque parametri', () => {
+  it('i booleani sono a tre stati: assente, sì, no', () => {
+    const setState = vi.fn();
+    render(<ModelEditor
+      state={{ mode: 'new', form: { id: 'qwen9', engine: PROFILI[0].id, tools: false, vision: undefined, reasoning: true } }}
+      setState={setState} busy={false} onSave={vi.fn()} onTest={vi.fn()} profiles={PROFILI}
+    />);
+    expect(screen.getByLabelText('Supports tools').value).toBe('false');
+    expect(screen.getByLabelText('Reads images').value).toBe('');
+    expect(screen.getByLabelText('Supports extended reasoning').value).toBe('true');
+    fireEvent.change(screen.getByLabelText('Reads images'), { target: { value: 'true' } });
+    expect(setState).toHaveBeenCalledWith(expect.objectContaining({
+      form: expect.objectContaining({ vision: true }),
+    }));
+    fireEvent.change(screen.getByLabelText('Supports tools'), { target: { value: '' } });
+    expect(setState).toHaveBeenCalledWith(expect.objectContaining({
+      form: expect.objectContaining({ tools: undefined }),
+    }));
+  });
+
+  it('un limite fuori scala blocca il salvataggio invece di farlo fallire dopo', () => {
+    const invalid = renderEditor({ state: { mode: 'new', form: { id: 'qwen9', engine: PROFILI[0].id, contextWindow: '1000' } } });
+    expect(screen.getByText(/between 1024 and 100000000/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /save/i }).disabled).toBe(true);
+    invalid.unmount();
+    // La stessa forma, in scala: il salvataggio si apre.
+    renderEditor({ state: { mode: 'new', form: { id: 'qwen9', engine: PROFILI[0].id, contextWindow: '2048' } } });
+    expect(screen.getByRole('button', { name: /save/i }).disabled).toBe(false);
+  });
+});

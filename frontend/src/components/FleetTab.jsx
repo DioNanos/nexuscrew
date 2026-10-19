@@ -8,7 +8,7 @@ import {
   fleetImportCell,
   fleetRestoreCells, fleetRestoreEngines,
   fleetCredentialStatus, fleetSetCredential, fleetRemoveCredential,
-  fleetDefineModel, fleetRemoveModel, fleetModelTest,
+  fleetDefineModel, fleetEditModel, fleetRemoveModel, fleetModelTest, fleetEngineModels,
   getRouteConfig,
 } from '../lib/api.js';
 import PowerSheet from './PowerSheet.jsx';
@@ -21,6 +21,7 @@ import FleetInventory from './fleet/FleetInventory.jsx';
 import FleetBackupDialog from './fleet/FleetBackupDialog.jsx';
 import EngineEditor from './fleet/EngineEditor.jsx';
 import ModelEditor from './fleet/ModelEditor.jsx';
+import { modelPatchFromValues } from '../lib/model-fields.js';
 import CellEditor from './fleet/CellEditor.jsx';
 import ImportEditor from './fleet/ImportEditor.jsx';
 import CwdRepairDialog from './fleet/CwdRepairDialog.jsx';
@@ -96,19 +97,39 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   };
 
   const saveModel = (form) => run(async () => {
-    const def = { id: String(form.id || '').trim(), engine: String(form.engine || '').trim() };
-    // I campi numerici arrivano dal form come stringhe: si convertono qui, e
-    // si OMETTONO quando vuoti — il parser rifiuta un campo presente e non
-    // valido, ed e' giusto cosi'.
-    for (const key of ['contextWindow', 'maxTokens']) {
-      const value = String(form[key] || '').trim();
-      if (value) def[key] = Number(value);
-    }
-    if (form.reasoning === true) def.reasoning = true;
+    // I cinque parametri passano da UNA sola conversione: numeri tipizzati e
+    // booleani a tre stati (assente / true / false). Vuoto non scrive; `false`
+    // e' una risposta e resta tale anche quando il form lo rappresenta a stringa.
+    const def = { id: String(form.id || '').trim(), engine: String(form.engine || '').trim(), ...modelPatchFromValues(form) };
     await fleetDefineModel(token, def, route);
     setModelEdit(null);
     await refresh();
   });
+
+  // Il valore confermato dal dialogo dei dati mancanti (editor engine): diventa
+  // una dichiarazione UTENTE in fleet.json — precedenza piu' alta, mai
+  // riscritta dalla scoperta. Dichiarazione esistente -> patch, altrimenti si
+  // crea con i soli campi riempiti: un «lascia vuoto» non scrive nulla.
+  // Restituisce l'esito al dialogo, che lo usa per decidere se chiudersi. Un
+  // errore non viene assorbito: resta visibile nel dialogo e non e' cancellato
+  // dal refresh periodico di questa vista.
+  const saveModelValue = async (engine, model, values) => {
+    setBusy(true); setErr('');
+    try {
+      // Un valore non valido e' un errore esplicito: nessuna patch parziale.
+      const patch = modelPatchFromValues(values);
+      if (!Object.keys(patch).length) return { ok: true, written: false };
+      const existing = (defs.models || []).find((m) => m.id === model && m.engine === engine);
+      if (existing) await fleetEditModel(token, model, engine, patch, route);
+      else await fleetDefineModel(token, { id: model, engine, ...patch }, route);
+      await refresh();
+      return { ok: true, written: true };
+    } catch (e) {
+      const message = String((e && e.message) || e);
+      setErr(message);
+      return { ok: false, error: message };
+    } finally { setBusy(false); }
+  };
 
   const saveEngine = () => run(async () => {
     const creating = engineEdit.mode === 'new';
@@ -397,7 +418,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
         <ModelEditor state={modelEdit} setState={setModelEdit} busy={busy} onSave={saveModel}
           onTest={provaModello} profiles={defs.managedCatalog || []}
           canTest={caps.includes('model-test') && !provaBloccata} /></FleetModal>}
-      {engineEdit && <FleetModal onClose={() => setEngineEdit(null)} label={t('fleet-new-engine')} error={err}><EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} /></FleetModal>}
+      {engineEdit && <FleetModal onClose={() => setEngineEdit(null)} label={t('fleet-new-engine')} error={err}><EngineEditor state={engineEdit} setState={setEngineEdit} busy={busy} onSave={saveEngine} catalog={defs.managedCatalog || []} fetchModels={caps.includes('model-discovery') ? (engine, refresh) => fleetEngineModels(token, engine, refresh, route) : undefined} onSetModelValue={caps.includes('edit-model') ? saveModelValue : undefined} /></FleetModal>}
       {cellEdit && <FleetModal onClose={() => setCellEdit(null)} label={t('fleet-new-cell')} error={err}><CellEditor token={token} route={route} targets={targets} location={location} setLocation={setLocation} state={cellEdit} setState={setCellEdit} engines={defs.engines} mcpServers={defs.mcpServers || []} managedCatalog={defs.managedCatalog || []} busy={busy} onSave={saveCell} /></FleetModal>}
       {repairCell && <FleetModal onClose={() => setRepairCell(null)} label={t('fleet-cwd-repair-title').replace('{id}', repairCell.id)} error=""><CwdRepairDialog token={token} route={route} cell={repairCell} busy={busy} onSaved={async () => { setRepairCell(null); setNote(t('fleet-cwd-repaired')); await refresh(); }} onClose={() => setRepairCell(null)} /></FleetModal>}
       {note && <div className="nc-set-note">{note}</div>}{err && <div className="nc-err">{err}</div>}

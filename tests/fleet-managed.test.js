@@ -238,6 +238,7 @@ test('Ollama Direct discovery: usa la shortlist TOP disponibile e filtra garbage
   const models = await discoverOllamaModels({
     noCache: true,
     apiKey: 'test-key',
+    home: tmp(),
     fetchImpl: async () => ({
       ok: true,
       json: async () => ({ models: [
@@ -250,7 +251,7 @@ test('Ollama Direct discovery: usa la shortlist TOP disponibile e filtra garbage
 });
 
 test('Ollama Direct discovery: errore API usa la shortlist TOP di fallback', async () => {
-  const models = await discoverOllamaModels({ noCache: true, fetchImpl: async () => { throw new Error('down'); } });
+  const models = await discoverOllamaModels({ noCache: true, apiKey: 'test-key', home: tmp(), fetchImpl: async () => { throw new Error('down'); } });
   assert.deepEqual(models, [
     'glm-5.2', 'kimi-k2.7-code', 'deepseek-v4-pro', 'minimax-m3',
     'qwen3.5:397b', 'deepseek-v4-flash', 'mistral-large-3:675b', 'gemma4:31b',
