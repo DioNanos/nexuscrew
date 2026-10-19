@@ -20,8 +20,35 @@ export function validModelLimit(value) {
 
 // Valori del dialogo (stringhe o booleani) -> patch tipizzata per l'API.
 // Vuoto o assente non scrive; `false` scrive `false`.
+// Errori per campo, PRIMA di convertire. Un valore non vuoto e fuori scala e'
+// un errore, non un'assenza: scartarlo in silenzio produrrebbe una patch
+// parziale che nessuno ha chiesto.
+export function modelFieldErrors(values) {
+  const source = values && typeof values === 'object' ? values : {};
+  const errors = {};
+  for (const key of MODEL_NUMERIC_FIELDS) {
+    const raw = source[key];
+    if (raw === undefined || raw === null) continue;
+    const text = String(raw).trim();
+    if (text && !validModelLimit(text)) errors[key] = 'out-of-range';
+  }
+  for (const key of MODEL_BOOLEAN_FIELDS) {
+    const raw = source[key];
+    if (raw === undefined || raw === null || raw === '') continue;
+    if (raw !== true && raw !== false && raw !== 'true' && raw !== 'false') errors[key] = 'not-a-boolean';
+  }
+  return errors;
+}
+
 export function modelPatchFromValues(values) {
   const source = values && typeof values === 'object' ? values : {};
+  const fieldErrors = modelFieldErrors(source);
+  if (Object.keys(fieldErrors).length) {
+    const error = new Error(`invalid model values: ${Object.keys(fieldErrors).join(', ')}`);
+    error.code = 'invalid-model-values';
+    error.fields = fieldErrors;
+    throw error;
+  }
   const patch = {};
   for (const key of MODEL_NUMERIC_FIELDS) {
     const raw = source[key];

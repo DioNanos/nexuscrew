@@ -4,7 +4,7 @@ import { catalogEntry } from '../../lib/fleet-forms.js';
 // Anticipazione lato UI: stesso validatore del round-trip di backup (gia'
 // sorvegliato contro il validatore autorevole del backend), v. CellEditor.jsx.
 import { validBackupPanelUrl } from '../../lib/fleet-backup.js';
-import { MODEL_BOOLEAN_FIELDS } from '../../lib/model-fields.js';
+import { MODEL_BOOLEAN_FIELDS, modelFieldErrors } from '../../lib/model-fields.js';
 
 // Sezione «puoi usare questi»: l'elenco dei modelli scoperti per l'engine, con
 // la provenienza DISCRETA di ogni campo (utente / API / catalogo / backup) e
@@ -42,7 +42,7 @@ function authCauseLabel(cause, envKey) {
 // Confermare chiama il parent, che scrive il valore come dichiarazione utente
 // (fleet.json): precedenza più alta, mai riscritta dalla scoperta.
 function ModelFieldsDialog({
-  model, fields, busy, onConfirm, onCancel, mode,
+  model, fields, busy, onConfirm, onCancel, mode, error = '', writing = false,
 }) {
   const [values, setValues] = useState(() => Object.fromEntries(
     // Un campo mancante parte dal backup proposto; uno da confermare parte dal
@@ -52,6 +52,10 @@ function ModelFieldsDialog({
       : (backup !== undefined ? String(backup) : '')]),
   ));
   const missing = mode === 'missing';
+  // La stessa validazione del parser, PRIMA della conferma: un valore fuori
+  // scala si vede accanto al campo e Confirm resta spento.
+  const fieldErrors = modelFieldErrors(values);
+  const invalid = Object.keys(fieldErrors).length > 0;
   const title = missing
     ? t('fleet-models-missing-title')
     : t('fleet-models-make-mine-title').replace('{model}', model);
@@ -77,14 +81,16 @@ function ModelFieldsDialog({
         <input inputMode="numeric" value={values[field] || ''} disabled={busy} aria-label={t(label)}
           placeholder={backup !== undefined ? String(backup) : ''} autoComplete="off"
           onChange={(e) => setValues({ ...values, [field]: e.target.value.replace(/[^0-9]/g, '').slice(0, 9) })} />
+        {fieldErrors[field] && <small className="nc-err">{t('model-editor-limit-invalid')}</small>}
         {backup !== undefined && <small className="nc-fleet-models-note">{t('fleet-models-missing-backup').replace('{value}', String(backup))}</small>}
       </label>)}
     <small>{t('fleet-models-missing-user')}</small>
+    {error && <small className="nc-err nc-fleet-write-error">{error}</small>}
     <div className="nc-sheet-actions">
-      <button type="button" className="nc-btn ghost" disabled={busy} onClick={onCancel}>
+      <button type="button" className="nc-btn ghost" disabled={busy || writing} onClick={onCancel}>
         {missing ? t('fleet-models-missing-empty') : t('cancel')}
       </button>
-      <button type="button" className="nc-btn primary" disabled={busy} onClick={() => onConfirm(values)}>
+      <button type="button" className="nc-btn primary" disabled={busy || writing || invalid} onClick={() => onConfirm(values)}>
         {missing ? t('fleet-models-missing-confirm') : t('fleet-models-make-mine-confirm')}
       </button>
     </div>
@@ -147,30 +153,57 @@ function ModelDiscoverySection({ engineId, fetchModels, onPick, activeModel, onS
     askedRef.current = missingKey;
     setDialog(true);
   }, [missingKey, onSetModelValue]);
-  const closeDialog = () => setDialog(false);
-  // UN solo percorso di scrittura e di ricarica per tutte le azioni: il dato
-  // mancante, il singolo campo, la riga intera. Dopo la conferma la vista si
-  // ricarica davvero, cosi' la provenienza diventa «utente» e non resta un
-  // badge cambiato in memoria.
-  const writeAndReload = (modelId, values) => {
-    Promise.resolve(onSetModelValue(engineId, modelId, values))
-      .then(() => { setView({ loading: true, refreshing: false, result: null, error: '' }); return load(false); })
-      .then((next) => { setView(next); })
-      .catch(() => {});
+  const closeDialog = () => { setDialog(false); setDialogError(''); };
+  // UN solo percorso di scrittura per tutte le azioni: il dato mancante, il
+  // singolo campo, la riga intera. La callback restituisce l'esito; la vista si
+  // ricarica SOLO dopo una scrittura riuscita, e il dialogo si chiude solo
+  // allora. Se la scrittura fallisce restano aperti i valori inseriti e
+  // l'errore, che il refresh periodico del parent non tocca.
+  const writeValues = async (modelId, values) => {
+    let outcome;
+    try {
+      const result = await Promise.resolve(onSetModelValue(engineId, modelId, values));
+      outcome = result && result.ok === false
+        ? { ok: false, error: result.error || t('fleet-models-write-failed') }
+        : { ok: true };
+    } catch (e) {
+      outcome = { ok: false, error: String((e && e.message) || e) };
+    }
+    if (outcome.ok) {
+      setView({ loading: true, refreshing: false, result: null, error: '' });
+      try { setView(await load(false)); } catch (_) { /* la vista ha gia' il suo errore */ }
+    }
+    return outcome;
   };
-  const confirmMissing = (values) => { setDialog(false); writeAndReload(active, values); };
+  const [dialogWriting, setDialogWriting] = useState(false);
+  const [dialogError, setDialogError] = useState('');
+  const confirmMissing = async (values) => {
+    setDialogError('');
+    setDialogWriting(true);
+    const outcome = await writeValues(active, values);
+    setDialogWriting(false);
+    if (outcome.ok) setDialog(false); else setDialogError(outcome.error);
+  };
   const [editor, setEditor] = useState(null);
-  const confirmEditor = (values) => {
+  const [editorWriting, setEditorWriting] = useState(false);
+  const [editorError, setEditorError] = useState('');
+  const confirmEditor = async (values) => {
     const modelId = editor && editor.model;
-    setEditor(null);
-    if (modelId) writeAndReload(modelId, values);
+    if (!modelId) return;
+    setEditorError('');
+    setEditorWriting(true);
+    const outcome = await writeValues(modelId, values);
+    setEditorWriting(false);
+    if (outcome.ok) setEditor(null); else setEditorError(outcome.error);
   };
-  const openFieldEditor = (row, field, label) => setEditor({
-    model: row.id, fields: [{ field, label, value: row[field] }],
-  });
-  const openRowEditor = (row) => setEditor({
-    model: row.id, fields: MODEL_FIELDS.map(([field, label]) => ({ field, label, value: row[field] })),
-  });
+  const openFieldEditor = (row, field, label) => {
+    setEditorError('');
+    setEditor({ model: row.id, fields: [{ field, label, value: row[field] }] });
+  };
+  const openRowEditor = (row) => {
+    setEditorError('');
+    setEditor({ model: row.id, fields: MODEL_FIELDS.map(([field, label]) => ({ field, label, value: row[field] })) });
+  };
   return <section className="nc-fleet-models" aria-label={t('fleet-models-title')}>
     <div className="nc-fleet-models-head">
       <b>{t('fleet-models-usable')}</b>
@@ -188,8 +221,8 @@ function ModelDiscoverySection({ engineId, fetchModels, onPick, activeModel, onS
       && <small className="nc-fleet-models-note nc-fleet-models-auth">{t(authCauseLabel(authCause, authEnvKey)).replace('{key}', authEnvKey)}</small>}
     {!view.loading && result && result.supported === false && <small>{t('fleet-models-unsupported')}</small>}
     {!view.loading && result && result.supported !== false && !models.length && <small>{t('fleet-models-none')}</small>}
-    {dialog && missing.length > 0 && <ModelFieldsDialog mode="missing" model={active} fields={missing} busy={busy} onConfirm={confirmMissing} onCancel={closeDialog} />}
-    {editor && <ModelFieldsDialog mode="edit" model={editor.model} fields={editor.fields} busy={busy} onConfirm={confirmEditor} onCancel={() => setEditor(null)} />}
+    {dialog && missing.length > 0 && <ModelFieldsDialog mode="missing" model={active} fields={missing} busy={busy} onConfirm={confirmMissing} onCancel={closeDialog} error={dialogError} writing={dialogWriting} />}
+    {editor && <ModelFieldsDialog mode="edit" model={editor.model} fields={editor.fields} busy={busy} onConfirm={confirmEditor} onCancel={() => setEditor(null)} error={editorError} writing={editorWriting} />}
     {!dialog && missing.length > 0 && onSetModelValue && <button type="button" className="nc-btn ghost nc-fleet-missing-open" onClick={() => setDialog(true)}>{t('fleet-models-missing-open').replace('{model}', active)}</button>}
     {models.map((m) => <div key={m.id} className={`nc-fleet-model-row${m.inApi === false ? ' nc-model-not-in-api' : ''}`}>
       <button type="button" className="nc-btn ghost nc-fleet-model-pick" aria-label={t('fleet-models-use').replace('{model}', m.id)} onClick={() => onPick(m.id)}>{m.id}</button>

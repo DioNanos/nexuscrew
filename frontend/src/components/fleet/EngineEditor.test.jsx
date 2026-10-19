@@ -495,6 +495,21 @@ describe('EngineEditor make-it-mine', () => {
     });
   });
 
+  it('an out-of-range number shows the error and disables Confirm', async () => {
+    const onSetModelValue = vi.fn();
+    const user = userEvent.setup();
+    render(<Harness initial={{ ...profileForm('claude.kimi-code'), managedModel: 'k3' }} fetchModels={vi.fn().mockResolvedValue(RESULT)} onSetModelValue={onSetModelValue} />);
+    await screen.findByRole('region', { name: 'Models' });
+    await user.click(screen.getByRole('button', { name: 'Make it mine: k3' }));
+    const dialog = screen.getByRole('dialog', { name: 'Confirm the values of k3' });
+    const input = within(dialog).getByLabelText('context');
+    await user.clear(input);
+    await user.type(input, '512');
+    expect(within(dialog).getByText(/between 1024 and 100000000/)).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Confirm' }).disabled).toBe(true);
+    expect(onSetModelValue).not.toHaveBeenCalled();
+  });
+
   it('cancel writes nothing, and without the write capability there are no actions', async () => {
     const onSetModelValue = vi.fn();
     const user = userEvent.setup();

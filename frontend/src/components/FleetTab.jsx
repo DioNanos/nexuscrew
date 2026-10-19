@@ -110,16 +110,26 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
   // una dichiarazione UTENTE in fleet.json — precedenza piu' alta, mai
   // riscritta dalla scoperta. Dichiarazione esistente -> patch, altrimenti si
   // crea con i soli campi riempiti: un «lascia vuoto» non scrive nulla.
-  const saveModelValue = (engine, model, values) => run(async () => {
-    // La stessa conversione del dialogo di dichiarazione: qui arrivano anche
-    // tools/vision/reasoning, e un `false` confermato deve essere scritto, non
-    // scambiato per «lascia vuoto».
-    const patch = modelPatchFromValues(values);
-    if (!Object.keys(patch).length) return;
-    const existing = (defs.models || []).find((m) => m.id === model && m.engine === engine);
-    if (existing) await fleetEditModel(token, model, engine, patch, route);
-    else await fleetDefineModel(token, { id: model, engine, ...patch }, route);
-  });
+  // Restituisce l'esito al dialogo, che lo usa per decidere se chiudersi. Un
+  // errore non viene assorbito: resta visibile nel dialogo e non e' cancellato
+  // dal refresh periodico di questa vista.
+  const saveModelValue = async (engine, model, values) => {
+    setBusy(true); setErr('');
+    try {
+      // Un valore non valido e' un errore esplicito: nessuna patch parziale.
+      const patch = modelPatchFromValues(values);
+      if (!Object.keys(patch).length) return { ok: true, written: false };
+      const existing = (defs.models || []).find((m) => m.id === model && m.engine === engine);
+      if (existing) await fleetEditModel(token, model, engine, patch, route);
+      else await fleetDefineModel(token, { id: model, engine, ...patch }, route);
+      await refresh();
+      return { ok: true, written: true };
+    } catch (e) {
+      const message = String((e && e.message) || e);
+      setErr(message);
+      return { ok: false, error: message };
+    } finally { setBusy(false); }
+  };
 
   const saveEngine = () => run(async () => {
     const creating = engineEdit.mode === 'new';
