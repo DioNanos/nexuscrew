@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { applyEvents, createView, markCancelRequested, RUN_STATE } from '../../lib/chat-model.js';
+import { applyEvents, createView, RUN_STATE } from '../../lib/chat-model.js';
 import RunStatusBar from './RunStatusBar.jsx';
 import ToolHistoryMenu from './ToolHistoryMenu.jsx';
 import ChatTranscript from './ChatTranscript.jsx';
@@ -38,8 +38,11 @@ export default function ChatTileView({
   }, [now, pending]);
 
   const view = useMemo(() => {
-    const base = applyEvents(createView({ target, viewer, now: anchor, reviews }), events);
-    return cancelRequested ? markCancelRequested(base) : base;
+    // The cancel fence is a reducer action, not a post-hoc prop: append it as
+    // a local frame so later frames in a fixture can prove they cannot reopen
+    // the run.
+    const frames = cancelRequested ? [...events, { type: 'cancel_requested' }] : events;
+    return applyEvents(createView({ target, viewer, now: anchor, reviews }), frames);
   }, [target, viewer, events, anchor, cancelRequested, reviews]);
 
   return (
