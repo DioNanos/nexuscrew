@@ -102,3 +102,19 @@ test('`models` non e\' un array: si rifiuta invece di indovinare', () => {
   assert.equal(parseDefinitions(defs({ models: {} })), null);
   assert.equal(parseDefinitions(defs({ models: 'qwen' })), null);
 });
+
+test('tools e vision sono booleani tipizzati, e `false` e\' una risposta', () => {
+  // `false` non e' un'assenza: e' la parola esplicita dell'operatore, e deve
+  // sopravvivere al giro scrittura -> rilettura senza diventare «assente».
+  const out = parseDefinitions(defs({
+    models: [{ id: 'm1', engine: PROFILO, tools: false, vision: true }],
+  }));
+  assert.deepEqual(out.models[0], { id: 'm1', engine: PROFILO, tools: false, vision: true });
+  // Il tipo e' chiuso: una stringa o un numero non sono un booleano.
+  assert.equal(parseDefinitions(defs({ models: [{ id: 'm1', engine: PROFILO, tools: 'no' }] })), null);
+  assert.equal(parseDefinitions(defs({ models: [{ id: 'm1', engine: PROFILO, vision: 1 }] })), null);
+  // Assente resta assente: nessun valore inventato dal parser.
+  const absent = parseDefinitions(defs({ models: [{ id: 'm1', engine: PROFILO }] }));
+  assert.ok(!Object.hasOwn(absent.models[0], 'tools'));
+  assert.ok(!Object.hasOwn(absent.models[0], 'vision'));
+});
