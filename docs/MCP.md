@@ -126,7 +126,10 @@ credential-redacted.
 VL mutation tools likewise require an active local Fleet caller. Use
 `nc_vl_nodes` immediately before mutation and the full owner-qualified target.
 `nc_vl_command` receipts are transport-only until `lastAck` carries the same
-ID. See [VL micro-device nodes](VL_MICRO_NODES.md).
+ID. The `prompt` kind is the only command that carries user text: its single
+argument is `args.text`, a non-empty UTF-8 string bounded to 4 KiB, and the
+bridge rejects an over-4-KiB text with a readable error rather than a silent
+`submitted`. See [VL micro-device nodes](VL_MICRO_NODES.md).
 
 ### Audio Share
 

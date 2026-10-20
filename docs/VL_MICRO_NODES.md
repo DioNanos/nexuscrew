@@ -56,9 +56,16 @@ in its current authorized topology. A stale or revoked owner disappears; it is
 not guessed from cached routes.
 
 The exact command allowlist is: `status`, `health`, `start`, `stop`, `restart`,
-`version`, `capabilities`, `logs`, `update_candidate`, and `unpair`. `logs` is
-bounded to 1–100 redacted records. An update candidate is bounded to 2.5 MiB,
-hash verified and staged only; the protocol cannot activate it.
+`version`, `capabilities`, `logs`, `update_candidate`, `unpair`, and `prompt`.
+`logs` is bounded to 1–100 redacted records. An update candidate is bounded to
+2.5 MiB, hash verified and staged only; the protocol cannot activate it. `prompt`
+is the only verb that carries user text to the device session: its single
+argument is `args.text`, a non-empty UTF-8 string bounded to 4 KiB (4096 bytes,
+the same `MAX_PROMPT_TEXT` the device enforces). A `prompt` receipt is
+transport-only like every other command; completion is confirmed only when
+`lastAck` carries the same id. The bridge rejects an over-4-KiB text at the MCP
+layer with a readable error rather than letting it depart as a silent
+`submitted` that the device would refuse.
 
 ## HTTP surface
 
