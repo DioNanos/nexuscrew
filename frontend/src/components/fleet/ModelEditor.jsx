@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { t } from '../../lib/i18n.js';
-import { MODEL_BOOLEAN_FIELDS, validModelLimit } from '../../lib/model-fields.js';
+import { MODEL_BOOLEAN_FIELDS, validModelLimit, parseEffortLevels } from '../../lib/model-fields.js';
 
 // Dichiarazione di un modello, con la prova sull'API accanto al campo.
 //
@@ -26,7 +26,15 @@ export default function ModelEditor({
     const raw = String(form[key] === undefined ? '' : form[key]).trim();
     return !raw || validModelLimit(raw);
   });
-  const pronto = !!(form.id || '').trim() && !!(form.engine || '').trim() && idOk && limitsOk;
+  // I livelli di effort dichiarati: una stringa separata da virgole nel
+  // dialogo, un array nel file. La validazione e' quella del parser, e un
+  // livello non conforme blocca il salvataggio PRIMA: meglio un campo che si
+  // rifiuta di essere salvato che un file che il parser respinge dopo.
+  const effortText = Array.isArray(form.effortLevels)
+    ? form.effortLevels.join(', ')
+    : String(form.effortLevels || '');
+  const effortOk = parseEffortLevels(form.effortLevels).ok;
+  const pronto = !!(form.id || '').trim() && !!(form.engine || '').trim() && idOk && limitsOk && effortOk;
 
   const prova = async () => {
     setTest(null); setTesting(true);
@@ -71,6 +79,15 @@ export default function ModelEditor({
           <option value="false">{t('model-editor-false')}</option>
         </select>
       </label>)}
+      {/* I livelli di effort: una dichiarazione, non un interruttore. Il
+          cliente vl accetta solo i livelli dichiarati, quindi vuoto vuol
+          dire "nessun livello richiesto" — non "un livello a caso". */}
+      <label className="nc-field">{t('model-editor-effort-levels')}
+        <input aria-label={t('fleet-models-field-effort')} value={effortText} disabled={busy}
+          placeholder="low, medium" aria-invalid={effortOk ? 'false' : 'true'}
+          onChange={(e) => set({ effortLevels: e.target.value })} />
+      </label>
+      {!effortOk && <small className="nc-err">{t('model-editor-effort-invalid')}</small>}
 
       <div className="nc-set-row">
         {/* Su un nodo che non espone la capability la prova non esiste: si

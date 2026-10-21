@@ -216,3 +216,56 @@ test('edit-model: l\'engine che usa il modello resta invariato prima/dopo', asyn
 
   assert.equal(JSON.stringify(letto(w).engines), enginesPrima, 'l\'engine che usa il modello non viene toccato');
 });
+
+// --- livelli di effort dichiarati (client vl, env VL_EFFORT) --------------
+//
+// I livelli dichiarati fanno parte della dichiarazione del modello: il
+// runtime accetta solo i livelli dichiarati, quindi cambiarli e' una
+// correzione legittima. Non e' un campo congelato al primo salvataggio.
+
+test('edit-model: i livelli di effort dichiarati si modificano come gli altri campi', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineModel({ id: 'vl-modello', engine: PROFILO, effortLevels: ['low'] });
+
+  await fleet.editModel('vl-modello', PROFILO, { effortLevels: ['low', 'high'] });
+
+  const m = letto(w).models.find((mm) => mm.id === 'vl-modello');
+  assert.deepEqual(m.effortLevels, ['low', 'high'], 'i livelli dichiarati cambiano');
+  assert.equal(m.engine, PROFILO, 'engine identita\' invariata');
+});
+
+test('edit-model: una dichiarazione di livelli vuota si TOGLIE', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineModel({ id: 'vl-modello', engine: PROFILO, effortLevels: ['low', 'medium'] });
+
+  await fleet.editModel('vl-modello', PROFILO, { effortLevels: null });
+
+  const m = letto(w).models.find((mm) => mm.id === 'vl-modello');
+  assert.equal(Object.hasOwn(m, 'effortLevels'), false,
+    'la dichiarazione sparisce: senza livelli dichiarati nessun livello e\' richiesto');
+});
+
+test('edit-model: livelli non conformi -> 400, nessun livello inventato', async (t) => {
+  const w = mondo(t);
+  const fleet = await fleetDi(w);
+  await fleet.defineModel({ id: 'm1', engine: PROFILO });
+
+  const rifiutati = [
+    { levels: [], why: 'vuoto' },
+    { levels: ['Low'], why: 'maiuscola' },
+    { levels: ['low', 'low'], why: 'duplicato' },
+    { levels: ['low livello'], why: 'spazio' },
+    { levels: 'low', why: 'non e\' un array' },
+  ];
+  for (const { levels, why } of rifiutati) {
+    await assert.rejects(() => fleet.editModel('m1', PROFILO, { effortLevels: levels }), (e) => {
+      assert.equal(e.status, 400, `rifiutato: ${why}`);
+      assert.match(e.message, /effortLevels/);
+      return true;
+    });
+  }
+  const m = letto(w).models.find((mm) => mm.id === 'm1');
+  assert.equal(Object.hasOwn(m, 'effortLevels'), false, 'nessun livello finisce nel file');
+});

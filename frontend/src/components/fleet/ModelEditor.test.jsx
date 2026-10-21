@@ -146,3 +146,34 @@ describe('ModelEditor — i cinque parametri', () => {
     expect(screen.getByRole('button', { name: /save/i }).disabled).toBe(false);
   });
 });
+
+// I livelli di effort dichiarati per un modello: il runtime accetta solo i
+// livelli dichiarati, quindi la dichiarazione e' una scelta dell'operatore —
+// e va scritta e modificata come gli altri campi, non congelata al primo
+// salvataggio.
+describe('ModelEditor — i livelli di effort dichiarati', () => {
+  it('i livelli dichiarati si leggono e si scrivono', () => {
+    const setState = vi.fn();
+    render(<ModelEditor
+      state={{ mode: 'new', form: { id: 'qwen9', engine: PROFILI[0].id, effortLevels: ['low', 'high'] } }}
+      setState={setState} busy={false} onSave={vi.fn()} onTest={vi.fn()} profiles={PROFILI}
+    />);
+    expect(screen.getByLabelText('Effort levels').value).toBe('low, high');
+    fireEvent.change(screen.getByLabelText('Effort levels'), { target: { value: 'low, medium' } });
+    expect(setState).toHaveBeenCalledWith(expect.objectContaining({
+      form: expect.objectContaining({ effortLevels: 'low, medium' }),
+    }));
+  });
+
+  it('un livello non conforme blocca il salvataggio invece di farlo fallire dopo', () => {
+    renderEditor({ state: { mode: 'new', form: { id: 'qwen9', engine: PROFILI[0].id, effortLevels: 'Low' } } });
+    expect(screen.getByText(/Invalid levels/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /save/i }).disabled).toBe(true);
+  });
+
+  it('senza livelli dichiarati il salvataggio resta aperto', () => {
+    renderEditor({ state: { mode: 'new', form: { id: 'qwen9', engine: PROFILI[0].id } } });
+    expect(screen.getByLabelText('Effort levels').value).toBe('');
+    expect(screen.getByRole('button', { name: /save/i }).disabled).toBe(false);
+  });
+});
