@@ -34,6 +34,12 @@ function homeWith() {
   const bin = path.join(home, '.local', 'bin', 'vl');
   fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   fs.chmodSync(bin, 0o755);
+  // Il catalogo dell'operatore: e' la sorgente di un engine native senza
+  // vlConfigFile dichiarato. Senza di esso il lancio nativo e' un rifiuto
+  // dichiarato, non un avvio sui default del runtime.
+  const catalogoVl = path.join(home, '.config', 'vl');
+  fs.mkdirSync(catalogoVl, { recursive: true });
+  fs.writeFileSync(path.join(catalogoVl, 'config.toml'), '[profiles.work]\nmodel = "m-work"\n');
   return home;
 }
 

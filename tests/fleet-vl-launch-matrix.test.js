@@ -46,6 +46,12 @@ function mondo(t, { version = 'vl 0.5.0', engine = null, engineId = null, extraM
     mcpServers: { nexuscrew: { command: 'nexuscrew' } },
   }), { mode: 0o600 });
   fs.mkdirSync(path.join(home, 'NexusFiles'), { recursive: true });
+  // Il catalogo dell'operatore: la sorgente di un engine native senza
+  // vlConfigFile dichiarato. Senza di esso il lancio nativo e' un rifiuto
+  // dichiarato, non un avvio sui default del runtime.
+  const catalogoVl = path.join(home, '.config', 'vl');
+  fs.mkdirSync(catalogoVl, { recursive: true });
+  fs.writeFileSync(path.join(catalogoVl, 'config.toml'), '[profiles.work]\nmodel = "m-work"\n');
 
   // Il binario vl nel PATH: serve a findBinary (il gate di `configured`), ma
   // il binario REALE che gira e' quello dichiarato in vlBinary.
@@ -540,14 +546,25 @@ test('confini: nessuna variante mette un segreto su argv', async (t) => {
 // ===========================================================================
 
 const XDG_TRIO = ['XDG_STATE_HOME', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME'];
-const XDG_CONDIVISO = {
-  XDG_STATE_HOME: '/percorso/condiviso/state',
-  XDG_DATA_HOME: '/percorso/condiviso/data',
-  XDG_CONFIG_HOME: '/percorso/condiviso/config',
-};
+// Il trio XDG condiviso, in un posto REALE: l'ambiente del servizio e' anche
+// la radice del catalogo dell'operatore, quindi un percorso inesistente
+// farebbe rifiutare il lancio nativo per una sorgente assente — e il test
+// che segue riguarda il trio, non il catalogo.
+function trioCondiviso(t) {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlxdg-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const state = path.join(base, 'state');
+  const data = path.join(base, 'data');
+  const config = path.join(base, 'config');
+  for (const d of [state, data, config]) fs.mkdirSync(d, { recursive: true });
+  fs.mkdirSync(path.join(config, 'vl'), { recursive: true });
+  fs.writeFileSync(path.join(config, 'vl', 'config.toml'), '[profiles.work]\nmodel = "m-work"\n');
+  return { XDG_STATE_HOME: state, XDG_DATA_HOME: data, XDG_CONFIG_HOME: config };
+}
 
 test('XDG: il passthrough del trio XDG e\' RIFIUTATO alla sorgente (non entra nella definizione)', async (t) => {
   const w = mondo(t);
+  const XDG_CONDIVISO = trioCondiviso(t);
   const fleet = await w.fleet({ env: { ...XDG_CONDIVISO } });
   await assert.rejects(
     () => fleet.editEngine('vl.native', { managed: vlNative({ envPassthrough: [...XDG_TRIO] }) }),
@@ -569,6 +586,7 @@ test('XDG: nemmeno scritto a mano nel file di definizioni il payload non porta i
   const defs = JSON.parse(fs.readFileSync(w.defsPath, 'utf8'));
   defs.engines[0].managed.envPassthrough = [...XDG_TRIO];
   fs.writeFileSync(w.defsPath, JSON.stringify(defs, null, 2));
+  const XDG_CONDIVISO = trioCondiviso(t);
   const fleet = await w.fleet({ env: { ...XDG_CONDIVISO } });
   if (typeof fleet.up === 'function') {
     await assert.rejects(() => fleet.up('Alpha'), () => true,
@@ -587,6 +605,7 @@ test('XDG: nemmeno scritto a mano nel file di definizioni il payload non porta i
 
 test('XDG: due celle, stesso engine -> due payload con trio XDG DISTINTI (e mai quello condiviso)', async (t) => {
   const w = mondo(t, { cells: [{ id: 'Alpha' }, { id: 'Beta' }] });
+  const XDG_CONDIVISO = trioCondiviso(t);
   const fleet = await w.fleet({ env: { ...XDG_CONDIVISO } });
   const a = await fleet.up('Alpha');
   const b = await fleet.up('Beta');
@@ -610,6 +629,7 @@ test('XDG: il trio ambientale non raggiunge mai il payload (assegnazione finale 
   // iniettato piu' a valle, l'assegnazione per cella di NexusCrew e' l'ultima
   // parola e resta quella che viaggia.
   const w = mondo(t);
+  const XDG_CONDIVISO = trioCondiviso(t);
   const fleet = await w.fleet({ env: { ...XDG_CONDIVISO } });
   const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);

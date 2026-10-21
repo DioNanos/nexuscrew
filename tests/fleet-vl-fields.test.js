@@ -24,12 +24,20 @@ const { main } = require('../lib/fleet/cell-exec.js');
 
 const PROBE = (v) => () => `vl ${v}\n`;
 
-function homeWith() {
+function homeWith(opts = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlfld-'));
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const bin = path.join(home, '.local', 'bin', 'vl');
   fs.writeFileSync(bin, '#!/bin/sh\nif [ "$1" = "--version" ]; then printf "vl 0.5.0\\n"; fi\nexit 0\n', { mode: 0o755 });
   fs.chmodSync(bin, 0o755);
+  // Il catalogo dell'operatore: e' la sorgente di un engine native senza
+  // vlConfigFile dichiarato. Senza di esso il lancio nativo e' un rifiuto
+  // dichiarato, non un avvio sui default del runtime.
+  if (!opts.senzaCatalogo) {
+    const catalogoVl = path.join(home, '.config', 'vl');
+    fs.mkdirSync(catalogoVl, { recursive: true });
+    fs.writeFileSync(path.join(catalogoVl, 'config.toml'), '[profiles.work]\nmodel = "m-work"\n');
+  }
   return home;
 }
 
@@ -242,10 +250,19 @@ test('catalogo: sorgente mancante o illeggibile -> avvio RIFIUTATO dichiarato; p
     assert.equal(rProfile.ok, false);
     assert.match(rProfile.reason, /ghost/);
     assert.match(rProfile.reason, /profilo inesistente rifiutato esplicitamente/);
-    // vlProfile senza vlConfigFile
-    const rNoCat = resolve(home, vlNative({ vlProfile: 'work' }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
-    assert.equal(rNoCat.ok, false);
-    assert.match(rNoCat.reason, /senza vlConfigFile/);
+    // vlProfile senza vlConfigFile dichiarato: la sorgente diventa il
+    // catalogo dell'operatore, e il profilo ci deve stare davvero.
+    const rOperatore = resolve(home, vlNative({ vlProfile: 'work' }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
+    assert.equal(rOperatore.ok, true, rOperatore.reason);
+    assert.deepEqual(rOperatore.engine.args, ['-p', 'work'], 'il profilo viene dal catalogo dell\'operatore');
+    // Senza NESSUNA sorgente il rifiuto e' dichiarato: mai un profilo
+    // inventato, mai un catalogo di scarto.
+    const homeSenza = homeWith({ senzaCatalogo: true });
+    try {
+      const rNoCat = resolve(homeSenza, vlNative({ vlProfile: 'work' }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
+      assert.equal(rNoCat.ok, false);
+      assert.match(rNoCat.reason, /senza catalogo/);
+    } finally { fs.rmSync(homeSenza, { recursive: true, force: true }); }
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 

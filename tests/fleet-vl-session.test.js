@@ -42,6 +42,12 @@ function mondo(t, { version = 'vl 0.3.1', cooldownMs, clockStart = 0, broker } =
     mcpServers: { nexuscrew: { command: 'nexuscrew' } },
   }), { mode: 0o600 });
   fs.mkdirSync(path.join(home, 'NexusFiles'), { recursive: true });
+  // Il catalogo dell'operatore: la sorgente di un engine native senza
+  // vlConfigFile dichiarato. Senza di esso il lancio nativo e' un rifiuto
+  // dichiarato, non un avvio sui default del runtime.
+  const catalogoVl = path.join(home, '.config', 'vl');
+  fs.mkdirSync(catalogoVl, { recursive: true });
+  fs.writeFileSync(path.join(catalogoVl, 'config.toml'), '[profiles.work]\nmodel = "m-work"\n');
 
   const statoPath = path.join(root, 'sessions.txt');
   fs.writeFileSync(statoPath, '');

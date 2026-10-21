@@ -27,6 +27,12 @@ const { normalizeManagedSpec, resolveManagedEngine } = require('../lib/fleet/man
 function world() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-envpass-'));
   fs.chmodSync(home, 0o700);
+  // Il catalogo dell'operatore: la sorgente di un engine native senza
+  // vlConfigFile dichiarato. Senza di esso il lancio nativo e' un rifiuto
+  // dichiarato, non un avvio sui default del runtime.
+  const catalogoVl = path.join(home, '.config', 'vl');
+  fs.mkdirSync(catalogoVl, { recursive: true });
+  fs.writeFileSync(path.join(catalogoVl, 'config.toml'), '[profiles.work]\nmodel = "m-work"\n');
   const vl = path.join(home, '.local', 'bin', 'vl');
   fs.mkdirSync(path.dirname(vl), { recursive: true });
   fs.writeFileSync(vl, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
