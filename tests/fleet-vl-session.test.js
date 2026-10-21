@@ -551,3 +551,64 @@ test('inventario legacy: home senza stato vl -> elenco vuoto, nessuna creazione'
     assert.ok(!fs.existsSync(path.join(home, '.local')), 'nessuna directory creata dall\'inventario');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
+
+test('inventario legacy: un symlink INTERMEDIO non porta l\'inventario fuori dall\'albero', () => {
+  // `vl-prova/vl` e' un symlink a una directory ESTERNA: il percorso delle
+  // sessioni (`<dir>/vl/host-v1/sessions`) passa di li'. Il controllo
+  // precedente guardava la directory legacy e il path terminale: il
+  // componente INTERMEDIO sfuggiva, e l'inventario elencava i nomi delle
+  // sessioni di un albero esterno. Ora nessun componente del percorso puo'
+  // essere un symlink, e l'entry non viene elencata.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlinv-'));
+  const fuori = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlout-'));
+  try {
+    // La directory ESTERNA contiene gia' `host-v1/sessions`: il percorso
+    // risolto attraverso il symlink porta a file veri, cosi' l'unico
+    // controllo che puo' fermare la fuga e' quello sui componenti.
+    fs.mkdirSync(path.join(fuori, 'host-v1', 'sessions'), { recursive: true });
+    fs.writeFileSync(path.join(fuori, 'host-v1', 'sessions', 'SessioneDiAltroAlbero'), '');
+    const legacy = path.join(home, '.local', 'state', 'vl-prova');
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.symlinkSync(fuori, path.join(legacy, 'vl'));
+
+    const inv = vlLegacyInventory(home);
+    const nomi = inv.entries.map((e) => e.name);
+    assert.equal(nomi.includes('vl-prova'), false,
+      'una entry con un symlink intermedio non e\' elencata: l\'inventario resta dentro l\'albero');
+    assert.equal(JSON.stringify(inv).includes('SessioneDiAltroAlbero'), false,
+      'nessun nome di sessione dall\'albero esterno');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(fuori, { recursive: true, force: true });
+  }
+});
+
+test('inventario legacy: un symlink nella catena superiore (.local) -> nessuna entry', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlinv-'));
+  const fuori = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlout-'));
+  try {
+    fs.mkdirSync(path.join(fuori, 'state', 'vl-prova', 'vl', 'host-v1', 'sessions'), { recursive: true });
+    fs.writeFileSync(path.join(fuori, 'state', 'vl-prova', 'vl', 'host-v1', 'sessions', 'default'), '');
+    fs.symlinkSync(fuori, path.join(home, '.local'));
+
+    const inv = vlLegacyInventory(home);
+    assert.equal(inv.entries.length, 0, 'nessuna entry: la catena dei componenti contiene un symlink');
+    assert.equal(JSON.stringify(inv).includes('default'), false, 'nessun nome di sessione');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(fuori, { recursive: true, force: true });
+  }
+});
+
+test('inventario legacy: senza symlink la sessione normale e\' ancora elencata', () => {
+  // La guardia non deve cambiare il caso sano: il percorso intero e' fatto
+  // di directory reali e le sessioni si vedono.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlinv-'));
+  try {
+    fs.mkdirSync(path.join(home, '.local', 'state', 'vl-prova', 'vl', 'host-v1', 'sessions'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.local', 'state', 'vl-prova', 'vl', 'host-v1', 'sessions', 'default'), '');
+    const inv = vlLegacyInventory(home);
+    assert.equal(inv.entries.length, 1, 'la entry normale e\' elencata');
+    assert.deepEqual(inv.entries[0].sessions, ['default']);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
