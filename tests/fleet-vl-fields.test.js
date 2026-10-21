@@ -42,7 +42,7 @@ function catalogWith(home, profiles) {
   return file;
 }
 
-function resolve(home, managed, cell = { id: 'Dev' }, cfgExtra = {}, engineId = 'vl.native') {
+function resolve(home, managed, cell = { id: 'CellaProva' }, cfgExtra = {}, engineId = 'vl.native') {
   const engine = { id: engineId, managed };
   return resolveManagedEngine(engine, cell, { home, platform: 'linux', env: {}, ...cfgExtra });
 }
@@ -118,17 +118,17 @@ test('normalize: envPassthrough non porta i nomi VL_* delle scelte engine (prece
 test('matrice native: nessun campo -> argv vuoto, solo trio XDG; +catalogo -> copia atomica, selected.toml MAI creato', () => {
   const home = homeWith();
   try {
-    const r0 = resolve(home, vlNative(), { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    const r0 = resolve(home, vlNative(), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(r0.ok, true);
     assert.deepEqual(r0.engine.args, []);
     assert.equal(r0.engine.env.VL_PROVIDER, undefined);
     assert.equal(r0.engine.env.VL_BASE_URL, undefined);
     const { XDG_STATE_HOME, XDG_DATA_HOME, XDG_CONFIG_HOME } = r0.engine.env;
     assert.ok(XDG_STATE_HOME && XDG_DATA_HOME && XDG_CONFIG_HOME);
-    assert.equal(r0.engine.env.VL_SYSTEM_APPEND_FILE, path.join(home, '.nexuscrew', 'vl-prompts', 'Dev.md'));
+    assert.equal(r0.engine.env.VL_SYSTEM_APPEND_FILE, path.join(home, '.nexuscrew', 'vl-prompts', 'CellaProva.md'));
 
     const cat = catalogWith(home, ['work', 'fast']);
-    const r1 = resolve(home, vlNative({ vlConfigFile: cat }), { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    const r1 = resolve(home, vlNative({ vlConfigFile: cat }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(r1.ok, true);
     const copia = path.join(XDG_CONFIG_HOME, 'vl', 'config.toml');
     assert.equal(fs.readFileSync(copia, 'utf8'), fs.readFileSync(cat, 'utf8'), 'copia identica al catalogo dichiarato');
@@ -137,7 +137,7 @@ test('matrice native: nessun campo -> argv vuoto, solo trio XDG; +catalogo -> co
     assert.ok(!fs.existsSync(path.join(XDG_CONFIG_HOME, 'vl', 'secrets.env')), 'nessun segreto copiato');
     // rilancio: la copia si aggiorna al catalogo CORRENTE (politica: a ogni lancio)
     fs.writeFileSync(cat, '# nuovo\n[profiles.solo]\n');
-    resolve(home, vlNative({ vlConfigFile: cat }), { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    resolve(home, vlNative({ vlConfigFile: cat }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.match(fs.readFileSync(copia, 'utf8'), /profiles\.solo/, 'il catalogo della cella segue l\'engine');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -151,7 +151,7 @@ test('matrice native+profilo: -p <nome>, provider/base/model/effort NEUTRALIZZAT
     // nell'ambiente del processo NON entra nel child (il passthrough lo
     // reintrodurrebbe, ma e' gia' rifiutato in normalize; qui si prova la
     // difesa in profondita' del loop con uno spec costruito a mano)
-    const r = resolve(home, spec, { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    const r = resolve(home, spec, { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(r.ok, true);
     assert.deepEqual(r.engine.args, ['-p', 'work'], 'profilo come argomento unico -p');
     for (const name of ['VL_PROVIDER', 'VL_BASE_URL', 'VL_MODEL', 'VL_EFFORT']) {
@@ -159,12 +159,12 @@ test('matrice native+profilo: -p <nome>, provider/base/model/effort NEUTRALIZZAT
     }
     // difesa in profondita': passthrough che reintroduce VL_PROVIDER su spec bypass
     const hostile = { ...spec, envPassthrough: ['VL_API_KEY'] };
-    const r2 = resolve(home, hostile, { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0'), env: { VL_API_KEY: 'sk-test', VL_PROVIDER: 'evil' } });
+    const r2 = resolve(home, hostile, { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0'), env: { VL_API_KEY: 'sk-test', VL_PROVIDER: 'evil' } });
     assert.equal(r2.ok, true);
     assert.equal(r2.engine.env.VL_PROVIDER, undefined, 'il provider ostile dell\'ambiente NON arriva al child');
     assert.equal(r2.engine.env.VL_API_KEY, 'sk-test', 'la chiave viaggia per NOME: solo quella passa');
     // modello esplicito NC > profilo
-    const r3 = resolve(home, vlNative({ vlConfigFile: cat, vlProfile: 'work', model: 'scelto-da-ui' }), { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    const r3 = resolve(home, vlNative({ vlConfigFile: cat, vlProfile: 'work', model: 'scelto-da-ui' }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(r3.engine.env.VL_MODEL, 'scelto-da-ui', 'scelta esplicita NC vince sul profilo');
     assert.equal(r3.engine.args[2], undefined, 'il modello NON va su argv in modalita\' profilo');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -173,7 +173,7 @@ test('matrice native+profilo: -p <nome>, provider/base/model/effort NEUTRALIZZAT
 test('matrice anthropic/custom: la variante e\' la scelta -> coppia SEMPRE composta; mai insieme al profilo', () => {
   const home = homeWith();
   try {
-    const rA = resolve(home, { client: 'vl', provider: 'anthropic', model: '' }, { id: 'Dev' },
+    const rA = resolve(home, { client: 'vl', provider: 'anthropic', model: '' }, { id: 'CellaProva' },
       { vlVersionProbe: PROBE('0.5.0'), env: { VL_API_KEY: 'sk-a' } });
     assert.equal(rA.ok, true);
     assert.equal(rA.engine.env.VL_PROVIDER, 'anthropic');
@@ -182,7 +182,7 @@ test('matrice anthropic/custom: la variante e\' la scelta -> coppia SEMPRE compo
     const rC = resolve(home, {
       client: 'vl', provider: 'custom', displayName: 'GW', baseUrl: 'https://gw/x',
       protocol: 'anthropic-bearer', model: 'kimi-k2.7', envKey: '',
-    }, { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    }, { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(rC.engine.env.VL_PROVIDER, 'anthropic-bearer', 'il protocollo custom E\' il provider wire');
     assert.equal(rC.engine.env.VL_BASE_URL, 'https://gw/x');
     assert.equal(rC.engine.env.VL_MODEL, 'kimi-k2.7');
@@ -190,7 +190,7 @@ test('matrice anthropic/custom: la variante e\' la scelta -> coppia SEMPRE compo
     // normalize; quello che arriva e' solo cio\' che la variante ha composto
     const hostile = resolve(home, {
       ...vlNative(), vlConfigFile: catalogWith(home, ['w']), vlProfile: 'w',
-    }, { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0'), env: { VL_BASE_URL: 'http://evil', VL_API_KEY: 'sk-b' } });
+    }, { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0'), env: { VL_BASE_URL: 'http://evil', VL_API_KEY: 'sk-b' } });
     assert.equal(hostile.engine.env.VL_BASE_URL, undefined, 'env ostile neutralizzata in modalita\' profilo');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -205,27 +205,27 @@ test('vlBinary: valido (con spazi) -> realpath per probe E spawn; invalido -> ri
     const bin = path.join(dirWithSpaces, 'vl-Runner');
     fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     fs.chmodSync(bin, 0o755);
-    const r = resolve(home, vlNative({ vlBinary: bin }), { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    const r = resolve(home, vlNative({ vlBinary: bin }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(r.ok, true);
     assert.equal(r.info.binary, fs.realpathSync(bin), 'probe e spawn usano il binario RISOLTO (realpath)');
     assert.equal(r.engine.command, fs.realpathSync(bin), 'il comando di lancio e\' lo stesso file');
     assert.ok(r.engine.command.includes(' '), 'percorso con spazi conservato INTEGER (argv separato, nessuna shell)');
     // inesistente
-    const rMissing = resolve(home, vlNative({ vlBinary: path.join(home, 'non-esiste') }), { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    const rMissing = resolve(home, vlNative({ vlBinary: path.join(home, 'non-esiste') }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(rMissing.ok, false);
     assert.match(rMissing.reason, /nessun ripiego sul PATH/);
     // non eseguibile
     const noExec = path.join(home, 'vl-noexec');
     fs.writeFileSync(noExec, '#!/bin/sh\nexit 0\n', { mode: 0o644 });
-    const rNoExec = resolve(home, vlNative({ vlBinary: noExec }), { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    const rNoExec = resolve(home, vlNative({ vlBinary: noExec }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(rNoExec.ok, false);
     assert.match(rNoExec.reason, /non eseguibile/);
     // directory (non file regolare)
-    const rDir = resolve(home, vlNative({ vlBinary: path.join(home, '.local', 'bin') }), { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    const rDir = resolve(home, vlNative({ vlBinary: path.join(home, '.local', 'bin') }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(rDir.ok, false);
     assert.match(rDir.reason, /non e' un file regolare/);
     // assente -> PATH, come prima
-    const rPath = resolve(home, vlNative(), { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    const rPath = resolve(home, vlNative(), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(rPath.info.binary, fs.realpathSync(path.join(home, '.local', 'bin', 'vl')));
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -233,17 +233,17 @@ test('vlBinary: valido (con spazi) -> realpath per probe E spawn; invalido -> ri
 test('catalogo: sorgente mancante o illeggibile -> avvio RIFIUTATO dichiarato; profilo inesistente -> rifiuto nominato', () => {
   const home = homeWith();
   try {
-    const rMissing = resolve(home, vlNative({ vlConfigFile: path.join(home, 'manca.toml') }), { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    const rMissing = resolve(home, vlNative({ vlConfigFile: path.join(home, 'manca.toml') }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(rMissing.ok, false);
     assert.match(rMissing.reason, /non leggibile/);
     assert.match(rMissing.reason, /avvio rifiutato/, 'mai partire senza catalogo');
     const cat = catalogWith(home, ['work']);
-    const rProfile = resolve(home, vlNative({ vlConfigFile: cat, vlProfile: 'ghost' }), { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    const rProfile = resolve(home, vlNative({ vlConfigFile: cat, vlProfile: 'ghost' }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(rProfile.ok, false);
     assert.match(rProfile.reason, /ghost/);
     assert.match(rProfile.reason, /profilo inesistente rifiutato esplicitamente/);
     // vlProfile senza vlConfigFile
-    const rNoCat = resolve(home, vlNative({ vlProfile: 'work' }), { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+    const rNoCat = resolve(home, vlNative({ vlProfile: 'work' }), { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(rNoCat.ok, false);
     assert.match(rNoCat.reason, /senza vlConfigFile/);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -257,21 +257,21 @@ test('effort: gate versione sul binario SCELTO (0.4.0 rifiuta, 0.5.0 passa); cos
     assert.deepEqual(vlEffortMinVersion(), [0, 5, 0]);
     const extraModels = new Map([['vl.native', new Map([['gemma4', { id: 'gemma4', engine: 'vl.native', effortLevels: ['high'] }]])]]);
     const spec = vlNative({ model: 'gemma4', effort: 'high' });
-    const rVecchio = resolve(home, spec, { id: 'Dev' }, { vlVersionProbe: PROBE('0.4.0'), extraModels });
+    const rVecchio = resolve(home, spec, { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.4.0'), extraModels });
     assert.equal(rVecchio.ok, false, 'binario che non legge VL_EFFORT: rifiuto dichiarato, non ignorato');
     assert.match(rVecchio.reason, /0\.4\.0/);
     assert.match(rVecchio.reason, /0\.5\.0/);
-    const rNuovo = resolve(home, spec, { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0'), extraModels });
+    const rNuovo = resolve(home, spec, { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0'), extraModels });
     assert.equal(rNuovo.ok, true);
     assert.equal(rNuovo.engine.env.VL_EFFORT, 'high', 'VL_EFFORT composta solo se promettibile');
     // probe muto: rifiuto fail-closed
-    const rMuto = resolve(home, spec, { id: 'Dev' }, { vlVersionProbe: () => null, extraModels });
+    const rMuto = resolve(home, spec, { id: 'CellaProva' }, { vlVersionProbe: () => null, extraModels });
     assert.equal(rMuto.ok, false);
     assert.match(rMuto.reason, /non determinabile/);
     // il gate riceve lo stesso binario dello spawn
     const bin = path.join(home, 'altro-vl');
     fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-    const rBin = resolve(home, vlNative({ vlBinary: bin, model: 'gemma4', effort: 'high' }), { id: 'Dev' },
+    const rBin = resolve(home, vlNative({ vlBinary: bin, model: 'gemma4', effort: 'high' }), { id: 'CellaProva' },
       { vlVersionProbe: PROBE('0.5.0'), extraModels });
     assert.equal(rBin.info.binary, fs.realpathSync(bin));
     assert.equal(vlEffortGate(fs.realpathSync(bin), { vlVersionProbe: PROBE('0.5.0') }).ok, true);
@@ -284,18 +284,18 @@ test('effort: gate versione sul binario SCELTO (0.4.0 rifiuta, 0.5.0 passa); cos
 test('identita vl: owner+cellId -> directory stabile e distinte; collisioni slug impossibili', () => {
   const home = homeWith();
   try {
-    const a1 = vlCellBaseDir(home, 'owner-A', 'Dev');
-    const a2 = vlCellBaseDir(home, 'owner-A', 'Dev');
-    const b = vlCellBaseDir(home, 'owner-B', 'Dev');
+    const a1 = vlCellBaseDir(home, 'owner-A', 'CellaProva');
+    const a2 = vlCellBaseDir(home, 'owner-A', 'CellaProva');
+    const b = vlCellBaseDir(home, 'owner-B', 'CellaProva');
     assert.equal(a1, a2, 'stessa cella stesso owner: percorso STABILE ai restart');
     assert.notEqual(a1, b, 'stessa cellId, owner diversi: percorsi DIVERSI');
     // due id che slugano uguale restano distinti per costruzione (hash)
-    const s1 = vlCellBaseDir(home, 'owner-A', 'Dev Cell');
+    const s1 = vlCellBaseDir(home, 'owner-A', 'CellaProva Cell');
     const s2 = vlCellBaseDir(home, 'owner-A', 'dev-cell');
     assert.notEqual(s1, s2, 'slug equivalente: l\'hash distingue');
     // il trio si crea con permessi privati e si riusa
-    const d1 = ensureVlCellDirs(home, 'owner-A', 'Dev');
-    const d2 = ensureVlCellDirs(home, 'owner-A', 'Dev');
+    const d1 = ensureVlCellDirs(home, 'owner-A', 'CellaProva');
+    const d2 = ensureVlCellDirs(home, 'owner-A', 'CellaProva');
     assert.equal(d1.base, d2.base);
     assert.ok(fs.statSync(d1.base).isDirectory());
     assert.equal((fs.statSync(d1.base).mode & 0o777), 0o700, 'base 0700');
@@ -396,7 +396,7 @@ test('launcher finto: argv separato con path spaziato, env con nomi+valori redat
 test('confini: il ramo vl non porta send-keys né guardiano; il prompt viaggia SOLO su VL_SYSTEM_APPEND_FILE', () => {
   const home = homeWith();
   try {
-    const r = resolve(home, vlNative(), { id: 'Dev', prompt: 'prompt di cella' }, { vlVersionProbe: PROBE('0.5.0') });
+    const r = resolve(home, vlNative(), { id: 'CellaProva', prompt: 'prompt di cella' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(r.engine.promptMode, 'managed-argv', 'vl: nessuna consegna send-keys (niente pressione di Invio)');
     assert.equal(r.engine.restartPrompt, undefined, 'niente reinjection: nessun guardiano dell\'Invio');
     assert.deepEqual(r.engine.args, [], 'il prompt NON sta su argv');
@@ -416,7 +416,7 @@ test('confini: diagnostica senza segreti (vlRuntime) e versione probe condivisa 
     fs.chmodSync(bin, 0o755);
     const cat = catalogWith(home, ['work']);
     const r = resolve(home, vlNative({ vlBinary: bin, vlConfigFile: cat, vlProfile: 'work' }),
-      { id: 'Dev' }, { vlVersionProbe: PROBE('0.5.0') });
+      { id: 'CellaProva' }, { vlVersionProbe: PROBE('0.5.0') });
     assert.equal(r.ok, true);
     assert.ok(r.info.vlRuntime, 'diagnostica presente');
     assert.equal(r.info.vlRuntime.binary, fs.realpathSync(bin), 'dice QUALE binario girera\'');

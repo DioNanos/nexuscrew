@@ -49,7 +49,7 @@ function fleetSeam() {
       },
       vlLegacyInventory: () => {
         seen.inventory.push(true);
-        return { entries: [{ name: 'vl-mgm', sessionCount: 2 }], moved: 0, deleted: 0 };
+        return { entries: [{ name: 'vl-prova', sessionCount: 2 }], moved: 0, deleted: 0 };
       },
     },
   };
@@ -117,11 +117,11 @@ async function pair(t, opts = {}) {
 
 test('la richiesta di sessione nuova federata arriva al nodo OWNER, non a quello che guarda', async (t) => {
   const { a, b } = await pair(t);
-  const res = await a.call('POST', '/api/route/peer-b/_/fleet/vl-new-session', { cell: 'Dev' });
+  const res = await a.call('POST', '/api/route/peer-b/_/fleet/vl-new-session', { cell: 'CellaProva' });
   const out = await res.json();
   assert.equal(res.status, 200, JSON.stringify(out));
   assert.equal(out.state, 'pending');
-  assert.deepEqual(b.seen.newSession, ['Dev'], 'la richiesta deve essere arrivata al nodo remoto (owner)');
+  assert.deepEqual(b.seen.newSession, ['CellaProva'], 'la richiesta deve essere arrivata al nodo remoto (owner)');
   assert.deepEqual(a.seen.newSession, [], 'e NON deve essere finita sul nodo che guarda');
 });
 
@@ -129,7 +129,7 @@ test('la richiesta federata non esegue nulla sul nodo che guarda', async (t) => 
   // "nessun processo sul viewer": il nodo che guarda non consuma il marcatore
   // e non avvia nulla. La richiesta e' un atto dell'owner.
   const { a, b } = await pair(t);
-  const res = await a.call('POST', '/api/route/peer-b/_/fleet/vl-new-session', { cell: 'Dev' });
+  const res = await a.call('POST', '/api/route/peer-b/_/fleet/vl-new-session', { cell: 'CellaProva' });
   assert.equal(res.status, 200);
   assert.equal(a.seen.newSession.length, 0, 'il viewer non ha consumato nulla');
   assert.equal(b.seen.newSession.length, 1, 'l\'owner ha consumato la richiesta');
@@ -141,7 +141,7 @@ test('l\'inventario legacy federato e\' una diagnosi read-only: attraversa e non
   const out = await res.json();
   assert.equal(res.status, 200, JSON.stringify(out));
   assert.equal(out.entries.length, 1);
-  assert.equal(out.entries[0].name, 'vl-mgm');
+  assert.equal(out.entries[0].name, 'vl-prova');
   assert.equal(out.moved, 0, 'l\'inventario non sposta nulla');
   assert.equal(out.deleted, 0, 'l\'inventario non cancella nulla');
   assert.equal(b.seen.inventory.length, 1, 'l\'inventario e\' stato calcolato sul nodo owner');
@@ -155,7 +155,7 @@ test('federare la risorsa non federa ogni verbo', async (t) => {
   const res = await a.call('GET', '/api/route/peer-b/_/fleet/vl-new-session');
   assert.notEqual(res.status, 200, 'GET su /fleet/vl-new-session non deve passare');
   // POST sull'inventario: e' una GET, non una POST.
-  const res2 = await a.call('POST', '/api/route/peer-b/_/fleet/vl-legacy-inventory', { cell: 'Dev' });
+  const res2 = await a.call('POST', '/api/route/peer-b/_/fleet/vl-legacy-inventory', { cell: 'CellaProva' });
   assert.notEqual(res2.status, 200, 'POST su /fleet/vl-legacy-inventory non deve passare');
 });
 
@@ -163,7 +163,7 @@ test('federare la risorsa non federa ogni verbo', async (t) => {
 
 test('READONLY sul nodo owner blocca la richiesta di sessione nuova', async (t) => {
   const { a, b } = await pair(t, { readonlyDefault: true });
-  const res = await a.call('POST', '/api/route/peer-b/_/fleet/vl-new-session', { cell: 'Dev' });
+  const res = await a.call('POST', '/api/route/peer-b/_/fleet/vl-new-session', { cell: 'CellaProva' });
   assert.notEqual(res.status, 200, 'una mutazione non deve partire da un nodo in sola lettura');
   assert.deepEqual(b.seen.newSession, [], 'nessuna richiesta deve essere arrivata all\'owner');
 });
@@ -201,7 +201,7 @@ test('un peer senza permesso operatore non aziona la richiesta di sessione nuova
   });
   nodesStore.atomicWriteStore(b.paths.nodesPath, st);
 
-  const res = await a.call('POST', '/api/route/peer-b/_/fleet/vl-new-session', { cell: 'Dev' });
+  const res = await a.call('POST', '/api/route/peer-b/_/fleet/vl-new-session', { cell: 'CellaProva' });
   assert.notEqual(res.status, 200, 'senza il grant operatore la mutazione non passa');
   assert.deepEqual(b.seen.newSession, [], 'e nessuna richiesta arriva all\'owner');
 });

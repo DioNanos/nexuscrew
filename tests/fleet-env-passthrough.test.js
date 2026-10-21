@@ -85,7 +85,7 @@ test('D3 normalize: disponibile per qualunque client, non solo vl', () => {
 test('D3 resolve: nomi presenti nel runtime vengono iniettati; vl non riceve argv', () => {
   const home = world();
   try {
-    const r = resolveManagedEngine(vlEngine(['VL_API_KEY', 'VL_ENDPOINT']), { id: 'Dev' }, { home, env: { VL_API_KEY: 'secret-1', VL_ENDPOINT: 'https://host' } });
+    const r = resolveManagedEngine(vlEngine(['VL_API_KEY', 'VL_ENDPOINT']), { id: 'CellaProva' }, { home, env: { VL_API_KEY: 'secret-1', VL_ENDPOINT: 'https://host' } });
     assert.equal(r.ok, true);
     // trio XDG per-cella (contratto identità 2026-10-21) + i nomi passthrough
     const { XDG_STATE_HOME, XDG_DATA_HOME, XDG_CONFIG_HOME, ...restPassthrough } = r.engine.env;
@@ -102,11 +102,11 @@ test('D3 resolve: ordine di risoluzione runtime -> store -> shell -> keys -> leg
     const secrets = path.join(home, '.nexuscrew', 'providers.env');
     fs.mkdirSync(path.dirname(secrets), { recursive: true });
     fs.writeFileSync(secrets, 'VL_K=legacy-val\n', { mode: 0o600 });
-    const r = resolveManagedEngine(vlEngine(['VL_K']), { id: 'Dev' }, { home, env: { VL_K: 'runtime-val' } });
+    const r = resolveManagedEngine(vlEngine(['VL_K']), { id: 'CellaProva' }, { home, env: { VL_K: 'runtime-val' } });
     assert.equal(r.ok, true);
     assert.equal(r.engine.env.VL_K, 'runtime-val');
     // legacy da solo (runtime vuoto) viene comunque risolto.
-    const r2 = resolveManagedEngine(vlEngine(['VL_K']), { id: 'Dev' }, { home, env: {} });
+    const r2 = resolveManagedEngine(vlEngine(['VL_K']), { id: 'CellaProva' }, { home, env: {} });
     assert.equal(r2.ok, true);
     assert.equal(r2.engine.env.VL_K, 'legacy-val');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -115,7 +115,7 @@ test('D3 resolve: ordine di risoluzione runtime -> store -> shell -> keys -> leg
 test('D3 resolve: nome dichiarato ma assente -> ok:false con reason che NOMINA il nome', () => {
   const home = world();
   try {
-    const r = resolveManagedEngine(vlEngine(['VL_API_KEY', 'VL_MISSING']), { id: 'Dev' }, { home, env: { VL_API_KEY: 'x' } });
+    const r = resolveManagedEngine(vlEngine(['VL_API_KEY', 'VL_MISSING']), { id: 'CellaProva' }, { home, env: { VL_API_KEY: 'x' } });
     assert.equal(r.ok, false);
     assert.match(r.reason, /VL_MISSING/);
     assert.match(r.reason, /credential source/i);
@@ -125,7 +125,7 @@ test('D3 resolve: nome dichiarato ma assente -> ok:false con reason che NOMINA i
 test('D3 resolve: senza envPassthrough il ramo vl resta vuoto (no regressione)', () => {
   const home = world();
   try {
-    const r = resolveManagedEngine(vlEngine(null), { id: 'Dev' }, { home, env: { UNRELATED: 'x' } });
+    const r = resolveManagedEngine(vlEngine(null), { id: 'CellaProva' }, { home, env: { UNRELATED: 'x' } });
     assert.equal(r.ok, true);
     const { XDG_STATE_HOME, XDG_DATA_HOME, XDG_CONFIG_HOME, ...restNoPass } = r.engine.env;
     assert.ok(XDG_STATE_HOME && XDG_DATA_HOME && XDG_CONFIG_HOME, 'trio XDG per-cella');
@@ -137,7 +137,7 @@ test('D3 resolve: senza envPassthrough il ramo vl resta vuoto (no regressione)',
 test('D3 resolve: i valori passano nel child env e mai su argv o info', () => {
   const home = world();
   try {
-    const r = resolveManagedEngine(vlEngine(['VL_API_KEY']), { id: 'Dev' }, { home, env: { VL_API_KEY: 'do-not-leak' } });
+    const r = resolveManagedEngine(vlEngine(['VL_API_KEY']), { id: 'CellaProva' }, { home, env: { VL_API_KEY: 'do-not-leak' } });
     assert.equal(r.ok, true);
     assert.equal(r.engine.env.VL_API_KEY, 'do-not-leak');
     assert.equal(r.engine.args.join('\n').includes('do-not-leak'), false, 'mai su argv');

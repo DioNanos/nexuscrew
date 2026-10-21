@@ -39,7 +39,7 @@ function redactEnv(env) {
 function mondo(t, { version = 'vl 0.5.0', engine = null, engineId = null, extraModels = null, clockStart = 0, cells = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlmx-'));
   const home = path.join(root, 'home');
-  const cwd = path.join(home, 'Dev');
+  const cwd = path.join(home, 'CellaProva');
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({
@@ -93,7 +93,7 @@ process.exit(0);
       id: 'vl.native', label: 'VL', rc: false,
       managed: { client: 'vl', provider: 'native', model: '', permissionPolicy: 'standard' },
     }],
-    cells: (cells || [{ id: 'Dev', tmuxSession: 'cloud-Dev' }]).map((c) => ({
+    cells: (cells || [{ id: 'CellaProva', tmuxSession: 'cloud-CellaProva' }]).map((c) => ({
       id: c.id, tmuxSession: c.tmuxSession || c.id, cwd,
       engine: (engine && engine.id) || 'vl.native', boot: false,
     })),
@@ -164,7 +164,7 @@ const MODELS_CON_EFFORT = [{ id: 'gemma4', engine: 'vl.native', effortLevels: ['
 test('matrice native vuoto: argv vuoto, nessuna env VL_*, solo il trio XDG', async (t) => {
   const w = mondo(t);
   const fleet = await w.fleet();
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   const ticket = w.tickets[0];
   assert.deepEqual(ticket.args, [], 'nessun argomento: la TUI parte nuda');
@@ -186,7 +186,7 @@ test('matrice native+profilo: -p <nome> su argv, provider/base/model/effort neut
   const fleet = await w.fleet();
   const cat = catalogo(w.home, ['work']);
   await fleet.editEngine('vl.native', { managed: vlNative({ vlConfigFile: cat, vlProfile: 'work' }) });
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   const ticket = w.tickets[0];
   assert.deepEqual(ticket.args, ['-p', 'work'], 'il profilo e\' UN argomento separato');
@@ -215,7 +215,7 @@ test('matrice native+profilo con env AMBIENTALE ostile: VL_PROVIDER/VL_BASE_URL 
   });
   const cat = catalogo(w.home, ['work']);
   await fleet.editEngine('vl.native', { managed: vlNative({ vlConfigFile: cat, vlProfile: 'work' }) });
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   const ticket = w.tickets[0];
   assert.equal(ticket.env.VL_PROVIDER, undefined, 'VL_PROVIDER ambientale neutralizzato');
@@ -249,7 +249,7 @@ test('matrice passthrough: VL_API_KEY ammesso (nome, mai valore) e neutralizzato
   await fleet.editEngine('vl.native', {
     managed: vlNative({ vlConfigFile: cat, vlProfile: 'work', envPassthrough: ['VL_API_KEY'] }),
   });
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   const ticket = w.tickets[0];
   assert.equal(ticket.env.VL_API_KEY, '<redacted>', 'la chiave viaggia per NOME, col valore redatto nel registro');
@@ -261,7 +261,7 @@ test('matrice native+profilo+modello esplicito NC: il modello NC vince sul profi
   const fleet = await w.fleet();
   const cat = catalogo(w.home, ['work']);
   await fleet.editEngine('vl.native', { managed: vlNative({ vlConfigFile: cat, vlProfile: 'work', model: 'scelto-da-ui' }) });
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   const ticket = w.tickets[0];
   assert.equal(ticket.env.VL_MODEL, 'scelto-da-ui', 'scelta esplicita NC > profilo');
@@ -277,7 +277,7 @@ test('matrice anthropic: la coppia provider/base esce sempre, con o senza modell
     engine: { id: 'vl.anthropic', label: 'VL', rc: false, managed: { client: 'vl', provider: 'anthropic', model: '', permissionPolicy: 'standard' } },
   });
   const fleet = await w.fleet({ env: { VL_API_KEY: 'sk-anthropic-secret' } });
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   const ticket = w.tickets[0];
   assert.equal(ticket.env.VL_PROVIDER, 'anthropic', 'la variante e\' la scelta');
@@ -298,7 +298,7 @@ test('matrice custom: il protocollo scelto E\' il provider wire, con baseUrl pro
     },
   });
   const fleet = await w.fleet();
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   const ticket = w.tickets[0];
   assert.equal(ticket.env.VL_PROVIDER, 'anthropic-bearer', 'il protocollo custom e\' il provider wire');
@@ -318,7 +318,7 @@ test('matrice custom: env ambientale ostile NON sovrascrive la coppia composta',
     },
   });
   const fleet = await w.fleet({ env: { VL_PROVIDER: 'evil', VL_BASE_URL: 'http://evil.invalid' } });
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   const ticket = w.tickets[0];
   assert.equal(ticket.env.VL_PROVIDER, 'openai-compat', 'la variante comanda, non l\'ambiente');
@@ -333,7 +333,7 @@ test('matrice effort: livello dichiarato + binario che lo legge -> VL_EFFORT nel
   const w = mondo(t, { extraModels: MODELS_CON_EFFORT });
   const fleet = await w.fleet();
   await fleet.editEngine('vl.native', { managed: vlNative({ model: 'gemma4', effort: 'high' }) });
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   assert.equal(w.tickets[0].env.VL_EFFORT, 'high', 'VL_EFFORT composta');
   assert.equal(w.tickets[0].env.VL_MODEL, 'gemma4');
@@ -364,7 +364,7 @@ test('matrice effort: binario che NON legge VL_EFFORT -> avvio rifiutato dichiar
   const w = mondo(t, { version: 'vl 0.4.0', extraModels: MODELS_CON_EFFORT });
   const fleet = await w.fleet();
   await fleet.editEngine('vl.native', { managed: vlNative({ model: 'gemma4', effort: 'high' }) });
-  await assert.rejects(() => fleet.up('Dev'), (e) => {
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => {
     assert.equal(e.status, 400);
     assert.match(e.message, /VL_EFFORT/);
     return true;
@@ -380,7 +380,7 @@ test('matrice effort: versione non determinabile -> rifiuto fail-closed dichiara
   fs.writeFileSync(muto, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   fs.chmodSync(muto, 0o755);
   await fleet.editEngine('vl.native', { managed: vlNative({ vlBinary: muto, model: 'gemma4', effort: 'high' }) });
-  await assert.rejects(() => fleet.up('Dev'), (e) => {
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => {
     assert.match(e.message, /non determinabile/);
     return true;
   });
@@ -396,7 +396,7 @@ test('matrice vlBinary: path CON SPAZI -> argv[0] intero, probe e spawn sullo st
   const fleet = await w.fleet();
   const bin = binarioConSpazi(w.home);
   await fleet.editEngine('vl.native', { managed: vlNative({ vlBinary: bin }) });
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   const ticket = w.tickets[0];
   assert.equal(ticket.command, fs.realpathSync(bin), 'argv[0] e\' il file risolto, intero');
@@ -409,7 +409,7 @@ test('matrice vlBinary: inesistente / non eseguibile -> rifiuto dichiarato, MAI 
   const fleet = await w.fleet();
   // inesistente
   await fleet.editEngine('vl.native', { managed: vlNative({ vlBinary: path.join(w.home, 'non-esiste') }) });
-  await assert.rejects(() => fleet.up('Dev'), (e) => {
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => {
     assert.match(e.message, /nessun ripiego sul PATH/);
     return true;
   });
@@ -418,7 +418,7 @@ test('matrice vlBinary: inesistente / non eseguibile -> rifiuto dichiarato, MAI 
   fs.writeFileSync(noExec, '#!/bin/sh\nexit 0\n', { mode: 0o644 });
   fs.chmodSync(noExec, 0o644);
   await fleet.editEngine('vl.native', { managed: vlNative({ vlBinary: noExec }) });
-  await assert.rejects(() => fleet.up('Dev'), (e) => {
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => {
     assert.match(e.message, /non eseguibile/);
     return true;
   });
@@ -428,7 +428,7 @@ test('matrice vlBinary: inesistente / non eseguibile -> rifiuto dichiarato, MAI 
 test('matrice vlBinary: versione inadatta al gate del prompt -> degrado DICHIARATO, niente env promessa', async (t) => {
   const w = mondo(t, { version: 'vl 0.1.0' });
   const fleet = await w.fleet();
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true, 'la cella PARTE: il degrado non e\' un blocco');
   assert.equal(w.tickets[0].env.VL_SYSTEM_APPEND_FILE, undefined,
     'una env che il runtime ignorerebbe in silenzio NON viene composta');
@@ -444,7 +444,7 @@ test('matrice profilo: profilo inesistente nel catalogo -> rifiuto che nomina il
   const fleet = await w.fleet();
   const cat = catalogo(w.home, ['work']);
   await fleet.editEngine('vl.native', { managed: vlNative({ vlConfigFile: cat, vlProfile: 'ghost' }) });
-  await assert.rejects(() => fleet.up('Dev'), (e) => {
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => {
     assert.match(e.message, /ghost/);
     assert.match(e.message, /profilo inesistente rifiutato esplicitamente/);
     return true;
@@ -456,7 +456,7 @@ test('matrice profilo: catalogo dichiarato ma illeggibile -> rifiuto, nessun avv
   const w = mondo(t);
   const fleet = await w.fleet();
   await fleet.editEngine('vl.native', { managed: vlNative({ vlConfigFile: path.join(w.home, 'manca.toml') }) });
-  await assert.rejects(() => fleet.up('Dev'), (e) => {
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => {
     assert.match(e.message, /non leggibile/);
     assert.match(e.message, /avvio rifiutato/);
     return true;
@@ -478,7 +478,7 @@ test('diagnostica: tre campi distinti (engine, profilo vl, modello effettivo) e 
       envPassthrough: ['VL_API_KEY'],
     }),
   });
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   const dump = JSON.stringify(res);
   assert.equal(dump.includes('sk-non-mostrare-mai'), false, 'nessun valore segreto nel risultato');
@@ -518,7 +518,7 @@ test('confini: nessuna variante mette un segreto su argv', async (t) => {
       engine: { id: v.id, label: 'VL', rc: false, managed: v.managed },
     });
     const fleet = await w.fleet({ env: { VL_API_KEY: 'sk-mai-su-argv' } });
-    const res = await fleet.up('Dev');
+    const res = await fleet.up('CellaProva');
     assert.equal(res.ok, true, v.id);
     const ticket = w.tickets[0];
     const argvDump = JSON.stringify([ticket.command, ...ticket.args]);
@@ -611,7 +611,7 @@ test('XDG: il trio ambientale non raggiunge mai il payload (assegnazione finale 
   // parola e resta quella che viaggia.
   const w = mondo(t);
   const fleet = await w.fleet({ env: { ...XDG_CONDIVISO } });
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   const env = w.tickets[0].env;
   for (const nome of XDG_TRIO) {

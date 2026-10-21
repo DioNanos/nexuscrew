@@ -41,7 +41,7 @@ function vlNative(extra = {}) {
   return { client: 'vl', provider: 'native', model: '', permissionPolicy: 'standard', ...extra };
 }
 
-function resolve(home, managed, cell = { id: 'Dev' }, cfgExtra = {}) {
+function resolve(home, managed, cell = { id: 'CellaProva' }, cfgExtra = {}) {
   return resolveManagedEngine({ id: 'vl.native', managed }, cell,
     { home, platform: 'linux', env: {}, ...cfgExtra });
 }
@@ -153,8 +153,8 @@ test('isolamento: l\'effort di A non compare nell\'env di B', () => {
 test('identita: stessa cellId con owner diversi -> percorsi distinti', () => {
   const home = homeWith();
   try {
-    const a = vlCellBaseDir(home, 'owner-A', 'Dev');
-    const b = vlCellBaseDir(home, 'owner-B', 'Dev');
+    const a = vlCellBaseDir(home, 'owner-A', 'CellaProva');
+    const b = vlCellBaseDir(home, 'owner-B', 'CellaProva');
     assert.notEqual(a, b, 'stessa cellId, owner diversi: percorsi DIVERSI');
     // e i percorsi DERIVATI (server/socket) non collidono
     const envA = { XDG_STATE_HOME: path.join(a, 'state'), XDG_CONFIG_HOME: path.join(a, 'config') };
@@ -167,7 +167,7 @@ test('identita: stessa cellId con owner diversi -> percorsi distinti', () => {
 test('identita: due id che sluggano uguale restano distinti (l\'hash distingue)', () => {
   const home = homeWith();
   try {
-    const a = vlCellBaseDir(home, 'owner-A', 'Dev Cell');
+    const a = vlCellBaseDir(home, 'owner-A', 'CellaProva Cell');
     const b = vlCellBaseDir(home, 'owner-A', 'dev-cell');
     const c = vlCellBaseDir(home, 'owner-A', 'dev_cell');
     assert.notEqual(a, b, 'slug-equivalenti: percorsi distinti');
@@ -179,11 +179,11 @@ test('identita: due id che sluggano uguale restano distinti (l\'hash distingue)'
 test('identita: la stessa cella conserva il percorso fra restart e cambio engine', () => {
   const home = homeWith();
   try {
-    const primo = vlCellBaseDir(home, 'node-1', 'Dev');
-    const secondo = vlCellBaseDir(home, 'node-1', 'Dev');
+    const primo = vlCellBaseDir(home, 'node-1', 'CellaProva');
+    const secondo = vlCellBaseDir(home, 'node-1', 'CellaProva');
     assert.equal(primo, secondo, 'stesso owner+cellId: percorso STABILE');
     // il percorso NON dipende dall'engine: vlCellBaseDir non ne prende uno
-    const envVl = ensureVlCellDirs(home, 'node-1', 'Dev');
+    const envVl = ensureVlCellDirs(home, 'node-1', 'CellaProva');
     assert.equal(envVl.base, primo, 'l\'engine non partecipa alla chiave');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -196,8 +196,8 @@ test('identita: la stessa cellId su due nodi (home diverse) risolve in locale', 
   const homeA = homeWith();
   const homeB = homeWith();
   try {
-    const a = vlCellBaseDir(homeA, 'node-1', 'Dev');
-    const b = vlCellBaseDir(homeB, 'node-1', 'Dev');
+    const a = vlCellBaseDir(homeA, 'node-1', 'CellaProva');
+    const b = vlCellBaseDir(homeB, 'node-1', 'CellaProva');
     // lo stesso nome di cella su due nodi: due directory locali distinte
     assert.notEqual(a, b, 'due nodi: due directory locali distinte');
     assert.ok(a.startsWith(homeA), 'il nodo A risolve sotto la propria home');
@@ -220,7 +220,7 @@ test('identita: la stessa cellId su due nodi (home diverse) risolve in locale', 
 test('confini: NexusCrew non scrive nello stato del runtime (le sessioni sono del vl)', () => {
   const home = homeWith();
   try {
-    const r = resolve(home, vlNative(), { id: 'Dev', prompt: 'prompt di cella' },
+    const r = resolve(home, vlNative(), { id: 'CellaProva', prompt: 'prompt di cella' },
       { vlVersionProbe: PROBE, vlOwnerInstanceId: 'node-1' });
     assert.equal(r.ok, true);
     const stateDir = r.engine.env.XDG_STATE_HOME;
@@ -241,7 +241,7 @@ test('confini: il catalogo copiato non contiene segreti (nessun secrets.env)', (
     fs.mkdirSync(dir, { recursive: true });
     const cat = path.join(dir, 'config.toml');
     fs.writeFileSync(cat, '[profiles.work]\nmodel = "m"\napi_key = "sk-non-deve-essere-copiato"\n');
-    const r = resolve(home, vlNative({ vlConfigFile: cat, vlProfile: 'work' }), { id: 'Dev' },
+    const r = resolve(home, vlNative({ vlConfigFile: cat, vlProfile: 'work' }), { id: 'CellaProva' },
       { vlVersionProbe: PROBE, vlOwnerInstanceId: 'node-1' });
     assert.equal(r.ok, true);
     const vlDir = path.join(r.engine.env.XDG_CONFIG_HOME, 'vl');

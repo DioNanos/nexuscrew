@@ -23,7 +23,7 @@ const {
 const { fleetRoutes } = require('../lib/fleet/routes.js');
 const express = require('express');
 
-const SESSIONE = 'cloud-Dev';
+const SESSIONE = 'cloud-CellaProva';
 
 // --- mondo: fleet builtin con tmux finto a stato vero e vl finto ------------
 // Il fake vl risponde a `--version` (il probe REALE: niente seam iniettato) e
@@ -32,7 +32,7 @@ const SESSIONE = 'cloud-Dev';
 function mondo(t, { version = 'vl 0.3.1', cooldownMs, clockStart = 0, broker } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-vlses-'));
   const home = path.join(root, 'home');
-  const cwd = path.join(home, 'Dev');
+  const cwd = path.join(home, 'CellaProva');
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const vlBin = path.join(home, '.local', 'bin', 'vl');
@@ -78,7 +78,7 @@ process.exit(0);
       id: 'vl.native', label: 'VL', rc: false,
       managed: { client: 'vl', provider: 'native', model: '', permissionPolicy: 'standard' },
     }],
-    cells: [{ id: 'Dev', tmuxSession: SESSIONE, cwd, engine: 'vl.native', boot: false }],
+    cells: [{ id: 'CellaProva', tmuxSession: SESSIONE, cwd, engine: 'vl.native', boot: false }],
   });
 
   const tickets = [];
@@ -106,14 +106,14 @@ process.exit(0);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return {
     root, home, defsPath, tickets, clock, cfgBase, markerDir,
-    requestedPath: path.join(markerDir, 'Dev.requested'),
-    consumedPath: path.join(markerDir, 'Dev.consumed'),
+    requestedPath: path.join(markerDir, 'CellaProva.requested'),
+    consumedPath: path.join(markerDir, 'CellaProva.consumed'),
     async fleet() {
       const f = await createBuiltinFleet(cfgBase);
       t.after(() => f.close().catch(() => {}));
       return f;
     },
-    async spegni(fleet) { await fleet.down('Dev'); },
+    async spegni(fleet) { await fleet.down('CellaProva'); },
   };
 }
 
@@ -122,15 +122,15 @@ process.exit(0);
 test('marcatore: richiesta -> pending; doppio click NON impila una seconda richiesta', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlmark-'));
   try {
-    const r1 = requestVlNewSession({ home, cellId: 'Dev', now: 1000 });
+    const r1 = requestVlNewSession({ home, cellId: 'CellaProva', now: 1000 });
     assert.equal(r1.state, 'pending');
     assert.equal(r1.alreadyPending, false);
-    assert.ok(fs.existsSync(path.join(home, '.nexuscrew', 'vl-new-session', 'Dev.requested')));
-    const r2 = requestVlNewSession({ home, cellId: 'Dev', now: 2000 });
+    assert.ok(fs.existsSync(path.join(home, '.nexuscrew', 'vl-new-session', 'CellaProva.requested')));
+    const r2 = requestVlNewSession({ home, cellId: 'CellaProva', now: 2000 });
     assert.equal(r2.state, 'pending');
     assert.equal(r2.alreadyPending, true, 'la seconda richiesta trova la stessa pending: dedup del doppio click');
     assert.equal(r2.requestedAt, 1000, 'requestedAt resta quella della PRIMA richiesta');
-    assert.equal((fs.statSync(path.join(home, '.nexuscrew', 'vl-new-session', 'Dev.requested')).mode & 0o777), 0o600, 'marcatore 0600');
+    assert.equal((fs.statSync(path.join(home, '.nexuscrew', 'vl-new-session', 'CellaProva.requested')).mode & 0o777), 0o600, 'marcatore 0600');
     assert.equal((fs.statSync(path.join(home, '.nexuscrew', 'vl-new-session')).mode & 0o777), 0o700, 'directory 0700');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -138,21 +138,21 @@ test('marcatore: richiesta -> pending; doppio click NON impila una seconda richi
 test('marcatore: consumo atomico UNA volta; seconda consumazione non consuma', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlmark-'));
   try {
-    requestVlNewSession({ home, cellId: 'Dev', now: 1000 });
-    const c1 = consumeVlNewSession({ home, cellId: 'Dev', now: 3000 });
+    requestVlNewSession({ home, cellId: 'CellaProva', now: 1000 });
+    const c1 = consumeVlNewSession({ home, cellId: 'CellaProva', now: 3000 });
     assert.equal(c1.consumed, true);
     assert.equal(c1.requestedAt, 1000);
     assert.equal(c1.consumedAt, 3000);
-    assert.ok(!fs.existsSync(path.join(home, '.nexuscrew', 'vl-new-session', 'Dev.requested')), 'richiesta spenta: il rename e\' IL consumo');
-    assert.ok(fs.existsSync(path.join(home, '.nexuscrew', 'vl-new-session', 'Dev.consumed')), 'il record consumato resta come prova');
-    const c2 = consumeVlNewSession({ home, cellId: 'Dev', now: 4000 });
+    assert.ok(!fs.existsSync(path.join(home, '.nexuscrew', 'vl-new-session', 'CellaProva.requested')), 'richiesta spenta: il rename e\' IL consumo');
+    assert.ok(fs.existsSync(path.join(home, '.nexuscrew', 'vl-new-session', 'CellaProva.consumed')), 'il record consumato resta come prova');
+    const c2 = consumeVlNewSession({ home, cellId: 'CellaProva', now: 4000 });
     assert.equal(c2.consumed, false, 'una seconda consumazione non trova nulla: UNA volta sola');
     // stato: consumato, esito NON tracciato (NC non legge le sessioni vl)
-    const st = vlNewSessionStatus({ home, cellId: 'Dev' });
+    const st = vlNewSessionStatus({ home, cellId: 'CellaProva' });
     assert.equal(st.state, 'consumed');
     assert.equal(st.outcome, 'not-tracked', 'l\'esito incerto si DICHIARA, non si immagina');
     // una richiesta NUOVA esplicita e' possibile: sopra il record consumato
-    const r = requestVlNewSession({ home, cellId: 'Dev', now: 5000 });
+    const r = requestVlNewSession({ home, cellId: 'CellaProva', now: 5000 });
     assert.equal(r.state, 'pending');
     assert.equal(r.lastConsumedAt, 3000, 'il consumo precedente resta visibile sotto la nuova richiesta');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -173,7 +173,7 @@ test('marcatore: id traversal rifiutato prima di toccare il disco', () => {
 test('up ordinario (nessuna richiesta): MAI --new, nessun flag nel payload', async (t) => {
   const w = mondo(t);
   const fleet = await w.fleet();
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   assert.equal(res.vlNewSession, undefined, 'start ordinario: nessuna rotazione');
   assert.equal('vlNewSession' in w.tickets[0], false, 'payload senza il flag');
@@ -184,11 +184,11 @@ test('up ordinario (nessuna richiesta): MAI --new, nessun flag nel payload', asy
 test('richiesta esplicita -> up consuma UNA volta: flag nel payload, marker spento, esito riferito', async (t) => {
   const w = mondo(t);
   const fleet = await w.fleet();
-  const req = await fleet.vlNewSession('Dev');
+  const req = await fleet.vlNewSession('CellaProva');
   assert.equal(req.ok, true);
   assert.equal(req.status.state, 'pending');
 
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   assert.equal(res.vlNewSession, true, 'il lancio dichiara la rotazione applicata');
   assert.equal(w.tickets[0].vlNewSession, true, 'la decisione viaggia nel payload broker');
@@ -199,7 +199,7 @@ test('richiesta esplicita -> up consuma UNA volta: flag nel payload, marker spen
   // operatore si'): la richiesta e' SPENTA, nessuna seconda rotazione
   await w.spegni(fleet);
   w.clock.advance(60000);
-  const res2 = await fleet.up('Dev');
+  const res2 = await fleet.up('CellaProva');
   assert.equal(res2.vlNewSession, undefined, 'restart ordinario: MAI un secondo --new');
   assert.equal('vlNewSession' in w.tickets[1], false);
 });
@@ -221,15 +221,15 @@ test('esito incerto: consumo seguito da fallimento del broker -> MAI secondo --n
     }),
   });
   const fleet = await w.fleet();
-  await fleet.vlNewSession('Dev');
-  await assert.rejects(() => fleet.up('Dev'), (e) => e.status === 500);
+  await fleet.vlNewSession('CellaProva');
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => e.status === 500);
   assert.ok(!fs.existsSync(w.requestedPath), 'consumata prima dello spawn: il fallimento non la resuscita');
   assert.ok(fs.existsSync(w.consumedPath), 'record del consumo incerto');
-  const st = await Promise.resolve(vlNewSessionStatus({ home: w.home, cellId: 'Dev' }));
+  const st = await Promise.resolve(vlNewSessionStatus({ home: w.home, cellId: 'CellaProva' }));
   assert.equal(st.state, 'consumed', 'lo stato RIFERISCE l\'esito incerto');
   // retry oltre il cooldown: parte SENZA --new
   w.clock.advance(60000);
-  const res2 = await fleet.up('Dev');
+  const res2 = await fleet.up('CellaProva');
   assert.equal(res2.vlNewSession, undefined, 'mai un secondo --new automatico');
   assert.equal('vlNewSession' in w.tickets[1], false);
 });
@@ -240,7 +240,7 @@ test('cella non-vl: il lancio non tocca il marcatore (nessuna rotazione per altr
   // marcatore scritto a mano per una cella il cui engine NON e' vl: il runtime
   // non lo consuma (il gate e' per client) e la facade lo rifiuta alla fonte.
   fs.mkdirSync(w.markerDir, { recursive: true });
-  fs.writeFileSync(w.requestedPath, JSON.stringify({ cell: 'Dev', requestedAt: 1 }), { mode: 0o600 });
+  fs.writeFileSync(w.requestedPath, JSON.stringify({ cell: 'CellaProva', requestedAt: 1 }), { mode: 0o600 });
   // secondo fleet con engine claude sulla stessa home: serve il binario claude
   // (findBinary), altrimenti l'engine risulta non configurato e non si arriva
   // al punto del test (il marcatore lasciato intanto).
@@ -251,7 +251,7 @@ test('cella non-vl: il lancio non tocca il marcatore (nessuna rotazione per altr
   atomicWrite(defsPath, {
     schemaVersion: 1,
     engines: [{ id: 'cl', label: 'Claude', managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'unsafe' } }],
-    cells: [{ id: 'Dev', tmuxSession: SESSIONE, cwd: path.join(home, 'Dev'), engine: 'cl', boot: false }],
+    cells: [{ id: 'CellaProva', tmuxSession: SESSIONE, cwd: path.join(home, 'CellaProva'), engine: 'cl', boot: false }],
   });
   const tickets2 = [];
   const fleet2 = await createBuiltinFleet({
@@ -262,17 +262,17 @@ test('cella non-vl: il lancio non tocca il marcatore (nessuna rotazione per altr
     },
   });
   t.after(() => { fs.rmSync(claudeRoot, { recursive: true, force: true }); fleet2.close().catch(() => {}); });
-  await fleet2.up('Dev');
+  await fleet2.up('CellaProva');
   assert.ok(fs.existsSync(w.requestedPath), 'il marcatore resta intatto: nessun client non-vl lo consuma');
   assert.equal('vlNewSession' in tickets2[0], false);
-  await fleet.down('Dev').catch(() => {});
+  await fleet.down('CellaProva').catch(() => {});
 });
 
 test('facade vlNewSession: cella vl ok, cella inesistente e cella non-vl rifiutate nominalo', async (t) => {
   const w = mondo(t);
   const fleet = await w.fleet();
-  const ok = await fleet.vlNewSession('Dev');
-  assert.equal(ok.cell, 'Dev');
+  const ok = await fleet.vlNewSession('CellaProva');
+  assert.equal(ok.cell, 'CellaProva');
   await assert.rejects(() => fleet.vlNewSession('Ghost'), (e) => {
     assert.equal(e.status, 400);
     assert.match(e.message, /cella sconosciuta/);
@@ -358,10 +358,10 @@ test('validPayload: vlNewSession ammesso solo come booleano', () => {
 test('cooldown vl: lancio ok -> rilancio entro la pausa 429 dichiarato, oltre la pausa ok', async (t) => {
   const w = mondo(t, { cooldownMs: 10000 });
   const fleet = await w.fleet();
-  await fleet.up('Dev'); // t=0: impegna il lancio
+  await fleet.up('CellaProva'); // t=0: impegna il lancio
   await w.spegni(fleet);
   w.clock.advance(5000);
-  await assert.rejects(() => fleet.up('Dev'), (e) => {
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => {
     assert.equal(e.status, 429);
     assert.equal(e.fleetCode, 'VL_LAUNCH_COOLDOWN');
     assert.equal(e.fleetPhase, 'preflight');
@@ -369,7 +369,7 @@ test('cooldown vl: lancio ok -> rilancio entro la pausa 429 dichiarato, oltre la
     return true;
   });
   w.clock.advance(6000); // t=11000: oltre i 10 s
-  const res = await fleet.up('Dev');
+  const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true, 'oltre la pausa il lancio riparte');
 });
 
@@ -384,18 +384,18 @@ test('cooldown vl: la pausa conta anche il lancio FALLITO (retry a passo limitat
     }),
   });
   const fleet = await w.fleet();
-  await assert.rejects(() => fleet.up('Dev'), () => true); // t=0 fallisce
+  await assert.rejects(() => fleet.up('CellaProva'), () => true); // t=0 fallisce
   w.clock.advance(2000);
-  await assert.rejects(() => fleet.up('Dev'), (e) => e.fleetCode === 'VL_LAUNCH_COOLDOWN',
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => e.fleetCode === 'VL_LAUNCH_COOLDOWN',
     'il retry a 2 s dal fallimento e\' in pausa, non in corsa');
 });
 
 test('cooldown vl: 0 disattiva; celle diverse e celle non-vl non sono toccate', async (t) => {
   const w = mondo(t, { cooldownMs: 0 });
   const fleet = await w.fleet();
-  await fleet.up('Dev');
+  await fleet.up('CellaProva');
   await w.spegni(fleet);
-  const res = await fleet.up('Dev'); // immediato: disattivato
+  const res = await fleet.up('CellaProva'); // immediato: disattivato
   assert.equal(res.ok, true, 'vlLaunchCooldownMs=0: nessuna pausa');
 
   // default 10 s quando il campo manca: cella non-vl non passa dal cooldown
@@ -408,13 +408,13 @@ test('cooldown vl: 0 disattiva; celle diverse e celle non-vl non sono toccate', 
   // verifica solo che il default esista e sia 10 s per vl)
   const w3 = mondo(t, { clockStart: 0 });
   const fleet3 = await w3.fleet();
-  await fleet3.up('Dev');
-  await fleet3.down('Dev');
+  await fleet3.up('CellaProva');
+  await fleet3.down('CellaProva');
   w3.clock.advance(9999);
-  await assert.rejects(() => fleet3.up('Dev'), (e) => e.fleetCode === 'VL_LAUNCH_COOLDOWN',
+  await assert.rejects(() => fleet3.up('CellaProva'), (e) => e.fleetCode === 'VL_LAUNCH_COOLDOWN',
     'default: a 9999 ms la pausa da 10 s tiene ancora');
   w3.clock.advance(100);
-  const res3 = await fleet3.up('Dev');
+  const res3 = await fleet3.up('CellaProva');
   assert.equal(res3.ok, true, 'default: a 10099 ms si parte');
 });
 
@@ -428,7 +428,7 @@ test('cooldown vl: 0 disattiva; celle diverse e celle non-vl non sono toccate', 
 test('vl: due up concorrenti -> serializzati: un vincitore, un 409 di preflight, un solo ticket', async (t) => {
   const w = mondo(t, { cooldownMs: 0 });
   const fleet = await w.fleet();
-  const esiti = await Promise.allSettled([fleet.up('Dev'), fleet.up('Dev')]);
+  const esiti = await Promise.allSettled([fleet.up('CellaProva'), fleet.up('CellaProva')]);
   const vinti = esiti.filter((e) => e.status === 'fulfilled');
   const persi = esiti.filter((e) => e.status === 'rejected');
   assert.equal(vinti.length, 1, 'un solo vincitore');
@@ -477,17 +477,17 @@ test('route POST /api/fleet/vl-new-session: passa la chiamata; READONLY blocca; 
     vlNewSession: async (cell) => { chiamate.push(cell); return { ok: true, cell, state: 'pending' }; },
   };
   const app = appConFleet(fleet);
-  const res = await richiesta(app, 'POST', '/api/fleet/vl-new-session', { cell: 'Dev' });
+  const res = await richiesta(app, 'POST', '/api/fleet/vl-new-session', { cell: 'CellaProva' });
   assert.equal(res.status, 200);
-  assert.deepEqual(chiamate, ['Dev']);
+  assert.deepEqual(chiamate, ['CellaProva']);
   assert.equal(res.body.state, 'pending');
 
   const ro = appConFleet(fleet, { readonlyDefault: true });
-  const resRO = await richiesta(ro, 'POST', '/api/fleet/vl-new-session', { cell: 'Dev' });
+  const resRO = await richiesta(ro, 'POST', '/api/fleet/vl-new-session', { cell: 'CellaProva' });
   assert.equal(resRO.status, 403, 'READONLY: e\' una mutazione dello stato richieste');
 
   const senza = appConFleet({ available: true, capabilities: () => ['status'] });
-  const res501 = await richiesta(senza, 'POST', '/api/fleet/vl-new-session', { cell: 'Dev' });
+  const res501 = await richiesta(senza, 'POST', '/api/fleet/vl-new-session', { cell: 'CellaProva' });
   assert.equal(res501.status, 501);
 });
 
@@ -515,30 +515,30 @@ test('inventario legacy: elenca vl e vl-* con le sessioni trovate, NON tocca nul
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlinv-'));
   try {
     const mk = (rel) => fs.mkdirSync(path.join(home, rel), { recursive: true });
-    mk('.local/state/vl-mgm/vl/host-v1/sessions');
-    mk('.local/state/vl-cloud-Research/vl/host-v1/sessions');
-    fs.writeFileSync(path.join(home, '.local/state/vl-mgm/vl/host-v1/sessions', 'default'), '');
-    fs.writeFileSync(path.join(home, '.local/state/vl-mgm/vl/host-v1/sessions', 'archive-20260823T002011015Z-p3054639-s0'), '');
+    mk('.local/state/vl-prova/vl/host-v1/sessions');
+    mk('.local/state/vl-prova-seconda/vl/host-v1/sessions');
+    fs.writeFileSync(path.join(home, '.local/state/vl-prova/vl/host-v1/sessions', 'default'), '');
+    fs.writeFileSync(path.join(home, '.local/state/vl-prova/vl/host-v1/sessions', 'archive-20260823T002011015Z-p3054639-s0'), '');
     mk('.local/state/vl/host-v1/sessions');
     fs.writeFileSync(path.join(home, '.local/state/vl/host-v1/sessions', 'default'), '');
     mk('.local/state/altro'); // non vl: ignorato
-    const prima = fs.readFileSync(path.join(home, '.local/state/vl-mgm/vl/host-v1/sessions', 'default'), 'utf8');
+    const prima = fs.readFileSync(path.join(home, '.local/state/vl-prova/vl/host-v1/sessions', 'default'), 'utf8');
 
     const inv = vlLegacyInventory(home);
-    assert.equal(inv.entries.length, 3, 'vl, vl-mgm, vl-cloud-Research');
-    assert.deepEqual(inv.entries.map((e) => e.name), ['vl', 'vl-cloud-Research', 'vl-mgm'], 'ordinati per nome');
-    const mgm = inv.entries.find((e) => e.name === 'vl-mgm');
-    assert.equal(mgm.sessionCount, 2);
-    assert.deepEqual(mgm.sessions, ['archive-20260823T002011015Z-p3054639-s0', 'default']);
-    assert.equal(mgm.sessionsDir, true);
-    const cloud = inv.entries.find((e) => e.name === 'vl-cloud-Research');
-    assert.equal(cloud.sessionCount, 0, 'cartella sessions vuota: zero sessioni, ma presente');
+    assert.equal(inv.entries.length, 3, 'vl, vl-prova, vl-prova-seconda');
+    assert.deepEqual(inv.entries.map((e) => e.name), ['vl', 'vl-prova', 'vl-prova-seconda'], 'ordinati per nome');
+    const primo = inv.entries.find((e) => e.name === 'vl-prova');
+    assert.equal(primo.sessionCount, 2);
+    assert.deepEqual(primo.sessions, ['archive-20260823T002011015Z-p3054639-s0', 'default']);
+    assert.equal(primo.sessionsDir, true);
+    const secondo = inv.entries.find((e) => e.name === 'vl-prova-seconda');
+    assert.equal(secondo.sessionCount, 0, 'cartella sessions vuota: zero sessioni, ma presente');
     assert.equal(inv.moved, 0);
     assert.equal(inv.deleted, 0);
     assert.match(inv.note, /read-only/i);
 
     // NON ha toccato nulla: stesso contenuto, stessi ingressi
-    assert.equal(fs.readFileSync(path.join(home, '.local/state/vl-mgm/vl/host-v1/sessions', 'default'), 'utf8'), prima);
+    assert.equal(fs.readFileSync(path.join(home, '.local/state/vl-prova/vl/host-v1/sessions', 'default'), 'utf8'), prima);
     assert.equal(fs.readdirSync(path.join(home, '.local/state')).includes('altro'), true);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

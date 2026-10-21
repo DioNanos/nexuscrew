@@ -39,9 +39,9 @@ function appWith(store, { federated = true } = {}) {
       ? { ok: true, trust: 'federated', visited: String(req.headers['x-test-visited']).split(',') }
       : { ok: true, trust: 'local-bridge' }),
   }));
-  app.get('/cells', (_req, res) => res.json({ cells: [{ cell: 'Dev' }, { cell: 'Research' }] }));
-  app.get('/fleet/status', (_req, res) => res.json({ available: true, cells: [{ cell: 'Dev' }, { cell: 'Research' }] }));
-  app.get('/sessions', (_req, res) => res.json({ sessions: [{ name: 'cloud-Dev', preview: 'segreto' }, { name: 'cloud-Research' }] }));
+  app.get('/cells', (_req, res) => res.json({ cells: [{ cell: 'CellaProva' }, { cell: 'CellaProva2' }] }));
+  app.get('/fleet/status', (_req, res) => res.json({ available: true, cells: [{ cell: 'CellaProva' }, { cell: 'CellaProva2' }] }));
+  app.get('/sessions', (_req, res) => res.json({ sessions: [{ name: 'cloud-CellaProva', preview: 'segreto' }, { name: 'cloud-CellaProva2' }] }));
   app.post('/cells/send', (_req, res) => res.json({ ok: true }));
   app.post('/fleet/up', (_req, res) => res.json({ ok: true }));
   app.post('/fleet/define-cell', (_req, res) => res.json({ ok: true }));
@@ -68,7 +68,7 @@ const call = async (srv, method, path, { body, visited } = {}) => {
   return { status: r.status, payload };
 };
 
-const RESTRICTED = () => storeWith(peer({ cellVisibility: 'selected', cells: ['Research'] }));
+const RESTRICTED = () => storeWith(peer({ cellVisibility: 'selected', cells: ['CellaProva2'] }));
 
 test('gli elenchi escono filtrati: /cells, /fleet/status e /sessions insieme', async (t) => {
   const srv = await listen(appWith(RESTRICTED()));
@@ -76,17 +76,17 @@ test('gli elenchi escono filtrati: /cells, /fleet/status e /sessions insieme', a
   const chain = [PEER, LOCAL];
 
   const cells = await call(srv, 'GET', '/cells', { visited: chain });
-  assert.deepEqual(cells.payload.cells.map((c) => c.cell), ['Research']);
+  assert.deepEqual(cells.payload.cells.map((c) => c.cell), ['CellaProva2']);
 
   // Questo e' l'elenco che la PWA remota usa DAVVERO: filtrare /cells e non
   // questo significa non filtrare niente per l'utente reale.
   const fleet = await call(srv, 'GET', '/fleet/status', { visited: chain });
-  assert.deepEqual(fleet.payload.cells.map((c) => c.cell), ['Research']);
+  assert.deepEqual(fleet.payload.cells.map((c) => c.cell), ['CellaProva2']);
 
   // Le sessioni portano anche `preview`, cioe' CONTENUTO del terminale: una
   // cella nascosta con anteprima visibile e' peggio di una cella visibile.
   const sess = await call(srv, 'GET', '/sessions', { visited: chain });
-  assert.deepEqual(sess.payload.sessions.map((s) => s.name), ['cloud-Research']);
+  assert.deepEqual(sess.payload.sessions.map((s) => s.name), ['cloud-CellaProva2']);
   assert.equal(JSON.stringify(sess.payload).includes('segreto'), false, 'l\'anteprima di una cella fuori scope non deve uscire');
 });
 
@@ -95,18 +95,18 @@ test('le azioni fuori scope sono rifiutate, quelle dentro passano', async (t) =>
   t.after(() => srv.close());
   const chain = [PEER, LOCAL];
 
-  assert.equal((await call(srv, 'POST', '/fleet/up', { body: { cell: 'Dev' }, visited: chain })).status, 403);
-  assert.equal((await call(srv, 'POST', '/fleet/up', { body: { cell: 'Research' }, visited: chain })).status, 200);
+  assert.equal((await call(srv, 'POST', '/fleet/up', { body: { cell: 'CellaProva' }, visited: chain })).status, 403);
+  assert.equal((await call(srv, 'POST', '/fleet/up', { body: { cell: 'CellaProva2' }, visited: chain })).status, 200);
 
   assert.equal((await call(srv, 'POST', '/cells/send', {
-    body: { to: { cell: 'Dev', tmuxSession: 'cloud-Dev' }, text: 'ciao' }, visited: chain,
+    body: { to: { cell: 'CellaProva', tmuxSession: 'cloud-CellaProva' }, text: 'ciao' }, visited: chain,
   })).status, 403);
   assert.equal((await call(srv, 'POST', '/cells/send', {
-    body: { to: { cell: 'Research', tmuxSession: 'cloud-Research' }, text: 'ciao' }, visited: chain,
+    body: { to: { cell: 'CellaProva2', tmuxSession: 'cloud-CellaProva2' }, text: 'ciao' }, visited: chain,
   })).status, 200);
 
-  assert.equal((await call(srv, 'DELETE', '/sessions/cloud-Dev', { visited: chain })).status, 403);
-  assert.equal((await call(srv, 'GET', '/files?session=cloud-Dev', { visited: chain })).status, 403);
+  assert.equal((await call(srv, 'DELETE', '/sessions/cloud-CellaProva', { visited: chain })).status, 403);
+  assert.equal((await call(srv, 'GET', '/files?session=cloud-CellaProva', { visited: chain })).status, 403);
 });
 
 test('definire celle non e\' concesso a chi ha uno scope ristretto', async (t) => {
@@ -124,16 +124,16 @@ test('un peer senza restrizioni non subisce alcun cambiamento', async (t) => {
   t.after(() => srv.close());
   const chain = [PEER, LOCAL];
   const cells = await call(srv, 'GET', '/cells', { visited: chain });
-  assert.deepEqual(cells.payload.cells.map((c) => c.cell), ['Dev', 'Research']);
-  assert.equal((await call(srv, 'POST', '/fleet/up', { body: { cell: 'Dev' }, visited: chain })).status, 200);
+  assert.deepEqual(cells.payload.cells.map((c) => c.cell), ['CellaProva', 'CellaProva2']);
+  assert.equal((await call(srv, 'POST', '/fleet/up', { body: { cell: 'CellaProva' }, visited: chain })).status, 200);
 });
 
 test('le richieste locali non sono toccate', async (t) => {
   const srv = await listen(appWith(RESTRICTED()));
   t.after(() => srv.close());
   const cells = await call(srv, 'GET', '/cells');
-  assert.deepEqual(cells.payload.cells.map((c) => c.cell), ['Dev', 'Research']);
-  assert.equal((await call(srv, 'POST', '/fleet/up', { body: { cell: 'Dev' } })).status, 200);
+  assert.deepEqual(cells.payload.cells.map((c) => c.cell), ['CellaProva', 'CellaProva2']);
+  assert.equal((await call(srv, 'POST', '/fleet/up', { body: { cell: 'CellaProva' } })).status, 200);
 });
 
 test('un peer sconosciuto non vede nulla e non agisce', async (t) => {
@@ -141,7 +141,7 @@ test('un peer sconosciuto non vede nulla e non agisce', async (t) => {
   t.after(() => srv.close());
   const chain = [PEER, LOCAL];
   assert.deepEqual((await call(srv, 'GET', '/cells', { visited: chain })).payload.cells, []);
-  assert.equal((await call(srv, 'POST', '/fleet/up', { body: { cell: 'Research' }, visited: chain })).status, 403);
+  assert.equal((await call(srv, 'POST', '/fleet/up', { body: { cell: 'CellaProva2' }, visited: chain })).status, 403);
 });
 
 test('una route che nomina una cella ma non e\' in tabella viene NEGATA, non ignorata', async (t) => {
@@ -153,7 +153,7 @@ test('una route che nomina una cella ma non e\' in tabella viene NEGATA, non ign
   const srv = await listen(app);
   t.after(() => srv.close());
   const res = await call(srv, 'POST', '/rotta/nuova/inventata', {
-    body: { cell: 'Dev' }, visited: [PEER, LOCAL],
+    body: { cell: 'CellaProva' }, visited: [PEER, LOCAL],
   });
   assert.equal(res.status, 403, 'una route non dichiarata che nomina una cella deve essere fail-closed');
 });
@@ -172,10 +172,10 @@ test('vl-new-session: la cella fuori scope e\' rifiutata, quella dentro passa', 
   t.after(() => srv.close());
   const chain = [PEER, LOCAL];
   assert.equal((await call(srv, 'POST', '/fleet/vl-new-session', {
-    body: { cell: 'Dev' }, visited: chain,
+    body: { cell: 'CellaProva' }, visited: chain,
   })).status, 403, 'cella fuori scope: la richiesta di sessione nuova non parte');
   assert.equal((await call(srv, 'POST', '/fleet/vl-new-session', {
-    body: { cell: 'Research' }, visited: chain,
+    body: { cell: 'CellaProva2' }, visited: chain,
   })).status, 200, 'cella dentro scope: passa');
 });
 
@@ -195,7 +195,7 @@ test('vl-legacy-inventory: una route che nomina una cella dentro il corpo non e\
   const srv = await listen(app);
   t.after(() => srv.close());
   const res = await call(srv, 'POST', '/fleet/vl-legacy-inventory', {
-    body: { cell: 'Dev' }, visited: [PEER, LOCAL],
+    body: { cell: 'CellaProva' }, visited: [PEER, LOCAL],
   });
   assert.equal(res.status, 403, 'un corpo che nomina una cella su una route non dichiarata per bersaglio viene negato');
 });

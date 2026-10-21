@@ -27,7 +27,7 @@ const { main } = require('../lib/fleet/cell-exec.js');
 const { EventEmitter } = require('node:events');
 const { NOME_GENERAZIONE } = require('../lib/files/activity.js');
 
-const SESSIONE = 'cloud-Dev';
+const SESSIONE = 'cloud-CellaProva';
 
 // --- il mondo -------------------------------------------------------------
 // Fake tmux con lo stato VERO del server: `vive` e' l'elenco delle sessioni che
@@ -39,7 +39,7 @@ function mondo(t, { vive = [], pronto = true, broker = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-live-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700);
-  const cwd = path.join(home, 'Dev'); fs.mkdirSync(cwd);
+  const cwd = path.join(home, 'CellaProva'); fs.mkdirSync(cwd);
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const client = path.join(home, '.local', 'bin', 'claude');
   fs.writeFileSync(client, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); fs.chmodSync(client, 0o755);
@@ -92,7 +92,7 @@ process.exit(0);
         client: 'claude', provider: 'native', model: '', permissionPolicy: 'unsafe',
       },
     }],
-    cells: [{ id: 'Dev', tmuxSession: SESSIONE, cwd, engine: 'ec', boot: true }],
+    cells: [{ id: 'CellaProva', tmuxSession: SESSIONE, cwd, engine: 'ec', boot: true }],
   });
 
   const ticket = [];
@@ -130,7 +130,7 @@ test('up su una cella viva: 409 «già in esecuzione» e activity.gen INTATTO', 
   const statPrima = fs.statSync(w.genPath);
   const prima = fs.readFileSync(w.genPath, 'utf8');
 
-  await assert.rejects(() => w.runtime.up('Dev'), (e) => {
+  await assert.rejects(() => w.runtime.up('CellaProva'), (e) => {
     assert.equal(e.status, 409, 'stesso 409 che dava la new-session');
     assert.equal(e.fleetCode, 'SESSION_DUPLICATE');
     assert.match(String(e.message), /già in esecuzione/);
@@ -156,12 +156,12 @@ test('boot di flotta con la cella gia\' viva: salta e non scrive', async (t) => 
 
   const fleet = {
     available: true,
-    status: async () => ({ cells: [{ cell: 'Dev', tmuxSession: SESSIONE, boot: true }] }),
+    status: async () => ({ cells: [{ cell: 'CellaProva', tmuxSession: SESSIONE, boot: true }] }),
     up: (id) => w.runtime.up(id),
   };
   const res = await bootCells(fleet, { log: () => {} });
 
-  assert.deepEqual(res.skipped, ['Dev'], 'una cella gia\' viva e\' uno SKIP, non un errore');
+  assert.deepEqual(res.skipped, ['CellaProva'], 'una cella gia\' viva e\' uno SKIP, non un errore');
   assert.deepEqual(res.started, []);
   assert.deepEqual(res.failed, []);
   assert.equal(fs.readFileSync(w.genPath, 'utf8'), prima, 'la generazione resta quella del lancio vero');
@@ -175,7 +175,7 @@ test('up su una cella spenta: generazione NUOVA nel payload, e su disco non scri
   const w = mondo(t, { vive: [] });
   genera(w, 'gen-vecchia-di-un-lancio-precedente');
 
-  const esito = await w.runtime.up('Dev');
+  const esito = await w.runtime.up('CellaProva');
   assert.ok(esito, 'la cella spenta si lancia');
 
   assert.equal(w.ticket.length, 1, 'un ticket, una cella');
@@ -196,7 +196,7 @@ test('restart: la cella muore e rinasce, con una generazione nuova e coerente', 
   const w = mondo(t, { vive: [SESSIONE] });
   genera(w, 'gen-del-lancio-vero');
 
-  await w.runtime.restart('Dev');
+  await w.runtime.restart('CellaProva');
 
   assert.equal(w.ticket.length, 1, 'un ticket, un lancio');
   const dopo = w.ticket[0].activity.generation;
@@ -236,7 +236,7 @@ test('due up concorrenti: UN vincitore, e sul disco la generazione del VINCITORE
   const w = mondo(t, { vive: [] });
   genera(w, 'gen-di-un-lancio-vecchio');
 
-  const esiti = await Promise.allSettled([w.runtime.up('Dev'), w.runtime.up('Dev')]);
+  const esiti = await Promise.allSettled([w.runtime.up('CellaProva'), w.runtime.up('CellaProva')]);
   const vinti = esiti.filter((e) => e.status === 'fulfilled');
   const persi = esiti.filter((e) => e.status === 'rejected');
   assert.equal(vinti.length, 1, 'UN solo up riesce');

@@ -132,7 +132,7 @@ test('lancio: con vlBinary dichiarato e nessun vl nel PATH, la cella PARTE', () 
   try {
     const bin = vlEseguibile(path.join(home, 'opt', 'vl-0.5'));
     const r = resolveManagedEngine({ id: 'vl.native', managed: vlNative({ vlBinary: bin }) },
-      { id: 'Dev' }, { home, platform: 'linux', env: {}, vlVersionProbe: PROBE('0.5.0') });
+      { id: 'CellaProva' }, { home, platform: 'linux', env: {}, vlVersionProbe: PROBE('0.5.0') });
     assert.equal(r.ok, true, `motivo: ${r.reason}`);
     assert.equal(r.engine.command, fs.realpathSync(bin), 'lo spawn usa il binario dichiarato');
     assert.equal(r.engine.clientBinary, fs.realpathSync(bin));
@@ -145,7 +145,7 @@ test('lancio: il probe di versione interroga il binario DICHIARATO', () => {
     const bin = vlEseguibile(path.join(home, 'opt', 'vl-0.5'));
     const interrogati = [];
     const r = resolveManagedEngine({ id: 'vl.native', managed: vlNative({ vlBinary: bin }) },
-      { id: 'Dev' }, {
+      { id: 'CellaProva' }, {
         home, platform: 'linux', env: {},
         vlVersionProbe: (b) => { interrogati.push(b); return 'vl 0.5.0\n'; },
       });
@@ -163,7 +163,7 @@ test('lancio: vlBinary rotto blocca il lancio con il motivo dichiarato', () => {
     vlEseguibile(path.join(home, '.local', 'bin', 'vl'));
     const mancante = path.join(home, 'opt', 'vl-che-non-esiste');
     const r = resolveManagedEngine({ id: 'vl.native', managed: vlNative({ vlBinary: mancante }) },
-      { id: 'Dev' }, { home, platform: 'linux', env: {}, vlVersionProbe: PROBE('0.5.0') });
+      { id: 'CellaProva' }, { home, platform: 'linux', env: {}, vlVersionProbe: PROBE('0.5.0') });
     assert.equal(r.ok, false, 'la cella non parte con un binario dichiarato rotto');
     assert.match(r.reason, /vlBinary/);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -179,7 +179,7 @@ test('vlBinary con spazi nel path: risolto e usato (argv separato, niente shell)
     assert.equal(info.configured, true, `motivo: ${info.reason}`);
     assert.equal(info.binary, fs.realpathSync(bin));
     const r = resolveManagedEngine({ id: 'vl.native', managed: vlNative({ vlBinary: bin }) },
-      { id: 'Dev' }, { home, platform: 'linux', env: {}, vlVersionProbe: PROBE('0.5.0') });
+      { id: 'CellaProva' }, { home, platform: 'linux', env: {}, vlVersionProbe: PROBE('0.5.0') });
     assert.equal(r.ok, true, `motivo: ${r.reason}`);
     assert.equal(r.engine.command, fs.realpathSync(bin), 'lo spazio non spezza il comando');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -197,7 +197,7 @@ test('vlBinary che e\' un symlink: risolto una volta sola, probe e spawn coincid
     assert.equal(info.configured, true, `motivo: ${info.reason}`);
     assert.equal(info.binary, fs.realpathSync(link), 'il symlink si risolve una volta sola');
     const r = resolveManagedEngine({ id: 'vl.native', managed: vlNative({ vlBinary: link }) },
-      { id: 'Dev' }, { home, platform: 'linux', env: {}, vlVersionProbe: PROBE('0.5.0') });
+      { id: 'CellaProva' }, { home, platform: 'linux', env: {}, vlVersionProbe: PROBE('0.5.0') });
     assert.equal(r.ok, true, `motivo: ${r.reason}`);
     assert.equal(r.engine.command, fs.realpathSync(reale), 'lo spawn e\' il file reale, come il probe');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }

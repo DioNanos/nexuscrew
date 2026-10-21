@@ -291,15 +291,15 @@ test('identita stato: vlCellBaseDir e indipendente dall engine; cambio engine co
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlrt-id-'));
   try {
     const owner = 'node-1';
-    const before = vlCellBaseDir(home, owner, 'Dev');
+    const before = vlCellBaseDir(home, owner, 'CellaProva');
     // stesso owner+cellId, nessun engine in input: il percorso e una funzione
     // di (home, owner, cellId). Cambiare engine non sposta lo stato.
-    const after = vlCellBaseDir(home, owner, 'Dev');
+    const after = vlCellBaseDir(home, owner, 'CellaProva');
     assert.equal(before, after, 'cambio engine: stessa directory di stato');
     // e' distinto da un altra cella
-    assert.notEqual(before, vlCellBaseDir(home, owner, 'Research'));
+    assert.notEqual(before, vlCellBaseDir(home, owner, 'CellaProva2'));
     // owner diverso, stessa cellId: diverso
-    assert.notEqual(before, vlCellBaseDir(home, 'node-2', 'Dev'));
+    assert.notEqual(before, vlCellBaseDir(home, 'node-2', 'CellaProva'));
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
