@@ -612,3 +612,86 @@ test('inventario legacy: senza symlink la sessione normale e\' ancora elencata',
     assert.deepEqual(inv.entries[0].sessions, ['default']);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
+
+// --- H. stato della richiesta di sessione nuova, letto senza mutare -------
+//
+// Il consumo del marcatore e' un fatto che il solo errore di lancio non
+// racconta. Prima di questo blocco l'unico modo di sapere che la richiesta
+// era stata consumata era CREARNE UN'ALTRA: una mutazione, e una rotazione
+// in piu' possibile. Qui lo stato si legge, e si legge per una cella sola.
+
+test('route GET /api/fleet/vl-new-session-state: stato read-only della cella', async (t) => {
+  const w = mondo(t);
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaProva');
+  const app = appConFleet(fleet);
+
+  const res = await richiesta(app, 'GET', '/api/fleet/vl-new-session-state?cell=CellaProva');
+  assert.equal(res.status, 200);
+  assert.equal(res.body.cell, 'CellaProva');
+  assert.equal(res.body.state, 'pending', 'la richiesta e\' pendente: il prossimo lancio ruota');
+
+  // La richiesta non e\' una mutazione: la lettura non crea niente e non
+  // cambia lo stato (nessun marcatore nuovo).
+  const dopo = await richiesta(app, 'GET', '/api/fleet/vl-new-session-state?cell=CellaProva');
+  assert.equal(dopo.body.state, 'pending', 'la lettura non consuma e non crea richieste');
+
+  // Nessuna cella: la domanda non e\'posta. E una cella che non usa vl: il
+  // contratto esiste solo per vl.
+  const senza = await richiesta(app, 'GET', '/api/fleet/vl-new-session-state');
+  assert.equal(senza.status, 400, 'senza cella la domanda non e\' posta');
+  const ignota = await richiesta(app, 'GET', '/api/fleet/vl-new-session-state?cell=Nesuna');
+  assert.equal(ignota.status, 400, 'cella inesistente: 400');
+
+  const senzaProvider = appConFleet({ available: true, capabilities: () => ['status'] });
+  const res501 = await richiesta(senzaProvider, 'GET', '/api/fleet/vl-new-session-state?cell=CellaProva');
+  assert.equal(res501.status, 501, 'provider senza la vista: 501, non un errore generico');
+});
+
+test('fleet.status: la cella vl porta con se\' lo stato della richiesta', async (t) => {
+  const w = mondo(t);
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaProva');
+  const st = await fleet.status();
+  const cella = (st.cells || []).find((c) => c.cell === 'CellaProva');
+  assert.ok(cella, 'la cella e\' nel fleet.status');
+  assert.equal(cella.newSession.state, 'pending');
+  assert.equal(typeof cella.newSession.requestedAt, 'number');
+});
+
+test('up fallito DOPO il consumo: l\'errore dichiara l\'esito incerto della rotazione', async (t) => {
+  // Il broker fallisce dopo che il marcatore e\' stato consumato: la
+  // richiesta e\' andata, l\'esito (sessione ruotata o no) non e\' tracciato.
+  // L\'errore deve dirlo, e il marcatore NON deve tornare indietro.
+  const w = mondo(t, {
+    broker: () => ({
+      issue: async () => { throw new Error('broker chiuso'); },
+      revoke: async () => {},
+      close: async () => {},
+    }),
+  });
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaProva');
+
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => {
+    assert.ok(e.data && e.data.vlNewSession, 'l\'errore porta lo stato del marcatore');
+    assert.equal(e.data.vlNewSession.state, 'consumed', 'la richiesta e\' stata consumata');
+    assert.equal(e.data.vlNewSession.outcome, 'not-tracked', 'l\'esito non e\' tracciato: si dichiara, non si inventa');
+    assert.equal(e.vlNewSessionOutcome, 'consumed-unknown', 'marker bounded per i diagnostici');
+    return true;
+  });
+
+  // Il consumo non torna indietro e non si ripete: nessuna seconda rotazione.
+  assert.ok(fs.existsSync(w.consumedPath), 'il record consumato resta');
+  assert.ok(!fs.existsSync(w.requestedPath), 'nessuna richiesta pendente residua');
+  assert.equal(vlNewSessionStatus({ home: w.home, cellId: 'CellaProva' }).state, 'consumed');
+});
+
+test('la vista dello stato e\' read-only: nessuna directory viene creata', async (t) => {
+  const w = mondo(t);
+  const fleet = await w.fleet();
+  const st = await fleet.status();
+  const cella = (st.cells || []).find((c) => c.cell === 'CellaProva');
+  assert.equal(cella.newSession.state, 'none', 'nessuna richiesta: nessun marcatore');
+  assert.ok(!fs.existsSync(w.markerDir), 'la lettura non lascia directory sul disco');
+});

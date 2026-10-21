@@ -47,6 +47,7 @@ function appWith(store, { federated = true } = {}) {
   app.post('/fleet/define-cell', (_req, res) => res.json({ ok: true }));
   app.post('/fleet/vl-new-session', (_req, res) => res.json({ ok: true }));
   app.get('/fleet/vl-legacy-inventory', (_req, res) => res.json({ entries: [] }));
+  app.get('/fleet/vl-new-session-state', (_req, res) => res.json({ cell: 'CellaProva2', state: 'none' }));
   app.delete('/sessions/:name', (_req, res) => res.json({ ok: true }));
   app.get('/files', (_req, res) => res.json({ files: [] }));
   return app;
@@ -198,4 +199,18 @@ test('vl-legacy-inventory: una route che nomina una cella dentro il corpo non e\
     body: { cell: 'CellaProva' }, visited: [PEER, LOCAL],
   });
   assert.equal(res.status, 403, 'un corpo che nomina una cella su una route non dichiarata per bersaglio viene negato');
+});
+
+test('vl-new-session-state: la cella fuori scope e\' rifiutata, quella dentro passa', async (t) => {
+  // Lo stato della richiesta di sessione nuova e' una domanda su UNA cella:
+  // il bersaglio sta nella query (la route e' una GET), e va dichiarato come
+  // tale. Senza la dichiarazione la risposta passerebbe il predicato e
+  // porterebbe lo stato di una cella non concessa.
+  const srv = await listen(appWith(RESTRICTED()));
+  t.after(() => srv.close());
+  const chain = [PEER, LOCAL];
+  const fuori = await call(srv, 'GET', '/fleet/vl-new-session-state?cell=CellaProva', { visited: chain });
+  assert.equal(fuori.status, 403, 'cella fuori scope: lo stato della richiesta non esce');
+  const dentro = await call(srv, 'GET', '/fleet/vl-new-session-state?cell=CellaProva2', { visited: chain });
+  assert.equal(dentro.status, 200, 'cella dentro scope: passa');
 });
