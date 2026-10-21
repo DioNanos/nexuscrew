@@ -27,7 +27,7 @@ const PEER_TOKEN = 'peer-token-abcdefghijklmnopqrstuvwxyz0123456789';
 // Registra cio' che il nodo riceve DAVVERO: il punto del test e' che la
 // chiamata arrivi fin li', non che il proxy risponda 200 per conto suo.
 function fleetSeam() {
-  const seen = { newSession: [], inventory: [] };
+  const seen = { newSession: [], inventory: [], newSessionState: [] };
   return {
     seen,
     seam: {
@@ -50,6 +50,13 @@ function fleetSeam() {
       vlLegacyInventory: () => {
         seen.inventory.push(true);
         return { entries: [{ name: 'vl-prova', sessionCount: 2 }], moved: 0, deleted: 0 };
+      },
+      // Lo stato della richiesta di sessione nuova: read-only, per cella. La
+      // rotella esiste nella tabella delle route federate, quindi la richiesta
+      // arriva al nodo OWNER (e non viene trattata come una risorsa ignota).
+      vlNewSessionState: (cell) => {
+        seen.newSessionState.push(cell);
+        return { cell, state: 'none' };
       },
     },
   };
@@ -220,6 +227,18 @@ test('l\'inventario legacy con scope "none": 403 dichiarato', async (t) => {
   const res = await a.call('GET', '/api/route/peer-b/_/fleet/vl-legacy-inventory');
   assert.equal(res.status, 403);
   assert.equal(b.seen.inventory.length, 0, 'l\'owner non ha calcolato l\'inventario');
+});
+
+// --- 5. lo stato della richiesta di sessione nuova attraversa --------------
+
+test('lo stato della richiesta di sessione nuova e\' una route federata: arriva al nodo OWNER', async (t) => {
+  const { a, b } = await pair(t);
+  const res = await a.call('GET', '/api/route/peer-b/_/fleet/vl-new-session-state?cell=CellaProva');
+  const out = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(out));
+  assert.equal(out.cell, 'CellaProva');
+  assert.deepEqual(b.seen.newSessionState, ['CellaProva'], 'la lettura e\' avvenuta sul nodo owner');
+  assert.deepEqual(a.seen.newSessionState, [], 'e NON sul nodo che guarda');
 });
 
 // --- 6. il peer senza permesso operatore non ottiene nulla -------------------
