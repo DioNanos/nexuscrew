@@ -177,7 +177,52 @@ test('READONLY sul nodo owner NON blocca l\'inventario (diagnosi read-only)', as
   assert.equal(b.seen.inventory.length, 1);
 });
 
-// --- 4. il peer senza permesso operatore non ottiene nulla -------------------
+// --- 4. l'inventario con scope ristretto: 403, e l'owner non scanna ---------
+
+test('l\'inventario legacy con scope ristretto: 403 e l\'owner non calcola nulla', async (t) => {
+  // L'inventario e' lo STATO DEL NODO (le cartelle condivise pre-contratto):
+  // nomi e conteggi, senza una mappatura affidabile cella->sessione. Proiettarlo
+  // su uno scope parziale richiederebbe inventare quella mappa, quindi la
+  // scelta e' intero o niente: il peer operatore con scope ristretto riceve
+  // un 403, e l'owner non scandisce niente.
+  const { a, b } = await pair(t);
+  let st = nodesStore.loadStoreStrict(b.paths.nodesPath);
+  st = nodesStore.setPeerAccessGrants(st, 'peer-a', {
+    cellVisibility: 'selected', cells: ['CellaProva'],
+    liveHostAccess: false, panelAccess: false, eventsAccess: false,
+    nodeEventsAccess: false, askReplyAccess: false, filesReadAccess: false,
+    peerOperatorAccess: true,
+  });
+  nodesStore.atomicWriteStore(b.paths.nodesPath, st);
+
+  const res = await a.call('GET', '/api/route/peer-b/_/fleet/vl-legacy-inventory');
+  assert.equal(res.status, 403, 'scope ristretto: l\'inventario non esce');
+  const body = await res.json().catch(() => ({}));
+  assert.equal(body.entries, undefined, 'nessun inventario nella risposta');
+  assert.equal(b.seen.inventory.length, 0, 'l\'owner non ha calcolato l\'inventario');
+  // L'operatore del nodo proprietario continua a leggerlo: la restrizione e'
+  // sul peer, non su chi possiede la macchina.
+  const locale = await b.call('GET', '/api/fleet/vl-legacy-inventory');
+  assert.equal(locale.status, 200, 'il proprietario del nodo legge il suo inventario');
+  assert.equal(b.seen.inventory.length, 1);
+});
+
+test('l\'inventario legacy con scope "none": 403 dichiarato', async (t) => {
+  const { a, b } = await pair(t);
+  let st = nodesStore.loadStoreStrict(b.paths.nodesPath);
+  st = nodesStore.setPeerAccessGrants(st, 'peer-a', {
+    cellVisibility: 'none',
+    liveHostAccess: false, panelAccess: false, eventsAccess: false,
+    nodeEventsAccess: false, askReplyAccess: false, filesReadAccess: false,
+    peerOperatorAccess: true,
+  });
+  nodesStore.atomicWriteStore(b.paths.nodesPath, st);
+  const res = await a.call('GET', '/api/route/peer-b/_/fleet/vl-legacy-inventory');
+  assert.equal(res.status, 403);
+  assert.equal(b.seen.inventory.length, 0, 'l\'owner non ha calcolato l\'inventario');
+});
+
+// --- 6. il peer senza permesso operatore non ottiene nulla -------------------
 
 test('un peer senza permesso operatore non aziona la richiesta di sessione nuova', async (t) => {
   const { a, b } = await pair(t);

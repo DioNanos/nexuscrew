@@ -180,11 +180,37 @@ test('vl-new-session: la cella fuori scope e\' rifiutata, quella dentro passa', 
   })).status, 200, 'cella dentro scope: passa');
 });
 
-test('vl-legacy-inventory: diagnostica del nodo, nessun bersaglio, passa', async (t) => {
+test('vl-legacy-inventory: e\' lo stato del NODO, quindi intero o niente', async (t) => {
+  // L'inventario legacy elenca le cartelle di stato CONDIVISE pre-contratto:
+  // nomi e conteggi. Non c'e' una mappatura affidabile cella->sessione, quindi
+  // proiettarlo su uno scope parziale richiederebbe inventarla. Con uno scope
+  // ristretto la risposta e' un 403 — e nessuna directory viene scandita.
   const srv = await listen(appWith(RESTRICTED()));
   t.after(() => srv.close());
   const res = await call(srv, 'GET', '/fleet/vl-legacy-inventory', { visited: [PEER, LOCAL] });
-  assert.equal(res.status, 200, 'la diagnosi read-only del nodo non ha bersaglio cella');
+  assert.equal(res.status, 403, 'scope ristretto: l\'inventario del nodo non esce');
+  assert.equal(res.payload.reason, 'scope-not-full');
+  const pieno = await listen(appWith(storeWith(peer({ cellVisibility: 'all' }))));
+  t.after(() => pieno.close());
+  const ok = await call(pieno, 'GET', '/fleet/vl-legacy-inventory', { visited: [PEER, LOCAL] });
+  assert.equal(ok.status, 200, 'scope pieno: l\'inventario resta una diagnosi del nodo');
+});
+
+test('vl-legacy-inventory: decide la catena INTERA, non l\'ultimo hop', async (t) => {
+  // Multihop: l'origine e' ristretta, il nodo che consegna e' ampio. Lo scope
+  // risolto e' l'intersezione, quindi ristretto: l'inventario non esce. Se si
+  // guardasse solo l'ultimo hop, il peer ristretto erediterbbe la promessa di
+  // un peer ampio.
+  const ORIGINE = 'c'.repeat(32);
+  const store = storeWith(
+    peer({ cellVisibility: 'all' }),
+    { name: 'origine', nodeId: ORIGINE, visibility: 'network', shared: true, cellVisibility: 'selected', cells: ['CellaProva2'] },
+  );
+  const srv = await listen(appWith(store));
+  t.after(() => srv.close());
+  const res = await call(srv, 'GET', '/fleet/vl-legacy-inventory', { visited: [ORIGINE, PEER, LOCAL] });
+  assert.equal(res.status, 403, 'l\'origine ristretta stringa la promessa del consegna');
+  assert.equal(res.payload.reason, 'scope-not-full');
 });
 
 test('vl-legacy-inventory: una route che nomina una cella dentro il corpo non e\' piu\' una diagnosi', async (t) => {
