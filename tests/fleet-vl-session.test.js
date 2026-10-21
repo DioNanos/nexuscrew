@@ -83,7 +83,17 @@ process.exit(0);
 
   const tickets = [];
   let adesso = clockStart;
-  const clock = { now: () => adesso, advance: (ms) => { adesso += ms; } };
+  let mono = clockStart;
+  // Due clock distinti: quello di parete (quello che l'operatore vede, e che
+  // puo' saltare) e quello MONOTONO (quello su cui il cooldown e' costruito).
+  // `advance` muove entrambi — il tempo che passa e' tempo che passa;
+  // `wallJump` muove solo il primo: e' il balzo dell'orologio.
+  const clock = {
+    now: () => adesso,
+    advance: (ms) => { adesso += ms; mono += ms; },
+    wallJump: (ms) => { adesso += ms; },
+    mono: () => mono,
+  };
   const launchBroker = broker
     ? broker(tickets, { statoPath })
     : {
@@ -100,6 +110,7 @@ process.exit(0);
     ensureTmuxProtection: async () => {}, launchBroker, platform: 'linux', env: {},
     launchReadyMs: 0,
     now: clock.now,
+    monotonicNow: clock.mono,
     ...(cooldownMs !== undefined ? { vlLaunchCooldownMs: cooldownMs } : {}),
   };
   const markerDir = path.join(home, '.nexuscrew', 'vl-new-session');
@@ -694,4 +705,20 @@ test('la vista dello stato e\' read-only: nessuna directory viene creata', async
   const cella = (st.cells || []).find((c) => c.cell === 'CellaProva');
   assert.equal(cella.newSession.state, 'none', 'nessuna richiesta: nessun marcatore');
   assert.ok(!fs.existsSync(w.markerDir), 'la lettura non lascia directory sul disco');
+});
+
+test('cooldown vl: l\'orologio di parete che salta NON accorcia la pausa minima', async (t) => {
+  // La pausa minima fra due lanci e' un tempo MINIMO: un balzo dell'orologio
+  // di parete (NTP, correzione manuale dell'ora) non puo' accorciarla. Il
+  // clock del cooldown e' monotono, e questo test lo dimostra: con l'orologio
+  // di parete il secondo lancio passerebbe, e il test fallirebbe.
+  const w = mondo(t, { cooldownMs: 10000 });
+  const fleet = await w.fleet();
+  await fleet.up('CellaProva');            // t=0: impegna il lancio
+  await w.spegni(fleet);
+  w.clock.wallJump(3600000);               // l'orologio di parete salta di un'ora
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => {
+    assert.equal(e.fleetCode, 'VL_LAUNCH_COOLDOWN', 'la pausa minima e\' monotona: il balzo non la accorcia');
+    return true;
+  });
 });
