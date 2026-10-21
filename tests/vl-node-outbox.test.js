@@ -312,9 +312,10 @@ test('real HTTP server: ACL default-deny, PUT acl, delivery, cursor header, from
   });
   assert.equal(poll7.headers.get('x-vl-outbox-cursor'), `${msg7Id}:rejected:oversized`);
 
-  // 10. Rate limiting at HTTP level (consume up to 6 messages in the minute, 7th is rate-limited)
-  // Already consumed 3 in this minute (msg3, msg5, msg6)
-  for (let i = 8; i <= 10; i++) {
+  // 10. Rate limiting at HTTP level (6 delivered per minute, 7th is rate-limited)
+  // Rate quota is consumed at delivery time, so msg6 (target-not-active)
+  // does NOT burn a slot: delivered so far in this minute = msg3, msg5.
+  for (let i = 8; i <= 11; i++) {
     const id = String(i).padStart(32, '0');
     const p = await fetch(`${base}/vl-node/v1/poll`, {
       method: 'POST',
@@ -330,7 +331,7 @@ test('real HTTP server: ACL default-deny, PUT acl, delivery, cursor header, from
   const pollRateLimited = await fetch(`${base}/vl-node/v1/poll`, {
     method: 'POST',
     headers: nodeHeaders,
-    body: JSON.stringify(heartbeat(nodeId, sessionId, 11, {
+    body: JSON.stringify(heartbeat(nodeId, sessionId, 12, {
       outbox: [{ id: msgRateLimited, to: `${ownerId}:Dev`, text: 'should rate limit' }],
     })),
   });
@@ -381,7 +382,9 @@ function makeHarness() {
       return { submitted: true };
     },
     rateLimiter: createRateLimiter(),
-    now: 1_000_000,
+    // Real clock: the harness also calls store writers (setNodeAcl) with the
+    // default Date.now(), so a fixed `now` here would prune the dedup TTL.
+    now: Date.now,
   };
   return {
     home,
