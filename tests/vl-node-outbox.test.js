@@ -143,7 +143,7 @@ test('real HTTP server: ACL default-deny, PUT acl, delivery, cursor header, from
       available: true,
       cells: [
         { cell: 'Dev', tmuxSession: 'cloud-Dev', active: true, tmux: true, engine: 'claude.native' },
-        { cell: 'SysAdmin', tmuxSession: 'cloud-SysAdmin', active: true, tmux: true, engine: 'claude.native' },
+        { cell: 'OtherCell', tmuxSession: 'cloud-OtherCell', active: true, tmux: true, engine: 'claude.native' },
         { cell: 'InactiveCell', tmuxSession: 'cloud-Inactive', active: false, tmux: false },
       ],
     }),
@@ -227,19 +227,19 @@ test('real HTTP server: ACL default-deny, PUT acl, delivery, cursor header, from
   assert.equal(getAclRes.status, 200);
   assert.deepEqual((await json(getAclRes)).acl, { allowCells: ['Dev'] });
 
-  // 4. Poll sending to cell outside ACL (SysAdmin) -> rejected:acl-denied
+  // 4. Poll sending to cell outside ACL (OtherCell) -> rejected:acl-denied
   const msg2Id = '2'.repeat(32);
   const poll2 = await fetch(`${base}/vl-node/v1/poll`, {
     method: 'POST',
     headers: nodeHeaders,
     body: JSON.stringify(heartbeat(nodeId, sessionId, 1, {
-      outbox: [{ id: msg2Id, to: `${ownerId}:SysAdmin`, text: 'to sysadmin' }],
+      outbox: [{ id: msg2Id, to: `${ownerId}:OtherCell`, text: 'to other cell' }],
     })),
   });
   assert.equal(poll2.headers.get('x-vl-outbox-cursor'), `${msg2Id}:rejected:acl-denied`);
   assert.equal(deliveredMessages.length, 0);
 
-  // 5. Poll sending to allowed cell (Dev) -> delivered!
+  // 5. Poll sending to allowed cell -> delivered!
   // Include payload `from: "Impersonated"`: must be IGNORED!
   const msg3Id = '3'.repeat(32);
   const poll3 = await fetch(`${base}/vl-node/v1/poll`, {
