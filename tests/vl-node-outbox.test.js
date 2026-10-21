@@ -10,12 +10,14 @@ const { formatCellEnvelope } = require('../lib/cells/deliver.js');
 const {
   sanitizeOutboxItem,
   createRateLimiter,
+  processOutbox,
   MAX_OUTBOX_TEXT,
   RATE_LIMIT_MINUTE_CAP,
   RATE_LIMIT_HOUR_CAP,
 } = require('../lib/vl-nodes/outbox.js');
 const { createServer } = require('../lib/server.js');
 const nodesStore = require('../lib/nodes/store.js');
+const vlNodesStore = require('../lib/vl-nodes/store.js');
 
 async function json(response) {
   const text = await response.text();
@@ -344,4 +346,134 @@ test('real HTTP server: ACL default-deny, PUT acl, delivery, cursor header, from
     })),
   });
   assert.notEqual(pollLarge.status, 413, 'payload between 20kb and 24kb must not be rejected with 413');
+});
+
+// --- Direct processOutbox harness (same shape as the audit probes): no real
+// cells are involved, the submit seam is a counting mock.
+
+function makeHarness() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-vl-outbox-unit-'));
+  const file = path.join(home, 'vl-nodes.json');
+  const owner = 'a'.repeat(32);
+  const nodeId = 'b'.repeat(32);
+  const invite = vlNodesStore.createInvite(file, { label: 'synthetic' });
+  const paired = vlNodesStore.pairNode(file, {
+    invite: invite.invite,
+    nodeId,
+    version: 'test',
+    capabilities: [],
+  });
+  assert.ok(paired.ok, 'pairing must succeed');
+  vlNodesStore.setNodeAcl(file, nodeId, { allowCells: ['Dev'] });
+  let deliveries = 0;
+  const ctx = {
+    node: { nodeId },
+    storePath: file,
+    ownerId: owner,
+    fleetStatus: {
+      available: true,
+      cells: [
+        { cell: 'Dev', tmuxSession: 'cloud-Dev', active: true, tmux: true, engine: 'mock' },
+      ],
+    },
+    submit: async () => {
+      deliveries += 1;
+      return { submitted: true };
+    },
+    rateLimiter: createRateLimiter(),
+    now: 1_000_000,
+  };
+  return {
+    home,
+    file,
+    owner,
+    nodeId,
+    ctx,
+    deliveries: () => deliveries,
+    cleanup: () => fs.rmSync(home, { recursive: true, force: true }),
+  };
+}
+
+test('NC01 duplicate outbox id returns the previous outcome and delivers once', async () => {
+  const h = makeHarness();
+  try {
+    const item = { id: 'c'.repeat(32), to: `${h.owner}:Dev`, text: 'TEST_ONLY_MESSAGE' };
+    const first = await processOutbox({ ...h.ctx, outbox: [item] });
+    const second = await processOutbox({ ...h.ctx, outbox: [item] });
+    assert.equal(first.outcomes[0].outcome, 'submitted');
+    assert.equal(second.outcomes[0].outcome, 'submitted');
+    assert.equal(
+      second.cursor,
+      first.cursor,
+      'a re-presented id must return the previous outcome in the cursor'
+    );
+    assert.equal(h.deliveries(), 1, 'duplicate id must not deliver twice');
+
+    // A rejected outcome is deduplicated too: widening the ACL afterwards
+    // must NOT turn a re-presented id into a second attempt/delivery.
+    const rejected = { id: 'd'.repeat(32), to: `${h.owner}:Other`, text: 'nope' };
+    const r1 = await processOutbox({ ...h.ctx, outbox: [rejected] });
+    assert.equal(r1.outcomes[0].outcome, 'rejected:acl-denied');
+    vlNodesStore.setNodeAcl(h.file, h.nodeId, { allowCells: ['Dev', 'Other'] });
+    const r2 = await processOutbox({ ...h.ctx, outbox: [rejected] });
+    assert.equal(r2.outcomes[0].outcome, 'rejected:acl-denied');
+    assert.equal(h.deliveries(), 1, 're-presented rejected id must stay undelivered');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('NC02 ACL revoked while the directory resolves ends in rejected:acl-revoked', async () => {
+  const h = makeHarness();
+  try {
+    let release;
+    let entered;
+    const waiting = new Promise((resolve) => { entered = resolve; });
+    const barrier = new Promise((resolve) => { release = resolve; });
+    const item = { id: 'e'.repeat(32), to: `${h.owner}:Dev`, text: 'TEST_ONLY_MESSAGE' };
+    const pending = processOutbox({
+      ...h.ctx,
+      outbox: [item],
+      fleetStatus: async () => {
+        entered();
+        await barrier;
+        return h.ctx.fleetStatus;
+      },
+    });
+    await waiting;
+    // Revoke the whole ACL while the first authorization already passed and
+    // the broker is waiting on the fleet directory.
+    vlNodesStore.setNodeAcl(h.file, h.nodeId, { allowCells: [] });
+    release();
+    const result = await pending;
+    assert.equal(result.outcomes[0].outcome, 'rejected:acl-revoked');
+    assert.equal(h.deliveries(), 0, 'revoked delivery must not reach the cell');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('NC03 broker qualifies a simple local cell name and keeps remote owners rejected', async () => {
+  const h = makeHarness();
+  try {
+    // Simple cell name: counts as a local cell of the hub owner.
+    assert.equal(sanitizeOutboxItem({ id: 'f'.repeat(32), to: 'Dev', text: 'hi' }).error, null);
+    const local = await processOutbox({
+      ...h.ctx,
+      outbox: [{ id: 'f'.repeat(32), to: 'Dev', text: 'TEST_ONLY_MESSAGE' }],
+    });
+    assert.equal(local.outcomes[0].outcome, 'submitted', 'plain local cell name must be qualified');
+    assert.equal(h.deliveries(), 1);
+
+    // Owner-qualified ids of other owners stay rejected (closed federation).
+    const remoteOwner = '9'.repeat(32);
+    const remote = await processOutbox({
+      ...h.ctx,
+      outbox: [{ id: '1'.repeat(32), to: `${remoteOwner}:Dev`, text: 'cross node' }],
+    });
+    assert.equal(remote.outcomes[0].outcome, 'rejected:remote-unsupported');
+    assert.equal(h.deliveries(), 1, 'remote destination must not be delivered');
+  } finally {
+    h.cleanup();
+  }
 });
