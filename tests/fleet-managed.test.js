@@ -254,6 +254,7 @@ test('Ollama Direct discovery: errore API usa la shortlist TOP di fallback', asy
   const models = await discoverOllamaModels({ noCache: true, apiKey: 'test-key', home: tmp(), fetchImpl: async () => { throw new Error('down'); } });
   assert.deepEqual(models, [
     'glm-5.2', 'kimi-k2.7-code', 'deepseek-v4-pro', 'minimax-m3',
+    'minimax-m3.1-flash',
     'qwen3.5:397b', 'deepseek-v4-flash', 'mistral-large-3:675b', 'gemma4:31b',
     'glm-5.3-flash',
     'glm-5.3',
