@@ -19,6 +19,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync, execFileSync } = require('node:child_process');
 const { resolveManagedEngine, vlCellBaseDir } = require('../lib/fleet/managed.js');
 
 const CATALOGO_OPERATORE = '[profiles."lavoro"]\nmodel = "mine"\ndefault_profile = "lavoro"\n';
@@ -55,6 +56,38 @@ const overlayDi = (res) => path.join(res.engine.env.XDG_CONFIG_HOME, 'vl', 'conf
 // esiste anche quando il lancio viene rifiutato (le directory per cella sono
 // create prima del catalogo), quindi l'assenza da provare e' il FILE.
 const overlayPrevisto = (home) => path.join(vlCellBaseDir(home, null, 'CellaProva'), 'config', 'vl', 'config.toml');
+
+// Il resolver del prodotto, eseguito in un PROCESSO SEPARATO: una lettura
+// bloccante (una FIFO) bloccherebbe anche il test, e il test deve poter
+// dire "il resolver ha risposto" invece di "il test e' scaduto".
+const MODULO_PRODOTTO = require.resolve('../lib/fleet/managed.js');
+
+function risolviInProcessoSeparato(home, vlConfigFile, timeoutMs = 5000) {
+  const script = [
+    `const { resolveManagedEngine } = require(${JSON.stringify(MODULO_PRODOTTO)});`,
+    'const res = resolveManagedEngine(',
+    "  { id: 'engine.vl', managed: { client: 'vl', provider: 'native', model: '', permissionPolicy: 'standard', vlConfigFile: process.argv[1] } },",
+    "  { id: 'CellaProva' },",
+    "  { home: process.argv[2], platform: 'linux', env: {} },",
+    ');',
+    'process.stdout.write(JSON.stringify({ ok: res.ok === true, reason: res.reason || null }));',
+  ].join('\n');
+  const esito = spawnSync(process.execPath, ['-e', script, vlConfigFile, home], {
+    encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL',
+  });
+  if (esito.error && esito.error.code === 'ETIMEDOUT') {
+    return { scaduto: true, ok: null, reason: null };
+  }
+  if (esito.status !== 0) {
+    return { scaduto: false, ok: null, reason: `il resolver e' uscito con codice ${esito.status}: ${esito.stderr || ''}` };
+  }
+  try {
+    const reso = JSON.parse(esito.stdout);
+    return { scaduto: false, ok: reso.ok === true, reason: reso.reason };
+  } catch (_) {
+    return { scaduto: false, ok: null, reason: `output non leggibile: ${esito.stdout}` };
+  }
+}
 
 test('vl.native senza vlConfigFile: il catalogo dell\'operatore diventa l\'overlay della cella', () => {
   const home = homeConBinario();
@@ -146,4 +179,91 @@ test('i segreti e la preferenza dell\'operatore non vengono importati', () => {
   assert.deepEqual(fs.readdirSync(vlDir).sort(), ['config.toml'], 'nella cella finisce solo il catalogo');
   const contenuto = fs.readFileSync(path.join(vlDir, 'config.toml'), 'utf8');
   assert.equal(contenuto.includes('non-copiare'), false, 'i segreti dell\'operatore non vengono copiati');
+});
+
+// --------------------------------------------------------------------------
+// La sorgente deve essere un file REGOLARE e stare FUORI dall'overlay
+// generato della cella.
+//
+//  * una FIFO non e' un catalogo: leggerla bloccherebbe il thread Node fino
+//    all'arrivo di uno scrittore, quindi il rifiuto deve arrivare PRIMA di
+//    qualsiasi lettura;
+//  * l'overlay generato non puo' essere la sua stessa sorgente, ne' tramite
+//    un symlink o un hard link: copiare l'overlay su se stesso non produce
+//    un catalogo, produce un autoriferimento.
+// --------------------------------------------------------------------------
+
+test('sorgente non regolare (FIFO): il lancio e\' rifiutato e la lettura non blocca', () => {
+  const home = homeConBinario();
+  const fifo = path.join(home, 'catalogo.fifo');
+  execFileSync('mkfifo', [fifo]);
+  const esito = risolviInProcessoSeparato(home, fifo);
+  assert.equal(esito.scaduto, false, 'il resolver non deve bloccare su una FIFO');
+  assert.equal(esito.ok, false, 'una FIFO non e\' un catalogo');
+  assert.match(String(esito.reason), /non regolare/i, esito.reason);
+  assert.match(String(esito.reason), /FIFO/i, esito.reason);
+  assert.equal(fs.existsSync(overlayPrevisto(home)), false, 'nessun overlay scritto');
+});
+
+test('sorgente non regolare (directory): il lancio e\' rifiutato, dichiarato', () => {
+  const home = homeConBinario();
+  const dir = path.join(home, 'catalogo.directory');
+  fs.mkdirSync(dir);
+  const res = risolvi(home, vlNative({ vlConfigFile: dir }), { env: {} });
+  assert.equal(res.ok, false, 'una directory non e\' un catalogo');
+  assert.match(String(res.reason), /non regolare/i, res.reason);
+  assert.match(String(res.reason), /directory/i, res.reason);
+  assert.equal(fs.existsSync(overlayPrevisto(home)), false, 'nessun overlay scritto');
+});
+
+test('l\'overlay generato non puo\' essere la sorgente: il lancio e\' rifiutato', () => {
+  const home = homeConBinario();
+  const esterno = scriviCatalogo(path.join(home, 'esterno'), CATALOGO_OPERATORE);
+  const primo = risolvi(home, vlNative({ vlConfigFile: esterno }), { env: {} });
+  assert.equal(primo.ok, true, primo.reason);
+  const overlay = overlayDi(primo);
+  assert.equal(fs.existsSync(overlay), true, 'il primo lancio ha generato l\'overlay');
+  const selected = path.join(path.dirname(overlay), 'selected.toml');
+  fs.writeFileSync(selected, 'profile = "mia"\n');
+  // Secondo lancio: la sorgente dichiarata e' l'overlay generato.
+  const secondo = risolvi(home, vlNative({ vlConfigFile: overlay }), { env: {} });
+  assert.equal(secondo.ok, false, 'l\'overlay non puo\' essere la sua stessa sorgente');
+  assert.match(String(secondo.reason), /overlay/i, secondo.reason);
+  assert.equal(fs.readFileSync(selected, 'utf8'), 'profile = "mia"\n', 'la preferenza privata della cella non viene toccata');
+});
+
+test('un symlink all\'overlay non puo\' essere la sorgente: il lancio e\' rifiutato', () => {
+  const home = homeConBinario();
+  const esterno = scriviCatalogo(path.join(home, 'esterno'), CATALOGO_OPERATORE);
+  const primo = risolvi(home, vlNative({ vlConfigFile: esterno }), { env: {} });
+  assert.equal(primo.ok, true, primo.reason);
+  const overlay = overlayDi(primo);
+  const alias = path.join(home, 'alias-overlay.toml');
+  fs.symlinkSync(overlay, alias);
+  const secondo = risolvi(home, vlNative({ vlConfigFile: alias }), { env: {} });
+  assert.equal(secondo.ok, false, 'un alias dell\'overlay non e\' una sorgente');
+  assert.match(String(secondo.reason), /overlay/i, secondo.reason);
+});
+
+test('un hard link all\'overlay non puo\' essere la sorgente: il lancio e\' rifiutato', () => {
+  const home = homeConBinario();
+  const esterno = scriviCatalogo(path.join(home, 'esterno'), CATALOGO_OPERATORE);
+  const primo = risolvi(home, vlNative({ vlConfigFile: esterno }), { env: {} });
+  assert.equal(primo.ok, true, primo.reason);
+  const overlay = overlayDi(primo);
+  const alias = path.join(home, 'hardlink-overlay.toml');
+  fs.linkSync(overlay, alias);
+  const secondo = risolvi(home, vlNative({ vlConfigFile: alias }), { env: {} });
+  assert.equal(secondo.ok, false, 'un hard link all\'overlay non e\' una sorgente');
+  assert.match(String(secondo.reason), /overlay/i, secondo.reason);
+});
+
+test('un symlink verso un catalogo esterno legittimo resta una sorgente valida', () => {
+  const home = homeConBinario();
+  const esterno = scriviCatalogo(path.join(home, 'esterno'), CATALOGO_OPERATORE);
+  const alias = path.join(home, 'alias-esterno.toml');
+  fs.symlinkSync(esterno, alias);
+  const res = risolvi(home, vlNative({ vlConfigFile: alias }), { env: {} });
+  assert.equal(res.ok, true, res.reason);
+  assert.equal(fs.readFileSync(overlayDi(res), 'utf8'), CATALOGO_OPERATORE, 'l\'overlay e\' il catalogo della sorgente');
 });
