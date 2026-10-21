@@ -619,3 +619,75 @@ test('XDG: il trio ambientale non raggiunge mai il payload (assegnazione finale 
     assert.ok(env[nome].includes(path.join('.nexuscrew', 'vl-cells')), `${nome}: per cella`);
   }
 });
+
+// ===========================================================================
+// J. Catalogo vl: TOML vero (header quotati, commenti) e catalogo malformato
+//
+// Il catalogo e' un config.toml: si legge con il parser TOML, non con una
+// regex. Un header con nome quotato (`[profiles."work"]`) o con un commento
+// in coda e' TOML valido e il profilo esiste: rifiutarlo come "inesistente"
+// sarebbe un difetto del prodotto, non una garanzia. Un catalogo malformato
+// invece non dichiara nulla e la cella non parte, dichiarando il motivo.
+// ===========================================================================
+
+function catalogoTesto(home, testo) {
+  const dir = path.join(home, 'cataloghi');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'config.toml');
+  fs.writeFileSync(file, testo);
+  return file;
+}
+
+test('catalogo: header QUOTATO ([profiles."work"]) -> il profilo esiste e la cella parte', async (t) => {
+  const w = mondo(t);
+  const fleet = await w.fleet();
+  const cat = catalogoTesto(w.home, '# catalogo\n[profiles."work"] # il profilo di lavoro\nmodel = "m-work"\n');
+  await fleet.editEngine('vl.native', { managed: vlNative({ vlConfigFile: cat, vlProfile: 'work' }) });
+  const res = await fleet.up('CellaProva');
+  assert.equal(res.ok, true, 'un catalogo TOML valido non viene rifiutato come inesistente');
+  assert.deepEqual(w.tickets[0].args, ['-p', 'work'], 'il profilo quotato viaggia su argv');
+});
+
+test('catalogo: nomi con punto e trattini, e commenti, -> profili riconosciuti', async (t) => {
+  const w = mondo(t);
+  const fleet = await w.fleet();
+  const cat = catalogoTesto(w.home, [
+    '# catalogo di prova',
+    '',
+    '[profiles."work.local"]   # nome con punto',
+    'model = "m1"',
+    '',
+    '[profiles.b-c]',
+    'model = "m2"',
+    '',
+  ].join('\n'));
+  await fleet.editEngine('vl.native', { managed: vlNative({ vlConfigFile: cat, vlProfile: 'work.local' }) });
+  const res = await fleet.up('CellaProva');
+  assert.equal(res.ok, true, 'profilo con nome quotato e punto: riconosciuto');
+  assert.deepEqual(w.tickets[0].args, ['-p', 'work.local']);
+});
+
+test('catalogo: malformato -> rifiuto DICHIARATO che nomina il file, nessun avvio', async (t) => {
+  const w = mondo(t);
+  const fleet = await w.fleet();
+  const cat = catalogoTesto(w.home, '[profiles.work\nmodel = "m"\n');
+  await fleet.editEngine('vl.native', { managed: vlNative({ vlConfigFile: cat, vlProfile: 'work' }) });
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => {
+    assert.match(e.message, /catalogo vl non valido/, 'il rifiuto dice che il CATALOGO e\' rotto');
+    assert.match(e.message, /config\.toml/, 'il rifiuto nomina il file');
+    return true;
+  });
+  assert.equal(w.tickets.length, 0, 'nessun lancio da un catalogo malformato');
+});
+
+test('catalogo: malformato -> nessun profilo inventato (niente -p, niente catalogo accettato)', async (t) => {
+  const w = mondo(t);
+  const fleet = await w.fleet();
+  const cat = catalogoTesto(w.home, 'profiles = 42\n');
+  await fleet.editEngine('vl.native', { managed: vlNative({ vlConfigFile: cat, vlProfile: 'work' }) });
+  await assert.rejects(() => fleet.up('CellaProva'), (e) => {
+    assert.match(e.message, /catalogo vl non valido/);
+    return true;
+  });
+  assert.equal(w.tickets.length, 0);
+});
