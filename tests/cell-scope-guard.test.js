@@ -45,6 +45,8 @@ function appWith(store, { federated = true } = {}) {
   app.post('/cells/send', (_req, res) => res.json({ ok: true }));
   app.post('/fleet/up', (_req, res) => res.json({ ok: true }));
   app.post('/fleet/define-cell', (_req, res) => res.json({ ok: true }));
+  app.post('/fleet/vl-new-session', (_req, res) => res.json({ ok: true }));
+  app.get('/fleet/vl-legacy-inventory', (_req, res) => res.json({ entries: [] }));
   app.delete('/sessions/:name', (_req, res) => res.json({ ok: true }));
   app.get('/files', (_req, res) => res.json({ files: [] }));
   return app;
@@ -154,4 +156,46 @@ test('una route che nomina una cella ma non e\' in tabella viene NEGATA, non ign
     body: { cell: 'Dev' }, visited: [PEER, LOCAL],
   });
   assert.equal(res.status, 403, 'una route non dichiarata che nomina una cella deve essere fail-closed');
+});
+
+// --- Le due route vl dentro lo scope delle celle ---------------------------
+//
+// La richiesta di sessione nuova crea una richiesta PERSISTENTE per una
+// cella: il suo bersaglio e' la cella, e come /fleet/up deve stare nello
+// scope. L'inventario legacy e' invece una diagnosi del NODO: nessun
+// bersaglio, quindi nessun filtro — ma la rete di sicurezza deve
+// riconoscerlo come route nota, altrimenti la nega perche' non e' in
+// tabella.
+
+test('vl-new-session: la cella fuori scope e\' rifiutata, quella dentro passa', async (t) => {
+  const srv = await listen(appWith(RESTRICTED()));
+  t.after(() => srv.close());
+  const chain = [PEER, LOCAL];
+  assert.equal((await call(srv, 'POST', '/fleet/vl-new-session', {
+    body: { cell: 'Dev' }, visited: chain,
+  })).status, 403, 'cella fuori scope: la richiesta di sessione nuova non parte');
+  assert.equal((await call(srv, 'POST', '/fleet/vl-new-session', {
+    body: { cell: 'Research' }, visited: chain,
+  })).status, 200, 'cella dentro scope: passa');
+});
+
+test('vl-legacy-inventory: diagnostica del nodo, nessun bersaglio, passa', async (t) => {
+  const srv = await listen(appWith(RESTRICTED()));
+  t.after(() => srv.close());
+  const res = await call(srv, 'GET', '/fleet/vl-legacy-inventory', { visited: [PEER, LOCAL] });
+  assert.equal(res.status, 200, 'la diagnosi read-only del nodo non ha bersaglio cella');
+});
+
+test('vl-legacy-inventory: una route che nomina una cella dentro il corpo non e\' piu\' una diagnosi', async (t) => {
+  // Se il corpo nomina una cella, la domanda cambia: non e' piu' un
+  // inventario del nodo, e' un'azione su una cella. La rete di sicurezza deve
+  // chiuderla invece di lasciarla passare come se fosse una GET.
+  const app = appWith(RESTRICTED());
+  app.post('/fleet/vl-legacy-inventory', (_req, res) => res.json({ ok: true }));
+  const srv = await listen(app);
+  t.after(() => srv.close());
+  const res = await call(srv, 'POST', '/fleet/vl-legacy-inventory', {
+    body: { cell: 'Dev' }, visited: [PEER, LOCAL],
+  });
+  assert.equal(res.status, 403, 'un corpo che nomina una cella su una route non dichiarata per bersaglio viene negato');
 });

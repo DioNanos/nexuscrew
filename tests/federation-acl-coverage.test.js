@@ -17,11 +17,12 @@ function literalResources() {
 }
 
 // The fleet family: one entry per alternative the allowlist accepts.
-const FLEET_READ = ['status', 'schema', 'definitions', 'credentials/status'];
+const FLEET_READ = ['status', 'schema', 'definitions', 'credentials/status', 'vl-legacy-inventory'];
 const FLEET_WRITE = [
   'credentials/set', 'credentials/remove', 'up', 'down', 'restart', 'engine', 'boot',
   'define-engine', 'edit-engine', 'remove-engine', 'define-model', 'remove-model',
   'model-test', 'define-cell', 'edit-cell', 'remove-cell', 'restore-cells', 'restore-engines',
+  'vl-new-session',
 ];
 
 // One sample path per branch of the allowlist: the literals, plus an example for

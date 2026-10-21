@@ -64,7 +64,13 @@ test('vl argv: lancia la TUI senza argomenti; nessun prompt su argv; niente toke
     const r0 = resolveManagedEngine(eng(), { id: 'vl.native' }, { home, platform: 'linux', env: {} });
     assert.equal(r0.ok, true);
     assert.deepEqual(r0.engine.args, [], 'vl lancia la TUI senza argomenti');
-    assert.deepEqual(r0.engine.env, {}, 'runtime locale: nessun token/credenziale (e append degradata, non composta)');
+    // Il trio XDG per-cella e' parte del contratto (identità di stato); fuori
+    // da quello, il runtime locale non porta NESSUNA env: niente token,
+    // niente provider, e append degradata (non composta).
+    const { XDG_STATE_HOME, XDG_DATA_HOME, XDG_CONFIG_HOME, ...rest0 } = r0.engine.env;
+    assert.ok(XDG_STATE_HOME && XDG_DATA_HOME && XDG_CONFIG_HOME, 'trio XDG per-cella composto');
+    assert.ok(XDG_STATE_HOME.startsWith(path.join(home, '.nexuscrew', 'vl-cells')), 'stato dentro l\'albero NC');
+    assert.deepEqual(rest0, {}, 'runtime locale: nessun token/credenziale oltre al trio XDG (append degradata, non composta)');
     // anche con un prompt di cella, vl NON lo riceve su argv (TUI senza superficie prompt)
     const r1 = resolveManagedEngine(eng(), { id: 'vl.native', prompt: 'you are dev' }, { home, platform: 'linux', env: {} });
     assert.deepEqual(r1.engine.args, [], 'vl non accetta prompt su argv (TUI senza superficie prompt)');
@@ -114,7 +120,9 @@ test('CONTROLLO NEGATIVO — versione vecchia (0.1.0): env append NON composta +
     assert.equal(r.engine.env.VL_SYSTEM_APPEND_FILE, undefined, 'mai una env che il runtime ignorerebbe in silenzio');
     assert.ok(r.engine.vlPromptDegraded && r.engine.vlPromptDegraded.includes('0.1.0'), 'il degrado nomina la versione trovata');
     assert.ok(r.engine.vlPromptDegraded.includes('0.3.1'), 'il degrado nomina la versione minima');
-    assert.ok(!fs.existsSync(path.join(home, '.nexuscrew')), 'degradato per versione: nessun file scritto');
+    // degradato per versione: NESSUN file di prompt scritto (le directory
+    // identità per-cella restano: sono il contratto, non il degrado)
+    assert.ok(!fs.existsSync(path.join(home, '.nexuscrew', 'vl-prompts')), 'degradato per versione: nessun prompt scritto');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -160,20 +168,24 @@ test('modello dalla UI: scelto -> SOLO VL_MODEL; vl.native non esporta MAI provi
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('difese del percorso per-cella: id traversal e symlink -> degrado, mai scrittura fuori posto', () => {
+test('difese del percorso per-cella: id traversal e symlink -> RIFIUTO dichiarato, mai scrittura fuori posto', () => {
   const home = homeWithVl();
   try {
-    // '..' passa CELL_ID_RE ma come filename e' traversal: rifiutato, degradato
+    // '..' passa CELL_ID_RE ma come directory e' traversal: con le directory
+    // identita' per-cella (contratto 2026-10-21) la cella si RIFIUTA —
+    // degradare a una directory condivisa e' esattamente l'incidente che il
+    // contratto chiude, non un'opzione.
     const rDot = vlResolve(home, { id: '..', prompt: 'p' }, { vlVersionProbe: PROBE_031 });
-    assert.equal(rDot.ok, true, 'la cella parte');
-    assert.equal(rDot.engine.env.VL_SYSTEM_APPEND_FILE, undefined, 'niente env su un file che non si puo\' scrivere in sicurezza');
-    assert.ok(rDot.engine.vlPromptDegraded.includes('non scrivibile in sicurezza'), 'degrado con motivo');
+    assert.equal(rDot.ok, false, 'id traversal: avvio rifiutato');
+    assert.match(rDot.reason, /non creabile in sicurezza/, 'il rifiuto nomina la difesa');
     assert.ok(!fs.existsSync(path.join(home, '.nexuscrew', 'vl-prompts')), 'nessun file scritto');
-    // symlink al posto della directory: stessa difesa del precedente pi
+    // symlink al posto della directory: stessa difesa (rifiuto, niente scritto
+    // attraverso il link)
     fs.mkdirSync(path.join(home, 'evil'), { recursive: true });
     fs.symlinkSync(path.join(home, 'evil'), path.join(home, '.nexuscrew'));
     const rLink = vlResolve(home, { id: 'Dev', prompt: 'p' }, { vlVersionProbe: PROBE_031 });
-    assert.ok(rLink.engine.vlPromptDegraded.includes('non scrivibile in sicurezza'), 'symlink dir: degrado');
+    assert.equal(rLink.ok, false, 'symlink al posto di .nexuscrew: avvio rifiutato');
+    assert.match(rLink.reason, /non creabile in sicurezza/, 'rifiuto dichiarato');
     assert.equal(fs.readdirSync(path.join(home, 'evil')).length, 0, 'NULLA scritto attraverso il symlink');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

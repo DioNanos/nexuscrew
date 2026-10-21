@@ -87,7 +87,10 @@ test('D3 resolve: nomi presenti nel runtime vengono iniettati; vl non riceve arg
   try {
     const r = resolveManagedEngine(vlEngine(['VL_API_KEY', 'VL_ENDPOINT']), { id: 'Dev' }, { home, env: { VL_API_KEY: 'secret-1', VL_ENDPOINT: 'https://host' } });
     assert.equal(r.ok, true);
-    assert.deepEqual(r.engine.env, { VL_API_KEY: 'secret-1', VL_ENDPOINT: 'https://host' });
+    // trio XDG per-cella (contratto identità 2026-10-21) + i nomi passthrough
+    const { XDG_STATE_HOME, XDG_DATA_HOME, XDG_CONFIG_HOME, ...restPassthrough } = r.engine.env;
+    assert.ok(XDG_STATE_HOME && XDG_DATA_HOME && XDG_CONFIG_HOME, 'trio XDG per-cella');
+    assert.deepEqual(restPassthrough, { VL_API_KEY: 'secret-1', VL_ENDPOINT: 'https://host' });
     assert.deepEqual(r.engine.args, [], 'vl non riceve argv (ramo vl vuoto)');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -124,7 +127,9 @@ test('D3 resolve: senza envPassthrough il ramo vl resta vuoto (no regressione)',
   try {
     const r = resolveManagedEngine(vlEngine(null), { id: 'Dev' }, { home, env: { UNRELATED: 'x' } });
     assert.equal(r.ok, true);
-    assert.deepEqual(r.engine.env, {});
+    const { XDG_STATE_HOME, XDG_DATA_HOME, XDG_CONFIG_HOME, ...restNoPass } = r.engine.env;
+    assert.ok(XDG_STATE_HOME && XDG_DATA_HOME && XDG_CONFIG_HOME, 'trio XDG per-cella');
+    assert.deepEqual(restNoPass, {}, 'nessuna env oltre al trio XDG');
     assert.deepEqual(r.engine.args, []);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

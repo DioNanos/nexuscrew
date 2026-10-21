@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import EngineEditor from './EngineEditor.jsx';
-import { blankEngine } from '../../lib/fleet-forms.js';
+import { blankEngine, buildEngine } from '../../lib/fleet-forms.js';
 import { t, DICTS } from '../../lib/i18n.js';
 
 const catalog = [
@@ -17,6 +17,7 @@ const catalog = [
   { id: 'pi.alibaba-token-plan', client: 'pi', clientLabel: 'pi', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'openai-completions', permissionPolicyDefault: 'standard', supportsUnsafe: false, model: 'qwen3.8-max', models: ['qwen3.8-max', 'qwen3.7-plus', 'qwen3.7-max', 'qwen3.6-flash', 'glm-5.2', 'deepseek-v4-pro'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
   { id: 'agy.native', client: 'agy', clientLabel: 'agy', provider: 'native', label: 'Agy', protocol: 'agy_native', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: '', models: [], rc: false },
   { id: 'kimi.native', client: 'kimi', clientLabel: 'kimi', provider: 'native', label: 'Kimi account (CLI login)', protocol: 'kimi_native', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: '', models: [], rc: false, notice: 'kimi-native' },
+  { id: 'vl.native', client: 'vl', clientLabel: 'vl', provider: 'native', label: 'VL', protocol: 'vl_native', permissionPolicyDefault: 'standard', supportsUnsafe: false, model: '', models: [], rc: false },
 ];
 
 function profileForm(id) {
@@ -28,9 +29,12 @@ function profileForm(id) {
   };
 }
 
-function Harness({ initial, onSave = vi.fn(), mode = 'new', fetchModels, onSetModelValue }) {
+function Harness({ initial, onSave = vi.fn(), mode = 'new', fetchModels, onSetModelValue, onForm }) {
   const [state, setState] = useState({ mode, form: initial });
   if (!state) return <div>closed</div>;
+  // onForm: osserva la forma corrente. L'editor possiede la forma, non la spec:
+  // e' FleetTab (buildEngine) a costruire la spec che viene salvata.
+  if (onForm) onForm(state.form);
   return <EngineEditor state={state} setState={setState} busy={false} onSave={onSave} catalog={catalog} fetchModels={fetchModels} onSetModelValue={onSetModelValue} />;
 }
 
@@ -562,5 +566,74 @@ describe('EngineEditor discovery without a listing', () => {
     await user.type(within(dialog).getByLabelText('output'), '4096');
     await user.click(within(dialog).getByRole('button', { name: 'Confirm' }));
     expect(onSetModelValue).toHaveBeenCalledWith('claude.kimi-code', 'k3', { maxTokens: '4096' });
+  });
+});
+
+// --- vl: i campi del contratto engine vl sono presenti SOLO per il client vl
+// I quattro campi (binario, catalogo, profilo, effort) sono il contratto del
+// ramo vl: percorsi e nomi, mai segreti. Devono comparire per il client vl e
+// restare ASSENTI per ogni altro client — un campo vl che spunta su un engine
+// claude verrebbe rifiutato dal validatore del backend, e l'operatore
+// scoprirebbe il rifiuto solo al salvataggio.
+describe('EngineEditor vl fields', () => {
+  beforeEach(() => localStorage.setItem('nc_lang', 'en'));
+
+  const vlForm = () => profileForm('vl.native');
+
+  it('shows the four vl fields for the vl client, with their hints', () => {
+    render(<Harness initial={vlForm()} />);
+    expect(screen.getByPlaceholderText('absolute path of the vl binary (empty = PATH)')).toBeTruthy();
+    expect(screen.getByPlaceholderText('shared vl profile catalog (config.toml, absolute path)')).toBeTruthy();
+    expect(screen.getByPlaceholderText('vl profile (-p)')).toBeTruthy();
+    expect(screen.getByPlaceholderText('effort (VL_EFFORT)')).toBeTruthy();
+    expect(screen.getByText(/Every vl cell gets its own state and config/)).toBeTruthy();
+  });
+
+  it('keeps the vl fields out of a non-vl engine', () => {
+    render(<Harness initial={profileForm('claude.native')} />);
+    expect(screen.queryByPlaceholderText('absolute path of the vl binary (empty = PATH)')).toBeNull();
+    expect(screen.queryByPlaceholderText('shared vl profile catalog (config.toml, absolute path)')).toBeNull();
+    expect(screen.queryByPlaceholderText('vl profile (-p)')).toBeNull();
+    expect(screen.queryByPlaceholderText('effort (VL_EFFORT)')).toBeNull();
+  });
+
+  it('edits the vl fields: the form carries them and the spec built from it keeps them', async () => {
+    const user = userEvent.setup();
+    let form = null;
+    const onSave = vi.fn();
+    render(<Harness initial={vlForm()} onSave={onSave} onForm={(_f) => { form = _f; }} />);
+    await user.type(screen.getByPlaceholderText('absolute path of the vl binary (empty = PATH)'), '/opt/vl/bin/vl');
+    await user.type(screen.getByPlaceholderText('shared vl profile catalog (config.toml, absolute path)'), '/opt/vl/config.toml');
+    await user.type(screen.getByPlaceholderText('vl profile (-p)'), 'work');
+    await user.type(screen.getByPlaceholderText('effort (VL_EFFORT)'), 'high');
+    // l'editor possiede la FORMA; la spec la costruisce il padre (FleetTab)
+    // con buildEngine. Qui si verifica il passaggio dei due lati: la forma
+    // tiene i valori, e la spec che ne nasce li riporta (trim inclusi).
+    expect(form.vlBinary).toBe('/opt/vl/bin/vl');
+    expect(form.vlConfigFile).toBe('/opt/vl/config.toml');
+    expect(form.vlProfile).toBe('work');
+    expect(form.effort).toBe('high');
+    const saved = buildEngine({ ...form, kind: 'managed' }, true, catalog);
+    expect(saved.managed.vlBinary).toBe('/opt/vl/bin/vl');
+    expect(saved.managed.vlConfigFile).toBe('/opt/vl/config.toml');
+    expect(saved.managed.vlProfile).toBe('work');
+    expect(saved.managed.effort).toBe('high');
+  });
+
+  it('omits an empty vl field from the spec (that is how a field is cleared)', async () => {
+    const user = userEvent.setup();
+    let form = null;
+    render(<Harness initial={{ ...vlForm(), vlProfile: 'work' }} onForm={(_f) => { form = _f; }} mode="edit" />);
+    // l'operatore svuota il campo profilo: nella forma resta vuoto, e la spec
+    // che ne nasce OMETTE la chiave — omissione e' il modo con cui il backend
+    // cancella (un null verrebbe rifiutato dal validatore).
+    await user.clear(screen.getByPlaceholderText('vl profile (-p)'));
+    expect(form.vlProfile).toBe('');
+    const saved = buildEngine({ ...form, kind: 'managed' }, false, catalog);
+    expect(Object.prototype.hasOwnProperty.call(saved.managed, 'vlProfile')).toBe(false);
+    // gli altri campi vl mai valorizzati restano assenti dalla spec
+    expect(Object.prototype.hasOwnProperty.call(saved.managed, 'vlBinary')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(saved.managed, 'vlConfigFile')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(saved.managed, 'effort')).toBe(false);
   });
 });
