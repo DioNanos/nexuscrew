@@ -16,6 +16,7 @@ const {
   RATE_LIMIT_HOUR_CAP,
 } = require('../lib/vl-nodes/outbox.js');
 const { createServer } = require('../lib/server.js');
+const { createBroker } = require('../lib/vl-nodes/broker.js');
 const nodesStore = require('../lib/nodes/store.js');
 const vlNodesStore = require('../lib/vl-nodes/store.js');
 
@@ -476,6 +477,120 @@ test('NC03 broker qualifies a simple local cell name and keeps remote owners rej
     });
     assert.equal(remote.outcomes[0].outcome, 'rejected:remote-unsupported');
     assert.equal(h.deliveries(), 1, 'remote destination must not be delivered');
+  } finally {
+    h.cleanup();
+  }
+});
+
+// --- NC05: poll longevity across the outbox await (barrier on the fleet
+// directory, same shape as the audit probe).
+
+function makeBrokerHarness() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-vl-poll-race-'));
+  const file = path.join(home, 'vl-nodes.json');
+  const owner = 'a'.repeat(32);
+  const nodeId = 'b'.repeat(32);
+  const sessionId = 'e'.repeat(32);
+  const invite = vlNodesStore.createInvite(file, { label: 'synthetic' });
+  vlNodesStore.pairNode(file, { invite: invite.invite, nodeId, version: 'test', capabilities: [] });
+  vlNodesStore.setNodeAcl(file, nodeId, { allowCells: ['Dev'] });
+  const gates = {};
+  gates.atBarrier = new Promise((resolve) => { gates.entered = resolve; });
+  gates.barrier = new Promise((resolve) => { gates.release = resolve; });
+  const fleetDirectory = {
+    available: true,
+    cells: [{ cell: 'Dev', tmuxSession: 'cloud-Dev', active: true, tmux: true }],
+  };
+  const broker = createBroker({
+    storePath: file,
+    ownerId: owner,
+    now: () => 100_000,
+    submit: async () => ({ submitted: true }),
+    fleetStatus: async () => {
+      gates.entered();
+      await gates.barrier;
+      return fleetDirectory;
+    },
+  });
+  const hb = (seq, extra = {}) => ({
+    protocol: 'vl-node/1',
+    sessionId,
+    seq,
+    health: { state: 'running' },
+    ...extra,
+  });
+  return {
+    home,
+    owner,
+    nodeId,
+    broker,
+    hb,
+    gates,
+    cleanup: () => fs.rmSync(home, { recursive: true, force: true }),
+  };
+}
+
+test('NC05 a poll superseded while the directory resolves answers superseded and keeps the newest waiter', async () => {
+  const h = makeBrokerHarness();
+  try {
+    const node = { nodeId: h.nodeId, label: 'synthetic' };
+    const stale = h.broker.poll(node, h.hb(1, {
+      outbox: [{ id: 'c'.repeat(32), to: `${h.owner}:Dev`, text: 'TEST_ONLY_MESSAGE' }],
+    }), { waitMs: 200 });
+    await h.gates.atBarrier;
+    // A newer poll of the same session supersedes the stale one and installs
+    // the current waiter while the stale poll still waits on the directory.
+    const newest = h.broker.poll(node, h.hb(2), { waitMs: 200 });
+    const liveState = h.broker._states.get(h.nodeId);
+    const newestWaiter = liveState.waiter;
+    assert.ok(newestWaiter, 'the newest poll must have installed the waiter');
+
+    // Let the directory resolve, then wait until the stale poll has either
+    // settled (fixed behavior) or replaced the waiter (bug). Bounded loop:
+    // setImmediate turns are orders of magnitude faster than waitMs.
+    let staleSettled = false;
+    stale.then(() => { staleSettled = true; }, () => {});
+    h.gates.release();
+    for (let i = 0; i < 1_000
+      && !staleSettled
+      && h.broker._states.get(h.nodeId) === liveState
+      && liveState.waiter === newestWaiter; i += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    const dispatched = h.broker.dispatch(h.nodeId, { kind: 'prompt', text: 'TEST_ONLY_COMMAND' });
+    assert.equal(dispatched.ok, true, 'dispatch must reach the live waiter');
+
+    const staleResult = await stale;
+    assert.equal(
+      staleResult.type,
+      'superseded',
+      'the superseded poll must answer superseded instead of stealing the waiter'
+    );
+    const newestResult = await newest;
+    assert.equal(newestResult.type, 'command', 'the command must be delivered to the newest poll');
+    assert.equal(newestResult.command.text, 'TEST_ONLY_COMMAND');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('NC05 forget while the directory resolves answers revoked', async () => {
+  const h = makeBrokerHarness();
+  try {
+    const node = { nodeId: h.nodeId, label: 'synthetic' };
+    const pending = h.broker.poll(node, h.hb(1, {
+      outbox: [{ id: 'd'.repeat(32), to: `${h.owner}:Dev`, text: 'TEST_ONLY_MESSAGE' }],
+    }), { waitMs: 50 });
+    await h.gates.atBarrier;
+    h.broker.forget(h.nodeId);
+    h.gates.release();
+    const result = await pending;
+    assert.equal(result.type, 'revoked', 'a poll forgotten mid-await must answer revoked');
+    assert.equal(
+      h.broker.dispatch(h.nodeId, { kind: 'prompt', text: 'TEST_ONLY_COMMAND' }).code,
+      'node-offline'
+    );
   } finally {
     h.cleanup();
   }
