@@ -36,7 +36,7 @@ function redactEnv(env) {
 
 // Il launcher finto: registra argv ed env e non parla MAI col runtime vero.
 // Il TUI non parte: qui la prova finisce alla composizione.
-function mondo(t, { version = 'vl 0.5.0', engine = null, engineId = null, extraModels = null, clockStart = 0 } = {}) {
+function mondo(t, { version = 'vl 0.5.0', engine = null, engineId = null, extraModels = null, clockStart = 0, cells = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlmx-'));
   const home = path.join(root, 'home');
   const cwd = path.join(home, 'Dev');
@@ -65,7 +65,9 @@ const cmd = args[0] || '';
 const vive = () => fs.readFileSync(STATO, 'utf8').split('\\n').filter(Boolean);
 if (cmd === 'list-sessions') { for (const n of vive()) process.stdout.write(n + '\\t1\\n'); process.exit(0); }
 if (cmd === 'new-session') {
-  fs.writeFileSync(STATO, vive().concat(['cloud-Dev']).join('\\n') + '\\n');
+  const i = args.indexOf('-s');
+  const nome = i >= 0 ? args[i + 1] : 'sessione-senza-nome';
+  fs.writeFileSync(STATO, vive().concat([nome]).join('\\n') + '\\n');
   process.stdout.write('$5\\t@1\\t%9\\n'); process.exit(0);
 }
 if (cmd === 'display-message') { process.stdout.write('0\\t\\t%9\\n'); process.exit(0); }
@@ -91,7 +93,10 @@ process.exit(0);
       id: 'vl.native', label: 'VL', rc: false,
       managed: { client: 'vl', provider: 'native', model: '', permissionPolicy: 'standard' },
     }],
-    cells: [{ id: 'Dev', tmuxSession: 'cloud-Dev', cwd, engine: (engine && engine.id) || 'vl.native', boot: false }],
+    cells: (cells || [{ id: 'Dev', tmuxSession: 'cloud-Dev' }]).map((c) => ({
+      id: c.id, tmuxSession: c.tmuxSession || c.id, cwd,
+      engine: (engine && engine.id) || 'vl.native', boot: false,
+    })),
     ...(extraModels ? { models: extraModels } : {}),
   });
 
@@ -519,5 +524,98 @@ test('confini: nessuna variante mette un segreto su argv', async (t) => {
     const argvDump = JSON.stringify([ticket.command, ...ticket.args]);
     assert.equal(argvDump.includes('sk-mai-su-argv'), false, `${v.id}: nessun segreto su argv`);
     assert.equal(ticket.env.VL_API_KEY, '<redacted>', `${v.id}: nel payload il segreto e\' redatto`);
+  }
+});
+
+// ===========================================================================
+// I. Il trio XDG e' l'IDENTITA' per cella: il passthrough non lo annulla
+//
+// Il runtime vl deriva dal trio XDG tre cose che condividerebbero una
+// cartella: il root del server (che ospita il socket di controllo) e il dove
+// finiscono le sessioni. Il trio lo compone NexusCrew, uno per cella: se un
+// canale di passthrough puo' sovrascriverlo, due celle finiscono sulla stessa
+// directory di stato e l'isolamento per cella diventa una promessa falsa.
+// La prova e' sul PAYLOAD DEL BROKER (quello che il child riceve davvero),
+// non sul solo helper dei percorsi.
+// ===========================================================================
+
+const XDG_TRIO = ['XDG_STATE_HOME', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME'];
+const XDG_CONDIVISO = {
+  XDG_STATE_HOME: '/percorso/condiviso/state',
+  XDG_DATA_HOME: '/percorso/condiviso/data',
+  XDG_CONFIG_HOME: '/percorso/condiviso/config',
+};
+
+test('XDG: il passthrough del trio XDG e\' RIFIUTATO alla sorgente (non entra nella definizione)', async (t) => {
+  const w = mondo(t);
+  const fleet = await w.fleet({ env: { ...XDG_CONDIVISO } });
+  await assert.rejects(
+    () => fleet.editEngine('vl.native', { managed: vlNative({ envPassthrough: [...XDG_TRIO] }) }),
+    (e) => {
+      assert.match(e.message, /XDG_STATE_HOME/, 'il rifiuto nomina la variabile');
+      assert.match(e.message, /identita' per cella/, 'il rifiuto dice perche\'');
+      return true;
+    },
+    'un passthrough del trio XDG non entra nella definizione di una cella vl',
+  );
+  assert.equal(w.tickets.length, 0, 'nessun lancio: la definizione rifiutata non parte');
+});
+
+test('XDG: nemmeno scritto a mano nel file di definizioni il payload non porta il trio condiviso', async (t) => {
+  // Il percorso della sorgente non e' l'unico: il file di definizioni puo'
+  // essere scritto fuori dalla API. Il risultato che conta e' uno solo: il
+  // payload del broker NON contiene mai il trio condiviso.
+  const w = mondo(t, { cells: [{ id: 'Alpha' }, { id: 'Beta' }] });
+  const defs = JSON.parse(fs.readFileSync(w.defsPath, 'utf8'));
+  defs.engines[0].managed.envPassthrough = [...XDG_TRIO];
+  fs.writeFileSync(w.defsPath, JSON.stringify(defs, null, 2));
+  const fleet = await w.fleet({ env: { ...XDG_CONDIVISO } });
+  if (typeof fleet.up === 'function') {
+    await assert.rejects(() => fleet.up('Alpha'), () => true,
+      'il lancio non parte da una definizione che dichiara il trio XDG in passthrough');
+  } else {
+    assert.equal(fleet.available, false,
+      'definizione non caricabile: il file intero e\' rifiutato, il fleet resta indisponibile');
+  }
+  assert.equal(w.tickets.length, 0, 'nessun payload emesso');
+  for (const tk of w.tickets) {
+    for (const nome of XDG_TRIO) {
+      assert.notEqual(tk.env[nome], XDG_CONDIVISO[nome], `${nome}: mai il valore condiviso`);
+    }
+  }
+});
+
+test('XDG: due celle, stesso engine -> due payload con trio XDG DISTINTI (e mai quello condiviso)', async (t) => {
+  const w = mondo(t, { cells: [{ id: 'Alpha' }, { id: 'Beta' }] });
+  const fleet = await w.fleet({ env: { ...XDG_CONDIVISO } });
+  const a = await fleet.up('Alpha');
+  const b = await fleet.up('Beta');
+  assert.equal(a.ok, true);
+  assert.equal(b.ok, true);
+  assert.equal(w.tickets.length, 2, 'due lanci, due payload');
+  const [pa, pb] = w.tickets.map((x) => x.env);
+  for (const nome of XDG_TRIO) {
+    assert.ok(pa[nome], `${nome}: presente nel payload di Alpha`);
+    assert.ok(pb[nome], `${nome}: presente nel payload di Beta`);
+    assert.notEqual(pa[nome], pb[nome], `${nome}: DISTINTO per cella`);
+    assert.notEqual(pa[nome], XDG_CONDIVISO[nome], `${nome}: mai il valore condiviso`);
+    assert.notEqual(pb[nome], XDG_CONDIVISO[nome], `${nome}: mai il valore condiviso`);
+    assert.ok(pa[nome].includes(path.join('.nexuscrew', 'vl-cells')),
+      `${nome}: dentro l'albero per cella di NexusCrew`);
+  }
+});
+
+test('XDG: il trio ambientale non raggiunge mai il payload (assegnazione finale protetta)', async (t) => {
+  // Difesa in profondita': anche se un valore ambientale del trio fosse
+  // iniettato piu' a valle, l'assegnazione per cella di NexusCrew e' l'ultima
+  // parola e resta quella che viaggia.
+  const w = mondo(t);
+  const fleet = await w.fleet({ env: { ...XDG_CONDIVISO } });
+  const res = await fleet.up('Dev');
+  assert.equal(res.ok, true);
+  const env = w.tickets[0].env;
+  for (const nome of XDG_TRIO) {
+    assert.notEqual(env[nome], XDG_CONDIVISO[nome], `${nome}: il valore ambientale non vince`);
+    assert.ok(env[nome].includes(path.join('.nexuscrew', 'vl-cells')), `${nome}: per cella`);
   }
 });
