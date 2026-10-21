@@ -1,5 +1,6 @@
 'use strict';
-// Isolamento per cella del ramo vl (auditor, req 1 e prove minime 1 e 2).
+// Isolamento per cella del ramo vl: la directory di stato, il socket di
+// controllo e le sessioni sono derivati da XDG_STATE_HOME e distinti per cella.
 //
 // L'affermazione forte da provare non e' "due celle hanno due env diverse":
 // e' "due celle sono isolate FINO ALL'HOST". Il runtime vl deriva dal suo

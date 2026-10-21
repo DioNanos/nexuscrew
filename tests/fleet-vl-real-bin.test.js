@@ -1,5 +1,5 @@
 'use strict';
-// Integrazione con il binario VL reale (prova minima 5).
+// Integrazione con il binario VL reale.
 //
 // Il binario arriva dalla variabile d'ambiente NEXUSCREW_VL_REAL_BIN: il
 // percorso di un binario congelato e' una scelta della macchina, non un

@@ -3,7 +3,7 @@
 // + varianti + neutralizzazione) e launcher finto che REGISTRA argv/env
 // redatti attraverso lo spawn REALE del supervisore (cell-exec).
 //
-// La matrice segue le prove minime del progetto: native/custom/anthropic ×
+// La matrice copre: native/custom/anthropic ×
 // con/senza profilo/modello/effort, env ambientali ostili, envPassthrough che
 // reintroduce nomi VL_*, path binario con spazi, binario inesistente/non
 // eseguibile/vecchio, profilo mancante, effort non dichiarato/non supportato.

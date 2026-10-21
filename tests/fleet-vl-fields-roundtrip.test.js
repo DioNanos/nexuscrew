@@ -2,11 +2,11 @@
 // Roundtrip API/UI/persistenza/export dei campi nuovi del ramo vl
 // (vlBinary, vlConfigFile, vlProfile, effort + effortLevels dei modelli).
 //
-// Copre le prove minime dell'auditor che fleet-vl.test.js e fleet-vl-fields.test.js
+// Copre il ciclo completo che fleet-vl.test.js e fleet-vl-fields.test.js
 // non toccano: il gate di normalizzazione e' provato, ma qui si verifica che il
 // campo attraversi INTERO il ciclo forma UI -> definizione persistita -> API ->
 // esportazione -> ripristino, e che il cambio engine conservi l'identita' di
-// stato della cella (req 1: "cambio engine conserva l'identita' dello stato").
+// stato della cella ("cambio engine conserva l'identita' dello stato").
 // Nessun valore segreto transita: i campi vl sono path e nomi di profilo, mai
 // chiavi; l'export non deve contenere segreti.
 
@@ -285,7 +285,7 @@ test('API: defineEngine con vlProfile su variante custom rifiutato (incompatibil
   assert.equal(fleet.definitions().engines.find((e) => e.id === 'vl.custom'), undefined, 'nessun engine sporco persistito');
 });
 
-// --- identita' di stato: indipendente dall engine (req 1) --------------------
+// --- identita' di stato: indipendente dall engine -------------------------
 
 test('identita stato: vlCellBaseDir e indipendente dall engine; cambio engine conserva il percorso', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlrt-id-'));
@@ -304,7 +304,7 @@ test('identita stato: vlCellBaseDir e indipendente dall engine; cambio engine co
 });
 
 test('identita stato: normalizeManagedSpec non accetta campi vl su client non-vl (gate di dominio)', () => {
-  // req 3: i campi nuovi vivono solo sul client vl; su altri client sono un
+  // I campi nuovi vivono solo sul client vl; su altri client sono un
   // errore di configurazione dichiarato, non un no-op silenzioso che li
   // persistirebbe di nascosto.
   let issue = null;

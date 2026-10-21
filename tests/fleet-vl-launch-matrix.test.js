@@ -4,7 +4,7 @@
 // spawn). Non un seccello: il percorso esercitato e' quello che gira in
 // produzione, cosi' la matrice descrive il contratto effettivo.
 //
-// Copre le prove minime dell'auditor (matrice native/custom/anthropic x
+// Copre la matrice completa (native/custom/anthropic x
 // con/senza profilo/modello/effort, env ambientali ostili, envPassthrough,
 // path con spazi, binario inesistente/non eseguibile/versione inadatta,
 // profilo mancante, effort non dichiarato/non supportato).

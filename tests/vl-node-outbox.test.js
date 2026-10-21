@@ -350,7 +350,7 @@ test('real HTTP server: ACL default-deny, PUT acl, delivery, cursor header, from
   assert.notEqual(pollLarge.status, 413, 'payload between 20kb and 24kb must not be rejected with 413');
 });
 
-// --- Direct processOutbox harness (same shape as the audit probes): no real
+// --- Direct processOutbox harness (no real
 // cells are involved, the submit seam is a counting mock.
 
 function makeHarness() {
@@ -483,7 +483,7 @@ test('NC03 broker qualifies a simple local cell name and keeps remote owners rej
 });
 
 // --- NC05: poll longevity across the outbox await (barrier on the fleet
-// directory, same shape as the audit probe).
+// directory, same harness shape as the unit probe).
 
 function makeBrokerHarness() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-vl-poll-race-'));

@@ -1,7 +1,6 @@
 'use strict';
-// La via FEDERATA dei due endpoint vl (auditor, prova minima 5): "provare
-// anche la via federata autorizzata sul nodo owner; nessun processo sul
-// viewer".
+// La via FEDERATA dei due endpoint vl: la stessa operazione deve riuscire
+// anche a distanza, sul nodo owner, senza eseguire nulla sul nodo che guarda.
 //
 // Due server reali, come in fleet-models-federation-e2e.test.js: il motivo e'
 // imparato a caro prezzo — i test unitari sull'allowlist erano verdi mentre il
