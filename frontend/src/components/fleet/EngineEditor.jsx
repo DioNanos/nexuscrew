@@ -357,6 +357,10 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog, f
       <label className="nc-check"><input type="checkbox" checked={f.rc} onChange={(e) => set({ rc: e.target.checked })} /> {t('fleet-remote-control')}</label>
       <select value={f.promptMode} onChange={(e) => set({ promptMode: e.target.value })}><option value="send-keys">send-keys</option><option value="flag">flag</option></select>
       {f.promptMode === 'flag' && <input value={f.promptFlag} placeholder="prompt flag" onChange={(e) => set({ promptFlag: e.target.value })} />}
+      {/* Opt-in F4: un solo Enter dopo il bracketed paste. Spento = paste
+          senza Invio (storico). Non si offre per promptMode 'flag', dove il
+          prompt viaggia in argv e il campo sarebbe rifiutato dal parser. */}
+      {f.promptMode === 'send-keys' && <label className="nc-check"><input type="checkbox" checked={!!f.submit} onChange={(e) => set({ submit: e.target.checked })} /> {t('fleet-submit-enter')}</label>}
       <div className="nc-fleet-pair"><input value={f.modelFlag} placeholder="model flag" onChange={(e) => set({ modelFlag: e.target.value })} /><input value={f.modelValue} placeholder="model default" onChange={(e) => set({ modelValue: e.target.value })} /></div>
       <small>{t('env-write-only')}</small>
       {rows.map((r, i) => <div className="nc-fleet-env" key={`${r.key}-${i}`}><input value={r.key} disabled={r.configured} placeholder="ENV_KEY" onChange={(e) => { const n = rows.slice(); n[i] = { ...r, key: e.target.value }; set({ envRows: n }); }} /><input type="password" value={r.value} placeholder={r.configured ? '•••••• (unchanged)' : 'value'} onChange={(e) => { const n = rows.slice(); n[i] = { ...r, value: e.target.value }; set({ envRows: n }); }} /><button className="nc-btn danger" onClick={() => set({ envRows: rows.filter((_, x) => x !== i) })}>×</button></div>)}

@@ -154,6 +154,12 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     const def = buildEngine(form, creating, catalog);
     if (!creating && engineEdit.form.kind === 'custom' && !engineEdit.form.modelFlag) def.model = null;
     if (!creating && engineEdit.form.kind === 'custom' && engineEdit.form.promptMode !== 'flag') def.promptFlag = null;
+    // submit (F4) vive solo con send-keys: passando a 'flag' o togliendo
+    // l'opt-in la chiave si CANCELLA (null = delete in editEngine), altrimenti
+    // resterebbe nella definizione e il parser la rifiuterebbe al salvataggio
+    // successivo.
+    if (!creating && engineEdit.form.kind === 'custom'
+      && (engineEdit.form.promptMode !== 'send-keys' || !engineEdit.form.submit)) def.submit = null;
     let definitionResult;
     if (creating) definitionResult = await fleetDefineEngine(token, def, route);
     else {
