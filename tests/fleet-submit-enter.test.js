@@ -489,3 +489,58 @@ test('R01: un esito di generazione invalidata non diventa l esito della nuova', 
     'nessun esito sul pane di una generazione che non c e piu');
   assert.deepEqual(outcome, { state: 'delivery-unknown' }, 'ma l incertezza interna si conserva');
 });
+
+// --- R02: la cancellazione non deve disabilitare il cleanup ---------------
+// Se il load e' riuscito, il buffer nominato esiste NEL SERVER tmux con dentro
+// il prompt: la cancellazione vieta il paste, non il cleanup. Prima il flag
+// `loaded` veniva alzato DOPO il controllo di cancellazione, quindi l'uscita
+// anticipata lasciava il buffer nel server.
+test('R02: cancellazione durante il load -> il buffer tmux viene comunque cancellato', async () => {
+  const h = cancelAt(null, (args) => args[0] === 'load-buffer');
+  const r = await runWith(h);
+  assert.equal(r.state, 'cancelled');
+  assert.equal(count(h.calls, 'paste-buffer'), 0, 'nessun paste dopo l invalidazione');
+  assert.equal(count(h.calls, 'delete-buffer'), 1, 'il buffer caricato si cancella comunque');
+  assert.match(h.calls.find((c) => c.startsWith('delete-buffer')), /-b ncstage-[a-f0-9]{16}/);
+});
+
+test('R02: il bootstrap cancella il buffer dopo una cancellazione durante il load', async () => {
+  const { deliverBootstrapPrompt } = require('../lib/fleet/prompt-delivery.js');
+  const { calls, exec } = fakeTmux({});
+  let cancelled = false;
+  const exec2 = async (bin, args) => {
+    const result = await exec(bin, args);
+    if (args[0] === 'load-buffer') cancelled = true;
+    return result;
+  };
+  const r = await deliverBootstrapPrompt({
+    tmuxBin: 'tmux', session: 'cloud-T', prompt: 'boot', client: 'claude',
+    readyWaitMs: 0, tmuxExecImpl: exec2, sleepImpl: async () => {},
+    captureImpl: async () => '❯\n', isCancelled: () => cancelled,
+  });
+  assert.equal(r.state, 'cancelled');
+  assert.equal(count(calls, 'paste-buffer'), 0);
+  assert.equal(count(calls, 'delete-buffer'), 1, 'bootstrap: stesso cleanup');
+});
+
+test('R02: successo e errore del load restano coerenti sul cleanup', async () => {
+  // successo normale: un load, un paste, un Enter, un delete
+  const ok = submit({}, { bracketedPaste: true });
+  const r1 = await ok.run();
+  assert.equal(r1.state, 'submitted');
+  assert.equal(count(ok.calls, 'delete-buffer'), 1, 'successo: buffer cancellato');
+
+  // load fallito: nessun buffer creato, nessun delete da fare
+  const bad = submit({ loadFails: true }, { bracketedPaste: true });
+  const r2 = await bad.run();
+  assert.equal(r2.state, 'failed-pre-paste');
+  assert.equal(count(bad.calls, 'load-buffer'), 2);
+  assert.equal(count(bad.calls, 'delete-buffer'), 0, 'load fallito: niente da cancellare');
+
+  // cancellazione PRIMA del load: nessun buffer e nessun delete
+  const early = submit({}, { bracketedPaste: true, isCancelled: () => true });
+  const r3 = await early.run();
+  assert.equal(r3.state, 'cancelled');
+  assert.equal(count(early.calls, 'load-buffer'), 0);
+  assert.equal(count(early.calls, 'delete-buffer'), 0);
+});
