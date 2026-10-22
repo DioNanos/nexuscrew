@@ -426,7 +426,7 @@ export const FIXTURE_BUILDERS = Object.freeze({
   topLevelOldReset: () => topLevelOldResetEvents(),
 });
 
-// R5/R6 residual sequences from the re-audit.
+// Residual fixture sequences: approval conflicts and generation restarts.
 export function approvalConflictEvents(sessionId = 'sess-approval-conflict') {
   const t = { target: TARGETS.cli, sessionId, sourceKind: 'cli_adapter', seq: 0 };
   return [

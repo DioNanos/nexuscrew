@@ -213,9 +213,9 @@ test('real effort gate: il verdetto segue la versione REALE del binario', (t) =>
 // --- effort ammesso: binario finto 0.5.0 (strato 2 non rilasciato) -----------
 
 test('effort ammesso: binario finto 0.5.0 (>= VL_EFFORT_MIN) -> VL_EFFORT composta', () => {
-  // Lo strato 2 di VL (lettura di VL_EFFORT) non e' ancora rilasciato: il
-  // binario reale e' 0.4.0. Il caso ammesso si prova con un binario finto
-  // 0.5.0, come da mandato: il gate e' lo stesso, cambia solo la versione.
+  // VL_EFFORT support is not released yet: the real binary is 0.4.0. The
+  // accepted case is exercised with a fake 0.5.0 binary: the gate is the
+  // same, only the version differs.
   const home = homeWith();
   try {
     const fake = path.join(home, 'vl-fake-050');
