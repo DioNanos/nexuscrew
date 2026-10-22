@@ -26,6 +26,9 @@ const UFFICIALE_2026_09_12 = Object.freeze(new Set([
   'deepseek-v4.1-flash', 'deepseek-v4-flash', 'deepseek-v4-flash:0731',
   'deepseek-v4-pro', 'deepseek-v4-pro:0813',
   'minimax-m2.7', 'minimax-m3', 'kimi-k2.6', 'kimi-k2.7-code', 'kimi-k3',
+  // minimax-m3.1-flash: aggiunta 2026-10-21 (modello nuovo, non nel campione
+  // 2026-09-12). Vivo su Ollama cloud secondo dichiarazione operatore.
+  'minimax-m3.1-flash',
   'nemotron-3-ultra', 'nemotron-3-super', 'nemotron-3-nano:30b',
   'gemma4', 'gemma4:31b', 'qwen3.5', 'qwen3.5:397b',
   'mistral-large-3:675b', 'gpt-oss:120b', 'gpt-oss:20b',

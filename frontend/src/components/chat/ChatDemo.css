@@ -1,0 +1,30 @@
+/* Hermetic demo surface: the whole viewport is the demo, and the grid scrolls
+   internally when the two tiles do not fit (phone). No absolute labels: the
+   tile header already names the role. */
+.nc-ui0-demo {
+  height: 100dvh; min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg-primary); color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+.nc-ui0-bar {
+  flex: 0 0 auto; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+  padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-secondary);
+  font-size: 12px;
+}
+.nc-ui0-bar span { color: var(--text-tertiary); }
+.nc-ui0-grid {
+  flex: 1 1 auto; min-height: 0; display: grid; gap: 8px; padding: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+.nc-ui0-tile { min-height: 0; min-width: 0; }
+.nc-ui0-sub { color: var(--text-tertiary); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 560px) {
+  .nc-ui0-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    overflow-y: auto;
+  }
+}

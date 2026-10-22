@@ -100,8 +100,21 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
     // I cinque parametri passano da UNA sola conversione: numeri tipizzati e
     // booleani a tre stati (assente / true / false). Vuoto non scrive; `false`
     // e' una risposta e resta tale anche quando il form lo rappresenta a stringa.
-    const def = { id: String(form.id || '').trim(), engine: String(form.engine || '').trim(), ...modelPatchFromValues(form) };
-    await fleetDefineModel(token, def, route);
+    // I livelli di effort dichiarati passano dalla stessa conversione: il
+    // dialogo li tiene come stringa, il file li vuole come array.
+    const patch = modelPatchFromValues(form);
+    if (modelEdit && modelEdit.mode === 'edit') {
+      // Modifica: l'identita' (id, engine) NON si tocca, e i campi che il form
+      // non porta non vengono scritti. Una dichiarazione di livelli svuotata
+      // e' una RIMOZIONE esplicita, non un silenzio.
+      const original = modelEdit.original || {};
+      if (original.effortLevels && !patch.effortLevels) patch.effortLevels = null;
+      if (!Object.keys(patch).length) { setModelEdit(null); return; }
+      await fleetEditModel(token, String(form.id || '').trim(), String(form.engine || '').trim(), patch, route);
+    } else {
+      const def = { id: String(form.id || '').trim(), engine: String(form.engine || '').trim(), ...patch };
+      await fleetDefineModel(token, def, route);
+    }
     setModelEdit(null);
     await refresh();
   });
@@ -409,6 +422,8 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
           </span><span>
             {caps.includes('model-test') && <button className="nc-btn ghost" disabled={busy || provaBloccata}
               onClick={() => run(() => provaModello(m.engine, m.id))}>{t('model-test')}</button>}
+            {caps.includes('edit-model') && <button className="nc-btn ghost" disabled={locked || busy}
+              onClick={() => { setErr(''); setModelEdit({ mode: 'edit', original: m, form: { id: m.id, engine: m.engine, contextWindow: m.contextWindow, maxTokens: m.maxTokens, tools: m.tools, vision: m.vision, reasoning: m.reasoning, effortLevels: m.effortLevels } }); }}>{t('edit')}</button>}
             <button className="nc-btn danger" disabled={locked || busy}
               onClick={() => run(() => fleetRemoveModel(token, m.id, m.engine, route))}>×</button>
           </span></div>

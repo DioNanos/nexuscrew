@@ -55,6 +55,46 @@ Activity hooks are injected only into CLI versions that have been verified
 against them. On any other version no hook is installed and the cell runs
 without them — a declared limitation, not a failure.
 
+### VL engine fields (per-cell identity, binary, profile, effort)
+
+A `vl` engine accepts four optional fields. They are paths and names — never
+secrets — and they are validated twice: the *shape* when the definition is
+saved, the *truth on the node* at every launch.
+
+- `vlBinary` — absolute path of the `vl` executable on the **node that runs
+  the cell**. When declared it is the only binary considered: NexusCrew does
+  not fall back to the `PATH`. A declared binary that is missing, is not a
+  regular file, or is not executable refuses the start with a declared reason.
+  The same resolved file is used for the version probes and for the spawn, so
+  the gate never interrogates a different executable than the one launched.
+  Spaces in the path are legal. Without the field, the `PATH` is used exactly
+  as before.
+- `vlConfigFile` — absolute path of a shared `config.toml` catalog of `vl`
+  profiles. At every launch NexusCrew copies it into the cell's own
+  `config/vl/config.toml` (atomic write, mode 0600). The cell's
+  `selected.toml` is never created nor touched, and no `secrets.env` is ever
+  written: keys travel by name only.
+- `vlProfile` — a single `-p <name>` argument, valid on `vl.native` only (the
+  remote variants already compose provider and endpoint, and the two choices
+  exclude each other). A profile that is not in the catalog refuses the start
+  explicitly. In profile mode `VL_PROVIDER` and `VL_BASE_URL` are neutralized,
+  as are `VL_MODEL` and `VL_EFFORT` when NexusCrew carries no explicit
+  choice. Precedence: explicit operator choice > profile > the cell's own
+  `selected.toml`.
+- `effort` — accepted only among the levels declared for the model, and only
+  when the selected binary is new enough to read `VL_EFFORT`. An unsupported
+  or unknown level refuses the start with a declared error instead of being
+  ignored or promoted to another level.
+
+Every `vl` cell also gets its own identity directory under the NexusCrew state
+tree, keyed by owner instance id and cell id, with private `XDG_STATE_HOME`,
+`XDG_DATA_HOME` and `XDG_CONFIG_HOME`. Two cells on the same engine are
+isolated down to the host, not just in their environment.
+
+The cell prompt travels only through `VL_SYSTEM_APPEND_FILE`. NexusCrew never
+reads, rewrites, archives, rotates or deletes `vl` sessions, never deletes a
+lock, and never puts a credential on the command line.
+
 ### Bootstrap prompt delivery (Kimi engines)
 
 For `kimi.native` and the Claude Code "Kimi Code" provider the cell prompt is

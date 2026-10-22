@@ -27,7 +27,7 @@ const { main } = require('../lib/fleet/cell-exec.js');
 const { EventEmitter } = require('node:events');
 const { NOME_GENERAZIONE } = require('../lib/files/activity.js');
 
-const SESSIONE = 'cloud-Dev';
+const SESSIONE = 'cloud-CellaProva';
 
 // --- il mondo -------------------------------------------------------------
 // Fake tmux con lo stato VERO del server: `vive` e' l'elenco delle sessioni che
@@ -39,7 +39,7 @@ function mondo(t, { vive = [], pronto = true, broker = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-live-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700);
-  const cwd = path.join(home, 'Dev'); fs.mkdirSync(cwd);
+  const cwd = path.join(home, 'CellaProva'); fs.mkdirSync(cwd);
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const client = path.join(home, '.local', 'bin', 'claude');
   fs.writeFileSync(client, '#!/bin/sh\nexit 0\n', { mode: 0o755 }); fs.chmodSync(client, 0o755);
@@ -92,7 +92,7 @@ process.exit(0);
         client: 'claude', provider: 'native', model: '', permissionPolicy: 'unsafe',
       },
     }],
-    cells: [{ id: 'Dev', tmuxSession: SESSIONE, cwd, engine: 'ec', boot: true }],
+    cells: [{ id: 'CellaProva', tmuxSession: SESSIONE, cwd, engine: 'ec', boot: true }],
   });
 
   const ticket = [];
@@ -130,7 +130,7 @@ test('up su una cella viva: 409 «già in esecuzione» e activity.gen INTATTO', 
   const statPrima = fs.statSync(w.genPath);
   const prima = fs.readFileSync(w.genPath, 'utf8');
 
-  await assert.rejects(() => w.runtime.up('Dev'), (e) => {
+  await assert.rejects(() => w.runtime.up('CellaProva'), (e) => {
     assert.equal(e.status, 409, 'stesso 409 che dava la new-session');
     assert.equal(e.fleetCode, 'SESSION_DUPLICATE');
     assert.match(String(e.message), /già in esecuzione/);
@@ -156,12 +156,12 @@ test('boot di flotta con la cella gia\' viva: salta e non scrive', async (t) => 
 
   const fleet = {
     available: true,
-    status: async () => ({ cells: [{ cell: 'Dev', tmuxSession: SESSIONE, boot: true }] }),
+    status: async () => ({ cells: [{ cell: 'CellaProva', tmuxSession: SESSIONE, boot: true }] }),
     up: (id) => w.runtime.up(id),
   };
   const res = await bootCells(fleet, { log: () => {} });
 
-  assert.deepEqual(res.skipped, ['Dev'], 'una cella gia\' viva e\' uno SKIP, non un errore');
+  assert.deepEqual(res.skipped, ['CellaProva'], 'una cella gia\' viva e\' uno SKIP, non un errore');
   assert.deepEqual(res.started, []);
   assert.deepEqual(res.failed, []);
   assert.equal(fs.readFileSync(w.genPath, 'utf8'), prima, 'la generazione resta quella del lancio vero');
@@ -175,7 +175,7 @@ test('up su una cella spenta: generazione NUOVA nel payload, e su disco non scri
   const w = mondo(t, { vive: [] });
   genera(w, 'gen-vecchia-di-un-lancio-precedente');
 
-  const esito = await w.runtime.up('Dev');
+  const esito = await w.runtime.up('CellaProva');
   assert.ok(esito, 'la cella spenta si lancia');
 
   assert.equal(w.ticket.length, 1, 'un ticket, una cella');
@@ -196,7 +196,7 @@ test('restart: la cella muore e rinasce, con una generazione nuova e coerente', 
   const w = mondo(t, { vive: [SESSIONE] });
   genera(w, 'gen-del-lancio-vero');
 
-  await w.runtime.restart('Dev');
+  await w.runtime.restart('CellaProva');
 
   assert.equal(w.ticket.length, 1, 'un ticket, un lancio');
   const dopo = w.ticket[0].activity.generation;
@@ -207,16 +207,23 @@ test('restart: la cella muore e rinasce, con una generazione nuova e coerente', 
 
 // --- 5. IL RIPRODUTTORE: due up concorrenti, e sul disco chi ha vinto -------
 //
-// E' il caso che la verifica ha riprodotto: entrambi vedevano «non viva», il
-// vincitore creava la sessione con la generazione A, il perdente scriveva B e
-// solo dopo prendeva il 409 — e sul disco restava B, che non e' la generazione
-// di nessun lancio vivo.
+// E' il caso che la verifica ha riprodotto (pre-lock): entrambi vedevano «non
+// viva», il vincitore creava la sessione con la generazione A, il perdente
+// scriveva B e solo dopo prendeva il 409 — e sul disco restava B, che non era
+// la generazione di nessun lancio vivo.
 //
-// Con il disegno nuovo la scrittura non sta piu' nella risoluzione (che gira
-// anche per chi perde): la fa `cell-exec`, che gira DENTRO la sessione tmux
-// creata, quindi solo per il vincitore. Questo test compone le due meta': il
-// runtime decide chi vince, e poi ESEGUE il passo di scrittura di cell-exec con
-// il payload del vincitore.
+// Il disegno ha DUE difese, e questo test prova ENTRAMBE. La prima e' il lock
+// per cella: due up concorrenti si serializzano, quindi la corsa non esiste
+// piu' — il secondo parte DOPO il primo, vede la sessione viva e prende il 409
+// in PREFLIGHT, senza nemmeno risolvere lo spec (un solo ticket). La seconda e'
+// che la scrittura della generazione non sta nella risoluzione: la fa
+// `cell-exec`, DENTRO la sessione tmux creata, quindi solo per il vincitore —
+// ed e' la meta' che resta decisiva se un giorno il lock venisse rimosso.
+//
+// Nota sul fake tmux: il broker «attesa» che determinizzava la corsa non serve
+// piu' (il lock la determinizza da solo) e il fake NON rifiuta una seconda
+// new-session: senza lock il secondo up CREEREBBE una seconda sessione — e'
+// cosi' che questo test cadrebbe se la serializzazione regredisse.
 
 function figlioCheErrore() {
   const ee = new EventEmitter();
@@ -226,44 +233,28 @@ function figlioCheErrore() {
 }
 
 test('due up concorrenti: UN vincitore, e sul disco la generazione del VINCITORE', async (t) => {
-  // Il vincitore lo decide la new-session (atomica). Qui lo si rende
-  // DETERMINISTICO senza togliere la corsa: il secondo up risolve lo spec e
-  // chiede il suo ticket — quindi e' una corsa vera, con due generazioni
-  // diverse in gioco — ma la sua new-session parte dopo che la prima ha gia'
-  // creato la sessione, quindi prende il duplicato.
-  const attesa = (ticket, ctx) => ({
-    issue: async (payload) => {
-      ticket.push(payload);
-      if (ticket.length > 1) {
-        for (let i = 0; i < 400 && !fs.readFileSync(ctx.statoPath, 'utf8').includes(ctx.sessione); i += 1) {
-          await new Promise((r) => setTimeout(r, 5));
-        }
-      }
-      return { socketPath: path.join('/tmp', 'broker.sock'), nonce: 'n'.repeat(64) };
-    },
-    revoke: async () => {},
-    close: async () => {},
-  });
-  const w = mondo(t, { vive: [], broker: attesa });
+  const w = mondo(t, { vive: [] });
   genera(w, 'gen-di-un-lancio-vecchio');
 
-  const esiti = await Promise.allSettled([w.runtime.up('Dev'), w.runtime.up('Dev')]);
+  const esiti = await Promise.allSettled([w.runtime.up('CellaProva'), w.runtime.up('CellaProva')]);
   const vinti = esiti.filter((e) => e.status === 'fulfilled');
   const persi = esiti.filter((e) => e.status === 'rejected');
   assert.equal(vinti.length, 1, 'UN solo up riesce');
   assert.equal(persi.length, 1, 'e uno solo perde');
+  // Il perdente e' fermato dal PREFLIGHT (sessione gia' viva), non dalla
+  // new-session: il lock ha chiuso la corsa prima che iniziasse.
   assert.equal(persi[0].reason.status, 409);
   assert.equal(persi[0].reason.fleetCode, 'SESSION_DUPLICATE');
-  assert.equal(w.ticket.length, 2, 'entrambi hanno risolto lo spec: la corsa era vera');
+  assert.equal(persi[0].reason.fleetPhase, 'preflight', 'serializzato: il 409 arriva dal preflight, non dalla new-session');
+  // La conseguenza diretta della serializzazione: il perdente non risolve
+  // nemmeno lo spec. UN solo ticket, una sola generazione in gioco.
+  assert.equal(w.ticket.length, 1, 'il perdente non risolve lo spec: la corsa non esiste piu\'');
 
-  // Nessuno dei due ha scritto: la risoluzione non tocca piu' activity.gen, e
-  // quindi il perdente non puo' lasciare la SUA generazione sul disco.
+  // Nessuno dei due ha scritto: la risoluzione non tocca activity.gen.
   assert.equal(fs.readFileSync(w.genPath, 'utf8'), 'gen-di-un-lancio-vecchio',
     'ne\' il vincitore ne\' il perdente scrivono durante up');
 
   const genVincitore = w.ticket[0].activity.generation;
-  const genPerdente = w.ticket[1].activity.generation;
-  assert.notEqual(genVincitore, genPerdente, 'due generazioni diverse in gioco');
 
   // Il passo che nella cella vera fa cell-exec, eseguito con il payload del
   // vincitore: e' lui che mette la generazione su disco, prima del client.
@@ -277,5 +268,4 @@ test('due up concorrenti: UN vincitore, e sul disco la generazione del VINCITORE
   // La prima riga: la seconda e' il segno dell'uscita, che questo supervisore dichiara.
   const suDisco = fs.readFileSync(w.genPath, 'utf8').split('\n')[0];
   assert.equal(suDisco, genVincitore, 'sul disco la generazione del VINCITORE');
-  assert.notEqual(suDisco, genPerdente, 'mai quella del perdente');
 });

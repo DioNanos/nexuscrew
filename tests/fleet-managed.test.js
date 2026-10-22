@@ -254,6 +254,7 @@ test('Ollama Direct discovery: errore API usa la shortlist TOP di fallback', asy
   const models = await discoverOllamaModels({ noCache: true, apiKey: 'test-key', home: tmp(), fetchImpl: async () => { throw new Error('down'); } });
   assert.deepEqual(models, [
     'glm-5.2', 'kimi-k2.7-code', 'deepseek-v4-pro', 'minimax-m3',
+    'minimax-m3.1-flash',
     'qwen3.5:397b', 'deepseek-v4-flash', 'mistral-large-3:675b', 'gemma4:31b',
     'glm-5.3-flash',
     'glm-5.3',
@@ -324,7 +325,7 @@ test('Ollama Direct: usa ollama.com + OLLAMA_API_KEY, mai localhost', () => {
     fs.writeFileSync(secrets, 'OLLAMA_API_KEY=ollama-secret\n', { mode: 0o600 });
     for (const client of ['claude', 'codex-vl']) {
       const managed = { client, provider: 'ollama-cloud', model: 'glm-5.2' };
-      const r = resolveManagedEngine({ id: `${client}.ollama-cloud`, label: 'Ollama', managed }, { id: 'Dev' }, { home, providerSecretsPath: secrets, env: {} });
+      const r = resolveManagedEngine({ id: `${client}.ollama-cloud`, label: 'Ollama', managed }, { id: 'CellaProva' }, { home, providerSecretsPath: secrets, env: {} });
       assert.equal(r.ok, true);
       assert.equal(JSON.stringify(r).includes('127.0.0.1'), false);
       assert.equal(JSON.stringify(r).includes('localhost'), false);
@@ -350,11 +351,11 @@ test('Claude native onora rc:false', () => {
   const home = tmp();
   try {
     fakeClient(home, 'claude');
-    const r = resolveManagedEngine({ id: 'claude.native', label: 'Claude', rc: false, managed: { client: 'claude', provider: 'native', model: '' } }, { id: 'Dev' }, { home });
+    const r = resolveManagedEngine({ id: 'claude.native', label: 'Claude', rc: false, managed: { client: 'claude', provider: 'native', model: '' } }, { id: 'CellaProva' }, { home });
     assert.equal(r.ok, true);
     assert.equal(r.engine.args.includes('--remote-control'), false);
     assert.equal(r.engine.args.includes('--dangerously-skip-permissions'), true);
-    const standard = resolveManagedEngine({ id: 'claude.native', label: 'Claude', rc: false, managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'standard' } }, { id: 'Dev' }, { home });
+    const standard = resolveManagedEngine({ id: 'claude.native', label: 'Claude', rc: false, managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'standard' } }, { id: 'CellaProva' }, { home });
     assert.equal(standard.engine.args.includes('--dangerously-skip-permissions'), false);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -368,7 +369,7 @@ test('Claude enterprise providers usano solo i flag ambiente documentati', () =>
       ['vertex', 'CLAUDE_CODE_USE_VERTEX'],
       ['foundry', 'CLAUDE_CODE_USE_FOUNDRY'],
     ]) {
-      const r = resolveManagedEngine({ id: `claude.${provider}`, label: provider, managed: { client: 'claude', provider, model: '' } }, { id: 'Dev' }, { home });
+      const r = resolveManagedEngine({ id: `claude.${provider}`, label: provider, managed: { client: 'claude', provider, model: '' } }, { id: 'CellaProva' }, { home });
       assert.equal(r.ok, true);
       assert.deepEqual(r.engine.env, { [key]: '1' });
       assert.equal(r.engine.args.includes('--dangerously-skip-permissions'), true);
@@ -382,7 +383,7 @@ test('Claude OpenRouter usa il contratto Anthropic-skin dedicato senza finestre 
   try {
     fakeClient(home, 'claude');
     const model = 'anthropic/claude-sonnet-4';
-    const r = resolveManagedEngine({ id: 'claude.openrouter', label: 'OpenRouter', managed: { client: 'claude', provider: 'openrouter', model } }, { id: 'Dev' }, { home, env: { OPENROUTER_API_KEY: 'synthetic-openrouter-token' } });
+    const r = resolveManagedEngine({ id: 'claude.openrouter', label: 'OpenRouter', managed: { client: 'claude', provider: 'openrouter', model } }, { id: 'CellaProva' }, { home, env: { OPENROUTER_API_KEY: 'synthetic-openrouter-token' } });
     assert.equal(r.ok, true);
     assert.equal(r.engine.env.ANTHROPIC_BASE_URL, 'https://openrouter.ai/api');
     assert.equal(r.engine.env.ANTHROPIC_AUTH_TOKEN, 'synthetic-openrouter-token');
@@ -404,7 +405,7 @@ test('Claude Kimi Code isola config, usa API_KEY child-only e applica il profilo
       ['k3', '262144', true], ['k3[1m]', '1048576', true],
       ['kimi-for-coding', '262144', false], ['kimi-for-coding-highspeed', '262144', false],
     ]) {
-      const r = resolveManagedEngine({ id: `claude.kimi-${model}`, label: 'Kimi Code', managed: { client: 'claude', provider: 'kimi-code', model } }, { id: 'Dev' }, { home, env: { KIMI_API_KEY: 'synthetic-kimi-token' } });
+      const r = resolveManagedEngine({ id: `claude.kimi-${model}`, label: 'Kimi Code', managed: { client: 'claude', provider: 'kimi-code', model } }, { id: 'CellaProva' }, { home, env: { KIMI_API_KEY: 'synthetic-kimi-token' } });
       assert.equal(r.ok, true);
       assert.equal(r.engine.env.ANTHROPIC_BASE_URL, 'https://api.kimi.com/coding/');
       assert.equal(r.engine.env.ANTHROPIC_API_KEY, 'synthetic-kimi-token');
@@ -432,7 +433,7 @@ test('Codex-VL OpenRouter usa Responses command-auth senza env_key e pinna Kimi 
   try {
     fakeClient(home, 'codex-vl');
     const secret = 'synthetic-openrouter-token';
-    const r = resolveManagedEngine({ id: 'codex-vl.openrouter', label: 'OpenRouter', managed: { client: 'codex-vl', provider: 'openrouter', model: 'moonshotai/kimi-k3' } }, { id: 'Dev' }, { home, env: { OPENROUTER_API_KEY: secret } });
+    const r = resolveManagedEngine({ id: 'codex-vl.openrouter', label: 'OpenRouter', managed: { client: 'codex-vl', provider: 'openrouter', model: 'moonshotai/kimi-k3' } }, { id: 'CellaProva' }, { home, env: { OPENROUTER_API_KEY: secret } });
     assert.equal(r.ok, true);
     assert.deepEqual(r.engine.env, {
       OPENROUTER_API_KEY: secret,
@@ -500,7 +501,7 @@ test('OpenAI API usa OPENAI_API_KEY senza creare un provider compatibile', () =>
   try {
     for (const client of ['codex', 'codex-vl']) {
       fakeClient(home, client);
-      const r = resolveManagedEngine({ id: `${client}.openai-api`, label: 'OpenAI API', managed: { client, provider: 'openai-api', model: 'gpt-5.4' } }, { id: 'Dev' }, { home, env: { OPENAI_API_KEY: 'secret' } });
+      const r = resolveManagedEngine({ id: `${client}.openai-api`, label: 'OpenAI API', managed: { client, provider: 'openai-api', model: 'gpt-5.4' } }, { id: 'CellaProva' }, { home, env: { OPENAI_API_KEY: 'secret' } });
       assert.equal(r.ok, true);
       assert.deepEqual(r.engine.env, client === 'codex-vl'
         ? { OPENAI_API_KEY: 'secret', CODEX_APP_SERVER_IDENTITY_REQUIRED: '0' }
@@ -523,7 +524,7 @@ test('Z.AI: config visibile, secret redatto, launch env interno', () => {
     assert.equal(info.configured, true);
     assert.equal(info.auth, 'ZAI_API_KEY_A');
     assert.equal(JSON.stringify(info).includes('super-secret'), false);
-    const r = resolveManagedEngine({ id: 'claude.zai-a', label: 'z', managed }, { id: 'Dev' }, { home, providerSecretsPath: secrets, env: {} });
+    const r = resolveManagedEngine({ id: 'claude.zai-a', label: 'z', managed }, { id: 'CellaProva' }, { home, providerSecretsPath: secrets, env: {} });
     assert.equal(r.ok, true);
     assert.equal(r.engine.env.ANTHROPIC_AUTH_TOKEN, 'super-secret');
     assert.equal(r.engine.args.includes('--dangerously-skip-permissions'), true);
@@ -537,7 +538,7 @@ test('Z.AI generico: nome variabile configurabile, valore solo da environment', 
     fakeClient(home, 'claude');
     const spec = normalizeManagedSpec({ client: 'claude', provider: 'zai', envKey: 'TEAM_ZAI_KEY', model: 'glm-5.2[1m]' });
     assert.equal(spec.envKey, 'TEAM_ZAI_KEY');
-    const r = resolveManagedEngine({ id: 'claude.zai', label: 'Z.AI', managed: spec }, { id: 'Dev' }, { home, env: { TEAM_ZAI_KEY: 'secret' } });
+    const r = resolveManagedEngine({ id: 'claude.zai', label: 'Z.AI', managed: spec }, { id: 'CellaProva' }, { home, env: { TEAM_ZAI_KEY: 'secret' } });
     assert.equal(r.ok, true);
     assert.equal(r.engine.env.ANTHROPIC_AUTH_TOKEN, 'secret');
     assert.equal(JSON.stringify(r.info).includes('secret'), false);
@@ -556,7 +557,7 @@ test('provider shell: launchd risolve export esistenti senza eseguire il file o 
     const info = describeManaged(managed, { home, providerShellPath: shellFile, env: {} });
     assert.equal(info.configured, true);
     assert.equal(JSON.stringify(info).includes('secret-from-shell'), false);
-    const resolved = resolveManagedEngine({ id: 'claude.zai', label: 'Z.AI', managed }, { id: 'Dev' }, { home, providerShellPath: shellFile, env: {} });
+    const resolved = resolveManagedEngine({ id: 'claude.zai', label: 'Z.AI', managed }, { id: 'CellaProva' }, { home, providerShellPath: shellFile, env: {} });
     assert.equal(resolved.ok, true);
     assert.equal(resolved.engine.env.ANTHROPIC_AUTH_TOKEN, 'secret-from-shell');
     assert.equal(fs.existsSync('/tmp/nc-must-not-run'), false);
@@ -581,7 +582,7 @@ test('provider canonico: Termux risolve ai.env senza eseguire source o esporre l
     const info = describeManaged(managed, { home, env: {} });
     assert.equal(info.configured, true);
     assert.equal(JSON.stringify(info).includes('termux-secret'), false);
-    const resolved = resolveManagedEngine({ id: 'codex-vl.ollama-cloud', label: 'Ollama', managed }, { id: 'Dev' }, { home, env: {}, platform: 'android' });
+    const resolved = resolveManagedEngine({ id: 'codex-vl.ollama-cloud', label: 'Ollama', managed }, { id: 'CellaProva' }, { home, env: {}, platform: 'android' });
     assert.equal(resolved.ok, true);
     assert.equal(resolved.engine.env.OPENAI_API_KEY, 'termux-secret');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -624,13 +625,13 @@ test('Codex-VL Native: standard non forza bypass; unsafe e opt-in', () => {
   try {
     const bin = fakeClient(home, 'codex-vl');
     const managed = { client: 'codex-vl', provider: 'native', model: '' };
-    const r = resolveManagedEngine({ id: 'codex-vl.native', label: 'Codex', managed }, { id: 'Dev', prompt: 'bootstrap' }, { home });
+    const r = resolveManagedEngine({ id: 'codex-vl.native', label: 'Codex', managed }, { id: 'CellaProva', prompt: 'bootstrap' }, { home });
     assert.equal(r.ok, true);
     assert.equal(r.engine.command, bin);
     assert.deepEqual(r.engine.env, { CODEX_APP_SERVER_IDENTITY_REQUIRED: '0' });
     assert.deepEqual(r.engine.args, ['--no-daemon', 'bootstrap']);
     assert.equal(r.engine.promptMode, 'managed-argv');
-    const unsafe = resolveManagedEngine({ id: 'codex-vl.native', label: 'Codex', managed: { ...managed, permissionPolicy: 'unsafe' } }, { id: 'Dev', prompt: 'bootstrap' }, { home });
+    const unsafe = resolveManagedEngine({ id: 'codex-vl.native', label: 'Codex', managed: { ...managed, permissionPolicy: 'unsafe' } }, { id: 'CellaProva', prompt: 'bootstrap' }, { home });
     assert.deepEqual(unsafe.engine.args, ['--dangerously-bypass-approvals-and-sandbox', '--no-daemon', 'bootstrap']);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -650,7 +651,7 @@ test('Termux: npm CLI con shebang /usr/bin/env node usa process.execPath esplici
     const r = resolveManagedEngine({
       id: 'codex-vl.native', label: 'Codex-VL',
       managed: { client: 'codex-vl', provider: 'native', model: '', permissionPolicy: 'standard' },
-    }, { id: 'Dev', prompt: 'bootstrap' }, { home, platform: 'android', nodeExecPath: node });
+    }, { id: 'CellaProva', prompt: 'bootstrap' }, { home, platform: 'android', nodeExecPath: node });
     assert.equal(r.ok, true);
     assert.equal(r.engine.command, node);
     assert.deepEqual(r.engine.args, [bin, '--no-daemon', 'bootstrap']);
@@ -665,7 +666,7 @@ test('Termux: native or shell CLI remains direct exec', () => {
     assert.equal(needsExplicitNode(bin, 'android'), false);
     const r = resolveManagedEngine({ id: 'pi.native', label: 'Pi', managed: {
       client: 'pi', provider: 'native', model: '', permissionPolicy: 'standard',
-    } }, { id: 'Dev' }, { home, platform: 'android', nodeExecPath: '/should/not/be/used' });
+    } }, { id: 'CellaProva' }, { home, platform: 'android', nodeExecPath: '/should/not/be/used' });
     assert.equal(r.engine.command, bin);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -693,7 +694,7 @@ test('needsExplicitNode: Termux runtime via PREFIX attiva il workaround anche co
     const r = resolveManagedEngine({
       id: 'codex-vl.native', label: 'Codex-VL',
       managed: { client: 'codex-vl', provider: 'native', model: '', permissionPolicy: 'standard' },
-    }, { id: 'Dev' }, { home, platform: 'linux', env: termuxEnv, nodeExecPath: node });
+    }, { id: 'CellaProva' }, { home, platform: 'linux', env: termuxEnv, nodeExecPath: node });
     assert.equal(r.ok, true);
     assert.equal(r.engine.command, node);
     assert.deepEqual(r.engine.args, [bin, '--no-daemon']);
@@ -706,7 +707,7 @@ test('adapter separati: codex, codex-vl e pi risolvono binari distinti', () => {
     const bins = Object.fromEntries(['codex', 'codex-vl', 'pi'].map((name) => [name, fakeClient(home, name)]));
     for (const client of Object.keys(bins)) {
       const provider = client === 'pi' ? 'ollama' : 'native';
-      const r = resolveManagedEngine({ id: `${client}.${provider}`, label: client, managed: { client, provider, model: client === 'pi' ? 'qwen3:8b' : '' } }, { id: 'Dev' }, { home });
+      const r = resolveManagedEngine({ id: `${client}.${provider}`, label: client, managed: { client, provider, model: client === 'pi' ? 'qwen3:8b' : '' } }, { id: 'CellaProva' }, { home });
       assert.equal(r.ok, true);
       assert.equal(r.engine.command, bins[client]);
     }
@@ -717,7 +718,7 @@ test('Pi native usa la configurazione propria senza forzare provider o modello',
   const home = tmp();
   try {
     const bin = fakeClient(home, 'pi');
-    const r = resolveManagedEngine({ id: 'pi.native', label: 'Pi', managed: { client: 'pi', provider: 'native', model: '' } }, { id: 'Dev', prompt: 'bootstrap' }, { home });
+    const r = resolveManagedEngine({ id: 'pi.native', label: 'Pi', managed: { client: 'pi', provider: 'native', model: '' } }, { id: 'CellaProva', prompt: 'bootstrap' }, { home });
     assert.equal(r.ok, true);
     assert.equal(r.engine.command, bin);
     assert.deepEqual(r.engine.args, ['bootstrap']);
@@ -729,7 +730,7 @@ test('Pi Ollama locale: adapter documentato generato da NexusCrew, modello obbli
   try {
     fakeClient(home, 'pi');
     assert.equal(normalizeManagedSpec({ client: 'pi', provider: 'ollama', model: '' }), null);
-    const r = resolveManagedEngine({ id: 'pi.ollama', label: 'Ollama', managed: { client: 'pi', provider: 'ollama', model: 'qwen3:8b' } }, { id: 'Dev' }, { home });
+    const r = resolveManagedEngine({ id: 'pi.ollama', label: 'Ollama', managed: { client: 'pi', provider: 'ollama', model: 'qwen3:8b' } }, { id: 'CellaProva' }, { home });
     assert.equal(r.ok, true);
     assert.deepEqual(r.engine.args.slice(2), ['--provider', 'ollama', '--model', 'qwen3:8b']);
     const source = fs.readFileSync(r.engine.args[1], 'utf8');
@@ -743,7 +744,7 @@ test('Custom Codex: env-only, Responses obbligatoria, mai Chat Completions', () 
   try {
     fakeClient(home, 'codex');
     const managed = { client: 'codex', provider: 'custom', displayName: 'Fireworks', protocol: 'openai_responses', baseUrl: 'https://api.fireworks.ai/inference/v1', envKey: 'FIREWORKS_API_KEY', providerId: 'fireworks', model: 'model-x' };
-    const r = resolveManagedEngine({ id: 'codex.fireworks', label: 'Fireworks', managed }, { id: 'Dev' }, { home, env: { FIREWORKS_API_KEY: 'secret' } });
+    const r = resolveManagedEngine({ id: 'codex.fireworks', label: 'Fireworks', managed }, { id: 'CellaProva' }, { home, env: { FIREWORKS_API_KEY: 'secret' } });
     assert.equal(r.ok, true);
     assert.equal(r.engine.env.FIREWORKS_API_KEY, 'secret');
     const argv = JSON.stringify(r.engine.args);
@@ -752,7 +753,7 @@ test('Custom Codex: env-only, Responses obbligatoria, mai Chat Completions', () 
     assert.equal(JSON.stringify(r.info).includes('secret'), false);
     assert.equal(normalizeManagedSpec({ ...managed, protocol: 'openai_chat' }), null);
     assert.equal(normalizeManagedSpec({ ...managed, baseUrl: 'https://user:secret@example.com/v1' }), null);
-    const quoted = resolveManagedEngine({ id: 'codex.quoted', label: 'Quoted', managed: { ...managed, displayName: 'Lab "quoted"' } }, { id: 'Dev' }, { home, env: { FIREWORKS_API_KEY: 'secret' } });
+    const quoted = resolveManagedEngine({ id: 'codex.quoted', label: 'Quoted', managed: { ...managed, displayName: 'Lab "quoted"' } }, { id: 'CellaProva' }, { home, env: { FIREWORKS_API_KEY: 'secret' } });
     assert.ok(quoted.engine.args.includes('model_providers.fireworks.name="Lab \\"quoted\\""'));
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -762,7 +763,7 @@ test('Pi provider: argv diretto e API key solo da environment', () => {
   try {
     fakeClient(home, 'pi');
     const managed = { client: 'pi', provider: 'openrouter', model: 'openai/gpt-oss-120b' };
-    const r = resolveManagedEngine({ id: 'pi.openrouter', label: 'Pi', managed }, { id: 'Dev', prompt: 'boot' }, { home, env: { OPENROUTER_API_KEY: 'secret' } });
+    const r = resolveManagedEngine({ id: 'pi.openrouter', label: 'Pi', managed }, { id: 'CellaProva', prompt: 'boot' }, { home, env: { OPENROUTER_API_KEY: 'secret' } });
     assert.equal(r.ok, true);
     assert.deepEqual(r.engine.args, ['--provider', 'openrouter', '--model', 'openai/gpt-oss-120b', 'boot']);
     assert.deepEqual(r.engine.env, { OPENROUTER_API_KEY: 'secret' });
@@ -779,7 +780,7 @@ test('Pi Custom: estensione documentata, base URL/protocollo reali, nessun segre
       protocol: 'openai-responses', baseUrl: 'https://lab.example/v1',
       envKey: 'LAB_API_KEY', providerId: 'lab-responses', model: 'model-r1',
     };
-    const r = resolveManagedEngine({ id: 'pi.lab', label: 'Pi Lab', managed }, { id: 'Dev' }, { home, env: { LAB_API_KEY: 'top-secret' } });
+    const r = resolveManagedEngine({ id: 'pi.lab', label: 'Pi Lab', managed }, { id: 'CellaProva' }, { home, env: { LAB_API_KEY: 'top-secret' } });
     assert.equal(r.ok, true);
     assert.equal(r.engine.env.LAB_API_KEY, 'top-secret');
     assert.deepEqual(r.engine.args.slice(0, 2), ['--extension', path.join(home, '.nexuscrew', 'pi-providers', 'lab-responses.ts')]);
@@ -836,12 +837,12 @@ test('policy per-cell: Claude override standard NON mette --dangerously-skip-per
     fakeClient(home, 'claude');
     const engine = { id: 'claude.native', label: 'Claude', managed: { client: 'claude', provider: 'native', model: '' } };
     // default engine (claude) = unsafe -> flag presente, info.policy = unsafe
-    const def = resolveManagedEngine(engine, { id: 'Dev' }, { home });
+    const def = resolveManagedEngine(engine, { id: 'CellaProva' }, { home });
     assert.equal(def.ok, true);
     assert.equal(def.engine.args.includes('--dangerously-skip-permissions'), true);
     assert.equal(def.info.permissionPolicy, 'unsafe');
     // override PER-CELL standard -> flag assente, policy effettiva standard
-    const std = resolveManagedEngine(engine, { id: 'Dev', permissionPolicies: { 'claude.native': 'standard' } }, { home });
+    const std = resolveManagedEngine(engine, { id: 'CellaProva', permissionPolicies: { 'claude.native': 'standard' } }, { home });
     assert.equal(std.engine.args.includes('--dangerously-skip-permissions'), false);
     assert.equal(std.info.permissionPolicy, 'standard');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -852,9 +853,9 @@ test('policy per-cell: Codex-VL override unsafe mette bypass; standard no', () =
   try {
     fakeClient(home, 'codex-vl');
     const engine = { id: 'codex-vl.native', label: 'Codex', managed: { client: 'codex-vl', provider: 'native', model: '' } };
-    const unsafe = resolveManagedEngine(engine, { id: 'Dev', permissionPolicies: { 'codex-vl.native': 'unsafe' } }, { home });
+    const unsafe = resolveManagedEngine(engine, { id: 'CellaProva', permissionPolicies: { 'codex-vl.native': 'unsafe' } }, { home });
     assert.equal(unsafe.engine.args.includes('--dangerously-bypass-approvals-and-sandbox'), true);
-    const std = resolveManagedEngine(engine, { id: 'Dev', permissionPolicies: { 'codex-vl.native': 'standard' } }, { home });
+    const std = resolveManagedEngine(engine, { id: 'CellaProva', permissionPolicies: { 'codex-vl.native': 'standard' } }, { home });
     assert.equal(std.engine.args.includes('--dangerously-bypass-approvals-and-sandbox'), false);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -864,7 +865,7 @@ test('policy per-cell: Pi resta sempre standard anche con override unsafe', () =
   try {
     fakeClient(home, 'pi');
     const engine = { id: 'pi.openrouter', label: 'Pi', managed: { client: 'pi', provider: 'openrouter', model: 'x' } };
-    const r = resolveManagedEngine(engine, { id: 'Dev', permissionPolicies: { 'pi.openrouter': 'unsafe' } }, { home, env: { OPENROUTER_API_KEY: 'k' } });
+    const r = resolveManagedEngine(engine, { id: 'CellaProva', permissionPolicies: { 'pi.openrouter': 'unsafe' } }, { home, env: { OPENROUTER_API_KEY: 'k' } });
     assert.equal(r.ok, true);
     assert.equal(r.info.permissionPolicy, 'standard');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -877,7 +878,7 @@ test('parseDefinitions: permissionPolicies round-trip; valore non ammesso -> nul
       { id: 'claude.native', label: 'C', managed: { client: 'claude', provider: 'native', model: '' } },
       { id: 'codex.native', label: 'X', managed: { client: 'codex', provider: 'native', model: '' } },
     ],
-    cells: [{ id: 'Dev', cwd: '/home', engine: 'claude.native', permissionPolicies: { 'claude.native': 'standard', 'codex.native': 'unsafe' } }],
+    cells: [{ id: 'CellaProva', cwd: '/home', engine: 'claude.native', permissionPolicies: { 'claude.native': 'standard', 'codex.native': 'unsafe' } }],
   });
   assert.deepEqual(ok.cells[0].permissionPolicies, { 'claude.native': 'standard', 'codex.native': 'unsafe' });
   // valore fuori standard|unsafe -> intero documento rifiutato (fail-closed)
@@ -908,7 +909,7 @@ test('ogni modello Ollama Cloud riceve la sua finestra, anche quando porta un ta
       const managed = { client: 'codex-vl', provider: 'ollama-cloud', model };
       const r = resolveManagedEngine(
         { id: 'codex-vl.ollama-cloud', label: 'Ollama', managed },
-        { id: 'Dev' },
+        { id: 'CellaProva' },
         { home, providerSecretsPath: secrets, env: {} },
       );
       assert.equal(r.ok, true, `resolve fallito per ${model}`);
@@ -1169,7 +1170,7 @@ test('launch ollama-cloud: generazione impossibile ricade sul file utente (no la
     fs.writeFileSync(secrets, 'OLLAMA_API_KEY=ollama-secret\n', { mode: 0o600 });
     const r = resolveManagedEngine(
       { id: 'codex-vl.ollama-cloud', label: 'Ollama', managed: { client: 'codex-vl', provider: 'ollama-cloud', model: 'glm-5.2' } },
-      { id: 'Dev' },
+      { id: 'CellaProva' },
       { home, providerSecretsPath: secrets, env: {} },
     );
     assert.equal(r.ok, true, `launch non deve fallire: ${r && r.reason}`);

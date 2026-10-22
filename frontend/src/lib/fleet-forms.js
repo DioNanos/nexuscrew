@@ -7,7 +7,7 @@
 // place. Behaviour must stay byte-for-byte identical to the original inline
 // definitions.
 
-export const blankEngine = () => ({ kind: 'managed', id: 'claude.native', label: '', client: 'claude', provider: 'native', credentialProfile: '', managedModel: '', permissionPolicy: 'unsafe', credentialSourcePolicy: 'auto', displayName: '', protocol: 'anthropic_messages', baseUrl: '', envKey: '', providerId: 'nexuscrew-custom', command: '', argsText: '', rc: true, promptMode: 'send-keys', promptFlag: '', modelFlag: '', modelValue: '', envRows: [], credentialValue: '', credentialReveal: false, allowMissingCredential: false, panelUrl: '' });
+export const blankEngine = () => ({ kind: 'managed', id: 'claude.native', label: '', client: 'claude', provider: 'native', credentialProfile: '', managedModel: '', permissionPolicy: 'unsafe', credentialSourcePolicy: 'auto', displayName: '', protocol: 'anthropic_messages', baseUrl: '', envKey: '', providerId: 'nexuscrew-custom', vlBinary: '', vlConfigFile: '', vlProfile: '', effort: '', command: '', argsText: '', rc: true, promptMode: 'send-keys', promptFlag: '', modelFlag: '', modelValue: '', envRows: [], credentialValue: '', credentialReveal: false, allowMissingCredential: false, panelUrl: '' });
 export const blankCell = (engine = '') => ({ id: '', cwd: '', engine, boot: false, label: '', model: '', prompt: '', commands: {}, command: '', panelUrl: '' });
 export const defaultPermission = (client) => client === 'claude' ? 'unsafe' : 'standard';
 export const catalogEntry = (catalog, form) => catalog.find((p) => p.client === form.client && p.provider === form.provider && (p.credentialProfile || '') === (form.credentialProfile || ''));
@@ -18,7 +18,7 @@ export function engineForm(e) {
     kind: e.managed ? 'managed' : 'custom',
     id: e.id, label: e.label || '', command: e.command || '', argsText: (e.args || []).join('\n'), rc: !!e.rc,
     client: e.managed?.client || 'claude', provider: e.managed?.provider || 'native', credentialProfile: e.managed?.credentialProfile || '', managedModel: e.managed?.model || '',
-    permissionPolicy: e.managed?.permissionPolicy || defaultPermission(e.managed?.client), credentialSourcePolicy: e.managed?.credentialSourcePolicy || 'auto', displayName: e.managed?.displayName || '', protocol: e.managed?.protocol || '', baseUrl: e.managed?.baseUrl || '', envKey: e.managed?.envKey || '', providerId: e.managed?.providerId || 'nexuscrew-custom', modelOptions: e.availableModels || e.managedInfo?.models || [],
+    permissionPolicy: e.managed?.permissionPolicy || defaultPermission(e.managed?.client), credentialSourcePolicy: e.managed?.credentialSourcePolicy || 'auto', displayName: e.managed?.displayName || '', protocol: e.managed?.protocol || '', baseUrl: e.managed?.baseUrl || '', envKey: e.managed?.envKey || '', providerId: e.managed?.providerId || 'nexuscrew-custom', vlBinary: e.managed?.vlBinary || '', vlConfigFile: e.managed?.vlConfigFile || '', vlProfile: e.managed?.vlProfile || '', effort: e.managed?.effort || '', modelOptions: e.availableModels || e.managedInfo?.models || [],
     promptMode: e.promptMode || 'send-keys', promptFlag: e.promptFlag || '',
     modelFlag: e.model?.flag || '', modelValue: e.model?.value || '',
     envRows: (e.envKeys || []).map((key) => ({ key, value: '', configured: true, remove: false })),
@@ -53,6 +53,16 @@ export function buildEngine(form, creating, catalog = []) {
     // 'auto' is the default and stays ABSENT from the serialized spec, so legacy
     // engines migrate no-op; only environment|nexuscrew-store are persisted.
     if (form.credentialSourcePolicy && form.credentialSourcePolicy !== 'auto') managed.credentialSourcePolicy = form.credentialSourcePolicy;
+    // vl engine fields. Included only when non-empty, in create AND edit:
+    // the managed object is rebuilt wholesale on every save, so an empty field
+    // must OMIT the key (a null value would be rejected by the managed-spec
+    // validator — omission is how a vl field is cleared from the UI).
+    if (form.client === 'vl') {
+      for (const key of ['vlBinary', 'vlConfigFile', 'vlProfile', 'effort']) {
+        const value = (form[key] || '').trim();
+        if (value) managed[key] = value;
+      }
+    }
     const profile = catalogEntry(catalog, form);
     if (profile?.credentialEnv === true) managed.envKey = form.envKey;
     if (form.provider === 'custom') Object.assign(managed, { displayName: form.displayName, protocol: form.protocol, baseUrl: form.baseUrl, envKey: form.envKey, providerId: form.providerId });

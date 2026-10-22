@@ -341,6 +341,15 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog, f
         <div className="nc-fleet-pair"><input value={f.envKey} placeholder={t('fleet-api-key-env')} onChange={(e) => set({ envKey: e.target.value })} /><input value={f.providerId} placeholder={t('fleet-provider-id')} onChange={(e) => set({ providerId: e.target.value })} /></div>
         <small>{f.protocol} · {t('fleet-custom-secret-help')}</small>
       </>}
+      {f.client === 'vl' && <>
+        {/* Campi vl: identità per cella e catalogo profili sono del contratto
+            engine vl; vuoto = assente (il campo si cancella svuotandolo, v.
+            buildEngine in fleet-forms.js). Nessun segreto: percorsi e nomi. */}
+        <input value={f.vlBinary || ''} placeholder={t('fleet-vl-binary')} onChange={(e) => set({ vlBinary: e.target.value })} />
+        <input value={f.vlConfigFile || ''} placeholder={t('fleet-vl-config-file')} onChange={(e) => set({ vlConfigFile: e.target.value })} />
+        <div className="nc-fleet-pair"><input value={f.vlProfile || ''} placeholder={t('fleet-vl-profile')} onChange={(e) => set({ vlProfile: e.target.value })} /><input value={f.effort || ''} placeholder={t('fleet-vl-effort')} onChange={(e) => set({ effort: e.target.value })} /></div>
+        <small>{t('fleet-vl-fields-help')}</small>
+      </>}
       <small>{t(f.client === 'shell' ? 'fleet-shell-engine-help' : 'fleet-managed-help')}</small>
     </> : <>
       <input value={f.command} placeholder={t('command-path')} onChange={(e) => set({ command: e.target.value })} />

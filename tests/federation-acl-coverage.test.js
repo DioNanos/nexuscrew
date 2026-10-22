@@ -17,11 +17,16 @@ function literalResources() {
 }
 
 // The fleet family: one entry per alternative the allowlist accepts.
-const FLEET_READ = ['status', 'schema', 'definitions', 'credentials/status'];
+const FLEET_READ = ['status', 'schema', 'definitions', 'credentials/status', 'vl-new-session-state', 'vl-legacy-inventory'];
+// The fleet reads whose class is NOT the plain operator one: the vl legacy
+// inventory is a photo of the NODE state, so it is whole or nothing
+// (class 'node-inventory': operator grant AND full scope).
+const FLEET_READ_CLASS = { 'vl-legacy-inventory': 'node-inventory' };
 const FLEET_WRITE = [
   'credentials/set', 'credentials/remove', 'up', 'down', 'restart', 'engine', 'boot',
   'define-engine', 'edit-engine', 'remove-engine', 'define-model', 'remove-model',
   'model-test', 'define-cell', 'edit-cell', 'remove-cell', 'restore-cells', 'restore-engines',
+  'vl-new-session',
 ];
 
 // One sample path per branch of the allowlist: the literals, plus an example for
@@ -91,7 +96,8 @@ test('the corpus covers every literal the allowlist compares', () => {
 
 test('the fleet family is classified exactly on the methods the allowlist accepts', () => {
   for (const alt of FLEET_READ) {
-    assert.strictEqual(classifyResource(`/fleet/${alt}`, 'GET'), 'operator', `GET /fleet/${alt}`);
+    const cls = FLEET_READ_CLASS[alt] || 'operator';
+    assert.strictEqual(classifyResource(`/fleet/${alt}`, 'GET'), cls, `GET /fleet/${alt}`);
   }
   for (const alt of FLEET_WRITE) {
     assert.strictEqual(classifyResource(`/fleet/${alt}`, 'POST'), 'operator', `POST /fleet/${alt}`);

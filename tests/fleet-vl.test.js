@@ -29,6 +29,12 @@ function homeWithVl() {
   const bin = path.join(home, '.local', 'bin', 'vl');
   fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   fs.chmodSync(bin, 0o755);
+  // Il catalogo dell'operatore: e' la sorgente di un engine native senza
+  // vlConfigFile dichiarato. Senza di esso il lancio nativo e' un rifiuto
+  // dichiarato, non un avvio sui default del runtime.
+  const catalogoVl = path.join(home, '.config', 'vl');
+  fs.mkdirSync(catalogoVl, { recursive: true });
+  fs.writeFileSync(path.join(catalogoVl, 'config.toml'), '[profiles.work]\nmodel = "m-work"\n');
   return home;
 }
 
@@ -64,7 +70,13 @@ test('vl argv: lancia la TUI senza argomenti; nessun prompt su argv; niente toke
     const r0 = resolveManagedEngine(eng(), { id: 'vl.native' }, { home, platform: 'linux', env: {} });
     assert.equal(r0.ok, true);
     assert.deepEqual(r0.engine.args, [], 'vl lancia la TUI senza argomenti');
-    assert.deepEqual(r0.engine.env, {}, 'runtime locale: nessun token/credenziale (e append degradata, non composta)');
+    // Il trio XDG per-cella e' parte del contratto (identità di stato); fuori
+    // da quello, il runtime locale non porta NESSUNA env: niente token,
+    // niente provider, e append degradata (non composta).
+    const { XDG_STATE_HOME, XDG_DATA_HOME, XDG_CONFIG_HOME, ...rest0 } = r0.engine.env;
+    assert.ok(XDG_STATE_HOME && XDG_DATA_HOME && XDG_CONFIG_HOME, 'trio XDG per-cella composto');
+    assert.ok(XDG_STATE_HOME.startsWith(path.join(home, '.nexuscrew', 'vl-cells')), 'stato dentro l\'albero NC');
+    assert.deepEqual(rest0, {}, 'runtime locale: nessun token/credenziale oltre al trio XDG (append degradata, non composta)');
     // anche con un prompt di cella, vl NON lo riceve su argv (TUI senza superficie prompt)
     const r1 = resolveManagedEngine(eng(), { id: 'vl.native', prompt: 'you are dev' }, { home, platform: 'linux', env: {} });
     assert.deepEqual(r1.engine.args, [], 'vl non accetta prompt su argv (TUI senza superficie prompt)');
@@ -89,15 +101,15 @@ function vlResolve(home, cell, cfgExtra = {}) {
 test('gate versione regge (0.3.1): file per-cella scritto + env composta, NESSUN degrado', () => {
   const home = homeWithVl();
   try {
-    const r = vlResolve(home, { id: 'Dev', prompt: 'You are the Dev cell.' }, { vlVersionProbe: PROBE_031 });
+    const r = vlResolve(home, { id: 'CellaProva', prompt: 'You are the CellaProva cell.' }, { vlVersionProbe: PROBE_031 });
     assert.equal(r.ok, true);
     assert.equal(r.engine.vlPromptDegraded, undefined, 'versione che regge: nessun degrado');
     const target = r.engine.env.VL_SYSTEM_APPEND_FILE;
     assert.ok(target, 'VL_SYSTEM_APPEND_FILE composta');
-    assert.equal(target, path.join(home, '.nexuscrew', 'vl-prompts', 'Dev.md'), 'file per-cella sotto ~/.nexuscrew (forma del precedente pi)');
+    assert.equal(target, path.join(home, '.nexuscrew', 'vl-prompts', 'CellaProva.md'), 'file per-cella sotto ~/.nexuscrew (forma del precedente pi)');
     assert.ok(fs.existsSync(target), 'il file esiste');
     const content = fs.readFileSync(target, 'utf8');
-    assert.ok(content.startsWith('You are the Dev cell.'), 'il prompt della cella apre il file');
+    assert.ok(content.startsWith('You are the CellaProva cell.'), 'il prompt della cella apre il file');
     assert.ok(content.includes('NexusCrew companions'), 'le istruzioni companion seguono il prompt (vl non ha client MCP)');
     assert.ok((fs.statSync(target).mode & 0o777) === 0o600, 'file 0600: non esposto ad altri utenti');
     assert.ok((fs.statSync(path.dirname(target)).mode & 0o777) === 0o700, 'directory 0700');
@@ -109,26 +121,28 @@ test('gate versione regge (0.3.1): file per-cella scritto + env composta, NESSUN
 test('CONTROLLO NEGATIVO — versione vecchia (0.1.0): env append NON composta + degrado DICHIARATO (mai silenzio)', () => {
   const home = homeWithVl();
   try {
-    const r = vlResolve(home, { id: 'Dev', prompt: 'You are the Dev cell.' }, { vlVersionProbe: PROBE_010 });
+    const r = vlResolve(home, { id: 'CellaProva', prompt: 'You are the CellaProva cell.' }, { vlVersionProbe: PROBE_010 });
     assert.equal(r.ok, true, 'la cella PARTE lo stesso: degrado, non blocco');
     assert.equal(r.engine.env.VL_SYSTEM_APPEND_FILE, undefined, 'mai una env che il runtime ignorerebbe in silenzio');
     assert.ok(r.engine.vlPromptDegraded && r.engine.vlPromptDegraded.includes('0.1.0'), 'il degrado nomina la versione trovata');
     assert.ok(r.engine.vlPromptDegraded.includes('0.3.1'), 'il degrado nomina la versione minima');
-    assert.ok(!fs.existsSync(path.join(home, '.nexuscrew')), 'degradato per versione: nessun file scritto');
+    // degradato per versione: NESSUN file di prompt scritto (le directory
+    // identità per-cella restano: sono il contratto, non il degrado)
+    assert.ok(!fs.existsSync(path.join(home, '.nexuscrew', 'vl-prompts')), 'degradato per versione: nessun prompt scritto');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test('probe non risponde / output non riconosciuto: degrado fail-closed con motivo, cella parte', () => {
   const home = homeWithVl();
   try {
-    const rNull = vlResolve(home, { id: 'Dev', prompt: 'p' }, { vlVersionProbe: () => null });
+    const rNull = vlResolve(home, { id: 'CellaProva', prompt: 'p' }, { vlVersionProbe: () => null });
     assert.equal(rNull.ok, true);
     assert.equal(rNull.engine.env.VL_SYSTEM_APPEND_FILE, undefined);
     assert.ok(rNull.engine.vlPromptDegraded.includes('non determinabile'), 'probe muto: motivo non determinabile');
-    const rJunk = vlResolve(home, { id: 'Dev', prompt: 'p' }, { vlVersionProbe: () => 'qualcosaltro' });
+    const rJunk = vlResolve(home, { id: 'CellaProva', prompt: 'p' }, { vlVersionProbe: () => 'qualcosaltro' });
     assert.ok(rJunk.engine.vlPromptDegraded.includes('non riconosciuta'), 'output inatteso: motivo non riconosciuta');
     // 0.10.0 > 0.3.1 per CAMPI, non per stringa ('0.10.0' < '0.3.1' come testo)
-    const r0100 = vlResolve(home, { id: 'Dev', prompt: 'p' }, { vlVersionProbe: () => 'vl 0.10.0\n' });
+    const r0100 = vlResolve(home, { id: 'CellaProva', prompt: 'p' }, { vlVersionProbe: () => 'vl 0.10.0\n' });
     assert.equal(r0100.engine.vlPromptDegraded, undefined, '0.10.0 regge: confronto per campi, non lessicale');
     assert.ok(r0100.engine.env.VL_SYSTEM_APPEND_FILE, '0.10.0: append composta');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -137,7 +151,7 @@ test('probe non risponde / output non riconosciuto: degrado fail-closed con moti
 test('senza prompt di cella: il file porta comunque le istruzioni companion (superficie MCP di vl)', () => {
   const home = homeWithVl();
   try {
-    const r = vlResolve(home, { id: 'Dev' }, { vlVersionProbe: PROBE_031 });
+    const r = vlResolve(home, { id: 'CellaProva' }, { vlVersionProbe: PROBE_031 });
     const target = r.engine.env.VL_SYSTEM_APPEND_FILE;
     assert.ok(target, 'append composta anche senza prompt');
     const content = fs.readFileSync(target, 'utf8');
@@ -149,31 +163,35 @@ test('senza prompt di cella: il file porta comunque le istruzioni companion (sup
 test('modello dalla UI: scelto -> SOLO VL_MODEL; vl.native non esporta MAI provider/base_url', () => {
   const home = homeWithVl();
   try {
-    const r = vlResolve(home, { id: 'Dev', model: 'gemma4:31b' }, { vlVersionProbe: PROBE_031 });
+    const r = vlResolve(home, { id: 'CellaProva', model: 'gemma4:31b' }, { vlVersionProbe: PROBE_031 });
     assert.equal(r.engine.env.VL_MODEL, 'gemma4:31b', 'la scelta UI ha effetto');
     assert.equal(r.engine.env.VL_PROVIDER, undefined, 'vl.native: la configurazione dell\'operatore comanda, nessun override silenzioso');
     assert.equal(r.engine.env.VL_BASE_URL, undefined, 'vl.native: i default interni del runtime sono gia\' openai-compat+localhost:11434');
-    const r0 = vlResolve(home, { id: 'Dev' }, { vlVersionProbe: PROBE_031 });
+    const r0 = vlResolve(home, { id: 'CellaProva' }, { vlVersionProbe: PROBE_031 });
     assert.equal(r0.engine.env.VL_MODEL, undefined, 'nessun modello scelto: il config.toml dell\'operatore comanda');
     assert.equal(r0.engine.env.VL_PROVIDER, undefined);
     assert.equal(r0.engine.env.VL_BASE_URL, undefined);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('difese del percorso per-cella: id traversal e symlink -> degrado, mai scrittura fuori posto', () => {
+test('difese del percorso per-cella: id traversal e symlink -> RIFIUTO dichiarato, mai scrittura fuori posto', () => {
   const home = homeWithVl();
   try {
-    // '..' passa CELL_ID_RE ma come filename e' traversal: rifiutato, degradato
+    // '..' passa CELL_ID_RE ma come directory e' traversal: con le directory
+    // identita' per-cella (contratto 2026-10-21) la cella si RIFIUTA —
+    // degradare a una directory condivisa e' esattamente l'incidente che il
+    // contratto chiude, non un'opzione.
     const rDot = vlResolve(home, { id: '..', prompt: 'p' }, { vlVersionProbe: PROBE_031 });
-    assert.equal(rDot.ok, true, 'la cella parte');
-    assert.equal(rDot.engine.env.VL_SYSTEM_APPEND_FILE, undefined, 'niente env su un file che non si puo\' scrivere in sicurezza');
-    assert.ok(rDot.engine.vlPromptDegraded.includes('non scrivibile in sicurezza'), 'degrado con motivo');
+    assert.equal(rDot.ok, false, 'id traversal: avvio rifiutato');
+    assert.match(rDot.reason, /non creabile in sicurezza/, 'il rifiuto nomina la difesa');
     assert.ok(!fs.existsSync(path.join(home, '.nexuscrew', 'vl-prompts')), 'nessun file scritto');
-    // symlink al posto della directory: stessa difesa del precedente pi
+    // symlink al posto della directory: stessa difesa (rifiuto, niente scritto
+    // attraverso il link)
     fs.mkdirSync(path.join(home, 'evil'), { recursive: true });
     fs.symlinkSync(path.join(home, 'evil'), path.join(home, '.nexuscrew'));
-    const rLink = vlResolve(home, { id: 'Dev', prompt: 'p' }, { vlVersionProbe: PROBE_031 });
-    assert.ok(rLink.engine.vlPromptDegraded.includes('non scrivibile in sicurezza'), 'symlink dir: degrado');
+    const rLink = vlResolve(home, { id: 'CellaProva', prompt: 'p' }, { vlVersionProbe: PROBE_031 });
+    assert.equal(rLink.ok, false, 'symlink al posto di .nexuscrew: avvio rifiutato');
+    assert.match(rLink.reason, /non creabile in sicurezza/, 'rifiuto dichiarato');
     assert.equal(fs.readdirSync(path.join(home, 'evil')).length, 0, 'NULLA scritto attraverso il symlink');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -237,7 +255,7 @@ test('vl policy per-cell: override unsafe viene clampato a standard (nessun flag
   try {
     const engine = { id: 'vl.native', managed: { client: 'vl', provider: 'native', model: '', permissionPolicy: 'standard' } };
     // override PER-CELL unsafe -> vl e' standard-only, clamp a standard, nessun flag
-    const r = resolveManagedEngine(engine, { id: 'Dev', permissionPolicies: { 'vl.native': 'unsafe' } }, { home, platform: 'linux', env: {} });
+    const r = resolveManagedEngine(engine, { id: 'CellaProva', permissionPolicies: { 'vl.native': 'unsafe' } }, { home, platform: 'linux', env: {} });
     assert.equal(r.ok, true);
     assert.equal(r.info.permissionPolicy, 'standard', "vl: l'override PER-CELL unsafe e' clampato a standard");
     assert.equal(r.engine.args.includes('--always-approve'), false, 'nessun --always-approve');
@@ -353,12 +371,12 @@ function vlRemote(provider, extra = {}) {
 test('varianti vl: vl.anthropic compone SEMPRE provider e base_url (anche senza modello)', () => {
   const home = homeWithVl();
   try {
-    const r0 = resolveManagedEngine(vlRemote('anthropic'), { id: 'Dev' }, { home, env: { VL_API_KEY: 'k' } });
+    const r0 = resolveManagedEngine(vlRemote('anthropic'), { id: 'CellaProva' }, { home, env: { VL_API_KEY: 'k' } });
     assert.equal(r0.ok, true);
     assert.equal(r0.engine.env.VL_PROVIDER, 'anthropic', 'la variante e\' la scelta: la coppia esce sempre');
     assert.equal(r0.engine.env.VL_BASE_URL, 'https://api.anthropic.com');
     assert.equal(r0.engine.env.VL_MODEL, undefined, 'senza modello scelto nessuna VL_MODEL');
-    const r1 = resolveManagedEngine(vlRemote('anthropic', { model: 'claude-sonnet-5' }), { id: 'Dev' }, { home, env: { VL_API_KEY: 'k' } });
+    const r1 = resolveManagedEngine(vlRemote('anthropic', { model: 'claude-sonnet-5' }), { id: 'CellaProva' }, { home, env: { VL_API_KEY: 'k' } });
     assert.equal(r1.engine.env.VL_MODEL, 'claude-sonnet-5');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -374,12 +392,12 @@ test('varianti vl: vl.anthropic porta envPassthrough VL_API_KEY di default; asse
   const home = homeWithVl();
   try {
     // nome assente da ogni fonte: la cella NON parte, e il reason nomina il nome
-    const r = resolveManagedEngine(vlRemote('anthropic'), { id: 'Dev' }, { home, env: {} });
+    const r = resolveManagedEngine(vlRemote('anthropic'), { id: 'CellaProva' }, { home, env: {} });
     assert.equal(r.ok, false);
     assert.match(r.reason, /VL_API_KEY/);
     assert.match(r.reason, /credential source/i);
     // presente a runtime: iniettata per nome nel child
-    const r2 = resolveManagedEngine(vlRemote('anthropic'), { id: 'Dev' }, { home, env: { VL_API_KEY: 'secret' } });
+    const r2 = resolveManagedEngine(vlRemote('anthropic'), { id: 'CellaProva' }, { home, env: { VL_API_KEY: 'secret' } });
     assert.equal(r2.ok, true);
     assert.equal(r2.engine.env.VL_API_KEY, 'secret');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -396,13 +414,13 @@ test('varianti vl: vl.custom richiede baseUrl e protocollo fra i tre reali; la c
   assert.equal(Object.prototype.hasOwnProperty.call(okOpenAi, 'envKey'), false, 'envKey vuota ammessa per vl: la chiave, se serve, viaggia per nome');
   const home = homeWithVl();
   try {
-    const r = resolveManagedEngine(vlRemote('custom', { displayName: 'GW interno', baseUrl: 'https://gw.internal/anthropic', envKey: '', protocol: 'anthropic-bearer', model: 'kimi-k2.7' }), { id: 'Dev' }, { home, env: {} });
+    const r = resolveManagedEngine(vlRemote('custom', { displayName: 'GW interno', baseUrl: 'https://gw.internal/anthropic', envKey: '', protocol: 'anthropic-bearer', model: 'kimi-k2.7' }), { id: 'CellaProva' }, { home, env: {} });
     assert.equal(r.ok, true);
     assert.equal(r.engine.env.VL_PROVIDER, 'anthropic-bearer', 'il protocollo scelto E\' il provider wire');
     assert.equal(r.engine.env.VL_BASE_URL, 'https://gw.internal/anthropic');
     assert.equal(r.engine.env.VL_MODEL, 'kimi-k2.7');
     // la chiave del custom, se dichiarata, viaggia per nome (envPassthrough), mai come valore copiato dallo store
-    const r2 = resolveManagedEngine(vlRemote('custom', { displayName: 'Ollama remoto', baseUrl: 'https://ollama.example', envKey: '', protocol: 'openai-compat', model: 'glm-5.2', envPassthrough: ['VL_API_KEY'] }), { id: 'Dev' }, { home, env: { VL_API_KEY: 'sk' } });
+    const r2 = resolveManagedEngine(vlRemote('custom', { displayName: 'Ollama remoto', baseUrl: 'https://ollama.example', envKey: '', protocol: 'openai-compat', model: 'glm-5.2', envPassthrough: ['VL_API_KEY'] }), { id: 'CellaProva' }, { home, env: { VL_API_KEY: 'sk' } });
     assert.equal(r2.ok, true);
     assert.equal(r2.engine.env.VL_API_KEY, 'sk');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -443,24 +461,24 @@ test('varianti vl: profilo remoto incompleto si RIFIUTA nominando il campo (mai 
   const saved = { vlProvider: anth.vlProvider, endpoint: anth.endpoint };
   try {
     delete anth.endpoint;
-    const r1 = resolveManagedEngine(vlRemote('anthropic'), { id: 'Dev' }, { home, env: { VL_API_KEY: 'k' } });
+    const r1 = resolveManagedEngine(vlRemote('anthropic'), { id: 'CellaProva' }, { home, env: { VL_API_KEY: 'k' } });
     assert.equal(r1.ok, false, 'senza endpoint la variante remota non parte');
     assert.match(r1.reason, /endpoint/, 'il reason NOMINA il campo mancante');
     assert.match(r1.reason, /vl\.anthropic/, 'il reason nomina il profilo');
     anth.endpoint = saved.endpoint;
     delete anth.vlProvider;
-    const r2 = resolveManagedEngine(vlRemote('anthropic'), { id: 'Dev' }, { home, env: { VL_API_KEY: 'k' } });
+    const r2 = resolveManagedEngine(vlRemote('anthropic'), { id: 'CellaProva' }, { home, env: { VL_API_KEY: 'k' } });
     assert.equal(r2.ok, false, 'senza vlProvider la variante remota non parte');
     assert.match(r2.reason, /vlProvider/, 'il reason NOMINA l\'altro campo mancante');
     anth.vlProvider = saved.vlProvider;
     // verso opposto: voce completa ripristinata, la coppia torna a comporsi
-    const r3 = resolveManagedEngine(vlRemote('anthropic'), { id: 'Dev' }, { home, env: { VL_API_KEY: 'k' } });
+    const r3 = resolveManagedEngine(vlRemote('anthropic'), { id: 'CellaProva' }, { home, env: { VL_API_KEY: 'k' } });
     assert.equal(r3.ok, true, 'il rifiuto non stringe troppo: la voce completa riparte');
     assert.equal(r3.engine.env.VL_PROVIDER, 'anthropic');
     assert.equal(r3.engine.env.VL_BASE_URL, 'https://api.anthropic.com');
     // vl.native NON e' toccato: l'assenza delle due env e' la decisione
     // «usa la tua configurazione», non uno stato impossibile
-    const rNat = resolveManagedEngine({ id: 'vl.native', label: 'VL', managed: { client: 'vl', provider: 'native', model: 'gemma4:31b', permissionPolicy: 'standard' } }, { id: 'Dev' }, { home, env: {} });
+    const rNat = resolveManagedEngine({ id: 'vl.native', label: 'VL', managed: { client: 'vl', provider: 'native', model: 'gemma4:31b', permissionPolicy: 'standard' } }, { id: 'CellaProva' }, { home, env: {} });
     assert.equal(rNat.ok, true, 'il controllo vale solo per provider !== native');
     assert.equal(rNat.engine.env.VL_MODEL, 'gemma4:31b');
     assert.equal(rNat.engine.env.VL_PROVIDER, undefined);

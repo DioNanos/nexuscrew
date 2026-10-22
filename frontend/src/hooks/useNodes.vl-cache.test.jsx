@@ -357,7 +357,7 @@ describe('replacement outcome and identity scoped errors', () => {
   if (!error) {
    await act(async () => {resolveNew(payload);await vi.advanceTimersByTimeAsync(0);});expect(vlLabels(hook.result)).toEqual(['New-VL']);
    await act(async () => {resolveOld(VL_PAYLOAD);await vi.advanceTimersByTimeAsync(0);});
-   console.log('AUDITOR_REPLACEMENT_NONEMPTY',JSON.stringify(vlLabels(hook.result)));
+   console.log('REPLACEMENT_NONEMPTY',JSON.stringify(vlLabels(hook.result)));
    expect(vlLabels(hook.result)).toEqual(['New-VL']);
   } else {
    await act(async () => {rejectNew(Object.assign(new Error('replacement unavailable'),{status:502}));await vi.advanceTimersByTimeAsync(0);});
@@ -369,7 +369,7 @@ describe('replacement outcome and identity scoped errors', () => {
    await act(async () => {await vi.advanceTimersByTimeAsync(4000);});
    const retryAtFour = retryCalls; const labelsAtFour = vlLabels(hook.result);
    await act(async () => {await vi.advanceTimersByTimeAsync(4000);});
-   console.log('AUDITOR_OLD_ERROR_RETRY',JSON.stringify({mode,retryAtFour,labelsAtFour,retryAtEight:retryCalls,labelsAtEight:vlLabels(hook.result)}));
+   console.log('OLD_ERROR_RETRY',JSON.stringify({mode,retryAtFour,labelsAtFour,retryAtEight:retryCalls,labelsAtEight:vlLabels(hook.result)}));
    expect(retryAtFour).toBe(1);expect(labelsAtFour).toEqual(['New-VL']);
   }
  });

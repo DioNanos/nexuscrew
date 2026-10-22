@@ -231,6 +231,53 @@ test('route: spawn-client failure still emits sanitized CELL_SPAWN_FAILED (uncha
   assert.equal(text.includes('/home/alice'), false);
 });
 
+test('route: spawn-client failure also reports the bounded new-session consumption enum', async (t) => {
+  // The consumption of the "new session" marker is a FACT the launch error
+  // does not tell: the request was consumed and the rotation outcome is not
+  // tracked anywhere. A failure that happens IN the spawn is not a case in
+  // which that consumption may disappear: the diagnostic branch carries the
+  // same closed enum as the generic failure branch, so the fact is read
+  // wherever the failure is classified.
+  const fleet = {
+    available: true, capabilities: () => ['up'],
+    up: async () => {
+      const e = new Error('nexuscrew cell spawn failed: ENOENT vl');
+      e.status = 500;
+      e.vlNewSessionOutcome = 'consumed-unknown';
+      throw e;
+    },
+  };
+  const { diagnostics, port } = await bootRoutes(t, fleet);
+  const res = await post(port, { cell: 'Dev' });
+  assert.equal(res.status, 500);
+  const recs = diagnostics.logs().records;
+  assert.equal(recs.length, 1);
+  assert.equal(recs[0].code, 'CELL_SPAWN_FAILED');
+  assert.equal(recs[0].meta.newSession, 'consumed-unknown', 'il consumo dichiarato arriva anche nel ramo di spawn');
+  // The marker stays a closed enum: never a free text.
+  assert.match(String(recs[0].meta.newSession), /^consumed-[a-z-]+$/);
+});
+
+test('route: spawn-client failure without a consumed marker keeps the record unchanged', async (t) => {
+  // No consumption, no marker: the diagnostic record of a spawn failure is
+  // exactly what it was.
+  const fleet = {
+    available: true, capabilities: () => ['up'],
+    up: async () => {
+      const e = new Error('nexuscrew cell spawn failed: ENOENT vl');
+      e.status = 500;
+      throw e;
+    },
+  };
+  const { diagnostics, port } = await bootRoutes(t, fleet);
+  const res = await post(port, { cell: 'Dev' });
+  assert.equal(res.status, 500);
+  const recs = diagnostics.logs().records;
+  assert.equal(recs.length, 1);
+  assert.equal(recs[0].code, 'CELL_SPAWN_FAILED');
+  assert.equal('newSession' in recs[0].meta, false, 'senza consumo dichiarato nessun marker');
+});
+
 test('route: up() success -> 200, no structured cause, only STARTED/COMPLETED (no FAILED)', async (t) => {
   const diagnostics = createDiagnostics();
   diagnostics.setVerbose(true, 300); // retain info-level STARTED/COMPLETED

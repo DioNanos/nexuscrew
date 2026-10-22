@@ -201,6 +201,84 @@ test('nc_vl_command: un owner inesistente accusa l\'OWNER, non il micro-device',
   assert.match(out.lines[1].result.content[0].text, /micro-device VL-e+ non trovato sull'owner/);
 });
 
+test('nc_vl_command: tools/list espone il kind `prompt` nell enum', async () => {
+  const { srv, out } = makeSrv();
+  await srv.handleLine(rpc(2, 'tools/list'));
+  const tools = out.lines[0].result.tools;
+  const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+  const kinds = byName.nc_vl_command.inputSchema.properties.kind.enum;
+  assert.ok(kinds.includes('prompt'), `enum manca prompt: ${JSON.stringify(kinds)}`);
+});
+
+test('nc_vl_command: kind `prompt` fa POST /commands con {kind, args:{text}}', async () => {
+  const localId = 'a'.repeat(32); const nodeId = 'b'.repeat(32);
+  const target = `${localId}:VL-${nodeId}`;
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') return { status: 200, json: { nodes: [] } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev', engine: 'codex.native', active: true, canReceive: true },
+      ] } };
+      if (p === '/api/vl-nodes' && call.method === 'GET') return { status: 200, json: {
+        instanceId: localId, protocol: 'vl-node/1', nodes: [{
+          id: target, instanceId: localId, nodeId, cell: 'VL-bbbbbbbb', label: 'N900',
+          online: true, canManage: true, generation: 1, capabilities: ['prompt'],
+        }],
+      } };
+      if (p === `/api/vl-nodes/${nodeId}/commands`) return { status: 202, json: {
+        id: 'c'.repeat(32), status: 'submitted', note: 'completion requires ack',
+      } };
+      return { status: 404, json: { error: p } };
+    },
+  });
+  await srv.handleLine(rpc(230, 'tools/call', {
+    name: 'nc_vl_command', arguments: { target, kind: 'prompt', args: { text: 'run diagnostics now' } },
+  }));
+  const receipt = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(receipt.status, 'submitted');
+  assert.equal(receipt.target, target);
+  const commandCall = calls.find((call) => new URL(call.url).pathname.endsWith('/commands'));
+  assert.deepEqual(commandCall.body, { kind: 'prompt', args: { text: 'run diagnostics now' } });
+});
+
+test('nc_vl_command: kind `prompt` con testo oltre 4 KiB dà errore leggibile, nessun submitted', async () => {
+  const localId = 'a'.repeat(32); const nodeId = 'b'.repeat(32);
+  const target = `${localId}:VL-${nodeId}`;
+  const { srv, out, calls } = makeSrv({
+    env: { NEXUSCREW_MCP_SESSION: 'cloud-Dev' },
+    responder: (call) => {
+      const p = new URL(call.url).pathname;
+      if (p === '/api/config') return { status: 200, json: { instanceId: localId } };
+      if (p === '/api/topology') return { status: 200, json: { nodes: [] } };
+      if (p === '/api/cells') return { status: 200, json: { instanceId: localId, cells: [
+        { instanceId: localId, cell: 'Dev', tmuxSession: 'cloud-Dev', active: true, canReceive: true },
+      ] } };
+      if (p === '/api/vl-nodes' && call.method === 'GET') return { status: 200, json: {
+        instanceId: localId, protocol: 'vl-node/1', nodes: [{
+          id: target, instanceId: localId, nodeId, cell: 'VL-bbbbbbbb', label: 'N900',
+          online: true, canManage: true, generation: 1, capabilities: ['prompt'],
+        }],
+      } };
+      // Il device non deve essere mai raggiunto: il bridge rifiuta prima.
+      if (p === `/api/vl-nodes/${nodeId}/commands`) return { status: 202, json: { id: 'x', status: 'submitted' } };
+      return { status: 404, json: { error: p } };
+    },
+  });
+  const tooBig = 'x'.repeat(4097);
+  await srv.handleLine(rpc(231, 'tools/call', {
+    name: 'nc_vl_command', arguments: { target, kind: 'prompt', args: { text: tooBig } },
+  }));
+  const result = out.lines[0].result;
+  assert.equal(result.isError, true, 'un testo oltre 4 KiB deve essere un errore, non un submitted');
+  assert.match(result.content[0].text, /args\.text oltre 4 KiB/);
+  assert.doesNotMatch(result.content[0].text, /submitted/);
+  const commandCall = calls.find((call) => new URL(call.url).pathname.endsWith('/commands'));
+  assert.equal(commandCall, undefined, 'nessuna POST /commands deve partire per un testo over-size');
+});
+
 test('nc_vl_nodes: un owner remoto irraggiungibile e\' unreachable, non silenzioso', async () => {
   // I nodi VL SONO federati (vedi la NOTE in lib/proxy/federation.js): un owner
   // remoto va interrogato davvero. Se non risponde, deve comparire in

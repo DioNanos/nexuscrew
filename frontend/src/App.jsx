@@ -23,6 +23,9 @@ import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import { createPollGuard } from './lib/poll-guard.js';
 import { subscribeFleetRoute, readFleetRoute, refreshFleetRoute } from './lib/fleet-poll.js';
 import VlSessionView from './components/VlSessionView.jsx';
+import ChatTileView from './components/chat/ChatTileView.jsx';
+import { DEMO } from './lib/chat-fixtures.js';
+import { ui0ChatEnabled } from './lib/ui0-chat-demo.js';
 import CellPanel from './components/CellPanel.jsx';
 import {
   apiFetch, fleetBoot, killSession, getSettings, nodeAction, renameNodeLabel, setSessionTechnical,
@@ -203,7 +206,7 @@ const spegniFilesNuovi = (chiave) => (cur) => {
 };
 
 export function SingleView({
-  session, node, ownerId, cellName, token, readonly = false, panelPort = 0, onBack, onCellSwitcher, cellSwitcherOpen = false,
+  session, node, ownerId, cellName, token, readonly = false, panelPort = 0, onBack, onCellSwitcher, cellSwitcherOpen = false, chatPreview = null,
   // Live host della cella aperta (gia' risolto da App per la route giusta):
   // the phone header has room for a dot only; the sentence lives in the title.
   liveHost = null,
@@ -406,6 +409,8 @@ export function SingleView({
   const actionRef = useRef(() => {});
   const ctrlRef = useRef(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
+  // UI-0 preview branch: explicit descriptor only, never inferred from a name.
+  const chatDemo = ui0ChatEnabled() && Boolean(chatPreview);
   const altRef = useRef(false);
   const [altArmed, setAltArmed] = useState(false);
   const keyboardRef = useRef(null);   // requestTerminalKeyboard del terminale attivo
@@ -796,10 +801,21 @@ export function SingleView({
               : (sideOnTop ? [paneSecondario, maniglia, panePrincipale] : [panePrincipale, maniglia, paneSecondario])}
           </div>
         ) : (
-          <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
-            ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} altRef={altRef} setAltArmed={setAltArmed} keyboardRef={keyboardRef} onFiles={onFilesCella} fontSize={fontSize}
-            selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
-            keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
+          chatDemo ? (
+            <ChatTileView
+              target={chatPreview.target || DEMO.vl.target}
+              events={chatPreview.events || DEMO.vl.events}
+              viewer={chatPreview.viewer || DEMO.vl.viewer}
+              reviews={chatPreview.reviews || {}}
+              label={chatPreview.label || title}
+              capabilities={chatPreview.capabilities || { permissionPolicy: 'yolo' }}
+            />
+          ) : (
+            <Terminal session={session} node={node} token={token} readonly={readonly} takeSize sendRef={sendRef} composerRef={composerRef} actionRef={actionRef}
+              ctrlRef={ctrlRef} setCtrlArmed={setCtrlArmed} altRef={altRef} setAltArmed={setAltArmed} keyboardRef={keyboardRef} onFiles={onFilesCella} fontSize={fontSize}
+              selectionMode={selectionMode} onSelectionModeChange={setSelectionMode}
+              keyboardGesture={inputPreferences.terminalKeyboardGesture} onRendererChange={setRendererKind} />
+          )
         )}
         {/* D8: pannello in alternativa al terminale, overlay assoluto — il
             terminale resta montato (PTY vivo, nessun reflow al toggle).
@@ -816,7 +832,7 @@ export function SingleView({
           />
         )}
       </div>
-      <KeyBar onKeyboard={() => setShowComposer((v) => !v)} onCellSwitcher={onCellSwitcher} cellSwitcherOpen={cellSwitcherOpen}
+      {!chatDemo && <KeyBar onKeyboard={() => setShowComposer((v) => !v)} onCellSwitcher={onCellSwitcher} cellSwitcherOpen={cellSwitcherOpen}
         send={(seq) => (focaLaSide ? sideSendRef : sendRef).current(seq)}
         action={(name) => (focaLaSide ? sideActionRef : actionRef).current(name)}
         ctrlArmed={ctrlArmed} onCtrl={toggleCtrl} altArmed={altArmed} onAlt={toggleAlt}
@@ -824,8 +840,8 @@ export function SingleView({
         onKeyboardKeep={() => (focaLaSide ? sideKeyboardRef : keyboardRef).current?.()}
         selectionMode={selectionMode} onSelectionMode={setSelectionMode}
         keepKeyboardClosed={inputPreferences.keybarKeepsKeyboardClosed} showEnter={inputPreferences.showKeybarEnter}
-        keybarLayout={inputPreferences.keybarLayout} />
-      {showComposer && (
+        keybarLayout={inputPreferences.keybarLayout} />}
+      {!chatDemo && showComposer && (
         <ComposerBar submitText={(text) => (focaLaSide ? sideComposerRef : composerRef).current(text)}
           token={token} session={focaLaSide ? side.session : session} node={focaLaSide ? side.node : node}
           ownerId={focaLaSide ? side.ownerId : ownerId} readonly={readonly}
