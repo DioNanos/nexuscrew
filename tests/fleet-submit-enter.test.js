@@ -383,3 +383,109 @@ test('fence: la delivery della generazione vecchia non tocca la nuova sul medesi
   assert.ok(outcome0 === null || !outcome0.state || outcome0.state === 'cancelled',
     'pre-paste cancellato: nessuna incertezza inventata');
 });
+
+// --- R01: il report del ramo custom deve arrivare al consumer --------------
+// Il difetto: il supervisore azzerava e pubblicava solo nel ramo classificato,
+// quindi `up()` arrivava alla propria deadline e ripiegava su report-timeout
+// invece di leggere transport-unsupported. Qui il produttore e il consumer
+// sono QUELLI VERI e condividono lo stesso tmux (finto, in memoria): se il
+// produttore non scrive, il consumer non legge — nessun valore precaricato.
+function paneOptionsTmux() {
+  const options = new Map();
+  const argv = [];
+  const exec = async (_bin, args) => {
+    argv.push(args.join(' '));
+    if (args[0] === 'set-option') {
+      options.set(`${args[3]} ${args[4]}`, args[5] === undefined ? '' : args[5]);
+      return { err: null, stdout: '', stderr: '', code: 0 };
+    }
+    if (args[0] === 'display-message') {
+      const field = args[args.length - 1];
+      if (field === '#{@nc_delivery}') {
+        const value = options.get(`${args[3]} @nc_delivery`) || '';
+        return { err: null, stdout: `${value}\n`, stderr: '', code: 0 };
+      }
+      return { err: null, stdout: '', stderr: '', code: 0 };
+    }
+    return { err: null, stdout: '', stderr: '', code: 0 };
+  };
+  return { exec, argv, options };
+}
+
+test('R01: il ramo custom pubblica il report e il consumer lo legge davvero', async () => {
+  const { waitDeliveryReport } = require('../lib/fleet/prompt-delivery.js');
+  const { exec, argv, options } = paneOptionsTmux();
+  // Nessuna attestazione (default di produzione): l'esito e' il rifiuto.
+  const target = process.env.TMUX_PANE || '=cloud-T';
+  const ctl = startGenerationPrompt(
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 0, submit: true },
+    0,
+    { exited: false },
+    { setTimeout: (fn) => { fn(); return 1; }, clearTimeout: () => {}, tmuxExec: exec },
+  );
+  assert.ok(ctl, 'la generazione 0 del opt-in e del supervisore');
+  await ctl.settled;
+
+  // Il produttore ha scritto l'opzione di pane?
+  assert.equal(options.get(`${target} @nc_delivery`), 'transport-unsupported',
+    'il ramo custom deve pubblicare il proprio esito, non lasciare il pane muto');
+
+  // E il consumer VERO legge quello che il produttore ha scritto.
+  const report = await waitDeliveryReport('tmux', target, {
+    env: {}, exec, timeoutMs: 50, pollMs: 10, sleepImpl: async () => {},
+  });
+  assert.ok(report, 'waitDeliveryReport deve leggere il report (niente report-timeout)');
+  assert.equal(report.state, 'transport-unsupported');
+  assert.equal(report.delivered, false);
+
+  // Rifiuto = zero digitazione, e nessun comando di consegna e' stato emesso.
+  for (const prefix of ['load-buffer', 'paste-buffer', 'send-keys']) {
+    assert.equal(argv.filter((a) => a.startsWith(prefix)).length, 0, `zero ${prefix}`);
+  }
+});
+
+test('R01: un esito incerto viene pubblicato e resta bloccante', async () => {
+  const { exec, options } = paneOptionsTmux();
+  const target = process.env.TMUX_PANE || '=cloud-T';
+  const ctl = startGenerationPrompt(
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 0, submit: true },
+    1,
+    { exited: false },
+    {
+      setTimeout: (fn) => { fn(); return 1; },
+      clearTimeout: () => {},
+      tmuxExec: exec,
+      submitPromptWithEnter: async () => ({ delivered: false, state: 'delivery-unknown' }),
+    },
+  );
+  const outcome = await ctl.settled;
+  assert.equal(options.get(`${target} @nc_delivery`), 'delivery-unknown', 'pubblicato come enum bounded');
+  assert.deepEqual(outcome, { state: 'delivery-unknown' }, 'e conservato per il loop principale');
+});
+
+test('R01: un esito di generazione invalidata non diventa l esito della nuova', async () => {
+  const { exec, options } = paneOptionsTmux();
+  const target = process.env.TMUX_PANE || '=cloud-T';
+  const childState = { exited: false };
+  const ctl = startGenerationPrompt(
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 0, submit: true },
+    0,
+    childState,
+    {
+      setTimeout: (fn) => { fn(); return 1; },
+      clearTimeout: () => {},
+      tmuxExec: exec,
+      submitPromptWithEnter: async () => {
+        childState.exited = true;                       // la generazione muore durante la consegna
+        return { delivered: false, state: 'delivery-unknown' };
+      },
+    },
+  );
+  const outcome = await ctl.settled;
+  // L'azzeramento iniziale c'e' (pulisce l'esito della generazione
+  // precedente), ma nessun ESITO viene pubblicato per una generazione che non
+  // c'e' piu'.
+  assert.equal(options.get(`${target} @nc_delivery`), '',
+    'nessun esito sul pane di una generazione che non c e piu');
+  assert.deepEqual(outcome, { state: 'delivery-unknown' }, 'ma l incertezza interna si conserva');
+});
