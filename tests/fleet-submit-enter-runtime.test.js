@@ -86,18 +86,36 @@ async function up(opts = {}) {
   }
 }
 
-test('E01: la generazione iniziale di un engine opt-in consegna davvero il prompt', async () => {
+// E02: l'opt-in NON e' un'attestazione. Senza una prova del framing, il
+// prodotto dichiara `transport-unsupported` prima di qualunque effetto.
+test('E02: senza attestazione l\'up di un engine opt-in non digita nulla', async () => {
   const { w, result, calls } = await up();
   try {
-    assert.ok(result && result.ok, 'up deve riuscire');
-    assert.ok(result.prompt, 'up deve riportare un esito di consegna');
-    const pastes = calls.filter((args) => args[0] === 'paste-buffer');
-    const enters = calls.filter((args) => args[0] === 'send-keys');
-    assert.equal(pastes.length, 1, 'un solo paste, dal percorso reale di up');
-    assert.equal(pastes[0].includes('-p'), true, 'paste delimitato');
-    assert.equal(enters.length, 1, 'un solo Enter');
-    assert.deepEqual(enters[0].slice(-2), ['%9', 'Enter'], 'Enter sul %N risolto');
-    assert.equal(result.prompt.state, 'submitted');
-    assert.ok(!calls.some((args) => args.includes('hello\nworld')), 'testo mai in argv');
+    assert.ok(result && result.ok, 'il lancio riesce comunque');
+    assert.equal(result.prompt.state, 'transport-unsupported');
+    assert.equal(result.prompt.delivered, false);
+    assert.equal(calls.filter((args) => args[0] === 'paste-buffer').length, 0, 'zero paste');
+    assert.equal(calls.filter((args) => args[0] === 'send-keys').length, 0, 'zero Enter, zero tasti');
   } finally { w.cleanup(); }
+});
+
+// L'attestazione vera oggi non esiste, ma il percorso paste+Enter deve restare
+// nel codice e provato: qui l'attestazione e' finta e lo dice.
+test('E02: con un\'attestazione esplicita il percorso consegna (un paste, un Enter)', async () => {
+  const { setBracketedPasteAttestor } = require('../lib/fleet/pane-attestation.js');
+  setBracketedPasteAttestor(() => ({ attested: true }));
+  try {
+    const { w, result, calls } = await up();
+    try {
+      assert.ok(result && result.ok);
+      assert.equal(result.prompt.state, 'submitted');
+      const pastes = calls.filter((args) => args[0] === 'paste-buffer');
+      const enters = calls.filter((args) => args[0] === 'send-keys');
+      assert.equal(pastes.length, 1, 'un solo paste');
+      assert.equal(pastes[0].includes('-p'), true, 'delimitato');
+      assert.equal(enters.length, 1, 'un solo Enter');
+      assert.deepEqual(enters[0].slice(-2), ['%9', 'Enter'], 'Enter sul %N risolto');
+      assert.ok(!calls.some((args) => args.includes('hello\nworld')), 'testo mai in argv');
+    } finally { w.cleanup(); }
+  } finally { setBracketedPasteAttestor(null); }
 });

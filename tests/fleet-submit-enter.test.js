@@ -180,3 +180,49 @@ test('consegna: nessun retry dopo un esito incerto, anche se il pane torna', asy
   assert.equal(count(calls, 'paste-buffer'), 1);
   assert.equal(count(calls, 'send-keys'), 0);
 });
+
+// --- E02: l'opt-in non e' un'attestazione --------------------------------
+// Il supervisore non deve passare `bracketedPaste: true` perche' la
+// definizione contiene `submit: 'enter'`: il valore viene dall'attestatore.
+const { startGenerationPrompt } = require('../lib/fleet/cell-exec.js');
+const { setBracketedPasteAttestor } = require('../lib/fleet/pane-attestation.js');
+
+function supervisorRun({ attestor = null } = {}) {
+  setBracketedPasteAttestor(attestor);
+  const seen = [];
+  const config = {
+    tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0,
+    readyWaitMs: 0, submit: true,
+  };
+  const seams = {
+    setTimeout: (fn) => { fn(); return 1; },
+    clearTimeout: () => {},
+    submitPromptWithEnter: async (opts) => {
+      seen.push(opts.bracketedPaste);
+      return { delivered: false, state: opts.bracketedPaste ? 'submitted' : 'transport-unsupported' };
+    },
+  };
+  const childState = { exited: false };
+  return { seen, config, seams, childState };
+}
+
+test('E02: il supervisore non usa l opt-in come prova del framing', async () => {
+  const { seen, config, seams, childState } = supervisorRun();
+  try {
+    // La generazione 1 e' quella che il supervisore possiede gia' per i
+    // custom (la 0 passa al supervisore col rilievo E04).
+    const ctl = startGenerationPrompt(config, 1, childState, seams);
+    assert.ok(ctl, 'gen>0 di un opt-in e consegnata dal supervisore');
+    await ctl.settled;
+    assert.deepEqual(seen, [false], 'senza attestazione bracketedPaste resta false');
+  } finally { setBracketedPasteAttestor(null); }
+});
+
+test('E02: con un attestatore esplicito il supervisore ammette il percorso', async () => {
+  const { seen, config, seams, childState } = supervisorRun({ attestor: () => ({ attested: true }) });
+  try {
+    const ctl = startGenerationPrompt(config, 1, childState, seams);
+    await ctl.settled;
+    assert.deepEqual(seen, [true], 'solo l attestazione apre il percorso');
+  } finally { setBracketedPasteAttestor(null); }
+});
