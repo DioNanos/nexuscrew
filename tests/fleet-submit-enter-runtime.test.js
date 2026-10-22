@@ -12,7 +12,7 @@ const path = require('node:path');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
 
-function world({ delivery = 'submitted' } = {}) {
+function world({ report = 'transport-unsupported' } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncsubmit-'));
   const home = path.join(root, 'home');
   const cwd = path.join(home, 'Dev');
@@ -49,7 +49,7 @@ if (args[0] === 'display-message') {
   if (field === '#{session_id}') { process.stdout.write('$5\\n'); process.exit(0); }
   if (field === '#{pane_dead}\\t#{pane_dead_status}\\t#{pane_id}') { process.stdout.write('0\\t\\t%9\\n'); process.exit(0); }
   if (field === '#{session_name}\\t#{pane_dead}\\t#{pane_id}') { process.stdout.write('work-submit\\t0\\t%9\\n'); process.exit(0); }
-  if (field === '#{@nc_delivery}') { process.stdout.write('${delivery}\\n'); process.exit(0); }
+  if (field === '#{@nc_delivery}') { process.stdout.write('${report}\\n'); process.exit(0); }
   if (field === '#{@nc_mcp_list}') { process.stdout.write('\\n'); process.exit(0); }
   process.stdout.write('0\\t\\t%9\\n'); process.exit(0);
 }
@@ -65,6 +65,7 @@ process.exit(0);
 }
 
 async function up(opts = {}) {
+  // opts.report = stato pubblicato dal supervisore su @nc_delivery
   const w = world(opts);
   const launchBroker = {
     issue: async () => ({ socketPath: path.join(w.root, 'broker.sock'), nonce: 'b'.repeat(64) }),
@@ -101,21 +102,38 @@ test('E02: senza attestazione l\'up di un engine opt-in non digita nulla', async
 
 // L'attestazione vera oggi non esiste, ma il percorso paste+Enter deve restare
 // nel codice e provato: qui l'attestazione e' finta e lo dice.
-test('E02: con un\'attestazione esplicita il percorso consegna (un paste, un Enter)', async () => {
+// E04: la consegna della generazione 0 appartiene al supervisore. Il runtime
+// non digita mai: legge l'esito bounded dal pane, come per il bootstrap
+// classificato. Un solo proprietario per tutte le generazioni.
+test('E04: la generazione 0 di un opt-in e consegnata dal supervisore, non dal runtime', async () => {
   const { setBracketedPasteAttestor } = require('../lib/fleet/pane-attestation.js');
   setBracketedPasteAttestor(() => ({ attested: true }));
   try {
-    const { w, result, calls } = await up();
+    const { w, result, calls } = await up({ report: 'submitted' });
     try {
       assert.ok(result && result.ok);
-      assert.equal(result.prompt.state, 'submitted');
-      const pastes = calls.filter((args) => args[0] === 'paste-buffer');
-      const enters = calls.filter((args) => args[0] === 'send-keys');
-      assert.equal(pastes.length, 1, 'un solo paste');
-      assert.equal(pastes[0].includes('-p'), true, 'delimitato');
-      assert.equal(enters.length, 1, 'un solo Enter');
-      assert.deepEqual(enters[0].slice(-2), ['%9', 'Enter'], 'Enter sul %N risolto');
-      assert.ok(!calls.some((args) => args.includes('hello\nworld')), 'testo mai in argv');
+      assert.equal(result.prompt.state, 'submitted', 'esito letto dal report del supervisore');
+      assert.equal(result.prompt.delivered, true);
+      assert.equal(calls.filter((args) => args[0] === 'paste-buffer').length, 0,
+        'nessun paste dal runtime: un solo proprietario');
+      assert.equal(calls.filter((args) => args[0] === 'send-keys').length, 0,
+        'nessun Enter dal runtime');
+      assert.ok(calls.some((args) => args[0] === 'display-message' && args[args.length - 1] === '#{@nc_delivery}'),
+        'il runtime legge @nc_delivery');
     } finally { w.cleanup(); }
   } finally { setBracketedPasteAttestor(null); }
 });
+
+// Il runtime non riformula l'esito del supervisore: uno stato incerto deve
+// arrivare all'operatore come incerto, mai promosso a consegnato.
+test('E04: il runtime riporta l\'esito del supervisore senza riformularlo', async () => {
+  const { w, result, calls } = await up({ report: 'delivery-unknown' });
+  try {
+    assert.ok(result && result.ok);
+    assert.equal(result.prompt.state, 'delivery-unknown');
+    assert.equal(result.prompt.delivered, false, 'incerto non significa consegnato');
+    assert.equal(calls.filter((args) => args[0] === 'paste-buffer').length, 0);
+    assert.equal(calls.filter((args) => args[0] === 'send-keys').length, 0);
+  } finally { w.cleanup(); }
+});
+

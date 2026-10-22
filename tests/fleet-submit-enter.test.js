@@ -327,3 +327,59 @@ test('E03: il supervisore conserva l incertezza anche se il figlio e gia morto',
     assert.deepEqual(outcome, { state }, `${state}: l esito incerto sopravvive all uscita del figlio`);
   }
 });
+
+// --- E04: un solo proprietario e fence di generazione ---------------------
+test('E04: la generazione 0 di un opt-in e del supervisore (un solo proprietario)', async () => {
+  for (const generation of [0, 1]) {
+    const seen = [];
+    const config = { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 0, submit: true };
+    const ctl = startGenerationPrompt(config, generation, { exited: false }, {
+      setTimeout: (fn) => { fn(); return 1; },
+      clearTimeout: () => {},
+      submitPromptWithEnter: async () => { seen.push(generation); return { delivered: false, state: 'transport-unsupported' }; },
+    });
+    assert.ok(ctl, `generazione ${generation}: consegnata dal supervisore`);
+    await ctl.settled;
+    assert.deepEqual(seen, [generation], `generazione ${generation}: una sola consegna`);
+  }
+});
+
+test('E04: fence — la delivery della generazione vecchia non tocca la nuova sul medesimo %N', async () => {
+  // Barrier: la consegna di gen0 e' ferma DENTRO il paste quando il child
+  // muore. cancel() deve fermarla e settled deve risolvere PRIMA che gen1
+  // parta: nessun testo/Enter vecchio sulla generazione nuova.
+  const { EventEmitter } = require('node:events');
+  const effects = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const config = { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'vecchio', readyMs: 0, readyWaitMs: 60000, submit: true };
+  const childState = { exited: false };
+  const ctl0 = startGenerationPrompt(config, 0, childState, {
+    setTimeout: (fn) => { fn(); return 1; },
+    clearTimeout: () => {},
+    submitPromptWithEnter: async (opts) => {
+      effects.push('paste-vecchio');
+      // Attende il permesso, ma rispetta la cancellazione come fa il nucleo.
+      await gate;
+      if (opts.isCancelled && opts.isCancelled()) { effects.push('stop-vecchio'); return { delivered: false, state: 'cancelled' }; }
+      effects.push('enter-vecchio');
+      return { delivered: true, state: 'submitted' };
+    },
+  });
+  await new Promise((r) => setImmediate(r));
+  childState.exited = true;        // il child muore
+  ctl0.cancel();                    // il supervisore annulla PRIMA del respawn
+  release();
+  const outcome0 = await ctl0.settled;
+  // gen1 sullo stesso pane
+  const ctl1 = startGenerationPrompt({ ...config, prompt: 'nuovo' }, 1, { exited: false }, {
+    setTimeout: (fn) => { fn(); return 1; },
+    clearTimeout: () => {},
+    submitPromptWithEnter: async () => { effects.push('consegna-nuova'); return { delivered: true, state: 'submitted' }; },
+  });
+  await ctl1.settled;
+  assert.equal(effects.includes('enter-vecchio'), false, 'nessun Enter della generazione vecchia');
+  assert.equal(effects.filter((e) => e === 'consegna-nuova').length, 1, 'una sola consegna nuova (nessun doppio bootstrap)');
+  assert.ok(outcome0 === null || !outcome0.state || outcome0.state === 'cancelled',
+    'pre-paste cancellato: nessuna incertezza inventata');
+});
