@@ -1,5 +1,5 @@
 'use strict';
-// E01 (audit submit Enter): la generazione iniziale di un engine custom con
+// La generazione iniziale di un engine custom con
 // `submit: 'enter'` deve arrivare davvero alla consegna passando dal percorso
 // reale `createBuiltinFleet().up`. I test dell'helper, da soli, non vedono un
 // import sbagliato: qui il fake tmux registra OGNI argv, quindi una paste o un
@@ -87,9 +87,9 @@ async function up(opts = {}) {
   }
 }
 
-// E02: l'opt-in NON e' un'attestazione. Senza una prova del framing, il
+// L'opt-in NON e' un'attestazione. Senza una prova del framing, il
 // prodotto dichiara `transport-unsupported` prima di qualunque effetto.
-test('E02: senza attestazione l\'up di un engine opt-in non digita nulla', async () => {
+test('senza attestazione l\'up di un engine opt-in non digita nulla', async () => {
   const { w, result, calls } = await up();
   try {
     assert.ok(result && result.ok, 'il lancio riesce comunque');
@@ -102,10 +102,10 @@ test('E02: senza attestazione l\'up di un engine opt-in non digita nulla', async
 
 // L'attestazione vera oggi non esiste, ma il percorso paste+Enter deve restare
 // nel codice e provato: qui l'attestazione e' finta e lo dice.
-// E04: la consegna della generazione 0 appartiene al supervisore. Il runtime
+// La consegna della generazione 0 appartiene al supervisore. Il runtime
 // non digita mai: legge l'esito bounded dal pane, come per il bootstrap
 // classificato. Un solo proprietario per tutte le generazioni.
-test('E04: la generazione 0 di un opt-in e consegnata dal supervisore, non dal runtime', async () => {
+test('la generazione 0 di un opt-in e consegnata dal supervisore, non dal runtime', async () => {
   const { setBracketedPasteAttestor } = require('../lib/fleet/pane-attestation.js');
   setBracketedPasteAttestor(() => ({ attested: true }));
   try {
@@ -126,7 +126,7 @@ test('E04: la generazione 0 di un opt-in e consegnata dal supervisore, non dal r
 
 // Il runtime non riformula l'esito del supervisore: uno stato incerto deve
 // arrivare all'operatore come incerto, mai promosso a consegnato.
-test('E04: il runtime riporta l\'esito del supervisore senza riformularlo', async () => {
+test('il runtime riporta l\'esito del supervisore senza riformularlo', async () => {
   const { w, result, calls } = await up({ report: 'delivery-unknown' });
   try {
     assert.ok(result && result.ok);

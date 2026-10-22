@@ -181,7 +181,7 @@ test('consegna: nessun retry dopo un esito incerto, anche se il pane torna', asy
   assert.equal(count(calls, 'send-keys'), 0);
 });
 
-// --- E02: l'opt-in non e' un'attestazione --------------------------------
+// --- l'opt-in non e' un'attestazione ---------------------------------------
 // Il supervisore non deve passare `bracketedPaste: true` perche' la
 // definizione contiene `submit: 'enter'`: il valore viene dall'attestatore.
 const { startGenerationPrompt } = require('../lib/fleet/cell-exec.js');
@@ -206,11 +206,11 @@ function supervisorRun({ attestor = null } = {}) {
   return { seen, config, seams, childState };
 }
 
-test('E02: il supervisore non usa l opt-in come prova del framing', async () => {
+test('supervisore: l opt-in non e la prova del framing', async () => {
   const { seen, config, seams, childState } = supervisorRun();
   try {
     // La generazione 1 e' quella che il supervisore possiede gia' per i
-    // custom (la 0 passa al supervisore col rilievo E04).
+    // custom (la 0 passa al supervisore insieme al resto dell'opt-in).
     const ctl = startGenerationPrompt(config, 1, childState, seams);
     assert.ok(ctl, 'gen>0 di un opt-in e consegnata dal supervisore');
     await ctl.settled;
@@ -218,7 +218,7 @@ test('E02: il supervisore non usa l opt-in come prova del framing', async () => 
   } finally { setBracketedPasteAttestor(null); }
 });
 
-test('E02: con un attestatore esplicito il supervisore ammette il percorso', async () => {
+test('supervisore: con un attestatore esplicito il percorso e ammesso', async () => {
   const { seen, config, seams, childState } = supervisorRun({ attestor: () => ({ attested: true }) });
   try {
     const ctl = startGenerationPrompt(config, 1, childState, seams);
@@ -227,7 +227,7 @@ test('E02: con un attestatore esplicito il supervisore ammette il percorso', asy
   } finally { setBracketedPasteAttestor(null); }
 });
 
-// --- E03: cancellazione dentro gli stadi del paste e incertezza ------------
+// --- cancellazione dentro gli stadi del paste e incertezza -----------------
 // Il predicato deve arrivare DENTRO securePaste (resolve, load, paste): se la
 // generazione finisce durante il load, il paste non deve partire. E da quando
 // il paste e' tentato l'incertezza non si perde mai, nemmeno su errore,
@@ -249,7 +249,7 @@ const runWith = (harness, extra = {}) => submitPromptWithEnter({
   bracketedPaste: true, isCancelled: harness.isCancelled, ...extra,
 });
 
-test('E03: cancellazione durante il load -> il paste NON parte', async () => {
+test('cancellazione durante il load -> il paste NON parte', async () => {
   const h = cancelAt(null, (args) => args[0] === 'load-buffer');
   const r = await runWith(h);
   assert.equal(r.state, 'cancelled');
@@ -257,7 +257,7 @@ test('E03: cancellazione durante il load -> il paste NON parte', async () => {
   assert.equal(count(h.calls, 'send-keys'), 0);
 });
 
-test('E03: cancellazione dopo il resolve -> nessun load e nessun paste', async () => {
+test('cancellazione dopo il resolve -> nessun load e nessun paste', async () => {
   let seenResolve = 0;
   const { calls, exec } = fakeTmux({});
   let cancelled = false;
@@ -276,7 +276,7 @@ test('E03: cancellazione dopo il resolve -> nessun load e nessun paste', async (
   assert.equal(count(calls, 'paste-buffer'), 0);
 });
 
-test('E03: paste tentato e fallito mentre si cancella -> delivery-unknown, non cancelled', async () => {
+test('paste tentato e fallito mentre si cancella -> delivery-unknown, non cancelled', async () => {
   const h = cancelAt(null, (args) => args[0] === 'paste-buffer', { pasteFails: true });
   const r = await runWith(h);
   assert.equal(r.state, 'delivery-unknown', 'l incertezza post-paste non si perde');
@@ -284,7 +284,7 @@ test('E03: paste tentato e fallito mentre si cancella -> delivery-unknown, non c
   assert.equal(count(h.calls, 'send-keys'), 0);
 });
 
-test('E03: cancellazione durante il cleanup (delete-buffer) -> nessun Enter, incerto', async () => {
+test('cancellazione durante il cleanup (delete-buffer) -> nessun Enter, incerto', async () => {
   const h = cancelAt(null, (args) => args[0] === 'delete-buffer');
   const r = await runWith(h);
   assert.equal(r.state, 'delivery-unknown');
@@ -292,7 +292,7 @@ test('E03: cancellazione durante il cleanup (delete-buffer) -> nessun Enter, inc
   assert.equal(count(h.calls, 'send-keys'), 0, 'mai Enter dopo l invalidazione');
 });
 
-test('E03: il bootstrap riceve lo stesso predicato (paste non parte dopo il load)', async () => {
+test('il bootstrap riceve lo stesso predicato (paste non parte dopo il load)', async () => {
   const { deliverBootstrapPrompt } = require('../lib/fleet/prompt-delivery.js');
   const { calls, exec } = fakeTmux({});
   let cancelled = false;
@@ -310,7 +310,7 @@ test('E03: il bootstrap riceve lo stesso predicato (paste non parte dopo il load
   assert.equal(count(calls, 'paste-buffer'), 0, 'bootstrap: nessun paste dopo l invalidazione');
 });
 
-test('E03: il supervisore conserva l incertezza anche se il figlio e gia morto', async () => {
+test('il supervisore conserva l incertezza anche se il figlio e gia morto', async () => {
   // Un paste tentato resta incerto: l'esito attraversa l'uscita del child e
   // arriva al loop principale, che su delivery-unknown non riavvia.
   for (const state of ['delivery-unknown', 'staged-not-submitted']) {
@@ -328,8 +328,8 @@ test('E03: il supervisore conserva l incertezza anche se il figlio e gia morto',
   }
 });
 
-// --- E04: un solo proprietario e fence di generazione ---------------------
-test('E04: la generazione 0 di un opt-in e del supervisore (un solo proprietario)', async () => {
+// --- un solo proprietario e fence di generazione ---------------------------
+test('la generazione 0 di un opt-in e del supervisore (un solo proprietario)', async () => {
   for (const generation of [0, 1]) {
     const seen = [];
     const config = { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 0, submit: true };
@@ -344,7 +344,7 @@ test('E04: la generazione 0 di un opt-in e del supervisore (un solo proprietario
   }
 });
 
-test('E04: fence — la delivery della generazione vecchia non tocca la nuova sul medesimo %N', async () => {
+test('fence: la delivery della generazione vecchia non tocca la nuova sul medesimo %N', async () => {
   // Barrier: la consegna di gen0 e' ferma DENTRO il paste quando il child
   // muore. cancel() deve fermarla e settled deve risolvere PRIMA che gen1
   // parta: nessun testo/Enter vecchio sulla generazione nuova.
