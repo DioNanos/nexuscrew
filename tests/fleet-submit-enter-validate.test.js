@@ -1,6 +1,6 @@
 'use strict';
-// F4 (piano 2026-10-22_DEVAUDITOR_PIANO_VL_STRATO3) — submit opt-in `enter`
-// per gli engine custom con promptMode 'send-keys'.
+// Submit opt-in `enter` for custom engines with promptMode 'send-keys':
+// VALIDATION surface.
 //
 // Due superfici, due blocchi:
 //  1. VALIDAZIONE: `submit` e' un opt-in stretto ('enter', solo send-keys, mai

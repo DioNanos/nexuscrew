@@ -1,9 +1,8 @@
 'use strict';
-// F4 (piano 2026-10-22_DEVAUDITOR_PIANO_VL_STRATO3) — CONSEGNA del submit
-// opt-in `enter` per gli engine custom con promptMode 'send-keys': un solo
-// paste delimitato, UN solo Enter sullo stesso %N, nessun retry dopo un paste
-// tentato, nessun degrado a testo grezzo. La validazione della definizione sta
-// in fleet-submit-enter-validate.test.js.
+// DELIVERY of the opt-in `enter` submit for custom engines with promptMode
+// 'send-keys': one delimited paste, ONE Enter on the same %N, no retry after a
+// paste attempt, no degradation to raw keystrokes. The definition validation
+// lives in fleet-submit-enter-validate.test.js.
 const { test } = require('node:test');
 const assert = require('node:assert');
 
