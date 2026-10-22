@@ -226,3 +226,104 @@ test('E02: con un attestatore esplicito il supervisore ammette il percorso', asy
     assert.deepEqual(seen, [true], 'solo l attestazione apre il percorso');
   } finally { setBracketedPasteAttestor(null); }
 });
+
+// --- E03: cancellazione dentro gli stadi del paste e incertezza ------------
+// Il predicato deve arrivare DENTRO securePaste (resolve, load, paste): se la
+// generazione finisce durante il load, il paste non deve partire. E da quando
+// il paste e' tentato l'incertezza non si perde mai, nemmeno su errore,
+// cancellazione o cleanup.
+function cancelAt(calls, when, script = {}) {
+  const { calls: log, exec } = fakeTmux(script);
+  let cancelled = false;
+  const exec2 = async (bin, args) => {
+    const result = await exec(bin, args);
+    if (when(args)) cancelled = true;
+    return result;
+  };
+  return { calls: log, exec: exec2, isCancelled: () => cancelled, cancelledAt: () => cancelled };
+}
+
+const runWith = (harness, extra = {}) => submitPromptWithEnter({
+  tmuxBin: 'tmux', session: 'cloud-T', prompt: 'p', env: {},
+  readyWaitMs: 0, tmuxExecImpl: harness.exec, sleepImpl: async () => {},
+  bracketedPaste: true, isCancelled: harness.isCancelled, ...extra,
+});
+
+test('E03: cancellazione durante il load -> il paste NON parte', async () => {
+  const h = cancelAt(null, (args) => args[0] === 'load-buffer');
+  const r = await runWith(h);
+  assert.equal(r.state, 'cancelled');
+  assert.equal(count(h.calls, 'paste-buffer'), 0, 'nessun paste dopo l invalidazione');
+  assert.equal(count(h.calls, 'send-keys'), 0);
+});
+
+test('E03: cancellazione dopo il resolve -> nessun load e nessun paste', async () => {
+  let seenResolve = 0;
+  const { calls, exec } = fakeTmux({});
+  let cancelled = false;
+  const exec2 = async (bin, args) => {
+    const result = await exec(bin, args);
+    if (args[0] === 'display-message') { seenResolve += 1; if (seenResolve >= 1) cancelled = true; }
+    return result;
+  };
+  const r = await submitPromptWithEnter({
+    tmuxBin: 'tmux', session: 'cloud-T', prompt: 'p', env: {},
+    readyWaitMs: 0, tmuxExecImpl: exec2, sleepImpl: async () => {},
+    bracketedPaste: true, isCancelled: () => cancelled,
+  });
+  assert.equal(r.state, 'cancelled');
+  assert.equal(count(calls, 'load-buffer'), 0, 'nessun effetto dopo il resolve');
+  assert.equal(count(calls, 'paste-buffer'), 0);
+});
+
+test('E03: paste tentato e fallito mentre si cancella -> delivery-unknown, non cancelled', async () => {
+  const h = cancelAt(null, (args) => args[0] === 'paste-buffer', { pasteFails: true });
+  const r = await runWith(h);
+  assert.equal(r.state, 'delivery-unknown', 'l incertezza post-paste non si perde');
+  assert.equal(count(h.calls, 'paste-buffer'), 1);
+  assert.equal(count(h.calls, 'send-keys'), 0);
+});
+
+test('E03: cancellazione durante il cleanup (delete-buffer) -> nessun Enter, incerto', async () => {
+  const h = cancelAt(null, (args) => args[0] === 'delete-buffer');
+  const r = await runWith(h);
+  assert.equal(r.state, 'delivery-unknown');
+  assert.equal(count(h.calls, 'paste-buffer'), 1);
+  assert.equal(count(h.calls, 'send-keys'), 0, 'mai Enter dopo l invalidazione');
+});
+
+test('E03: il bootstrap riceve lo stesso predicato (paste non parte dopo il load)', async () => {
+  const { deliverBootstrapPrompt } = require('../lib/fleet/prompt-delivery.js');
+  const { calls, exec } = fakeTmux({});
+  let cancelled = false;
+  const exec2 = async (bin, args) => {
+    const result = await exec(bin, args);
+    if (args[0] === 'load-buffer') cancelled = true;
+    return result;
+  };
+  const r = await deliverBootstrapPrompt({
+    tmuxBin: 'tmux', session: 'cloud-T', prompt: 'boot', client: 'claude',
+    readyWaitMs: 0, tmuxExecImpl: exec2, sleepImpl: async () => {},
+    captureImpl: async () => '❯\n', isCancelled: () => cancelled,
+  });
+  assert.equal(r.state, 'cancelled');
+  assert.equal(count(calls, 'paste-buffer'), 0, 'bootstrap: nessun paste dopo l invalidazione');
+});
+
+test('E03: il supervisore conserva l incertezza anche se il figlio e gia morto', async () => {
+  // Un paste tentato resta incerto: l'esito attraversa l'uscita del child e
+  // arriva al loop principale, che su delivery-unknown non riavvia.
+  for (const state of ['delivery-unknown', 'staged-not-submitted']) {
+    const seen = [];
+    const config = { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 0, submit: true };
+    const childState = { exited: false };
+    const ctl = startGenerationPrompt(config, 1, childState, {
+      setTimeout: (fn) => { fn(); return 1; },
+      clearTimeout: () => {},
+      submitPromptWithEnter: async () => { childState.exited = true; seen.push(state); return { delivered: false, state }; },
+    });
+    const outcome = await ctl.settled;
+    assert.deepEqual(seen, [state], `${state}: consegna tentata una volta`);
+    assert.deepEqual(outcome, { state }, `${state}: l esito incerto sopravvive all uscita del figlio`);
+  }
+});
