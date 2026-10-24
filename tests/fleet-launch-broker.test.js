@@ -176,6 +176,9 @@ test('cell-exec restarts stable children with backoff, reinjects send-keys promp
       return fakeChild((child) => { clock += 100; child.emit('exit', 1, null); });
     },
     now: () => clock,
+    // Le DURATE (vita del figlio, finestra rapid) viaggiano sull'orologio
+    // monotono: il test che le pilota col clock inietta monoNow.
+    monoNow: () => clock,
     sleep: async (ms) => { waits.push(ms); },
     process: proc,
     setTimeout: (fn) => { fn(); return 1; },
@@ -208,6 +211,7 @@ test('cell-exec stop during backoff disarms relaunch', async () => {
       return fakeChild((child) => { clock += 100; child.emit('exit', 1, null); });
     },
     now: () => clock,
+    monoNow: () => clock,
     sleep: async () => { proc.emit('SIGTERM'); },
     process: proc,
   });

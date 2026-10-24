@@ -105,6 +105,34 @@ describe('cellRuntime: tre stati dagli hook + incerto dove il titolo non prova',
     }
     expect(new Set([t('cell-stopped'), t('cell-permission'), t('cell-unknown'), t('cell-idle')]).size).toBe(4);
   });
+
+  // Ragione terminale del lancio corrente: la verita' di supervisione vince
+  // sugli indizi (pane vivo, stato pubblicato, anteprima) e la cella e' FERMA
+  // per QUELLA ragione — leggibile anche a pane sparito, perche' il record
+  // vive su file. Ragione fuori enum: nessuna etichetta inventata.
+  it('ragione terminale vince su tutto: cella ferma con la SUA etichetta, anche a pane vivo', () => {
+    const base = { tmux: true, cell: 'Dev', engine: 'claude', terminal: { reason: 'restart-budget-exhausted', ts: 1 } };
+    const out = cellRuntime(base, { ...att('lavora'), working: true, status: 'Working…' });
+    expect(out.working).toBe(false);
+    expect(out.stato).toBe('ferma');
+    expect(out.subtitle).toBe(t('cell-terminal-restart-budget-exhausted'));
+  });
+
+  it('ogni ragione dell\'enum ha la SUA frase, in tutte le lingue; ragione ignota non si inventa', () => {
+    const ragioni = ['restart-budget-exhausted', 'uncertain-delivery', 'lease-lost', 'spawn-error', 'operator-stop'];
+    const frasi = new Set();
+    for (const reason of ragioni) {
+      const chiave = `cell-terminal-${reason}`;
+      expect(t(chiave)).not.toBe(chiave); // la traduzione esiste davvero
+      frasi.add(t(chiave));
+    }
+    expect(frasi.size).toBe(ragioni.length); // frasi DISTINTE
+    // Ragione fuori enum: la riga NON la nomina (resta il percorso di prima).
+    const ignota = cellRuntime(
+      { tmux: false, cell: 'Dev', engine: 'claude', terminal: { reason: 'qualcosaltro', ts: 1 } }, {},
+    );
+    expect(ignota.subtitle).toBe('claude');
+  });
 });
 
 // ---------------------------------------------------------------------------

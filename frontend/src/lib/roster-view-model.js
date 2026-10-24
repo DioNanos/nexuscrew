@@ -14,6 +14,17 @@ import { t } from './i18n.js';
 import { positionKey } from './nodes-model.js';
 import { CAUSE_PEER_ASENTE, CAUSE_PEER_NEGA, CAUSE_ROTTA_INESISTENTE } from './peer-backoff.js';
 
+// Ragioni terminali del supervisore che la riga della cella sa NOMINARE (le
+// stesse dell'enum chiuso del canale terminale). Fuori da qui: nessuna
+// etichetta inventata.
+const RAGIONI_TERMINALI_CELLA = [
+  'restart-budget-exhausted',
+  'uncertain-delivery',
+  'lease-lost',
+  'spawn-error',
+  'operator-stop',
+];
+
 // Tempo relativo compatto da epoch sec: 'ora' | 'Nm' | 'Nh' | 'Ng'.
 // nowSec e' iniettabile solo per i test; il default e' l'ora corrente, come
 // facevano le copie inline che questo modulo sostituisce.
@@ -130,6 +141,21 @@ export function cellRuntime(cell, session = {}, { autorevole = true } = {}) {
   const c = cell || {};
   const engine = `${c.engine || ''}${c.key ? `·${c.key}` : ''}`;
   const startup = [engine, c.model && c.model !== engine ? c.model : ''].filter(Boolean).join(' · ');
+  // Ragione terminale del LANCIO CORRENTE (canale su file del supervisore,
+  // sopravvive alla scomparsa del pane): e' la verita' di supervisione e vince
+  // su ogni indizio — pane residuo, anteprima, stato pubblicato. La cella e'
+  // FERMA per quella ragione, mai «attiva sana» sulla sola sessione tmux
+  // rimasta. Solo le ragioni dell'enum chiuso: una ragione sconosciuta non si
+  // inventa un'etichetta.
+  const terminale = c.terminal && typeof c.terminal === 'object' ? c.terminal : null;
+  if (terminale && RAGIONI_TERMINALI_CELLA.includes(terminale.reason)) {
+    return {
+      working: false,
+      stato: 'ferma',
+      terminale: terminale.reason,
+      subtitle: t(`cell-terminal-${terminale.reason}`),
+    };
+  }
   if (!c.tmux) {
     return {
       working: false,

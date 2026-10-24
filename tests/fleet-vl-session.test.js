@@ -329,6 +329,10 @@ test('cell-exec: payload.vlNewSession -> --new SOLO alla generazione 0, mai ai r
       return fakeChildExit();
     },
     now: () => clock,
+    // La vita del figlio si misura sull'orologio MONOTONO: il clock iniettato
+    // governa anche monoNow, altrimenti la vita reale di un fake child (~0ms)
+    // sembrerebbe sotto initialReadyMs (failed start, nessun restart).
+    monoNow: () => clock,
     sleep: async () => { clock += 1000; },
     stderrWrite: () => {},
   });
@@ -355,6 +359,7 @@ test('cell-exec: payload SENZA vlNewSession: nessuna generazione porta --new', a
     }),
     spawn: (command, args) => { spawnCalls.push([...args]); return fakeChildExit(); },
     now: () => clock,
+    monoNow: () => clock, // durate sul monotono iniettato (vita del figlio oltre initialReadyMs)
     sleep: async () => { clock += 1000; },
     stderrWrite: () => {},
   });

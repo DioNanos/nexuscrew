@@ -615,6 +615,7 @@ test('cell-exec kimi: delivery owner per OGNI generazione + marker @nc_delivery 
       return child;
     },
     now: () => clock,
+    monoNow: () => clock,
     sleep: async () => {},
     process: proc,
     setTimeout: (fn) => { fn(); return 1; },
@@ -906,6 +907,7 @@ test('cell-exec restart: senza client -> legacy injectPrompt (G4); failure deliv
       return child;
     },
     now: () => clock,
+    monoNow: () => clock,
     sleep: async () => {},
     process: proc,
     setTimeout: (fn) => { fn(); return 1; },
@@ -990,4 +992,638 @@ test('regression: claude.native/codex/pi/agy conservano prompt su argv; solo kim
     assert.ok(!kimiCode.engine.args.includes('bootstrap'), 'claude.kimi-code: prompt mai in argv');
     assert.ok(kimiCode.engine.args.includes('k3[1m]'), 'modello K3 1M preservato (regression)');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+// ===========================================================================
+// 7. Restart cap (restart budget) + stop visibile persistente: tetto
+//    cumulativo oltre gen0, misura della durata sul clock monotono catturata
+//    all'exit, reset completo dopo run lunga, backoff raddoppiante, record
+//    terminale per lancio su file (sopravvive al pane), selettore del lancio,
+//    payload activity anche per gli engine a launcher, terminal in status.
+//    Ogni test usa HOME/dir in tmpdir: nessuna scrittura fuori dalla own tmp.
+// ===========================================================================
+const activityFiles = require('../lib/files/activity.js');
+const { validSupervise, validPayload } = require('../lib/fleet/cell-exec.js');
+
+// Harness del supervisore: clock MONOTONO iniettato (la vita di ogni
+// generazione e' lifeMs), sleep contati, spawn fake con exit a microtask
+// (dopo aver fatto avanzare il clock), stderr catturato. `now` civile
+// controllabile a parte per i timestamp dei record.
+function supervisorHarness({
+  supervise = {}, payload = {}, activity = null, lifeMs = 60,
+  wall = null, manualExit = false, killExits = true, onSpawn = null,
+} = {}) {
+  const errs = []; const waits = [];
+  let clock = 0; let launches = 0;
+  const proc = new EventEmitter();
+  const fullPayload = {
+    command: '/bin/fake', args: [], env: {},
+    ...payload,
+    ...(activity ? { activity } : {}),
+    supervise: {
+      enabled: true, initialReadyMs: 50, restartDelayMs: 50,
+      maxRestartDelayMs: 800, resetAfterMs: 1000, rapidWindowMs: 3600000,
+      maxRapidRestarts: 1000,
+      ...supervise,
+    },
+  };
+  const seamsBase = {
+    receivePayload: async () => fullPayload,
+    spawn: () => {
+      launches += 1;
+      const child = new EventEmitter();
+      child.kill = () => { if (killExits) child.emit('exit', 0, null); };
+      if (onSpawn) onSpawn(launches, child, proc);
+      if (!manualExit) queueMicrotask(() => { clock += lifeMs; child.emit('exit', 1, null); });
+      return child;
+    },
+    now: () => (wall ? wall(launches) : 1700000000000 + clock),
+    monoNow: () => clock,
+    sleep: async (ms) => { waits.push(ms); },
+    process: proc,
+    // Il timer del prompt NON scatta nello stack che lo crea (nel runtime vero
+    // e' un setTimeout): se fn() girasse subito, `timer = null` avverrebbe
+    // prima che `timer = setTimer(...)` riceva l'handle, e il cancel() vedrebbe
+    // un timer pendente che non esiste piu' — settle(null) spezzerebbe la
+    // propagazione dell'esito incerto della delivery.
+    setTimeout: (fn) => { queueMicrotask(fn); return 1; },
+    clearTimeout: () => {},
+    writeError: (m) => errs.push(String(m)),
+    tmuxExec: async () => ({ err: null, stdout: '', stderr: '', code: 0 }),
+  };
+  return {
+    proc,
+    errs, waits,
+    launches: () => launches,
+    payload: fullPayload,
+    seams: seamsBase,
+    clock: () => clock,
+    run: (extra = {}) => cellExecMain(['--socket', '/tmp/x', '--nonce', '1'.repeat(64)], { ...seamsBase, ...extra }),
+  };
+}
+
+test('budget: bounds di maxTotalRestarts validati (1..200 intero), payload invalido rifiutato', () => {
+  assert.equal(validSupervise({ maxTotalRestarts: 1 }), true);
+  assert.equal(validSupervise({ maxTotalRestarts: 12 }), true);
+  assert.equal(validSupervise({ maxTotalRestarts: 200 }), true);
+  assert.equal(validSupervise({ maxTotalRestarts: 0 }), false, 'sotto bound');
+  assert.equal(validSupervise({ maxTotalRestarts: 201 }), false, 'sopra bound');
+  assert.equal(validSupervise({ maxTotalRestarts: 1.5 }), false, 'frazione');
+  assert.equal(validSupervise({ maxTotalRestarts: '12' }), false, 'stringa');
+  assert.equal(validSupervise({ maxTotalRestarts: true }), false, 'booleano');
+  assert.equal(validPayload({
+    command: '/bin/x', args: [], env: {},
+    supervise: { enabled: true, maxTotalRestarts: 201 },
+  }), false, 'payload con tetto fuori bounds rifiutato');
+  const { DEFAULT_SUPERVISE } = require('../lib/fleet/cell-exec.js');
+  assert.equal(DEFAULT_SUPERVISE.maxTotalRestarts, 12, 'default 12: gen0 + 12 spawn');
+});
+
+test('budget: cap=2 -> esattamente 3 spawn (gen0+2), il 4o vietato, stop SENZA sleep inutile', async () => {
+  const w = supervisorHarness({ supervise: { maxTotalRestarts: 2 } });
+  const code = await w.run();
+  assert.equal(w.launches(), 3, 'gen0 piu\' due restart impegnati, il terzo vietato');
+  assert.equal(code, 1, 'fermata terminale');
+  // Il check del tetto e' ALLA DECISIONE di restart, prima di dormire: gli
+  // sleep sono esattamente tanti quanti i restart davvero impegnati (2), col
+  // backoff gia' raddoppiato fra il primo e il secondo.
+  assert.deepEqual(w.waits, [50, 100], 'nessun backoff dormito dopo il tetto raggiunto');
+  assert.ok(w.errs.some((e) => e.includes('total restart budget exhausted')), 'motivo bounded su stderr');
+});
+
+test('budget: cap=1 e cap=12 (gen0+N esatti)', async () => {
+  const w1 = supervisorHarness({ supervise: { maxTotalRestarts: 1 } });
+  await w1.run();
+  assert.equal(w1.launches(), 2, 'cap 1: gen0 + 1 spawn');
+  const w12 = supervisorHarness({ supervise: { maxTotalRestarts: 12 } });
+  await w12.run();
+  assert.equal(w12.launches(), 13, 'cap 12: gen0 + 12 spawn (13 in tutto)');
+  assert.equal(w12.waits.length, 12, 'un backoff per ogni restart impegnato');
+});
+
+test('budget: impegno solo allo spawn certo — stop durante il backoff NON consuma', async () => {
+  const w = supervisorHarness({ supervise: { maxTotalRestarts: 5 } });
+  // Il primo sleep emette lo stop dell'operatore: nessun secondo spawn.
+  w.seams.sleep = async () => { w.waits.push(50); w.proc.emit('SIGTERM'); };
+  const code = await w.run();
+  assert.equal(code, 0);
+  assert.equal(w.launches(), 1, 'nessun client rilanciato dopo il segnale');
+});
+
+test('budget: run >= resetAfterMs azzera ANCHE il contatore cumulativo (burst nuovo)', async () => {
+  // cap=1 con generazioni LUNGHE (2000ms >= resetAfterMs): il reset azzerando
+  // totalRestarts permette il terzo spawn. Senza l'azzeramento del budget il
+  // supervisore si fermerebbe a 2. Lo stop dell'operatore arriva DENTRO lo
+  // spawn della terza generazione (sincrono: il loop gira a microtask puri e
+  // un timer reale non girerebbe mai).
+  const stopAt = (n, _child, proc) => { if (n === 3) proc.emit('SIGTERM'); };
+  const w = supervisorHarness({ lifeMs: 2000, supervise: { maxTotalRestarts: 1 }, onSpawn: stopAt });
+  const code = await w.run();
+  assert.equal(w.launches(), 3, 'il reset della run lunga restituisce il budget del burst');
+  assert.equal(code, 0, 'chiusura pulita via operatore');
+});
+
+test('budget: confine del reset — durata APPENA sotto non azzera, APPENA sopra si\'', async () => {
+  // resetAfterMs di harness: 1000. lifeMs 999: la generazione non e' «lunga»,
+  // il budget non si azzera, cap=1 fermo a gen0+1. lifeMs 1000: il reset si
+  // applica e il burst ricomincia (si ferma l'operatore al terzo spawn).
+  const sotto = supervisorHarness({ lifeMs: 999, supervise: { maxTotalRestarts: 1 } });
+  await sotto.run();
+  assert.equal(sotto.launches(), 2, '999ms < 1000ms: nessun reset, tetto a gen0+1');
+  const stopAt = (n, _child, proc) => { if (n === 3) proc.emit('SIGTERM'); };
+  const sopra = supervisorHarness({ lifeMs: 1000, supervise: { maxTotalRestarts: 1 }, onSpawn: stopAt });
+  const code = await sopra.run();
+  assert.equal(sopra.launches(), 3, '1000ms >= 1000ms: reset, il budget del burst torna');
+  assert.equal(code, 0);
+});
+
+test('misura: durata catturata all\'exit — attesa di cancellazione LUNGA dopo l\'exit non resetta', async () => {
+  // gen0 vita breve (60ms), ma la delivery si conclude molto DOPO l'exit e
+  // nel frattempo fa avanzare il clock di 5000ms: la vecchia misura (letta a
+  // valle delle attese) vedeva una generazione «lunga» e azzerava la finestra
+  // rapid. Con l'istante catturato nel listener la generazione resta breve e
+  // il circuito rapid si apre al secondo exit.
+  let deliverClockJump = 5000;
+  const w = supervisorHarness({
+    supervise: { maxRapidRestarts: 1, maxTotalRestarts: 100 },
+    payload: {
+      restartPrompt: {
+        tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'resume', readyMs: 0,
+        client: 'kimi', readyWaitMs: 1000,
+      },
+    },
+  });
+  // safety: se il difetto tornasse (reset continuo), fermiamo l'infinito.
+  let safety = 0;
+  w.seams.sleep = async (ms) => {
+    w.waits.push(ms); safety += 1;
+    if (safety >= 6) w.proc.emit('SIGTERM');
+  };
+  const realClock = w.seams.monoNow;
+  w.seams.deliverBootstrapPrompt = () => new Promise((resolve) => {
+    setTimeout(() => {
+      const base = realClock();
+      w.seams.monoNow = () => base + deliverClockJump; // il clock scorre durante l'attesa...
+      deliverClockJump = 0;
+      resolve({ delivered: true, state: 'submitted', notReady: '' });
+    }, 10);
+  });
+  const code = await w.run();
+  assert.equal(w.launches(), 2, 'il circuito rapid apre al secondo exit breve');
+  assert.equal(code, 1);
+});
+
+test('backoff: raddoppia davvero fino al tetto (50,100,200,400,800,800,800)', async () => {
+  const w = supervisorHarness({
+    supervise: { maxTotalRestarts: 7, restartDelayMs: 50, maxRestartDelayMs: 800 },
+  });
+  await w.run();
+  assert.deepEqual(w.waits, [50, 100, 200, 400, 800, 800, 800], 'sequenza di backoff raddoppiante con cap');
+  assert.equal(w.launches(), 8, 'gen0 + 7 restart');
+});
+
+test('stop visibile: cap raggiunto DOPO la readiness -> ragione su file, leggibile senza pane, per custom', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-term-'));
+  const sessione = 'cloud-T';
+  const dir = path.join(root, sessione);
+  try {
+    const launchId = 'a1b2c3d4e5f60718';
+    // Il selettore del lancio lo pubblica il PROPRIETARIO del ciclo di vita
+    // (il runtime, prima dello spawn): qui lo si simula nello stesso punto.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, launchId), true);
+    const w = supervisorHarness({
+      supervise: { maxTotalRestarts: 1 },
+      activity: { dir, generation: launchId },
+    });
+    const code = await w.run();
+    assert.equal(code, 1, 'fermata terminale a budget esaurito');
+    assert.equal(w.launches(), 2);
+    // Il pane non esiste piu' (nessun tmux qui): la ragione vive sul FILE.
+    const diagnosi = activityFiles.leggiDiagnosiTerminale(root, sessione);
+    assert.equal(diagnosi.reason, 'restart-budget-exhausted');
+    assert.equal(diagnosi.launchId, launchId);
+    assert.ok(Number.isFinite(diagnosi.ts), 'timestamp civile finito');
+    // Contenuto del record: schema chiuso, niente testo libero.
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, `terminal-${launchId}.json`), 'utf8'));
+    assert.deepEqual(Object.keys(raw).sort(), ['event', 'launchId', 'reason', 'ts', 'version']);
+    assert.equal(raw.event, 'terminal-stop');
+    assert.equal(raw.version, 1);
+    // Selettore del lancio: pubblicato dal proprietario, NON toccato dal
+    // supervisore (che pure ha vissuto l'intero ciclo fino allo stop).
+    assert.equal(fs.readFileSync(path.join(dir, 'launch-current'), 'utf8').trim(), launchId);
+    // Nessun boot automatico: il supervisore e' uscito, nessuno spawn oltre il tetto.
+    assert.equal(w.launches(), 2);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('stop visibile: il supervisore NON puo\' spostare il selettore (e\' del ciclo di vita, non suo)', async () => {
+  // Prova del vincolo sul selettore: un supervisore ritardato di un lancio
+  // vecchio, fermo prima della pubblicazione, non deve poter spostare la
+  // selezione di un lancio nuovo. Nel codice nuovo la pubblicazione sta al
+  // runtime (dentro il lock per cella): il supervisore NON scrive MAI
+  // `launch-current`, quindi un ritardo qualsiasi al piu' fa arrivare tardi
+  // il SUO record terminale — la selezione resta quella del lancio corrente.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-selown-'));
+  const sessione = 'cloud-T';
+  const dir = path.join(root, sessione);
+  try {
+    const vecchio = 'aaaa000000000001';
+    const nuovo = 'bbbb000000000002';
+    // Il runtime del lancio NUOVO ha gia' spostato il selettore...
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, nuovo), true);
+    // ...e il supervisore VECCHIO (ritardato, fermo prima della vecchia
+    // pubblicazione) vive ora tutto il suo ciclo e pubblica solo il proprio
+    // record terminale.
+    const w = supervisorHarness({
+      supervise: { maxTotalRestarts: 1 },
+      activity: { dir, generation: vecchio },
+    });
+    const code = await w.run();
+    assert.equal(code, 1);
+    // La selezione NON si e' mossa: resta il lancio nuovo, e la diagnosi
+    // restituita e' quella del lancio nuovo (assente), MAI quella del vecchio.
+    assert.equal(fs.readFileSync(path.join(dir, 'launch-current'), 'utf8').trim(), nuovo,
+      'il supervisore non scrive launch-current');
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, sessione), null,
+      'il record del vecchio non viene selezionato');
+    // Il record del vecchio esiste (diagnosi conservata per chi la cerca per
+    // lancio) ma non e' la diagnosi DEL LANCIO CORRENTE.
+    assert.ok(fs.existsSync(path.join(dir, `terminal-${vecchio}.json`)));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('stop visibile: orologi separati — salto dell\'orologio civile non tocca budget ne\' timestamp', async () => {
+  // now (civile) salta avanti e indietro a ogni generazione: le DURATE e il
+  // budget sono sul monotono e non cambiano; il record porta un ts civile
+  // finito (interpretabile dal lettore Date.now).
+  let i = 0;
+  const salti = [1700000000000, 900000000000, 4200000000000, 1700000000001];
+  const w = supervisorHarness({
+    supervise: { maxTotalRestarts: 1 },
+    wall: () => salti[i++ % salti.length],
+  });
+  const code = await w.run();
+  assert.equal(w.launches(), 2, 'budget identico nonostante i salti civili');
+  assert.equal(code, 1);
+});
+
+test('stop visibile: errore di pubblicazione onesto — dir non scrivibile, ciclo fermo comunque', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-ro-'));
+  const dir = path.join(root, 'cloud-T');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o500); // scrittura negata al owner: le publish falliscono
+  try {
+    const w = supervisorHarness({
+      supervise: { maxTotalRestarts: 1 },
+      activity: { dir, generation: 'dead0000beef0001' },
+    });
+    const code = await w.run();
+    assert.equal(code, 1, 'il ciclo si ferma comunque al tetto');
+    assert.equal(w.launches(), 2);
+    assert.ok(w.errs.some((e) => e.includes('terminal reason not published')),
+      'diagnosi dichiarata non disponibile, mai uno stop «registrato» non scritto');
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 'cloud-T'), null, 'nessuna diagnosi inventata');
+  } finally {
+    fs.chmodSync(dir, 0o700);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('stop visibile: ragioni terminali del supervisore sul canale (operator/spawn/uncertain)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-rag-'));
+  // Il selettore del lancio lo pubblica il runtime (proprietario del ciclo di
+  // vita) PRIMA dello spawn: in ogni sotto-caso lo si simula li'.
+  const mk = (name) => {
+    const dir = path.join(root, name);
+    const launchId = name.padEnd(16, '0').slice(0, 16);
+    return { dir, launchId };
+  };
+  try {
+    // operator-stop: segnale durante il backoff.
+    {
+      const { dir, launchId } = mk('opstop00000000000'.slice(0, 16));
+      assert.equal(activityFiles.pubblicaSelettoreLancio(dir, launchId), true);
+      const w = supervisorHarness({ activity: { dir, generation: launchId } });
+      w.seams.sleep = async (ms) => { w.waits.push(ms); w.proc.emit('SIGTERM'); };
+      const code = await w.run();
+      assert.equal(code, 0);
+      assert.equal(w.launches(), 1);
+      assert.equal(activityFiles.leggiDiagnosiTerminale(root, path.basename(dir)).reason, 'operator-stop');
+    }
+    // spawn-error: il figlio non nasce (error di spawn).
+    {
+      const nome = 'spawnerr';
+      const dir = path.join(root, nome);
+      assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'aa0000000000000b'), true);
+      const w = supervisorHarness({ activity: { dir, generation: 'aa0000000000000b' } });
+      w.seams.spawn = () => {
+        const child = new EventEmitter();
+        child.kill = () => {};
+        queueMicrotask(() => child.emit('error', Object.assign(new Error('enoent'), { code: 'ENOENT' })));
+        return child;
+      };
+      const code = await w.run();
+      assert.equal(code, 1);
+      assert.ok(w.errs.some((e) => e.includes('spawn failed')), 'sanitize spawn error');
+      assert.equal(activityFiles.leggiDiagnosiTerminale(root, nome).reason, 'spawn-error');
+    }
+    // uncertain-delivery: esito post-paste incerto -> fermata bounded + record.
+    {
+      const nome = 'uncertain';
+      const dir = path.join(root, nome);
+      assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'cc0000000000000d'), true);
+      const w = supervisorHarness({
+        activity: { dir, generation: 'cc0000000000000d' },
+        payload: {
+          restartPrompt: {
+            tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'resume', readyMs: 0,
+            client: 'kimi', readyWaitMs: 1000,
+          },
+        },
+      });
+      w.seams.deliverBootstrapPrompt = async () => ({ delivered: false, state: 'delivery-unknown', notReady: '' });
+      const code = await w.run();
+      assert.equal(code, 1);
+      assert.equal(w.launches(), 1, 'nessuna gen1 dopo esito incerto');
+      assert.equal(activityFiles.leggiDiagnosiTerminale(root, nome).reason, 'uncertain-delivery');
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('stop visibile: lease persa -> ragione lease-lost pubblicata (idempotente sull\'uscita)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-lease-'));
+  const dir = path.join(root, 'cloud-T');
+  const L = require('../lib/fleet/cell-lease.js');
+  const clock = { t: 100_000 };
+  const timers = [];
+  const fakeSetTimeout = (fn) => { const h = { fn }; timers.push(h); return h; };
+  const fakeClearTimeout = () => {};
+  try {
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'ee0000000000000f'), true);
+    const w = supervisorHarness({
+      activity: { dir, generation: 'ee0000000000000f' },
+      manualExit: true, // il child vive finche' onLost non lo ferma
+      payload: { lease: { cellId: 'Dev', launchEpoch: 'e'.repeat(16), stablePath: '/tmp/nonexistent-lease.sock' } },
+    });
+    const fakeSocket = new (require('node:events').EventEmitter)();
+    fakeSocket.destroyed = false;
+    fakeSocket.destroy = () => { fakeSocket.destroyed = true; fakeSocket.emit('close'); };
+    w.seams.receivePayload = async () => ({ payload: w.payload, socket: fakeSocket });
+    w.seams.now = () => clock.t;                  // orologio civile = clock della grace
+    w.seams.monoNow = () => clock.t;              // durate sullo stesso clock controllato
+    w.seams.setTimeout = fakeSetTimeout;
+    w.seams.clearTimeout = fakeClearTimeout;
+    w.seams.net = {
+      createConnection: () => {
+        const s = new (require('node:events').EventEmitter)();
+        s.destroyed = false;
+        s.destroy = () => { s.destroyed = true; s.emit('close'); };
+        s.setEncoding = () => {}; s.write = () => true;
+        return s;
+      },
+    };
+    const running = w.run();
+    // Lascia partire il supervisore (spawn + lease client), poi perde il canale.
+    await new Promise((resolve) => setImmediate(resolve));
+    fakeSocket.emit('close');
+    clock.t += L.GRACE_MS + 1;
+    for (let guard = 0; guard < 40; guard += 1) {
+      const pending = timers.splice(0, timers.length);
+      for (const h of pending) { try { h.fn(); } catch (_) {} }
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const code = await running;
+    assert.equal(code, 0, 'uscita pulita dopo la fermata del child');
+    // La ragione e' la CAUSA (lease-lost), non il operator-stop dell'uscita.
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 'cloud-T').reason, 'lease-lost');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('canale terminale: enum chiuso, round-trip per ogni ragione, id lancio ostile rifiutato', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-enum-'));
+  const dir = path.join(root, 's');
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    assert.deepEqual([...activityFiles.RAGIONI_TERMINALI],
+      ['restart-budget-exhausted', 'uncertain-delivery', 'lease-lost', 'spawn-error', 'operator-stop'],
+      'enum chiuso, nessuna aggiunta libera');
+    for (const reason of activityFiles.RAGIONI_TERMINALI) {
+      const id = reason.slice(0, 16).padEnd(16, 'x');
+      assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: id, reason, ora: 123 }), true, reason);
+      assert.equal(activityFiles.pubblicaSelettoreLancio(dir, id), true);
+      const d = activityFiles.leggiDiagnosiTerminale(root, 's');
+      assert.equal(d.reason, reason); assert.equal(d.ts, 123); assert.equal(d.launchId, id);
+    }
+    // id ostile: mai un nome file fuori dalla directory, mai una ragione fuori enum.
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: '../escape', reason: 'operator-stop' }), false);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: 'ok0000000000000f', reason: 'free-text' }), false);
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, '../../etc'), false);
+    assert.equal(fs.readdirSync(dir).some((n) => n.includes('escape') || n.startsWith('..')), false);
+    // Sessione ostile in lettura: traversal negato.
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, '../altro'), null);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('canale terminale: il selettore separa i lanci — il vecchio supervisore non sporca il nuovo', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-sel-'));
+  const dir = path.join(root, 's');
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    const A = 'aaaa000000000001'; const B = 'bbbb000000000002'; const C = 'cccc000000000003';
+    // Lancio A pubblica la propria ragione ed e' selezionato.
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: A, reason: 'lease-lost', ora: 1 }), true);
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, A), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 's').reason, 'lease-lost');
+    // Lancio B nuovo: il selettore si sposta; la ragione di B non c'e' ancora.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, B), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 's'), null,
+      'la ragione del lancio vecchio non vale per il nuovo');
+    // Il VECCHIO supervisore A scrive tardi: riscrive solo il proprio record.
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: A, reason: 'spawn-error', ora: 2 }), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 's'), null, 'scrittura tardiva di A non seleziona A');
+    // B pubblica la propria ragione; un hook tardo (ClientExit) tocca solo
+    // activity.json e non puo' cancellarla.
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: B, reason: 'operator-stop', ora: 3 }), true);
+    assert.equal(activityFiles.scriviStato(dir, { evento: 'ClientExit', generazione: B, ora: 4 }), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 's').reason, 'operator-stop',
+      'la diagnosi sopravvive a un hook tardivo');
+    // Lancio C: selezione C; scrittura tardiva di B non invalida C.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, C), true);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: B, reason: 'spawn-error', ora: 5 }), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 's'), null, 'B tardivo non sposta la selezione di C');
+    // Selettore rotto: onesto null, mai la ragione vecchia come nuova.
+    fs.writeFileSync(path.join(dir, 'launch-current'), 'not!!a@valid id\n');
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 's'), null);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('canale terminale: retention bounded — al lancio restano gli ultimi 8 record', () => {
+  // La potatura sta al proprietario del ciclo di vita (il runtime, allo stesso
+  // punto della pubblicazione del selettore): qui si prova direttamente
+  // l'helper, con la stessa sequenza che usa il runtime.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-ret-'));
+  const dir = path.join(root, 's');
+  fs.mkdirSync(dir, { recursive: true });
+  const idDi = (i) => `r${String(i).padStart(15, '0')}`;
+  try {
+    const base = Date.now() - 100000;
+    for (let i = 0; i < 10; i += 1) {
+      assert.equal(activityFiles.scriviRecordTerminale(dir, {
+        launchId: idDi(i), reason: 'operator-stop', ora: base + i,
+      }), true);
+      fs.utimesSync(path.join(dir, `terminal-${idDi(i)}.json`), new Date(base + i), new Date(base + i));
+    }
+    const rimossi = activityFiles.potaTerminali(dir);
+    assert.deepEqual(rimossi.sort(), [`terminal-${idDi(0)}.json`, `terminal-${idDi(1)}.json`],
+      'pruna i due piu\' vecchi');
+    const restanti = fs.readdirSync(dir).filter((n) => n.startsWith('terminal-')).sort();
+    assert.equal(restanti.length, 8, 'retention bounded');
+    assert.ok(!restanti.includes(`terminal-${idDi(0)}.json`), 'il piu\' vecchio e\' pruno');
+    assert.ok(!restanti.includes(`terminal-${idDi(1)}.json`), 'il secondo piu\' vecchio e\' pruno');
+    assert.ok(restanti.includes(`terminal-${idDi(2)}.json`), 'dal terzo in poi restano');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// --- Runtime: plumb del tetto nel payload, canale activity per i custom,
+// --- terminal esposto da cellStatus (la UI non mostra «attivo sano» dove
+// --- c'e' una ragione terminale del lancio corrente).
+function makeCustomWorld({ cfgExtra = {} } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-cw-'));
+  const home = path.join(root, 'home'); fs.mkdirSync(home, { mode: 0o700 });
+  const cwd = path.join(home, 'work'); fs.mkdirSync(cwd);
+  const filesRoot = path.join(root, 'files');
+  const defsPath = path.join(root, 'fleet.json');
+  // Il command deve passare il gate di trust: file regolare, eseguibile
+  // dall'owner, non symlink, non world-writable. Nel mondo del test.
+  const fakeCli = path.join(root, 'fake-cli');
+  fs.writeFileSync(fakeCli, '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(fakeCli, 0o755);
+  atomicWrite(defsPath, {
+    schemaVersion: 1,
+    engines: [{ id: 'fake.cli', label: 'F', rc: false, command: fakeCli, args: [], promptMode: 'send-keys' }],
+    cells: [{ id: 'Dev', tmuxSession: 'work-custom', cwd, engine: 'fake.cli', boot: false }],
+  });
+  const tmuxBin = writeFakeTmux(root, {});
+  let ticket = null;
+  const logs = [];
+  const runtime = createBuiltinRuntime({
+    cfg: { launchReadyMs: 40, filesRoot, log: (m) => logs.push(String(m)), ...cfgExtra },
+    home, defsPath, tmuxBin, readonly: () => false,
+    launchBroker: {
+      issue: async (payload) => { ticket = payload; return { socketPath: '/x', nonce: 'n'.repeat(64) }; },
+      close: async () => {},
+    },
+    boot: loadDefinitions(defsPath),
+  });
+  return {
+    runtime, root, filesRoot, logs,
+    ticket: () => ticket,
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+test('runtime custom (launcher): payload activity per il supervisore + tetto nel supervise', async () => {
+  const w = makeCustomWorld();
+  try {
+    const res = await w.runtime.up('Dev');
+    assert.equal(res.ok, true);
+    const t = w.ticket();
+    // Il canale esce dal solo ramo managed: anche gli engine a launcher
+    // portano la directory attivita' del supervisore e la generazione.
+    assert.ok(t.activity, 'payload activity per engine custom');
+    assert.equal(t.activity.dir, path.join(w.filesRoot, 'work-custom'));
+    assert.match(t.activity.generation, /^[0-9a-f]{16}$/, 'identita\' del lancio');
+    // Tetto cumulativo: default 12, clamped 1..200.
+    assert.equal(t.supervise.maxTotalRestarts, 12, 'default del tetto cumulativo');
+  } finally { w.cleanup(); }
+});
+
+test('runtime: cellMaxTotalRestarts plumbed e clamped (override 7, fuori bounds -> 200)', async () => {
+  const w7 = makeCustomWorld({ cfgExtra: { cellMaxTotalRestarts: 7 } });
+  try {
+    await w7.runtime.up('Dev');
+    assert.equal(w7.ticket().supervise.maxTotalRestarts, 7, 'override da cfg');
+  } finally { w7.cleanup(); }
+  const wBig = makeCustomWorld({ cfgExtra: { cellMaxTotalRestarts: 9999 } });
+  try {
+    await wBig.runtime.up('Dev');
+    assert.equal(wBig.ticket().supervise.maxTotalRestarts, 200, 'clamp al bound massimo');
+  } finally { wBig.cleanup(); }
+});
+
+test('runtime: opt-out activityHooks == false vale anche per i custom (nessun canale)', async () => {
+  const w = makeCustomWorld({ cfgExtra: { activityHooks: false } });
+  try {
+    await w.runtime.up('Dev');
+    assert.equal(w.ticket().activity, undefined, 'opt-out dell\'operatore rispettato');
+  } finally { w.cleanup(); }
+});
+
+test('runtime: il selettore del lancio lo pubblica il PROPRIETARIO del ciclo di vita', async () => {
+  // Dentro up() (lock per cella), PRIMA dello spawn: un supervisore ritardato
+  // non ha in mano la selezione di un lancio nuovo. Il selettore segue il
+  // lancio corrente a ogni up.
+  const w = makeCustomWorld();
+  try {
+    await w.runtime.up('Dev');
+    const dir = path.join(w.filesRoot, 'work-custom');
+    const gen1 = w.ticket().activity.generation;
+    assert.equal(activityFiles.leggiSelettoreLancio(dir), gen1,
+      'il runtime pubblica launch-current alla partenza');
+    assert.equal(w.logs.length, 0, 'nessun problema di pubblicazione dichiarato');
+    // Un secondo lancio sposta la selezione: la diagnosi del vecchio lancio
+    // non vale piu' per la cella.
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: gen1, reason: 'lease-lost', ora: 1,
+    }), true);
+    await w.runtime.up('Dev');
+    const gen2 = w.ticket().activity.generation;
+    assert.notEqual(gen2, gen1);
+    assert.equal(activityFiles.leggiSelettoreLancio(dir), gen2, 'la selezione segue il lancio nuovo');
+    assert.equal(activityFiles.leggiDiagnosiTerminale(w.filesRoot, 'work-custom'), null,
+      'la ragione del lancio vecchio non si presenta come attuale');
+  } finally { w.cleanup(); }
+});
+
+test('runtime: selettore non pubblicabile -> lancio NON bloccato, dichiarazione onesta', async () => {
+  // La directory attivita' e' read-only: la pubblicazione fallisce, il
+  // lancio parte comunque (la fermata c'e' sempre, la VISIBILITA' persistente
+  // richiede il canale) e il fallimento viene dichiarato — mai una diagnosi
+  // silenziosamente assente.
+  const w = makeCustomWorld();
+  try {
+    const dir = path.join(w.filesRoot, 'work-custom');
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o500);
+    const res = await w.runtime.up('Dev');
+    assert.equal(res.ok, true, 'il lancio non si blocca sul selettore');
+    assert.ok(w.logs.some((l) => l.includes('launch selector not published')),
+      'fallimento dichiarato: diagnosi non disponibile');
+  } finally { w.cleanup(); }
+});
+
+test('cellStatus: terminal del lancio corrente esposto (reason+ts), assente senza record', async () => {
+  const w = makeCustomWorld();
+  try {
+    await w.runtime.up('Dev');
+    const dir = path.join(w.filesRoot, 'work-custom');
+    const launchId = w.ticket().activity.generation;
+    // Nessun record: campo assente, la cella non finge una diagnosi.
+    const prima = await w.runtime.cellStatus();
+    assert.equal(prima.cells[0].terminal, undefined);
+    // Record del lancio corrente: la ragione arriva a status (pane o non pane).
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId, reason: 'restart-budget-exhausted', ora: 1700000000000,
+    }), true);
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, launchId), true);
+    const dopo = await w.runtime.cellStatus();
+    assert.deepEqual(dopo.cells[0].terminal,
+      { reason: 'restart-budget-exhausted', ts: 1700000000000 },
+      'solo enum + timestamp, nessun testo libero o percorso');
+    // Lancio nuovo: il selettore si sposta, la ragione vecchia non si vede.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'ffff000000000009'), true);
+    const nuovo = await w.runtime.cellStatus();
+    assert.equal(nuovo.cells[0].terminal, undefined,
+      'un nuovo lancio invalida la ragione del vecchio');
+  } finally { w.cleanup(); }
 });
