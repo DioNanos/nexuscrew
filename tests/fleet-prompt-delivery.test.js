@@ -2021,3 +2021,174 @@ test('registro inaccessibile ovunque: il lancio e\' RIFIUTATO, il corrente resta
     w.cleanup();
   }
 });
+
+// ===========================================================================
+// 7d. Terzo giro di correzioni. L'autorita' del registro si ordina per
+//     REVISIONE PERSISTENTE (mai per orologio civile) e il commit
+//     dell'autorita' PRECEDE la pubblicazione del selettore: un lancio
+//     ammesso resta l'autorita' piu' recente dopo il riavvio del runtime
+//     indipendentemente dal clock (uguale o arretrato), dall'ordine delle
+//     locazioni e da quale copia sia rimasta vecchia; un lancio RIFIUTATO
+//     per registro inaccessibile lascia selettore e diagnosi del lancio
+//     precedente coerenti e leggibili, sessione scrivibile o meno.
+// ===========================================================================
+
+// Scrittura che tocca SOLO la primaria (riserva guasta): resta la piu'
+// recente anche a timestamp UGUALE o ARRETRATO rispetto al record rimasto
+// nella riserva — ordina la revisione, non il wall clock.
+for (const clock of [100, 99]) test(`registro: scrittura solo-primaria a timestamp ${clock} resta la piu' recente`, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-order-p-'));
+  const spare = path.join(root, 'launch-registry-spare');
+  try {
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'oldlaunch', canale: 'selector', ora: 100,
+    }), true);
+    fs.chmodSync(spare, 0o500);
+    const esito = {};
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'newlaunch', canale: 'off', ora: clock, esito,
+    }), true);
+    assert.deepEqual(esito, { primario: true, riserva: false });
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's').launchId, 'newlaunch',
+      'il lancio ammesso sopravanza l\'autorita\' precedente indipendentemente dal clock');
+  } finally { fs.chmodSync(spare, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// Simmetria delle locazioni: la scrittura che tocca SOLO la riserva (primaria
+// guasta) resta la piu' recente nelle stesse condizioni di clock.
+for (const clock of [100, 99]) test(`registro: scrittura solo-riserva a timestamp ${clock} resta la piu' recente`, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-order-s-'));
+  const primaria = path.join(root, 'launch-registry');
+  try {
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'oldlaunch', canale: 'selector', ora: 100,
+    }), true);
+    fs.chmodSync(primaria, 0o500);
+    const esito = {};
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'newlaunch', canale: 'off', ora: clock, esito,
+    }), true);
+    assert.deepEqual(esito, { primario: false, riserva: true });
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's').launchId, 'newlaunch',
+      'nessuna locazione e\' privilegiata: vince la revisione piu\' alta');
+  } finally { fs.chmodSync(primaria, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// Due identita' DIVERGENTI alla stessa revisione: l'ordine non e' stabilibile
+// e la lettura e' l'assenza onesta — mai una delle due per preferenza fissa
+// di locazione o di clock. I record sono scritti a mano perche' l'API, che
+// incrementa la revisione sotto il lock del proprietario, non puo' produrli.
+test('registro: revisione pari con lanci divergenti -> assenza onesta, nessuna preferenza fissa', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-order-d-'));
+  const scrivi = (dir, launchId, ts, rev) => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 's.json'), `${JSON.stringify({
+      version: 1, event: 'launch-registry', launchId, channel: 'selector', ts, rev,
+    })}\n`);
+  };
+  try {
+    scrivi(path.join(root, 'launch-registry'), 'aaaa000000000001', 10, 7);
+    scrivi(path.join(root, 'launch-registry-spare'), 'bbbb000000000002', 20, 7);
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's'), null,
+      'ordine non stabilibile: nessuna delle due copie vince per convenzione');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// Runtime: dopo il riavvio del processo l'autorita' resta quella del lancio
+// AMMESSO, mai quella del lancio vecchio, con hook attivi e con attivita'
+// disattivata, a timestamp uguale e arretrato. La riserva del registro resta
+// vecchia: l'ordinamento non puo' dipendere da lei ne' dal clock.
+for (const hooksOff of [false, true]) for (const clock of [100, 99]) test(`registro: riavvio con hook ${hooksOff ? 'disattivati' : 'attivi'} e timestamp ${clock} — l'autorita' resta il lancio ammesso`, async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const spare = path.join(w.filesRoot, 'launch-registry-spare');
+  const registro = path.join(w.filesRoot, 'launch-registry', 'work-custom.json');
+  try {
+    const a = w.mkRuntime({ now: () => 100 });
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    const idA = a.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: idA, reason: 'lease-lost', ora: 1,
+    }), true);
+    assert.equal((await a.runtime.cellStatus()).cells[0].terminal.reason, 'lease-lost');
+    fs.chmodSync(spare, 0o500);
+    if (!hooksOff) fs.chmodSync(dir, 0o500);
+    const b = w.mkRuntime({ now: () => clock, ...(hooksOff ? { activityHooks: false } : {}) });
+    assert.equal((await b.runtime.up('Dev')).ok, true);
+    assert.ok(b.logs.some((l) => l.includes('launch registry spare not written')),
+      'la locazione rimasta indietro e\' dichiarata');
+    assert.equal((await b.runtime.cellStatus()).cells[0].terminal, undefined,
+      'in processo l\'autorita\' e\' quella del lancio ammesso');
+    const idB = JSON.parse(fs.readFileSync(registro, 'utf8')).launchId;
+    assert.notEqual(idB, idA);
+    const riavviato = w.mkRuntime(hooksOff ? { activityHooks: false } : {});
+    const st = await riavviato.runtime.cellStatus();
+    assert.equal(st.cells[0].terminal, undefined,
+      'dopo il riavvio il lancio vecchio non torna autorita\'');
+    assert.equal(activityFiles.leggiLancioCorrente(w.filesRoot, 'work-custom').launchId, idB,
+      'l\'autorita\' persistente e\' il lancio ammesso, a clock uguale o arretrato');
+  } finally {
+    for (const d of [spare, dir]) if (fs.existsSync(d)) fs.chmodSync(d, 0o700);
+    w.cleanup();
+  }
+});
+
+// Off dopo il riavvio, registro sano e clock in pari col lancio precedente:
+// l'autorita' e' comunque il lancio nuovo a canale disattivato, e la storia
+// del vecchio non e' la sua diagnosi.
+test('registro: off sopravvive al riavvio con clock in pari — autorita\' nuova, nessuna diagnosi del vecchio', async () => {
+  const w = makeCustomWorldConRiavvio();
+  try {
+    const a = w.mkRuntime({ now: () => 100 });
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    const idA = a.ticket().activity.generation;
+    const dir = path.join(w.filesRoot, 'work-custom');
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: idA, reason: 'lease-lost', ora: 1,
+    }), true);
+    const b = w.mkRuntime({ now: () => 100, activityHooks: false });
+    assert.equal((await b.runtime.up('Dev')).ok, true);
+    assert.equal(b.ticket().activity, undefined, 'opt-out rispettato nel payload');
+    const idB = JSON.parse(fs.readFileSync(
+      path.join(w.filesRoot, 'launch-registry', 'work-custom.json'), 'utf8')).launchId;
+    assert.notEqual(idB, idA);
+    const st = await w.mkRuntime().runtime.cellStatus();
+    assert.equal(st.cells[0].terminal, undefined,
+      'il canale off non eredita la diagnosi del lancio vecchio');
+    assert.equal(activityFiles.leggiLancioCorrente(w.filesRoot, 'work-custom').launchId, idB,
+      'a pari clock vince la revisione del lancio nuovo');
+  } finally { w.cleanup(); }
+});
+
+// Rifiuto per registro inaccessibile con SESSIONE SCRIVIBILE: il rifiuto
+// avviene PRIMA di toccare il selettore — zero ticket al broker, identita' e
+// diagnosi del lancio precedente identiche prima e dopo il rifiuto, e dopo
+// il riavvio del runtime.
+test('registro inaccessibile con sessione scrivibile: rifiuto PRIMA del selettore, il corrente resta leggibile', async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const regs = ['launch-registry', 'launch-registry-spare'].map((d) => path.join(w.filesRoot, d));
+  try {
+    const a = w.mkRuntime();
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    const idA = a.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: idA, reason: 'restart-budget-exhausted', ora: 1,
+    }), true);
+    const prima = (await a.runtime.cellStatus()).cells[0].terminal;
+    assert.deepEqual(prima, { reason: 'restart-budget-exhausted', ts: 1 });
+    for (const d of regs) fs.chmodSync(d, 0o500);
+    const b = w.mkRuntime();
+    await assert.rejects(b.runtime.up('Dev'),
+      (e) => e && e.fleetCode === 'LAUNCH_REGISTRY_UNWRITABLE');
+    assert.equal(b.ticket(), null, 'nessun ticket al broker: il rifiuto precede lo spawn');
+    assert.equal(activityFiles.leggiSelettoreLancio(dir), idA,
+      'il selettore non e\' stato spostato dal lancio rifiutato');
+    const dopo = (await w.mkRuntime().runtime.cellStatus()).cells[0].terminal;
+    assert.deepEqual(dopo, prima,
+      'diagnosi identica prima e dopo il rifiuto (e dopo il riavvio)');
+  } finally {
+    for (const d of regs) if (fs.existsSync(d)) fs.chmodSync(d, 0o700);
+    w.cleanup();
+  }
+});
