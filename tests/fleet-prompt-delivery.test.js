@@ -1751,9 +1751,19 @@ test('lettura legata al lancio corrente: canale compromesso legge PER IDENTITA\'
     }), null, 'off: nessuna diagnosi attribuita a un lancio senza canale');
     assert.equal(activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', null), null,
       'senza autorita\' nota l\'esito e\' l\'assenza, non l\'ultimo selettore leggibile');
+    // Il selettore rimasto su quello del VECCHIO lancio non consegna la
+    // diagnosi del vecchio al lancio nuovo: l'identita' selezionata si
+    // confronta con quella dell'autorita' corrente, e una selezione diversa
+    // e' assenza onesta — mai il record di un altro lancio.
     assert.equal(activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', {
       launchId: nuovo, canale: 'selector',
-    }).reason, 'spawn-error', 'selector: il canale integro si legge come prima (selettore -> record)');
+    }), null, 'selector: una selezione che non e\' quella del lancio corrente non restituisce un altro lancio');
+    // Canale integro: il selettore ripubblicato sul lancio corrente consegna
+    // il record di QUEL lancio (e solo quello).
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, nuovo), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', {
+      launchId: nuovo, canale: 'selector',
+    }).reason, 'lease-lost', 'selector: con il selettore del lancio corrente si legge il suo record');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -1877,4 +1887,137 @@ test('opt-out activityHooks: nessuna diagnosi del lancio precedente sul nuovo, n
     assert.deepEqual(st.cells[0].terminal, { reason: 'operator-stop', ts: 4 },
       'al re-enable la ragione del lancio CORRENTE, mai quella di A');
   } finally { w.cleanup(); }
+});
+
+// ===========================================================================
+// 7c. Secondo giro di correzioni. Tre controprobe indipendenti (riportate
+//     dal re-esame del primo giro e qui tenute come regressioni permanenti):
+//     (1) il canale selector non sostituisce MAI l'identita' di un altro
+//     lancio; (2)+(3) il fallimento PERSISTENTE della scrittura del registro
+//     — con hook attivi e con activityHooks:false — non puo' far risorgere
+//     la diagnosi del lancio vecchio dopo il riavvio del runtime. A questo
+//     serve il registro in DUE locazioni: quando NESSUNA delle due accetta
+//     la scrittura il lancio e' rifiutato, perche' un'autorita' senza alcuna
+//     traccia durevole durerebbe solo fino al riavvio, e dopo il riavvio il
+//     record rimasto su disco — quello del lancio precedente — tornerebbe
+//     corrente. Un log e una Map in memoria non sono una traccia durevole.
+// ===========================================================================
+
+test('independent: selector mode must not substitute a different launch identity', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-id-'));
+  const dir = path.join(root, 's');
+  try {
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'oldlaunch'), true);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: 'oldlaunch', reason: 'operator-stop', ora: 1,
+    }), true);
+    const d = activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', {
+      launchId: 'newlaunch', canale: 'selector',
+    });
+    assert.equal(d, null, 'a launch-tagged authority must not resolve another launch terminal');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const hooksOff of [false, true]) test(`independent: persistent registry failure with hooks ${hooksOff ? 'off' : 'on'} cannot revive old diagnosis after restart`, async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const reg = path.join(w.filesRoot, 'launch-registry');
+  try {
+    const a = w.mkRuntime();
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    const old = a.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: old, reason: 'lease-lost', ora: 1,
+    }), true);
+    assert.equal((await a.runtime.cellStatus()).cells[0].terminal.reason, 'lease-lost');
+    const oldRegistry = fs.readFileSync(path.join(reg, 'work-custom.json'), 'utf8');
+    fs.chmodSync(reg, 0o500);
+    if (!hooksOff) fs.chmodSync(dir, 0o500);
+    const b = w.mkRuntime(hooksOff ? { activityHooks: false } : {});
+    assert.equal((await b.runtime.up('Dev')).ok, true);
+    assert.ok(b.logs.some((x) => x.includes('launch registry not written')),
+      'il fallimento della locazione primaria e\' dichiarato');
+    assert.equal(fs.readFileSync(path.join(reg, 'work-custom.json'), 'utf8'), oldRegistry,
+      'il record primario resta byte-identico');
+    assert.equal((await b.runtime.cellStatus()).cells[0].terminal, undefined,
+      'in-process authority suppresses old A');
+    const restarted = w.mkRuntime(hooksOff ? { activityHooks: false } : {});
+    const st = await restarted.runtime.cellStatus();
+    assert.equal(st.cells[0].terminal, undefined,
+      'new B may be unknown; old A cannot become current after restart');
+  } finally {
+    if (fs.existsSync(reg)) fs.chmodSync(reg, 0o700);
+    if (fs.existsSync(dir)) fs.chmodSync(dir, 0o700);
+    w.cleanup();
+  }
+});
+
+test('registro a due locazioni: la lettura segue la piu\' recente fra primaria e riserva', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-2loc-'));
+  const primaria = path.join(root, 'launch-registry');
+  try {
+    const esito1 = {};
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'aaaa000000000001', canale: 'selector', ora: 10, esito: esito1,
+    }), true);
+    assert.equal(esito1.primario, true, 'primaria dichiarata scritta');
+    assert.equal(esito1.riserva, true, 'riserva dichiarata scritta');
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's').launchId, 'aaaa000000000001');
+    // La primaria smette di accettare scritture: la verita' corrente resta
+    // durevole nella riserva, e la lettura la segue.
+    fs.chmodSync(primaria, 0o500);
+    const esito2 = {};
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'bbbb000000000002', canale: 'off', ora: 20, esito: esito2,
+    }), true, 'almeno una locazione persiste');
+    assert.equal(esito2.primario, false, 'primaria dichiarata NON scritta');
+    assert.equal(esito2.riserva, true, 'riserva dichiarata scritta');
+    const letto = activityFiles.leggiLancioCorrente(root, 's');
+    assert.equal(letto.launchId, 'bbbb000000000002',
+      'vince il record piu\' recente, non quello rimasto nella primaria');
+    assert.equal(letto.canale, 'off');
+    // Primaria di nuovo scrivibile: il lancio successivo la aggiorna e la
+    // lettura segue di nuovo lei (ts maggiore).
+    fs.chmodSync(primaria, 0o700);
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'cccc000000000003', canale: 'selector', ora: 30,
+    }), true);
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's').launchId, 'cccc000000000003');
+  } finally {
+    if (fs.existsSync(primaria)) fs.chmodSync(primaria, 0o700);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('registro inaccessibile ovunque: il lancio e\' RIFIUTATO, il corrente resta il precedente', async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const primaria = path.join(w.filesRoot, 'launch-registry');
+  const riserva = path.join(w.filesRoot, 'launch-registry-spare');
+  try {
+    const a = w.mkRuntime();
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    const idA = a.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: idA, reason: 'restart-budget-exhausted', ora: 1,
+    }), true);
+    // Nessuna delle DUE locazioni del registro accetta piu' scritture (e
+    // nemmeno la directory di sessione): nessuna traccia durevole possibile.
+    fs.chmodSync(primaria, 0o500); fs.chmodSync(riserva, 0o500); fs.chmodSync(dir, 0o500);
+    const b = w.mkRuntime();
+    await assert.rejects(b.runtime.up('Dev'), (e) => e && e.fleetCode === 'LAUNCH_REGISTRY_UNWRITABLE',
+      'senza alcuna traccia durevole della nuova autorita\' il lancio non parte');
+    // Il lancio precedente resta il corrente a tutti gli effetti: la sua
+    // diagnosi e' quella VERA (niente di risorto, niente di nascosto), per
+    // il runtime che c'e' e per uno ripartito.
+    const st = await a.runtime.cellStatus();
+    assert.deepEqual(st.cells[0].terminal, { reason: 'restart-budget-exhausted', ts: 1 });
+    const riavviato = w.mkRuntime();
+    const st2 = await riavviato.runtime.cellStatus();
+    assert.deepEqual(st2.cells[0].terminal, { reason: 'restart-budget-exhausted', ts: 1 },
+      'dopo il rifiuto (e un riavvio) l\'autorita\' resta quella di A');
+  } finally {
+    for (const d of [primaria, riserva, dir]) { if (fs.existsSync(d)) fs.chmodSync(d, 0o700); }
+    w.cleanup();
+  }
 });
