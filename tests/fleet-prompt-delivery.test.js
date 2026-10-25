@@ -2192,3 +2192,190 @@ test('registro inaccessibile con sessione scrivibile: rifiuto PRIMA del selettor
     w.cleanup();
   }
 });
+
+// ===========================================================================
+// 7e. Quarto giro di correzioni. La revisione di una copia ILLEGGIBILE — o di
+//     un suo record non valido — non e' osservabile: una scrittura ammessa
+//     sopra il massimo LEGGIBILE potrebbe restare sotto una revisione
+//     nascosta, e la copia tornata leggibile rispristinerebbe un lancio
+//     superato. L'ordine non stabilibile si rifiuta PRIMA di ogni effetto
+//     (stesso enum chiuso del registro inaccessibile) e la lettura dichiara
+//     l'assenza onesta finche' l'autorita' non e' stabilibile. Le copie
+//     provate sono ILLEGGIBILI (0000, con verifica che la lettura fallisca),
+//     non solo non scrivibili: una directory 0500 resta leggibile e non basta.
+//     Entrambe le locazioni, alternativamente, con hook attivi e disattivati.
+// ===========================================================================
+
+test('registry: an unreadable higher revision must not lose authority to an admitted lower revision', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-a4-hidden-'));
+  const p = path.join(root, 'launch-registry');
+  const q = path.join(root, 'launch-registry-spare');
+  try {
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', { launchId: 'seedlaunch', canale: 'selector', ora: 1 }), true);
+    fs.chmodSync(q, 0o500);
+    for (let i = 0; i < 4; i += 1) {
+      assert.equal(activityFiles.registraLancioCorrente(root, 's', { launchId: 'oldlaunch', canale: 'selector', ora: 1 }), true);
+    }
+    const old = JSON.parse(fs.readFileSync(path.join(p, 's.json'), 'utf8'));
+    assert.ok(old.rev >= 5, 'the primary alone advanced above the frozen spare');
+    fs.chmodSync(q, 0o700);
+    fs.chmodSync(p, 0o000);
+    assert.throws(() => fs.readFileSync(path.join(p, 's.json'), 'utf8'), (e) => e.code === 'EACCES');
+    const esito = {};
+    const admitted = activityFiles.registraLancioCorrente(root, 's', { launchId: 'newlaunch', canale: 'off', ora: 1, esito });
+    fs.chmodSync(p, 0o700);
+    const current = activityFiles.leggiLancioCorrente(root, 's');
+    console.log('HIDDEN_REV', JSON.stringify({ oldRevision: old.rev, admitted, esito, current }));
+    assert.ok(!admitted || current?.launchId === 'newlaunch',
+      'must refuse uncertain order or keep the newly admitted authority after the unreadable copy returns');
+  } finally { for (const d of [p, q]) if (fs.existsSync(d)) fs.chmodSync(d, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const hooksOff of [false, true]) test(`registry: unreadable newer primary then runtime restart hooks ${hooksOff ? 'off' : 'on'}`, async () => {
+  const w = makeCustomWorldConRiavvio();
+  const p = path.join(w.filesRoot, 'launch-registry');
+  const q = path.join(w.filesRoot, 'launch-registry-spare');
+  const dir = path.join(w.filesRoot, 'work-custom');
+  try {
+    const a = w.mkRuntime();
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    fs.chmodSync(q, 0o500);
+    for (let i = 0; i < 2; i += 1) assert.equal((await a.runtime.up('Dev')).ok, true);
+    const idA = a.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: idA, reason: 'lease-lost', ora: 1 }), true);
+    const old = JSON.parse(fs.readFileSync(path.join(p, 'work-custom.json'), 'utf8'));
+    assert.ok(old.rev >= 6, 'the primary alone advanced above the frozen spare');
+    assert.equal((await a.runtime.cellStatus()).cells[0].terminal.reason, 'lease-lost');
+    fs.chmodSync(q, 0o700);
+    fs.chmodSync(p, 0o000);
+    assert.throws(() => fs.readFileSync(path.join(p, 'work-custom.json'), 'utf8'), (e) => e.code === 'EACCES');
+    if (!hooksOff) fs.chmodSync(dir, 0o500);
+    const b = w.mkRuntime(hooksOff ? { activityHooks: false } : {});
+    let admitted = false;
+    let refusal = null;
+    try { admitted = (await b.runtime.up('Dev')).ok === true; } catch (e) { refusal = e.fleetCode; assert.equal(refusal, 'LAUNCH_REGISTRY_UNWRITABLE'); }
+    if (admitted) assert.equal((await b.runtime.cellStatus()).cells[0].terminal, undefined, 'in-memory B must suppress A');
+    fs.chmodSync(p, 0o700);
+    const st = await w.mkRuntime(hooksOff ? { activityHooks: false } : {}).runtime.cellStatus();
+    console.log('HIDDEN_REV_RESTART', JSON.stringify({ hooksOff, oldRevision: old.rev, admitted, refusal, terminal: st.cells[0].terminal }));
+    if (admitted) assert.equal(st.cells[0].terminal, undefined, 'admitted B must not restore old A after the primary returns');
+  } finally { for (const d of [p, q, dir]) if (fs.existsSync(d)) fs.chmodSync(d, 0o700); w.cleanup(); }
+});
+
+test('registry: old records without rev migrate above zero', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-a4-legacy-'));
+  try {
+    for (const d of ['launch-registry', 'launch-registry-spare']) {
+      const p = path.join(root, d);
+      fs.mkdirSync(p, { recursive: true });
+      fs.writeFileSync(path.join(p, 's.json'), JSON.stringify({ version: 1, event: 'launch-registry', launchId: 'oldlaunch', channel: 'selector', ts: 100 }));
+    }
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', { launchId: 'newlaunch', canale: 'off', ora: 99 }), true);
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's').launchId, 'newlaunch');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'launch-registry', 's.json'), 'utf8')).rev, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('registry: failed second commit retains current identity after runtime restart', async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const regs = ['launch-registry', 'launch-registry-spare'].map((d) => path.join(w.filesRoot, d));
+  const rename = fs.renameSync;
+  let armed = false;
+  try {
+    const a = w.mkRuntime();
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    fs.renameSync = function (from, to) {
+      const r = rename.call(this, from, to);
+      if (armed && to === path.join(dir, activityFiles.NOME_SELETTORE_LANCIO)) {
+        armed = false;
+        for (const d of regs) fs.chmodSync(d, 0o500);
+      }
+      return r;
+    };
+    armed = true;
+    const b = w.mkRuntime();
+    assert.equal((await b.runtime.up('Dev')).ok, true);
+    assert.equal(armed, false, 'fault must fire after selector publication');
+    assert.ok(b.logs.some((l) => l.includes('launch registry channel not updated')));
+    const idB = b.ticket().activity.generation;
+    assert.equal(activityFiles.leggiLancioCorrente(w.filesRoot, 'work-custom').launchId, idB);
+    assert.equal(activityFiles.leggiLancioCorrente(w.filesRoot, 'work-custom').canale, 'none');
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: idB, reason: 'operator-stop', ora: 2 }), true);
+    assert.deepEqual((await b.runtime.cellStatus()).cells[0].terminal, { reason: 'operator-stop', ts: 2 });
+    assert.deepEqual((await w.mkRuntime().runtime.cellStatus()).cells[0].terminal, { reason: 'operator-stop', ts: 2 });
+  } finally { fs.renameSync = rename; for (const d of regs) if (fs.existsSync(d)) fs.chmodSync(d, 0o700); w.cleanup(); }
+});
+
+// La copia ILLEGGIBILE con la revisione maggiore stavolta e' la RISERVA: il
+// rifiuto vale per entrambe le locazioni, la copia leggibile resta intatta e
+// l'autorita' resta assente finche' la copia nascosta non torna leggibile.
+test('registry: an unreadable higher revision on the spare also refuses the new launch', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-a4-spare-'));
+  const p = path.join(root, 'launch-registry');
+  const q = path.join(root, 'launch-registry-spare');
+  try {
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', { launchId: 'seedlaunch', canale: 'selector', ora: 1 }), true);
+    fs.chmodSync(p, 0o500);
+    for (let i = 0; i < 4; i += 1) {
+      assert.equal(activityFiles.registraLancioCorrente(root, 's', { launchId: 'oldlaunch', canale: 'selector', ora: 1 }), true);
+    }
+    const old = JSON.parse(fs.readFileSync(path.join(q, 's.json'), 'utf8'));
+    assert.ok(old.rev >= 5, 'the spare alone advanced above the frozen primary');
+    fs.chmodSync(p, 0o700);
+    fs.chmodSync(q, 0o000);
+    assert.throws(() => fs.readFileSync(path.join(q, 's.json'), 'utf8'), (e) => e.code === 'EACCES');
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's'), null,
+      'authority is not establishable while a copy is unreadable: honest absence, no stale record as current');
+    const esito = {};
+    const prima = fs.readFileSync(path.join(p, 's.json'), 'utf8');
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', { launchId: 'newlaunch', canale: 'off', ora: 1, esito }), false,
+      'refused before any effect: the hidden revision could outrank the new one');
+    assert.deepEqual(esito, { primario: false, riserva: false }, 'no location written on refusal');
+    assert.equal(fs.readFileSync(path.join(p, 's.json'), 'utf8'), prima,
+      'no partial write: the readable copy is left untouched');
+    fs.chmodSync(q, 0o700);
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's').launchId, 'oldlaunch',
+      'after the spare returns readable, the refused launch never took authority');
+  } finally { for (const d of [p, q]) if (fs.existsSync(d)) fs.chmodSync(d, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// Variante runtime della copia nascosta in RISERVA, hook attivi e off: il
+// rifiuto precede lo spawn (zero ticket) e dopo il ripristino l'autorita' e'
+// ancora quella del lancio mai superato, con la SUA diagnosi coerente.
+for (const hooksOff of [false, true]) test(`registry: unreadable newer spare then runtime restart hooks ${hooksOff ? 'off' : 'on'}`, async () => {
+  const w = makeCustomWorldConRiavvio();
+  const p = path.join(w.filesRoot, 'launch-registry');
+  const q = path.join(w.filesRoot, 'launch-registry-spare');
+  const dir = path.join(w.filesRoot, 'work-custom');
+  try {
+    const a = w.mkRuntime();
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    fs.chmodSync(p, 0o500);
+    for (let i = 0; i < 2; i += 1) assert.equal((await a.runtime.up('Dev')).ok, true);
+    const idA = a.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: idA, reason: 'lease-lost', ora: 1 }), true);
+    const old = JSON.parse(fs.readFileSync(path.join(q, 'work-custom.json'), 'utf8'));
+    assert.ok(old.rev >= 6, 'the spare alone advanced above the frozen primary');
+    assert.equal((await a.runtime.cellStatus()).cells[0].terminal.reason, 'lease-lost');
+    fs.chmodSync(p, 0o700);
+    fs.chmodSync(q, 0o000);
+    assert.throws(() => fs.readFileSync(path.join(q, 'work-custom.json'), 'utf8'), (e) => e.code === 'EACCES');
+    if (!hooksOff) fs.chmodSync(dir, 0o500);
+    const b = w.mkRuntime(hooksOff ? { activityHooks: false } : {});
+    let admitted = false;
+    let refusal = null;
+    try { admitted = (await b.runtime.up('Dev')).ok === true; } catch (e) { refusal = e.fleetCode; assert.equal(refusal, 'LAUNCH_REGISTRY_UNWRITABLE'); }
+    assert.equal(admitted, false, 'uncertain order: the launch is refused before any effect');
+    assert.equal(b.ticket(), null, 'no broker ticket: the refusal precedes the spawn');
+    if (!hooksOff) {
+      assert.equal(activityFiles.leggiSelettoreLancio(dir), idA,
+        'the selector was not moved by the refused launch');
+    }
+    fs.chmodSync(q, 0o700);
+    const st = await w.mkRuntime(hooksOff ? { activityHooks: false } : {}).runtime.cellStatus();
+    console.log('HIDDEN_SPARE_RESTART', JSON.stringify({ hooksOff, oldRevision: old.rev, admitted, refusal, terminal: st.cells[0].terminal }));
+    assert.equal(st.cells[0].terminal && st.cells[0].terminal.reason, 'lease-lost',
+      'the refused launch never took authority: A stays current with its own diagnosis');
+  } finally { for (const d of [p, q, dir]) if (fs.existsSync(d)) fs.chmodSync(d, 0o700); w.cleanup(); }
+});
