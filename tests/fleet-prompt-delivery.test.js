@@ -1627,3 +1627,254 @@ test('cellStatus: terminal del lancio corrente esposto (reason+ts), assente senz
       'un nuovo lancio invalida la ragione del vecchio');
   } finally { w.cleanup(); }
 });
+
+// ===========================================================================
+// 7b. Correzioni dello strato 1: il lettore della diagnosi
+//     terminale e' LEGATO ALL'AUTORITA' DEL LANCIO CORRENTE (registro del
+//     runtime: in memoria + su file FUORI dalla directory di sessione). Una
+//     pubblicazione fallita del selettore non trasforma il record del lancio
+//     precedente nella diagnosi del lancio nuovo — nemmeno dopo il riavvio
+//     del runtime — e l'opt-out del canale attivita' non eredita la diagnosi
+//     di un lancio che non e' piu' quello corrente.
+// ===========================================================================
+
+// Mondo condiviso per le prove di RIAVVIO del runtime: stessa root (defs,
+// fake tmux, file di attivita'), runtime DIVERSI — il secondo non ha memoria
+// in-processo del primo, come un processo ripartito. mkRuntime(cfgExtra)
+// costruisce un runtime con la propria coda di log e il proprio capture del
+// ticket del broker.
+function makeCustomWorldConRiavvio() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-rv-'));
+  const home = path.join(root, 'home'); fs.mkdirSync(home, { mode: 0o700 });
+  const cwd = path.join(home, 'work'); fs.mkdirSync(cwd);
+  const filesRoot = path.join(root, 'files');
+  const defsPath = path.join(root, 'fleet.json');
+  const fakeCli = path.join(root, 'fake-cli');
+  fs.writeFileSync(fakeCli, '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(fakeCli, 0o755);
+  atomicWrite(defsPath, {
+    schemaVersion: 1,
+    engines: [{ id: 'fake.cli', label: 'F', rc: false, command: fakeCli, args: [], promptMode: 'send-keys' }],
+    cells: [{ id: 'Dev', tmuxSession: 'work-custom', cwd, engine: 'fake.cli', boot: false }],
+  });
+  const tmuxBin = writeFakeTmux(root, {});
+  const mkRuntime = (cfgExtra = {}) => {
+    let ticket = null;
+    const logs = [];
+    const runtime = createBuiltinRuntime({
+      cfg: { launchReadyMs: 40, filesRoot, log: (m) => logs.push(String(m)), ...cfgExtra },
+      home, defsPath, tmuxBin, readonly: () => false,
+      launchBroker: {
+        issue: async (payload) => { ticket = payload; return { socketPath: '/x', nonce: 'n'.repeat(64) }; },
+        close: async () => {},
+      },
+      boot: loadDefinitions(defsPath),
+    });
+    return { runtime, logs, ticket: () => ticket };
+  };
+  return {
+    root, filesRoot, mkRuntime,
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+test('rimuoviSelettoreLancio: esito CONTROLLATO — false su errore reale, true solo su rimozione o assenza', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-rm-'));
+  const dir = path.join(root, 's');
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    assert.equal(activityFiles.rimuoviSelettoreLancio(dir), true, 'assenza = esito onesto (ENOENT)');
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'aaaa000000000001'), true);
+    assert.equal(activityFiles.rimuoviSelettoreLancio(dir), true, 'rimozione riuscita');
+    // Directory non scrivibile con selettore presente: la rimozione FALLISCE e
+    // il booleano lo dichiara — chi chiama non puo' presumere la pulizia.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'aaaa000000000002'), true);
+    fs.chmodSync(dir, 0o500);
+    assert.equal(activityFiles.rimuoviSelettoreLancio(dir), false, 'errore reale dichiarato, non muto');
+  } finally { fs.chmodSync(dir, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('registro dei lanci: round-trip per stato canale, id ostili rifiutati, file rotto = assenza', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-reg-'));
+  try {
+    for (const canale of ['selector', 'none', 'off']) {
+      assert.equal(activityFiles.registraLancioCorrente(root, 'work-x', {
+        launchId: 'aaaa000000000001', canale, ora: 5,
+      }), true, canale);
+      assert.deepEqual(activityFiles.leggiLancioCorrente(root, 'work-x'),
+        { launchId: 'aaaa000000000001', canale, ts: 5 }, `round-trip ${canale}`);
+    }
+    // Sessione/id ostili: mai un path fuori dalla root del registro.
+    assert.equal(activityFiles.registraLancioCorrente(root, '../altro', {
+      launchId: 'aaaa000000000002', canale: 'off',
+    }), false);
+    assert.equal(activityFiles.registraLancioCorrente(root, 'a/b', {
+      launchId: 'aaaa000000000003', canale: 'off',
+    }), false);
+    assert.equal(activityFiles.registraLancioCorrente(root, 'work-x', {
+      launchId: '../escape', canale: 'off',
+    }), false);
+    assert.equal(activityFiles.registraLancioCorrente(root, 'work-x', {
+      launchId: 'aaaa000000000004', canale: 'free',
+    }), false, 'stato canale fuori enum rifiutato');
+    assert.equal(activityFiles.leggiLancioCorrente(root, '../altro'), null);
+    // File rotto o fuori schema: assenza onesta, mai throw.
+    fs.writeFileSync(path.join(root, 'launch-registry', 'rotto.json'), '{nope');
+    assert.equal(activityFiles.leggiLancioCorrente(root, 'rotto'), null);
+    fs.writeFileSync(path.join(root, 'launch-registry', 'strano.json'),
+      JSON.stringify({ version: 1, event: 'launch-registry', launchId: 'aaaa000000000005', channel: 'altro', ts: 1 }));
+    assert.equal(activityFiles.leggiLancioCorrente(root, 'strano'), null);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('lettura legata al lancio corrente: canale compromesso legge PER IDENTITA\', canale off non legge', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-auth-'));
+  const dir = path.join(root, 's');
+  fs.mkdirSync(dir, { recursive: true });
+  const vecchio = 'aaaa000000000001';
+  const nuovo = 'bbbb000000000002';
+  try {
+    // Il selettore e' rimasto quello del VECCHIO lancio (pubblicazione del
+    // nuovo fallita, rimozione fallita): chi legge per identita' non lo guarda.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, vecchio), true);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: vecchio, reason: 'spawn-error', ora: 1,
+    }), true);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: nuovo, reason: 'lease-lost', ora: 2,
+    }), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', {
+      launchId: nuovo, canale: 'none',
+    }).reason, 'lease-lost', 'none: la ragione del lancio CORRENTE, non quella del selettore stantio');
+    assert.equal(activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', {
+      launchId: nuovo, canale: 'off',
+    }), null, 'off: nessuna diagnosi attribuita a un lancio senza canale');
+    assert.equal(activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', null), null,
+      'senza autorita\' nota l\'esito e\' l\'assenza, non l\'ultimo selettore leggibile');
+    assert.equal(activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', {
+      launchId: nuovo, canale: 'selector',
+    }).reason, 'spawn-error', 'selector: il canale integro si legge come prima (selettore -> record)');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('cellStatus: pubblicazione fallita con lancio precedente — la ragione del vecchio NON e\' la diagnosi del nuovo', async () => {
+  const w = makeCustomWorld();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const vecchio = 'aaaa111122223333';
+  try {
+    // Il lancio precedente esiste ED e' visibile: selezione e ragione proprie.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, vecchio), true);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: vecchio, reason: 'restart-budget-exhausted', ora: 1,
+    }), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminale(w.filesRoot, 'work-custom').reason,
+      'restart-budget-exhausted', 'il lancio precedente era correntemente selezionato');
+    // La directory di sessione diventa non scrivibile: pubblicare il selettore
+    // del nuovo lancio FALLISCE e fallisce anche la rimozione di quello vecchio.
+    fs.chmodSync(dir, 0o500);
+    const res = await w.runtime.up('Dev');
+    assert.equal(res.ok, true, 'il lancio non si blocca sul selettore');
+    const nuovo = w.ticket().activity.generation;
+    assert.notEqual(nuovo, vecchio, 'lancio nuovo, identita\' diversa');
+    assert.equal(activityFiles.leggiSelettoreLancio(dir), vecchio,
+      'il selettore su disco e\' rimasto quello VECCHIO');
+    assert.ok(w.logs.some((l) => l.includes('launch selector not published')),
+      'fallimento dichiarato: diagnosi non disponibile');
+    // La vista non attribuisce al lancio nuovo la ragione del vecchio: il
+    // selettore rimasto su disco e' STANTIO e non si presume attuale.
+    const st = await w.runtime.cellStatus();
+    assert.equal(st.cells[0].terminal, undefined,
+      'la ragione del lancio vecchio non e\' la diagnosi del lancio nuovo');
+  } finally { fs.chmodSync(dir, 0o700); w.cleanup(); }
+});
+
+test('cellStatus: dopo il RIAVVIO del runtime la selezione stantia non vale; al ripristino la ragione del lancio corrente si vede', async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const vecchio = 'aaaa111122223334';
+  try {
+    const prima = w.mkRuntime();
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, vecchio), true);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: vecchio, reason: 'operator-stop', ora: 2,
+    }), true);
+    fs.chmodSync(dir, 0o500);
+    assert.equal((await prima.runtime.up('Dev')).ok, true, 'il lancio parte anche senza canale');
+    const corrente = prima.ticket().activity.generation;
+    assert.notEqual(corrente, vecchio);
+    // Il runtime riparte (nessuna memoria in-processo): l'autorita' del lancio
+    // si ricostruisce dal registro, non dall'ultimo selettore leggibile.
+    const riavviato = w.mkRuntime();
+    let st = await riavviato.runtime.cellStatus();
+    assert.equal(st.cells[0].terminal, undefined,
+      'dopo il riavvio la ragione del lancio vecchio non si mostra');
+    // Ripristino del canale: la ragione del lancio CORRENTE (partito durante
+    // l'indisponibilita') viene selezionata correttamente, per identita' —
+    // mai attraverso il selettore rimasto quello del vecchio.
+    fs.chmodSync(dir, 0o700);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: corrente, reason: 'lease-lost', ora: 3,
+    }), true);
+    st = await riavviato.runtime.cellStatus();
+    assert.deepEqual(st.cells[0].terminal, { reason: 'lease-lost', ts: 3 },
+      'la ragione del lancio corrente si vede, quella del vecchio mai');
+    // Il canale tornato integro serve anche al lancio SUCCESSIVO: selezione
+    // normale, selettore del nuovo lancio pubblicato dal proprietario.
+    const ripristinato = w.mkRuntime();
+    assert.equal((await ripristinato.runtime.up('Dev')).ok, true);
+    const successivo = ripristinato.ticket().activity.generation;
+    assert.equal(activityFiles.leggiSelettoreLancio(dir), successivo,
+      'selettore ripubblicato per il lancio nuovo');
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: successivo, reason: 'spawn-error', ora: 4,
+    }), true);
+    st = await ripristinato.runtime.cellStatus();
+    assert.deepEqual(st.cells[0].terminal, { reason: 'spawn-error', ts: 4 },
+      'con il canale integro la selezione torna quella del lancio corrente');
+  } finally { fs.chmodSync(dir, 0o700); w.cleanup(); }
+});
+
+test('opt-out activityHooks: nessuna diagnosi del lancio precedente sul nuovo, nemmeno dopo il riavvio', async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  try {
+    // Canale ATTIVO: il lancio A si ferma e la sua ragione e' visibile.
+    const conCanale = w.mkRuntime();
+    assert.equal((await conCanale.runtime.up('Dev')).ok, true);
+    const idA = conCanale.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: idA, reason: 'lease-lost', ora: 1,
+    }), true);
+    const stA = await conCanale.runtime.cellStatus();
+    assert.deepEqual(stA.cells[0].terminal, { reason: 'lease-lost', ts: 1 },
+      'con il canale attivo la fermata del lancio corrente si vede');
+    // L'operatore disattiva il canale: il lancio B non ne ha, e la storia di
+    // A non e' lo stato corrente di B.
+    const senzaCanale = w.mkRuntime({ activityHooks: false });
+    assert.equal((await senzaCanale.runtime.up('Dev')).ok, true);
+    assert.equal(senzaCanale.ticket().activity, undefined, 'opt-out rispettato nel payload');
+    const stB = await senzaCanale.runtime.cellStatus();
+    assert.equal(stB.cells[0].terminal, undefined,
+      'nessuna etichetta terminale di A sul lancio B vivo');
+    // Riavvio del runtime: l'opt-out registrato vale anche senza memoria
+    // in-processo.
+    const riavviato = w.mkRuntime({ activityHooks: false });
+    const stB2 = await riavviato.runtime.cellStatus();
+    assert.equal(stB2.cells[0].terminal, undefined,
+      'dopo il riavvio nessuna etichetta terminale di A');
+    // Re-enable: il lancio nuovo pubblica la propria selezione e mostra la
+    // propria ragione — mai quella di A.
+    const rientrato = w.mkRuntime();
+    assert.equal((await rientrato.runtime.up('Dev')).ok, true);
+    const idC = rientrato.ticket().activity.generation;
+    let st = await rientrato.runtime.cellStatus();
+    assert.equal(st.cells[0].terminal, undefined,
+      'lancio vivo: nessuna ragione propria da mostrare');
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: idC, reason: 'operator-stop', ora: 4,
+    }), true);
+    st = await rientrato.runtime.cellStatus();
+    assert.deepEqual(st.cells[0].terminal, { reason: 'operator-stop', ts: 4 },
+      'al re-enable la ragione del lancio CORRENTE, mai quella di A');
+  } finally { w.cleanup(); }
+});
