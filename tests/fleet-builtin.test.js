@@ -73,7 +73,20 @@ ALTSCREENFAIL=${shellQ(alternateScreenFail)}
 POISON=${shellQ(poison)}
 KILLED=${shellQ(path.join(root, 'killed'))}
 if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
-  printf '%s\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1'
+  if [ "$4" = "new-session" ]; then
+    # Creazione posseduta: il primo frame è l'esito del comando new-session
+    # stesso, eseguito da questa fixture in forma argv (log, veleno, -P -F).
+    errc="\${TMPDIR:-/tmp}/ncfakecr.$$"
+    outc=$( ( shift 3; "$0" "$@" ) 2>"$errc" )
+    rcc=$?
+    printf '%s\n' '%begin 1 0 1'
+    [ -n "$outc" ] && printf '%s\n' "$outc"
+    if [ "$rcc" = "0" ]; then printf '%s\n' '%end 1 0 1'
+    else errtxt=$(cat "$errc" 2>/dev/null); [ -n "$errtxt" ] && printf '%s\n' "$errtxt"; printf '%s\n' '%error 1 0 1'; fi
+    rm -f "$errc"
+  else
+    printf '%s\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1'
+  fi
   # control mode (canale di controllo del lancio): una riga per comando su
   # stdin, risposta incorniciata (%begin/%end, %error sull'errore). Ogni riga
   # viene eseguita dallo stesso script in forma argv.
@@ -499,7 +512,11 @@ test('early exit: cattura bounded/redacted, exit code e rimuove il pane diagnost
     const script = `#!/bin/sh
 LOG=${shellQ(w.log)}
 if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
-  printf '%s\\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1'
+  if [ "$4" = "new-session" ]; then
+    printf '%s\\n' '%begin 1 0 1' '$1	@1	%9' '%end 1 0 1'
+  else
+    printf '%s\\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1'
+  fi
   sock="$2"
   n=0
   while IFS= read -r riga; do

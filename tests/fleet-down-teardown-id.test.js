@@ -54,7 +54,14 @@ const args = argv[0] === '-S' ? argv.slice(2) : argv; // -S <socket> in testa qu
 // Ogni riga viene eseguita dallo stesso script in forma argv, cosi' la
 // logica dei comandi resta UNA sola.
 if (args[0] === '-C') {
+  if (process.argv.includes('new-session')) {
+    const { spawnSync: creaSync } = require('node:child_process');
+    const rCrea = creaSync(process.execPath, [__filename].concat(process.argv.slice(2).filter((a) => a !== '-C')), { encoding: 'utf8' });
+    const corpoCrea = (s) => (s ? (s.endsWith('\\n') ? s : s + '\\n') : ''); if ((rCrea.status || 0) === 0) process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stdout) + '%end 1 0 1\\n');
+    else process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stderr) + '%error 1 0 1\\n');
+  } else {
   process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  }
   const { spawnSync } = require('node:child_process');
   let n = 0; let buf = '';
   process.stdin.setEncoding('utf8');

@@ -36,7 +36,14 @@ const args = argv[0] === '-S' ? argv.slice(2) : argv;
 if (args[0] === '-C') {
   const nato = fs.readFileSync(GEN, 'utf8').trim();
   nota('open:' + nato + ':' + (argv[1] || ''));
-  process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  if (process.argv.includes('new-session')) {
+    const { spawnSync: creaSync } = require('node:child_process');
+    const rCrea = creaSync(process.execPath, [__filename].concat(process.argv.slice(2).filter((a) => a !== '-C')), { encoding: 'utf8' });
+    const corpoCrea = (s) => (s ? (s.endsWith('\\n') ? s : s + '\\n') : ''); if ((rCrea.status || 0) === 0) process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stdout) + '%end 1 0 1\\n');
+    else process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stderr) + '%error 1 0 1\\n');
+  } else {
+    process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  }
   let buf = '';
   let n = 0;
   let viva = true;

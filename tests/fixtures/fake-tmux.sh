@@ -7,9 +7,16 @@ echo "$*" >> "${LOG:-/dev/null}"
 # directory del socket, cosi' il processo del canale e i comandi rieseguiti
 # vedono la stessa sessione senza env extra.
 if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
-  printf '%s\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1'
   sock="$2"
   state=$(dirname "$sock")
+  if [ "$4" = "new-session" ]; then
+    # Creazione posseduta: il PRIMO frame è l'esito del comando stesso, con
+    # gli id richiesti da -P -F. Nessun token di apertura: la creazione e il
+    # canale vivono sullo stesso client.
+    printf '%s\n' '%begin 1 0 1' '$1	@1	%42' '%end 1 0 1'
+  else
+    printf '%s\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1'
+  fi
   n=0
   errf="${TMPDIR:-/tmp}/ncfakecc.$$"
   while IFS= read -r riga; do
