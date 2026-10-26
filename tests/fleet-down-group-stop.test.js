@@ -21,6 +21,25 @@ const gruppo = require('../lib/fleet/group-stop.js');
 
 function hexId() { return crypto.randomBytes(8).toString('hex'); }
 
+test('una cancellazione oltre la deadline non rinnova il segnale', async () => {
+  let clock = 0;
+  const signals = [];
+  const esito = await gruppo.eseguiFaseStop({
+    frame: { payload: { deadlineMs: 100 }, requestId: hexId(), epoch: 1 },
+    tokenHash: 'a'.repeat(64),
+    launchId: hexId(),
+    monoNow: () => clock,
+    sleep: async (n) => { clock += n; },
+    killGruppo: (s) => signals.push(s),
+    osserva: () => ({ inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' }),
+    invia: () => {},
+    svuota: async () => true,
+    cancellaDelivery: async () => { clock = 1000; },
+  });
+  assert.equal(signals.length, 0);
+  assert.equal(esito.outcome, 'stop-unknown');
+});
+
 test('un candidato illeggibile non conta come zero completo', () => {
   const rd = fs.readFileSync;
   const ls = fs.readdirSync;
