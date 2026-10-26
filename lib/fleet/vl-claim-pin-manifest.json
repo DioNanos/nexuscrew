@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "platform": "linux-x64",
+  "flock": {
+    "source": "/usr/bin/flock",
+    "version": "2.39.3",
+    "sha256": "e619344dc3eec4023498465679262f9ca27d1e8cef9cfc4c1ae72b428577b806"
+  },
+  "node": {
+    "source": "/home/dag/.nvm/versions/node/v24.21.0/bin/node",
+    "sha256": "7fde7b8afa198da66257f42ee2001d874c7355631e6d1579a5fb5ef1f246df4c"
+  },
+  "helper": {
+    "sha256": "8fba5d5d1872be8c1ce524f2d7900794c78df3e14655a4455615baf2402b2cc2"
+  }
+}
