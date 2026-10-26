@@ -32,6 +32,10 @@ function mondo(t) {
   const vlBin = path.join(home, '.local', 'bin', 'vl');
   fs.writeFileSync(vlBin, '#!/bin/sh\nif [ "$1" = "--version" ]; then printf \'vl 0.3.1\\n\'; exit 0; fi\nexit 0\n', { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
+  // Catalogo del TEST, non dell'ambiente: la sorgente "dell'operatore" per
+  // vl.native risolve XDG_CONFIG_HOME da cfg.env (o da process.env). Il test
+  // scrive la fixture nella home isolata e passa env: {} qui sotto, cosi' la
+  // sorgente e' sempre questa, mai il config del worker o dell'operatore.
   const catalogo = path.join(home, '.config', 'vl');
   fs.mkdirSync(catalogo, { recursive: true });
   fs.writeFileSync(path.join(catalogo, 'config.toml'), '[profiles.work]\nmodel = "m"\n');
@@ -83,7 +87,7 @@ process.exit(0);
     cells: [{ id: 'CellaLease', tmuxSession: SESSIONE, cwd, engine: 'vl.native', boot: false }],
   });
   const runtime = createBuiltinRuntime({
-    cfg: { launchReadyMs: 0, filesRoot, activityHooks: false, vlLaunchCooldownMs: 0, log: () => {}, env: {} },
+    cfg: { launchReadyMs: 0, filesRoot, activityHooks: false, vlLaunchCooldownMs: 0, log: () => {}, env: {} }, // env: {} -> niente XDG_CONFIG_HOME dell'ambiente
     home, defsPath, tmuxBin, readonly: () => false,
     launchBroker: {
       issue: async () => ({ socketPath: path.join(root, 'broker.sock'), nonce: 'b'.repeat(64) }),
