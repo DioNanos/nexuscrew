@@ -39,7 +39,7 @@ function prepara(home) {
 }
 
 // Fault the Nth directory fsync of the RELEASE phase only (installed after
-// the claim, like an auditor's probe would).
+// the claim, like an external check would).
 function faultDirSyncRelease(n, fn) {
   const sync = fs.fsyncSync;
   let dirs = 0;
