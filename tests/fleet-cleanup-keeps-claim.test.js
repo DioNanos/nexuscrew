@@ -55,7 +55,11 @@ if (args[0] === '-C') {
       buf = buf.slice(i + 1);
       if (!riga) continue;
       n += 1;
-      process.stdout.write('%begin 1 ' + n + ' 1\\n%end 1 ' + n + ' 1\\n');
+      if (riga.startsWith('respawn-pane')) {
+        process.stdout.write('%begin 1 ' + n + ' 1\\nrespawn lost\\n%error 1 ' + n + ' 1\\n');
+      } else {
+        process.stdout.write('%begin 1 ' + n + ' 1\\n%end 1 ' + n + ' 1\\n');
+      }
     }
   });
   process.stdin.on('end', () => process.exit(0));

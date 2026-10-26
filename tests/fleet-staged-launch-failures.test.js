@@ -40,16 +40,40 @@ function world() {
   fs.writeFileSync(tmuxBin, `#!${process.execPath}
 'use strict';
 const fs = require('node:fs');
-const args = process.argv.slice(2);
+const { spawnSync } = require('node:child_process');
+const argv = process.argv.slice(2);
+const args = argv[0] === '-S' ? argv.slice(2) : argv;
 const stage = fs.readFileSync(${JSON.stringify(stageFile)}, 'utf8').trim();
 const log = ${JSON.stringify(log)};
 fs.appendFileSync(log, JSON.stringify(args) + '\\n');
 const fail = (name) => { if (stage === name) { process.stderr.write('synthetic ' + name + ' failure\\n'); process.exit(1); } };
+if (args[0] === '-C') {
+  if (args.includes('nc-control-open')) process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  let buf = '';
+  let n = 0;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\\n')) >= 0) {
+      const riga = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!riga) continue;
+      n += 1;
+      const r = spawnSync(process.execPath, [__filename, '-S', 'sock'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });
+      if ((r.status || 0) === 0) process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stdout || '') + '%end 1 ' + n + ' 1\\n');
+      else process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stderr || '') + '%error 1 ' + n + ' 1\\n');
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  return;
+}
 if (args[0] === 'new-session') { fail('new-session'); fs.writeFileSync(${JSON.stringify(natoFile)}, '1'); process.stdout.write(fs.readFileSync(${JSON.stringify(idsFile)}, 'utf8')); process.exit(0); }
 if (args[0] === 'set-option') { fail('set-option'); process.exit(0); }
 if (args[0] === 'respawn-pane') { fail('respawn-pane'); process.exit(0); }
 if (args[0] === 'display-message') {
   if (args[args.length - 1] === '#{session_id}') { process.stdout.write('$5\\n'); process.exit(0); }
+  if (args[args.length - 1] === '#{pid}') { process.stdout.write('4242\\n'); process.exit(0); }
   fail('readiness'); process.stdout.write('0\\t\\t%9\\n'); process.exit(0);
 }
 if (args[0] === 'list-sessions') { if (fs.existsSync(${JSON.stringify(natoFile)})) process.stdout.write('$5\\twork-build\\n'); process.exit(0); }
@@ -95,7 +119,7 @@ for (const stage of ['new-session', 'set-option', 'respawn-pane', 'readiness']) 
       assert.deepEqual(result.revoked, ['a'.repeat(64)], 'ticket revocato senza attendere TTL');
       const kills = result.calls.filter((args) => args[0] === 'kill-session');
       if (stage === 'new-session') assert.deepEqual(kills, [], 'new-session fallita: nulla da pulire');
-      else assert.deepEqual(kills, [['kill-session', '-t', '$5']], 'cleanup sul session ID stabile');
+      else assert.deepEqual(kills, [['kill-session', '-t', '$5']], 'cleanup sul session ID stabile, dal canale');
       assert.equal(result.calls.flat().includes('=work-build'), false,
         'nessun cleanup critico torna al nome richiesto');
     } finally { result.w.cleanup(); }
@@ -108,10 +132,10 @@ test('output new-session parziale: risolve $N dal %N, pulisce e fallisce chiuso'
     assert.ok(result.error);
     assert.equal(result.error.fleetCode, 'NEW_SESSION_FAILED');
     assert.deepEqual(result.revoked, ['a'.repeat(64)]);
-    assert.ok(result.calls.some((args) => args[0] === 'display-message'
-      && args.includes('%9') && args.includes('#{session_id}')),
-    'session ID risolto dal pane stabile');
-    assert.ok(result.calls.some((args) => args.join(' ') === 'kill-session -t $5'));
+    assert.equal(result.calls.some((args) => args.includes('#{session_id}')), false,
+      'senza id di sessione non si apre un client per risalire');
+    assert.equal(result.calls.some((args) => args[0] === 'kill-session'), false,
+      'senza canale e senza id non parte un kill');
     assert.equal(result.calls.flat().includes('=work-build'), false);
   } finally { result.w.cleanup(); }
 });
