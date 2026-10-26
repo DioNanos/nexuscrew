@@ -38,6 +38,7 @@ const fs = require('node:fs');
 const argv = process.argv.slice(2);
 const args = argv[0] === '-S' ? argv.slice(2) : argv;
 if (args[0] === '-C') {
+  if (args.includes('nc-control-open')) process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
   const { spawnSync } = require('node:child_process');
   const MUORI = ${JSON.stringify(muori)};
   const MUORI_SU_KILL = ${JSON.stringify(muoriSuKill)};

@@ -54,6 +54,7 @@ const args = argv[0] === '-S' ? argv.slice(2) : argv; // -S <socket> in testa qu
 // Ogni riga viene eseguita dallo stesso script in forma argv, cosi' la
 // logica dei comandi resta UNA sola.
 if (args[0] === '-C') {
+  if (args.includes('nc-control-open')) process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
   const { spawnSync } = require('node:child_process');
   let n = 0; let buf = '';
   process.stdin.setEncoding('utf8');

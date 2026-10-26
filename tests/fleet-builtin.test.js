@@ -73,6 +73,9 @@ ALTSCREENFAIL=${shellQ(alternateScreenFail)}
 POISON=${shellQ(poison)}
 KILLED=${shellQ(path.join(root, 'killed'))}
 if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
+  case "$*" in
+    *nc-control-open*) printf '%s\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1' ;;
+  esac
   # control mode (canale di controllo del lancio): una riga per comando su
   # stdin, risposta incorniciata (%begin/%end, %error sull'errore). Ogni riga
   # viene eseguita dallo stesso script in forma argv.

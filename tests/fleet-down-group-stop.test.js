@@ -398,6 +398,7 @@ const fs = require('node:fs');
 const argv = process.argv.slice(2);
 const args = argv[0] === '-S' ? argv.slice(2) : argv;
 if (args[0] === '-C') {
+  if (args.includes('nc-control-open')) process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
   let n = 0; let buf = '';
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (c) => {
