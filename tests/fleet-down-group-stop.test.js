@@ -582,7 +582,7 @@ test('down: ready e EOF senza uscita osservata non sono uno stop pulito', async 
   assert.equal(lease.inviati.filter((f) => f.op === 'stop').length, 1);
 });
 
-test('down: solo ack non e\' successo, kill-session resta, restart non rilancia', async (t) => {
+test('down: solo ack non e\' successo, la sessione resta, restart non rilancia', async (t) => {
   const lease = leaseFinto('solo-ack');
   const w = mondo(t, lease);
   await w.runtime.up('CellaGS');
@@ -591,17 +591,17 @@ test('down: solo ack non e\' successo, kill-session resta, restart non rilancia'
     () => w.runtime.restart('CellaGS'),
     (e) => e.fleetCode === 'STOP_UNKNOWN' && e.data.outcome === 'stop-unknown',
   );
-  assert.ok(w.log().some((r) => r.startsWith('kill-session:')));
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
   assert.equal(w.log().filter((r) => r.startsWith('new-session:')).length, prima);
 });
 
-test('down: canale spento e\' identity-lost, un solo kill-session, nessuno stop sul filo', async (t) => {
+test('down: canale spento e\' identity-lost, nessuno kill-session, nessuno stop sul filo', async (t) => {
   const lease = leaseFinto('spento');
   const w = mondo(t, lease);
   await w.runtime.up('CellaGS');
   await assert.rejects(() => w.runtime.down('CellaGS'), (e) => e.status === 409 && e.fleetCode === 'IDENTITY_LOST' && e.data.outcome === 'identity-lost');
   assert.equal(lease.inviati.length, 0);
-  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 1);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
 });
 
 test('down: EOF senza impegno e\' stop-unknown', async (t) => {
