@@ -250,12 +250,26 @@ test('launch-target: id non conformi rifiutati, lettura a tre stati', async (t) 
     launchId: 'a'.repeat(16), sessionId: 'finestra', paneId: '%1',
   }), false, 'sessionId fuori forma tmux: rifiutato');
   assert.strictEqual(launchTarget.registra(root, sessione, {
-    launchId: 'a'.repeat(16), sessionId: '$7', paneId: '%9',
+    launchId: 'a'.repeat(16), sessionId: '$7', paneId: '%9', family: 'vl',
   }), true, 'record valido scritto');
   const letto = launchTarget.leggi(root, sessione);
   assert.strictEqual(letto.stato, 'presente');
   assert.strictEqual(letto.record.sessionId, '$7');
   assert.strictEqual(letto.record.paneId, '%9');
+
+  assert.strictEqual(launchTarget.registra(root, sessione, {
+    launchId: 'a'.repeat(16), sessionId: '$7', paneId: '%9', family: 'chissa',
+  }), false, 'famiglia fuori dall enum: rifiutata prima di toccare il disco');
+  assert.strictEqual(launchTarget.leggi(root, sessione).record.family, 'vl');
+  const senzaFamiglia = path.join(root, launchTarget.DIR, `${sessione}.json`);
+  fs.writeFileSync(senzaFamiglia, `${JSON.stringify({
+    launchId: 'b'.repeat(16), sessionId: '$9', paneId: '%9', tmuxSocket: '', serverPid: null, ts: 1,
+  })}\n`, 'utf8');
+  const lettoVecchio = launchTarget.leggi(root, sessione);
+  assert.strictEqual(lettoVecchio.record.family, null, 'record senza famiglia: resta ignoto, non esente');
+  launchTarget.registra(root, sessione, {
+    launchId: 'a'.repeat(16), sessionId: '$7', paneId: '%9', family: 'vl',
+  });
 
   const assente = launchTarget.leggi(root, 'cloud-Mai');
   assert.strictEqual(assente.stato, 'assente');
