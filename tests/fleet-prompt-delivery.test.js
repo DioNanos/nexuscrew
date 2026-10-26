@@ -1880,6 +1880,7 @@ test('cellStatus: dopo il RIAVVIO del runtime la selezione stantia non vale; al 
       'la ragione del lancio corrente si vede, quella del vecchio mai');
     // Il canale tornato integro serve anche al lancio SUCCESSIVO: selezione
     // normale, selettore del nuovo lancio pubblicato dal proprietario.
+    await prima.runtime.down('Dev');
     const ripristinato = w.mkRuntime();
     assert.equal((await ripristinato.runtime.up('Dev')).ok, true);
     const successivo = ripristinato.ticket().activity.generation;
@@ -1910,6 +1911,7 @@ test('opt-out activityHooks: nessuna diagnosi del lancio precedente sul nuovo, n
       'con il canale attivo la fermata del lancio corrente si vede');
     // L'operatore disattiva il canale: il lancio B non ne ha, e la storia di
     // A non e' lo stato corrente di B.
+    await conCanale.runtime.down('Dev');
     const senzaCanale = w.mkRuntime({ activityHooks: false });
     assert.equal((await senzaCanale.runtime.up('Dev')).ok, true);
     assert.equal(senzaCanale.ticket().activity, undefined, 'opt-out rispettato nel payload');
@@ -1924,6 +1926,7 @@ test('opt-out activityHooks: nessuna diagnosi del lancio precedente sul nuovo, n
       'dopo il riavvio nessuna etichetta terminale di A');
     // Re-enable: il lancio nuovo pubblica la propria selezione e mostra la
     // propria ragione — mai quella di A.
+    await senzaCanale.runtime.down('Dev');
     const rientrato = w.mkRuntime();
     assert.equal((await rientrato.runtime.up('Dev')).ok, true);
     const idC = rientrato.ticket().activity.generation;
@@ -1980,6 +1983,7 @@ for (const hooksOff of [false, true]) test(`independent: persistent registry fai
       launchId: old, reason: 'lease-lost', ora: 1,
     }), true);
     assert.equal((await a.runtime.cellStatus()).cells[0].terminal.reason, 'lease-lost');
+    await a.runtime.down('Dev');
     const oldRegistry = fs.readFileSync(path.join(reg, 'work-custom.json'), 'utf8');
     fs.chmodSync(reg, 0o500);
     if (!hooksOff) fs.chmodSync(dir, 0o500);
@@ -2051,6 +2055,7 @@ test('registro inaccessibile ovunque: il lancio e\' RIFIUTATO, il corrente resta
     assert.equal(activityFiles.scriviRecordTerminale(dir, {
       launchId: idA, reason: 'restart-budget-exhausted', ora: 1,
     }), true);
+    await a.runtime.down('Dev');
     // Nessuna delle DUE locazioni del registro accetta piu' scritture (e
     // nemmeno la directory di sessione): nessuna traccia durevole possibile.
     fs.chmodSync(primaria, 0o500); fs.chmodSync(riserva, 0o500); fs.chmodSync(dir, 0o500);
@@ -2161,6 +2166,7 @@ for (const hooksOff of [false, true]) for (const clock of [100, 99]) test(`regis
       launchId: idA, reason: 'lease-lost', ora: 1,
     }), true);
     assert.equal((await a.runtime.cellStatus()).cells[0].terminal.reason, 'lease-lost');
+    await a.runtime.down('Dev');
     fs.chmodSync(spare, 0o500);
     if (!hooksOff) fs.chmodSync(dir, 0o500);
     const b = w.mkRuntime({ now: () => clock, ...(hooksOff ? { activityHooks: false } : {}) });
@@ -2196,6 +2202,7 @@ test('registro: off sopravvive al riavvio con clock in pari — autorita\' nuova
     assert.equal(activityFiles.scriviRecordTerminale(dir, {
       launchId: idA, reason: 'lease-lost', ora: 1,
     }), true);
+    await a.runtime.down('Dev');
     const b = w.mkRuntime({ now: () => 100, activityHooks: false });
     assert.equal((await b.runtime.up('Dev')).ok, true);
     assert.equal(b.ticket().activity, undefined, 'opt-out rispettato nel payload');
@@ -2227,6 +2234,7 @@ test('registro inaccessibile con sessione scrivibile: rifiuto PRIMA del selettor
     }), true);
     const prima = (await a.runtime.cellStatus()).cells[0].terminal;
     assert.deepEqual(prima, { reason: 'restart-budget-exhausted', ts: 1 });
+    await a.runtime.down('Dev');
     for (const d of regs) fs.chmodSync(d, 0o500);
     const b = w.mkRuntime();
     await assert.rejects(b.runtime.up('Dev'),
@@ -2299,6 +2307,7 @@ for (const hooksOff of [false, true]) test(`registry: unreadable newer primary t
     const old = JSON.parse(fs.readFileSync(path.join(p, 'work-custom.json'), 'utf8'));
     assert.ok(old.rev >= 6, 'the primary alone advanced above the frozen spare');
     assert.equal((await a.runtime.cellStatus()).cells[0].terminal.reason, 'lease-lost');
+    await a.runtime.down('Dev');
     fs.chmodSync(q, 0o700);
     fs.chmodSync(p, 0o000);
     assert.throws(() => fs.readFileSync(path.join(p, 'work-custom.json'), 'utf8'), (e) => e.code === 'EACCES');
@@ -2338,6 +2347,7 @@ test('registry: failed second commit retains current identity after runtime rest
   try {
     const a = w.mkRuntime();
     assert.equal((await a.runtime.up('Dev')).ok, true);
+    await a.runtime.down('Dev');
     fs.renameSync = function (from, to) {
       const r = rename.call(this, from, to);
       if (armed && to === path.join(dir, activityFiles.NOME_SELETTORE_LANCIO)) {
@@ -2414,6 +2424,7 @@ for (const hooksOff of [false, true]) test(`registry: unreadable newer spare the
     const old = JSON.parse(fs.readFileSync(path.join(q, 'work-custom.json'), 'utf8'));
     assert.ok(old.rev >= 6, 'the spare alone advanced above the frozen primary');
     assert.equal((await a.runtime.cellStatus()).cells[0].terminal.reason, 'lease-lost');
+    await a.runtime.down('Dev');
     fs.chmodSync(p, 0o700);
     fs.chmodSync(q, 0o000);
     assert.throws(() => fs.readFileSync(path.join(q, 'work-custom.json'), 'utf8'), (e) => e.code === 'EACCES');
