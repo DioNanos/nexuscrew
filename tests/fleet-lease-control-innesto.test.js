@@ -213,6 +213,10 @@ test('verificatore del token: hash giusto ammesso, sbagliato/assente/revocato ri
 
   const spediti = [];
   const spedisci = (frame) => { spediti.push(frame); leaseCtl.sendControl(frame); };
+  // S3F12: epoch e launchId sono obbligatori nel protocollo chiuso e il
+  // verificatore li controlla contro il lancio e la connessione correnti:
+  // senza epoca il frame non arriva nemmeno al gate dell'hash e il test
+  // resterebbe appeso ad attendere una consegna che il protocollo rifiuta.
   const epoca = mgr.controlEpoch(cellId);
 
   // hash SBAGLIATO -> no-op
