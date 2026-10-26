@@ -419,6 +419,8 @@ test('canale vero: ready-to-exit e EOF diventano killed-clean, il solo ack no', 
     monoNow: () => Number(process.hrtime.bigint() / 1000000n),
     deadlineAt: Number(process.hrtime.bigint() / 1000000n) + 2000,
     graziaMs: 400,
+    attendiUscita: async () => { if (coord.attiva()) await coord.attiva(); },
+    osserva: () => ({ inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' }),
   });
   // Il coordinatore esce chiudendo il socket: senza EOF l'esito non e' pulito.
   if (coord.attiva()) await coord.attiva();
@@ -546,8 +548,13 @@ function leaseFinto(modo) {
     controlLaunchId() { return idArmato; },
     status() { return { state: 'none' }; },
     setLaunchSubject() { return true; },
+    attendiUscita() {
+      if (modo === 'pulito' || modo === 'residui') return Promise.resolve();
+      return Promise.reject(new Error('exit unproven'));
+    },
     osservaGruppo() {
       if (modo === 'residui') return { inGruppo: 2, fuoriGruppo: 0, qualita: 'noti' };
+      if (modo === 'pulito') return { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' };
       return null;
     },
     ascoltaControl(fn) { ascoltatori.push(fn); return () => {}; },
