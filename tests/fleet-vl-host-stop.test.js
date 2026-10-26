@@ -9,7 +9,21 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { EventEmitter } = require('node:events');
 const host = require('../lib/fleet/vl-host-stop.js');
+
+function procEsito(output, code) {
+  const p = new EventEmitter();
+  p.stdout = new EventEmitter();
+  p.stderr = new EventEmitter();
+  p.kill = () => {};
+  p.unref = () => {};
+  queueMicrotask(() => {
+    if (output) p.stdout.emit('data', Buffer.from(output));
+    p.emit('close', code);
+  });
+  return p;
+}
 
 function casa() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-host-'));
@@ -72,6 +86,22 @@ process.stdout.write(gia ? '{"state":"none"}\\n' : '{"state":"live"}\\n');
   assert.equal(vistoJson.env.VL_API_KEY, undefined);
   assert.ok(esito.spawned >= 2);
   assert.ok(pin.path !== bin);
+});
+
+test('stato none con il comando fallito non supera la barriera', async () => {
+  const home = casa();
+  const bin = scriviBin(path.join(home, 'vl'), `#!${process.execPath}\nprocess.exit(0);\n`);
+  const rec = recordDi(home, bin);
+  const esito = await host.fermaHost({
+    record: rec, bin, budgetMs: 2000, monoNow: () => Date.now(),
+    spawnImpl: () => procEsito('{"state":"none"}\n', 2),
+  });
+  assert.ok(esito.outcome !== 'host-already-stopped' && esito.outcome !== 'host-stopped-clean', esito.outcome);
+  const ok = await host.fermaHost({
+    record: rec, bin, budgetMs: 2000, monoNow: () => Date.now(),
+    spawnImpl: () => procEsito('{"state":"none"}\n', 0),
+  });
+  assert.equal(ok.outcome, 'host-already-stopped');
 });
 
 test('host gia none: nessun bisogno di dichiarare uno stop pulito dopo un ack', async () => {
