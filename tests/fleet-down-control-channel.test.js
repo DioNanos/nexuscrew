@@ -1,5 +1,5 @@
 'use strict';
-// La continuita' del teardown (decisione auditor Q2): la verifica e il comando
+// La continuita' del teardown: la verifica e il comando
 // di stop viaggiano sulla connessione di controllo APERTA ALLA CREAZIONE e
 // posseduta dal lancio. Barriere: canale morto prima del down, canale morto
 // fra verifica e comando (server sostituito), NC riavviato senza canale,

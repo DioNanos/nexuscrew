@@ -1570,7 +1570,8 @@ test('runtime: il selettore del lancio lo pubblica il PROPRIETARIO del ciclo di 
     const gen1 = w.ticket().activity.generation;
     assert.equal(activityFiles.leggiSelettoreLancio(dir), gen1,
       'il runtime pubblica launch-current alla partenza');
-    assert.equal(w.logs.length, 0, 'nessun problema di pubblicazione dichiarato');
+    const problemi = w.logs.filter((riga) => !/launch target registered|control channel held/.test(riga));
+    assert.equal(problemi.length, 0, `nessun problema di pubblicazione dichiarato: ${problemi.join(' | ')}`);
     // Un secondo lancio sposta la selezione: la diagnosi del vecchio lancio
     // non vale piu' per la cella.
     assert.equal(activityFiles.scriviRecordTerminale(dir, {
