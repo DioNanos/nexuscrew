@@ -8,7 +8,16 @@ const assert = require('node:assert');
 const proto = require('../lib/fleet/control-protocol.js');
 
 const frameOk = (extra = {}) => JSON.stringify({
-  op: 'stop', requestId: 'a'.repeat(16), epoch: 1, ...extra,
+  op: 'stop', requestId: 'a'.repeat(16), launchId: 'f'.repeat(16), epoch: 1, ...extra,
+});
+
+test('un frame senza epoca o launchId non viene consegnato', () => {
+  const visti = [];
+  const p = proto.creaParser({ onFrame: (f) => visti.push(f) });
+  p.spingi(JSON.stringify({
+    op: 'ready-to-exit', requestId: 'a'.repeat(16), payload: {},
+  }) + '\n');
+  assert.equal(visti.length, 0);
 });
 
 test('framing: riga spezzata su piu\' chunk viene ricomposta in UN frame', () => {
@@ -107,7 +116,9 @@ test('epoche: ogni (ri)connessione apre un\'epoca nuova; i messaggi vecchi non s
 });
 
 test('codifica: un frame valido torna una riga NDJSON con newline; payload oltre il tetto rifiutato', () => {
-  const riga = proto.codifica({ op: 'stop', requestId: 'd'.repeat(16), epoch: 3, payload: { deadlineMs: 5000 } });
+  const riga = proto.codifica({
+    op: 'stop', requestId: 'd'.repeat(16), launchId: 'f'.repeat(16), epoch: 3, payload: { deadlineMs: 5000 },
+  });
   assert.ok(riga.endsWith('\n'));
   const visti = [];
   const p = proto.creaParser({ onFrame: (f) => visti.push(f) });
