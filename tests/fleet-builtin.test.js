@@ -72,6 +72,27 @@ SESS=${shellQ(sessions)}
 ALTSCREENFAIL=${shellQ(alternateScreenFail)}
 POISON=${shellQ(poison)}
 KILLED=${shellQ(path.join(root, 'killed'))}
+if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
+  # control mode (canale di controllo del lancio): una riga per comando su
+  # stdin, risposta incorniciata (%begin/%end, %error sull'errore). Ogni riga
+  # viene eseguita dallo stesso script in forma argv.
+  sock="$2"
+  n=0
+  errf="\${TMPDIR:-/tmp}/ncfakecc.$$"
+  while IFS= read -r riga; do
+    n=$((n+1))
+    [ -z "$riga" ] && continue
+    out=$("$0" -S "$sock" $riga 2>"$errf")
+    rc=$?
+    printf '%%begin 1 %s 1\n' "$n"
+    [ -n "$out" ] && printf '%s\n' "$out"
+    if [ "$rc" = "0" ]; then printf '%%end 1 %s 1\n' "$n"
+    else cat "$errf" 2>/dev/null; printf '%%error 1 %s 1\n' "$n"; fi
+  done
+  rm -f "$errf"
+  exit 0
+fi
+if [ "$1" = "-S" ]; then shift 2; fi # -S <socket> in testa quando il canale respawn il comando
 cmd="\${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   has-session)
@@ -108,6 +129,8 @@ case "$cmd" in
     # format-aware: '#{session_name}\t#{pane_dead}\t#{pane_id}' (resolveSession-
     # Pane, parsing esatto 3 campi) vs legacy dead\tstatus\tpane (waitStablePane)
     last=""
+    for a in "$@"; do last="$a"; done
+    case "$last" in *socket_path*) printf '/tmp/nc-fake/socket\t4242\n'; exit 0 ;; esac
     for a in "$@"; do last="$a"; done
     tgt=""
     prev=""
@@ -807,9 +830,17 @@ test('removeCell attiva richiede stop esplicito', async () => {
     fs.writeFileSync(w.sessions, 'work-build\n');
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await assert.rejects(() => fleet.removeCell('Dev'), (e) => e.status === 409);
+    // Sessione omonima NON posseduta da questo NC (nessun lancio, quindi
+    // nessun record e nessuna connessione di controllo): anche con stop il
+    // down rifiuta onesto — non puo' dimostrare che quella sessione sia sua.
+    await assert.rejects(() => fleet.removeCell('Dev', { stop: true }),
+      (e) => e.status === 409 && e.fleetCode === 'IDENTITY_UNVERIFIED');
+    assert.equal(fleet.definitions().cells.length, 1, 'la cella resta: nessuna rimozione senza uno stop dichiarabile');
+    assert.ok(!readLog(w).lines.some((x) => x.startsWith('kill-session')), 'nessun kill su una sessione non posseduta');
+    // Cella gia' ferma: lo stop e' idempotente e la rimozione procede.
+    fs.writeFileSync(w.sessions, '');
     await fleet.removeCell('Dev', { stop: true });
     assert.equal(fleet.definitions().cells.length, 0);
-    assert.ok(readLog(w).lines.some((x) => x.startsWith('kill-session')));
   } finally { w.cleanup(); }
 });
 

@@ -49,6 +49,33 @@ function mondo(t, { killMuto = false } = {}) {
 const fs = require('node:fs');
 const argv = process.argv.slice(2);
 const args = argv[0] === '-S' ? argv.slice(2) : argv; // -S <socket> in testa quando il record lo porta
+// Control mode (canale di controllo del lancio): una riga per comando su
+// stdin, risposta incorniciata come tmux 3.4 (%begin/%end, %error sull'errore).
+// Ogni riga viene eseguita dallo stesso script in forma argv, cosi' la
+// logica dei comandi resta UNA sola.
+if (args[0] === '-C') {
+  const { spawnSync } = require('node:child_process');
+  let n = 0; let buf = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\\n')) >= 0) {
+      const riga = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!riga) continue;
+      n += 1;
+      const r = spawnSync(process.execPath,
+        [__filename, '-S', process.argv[3] || 'x'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });
+      if ((r.status || 0) === 0) {
+        process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stdout || '') + '%end 1 ' + n + ' 1\\n');
+      } else {
+        process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stderr || '') + '%error 1 ' + n + ' 1\\n');
+      }
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  return; // top-level: il corpo argv qui sotto non deve girare (uscirebbe subito)
+}
 const STATO = ${JSON.stringify(statoPath)};
 const LOG = ${JSON.stringify(logPath)};
 const KILL_MUTO = ${JSON.stringify(killMuto)};
@@ -78,9 +105,11 @@ if (cmd(args) === 'new-session') {
 }
 if (cmd(args) === 'kill-session') {
   const bersaglio = args[args.length - 1];
-  const s = risolvi(bersaglio);
+  const nudo = String(bersaglio || '').replace(/^=/, '');
+  const lista = vive();
+  const s = lista.find((x) => x.nome === nudo || x.id === nudo) || null;
   nota('kill-session:' + bersaglio);
-  if (s && !KILL_MUTO) fs.writeFileSync(STATO, JSON.stringify(vive().filter((x) => x !== s)));
+  if (s && !KILL_MUTO) fs.writeFileSync(STATO, JSON.stringify(lista.filter((x) => x.id !== s.id)));
   process.exit(0);
 }
 if (cmd(args) === 'has-session') {
@@ -89,7 +118,8 @@ if (cmd(args) === 'has-session') {
   process.exit(risolvi(bersaglio) ? 0 : 1);
 }
 if (cmd(args) === 'display-message') {
-  const fmt = args[args.indexOf('-F') + 1] || '';
+  const iF = args.indexOf('-F');
+  const fmt = (iF >= 0 ? args[iF + 1] : args[args.length - 1]) || '';
   if (fmt.includes('socket_path')) { process.stdout.write('/tmp/nc-fake/socket\\t4242\\n'); process.exit(0); }
   if (fmt.includes('pane_dead')) { process.stdout.write('0\\t0\\t%9\\n'); process.exit(0); }
   process.stdout.write('0\\t\\t%9\\n'); process.exit(0);

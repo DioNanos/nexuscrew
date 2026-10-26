@@ -46,7 +46,32 @@ function mondo(t, { brokerDelayMs = 200, killSessionFallisce = false } = {}) {
   const script = `#!${process.execPath}
 'use strict';
 const fs = require('node:fs');
-const args = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const args = argv[0] === '-S' ? argv.slice(2) : argv;
+if (args[0] === '-C') {
+  const { spawnSync } = require('node:child_process');
+  let n = 0; let buf = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\\n')) >= 0) {
+      const riga = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!riga) continue;
+      n += 1;
+      const r = spawnSync(process.execPath,
+        [__filename, '-S', process.argv[3] || 'x'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });
+      if ((r.status || 0) === 0) {
+        process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stdout || '') + '%end 1 ' + n + ' 1\\n');
+      } else {
+        process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stderr || '') + '%error 1 ' + n + ' 1\\n');
+      }
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  return;
+}
+
 const STATO = ${JSON.stringify(statoPath)};
 const LOG = ${JSON.stringify(logPath)};
 const cmd = args[0] || '';
@@ -72,7 +97,12 @@ if (cmd === 'kill-session') {
   nota('kill-session:' + bersaglio);
   process.exit(0);
 }
-if (cmd === 'display-message') { process.stdout.write('0\\t\\t%9\\n'); process.exit(0); }
+if (cmd === 'display-message') {
+  const iF = args.indexOf('-F');
+  const fmt = (iF >= 0 ? args[iF + 1] : args[args.length - 1]) || '';
+  if (fmt.includes('socket_path')) { process.stdout.write('/tmp/nc-fake/socket\\t4242\\n'); process.exit(0); }
+  process.stdout.write('0\\t\\t%9\\n'); process.exit(0);
+}
 if (cmd === 'has-session') {
   const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
   const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
